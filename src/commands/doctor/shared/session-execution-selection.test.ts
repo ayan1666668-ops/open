@@ -200,22 +200,25 @@ describe("Doctor execution selection conversion", () => {
     },
   );
 
-  it("retains the accepted ACP pair beside provider-only legacy input", () => {
-    const result = migrateSessionExecutionSelection({
-      entry: { providerOverride: "provider-later", modelOverrideSource: "user" },
-      acp: { backend: "backend-a", agent: "agent-a", model: "accepted-model" },
-      classifyExecutor,
-    });
-    expect(result.entry.executionSelection).toEqual({
-      state: "accepted",
-      selection: {
-        model: { id: "accepted-model" },
-        executor: { kind: "acp", backend: "backend-a", agent: "agent-a" },
-      },
-      fallbackPermission: "explicit",
-      legacyRequest: { provider: "provider-later", source: "user" },
-    });
-  });
+  it.each(["openai/accepted/model", undefined])(
+    "retains the accepted ACP pair with model %s beside provider-only legacy input",
+    (model) => {
+      const result = migrateSessionExecutionSelection({
+        entry: { providerOverride: "provider-later", modelOverrideSource: "user" },
+        acp: { backend: "backend-a", agent: "agent-a", model },
+        classifyExecutor,
+      });
+      expect(result.entry.executionSelection).toEqual({
+        state: "accepted",
+        selection: {
+          model: model ? { id: model } : "native-managed",
+          executor: { kind: "acp", backend: "backend-a", agent: "agent-a" },
+        },
+        fallbackPermission: "explicit",
+        legacyRequest: { provider: "provider-later", source: "user" },
+      });
+    },
+  );
 
   it("recovers complete fallback-origin intent before classifying partial input", () => {
     const result = migrateSessionExecutionSelection({
@@ -307,25 +310,70 @@ describe("Doctor execution selection conversion", () => {
     });
   });
 
-  it("preserves the committed ACP pair while an older plugin's model change is pending", () => {
-    const result = migrateSessionExecutionSelection({
-      entry: { modelOverride: "next-model" },
-      acp: { backend: "backend-a", agent: "agent-a", model: "old-model" },
-      classifyExecutor,
-    });
-    expect(result.entry.executionSelection).toEqual({
-      state: "deferred",
+  it.each([
+    {
+      name: "providerless opaque model ID",
+      entry: { modelOverride: "openai/next/model" },
+      acceptedModel: "openai/old/model",
+      requestedModel: { id: "openai/next/model" },
       fallbackPermission: "explicit",
-      previous: {
-        model: { id: "old-model" },
-        executor: { kind: "acp", backend: "backend-a", agent: "agent-a" },
+    },
+    {
+      name: "opaque model ID with provider provenance and native-managed previous selection",
+      entry: { providerOverride: "openai", modelOverride: "openai/next/model" },
+      acceptedModel: undefined,
+      requestedModel: { provider: "openai", id: "openai/next/model" },
+      fallbackPermission: "explicit",
+    },
+    {
+      name: "automatic fallback-origin provenance",
+      entry: {
+        providerOverride: "provider-temporary",
+        modelOverride: "temporary",
+        modelOverrideSource: "auto",
+        modelOverrideFallbackOriginProvider: "openai",
+        modelOverrideFallbackOriginModel: "openai/original/model",
       },
-      request: {
-        model: { id: "next-model" },
-        executor: { kind: "acp", backend: "backend-a", agent: "agent-a" },
-      },
-    });
-  });
+      acceptedModel: "openai/old/model",
+      requestedModel: { provider: "openai", id: "openai/original/model" },
+      fallbackPermission: "configured",
+    },
+    {
+      name: "default reset to native-managed",
+      entry: { modelOverride: "openai/ignored/model", modelOverrideSource: "default" },
+      acceptedModel: "openai/old/model",
+      requestedModel: "native-managed",
+      fallbackPermission: "configured",
+    },
+  ])(
+    "preserves the committed ACP pair and pending $name",
+    ({ entry, acceptedModel, requestedModel, fallbackPermission }) => {
+      const result = migrateSessionExecutionSelection({
+        entry: {
+          ...entry,
+          acp: {
+            backend: "backend-a",
+            agent: "agent-a",
+            runtimeOptions: { model: acceptedModel },
+          },
+        },
+        defaultProvider: "configured-provider",
+        classifyExecutor,
+      });
+      expect(result.entry.executionSelection).toEqual({
+        state: "deferred",
+        fallbackPermission,
+        previous: {
+          model: acceptedModel ? { id: acceptedModel } : "native-managed",
+          executor: { kind: "acp", backend: "backend-a", agent: "agent-a" },
+        },
+        request: {
+          model: requestedModel,
+          executor: { kind: "acp", backend: "backend-a", agent: "agent-a" },
+        },
+      });
+    },
+  );
 
   it("does not replace a committed pair when retrying retained legacy sources", () => {
     const first = migrateSessionExecutionSelection({

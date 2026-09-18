@@ -1,9 +1,7 @@
 import { expect } from "vitest";
-import { createDeferred } from "../../test/helpers/promise.js";
 import type { PreparedAgentCredentialModes } from "../agents/agent-auth-credential-modes.js";
 import { createSessionModelCatalogFixture } from "../agents/test-helpers/session-model-catalog.test-support.js";
 import { createPluginMetadataSnapshotFixture } from "../plugins/plugin-metadata.test-support.js";
-import { embeddedRunMock } from "./test-helpers.js";
 import { getTestPluginRegistry } from "./test-helpers.plugin-registry.js";
 import {
   getGatewayConfigModule,
@@ -55,42 +53,6 @@ export function createCompactionClientOpener(
       runtimeAuthModes,
     });
     return client;
-  };
-}
-
-type HeldCompactionResult = {
-  ok: true;
-  compacted: true;
-  result: {
-    summary: string;
-    firstKeptEntryId: string;
-    tokensBefore: number;
-    tokensAfter: number;
-    sessionId?: string;
-  };
-};
-
-export function holdCompaction(result: HeldCompactionResult) {
-  const entered = createDeferred();
-  const terminal = createDeferred<HeldCompactionResult>();
-  embeddedRunMock.compactEmbeddedAgentSession.mockImplementationOnce(() => {
-    entered.resolve();
-    return terminal.promise;
-  });
-  return {
-    release: () => terminal.resolve(result),
-    waitForEntry: async (compactResult: Promise<unknown>) => {
-      // Admission can outlast waitFor's default; only backend entry makes the held result ready.
-      await Promise.race([
-        entered.promise,
-        compactResult.then((response) => {
-          throw new Error(
-            `Compaction RPC completed before backend entry: ${JSON.stringify(response)}`,
-          );
-        }),
-      ]);
-      expect(embeddedRunMock.compactEmbeddedAgentSession).toHaveBeenCalledTimes(1);
-    },
   };
 }
 

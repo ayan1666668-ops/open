@@ -1,5 +1,7 @@
+import { describe, expect, it, vi } from "vitest";
+import { createDeferred } from "../../../test/helpers/promise.js";
 /** Tests ACP manager session initialization and persisted runtime options. */
-import { describe, expect, it } from "vitest";
+import { getAcpSessionResetControls } from "./manager.reset-controls.js";
 import {
   AcpSessionManager,
   baseCfg,
@@ -137,6 +139,80 @@ describe("AcpSessionManager initializeSession", () => {
     });
     expectRecordFields(closeInput.handle, {
       sessionKey: "agent:codex:acp:session-1",
+    });
+  });
+
+  it("does not let reset-superseded initialization republish a stale runtime handle", async () => {
+    const runtimeState = createRuntime();
+    const releaseOldInit = createDeferred();
+    let ensureCount = 0;
+    runtimeState.ensureSession.mockImplementation(async (input) => {
+      const callNumber = ++ensureCount;
+      if (callNumber === 1) {
+        await releaseOldInit.promise;
+      }
+      return {
+        sessionKey: input.sessionKey,
+        backend: "acpx",
+        runtimeSessionName: `runtime-${callNumber}`,
+        backendSessionId: `backend-${callNumber}`,
+      };
+    });
+    hoisted.requireAcpRuntimeBackendMock.mockReturnValue({
+      id: "acpx",
+      runtime: runtimeState.runtime,
+    });
+
+    const sessionKey = "agent:codex:acp:child-1";
+    const store = installAcpSessionStoreFixture({ sessionKey, agentId: "codex" });
+
+    const manager = new AcpSessionManager();
+    const staleInitialization = manager.initializeSession({
+      cfg: baseCfg,
+      sessionKey,
+      agent: "codex",
+      mode: "persistent",
+    });
+    await vi.waitFor(() => {
+      expect(runtimeState.ensureSession).toHaveBeenCalledTimes(1);
+    });
+
+    await getAcpSessionResetControls(manager).forceDiscardSessionRuntime({
+      cfg: baseCfg,
+      sessionKey,
+      reason: "session-reset",
+    });
+    const fresh = await manager.initializeSession({
+      cfg: baseCfg,
+      sessionKey,
+      agent: "codex",
+      mode: "persistent",
+    });
+    expect(fresh.handle.runtimeSessionName).toBe("runtime-2");
+
+    releaseOldInit.resolve();
+    await expect(staleInitialization).rejects.toMatchObject({
+      code: "ACP_SESSION_INIT_FAILED",
+      detailCode: "SESSION_ACTOR_SUPERSEDED",
+    });
+    expect(store.readMeta()?.runtimeSessionName).toBe("runtime-2");
+    expectRecordFields(mockCallArg(runtimeState.close), {
+      handle: expect.objectContaining({ runtimeSessionName: "runtime-1" }),
+      reason: "session-actor-superseded",
+      discardPersistentState: true,
+    });
+
+    await manager.runTurn({
+      provenance: "system",
+      cfg: baseCfg,
+      sessionKey,
+      text: "follow-up turn",
+      mode: "prompt",
+      requestId: "follow-up-turn",
+    });
+    expect(ensureCount).toBe(2);
+    expectRecordFields(mockCallArg(runtimeState.runTurn), {
+      handle: expect.objectContaining({ runtimeSessionName: "runtime-2" }),
     });
   });
 });

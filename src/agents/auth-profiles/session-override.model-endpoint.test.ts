@@ -114,7 +114,7 @@ it.each([
           },
           agentId,
         );
-        const model = resolveModelWithRegistry({
+        const model = await resolveModelWithRegistry({
           cfg,
           provider: "arcee",
           modelId: "trinity-large-thinking",

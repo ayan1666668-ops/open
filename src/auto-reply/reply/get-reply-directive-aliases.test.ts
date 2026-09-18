@@ -420,7 +420,6 @@ describe("reply directive resolution", () => {
       }),
       blockStreamingEnabled: result.result.blockStreamingEnabled,
       blockReplyPipeline: null,
-      directlySentBlockKeys: new Set(),
       directBlockDeliveries: [],
     });
     const { emit, subscription } = createSubscribedSessionHarness({

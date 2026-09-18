@@ -121,6 +121,7 @@ export function createSessionModelCatalogFixture() {
       modelCatalog: catalog,
       readFullModelCatalog: () => catalog,
       configuredRuntimeModels: [],
+      findConfiguredRuntimeModel: () => undefined,
       inlineProviderModels: [],
       createStores() {
         const authStorage = AuthStorage.inMemory({});

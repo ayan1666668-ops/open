@@ -3,12 +3,8 @@ import {
   normalizeOptionalString,
   normalizeOptionalLowercaseString,
 } from "@openclaw/normalization-core/string-coerce";
-import {
-  readAcpSessionMetaForEntry,
-  resolveSessionStorePathForAcp,
-} from "../acp/runtime/session-meta.js";
-// Runtime helpers for building status summaries.
-// Kept behind a lazy surface because status summary imports model/session/runtime metadata helpers.
+import { readAcpSessionMetaForEntry } from "../acp/runtime/session-meta-readonly.js";
+import { resolveSessionStorePathForAcp } from "../acp/runtime/session-meta.js";
 import { resolveCurrentSessionAgentRuntimeMetadata } from "../agents/agent-runtime-metadata.js";
 import { resolveAgentConfig } from "../agents/agent-scope-config.js";
 import {

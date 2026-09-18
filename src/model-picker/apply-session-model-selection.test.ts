@@ -674,7 +674,7 @@ describe("applySessionExecutionSelection public operation", () => {
         authProfileOverrideSource: "user",
       });
       expect(lifecycleEvents).toEqual([
-        { sessionKey: params.sessionKey, agentId: "main", reason: "patch" },
+        { sessionKey: params.sessionKey, agentId: "main", reason: "patch", catalogChanged: true },
       ]);
       expect(effects.enqueueSystemEvent).not.toHaveBeenCalled();
     } finally {

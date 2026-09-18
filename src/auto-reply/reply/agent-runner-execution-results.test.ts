@@ -294,10 +294,10 @@ describe("executeAgentTurn: result and tool delivery", () => {
       model: { provider: "openai", id: "gpt-5.4" },
       executor: { kind: "harness", id: "openclaw" },
     };
+    const delivery =
+      await vi.importActual<typeof import("./reply-delivery.js")>("./reply-delivery.js");
     state.createBlockReplyDeliveryHandlerMock.mockImplementationOnce(
-      (params: { directlySentBlockKeys?: Set<string> }) => async () => {
-        params.directlySentBlockKeys?.add("block:1");
-      },
+      delivery.createBlockReplyDeliveryHandler,
     );
     state.runEmbeddedAgentMock.mockImplementationOnce(async (params: EmbeddedAgentParams) => {
       await params.onBlockReply?.({ text: "streamed block" });
@@ -330,12 +330,13 @@ describe("executeAgentTurn: result and tool delivery", () => {
     });
 
     const executeAgentTurn = await getExecuteAgentTurnForTest();
-    const result = await executeAgentTurn(
-      createMinimalRunAgentTurnParams({
+    const result = await executeAgentTurn({
+      ...createMinimalRunAgentTurnParams({
         followupRun,
         opts: { onBlockReply: vi.fn() } satisfies GetReplyOptions,
       }),
-    );
+      blockStreamingEnabled: true,
+    });
 
     expect(result.kind).toBe("success");
   });

@@ -168,8 +168,9 @@ export const runPluginEmbeddedAgent: PluginRuntime["agent"]["runEmbeddedAgent"] 
       throw new Error(selectionError);
     }
     params.abortSignal?.throwIfAborted();
+    const { githubPublicationAvailable: _, ...runParams } = params;
     const result = await runEmbeddedAgentCore({
-      ...params,
+      ...runParams,
       config,
       preparedRunAdmission,
       provider: model?.provider,

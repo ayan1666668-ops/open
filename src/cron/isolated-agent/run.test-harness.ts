@@ -98,7 +98,6 @@ const resolveAgentWorkspaceDirMock = vi.fn(
 const resolveSubagentModelFallbacksOverrideMock = createMock();
 export const resolveAgentSkillsFilterMock = createMock();
 export const getModelRefStatusMock = createMock();
-export const isCliProviderMock = createMock();
 export const resolveAllowedModelRefMock = createMock();
 export const resolveConfiguredModelRefMock = createMock();
 export const resolveHooksGmailModelMock = createMock();
@@ -135,7 +134,7 @@ export const callGatewayMock = createMock();
 export const hasUsableWebSearchProviderMock = createMock();
 export const readSessionMessagesAsyncMock = createMock();
 
-const resolveBootstrapWarningSignaturesSeenMock = createMock();
+const resolveBootstrapWarningSignaturesSeenMock = vi.fn<() => string[]>();
 const resolveCronStyleNowMock = createMock();
 export const resolveCronAgentLaneMock = createMock();
 const resolveAgentTimeoutMsMock = createMock();
@@ -183,7 +182,6 @@ vi.mock("./run.runtime.js", async () => ({
   resolveAgentWorkspaceDir: resolveAgentWorkspaceDirMock,
   resolveCronStyleNow: resolveCronStyleNowMock,
   DEFAULT_CONTEXT_TOKENS: 128000,
-  isCliProvider: isCliProviderMock,
   resolveThinkingSelection: (params: { level?: string }) => {
     const requestedLevel = params.level ?? resolveThinkingDefaultMock(params);
     const policy = { ...params, level: requestedLevel };
@@ -561,8 +559,7 @@ function resetRunConfigMocks(): void {
 }
 
 function resetRunExecutionMocks(): void {
-  isCliProviderMock.mockReturnValue(false);
-  resolveBootstrapWarningSignaturesSeenMock.mockReturnValue(new Set());
+  resolveBootstrapWarningSignaturesSeenMock.mockReturnValue([]);
   resolveFastModeStateMock.mockImplementation((params) => resolveFastModeStateImpl(params));
   resolveCronAgentLaneMock.mockReturnValue(undefined);
   normalizeVerboseLevelMock.mockImplementation((value: unknown) => value ?? "off");

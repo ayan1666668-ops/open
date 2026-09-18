@@ -30,6 +30,7 @@ import {
   replaceSessionEntry,
   upsertSessionEntryCore,
 } from "../config/sessions/session-accessor.js";
+import { clearAgentRunContext, registerAgentRunContext } from "../infra/agent-run-registry.js";
 import { setActivePluginRegistry } from "../plugins/runtime.js";
 import {
   enqueueCommandInLane,
@@ -51,7 +52,6 @@ import { acceptedModelSelection } from "../test-utils/session-execution-selectio
 import {
   createCompactionClientOpener,
   expectMainCompactionResult,
-  holdCompaction,
   isCompactOperationEvent,
 } from "./server-sessions.compaction-runtime.test-support.js";
 import {
@@ -62,6 +62,10 @@ import {
   testState,
 } from "./test-helpers.js";
 import { getTestPluginRegistry } from "./test-helpers.plugin-registry.js";
+import {
+  compactionCheckpointEntry,
+  holdCompaction,
+} from "./test/server-sessions-checkpoint.test-helpers.js";
 import {
   setupGatewaySessionsTestHarness,
   getGatewayConfigModule,
@@ -79,8 +83,6 @@ const {
 } = setupGatewaySessionsTestHarness();
 
 const openClient = createCompactionClientOpener(openGatewayClient);
-
-type CheckpointFixture = Awaited<ReturnType<typeof createCheckpointFixture>>;
 
 function buildSessionTranscriptLines(sessionId: string, totalLines: number): string[] {
   const header = JSON.stringify({
@@ -100,42 +102,6 @@ function buildSessionTranscriptLines(sessionId: string, totalLines: number): str
     }),
   );
   return [header, ...entries];
-}
-
-function compactionCheckpointEntry(
-  fixture: CheckpointFixture,
-  options: {
-    checkpointId: string;
-    sessionKey: string;
-    createdAt: number;
-    reason: SessionCompactionCheckpoint["reason"];
-    summary: string;
-    tokensBefore?: number;
-    tokensAfter?: number;
-  },
-): SessionCompactionCheckpoint {
-  return {
-    checkpointId: options.checkpointId,
-    sessionKey: options.sessionKey,
-    sessionId: fixture.sessionId,
-    createdAt: options.createdAt,
-    reason: options.reason,
-    tokensVersion: 1,
-    summary: options.summary,
-    ...(options.tokensBefore === undefined ? {} : { tokensBefore: options.tokensBefore }),
-    ...(options.tokensAfter === undefined ? {} : { tokensAfter: options.tokensAfter }),
-    firstKeptEntryId: fixture.preCompactionLeafId,
-    preCompaction: {
-      sessionId: fixture.sessionId,
-      leafId: fixture.preCompactionLeafId,
-    },
-    postCompaction: {
-      sessionId: fixture.sessionId,
-      sessionFile: fixture.sessionFile,
-      leafId: fixture.postCompactionLeafId,
-      entryId: fixture.postCompactionLeafId,
-    },
-  };
 }
 
 async function seedSessionEntry(params: {
@@ -2042,25 +2008,32 @@ test("sessions.compact maxLines refuses an active run without trimming rows", as
   });
 
   const { ws } = await openClient();
-  // Simulate an embedded agent run actively appending to this session transcript.
-  embeddedRunMock.activeIds.add("sess-main");
+  const runId = "manual-trim-active-run";
+  registerAgentRunContext(runId, {
+    agentId: "main",
+    sessionId: "sess-main",
+    sessionKey: "agent:main:main",
+    projectSessionActive: true,
+  });
+  try {
+    const compacted = await rpcReq(ws, "sessions.compact", { key: "main", maxLines: 50 });
 
-  const compacted = await rpcReq(ws, "sessions.compact", { key: "main", maxLines: 50 });
-
-  expect(compacted.ok).toBe(false);
-  expect(compacted.error?.message).toContain("has an active run");
-  expect(embeddedRunMock.abortCalls).toEqual([]);
-  expect(embeddedRunMock.waitCalls).toEqual([]);
-  await expect(
-    loadTranscriptRows({
-      sessionId: "sess-main",
-      sessionKey: "agent:main:main",
-      storePath,
-    }),
-  ).resolves.toHaveLength(500);
-  expect((await fs.readdir(dir)).some((name) => name.includes(".bak"))).toBe(false);
-
-  ws.close();
+    expect(compacted.ok).toBe(false);
+    expect(compacted.error?.message).toContain("has an active run");
+    expect(embeddedRunMock.abortCalls).toEqual([]);
+    expect(embeddedRunMock.waitCalls).toEqual([]);
+    await expect(
+      loadTranscriptRows({
+        sessionId: "sess-main",
+        sessionKey: "agent:main:main",
+        storePath,
+      }),
+    ).resolves.toHaveLength(500);
+    expect((await fs.readdir(dir)).some((name) => name.includes(".bak"))).toBe(false);
+  } finally {
+    clearAgentRunContext(runId);
+    ws.close();
+  }
 });
 
 test("sessions.compact maxLines does not interrupt an active run when row trimming is a no-op", async () => {

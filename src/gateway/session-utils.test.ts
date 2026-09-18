@@ -37,11 +37,10 @@ import {
   closeOpenClawAgentDatabasesForTest,
   resolveIncognitoOpenClawAgentSqlitePath,
 } from "../state/openclaw-agent-db.js";
-import { closeOpenClawStateDatabaseForTest } from "../state/openclaw-state-db.js";
 import { withStateDirEnv as withRawStateDirEnv } from "../test-helpers/state-dir-env.js";
 import { normalizeSessionDeliveryState } from "../utils/delivery-context.shared.js";
 import { registerSessionAutomationSource } from "./session-automation-index.js";
-import { buildGatewaySessionEventFields } from "./session-event-payload.js";
+import { buildGatewaySessionSnapshot } from "./session-event-payload.js";
 import { projectSessionActor } from "./session-identity-projection.js";
 import {
   sessionSelectionFixture,
@@ -66,6 +65,7 @@ import {
   resolveCanonicalGatewaySessionStoreKey,
   resolveDeletedAgentIdFromSessionKey,
 } from "./session-utils-store.js";
+import { closeSessionSqliteDatabasesForTest } from "./session-utils.test-support.js";
 import { applySessionContextWindowPatch } from "./sessions-patch-context-window.js";
 
 const providerArtifactMocks = vi.hoisted(() => ({
@@ -78,11 +78,6 @@ vi.mock("../plugins/provider-public-artifacts.js", () => ({
   resolveBundledProviderPolicySurface: providerArtifactMocks.resolveBundledProviderPolicySurface,
   resolveProviderPolicySurface: providerArtifactMocks.resolveBundledProviderPolicySurface,
 }));
-
-function closeSessionSqliteDatabasesForTest(): void {
-  closeOpenClawAgentDatabasesForTest();
-  closeOpenClawStateDatabaseForTest();
-}
 
 test("resolves fixed-store and auth compatibility owners", () => {
   const cfg = retainLegacyDefaultAgentId(
@@ -151,7 +146,7 @@ test("projects a channel avatar route without exposing its media-store reference
   );
   expect(row.origin).toEqual({ provider: "discord", to: "user:user-1" });
   expect(JSON.stringify(row)).not.toContain(localReference);
-  expect(buildGatewaySessionEventFields({ sessionRow: row })).toMatchObject({
+  expect(buildGatewaySessionSnapshot({ sessionRow: row })).toMatchObject({
     channelAvatarUrl: row.channelAvatarUrl,
   });
 
@@ -188,7 +183,7 @@ async function withStateDirEnv<T>(
     try {
       return await fn(ctx);
     } finally {
-      closeSessionSqliteDatabasesForTest();
+      await closeSessionSqliteDatabasesForTest();
     }
   });
 }
@@ -288,9 +283,6 @@ function buildGatewaySessionRow(
   const rowContext = buildSessionListRowMetadataContext({
     now: params.now ?? Date.now(),
   });
-  // Row projection tests do not own ACP persistence. Mark the supplied fixture
-  // as already checked so each assertion does not open the ambient state DB.
-  rowContext.acpSessionMetaByEntry.set(entry, undefined);
   return buildSessionRowFixture({
     ...params,
     entry,
@@ -589,7 +581,7 @@ describe("gateway session utils", () => {
     });
 
     expect(row.swarmGroupId).toBe("swarm:agent:main:parent:turn-42");
-    expect(buildGatewaySessionEventFields({ sessionRow: row }).swarmGroupId).toBe(
+    expect(buildGatewaySessionSnapshot({ sessionRow: row }).swarmGroupId).toBe(
       "swarm:agent:main:parent:turn-42",
     );
   });
@@ -605,9 +597,7 @@ describe("gateway session utils", () => {
     });
 
     expect(row.toolOverrides).toEqual(toolOverrides);
-    expect(buildGatewaySessionEventFields({ sessionRow: row }).toolOverrides).toEqual(
-      toolOverrides,
-    );
+    expect(buildGatewaySessionSnapshot({ sessionRow: row }).toolOverrides).toEqual(toolOverrides);
   });
 
   test("projects restart recovery tombstones", () => {
@@ -629,7 +619,7 @@ describe("gateway session utils", () => {
     });
 
     expect(row.restartRecoveryStatus).toBe("tombstoned");
-    expect(buildGatewaySessionEventFields({ sessionRow: row }).restartRecoveryStatus).toBe(
+    expect(buildGatewaySessionSnapshot({ sessionRow: row }).restartRecoveryStatus).toBe(
       "tombstoned",
     );
   });
@@ -643,7 +633,7 @@ describe("gateway session utils", () => {
       entry: {} as SessionEntry,
     });
 
-    expect(buildGatewaySessionEventFields({ sessionRow: row }).controlOwnerSessionKey).toBeNull();
+    expect(buildGatewaySessionSnapshot({ sessionRow: row }).controlOwnerSessionKey).toBeNull();
   });
 
   test("projects only unexpired agent status", () => {
@@ -691,7 +681,7 @@ describe("gateway session utils", () => {
       updatedAt: observerDigest.updatedAt,
       revision: observerDigest.revision,
     });
-    expect(buildGatewaySessionEventFields({ sessionRow: row }).observerDigest).toEqual(
+    expect(buildGatewaySessionSnapshot({ sessionRow: row }).observerDigest).toEqual(
       row.observerDigest,
     );
   });
@@ -718,7 +708,7 @@ describe("gateway session utils", () => {
     });
 
     expect(row.observerDigest).toBeUndefined();
-    expect(buildGatewaySessionEventFields({ sessionRow: row }).observerDigest).toBeNull();
+    expect(buildGatewaySessionSnapshot({ sessionRow: row }).observerDigest).toBeNull();
   });
 
   test("session lists apply a bounded default and expose truncation metadata", async () => {
@@ -1444,7 +1434,7 @@ describe("gateway session utils", () => {
         skipTranscriptUsageFallback: true,
       });
       expect(bound.hasAutomation).toBe(true);
-      expect(buildGatewaySessionEventFields({ sessionRow: bound }).hasAutomation).toBe(true);
+      expect(buildGatewaySessionSnapshot({ sessionRow: bound }).hasAutomation).toBe(true);
 
       const plain = buildGatewaySessionRow({
         cfg,
@@ -1455,7 +1445,7 @@ describe("gateway session utils", () => {
         skipTranscriptUsageFallback: true,
       });
       expect(plain.hasAutomation).toBeUndefined();
-      expect(buildGatewaySessionEventFields({ sessionRow: plain }).hasAutomation).toBe(false);
+      expect(buildGatewaySessionSnapshot({ sessionRow: plain }).hasAutomation).toBe(false);
     } finally {
       registerSessionAutomationSource(null);
     }
@@ -1479,12 +1469,12 @@ describe("gateway session utils", () => {
     });
 
     expect(failed.lastRunError).toBe("Provider credits exhausted");
-    expect(buildGatewaySessionEventFields({ sessionRow: failed }).lastRunError).toBe(
+    expect(buildGatewaySessionSnapshot({ sessionRow: failed }).lastRunError).toBe(
       "Provider credits exhausted",
     );
 
     const cleared = { ...failed, status: "running" as const, lastRunError: undefined };
-    expect(buildGatewaySessionEventFields({ sessionRow: cleared }).lastRunError).toBeNull();
+    expect(buildGatewaySessionSnapshot({ sessionRow: cleared }).lastRunError).toBeNull();
   });
 
   test("session rows and update events project the exact settled run identity", () => {
@@ -1504,10 +1494,10 @@ describe("gateway session utils", () => {
     });
 
     expect(settled.lastRunId).toBe("run-settled");
-    expect(buildGatewaySessionEventFields({ sessionRow: settled }).lastRunId).toBe("run-settled");
+    expect(buildGatewaySessionSnapshot({ sessionRow: settled }).lastRunId).toBe("run-settled");
 
     const running = { ...settled, status: "running" as const, lastRunId: undefined };
-    expect(buildGatewaySessionEventFields({ sessionRow: running }).lastRunId).toBeNull();
+    expect(buildGatewaySessionSnapshot({ sessionRow: running }).lastRunId).toBeNull();
   });
 
   test.each([
@@ -1917,9 +1907,6 @@ describe("gateway session utils", () => {
       });
       setTestActivePluginRegistry(registry);
       const rowContext = buildSessionListRowMetadataContext({ now: 1 });
-      for (const current of Object.values(store)) {
-        rowContext.acpSessionMetaByEntry.set(current, undefined);
-      }
       const readRow = (key: keyof typeof store) =>
         buildGatewaySessionRowOwner({
           cfg,
@@ -1941,7 +1928,7 @@ describe("gateway session utils", () => {
         opts: { search: "openai/gpt-5.6-luna" },
       });
       expect(matches.sessions.map((row) => row.key)).toEqual([nativeKey]);
-      expect(buildGatewaySessionEventFields({ sessionRow: nativeRow })).toMatchObject({
+      expect(buildGatewaySessionSnapshot({ sessionRow: nativeRow })).toMatchObject({
         modelProvider: "openai",
         model: "gpt-5.6-luna",
       });
@@ -2950,16 +2937,26 @@ describe("gateway session utils", () => {
     expect(titledRow.displayName).toBe("Release Planning");
   });
 
-  test("buildGatewaySessionRow prefers generated titles over Android node stamps", () => {
+  test.each<[string, Partial<SessionEntry>, string]>([
+    ["generated title", {}, "Release Planning"],
+    [
+      "explicit rename",
+      { label: "  OpenClaw App · Release planning · 1234567890ab  " },
+      "OpenClaw App · Release planning · 1234567890ab",
+    ],
+    ["blank explicit label", { label: "  " }, "Release Planning"],
+    ["empty stored name", { displayName: "" }, ""],
+    ["empty automatic name", { displayName: undefined, autoLabel: "" }, ""],
+  ])("buildGatewaySessionRow preserves title precedence for %s", (_name, overrides, expected) => {
     const cfg = { agents: { list: [{ id: "main", default: true }] } } as OpenClawConfig;
     const key = "agent:main:node-1234567890ab";
-    const stamp = "OpenClaw App · Pixel · 1234567890ab";
-    const entry = {
+    const entry: SessionEntry = {
       sessionId: "node-1",
       updatedAt: 1,
-      autoLabel: stamp,
+      autoLabel: "OpenClaw App · Pixel · 1234567890ab",
       displayName: "Release Planning",
-    } as SessionEntry;
+      ...overrides,
+    };
     const row = buildGatewaySessionRow({
       cfg,
       storePath: "",
@@ -2967,22 +2964,9 @@ describe("gateway session utils", () => {
       key,
       entry,
     });
-    expect(row.autoLabel).toBe(stamp);
-    expect(row.label).toBeUndefined();
-    expect(row.displayName).toBe("Release Planning");
-
-    const manualPrefix = {
-      ...entry,
-      label: "OpenClaw App · Release planning · 1234567890ab",
-    } as SessionEntry;
-    const manualRow = buildGatewaySessionRow({
-      cfg,
-      storePath: "",
-      store: { [key]: manualPrefix },
-      key,
-      entry: manualPrefix,
-    });
-    expect(manualRow.displayName).toBe("OpenClaw App · Release planning · 1234567890ab");
+    expect(row.autoLabel).toBe(entry.autoLabel);
+    expect(row.label).toBe(entry.label);
+    expect(row.displayName).toBe(expected);
   });
 
   test("buildGatewaySessionRow displayName prefers the human chat title for group sessions", () => {
@@ -3058,7 +3042,7 @@ describe("gateway session utils", () => {
           sessionKey: key,
           ctx: { ...ctx, TopicName: topicName },
         });
-        closeSessionSqliteDatabasesForTest();
+        await closeSessionSqliteDatabasesForTest();
         const store = readStore();
         const entry = expectDefined(store[key], "topic session");
         const row = buildGatewaySessionRow({ cfg, storePath, store, key, entry });
@@ -3106,7 +3090,7 @@ describe("gateway session utils", () => {
       });
       expect(labeledRow.displayName).toBe("My planning chat");
     } finally {
-      closeSessionSqliteDatabasesForTest();
+      await closeSessionSqliteDatabasesForTest();
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
@@ -3159,7 +3143,7 @@ describe("gateway session utils", () => {
       expect(row.displayName).toBe("Engineering");
       expect(row.origin?.nativeChannelId).toBe(roomId);
     } finally {
-      closeSessionSqliteDatabasesForTest();
+      await closeSessionSqliteDatabasesForTest();
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
@@ -3223,7 +3207,7 @@ describe("gateway session utils", () => {
       expect(row.displayName).toBe(subject);
       expect(row.origin?.nativeChannelId).toBe(channelId);
     } finally {
-      closeSessionSqliteDatabasesForTest();
+      await closeSessionSqliteDatabasesForTest();
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
@@ -4505,7 +4489,7 @@ describe("gateway session utils", () => {
     ).toThrow("openclaw doctor --fix");
   });
 
-  test("listAgentsForGateway rejects avatar symlink escapes outside workspace", () => {
+  test("listAgentsForGateway rejects avatar symlink escapes outside workspace", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "session-utils-avatar-outside-"));
     const workspace = path.join(root, "workspace");
     fs.mkdirSync(workspace, { recursive: true });
@@ -4518,11 +4502,11 @@ describe("gateway session utils", () => {
 
     const cfg = createSingleAgentAvatarConfig(workspace);
 
-    const result = listAgentsForGateway(cfg);
+    const result = await listAgentsForGateway(cfg);
     expect(result.agents[0]?.identity?.avatarUrl).toBeUndefined();
   });
 
-  test("listAgentsForGateway allows avatar symlinks that stay inside workspace", () => {
+  test("listAgentsForGateway allows avatar symlinks that stay inside workspace", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "session-utils-avatar-inside-"));
     const workspace = path.join(root, "workspace");
     fs.mkdirSync(path.join(workspace, "avatars"), { recursive: true });
@@ -4535,13 +4519,13 @@ describe("gateway session utils", () => {
 
     const cfg = createSingleAgentAvatarConfig(workspace);
 
-    const result = listAgentsForGateway(cfg);
+    const result = await listAgentsForGateway(cfg);
     expect(result.agents[0]?.identity?.avatarUrl).toBe(
       `data:image/png;base64,${Buffer.from("avatar").toString("base64")}`,
     );
   });
 
-  test.each(["local", "data"])("keeps %s avatar bytes out of browser agent rows", (kind) => {
+  test.each(["local", "data"])("keeps %s avatar bytes out of browser agent rows", async (kind) => {
     const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "session-utils-browser-avatar-"));
     onTestFinished(() => fs.rmSync(workspace, { recursive: true, force: true }));
     const dataUrl = `data:image/png;base64,${Buffer.from("avatar").toString("base64")}`;
@@ -4550,16 +4534,16 @@ describe("gateway session utils", () => {
     if (kind === "data") {
       cfg.agents!.list![0]!.identity!.avatar = dataUrl;
     }
-    const browser = listAgentsForGateway(cfg, undefined, { httpAvatarBasePath: "/control" });
+    const browser = await listAgentsForGateway(cfg, undefined, { httpAvatarBasePath: "/control" });
     expect(browser.agents[0]?.identity?.avatarUrl).toMatch(
       /^\/control\/avatar\/main\?v=[a-f0-9]+$/,
     );
     expect(browser.agents[0]?.identity?.avatar).toBe(browser.agents[0]?.identity?.avatarUrl);
     expect(JSON.stringify(browser)).not.toContain(dataUrl);
-    expect(listAgentsForGateway(cfg).agents[0]?.identity?.avatarUrl).toBe(dataUrl);
+    expect((await listAgentsForGateway(cfg)).agents[0]?.identity?.avatarUrl).toBe(dataUrl);
   });
 
-  test("listAgentsForGateway falls back to identity.name when name is unset", () => {
+  test("listAgentsForGateway falls back to identity.name when name is unset", async () => {
     const cfg = {
       session: { mainKey: "main" },
       agents: {
@@ -4567,7 +4551,7 @@ describe("gateway session utils", () => {
       },
     } as OpenClawConfig;
 
-    const result = listAgentsForGateway(cfg);
+    const result = await listAgentsForGateway(cfg);
 
     expect(result.agents[0]).toMatchObject({
       id: "main",
@@ -4576,7 +4560,7 @@ describe("gateway session utils", () => {
     });
   });
 
-  test("listAgentsForGateway prefers explicit name over identity.name", () => {
+  test("listAgentsForGateway prefers explicit name over identity.name", async () => {
     const cfg = {
       session: { mainKey: "main" },
       agents: {
@@ -4591,7 +4575,7 @@ describe("gateway session utils", () => {
       },
     } as OpenClawConfig;
 
-    const result = listAgentsForGateway(cfg);
+    const result = await listAgentsForGateway(cfg);
 
     expect(result.agents[0]).toMatchObject({
       id: "main",
@@ -4600,7 +4584,7 @@ describe("gateway session utils", () => {
     });
   });
 
-  test("listAgentsForGateway leaves name unset when both configured and identity names are absent", () => {
+  test("listAgentsForGateway leaves name unset when both configured and identity names are absent", async () => {
     const cfg = {
       session: { mainKey: "main" },
       agents: {
@@ -4608,7 +4592,7 @@ describe("gateway session utils", () => {
       },
     } as OpenClawConfig;
 
-    const result = listAgentsForGateway(cfg);
+    const result = await listAgentsForGateway(cfg);
 
     expect(result.agents[0]).toMatchObject({
       id: "main",
@@ -4627,7 +4611,7 @@ describe("gateway session utils", () => {
         agents: { list: [{ id: "main", default: true }] },
       } as OpenClawConfig;
 
-      const { agents } = listAgentsForGateway(cfg);
+      const { agents } = await listAgentsForGateway(cfg);
       expect(agents.map((agent) => agent.id)).toEqual(["main"]);
     });
   });
@@ -4637,7 +4621,7 @@ describe("gateway session utils", () => {
       fs.mkdirSync(path.join(stateDir, "agents", "openclaw"), { recursive: true });
       fs.mkdirSync(path.join(stateDir, "agents", "research"), { recursive: true });
 
-      const result = listAgentsForGateway({}, undefined, { includeSystem: true });
+      const result = await listAgentsForGateway({}, undefined, { includeSystem: true });
 
       expect(result.agents.map(({ id, kind }) => ({ id, kind }))).toEqual([
         { id: "main", kind: "agent" },
@@ -4651,7 +4635,7 @@ describe("gateway session utils", () => {
     await withStateDirEnv("openclaw-agent-list-legacy-", async ({ stateDir }) => {
       fs.mkdirSync(path.join(stateDir, "agents", "openclaw"), { recursive: true });
 
-      const agents = listAgentsForGateway({}).agents;
+      const agents = (await listAgentsForGateway({})).agents;
       expect(agents.map((agent) => agent.id)).toEqual(["main"]);
       expect(agents[0]).not.toHaveProperty("kind");
     });
@@ -4690,7 +4674,7 @@ describe("gateway session utils", () => {
           agents: { entries: { main: { tools: { exec: agentExec } } } },
         };
         const original = structuredClone(cfg);
-        const agent = listAgentsForGateway(cfg).agents.find((entry) => entry.id === "main");
+        const agent = (await listAgentsForGateway(cfg)).agents.find((entry) => entry.id === "main");
         if (expected === undefined) {
           expect(agent).not.toHaveProperty("defaultPermissionMode");
         } else {
@@ -4762,7 +4746,7 @@ describe("gateway session utils", () => {
   ])("listAgentsForGateway never overstates $name", async ({ cfg, approvals, expected }) => {
     await withStateDirEnv("openclaw-agent-permission-floor-", async () => {
       execApprovalsStore.saveExecApprovals(approvals);
-      const agent = listAgentsForGateway(cfg).agents.find((entry) => entry.id === "main");
+      const agent = (await listAgentsForGateway(cfg)).agents.find((entry) => entry.id === "main");
       expect(agent).toBeDefined();
       if (expected === undefined) {
         expect(agent).not.toHaveProperty("defaultPermissionMode");
@@ -4793,7 +4777,7 @@ describe("gateway session utils", () => {
       const loadApprovals = vi.spyOn(execApprovalsStore, "loadExecApprovals");
       onTestFinished(() => loadApprovals.mockRestore());
       expect(
-        listAgentsForGateway(cfg).agents.map(({ id, defaultPermissionMode }) => [
+        (await listAgentsForGateway(cfg)).agents.map(({ id, defaultPermissionMode }) => [
           id,
           defaultPermissionMode,
         ]),
@@ -4806,7 +4790,7 @@ describe("gateway session utils", () => {
     });
   });
 
-  test("listAgentsForGateway includes effective workspace + model for default agent", () => {
+  test("listAgentsForGateway includes effective workspace + model for default agent", async () => {
     const cfg = {
       session: { mainKey: "main" },
       agents: {
@@ -4821,7 +4805,7 @@ describe("gateway session utils", () => {
       },
     } as OpenClawConfig;
 
-    const result = listAgentsForGateway(cfg);
+    const result = await listAgentsForGateway(cfg);
     expectFields(result.agents[0], {
       id: "main",
       workspace: "/tmp/default-workspace",
@@ -4838,7 +4822,7 @@ describe("gateway session utils", () => {
     });
   });
 
-  test("listAgentsForGateway reports whether each workspace is a git checkout", () => {
+  test("listAgentsForGateway reports whether each workspace is a git checkout", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-agent-workspace-git-"));
     const gitWorkspace = path.join(root, "git");
     const plainWorkspace = path.join(root, "plain");
@@ -4853,7 +4837,7 @@ describe("gateway session utils", () => {
       },
     } as OpenClawConfig;
     try {
-      const result = listAgentsForGateway(cfg);
+      const result = await listAgentsForGateway(cfg);
 
       expect(result.agents.map(({ id, workspaceGit }) => ({ id, workspaceGit }))).toEqual([
         { id: "main", workspaceGit: true },
@@ -4864,7 +4848,7 @@ describe("gateway session utils", () => {
     }
   });
 
-  test("listAgentsForGateway reports explicit plugin runtime metadata", () => {
+  test("listAgentsForGateway reports explicit plugin runtime metadata", async () => {
     const cfg = {
       session: { mainKey: "main" },
       models: {
@@ -4884,7 +4868,7 @@ describe("gateway session utils", () => {
       },
     } as OpenClawConfig;
 
-    const result = listAgentsForGateway(cfg);
+    const result = await listAgentsForGateway(cfg);
     expectFields(result.agents[0], {
       id: "main",
     });
@@ -4896,7 +4880,7 @@ describe("gateway session utils", () => {
     });
   });
 
-  test("listAgentsForGateway respects per-agent fallback override (including explicit empty list)", () => {
+  test("listAgentsForGateway respects per-agent fallback override (including explicit empty list)", async () => {
     const cfg = {
       session: { mainKey: "main" },
       agents: {
@@ -4919,12 +4903,12 @@ describe("gateway session utils", () => {
       },
     } as OpenClawConfig;
 
-    const result = listAgentsForGateway(cfg);
+    const result = await listAgentsForGateway(cfg);
     const ops = result.agents.find((agent) => agent.id === "ops");
     expect(ops?.model).toEqual({ primary: "anthropic/claude-opus-4-6" });
   });
 
-  test("listAgentsForGateway reports per-agent thinking defaults from the agent model", () => {
+  test("listAgentsForGateway reports per-agent thinking defaults from the agent model", async () => {
     const resolveDeepSeekThinkingProfile = vi.fn(() => ({
       levels: [
         { id: "off" as const },
@@ -4982,7 +4966,7 @@ describe("gateway session utils", () => {
       },
     } as OpenClawConfig;
 
-    const result = listAgentsForGateway(cfg);
+    const result = await listAgentsForGateway(cfg);
     const agent = result.agents.find((row) => row.id === "investment-master");
 
     expect(agent?.model).toEqual({ primary: "deepseek/deepseek-v4-flash" });
@@ -4999,7 +4983,7 @@ describe("gateway session utils", () => {
     expect(agent?.thinkingOptions).toEqual(agent?.thinkingLevels?.map((level) => level.label));
   });
 
-  test("listAgentsForGateway uses the model catalog for per-agent thinking metadata", () => {
+  test("listAgentsForGateway uses the model catalog for per-agent thinking metadata", async () => {
     const cfg = {
       session: { mainKey: "main" },
       agents: {
@@ -5017,7 +5001,7 @@ describe("gateway session utils", () => {
     const disabledCatalog = [{ ...catalogEntry, reasoning: false }];
     const enabledCatalog = [{ ...catalogEntry, reasoning: true }];
 
-    const result = listAgentsForGateway(cfg, disabledCatalog, {
+    const result = await listAgentsForGateway(cfg, disabledCatalog, {
       modelCatalogByAgentId: new Map([
         ["main", { entries: disabledCatalog }],
         ["work", { entries: enabledCatalog }],
@@ -5033,7 +5017,7 @@ describe("gateway session utils", () => {
   });
 
   describe("listAgentsForGateway resolved model projection", () => {
-    test("publishes one resolved identity for model, runtime, and thinking capabilities", () => {
+    test("publishes one resolved identity for model, runtime, and thinking capabilities", async () => {
       const cfg = {
         agents: {
           defaults: {
@@ -5060,7 +5044,7 @@ describe("gateway session utils", () => {
         },
       ];
 
-      const agent = listAgentsForGateway(cfg, catalog).agents[0];
+      const agent = (await listAgentsForGateway(cfg, catalog)).agents[0];
 
       expect(agent).toMatchObject({
         model: {
@@ -5158,7 +5142,7 @@ describe("session list selected model display", () => {
       expect(listed.sessions[0]?.thinkingOptions?.length).toBeGreaterThan(0);
       expect(listed.sessions[0]?.thinkingDefault).toBe("off");
     } finally {
-      closeSessionSqliteDatabasesForTest();
+      await closeSessionSqliteDatabasesForTest();
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });
@@ -5210,7 +5194,7 @@ describe("session list selected model display", () => {
       expect(result.sessions[100]?.derivedTitle).toBeUndefined();
       expect(result.sessions[100]?.lastMessagePreview).toBeUndefined();
     } finally {
-      closeSessionSqliteDatabasesForTest();
+      await closeSessionSqliteDatabasesForTest();
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });

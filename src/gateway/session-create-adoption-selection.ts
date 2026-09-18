@@ -1,13 +1,18 @@
 import { type FastMode, normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { resolveAgentDir } from "../agents/agent-scope.js";
 import type { ModelCatalogSnapshot } from "../agents/model-catalog.types.js";
-import type { ModelRef } from "../agents/model-selection.js";
+import {
+  type ModelRef,
+  resolveDefaultModelForAgent,
+  resolveSubagentConfiguredModelSelection,
+} from "../agents/model-selection.js";
 import type { SessionEntry } from "../config/sessions.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import {
   getSessionExecutionSelection,
   isModelExecutionSelection,
 } from "../model-picker/execution-selection.js";
+import { isSubagentSessionKey } from "../routing/session-key.js";
 import { shouldPreserveSessionAuthProfileOverride } from "../sessions/auth-profile-preservation.js";
 import { resolveSessionPatchModelSelection } from "./server-methods/sessions-patch-model-selection.js";
 
@@ -19,8 +24,7 @@ export async function existingSessionSelectionWouldChange(params: {
   agentId: string;
   cfg: OpenClawConfig;
   catalogModel?: string;
-  defaultModel: string;
-  defaultProvider: string;
+  sessionKey: string;
   existingEntry: SessionEntry;
   loadGatewayModelCatalogSnapshot?: () => Promise<ModelCatalogSnapshot>;
   requestedModel?: string;
@@ -28,8 +32,11 @@ export async function existingSessionSelectionWouldChange(params: {
   requestedContextWindow?: string;
   requestedFastMode?: FastMode;
   requestedThinkingLevel?: string;
-  subagentModelHint?: string;
 }): Promise<ExistingSelectionCheck> {
+  const defaults = resolveDefaultModelForAgent({ cfg: params.cfg, agentId: params.agentId });
+  const subagentModelHint = isSubagentSessionKey(params.sessionKey)
+    ? resolveSubagentConfiguredModelSelection({ cfg: params.cfg, agentId: params.agentId })
+    : undefined;
   if (params.catalogModel) {
     // Public catalog creates cannot include a key, and the service rejects
     // catalog targets for existing rows. If a trusted caller reaches this,
@@ -84,9 +91,9 @@ export async function existingSessionSelectionWouldChange(params: {
     agentId: params.agentId,
     catalog: catalog.entries,
     raw: requestedModel,
-    defaultProvider: params.defaultProvider,
-    defaultModel: params.defaultModel,
-    subagentModelHint: params.subagentModelHint,
+    defaultProvider: defaults.provider,
+    defaultModel: defaults.model,
+    subagentModelHint,
   });
   if (!resolved.ok) {
     // Admin callers still receive the precise model error from sessions.patch.
@@ -104,19 +111,19 @@ export async function existingSessionSelectionWouldChange(params: {
       return { changes: true };
     }
     reference = {
-      provider: deferred.model.provider ?? params.defaultProvider,
+      provider: deferred.model.provider ?? defaults.provider,
       model: deferred.model.id,
     };
   } else {
-    reference = { provider: params.defaultProvider, model: params.defaultModel };
-    if (params.subagentModelHint) {
+    reference = { provider: defaults.provider, model: defaults.model };
+    if (subagentModelHint) {
       const configured = resolveSessionPatchModelSelection({
         cfg: params.cfg,
         agentId: params.agentId,
         catalog: catalog.entries,
-        raw: params.subagentModelHint,
-        defaultProvider: params.defaultProvider,
-        defaultModel: params.defaultModel,
+        raw: subagentModelHint,
+        defaultProvider: defaults.provider,
+        defaultModel: defaults.model,
       });
       if (!configured.ok) {
         return { changes: true };

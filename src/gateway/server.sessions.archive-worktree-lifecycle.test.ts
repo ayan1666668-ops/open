@@ -575,6 +575,14 @@ test.each([
       }
       return [];
     });
+    const context = { loadGatewayModelCatalog };
+    if (prepareCatalog) {
+      loadGatewayModelCatalog.mockResolvedValueOnce([]);
+      expect(await directSessionReq("sessions.describe", { key }, { context })).toMatchObject({
+        ok: true,
+      });
+      loadGatewayModelCatalog.mockClear();
+    }
     const patch = (archived: boolean) =>
       directSessionReq(
         method,
@@ -590,7 +598,7 @@ test.each([
                 : {}),
             }
           : { targets: [{ key, expectedSessionId: sessionId }], patch: { archived } },
-        !archived && prepareCatalog ? { context: { loadGatewayModelCatalog } } : undefined,
+        prepareCatalog ? { context } : undefined,
       );
 
     expect(await patch(true)).toMatchObject({ ok: true });

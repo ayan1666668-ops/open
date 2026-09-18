@@ -216,6 +216,8 @@ describe("executeCronRun sourceDelivery mapping", () => {
 
     expect(runEmbeddedAgentMock).toHaveBeenCalledTimes(1);
     const args = getEmbeddedRunArg();
+    expect(args.runId).toBe("source-delivery-run");
+    expect(args.sessionId).toBe("test-session-id");
     expect(args.sourceReplyDeliveryMode).toBeUndefined();
     expect(args.allowEmptyAssistantReplyAsSilent).toBe(true);
     expect(args.terminalReplyExpectation).toBe("optional");
@@ -421,6 +423,7 @@ function makeExecuteCronRunParams(overrides: Record<string, unknown> = {}) {
   };
 
   return {
+    runId: "source-delivery-run",
     cfg: {},
     cfgWithAgentDefaults: {},
     job,
@@ -443,7 +446,7 @@ function makeExecuteCronRunParams(overrides: Record<string, unknown> = {}) {
     commandBody: "run a task",
     persistSessionEntry: vi.fn().mockResolvedValue(undefined),
     lifecycle: createAgentLifecycleTerminalBackstop({
-      runId: "test-session-id",
+      runId: "source-delivery-run",
       sessionKey: "cron:source-delivery-guard:run:test-session-id",
       getLifecycleGeneration: getAgentEventLifecycleGeneration,
       resolveTerminationFields: () => ({}),

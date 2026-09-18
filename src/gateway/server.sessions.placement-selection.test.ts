@@ -135,6 +135,7 @@ test("sessions.dispatch admits the child's accepted runtime after its parent cha
     }),
     expect.any(Function),
     undefined,
+    undefined,
   );
   expect(result.error?.message).toBe("admitted to placement service");
 });

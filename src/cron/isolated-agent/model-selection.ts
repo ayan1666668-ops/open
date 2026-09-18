@@ -1,4 +1,4 @@
-import { findModelInCatalog } from "../../agents/model-catalog-lookup.js";
+import { findModelInCatalog, modelSupportsInput } from "../../agents/model-catalog-lookup.js";
 import type { ModelCatalogEntry } from "../../agents/model-catalog.types.js";
 import { splitTrailingAuthProfile } from "../../agents/model-ref-profile.js";
 import { resolveConfiguredModelPolicyAllow } from "../../agents/model-selection-shared.js";
@@ -17,6 +17,8 @@ import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import {
   getSessionExecutionSelection,
   isModelExecutionSelection,
+  type ExecutionSelection,
+  type ModelExecutionSelection,
 } from "../../model-picker/execution-selection.js";
 import type { CronJob } from "../types.js";
 import { resolveCronAgentConfig } from "./run-config.js";
@@ -35,6 +37,8 @@ import {
   resolveSubagentModelConfigSelectionResult,
   type ResolvedPublishedModelCatalogOwner,
 } from "./run-model-selection.runtime.js";
+import { resolveThinkingSelection } from "./run.runtime.js";
+import type { CronRunExecutionParams } from "./run.types.js";
 
 type CronModelSelectionSource = "default" | "subagent" | "agent" | "hook" | "payload" | "session";
 
@@ -207,6 +211,65 @@ export async function resolveCronThinkingSelection(params: {
     loadThinkingCatalog: async (provider, model, agentRuntime) =>
       await resolveCronThinkingCatalog({ owner: params.owner, provider, model, agentRuntime }),
     requestedThinkLevel,
+  };
+}
+
+/** Owns turn-local capability hydration across fallback candidates. */
+export function createCronCandidateThinkingResolver(
+  params: Pick<
+    CronRunExecutionParams,
+    | "cfgWithAgentDefaults"
+    | "agentId"
+    | "immutableThinkLevel"
+    | "thinkingCatalog"
+    | "loadThinkingCatalog"
+  >,
+) {
+  let catalog = params.thinkingCatalog;
+  let hydratedSelection: string | undefined;
+  return {
+    async resolve(selection: ExecutionSelection): Promise<ThinkLevel | undefined> {
+      if (!isModelExecutionSelection(selection)) {
+        return params.immutableThinkLevel;
+      }
+      const { provider, id: model } = selection.model;
+      const runtime = selection.executor.id;
+      const level =
+        params.immutableThinkLevel ??
+        resolveConfiguredThinkingDefault({
+          cfg: params.cfgWithAgentDefaults,
+          agentId: params.agentId,
+          provider,
+          model,
+        });
+      const key = `${provider}/${model}\0${runtime}`;
+      if (
+        (level !== "off" || runtime !== "openclaw") &&
+        hydratedSelection !== key &&
+        needsThinkHydration(catalog, provider, model, runtime)
+      ) {
+        hydratedSelection = key;
+        const refreshed = await params.loadThinkingCatalog(provider, model, runtime);
+        if (refreshed.length > 0) {
+          catalog = refreshed;
+        }
+      }
+      return resolveThinkingSelection({
+        cfg: params.cfgWithAgentDefaults,
+        agentId: params.agentId,
+        provider,
+        model,
+        level,
+        catalog,
+        agentRuntime: runtime,
+      }).level;
+    },
+    hasVision(model: ModelExecutionSelection["model"]) {
+      return modelSupportsInput(
+        findModelInCatalog(catalog ?? [], model.provider, model.id),
+        "image",
+      );
+    },
   };
 }
 

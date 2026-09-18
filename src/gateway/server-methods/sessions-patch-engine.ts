@@ -424,7 +424,8 @@ export async function executeSessionPatchMutations(params: {
                                 const outcome = committedGroupOutcomes?.[groupIndex];
                                 return outcome?.ok === true && outcome.applied;
                               },
-                              commitAccepted: async (accepted) => {
+                              commitAccepted: async (accepted, assertCurrentActor) => {
+                                assertCurrentActor();
                                 const acceptedProjection = await catalogs.project({
                                   ...projectionParams,
                                   mode: "ordered",
@@ -436,6 +437,7 @@ export async function executeSessionPatchMutations(params: {
                                     },
                                   },
                                 });
+                                assertCurrentActor();
                                 if (acceptedProjection.kind !== "complete") {
                                   throw new Error("Accepted model projection did not finish");
                                 }
@@ -453,6 +455,7 @@ export async function executeSessionPatchMutations(params: {
                                   execution: acceptedProjection.result.execution,
                                   placement: { context: params.context, sessionKey: primaryKey },
                                 });
+                                assertCurrentActor();
                                 if (!acceptedRuntime.ok) {
                                   throw new SessionMutationAuthorizationChangedError(
                                     acceptedRuntime.error,
@@ -460,7 +463,10 @@ export async function executeSessionPatchMutations(params: {
                                 }
                                 continuationStarted = true;
                                 acceptedEntry.updatedAt = Date.now();
-                                recordProjection(acceptedEntry, acceptedRuntime.validate);
+                                recordProjection(acceptedEntry, () => {
+                                  assertCurrentActor();
+                                  return acceptedRuntime.validate?.();
+                                });
                                 return {
                                   ok: true,
                                   operation: await projectTargets(groupIndex + 1),

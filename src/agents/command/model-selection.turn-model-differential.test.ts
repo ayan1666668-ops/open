@@ -28,9 +28,6 @@ vi.mock("../auth-profiles/session-override.js", () => ({
 vi.mock("../harness/runtime-plugin.js", () => ({
   ensureSelectedAgentHarnessPlugin: vi.fn(async () => undefined),
 }));
-vi.mock("../harness/selection.js", () => ({
-  resolveAvailableAgentHarnessPolicy: () => ({ runtime: "openclaw" }),
-}));
 vi.mock("../model-catalog.js", () => ({ loadManifestModelCatalog: () => [] }));
 vi.mock("../model-runtime-choice.js", () => ({
   evaluatePublishedModelRuntimeChoice: async ({
@@ -87,7 +84,6 @@ vi.mock("../provider-auth-aliases.js", () => ({
 vi.mock("../thinking-runtime.js", () => ({
   needsThinkHydration: () => false,
   normalizeThinkingCatalogProviders: (catalog: unknown) => catalog,
-  resolveEffectiveAgentRuntimeCore: () => "openclaw",
 }));
 vi.mock("./attempt-execution.shared.js", () => ({
   persistAgentSession: async ({ entry }: { entry?: SessionEntry }) => entry,

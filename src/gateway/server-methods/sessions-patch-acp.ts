@@ -18,7 +18,7 @@ import {
 import {
   isAcpExecutionSelection,
   type AcpExecutionSelection,
-  type ExecutionSelection,
+  type PreparedSessionExecutionCommitParams,
 } from "../../model-picker/execution-selection.js";
 import {
   isModelSelectionLocked,
@@ -161,7 +161,7 @@ export async function prepareAcpSessionPatch(params: {
 /** Hold the native actor through the caller's atomic agent-row commit. */
 export async function applyAcpSessionPatch<T extends { ok: true }>(params: {
   prepared: PreparedAcpSessionPatch;
-  commitAccepted: (selection: ExecutionSelection) => Promise<T>;
+  commitAccepted: PreparedSessionExecutionCommitParams<T>["commitAccepted"];
   selectionCommitted: () => boolean;
 }): Promise<T | { ok: false; error: ErrorShape }> {
   const { execution, ...target } = params.prepared;

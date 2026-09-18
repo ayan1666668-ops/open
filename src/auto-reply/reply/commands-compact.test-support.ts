@@ -2,6 +2,7 @@
 import { vi } from "vitest";
 import type { OpenClawConfig } from "../../config/config.js";
 import type { SessionEntry } from "../../config/sessions.js";
+import { resolveAgentIdFromSessionKey } from "../../routing/session-key.js";
 import {
   resolveAgentDirMock,
   resolveSessionAgentIdMock,
@@ -100,7 +101,9 @@ export function resetCompactCommandMocks() {
   resolveAgentDirMock.mockImplementation(
     (_cfg: unknown, agentId: string) => `/tmp/workspace/.openclaw/agents/${agentId}/agent`,
   );
-  resolveSessionAgentIdMock.mockReturnValue("main");
+  resolveSessionAgentIdMock.mockImplementation(({ sessionKey, agentId }) =>
+    resolveAgentIdFromSessionKey(sessionKey, agentId ?? "main"),
+  );
 }
 
 export function requireCompactEmbeddedAgentSessionCall(index = 0) {
@@ -120,9 +123,7 @@ export function requireIncrementCompactionCountCall(index = 0) {
 }
 
 export function requireResolveSessionAgentIdCall(index = 0) {
-  const call = (
-    resolveSessionAgentIdMock.mock.calls[index] as unknown as [unknown] | undefined
-  )?.[0] as { sessionKey?: string; config?: OpenClawConfig } | undefined;
+  const call = resolveSessionAgentIdMock.mock.calls[index]?.[0];
   if (!call) {
     throw new Error(`resolveSessionAgentId call ${index} missing`);
   }

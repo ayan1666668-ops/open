@@ -458,7 +458,7 @@ describe("direct compactor through the context-engine delegate", () => {
       expect(prepared.auth?.selection?.profileId).toBe("openai:primary");
       resolveContextEngineMock.mockResolvedValueOnce({
         info: { ownsCompaction: false },
-        compact: async (params: Parameters<ContextEngine["compact"]>[0]) => {
+        compact: vi.fn<ContextEngine["compact"]>(async (params) => {
           if (!params.runtimeContext) {
             throw new Error("Expected the delegated runtime context");
           }
@@ -467,7 +467,7 @@ describe("direct compactor through the context-engine delegate", () => {
             authProfileIdSource: "user",
           });
           return delegate(params);
-        },
+        }),
       });
       const work = new AsyncWorkScope();
       try {

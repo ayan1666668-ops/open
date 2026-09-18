@@ -12,15 +12,22 @@ import { resolveModelProviderAuthConfig } from "../agents/model-auth-provider-ro
 import type { ModelCatalogEntry } from "../agents/model-catalog.js";
 import type { ModelVisibilityPolicy } from "../agents/model-visibility-policy.js";
 import { resolveAcceptedSessionRuntimeId } from "../agents/session-runtime-compat.js";
+import type { InternalSessionEntry } from "../config/sessions/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import {
   stageSessionExecutionSelection,
+  executionSelectionTransactionChanged,
   type ApplySessionExecutionSelectionResult as OwnerSelectionResult,
 } from "../model-picker/apply-session-model-selection.js";
+import {
+  LEGACY_SELECTION_VIEW_FIELDS,
+  projectLegacyExecutionSelection,
+} from "../model-picker/execution-selection-projection.js";
 import {
   isAcpExecutionSelection,
   isModelExecutionSelection,
   getCommittedSessionExecutionSelection,
+  SESSION_EXECUTION_SELECTION_TRANSACTION_FIELDS,
 } from "../model-picker/execution-selection.js";
 import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.types.js";
 import { resolveSessionPinnedHarnessId } from "../sessions/agent-harness-session-key.js";
@@ -91,6 +98,25 @@ export type ApplySessionModelSelectionResult =
     }
   | Extract<OwnerSelectionResult, { status: "conflict" }>;
 
+function selectionSnapshotChanged(
+  snapshot: PublicSelectionEntry,
+  current: InternalSessionEntry,
+): boolean {
+  if (snapshot.executionSelection) {
+    return executionSelectionTransactionChanged(snapshot, current);
+  }
+  const projected = projectLegacyExecutionSelection(current.executionSelection);
+  return (
+    LEGACY_SELECTION_VIEW_FIELDS.some(
+      (field) => !isDeepStrictEqual(snapshot[field], projected[field]),
+    ) ||
+    SESSION_EXECUTION_SELECTION_TRANSACTION_FIELDS.some(
+      (field) =>
+        field !== "executionSelection" && !isDeepStrictEqual(snapshot[field], current[field]),
+    )
+  );
+}
+
 /** Preserve the shipped flat response while the session owner accepts and commits one pair. */
 export async function applySessionModelSelection(
   params: ApplySessionModelSelectionParams,
@@ -111,15 +137,21 @@ export async function applySessionModelSelection(
     : undefined;
   if (
     current &&
-    (current.sessionId !== original.sessionId ||
-      current.lifecycleRevision !== original.lifecycleRevision)
+    (current.sessionId !== initial.sessionId ||
+      current.lifecycleRevision !== initial.lifecycleRevision ||
+      selectionSnapshotChanged(initial, current))
   ) {
     return { status: "conflict", message: "The session changed. Retry the model selection." };
   }
   const canonical = current ?? {
-    ...projectPluginSessionEntryPatch(original),
-    sessionId: original.sessionId,
-    updatedAt: original.updatedAt,
+    ...projectPluginSessionEntryPatch(initial, {
+      sessionId: initial.sessionId,
+      updatedAt: initial.updatedAt,
+      lifecycleRevision: initial.lifecycleRevision,
+      executionSelection: initial.executionSelection,
+    }),
+    sessionId: initial.sessionId,
+    updatedAt: initial.updatedAt,
   };
   const sessionStore = { [params.sessionKey]: canonical };
   const acpInstruction =

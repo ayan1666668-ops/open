@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { SessionEntry } from "../../config/sessions.js";
 import {
   buildSessionCreationStamp,
   inheritSessionCreationPolicy,
@@ -14,6 +15,8 @@ import {
 } from "../../plugins/session-catalog.js";
 import * as userProfileList from "../../state/user-profile-list.js";
 import * as userProfiles from "../../state/user-profiles.js";
+import { bindSessionRowProjection } from "../session-row-projection-access.js";
+import { createSessionRowProjectionFixture } from "../session-row-projection.test-support.js";
 import { createSessionCatalogRequestEntrySnapshot } from "./session-catalog-entry-snapshot.js";
 
 type TestPluginRegistry = Omit<PluginRegistry, "sessionCatalogs"> & {
@@ -22,24 +25,23 @@ type TestPluginRegistry = Omit<PluginRegistry, "sessionCatalogs"> & {
 
 const hoisted = vi.hoisted(() => ({
   activeRegistry: {} as TestPluginRegistry,
-  listSessionEntriesReadOnly: vi.fn<
-    (scope?: { agentId?: string; clone?: boolean; projection?: "full" | "list" }) => Array<{
-      sessionKey: string;
-      entry: InternalSessionEntry;
-    }>
-  >(() => []),
 }));
 
-vi.mock("../../plugins/runtime.js", () => ({
+vi.mock("../../plugins/runtime.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../plugins/runtime.js")>()),
   getActivePluginRegistry: () => hoisted.activeRegistry,
+  getPluginRegistryForContext: () => hoisted.activeRegistry,
   requireActivePluginRegistry: () => hoisted.activeRegistry,
 }));
-vi.mock("../../config/sessions/session-accessor.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../config/sessions/session-accessor.js")>();
-  return { ...actual, listSessionEntriesReadOnly: hoisted.listSessionEntriesReadOnly };
-});
 
 const { sessionCatalogHandlers } = await import("./session-catalog.js");
+let projection: ReturnType<typeof createSessionRowProjectionFixture>;
+
+function setEntries(entries: Array<{ sessionKey: string; entry: Partial<SessionEntry> }>) {
+  for (const { sessionKey, entry } of entries) {
+    projection.setEntry(sessionKey, { sessionId: sessionKey, updatedAt: 1, ...entry });
+  }
+}
 
 function provider(id: string, sessionKey: string): SessionCatalogProvider {
   return {
@@ -93,8 +95,12 @@ describe("session catalog entry snapshots", () => {
       },
       pluginExtensions: { fixture: { value: "original" } },
     };
-    hoisted.listSessionEntriesReadOnly.mockReturnValue([{ sessionKey: "agent:main:qa", entry }]);
-    const snapshot = createSessionCatalogRequestEntrySnapshot({ cfg: {}, fallbackAgentId: "main" });
+    projection.setEntry("agent:main:qa", entry);
+    const snapshot = createSessionCatalogRequestEntrySnapshot({
+      cfg: {},
+      fallbackAgentId: "main",
+      projection,
+    });
     const projected = snapshot.sessionEntries.entriesForAgent("main")[0]?.entry;
     expect(projected).toMatchObject({ providerOverride: "qa-provider", modelOverride: "qa-model" });
     expect(projected).not.toHaveProperty("activeWriterRunId");
@@ -104,17 +110,17 @@ describe("session catalog entry snapshots", () => {
     projected.pluginExtensions.fixture.value = "external mutation";
     expect(snapshot.entryForSession("agent:main:qa")).toEqual(entry);
     expect(entry.pluginExtensions?.fixture?.value).toBe("original");
-    expect(snapshot.sessionEntries.entriesForAgent("main")).toBe(
-      snapshot.sessionEntries.entriesForAgent("main"),
-    );
   });
 
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => {
+    projection.dispose();
+    vi.restoreAllMocks();
+  });
 
   beforeEach(() => {
     hoisted.activeRegistry = createEmptyPluginRegistry() as TestPluginRegistry;
     markPluginRegistryActive(hoisted.activeRegistry as PluginRegistry);
-    hoisted.listSessionEntriesReadOnly.mockReset();
+    projection = createSessionRowProjectionFixture({ cfg: {}, store: {} });
   });
 
   it("resolves catalog senders against current profiles without attributing unknown turns", async () => {
@@ -150,7 +156,7 @@ describe("session catalog entry snapshots", () => {
     await sessionCatalogHandlers["sessions.catalog.read"]?.({
       params: { catalogId: "external", hostId: "gateway", threadId: "shared" },
       respond,
-      context: { getRuntimeConfig: () => ({}) },
+      context: bindSessionRowProjection({ getRuntimeConfig: () => ({}) }, () => projection),
     } as never);
     expect(respond).toHaveBeenCalledWith(true, {
       hostId: "gateway",
@@ -182,7 +188,11 @@ describe("session catalog entry snapshots", () => {
     ["invalid", undefined],
     [undefined, undefined],
   ])("projects provider color %s to its canonical wire value", (color, expected) => {
-    const snapshot = createSessionCatalogRequestEntrySnapshot({ cfg: {}, fallbackAgentId: "main" });
+    const snapshot = createSessionCatalogRequestEntrySnapshot({
+      cfg: {},
+      fallbackAgentId: "main",
+      projection,
+    });
     const host = snapshot.projectHostSessions(
       {
         hostId: "gateway:fixture",
@@ -227,7 +237,7 @@ describe("session catalog entry snapshots", () => {
         canArchive: false,
       })),
     }));
-    hoisted.listSessionEntriesReadOnly.mockReturnValue(
+    setEntries(
       hosts.flatMap((host) =>
         host.sessions.map((session, index) => ({
           sessionKey: session.sessionKey,
@@ -244,10 +254,12 @@ describe("session catalog entry snapshots", () => {
         })),
       ),
     );
+    display.mockClear();
     const project = () => {
       const snapshot = createSessionCatalogRequestEntrySnapshot({
         cfg: {},
         fallbackAgentId: "main",
+        projection,
       });
       return hosts.map((host) => {
         const instances = new Map();
@@ -277,7 +289,7 @@ describe("session catalog entry snapshots", () => {
   });
 
   it("shares provider planning entries while projecting all final catalogs from a fresh index", async () => {
-    hoisted.listSessionEntriesReadOnly.mockReturnValue([
+    setEntries([
       {
         sessionKey: "agent:main:alpha-adopted",
         entry: {
@@ -319,10 +331,9 @@ describe("session catalog entry snapshots", () => {
     await sessionCatalogHandlers["sessions.catalog.list"]?.({
       params: {},
       respond,
-      context: { getRuntimeConfig: () => ({}) },
+      context: bindSessionRowProjection({ getRuntimeConfig: () => ({}) }, () => projection),
     } as never);
 
-    expect(hoisted.listSessionEntriesReadOnly).toHaveBeenCalledTimes(2);
     expect(flattenedEntries).toHaveLength(2);
     expect(flattenedEntries[0]).toBe(flattenedEntries[1]);
     expect(respond).toHaveBeenCalledWith(true, {
@@ -426,8 +437,13 @@ describe("session catalog entry snapshots", () => {
         },
       },
     ];
-    hoisted.listSessionEntriesReadOnly.mockReturnValue(entries);
-    const snapshot = createSessionCatalogRequestEntrySnapshot({ cfg: {}, fallbackAgentId: "main" });
+    setEntries(entries);
+    display.mockClear();
+    const snapshot = createSessionCatalogRequestEntrySnapshot({
+      cfg: {},
+      fallbackAgentId: "main",
+      projection,
+    });
     const host: Parameters<typeof snapshot.projectHostSessions>[0] = {
       hostId: "gateway:fixture",
       label: "Fixture",

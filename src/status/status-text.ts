@@ -318,18 +318,24 @@ export async function buildStatusReplyParts(
     resolveAgentWorkspaceDir(cfg, statusAgentId);
   const selection = getSessionExecutionSelection(sessionEntry);
   const nativeManaged = selection?.model === "native-managed";
+  const selectedRoute =
+    selection && isModelExecutionSelection(selection) ? selection.model : undefined;
   const selectedProvider = nativeManaged
     ? (sessionEntry?.modelProvider ?? "")
-    : selection && isModelExecutionSelection(selection)
-      ? selection.model.provider
-      : provider;
+    : (selectedRoute?.provider ?? (selection ? "" : provider));
   const selectedModel = nativeManaged
     ? (sessionEntry?.model ?? "")
     : selection && selection.model !== "native-managed"
       ? selection.model.id
       : model;
   const parseSelectedProvider = false;
-  const modelParams = { selectedProvider, selectedModel, sessionEntry, parseSelectedProvider };
+  const modelParams = {
+    selectedProvider,
+    selectedModel,
+    sessionEntry,
+    parseSelectedProvider,
+    parseActiveProvider: !selection || Boolean(selectedRoute),
+  };
   const activeModel = params.activeModel
     ? { model: params.activeModel.model, modelProvider: params.activeModel.provider }
     : readSessionFallbackModel({
@@ -342,9 +348,8 @@ export async function buildStatusReplyParts(
     sessionEntry: activeModel ?? sessionEntry,
   });
   const selectedLookupProvider =
-    modelRefs.selected.provider || selectedProvider || (nativeManaged ? "" : provider);
-  const selectedLookupModel =
-    modelRefs.selected.model || selectedModel || (nativeManaged ? "" : model);
+    modelRefs.selected.provider || selectedProvider || (selection ? "" : provider);
+  const selectedLookupModel = modelRefs.selected.model || selectedModel || (selection ? "" : model);
   const hasModelIdentity = Boolean(selectedLookupProvider && selectedLookupModel);
   const effectiveHarness =
     params.resolvedHarness ??
@@ -383,7 +388,7 @@ export async function buildStatusReplyParts(
     harnessRuntime: effectiveHarness,
     config: cfg,
   });
-  const activeProvider = modelRefs.active.provider || (nativeManaged ? "" : provider);
+  const activeProvider = modelRefs.active.provider || (selection ? "" : provider);
   const activeStatusProvider = resolveStatusRuntimeProvider({
     provider: activeProvider,
     effectiveHarness,
@@ -444,6 +449,7 @@ export async function buildStatusReplyParts(
   const usageProvider = activeRuntimeIsAuthoritative ? activeProvider : selectedLookupProvider;
   const selectedUsageCredentialType = resolveUsageCredentialType(usageAuthLabel);
   const useCodexSyntheticUsage =
+    hasModelIdentity &&
     selectedUsageCredentialType !== "api_key" &&
     shouldUseCodexSyntheticUsageForRuntime({
       provider: usageStatusProvider,
@@ -591,24 +597,24 @@ export async function buildStatusReplyParts(
   });
   const { buildStatusMessageParts } = await loadStatusMessageRuntime();
   await waitForContextWindowCacheLoad();
-  const configuredThinkingDefault = resolveConfiguredThinkingDefault({
-    cfg,
-    agentId: statusAgentId,
-    provider: selectedLookupProvider,
-    model: selectedLookupModel,
-  });
+  const configuredThinkingDefault = hasModelIdentity
+    ? resolveConfiguredThinkingDefault({
+        cfg,
+        agentId: statusAgentId,
+        provider: selectedLookupProvider,
+        model: selectedLookupModel,
+      })
+    : undefined;
   const preparedContextTokens =
     typeof contextTokens === "number" && contextTokens > 0 ? contextTokens : undefined;
-  const selectedCatalogEntry = findModelInCatalog(
-    thinkingCatalog ?? [],
-    selectedLookupProvider,
-    selectedLookupModel,
-  );
-  const initialActiveCatalogEntry = findModelInCatalog(
-    thinkingCatalog ?? [],
-    activeProvider,
-    modelRefs.active.model || (nativeManaged ? "" : model),
-  );
+  const selectedCatalogEntry = hasModelIdentity
+    ? findModelInCatalog(thinkingCatalog ?? [], selectedLookupProvider, selectedLookupModel)
+    : undefined;
+  const activeLookupModel = modelRefs.active.model || (selection ? "" : model);
+  const initialActiveCatalogEntry =
+    activeProvider && activeLookupModel
+      ? findModelInCatalog(thinkingCatalog ?? [], activeProvider, activeLookupModel)
+      : undefined;
   const requestedThinkLevel =
     resolvedThinkLevel ??
     normalizeThinkLevel(sessionEntry?.thinkingLevel) ??

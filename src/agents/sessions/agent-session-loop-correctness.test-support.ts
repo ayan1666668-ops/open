@@ -20,7 +20,7 @@ const hoistedStreamMocks = vi.hoisted(() => ({
 
 export const streamMocks = hoistedStreamMocks;
 
-export const testModel: Model = {
+export const testModel = {
   id: "test-model",
   name: "Test Model",
   api: "openai-responses",
@@ -31,7 +31,7 @@ export const testModel: Model = {
   cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
   contextWindow: 32_768,
   maxTokens: 8_192,
-};
+} satisfies Model;
 
 const sessions: AgentSession[] = [];
 

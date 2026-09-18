@@ -22,6 +22,7 @@ import { AcpRuntimeError, withAcpRuntimeErrorBoundary } from "../runtime/errors.
 import { resolveSessionStorePathForAcp } from "../runtime/session-meta-store.js";
 import { resolveManagerRuntimeCapabilities } from "./manager.runtime-controls.js";
 import type { ManagerRuntimeHandleCache } from "./manager.runtime-handle-cache.js";
+import { createSupersededActorError } from "./manager.runtime-handle-ensure.js";
 import type {
   AcpSessionRuntimeOptions,
   EnsureManagerRuntimeHandle,
@@ -51,6 +52,7 @@ export type RuntimeOptionCommandServices = {
   resolveSession: ResolveManagerSession;
   ensureRuntimeHandle: EnsureManagerRuntimeHandle;
   writeSessionMeta: WriteManagerSessionMeta;
+  isCurrentActor: () => boolean;
 };
 
 type RuntimeOptionCommandContext = RuntimeOptionCommandServices & {
@@ -65,6 +67,9 @@ type RuntimeOptionCommandContext = RuntimeOptionCommandServices & {
 export async function runSetManagerSessionRuntimeMode(
   params: RuntimeOptionCommandContext & { runtimeMode: string },
 ): Promise<AcpSessionRuntimeOptions> {
+  if (!params.isCurrentActor()) {
+    throw createSupersededActorError(params.sessionKey);
+  }
   const resolution = params.resolveSession({
     cfg: params.cfg,
     sessionKey: params.sessionKey,
@@ -76,8 +81,12 @@ export async function runSetManagerSessionRuntimeMode(
     sessionKey: params.sessionKey,
     agentId: params.agentId,
     meta: resolvedMeta,
+    isCurrentActor: params.isCurrentActor,
   });
   const capabilities = await resolveManagerRuntimeCapabilities({ runtime, handle });
+  if (!params.isCurrentActor()) {
+    throw createSupersededActorError(params.sessionKey);
+  }
   if (!capabilities.controls.includes("session/set_mode") || !runtime.setMode) {
     throw createUnsupportedControlError({
       backend: handle.backend,
@@ -86,14 +95,21 @@ export async function runSetManagerSessionRuntimeMode(
   }
 
   await withAcpRuntimeErrorBoundary({
-    run: async () =>
+    run: async () => {
+      if (!params.isCurrentActor()) {
+        throw createSupersededActorError(params.sessionKey);
+      }
       await runtime.setMode!({
         handle,
         mode: params.runtimeMode,
-      }),
+      });
+    },
     fallbackCode: "ACP_TURN_FAILED",
     fallbackMessage: "Could not update ACP runtime mode.",
   });
+  if (!params.isCurrentActor()) {
+    throw createSupersededActorError(params.sessionKey);
+  }
 
   const nextOptions = mergeRuntimeOptions({
     current: resolveRuntimeOptionsForSelection(meta, selection),
@@ -110,9 +126,18 @@ export async function runSetManagerSessionRuntimeMode(
 export async function runWithManagerExecutionSelection<T>(
   params: RuntimeOptionCommandContext & {
     selection: AcpExecutionSelection;
-    commitAccepted: (selection: AcpExecutionSelection) => Promise<T>;
+    commitAccepted: (
+      selection: AcpExecutionSelection,
+      assertCurrentActor: () => void,
+    ) => Promise<T>;
   },
 ): Promise<T> {
+  const assertCurrentActor = () => {
+    if (!params.isCurrentActor()) {
+      throw createSupersededActorError(params.sessionKey);
+    }
+  };
+  assertCurrentActor();
   params.assertActive?.();
   params.assertSelectionCurrent?.();
   const before = requireReadySession(params.resolveSession(params));
@@ -124,7 +149,9 @@ export async function runWithManagerExecutionSelection<T>(
   }
   if (isDeepStrictEqual(before.selection.model, params.selection.model)) {
     params.assertActive?.();
-    return await params.commitAccepted(before.selection);
+    const committed = await params.commitAccepted(before.selection, assertCurrentActor);
+    assertCurrentActor();
+    return committed;
   }
   if (isModelSelectionLocked(before.entry)) {
     throw new AcpRuntimeError("ACP_BACKEND_UNSUPPORTED_CONTROL", MODEL_SELECTION_LOCKED_MESSAGE);
@@ -135,13 +162,23 @@ export async function runWithManagerExecutionSelection<T>(
       "This app cannot restore its default model in the current conversation. Select a model explicitly.",
     );
   }
+  const assertCommitAllowed = () => {
+    assertCurrentActor();
+    params.assertActive?.();
+    // The held control can carry its own unconfirmed reservation.
+    const resolved = params.resolveSession(params);
+    const current = resolved.kind === "ready" ? resolved : requireReadySession(resolved);
+    if (isModelSelectionLocked(current.entry)) {
+      throw new AcpRuntimeError("ACP_BACKEND_UNSUPPORTED_CONTROL", MODEL_SELECTION_LOCKED_MESSAGE);
+    }
+  };
   let committed: { value: T } | undefined;
   await runSetManagerSessionConfigOption({
     ...params,
     key: "model",
     value: params.selection.model.id,
     commitAccepted: async (selection) => {
-      committed = { value: await params.commitAccepted(selection) };
+      committed = { value: await params.commitAccepted(selection, assertCommitAllowed) };
     },
   });
   return expectDefined(committed, "accepted selection commit result").value;
@@ -155,6 +192,9 @@ export async function runSetManagerSessionConfigOption(
     commitAccepted?: (selection: AcpExecutionSelection) => Promise<void>;
   },
 ): Promise<AcpSessionRuntimeOptions> {
+  if (!params.isCurrentActor()) {
+    throw createSupersededActorError(params.sessionKey);
+  }
   params.assertActive?.();
   const before = requireReadySession(params.resolveSession(params));
   const inferredPatch = inferRuntimeOptionPatchFromConfigOption(params.key, params.value);
@@ -172,6 +212,9 @@ export async function runSetManagerSessionConfigOption(
     handle,
     includeStatusConfigOptionKeys: true,
   });
+  if (!params.isCurrentActor()) {
+    throw createSupersededActorError(params.sessionKey);
+  }
   if (!capabilities.controls.includes("session/set_config_option") || !runtime.setConfigOption) {
     throw createUnsupportedControlError({
       backend: handle.backend,
@@ -190,6 +233,9 @@ export async function runSetManagerSessionConfigOption(
   }
   const expected = { ...before, meta };
   const assertBeforeControl = () => {
+    if (!params.isCurrentActor()) {
+      throw createSupersededActorError(params.sessionKey);
+    }
     params.assertActive?.();
     params.assertSelectionCurrent?.();
     if (selectingModel) {
@@ -204,6 +250,12 @@ export async function runSetManagerSessionConfigOption(
         throw new AcpRuntimeError(
           "ACP_SESSION_INIT_FAILED",
           "The session changed before its model control could be submitted.",
+        );
+      }
+      if (isModelSelectionLocked(current.entry)) {
+        throw new AcpRuntimeError(
+          "ACP_BACKEND_UNSUPPORTED_CONTROL",
+          MODEL_SELECTION_LOCKED_MESSAGE,
         );
       }
     }
@@ -229,9 +281,9 @@ export async function runSetManagerSessionConfigOption(
         },
       });
     }
-    assertBeforeControl();
     const result = await withAcpRuntimeErrorBoundary({
       run: async () => {
+        assertBeforeControl();
         controlStarted = true;
         return await runtime.setConfigOption!({ handle, key: wireKey, value: params.value });
       },
@@ -239,6 +291,9 @@ export async function runSetManagerSessionConfigOption(
       fallbackMessage: "Could not update ACP runtime config option.",
     });
     controlCompleted = true;
+    if (!params.isCurrentActor()) {
+      throw createSupersededActorError(params.sessionKey);
+    }
     const nextOptions = reconcileAcceptedRuntimeOptions(
       mergeRuntimeOptions({
         current: resolveRuntimeOptionsForSelection(meta, before.selection),
@@ -288,6 +343,9 @@ export async function runSetManagerSessionConfigOption(
     if (selectingModel && controlCompleted) {
       try {
         const requireRecoveryCustody = () => {
+          if (!params.isCurrentActor()) {
+            throw createSupersededActorError(params.sessionKey);
+          }
           params.assertActive?.();
           const recoveryHandle = params.runtimeHandles.get(params);
           const current = params.resolveSession(params);
@@ -343,6 +401,9 @@ export async function runSetManagerSessionConfigOption(
 export async function runUpdateManagerSessionRuntimeOptions(
   params: RuntimeOptionCommandContext & { patch: Partial<AcpSessionRuntimeOptions> },
 ): Promise<AcpSessionRuntimeOptions> {
+  if (!params.isCurrentActor()) {
+    throw createSupersededActorError(params.sessionKey);
+  }
   if (params.patch.model !== undefined) {
     await runSetManagerSessionConfigOption({ ...params, key: "model", value: params.patch.model });
   }
@@ -359,6 +420,9 @@ export async function runUpdateManagerSessionRuntimeOptions(
 export async function runResetManagerSessionRuntimeOptions(
   params: RuntimeOptionCommandContext,
 ): Promise<AcpSessionRuntimeOptions> {
+  if (!params.isCurrentActor()) {
+    throw createSupersededActorError(params.sessionKey);
+  }
   const current = requireReadySession(params.resolveSession(params));
   if (current.selection.model !== "native-managed") {
     throw new AcpRuntimeError(
@@ -374,7 +438,10 @@ export async function runResetManagerSessionRuntimeOptions(
       fallbackCode: "ACP_TURN_FAILED",
       fallbackMessage: "Could not reset ACP runtime options.",
     });
-    params.runtimeHandles.clear(params);
+    if (!params.isCurrentActor()) {
+      throw createSupersededActorError(params.sessionKey);
+    }
+    params.runtimeHandles.clearIfHandleMatches({ ...params, handle: cached.handle });
   }
   await persistManagerRuntimeOptions({ ...params, options: {} });
   return {};
@@ -391,6 +458,9 @@ async function persistManagerRuntimeOptions(
     onPrepared?: (meta: SessionAcpLifecycle) => void;
   },
 ): Promise<SessionAcpLifecycle> {
+  if (!params.isCurrentActor()) {
+    throw createSupersededActorError(params.sessionKey);
+  }
   const { model: _model, ...options } = normalizeRuntimeOptions(params.options);
   const persisted = await params.writeSessionMeta({
     ...params,
@@ -435,6 +505,9 @@ async function persistManagerRuntimeOptions(
     failOnError: true,
     assertCommitAllowed: params.assertActive,
   });
+  if (!params.isCurrentActor()) {
+    throw createSupersededActorError(params.sessionKey);
+  }
   if (!persisted?.acp) {
     throw new AcpRuntimeError(
       "ACP_SESSION_INIT_FAILED",
@@ -461,6 +534,7 @@ async function releaseUnsubmittedModelReservation(
     const cached = params.runtimeHandles.get(params);
     const current = params.resolveSession(params);
     return (
+      params.isCurrentActor() &&
       cached?.runtime === params.runtime &&
       cached.handle === params.handle &&
       current.kind === "ready" &&
@@ -486,6 +560,7 @@ async function releaseUnsubmittedModelReservation(
     sessionKey: params.sessionKey,
     agentId: params.agentId,
     preserveActivity: true,
+    isCurrentActor: params.isCurrentActor,
     failOnError: true,
     assertCommitAllowed: assertCustody,
     mutate: (current, entry) => {
@@ -519,11 +594,27 @@ export async function commitManagerExecutionSelection(
     selection: AcpExecutionSelection;
   },
 ): Promise<ReadySession["entry"]> {
+  const assertCommitAllowed = () => {
+    params.assertActive?.();
+    if (!params.isCurrentActor()) {
+      throw createSupersededActorError(params.sessionKey);
+    }
+    if (!isDeepStrictEqual(params.expected.selection.model, params.selection.model)) {
+      const resolved = params.resolveSession(params);
+      const current = resolved.kind === "ready" ? resolved : requireReadySession(resolved);
+      if (isModelSelectionLocked(current.entry)) {
+        throw new AcpRuntimeError(
+          "ACP_BACKEND_UNSUPPORTED_CONTROL",
+          MODEL_SELECTION_LOCKED_MESSAGE,
+        );
+      }
+    }
+  };
   const target = resolveSessionStorePathForAcp(params);
   const committed = await patchSessionEntryWithKey(
     { agentId: target.agentId, storePath: target.storePath, sessionKey: target.storeSessionKey },
     (entry) => {
-      params.assertActive?.();
+      assertCommitAllowed();
       if (
         entry.sessionId !== params.expected.entry.sessionId ||
         entry.lifecycleRevision !== params.expected.entry.lifecycleRevision ||
@@ -541,7 +632,7 @@ export async function commitManagerExecutionSelection(
       });
       return next;
     },
-    { replaceEntry: true, assertCommitAllowed: params.assertActive },
+    { replaceEntry: true, assertCommitAllowed },
   );
   if (!committed) {
     throw new AcpRuntimeError(
@@ -556,6 +647,9 @@ export async function commitManagerExecutionSelection(
 export async function initializeManagerExecutionSelection(
   params: RuntimeOptionCommandContext,
 ): Promise<void> {
+  if (!params.isCurrentActor()) {
+    throw createSupersededActorError(params.sessionKey);
+  }
   const before = requireReadySession(params.resolveSession(params));
   if (getSessionExecutionSelection(before.entry)) {
     return;
@@ -605,10 +699,13 @@ export async function initializeManagerExecutionSelection(
     assertActive,
     assertSelectionCurrent,
     selection,
-    commitAccepted: async (accepted) =>
+    commitAccepted: async (accepted, assertCurrentActor) =>
       await commitManagerExecutionSelection({
         ...params,
-        assertActive,
+        assertActive: () => {
+          assertCurrentActor();
+          assertActive();
+        },
         expected: before,
         selection: accepted,
       }),

@@ -9,10 +9,7 @@ import {
 } from "../../agents/prepared-model-runtime.js";
 import { resolveAgentModelPrimaryValue } from "../../config/model-input.js";
 import { resolveSessionWorkStartError } from "../../config/sessions/lifecycle.js";
-import type { AgentDefaultsConfig } from "../../config/types.agent-defaults.js";
-import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { resolveCreatorSandbox } from "../../gateway/operator-role-policy.js";
-import type { SourceDeliveryPlan } from "../../infra/outbound/source-delivery-plan.js";
 import {
   commitSessionExecutionSelection,
   prepareSessionExecutionSelection,
@@ -28,18 +25,12 @@ import {
   AGENT_HARNESS_SESSION_KEY_RESERVED_MESSAGE,
   isAgentHarnessSessionKey,
 } from "../../sessions/agent-harness-session-key.js";
-import {
-  beginSessionWorkAdmission,
-  type SessionWorkAdmissionLease,
-} from "../../sessions/session-lifecycle-admission.js";
+import { beginSessionWorkAdmission } from "../../sessions/session-lifecycle-admission.js";
 import { resolveCronSkillsSnapshot } from "../../skills/runtime/cron-snapshot.js";
-import type { SkillSnapshot } from "../../skills/types.js";
 import { resolveCronJobEffectiveAgentId } from "../agent-id.js";
-import type { CronDeliveryPlan } from "../delivery-plan.js";
 import { createCronRunDiagnosticsFromError } from "../run-diagnostics.js";
 import { resolveCronScheduledToolPolicy } from "../scheduled-tool-policy.js";
 import { isDetachedCronSessionTarget } from "../session-target.js";
-import type { CronJob, CronRunDiagnostics } from "../types.js";
 import {
   resolveCronModelSelection,
   resolveCronModelSelectionOwner,
@@ -49,7 +40,6 @@ import { resolveCronCommandPromptPreflight } from "./run-command-preflight.js";
 import { resolveCronActiveRuntimeConfig, resolveCronAgentConfig } from "./run-config.js";
 import {
   createCronToolsAllowPreflightDiagnostics,
-  type ResolvedCronDeliveryTarget,
   resolveCronDeliveryContext,
 } from "./run-delivery-trace.js";
 import { resolveCronPreflight } from "./run-fallback-policy.js";
@@ -70,10 +60,7 @@ import {
   projectCronOwnershipFields,
   resolveCronLifecycleRevisionIdentity,
   type CronLiveSelection,
-  type CronRunContinuationSession,
   type CronSessionRowWriter,
-  type MutableCronSession,
-  type PersistCronSessionEntry,
 } from "./run-session-state.js";
 import { resolveCronRunTimeoutOverrideMs } from "./run-timeout.js";
 import {
@@ -88,54 +75,9 @@ import {
   resolveAcceptedSessionRuntimeId,
   resolveThinkingSelection,
 } from "./run.runtime.js";
-import type { RunCronAgentTurnResult } from "./run.types.js";
+import type { PreparedCronRunContext, RunCronAgentTurnResult } from "./run.types.js";
 import { resolveCronAgentSessionKey } from "./session-key.js";
 import { loadCronSessionEntryLatest, resolveCronSession } from "./session.js";
-
-export type PreparedCronRunContext = {
-  input: RunCronAgentTurnParams;
-  cfgWithAgentDefaults: OpenClawConfig;
-  agentId: string;
-  agentCfg: AgentDefaultsConfig;
-  agentDir: string;
-  agentSessionKey: string;
-  sourceSessionKey?: string;
-  sourceSessionGeneration?: { sessionId: string; lifecycleRevision: string | undefined };
-  runSessionId: string;
-  currentRunSessionId: () => string;
-  runSessionKey: string;
-  usesDetachedRunSession: boolean;
-  workspaceDir: string;
-  executionRoot?: RunCronAgentTurnParams["executionRoot"];
-  commandBody: string;
-  cronSession: MutableCronSession;
-  sessionWorkAdmission: SessionWorkAdmissionLease;
-  persistSessionEntry: PersistCronSessionEntry;
-  runContinuationSession?: CronRunContinuationSession;
-  withRunSession: WithRunSession;
-  agentPayload: Extract<CronJob["payload"], { kind: "agentTurn" }> | null;
-  deliveryPlan: CronDeliveryPlan;
-  resolvedDelivery: ResolvedCronDeliveryTarget;
-  deliveryRequested: boolean;
-  sourceDelivery: SourceDeliveryPlan;
-  suppressExecNotifyOnExit: boolean;
-  skillsSnapshot: SkillSnapshot;
-  liveSelection: CronLiveSelection;
-  useSubagentFallbacks: boolean;
-  inheritDefaultFallbacksForAgentStringModel: boolean;
-  modelFallbacksOverride?: string[];
-  thinkingSelection: Awaited<ReturnType<typeof resolveCronThinkingSelection>>;
-  timeoutMs: number;
-  preflightDiagnostics?: CronRunDiagnostics;
-  /**
-   * Set when the cron payload's `timeoutSeconds` was explicitly configured
-   * for this run (independent of whether its numeric value happens to equal
-   * `agents.defaults.timeoutSeconds`). Forwarded to the embedded runner so
-   * the LLM idle watchdog can honor the cron's per-run choice.
-   */
-  runTimeoutOverrideMs?: number;
-  preparedModelRuntimeLease: PreparedModelRuntimeLease;
-};
 
 type CronPreparationResult =
   | { ok: true; context: PreparedCronRunContext }
@@ -471,7 +413,14 @@ export async function prepareCronRunContext(params: {
       modelCatalog: modelOwner.modelCatalog.entries,
       request: nativeManaged
         ? { kind: "initialize" }
-        : { kind: "model", model: { provider, id: model } },
+        : {
+            kind:
+              !cronSession.sessionEntry.executionSelection &&
+              resolvedModelSelection.modelSource !== "payload"
+                ? "initialize"
+                : "model",
+            model: { provider, id: model },
+          },
     });
     if (preparedSelection.status !== "ready") {
       throw new Error(preparedSelection.message);
@@ -579,7 +528,7 @@ export async function prepareCronRunContext(params: {
         agentId,
       });
 
-    const commandBody = await buildCronCommandBody({
+    const { commandBody, inputProvenance } = await buildCronCommandBody({
       input,
       runtimeCfg,
       agentId,
@@ -588,6 +537,8 @@ export async function prepareCronRunContext(params: {
       sourceEntry,
       storePath: cronSession.storePath,
       now,
+      runId: runSessionId,
+      runSessionKey,
       hookExternalContentSource,
     });
 
@@ -692,6 +643,7 @@ export async function prepareCronRunContext(params: {
         workspaceDir,
         executionRoot: input.executionRoot,
         commandBody,
+        inputProvenance,
         cronSession,
         sessionWorkAdmission,
         persistSessionEntry,

@@ -11,9 +11,10 @@ import { listRegisteredAgentHarnesses, registerAgentHarness } from "../agents/ha
 import { restoreRegisteredAgentHarnesses } from "../agents/harness/registry.test-support.js";
 import { loadSessionEntry } from "../config/sessions/session-accessor.js";
 import type { InternalSessionEntry, SessionAcpLifecycle } from "../config/sessions/types.js";
-import { enqueueSystemEvent, peekSystemEvents } from "../infra/system-events.js";
+import { peekSystemEvents } from "../infra/system-events.js";
 import { commitSessionExecutionSelection } from "../model-picker/apply-session-model-selection.js";
 import { getCommittedSessionExecutionSelection } from "../model-picker/execution-selection.js";
+import { enqueueSystemEvent } from "../plugin-sdk/system-event-runtime.js";
 import {
   beginSessionWorkAdmission,
   runExclusiveSessionLifecycleMutation,
@@ -183,9 +184,8 @@ test("sessions.reset aborts active runs and clears queues", async () => {
     "sess-main",
     "main",
   );
-  expect(peekSystemEvents("main")).toStrictEqual([]);
   expect(peekSystemEvents("agent:main:main")).toStrictEqual([]);
-  expect(peekSystemEvents("sess-main")).toStrictEqual([]);
+  expect(peekSystemEvents("agent:main:sess-main")).toStrictEqual([]);
   expect(bundleMcpRuntimeMocks.retireSessionMcpRuntime).toHaveBeenNthCalledWith(1, {
     sessionId: "sess-main",
     reason: "gateway-session-cleanup",
@@ -594,7 +594,7 @@ test("sessions.reset rejects a concurrent archive during lifecycle rotation", as
   await writeSingleLineSession(dir, "sess-archive-race", "hello");
   await writeSessionStore({
     entries: {
-      [sessionKey]: sessionStoreEntry("sess-archive-race"),
+      [sessionKey]: sessionStoreEntry("sess-archive-race", { lifecycleRevision: "before-reset" }),
     },
   });
   const { promise: hookReleased, resolve: releaseHook } = createDeferred();
@@ -616,6 +616,7 @@ test("sessions.reset rejects a concurrent archive during lifecycle rotation", as
     key: sessionKey,
     archived: true,
     expectedSessionId: "sess-archive-race",
+    expectedLifecycleRevision: "before-reset",
   });
   releaseHook();
 

@@ -54,6 +54,7 @@ import { acceptedModelSelection } from "../../test-utils/session-execution-selec
 import { normalizeSessionDeliveryState } from "../../utils/delivery-context.shared.js";
 import type { TemplateContext } from "../templating.js";
 import { createReplyAgentRestartRecoveryController } from "./agent-runner-execute.js";
+import { registerWaitingStatusCases } from "./agent-runner.runreplyagent.waiting-status.cases.js";
 import { resolveActiveExplicitSteerSessionKey } from "./explicit-steer-routing.js";
 import type { InternalGetReplyOptions } from "./get-reply.types.js";
 import {
@@ -564,6 +565,23 @@ function createMinimalRun(params?: {
       });
     },
   };
+}
+
+function createDiscordFallbackRun() {
+  return createMinimalRun({
+    modelFallbacks: ["openai/gpt-5.5"],
+    runOverrides: {
+      executionSelection: acceptedModelSelection("lmstudio", "gemma-4-e4b-it").selection,
+      messageProvider: "discord",
+    },
+    sessionCtx: {
+      Provider: "discord",
+      OriginatingChannel: "discord",
+      OriginatingTo: "channel:C1",
+      AccountId: "primary",
+      MessageSid: "1503645939964055592",
+    },
+  });
 }
 
 function requireScheduledFollowupRunner(): (run: FollowupRun) => Promise<void> {
@@ -4968,11 +4986,6 @@ describe("runReplyAgent typing (heartbeat)", () => {
       },
     },
     {
-      label: "yielded continuation",
-      pendingContinuation: true,
-      result: { payloads: [], meta: { yielded: true } },
-    },
-    {
       label: "pending tool continuation",
       pendingContinuation: true,
       result: {
@@ -4992,105 +5005,47 @@ describe("runReplyAgent typing (heartbeat)", () => {
     expect(onPendingContinuation).toHaveBeenCalledTimes(pendingContinuation ? 1 : 0);
   });
 
-  it("delivers one bounded status for an accepted child continuation", async () => {
-    state.runEmbeddedAgentMock.mockResolvedValueOnce({
-      payloads: [{ text: "I’m continuing this work and will send the result when it is ready." }],
-      meta: { continuationPending: true },
-      acceptedSessionSpawns: [{ runId: "child", childSessionKey: "agent:main:child" }],
-    });
-    const onPendingContinuation = vi.fn();
-    const { run } = createMinimalRun({ opts: { onPendingContinuation } });
-
-    const result = await run();
-    expect(result).toMatchObject({
-      text: "I’m continuing this work and will send the result when it is ready.",
-      replyToId: "msg",
-    });
-    expect(onPendingContinuation).toHaveBeenCalledOnce();
-    expect(
-      getReplyPayloadMetadata(requireRecord(result, "continuation status"))?.continuationStatus,
-    ).toBe(true);
+  registerWaitingStatusCases({
+    createMinimalRun,
+    runEmbeddedAgentMock: state.runEmbeddedAgentMock,
   });
 
-  it("delivers an explicit yield acknowledgment after accepting a child spawn", async () => {
-    state.runEmbeddedAgentMock.mockResolvedValueOnce({
-      payloads: [],
-      meta: {
-        yielded: true,
-        yieldAcknowledgment: "Research started; results will follow.",
-      },
-      acceptedSessionSpawns: [{ runId: "child", childSessionKey: "agent:main:child" }],
-    });
-    const onPendingContinuation = vi.fn();
-    const { run } = createMinimalRun({ opts: { onPendingContinuation } });
-
-    await expect(run()).resolves.toMatchObject({
-      text: "Research started; results will follow.",
-      replyToId: "msg",
-    });
-    expect(onPendingContinuation).toHaveBeenCalledOnce();
-  });
-
-  it("prefers a yield acknowledgment over an earlier generated tool warning", async () => {
+  it.each([
+    { label: "default status" },
+    { label: "explicit status", acknowledgment: "Research started; results will follow." },
+    {
+      label: "room event",
+      acknowledgment: "Research started; results will follow.",
+      roomEvent: true,
+      warning: true,
+    },
+    { label: "empty acknowledgment", acknowledgment: "[[reply_to_current]]", warning: true },
+  ])("resolves an earlier tool warning with $label", async (testCase) => {
     const toolWarning = setReplyPayloadMetadata(
       { text: "⚠️ Bash failed", isError: true },
       { toolErrorWarning: { toolName: "bash" } },
     );
     state.runEmbeddedAgentMock.mockResolvedValueOnce({
       payloads: [toolWarning],
-      meta: {
-        yielded: true,
-        yieldAcknowledgment: "Research started; results will follow.",
-      },
-      acceptedSessionSpawns: [{ runId: "child", childSessionKey: "agent:main:child" }],
+      meta: { yielded: true, yieldAcknowledgment: testCase.acknowledgment },
+      acceptedSessionSpawns: [
+        {
+          runId: "child-run",
+          childSessionKey: "agent:main:subagent:child",
+          expectsCompletionMessage: true,
+        },
+      ],
     });
-    const { run } = createMinimalRun();
+    const { run } = createMinimalRun({
+      currentInboundEventKind: testCase.roomEvent ? "room_event" : undefined,
+    });
 
     await expect(run()).resolves.toMatchObject({
-      text: "Research started; results will follow.",
-      replyToId: "msg",
-    });
-  });
-
-  it("keeps a generated tool warning when the yield acknowledgment is not deliverable", async () => {
-    const toolWarning = setReplyPayloadMetadata(
-      { text: "⚠️ Bash failed", isError: true },
-      { toolErrorWarning: { toolName: "bash" } },
-    );
-    state.runEmbeddedAgentMock.mockResolvedValueOnce({
-      payloads: [toolWarning],
-      meta: {
-        yielded: true,
-        yieldAcknowledgment: "Research started; results will follow.",
-      },
-    });
-    const { run } = createMinimalRun({ currentInboundEventKind: "room_event" });
-
-    await expect(run()).resolves.toMatchObject({
-      text: "⚠️ Bash failed",
-      isError: true,
-      replyToId: "msg",
-    });
-  });
-
-  it("keeps a generated tool warning when the yield acknowledgment normalizes to empty", async () => {
-    const toolWarning = setReplyPayloadMetadata(
-      { text: "⚠️ Bash failed", isError: true },
-      { toolErrorWarning: { toolName: "bash" } },
-    );
-    state.runEmbeddedAgentMock.mockResolvedValueOnce({
-      payloads: [toolWarning],
-      meta: {
-        yielded: true,
-        yieldAcknowledgment: "[[reply_to_current]]",
-      },
-      acceptedSessionSpawns: [{ runId: "child", childSessionKey: "agent:main:child" }],
-    });
-    const { run } = createMinimalRun();
-
-    await expect(run()).resolves.toMatchObject({
-      text: "⚠️ Bash failed",
-      isError: true,
+      text: testCase.warning
+        ? "⚠️ Bash failed"
+        : (testCase.acknowledgment ??
+          "I’m continuing this work and will send the result when it is ready."),
+      ...(testCase.warning ? { isError: true } : {}),
       replyToId: "msg",
     });
   });
@@ -5720,18 +5675,7 @@ describe("runReplyAgent typing (heartbeat)", () => {
       .mockImplementationOnce(makeCompletedFallbackRunner());
 
     try {
-      const { run } = createMinimalRun({
-        modelFallbacks: ["openai/gpt-5.5"],
-        runOverrides: {
-          executionSelection: acceptedModelSelection("lmstudio", "gemma-4-e4b-it").selection,
-          messageProvider: "discord",
-        },
-        sessionCtx: {
-          ...fallbackSessionCtx,
-          OriginatingTo: "channel:C1",
-          AccountId: "primary",
-        },
-      });
+      const { run } = createDiscordFallbackRun();
 
       const res = await run();
       const payload = Array.isArray(res) ? res[0] : res;
@@ -5790,18 +5734,7 @@ describe("runReplyAgent typing (heartbeat)", () => {
       .mockImplementationOnce(makeCompletedFallbackRunner());
 
     try {
-      const { run } = createMinimalRun({
-        modelFallbacks: ["openai/gpt-5.5"],
-        runOverrides: {
-          executionSelection: acceptedModelSelection("lmstudio", "gemma-4-e4b-it").selection,
-          messageProvider: "discord",
-        },
-        sessionCtx: {
-          ...fallbackSessionCtx,
-          OriginatingTo: "channel:C1",
-          AccountId: "primary",
-        },
-      });
+      const { run } = createDiscordFallbackRun();
       const res = await run();
       const payload = Array.isArray(res) ? res[0] : res;
 
@@ -5824,18 +5757,7 @@ describe("runReplyAgent typing (heartbeat)", () => {
       .mockImplementationOnce(makeCompletedFallbackRunner());
 
     try {
-      const { run } = createMinimalRun({
-        modelFallbacks: ["openai/gpt-5.5"],
-        runOverrides: {
-          executionSelection: acceptedModelSelection("lmstudio", "gemma-4-e4b-it").selection,
-          messageProvider: "discord",
-        },
-        sessionCtx: {
-          ...fallbackSessionCtx,
-          OriginatingTo: "channel:C1",
-          AccountId: "primary",
-        },
-      });
+      const { run } = createDiscordFallbackRun();
 
       const res = await run();
       const payload = Array.isArray(res) ? res[0] : res;
@@ -5859,18 +5781,7 @@ describe("runReplyAgent typing (heartbeat)", () => {
       .mockImplementationOnce(makeCompletedFallbackRunner());
 
     try {
-      const { run } = createMinimalRun({
-        modelFallbacks: ["openai/gpt-5.5"],
-        runOverrides: {
-          executionSelection: acceptedModelSelection("lmstudio", "gemma-4-e4b-it").selection,
-          messageProvider: "discord",
-        },
-        sessionCtx: {
-          ...fallbackSessionCtx,
-          OriginatingTo: "channel:C1",
-          AccountId: "primary",
-        },
-      });
+      const { run } = createDiscordFallbackRun();
 
       const res = await run();
       const payload = Array.isArray(res) ? res[0] : res;

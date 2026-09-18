@@ -75,40 +75,8 @@ export function migrateSessionExecutionSelection(params: {
     originProvider,
     originModel,
   });
-  const routeResolution =
-    (automatic && originProvider && originModel) ||
-    entry.modelOverrideRouteResolution === "resolved"
-      ? "resolved"
-      : "raw";
-  const normalized = normalizeStoredOverrideModel({
-    providerOverride: request?.provider,
-    modelOverride: request?.id,
-    routeResolution,
-  });
-  const ref =
-    request && (request.provider || (routeResolution === "raw" && request.id.includes("/")))
-      ? resolvePersistedOverrideModelRef({
-          defaultProvider: params.defaultProvider,
-          overrideProvider: normalized.providerOverride,
-          overrideModel: normalized.modelOverride,
-          routeResolution,
-        })
-      : undefined;
-  let requestedModel = ref ? { provider: ref.provider, id: ref.model } : request;
-  const bindings = isRecord(entry.cliSessionBindings) ? entry.cliSessionBindings : undefined;
-  const cliRuntime =
-    requestedModel?.provider && bindings?.[requestedModel.provider] !== undefined
-      ? requestedModel.provider
-      : undefined;
-  const canonicalProvider = cliRuntime ? params.cliRuntimeProviders?.get(cliRuntime) : undefined;
-  if (requestedModel && canonicalProvider) {
-    requestedModel = { provider: canonicalProvider, id: requestedModel.id };
-  }
-  const runtime = isDefaultAgentRuntimeId(normalizedRuntime)
-    ? (nativeBindingOwner ?? (canonicalProvider ? cliRuntime : undefined))
-    : normalizedRuntime;
   const legacyRequest: LegacyExecutionRequest | undefined =
-    provider && !model && !requestedModel
+    provider && !model && !request
       ? {
           provider,
           ...(entry.modelOverrideSource === "auto" ||
@@ -123,20 +91,55 @@ export function migrateSessionExecutionSelection(params: {
     selection = sessionExecutionSelectionSchema.parse(entry.executionSelection);
   } else {
     if (acp) {
+      // ACP IDs are opaque; provider/model normalization belongs only to host requests.
       const previous = {
         model: acp.model ? { id: acp.model } : "native-managed",
         executor: { kind: "acp", backend: acp.backend, agent: acp.agent },
       } as const;
       selection =
-        requestedModel || entry.modelOverrideSource === "default"
+        request || entry.modelOverrideSource === "default"
           ? {
               state: "deferred",
               previous,
-              request: { executor: previous.executor, model: requestedModel ?? "native-managed" },
+              request: { executor: previous.executor, model: request ?? "native-managed" },
               fallbackPermission,
             }
           : { state: "accepted", selection: previous, fallbackPermission };
     } else {
+      const routeResolution =
+        (automatic && originProvider && originModel) ||
+        entry.modelOverrideRouteResolution === "resolved"
+          ? "resolved"
+          : "raw";
+      const normalized = normalizeStoredOverrideModel({
+        providerOverride: request?.provider,
+        modelOverride: request?.id,
+        routeResolution,
+      });
+      const ref =
+        request && (request.provider || (routeResolution === "raw" && request.id.includes("/")))
+          ? resolvePersistedOverrideModelRef({
+              defaultProvider: params.defaultProvider,
+              overrideProvider: normalized.providerOverride,
+              overrideModel: normalized.modelOverride,
+              routeResolution,
+            })
+          : undefined;
+      let requestedModel = ref ? { provider: ref.provider, id: ref.model } : request;
+      const bindings = isRecord(entry.cliSessionBindings) ? entry.cliSessionBindings : undefined;
+      const cliRuntime =
+        requestedModel?.provider && bindings?.[requestedModel.provider] !== undefined
+          ? requestedModel.provider
+          : undefined;
+      const canonicalProvider = cliRuntime
+        ? params.cliRuntimeProviders?.get(cliRuntime)
+        : undefined;
+      if (requestedModel && canonicalProvider) {
+        requestedModel = { provider: canonicalProvider, id: requestedModel.id };
+      }
+      const runtime = isDefaultAgentRuntimeId(normalizedRuntime)
+        ? (nativeBindingOwner ?? (canonicalProvider ? cliRuntime : undefined))
+        : normalizedRuntime;
       const kind = runtime ? params.classifyExecutor(runtime) : undefined;
       selection =
         runtime && kind && requestedModel?.provider && !nativeBindingOwner

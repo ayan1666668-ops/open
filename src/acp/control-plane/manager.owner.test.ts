@@ -10,11 +10,8 @@ import { closeOpenClawAgentDatabasesForTest } from "../../state/openclaw-agent-d
 import { closeOpenClawStateDatabaseForTest } from "../../state/openclaw-state-db.js";
 import { withTestDir } from "../../test-helpers/temp-dir.js";
 import { AcpRuntimeError } from "../runtime/errors.js";
-import {
-  readAcpSessionEntryCore,
-  readAcpSessionMetaForEntry,
-  upsertAcpSessionMeta,
-} from "../runtime/session-meta.js";
+import { readAcpSessionMetaForEntry } from "../runtime/session-meta-readonly.js";
+import { readAcpSessionEntryCore, upsertAcpSessionMeta } from "../runtime/session-meta.js";
 import { AcpSessionManager } from "./manager.core.js";
 import { disposeAcpSessionManagerInstance } from "./manager.lifecycle.js";
 import { DEFAULT_DEPS } from "./manager.types.js";

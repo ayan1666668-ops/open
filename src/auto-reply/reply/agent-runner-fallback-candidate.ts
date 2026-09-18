@@ -6,7 +6,6 @@ import {
 import type { FastModeAutoProgressState } from "../../agents/fast-mode.js";
 import type { ModelFallbackStepFields } from "../../agents/model-fallback-observation.js";
 import { buildGenericCliContextEngineHostSupport } from "../../context-engine/host-compat.js";
-import { prepareGitHubPublicationAvailability } from "../../gateway/github-publication-availability.js";
 import { revokeMessageActionTurnCapability } from "../../gateway/message-action-turn-capability.js";
 import { clearAgentRunTerminalWriteContext } from "../../infra/agent-run-terminal-writes.js";
 import { RUN_STALE_TAKEOVER_MS } from "../../logging/diagnostic-run-activity.js";
@@ -86,7 +85,6 @@ export async function runAgentFallbackCandidates(params: AgentFallbackCycleParam
   const bootstrapContextRunKind = turn.opts?.isHeartbeat
     ? ("heartbeat" as const)
     : ("default" as const);
-  let githubPublicationAvailability: Promise<boolean> | undefined;
 
   params.timing.logMilestoneIfSlow({
     runId: params.runId,
@@ -162,7 +160,7 @@ export async function runAgentFallbackCandidates(params: AgentFallbackCycleParam
         catalog: turn.followupRun.run.thinkingCatalog,
         agentId: turn.followupRun.run.agentId,
         sessionKey: turn.followupRun.run.runtimePolicySessionKey ?? turn.sessionKey,
-        sessionEntry: turn.getActiveSessionEntry(),
+        sessionEntry: params.liveModelSwitchRuntimeEntry ?? turn.getActiveSessionEntry(),
         agentRuntime: candidate.executor.id,
       });
       candidateFastMode = resolveRunFastModeForFallbackCandidate({
@@ -242,14 +240,6 @@ export async function runAgentFallbackCandidates(params: AgentFallbackCycleParam
       }
       const embeddedResult = await runEmbeddedFallbackCandidate({
         ...common,
-        githubPublicationAvailable: await (githubPublicationAvailability ??=
-          turn.sessionKey && params.effectiveRun.agentId
-            ? prepareGitHubPublicationAvailability({
-                sessionId: turn.followupRun.run.sessionId,
-                sessionKey: turn.sessionKey,
-                agentId: params.effectiveRun.agentId,
-              })
-            : Promise.resolve(false)),
         effectiveRun: params.effectiveRun,
         getLifecycleGeneration: () => params.state.lifecycleGeneration,
         onLifecycleGeneration: (generation) => {
@@ -276,6 +266,7 @@ export async function runAgentFallbackCandidates(params: AgentFallbackCycleParam
     }
   };
   const common = {
+    preparedRunAdmission: params.preparedRunAdmission,
     identity: {
       runId: params.runId,
       agentId: turn.followupRun.run.agentId,
@@ -289,7 +280,9 @@ export async function runAgentFallbackCandidates(params: AgentFallbackCycleParam
         hasRetryBlockedDelivery:
           turn.blockReplyPipeline?.hasRetryBlockedDelivery() === true ||
           params.directBlockDeliveries.some(hasBlockReplyDeliveryCustody),
-        hasDirectlySentBlockReply: params.directlySentBlockKeys.size > 0,
+        hasDirectlySentBlockReply: params.directBlockDeliveries.some(
+          (delivery) => delivery.terminalDeliveryConfirmed === true,
+        ),
         hasBlockReplyPipelineOutput: Boolean(
           turn.blockReplyPipeline?.hasBuffered() || turn.blockReplyPipeline?.didStream(),
         ),
@@ -407,7 +400,6 @@ export async function runAgentFallbackCandidates(params: AgentFallbackCycleParam
           });
         },
       },
-      runCandidate,
     }),
   );
 }

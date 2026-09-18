@@ -1,6 +1,5 @@
 import fs from "node:fs";
 import path from "node:path";
-import { DatabaseSync } from "node:sqlite";
 import { expectDefined } from "@openclaw/normalization-core";
 import { redactIdentifier } from "@openclaw/normalization-core/node-crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -45,7 +44,6 @@ import {
   applySessionEntryLifecycleMutation,
   assignSessionOwner,
   commitReplySessionInitialization,
-  countSessionEntryRowsReadOnly,
   createSessionEntryWithTranscript,
   deleteSessionEntryLifecycle,
   findTranscriptEvent,
@@ -387,24 +385,6 @@ describe("session accessor seam", () => {
 
     expect(readSessionEntryCount(database)).toBe(1);
     expect([...iterateSessionEntryKeys(database)]).toEqual(["agent:main:logical-entry"]);
-    expect(countSessionEntryRowsReadOnly({ agentId: "main", storePath })).toBe(2);
-  });
-
-  it("counts rows on a cold handle without parsing invalid entry JSON", async () => {
-    await replaceSessionEntry(
-      { sessionKey: "agent:main:cold-count", storePath },
-      { sessionId: "cold-count-session", updatedAt: 10 },
-    );
-    const databasePath = expectDefined(
-      resolveSqliteTargetFromSessionStorePath(storePath, { agentId: "main" }).path,
-      "cold count database path",
-    );
-    closeOpenClawAgentDatabasesForTest();
-    const database = new DatabaseSync(databasePath);
-    database.prepare("UPDATE session_nodes SET entry_valid = 0").run();
-    database.close();
-
-    expect(countSessionEntryRowsReadOnly({ agentId: "main", storePath })).toBe(1);
   });
 
   it("does not project retired createdBy input into canonical creator fields", async () => {

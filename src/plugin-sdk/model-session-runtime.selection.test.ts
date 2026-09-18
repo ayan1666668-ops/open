@@ -1,3 +1,4 @@
+import { expectDefined } from "@openclaw/normalization-core";
 import { afterEach, beforeEach, expect, expectTypeOf, test, vi } from "vitest";
 import * as acpManager from "../acp/control-plane/manager.js";
 import { evaluatePublishedModelRuntimeChoice } from "../agents/model-runtime-choice.js";
@@ -10,6 +11,7 @@ import {
 import type { SessionEntry } from "../config/sessions/types.js";
 import { admitSessionExecutionFallback } from "../model-picker/apply-session-model-selection.js";
 import { getActivePluginRegistryVersion } from "../plugins/runtime.js";
+import { onSessionLifecycleEvent } from "../sessions/session-lifecycle-events.js";
 import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
 import { acceptedModelSelection } from "../test-utils/session-execution-selection.js";
 import {
@@ -102,6 +104,69 @@ test("the released operation returns all flat fields for a caller absent from th
   });
 });
 
+test("keeps accepted memory-only selections idempotent", async () => {
+  await withOpenClawTestState({ label: "sdk-memory-selection" }, async () => {
+    const selected = acceptedModelSelection("fixture", "requested");
+    const params = request({ ...ordinary, executionSelection: selected });
+    params.currentModel = "requested";
+    const events: string[] = [];
+    const unsubscribe = onSessionLifecycleEvent((event) => events.push(event.reason));
+    try {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        expect(await applySessionModelSelection(params)).toMatchObject({
+          status: "applied",
+          changed: false,
+        });
+        expect(params.sessionEntry.executionSelection).toEqual(selected);
+        expect(params.sessionEntry.liveModelSwitchPending).toBeUndefined();
+      }
+      expect(events).toEqual([]);
+    } finally {
+      unsubscribe();
+    }
+  });
+});
+
+test.each([
+  { change: "model", legacy: false },
+  { change: "account", legacy: false },
+  { change: "metadata", legacy: false },
+  { change: "model", legacy: true },
+] as const)(
+  "preserves a same-lifecycle persisted $change change against an older SDK snapshot (legacy=$legacy)",
+  async ({ change, legacy }) => {
+    await withOpenClawTestState({ label: "sdk-stale-selection" }, async () => {
+      await replaceSessionEntry(scope, ordinary);
+      const original = expectDefined(loadSessionEntryReadOnly(scope), "SDK caller snapshot");
+      const params = request(original);
+      if (legacy) {
+        delete params.sessionEntry.executionSelection;
+      }
+      params.storePath = resolveSessionStorePathCore(undefined, { agentId: scope.agentId });
+      const latest = {
+        ...original,
+        ...(change === "model"
+          ? { executionSelection: acceptedModelSelection("fixture", "newer") }
+          : change === "account"
+            ? { authProfileOverride: "fixture:newer", authProfileOverrideSource: "user" as const }
+            : { label: "newer metadata" }),
+      };
+      await replaceSessionEntry(scope, latest);
+      const persisted = loadSessionEntryReadOnly(scope);
+      const before = structuredClone(params.sessionEntry);
+      const result = await applySessionModelSelection(params);
+      if (change === "metadata") {
+        expect(result.status).toBe("applied");
+        expect(loadSessionEntryReadOnly(scope)?.label).toBe("newer metadata");
+      } else {
+        expect(result.status).toBe("conflict");
+        expect(params.sessionEntry).toEqual(before);
+        expect(loadSessionEntryReadOnly(scope)).toEqual(persisted);
+      }
+    });
+  },
+);
+
 test.each([false, true])(
   "preserves caller default authorization=%s for a concrete primary",
   async (isDefault) => {
@@ -157,6 +222,9 @@ test.each([
       const params = request(entry);
       params.storePath = resolveSessionStorePathCore(undefined, { agentId: scope.agentId });
       params.request.runtime = runtime;
+      if (runtime.kind === "unchanged") {
+        delete params.sessionEntry.executionSelection;
+      }
       const result = await applySessionModelSelection(params);
       expect(result).toMatchObject({
         status: "applied",

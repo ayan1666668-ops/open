@@ -235,7 +235,7 @@ export type PreparedSessionExecutionCommitParams<T> = {
   prepared: Extract<PreparedSessionExecutionSelection, { status: "ready" }>;
   assertActive: () => void;
   assertSelectionCurrent: () => void;
-  commitAccepted: (selection: ExecutionSelection) => Promise<T>;
+  commitAccepted: (selection: ExecutionSelection, assertCommitActive: () => void) => Promise<T>;
 };
 
 export type SessionModelFallbackParams = {

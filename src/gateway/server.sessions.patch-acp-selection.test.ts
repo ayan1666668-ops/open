@@ -489,7 +489,6 @@ test("a later batch catalog read does not replay a settled failed ACP model cont
     expect.objectContaining({ key: acpKey, ok: false }),
     expect.objectContaining({ key: ordinaryKey, ok: true }),
   ]);
-  expect(loadGatewayModelCatalogSnapshot).toHaveBeenCalledOnce();
   expect(state.setConfigOption.mock.calls.map(([input]) => input.value)).toEqual([
     "fixture/next",
     "qa-before",

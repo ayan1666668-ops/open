@@ -90,7 +90,12 @@ vi.mock("../agents/prepared-model-catalog.js", () => ({
   })),
 }));
 
-vi.mock("../agents/model-selection.js", async () => {
+vi.mock("../agents/model-selection.js", async (importOriginal) => {
+  const {
+    inferUniqueProviderFromConfiguredModels,
+    normalizeStoredOverrideModel,
+    resolvePersistedSelectedModelRef,
+  } = await importOriginal<typeof import("../agents/model-selection.js")>();
   const { normalizeModelRef } = await import("../agents/model-ref-shared.js");
   const { parseModelRef: parseModelRefImpl } =
     await import("../agents/model-selection-normalize.js");
@@ -225,12 +230,15 @@ vi.mock("../agents/model-selection.js", async () => {
     buildConfiguredModelCatalog: vi.fn(() => []),
     buildModelAliasIndex: vi.fn(() => new Map()),
     isModelKeyAllowedBySet,
+    inferUniqueProviderFromConfiguredModels,
     isCliProvider: vi.fn(() => false),
     modelKey,
     normalizeModelRef,
+    normalizeStoredOverrideModel,
     normalizeProviderId,
     normalizeProviderIdForAuth: normalizeProviderId,
     parseModelRef,
+    resolvePersistedSelectedModelRef,
     resolveConfiguredModelRef: vi.fn(
       ({ cfg }: { cfg?: ConfigWithModels; defaultProvider?: string; defaultModel?: string }) =>
         resolveDefaultRef(cfg),

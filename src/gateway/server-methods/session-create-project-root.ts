@@ -18,7 +18,7 @@ export async function resolveSessionCreateProjectRoot(
   projectId: string,
   worktree?: boolean,
 ): Promise<Result<string, ErrorShape>> {
-  const project = resolveProjectRegistry(cfg, projectId);
+  const project = await resolveProjectRegistry(cfg, projectId);
   if (!project) {
     return err(errorShape(ErrorCodes.INVALID_REQUEST, `unknown project id: ${projectId}`));
   }

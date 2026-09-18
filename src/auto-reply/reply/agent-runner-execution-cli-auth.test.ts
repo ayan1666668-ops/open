@@ -235,7 +235,6 @@ describe("executeAgentTurn: CLI credential selection", () => {
               agentId: "main",
               workspaceDir: followupRun.run.workspaceDir,
             }),
-            directlySentBlockKeys: new Set(),
             directBlockDeliveries: [],
             heartbeatState: { didLogStrip: false },
           }),

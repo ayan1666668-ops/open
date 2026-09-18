@@ -8,6 +8,7 @@ import { resolveEffectiveAgentRuntimeCore } from "../agents/thinking-runtime.js"
 import { forkSessionFromParentWithDecision } from "../auto-reply/reply/session-fork.js";
 import type { SessionEntry } from "../config/sessions.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import type { PreparedGatewaySessionLifecycle } from "./session-lifecycle-preparation.js";
 import type { resolveGatewaySessionStoreTarget } from "./session-utils.js";
 
 export async function createGatewaySessionForkTranscript(params: {
@@ -20,6 +21,7 @@ export async function createGatewaySessionForkTranscript(params: {
   loadGatewayModelCatalogSnapshot?: () => Promise<ModelCatalogSnapshot>;
   forkFrom?: "last-completed";
   commitGuard: () => void;
+  withCommit?: PreparedGatewaySessionLifecycle["withCommit"];
 }) {
   const childModel = resolveSessionModelRef(params.cfg, params.entry, params.target.agentId);
   const childCatalog = params.loadGatewayModelCatalogSnapshot
@@ -65,16 +67,21 @@ export async function createGatewaySessionForkTranscript(params: {
     : resolvedForkMaxTokens;
   // The storage owner selects one source for both size admission and copying,
   // so an active tail cannot make a smaller stable prefix fail the cap.
-  return await forkSessionFromParentWithDecision({
-    parentEntry: params.parentEntry,
-    agentId: params.parentTarget.agentId,
-    commitGuard: params.commitGuard,
-    parentSessionKey: params.parentSessionKey,
-    sessionKey: params.target.canonicalKey,
-    storePath: params.parentTarget.storePath,
-    ...(forkMaxTokens ? { maxTokens: forkMaxTokens } : {}),
-    // Keep the fork transcript owned by the child store across agent boundaries.
-    targetStorePath: params.target.storePath,
-    ...(params.forkFrom ? { forkFrom: params.forkFrom } : {}),
-  });
+  const forkFromParent = async (assertSourceCurrent?: () => void) =>
+    await forkSessionFromParentWithDecision({
+      parentEntry: params.parentEntry,
+      agentId: params.parentTarget.agentId,
+      commitGuard: () => {
+        params.commitGuard();
+        assertSourceCurrent?.();
+      },
+      parentSessionKey: params.parentSessionKey,
+      sessionKey: params.target.canonicalKey,
+      storePath: params.parentTarget.storePath,
+      ...(forkMaxTokens ? { maxTokens: forkMaxTokens } : {}),
+      // Keep the fork transcript owned by the child store across agent boundaries.
+      targetStorePath: params.target.storePath,
+      ...(params.forkFrom ? { forkFrom: params.forkFrom } : {}),
+    });
+  return params.withCommit ? await params.withCommit(forkFromParent) : await forkFromParent();
 }

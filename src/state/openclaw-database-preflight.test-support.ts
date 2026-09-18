@@ -3,11 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { gunzipSync } from "node:zlib";
 import { expect } from "vitest";
-import { requireNodeSqlite } from "../infra/node-sqlite.js";
-import { runSqliteImmediateTransactionSync } from "../infra/sqlite-transaction.js";
-import { OPENCLAW_STATE_SCHEMA_VERSION } from "./openclaw-state-db-contract.js";
 import { resolveOpenClawStateSqlitePath } from "./openclaw-state-db.paths.js";
-import { OPENCLAW_STATE_SCHEMA_SQL } from "./openclaw-state-schema.js";
 
 /** Capture persistent artifacts without releasing the test writer's POSIX locks. */
 export function snapshotPreflightSourceManifest(stateDir: string, allowAgentReadMarks?: string) {
@@ -77,29 +73,4 @@ export function snapshotSourceFamily(databasePath: string) {
       };
     }),
   };
-}
-
-export function createExplicitStateDatabase(
-  stateDir: string,
-  schemaSql = OPENCLAW_STATE_SCHEMA_SQL,
-): string {
-  const databasePath = path.join(stateDir, "candidate.sqlite");
-  const { DatabaseSync } = requireNodeSqlite();
-  const database = new DatabaseSync(databasePath);
-  try {
-    // Match production bootstrap: one durable commit, not one per schema object.
-    runSqliteImmediateTransactionSync(database, () => {
-      database.exec(`${schemaSql}; PRAGMA user_version = ${OPENCLAW_STATE_SCHEMA_VERSION};`);
-      database
-        .prepare(
-          `INSERT INTO schema_meta (
-             meta_key, role, schema_version, agent_id, app_version, created_at, updated_at
-           ) VALUES ('primary', 'global', ?, NULL, NULL, 1, 1)`,
-        )
-        .run(OPENCLAW_STATE_SCHEMA_VERSION);
-    });
-  } finally {
-    database.close();
-  }
-  return databasePath;
 }

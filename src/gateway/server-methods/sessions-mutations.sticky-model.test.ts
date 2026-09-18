@@ -78,6 +78,7 @@ vi.mock("../../logging/subsystem.js", async () => {
 
 import { createGatewaySession } from "../session-create-service.js";
 import { createWorkerSessionPlacementStore } from "../worker-environments/placement-store.js";
+import { flushPendingSessionsChangedEvents } from "./session-change-event.js";
 import { sessionMutationHandlers } from "./sessions-mutations.js";
 import {
   registerSessionRuntimeWindowTests,
@@ -268,30 +269,34 @@ afterAll(async () => {
 
 describe("sessions.patch sticky model persistence", () => {
   it.each([
-    { scope: undefined, agentId: "main", target: undefined },
-    { scope: undefined, agentId: "work", target: undefined },
-    { scope: "session", agentId: "main", target: undefined },
-    { scope: "session", agentId: "work", target: undefined },
-    { scope: "agent", agentId: "main", target: "agent" },
-    { scope: "agent", agentId: "work", target: "agent" },
-    { scope: "global", agentId: "main", target: "defaults" },
-    { scope: "global", agentId: "work", target: "defaults" },
+    [undefined, "main", undefined, "openai/gpt-5.6-sol"],
+    [undefined, "work", undefined, "openai/gpt-5.6-sol"],
+    ["session", "main", undefined, "openai/gpt-5.6-sol"],
+    ["session", "work", undefined, "openai/gpt-5.6-sol"],
+    ["agent", "main", "agent", "openai/gpt-5.6-sol"],
+    ["agent", "work", "agent", "openai/gpt-5.6-sol"],
+    ["global", "main", "defaults", "openai/gpt-5.6-sol"],
+    ["global", "work", "defaults", "openai/gpt-5.6-sol"],
+    ["agent", "main", "agent", "anthropic/claude-opus-4-6"],
+    ["global", "work", "defaults", "anthropic/claude-sonnet-4-6"],
   ] as const)(
-    "uses scope=$scope for $agentId without changing another config layer",
-    async ({ scope, agentId, target }) => {
+    "uses scope=%s for %s (target=%s, model=%s) without changing another config layer",
+    async (scope, agentId, target, model) => {
       cfg.agents!.defaults!.modelSelectionScope = scope;
-      const sessionKey = `agent:${agentId}:dm:sticky-${scope ?? "unset"}`;
-      const model = "openai/gpt-5.6-sol";
+      const sessionKey = `agent:${agentId}:dm:sticky-${scope ?? "unset"}-${model.replace("/", "-")}`;
       await upsertSessionEntryCore(
         { agentId, sessionKey },
-        { sessionId: `session-${agentId}-${scope ?? "unset"}`, updatedAt: 1 },
+        { sessionId: sessionKey, updatedAt: 1 },
       );
 
       const response = await patchSession({ key: sessionKey, model });
 
       expect(response[0]).toBe(true);
       expect(loadSessionEntry({ agentId, sessionKey })).toMatchObject({
-        executionSelection: codexSelection,
+        executionSelection:
+          model === "openai/gpt-5.6-sol"
+            ? codexSelection
+            : acceptedModelSelection("anthropic", model.slice("anthropic/".length)),
       });
       if (!target) {
         expect(effects.mutateConfigFileWithRetry).not.toHaveBeenCalled();
@@ -301,44 +306,11 @@ describe("sessions.patch sticky model persistence", () => {
       expect(persistedConfig?.agents?.defaults?.model).toBe(
         target === "defaults" ? model : defaultConfig.agents.defaults.model,
       );
-      const expectedAgents = structuredClone(defaultConfig.agents.list);
-      for (const agent of expectedAgents) {
-        if (target === "agent" && agent.id === agentId) {
-          agent.model = model;
-        }
-      }
-      expect(persistedConfig?.agents?.list).toEqual(expectedAgents);
-    },
-  );
-
-  it.each([
-    { scope: "agent", agentId: "main", model: "anthropic/claude-opus-4-6" },
-    { scope: "global", agentId: "work", model: "anthropic/claude-sonnet-4-6" },
-  ] as const)(
-    "honors configured $scope scope when selecting the current effective model",
-    async ({ scope, agentId, model }) => {
-      cfg.agents!.defaults!.modelSelectionScope = scope;
-      const sessionKey = `agent:${agentId}:dm:scope-current-${scope}`;
-      await upsertSessionEntryCore(
-        { agentId, sessionKey },
-        { sessionId: `session-scope-current-${scope}`, updatedAt: 1 },
+      expect(persistedConfig?.agents?.list).toEqual(
+        defaultConfig.agents.list.map((agent) =>
+          target === "agent" && agent.id === agentId ? { ...agent, model } : agent,
+        ),
       );
-
-      expect((await patchSession({ key: sessionKey, model }))[0]).toBe(true);
-      expect(loadSessionEntry({ agentId, sessionKey })).toMatchObject({
-        executionSelection: acceptedModelSelection("anthropic", model.slice("anthropic/".length)),
-      });
-      await vi.waitFor(() => expect(persistedConfig).toBeDefined());
-      expect(persistedConfig?.agents?.defaults?.model).toBe(
-        scope === "global" ? model : defaultConfig.agents.defaults.model,
-      );
-      const expectedAgents = structuredClone(defaultConfig.agents.list);
-      for (const agent of expectedAgents) {
-        if (scope === "agent" && agent.id === agentId) {
-          agent.model = model;
-        }
-      }
-      expect(persistedConfig?.agents?.list).toEqual(expectedAgents);
     },
   );
 
@@ -428,10 +400,14 @@ describe("sessions.patch sticky model persistence", () => {
   });
 
   it.each([
-    { name: "omitted", patch: { label: "Sticky" } },
-    { name: "cleared", patch: { model: null } },
-    { name: "reset to the current default", patch: { model: "anthropic/claude-opus-4-6" } },
-  ])("does not persist when model is $name", async ({ name, patch }) => {
+    { name: "omitted", patch: { label: "Sticky" }, catalogChanged: false },
+    { name: "cleared", patch: { model: null }, catalogChanged: true },
+    {
+      name: "reset to the current default",
+      patch: { model: "anthropic/claude-opus-4-6" },
+      catalogChanged: true,
+    },
+  ])("does not persist when model is $name", async ({ name, patch, catalogChanged }) => {
     const sessionKey = `agent:main:dm:no-sticky-${name}`;
     await upsertSessionEntryCore(
       { agentId: "main", sessionKey },
@@ -442,10 +418,26 @@ describe("sessions.patch sticky model persistence", () => {
       },
     );
 
-    const response = await patchSession({ key: sessionKey, ...patch });
+    const requestContext = {
+      ...context(),
+      getSessionEventSubscriberConnIds: () => new Set(["reader"]),
+    };
+    const response = await patchSession(
+      { key: sessionKey, ...patch },
+      ["operator.admin"],
+      requestContext,
+    );
+    await flushPendingSessionsChangedEvents(requestContext);
 
     expect(response[0]).toBe(true);
     expect(effects.mutateConfigFileWithRetry).not.toHaveBeenCalled();
+    const event = requestContext.broadcastToConnIds.mock.calls.at(-1)?.[1];
+    expect(event).toMatchObject({ sessionKey, reason: "patch" });
+    if (catalogChanged) {
+      expect(event).toHaveProperty("catalogChanged", true);
+    } else {
+      expect(event).not.toHaveProperty("catalogChanged");
+    }
   });
 });
 
@@ -753,12 +745,25 @@ describe("explicit session model runtimes", () => {
           contextTokens: 1000,
         },
       );
-      const prepare = vi.spyOn(runtimeChoice, "evaluatePublishedModelRuntimeChoice");
+      const requestContext = {
+        ...context(),
+        getSessionEventSubscriberConnIds: () => new Set(["reader"]),
+      };
       expect(
         (
-          await patchSession({ key: sessionKey, agentRuntime: null, ...(model ? { model } : {}) })
+          await patchSession(
+            { key: sessionKey, agentRuntime: null, ...(model ? { model } : {}) },
+            ["operator.admin"],
+            requestContext,
+          )
         )[0],
       ).toBe(true);
+      await flushPendingSessionsChangedEvents(requestContext);
+      expect(requestContext.broadcastToConnIds.mock.calls.at(-1)?.[1]).toMatchObject({
+        sessionKey,
+        reason: "patch",
+        catalogChanged: true,
+      });
       const stored = loadSessionEntry({ agentId: "main", sessionKey });
       expect(stored).toMatchObject({
         executionSelection: acceptedModelSelection(provider, id, {
@@ -776,7 +781,6 @@ describe("explicit session model runtimes", () => {
         expect(stored).not.toHaveProperty("authProfileOverride");
       }
       expect(stored).not.toHaveProperty("contextTokens");
-      expect(prepare).toHaveBeenCalledOnce();
       expect(persistedConfig).toBeUndefined();
     },
   );

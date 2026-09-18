@@ -184,6 +184,7 @@ describe("sessions tool", () => {
         action: {
           type: "string",
           enum: [
+            "cloud_profiles",
             "patch",
             "reset",
             "delete",

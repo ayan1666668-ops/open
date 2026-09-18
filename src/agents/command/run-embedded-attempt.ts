@@ -25,6 +25,7 @@ import {
 } from "../../tasks/task-status-access.js";
 import { createTrajectoryRuntimeRecorder } from "../../trajectory/runtime.js";
 import { resolveMessageChannel } from "../../utils/message-channel.js";
+import { modelFallbackOverrideFromAvailability } from "../agent-scope.js";
 import { isHeartbeatLifecycleRunKind } from "../bootstrap-mode.js";
 import {
   runEmbeddedAgentEntry,
@@ -276,8 +277,9 @@ export async function runEmbeddedAgentAttempt(params: RunEmbeddedAgentAttemptPar
               subagentSpawnLineage: (sessionEntry?.spawnDepth ?? 0) > 0,
             })
           : undefined;
-        const effectiveFallbacksOverride =
-          fallbackAvailability?.kind === "active" ? fallbackAvailability.models : [];
+        const effectiveFallbacksOverride = fallbackAvailability
+          ? modelFallbackOverrideFromAvailability(fallbackAvailability)
+          : [];
 
         const fallbackRuntimeState: { originRuntime?: "cli" | "embedded" } = {};
         attemptLifecycleState.currentTurnUserMessagePersisted = false;
@@ -340,12 +342,17 @@ export async function runEmbeddedAgentAttempt(params: RunEmbeddedAgentAttemptPar
                 provider: providerOverride,
                 model: modelOverride,
               });
-            let candidateThinkingCatalog = thinkingCatalog;
+            const changedCandidate =
+              providerOverride !== params.modelSelection.provider ||
+              modelOverride !== params.modelSelection.model;
+            let candidateThinkingCatalog = changedCandidate
+              ? (params.modelSelection.loadDeferredThinkingCatalog?.() ?? thinkingCatalog)
+              : thinkingCatalog;
             if (
               pluginsEnabled &&
               (candidateConfiguredThinkLevel !== "off" || candidateRuntime !== "openclaw") &&
               needsThinkHydration(
-                thinkingCatalog,
+                candidateThinkingCatalog,
                 providerOverride,
                 modelOverride,
                 candidateRuntime,
@@ -485,6 +492,7 @@ export async function runEmbeddedAgentAttempt(params: RunEmbeddedAgentAttemptPar
           }
         };
         const runEntry = {
+          preparedRunAdmission: params.preparedRunAdmission,
           identity: {
             runId,
             agentId: sessionAgentId,

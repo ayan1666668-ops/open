@@ -2,6 +2,7 @@ import { vi } from "vitest";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { createPluginMetadataSnapshotFixture } from "../plugins/plugin-metadata.test-support.js";
 import { buildInlineProviderModels } from "./embedded-agent-runner/model.inline-provider.js";
+import { createPreparedConfiguredRuntimeModelLookup } from "./embedded-agent-runner/model.static-id.js";
 import type { ModelRef } from "./model-ref-shared.js";
 import {
   getPreparedModelRuntimeAuthStore,
@@ -50,6 +51,8 @@ export function publish(
   > = {},
 ) {
   const entry = { provider: "fixture", id: "model", name: "Model" };
+  const configuredRuntimeModels = facts.configuredRuntimeModels ?? [];
+  const metadataSnapshot = facts.metadataSnapshot ?? createPluginMetadataSnapshotFixture();
   const owner: PreparedModelRuntimeSnapshot = {
     config,
     observationConfig: config,
@@ -59,11 +62,15 @@ export function publish(
     workspaceDir: "/tmp/runtime-choice",
     activeProjectKeys: [],
     authModes: {},
-    metadataSnapshot: createPluginMetadataSnapshotFixture(),
+    metadataSnapshot,
     isCurrent,
     allowGatewaySubagentBinding: false,
     modelCatalog: { entries: [entry], routeVariants: [entry] },
-    configuredRuntimeModels: [],
+    configuredRuntimeModels,
+    findConfiguredRuntimeModel: createPreparedConfiguredRuntimeModelLookup(
+      configuredRuntimeModels,
+      metadataSnapshot,
+    ),
     inlineProviderModels: buildInlineProviderModels(config.models?.providers ?? {}, {
       providerMetadataOwners: facts.metadataSnapshot?.owners,
     }),

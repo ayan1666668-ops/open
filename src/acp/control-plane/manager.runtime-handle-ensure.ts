@@ -55,7 +55,12 @@ export async function ensureManagerRuntimeHandle(params: {
   deps: Pick<AcpSessionManagerDeps, "requireRuntimeBackend">;
   runtimeHandles: ManagerRuntimeHandleCache;
   writeSessionMeta: WriteManagerSessionMeta;
+  isCurrentActor?: () => boolean;
 }): Promise<{ runtime: AcpRuntime; handle: AcpRuntimeHandle; meta: SessionAcpLifecycle }> {
+  const isCurrentActor = params.isCurrentActor ?? (() => true);
+  if (!isCurrentActor()) {
+    throw createSupersededActorError(params.sessionKey);
+  }
   const { selection } = params;
   const agent = selection.executor.agent;
   const mode = params.meta.mode;
@@ -76,6 +81,7 @@ export async function ensureManagerRuntimeHandle(params: {
       cfg: params.cfg,
       sessionKey: params.sessionKey,
       agentId: params.agentId,
+      isCurrentActor,
       mutate: (current, entry) => {
         if (!current || !entry) {
           return null;
@@ -106,6 +112,9 @@ export async function ensureManagerRuntimeHandle(params: {
         "Could not reserve the temporary app selection.",
       );
     }
+    if (!isCurrentActor()) {
+      throw createSupersededActorError(params.sessionKey);
+    }
   }
   const cached = params.runtimeHandles.get(params);
   if (cached) {
@@ -118,7 +127,7 @@ export async function ensureManagerRuntimeHandle(params: {
       handle: cached.handle,
       meta: params.meta,
     });
-    if (
+    const reusable =
       backendMatches &&
       agentMatches &&
       modeMatches &&
@@ -129,8 +138,15 @@ export async function ensureManagerRuntimeHandle(params: {
         sessionKey: params.sessionKey,
         runtime: cached.runtime,
         handle: cached.handle,
-      }))
-    ) {
+        isCurrentActor,
+      }));
+    if (!isCurrentActor()) {
+      throw createSupersededActorError(params.sessionKey);
+    }
+    if (reusable) {
+      if (!isCurrentActor()) {
+        throw createSupersededActorError(params.sessionKey);
+      }
       return {
         runtime: cached.runtime,
         handle: cached.handle,
@@ -141,7 +157,11 @@ export async function ensureManagerRuntimeHandle(params: {
       sessionKey: params.sessionKey,
       agentId: params.agentId,
       reason: "runtime-handle-replaced",
+      expectedHandle: cached.handle,
     });
+    if (!isCurrentActor()) {
+      throw createSupersededActorError(params.sessionKey);
+    }
   }
 
   const previousMeta = params.meta;
@@ -159,8 +179,8 @@ export async function ensureManagerRuntimeHandle(params: {
     mode === "persistent" &&
     previousIdentity != null &&
     !identityHasStableSessionId(previousIdentity);
-  const ensureSession = async (resumeSessionId?: string) =>
-    await withAcpRuntimeErrorBoundary({
+  const ensureSession = async (resumeSessionId?: string) => {
+    const ensured = await withAcpRuntimeErrorBoundary({
       run: async () =>
         await runtime.ensureSession({
           persistedHandle,
@@ -178,13 +198,29 @@ export async function ensureManagerRuntimeHandle(params: {
       fallbackCode: "ACP_SESSION_INIT_FAILED",
       fallbackMessage: "Could not initialize ACP session runtime.",
     });
+    if (!isCurrentActor()) {
+      await closeSupersededRuntimeHandle({
+        runtime,
+        handle: ensured,
+        sessionKey: params.sessionKey,
+      });
+      throw createSupersededActorError(params.sessionKey);
+    }
+    return ensured;
+  };
   let ensured: AcpRuntimeHandle;
   if (shouldPrepareFreshPersistentSession) {
+    if (!isCurrentActor()) {
+      throw createSupersededActorError(params.sessionKey);
+    }
     await runtime.prepareFreshSession?.({
       persistedHandle,
       sessionKey: params.sessionKey,
       agentId: params.agentId,
     });
+    if (!isCurrentActor()) {
+      throw createSupersededActorError(params.sessionKey);
+    }
   }
   if (persistedResumeSessionId) {
     try {
@@ -195,6 +231,9 @@ export async function ensureManagerRuntimeHandle(params: {
         fallbackCode: "ACP_SESSION_INIT_FAILED",
         fallbackMessage: "Could not initialize ACP session runtime.",
       });
+      if (!isCurrentActor()) {
+        throw acpError;
+      }
       if (isAcpOwnerRepairRequired(acpError) || acpError.code !== "ACP_SESSION_INIT_FAILED") {
         throw acpError;
       }
@@ -226,13 +265,20 @@ export async function ensureManagerRuntimeHandle(params: {
     ...runtimeOptions,
     ...(effectiveCwd ? { cwd: effectiveCwd } : {}),
   });
+  const ensuredIdentity = createIdentityFromEnsure({ handle: ensured, now });
+  // A new physical record cannot inherit resolved IDs from the previous record.
+  // In particular, a completed oneshot may be re-ensured for cleanup or status.
+  if (
+    identityForEnsure?.acpxRecordId &&
+    ensuredIdentity?.acpxRecordId &&
+    identityForEnsure.acpxRecordId !== ensuredIdentity.acpxRecordId
+  ) {
+    identityForEnsure = undefined;
+  }
   const nextIdentity =
     mergeSessionIdentity({
       current: identityForEnsure,
-      incoming: createIdentityFromEnsure({
-        handle: ensured,
-        now,
-      }),
+      incoming: ensuredIdentity,
       now,
     }) ?? identityForEnsure;
   const nextHandleIdentifiers = resolveRuntimeHandleIdentifiersFromIdentity(nextIdentity);
@@ -264,18 +310,42 @@ export async function ensureManagerRuntimeHandle(params: {
     !runtimeOptionsEqual(previousMeta.runtimeOptions, nextMeta.runtimeOptions) ||
     hasLegacyAcpIdentityProjection(previousMeta);
   if (shouldPersistMeta && !turnLocal) {
-    await params.writeSessionMeta({
-      preserveActivity: params.preserveActivity,
-      cfg: params.cfg,
+    try {
+      await params.writeSessionMeta({
+        preserveActivity: params.preserveActivity,
+        cfg: params.cfg,
+        sessionKey: params.sessionKey,
+        agentId: params.agentId,
+        isCurrentActor,
+        mutate: (_current, entry) => {
+          if (!isCurrentActor()) {
+            return undefined;
+          }
+          if (!entry) {
+            return null;
+          }
+          return nextMeta;
+        },
+      });
+    } catch (error) {
+      // This handle has not entered the cache, so reset cleanup cannot capture it.
+      if (!isCurrentActor()) {
+        await closeSupersededRuntimeHandle({
+          runtime,
+          handle: nextHandle,
+          sessionKey: params.sessionKey,
+        });
+      }
+      throw error;
+    }
+  }
+  if (!isCurrentActor()) {
+    await closeSupersededRuntimeHandle({
+      runtime,
+      handle: nextHandle,
       sessionKey: params.sessionKey,
-      agentId: params.agentId,
-      mutate: (_current, entry) => {
-        if (!entry) {
-          return null;
-        }
-        return nextMeta;
-      },
     });
+    throw createSupersededActorError(params.sessionKey);
   }
   params.runtimeHandles.set(params, {
     runtime,
@@ -292,4 +362,32 @@ export async function ensureManagerRuntimeHandle(params: {
     handle: nextHandle,
     meta: nextMeta,
   };
+}
+
+const SESSION_ACTOR_SUPERSEDED_DETAIL_CODE = "SESSION_ACTOR_SUPERSEDED";
+
+export function createSupersededActorError(sessionKey: string): AcpRuntimeError {
+  return new AcpRuntimeError(
+    "ACP_SESSION_INIT_FAILED",
+    `ACP session actor was superseded during runtime initialization for ${sessionKey}.`,
+    { detailCode: SESSION_ACTOR_SUPERSEDED_DETAIL_CODE },
+  );
+}
+
+export async function closeSupersededRuntimeHandle(params: {
+  runtime: AcpRuntime;
+  handle: AcpRuntimeHandle;
+  sessionKey: string;
+}): Promise<void> {
+  await params.runtime
+    .close({
+      handle: params.handle,
+      reason: "session-actor-superseded",
+      discardPersistentState: true,
+    })
+    .catch((error: unknown) => {
+      logVerbose(
+        `acp-manager: failed discarding superseded runtime for ${params.sessionKey}: ${String(error)}`,
+      );
+    });
 }

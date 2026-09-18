@@ -7,6 +7,7 @@ type OpenClawStateDatabaseSchemaMigrationRequiredKind =
   | "agent-databases-composite-primary-key"
   | "audit-events-v2"
   | "acp-execution-selection-v18"
+  | "legacy-cron-run-logs"
   | "legacy-workshop-review-index";
 
 export class OpenClawStateDatabaseSchemaMigrationRequiredError extends StartupMaintenanceRequiredError {

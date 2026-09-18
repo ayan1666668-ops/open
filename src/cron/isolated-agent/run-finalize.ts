@@ -29,7 +29,6 @@ import type { CronDeliveryTrace, CronRunTelemetry } from "../types.js";
 import { resolveCronChannelOutputPolicy } from "./channel-output-policy.js";
 import { resolveCronPayloadOutcome } from "./helpers.js";
 import { buildCronDeliveryTrace, loadCronDeliveryRuntime } from "./run-delivery-trace.js";
-import type { PreparedCronRunContext } from "./run-prepare.js";
 import {
   adoptCronRunSessionMetadata,
   setCronSessionAgentHarnessId,
@@ -41,7 +40,7 @@ import {
   deriveSessionTotalTokens,
   hasNonzeroUsage,
 } from "./run.runtime.js";
-import type { RunCronAgentTurnResult } from "./run.types.js";
+import type { PreparedCronRunContext, RunCronAgentTurnResult } from "./run.types.js";
 import { cleanupCronRunSessionAfterRun } from "./session-cleanup.js";
 
 type CronExecutionRuntime = typeof import("./run-executor.runtime.js");

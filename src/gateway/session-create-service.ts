@@ -25,11 +25,7 @@ import {
 import { resolveModelProviderAuthConfig } from "../agents/model-auth-provider-route.js";
 import type { ModelCatalogSnapshot } from "../agents/model-catalog.types.js";
 import { splitTrailingAuthProfile } from "../agents/model-ref-profile.js";
-import {
-  type ModelRef,
-  resolveDefaultModelForAgent,
-  resolveSubagentConfiguredModelSelection,
-} from "../agents/model-selection.js";
+import type { ModelRef } from "../agents/model-selection.js";
 import { resolveSessionModelRefCore as resolveSessionModelRef } from "../agents/session-model-ref.js";
 import { MODEL_SELECTION_LOCKED_PARENT_FORK_MESSAGE } from "../auto-reply/reply/session-fork.js";
 import type {
@@ -71,7 +67,6 @@ import {
 } from "../model-picker/execution-selection.js";
 import {
   isIncognitoSessionKey,
-  isSubagentSessionKey,
   normalizeAgentId,
   parseAgentSessionKey,
   resolveAgentIdFromSessionKey,
@@ -1033,6 +1028,7 @@ export async function createGatewaySession(params: {
       return { ok: false, error: preparationResult.error };
     }
     preparedLifecycle = preparationResult?.value;
+    const pendingWorktree = preparedLifecycle?.pendingWorktree ?? params.pendingWorktree;
     const spawnedCwd = normalizeOptionalString(
       preparedLifecycle?.spawnedCwd ?? params.spawnedCwd ?? inheritedWorkspace?.spawnedCwd,
     );
@@ -1095,41 +1091,25 @@ export async function createGatewaySession(params: {
             ),
           };
         }
-        if (params.initialEntry && existingEntry !== undefined) {
-          return {
-            ok: false,
-            error: errorShape(
-              ErrorCodes.INVALID_REQUEST,
-              "trusted initial session state requires a new session",
-            ),
-          };
-        }
-        if (params.catalogTarget && existingEntry !== undefined) {
-          return {
-            ok: false,
-            error: errorShape(
-              ErrorCodes.INVALID_REQUEST,
-              "catalog session target requires a new session",
-            ),
-          };
-        }
-        if ((pendingProjectGitUrl || params.pendingWorktree) && existingEntry !== undefined) {
-          return {
-            ok: false,
-            error: errorShape(
-              ErrorCodes.INVALID_REQUEST,
-              "workspace preparation requires a new session",
-            ),
-          };
-        }
-        if (spawnToolPolicy && existingEntry !== undefined) {
-          return {
-            ok: false,
-            error: errorShape(
-              ErrorCodes.INVALID_REQUEST,
-              "spawn tool policy requires a new session",
-            ),
-          };
+        if (existingEntry !== undefined) {
+          const creationOnlyInput = params.initialEntry
+            ? "trusted initial session state"
+            : params.catalogTarget
+              ? "catalog session target"
+              : pendingProjectGitUrl || pendingWorktree
+                ? "workspace preparation"
+                : spawnToolPolicy
+                  ? "spawn tool policy"
+                  : undefined;
+          if (creationOnlyInput) {
+            return {
+              ok: false,
+              error: errorShape(
+                ErrorCodes.INVALID_REQUEST,
+                `${creationOnlyInput} requires a new session`,
+              ),
+            };
+          }
         }
         if (
           params.visibility &&
@@ -1166,16 +1146,11 @@ export async function createGatewaySession(params: {
         const requestedFastMode = params.fastMode;
         let authorizedModel: Extract<ExistingSelectionCheck, { changes: false }>["model"];
         if (existingEntry?.sessionId && params.allowExistingModelSelection !== true) {
-          const gateDefaultModel = resolveDefaultModelForAgent({
-            cfg: params.cfg,
-            agentId: target.agentId,
-          });
           const sessionSelectionWouldChange = await existingSessionSelectionWouldChange({
             agentId: target.agentId,
             cfg: params.cfg,
             catalogModel,
-            defaultModel: gateDefaultModel.model,
-            defaultProvider: gateDefaultModel.provider,
+            sessionKey: target.canonicalKey,
             existingEntry,
             loadGatewayModelCatalogSnapshot: params.loadGatewayModelCatalogSnapshot,
             requestedModel,
@@ -1183,12 +1158,6 @@ export async function createGatewaySession(params: {
             requestedContextWindow,
             requestedFastMode,
             requestedThinkingLevel,
-            subagentModelHint: isSubagentSessionKey(target.canonicalKey)
-              ? resolveSubagentConfiguredModelSelection({
-                  cfg: params.cfg,
-                  agentId: target.agentId,
-                })
-              : undefined,
           });
           if (sessionSelectionWouldChange.changes) {
             return {
@@ -1344,9 +1313,7 @@ export async function createGatewaySession(params: {
           ...(params.visibility && createdNewEntry ? { visibility: params.visibility } : {}),
           ...(projectId && createdNewEntry ? { projectId } : {}),
           ...(pendingProjectGitUrl && createdNewEntry ? { pendingProjectGitUrl } : {}),
-          ...(params.pendingWorktree && createdNewEntry
-            ? { pendingWorktree: params.pendingWorktree }
-            : {}),
+          ...(pendingWorktree && createdNewEntry ? { pendingWorktree } : {}),
           ...(params.catalogTarget && catalogAgentRuntime
             ? {
                 modelSelectionLocked: true,
@@ -1538,6 +1505,7 @@ export async function createGatewaySession(params: {
           loadGatewayModelCatalogSnapshot: params.loadGatewayModelCatalogSnapshot,
           forkFrom: params.forkFrom,
           commitGuard,
+          withCommit: preparedLifecycle?.withCommit,
         });
         if (forkResult.status === "too-large") {
           return {
@@ -1576,6 +1544,10 @@ export async function createGatewaySession(params: {
             }
           : {}),
         commitGuard,
+        ...(preparedLifecycle?.withCommit ? { withCommit: preparedLifecycle.withCommit } : {}),
+        onLifecycleCommitted: () => {
+          lifecyclePreparationCommitted = true;
+        },
         ...(runtimeCwd ? { cwd: runtimeCwd } : {}),
       },
     );
@@ -1598,7 +1570,6 @@ export async function createGatewaySession(params: {
       storePath: target.storePath,
       isNew: createdNewEntry,
     };
-    lifecyclePreparationCommitted = true;
     if (!createdNewEntry) {
       refreshSessionPatchQueuedSelection({
         cfg: params.cfg,

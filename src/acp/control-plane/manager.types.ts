@@ -188,6 +188,7 @@ export type WriteManagerSessionMeta = (params: {
     current: SessionAcpLifecycle | undefined,
     entry: SessionEntry | undefined,
   ) => SessionAcpLifecycle | null | undefined;
+  isCurrentActor?: () => boolean;
   failOnError?: boolean;
   skipMaintenance?: boolean;
   takeCacheOwnership?: boolean;
@@ -206,6 +207,7 @@ export type EnsureManagerRuntimeHandle = (params: {
   meta: SessionAcpLifecycle;
   selectedBackend?: string;
   preserveActivity?: boolean;
+  isCurrentActor?: () => boolean;
 }) => Promise<{ runtime: AcpRuntime; handle: AcpRuntimeHandle; meta: SessionAcpLifecycle }>;
 
 export type ReconcileManagerRuntimeSessionIdentifiers = (params: {
@@ -217,6 +219,7 @@ export type ReconcileManagerRuntimeSessionIdentifiers = (params: {
   meta: SessionAcpLifecycle;
   runtimeStatus?: AcpRuntimeStatus;
   failOnStatusError: boolean;
+  isCurrentActor?: () => boolean;
 }) => Promise<{
   handle: AcpRuntimeHandle;
   meta: SessionAcpLifecycle;
@@ -230,11 +233,12 @@ export type SetManagerSessionState = (params: {
   state: SessionAcpLifecycle["state"];
   lastError?: string;
   clearLastError?: boolean;
+  isCurrentActor?: () => boolean;
 }) => Promise<void>;
 
 export type WithManagerSessionActor = <T>(
   target: AcpSessionTarget,
-  op: () => Promise<T>,
+  op: (isCurrentActor: () => boolean) => Promise<T>,
   signal?: AbortSignal,
 ) => Promise<T>;
 

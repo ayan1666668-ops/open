@@ -48,7 +48,6 @@ import { addSessionMember, removeSessionMember } from "../config/sessions/sessio
 import { resolveSqliteTargetFromSessionStorePath } from "../config/sessions/session-sqlite-target.js";
 import type { GatewayOperatorRoleDefinition } from "../config/types.gateway.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
-import { withTimeout } from "../infra/fs-safe.js";
 import { createEmptyPluginRegistry } from "../plugins/registry-empty.js";
 import { setActivePluginRegistry } from "../plugins/runtime.js";
 import {
@@ -57,7 +56,6 @@ import {
   isSessionLifecycleMutationActive,
   isSessionWorkAdmissionActive,
   runExclusiveSessionLifecycleMutation,
-  SESSION_WORK_ADMISSION_DRAIN_TIMEOUT_MS,
 } from "../sessions/session-lifecycle-admission.js";
 import { listSessionStateEventsSince } from "../sessions/session-state-events.js";
 import { createDeferredCore } from "../shared/deferred.js";
@@ -82,7 +80,6 @@ import {
   withOpenClawTestState,
 } from "../test-utils/openclaw-test-state.js";
 import { GATEWAY_CLIENT_MODES, GATEWAY_CLIENT_NAMES } from "../utils/message-channel.js";
-import { waitForChatAbortControllerRemoval } from "./chat-abort-lifecycle-internal.js";
 import type { ChatAbortControllerEntry } from "./chat-abort.js";
 import {
   attachGatewayLocalUserIngress,
@@ -93,6 +90,7 @@ import { sessionLog } from "./server-methods/sessions-shared.js";
 import { identifiedClient, soloClient } from "./server-methods/sessions-sharing.test-support.js";
 import type { GatewayClient } from "./server-methods/types.js";
 import { registerSessionCreateModelSelectionTests } from "./server-sessions.model-selection.test-support.js";
+import { waitForCreatedSessionRun } from "./server.sessions.create.projects.test-support.js";
 import { listSessionGroups } from "./session-groups.js";
 import { sessionSelectionFixture } from "./session-list.test-support.js";
 import {
@@ -182,10 +180,14 @@ vi.mock("./server-methods/chat-send-background.js", async (importOriginal) => {
 });
 
 let gitWorkspaceTemplate: string;
-const { createSessionStoreDir, createSelectedGlobalSessionStore, openClient } =
-  setupGatewaySessionsTestHarness(async (makeTempDir) => {
-    gitWorkspaceTemplate = await createGitWorkspace(makeTempDir("openclaw-session-git-template-"));
-  });
+const {
+  createSessionStoreDir,
+  createSelectedGlobalSessionStore,
+  openClient,
+  resetConfiguredGlobalAgentSessionStore,
+} = setupGatewaySessionsTestHarness(async (makeTempDir) => {
+  gitWorkspaceTemplate = await createGitWorkspace(makeTempDir("openclaw-session-git-template-"));
+});
 const execFileAsync = promisify(execFile);
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 const directoryLinkType = process.platform === "win32" ? "junction" : "dir";
@@ -243,30 +245,6 @@ async function withFixedOwnerSessionStore(
       config.clearRuntimeConfigSnapshot();
     }
   }
-}
-
-async function waitForCreatedSessionRun(
-  context: { chatAbortControllers: Map<string, ChatAbortControllerEntry> },
-  storePath: string,
-  sessionKey: string | undefined,
-) {
-  const released = getSessionWorkAdmissionRelease({
-    scope: storePath,
-    identities: [sessionKey],
-  });
-  const removed = await waitForChatAbortControllerRemoval({
-    entries: context.chatAbortControllers,
-    targets: [...context.chatAbortControllers].map(([runId, entry]) => ({ runId, entry })),
-    timeoutMs: SESSION_WORK_ADMISSION_DRAIN_TIMEOUT_MS,
-  });
-  if (released) {
-    await withTimeout(
-      released,
-      SESSION_WORK_ADMISSION_DRAIN_TIMEOUT_MS,
-      "worktree title run cleanup",
-    );
-  }
-  return removed;
 }
 
 // Read the real implementations back here rather than capturing them inside the
@@ -727,7 +705,7 @@ test.each([
             expect(resolveProviderIdForAuth("arcee", { config: cfg, storedCredential: true })).toBe(
               "arcee",
             );
-            const model = resolveModelWithRegistry({
+            const model = await resolveModelWithRegistry({
               cfg,
               provider: "arcee",
               modelId,
@@ -957,7 +935,6 @@ test("sessions.create without a model request does not require an unlinked confi
       "new unpinned session",
     );
     expect(entry.authProfileOverride).toBeUndefined();
-    expect(context.loadGatewayModelCatalogSnapshot).not.toHaveBeenCalled();
   });
 });
 
@@ -1024,6 +1001,10 @@ test.each(["foreign admin", "unidentified admin", "synthetic owner"] as const)(
         storePath,
         messages: [{ role: "user", content: "Review the deployment plan" }],
       });
+      await expect(
+        directSessionReq("sessions.describe", { key }, { client, context }),
+      ).resolves.toMatchObject({ ok: true });
+      context.loadGatewayModelCatalogSnapshot.mockClear();
       const before = loadSessionEntry({ sessionKey: key, storePath });
       if (kind === "foreign admin") {
         const other = ensureProfileForEmail("session-other-person@example.test");
@@ -1580,7 +1561,7 @@ test("sessions.create keeps incognito rows process-local through list, spawn, re
       "sessions.list",
       {},
     );
-    expect(listed.payload?.sessions).toContainEqual(
+    expect(listed.payload?.sessions).not.toContainEqual(
       expect.objectContaining({ key, incognito: true }),
     );
 
@@ -2107,7 +2088,8 @@ test("incognito operator RPCs treat identityless connections as owner-equivalent
       "sessions.list",
       {},
     );
-    expect(adminList.payload?.sessions?.some((session) => session.key === sessionKey)).toBe(true);
+    expect(adminList.ok).toBe(true);
+    expect(adminList.payload?.sessions?.some((session) => session.key === sessionKey)).toBe(false);
 
     for (const ws of [admin.ws, reader.ws, writer.ws]) {
       await expect(rpcReq(ws, "sessions.subscribe", {})).resolves.toMatchObject({ ok: true });
@@ -2119,7 +2101,7 @@ test("incognito operator RPCs treat identityless connections as owner-equivalent
         {},
       );
       expect(listed.ok).toBe(true);
-      expect(listed.payload?.sessions?.some((session) => session.key === sessionKey)).toBe(true);
+      expect(listed.payload?.sessions?.some((session) => session.key === sessionKey)).toBe(false);
     }
 
     const deniedCreate = await rpcReq(writer.ws, "sessions.create", {
@@ -2446,7 +2428,9 @@ test("sessions.create preserves keyed draft adoption idempotency", async () => {
 });
 
 test("sessions.create rejects draft visibility when policy disables drafts", async () => {
+  await createSessionStoreDir();
   testState.sessionConfig = { sharing: { drafts: false } };
+  (await getGatewayConfigModule()).setRuntimeConfigSnapshot(loadGatewayTestConfig());
   const created = await directSessionReq("sessions.create", {
     agentId: "main",
     visibility: "draft",
@@ -2554,20 +2538,20 @@ test("sessions.create rolls back failed provisioning before a same-key creator p
   const { storePath } = await createSessionStoreDir();
   const key = "agent:main:dashboard:worktree-rollback";
   const adminClient = { connect: { scopes: ["operator.admin"] } } as never;
-  const originalRemove = managedWorktrees.remove.bind(managedWorktrees);
+  const originalRollback = managedWorktrees.rollbackPreparation.bind(managedWorktrees);
   let failedWorktreeId: string | undefined;
   let successorWorktreeId: string | undefined;
   const { promise: rollbackGate, resolve: releaseRollback } = createDeferredCore();
   const { promise: rollbackStarted, resolve: markRollbackStarted } = createDeferredCore();
-  const removeSpy = vi.spyOn(managedWorktrees, "remove").mockImplementation(async (params) => {
-    if (params.reason === "session-create-failed") {
-      failedWorktreeId = params.id;
+  const rollbackSpy = vi
+    .spyOn(managedWorktrees, "rollbackPreparation")
+    .mockImplementation(async (record, withRollback) => {
+      failedWorktreeId = record.id;
       markRollbackStarted();
       expect(isSessionLifecycleMutationActive(storePath, [key])).toBe(true);
       await rollbackGate;
-    }
-    return await originalRemove(params);
-  });
+      await originalRollback(record, withRollback);
+    });
   try {
     const failedPromise = directSessionReq(
       "sessions.create",
@@ -2640,16 +2624,13 @@ test("sessions.create rolls back failed provisioning before a same-key creator p
       ok: false,
       error: { message: "sessions.create visibility requires a new session" },
     });
-    expect(
-      removeSpy.mock.calls.some(
-        ([params]) =>
-          params.reason === "session-create-failed" && params.id === successorWorktree.id,
-      ),
-    ).toBe(false);
+    expect(rollbackSpy.mock.calls.some(([record]) => record.id === successorWorktree.id)).toBe(
+      false,
+    );
     expect(getRegistryWorktree(process.env, successorWorktree.id)?.removedAt).toBeUndefined();
   } finally {
     releaseRollback();
-    removeSpy.mockRestore();
+    rollbackSpy.mockRestore();
     if (
       successorWorktreeId &&
       getRegistryWorktree(process.env, successorWorktreeId)?.removedAt === undefined
@@ -6518,6 +6499,12 @@ test("sessions.create checks selected global initialization in the requested age
 
 test("sessions.create sends selected global initial tasks to the requested agent", async () => {
   const { mainStorePath, workStorePath } = await createSelectedGlobalSessionStore();
+  onTestFinished(async () =>
+    resetConfiguredGlobalAgentSessionStore({
+      ...(await getGatewayConfigModule()),
+      configPath: requireNonEmptyString(process.env.OPENCLAW_CONFIG_PATH, "config path"),
+    }),
+  );
   const { ws } = await openClient();
 
   const created = await rpcReq<{

@@ -9,7 +9,10 @@ import {
   replaceSessionEntrySync,
 } from "../config/sessions/session-accessor.js";
 import * as transcriptTail from "../config/sessions/session-accessor.sqlite-active-events.js";
-import { SessionTranscriptProjectionUnavailableError } from "../config/sessions/session-transcript-projection-error.js";
+import {
+  SessionTranscriptProjectionUnavailableError,
+  SessionTranscriptStorageUnavailableError,
+} from "../config/sessions/session-transcript-projection-error.js";
 import type { InternalSessionEntry, SessionContextBudgetStatus } from "../config/sessions/types.js";
 import * as transcriptUsage from "../gateway/session-transcript-usage.js";
 import { createPluginMetadataSnapshotFixture } from "../plugins/plugin-metadata.test-support.js";
@@ -438,6 +441,23 @@ describe("buildStatusText prepared context windows", () => {
       { executionSelection: acceptedModelSelection("fallback", "small-model") },
       "fallback/small-model",
     ],
+    [
+      "accepted opaque ACP model",
+      "candidate",
+      "Vendor/Model:opaque",
+      {
+        executionSelection: {
+          state: "accepted",
+          selection: {
+            executor: { kind: "acp", backend: "fixture", agent: "fixture" },
+            model: { id: "Vendor/Model:opaque" },
+          },
+          fallbackPermission: "explicit",
+        },
+        model: "Vendor/Model:opaque",
+      },
+      "Vendor/Model:opaque",
+    ],
   ] satisfies Array<[string, string, string, Partial<InternalSessionEntry>, string]>)(
     "preserves typed selection for %s through the status owner",
     async (_name, provider, model, patch, expected) => {
@@ -452,6 +472,7 @@ describe("buildStatusText prepared context windows", () => {
           },
         ],
       });
+      const entry: InternalSessionEntry = { sessionId: "typed-selection", updatedAt: 1, ...patch };
       const parts = await withPluginRuntimeGenerationScope({ metadataSnapshot }, () =>
         renderPreparedStatus({
           cfg: { agents: { defaults: { model: { primary: "candidate/entry" } } } },
@@ -462,11 +483,18 @@ describe("buildStatusText prepared context windows", () => {
             { provider, id: model, contextWindow: 128_000, contextTokens: 128_000 },
           ],
           primaryModelLabelOverride: expected,
-          sessionEntry: { sessionId: "typed-selection", updatedAt: 1, ...patch },
+          sessionEntry: entry,
         }),
       );
       expect(parts.text).toContain(`Model: ${expected}`);
       expect(parts.text).not.toContain("Model: candidate/wrong");
+      if (
+        entry.executionSelection?.state === "accepted" &&
+        entry.executionSelection.selection.executor.kind === "acp"
+      ) {
+        expect(parts.text).not.toContain("Fallback:");
+        expect(parts.text).not.toContain("128k");
+      }
     },
   );
 
@@ -605,41 +633,39 @@ describe("buildStatusText prepared context windows", () => {
     expect(sessionEntry).toEqual(original);
   });
 
-  it.each([false, true])(
-    "catches only unavailable terminal projections (unavailable=%s)",
-    async (unavailable) => {
-      const error = unavailable
-        ? new SessionTranscriptProjectionUnavailableError("projection")
-        : new Error("unexpected reader failure");
-      const readTail = vi
-        .spyOn(transcriptTail, "readSessionTranscriptBoundedMessageTailPage")
-        .mockImplementation(() => {
-          throw error;
-        });
-      try {
-        const sessionEntry: InternalSessionEntry = {
-          sessionId: "projection",
-          updatedAt: 1,
-          status: "done",
-          lastRunId: "settled-run",
-          fallbackNotice: {
-            kind: "active",
-            selectedModel: "deepseek/deepseek-v4-flash",
-            activeModel: "fallback/small-model",
-          },
-        };
-        const result = renderPreparedStatus({ sessionEntry });
-        if (unavailable) {
-          expect((await result).text).not.toContain("Fallback:");
-        } else {
-          await expect(result).rejects.toBe(error);
-        }
-        expect(readTail).toHaveBeenCalledOnce();
-      } finally {
-        readTail.mockRestore();
+  it.each([
+    { error: new SessionTranscriptProjectionUnavailableError("projection"), unavailable: true },
+    { error: new SessionTranscriptStorageUnavailableError(), unavailable: true },
+    { error: new Error("unexpected reader failure"), unavailable: false },
+  ])("catches only unavailable terminal data ($error.name)", async ({ error, unavailable }) => {
+    const readTail = vi
+      .spyOn(transcriptTail, "readSessionTranscriptBoundedMessageTailPage")
+      .mockImplementation(() => {
+        throw error;
+      });
+    try {
+      const sessionEntry: InternalSessionEntry = {
+        sessionId: "projection",
+        updatedAt: 1,
+        status: "done",
+        lastRunId: "settled-run",
+        fallbackNotice: {
+          kind: "active",
+          selectedModel: "deepseek/deepseek-v4-flash",
+          activeModel: "fallback/small-model",
+        },
+      };
+      const result = renderPreparedStatus({ sessionEntry });
+      if (unavailable) {
+        expect((await result).text).not.toContain("Fallback:");
+      } else {
+        await expect(result).rejects.toBe(error);
       }
-    },
-  );
+      expect(readTail).toHaveBeenCalledOnce();
+    } finally {
+      readTail.mockRestore();
+    }
+  });
 
   it("renders a cold-cache prepared window in plain and rich status", async () => {
     const parts = await renderPreparedStatus();

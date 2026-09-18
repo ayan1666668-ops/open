@@ -57,10 +57,7 @@ function baseline(sessionId: string): SessionDiffBaseline {
   };
 }
 
-async function seedEntry(params: {
-  entry: InternalSessionEntry;
-  sessionKey?: string;
-}): Promise<{
+async function seedEntry(params: { entry: InternalSessionEntry; sessionKey?: string }): Promise<{
   agentId: string;
   entry: InternalSessionEntry;
   sessionKey: string;

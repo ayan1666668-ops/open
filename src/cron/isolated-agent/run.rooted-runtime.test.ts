@@ -15,7 +15,6 @@ import {
 import { makeIsolatedAgentParamsFixture } from "./job-fixtures.js";
 import { setupRunCronIsolatedAgentTurnSuite } from "./run.suite-helpers.js";
 import {
-  isCliProviderMock,
   loadRunCronIsolatedAgentTurn,
   mockRunCronFallbackPassthrough,
   pickLastNonEmptyTextFromPayloadsMock,
@@ -73,7 +72,6 @@ describe("runCronIsolatedAgentTurn — rooted runtime fallback", () => {
       model: "claude-opus-4-6",
     });
     resolveEffectiveAgentRuntimeMock.mockReturnValue("claude-cli");
-    isCliProviderMock.mockImplementation((provider: string) => provider === "claude-cli");
     runCliAgentMock.mockImplementation(async (params) => {
       params.onExecutionStarted?.();
       return {
@@ -125,7 +123,6 @@ describe("runCronIsolatedAgentTurn — rooted runtime fallback", () => {
     resolveEffectiveAgentRuntimeMock.mockImplementation(({ modelId }: { modelId: string }) =>
       modelId === "gpt-5.4" || modelId === "gpt-5" ? "openclaw" : "codex",
     );
-    isCliProviderMock.mockReturnValue(false);
     runEmbeddedAgentMock.mockImplementation(
       async (params: { model?: string; onExecutionStarted?: () => void }) => {
         params.onExecutionStarted?.();

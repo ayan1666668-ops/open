@@ -257,7 +257,7 @@ describe("mixed inline directives", () => {
       const { result } = await pending;
       expect(result).toMatchObject({ kind: "continue", provider: "openai", model: "gpt-5.6-luna" });
       expect(lifecycleEvents).toEqual([
-        { sessionKey: "agent:main:dm:1", agentId: "main", reason: "patch" },
+        { sessionKey: "agent:main:dm:1", agentId: "main", reason: "patch", catalogChanged: true },
       ]);
       expect(fixture.sessionEntry.authProfileOverrideSource).toBe("user");
       expect(loadSessionEntryReadOnly(fixture)?.authProfileOverrideSource).toBe("user");
@@ -303,6 +303,9 @@ describe("mixed inline directives", () => {
       } else {
         expect(persist).toHaveBeenCalledOnce();
         expect(enqueueSystemEvent).toHaveBeenCalledOnce();
+        expect(lifecycleEvents).toEqual([
+          { sessionKey: "agent:main:dm:1", agentId: "main", reason: "patch" },
+        ]);
       }
     },
   );

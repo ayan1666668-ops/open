@@ -955,6 +955,8 @@ enum class GatewayMethod(
   PluginsCredentialsInspect("plugins.credentials.inspect"),
   PluginsSkillsRead("plugins.skills.read"),
   DiagnosticsHeapProfile("diagnostics.heapProfile"),
+  DesktopRelease("desktop.release"),
+  McpAuthLogin("mcp.authLogin"),
 }
 
 enum class GatewayEvent(

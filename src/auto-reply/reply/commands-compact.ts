@@ -22,6 +22,7 @@ import {
   type InternalSessionEntry,
 } from "../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import { resolveSystemEventQueueKey } from "../../infra/system-event-ownership.js";
 import { ModelSelectionLockedError } from "../../sessions/model-overrides.js";
 import { createLazyImportLoader } from "../../shared/lazy-promise.js";
 import { formatTokenCount } from "../../utils/token-format.js";
@@ -443,7 +444,9 @@ export const handleCompactCommand: CommandHandler = async (params) => {
   const line = reason
     ? `${compactLabel}: ${reason} • ${contextSummary}`
     : `${compactLabel} • ${contextSummary}`;
-  runtime.enqueueSystemEvent(line, { sessionKey: params.sessionKey });
+  runtime.enqueueSystemEvent(line, {
+    sessionKey: resolveSystemEventQueueKey(params.sessionKey, sessionAgentId),
+  });
   return {
     shouldContinue: false,
     sessionCompaction: {

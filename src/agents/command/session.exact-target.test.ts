@@ -3,6 +3,7 @@ import { expect, it, vi } from "vitest";
 import { resolveInternalSessionEffectsIdentity } from "../../config/sessions/internal-session-key.js";
 import * as sessionAccessor from "../../config/sessions/session-accessor.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import type { SessionExecutionSelection } from "../../model-picker/execution-selection.js";
 import {
   isOpenClawAgentDatabaseOpen,
   resolveIncognitoOpenClawAgentSqlitePath,
@@ -21,14 +22,21 @@ it.each(["work", "dashboard:incognito-work"])(
         agents: { defaults: {} },
         session: { store: storePath, reset: { mode: "idle", idleMinutes: 60 } },
       } satisfies OpenClawConfig;
+      const executionSelection = {
+        state: "accepted",
+        selection: {
+          model: { provider: "openai", id: "gpt-5.6-luna" },
+          executor: { kind: "harness", id: "openclaw" },
+        },
+        fallbackPermission: "explicit",
+      } satisfies SessionExecutionSelection;
       const entry = {
         sessionId: "selected-session",
         updatedAt: Date.now(),
         sessionStartedAt: Date.now(),
         lastInteractionAt: Date.now(),
         thinkingLevel: "high",
-        modelOverride: "gpt-5.6-luna",
-        providerOverride: "openai",
+        executionSelection,
         lifecycleRevision: "selected-revision",
         skillsSnapshot: { prompt: "selected prompt", skills: [] },
         ...(incognito ? { incognito: true as const } : {}),
@@ -40,8 +48,7 @@ it.each(["work", "dashboard:incognito-work"])(
       })?.entry;
       expect(persisted).toMatchObject({
         thinkingLevel: "high",
-        modelOverride: "gpt-5.6-luna",
-        providerOverride: "openai",
+        executionSelection,
         lifecycleRevision: expect.any(String),
       });
       if (!incognito) {

@@ -371,7 +371,7 @@ export function resolveSessionModelFallbacks(
     params.modelFallbacksOverride !== undefined ||
     configured !== undefined ||
     params.userSelection !== undefined ||
-    (params.ownsCandidateChain ?? Boolean(getSessionExecutionSelection(entry)))
+    (params.ownsCandidateChain ?? entry?.executionSelection?.fallbackPermission === "explicit")
       ? "explicit"
       : "inherited";
   const candidates = resolveModelCandidateChain({

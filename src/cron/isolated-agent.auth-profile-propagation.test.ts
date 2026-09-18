@@ -1,4 +1,5 @@
 // Auth profile propagation tests cover isolated agent auth profile forwarding.
+import { expectDefined } from "@openclaw/normalization-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import { closeAuthProfileReadPool } from "../agents/auth-profiles/sqlite.js";
@@ -17,7 +18,7 @@ import {
 } from "./isolated-agent/job-fixtures.js";
 import { setupRunCronIsolatedAgentTurnSuite } from "./isolated-agent/run.suite-helpers.js";
 import {
-  isCliProviderMock,
+  resolveEffectiveAgentRuntimeMock,
   loadRunCronIsolatedAgentTurn,
   mockRunCronFallbackPassthrough,
   resolveConfiguredModelRefMock,
@@ -28,6 +29,7 @@ import {
 } from "./isolated-agent/run.test-harness.js";
 
 const runCronIsolatedAgentTurn = await loadRunCronIsolatedAgentTurn();
+const { evaluatePublishedModelRuntimeChoice } = await import("../agents/model-runtime-choice.js");
 const { resolveAgentDir } = await import("./isolated-agent/run.runtime.js");
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 
@@ -153,7 +155,7 @@ describe("runCronIsolatedAgentTurn auth profile propagation (#20624, #90991)", (
   });
 
   it("passes resolved authProfileId to runCliAgent when CLI execution provider is active (#144047)", async () => {
-    isCliProviderMock.mockReturnValue(true);
+    resolveEffectiveAgentRuntimeMock.mockReturnValue("claude-cli");
     mockRunCronFallbackPassthrough();
     runCliAgentMock.mockResolvedValue({
       payloads: [{ text: "cli done" }],
@@ -161,7 +163,7 @@ describe("runCronIsolatedAgentTurn auth profile propagation (#20624, #90991)", (
     });
     setupClaudeCliBackend();
     resolveConfiguredModelRefMock.mockReturnValue({
-      provider: "claude-cli",
+      provider: "anthropic",
       model: "claude-opus-4-8",
     });
     resolveSessionAuthSelectionMock.mockResolvedValue({
@@ -210,103 +212,118 @@ describe("runCronIsolatedAgentTurn auth profile propagation (#20624, #90991)", (
     });
   });
 
-  it("resolves and forwards ordered CLI auth profile on fallback to Claude CLI (#144047)", async () => {
-    isCliProviderMock.mockImplementation((provider: string) => provider === "claude-cli");
-    setupClaudeCliBackend();
-    resolveConfiguredModelRefMock.mockReturnValue({
-      provider: "anthropic",
-      model: "claude-opus-4-6",
-    });
-    resolveSessionAuthSelectionMock.mockResolvedValue({
-      profileId: "openai:default",
-      source: "auto",
-    });
-    saveAuthProfileStore(
-      {
-        version: 1,
-        profiles: {
-          "openai:default": {
-            type: "api_key",
-            provider: "openai",
-            key: "sk-test",
-          },
-          "claude-cli:personal": {
-            type: "oauth",
-            provider: "claude-cli",
-            access: "test-token",
-            refresh: "test-refresh",
-            expires: Date.now() + 3600_000,
-          },
-        },
-      },
-      agentDir,
-    );
-    runCliAgentMock.mockImplementation(async (request) => {
-      request.userTurnTranscriptRecorder?.markBlocked();
-      return {
-        payloads: [{ text: "fallback ok" }],
-        meta: { agentMeta: {} },
-      };
-    });
-    runWithModelFallbackMock.mockImplementation(async (params: TestModelFallbackRunnerParams) => {
-      const firstResult = await runInitialModelFallbackAttempt(params);
-      const secondResult = await runFallbackModelAttempt(
-        params,
-        "anthropic",
-        "claude-sonnet-4-6",
-        "unknown",
+  it.each(["auto", undefined] as const)(
+    "resolves ordered CLI auth after an incompatible executor fallback with source=%s",
+    async (source) => {
+      resolveEffectiveAgentRuntimeMock.mockImplementation(({ modelId }: { modelId: string }) =>
+        modelId === "claude-sonnet-4-6" ? "claude-cli" : "openclaw",
       );
-      return {
-        result: secondResult ?? firstResult,
+      const evaluate = expectDefined(
+        vi.mocked(evaluatePublishedModelRuntimeChoice).getMockImplementation(),
+        "configured cron runtime eligibility",
+      );
+      vi.mocked(evaluatePublishedModelRuntimeChoice).mockImplementation(async (params) =>
+        params.model === "claude-sonnet-4-6" && params.runtimeId === "openclaw"
+          ? { kind: "unsupported", message: "This fixture model requires Claude CLI." }
+          : evaluate(params),
+      );
+      setupClaudeCliBackend();
+      resolveConfiguredModelRefMock.mockReturnValue({
         provider: "anthropic",
-        model: "claude-sonnet-4-6",
-        attempts: [],
-      };
-    });
-
-    const result = await runCronIsolatedAgentTurn(
-      makeIsolatedAgentParamsFixture({
-        cfg: {
-          agents: {
-            defaults: {
-              model: {
-                primary: "anthropic/claude-opus-4-6",
-                fallbacks: ["anthropic/claude-sonnet-4-6"],
-              },
-              models: {
-                "anthropic/claude-sonnet-4-6": { agentRuntime: { id: "claude-cli" } },
-              },
+        model: "claude-opus-4-6",
+      });
+      resolveSessionAuthSelectionMock.mockResolvedValue({
+        profileId: "openai:default",
+        source,
+      });
+      saveAuthProfileStore(
+        {
+          version: 1,
+          profiles: {
+            "openai:default": {
+              type: "api_key",
+              provider: "openai",
+              key: "sk-test",
+            },
+            "claude-cli:personal": {
+              type: "oauth",
+              provider: "claude-cli",
+              access: "test-token",
+              refresh: "test-refresh",
+              expires: Date.now() + 3600_000,
             },
           },
-          auth: {
-            order: { "claude-cli": ["claude-cli:personal"] },
-          },
         },
-        job: makeIsolatedAgentJobFixture({
-          agentId: "main",
-          delivery: { mode: "none" },
-          payload: { kind: "agentTurn", message: "check status" },
-        }),
-        message: "check status",
-        sessionKey: "cron:job-1",
-        lane: "cron",
-      }),
-    );
+        agentDir,
+      );
+      runCliAgentMock.mockImplementation(async (request) => {
+        request.userTurnTranscriptRecorder?.markBlocked();
+        return {
+          payloads: [{ text: "fallback ok" }],
+          meta: { agentMeta: {} },
+        };
+      });
+      runWithModelFallbackMock.mockImplementation(async (params: TestModelFallbackRunnerParams) => {
+        const firstResult = await runInitialModelFallbackAttempt(params);
+        const secondResult = await runFallbackModelAttempt(
+          params,
+          "anthropic",
+          "claude-sonnet-4-6",
+          "unknown",
+        );
+        return {
+          outcome: "completed",
+          result: secondResult ?? firstResult,
+          provider: "anthropic",
+          model: "claude-sonnet-4-6",
+          attempts: [],
+        };
+      });
 
-    expect(result.status).toBe("ok");
-    expect(runCliAgentMock).toHaveBeenCalledOnce();
-    expect(getCliAgentParams()).toMatchObject({
-      provider: "claude-cli",
-      authProfileId: "claude-cli:personal",
-    });
-  });
+      const result = await runCronIsolatedAgentTurn(
+        makeIsolatedAgentParamsFixture({
+          cfg: {
+            agents: {
+              defaults: {
+                model: {
+                  primary: "anthropic/claude-opus-4-6",
+                  fallbacks: ["anthropic/claude-sonnet-4-6"],
+                },
+                models: {
+                  "anthropic/claude-sonnet-4-6": { agentRuntime: { id: "claude-cli" } },
+                },
+              },
+            },
+            auth: {
+              order: { "claude-cli": ["claude-cli:personal"] },
+            },
+          },
+          job: makeIsolatedAgentJobFixture({
+            agentId: "main",
+            delivery: { mode: "none" },
+            payload: { kind: "agentTurn", message: "check status" },
+          }),
+          message: "check status",
+          sessionKey: "cron:job-1",
+          lane: "cron",
+        }),
+      );
+
+      expect(result.status).toBe("ok");
+      expect(runCliAgentMock).toHaveBeenCalledOnce();
+      expect(getCliAgentParams()).toMatchObject({
+        provider: "claude-cli",
+        authProfileId: "claude-cli:personal",
+      });
+    },
+  );
 
   it("fails closed when user-locked auth profile cannot be used by CLI backend (#144047)", async () => {
-    isCliProviderMock.mockReturnValue(true);
+    resolveEffectiveAgentRuntimeMock.mockReturnValue("claude-cli");
     mockRunCronFallbackPassthrough();
     setupClaudeCliBackend();
     resolveConfiguredModelRefMock.mockReturnValue({
-      provider: "claude-cli",
+      provider: "anthropic",
       model: "claude-opus-4-8",
     });
     resolveSessionAuthSelectionMock.mockResolvedValue({
@@ -344,97 +361,5 @@ describe("runCronIsolatedAgentTurn auth profile propagation (#20624, #90991)", (
     expect(result.status).toBe("error");
     expect(result.error).toMatch(/cannot use auth profile "openai:work" owned by "openai"/i);
     expect(runCliAgentMock).not.toHaveBeenCalled();
-  });
-
-  it("defaults undefined authProfileIdSource to auto and allows fallback to Claude CLI (#144047)", async () => {
-    isCliProviderMock.mockImplementation((provider: string) => provider === "claude-cli");
-    setupClaudeCliBackend();
-    resolveConfiguredModelRefMock.mockReturnValue({
-      provider: "anthropic",
-      model: "claude-opus-4-6",
-    });
-    // Legacy / unspecified authProfileIdSource (undefined)
-    resolveSessionAuthSelectionMock.mockResolvedValue({
-      profileId: "openai:legacy",
-      source: undefined,
-    });
-    saveAuthProfileStore(
-      {
-        version: 1,
-        profiles: {
-          "openai:legacy": {
-            type: "api_key",
-            provider: "openai",
-            key: "sk-test",
-          },
-          "claude-cli:personal": {
-            type: "oauth",
-            provider: "claude-cli",
-            access: "test-token",
-            refresh: "test-refresh",
-            expires: Date.now() + 3600_000,
-          },
-        },
-      },
-      agentDir,
-    );
-    runCliAgentMock.mockImplementation(async (request) => {
-      request.userTurnTranscriptRecorder?.markBlocked();
-      return {
-        payloads: [{ text: "fallback ok" }],
-        meta: { agentMeta: {} },
-      };
-    });
-    runWithModelFallbackMock.mockImplementation(async (params: TestModelFallbackRunnerParams) => {
-      const firstResult = await runInitialModelFallbackAttempt(params);
-      const secondResult = await runFallbackModelAttempt(
-        params,
-        "anthropic",
-        "claude-sonnet-4-6",
-        "unknown",
-      );
-      return {
-        result: secondResult ?? firstResult,
-        provider: "anthropic",
-        model: "claude-sonnet-4-6",
-        attempts: [],
-      };
-    });
-
-    const result = await runCronIsolatedAgentTurn(
-      makeIsolatedAgentParamsFixture({
-        cfg: {
-          agents: {
-            defaults: {
-              model: {
-                primary: "anthropic/claude-opus-4-6",
-                fallbacks: ["anthropic/claude-sonnet-4-6"],
-              },
-              models: {
-                "anthropic/claude-sonnet-4-6": { agentRuntime: { id: "claude-cli" } },
-              },
-            },
-          },
-          auth: {
-            order: { "claude-cli": ["claude-cli:personal"] },
-          },
-        },
-        job: makeIsolatedAgentJobFixture({
-          agentId: "main",
-          delivery: { mode: "none" },
-          payload: { kind: "agentTurn", message: "check status" },
-        }),
-        message: "check status",
-        sessionKey: "cron:job-1",
-        lane: "cron",
-      }),
-    );
-
-    expect(result.status).toBe("ok");
-    expect(runCliAgentMock).toHaveBeenCalledOnce();
-    expect(getCliAgentParams()).toMatchObject({
-      provider: "claude-cli",
-      authProfileId: "claude-cli:personal",
-    });
   });
 });

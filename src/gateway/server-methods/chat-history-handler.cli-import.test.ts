@@ -15,10 +15,10 @@ import {
   projectChatDisplayMessages,
 } from "../chat-display-projection.js";
 import * as cliSessionHistory from "../cli-session-history.js";
-import { createDirectChatContext } from "../server-chat.agent-events.test-helpers.js";
 import { getMaxChatHistoryMessagesBytes } from "../server-constants.js";
 import { readChatHistoryMessageId } from "../session-history-tail.js";
 import { chatHistoryHandlers } from "./chat-history-handler.js";
+import { createHistoryReadContext } from "./chat-history.test-helpers.js";
 
 type HistoryPage = {
   messages: unknown[];
@@ -91,7 +91,7 @@ async function withImportedHistory(
         })
         .join("\n") + "\n",
     );
-    const context = createDirectChatContext();
+    const context = await createHistoryReadContext();
     const handler = expectDefined(chatHistoryHandlers[method], "history handler");
     const read = async (params: HistoryRequest): Promise<HistoryPage> => {
       let result: HistoryPage | undefined;
@@ -148,7 +148,7 @@ async function withImportedSnapshot(
       .spyOn(cliSessionHistory, "readChatHistoryCliSessionImportSnapshot")
       .mockResolvedValue(messages);
     const handler = expectDefined(chatHistoryHandlers[method], "history handler");
-    const context = createDirectChatContext();
+    const context = await createHistoryReadContext();
     try {
       await run(async (params) => {
         let result: HistoryPage | undefined;
@@ -419,7 +419,7 @@ describe("CLI-imported history anchors", () => {
       let result: HistoryPage | undefined;
       await handler({
         params: { sessionKey: scope.sessionKey, messageId: local.messageId, limit: 2 },
-        context: createDirectChatContext(),
+        context: await createHistoryReadContext(),
         req: { type: "req", id: "metadata-anchor", method: "chat.history" },
         client: null,
         isWebchatConnect: () => false,
@@ -488,7 +488,7 @@ describe("CLI-imported history anchors", () => {
         path.join(projectDir, `${cliSessionId}.jsonl`),
         `${importedRows.join("\n")}\n`,
       );
-      const context = createDirectChatContext();
+      const context = await createHistoryReadContext();
       const handler = expectDefined(chatHistoryHandlers["chat.history"], "history handler");
       const read = async (params: HistoryRequest) => {
         let result: HistoryPage | undefined;
@@ -578,7 +578,7 @@ describe("CLI-imported history anchors", () => {
       let result: HistoryPage | undefined;
       await handler({
         params: { sessionKey: scope.sessionKey, limit: 1, offset: 1 },
-        context: createDirectChatContext(),
+        context: await createHistoryReadContext(),
         req: { type: "req", id: "metadata-recovery", method: "chat.history" },
         client: null,
         isWebchatConnect: () => false,
@@ -679,7 +679,7 @@ describe("CLI-imported history anchors", () => {
       let result: unknown;
       await handler({
         params: { sessionKey: scope.sessionKey, messageId: hidden.messageId, limit: 2 },
-        context: createDirectChatContext(),
+        context: await createHistoryReadContext(),
         req: { type: "req", id: "filtered-anchor", method: "chat.history" },
         client: null,
         isWebchatConnect: () => false,

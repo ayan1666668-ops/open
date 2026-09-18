@@ -1,8 +1,8 @@
 import { performance } from "node:perf_hooks";
 import { afterEach, expect, test, vi } from "vitest";
+import { loadPublishedPreparedModelCatalogOwnerSnapshot } from "../../agents/prepared-model-catalog.js";
 import {
   markPreparedModelRuntimeSnapshotsStale,
-  prepareModelRuntimeSnapshot,
   rejectPendingPreparedModelRuntimeReplacement,
 } from "../../agents/prepared-model-runtime.js";
 import { resetPreparedModelRuntimeSnapshotsForTest } from "../../agents/prepared-model-runtime.test-support.js";
@@ -87,11 +87,8 @@ test("catalog reload releases the agent writer while preserving same-session ord
         agentId: "main",
         getConfig: () => ({}),
         loadPublishedPreparedModelCatalogOwnerSnapshot: (params) => {
-          // The catalog loader yields before owner lookup; signal only after the gate has a waiter.
-          const pending = prepareModelRuntimeSnapshot({
-            ...params,
-            agentDir: state.agentDir("main"),
-          });
+          const pending = loadPublishedPreparedModelCatalogOwnerSnapshot(params);
+          // The real owner captures the replacement gate synchronously before returning.
           entered.resolve();
           return pending;
         },

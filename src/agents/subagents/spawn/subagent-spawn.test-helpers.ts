@@ -96,6 +96,7 @@ export async function installSpawnModelCatalogFixture(defaultWorkspaceDir?: stri
         allowGatewaySubagentBinding: false,
         modelCatalog: { entries, routeVariants: entries },
         configuredRuntimeModels: [],
+        findConfiguredRuntimeModel: () => undefined,
         inlineProviderModels: [],
         createStores() {
           const authStorage = AuthStorage.inMemory({});

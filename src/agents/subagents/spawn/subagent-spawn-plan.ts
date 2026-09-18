@@ -33,11 +33,6 @@ export function splitModelRef(ref?: string) {
     const model = trimmed.slice(slash + 1);
     return { provider, model };
   }
-  const provider = undefined;
-  const model = trimmed;
-  if (model) {
-    return { provider, model };
-  }
   return { provider: undefined, model: trimmed };
 }
 

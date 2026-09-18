@@ -207,24 +207,85 @@ describe("AcpSessionManager accepted controls", () => {
     expect(state.readSelection().model).toEqual({ id: "qa-accepted" });
   });
 
-  it("rejects a direct model control for a locked session before contacting the runtime", async () => {
+  it.each([
+    "before initialization",
+    "during capability discovery",
+    "after reservation",
+    "before direct commit",
+    "before callback commit",
+  ])("rejects a model control when selection becomes locked %s", async (phase) => {
     const state = setupSession();
-    const read = hoisted.readAcpSessionEntryMock.getMockImplementation()!;
-    hoisted.readAcpSessionEntryMock.mockImplementation((params) => {
-      const current = read(params);
-      return { ...current, entry: { ...current.entry, modelSelectionLocked: true } };
+    const before = state.readEntry().executionSelection;
+    const patch = expectDefined(state.patchEntry.getMockImplementation(), "canonical row writer");
+    const lockSelection = async () =>
+      await patch({ agentId: "main", sessionKey }, (entry) => ({
+        ...entry,
+        modelSelectionLocked: true,
+      }));
+    if (phase === "before initialization") {
+      await lockSelection();
+    } else if (phase === "during capability discovery") {
+      state.getCapabilities.mockImplementationOnce(async () => {
+        await lockSelection();
+        return { controls: ["session/set_config_option"], configOptionKeys: ["model"] };
+      });
+    } else if (phase === "after reservation") {
+      const write = expectDefined(
+        hoisted.upsertAcpSessionMetaMock.getMockImplementation(),
+        "canonical lifecycle writer",
+      );
+      hoisted.upsertAcpSessionMetaMock.mockImplementation(async (input) => {
+        const committed = await write(input);
+        if (committed?.acp?.lastError === ACP_SELECTION_REPAIR_MESSAGE) {
+          await lockSelection();
+        }
+        return committed;
+      });
+    } else if (phase === "before direct commit") {
+      state.patchEntry.mockImplementationOnce(async (scope, update, options) => {
+        await lockSelection();
+        return await patch(scope, update, options);
+      });
+    }
+    const change =
+      phase === "before callback commit"
+        ? state.manager.withExecutionSelection({
+            cfg: baseCfg,
+            sessionKey,
+            selection: { ...state.readSelection(), model: { id: "qa-next" } },
+            commitAccepted: async (selection, assertCommitAllowed) => {
+              await lockSelection();
+              await state.patchEntry(
+                { agentId: "main", sessionKey },
+                (entry) => {
+                  commitSessionExecutionSelection(entry, selection);
+                  return entry;
+                },
+                { replaceEntry: true, assertCommitAllowed },
+              );
+            },
+          })
+        : state.manager.setSessionConfigOption({
+            cfg: baseCfg,
+            sessionKey,
+            key: "model",
+            value: "qa-next",
+          });
+    await expect(change).rejects.toMatchObject({
+      code: "ACP_BACKEND_UNSUPPORTED_CONTROL",
     });
-    await expect(
-      state.manager.setSessionConfigOption({
-        cfg: baseCfg,
-        sessionKey,
-        key: "model",
-        value: "qa-next",
-      }),
-    ).rejects.toMatchObject({ code: "ACP_BACKEND_UNSUPPORTED_CONTROL" });
-    expect(state.ensureSession).not.toHaveBeenCalled();
-    expect(state.setConfigOption).not.toHaveBeenCalled();
-    expect(state.readOptions().model).toBe(model);
+    if (phase === "before initialization") {
+      expect(state.ensureSession).not.toHaveBeenCalled();
+    }
+    expect(state.setConfigOption.mock.calls.map(([input]) => input.value)).toEqual(
+      phase === "before direct commit" || phase === "before callback commit"
+        ? ["qa-next", model]
+        : [],
+    );
+    expect(state.readEntry().executionSelection).toEqual(before);
+    expect(state.readEntry().modelSelectionLocked).toBe(true);
+    expect(state.readMeta().state).toBe("idle");
+    expect(state.readMeta().lastError).toBeUndefined();
   });
 
   it("returns the accepted model and uses it after reopening", async () => {
@@ -462,14 +523,20 @@ describe("AcpSessionManager accepted controls", () => {
   });
 
   it.each(["thinking", "effort", "reasoning_effort", "thought_level"])(
-    "persists the accepted value of an explicit %s selection",
+    "persists the accepted value of an explicit %s selection in a model-locked session",
     async (key) => {
       const state = setupSession();
+      const selection = state.readSelection();
+      await state.patchEntry({ agentId: "main", sessionKey }, (entry) => ({
+        ...entry,
+        modelSelectionLocked: true,
+      }));
       state.setConfigOption.mockResolvedValue(acceptedOptions("medium", ["low", "medium", "high"]));
       await expect(
         state.manager.setSessionConfigOption({ cfg: baseCfg, sessionKey, key, value: "high" }),
       ).resolves.toEqual({ model, thinking: "medium" });
       expect(state.readOptions()).toEqual({ model, thinking: "medium" });
+      expect(state.readSelection()).toEqual(selection);
     },
   );
 

@@ -8,7 +8,6 @@ import {
 import { makeIsolatedAgentJobFixture, makeIsolatedAgentParamsFixture } from "./job-fixtures.js";
 import { setupRunCronIsolatedAgentTurnSuite } from "./run.suite-helpers.js";
 import {
-  isCliProviderMock,
   loadRunCronIsolatedAgentTurn,
   mockRunCronFallbackPassthrough,
   patchSessionEntryMock,
@@ -261,12 +260,15 @@ describe("runCronIsolatedAgentTurn — payload.fallbacks", () => {
   });
 
   it.each([
-    { name: "a different embedded runtime", runtime: "openclaw", cli: false },
-    { name: "a CLI execution path", runtime: "test-cli", cli: true },
-  ])("fails closed before executing stored Codex authority on $name", async ({ runtime, cli }) => {
+    { name: "a different embedded runtime", runtime: "openclaw" },
+    { name: "a CLI execution path", runtime: "claude-cli" },
+  ])("fails closed before executing stored Codex authority on $name", async ({ runtime }) => {
     mockRunCronFallbackPassthrough();
     resolveEffectiveAgentRuntimeMock.mockReturnValue(runtime);
-    isCliProviderMock.mockReturnValue(cli);
+    resolveConfiguredModelRefMock.mockReturnValue({
+      provider: "anthropic",
+      model: "claude-sonnet-4-6",
+    });
 
     const result = await runCronIsolatedAgentTurn(
       makeIsolatedAgentParamsFixture({

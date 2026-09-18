@@ -8,6 +8,7 @@ import { resolveCollapsedSessionAuthPinSource } from "../../config/sessions/auth
 import { loadSessionEntryReadOnly } from "../../config/sessions/session-accessor.js";
 import { adoptPersistedSessionSnapshot } from "../../config/sessions/session-snapshot.js";
 import { triggerSessionPatchHook } from "../../gateway/session-patch-hooks.js";
+import { resolveSystemEventQueueKey } from "../../infra/system-event-ownership.js";
 import { enqueueSystemEvent } from "../../infra/system-events.js";
 import {
   resolveExecutionSelectionExecutorKind,
@@ -36,7 +37,10 @@ import {
   resolveSupportedThinkingLevel,
 } from "../thinking.js";
 import type { ReplyPayload } from "../types.js";
-import { maybeHandleUnexpectedDirectiveArguments } from "./directive-handling.arguments.js";
+import {
+  maybeHandleUnexpectedDirectiveArguments,
+  resolveInvalidExecDirectiveMessage,
+} from "./directive-handling.arguments.js";
 import { resolveModelRuntimeDirective } from "./directive-handling.model-runtime.js";
 import { resolveModelSelectionFromDirective } from "./directive-handling.model-selection.js";
 import { maybeHandleModelDirectiveInfo } from "./directive-handling.model.js";
@@ -291,15 +295,7 @@ export async function handleDirectiveOnly(
     return acknowledgeIgnoredDirective(...statusResponse);
   }
   if (directives.hasExecDirective) {
-    const invalidExecMessage = directives.invalidExecHost
-      ? `Unrecognized exec host "${directives.rawExecHost ?? ""}". Valid hosts: auto, sandbox, gateway, node.`
-      : directives.invalidExecSecurity
-        ? `Unrecognized exec security "${directives.rawExecSecurity ?? ""}". Valid: deny, allowlist, full.`
-        : directives.invalidExecAsk
-          ? `Unrecognized exec ask "${directives.rawExecAsk ?? ""}". Valid: off, on-miss, always.`
-          : directives.invalidExecNode
-            ? "Exec node requires a value."
-            : undefined;
+    const invalidExecMessage = resolveInvalidExecDirectiveMessage(directives);
     if (invalidExecMessage) {
       return acknowledgeIgnoredDirective({ text: invalidExecMessage }, "hasExecDirective");
     }
@@ -436,7 +432,11 @@ export async function handleDirectiveOnly(
     };
     let directiveFieldsUpdated = false;
     let selectionCommitted = false;
-    const commitDirectives = async (selection?: ExecutionSelection): Promise<void> => {
+    const commitDirectives = async (
+      selection: ExecutionSelection | undefined,
+      assertCurrentActor: () => void,
+    ): Promise<void> => {
+      assertCurrentActor();
       directiveFieldsUpdated =
         !params.persistenceState &&
         applySessionDirectiveFields({
@@ -481,8 +481,10 @@ export async function handleDirectiveOnly(
           reassertLiveModelSwitchPending:
             modelSelectionUpdated && sessionEntry.liveModelSwitchPending === true,
           touchedFields: touchedSessionFields,
-          validateCommit: () =>
-            modelResolution.validateAuthProfileSelection?.() ?? validateRuntimeSelection?.(),
+          validateCommit: () => {
+            assertCurrentActor();
+            return modelResolution.validateAuthProfileSelection?.() ?? validateRuntimeSelection?.();
+          },
         });
         if (persistence.status !== "applied") {
           const errorText =
@@ -511,7 +513,7 @@ export async function handleDirectiveOnly(
           commitAccepted: commitDirectives,
         });
       } else {
-        await commitDirectives();
+        await commitDirectives(undefined, assertActive);
       }
     } catch (error) {
       const failure = acpModelSelection
@@ -524,14 +526,16 @@ export async function handleDirectiveOnly(
             selectionCommitted,
           })
         : undefined;
-      if (selectionCommitted && failure && acceptedSelection && preparedModel) {
-        confirmationNotice = failure.confirmationNotice;
-      } else if (error instanceof DirectiveCommitError) {
+      if (!selectionCommitted) {
         const current = readCurrentEntry();
         if (current) {
           sessionStore[sessionKey] = current;
           adoptPersistedSessionSnapshot(sessionEntry, current);
         }
+      }
+      if (selectionCommitted && failure && acceptedSelection && preparedModel) {
+        confirmationNotice = failure.confirmationNotice;
+      } else if (error instanceof DirectiveCommitError) {
         return rejectModelTransaction(error.message);
       } else if (failure) {
         return rejectModelTransaction(failure.message);
@@ -566,7 +570,12 @@ export async function handleDirectiveOnly(
     // List projections must observe committed settings, not only model selections.
     const sessionSettingsUpdated = directiveFieldsUpdated || shouldRemapUnsupportedThinkLevel;
     if (sessionKey && (sessionSettingsUpdated || modelSelectionUpdated)) {
-      emitSessionLifecycleEvent({ sessionKey, agentId: activeAgentId, reason: "patch" });
+      emitSessionLifecycleEvent({
+        sessionKey,
+        agentId: activeAgentId,
+        reason: "patch",
+        ...(modelSelectionUpdated ? { catalogChanged: true } : {}),
+      });
     }
     if (modelSelection && acceptedSelection && modelSelectionUpdated && sessionKey) {
       triggerSessionPatchHook({
@@ -603,7 +612,7 @@ export async function handleDirectiveOnly(
       : modelSelection.model;
     if (nextLabel !== params.initialModelLabel) {
       enqueueSystemEvent(formatModelSwitchEvent(nextLabel, modelSelection.alias), {
-        sessionKey,
+        sessionKey: resolveSystemEventQueueKey(sessionKey, activeAgentId),
         contextKey: `model:${nextLabel}`,
       });
     }
@@ -612,7 +621,7 @@ export async function handleDirectiveOnly(
     enqueueModeSwitchEvents({
       enqueueSystemEvent,
       sessionEntry,
-      sessionKey,
+      sessionKey: resolveSystemEventQueueKey(sessionKey, activeAgentId),
       elevatedChanged,
       reasoningChanged,
     });
@@ -650,13 +659,10 @@ export async function handleDirectiveOnly(
         ? "Fast mode set to auto."
         : `Fast mode ${nextFastMode ? "enabled" : "disabled"}.`;
     enqueueSystemEvent(nextFastModeText, {
-      sessionKey,
+      sessionKey: resolveSystemEventQueueKey(sessionKey, activeAgentId),
       contextKey: `fast:${formatFastModeValue(nextFastMode)}`,
     });
   }
   const ack = parts.join(" ").trim();
-  if (!ack && directives.hasStatusDirective) {
-    return undefined;
-  }
-  return { text: ack || "OK." };
+  return !ack && directives.hasStatusDirective ? undefined : { text: ack || "OK." };
 }

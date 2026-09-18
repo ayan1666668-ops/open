@@ -25,6 +25,7 @@ import {
 import { adoptPersistedSessionSnapshot } from "../config/sessions/session-snapshot.js";
 import type { InternalSessionEntry as SessionEntry } from "../config/sessions/types.js";
 import { triggerSessionPatchHook } from "../gateway/session-patch-hooks.js";
+import { resolveSystemEventQueueKey } from "../infra/system-event-ownership.js";
 import { enqueueSystemEvent } from "../infra/system-events.js";
 import { MODEL_SELECTION_LOCKED_MESSAGE } from "../sessions/model-overrides.js";
 import { emitSessionLifecycleEvent } from "../sessions/session-lifecycle-events.js";
@@ -83,7 +84,7 @@ export async function withPreparedSessionExecutionSelection<T>(
       commitAccepted: params.commitAccepted,
     });
   }
-  return params.commitAccepted(params.prepared.selection);
+  return params.commitAccepted(params.prepared.selection, params.assertActive);
 }
 
 export type SessionExecutionControlTarget = Pick<
@@ -366,7 +367,11 @@ async function applyExecutionSelection(
     };
   }
   let committedResult: AppliedRunSelection | undefined;
-  const commitAccepted = async (selection: ExecutionSelection): Promise<RunSelectionResult> => {
+  const commitAccepted = async (
+    selection: ExecutionSelection,
+    assertCommitActive: () => void,
+  ): Promise<RunSelectionResult> => {
+    assertCommitActive();
     assertCurrent();
     const next = { ...initial };
     const cause: ExecutionSelectionCommitCause = initializing
@@ -448,10 +453,12 @@ async function applyExecutionSelection(
           changedSelection.changed && next.liveModelSwitchPending === true,
         touchedFields: SESSION_EXECUTION_SELECTION_TRANSACTION_FIELDS,
         validateCommit: () => {
+          assertCommitActive();
           assertCurrent();
           return undefined;
         },
       });
+      assertCommitActive();
       if (persistence.entry) {
         adoptPersistedSessionSnapshot(entry, persistence.entry);
         if (params.sessionStore) {
@@ -489,6 +496,7 @@ async function applyExecutionSelection(
       }
       persisted = persistence.entry;
     } else {
+      assertCommitActive();
       persisted = mergeSessionSnapshotChanges({ initial, next, current: currentEntry() ?? entry });
       adoptPersistedSessionSnapshot(entry, persisted);
       if (params.sessionStore) {
@@ -524,7 +532,7 @@ async function applyExecutionSelection(
           catalog,
         });
     if (changed) {
-      emitSessionLifecycleEvent({ sessionKey, agentId, reason: "patch" });
+      emitSessionLifecycleEvent({ sessionKey, agentId, reason: "patch", catalogChanged: true });
       triggerSessionPatchHook({
         cfg,
         sessionEntry: persisted,
@@ -540,7 +548,7 @@ async function applyExecutionSelection(
       });
       if (!initializing && !isDeepStrictEqual(before, selection)) {
         enqueueSystemEvent(message, {
-          sessionKey,
+          sessionKey: resolveSystemEventQueueKey(sessionKey, agentId),
           contextKey: `model:${modelRef ?? "native-managed"}`,
         });
       }

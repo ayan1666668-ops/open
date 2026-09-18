@@ -106,7 +106,9 @@ describe("dispatchReplyFromConfig reply hook scope", () => {
     });
     const sourceKey = scenario.sourceKey ?? scenario.targetKey;
     const sourceEntry = { sessionId: "source-session", updatedAt: Date.now() };
-    const targetEntry: SessionEntry | undefined = scenario.missing
+    const targetEntry:
+      | Pick<SessionEntry, "sessionId" | "updatedAt" | "executionSelection">
+      | undefined = scenario.missing
       ? undefined
       : {
           sessionId: "target-session",
