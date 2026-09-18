@@ -100,10 +100,7 @@ import {
   claudeCliSessionTranscriptHasContent,
   claudeCliSessionTranscriptHasOrphanedToolUse,
 } from "../command/attempt-execution.helpers.js";
-import { resolveContextWindowInfo } from "../context-window-guard.js";
-import { resolveContextTokensForModel } from "../context.js";
 import { resolveConversationCapabilityProfile } from "../conversation-capability-profile.js";
-import { DEFAULT_CONTEXT_TOKENS } from "../defaults.js";
 import { waitForDeferredTurnMaintenanceForSession } from "../embedded-agent-runner/context-engine-maintenance.js";
 import { resolvePromptBuildHookResult } from "../embedded-agent-runner/run/attempt-prompt-helpers.js";
 import { composeSystemPromptWithHookContext } from "../embedded-agent-runner/run/attempt-thread-helpers.js";
@@ -124,9 +121,7 @@ import { selectContextEngineForTranscriptHost } from "../harness/context-engine-
 import { drainPendingContextEngineTurnsBeforeRun } from "../harness/context-engine-turn-attempt.js";
 import { createAgentQuestionAnswerAuthority } from "../harness/host-private-capabilities.js";
 import type { ResolvedProviderAuth } from "../model-auth-runtime-shared.js";
-import { findModelCatalogEntry, loadManifestModelCatalog } from "../model-catalog.js";
-import type { ModelCatalogEntry } from "../model-catalog.types.js";
-import { resolveModelContextWindowProfile } from "../model-context-window.js";
+import { loadManifestModelCatalog } from "../model-catalog.js";
 import { recordAdmittedModelRoutingDecision } from "../model-routing-decision.js";
 import { applyPluginTextReplacements } from "../plugin-text-transforms.js";
 import {
@@ -169,14 +164,14 @@ import {
   finalizeCliMcpGrant,
   normalizeOptionalMcpContextValue,
 } from "./mcp-grant-context.js";
-import { CLAUDE_CLI_CONTEXT_MODEL_ALIASES, detectNodeClaudePlacement } from "./prepare-claude.js";
+import { detectNodeClaudePlacement } from "./prepare-claude.js";
+import { resolveCliRunContextBudget } from "./prepare-context-budget.js";
 import { composeCliPromptContext, prepareCliSystemPrompt } from "./prompt-context.js";
 import {
   buildCliSessionHistoryPrompt,
   hasCliSessionTranscript,
   loadCliSessionHistoryMessages,
   loadCliSessionPromptContext,
-  resolveAutoCliSessionReseedHistoryChars,
 } from "./session-history.js";
 import type {
   CliReusableSession,
@@ -201,11 +196,6 @@ function unsupportedIsolatedCompletionError(backendId: string): Error & { code: 
   return error;
 }
 
-function resolveClaudeCliContextModelId(modelId: string): string {
-  const trimmed = modelId.trim();
-  const lower = trimmed.toLowerCase();
-  return CLAUDE_CLI_CONTEXT_MODEL_ALIASES[lower] ?? trimmed;
-}
 type RunCliAgentPrepareParams = RunCliAgentParams & {
   /** Ring-zero tool transport supplied only by the OpenClaw orchestrator. */
   systemAgentTool?: import("../tools/system-agent-tool.js").SystemAgentToolOptions;
@@ -237,22 +227,6 @@ const defaultPrepareDeps = {
   loadManifestModelCatalog,
 };
 const prepareDeps = { ...defaultPrepareDeps };
-
-function findSelectableContextWindowEntry(params: {
-  catalog: ModelCatalogEntry[];
-  providers: string[];
-  models: string[];
-}): ModelCatalogEntry | undefined {
-  for (const provider of params.providers) {
-    for (const model of params.models) {
-      const entry = findModelCatalogEntry(params.catalog, { provider, modelId: model });
-      if (entry?.contextWindows?.length) {
-        return entry;
-      }
-    }
-  }
-  return undefined;
-}
 
 function resolveReusableCliSessionId(reusableCliSession: CliReusableSession): string | undefined {
   return reusableCliSession.mode === "reuse" || reusableCliSession.mode === "reuse-with-drift"
@@ -1077,83 +1051,18 @@ async function prepareCliRunContextWithinReadFence(
   const promptBuildRestrictsTools =
     promptBuildToolsAllow !== undefined &&
     !promptBuildToolsAllow.some((toolName) => normalizeToolPolicyName(toolName) === "*");
-  const isClaudeCli = isClaudeCliBackendId(params.provider);
-  const requestedContextModelId = isClaudeCli ? resolveClaudeCliContextModelId(modelId) : modelId;
-  const normalizedContextModelId = isClaudeCli
-    ? resolveClaudeCliContextModelId(normalizedCatalogModel)
-    : normalizedCatalogModel;
-  // Aliases can map a canonical id to a CLI shorthand or a user shorthand to
-  // a canonical id. Resolve both identities and keep the safest owned limit.
-  const contextModelIds = [
-    requestedContextModelId,
-    ...(normalizedContextModelId !== requestedContextModelId ? [normalizedContextModelId] : []),
-  ];
-  const resolveContextModelTokens = (contextModelId: string) =>
-    resolveContextTokensForModel({
-      cfg: params.config,
-      provider: params.provider,
-      modelProvider: backendResolved.modelProvider,
-      model: contextModelId,
-      modelContextWindow: params.modelContextWindow,
-      modelContextTokens: params.modelContextTokens,
-      allowAsyncLoad: false,
-      // A same-name API model may have a different native window from this CLI runtime.
-      allowUnscopedModelLookup: false,
-    });
-  let modelContextTokens: number | undefined;
-  for (const contextModelId of contextModelIds) {
-    const candidateContextTokens = resolveContextModelTokens(contextModelId);
-    if (candidateContextTokens !== undefined) {
-      modelContextTokens =
-        modelContextTokens === undefined
-          ? candidateContextTokens
-          : Math.min(modelContextTokens, candidateContextTokens);
-    }
-  }
-  modelContextTokens ??= DEFAULT_CONTEXT_TOKENS;
-  // Session-selectable context windows (catalog `contextWindows`, e.g. Claude
-  // CLI 200k/1m) cap the resolved window here: the fixed provider contract in
-  // resolveAnthropicFixedContextWindow deliberately ignores catalog scalars,
-  // so the selected (or default) option must apply after it or a 200k session
-  // would auto-compact against a 1M budget.
-  const selectableContextEntry = findSelectableContextWindowEntry({
-    catalog: params.config
-      ? prepareDeps.loadManifestModelCatalog({ config: params.config, workspaceDir })
-      : [],
-    providers: uniqueStrings(
-      [params.provider, backendResolved.modelProvider].filter(
-        (provider): provider is string => typeof provider === "string" && provider.length > 0,
-      ),
-    ),
-    models: uniqueStrings([modelId, normalizedCatalogModel]),
-  });
-  if (selectableContextEntry) {
-    const contextWindowProfile = resolveModelContextWindowProfile({
-      catalogEntry: selectableContextEntry,
-      selected: params.contextWindow,
-    });
-    // Only an effective option caps the window; the bare catalog scalar stays
-    // subordinate to the fixed provider contract above.
-    if (contextWindowProfile.contextWindow && contextWindowProfile.contextTokens !== undefined) {
-      modelContextTokens = Math.min(modelContextTokens, contextWindowProfile.contextTokens);
-    }
-  }
-  const resolvedContextWindowInfo = resolveContextWindowInfo({
-    cfg: params.config,
+  const { contextWindowInfo, autoReseedHistoryChars } = resolveCliRunContextBudget({
+    config: params.config,
     provider: params.provider,
+    backendModelProvider: backendResolved.modelProvider,
     modelId,
-    modelContextTokens,
-    defaultTokens: DEFAULT_CONTEXT_TOKENS,
+    normalizedCatalogModel,
+    workspaceDir,
+    selectedContextWindow: params.contextWindow,
+    modelContextWindow: params.modelContextWindow,
+    modelContextTokens: params.modelContextTokens,
+    loadManifestModelCatalog: prepareDeps.loadManifestModelCatalog,
   });
-  // The generic guard rechecks the requested id in config. An alias target may
-  // have a tighter owned limit, so the alias-aware result remains an upper bound.
-  const contextWindowInfo =
-    resolvedContextWindowInfo.tokens > modelContextTokens
-      ? { tokens: modelContextTokens, source: "model" as const }
-      : resolvedContextWindowInfo;
-  const autoReseedHistoryChars = isClaudeCli
-    ? resolveAutoCliSessionReseedHistoryChars(contextWindowInfo.tokens)
-    : undefined;
 
   const sessionLabel = params.sessionKey ?? params.sessionId;
   const { bootstrapFiles, contextFiles: resolvedContextFiles } = skipsTurnPreparation
