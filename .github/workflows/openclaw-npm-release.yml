@@ -562,7 +562,7 @@ jobs:
               exit 1
             fi
           fi
-          if [[ -n "$AI_TARBALL_PATH" ]]; then
+          if [[ -n "$AI_TARBALL_PATH" && "$RELEASE_NPM_DIST_TAG" != "extended-stable" ]]; then
             node --import tsx scripts/prepare-openclaw-npm-shrinkwrap.ts "$AI_TARBALL_PATH"
           fi
           PACK_OUTPUT="$RUNNER_TEMP/npm-pack-output.txt"
@@ -798,13 +798,17 @@ jobs:
             ls -la "$PREFLIGHT_ARTIFACT_DIR" >&2 || true
             exit 1
           fi
-          PACKAGE_VERSION="$(node -p "require('./package.json').version")"
-          AI_TARBALL="$(find "$PREFLIGHT_ARTIFACT_DIR" -maxdepth 1 -type f -name 'openclaw-ai-*.tgz' -print | head -n 1)"
-          verify_args=("$TARBALL_PATH" "$PACKAGE_VERSION")
-          if [[ -n "$AI_TARBALL" ]]; then
-            verify_args+=("$AI_TARBALL")
+          if [[ "${{ inputs.npm_dist_tag }}" == "extended-stable" ]]; then
+            node scripts/verify-npm-tarball-install.mjs "$TARBALL_PATH"
+          else
+            PACKAGE_VERSION="$(node -p "require('./package.json').version")"
+            AI_TARBALL="$(find "$PREFLIGHT_ARTIFACT_DIR" -maxdepth 1 -type f -name 'openclaw-ai-*.tgz' -print | head -n 1)"
+            verify_args=("$TARBALL_PATH" "$PACKAGE_VERSION")
+            if [[ -n "$AI_TARBALL" ]]; then
+              verify_args+=("$AI_TARBALL")
+            fi
+            node --import tsx scripts/openclaw-npm-prepublish-verify.ts "${verify_args[@]}"
           fi
-          node --import tsx scripts/openclaw-npm-prepublish-verify.ts "${verify_args[@]}"
 
       - name: Upload dependency release evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
