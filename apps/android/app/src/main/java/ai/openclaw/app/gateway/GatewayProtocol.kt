@@ -971,6 +971,7 @@ enum class GatewayEvent(
   SessionApproval("session.approval"),
   SessionMessage("session.message"),
   SessionObserver("session.observer"),
+  SessionRunCompleted("session.run.completed"),
   SessionOperation("session.operation"),
   SessionSharing("session.sharing"),
   SessionSharingEvidence("session.sharing.evidence"),
