@@ -15,6 +15,10 @@ describe("resolveCompactionFailure", () => {
     code: "rate_limit_exceeded",
   });
   const safeguardCancellation = { reason: "Summarization could not finish.", error: providerError };
+  const qualityCancellation = {
+    reason: "Quality audit rejected a summary about a request timeout.",
+    qualityReasonCodes: ["missing_section"],
+  };
 
   it.each(["Compaction cancelled", "Error: Compaction cancelled"])(
     "recovers provider classification through the generic wrapper %s",
@@ -36,12 +40,11 @@ describe("resolveCompactionFailure", () => {
   it("does not classify an intentional decline from keywords in its display reason", () => {
     const failure = resolveCompactionFailure({
       error: new Error("Compaction cancelled"),
-      safeguardCancellation: {
-        reason: "Quality audit rejected a summary about a request timeout.",
-      },
+      safeguardCancellation: qualityCancellation,
     });
 
     expect(failure.reason).toContain("Quality audit rejected");
+    expect(failure.qualityReasonCodes).toEqual(["missing_section"]);
     expect(resolveFailoverReasonFromError(failure.error)).toBeNull();
   });
 
@@ -52,17 +55,18 @@ describe("resolveCompactionFailure", () => {
     new Error("session setup failed"),
     new Error("cleanup failed"),
   ])("preserves genuine $name/$message despite a stale cancellation record", (error) => {
-    const failure = resolveCompactionFailure({ error, safeguardCancellation });
+    const failure = resolveCompactionFailure({ error, safeguardCancellation: qualityCancellation });
 
     expect(failure.reason).toBe(error.message);
     expect(failure.error).toBe(error);
+    expect(failure.qualityReasonCodes).toBeUndefined();
   });
 
   it("preserves caller cancellation even when its reason matches the generic wrapper", () => {
     const error = new Error("Compaction cancelled");
     const failure = resolveCompactionFailure({
       error,
-      safeguardCancellation,
+      safeguardCancellation: qualityCancellation,
       abortSignal: AbortSignal.abort(error),
     });
 
@@ -99,12 +103,11 @@ describe("classifyCompactionReason", () => {
     );
   });
 
-  it("classifies safeguard messages as guard-blocked", () => {
-    expect(
-      classifyCompactionReason(
-        "Compaction safeguard could not resolve an API key for anthropic/claude-opus-4-6.",
-      ),
-    ).toBe("guard_blocked");
+  it.each([
+    "Compaction safeguard could not resolve an API key for anthropic/claude-opus-4-6.",
+    "Compaction repeatedly failed quality checks; conversation history is preserved.",
+  ])("classifies safeguard messages as guard-blocked: %s", (reason) => {
+    expect(classifyCompactionReason(reason)).toBe("guard_blocked");
   });
 
   it("classifies transcript persistence failures without losing them as unknown", () => {

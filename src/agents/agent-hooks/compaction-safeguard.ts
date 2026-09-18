@@ -66,6 +66,7 @@ import {
   nestRequiredSummaryHeadings,
   wrapUntrustedInstructionBlock,
 } from "./compaction-safeguard-quality.js";
+import { cancelCompactionForFailedAudit } from "./compaction-safeguard-rejection.js";
 import {
   getCompactionSafeguardRuntime,
   setCompactionSafeguardCancellation,
@@ -1333,6 +1334,8 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
             setCompactionSafeguardCancellation(
               ctx.sessionManager,
               "Compaction safeguard finalized summary failed quality checks and corrective generation failed.",
+              undefined,
+              ["corrective_generation_failed"],
             );
             return { cancel: true };
           }
@@ -1380,6 +1383,8 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
           setCompactionSafeguardCancellation(
             ctx.sessionManager,
             "Compaction safeguard required facts exceed the finalized summary budget.",
+            undefined,
+            ["quality_retention_infeasible"],
           );
           return { cancel: true };
         }
@@ -1397,18 +1402,7 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
           return compactionResult(finalized.summary);
         }
         if (!canRegenerate || attempt >= totalAttempts - 1) {
-          const reasonCodes = [
-            ...new Set(quality.reasons.map((reason) => reason.split(":", 1)[0])),
-          ];
-          log.warn(
-            "Compaction safeguard: finalized summary failed quality checks; " +
-              `reasonCodes=${reasonCodes.join(",")} reasonCount=${quality.reasons.length}`,
-          );
-          setCompactionSafeguardCancellation(
-            ctx.sessionManager,
-            "Compaction safeguard finalized summary failed quality checks.",
-          );
-          return { cancel: true };
+          return cancelCompactionForFailedAudit(ctx.sessionManager, quality.reasons);
         }
         const reasons = quality.reasons.join(", ");
         const qualityFeedbackInstruction =

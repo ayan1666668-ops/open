@@ -34,6 +34,23 @@ of corrective attempts. If no finalized summary passes, compaction stops before
 writing a transcript entry, keeps the original history, and surfaces the
 existing recovery outcome.
 
+After three built-in compaction attempts are rejected by the quality guard for
+the same session, OpenClaw logs an escalation and sends a recovery notice through
+the active run's compaction-notice channel, even when `notifyUser` is off. Manual
+`/compact` failures include the same recovery guidance. The notice lists stable
+rejection codes without including conversation text or identifiers. Corrective
+generation retries within one compaction count as one rejected attempt.
+
+Retry with `/compact`, or configure `agents.defaults.compaction.model` to use
+another summarization model and retry. A model-locked session keeps its selected
+model. Validation remains enabled; no degraded summary is accepted automatically.
+
+The warning is sent once per failure streak; unavailable or failed delivery is
+retried on the next rejected attempt. Successful built-in compaction
+clears the streak. Tracking is process-local, survives session reopening within
+that process, and retains the 1,024 most recently rejected session identities;
+restart or eviction clears it. It does not add persistent session state.
+
 ## Auto-compaction
 
 Auto-compaction is on by default. It runs when the session nears the context limit, or when the model returns a context-overflow error (in which case OpenClaw compacts and retries).

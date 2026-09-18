@@ -68,6 +68,7 @@ export type EmbeddedRunCompactionRecoveryInput = {
   }) => ReturnType<typeof buildContextEngineRuntimeSettings>;
   onCompactionHookMessages: (payload: {
     phase: "before" | "after";
+    completed?: boolean;
     messages: string[];
   }) => Promise<void>;
   runOwnsCompactionBeforeHook: (reason: string) => Promise<void>;
@@ -182,7 +183,7 @@ export async function compactEmbeddedRunForRecovery(
             ? "context-engine.overflow-compaction"
             : "context-engine.timeout-compaction",
     }),
-    onCompactionHookMessages: input.onCompactionHookMessages,
+    onCompactionHookMessages: runParams.onAgentEvent ? input.onCompactionHookMessages : undefined,
     ...(input.attempt.promptCache ? { promptCache: input.attempt.promptCache } : {}),
     runId: runParams.runId,
     trigger: recovery.trigger,
@@ -523,6 +524,7 @@ export function createEmbeddedRunCompactionRuntime(input: {
   };
   const onCompactionHookMessages = async (payload: {
     phase: "before" | "after";
+    completed?: boolean;
     messages: string[];
   }) => {
     const messages = payload.messages.filter((message) => message.trim().length > 0);
@@ -534,7 +536,7 @@ export function createEmbeddedRunCompactionRuntime(input: {
       stream: "compaction",
       data: {
         phase: payload.phase === "before" ? "start" : "end",
-        ...(payload.phase === "after" ? { completed: true } : {}),
+        ...(payload.phase === "after" ? { completed: payload.completed !== false } : {}),
         messages,
       },
       ...(params.sessionKey ? { sessionKey: params.sessionKey } : {}),

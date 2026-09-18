@@ -24,7 +24,7 @@ export function resolveCompactionFailure(params: {
   error: unknown;
   safeguardCancellation?: CompactionSafeguardCancellation | null;
   abortSignal?: AbortSignal;
-}): { reason: string; error: unknown } {
+}): { reason: string; error: unknown; qualityReasonCodes?: string[] } {
   const reason = formatErrorMessage(params.error);
   // AgentSessionCompaction wraps hook cancellation in a plain Error("Compaction cancelled").
   // Only that wrapper yields to safeguard provenance; genuine errors and caller aborts win.
@@ -35,7 +35,13 @@ export function resolveCompactionFailure(params: {
     isGenericCompactionCancelledReason(reason)
       ? params.safeguardCancellation
       : undefined;
-  return { reason: cancellation?.reason ?? reason, error: cancellation?.error ?? params.error };
+  return {
+    reason: cancellation?.reason ?? reason,
+    error: cancellation?.error ?? params.error,
+    ...(cancellation?.qualityReasonCodes
+      ? { qualityReasonCodes: cancellation.qualityReasonCodes }
+      : {}),
+  };
 }
 
 /** Bucket a raw compaction reason into stable telemetry/status classes. */
@@ -70,7 +76,7 @@ export function classifyCompactionReason(reason?: string): string {
   if (text.includes("session transcript") && text.includes("not persisted")) {
     return "transcript_persistence_failed";
   }
-  if (text.includes("guard")) {
+  if (text.includes("guard") || text.startsWith("compaction repeatedly failed quality checks")) {
     return "guard_blocked";
   }
   if (text.includes("summary")) {

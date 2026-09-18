@@ -21,7 +21,6 @@ import {
 import { getCurrentPluginMetadataSnapshot } from "../../plugins/current-plugin-metadata-snapshot.js";
 import { getGlobalHookRunner } from "../../plugins/hook-runner-global.js";
 import {
-  consumeCompactionSafeguardCancellation,
   getCompactionSafeguardRuntime,
   setCompactionSafeguardCancellation,
 } from "../agent-hooks/compaction-safeguard-runtime.js";
@@ -62,11 +61,13 @@ import {
   runBeforeCompactionHooks,
   runPostCompactionSideEffects,
 } from "./compaction-hooks.js";
+import { clearCompactionQualityRejections } from "./compaction-quality-rejections.js";
 import {
   compactWithSafetyTimeout,
   resolveCompactionTimeoutMs,
 } from "./compaction-safety-timeout.js";
 import { prepareCompactionSessionAgent } from "./compaction-session-agent.js";
+import { reportCompactionSessionFailure } from "./compaction-session-failure.js";
 import { buildEmbeddedExtensionFactories } from "./extensions.js";
 import { getHistoryLimitFromSessionKey, limitHistoryTurns } from "./history.js";
 import { log } from "./logger.js";
@@ -122,6 +123,7 @@ export async function executePreparedCompactionSession(runtime: PreparedCompacti
   let compactionSessionManager: unknown = null;
   let checkpointSnapshot: CapturedCompactionCheckpointSnapshot | null = null;
   let checkpointSnapshotRetained = false;
+  let rejectionContext: Parameters<typeof reportCompactionSessionFailure>[0]["context"];
 
   try {
     const compactionTimeoutMs = resolveCompactionTimeoutMs(params.config);
@@ -142,6 +144,7 @@ export async function executePreparedCompactionSession(runtime: PreparedCompacti
     const assertActive =
       memoryTranscript?.assertActive ?? captureOwnedTranscriptWriteAssertion(sessionTarget);
     assertActive();
+    rejectionContext = { target: sessionTarget, assertActive };
     const transcriptPolicy = runtimePlan.transcript.resolvePolicy(runtimePlanModelContext);
     const sessionManager = guardSessionManager(
       memoryTranscript?.sessionManager ?? SessionManager.open(sessionTarget),
@@ -570,6 +573,7 @@ export async function executePreparedCompactionSession(runtime: PreparedCompacti
           }
         }
         // Compaction succeeded: post-processing gets its own full watchdog window.
+        clearCompactionQualityRejections(sessionTarget);
         params.compactionTimeoutReset?.();
         const effectiveFirstKeptEntryId = clientResult?.firstKeptEntryId;
         const tokensBefore = serverResult?.usage.input_tokens ?? clientResult!.tokensBefore;
@@ -722,12 +726,13 @@ export async function executePreparedCompactionSession(runtime: PreparedCompacti
       }
     }
   } catch (err) {
-    const failure = resolveCompactionFailure({
+    return await reportCompactionSessionFailure({
       error: err,
-      safeguardCancellation: consumeCompactionSafeguardCancellation(compactionSessionManager),
-      abortSignal: params.abortSignal,
+      sessionManager: compactionSessionManager,
+      params,
+      context: rejectionContext,
+      fail,
     });
-    return fail(failure.reason, failure.error);
   } finally {
     setSessionModelUsageSink(compactionSessionManager, null);
     if (!checkpointSnapshotRetained) {
