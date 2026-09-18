@@ -209,6 +209,7 @@ describe("spawnAcpForPlugin", () => {
     expect(registration()).toMatchObject({
       runId: "run-plugin-1",
       childSessionKey: result.childSessionKey,
+      childSessionId: "sess-plugin",
       controllerSessionKey: ownerKey,
       taskOwnerKey: ownerKey,
       requesterSessionKey: ownerKey,
@@ -268,6 +269,7 @@ describe("spawnAcpForPlugin", () => {
     expect(registration()).toEqual({
       runId: "run-plugin-1",
       childSessionKey: result.childSessionKey,
+      childSessionId: "sess-plugin",
       controllerSessionKey: ownerKey,
       taskOwnerKey: ownerKey,
       requesterSessionKey: completionRequester.sessionKey,

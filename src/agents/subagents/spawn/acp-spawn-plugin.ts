@@ -203,6 +203,7 @@ export async function spawnAcpForPlugin(
   const childIdem = crypto.randomUUID();
   const gatewayAttachments = toGatewayImageAttachments(params.attachments);
   let childCreationEntry: SessionEntry | undefined;
+  let childSessionId: string | undefined;
   let closeRuntimeOnFailure: (() => Promise<void>) | undefined;
 
   const adapter: SpawnBackendAdapter<{ initializedSession: AcpSpawnInitializedRuntime }> = {
@@ -244,6 +245,9 @@ export async function spawnAcpForPlugin(
         cwd: runtimeCwd,
       });
       closeRuntimeOnFailure = initializedSession.initialized.closeRuntimeOnFailure;
+      // The incarnation the ACP runtime bound to; a later entry under the same key with a
+      // different sessionId is somebody else's session and must not be cancelled as this run.
+      childSessionId = initializedSession.sessionId ?? childCreationEntry?.sessionId;
       principal.assertActive?.();
       return { initializedSession };
     },
@@ -301,6 +305,7 @@ export async function spawnAcpForPlugin(
     buildRegistration: (_state, runId) => ({
       runId,
       childSessionKey: sessionKey,
+      ...(childSessionId ? { childSessionId } : {}),
       // Control and the task row stay with the plugin in both modes. With a host-captured
       // requester, only the announce target moves to that requester: the registry row's
       // requester session/origin feed the canonical completion delivery owner, and the

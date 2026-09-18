@@ -21,13 +21,21 @@ import {
   resetSubagentRegistryForTests,
   testing as subagentRegistryTesting,
 } from "../agents/subagents/registry/subagent-registry.test-helpers.js";
-import { loadSessionEntry, patchSessionEntryCore } from "../config/sessions/session-accessor.js";
+import {
+  loadSessionEntry,
+  patchSessionEntryCore,
+  listSessionEntryKeysReadOnly,
+} from "../config/sessions/session-accessor.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { resetAgentEventsForTest } from "../infra/agent-events.js";
 import { setActivePluginRegistry } from "../plugins/runtime.js";
 import { withPluginRuntimeGatewayRequestScope } from "../plugins/runtime/gateway-request-scope.js";
-import { withPluginSubagentRequesterContext } from "../plugins/runtime/subagent-requester-context.js";
+import {
+  type PluginSubagentRequesterContext,
+  withPluginSubagentRequesterContext,
+} from "../plugins/runtime/subagent-requester-context.js";
 import { resolvePluginAcpOwnerKey } from "../plugins/runtime/types-acp.js";
+import { cancelDetachedTaskRunById } from "../tasks/task-executor.js";
 import { getTaskById, listTasksForOwnerKey } from "../tasks/task-registry-query.js";
 import {
   resetTaskRegistryControlRuntimeForTests,
@@ -125,7 +133,8 @@ async function withCancelHarness(
     const agentTurnFacade: InternalAgentTurnFacade = {
       dispatch: async <T>(request: AgentRunRequest) => {
         hoisted.agentDispatchMock(request);
-        return { runId: RUN_ID } as T;
+        const launch = hoisted.agentDispatchMock.mock.calls.length;
+        return { runId: launch === 1 ? RUN_ID : `${RUN_ID}-${launch}` } as T;
       },
       dispatchRaw: async () => {
         throw new Error("dispatchRaw is not used by plugin ACP spawn");
@@ -363,6 +372,172 @@ describe("plugin ACP requester-bound cancellation", () => {
       });
       expectRunStillRunning(childSessionKey);
       expect(getTaskById(listTasksForOwnerKey(OWNER_KEY)[0]!.taskId)?.status).toBe("running");
+    });
+  });
+
+  it("refuses to cancel through a replacement session incarnation under the same key", async () => {
+    await withCancelHarness(async ({ cfg, runtime, tempRoot }) => {
+      const { sessionKey: childSessionKey, taskId } = await spawnRequesterBoundRun(
+        runtime,
+        tempRoot,
+      );
+      const original = loadSessionEntry({
+        storePath: cfg.session!.store!,
+        sessionKey: childSessionKey,
+        agentId: "codex",
+      });
+      expect(getSubagentRunByChildSessionKey(childSessionKey)?.childSessionId).toBe(
+        original?.sessionId,
+      );
+      // Same plugin owner, same logical key, but a different session incarnation.
+      await patchSessionEntryCore(
+        { storePath: cfg.session!.store!, sessionKey: childSessionKey, agentId: "codex" },
+        () => ({ sessionId: "replacement-not-original-run", pluginOwnerId: PLUGIN_ID }),
+      );
+
+      const throughRuntime = await scoped(() => runtime.cancel({ runId: RUN_ID }));
+      expect(throughRuntime.cancelled).toBe(false);
+      const throughTask = await cancelDetachedTaskRunById({ cfg, taskId: taskId! });
+      expect(throughTask.cancelled).toBe(false);
+      await expect(
+        killSubagentRunAdmin({
+          cfg,
+          sessionKey: childSessionKey,
+          expectedTaskRunId: RUN_ID,
+          expectedOwnerKey: OWNER_KEY,
+        }),
+      ).resolves.toEqual({ found: false, killed: false });
+
+      // Neither the replacement nor the old run was touched.
+      expectRunStillRunning(childSessionKey);
+      expect(getSubagentRunByChildSessionKey(childSessionKey)?.killIntent).toBeUndefined();
+      expect(getTaskById(taskId!)).toMatchObject({ status: "running", ownerKey: OWNER_KEY });
+      const replacement = loadSessionEntry({
+        storePath: cfg.session!.store!,
+        sessionKey: childSessionKey,
+        agentId: "codex",
+      });
+      expect(replacement?.sessionId).toBe("replacement-not-original-run");
+      expect(replacement?.abortedLastRun).toBeUndefined();
+    });
+  });
+});
+
+describe("plugin ACP child cap accounting", () => {
+  const spawnDetached = (runtime: ReturnType<typeof createGatewayAcpRuntime>, tempRoot: string) =>
+    scoped(() => runtime.spawn({ task: "detached", cwd: tempRoot }));
+  const spawnBoundTo =
+    (requester: PluginSubagentRequesterContext) =>
+    (runtime: ReturnType<typeof createGatewayAcpRuntime>, tempRoot: string) =>
+      withPluginSubagentRequesterContext(requester, () =>
+        scoped(() =>
+          runtime.spawn({ task: "bound", cwd: tempRoot, completionDelivery: "current-requester" }),
+        ),
+      );
+
+  it.each([
+    ["detached", spawnDetached],
+    ["same-agent requester-bound", spawnBoundTo({ ...REQUESTER, sessionKey: "agent:codex:main" })],
+    ["cross-agent requester-bound", spawnBoundTo(REQUESTER)],
+  ])("refuses the third live run at maxChildrenPerAgent=2 for %s spawns", async (_label, spawn) => {
+    await withCancelHarness(async ({ runtime, tempRoot }) => {
+      const first = await spawn(runtime, tempRoot);
+      const second = await spawn(runtime, tempRoot);
+      expect(first.runId).not.toBe(second.runId);
+      expect(hoisted.agentDispatchMock).toHaveBeenCalledTimes(2);
+
+      await expect(spawn(runtime, tempRoot)).rejects.toMatchObject({
+        code: "ACP_PLUGIN_ADMISSION_REJECTED",
+      });
+      expect(hoisted.agentDispatchMock).toHaveBeenCalledTimes(2);
+      expect(hoisted.initializeSessionMock).toHaveBeenCalledTimes(2);
+      expect(new Set(listTasksForOwnerKey(OWNER_KEY).map((task) => task.runId))).toEqual(
+        new Set([first.runId, second.runId]),
+      );
+    });
+  });
+
+  it("counts a cross-agent requester-bound run against the plugin owner, not the requester", async () => {
+    await withCancelHarness(async ({ runtime, tempRoot }) => {
+      const bound = await spawnBoundTo(REQUESTER)(runtime, tempRoot);
+      const registered = getSubagentRunByChildSessionKey(bound.sessionKey);
+      // Completion still derives its agent from the captured requester session (Repair 2),
+      // while capacity accounting follows the plugin controller.
+      expect(registered).toMatchObject({
+        taskOwnerKey: OWNER_KEY,
+        controllerSessionKey: OWNER_KEY,
+        requesterSessionKey: REQUESTER.sessionKey,
+      });
+      expect(registered?.requesterAgentId).not.toBe("codex");
+      await spawnDetached(runtime, tempRoot);
+      await expect(spawnDetached(runtime, tempRoot)).rejects.toMatchObject({
+        code: "ACP_PLUGIN_ADMISSION_REJECTED",
+      });
+      await expect(spawnBoundTo(REQUESTER)(runtime, tempRoot)).rejects.toMatchObject({
+        code: "ACP_PLUGIN_ADMISSION_REJECTED",
+      });
+      expect(hoisted.agentDispatchMock).toHaveBeenCalledTimes(2);
+    });
+  });
+});
+
+describe("plugin ACP request authority lease", () => {
+  it("creates nothing when a spawn armed inside a finished request runs later", async () => {
+    await withCancelHarness(async ({ cfg, runtime, tempRoot }) => {
+      cfg.plugins = { entries: {} };
+      let release!: () => void;
+      const barrier = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let later!: Promise<unknown>;
+      await withPluginRuntimeGatewayRequestScope(
+        {
+          pluginId: PLUGIN_ID,
+          pluginOrigin: "workspace",
+          isWebchatConnect: () => false,
+          client: { connect: { scopes: ["operator.write"] } } as never,
+        },
+        async () => {
+          later = (async () => {
+            await barrier;
+            return runtime.spawn({ task: "late job", cwd: tempRoot });
+          })();
+        },
+      );
+      release();
+      await expect(later).rejects.toMatchObject({ code: "ACP_PLUGIN_DETACHED_FORBIDDEN" });
+      expect(hoisted.initializeSessionMock).not.toHaveBeenCalled();
+      expect(hoisted.agentDispatchMock).not.toHaveBeenCalled();
+      expect(listTasksForOwnerKey(OWNER_KEY)).toEqual([]);
+      expect(
+        listSessionEntryKeysReadOnly({ storePath: cfg.session!.store!, agentId: "codex" }),
+      ).toEqual([]);
+    });
+  });
+
+  it("stops a spawn the request started but never awaited before any state is written", async () => {
+    await withCancelHarness(async ({ cfg, runtime, tempRoot }) => {
+      cfg.plugins = { entries: {} };
+      let inFlight!: Promise<unknown>;
+      withPluginRuntimeGatewayRequestScope(
+        {
+          pluginId: PLUGIN_ID,
+          pluginOrigin: "workspace",
+          isWebchatConnect: () => false,
+          client: { connect: { scopes: ["operator.write"] } } as never,
+        },
+        () => {
+          inFlight = runtime.spawn({ task: "fire and forget", cwd: tempRoot });
+        },
+      );
+      await expect(inFlight).rejects.toMatchObject({ code: "ACP_PLUGIN_DETACHED_FORBIDDEN" });
+      expect(hoisted.initializeSessionMock).not.toHaveBeenCalled();
+      expect(hoisted.agentDispatchMock).not.toHaveBeenCalled();
+      expect(hoisted.cleanupFailedAcpSpawnMock).not.toHaveBeenCalled();
+      expect(listTasksForOwnerKey(OWNER_KEY)).toEqual([]);
+      expect(
+        listSessionEntryKeysReadOnly({ storePath: cfg.session!.store!, agentId: "codex" }),
+      ).toEqual([]);
     });
   });
 });

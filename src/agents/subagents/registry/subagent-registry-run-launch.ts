@@ -62,6 +62,8 @@ export type RegisterSubagentRunParams = {
   runId: string;
   requesterTurnRunId?: string;
   childSessionKey: string;
+  /** Launch-time session incarnation; see `SubagentRunRecord.childSessionId`. */
+  childSessionId?: string;
   controllerSessionKey?: string;
   requesterSessionKey: string;
   requesterOrigin?: DeliveryContext;
@@ -136,6 +138,7 @@ export class SubagentLaunchManager extends SubagentRecoveryManager {
       taskRunId: runId,
       ...(requesterTurnRunId ? { requesterTurnRunId } : {}),
       childSessionKey,
+      childSessionId: registerParams.childSessionId,
       controllerSessionKey,
       taskOwnerKey,
       requesterSessionKey,

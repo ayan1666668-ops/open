@@ -190,8 +190,12 @@ Start agent work in the background: hook-dispatched turns for external content, 
     (`ACP_PLUGIN_PRINCIPAL_REQUIRED` when the handle is not the plugin's own).
     Requests made while the Gateway is serving the plugin (an operator request,
     a tool call, a requester-bound hook) are request-scoped and need no extra
-    configuration. Detached work such as timers or background jobs is denied by
-    default with `ACP_PLUGIN_DETACHED_FORBIDDEN`; a bundled or trusted official
+    configuration. That authority lasts exactly as long as the host awaits the
+    request callback: work the callback returns or awaits stays request-scoped,
+    while a continuation that outlives it (an unawaited promise, a timer armed
+    inside the request) is detached once the callback settles, even before the
+    spawn reaches the owner. Detached work such as timers or background jobs is
+    denied with `ACP_PLUGIN_DETACHED_FORBIDDEN`; a bundled or trusted official
     plugin can be granted detached spawns with
     `plugins.entries.<id>.acp.allowDetachedSpawn: true`. Neither mode inherits
     the caller's operator scopes or a user session's visibility.
@@ -204,10 +208,13 @@ Start agent work in the background: hook-dispatched turns for external content, 
     and every `getRun`, `listRuns`, `getSession`, `waitForRun`, `observe`, and
     `cancel` call is scoped to that owner. Another plugin's runs, operator
     sessions, and `sessions_spawn` children look identical to missing ones.
-    `cancel` rereads the child session entry (`pluginOwnerId`) and the live task
-    binding immediately before the canonical task cancellation runs; a session
-    that was replaced or re-owned in between is reported as not found and never
-    cancelled.
+    `cancel` rereads the child session entry (`pluginOwnerId` and the session
+    id the run was launched into) and the live task binding immediately before
+    the canonical task cancellation runs; a session that was replaced or
+    re-owned in between, including a same-plugin replacement under the same
+    key, is reported as not found and never cancelled. Every run counts
+    against the plugin owner's `maxChildrenPerAgent` cap, including
+    requester-bound runs announced to a different agent's requester.
 
     **Completion delivery.** By default nothing is announced anywhere; plugins
     poll `getRun`, `waitForRun`, or `observe`. Inside a requester-bound
@@ -228,10 +235,13 @@ Start agent work in the background: hook-dispatched turns for external content, 
     resume, or raw session control; an active run interrupted by a Gateway
     restart follows the normal restart-abort and finalization path.
     `idempotencyKey` replays the accepted (or still in-flight) result for the
-    same canonical input, including the captured requester, within a bounded
+    same canonical input, including the host-captured requester session and
+    delivery route (channel, account, destination, thread), within a bounded
     window and marks it `replayed: true`, so a retry after an accepted launch
-    never starts a duplicate run; changed input under the same key is a new
-    spawn, and failed spawns never replay. The registry writes the run's
+    never starts a duplicate run. Changed input under the same key is a new
+    spawn with its own receipt; earlier receipts for that key stay replayable
+    until the window ends or the plugin's bounded receipt cache evicts the
+    oldest. Failed spawns never replay. The registry writes the run's
     plugin-owned task row synchronously during registration, so an accepted
     result normally carries `taskId`; it is absent only when that best-effort
     task write failed (the Gateway logs a warning), and such a run is not

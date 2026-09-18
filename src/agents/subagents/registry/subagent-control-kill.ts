@@ -124,6 +124,16 @@ async function withSubagentKillScope<T>(
       let ownsSessionIncarnation: () => boolean;
       try {
         session = resolveSubagentKillSession(params.cfg, entry.childSessionKey);
+        // A run that recorded its launch incarnation never kills a replacement session
+        // under the same key: that entry belongs to whoever created it, and the old row is
+        // left untouched rather than marked cancelled.
+        if (
+          entry.childSessionId !== undefined &&
+          session.entry !== undefined &&
+          session.entry.sessionId !== entry.childSessionId
+        ) {
+          continue;
+        }
         const { storePath } = session;
         const sessionId = session.entry?.sessionId;
         const lifecycleRevision = session.entry?.lifecycleRevision;

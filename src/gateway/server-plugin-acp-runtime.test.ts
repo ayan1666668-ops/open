@@ -265,6 +265,117 @@ describe("plugin ACP spawn authority", () => {
       code: "ACP_PLUGIN_DISABLED",
     });
   });
+
+  it("expires request authority once the host request callback returns", async () => {
+    config.plugins = {};
+    const runtime = createRuntime();
+    let release!: () => void;
+    const barrier = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let later!: Promise<unknown>;
+    let availableLater!: ReturnType<PluginRuntime["acp"]["isAvailable"]>;
+    await scoped(
+      async () => {
+        await expect(runtime.isAvailable()).resolves.toEqual({ ok: true, mode: "request" });
+        // Armed inside the request (so the scope is inherited), but the host never awaits it.
+        later = (async () => {
+          await barrier;
+          return runtime.spawn({ task: "detached-after-request" });
+        })();
+        availableLater = barrier.then(() => runtime.isAvailable());
+      },
+      { client: requestClient, pluginOrigin: "workspace" },
+    );
+    release();
+    await expectAcpError(later, "ACP_PLUGIN_DETACHED_FORBIDDEN");
+    await expect(availableLater).resolves.toMatchObject({
+      ok: false,
+      code: "ACP_PLUGIN_DETACHED_FORBIDDEN",
+    });
+    expect(hoisted.spawnAcpForPluginMock).not.toHaveBeenCalled();
+  });
+
+  it("stops an in-flight spawn whose request ended before the owner is reached", async () => {
+    config.plugins = {};
+    const runtime = createRuntime();
+    // The spawn starts synchronously inside the request but is not awaited by the host,
+    // so the lease is gone by the time the spawn owner would be invoked.
+    let later!: Promise<unknown>;
+    scoped(
+      () => {
+        later = runtime.spawn({ task: "unawaited" });
+      },
+      { client: requestClient, pluginOrigin: "workspace" },
+    );
+    const error = await expectAcpError(later, "ACP_PLUGIN_DETACHED_FORBIDDEN");
+    expect(error.message).toContain("lost its Gateway request while the spawn was in flight");
+    expect(hoisted.spawnAcpForPluginMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps request authority for work the host awaits and rechecks it per side effect", async () => {
+    config.plugins = {};
+    const runtime = createRuntime();
+    let assertActive: (() => void) | undefined;
+    hoisted.spawnAcpForPluginMock.mockImplementation(
+      async (_input: unknown, principal: { assertActive?: () => void }) => {
+        assertActive = principal.assertActive;
+        assertActive?.();
+        await Promise.resolve();
+        assertActive?.();
+        return acceptedSpawn();
+      },
+    );
+    const result = await scoped(() => runtime.spawn({ task: "awaited" }), {
+      client: requestClient,
+      pluginOrigin: "workspace",
+    });
+    expect(result.runId).toBe("run-1");
+    expect(hoisted.spawnAcpForPluginMock).toHaveBeenCalledTimes(1);
+    // The owner's retained fence fails closed after the request has returned.
+    expect(assertActive).toBeTypeOf("function");
+    expect(assertActive).toThrow(PluginAcpRuntimeError);
+  });
+
+  it("does not let plugin code mint request authority by mutating the exposed scope", async () => {
+    config.plugins = {};
+    const runtime = createRuntime();
+    const { getPluginRuntimeGatewayRequestScope } =
+      await import("../plugins/runtime/gateway-request-scope.js");
+    await expectAcpError(
+      scoped(
+        () => {
+          const scope = getPluginRuntimeGatewayRequestScope();
+          scope!.client = requestClient;
+          return runtime.spawn({ task: "forged" });
+        },
+        { pluginOrigin: "workspace" },
+      ),
+      "ACP_PLUGIN_DETACHED_FORBIDDEN",
+    );
+    expect(hoisted.spawnAcpForPluginMock).not.toHaveBeenCalled();
+  });
+
+  it("lets a trusted detached grant run after its arming request has ended", async () => {
+    const runtime = createRuntime();
+    let release!: () => void;
+    const barrier = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let later!: Promise<unknown>;
+    await scoped(
+      async () => {
+        later = (async () => {
+          await barrier;
+          return runtime.spawn({ task: "detached-by-grant" });
+        })();
+      },
+      { client: requestClient },
+    );
+    release();
+    await expect(later).resolves.toMatchObject({ runId: "run-1" });
+    expect(hoisted.spawnAcpForPluginMock).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("plugin ACP requester-bound completion delivery", () => {
@@ -375,6 +486,50 @@ describe("plugin ACP requester-bound completion delivery", () => {
     expect(other.replayed).toBeUndefined();
     expect(hoisted.spawnAcpForPluginMock).toHaveBeenCalledTimes(2);
   });
+
+  it("keys replay on the full host-captured completion route, not the session alone", async () => {
+    config.plugins = {};
+    const runtime = createRuntime();
+    let launched = 0;
+    hoisted.spawnAcpForPluginMock.mockImplementation(async () =>
+      acceptedSpawn({ runId: `run-${++launched}`, expectsCompletionMessage: true }),
+    );
+    const spawnFrom = (origin: {
+      channel: string;
+      to: string;
+      accountId?: string;
+      threadId?: string;
+    }) =>
+      withPluginSubagentRequesterContext({ sessionKey: "agent:main:main", origin }, () =>
+        scoped(() =>
+          runtime.spawn({
+            task: "A",
+            idempotencyKey: "route",
+            completionDelivery: "current-requester",
+          }),
+        ),
+      );
+    const channelA = await spawnFrom({ channel: "slack", to: "channel:A" });
+    const channelB = await spawnFrom({ channel: "slack", to: "channel:B" });
+    const otherAccount = await spawnFrom({
+      channel: "slack",
+      to: "channel:A",
+      accountId: "acct-2",
+    });
+    const thread = await spawnFrom({ channel: "slack", to: "channel:A", threadId: "171" });
+    const runIds = [channelA, channelB, otherAccount, thread].map((result) => result.runId);
+    expect(new Set(runIds).size).toBe(4);
+    expect([channelA, channelB, otherAccount, thread].every((r) => r.replayed === undefined)).toBe(
+      true,
+    );
+    // The same session captured on the same route replays; a plugin cannot steer the
+    // route because requester fields are rejected as input (see the unsupported-option case).
+    const replayA = await spawnFrom({ channel: "slack", to: "channel:A" });
+    expect(replayA).toEqual({ ...channelA, replayed: true });
+    const replayThread = await spawnFrom({ channel: "slack", to: "channel:A", threadId: "171" });
+    expect(replayThread).toEqual({ ...thread, replayed: true });
+    expect(launched).toBe(4);
+  });
 });
 
 describe("plugin ACP spawn input", () => {
@@ -481,6 +636,63 @@ describe("plugin ACP spawn idempotency", () => {
     expect(second.runId).toBe("run-b");
     expect(second.replayed).toBeUndefined();
     expect(hoisted.spawnAcpForPluginMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("retains the earlier receipt when the same key alternates inputs (A, B, A)", async () => {
+    const runtime = createRuntime();
+    let launched = 0;
+    hoisted.spawnAcpForPluginMock.mockImplementation(async () =>
+      acceptedSpawn({ runId: `run-${++launched}` }),
+    );
+    const now = vi.spyOn(Date, "now");
+    let clock = 1_000_000;
+    now.mockImplementation(() => clock);
+    const a = await scoped(() => runtime.spawn({ task: "A", idempotencyKey: "same" }));
+    const b = await scoped(() => runtime.spawn({ task: "B", idempotencyKey: "same" }));
+    const aAgain = await scoped(() => runtime.spawn({ task: "A", idempotencyKey: "same" }));
+    const bAgain = await scoped(() => runtime.spawn({ task: "B", idempotencyKey: "same" }));
+    expect(a.runId).toBe("run-1");
+    expect(b.runId).toBe("run-2");
+    expect(aAgain).toEqual({ ...a, replayed: true });
+    expect(bAgain).toEqual({ ...b, replayed: true });
+    expect(launched).toBe(2);
+    // Both receipts share the existing 10 minute window and are pruned together after it.
+    clock += 10 * 60_000;
+    const aLater = await scoped(() => runtime.spawn({ task: "A", idempotencyKey: "same" }));
+    expect(aLater.replayed).toBeUndefined();
+    expect(aLater.runId).toBe("run-3");
+    expect(launched).toBe(3);
+  });
+
+  it("bounds receipts per plugin and evicts the oldest tuple first", async () => {
+    const runtime = createRuntime();
+    let launched = 0;
+    hoisted.spawnAcpForPluginMock.mockImplementation(async () =>
+      acceptedSpawn({ runId: `run-${++launched}` }),
+    );
+    const now = vi.spyOn(Date, "now");
+    let clock = 1_000_000;
+    now.mockImplementation(() => clock);
+    const first = await scoped(() => runtime.spawn({ task: "task-0", idempotencyKey: "bound" }));
+    for (let index = 1; index < 200; index += 1) {
+      clock += 1;
+      await scoped(() => runtime.spawn({ task: `task-${index}`, idempotencyKey: "bound" }));
+    }
+    expect(launched).toBe(200);
+    // The 201st distinct tuple evicts the oldest receipt (task-0) and nothing else.
+    clock += 1;
+    await scoped(() => runtime.spawn({ task: "task-200", idempotencyKey: "bound" }));
+    expect(launched).toBe(201);
+    const replayLatest = await scoped(() =>
+      runtime.spawn({ task: "task-199", idempotencyKey: "bound" }),
+    );
+    expect(replayLatest.replayed).toBe(true);
+    const relaunchOldest = await scoped(() =>
+      runtime.spawn({ task: "task-0", idempotencyKey: "bound" }),
+    );
+    expect(relaunchOldest.replayed).toBeUndefined();
+    expect(relaunchOldest.runId).not.toBe(first.runId);
+    expect(launched).toBe(202);
   });
 
   it("scopes replay to the calling plugin", async () => {

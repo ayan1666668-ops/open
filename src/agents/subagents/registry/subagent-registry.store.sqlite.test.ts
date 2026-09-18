@@ -575,12 +575,17 @@ describe("subagent registry sqlite store", () => {
       const pluginOwned = createRun({
         runId: "plugin-owned",
         childSessionKey: "agent:codex:acp:plugin:factory:child",
+        childSessionId: "session-incarnation-1",
         controllerSessionKey: pluginOwnerKey,
         taskOwnerKey: pluginOwnerKey,
         requesterSessionKey: "agent:main:telegram:group:42",
         execution: { status: "running", startedAt: 110 },
       });
-      const blankOwner = createRun({ runId: "blank-owner", taskOwnerKey: "   " });
+      const blankOwner = createRun({
+        runId: "blank-owner",
+        taskOwnerKey: "   ",
+        childSessionId: "   ",
+      });
       const legacy = createRun({ runId: "legacy", childSessionKey: "agent:main:subagent:legacy" });
       saveSubagentRegistryToSqlite(
         new Map([
@@ -594,10 +599,12 @@ describe("subagent registry sqlite store", () => {
         .db.prepare("SELECT payload_json FROM subagent_runs WHERE run_id = ?")
         .get(legacy.runId) as { payload_json: string };
       expect(JSON.parse(stored.payload_json)).not.toHaveProperty("taskOwnerKey");
+      expect(JSON.parse(stored.payload_json)).not.toHaveProperty("childSessionId");
       closeOpenClawStateDatabaseForTest();
 
       const restored = loadSubagentRegistryFromSqlite();
       expect(restored.get(pluginOwned.runId)).toMatchObject({
+        childSessionId: "session-incarnation-1",
         controllerSessionKey: pluginOwnerKey,
         taskOwnerKey: pluginOwnerKey,
         requesterSessionKey: "agent:main:telegram:group:42",
@@ -606,6 +613,7 @@ describe("subagent registry sqlite store", () => {
       for (const runId of [blankOwner.runId, legacy.runId]) {
         const run = restored.get(runId)!;
         expect(run.taskOwnerKey).toBeUndefined();
+        expect(run.childSessionId).toBeUndefined();
         expect(resolveSubagentTaskOwnerKey(run)).toBe(run.requesterSessionKey);
       }
     });

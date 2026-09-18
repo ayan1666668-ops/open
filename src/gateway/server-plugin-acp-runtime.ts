@@ -5,6 +5,7 @@
  * method resolves it fresh, so a plugin can only spawn as itself and only see, wait on,
  * observe, or cancel runs whose task owner key is `plugin:<pluginId>:acp`.
  */
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
@@ -18,6 +19,7 @@ import { normalizePluginsConfig } from "../plugins/config-state.js";
 import {
   bindGatewayContextResolver,
   getPluginRuntimeGatewayRequestScope,
+  hasLivePluginRuntimeRequestAuthority,
   withPluginRuntimeGatewayContextResolver,
 } from "../plugins/runtime/gateway-request-scope.js";
 import { mapCancelledTaskResult } from "../plugins/runtime/runtime-tasks.js";
@@ -43,6 +45,7 @@ import { cancelDetachedTaskRunById } from "../tasks/task-executor.js";
 import { isActiveTaskStatus } from "../tasks/task-registry-common.js";
 import { getTaskById, listTasksForOwnerKey } from "../tasks/task-registry-query.js";
 import type { TaskRecord } from "../tasks/task-registry.types.js";
+import { deliveryContextKey } from "../utils/delivery-context.shared.js";
 import type { GatewayContextResolver, GatewayRequestContext } from "./server-methods/types.js";
 import { getInProcessGatewayRequestContext } from "./server-plugin-in-process-dispatch.js";
 import {
@@ -93,10 +96,12 @@ type ResolvedPluginAcpPrincipal = {
   context: GatewayRequestContext;
   cfg: OpenClawConfig;
   detachedAllowed: boolean;
+  /** Rechecks the host request lease or requester-bound hook that granted request mode. */
+  requestAuthorityLive: () => boolean;
 };
 
+/** One receipt per (idempotency key, canonical input) tuple; failed spawns are evicted. */
 type IdempotencyEntry = {
-  fingerprint: string;
   expiresAt: number;
   pending?: Promise<PluginAcpSpawnResult>;
   result?: PluginAcpSpawnResult;
@@ -242,6 +247,12 @@ function resolveCompletionRequester(
   }
 }
 
+/**
+ * Digest of the canonical input plus the full host-captured completion route. The same key
+ * from a different requester session, or from the same session captured on a different
+ * channel/account/destination/thread, is a different run; a replay must never route one
+ * requester's completion to another destination.
+ */
 function fingerprintSpawnInput(
   input: CanonicalSpawnInput,
   requester: PluginSubagentRequesterContext | undefined,
@@ -250,14 +261,30 @@ function fingerprintSpawnInput(
   const ordered = Object.fromEntries(
     Object.entries({
       ...rest,
-      // The same key from a different requester is a different run; a replay must never
-      // route one requester's completion to another.
-      ...(requester ? { requesterSessionKey: requester.sessionKey } : {}),
+      ...(requester
+        ? {
+            requesterSessionKey: requester.sessionKey,
+            // Fall back to the raw captured fields so an unroutable origin still cannot
+            // collide with a different unroutable origin.
+            requesterRoute:
+              deliveryContextKey(requester.origin) ??
+              JSON.stringify([
+                requester.origin.channel,
+                requester.origin.to,
+                requester.origin.accountId,
+                requester.origin.threadId,
+              ]),
+          }
+        : {}),
     })
       .filter(([, value]) => value !== undefined)
       .toSorted(([left], [right]) => left.localeCompare(right)),
   );
-  return JSON.stringify(ordered);
+  return createHash("sha256").update(JSON.stringify(ordered)).digest("hex");
+}
+
+function idempotencyReceiptKey(idempotencyKey: string, fingerprint: string): string {
+  return `${idempotencyKey}\u0000${fingerprint}`;
 }
 
 function mapSpawnFailureCode(errorCode: string): PluginAcpErrorCode {
@@ -376,8 +403,12 @@ export function createGatewayAcpRuntime(
       throw new PluginAcpRuntimeError("ACP_PLUGIN_GATEWAY_REQUIRED", GATEWAY_REQUIRED_REASON);
     }
     const cfg = context.getRuntimeConfig();
-    const mode: PluginAcpAuthorityMode =
-      scope?.client || hasActivePluginSubagentRequesterContext() ? "request" : "detached";
+    // Request mode needs the host-minted lease of a still-running request callback (an
+    // ambient client on a retained or mutated scope object grants nothing) or a live
+    // requester-bound hook invocation. Both expire when their host callback returns.
+    const requestAuthorityLive = () =>
+      hasLivePluginRuntimeRequestAuthority(scope) || hasActivePluginSubagentRequesterContext();
+    const mode: PluginAcpAuthorityMode = requestAuthorityLive() ? "request" : "detached";
     const detachedAllowed =
       normalizePluginsConfig(cfg.plugins).entries[pluginId]?.acp?.allowDetachedSpawn === true &&
       canTrustedOfficialPluginRequestScopes(scope ?? {});
@@ -388,15 +419,19 @@ export function createGatewayAcpRuntime(
       context,
       cfg,
       detachedAllowed,
+      requestAuthorityLive,
     };
   };
 
+  const detachedForbidden = (principal: ResolvedPluginAcpPrincipal, reason: string) =>
+    new PluginAcpRuntimeError(
+      "ACP_PLUGIN_DETACHED_FORBIDDEN",
+      `Plugin "${principal.pluginId}" ${reason}. Detached ACP spawns require a bundled or trusted official plugin with plugins.entries.${principal.pluginId}.acp.allowDetachedSpawn=true.`,
+    );
+
   const assertSpawnAuthority = (principal: ResolvedPluginAcpPrincipal) => {
     if (principal.mode === "detached" && !principal.detachedAllowed) {
-      throw new PluginAcpRuntimeError(
-        "ACP_PLUGIN_DETACHED_FORBIDDEN",
-        `Plugin "${principal.pluginId}" has no live Gateway request. Detached ACP spawns require a bundled or trusted official plugin with plugins.entries.${principal.pluginId}.acp.allowDetachedSpawn=true.`,
-      );
+      throw detachedForbidden(principal, "has no live Gateway request");
     }
   };
 
@@ -407,6 +442,11 @@ export function createGatewayAcpRuntime(
         "ACP_PLUGIN_RUNTIME_CLOSED",
         "Gateway instance changed while the plugin ACP spawn was in flight.",
       );
+    }
+    // A spawn admitted under request authority must still hold it at every side effect;
+    // work the host awaits keeps the lease, an unawaited continuation loses it here.
+    if (!principal.detachedAllowed && !principal.requestAuthorityLive()) {
+      throw detachedForbidden(principal, "lost its Gateway request while the spawn was in flight");
     }
   };
 
@@ -477,12 +517,17 @@ export function createGatewayAcpRuntime(
         entries.delete(existingKey);
       }
     }
-    const fingerprint = fingerprintSpawnInput(input, completionRequester);
-    const existing = entries.get(key);
-    // Same key with different input is a distinct request, never an alias of the old run.
-    // A matching in-flight or accepted spawn replays instead of launching a duplicate; only
-    // a failed spawn (evicted below) lets the same key run again.
-    if (existing && existing.fingerprint === fingerprint) {
+    // Receipts are keyed by (key, canonical input). Same key with different input is a
+    // distinct request that gets its own receipt without erasing the earlier one, so an
+    // A -> B -> A retry within the window replays A. A matching in-flight or accepted spawn
+    // replays instead of launching a duplicate; only a failed spawn (evicted below) lets the
+    // same tuple run again.
+    const receiptKey = idempotencyReceiptKey(
+      key,
+      fingerprintSpawnInput(input, completionRequester),
+    );
+    const existing = entries.get(receiptKey);
+    if (existing) {
       const replay = existing.result ?? (await existing.pending);
       if (replay) {
         return { ...replay, replayed: true };
@@ -496,10 +541,7 @@ export function createGatewayAcpRuntime(
         entries.delete(oldest[0]);
       }
     }
-    const entry: IdempotencyEntry = {
-      fingerprint,
-      expiresAt: now + PLUGIN_ACP_IDEMPOTENCY_TTL_MS,
-    };
+    const entry: IdempotencyEntry = { expiresAt: now + PLUGIN_ACP_IDEMPOTENCY_TTL_MS };
     entry.pending = runSpawn(principal, input, completionRequester).then(
       (result) => {
         entry.result = result;
@@ -507,14 +549,14 @@ export function createGatewayAcpRuntime(
         return result;
       },
       (error: unknown) => {
-        // Failed spawns never replay; the next attempt with this key runs again.
-        if (entries.get(key) === entry) {
-          entries.delete(key);
+        // Failed spawns never replay; the next attempt with this tuple runs again.
+        if (entries.get(receiptKey) === entry) {
+          entries.delete(receiptKey);
         }
         throw error;
       },
     );
-    entries.set(key, entry);
+    entries.set(receiptKey, entry);
     return await entry.pending;
   };
 

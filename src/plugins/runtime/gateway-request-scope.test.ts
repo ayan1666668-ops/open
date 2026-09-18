@@ -103,6 +103,123 @@ describe("gateway request scope", () => {
     await expectPluginIdScopedGatewayScope("voice-call");
   });
 
+  describe("request lease", () => {
+    const client = {} as NonNullable<PluginRuntimeGatewayRequestScope["client"]>;
+
+    it("is live only while the awaited request callback runs", async () => {
+      const runtimeScope = await importGatewayRequestScopeModule();
+      let insideRequest: boolean | undefined;
+      let retained: (() => boolean) | undefined;
+      const result = await runtimeScope.withPluginRuntimeGatewayRequestScope(
+        { ...TEST_SCOPE, client },
+        async () => {
+          await Promise.resolve();
+          insideRequest = runtimeScope.hasLivePluginRuntimeRequestAuthority();
+          const scope = runtimeScope.getPluginRuntimeGatewayRequestScope();
+          retained = () => runtimeScope.hasLivePluginRuntimeRequestAuthority(scope);
+          return "done";
+        },
+      );
+      expect(result).toBe("done");
+      expect(insideRequest).toBe(true);
+      // The retained scope object and any continuation armed inside the request lose the
+      // lease once the callback settles, even though the Gateway itself is still alive.
+      expect(retained?.()).toBe(false);
+      expect(runtimeScope.hasLivePluginRuntimeRequestAuthority()).toBe(false);
+    });
+
+    it("expires for a continuation that outlives the request callback", async () => {
+      const runtimeScope = await importGatewayRequestScopeModule();
+      let release!: () => void;
+      const barrier = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let later!: Promise<boolean>;
+      await runtimeScope.withPluginRuntimeGatewayRequestScope(
+        { ...TEST_SCOPE, client },
+        async () => {
+          later = (async () => {
+            await barrier;
+            return runtimeScope.hasLivePluginRuntimeRequestAuthority();
+          })();
+        },
+      );
+      release();
+      await expect(later).resolves.toBe(false);
+    });
+
+    it("releases synchronously for plain returns and throws", async () => {
+      const runtimeScope = await importGatewayRequestScopeModule();
+      let scope: PluginRuntimeGatewayRequestScope | undefined;
+      const value = runtimeScope.withPluginRuntimeGatewayRequestScope(
+        { ...TEST_SCOPE, client },
+        () => {
+          scope = runtimeScope.getPluginRuntimeGatewayRequestScope();
+          expect(runtimeScope.hasLivePluginRuntimeRequestAuthority()).toBe(true);
+          return 42;
+        },
+      );
+      expect(value).toBe(42);
+      expect(runtimeScope.hasLivePluginRuntimeRequestAuthority(scope)).toBe(false);
+      expect(() =>
+        runtimeScope.withPluginRuntimeGatewayRequestScope({ ...TEST_SCOPE, client }, () => {
+          scope = runtimeScope.getPluginRuntimeGatewayRequestScope();
+          throw new Error("boom");
+        }),
+      ).toThrow("boom");
+      expect(runtimeScope.hasLivePluginRuntimeRequestAuthority(scope)).toBe(false);
+      await expect(
+        runtimeScope.withPluginRuntimeGatewayRequestScope({ ...TEST_SCOPE, client }, async () => {
+          scope = runtimeScope.getPluginRuntimeGatewayRequestScope();
+          throw new Error("async boom");
+        }),
+      ).rejects.toThrow("async boom");
+      expect(runtimeScope.hasLivePluginRuntimeRequestAuthority(scope)).toBe(false);
+    });
+
+    it("requires the host-admitted client and ignores client mutation by plugin code", async () => {
+      const runtimeScope = await importGatewayRequestScopeModule();
+      await runtimeScope.withPluginRuntimeGatewayRequestScope(TEST_SCOPE, async () => {
+        expect(runtimeScope.hasLivePluginRuntimeRequestAuthority()).toBe(false);
+        const scope = runtimeScope.getPluginRuntimeGatewayRequestScope();
+        // The SDK exposes the scope object; writing a client onto it mints no lease.
+        scope!.client = client;
+        expect(runtimeScope.hasLivePluginRuntimeRequestAuthority()).toBe(false);
+        expect(runtimeScope.hasLivePluginRuntimeRequestAuthority(scope)).toBe(false);
+      });
+      // A fabricated scope object that was never admitted by the host carries no lease.
+      expect(runtimeScope.hasLivePluginRuntimeRequestAuthority({ ...TEST_SCOPE, client })).toBe(
+        false,
+      );
+    });
+
+    it("follows the request into nested plugin and registry scopes but not detached work", async () => {
+      const runtimeScope = await importGatewayRequestScopeModule();
+      const registry = createEmptyPluginRegistry();
+      await runtimeScope.withPluginRuntimeGatewayRequestScope(
+        { ...TEST_SCOPE, client },
+        async () => {
+          await runtimeScope.withPluginRuntimePluginIdScope("voice-call", async () => {
+            expect(runtimeScope.hasLivePluginRuntimeRequestAuthority()).toBe(true);
+            await runtimeScope.withPluginRuntimeRegistryScope(registry, async () => {
+              expect(runtimeScope.hasLivePluginRuntimeRequestAuthority()).toBe(true);
+            });
+          });
+          runtimeScope.withPluginRuntimeGatewayContextResolver(undefined, () => {
+            expect(runtimeScope.hasLivePluginRuntimeRequestAuthority()).toBe(true);
+          });
+          runtimeScope.withPluginRuntimeGatewayContextResolver(
+            undefined,
+            () => {
+              expect(runtimeScope.hasLivePluginRuntimeRequestAuthority()).toBe(false);
+            },
+            { inheritRequestScope: false },
+          );
+        },
+      );
+    });
+  });
+
   it("resolves the owned registry while preserving gateway request facts", async () => {
     const activeRegistry = createEmptyPluginRegistry();
     const requestRegistry = createEmptyPluginRegistry();

@@ -64,8 +64,21 @@ type PluginRuntimePluginScope = {
   pluginTrustedOfficialInstall?: boolean;
 };
 
+/**
+ * Host-minted liveness of one request callback. `authenticated` is fixed from the client the
+ * host admitted when the scope was entered; `active` drops in `finally` when that callback
+ * settles. Plugins can read the scope object through the SDK but never reach this record.
+ */
+type PluginRuntimeRequestLease = {
+  readonly authenticated: boolean;
+  active: boolean;
+};
+
 const PLUGIN_RUNTIME_GATEWAY_REQUEST_SCOPE_KEY: unique symbol = Symbol.for(
   "openclaw.pluginRuntimeGatewayRequestScope",
+);
+const PLUGIN_RUNTIME_REQUEST_LEASES_KEY: unique symbol = Symbol.for(
+  "openclaw.pluginRuntimeRequestLeases",
 );
 const GATEWAY_CONTEXT_RESOLVERS_KEY: unique symbol = Symbol.for("openclaw.gatewayContextResolvers");
 
@@ -80,6 +93,42 @@ const gatewayContextResolvers = resolveGlobalSingleton<WeakMap<object, GatewayCo
   GATEWAY_CONTEXT_RESOLVERS_KEY,
   () => new WeakMap(),
 );
+// Keyed by the exact store object so a scope copied into nested plugin/registry scopes keeps
+// the request lease while a scope mutated or fabricated by plugin code never gains one.
+const pluginRuntimeRequestLeases = resolveGlobalSingleton<
+  WeakMap<object, PluginRuntimeRequestLease>
+>(PLUGIN_RUNTIME_REQUEST_LEASES_KEY, () => new WeakMap());
+
+function inheritRequestLease(
+  from: PluginRuntimeGatewayRequestScope | undefined,
+  to: PluginRuntimeGatewayRequestScope,
+): void {
+  const lease = from ? pluginRuntimeRequestLeases.get(from) : undefined;
+  if (lease) {
+    pluginRuntimeRequestLeases.set(to, lease);
+  }
+}
+
+function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "then" in value &&
+    typeof value.then === "function"
+  );
+}
+
+/**
+ * True only while the host request callback that admitted `scope` with an authenticated
+ * client is still running. Gateway lifetime, retained scope objects, and continuations armed
+ * inside a finished request do not qualify.
+ */
+export function hasLivePluginRuntimeRequestAuthority(
+  scope: PluginRuntimeGatewayRequestScope | undefined = pluginRuntimeGatewayRequestScope.getStore(),
+): boolean {
+  const lease = scope ? pluginRuntimeRequestLeases.get(scope) : undefined;
+  return lease?.active === true && lease.authenticated;
+}
 
 export function bindGatewayContextResolver(
   owner: object,
@@ -172,12 +221,42 @@ export function getSharedGatewayContextResolver(
 
 /**
  * Runs plugin gateway handlers with request-scoped context that runtime helpers can read.
+ * The request lease lives exactly as long as `run`: released synchronously for a plain
+ * return or throw, otherwise when the returned promise settles.
  */
 export function withPluginRuntimeGatewayRequestScope<T>(
   scope: PluginRuntimeGatewayRequestScope,
+  run: () => Promise<T>,
+): Promise<T>;
+export function withPluginRuntimeGatewayRequestScope<T>(
+  scope: PluginRuntimeGatewayRequestScope,
   run: () => T,
-): T {
-  return pluginRuntimeGatewayRequestScope.run(scope, run);
+): T;
+export function withPluginRuntimeGatewayRequestScope(
+  scope: PluginRuntimeGatewayRequestScope,
+  run: () => unknown,
+): unknown {
+  const scoped: PluginRuntimeGatewayRequestScope = { ...scope };
+  const lease: PluginRuntimeRequestLease = {
+    authenticated: scope.client !== undefined,
+    active: true,
+  };
+  pluginRuntimeRequestLeases.set(scoped, lease);
+  const release = () => {
+    lease.active = false;
+  };
+  let result: unknown;
+  try {
+    result = pluginRuntimeGatewayRequestScope.run(scoped, run);
+  } catch (error) {
+    release();
+    throw error;
+  }
+  if (isPromiseLike(result)) {
+    return Promise.resolve(result).finally(release);
+  }
+  release();
+  return result;
 }
 
 /** Runs detached work with its captured Gateway binding, including an explicitly unbound owner. */
@@ -198,6 +277,7 @@ export function withPluginRuntimeGatewayContextResolver<T>(
     resolveGatewayContext,
   };
   delete scoped.context;
+  inheritRequestLease(current, scoped);
   return pluginRuntimeGatewayRequestScope.run(scoped, run);
 }
 
@@ -211,17 +291,15 @@ export function withPluginRuntimeRegistryScope<T>(
     return run();
   }
   const current = pluginRuntimeGatewayRequestScope.getStore();
-  return pluginRuntimeGatewayRequestScope.run(
-    {
-      isWebchatConnect: () => false,
-      ...current,
-      pluginRegistry: registry,
-      declaredProviderOwners:
-        declaredProviderOwners ??
-        getPluginRuntimeLoadContextState(registry)?.declaredProviderOwners,
-    },
-    run,
-  );
+  const scoped: PluginRuntimeGatewayRequestScope = {
+    isWebchatConnect: () => false,
+    ...current,
+    pluginRegistry: registry,
+    declaredProviderOwners:
+      declaredProviderOwners ?? getPluginRuntimeLoadContextState(registry)?.declaredProviderOwners,
+  };
+  inheritRequestLease(current, scoped);
+  return pluginRuntimeGatewayRequestScope.run(scoped, run);
 }
 
 /**
@@ -250,6 +328,7 @@ export function withPluginRuntimePluginScope<T>(scope: PluginRuntimePluginScope,
   } else {
     delete scoped.pluginTrustedOfficialInstall;
   }
+  inheritRequestLease(current, scoped);
   return pluginRuntimeGatewayRequestScope.run(scoped, run);
 }
 
