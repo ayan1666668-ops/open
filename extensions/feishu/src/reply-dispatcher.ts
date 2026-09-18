@@ -7,7 +7,6 @@ import {
 } from "openclaw/plugin-sdk/channel-inbound";
 import {
   createChannelMessageReplyPipeline,
-  formatChannelProgressDraftLineForEntry,
   resolveChannelPreviewStreamMode,
   resolveChannelStreamingBlockEnabled,
 } from "openclaw/plugin-sdk/channel-outbound";
@@ -19,8 +18,6 @@ import {
   resolveTextChunksWithFallback,
   sendMediaWithLeadingCaption,
 } from "openclaw/plugin-sdk/reply-payload";
-import type { GetReplyOptions } from "openclaw/plugin-sdk/reply-runtime";
-import { stripReasoningTagsFromText } from "openclaw/plugin-sdk/text-chunking";
 import type { ClawdbotConfig, OutboundIdentity, ReplyPayload, RuntimeEnv } from "../runtime-api.js";
 import { resolveFeishuRuntimeAccount } from "./accounts.js";
 import { resolveConfiguredHttpTimeoutMs } from "./client-timeout.js";
@@ -35,6 +32,7 @@ import {
   renderFeishuReplyPayload,
   withinCardTableLimit,
 } from "./presentation-card.js";
+import { createFeishuProgressDraftBridge } from "./progress-draft-bridge.js";
 import {
   createFeishuPartialReplyDeliveryError,
   createFeishuReplyDeliveryResult,
@@ -281,12 +279,11 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
   const chunkMode = core.channel.text.resolveChunkMode(cfg, "feishu", accountId);
   const tableMode = core.channel.text.resolveMarkdownTableMode({ cfg, channel: "feishu" });
   const renderMode = account.config?.renderMode ?? "auto";
+  const previewStreamMode = resolveChannelPreviewStreamMode(account.config, "partial");
   // Streaming cards cannot attach native mention recipients. Bot-authored ingress
   // therefore uses normal cards/posts so every emitted unit reaches the peer bot.
   const streamingEnabled =
-    !requiredMentionTargets?.length &&
-    resolveChannelPreviewStreamMode(account.config, "partial") !== "off" &&
-    renderMode !== "raw";
+    !requiredMentionTargets?.length && previewStreamMode !== "off" && renderMode !== "raw";
   const hookRunner = getGlobalHookRunner();
   const modifyingHooksRegistered =
     (hookRunner?.hasHooks("reply_payload_sending") ?? false) ||
@@ -297,6 +294,12 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
   const blockStreamingEnabled = resolveChannelStreamingBlockEnabled(account.config);
   const coreBlockStreamingEnabled = blockStreamingEnabled === true;
   const reasoningPreviewEnabled = previewStreamingEnabled && params.allowReasoningPreview === true;
+  // Progress mode coalesces the whole work timeline (headline + tools +
+  // narration/commentary + plan) into one live CardKit draft, then repaints that
+  // same card in place with the final answer. Standalone progress messages are
+  // suppressed while the draft owns the lane. Every progress-only behavior is
+  // gated on this flag so `off`/`partial` keep their exact existing behavior.
+  const progressStreamingEnabled = previewStreamingEnabled && previewStreamMode === "progress";
 
   let streaming: FeishuStreamingSession | null = null;
   let streamText = "";
@@ -1547,6 +1550,10 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
             if (info?.kind === "final") {
               // Final payloads can be cumulative snapshots or independent
               // notices. Preserve both when the latter arrives after an answer.
+              if (progressStreamingEnabled) {
+                // Flip the single draft card from the work timeline to the answer.
+                progressBridge.markFinalReplyStarted();
+              }
               streamText = text;
               hasStreamingFinalText = true;
               snapshotBaseText = "";
@@ -1641,72 +1648,34 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
     onError: handleDeliveryError as NonNullable<ChannelInboundTurnPlan["delivery"]["onError"]>,
   };
 
+  // Progress-mode draft bridge: owns the shared compositor and the
+  // streaming/progress reply callbacks. Feishu only provides the CardKit
+  // streaming primitives; the compositor renders the rolling work timeline that
+  // the final answer repaints in place. When progress mode is off the bridge
+  // stays inert and partial-preview behavior is unchanged.
+  const progressBridge = createFeishuProgressDraftBridge({
+    accountConfig: account.config,
+    accountId: account.accountId,
+    sendTarget,
+    previewStreamMode,
+    previewStreamingEnabled,
+    progressStreamingEnabled,
+    reasoningPreviewEnabled,
+    startStreaming,
+    flushStreamingCardUpdate,
+    queueStreamingUpdate,
+    queueReasoningUpdate,
+    updateStreamingStatusLine,
+  });
+
   return {
     dispatcherOptions,
     delivery,
     replyOptions: {
       onModelSelected,
+      ...progressBridge.callbacks,
       disableBlockStreaming:
         typeof blockStreamingEnabled === "boolean" ? !blockStreamingEnabled : true,
-      onPartialReply: previewStreamingEnabled
-        ? (payload: ReplyPayload) => {
-            if (!payload.text) {
-              return false;
-            }
-            const cleaned = stripReasoningTagsFromText(payload.text, {
-              mode: "strict",
-              trim: "both",
-            });
-            if (!cleaned) {
-              return false;
-            }
-            startStreaming();
-            queueStreamingUpdate(cleaned, {
-              dedupeWithLastPartial: true,
-              mode: "snapshot",
-            });
-            return false;
-          }
-        : undefined,
-      onReasoningStream: reasoningPreviewEnabled
-        ? (payload: ReplyPayload) => {
-            if (!payload.text) {
-              return false;
-            }
-            startStreaming();
-            queueReasoningUpdate(formatReasoningMessage(payload.text));
-            return false;
-          }
-        : undefined,
-      onReasoningEnd: reasoningPreviewEnabled ? () => false : undefined,
-      onItemEvent: previewStreamingEnabled
-        ? (payload: Parameters<NonNullable<GetReplyOptions["onItemEvent"]>>[0]) => {
-            if (
-              payload.kind === "preamble" ||
-              payload.hideFromChannelProgress ||
-              payload.suppressChannelProgress
-            ) {
-              return false;
-            }
-            const { kind: itemKind, ...item } = payload;
-            const statusLineLocal = formatChannelProgressDraftLineForEntry(account.config, {
-              event: "item",
-              itemKind,
-              ...item,
-            });
-            if (statusLineLocal) {
-              return updateStreamingStatusLine(statusLineLocal);
-            }
-            return false;
-          }
-        : undefined,
-      onAssistantMessageStart: previewStreamingEnabled
-        ? () => updateStreamingStatusLine("", { startIfNeeded: false })
-        : undefined,
-      onCompactionStart: previewStreamingEnabled
-        ? () => updateStreamingStatusLine("📦 **Compacting context...**")
-        : undefined,
-      onCompactionEnd: previewStreamingEnabled ? () => updateStreamingStatusLine("") : undefined,
     },
     ensureNoVisibleReplyFallback,
     getVisibleReplyState: () => ({

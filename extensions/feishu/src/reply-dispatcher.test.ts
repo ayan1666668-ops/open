@@ -3444,8 +3444,8 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
     });
 
     await options.onReplyStart?.();
-    result.replyOptions.onReasoningStream?.({ text: "thinking step 1" });
-    result.replyOptions.onReasoningStream?.({
+    void result.replyOptions.onReasoningStream?.({ text: "thinking step 1" });
+    void result.replyOptions.onReasoningStream?.({
       text: "thinking step 1\nstep 2",
     });
     result.replyOptions.onPartialReply?.({ text: "answer part" });
@@ -3513,7 +3513,7 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
     });
 
     await options.onReplyStart?.();
-    result.replyOptions.onReasoningStream?.({ text: "deep thought" });
+    void result.replyOptions.onReasoningStream?.({ text: "deep thought" });
     result.replyOptions.onReasoningEnd?.();
     await options.onIdle?.();
 
@@ -3533,7 +3533,7 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
     });
 
     await options.onReplyStart?.();
-    result.replyOptions.onReasoningStream?.({ text: "" });
+    void result.replyOptions.onReasoningStream?.({ text: "" });
     result.replyOptions.onPartialReply?.({ text: "```ts\ncode\n```" });
     await options.deliver({ text: "```ts\ncode\n```" }, { kind: "final" });
     await options.onIdle?.();
@@ -3551,7 +3551,7 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
     });
 
     await options.onReplyStart?.();
-    result.replyOptions.onReasoningStream?.({ text: "thought" });
+    void result.replyOptions.onReasoningStream?.({ text: "thought" });
     result.replyOptions.onReasoningEnd?.();
     await options.deliver({ text: "```ts\nfinal answer\n```" }, { kind: "final" });
     await options.onIdle?.();
@@ -3636,7 +3636,7 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
       runtime: createRuntimeLogger(),
     });
     await options.onReplyStart?.();
-    result.replyOptions.onItemEvent?.(
+    void result.replyOptions.onItemEvent?.(
       projectAgentToolActivity({
         name: "web_search",
         toolCallId: "search-1",
@@ -3671,7 +3671,7 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
       runtime: createRuntimeLogger(),
     });
     await options.onReplyStart?.();
-    result.replyOptions.onItemEvent?.(
+    void result.replyOptions.onItemEvent?.(
       projectAgentToolActivity({
         name: "exec",
         toolCallId: "exec-1",
@@ -3694,7 +3694,7 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
       runtime: createRuntimeLogger(),
     });
     await options.onReplyStart?.();
-    result.replyOptions.onItemEvent?.(
+    void result.replyOptions.onItemEvent?.(
       projectAgentToolActivity({
         name: "process",
         toolCallId: "poll-1",
