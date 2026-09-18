@@ -8,6 +8,7 @@ import { runtimeProcessEntrypoints } from "../infra/runtime-process-entrypoints.
 import { prepareUpdateFailureReport } from "../infra/update-failure-report-prepare.js";
 import { listUpdateRuns } from "../infra/update-run-ledger.js";
 import { isPidAlive } from "../shared/pid-alive.js";
+import { resolveTestNodeExecPath } from "../test-utils/node-process.js";
 import {
   formatCliProcessFailure,
   runCliProcessChild,
@@ -15,6 +16,7 @@ import {
 } from "./cli-process-child.test-helpers.js";
 
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
+const testNodeExecPath = resolveTestNodeExecPath();
 // Keep source transforms reusable across fresh children; each case still owns its state.
 const childTempDir = useAutoCleanupTempDirTracker(afterAll).make("openclaw-update-child-tmp-");
 const fixture = fileURLToPath(
@@ -28,6 +30,7 @@ const doctorDiagnostics = [
   "Doctor complete.",
 ];
 const scenarios = [
+  "repair-deadline",
   "json",
   "inherited-json",
   "doctor-error",
@@ -52,7 +55,7 @@ const finalizeScenarios = [
 describe.each(["repair", "finalize"])("update %s process output", (command) => {
   // Both spellings share the finalization action; one matrix covers its output modes.
   it.each(command === "repair" ? scenarios : finalizeScenarios)(
-    "%s preserves the output and exit contract without restarting",
+    "%s preserves the output and exit contract",
     async (scenario) => {
       const root = tempDirs.make("openclaw-update-json-");
       const state = path.join(root, "state");
@@ -106,6 +109,7 @@ describe.each(["repair", "finalize"])("update %s process output", (command) => {
         listUpdateRuns({ limit: 1 }, { env: { HOME: root, OPENCLAW_STATE_DIR: state } })[0];
       let observedPhaseStart: ReturnType<typeof readRun> | undefined;
       const result = await runCliProcessChild({
+        nodeExecutable: testNodeExecPath,
         ...(scenario === "phase-hang"
           ? {
               interact: async (
@@ -131,7 +135,7 @@ describe.each(["repair", "finalize"])("update %s process output", (command) => {
         ],
         env: {
           ESBUILD_WORKER_THREADS: "0",
-          PATH: path.dirname(process.execPath),
+          PATH: path.dirname(testNodeExecPath),
           HOME: root,
           USERPROFILE: root,
           OPENCLAW_HOME: root,
@@ -153,10 +157,42 @@ describe.each(["repair", "finalize"])("update %s process output", (command) => {
       const failure = formatCliProcessFailure({ reason: `${command} ${scenario}`, ...result });
       expect(result.signal, failure).toBeNull();
       expect(result.code, failure).toBe(
-        scenario.endsWith("error") || scenario === "phase-hang" || blockedPhase === "doctor"
+        scenario === "repair-deadline" ||
+          scenario.endsWith("error") ||
+          scenario === "phase-hang" ||
+          blockedPhase === "doctor"
           ? 1
           : 0,
       );
+      if (scenario === "repair-deadline") {
+        const output = JSON.parse(result.stdout);
+        expect(output, failure).toMatchObject({ status: "failed", stuckPhase: "plugins" });
+        expect(await fs.readFile(path.join(state, "managed-service-state"), "utf8"), failure).toBe(
+          "running",
+        );
+        expect(
+          (await fs.readFile(path.join(state, "managed-service-state.events"), "utf8"))
+            .trim()
+            .split("\n"),
+          failure,
+        ).toEqual(["stop", "plugins-entered", "late-write-refused", "restart"]);
+        expect(JSON.parse(await fs.readFile(config, "utf8")).update, failure).toBeUndefined();
+        expect(readRun(), failure).toMatchObject({
+          status: "failed",
+          reason: "finalization-timeout",
+          steps: expect.arrayContaining([
+            expect.objectContaining({
+              step: "warning:finalize:plugins:deadline",
+              status: "completed",
+              detail: expect.stringContaining("timed out in plugins after 1000ms"),
+            }),
+          ]),
+        });
+        expect(result.stderr, failure).toContain(
+          "Gateway restarted and verified after Doctor repair.",
+        );
+        return;
+      }
       if (blockedPhase === "doctor") {
         const output = JSON.parse(result.stdout);
         expect(output, failure).toMatchObject({ status: "failed", stuckPhase: "doctor" });

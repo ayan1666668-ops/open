@@ -37,9 +37,9 @@ import {
 import { authorizeOperatorScopesForMethod } from "./method-scopes.js";
 import type { GatewayClient } from "./server-methods/shared-types.js";
 import { resolveSessionHistoryUnavailableMessage } from "./session-history-error.js";
+import { resolveCursorSeq } from "./session-history-snapshot.js";
 import {
   readSessionHistorySnapshotAsync,
-  resolveCursorSeq,
   SessionHistorySseState,
 } from "./session-history-state.js";
 import { createSessionListEntryFilter, resolveSessionSharingTarget } from "./session-sharing.js";
@@ -175,7 +175,13 @@ export async function handleSessionHistoryHttpRequest(
   let target: ReturnType<typeof resolveGatewaySessionStoreTargetWithStore>;
   let entry: ReturnType<typeof resolveCanonicalSessionEntryFromStoreKeys>;
   try {
-    target = resolveGatewaySessionStoreTargetWithStore({ cfg, key: sessionKey });
+    target = resolveGatewaySessionStoreTargetWithStore({
+      cfg,
+      key: sessionKey,
+      exactRead: true,
+      // Preserve configured-store initialization; retired and incognito targets stay read-only.
+      readOnly: false,
+    });
     entry = resolveCanonicalSessionEntryFromStoreKeys(target.store, target.storeKeys);
   } catch (error) {
     if ((error as { code?: unknown })?.code !== "SESSION_CANONICAL_KEY_MIGRATION_REQUIRED") {

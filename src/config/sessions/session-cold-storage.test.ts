@@ -9,6 +9,7 @@ import { createTempDirTracker } from "../../../test/helpers/temp-dir.js";
 import { executeSqliteQuerySync, getNodeSqliteKysely } from "../../infra/kysely-sync.js";
 import { flushLogger, setLoggerOverride } from "../../logging/logger.js";
 import { beginSessionWorkAdmission } from "../../sessions/session-lifecycle-admission.js";
+import { sessionChanges } from "../../sessions/session-row-changes.js";
 import type { DB } from "../../state/openclaw-agent-db.generated.js";
 import {
   closeOpenClawAgentDatabaseByPath,
@@ -20,7 +21,7 @@ import {
 } from "../../state/openclaw-agent-db.js";
 import { replaceSessionEntry } from "./session-accessor.js";
 import * as archiveWorkers from "./session-accessor.sqlite-archive.js";
-import { readSessionTranscriptHistoryEvents } from "./session-accessor.sqlite-history-events.js";
+import { readSessionTranscriptHistoryEvents } from "./session-accessor.sqlite-history.test-support.js";
 import { planSessionStateDeleteIfUnreferenced } from "./session-accessor.sqlite-lifecycle-state.js";
 import {
   loadTranscriptEvents,
@@ -657,13 +658,28 @@ describe("cold transcript storage workers", () => {
         await fs.unlink(archivePath);
       }
       closeOpenClawAgentDatabasesForTest();
-      await restoreSessionColdTranscript(fixture.scope);
-      expect(fixture.snapshot()).toEqual(fixture.original);
-      expect(readSessionColdTranscript(fixture.database(), historicalId)).toBeUndefined();
-      expect(fixture.database().prepare("PRAGMA quick_check").get()).toEqual({ quick_check: "ok" });
-      expect(fixture.database().prepare("PRAGMA foreign_key_check").all()).toEqual([]);
-      await restoreSessionColdTranscript(fixture.scope);
-      expect(fixture.snapshot()).toEqual(fixture.original);
+      const changes = vi.fn(() =>
+        Boolean(readSessionColdTranscript(fixture.database(), historicalId)),
+      );
+      const unsubscribe = sessionChanges.subscribe(changes);
+      try {
+        await restoreSessionColdTranscript(fixture.scope);
+        expect(fixture.snapshot()).toEqual(fixture.original);
+        expect(readSessionColdTranscript(fixture.database(), historicalId)).toBeUndefined();
+        expect(fixture.database().prepare("PRAGMA quick_check").get()).toEqual({
+          quick_check: "ok",
+        });
+        expect(fixture.database().prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+        await restoreSessionColdTranscript(fixture.scope);
+        expect(fixture.snapshot()).toEqual(fixture.original);
+        expect(changes).toHaveBeenCalledExactlyOnceWith({
+          storePath: fixture.scope.storePath,
+          sessionKey: fixture.scope.sessionKey,
+        });
+        expect(changes.mock.results[0]?.value).toBe(false);
+      } finally {
+        unsubscribe();
+      }
     },
   );
 
@@ -894,13 +910,20 @@ describe("cold transcript storage workers", () => {
         });
       },
     );
-    await expect(
-      restoreSessionColdTranscript(fixture.scope, () => {
-        if (revoked) {
-          throw new Error("Cold transcript reader was revoked");
-        }
-      }),
-    ).rejects.toThrow("Cold transcript reader was revoked");
+    const changes = vi.fn();
+    const unsubscribe = sessionChanges.subscribe(changes);
+    try {
+      await expect(
+        restoreSessionColdTranscript(fixture.scope, () => {
+          if (revoked) {
+            throw new Error("Cold transcript reader was revoked");
+          }
+        }),
+      ).rejects.toThrow("Cold transcript reader was revoked");
+      expect(changes).not.toHaveBeenCalled();
+    } finally {
+      unsubscribe();
+    }
     expect(revoked).toBe(true);
     expect(readSessionColdTranscript(fixture.database(), historicalId)).toEqual(descriptor);
     expect(fixture.snapshot()).toEqual(before);
