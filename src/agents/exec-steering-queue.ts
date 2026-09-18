@@ -28,7 +28,7 @@ const MERGED_EXEC_STEERING_PROMPT_HEADER = [
 ].join("\n\n");
 
 /** A completed background exec queued for requester-session steering. */
-export type ExecSteeringQueueItem = {
+type ExecSteeringQueueItem = {
   /** Unique id for this queued completion; used for ack/idempotency. */
   itemId: string;
   /** Session that launched the exec and should receive the completion. */
@@ -59,7 +59,7 @@ type StoredItem = {
 };
 
 /** Result of leasing pending exec completions for one requester turn. */
-export type LeasedExecSteeringBatch = {
+type LeasedExecSteeringBatch = {
   itemIds: string[];
   prompt: string;
 };
