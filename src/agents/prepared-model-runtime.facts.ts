@@ -160,25 +160,18 @@ export async function prepareWorkspaceBuildGroup(
     reusablePluginGeneration?.preferBuiltPluginArtifacts ??
     options.preferBuiltPluginArtifacts === true;
   options.registryResources?.retainGeneration(reusablePluginGeneration);
-  const registryClaims = new Map<PluginRegistry, ReturnType<typeof retainPreparedPluginRegistry>>();
-  await using registryCustody = {
-    retain: (registry: PluginRegistry) => {
-      if (!registryClaims.has(registry)) {
-        // The final generation acquires its own claim before these construction claims release.
-        registryClaims.set(registry, retainPreparedPluginRegistry(registry));
-      }
-    },
-    [Symbol.asyncDispose]: async () => {
-      const results = await Promise.allSettled(
-        [...registryClaims.values()].map(async (release) => await release?.()),
-      );
-      const failures = results.flatMap((result) =>
-        result.status === "rejected" ? [result.reason] : [],
-      );
-      if (failures.length) {
-        throw new AggregateError(failures, "Prepared registry construction cleanup failed");
-      }
-    },
+  const retainedRegistries = new Set<PluginRegistry>();
+  await using registryBorrows = new AsyncDisposableStack();
+  const retainRegistry = (registry: PluginRegistry) => {
+    if (retainedRegistries.has(registry)) {
+      return;
+    }
+    // The final generation takes its own claim before construction releases these borrows.
+    const release = retainPreparedPluginRegistry(registry);
+    retainedRegistries.add(registry);
+    if (release) {
+      registryBorrows.defer(release);
+    }
   };
   const preparingRegistries = prepareWorkspacePluginRegistries(
     input,
@@ -190,7 +183,7 @@ export async function prepareWorkspaceBuildGroup(
     options.basePluginIds,
     options.registryResources,
     options.purpose,
-    registryCustody.retain,
+    retainRegistry,
   );
   const { inboundPluginRegistry, runtimePluginRegistry, primaryRegistry } =
     preparingRegistries instanceof Promise ? await preparingRegistries : preparingRegistries;
