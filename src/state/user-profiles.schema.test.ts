@@ -111,6 +111,7 @@ describe("user profile role schema", () => {
         expect(tableHasColumn(database, "user_profiles", "role")).toBe(false);
         expect(resolveUserProfileId(profile.id, options)).toBe(profile.id);
         expect(getUserProfileListItem(profile.id, options)).not.toHaveProperty("role");
+        expect(listUserProfilesSync(options)[0]).not.toHaveProperty("role");
       };
       const rollBackRole = () =>
         runOpenClawStateWriteTransaction(() => {

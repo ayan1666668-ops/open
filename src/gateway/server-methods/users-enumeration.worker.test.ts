@@ -1,5 +1,6 @@
 import { expect, it, vi } from "vitest";
 import { requireNodeSqlite } from "../../infra/node-sqlite.js";
+import { tableHasColumn } from "../../state/openclaw-state-db-schema-helpers.js";
 import { openOpenClawStateDatabase } from "../../state/openclaw-state-db.js";
 import {
   ensureProfileForEmail,
@@ -105,6 +106,63 @@ it("enumerates protocol profile facts through the real users.list entry without 
     } finally {
       vi.restoreAllMocks();
     }
+  } finally {
+    await state.cleanup();
+  }
+});
+
+it("observes native first-use role assignment after warming a legacy worker reader", async () => {
+  const state = await createOpenClawTestState({ layout: "state-only", prefix: "users-role-" });
+  try {
+    const { db } = openOpenClawStateDatabase();
+    db.exec(`CREATE TABLE user_profiles (
+      id TEXT NOT NULL PRIMARY KEY, display_name TEXT, avatar BLOB, avatar_mime TEXT,
+      avatar_sha256 TEXT, merged_into TEXT, created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    ) STRICT`);
+    const profile = ensureProfileForEmail("legacy@example.test");
+    const version = db.prepare("PRAGMA user_version").get()?.user_version;
+    const read = async (expected: unknown) => {
+      const { DatabaseSync, StatementSync } = requireNodeSqlite();
+      const calls = [
+        vi.spyOn(DatabaseSync.prototype, "prepare"),
+        vi.spyOn(DatabaseSync.prototype, "exec"),
+        ...(["get", "all", "run", "iterate"] as const).map((method) =>
+          vi.spyOn(StatementSync.prototype, method),
+        ),
+      ];
+      const respond = vi.fn();
+      try {
+        await usersHandlers["users.list"]!({
+          req: {} as never,
+          params: {},
+          respond,
+          context: {} as never,
+          client: null,
+          isWebchatConnect: () => false,
+        });
+        expect(respond).toHaveBeenCalledExactlyOnceWith(true, { profiles: [expected] });
+        expect(calls.reduce((count, call) => count + call.mock.calls.length, 0)).toBe(0);
+      } finally {
+        vi.restoreAllMocks();
+      }
+    };
+    await read({
+      id: profile.id,
+      displayName: "legacy",
+      avatarMime: null,
+      mergedInto: null,
+      createdAt: profile.createdAt,
+      updatedAt: profile.updatedAt,
+      emails: ["legacy@example.test"],
+      githubIdentity: null,
+      hasAvatar: false,
+    });
+    expect(tableHasColumn(db, "user_profiles", "role")).toBe(false);
+
+    setUserProfileRole(profile.id, "maintainer");
+    await read(expect.objectContaining({ id: profile.id, role: "maintainer" }));
+    expect(db.prepare("PRAGMA user_version").get()?.user_version).toBe(version);
   } finally {
     await state.cleanup();
   }

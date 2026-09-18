@@ -50,7 +50,11 @@ export function listUserProfilesSync(options: OpenClawStateDatabaseOptions = {})
           .select([
             ...userProfileDisplaySelection,
             "created_at",
-            ...(hasEnsuredUserProfileRoleSchema(database.db) ? (["role"] as const) : []),
+            // The native role writer can add this column after a worker has opened.
+            ...(hasEnsuredUserProfileRoleSchema(database.db) ||
+            tableHasColumn(database.db, "user_profiles", "role")
+              ? (["role"] as const)
+              : []),
           ])
           .orderBy("created_at", "asc")
           .orderBy("id", "asc"),
