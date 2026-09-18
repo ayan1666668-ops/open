@@ -7,6 +7,7 @@ import { runVitestShutdownCommand } from "../helpers/vitest-shutdown-command.js"
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 const repoRoot = path.resolve(import.meta.dirname, "../..");
 const posixNodeIt = it.skipIf(process.platform === "win32" || Boolean(process.versions.bun));
+const teardownTimeoutError = "[vitest-pool-runner]: Timeout waiting for worker to respond";
 
 posixNodeIt.for(["normal", "missing-ack", "after-ack", "blocked-after-ack"] as const)(
   "retains native fork cleanup and captures only stalled teardown (%s)",
@@ -24,6 +25,7 @@ posixNodeIt.for(["normal", "missing-ack", "after-ack", "blocked-after-ack"] as c
     );
     fs.writeFileSync(path.join(root, "package.json"), '{"type":"module","private":true}');
     const receipt = path.join(root, "deadline.json");
+    const diagnosticReceipt = path.join(root, "diagnostic-deadline.json");
     const preload = path.join(root, "hold-teardown.cjs");
     fs.writeFileSync(
       preload,
@@ -34,7 +36,20 @@ const mode = ${JSON.stringify(mode)};
 const schedule = globalThis.setTimeout;
 const cancel = globalThis.clearTimeout;
 const deadlines = new Map();
+let stopDeadlineInvoked = false;
+const diagnosticDeadline = { delay: 0, scheduled: 0, fired: 0 };
+const recordDiagnosticDeadline = () => fs.writeFileSync(${JSON.stringify(diagnosticReceipt)}, JSON.stringify(diagnosticDeadline));
 globalThis.setTimeout = (callback, delay, ...args) => {
+  if (stopDeadlineInvoked && delay === 2000) {
+    diagnosticDeadline.delay = delay;
+    diagnosticDeadline.scheduled++;
+    recordDiagnosticDeadline();
+    return schedule(() => {
+      diagnosticDeadline.fired++;
+      recordDiagnosticDeadline();
+      callback(...args);
+    }, delay);
+  }
   if (delay !== 60000) return schedule(callback, delay, ...args);
   const invoke = () => callback(...args);
   const timer = schedule(() => { deadlines.delete(timer); invoke(); }, delay);
@@ -78,6 +93,7 @@ subscribe("child_process", ({ process: child }) => {
       const [timer, invoke] = deadlines.entries().next().value;
       cancel(timer);
       deadlines.delete(timer);
+      stopDeadlineInvoked = true;
       invoke();
     });
   });
@@ -111,99 +127,132 @@ it("runs on the fork main thread with ready native handles", async () => {
       );
     }
     const config = path.join(root, "vitest.config.ts");
-    fs.writeFileSync(
-      config,
-      `
+    const outcomeFile = path.join(root, "outcome.json");
+    const outcomes: unknown[] = [];
+    for (const useAdapter of [false, true]) {
+      fs.writeFileSync(workerReceipts, "");
+      for (const file of [receipt, diagnosticReceipt, outcomeFile]) {
+        fs.rmSync(file, { force: true });
+      }
+      fs.writeFileSync(
+        config,
+        `
+import fs from "node:fs";
 import { createExtensionDatabaseWorkersVitestConfig } from ${JSON.stringify(path.join(repoRoot, "test/vitest/vitest.extension-database-workers.config.ts"))};
 const extension = createExtensionDatabaseWorkersVitestConfig({});
 export default {
   root: ${JSON.stringify(root)},
   test: {
-    pool: extension.test.pool,
+    pool: ${useAdapter ? "extension.test.pool" : '"forks"'},
     include: ["*.test.ts"],
     isolate: false,
     maxWorkers: 1,
     fileParallelism: false,
     fsModuleCache: false,
-    reporters: ["default"],
+    reporters: ["default", {
+      onTestRunEnd(modules, errors, reason) {
+        fs.writeFileSync(${JSON.stringify(outcomeFile)}, JSON.stringify({
+          reason,
+          errors: errors.map(error => error.message),
+        }));
+      },
+    }],
   },
 };
 `,
-    );
-    const result = await runVitestShutdownCommand({
-      args: [
-        path.join(repoRoot, "scripts/run-vitest.mjs"),
-        "run",
-        "--config",
-        config,
-        "--root",
-        root,
-        "--configLoader",
-        "native",
-      ],
-      cwd: root,
-      env: {
-        ...process.env,
-        HOME: home,
-        USERPROFILE: home,
-        TMPDIR: tmp,
-        TMP: tmp,
-        TEMP: tmp,
-        CI: "1",
-        NODE_OPTIONS: `--require=${preload}`,
-        OPENCLAW_VITEST_FS_MODULE_CACHE_PATH: path.join(root, "cache"),
-        POOL_DIAGNOSTIC_FIXTURE_SECRET: "fixture-env-value-do-not-print",
-      },
-      signal,
-    });
-    const output = `${result.stdout}\n${result.stderr}`;
-    expect(output).toMatch(/2 passed/u);
-    const workers = fs
-      .readFileSync(workerReceipts, "utf8")
-      .trim()
-      .split("\n")
-      .map((line) => JSON.parse(line) as { pid: number; reportDirectory: string });
-    expect(new Set(workers.map(({ pid }) => pid)).size).toBe(1);
-    for (const { reportDirectory } of workers) {
-      if (reportDirectory) {
-        expect(fs.existsSync(reportDirectory)).toBe(false);
+      );
+      const result = await runVitestShutdownCommand({
+        args: [
+          path.join(repoRoot, "scripts/run-vitest.mjs"),
+          "run",
+          "--config",
+          config,
+          "--root",
+          root,
+          "--configLoader",
+          "native",
+        ],
+        cwd: root,
+        env: {
+          ...process.env,
+          HOME: home,
+          USERPROFILE: home,
+          TMPDIR: tmp,
+          TMP: tmp,
+          TEMP: tmp,
+          CI: "1",
+          NODE_OPTIONS: `--require=${preload}`,
+          OPENCLAW_VITEST_FS_MODULE_CACHE_PATH: path.join(root, "cache"),
+          POOL_DIAGNOSTIC_FIXTURE_SECRET: "fixture-env-value-do-not-print",
+        },
+        signal,
+      });
+      const output = `${result.stdout}\n${result.stderr}`;
+      expect(output).toMatch(/2 passed/u);
+      const outcome = JSON.parse(fs.readFileSync(outcomeFile, "utf8"));
+      expect(outcome, output).toEqual({
+        // Vitest's reason reflects test assertions; unhandled teardown errors set the CLI exit.
+        reason: "passed",
+        errors: mode === "normal" ? [] : [teardownTimeoutError],
+      });
+      outcomes.push({ code: result.code, outcome });
+      const workers = fs
+        .readFileSync(workerReceipts, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as { pid: number; reportDirectory: string });
+      expect(new Set(workers.map(({ pid }) => pid)).size).toBe(1);
+      for (const { reportDirectory } of workers) {
+        if (reportDirectory) {
+          expect(fs.existsSync(reportDirectory)).toBe(false);
+        }
       }
+      if (mode === "normal") {
+        expect(result.code, output).toBe(0);
+        expect(output).not.toContain("vitest-pool-diagnostics");
+        expect(output).not.toContain("Writing Node.js report");
+        continue;
+      }
+      expect(result.code, output).toBe(1);
+      expect(JSON.parse(fs.readFileSync(receipt, "utf8"))).toEqual({
+        liveDeadlines: 1,
+        delay: 60_000,
+      });
+      expect(output).toContain(teardownTimeoutError);
+      if (!useAdapter) {
+        expect(output).not.toContain("vitest-pool-diagnostics");
+        continue;
+      }
+      const report = output.match(
+        /\[vitest-pool-diagnostics\][^\n]*\n([\s\S]*?)\n\[\/vitest-pool-diagnostics\]/u,
+      )?.[1];
+      expect(report, output).toBeDefined();
+      expect(output).toContain(`stopAcknowledged=${mode !== "missing-ack"}`);
+      expect(output).not.toMatch(
+        /fixture-env-value-do-not-print|127\.0\.0\.1|localEndpoint|remoteEndpoint/u,
+      );
+      if (mode === "blocked-after-ack") {
+        expect(report).toBe("No complete Node diagnostic report captured within 2000ms.");
+        expect(JSON.parse(fs.readFileSync(diagnosticReceipt, "utf8"))).toEqual({
+          delay: 2_000,
+          scheduled: 1,
+          fired: 1,
+        });
+        continue;
+      }
+      expect(JSON.parse(report!)).toMatchObject({
+        nativeStack: expect.any(Array),
+        libuv: expect.arrayContaining([
+          expect.objectContaining({ type: "tcp", is_active: true, is_referenced: true }),
+        ]),
+        workers: expect.arrayContaining([
+          expect.objectContaining({
+            threadId: expect.any(Number),
+            libuv: expect.arrayContaining([expect.objectContaining({ type: "timer" })]),
+          }),
+        ]),
+      });
     }
-    if (mode === "normal") {
-      expect(result.code, output).toBe(0);
-      expect(output).not.toContain("vitest-pool-diagnostics");
-      expect(output).not.toContain("Writing Node.js report");
-      return;
-    }
-    expect(result.code, output).toBe(1);
-    expect(JSON.parse(fs.readFileSync(receipt, "utf8"))).toEqual({
-      liveDeadlines: 1,
-      delay: 60_000,
-    });
-    expect(output).toContain("Timeout waiting for worker to respond");
-    const report = output.match(
-      /\[vitest-pool-diagnostics\][^\n]*\n([\s\S]*?)\n\[\/vitest-pool-diagnostics\]/u,
-    )?.[1];
-    expect(report, output).toBeDefined();
-    expect(output).toContain(`stopAcknowledged=${mode !== "missing-ack"}`);
-    expect(output).not.toMatch(
-      /fixture-env-value-do-not-print|127\.0\.0\.1|localEndpoint|remoteEndpoint/u,
-    );
-    if (mode === "blocked-after-ack") {
-      expect(report).toBe("No complete Node diagnostic report captured within 2000ms.");
-      return;
-    }
-    expect(JSON.parse(report!)).toMatchObject({
-      nativeStack: expect.any(Array),
-      libuv: expect.arrayContaining([
-        expect.objectContaining({ type: "tcp", is_active: true, is_referenced: true }),
-      ]),
-      workers: expect.arrayContaining([
-        expect.objectContaining({
-          threadId: expect.any(Number),
-          libuv: expect.arrayContaining([expect.objectContaining({ type: "timer" })]),
-        }),
-      ]),
-    });
+    expect(outcomes[1]).toEqual(outcomes[0]);
   },
 );

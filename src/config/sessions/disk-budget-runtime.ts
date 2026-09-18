@@ -4,7 +4,11 @@ import { WorkerTaskPool } from "../../infra/worker-task-pool.js";
 import { resolveGlobalSingleton } from "../../shared/global-singleton.js";
 import type { SessionPhysicalDiskUsage } from "./disk-budget-files.js";
 
-const measurements = resolveGlobalSingleton(
+const measurements = resolveGlobalSingleton<{
+  pool: WorkerTaskPool<string, SessionPhysicalDiskUsage>;
+  pending: Set<Promise<SessionPhysicalDiskUsage>>;
+  draining?: Promise<void>;
+}>(
   Symbol.for("openclaw.sessionDiskBudgetWorkers"),
   () => ({
     pool: new WorkerTaskPool<string, SessionPhysicalDiskUsage>({
@@ -22,11 +26,18 @@ const measurements = resolveGlobalSingleton(
 );
 
 /** Join admitted scans before retiring workers; later measurements reuse the pool. */
-export async function drainSessionDiskBudgetWorkers(): Promise<void> {
-  while (measurements.pending.size > 0) {
-    await Promise.allSettled(measurements.pending);
-  }
-  await measurements.pool.rotate();
+export function drainSessionDiskBudgetWorkers(): Promise<void> {
+  // A second teardown must join this rotation, not retire its successor worker.
+  return (measurements.draining ??= Promise.resolve()
+    .then(async () => {
+      while (measurements.pending.size > 0) {
+        await Promise.allSettled(measurements.pending);
+      }
+      await measurements.pool.rotate();
+    })
+    .finally(() => {
+      measurements.draining = undefined;
+    }));
 }
 
 /** Measures physical session artifacts without running per-file synchronous work on the caller. */

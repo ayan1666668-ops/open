@@ -8,6 +8,7 @@ import { WorkerTaskPool } from "../../infra/worker-task-pool.js";
 import { createDeferredCore } from "../../shared/deferred.js";
 import { drainGlobalSingletonLifecycleState } from "../../shared/global-singleton.js";
 import { withTestDir } from "../../test-helpers/temp-dir.js";
+import { drainSessionDiskBudgetWorkers } from "./disk-budget-runtime.js";
 import {
   hasRetainedSessionTranscriptArchives,
   measureSessionPhysicalDiskUsage,
@@ -33,6 +34,93 @@ async function addSessionArtifacts(directory: string, index: number): Promise<vo
 }
 
 describe("physical session disk usage", () => {
+  it("joins a measurement admitted after drainage starts before retiring its worker", async () => {
+    await withTestDir({ prefix: "openclaw-disk-usage-drain-admission-" }, async (directory) => {
+      const storePath = path.join(directory, "openclaw-agent.sqlite");
+      await fs.writeFile(storePath, Buffer.alloc(321));
+      const release = createDeferredCore();
+      const spy = vi
+        .spyOn(WorkerTaskPool.prototype, "run")
+        .mockImplementationOnce(function (this: WorkerTaskPool<unknown, unknown>, input, options) {
+          spy.mockRestore();
+          return this.run(async () => {
+            await release.promise;
+            return input;
+          }, options);
+        });
+      let completed = 0;
+      const first = measureSessionPhysicalDiskUsage(storePath).then(() => completed++);
+      const drainage = drainSessionDiskBudgetWorkers();
+      const late = measureSessionPhysicalDiskUsage(storePath).then(() => completed++);
+      try {
+        release.resolve();
+        await drainage;
+        expect(completed).toBe(2);
+        expect(workers).toHaveLength(1);
+        expect(workers[0]?.threadId).toBe(-1);
+      } finally {
+        release.resolve();
+        spy.mockRestore();
+        await Promise.allSettled([first, late, drainage]);
+        await drainSessionDiskBudgetWorkers();
+      }
+    });
+  });
+
+  it.each([
+    { owner: "file teardown", drain: drainSessionDiskBudgetWorkers },
+    { owner: "runtime lifecycle cleanup", drain: drainGlobalSingletonLifecycleState },
+  ])(
+    "coalesces $owner with another teardown while a runtime scan awaits retirement",
+    async ({ drain }) => {
+      await withTestDir({ prefix: "openclaw-disk-usage-concurrent-drain-" }, async (directory) => {
+        const storePath = path.join(directory, "openclaw-agent.sqlite");
+        await fs.writeFile(storePath, Buffer.alloc(321));
+        await measureSessionPhysicalDiskUsage(storePath);
+        const retiringWorker = workers[0]!;
+        const entered = createDeferredCore();
+        const release = createDeferredCore();
+        const terminate = retiringWorker.terminate.bind(retiringWorker);
+        const retirement = vi
+          .spyOn(Worker.prototype, "terminate")
+          .mockImplementationOnce(async () => {
+            const code = await terminate();
+            entered.resolve();
+            await release.promise;
+            return code;
+          });
+        const firstDrain = drain();
+        let secondDrain: Promise<void> | undefined;
+        let measurement: ReturnType<typeof measureSessionPhysicalDiskUsage> | undefined;
+        try {
+          await entered.promise;
+          let measured = false;
+          measurement = measureSessionPhysicalDiskUsage(storePath).then((usage) => {
+            measured = true;
+            return usage;
+          });
+          secondDrain = drainSessionDiskBudgetWorkers();
+          await new Promise<void>((resolve) => {
+            setImmediate(resolve);
+          });
+          expect(measured).toBe(false);
+          expect(retiringWorker.threadId).toBe(-1);
+          release.resolve();
+          await Promise.all([firstDrain, secondDrain]);
+          await expect(measurement).resolves.toMatchObject({ totalBytes: 321 });
+          expect(retirement).toHaveBeenCalledTimes(1);
+          expect(workers).toHaveLength(2);
+          expect(workers[1]?.threadId).toBeGreaterThan(0);
+        } finally {
+          release.resolve();
+          await Promise.allSettled([firstDrain, secondDrain, measurement]);
+          retirement.mockRestore();
+          await drainSessionDiskBudgetWorkers();
+        }
+      });
+    },
+  );
+
   it("reports scan overload and retires queued scans before reusing workers", async () => {
     await withTestDir({ prefix: "openclaw-disk-usage-pressure-" }, async (directory) => {
       const storePath = path.join(directory, "openclaw-agent.sqlite");

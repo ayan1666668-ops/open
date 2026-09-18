@@ -48,8 +48,9 @@ class DiagnosticForksPoolWorker extends ForksPoolWorker {
         children.push(message.process);
       }
     };
-    // ForksPoolWorker starts its child synchronously. Observe its real transport;
-    // Vitest continues to own IPC, pipe drainage, termination, and exit joining.
+    // Vitest 5.0.0 + patches/vitest@5.0.0.patch (pnpm hash 5e7c1655) starts
+    // forks synchronously and calls stop() after its deadline or joined exit.
+    // Recheck that contract on upgrades; the transport remains Vitest-owned.
     subscribe("child_process", observe);
     let started: Promise<void>;
     try {
@@ -72,16 +73,10 @@ class DiagnosticForksPoolWorker extends ForksPoolWorker {
     super.send(message);
   }
 
-  override deserialize(data: unknown): unknown {
-    const message = super.deserialize(data);
-    if (
-      isRecord(message) &&
-      message["__vitest_worker_response__"] === true &&
-      message.type === "stopped"
-    ) {
-      this.stopAcknowledged = true;
-    }
-    return message;
+  override waitForExit(): Promise<void> {
+    // The public pool hook runs after the transport acknowledges its graceful exit.
+    this.stopAcknowledged = true;
+    return super.waitForExit();
   }
 
   override async stop(): Promise<void> {
