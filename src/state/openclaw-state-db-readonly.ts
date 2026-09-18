@@ -255,9 +255,7 @@ function withFreshOpenClawStateDatabaseReadOnly<T>(
     if (!opened) {
       opened = openOpenClawStateReadOnlyLocation(
         pathname,
-        prepareSqliteReadOnlyLocationSync(pathname, {
-          fallbackToOnlineBackupUnderLoad: true,
-        }),
+        prepareSqliteReadOnlyLocationSync(pathname),
       );
       readers.set(pathname, opened);
     }
@@ -269,9 +267,7 @@ function withFreshOpenClawStateDatabaseReadOnly<T>(
     return result;
   }
   const prepared = requiresArtifactPreservingSnapshot(pathname)
-    ? prepareSqliteReadOnlyLocationSync(pathname, {
-        fallbackToOnlineBackupUnderLoad: true,
-      })
+    ? prepareSqliteReadOnlyLocationSync(pathname)
     : undefined;
   return withOpenClawStateReadOnlyLocation(operation, pathname, prepared ?? pathname);
 }
@@ -429,9 +425,7 @@ export function withExistingOpenClawStateDatabaseCurrentReadOnly<T>(
     return withOpenClawStateReadOnlyLocation(
       operation,
       pathname,
-      prepareSqliteReadOnlyLocationSync(pathname, {
-        fallbackToOnlineBackupUnderLoad: true,
-      }),
+      prepareSqliteReadOnlyLocationSync(pathname),
       openStateSchemaReadAdmission,
     );
   });
