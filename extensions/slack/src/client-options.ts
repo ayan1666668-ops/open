@@ -1,5 +1,10 @@
 // Slack plugin module implements client options behavior.
-import { WebAPIRateLimitedError, type RetryOptions, type WebClientOptions } from "@slack/web-api";
+import {
+  WebAPIRateLimitedError,
+  type FetchFunction,
+  type RetryOptions,
+  type WebClientOptions,
+} from "@slack/web-api";
 import {
   createHttp1EnvHttpProxyAgent,
   captureChannelReadAuthority,
@@ -146,6 +151,20 @@ function applySlackRequestAuthority(
     assertDirectAdapterHandoff();
     return slackFetch(input, init);
   };
+}
+
+// Binds a client's requests to a provider-owned lifecycle: the Slack SDK only
+// enforces its own per-request timeout, so teardown needs this signal to cancel
+// an attempt that is already in flight.
+export function withSlackLifecycleSignal(
+  fetchImpl: FetchFunction,
+  lifecycleSignal: AbortSignal,
+): FetchFunction {
+  return async (input, init) =>
+    await fetchImpl(input, {
+      ...init,
+      signal: init?.signal ? AbortSignal.any([init.signal, lifecycleSignal]) : lifecycleSignal,
+    });
 }
 
 export function resolveSlackWebClientOptions(
