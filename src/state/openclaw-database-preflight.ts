@@ -36,7 +36,7 @@ import { getAgentDatabaseStartupAdmission } from "./agent-database-startup.js";
 import { OPENCLAW_AGENT_SCHEMA_VERSION } from "./openclaw-agent-db-contract.js";
 import { assertOpenClawAgentDatabaseForMaintenance } from "./openclaw-agent-db-maintenance.js";
 import type { ExistingAgentSchemaMeta } from "./openclaw-agent-db-metadata.js";
-import { readOpenClawAgentDatabaseRegistryRows } from "./openclaw-agent-db-registry-listing.js";
+import { readAgentDatabasePreflightTargets } from "./openclaw-agent-db-registry-listing.js";
 import { isPersistentOpenClawAgentDatabasePath } from "./openclaw-agent-db-registry.js";
 import { readExistingAgentSchemaMeta } from "./openclaw-agent-db-schema-helpers.js";
 import type { AgentSchemaInspection } from "./openclaw-agent-schema-inspection.js";
@@ -60,6 +60,7 @@ import {
   OPENCLAW_STATE_SCHEMA_VERSION,
 } from "./openclaw-state-db-contract.js";
 import type { OpenClawStateSchemaReadAdmission } from "./openclaw-state-db-contract.js";
+import { assertNoLegacyStateRuntimeRepair } from "./openclaw-state-db-fast-path.js";
 import {
   assertOpenClawStateDatabaseOwner,
   assertOpenClawStateDatabaseForMaintenance,
@@ -71,10 +72,7 @@ import {
   readStateSchemaContentVersion,
   readStateSchemaMigrationVersion,
 } from "./openclaw-state-db-schema-version.js";
-import {
-  resolveOpenClawRegisteredAgentDatabasePath,
-  resolveOpenClawStateSqlitePath,
-} from "./openclaw-state-db.paths.js";
+import { resolveOpenClawStateSqlitePath } from "./openclaw-state-db.paths.js";
 import {
   inspectOpenClawStateOwnershipFromDatabase,
   type OpenClawExternalStateOwnership,
@@ -165,25 +163,6 @@ export async function assertOpenClawDatabasesReady(
     return;
   }
   throw new Error(formatIndeterminateDatabaseReadiness(schemas.indeterminate, options.operation));
-}
-
-function readRegisteredAgentDatabases(
-  database: DatabaseSync,
-  registryPath: string,
-): Array<{
-  agentId: string;
-  path: string;
-}> {
-  return readOpenClawAgentDatabaseRegistryRows(database, registryPath).flatMap((row) =>
-    typeof row.agent_id === "string" && typeof row.path === "string"
-      ? [
-          {
-            agentId: row.agent_id,
-            path: resolveOpenClawRegisteredAgentDatabasePath(registryPath, row.path),
-          },
-        ]
-      : [],
-  );
 }
 
 function deduplicateSchemaIssues(issues: readonly SqliteSchemaIssue[]): SqliteSchemaIssue[] {
@@ -318,6 +297,7 @@ export async function preflightOpenClawStateDatabasePath(
     if (blockingIssues.length > 0) {
       return result("incompatible", { issues: blockingIssues });
     }
+    assertNoLegacyStateRuntimeRepair(database, resolvedPath);
     return result(startupRepairableIssues.length > 0 ? "startup-repairable" : "exact", {
       issues: startupRepairableIssues,
       requiresWrite: startupRepairableIssues.length > 0,
@@ -361,7 +341,7 @@ export async function preflightOpenClawDatabaseSchemas(options: {
     : undefined;
   const priorRefusals = startup?.captureRefusals(options.env);
   const statePath = path.resolve(resolveOpenClawStateSqlitePath(options.env));
-  let registeredDatabases: ReturnType<typeof readRegisteredAgentDatabases> = [];
+  let registeredDatabases: ReturnType<typeof readAgentDatabasePreflightTargets> = [];
   let stateDatabase: DatabaseSync | undefined;
   let closeStateSchemaReadAdmission: (() => void) | undefined;
   let stateSnapshot: Awaited<ReturnType<typeof prepareSqliteReadOnlyLocation>> | undefined;
@@ -474,7 +454,7 @@ export async function preflightOpenClawDatabaseSchemas(options: {
         return result;
       }
       try {
-        registeredDatabases = readRegisteredAgentDatabases(stateDatabase, statePath);
+        registeredDatabases = readAgentDatabasePreflightTargets(stateDatabase, statePath);
       } catch (error) {
         result.indeterminate.push({
           kind: "state",
@@ -675,7 +655,16 @@ export async function preflightOpenClawDatabaseSchemas(options: {
           throw schemaInspection.failure;
         }
         if (schemaInspection?.reason) {
-          throw new Error(schemaInspection.reason);
+          if (startup) {
+            throw new Error(schemaInspection.reason);
+          }
+          inspection.indeterminate.push({
+            kind: "agent",
+            path: agentPath,
+            reason: schemaInspection.reason,
+            ...(options.requireStartupMigrationReadiness ? { agentId: row.agentId } : {}),
+          });
+          return;
         }
         if (agentVersion > supportedVersions.agent) {
           inspection.incompatible.push({
