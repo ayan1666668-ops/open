@@ -173,7 +173,9 @@ const repositoryScriptEntries = [
   "scripts/print-live-docker-plugin-selection.mjs!",
   // Maintainer proof harnesses are invoked manually from PR evidence.
   "scripts/proof-126924-isolated-gateway.ts!",
+  "scripts/proof-126924-live-gateway-wait-expiry.ts!",
   "scripts/proof-126924-provisional-notification-delivery.ts!",
+  "scripts/proof-126924-store-upgrade-rollback.ts!",
   "scripts/proof-126924-subagent-wait-expiry-not-death.ts!",
   "scripts/proof-135480-subagent-shared-cwd-advisory.ts!",
   "scripts/qa-coverage-report.ts!",
