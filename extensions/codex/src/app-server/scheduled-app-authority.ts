@@ -7,15 +7,7 @@ import {
   asOptionalRecord,
   normalizeOptionalString,
 } from "openclaw/plugin-sdk/string-coerce-runtime";
-import {
-  codexAppToolHintsAllowed,
-  disableUnlistedCodexApps,
-  normalizeAppToolApprovalMode,
-  readCodexAppToolPolicy,
-  readCodexAppToolsByApp,
-  type CodexAppToolApprovalMode,
-  type CodexAppToolMetadata,
-} from "./app-tool-policy.js";
+import { disableUnlistedCodexApps, readCodexAppToolsByApp } from "./app-tool-policy.js";
 import { isCodexAppServerRequestTimeoutError, type CodexAppServerClient } from "./client.js";
 import type { CodexPluginDestructiveApprovalMode } from "./config.js";
 import { buildCodexAppApprovalOverrides } from "./plugin-app-approval-overrides.js";
@@ -29,6 +21,14 @@ import {
 } from "./plugin-thread-config.js";
 import { isJsonObject, type v2 } from "./protocol.js";
 import type { CodexAttemptConnection } from "./run-attempt-connection.js";
+import {
+  appToolHintsAllowed,
+  intersectToolApprovalMode,
+  normalizeAppToolApprovalMode,
+  readCurrentToolPolicy,
+  type CodexAppToolApprovalMode,
+  type CodexScheduledAppTool,
+} from "./scheduled-app-tool-policy.js";
 import { readCodexManagedRequirementsFingerprint } from "./thread-requests.js";
 import { withAbortableTimeout } from "./timeout.js";
 
@@ -39,7 +39,7 @@ const CODEX_APP_AUTHORITY_CAPTURE_MIN_TIMEOUT_MS = 100;
 type CronRuntimeAuthority = NonNullable<EmbeddedRunAttemptParams["scheduledRuntimeAuthority"]>;
 export type CurrentCodexScheduledAppPolicy = {
   config: Record<string, unknown>;
-  toolsByApp: ReadonlyMap<string, ReadonlyMap<string, CodexAppToolMetadata>>;
+  toolsByApp: ReadonlyMap<string, ReadonlyMap<string, CodexScheduledAppTool>>;
 };
 
 export type ScheduledCodexAppCreatorAuth =
@@ -330,7 +330,7 @@ export async function captureScheduledCodexAppAuthority(params: {
           .toSorted()
           .map((toolName) => [
             toolName,
-            readCodexAppToolPolicy(
+            readCurrentToolPolicy(
               currentPolicy.config,
               id,
               toolName,
@@ -375,26 +375,6 @@ function stricterApprovalMode(
   right: CodexPluginDestructiveApprovalMode,
 ): CodexPluginDestructiveApprovalMode {
   return APPROVAL_RANK[left] <= APPROVAL_RANK[right] ? left : right;
-}
-
-function intersectToolApprovalMode(
-  captured: CodexAppToolApprovalMode,
-  current: CodexAppToolApprovalMode,
-): CodexAppToolApprovalMode {
-  if (captured === current) {
-    return captured;
-  }
-  if (captured === "prompt" || current === "prompt") {
-    return "prompt";
-  }
-  if (captured === "approve") {
-    return current;
-  }
-  if (current === "approve") {
-    return captured;
-  }
-  // `auto` and `writes` are annotation-dependent and not totally ordered.
-  return "prompt";
 }
 
 function appApprovalCeiling(mode: CodexPluginDestructiveApprovalMode): CodexAppToolApprovalMode {
@@ -486,11 +466,11 @@ export function intersectCodexPluginThreadConfigWithScheduledAuthority(
     const currentAppCeiling = appApprovalCeiling(defaultApprovalMode(currentApp));
     // Current inventory owns existence; captured modes only cap tools that
     // still exist (and tools added later within the already-authorized app).
-    const tools = currentPolicy.toolsByApp.get(appId) ?? new Map<string, CodexAppToolMetadata>();
+    const tools = currentPolicy.toolsByApp.get(appId) ?? new Map<string, CodexScheduledAppTool>();
     appPatch.tools = Object.fromEntries(
       [...tools.keys()].toSorted().map((toolName) => {
         const capturedMode = captured.tools[toolName] ?? storedAppCeiling;
-        const currentToolPolicy = readCodexAppToolPolicy(
+        const currentToolPolicy = readCurrentToolPolicy(
           currentPolicy.config,
           appId,
           toolName,
@@ -501,8 +481,7 @@ export function intersectCodexPluginThreadConfigWithScheduledAuthority(
           toolName,
           {
             enabled:
-              currentToolPolicy.enabled &&
-              codexAppToolHintsAllowed(tools.get(toolName), currentApp),
+              currentToolPolicy.enabled && appToolHintsAllowed(tools.get(toolName), currentApp),
             approval_mode: intersectToolApprovalMode(
               intersectToolApprovalMode(capturedMode, storedAppCeiling),
               intersectToolApprovalMode(currentToolPolicy.approvalMode, currentAppCeiling),

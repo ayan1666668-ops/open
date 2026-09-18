@@ -1,7 +1,7 @@
 import { CodexAppInventoryCache } from "./app-inventory-cache.js";
 import { codexAppInventoryResponse, nativeAppToolsResponse } from "./app-inventory.test-helpers.js";
 import { CODEX_PLUGINS_MARKETPLACE_NAME } from "./config.js";
-import { appSummary, pluginList, pluginSummary } from "./plugin-inventory.test-helpers.js";
+import { appInfo, appSummary, pluginList, pluginSummary } from "./plugin-inventory.test-helpers.js";
 import { buildCodexPluginThreadConfig } from "./plugin-thread-config.js";
 import type { JsonObject, v2 } from "./protocol.js";
 
@@ -24,24 +24,6 @@ export function pluginDetail(
       apps,
       mcpServers,
     },
-  };
-}
-
-export function appInfo(id: string, accessible: boolean, enabled = true): v2.AppInfo {
-  return {
-    id,
-    name: id,
-    description: null,
-    logoUrl: null,
-    logoUrlDark: null,
-    distributionChannel: null,
-    branding: null,
-    appMetadata: null,
-    labels: null,
-    installUrl: null,
-    isAccessible: accessible,
-    isEnabled: enabled,
-    pluginDisplayNames: [],
   };
 }
 
