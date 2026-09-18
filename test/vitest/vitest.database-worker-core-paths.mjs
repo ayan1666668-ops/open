@@ -8,6 +8,7 @@ export const databaseWorkerCoreTestFiles = [
   "src/sessions/session-state-events.test.ts",
   "src/sessions/session-upstream-links.test.ts",
   "src/sessions/session-upstream-monitor.test.ts",
+  "test/canonical-descendant.integration.test.ts",
   "packages/memory-host-sdk/src/host/session-memory-sync.test.ts",
   "src/agents/harness/native-hook-relay-store.test.ts",
   "src/agents/harness/native-hook-relay.approval-binding.test.ts",
