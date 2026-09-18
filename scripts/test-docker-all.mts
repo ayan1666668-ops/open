@@ -37,7 +37,6 @@ import {
   terminateManagedChild,
   waitForManagedProcessGroupExit,
 } from "./lib/managed-child-process.mts";
-import { sleep } from "./lib/sleep.mjs";
 import {
   createPrepublishPluginRegistryArtifact,
   inspectNpmPackageTarball,
@@ -773,9 +772,10 @@ function cleanupSmokeResult(
   logFile: string,
   command: string,
   startedAtMs: number,
-  result: Pick<ShellCommandResult, "noOutputTimedOut" | "status" | "timedOut">,
+  result: Pick<ShellCommandResult, "cancelled" | "noOutputTimedOut" | "status" | "timedOut">,
 ) {
   return {
+    ...(result.cancelled ? { cancelled: true as const } : {}),
     command,
     attempts: [laneAttempt(1, startedAtMs, result)],
     elapsedSeconds: phaseElapsedSeconds(startedAtMs),
@@ -1476,6 +1476,7 @@ async function runLane(
   return {
     command,
     attempts,
+    ...(result.cancelled ? { cancelled: true as const } : {}),
     finishedAt: new Date().toISOString(),
     image: env.OPENCLAW_DOCKER_E2E_IMAGE,
     imageKind: lane.e2eImageKind,
@@ -1508,7 +1509,6 @@ async function runLanePool(
   } satisfies SchedulerActiveState;
   const activeLanes = new Map<string, number>();
   let lastLaneStartAt = 0;
-  let laneStartQueue: Promise<void> = Promise.resolve();
   const statusTimer =
     options.statusIntervalMs > 0
       ? setInterval(() => {
@@ -1531,18 +1531,20 @@ async function runLanePool(
     if (options.startStaggerMs <= 0) {
       return;
     }
-    const previous = laneStartQueue;
-    let releaseNext = () => {};
-    laneStartQueue = new Promise<void>((resolve) => {
-      releaseNext = resolve;
-    });
-    await previous;
     const waitMs = Math.max(0, lastLaneStartAt + options.startStaggerMs - Date.now());
     if (waitMs > 0) {
-      await sleep(waitMs);
+      // Admission is serial. Its sole timer must not outlive a stopped pool.
+      await new Promise<void>((resolve) => {
+        const finish = () => {
+          clearTimeout(timer);
+          cancelLaneStartWait = undefined;
+          resolve();
+        };
+        const timer = setTimeout(finish, waitMs);
+        cancelLaneStartWait = finish;
+      });
     }
     lastLaneStartAt = Date.now();
-    releaseNext();
   }
 
   function canStartLane(candidate: DockerE2eLane) {
@@ -1590,6 +1592,10 @@ async function runLanePool(
         results.push(result);
         if (result.status !== 0) {
           failures.push(result);
+          schedulerFailed ||= !result.cancelled;
+          if (options.failFast) {
+            cancelLaneStartWait?.();
+          }
         }
         return id;
       })
@@ -1662,6 +1668,7 @@ async function runLanePool(
     await Promise.allSettled(running.values());
     throw primaryError;
   } finally {
+    cancelLaneStartWait?.();
     if (statusTimer) {
       clearInterval(statusTimer);
     }
@@ -1712,6 +1719,9 @@ const childCleanups = new WeakMap<ChildProcess, Promise<void>>();
 const cleanupFailures: unknown[] = [];
 let activeChildrenShutdownPromise: Promise<number> | undefined;
 let shutdownChildren: ChildProcess[] = [];
+let cancelLaneStartWait: (() => void) | undefined;
+// A later signal may join cleanup, but cannot replace an observed ordinary failure.
+let schedulerFailed = false;
 const schedulerShutdownError = new Error("Docker scheduler interrupted");
 
 function throwIfSchedulerStopping(result?: Pick<ShellCommandResult, "status" | "cancelled">) {
@@ -1823,6 +1833,7 @@ function terminateChild(child: ChildProcess, signal: ShutdownSignal) {
 }
 
 function shutdownActiveChildren(signal: ShutdownSignal, exitCode: number) {
+  cancelLaneStartWait?.();
   if (activeChildrenShutdownPromise) {
     // Standalone second-signal escalation targets captured, still-owned groups.
     // Only positively joined commands have been released from activeChildren.
@@ -1849,8 +1860,9 @@ function shutdownActiveChildren(signal: ShutdownSignal, exitCode: number) {
       throw new AggregateError(cleanupFailures, "Docker process cleanup failed");
     }
     // 130/143 acknowledge joined signal cleanup, never merely receipt of a signal.
-    process.exitCode = exitCode;
-    return exitCode;
+    const result = schedulerFailed ? 1 : exitCode;
+    process.exitCode = result;
+    return result;
   });
   void activeChildrenShutdownPromise.catch((error: unknown) => {
     console.error(error);
@@ -2266,6 +2278,7 @@ async function main() {
     const cleanupFailure = await runCleanupSmokePhase(baseEnv, logDir, phases);
     if (cleanupFailure) {
       failures.push(cleanupFailure);
+      schedulerFailed ||= !cleanupFailure.cancelled;
     }
   } else {
     console.log("==> Cleanup smoke after parallel lanes: skipped for selected/release lanes");
@@ -2282,15 +2295,14 @@ async function main() {
 }
 
 if (IS_MAIN) {
-  let mainFailed = false;
   try {
     await main();
   } catch (error) {
-    mainFailed = error !== schedulerShutdownError;
+    schedulerFailed ||= error !== schedulerShutdownError;
     if (hasUnjoinedWork(error) && !cleanupFailures.includes(error)) {
       cleanupFailures.push(error);
     }
-    if (mainFailed) {
+    if (error !== schedulerShutdownError) {
       console.error(error instanceof Error ? error.message : String(error));
     }
   } finally {
@@ -2301,7 +2313,7 @@ if (IS_MAIN) {
     process.exitCode =
       cleanupFailures.length > 0
         ? CLEANUP_FAILURE_EXIT_CODE
-        : mainFailed
+        : schedulerFailed
           ? 1
           : (shutdownExitCode ?? process.exitCode);
   }
