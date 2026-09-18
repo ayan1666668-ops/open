@@ -38,12 +38,15 @@ async function withAcceptedTurn(
   outcome: "committed" | "duplicate" | "failed",
   maintenanceFails: boolean,
   run: (fixture: Awaited<ReturnType<typeof createAcceptedTurn>>) => Promise<void>,
+  maintenanceInfo: Pick<ContextEngine["info"], "turnMaintenanceMode"> = {
+    turnMaintenanceMode: "background",
+  },
 ) {
   await withStateDirEnv("openclaw-accepted-turn-maintenance-", async ({ stateDir }) => {
     resetCommandQueueStateForTest();
     resetTaskRegistryForTests({ persist: false });
     resetTaskFlowRegistryForTests({ persist: false });
-    const fixture = await createAcceptedTurn(stateDir, outcome, maintenanceFails);
+    const fixture = await createAcceptedTurn(stateDir, outcome, maintenanceFails, maintenanceInfo);
     try {
       await run(fixture);
     } finally {
@@ -65,6 +68,7 @@ async function createAcceptedTurn(
   stateDir: string,
   outcome: "committed" | "duplicate" | "failed",
   maintenanceFails: boolean,
+  maintenanceInfo: Pick<ContextEngine["info"], "turnMaintenanceMode">,
 ) {
   const engineId = `accepted-maintenance-${fixtureSequence++}`;
   const target = {
@@ -121,6 +125,7 @@ async function createAcceptedTurn(
     },
   });
   const releaseMaintenance = createDeferredCore();
+  const maintenanceStarted = createDeferredCore();
   const events: string[] = [];
   const resourceReads: unknown[] = [];
   const commitTurn = vi.fn<NonNullable<ContextEngine["commitTurn"]>>(async () => {
@@ -133,6 +138,7 @@ async function createAcceptedTurn(
   const maintain = vi.fn<NonNullable<ContextEngine["maintain"]>>(async () => {
     events.push("maintenance-started");
     resourceReads.push(probe.prepare("SELECT 42 AS value").get()?.value);
+    maintenanceStarted.resolve();
     await releaseMaintenance.promise;
     resourceReads.push(probe.prepare("SELECT 42 AS value").get()?.value);
     events.push("maintenance-settled");
@@ -149,7 +155,7 @@ async function createAcceptedTurn(
     info: {
       id: engineId,
       name: "Accepted maintenance fixture",
-      turnMaintenanceMode: "background",
+      ...maintenanceInfo,
       transcriptSemantics: {
         currentTurnFence: "before-current-turn-entry-v1",
         turnAdvancementIdempotency: "atomic-idempotent-v1",
@@ -197,6 +203,7 @@ async function createAcceptedTurn(
     sourceDisposed,
     probe,
     releaseMaintenance,
+    maintenanceStarted,
     commitTurn,
     maintain,
     dispose,
@@ -207,6 +214,64 @@ async function createAcceptedTurn(
 }
 
 describe("durable accepted-turn maintenance handoff", () => {
+  it.each(["foreground", undefined] as const)(
+    "awaits %s maintenance with durable runtime capabilities",
+    async (turnMaintenanceMode) => {
+      await withAcceptedTurn(
+        "committed",
+        false,
+        async (fixture) => {
+          const finalized = finalizeAcceptedContextEngineTurn(fixture).then(() => {
+            fixture.events.push("finalized");
+            return "finalized";
+          });
+          try {
+            expect(
+              await Promise.race([
+                fixture.maintenanceStarted.promise.then(() => "maintenance"),
+                finalized,
+              ]),
+            ).toBe("maintenance");
+            expect(fixture.pendingTurn()).toBeUndefined();
+            const runtimeContext = fixture.maintain.mock.calls[0]?.[0].runtimeContext;
+            expect(runtimeContext).toMatchObject({
+              ...fixture.facts.runtimeContext,
+              sessionTarget: {
+                ...fixture.facts.sessionTarget,
+                storePath: fixture.facts.boundary.admission.storePath,
+              },
+              llm: { complete: expect.any(Function) },
+              rewriteTranscriptEntries: expect.any(Function),
+            });
+            expect(runtimeContext?.allowDeferredCompactionExecution).toBeUndefined();
+            // Reopen the durable target through the supplied capability while the
+            // finalizer is waiting; no live SessionManager or rewrite lock is supplied.
+            expect(await runtimeContext?.rewriteTranscriptEntries?.({ replacements: [] })).toEqual({
+              ...unchanged,
+              reason: "no replacements requested",
+            });
+            expect(fixture.events).toEqual(["commit", "maintenance-started"]);
+            expect(fixture.probe.isOpen).toBe(true);
+          } finally {
+            fixture.releaseMaintenance.resolve();
+            await finalized;
+          }
+          await fixture.lease.dispose();
+          await fixture.sourceDisposed.promise;
+          expect(fixture.events).toEqual([
+            "commit",
+            "maintenance-started",
+            "maintenance-settled",
+            "finalized",
+            "engine-disposed",
+          ]);
+          expect(fixture.resourceReads).toEqual([42, 42, 42]);
+        },
+        { turnMaintenanceMode },
+      );
+    },
+  );
+
   it.each([
     { outcome: "committed", maintenanceFails: false },
     { outcome: "duplicate", maintenanceFails: false },

@@ -266,9 +266,16 @@ calls `commitTurn` only for the accepted successful turn; failed or aborted
 turns do not advance context-engine state.
 
 After accepted-turn finalization acknowledges `committed` or `duplicate`, the host
-also offers `maintain()` through the same maintenance scheduler. Background work
+also offers `maintain()` through the same maintenance scheduler. Engines declaring
+`turnMaintenanceMode: "background"` run deferred maintenance. Background work
 retains the logical turn's engine and supplying resources until it settles, without
-making reply completion wait for maintenance. Failed commits remain queued and do
+making reply completion wait for maintenance. Engines declaring `"foreground"` or
+omitting the mode run maintenance inline: accepted-turn finalization and reply
+completion wait for it to settle. Inline maintenance receives the committed
+session target, provider/model/token budget, LLM capability, and transcript rewrite
+capability, without background compaction permission. Transcript rewrites reopen
+the durable target rather than requiring a live session manager.
+Failed commits remain queued and do
 not trigger this handoff. Pre-run outbox recovery reconciles ingestion before
 bootstrap and assembly; it does not start concurrent background maintenance.
 Maintenance is best effort, not a crash-durable job for every committed turn, and
