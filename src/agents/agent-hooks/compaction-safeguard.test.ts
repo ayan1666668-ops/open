@@ -2538,51 +2538,79 @@ describe("compaction-safeguard recent-turn preservation", () => {
     expect(consumeCompactionSafeguardCancellation(sessionManager)).toBeNull();
   });
 
-  it("degrades to the bounded fallback when audit-required tail sections cannot fit the artifact cap", async () => {
-    mockSummarizeInStages.mockReset();
-    const latestAsk = "preserve the pending deployment status";
-    const identifier = `https://example.com/${"a".repeat(MAX_COMPACTION_SUMMARY_CHARS)}`;
-    const oversizedRequiredTail = [
-      "## Decisions",
-      "Keep current flow.",
-      "## Open TODOs",
-      "None.",
-      "## Constraints/Rules",
-      "Preserve exact context.",
-      "## Pending user asks",
-      latestAsk,
-      "## Exact identifiers",
-      identifier,
-    ].join("\n");
-    mockSummarizeInStages.mockResolvedValue(summaryResult(oversizedRequiredTail));
+  it.each([
+    { name: "source ask", runOwnedRequest: false },
+    { name: "run-owned request", runOwnedRequest: true },
+  ])(
+    "degrades with the $name when an identifier cannot fit the artifact cap",
+    async ({ runOwnedRequest }) => {
+      mockSummarizeInStages.mockReset();
+      const latestAsk = "preserve the pending deployment status";
+      const identifier = `https://example.com/${"a".repeat(MAX_COMPACTION_SUMMARY_CHARS)}`;
+      const fittingIdentifier = "/var/log/deploy-status.log";
+      const oversizedRequiredTail = [
+        "## Decisions",
+        "Keep current flow.",
+        "## Open TODOs",
+        "None.",
+        "## Constraints/Rules",
+        "Preserve exact context.",
+        "## Pending user asks",
+        latestAsk,
+        "## Exact identifiers",
+        identifier,
+      ].join("\n");
+      mockSummarizeInStages.mockResolvedValue(summaryResult(oversizedRequiredTail));
 
-    const sessionManager = stubSessionManager();
-    setCompactionSafeguardRuntime(sessionManager, {
-      model: createAnthropicModelFixture(),
-      recentTurnsPreserve: 0,
-      qualityGuardEnabled: true,
-      qualityGuardMaxRetries: 0,
-    });
-    const event = createCompactionEvent({
-      messageText: `${latestAsk} ${identifier}`,
-      tokensBefore: 1_500,
-    });
-    (
-      event.preparation as { settings?: { reserveTokens: number }; isSplitTurn?: boolean }
-    ).settings = { reserveTokens: 4_000 };
-    (event.preparation as { isSplitTurn?: boolean }).isSplitTurn = false;
+      const sessionManager = stubSessionManager();
+      setCompactionSafeguardRuntime(sessionManager, {
+        model: createAnthropicModelFixture(),
+        recentTurnsPreserve: 0,
+        qualityGuardEnabled: true,
+        qualityGuardMaxRetries: 0,
+      });
+      const event = {
+        preparation: {
+          messagesToSummarize: [
+            { role: "user", content: `the status log is ${fittingIdentifier}`, timestamp: 1 },
+            { role: "user", content: `${latestAsk} ${identifier}`, timestamp: 2 },
+          ] as AgentMessage[],
+          turnPrefixMessages: [] as AgentMessage[],
+          firstKeptEntryId: "entry-1",
+          tokensBefore: 1_500,
+          fileOps: { read: [], edited: [], written: [] },
+          settings: { reserveTokens: 4_000 },
+          isSplitTurn: false,
+          // The session owner bounds a run-owned request to 800 chars before it gets here.
+          ...(runOwnedRequest ? { latestUnresolvedUserRequest: latestAsk } : {}),
+        },
+        customInstructions: "",
+        signal: new AbortController().signal,
+      };
 
-    const { result } = await runCompactionScenario({ sessionManager, event, apiKey: "test-key" });
+      const { result } = await runCompactionScenario({ sessionManager, event, apiKey: "test-key" });
 
-    // Cancelling here left the session permanently uncompactable: the required facts
-    // never shrink, so every later attempt hits the same wall. Both terminal quality
-    // paths now commit the same bounded artifact and mark it as degraded.
-    expect(result).toMatchObject({
-      compaction: { details: { qualityDegraded: true } },
-    });
-    expect(mockSummarizeInStages).toHaveBeenCalledTimes(1);
-    expect(consumeCompactionSafeguardCancellation(sessionManager)).toBeNull();
-  });
+      // Cancelling here left the session permanently uncompactable: the required facts
+      // never shrink, so every later attempt hits the same wall. Both terminal quality
+      // paths now commit the same bounded artifact and mark it as degraded.
+      expect(result).toMatchObject({
+        compaction: { details: { qualityDegraded: true } },
+      });
+      // Identifiers are best-effort on this path and the request context is bounded, so an
+      // identifier that cannot fit must not take the request down with it.
+      const summary = expectCompactionResult(result).summary;
+      expect(summary).toContain("## Pending user asks\nLatest user request context:");
+      expect(summary).toContain(latestAsk);
+      expect(summary).toContain(fittingIdentifier);
+      expect(summary).not.toContain(identifier);
+      expect(summary.length).toBeLessThanOrEqual(MAX_COMPACTION_SUMMARY_CHARS);
+      expect(compactionLogger.warn).toHaveBeenCalledWith(
+        expect.stringMatching(/loss=.*identifier-retention/),
+      );
+      expect(mockSummarizeInStages).toHaveBeenCalledTimes(1);
+      expect(consumeCompactionSafeguardCancellation(sessionManager)).toBeNull();
+    },
+  );
 
   it("carries the pending ask and identifiers into the degraded fallback", async () => {
     mockSummarizeInStages.mockReset();
@@ -2620,6 +2648,61 @@ describe("compaction-safeguard recent-turn preservation", () => {
     expect(summary).toContain(latestAsk);
     expect(summary).toContain(identifier);
     expect(consumeCompactionSafeguardCancellation(sessionManager)).toBeNull();
+  });
+
+  it("keeps the generated split-turn context when the degraded suffix is trimmed", async () => {
+    mockSummarizeInStages.mockReset();
+    const latestAsk = "roll back the api deployment and confirm health";
+    const activeTurn = "Active turn: rolled back api-7 and is waiting on the health check.";
+    // Twelve long preserved turns, the file lists and the split-turn summary each fill their
+    // own cap, so the degraded suffix alone outgrows the artifact and must be trimmed.
+    const files = (kind: string) =>
+      Array.from({ length: 40 }, (_, index) => `/srv/app/${kind}/module-${index}.ts`);
+    const history = Array.from({ length: 14 }, (_, turn) => [
+      { role: "user", content: `turn ${turn} ${"u".repeat(700)}`, timestamp: 2 * turn + 1 },
+      castAgentMessage(timestampedTextAssistant(`reply ${turn} ${"r".repeat(700)}`, 2 * turn + 2)),
+    ]).flat() as AgentMessage[];
+    mockSummarizeInStages
+      .mockResolvedValueOnce(summaryResult("Core summary without headings"))
+      .mockResolvedValueOnce(
+        summaryResult(`${activeTurn} ${"z".repeat(MAX_COMPACTION_SUMMARY_CHARS)}`),
+      );
+
+    const sessionManager = stubSessionManager();
+    setCompactionSafeguardRuntime(sessionManager, {
+      model: createAnthropicModelFixture(),
+      recentTurnsPreserve: 12,
+      qualityGuardEnabled: true,
+      qualityGuardMaxRetries: 0,
+    });
+    const event = {
+      preparation: {
+        messagesToSummarize: history,
+        turnPrefixMessages: [
+          { role: "user", content: latestAsk, timestamp: 100 },
+        ] as AgentMessage[],
+        firstKeptEntryId: "entry-1",
+        tokensBefore: 1_500,
+        fileOps: { read: files("read"), edited: files("edit"), written: [] },
+        settings: { reserveTokens: 4_000 },
+        isSplitTurn: true,
+      },
+      customInstructions: "",
+      signal: new AbortController().signal,
+    };
+
+    const { result } = await runCompactionScenario({ sessionManager, event, apiKey: "test-key" });
+
+    expect(result).toMatchObject({ compaction: { details: { qualityDegraded: true } } });
+    const summary = expectCompactionResult(result).summary;
+    // The split-turn summary is the only generated context left on this path. Capping the
+    // suffix by its tail dropped it first and kept older verbatim turns instead.
+    expect(summary).toContain(`**Turn Context (split turn):**\n\n${activeTurn}`);
+    expect(summary).toContain(latestAsk);
+    expect(summary).toContain(CONTEXT_TRUNCATED_MARKER.trim());
+    expect(summary).toContain("reply 13 ");
+    expect(summary.length).toBeLessThanOrEqual(MAX_COMPACTION_SUMMARY_CHARS);
+    expect(mockSummarizeInStages).toHaveBeenCalledTimes(2);
   });
 
   it("restores source ask evidence omitted by the split-turn summary", async () => {

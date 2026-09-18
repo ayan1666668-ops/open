@@ -103,6 +103,7 @@ type CompactionLoss =
   | "split-turn-head"
   | "split-turn-tail"
   | "preserved-turn-head"
+  | "identifier-retention"
   | "quality-retention";
 
 function prependPreviousSummaryForRedistill(params: {
@@ -226,6 +227,8 @@ type CompactionSuffix = {
   // Keep producer segment boundaries after later suffix sections are appended;
   // otherwise the final tail cap can split an assistant tool-call/result group.
   contextRanges: Array<{ start: number; end: number; segmentStarts: number[] }>;
+  // Leading chars the tail cap keeps whole, trimming the later sections instead.
+  reservedChars?: number;
 };
 
 type SummaryQualityRetention = {
@@ -238,17 +241,21 @@ type SummaryQualityRetention = {
   identifierPolicy: "strict" | "off" | "custom";
 };
 
-function assembleSuffix(parts: {
-  splitTurnSection?: ContextSection;
-  generatedSplitTurnSection?: string;
-  preservedTurnsSection?: ContextSection;
-  toolFailureSection?: string;
-  fileOpsSummary?: string;
-  workspaceContext?: string;
-}): CompactionSuffix {
+function assembleSuffix(
+  parts: {
+    splitTurnSection?: ContextSection;
+    generatedSplitTurnSection?: string;
+    preservedTurnsSection?: ContextSection;
+    toolFailureSection?: string;
+    fileOpsSummary?: string;
+    workspaceContext?: string;
+  },
+  reserveSplitTurn = false,
+): CompactionSuffix {
   let text = "";
+  let reservedChars = 0;
   const contextRanges: CompactionSuffix["contextRanges"] = [];
-  for (const part of Object.values(parts)) {
+  for (const [name, part] of Object.entries(parts)) {
     const section = typeof part === "string" ? part : part?.text;
     if (!section) {
       continue;
@@ -257,6 +264,9 @@ function assembleSuffix(parts: {
     const appended = leadingTrim > 0 ? section.slice(leadingTrim) : section;
     const start = text.length;
     text = appendSummarySection(text, section);
+    if (reserveSplitTurn && name === "generatedSplitTurnSection") {
+      reservedChars = text.length;
+    }
     if (typeof part !== "string") {
       contextRanges.push({
         start,
@@ -271,13 +281,14 @@ function assembleSuffix(parts: {
   // ends without newline: "...## Exact identifiers## Tool Failures").
   if (text && !/^\s/.test(text)) {
     text = `\n\n${text}`;
+    reservedChars += reservedChars > 0 ? 2 : 0;
     for (const range of contextRanges) {
       range.start += 2;
       range.end += 2;
       range.segmentStarts = range.segmentStarts.map((segmentStart) => segmentStart + 2);
     }
   }
-  return { text, contextRanges };
+  return { text, contextRanges, ...(reservedChars > 0 ? { reservedChars } : {}) };
 }
 
 type ModelRegistryWithRequestAuthLookup = {
@@ -406,6 +417,24 @@ function capCompactionSuffix(suffixInput: string | CompactionSuffix, maxChars: n
   }
   if (maxChars <= 0) {
     return "";
+  }
+  const reserved = suffix.reservedChars ?? 0;
+  if (reserved > 0) {
+    // A reservation that cannot fit keeps its head, which names the active turn.
+    if (reserved >= maxChars) {
+      return capCompactionSummary(suffix.text.slice(0, reserved), maxChars);
+    }
+    const rest: CompactionSuffix = {
+      text: suffix.text.slice(reserved),
+      contextRanges: suffix.contextRanges
+        .filter((range) => range.start >= reserved)
+        .map((range) => ({
+          start: range.start - reserved,
+          end: range.end - reserved,
+          segmentStarts: range.segmentStarts.map((segmentStart) => segmentStart - reserved),
+        })),
+    };
+    return `${suffix.text.slice(0, reserved)}${capCompactionSuffix(rest, maxChars - reserved)}`;
   }
   if (maxChars < CONTEXT_TRUNCATED_MARKER.length) {
     const start = resolveSuffixTailStart(suffix, maxChars);
@@ -935,30 +964,49 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
       producerLosses: ReadonlySet<CompactionLoss> = new Set(),
       qualityRetention?: SummaryQualityRetention,
       // The degrade path exists BECAUSE required facts would not fit. Retaining them
-      // there must not throw, or the branch re-strands the session it exists to rescue.
-      retentionOptional = false,
+      // there is best-effort and must not throw, or the branch re-strands the session it
+      // exists to rescue. Its split-turn summary is the only generated context left, so
+      // the suffix cap trims older verbatim turns before it.
+      degraded = false,
     ) => {
       workspaceContextPromise ??= readWorkspaceContextForSummary(
         runtime?.postCompactionSections,
         runtime?.workspaceDir,
       );
-      const suffix = assembleSuffix({
-        splitTurnSection: sections.splitTurnSection,
-        generatedSplitTurnSection: sections.generatedSplitTurnSection,
-        preservedTurnsSection: sections.preservedTurnsSection,
-        toolFailureSection,
-        fileOpsSummary,
-        workspaceContext: await workspaceContextPromise,
-      });
-      let fitted = fitCompactionSummary(preparation.summaryTokenBudget, (maxChars) =>
-        budgetCompactionSummary(body, suffix, maxChars, qualityRetention),
+      const suffix = assembleSuffix(
+        {
+          splitTurnSection: sections.splitTurnSection,
+          generatedSplitTurnSection: sections.generatedSplitTurnSection,
+          preservedTurnsSection: sections.preservedTurnsSection,
+          toolFailureSection,
+          fileOpsSummary,
+          workspaceContext: await workspaceContextPromise,
+        },
+        degraded,
       );
-      const losses = new Set(producerLosses);
-      if (!fitted.ok && qualityRetention && retentionOptional) {
-        losses.add("quality-retention");
-        fitted = fitCompactionSummary(preparation.summaryTokenBudget, (maxChars) =>
-          budgetCompactionSummary(body, suffix, maxChars),
+      const fit = (retention?: SummaryQualityRetention) =>
+        fitCompactionSummary(preparation.summaryTokenBudget, (maxChars) =>
+          budgetCompactionSummary(body, suffix, maxChars, retention),
         );
+      let fitted = fit(qualityRetention);
+      const losses = new Set(producerLosses);
+      const retained = () => fitted.ok && !fitted.value.qualityRetentionInfeasible;
+      if (degraded && qualityRetention && !retained()) {
+        // The request context is bounded; identifiers are not. Shed the longest
+        // identifiers first so one oversized URL cannot take the request with it.
+        const { identifiers } = qualityRetention;
+        const byLength = identifiers.toSorted((left, right) => left.length - right.length);
+        for (let kept = byLength.length - 1; kept >= 0 && !retained(); kept -= 1) {
+          const keep = new Set(byLength.slice(0, kept));
+          fitted = fit({
+            ...qualityRetention,
+            identifiers: identifiers.filter((identifier) => keep.has(identifier)),
+          });
+        }
+        losses.add(retained() ? "identifier-retention" : "quality-retention");
+        if (!retained()) {
+          fitted = fit();
+        }
       }
       if (!fitted.ok) {
         throw fitted.error;
