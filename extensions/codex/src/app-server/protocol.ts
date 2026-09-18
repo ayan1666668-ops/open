@@ -605,8 +605,12 @@ export type CodexModelListResponse = {
 };
 
 export type CodexGetAccountResponse = {
-  account?: JsonValue;
-  requiresOpenaiAuth?: boolean;
+  account?:
+    | { type: "apiKey" }
+    | { type: "chatgpt"; email: string | null; planType: string }
+    | { type: "amazonBedrock"; usesCodexManagedCredentials?: boolean }
+    | null;
+  requiresOpenaiAuth: boolean;
 };
 
 type CodexModelProviderCapabilitiesReadResponse = {
