@@ -63,6 +63,8 @@ type Receipt = { status: string; runId: string; childSessionKey: string };
 type History = { messages: Array<{ role?: string; content?: unknown; stopReason?: string }> };
 type ProviderRequest = {
   model: string;
+  instructions?: string | null;
+  tools?: unknown[];
   input: Array<{ type?: string; role?: string; call_id?: string; output?: string }>;
 };
 type Scenario = {
@@ -79,8 +81,21 @@ type Scenario = {
 };
 
 async function startProvider(scenario: Scenario) {
-  const requests: Array<{ model: string; child: boolean; title: boolean; authorization?: string }> =
-    [];
+  const requests: Array<{
+    model: string;
+    child: boolean;
+    title: boolean;
+    authorization?: string;
+    purpose: {
+      bodyKeys: string[];
+      inputRoles: (string | undefined)[];
+      toolCount: number | undefined;
+      instructionsTitle: boolean;
+      agentPrompt: boolean;
+      subagentTask: boolean;
+      completionNotice: boolean;
+    };
+  }> = [];
   const errors: unknown[] = [];
   let spawn: Receipt | undefined;
   let spawnRequested = false;
@@ -92,16 +107,28 @@ async function startProvider(scenario: Scenario) {
         return;
       }
       const body = (await json(request)) as ProviderRequest;
-      const child = JSON.stringify(body.input.filter((item) => item.role === "user")).includes(
-        WORKER,
-      );
-      const title = JSON.stringify(
+      const userInput = JSON.stringify(body.input.filter((item) => item.role === "user"));
+      const systemInput = JSON.stringify(
         body.input.filter((item) => item.role === "developer" || item.role === "system"),
-      ).includes("Generate a concise session title");
+      );
+      const child = userInput.includes(WORKER);
+      const title = systemInput.includes("Generate a concise session title");
       requests.push({
         model: body.model,
         child: child && !title,
         title,
+        purpose: {
+          bodyKeys: Object.keys(body),
+          inputRoles: body.input.map((item) => item.role ?? item.type),
+          toolCount: Array.isArray(body.tools) ? body.tools.length : undefined,
+          instructionsTitle:
+            body.instructions?.includes("Generate a concise session title") ?? false,
+          agentPrompt:
+            systemInput.includes("openclaw:attempt:STABLE") ||
+            (body.instructions?.includes("openclaw:attempt:STABLE") ?? false),
+          subagentTask: userInput.includes("[Subagent Task]"),
+          completionNotice: userInput.includes("Every subagent spawned"),
+        },
         authorization: request.headers.authorization,
       });
       if (child && !title && body.model === "primary" && primaryRateLimited) {
@@ -744,10 +771,11 @@ describe("CLI model inheritance through MCP", () => {
                   ...scenario,
                   savedParent: BACKUP,
                   activeLogicalModel: PRIMARY,
-                  requests: providerRequests.map(({ model, child, title }) => ({
+                  requests: providerRequests.map(({ model, child: isChild, title, purpose }) => ({
                     model,
-                    child,
+                    child: isChild,
                     title,
+                    purpose,
                   })),
                   childModels: childRequests.map((request) => request.model),
                   storedChild: {
