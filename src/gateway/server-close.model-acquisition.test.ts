@@ -3,23 +3,32 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { setImmediate as nextTurn } from "node:timers/promises";
 import { Worker } from "node:worker_threads";
+import { collectNestedErrorCandidates } from "@openclaw/normalization-core/error-coercion";
 import { expect, it, vi } from "vitest";
 import { getPreparedModelCatalogWorkerPoolSnapshot } from "../agents/prepared-model-catalog-worker.js";
 import { registerPreparedModelRuntimePublicationListener } from "../agents/prepared-model-runtime.js";
 import { registerPreparedModelRuntimeClose } from "../agents/prepared-model-runtime.lifecycle.js";
 import { getPreparedModelRuntimeStartupStatus } from "../agents/prepared-model-runtime.startup-status.js";
 import { GATEWAY_SHUTDOWN_TIMEOUT_MS } from "../infra/gateway-shutdown-budget.js";
+import { getPluginValueInstance } from "../plugins/plugin-instance-scope.js";
 import { createDeferredCore } from "../shared/deferred.js";
 import { createGatewayMetadataCloseFixture } from "./server-close.metadata.test-support.js";
 import { publishConfiguredModelRuntimeSnapshots } from "./server-startup-model-runtime.js";
 
 it.each(["static catalog", "synthetic auth"] as const)(
-  "Gateway shutdown cancels and joins degraded %s acquisition",
+  "Gateway shutdown joins degraded %s acquisition and registered plugin cleanup outcomes",
   async (phase) => {
     const fixture = await createGatewayMetadataCloseFixture("degraded-model-close");
     const entered = createDeferredCore();
     const release = createDeferredCore();
     const closingEntered = createDeferredCore();
+    const finishAcquisition = createDeferredCore();
+    const cleanupEntered = createDeferredCore();
+    const finishCleanup = createDeferredCore();
+    const cleanupFailure =
+      phase === "synthetic auth" ? new Error("registered acquisition cleanup failed") : undefined;
+    let cleanupFinished = false;
+    let closeFinished = false;
     const workers: Worker[] = [];
     const timers = new Set<ReturnType<typeof setInterval>>();
     let acquisitionSignal: AbortSignal | undefined;
@@ -41,6 +50,7 @@ it.each(["static catalog", "synthetic auth"] as const)(
       entered.resolve();
       try {
         await release.promise;
+        await finishAcquisition.promise;
       } finally {
         signal?.removeEventListener("abort", cancel);
         clearInterval(timer);
@@ -93,6 +103,21 @@ it.each(["static catalog", "synthetic auth"] as const)(
     try {
       const port = await fixture.reservePort();
       const server = await fixture.start(port);
+      const metadata = fixture.kernels.get(port)?.getPluginMetadataSnapshot();
+      expect(metadata).toBeDefined();
+      const callback = fixture.loadCallback(metadata!);
+      const callbackOwner = getPluginValueInstance(callback);
+      expect(callbackOwner).toBeDefined();
+      callbackOwner!.lifecycle.onDispose(async () => {
+        cleanupEntered.resolve();
+        expect(joined).toBe(true);
+        await finishCleanup.promise;
+        cleanupFinished = true;
+        if (cleanupFailure) {
+          throw cleanupFailure;
+        }
+      });
+      expect(process.listenerCount(fixture.event)).toBe(fixture.listeners + 1);
       vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
       publication = publishConfiguredModelRuntimeSnapshots({ cfg: fixture.config });
       await Promise.race([
@@ -111,11 +136,41 @@ it.each(["static catalog", "synthetic auth"] as const)(
       vi.useRealTimers();
       expect((await fetch(`http://127.0.0.1:${port}/readyz`)).status).toBe(200);
       const startedAt = performance.now();
-      closing = server.close({ reason: "degraded acquisition fixture" });
+      closing = server.close({ reason: "degraded acquisition fixture" }).finally(() => {
+        closeFinished = true;
+      });
+      void closing.catch(() => {});
       await closingEntered.promise;
       await nextTurn();
       expect(acquisitionSignal?.aborted).toBe(true);
-      await closing;
+      expect(joined).toBe(false);
+      expect(callbackOwner!.lifecycle.signal.aborted).toBe(false);
+      expect(closeFinished).toBe(false);
+      finishAcquisition.resolve();
+      await Promise.race([
+        cleanupEntered.promise,
+        closing.then(() => {
+          throw new Error("Gateway close bypassed registered plugin cleanup");
+        }),
+      ]);
+      await nextTurn();
+      expect(callbackOwner!.lifecycle.signal.aborted).toBe(true);
+      expect(cleanupFinished).toBe(false);
+      expect(closeFinished).toBe(false);
+      finishCleanup.resolve();
+      const closeError = await closing.then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+      if (cleanupFailure) {
+        // Other shutdown work must not hide a discarded plugin cleanup outcome.
+        expect(collectNestedErrorCandidates(closeError)).toContain(cleanupFailure);
+      } else {
+        expect(closeError).toBeUndefined();
+      }
+      expect(cleanupFinished).toBe(true);
+      expect(process.listenerCount(fixture.event)).toBe(fixture.listeners);
+      expect(() => callback()).toThrow(/retir|disabled|reloaded/);
       expect(performance.now() - startedAt).toBeLessThan(GATEWAY_SHUTDOWN_TIMEOUT_MS);
       expect(joined).toBe(true);
       expect(timers.size).toBe(0);
@@ -132,6 +187,8 @@ it.each(["static catalog", "synthetic auth"] as const)(
     } finally {
       vi.useRealTimers();
       release.resolve();
+      finishAcquisition.resolve();
+      finishCleanup.resolve();
       await Promise.allSettled([publication, closing]);
       await Promise.all(
         workers.filter((worker) => worker.threadId !== -1).map((worker) => worker.terminate()),
