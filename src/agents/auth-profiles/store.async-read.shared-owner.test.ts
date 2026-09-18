@@ -2,6 +2,10 @@ import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js";
 import { createDeferredCore } from "../../shared/deferred.js";
+import {
+  createAgentDatabaseInspectionRefusal,
+  recordAgentDatabaseAdmissions,
+} from "../../state/agent-database-admission.js";
 import { cleanupSessionStateForTest } from "../../test-utils/session-state-cleanup.js";
 import * as ownership from "./path-resolve.js";
 import * as sqliteRead from "./sqlite-read.js";
@@ -23,6 +27,8 @@ it.each([
   { boundary: "ownership", local: true, unreadable: false },
   { boundary: "rows", local: true, unreadable: false },
   { boundary: "rows", local: false, unreadable: true },
+  { boundary: "ownership", local: true, unreadable: true },
+  { boundary: "rows", local: true, unreadable: true },
 ] as const)(
   "keeps the prepared owner across $boundary relocation (local: $local, unreadable: $unreadable)",
   async ({ boundary, local, unreadable }) => {
@@ -31,6 +37,18 @@ it.each([
     vi.stubEnv("OPENCLAW_AGENT_DIR", undefined);
     const legacyPath = ownership.resolveSharedAuthStorePath();
     const localDir = local ? path.join(root, "agents", "worker", "agent") : undefined;
+    if (local && unreadable) {
+      recordAgentDatabaseAdmissions(
+        [
+          createAgentDatabaseInspectionRefusal({
+            agentId: "main",
+            paths: [legacyPath],
+            reason: "Synthetic inherited owner refusal",
+          }),
+        ],
+        { env: process.env, source: "startup" },
+      );
+    }
     const localStore: AuthProfileStore = {
       version: 1,
       profiles: {
@@ -100,7 +118,7 @@ it.each([
       ]);
       ownership.noteCommittedSharedAuthStoreOwnership({ location: "state-db" });
       release.resolve();
-      if (unreadable) {
+      if (unreadable && !local) {
         await expect(loading).rejects.toMatchObject({
           code: "AUTH_PROFILE_STORE_UNREADABLE",
           databasePath: legacyPath,

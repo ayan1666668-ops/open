@@ -182,12 +182,21 @@ export function reloadSharedAuthStoreOwnership(
   return ownership;
 }
 
+/** Capture the shared database and its storage kind from one ownership read. */
+export function resolveSharedAuthStoreOwner(env: NodeJS.ProcessEnv = process.env) {
+  const { location } = resolveSharedAuthStoreOwnership(env);
+  return {
+    location,
+    sharedDatabasePath:
+      location === "state-db"
+        ? resolveOpenClawStateSqlitePath(env)
+        : path.join(resolveSharedMainAuthAgentDir(env), "openclaw-agent.sqlite"),
+  };
+}
+
 /** Resolve the canonical shared auth database path. */
 export function resolveSharedAuthStorePath(env: NodeJS.ProcessEnv = process.env): string {
-  if (resolveSharedAuthStoreOwnership(env).location === "state-db") {
-    return resolveOpenClawStateSqlitePath(env);
-  }
-  return path.join(resolveSharedMainAuthAgentDir(env), "openclaw-agent.sqlite");
+  return resolveSharedAuthStoreOwner(env).sharedDatabasePath;
 }
 
 /**
