@@ -11,13 +11,10 @@ import {
 } from "../browser-proxy-envelope.js";
 import type { BrowserServerState } from "../browser/server-context.js";
 import { toErrorObject } from "../infra/errors.js";
+import { firstBrowserDispatchRequest, stagedReportUpload } from "./invoke-browser.test-support.js";
 
 const BROWSER_PROXY_MAX_FILES = 256;
 const BROWSER_PROXY_MAX_TOTAL_FILE_BYTES = 16 * 1024 * 1024;
-const stagedReportUpload = {
-  body: { paths: ["/tmp/openclaw/uploads/.proxy-upload-1/0/report.txt"] },
-  directory: "/tmp/openclaw/uploads/.proxy-upload-1",
-};
 
 const controlServiceMocks = vi.hoisted(() => ({
   hasBrowserControlWork: vi.fn(() => false),
@@ -209,21 +206,6 @@ vi.mock("../browser-control-state.js", () => ({
 let runBrowserProxyCommand: typeof import("./invoke-browser.js").runBrowserProxyCommand;
 let browserState: BrowserServerState;
 
-type BrowserDispatchRequest = {
-  path?: string;
-  query?: unknown;
-  body?: unknown;
-};
-
-function firstBrowserDispatchRequest(): BrowserDispatchRequest {
-  const [call] = dispatcherMocks.dispatch.mock.calls;
-  if (!call) {
-    throw new Error("expected browser dispatch call");
-  }
-  const [request] = call as [BrowserDispatchRequest, ...unknown[]];
-  return request;
-}
-
 describe("runBrowserProxyCommand", () => {
   beforeEach(async () => {
     const { resolveBrowserConfig } =
@@ -412,7 +394,9 @@ describe("runBrowserProxyCommand", () => {
       upload,
       signal: expect.any(AbortSignal),
     });
-    expect(firstBrowserDispatchRequest().body).toEqual(staged.body);
+    expect(firstBrowserDispatchRequest(dispatcherMocks.dispatch.mock.calls).body).toEqual(
+      staged.body,
+    );
     expect(uploadMocks.discardStagedBrowserProxyUpload).not.toHaveBeenCalled();
   });
 
@@ -959,7 +943,7 @@ describe("runBrowserProxyCommand", () => {
       }),
     );
 
-    const request = firstBrowserDispatchRequest();
+    const request = firstBrowserDispatchRequest(dispatcherMocks.dispatch.mock.calls);
     expect(request.path).toBe("/snapshot");
   });
 
@@ -1055,7 +1039,7 @@ describe("runBrowserProxyCommand", () => {
       }),
     );
 
-    const request = firstBrowserDispatchRequest();
+    const request = firstBrowserDispatchRequest(dispatcherMocks.dispatch.mock.calls);
     expect(request.path).toBe("/stop");
     expect(request.query).toEqual({ profile: "openclaw" });
   });
