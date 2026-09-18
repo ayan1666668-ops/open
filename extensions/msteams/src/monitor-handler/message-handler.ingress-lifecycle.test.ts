@@ -333,6 +333,14 @@ describe("Microsoft Teams drain claim ownership", () => {
     );
     expect(bodies).toContain("message in thread A");
     expect(bodies).toContain("message in thread B");
+    // Correctly routed replies: each turn resolves to a distinct per-thread-root
+    // session key through the real resolveMSTeamsRouteSessionKey path.
+    const routeKeys = dispatch.mock.calls.map(
+      (call) => (call[0] as { ctx?: { SessionKey?: string } })?.ctx?.SessionKey ?? "",
+    );
+    expect(new Set(routeKeys).size).toBe(2);
+    expect(routeKeys).toContainEqual(expect.stringContaining(":thread:root-a"));
+    expect(routeKeys).toContainEqual(expect.stringContaining(":thread:root-b"));
   });
 
   it("preserves abandon retry accounting, backoff, threshold, and restart behavior", async () => {
