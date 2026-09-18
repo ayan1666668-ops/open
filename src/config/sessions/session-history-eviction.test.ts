@@ -182,7 +182,8 @@ describe("SQLite historical session disk budget", () => {
                 target,
                 buildNextEntry: () => {
                   assertActive();
-                  return { sessionId: "target-next", updatedAt: 3 };
+                  // Keep the replacement live; age retention would protect its history windows.
+                  return { sessionId: "target-next", updatedAt: Date.now() };
                 },
                 afterEntryMutation: () => {
                   expect(checkpoint).not.toHaveBeenCalled();
