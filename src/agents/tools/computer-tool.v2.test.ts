@@ -185,6 +185,21 @@ describe("createComputerTool v2 execution", () => {
     });
   });
 
+  it("drives the node with an owner-supplied execution id", async () => {
+    listNodesMock.mockResolvedValue([
+      macComputerNode({ computerUse: v2Descriptor(["screenshot"]) }),
+    ]);
+    const executionId = "0f4a2a7c-2d0e-4c7d-9b41-8a1b6a4b9c11";
+    const tool = createVisionComputerTool({ executionId, registerRunCleanup: () => {} });
+
+    await tool.execute("shot", { action: "screenshot" });
+
+    const snapshot = callGatewayToolMock.mock.calls
+      .map((call) => call[2] as ComputerActBody)
+      .findLast((body) => body.command === "screen.snapshot");
+    expect(snapshot?.params?.executionId).toBe(executionId);
+  });
+
   it("advertises execution-owned actions only with an attempt cleanup owner", async () => {
     const actions: ComputerUseV2ActionName[] = [
       "screenshot",

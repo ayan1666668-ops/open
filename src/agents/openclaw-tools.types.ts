@@ -114,6 +114,8 @@ export type OpenClawToolsOptions = {
   pairedNodeComputerUse?: PreparedPairedComputerUse;
   /** Registers run-owned cleanup for tools that hold node resources. */
   registerRunCleanup?: (cleanup: (reason: string) => Promise<void>) => void;
+  /** Stable computer execution identity for tool sets an owner rebuilds within one run. */
+  computerExecutionId?: string;
   /** Internal review-run restrictions and proposal provenance. */
   skillWorkshop?: SkillWorkshopRunOptions;
   /** If true, nodes action="invoke" can call media-returning commands directly. */

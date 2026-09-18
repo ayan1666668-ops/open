@@ -29,7 +29,7 @@ import {
   markAuthProfileSuccess,
 } from "./auth-profiles.js";
 import { resolveCliBackendConfig } from "./cli-backends.js";
-import { runCliCleanup } from "./cli-runner/cleanup.js";
+import { releasePreparedCliBackend } from "./cli-runner/backend-release.js";
 import { acceptsCliLiveSession } from "./cli-runner/cli-live-session-registry.js";
 import {
   resolveCliSessionId,
@@ -717,14 +717,13 @@ async function runPreparedCliAgentOwned(
     runFailed = true;
     runError = error;
   }
-  let cleanupError: Error | undefined;
-  try {
-    await runCliCleanup(params, "cli-backend-release", async () => {
-      await context.preparedBackend.cleanup?.();
-    });
-  } catch (error) {
-    cleanupError = error as Error;
-  }
+  const cleanupError = await releasePreparedCliBackend({
+    context,
+    params,
+    runFailed,
+    runError,
+    runResult,
+  });
   params.assertCurrent?.();
   return settleCliBackendOutcome({
     runResult,

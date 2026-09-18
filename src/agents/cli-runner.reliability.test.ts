@@ -1204,6 +1204,7 @@ describe("runCliAgent reliability", () => {
     context.params.sourceReplyDeliveryMode = "message_tool_only";
     context.params.messageChannel = "telegram";
     context.params.currentChannelId = "chat123";
+    context.preparedBackend.cleanup = vi.fn(async () => {});
 
     const result = await runPreparedCliAgent(context);
 
@@ -1214,6 +1215,8 @@ describe("runCliAgent reliability", () => {
       { text: "The reply stopped after sending progress. Please try again.", isError: true },
     ]);
     expect(supervisorSpawnMock).toHaveBeenCalledTimes(1);
+    // The run settled as a delivered failure, so node resources close as an error.
+    expect(context.preparedBackend.cleanup).toHaveBeenCalledWith("error");
   });
 
   it("clears a soft-resumed binding after confirmed message send followed by failure", async () => {
@@ -1245,11 +1248,7 @@ describe("runCliAgent reliability", () => {
         result: { status: "sent" },
       });
       markMcpLoopbackToolCallFinished(captureHandle);
-      return makeManagedRun({
-        exitCode: 1,
-        durationMs: 150,
-        stderr: "failed after delivery",
-      });
+      return makeManagedRun({ exitCode: 1, durationMs: 150, stderr: "failed after delivery" });
     });
     const context = makeClaudePreparedContext({
       sessionKey: "agent:main:soft-drift-delivered-failure",

@@ -603,6 +603,7 @@ async function runCliBtwSideQuestion(params: {
     "btw.side-question",
   );
   let prepared: Awaited<ReturnType<typeof prepareCliRunContext>> | undefined;
+  let text = "";
   try {
     prepared = await prepareCliRunContext({
       preparedRunAdmission,
@@ -635,14 +636,14 @@ async function runCliBtwSideQuestion(params: {
       messageProvider: params.messageProvider,
       currentChannelId: params.currentChannelId,
     });
-    const output = await executePreparedCliRun(prepared);
-    const text = output.text.trim();
+    text = (await executePreparedCliRun(prepared)).text.trim();
     if (!text) {
       throw new Error(`/btw side question via ${params.cliProvider} produced no answer.`);
     }
     return { text };
   } finally {
-    await prepared?.preparedBackend.cleanup?.();
+    // An answer means the side question ran to completion; anything else did not.
+    await prepared?.preparedBackend.cleanup?.(text ? "completion" : "error");
     preparedRunAdmission.close();
   }
 }

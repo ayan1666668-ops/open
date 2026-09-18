@@ -37,7 +37,7 @@ import {
   type GatewayClientMode,
   type GatewayClientName,
 } from "../utils/message-channel.js";
-import type { GatewayClient } from "./client.js";
+import type { GatewayClient, GatewayClientOptions } from "./client.js";
 import { buildDeviceAuthPayloadV3 } from "./device-auth.js";
 import { GatewayStartupCleanupError } from "./server-shutdown.js";
 import { startGatewayServer, type GatewayServerOptions } from "./server.js";
@@ -66,6 +66,8 @@ export async function connectGatewayClient(params: {
   scopes?: string[];
   caps?: string[];
   commands?: string[];
+  /** Computer-use descriptor a node declares at connect, as a real node host would. */
+  computerUse?: GatewayClientOptions["computerUse"];
   permissions?: Record<string, boolean>;
   instanceId?: string;
   deviceIdentity?: DeviceIdentity;
@@ -125,6 +127,7 @@ export async function connectGatewayClient(params: {
       scopes,
       caps: params.caps,
       commands: params.commands,
+      computerUse: params.computerUse,
       permissions: params.permissions,
       instanceId: params.instanceId,
       deviceIdentity,

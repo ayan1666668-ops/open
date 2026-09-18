@@ -24,6 +24,7 @@ import {
   revokeMcpLoopbackClientGrant,
   transferMcpLoopbackClientGrant,
 } from "../../gateway/mcp-grant-store.js";
+import type { McpLoopbackClientGrantCloseReason } from "../../gateway/mcp-grant-store.js";
 import { ensureMcpLoopbackServer } from "../../gateway/mcp-http.js";
 import {
   createMcpLoopbackServerConfig,
@@ -141,7 +142,6 @@ import { buildSystemPromptReport } from "../system-prompt-report.js";
 import { appendModelIdentitySystemPrompt, buildModelIdentityPromptLine } from "../system-prompt.js";
 import { expandToolGroups, normalizeToolPolicyName } from "../tool-policy.js";
 import { resolveQuestionTimeoutMs } from "../tools/ask-user-tool-normalization.js";
-import { assertNativeCronCreatorCapabilities } from "../tools/cron-tool-creator-cap.js";
 import { redactRunIdentifier, resolveRunWorkspaceDir } from "../workspace-run.js";
 import {
   DEFAULT_BOOTSTRAP_FILENAME,
@@ -164,6 +164,7 @@ import {
 import { isClaudeCliBackendId, normalizeCliModel } from "./helpers.js";
 import { prepareCliHistoryBoundary } from "./history-boundary.js";
 import { cliBackendLog } from "./log.js";
+import { createMcpClientGrantCapture } from "./mcp-client-grant-capture.js";
 import {
   buildCliMcpGrantContext,
   finalizeCliMcpGrant,
@@ -1460,7 +1461,7 @@ async function prepareCliRunContextWithinReadFence(
             bootstrapTruncationNotice !== undefined,
           ]),
         );
-  let cleanupPreparedResources: (() => Promise<void>) | undefined;
+  let cleanupPreparedResources: PreparedCliRunContext["preparedBackend"]["cleanup"];
   let preparedExecution: PrivateCliBackendPreparedExecution | undefined;
   try {
     const mcpClientGrant =
@@ -1495,94 +1496,30 @@ async function prepareCliRunContextWithinReadFence(
     };
     const mcpClientGrantCapture =
       mcpClientGrant && mcpLoopbackRuntime
-        ? (() => {
-            let activeToken = mcpClientGrant.token;
-            let activeCapture: ReturnType<typeof activateMcpLoopbackClientGrantCapture> = false;
-            return {
-              transportToken: mcpClientGrant.token,
-              adoptProcessToken: (processToken: string) => {
-                if (activeToken === processToken) {
-                  return;
-                }
-                if (
-                  !prepareDeps.transferMcpLoopbackClientGrant({
-                    sourceToken: mcpClientGrant.token,
-                    targetToken: processToken,
-                    runtimeOwnerToken: mcpLoopbackRuntime.ownerToken,
-                  })
-                ) {
-                  throw new Error(
-                    "CLI MCP client grant could not transfer onto the live process bearer",
-                  );
-                }
-                activeToken = processToken;
-              },
-              revokeProcessToken: () => {
-                prepareDeps.revokeMcpLoopbackClientGrant(activeToken);
-              },
-              activate: (captureKey: string, assertCurrent: () => void) => {
-                const activated = prepareDeps.activateMcpLoopbackClientGrantCapture({
-                  token: activeToken,
-                  runtimeOwnerToken: mcpLoopbackRuntime.ownerToken,
-                  captureKey,
-                  assertCurrent,
-                });
-                if (!activated) {
-                  throw new Error(
-                    "CLI MCP client grant is no longer valid for this Gateway runtime",
-                  );
-                }
-                activeCapture = activated;
-              },
-              deactivate: (captureKey: string) => {
-                prepareDeps.deactivateMcpLoopbackClientGrantCapture({
-                  token: activeToken,
-                  runtimeOwnerToken: mcpLoopbackRuntime.ownerToken,
-                  captureKey,
-                });
-              },
-              ...(projectNativeToolAuthority
-                ? {
-                    captureNativeTools: (tools: unknown) => {
-                      params.assertCurrent?.();
-                      params.abortSignal?.throwIfAborted();
-                      if (!activeCapture || !activeCapture.captureNativeToolAuthority(null)) {
-                        throw new Error("Native tool authority capture is no longer active.");
-                      }
-                      if (
-                        !Array.isArray(tools) ||
-                        !tools.every((name): name is string => typeof name === "string")
-                      ) {
-                        throw new Error(
-                          "Native runtime reported an invalid tool list; start a fresh session.",
-                        );
-                      }
-                      const selected = params.cliToolAvailability?.native;
-                      const capabilities = projectNativeToolAuthority(
-                        selected ? tools.filter((name) => selected.includes(name)) : tools,
-                      );
-                      assertNativeCronCreatorCapabilities(capabilities);
-                      const allowed = capabilities.filter(
-                        (name) =>
-                          name !== "web_search" || params.toolOverrides?.webSearch !== false,
-                      );
-                      if (!activeCapture.captureNativeToolAuthority(allowed)) {
-                        throw new Error("Native tool authority capture is no longer active.");
-                      }
-                    },
-                  }
-                : {}),
-            };
-          })()
+        ? createMcpClientGrantCapture({
+            grantToken: mcpClientGrant.token,
+            runtimeOwnerToken: mcpLoopbackRuntime.ownerToken,
+            deps: prepareDeps,
+            assertCurrent: params.assertCurrent,
+            abortSignal: params.abortSignal,
+            projectNativeToolAuthority,
+            nativeToolAvailability: params.cliToolAvailability?.native,
+            webSearchAllowed: params.toolOverrides?.webSearch !== false,
+          })
         : undefined;
     let mcpClientGrantRevoked = false;
     const cleanupMcpClientGrant = mcpClientGrant
-      ? async () => {
+      ? async (outcome?: McpLoopbackClientGrantCloseReason) => {
           if (mcpClientGrantRevoked) {
             return;
           }
           mcpClientGrantRevoked = true;
-          prepareDeps.revokeMcpLoopbackClientGrant(mcpClientGrant.token);
+          // After adoption the minted token is gone; the process bearer holds this turn's grant.
+          if (mcpClientGrantCapture) {
+            mcpClientGrantCapture.revokeProcessToken(outcome);
+            return;
+          }
+          prepareDeps.revokeMcpLoopbackClientGrant(mcpClientGrant.token, outcome);
         }
       : undefined;
     cleanupPreparedResources = cleanupMcpClientGrant;
@@ -1683,11 +1620,11 @@ async function prepareCliRunContextWithinReadFence(
     });
     const cleanupPreparedBackend =
       preparedBackend.cleanup || cleanupMcpClientGrant
-        ? async () => {
+        ? async (outcome?: McpLoopbackClientGrantCloseReason) => {
             try {
               await preparedBackend.cleanup?.();
             } finally {
-              await cleanupMcpClientGrant?.();
+              await cleanupMcpClientGrant?.(outcome);
             }
           }
         : undefined;
@@ -1753,7 +1690,7 @@ async function prepareCliRunContextWithinReadFence(
     const pluginExecutionConsumer = retainCliPluginExecutionConsumer(preparedExecution?.execute);
     const preparedBackendCleanup =
       cleanupPreparedBackend || preparedExecution?.cleanup || pluginExecutionConsumer
-        ? async () => {
+        ? async (outcome?: McpLoopbackClientGrantCloseReason) => {
             try {
               const cleanupExecution = () => preparedExecution?.cleanup?.();
               await (pluginExecutionConsumer
@@ -1761,7 +1698,7 @@ async function prepareCliRunContextWithinReadFence(
                 : cleanupExecution());
             } finally {
               try {
-                await cleanupPreparedBackend?.();
+                await cleanupPreparedBackend?.(outcome);
               } finally {
                 pluginExecutionConsumer?.release();
               }
@@ -1835,13 +1772,13 @@ async function prepareCliRunContextWithinReadFence(
         : undefined;
     const preparedCleanup =
       preparedBackendCleanup || claudeSkillsPlugin.args.length > 0
-        ? async () => {
+        ? async (outcome?: McpLoopbackClientGrantCloseReason) => {
             try {
               if (!claudeSkillsPluginClaimed) {
                 await claudeSkillsPlugin.cleanup();
               }
             } finally {
-              await preparedBackendCleanup?.();
+              await preparedBackendCleanup?.(outcome);
             }
           }
         : undefined;
@@ -2339,7 +2276,7 @@ async function prepareCliRunContextWithinReadFence(
         disposalHolds.add(promise);
         void promise.finally(() => disposalHolds.delete(promise)).catch(() => {});
       };
-      cleanupPreparedResources = async () => {
+      cleanupPreparedResources = async (outcome) => {
         try {
           if (disposalHolds.size > 0) {
             // Queued maintenance may need this foreground turn to release its lane first.
@@ -2355,7 +2292,7 @@ async function prepareCliRunContextWithinReadFence(
             await ownedEngine.dispose?.();
           }
         } finally {
-          await previousCleanup?.();
+          await previousCleanup?.(outcome);
         }
       };
       preparedBackendFinal.cleanup = cleanupPreparedResources;
@@ -2465,7 +2402,7 @@ async function prepareCliRunContextWithinReadFence(
   } catch (err) {
     try {
       await runCliCleanup(params, "cli-prepare-failure", async () => {
-        await cleanupPreparedResources?.();
+        await cleanupPreparedResources?.("error");
       });
     } catch (cleanupErr) {
       cliBackendLog.warn(`cli backend cleanup after prepare failure failed: ${String(cleanupErr)}`);
