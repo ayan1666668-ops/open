@@ -182,3 +182,40 @@ it("keeps the Git runner's untouched container result out of failure reports", a
     prepareUpdateFailureReport({ attemptId: "untouched-container", result }),
   ).rejects.toThrow("Only a final failed update");
 });
+
+it("reports Homebrew-managed installations as skipped in CLI JSON and terminal output", async () => {
+  const brewRoot = path.join(
+    dirs.make("brew-cellar-"),
+    "Cellar",
+    "openclaw-cli",
+    "2026.9.4",
+    "libexec",
+    "lib",
+    "node_modules",
+    "openclaw",
+  );
+  await fs.mkdir(path.join(brewRoot, "dist"), { recursive: true });
+  await fs.writeFile(
+    path.join(brewRoot, "package.json"),
+    '{"name":"openclaw","version":"2026.9.4"}',
+  );
+  vi.spyOn(shared, "resolveUpdateRoot").mockResolvedValue(brewRoot);
+  vi.spyOn(process, "cwd").mockReturnValue(brewRoot);
+
+  await expect(updateCommand({ json: true, yes: true })).rejects.toMatchObject({ code: 0 });
+  expect(output).toHaveLength(1);
+  expect(output[0]).toMatchObject({
+    status: "skipped",
+    reason: "unmanaged-package-install",
+    before: { version: "2026.9.4" },
+    steps: [],
+  });
+  expect(lines.join("\n")).toContain("brew upgrade openclaw-cli");
+
+  lines = [];
+  await expect(updateCommand({ yes: true })).rejects.toMatchObject({ code: 0 });
+  expect(lines.join("\n")).toContain("OpenClaw update skipped: unmanaged-package-install");
+  expect(lines.join("\n")).toContain("brew upgrade openclaw-cli");
+  expect(lines.join("\n")).toContain("openclaw gateway restart");
+  expect(triage).not.toHaveBeenCalled();
+});

@@ -453,7 +453,9 @@ export async function resolveGlobalManager(params: {
   ).assertUnowned(params.root);
   if (params.installKind === "package") {
     if (isHomebrewInstallRoot(params.root)) {
-      throw new Error(
+      const reason = resolveUnmanagedUpdateInstallReason();
+      throw new UpdatePreMutationError(
+        reason,
         "This OpenClaw installation is managed by Homebrew. To update OpenClaw, run:\n\n  brew upgrade openclaw-cli\n\nThen restart the gateway:\n\n  openclaw gateway restart",
       );
     }
