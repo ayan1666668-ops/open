@@ -44,7 +44,6 @@ import type {
 } from "../../plugins/cli-backend.types.js";
 import { buildAgentHookContextChannelFields } from "../../plugins/hook-agent-context.js";
 import { getGlobalHookRunner } from "../../plugins/hook-runner-global.js";
-import { buildPromptBuildDropResult } from "../../plugins/prompt-build-drop.js";
 import {
   LEGACY_IMPLICIT_AGENT_ID,
   isSubagentSessionKey,
@@ -106,7 +105,6 @@ import { resolveContextTokensForModel } from "../context.js";
 import { resolveConversationCapabilityProfile } from "../conversation-capability-profile.js";
 import { DEFAULT_CONTEXT_TOKENS } from "../defaults.js";
 import { waitForDeferredTurnMaintenanceForSession } from "../embedded-agent-runner/context-engine-maintenance.js";
-import { resolvePromptBuildHookResult } from "../embedded-agent-runner/run/attempt-prompt-helpers.js";
 import { composeSystemPromptWithHookContext } from "../embedded-agent-runner/run/attempt-thread-helpers.js";
 import {
   applyEmbeddedAttemptToolsAllow,
@@ -167,6 +165,10 @@ import { prepareCliHistoryBoundary } from "./history-boundary.js";
 import { cliBackendLog } from "./log.js";
 import { buildCliMcpGrantContext, normalizeOptionalMcpContextValue } from "./mcp-grant-context.js";
 import { CLAUDE_CLI_CONTEXT_MODEL_ALIASES, detectNodeClaudePlacement } from "./prepare-claude.js";
+import {
+  resolveAuthorizedCliPromptBuildHookResult,
+  resolveCliPromptBuildHookResult,
+} from "./prepare-prompt-build.js";
 import { composeCliPromptContext } from "./prompt-context.js";
 import {
   buildCliSessionHistoryPrompt,
@@ -1045,32 +1047,15 @@ async function prepareCliRunContextWithinReadFence(
     ...buildAgentHookContextChannelFields(params),
   };
   const promptBuildHookRunner = skipsTurnPreparation ? undefined : getGlobalHookRunner();
-  const promptBuildHookResult = await (async () => {
-    if (skipsTurnPreparation) {
-      return undefined;
-    }
-    try {
-      return await resolvePromptBuildHookResult({
-        config: runConfig,
-        prompt: params.prompt,
-        messages: await loadOpenClawHistoryMessages(),
-        hookCtx: promptBuildHookContext,
-        hookRunner: promptBuildHookRunner,
-        bootstrapContextRunKind: params.bootstrapContextRunKind,
-      });
-    } catch (error) {
-      // Deliberately marker-free: this catch also spans pre-dispatch preparation
-      // (config resolution, session-history load, hook-context assembly), so a
-      // failure here does not prove a plugin contribution was ever dispatched or
-      // dropped. Telling the model that context is missing when it never existed
-      // is the same misleading-recovery-instruction failure the marker exists to
-      // prevent. A real before_prompt_build rejection is turned into the bounded
-      // drop marker at the dispatch boundary inside resolvePromptBuildHookResult
-      // (openclaw-beads-201); the operator diagnostic stays in the warn above.
-      cliBackendLog.warn(`cli prompt-build hook preparation failed: ${String(error)}`);
-      return undefined;
-    }
-  })();
+  const promptBuildHookResult = await resolveCliPromptBuildHookResult({
+    skipsTurnPreparation,
+    config: runConfig,
+    prompt: params.prompt,
+    loadMessages: loadOpenClawHistoryMessages,
+    hookCtx: promptBuildHookContext,
+    hookRunner: promptBuildHookRunner,
+    bootstrapContextRunKind: params.bootstrapContextRunKind,
+  });
   const promptBuildToolsAllow = mergeForcedEmbeddedAttemptToolsAllow(
     promptBuildHookResult?.toolsAllow,
     {
@@ -1383,51 +1368,16 @@ async function prepareCliRunContextWithinReadFence(
     : nodeSkillWorkshop
       ? [nodeSkillWorkshop]
       : [];
-  const authorizedPromptBuildResult = await (async () => {
-    const toolAuthorityFingerprint = params.toolAuthorityFingerprint;
-    if (!promptBuildHookRunner || !toolAuthorityFingerprint) {
-      return undefined;
-    }
-    const admittedParams = await admitPreparedParams(params);
-    params = admittedParams;
-    const assertHostActive = resolveAdmittedRunActiveAssertion(
-      admittedParams.admittedRunContext,
-      admittedParams.abortSignal,
-    );
-    if (!assertHostActive) {
-      return undefined;
-    }
-    // Preparation gets its own catch, matching the ordinary phase above: a
-    // session-history load never reaches the dispatcher, so reporting it as a
-    // dropped contribution would hand the model a false recovery instruction.
-    let promptEvent: { prompt: string; messages: unknown[] };
-    try {
-      promptEvent = {
-        prompt: params.prompt,
-        messages: await loadOpenClawHistoryMessages(),
-      };
-    } catch (error) {
-      cliBackendLog.warn(`authorized cli prompt-build hook preparation failed: ${String(error)}`);
-      return undefined;
-    }
-    try {
-      return await promptBuildHookRunner.runAuthorizedPromptBuild(
-        promptEvent,
-        promptBuildHookContext,
-        {
-          toolAuthorityFingerprint,
-          activeToolNames: promptTools.map((tool) => tool.name),
-          assertHostActive,
-        },
-      );
-    } catch (error) {
-      cliBackendLog.warn(`authorized CLI prompt-build hook failed: ${String(error)}`);
-      // This prepared run continues, so the lost contribution has to be visible
-      // in the prompt it continues with. A rejection here is dispatch-level and
-      // never reaches runAuthorizedPromptBuild's per-handler drop collector.
-      return buildPromptBuildDropResult([{ reason: "dispatch-failed" }]);
-    }
-  })();
+  const authorizedPromptBuild = await resolveAuthorizedCliPromptBuildHookResult({
+    params,
+    admitParams: admitPreparedParams,
+    hookRunner: promptBuildHookRunner,
+    hookCtx: promptBuildHookContext,
+    loadMessages: loadOpenClawHistoryMessages,
+    activeToolNames: promptTools.map((tool) => tool.name),
+  });
+  params = authorizedPromptBuild.params;
+  const authorizedPromptBuildResult = authorizedPromptBuild.result;
   params.assertCurrent?.();
   const messageToolAvailable = promptTools.some(
     (tool) => normalizeToolPolicyName(tool.name) === "message",
