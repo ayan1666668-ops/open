@@ -1614,8 +1614,9 @@ jobs:
           done < <(jq -r '(.corePackageTarballs // [])[] | [.packageName, .tarballName] | @tsv' preflight-tarball/preflight-manifest.json)
           if node -e 'const pkg = require("./package.json"); process.exit(pkg.dependencies?.["@openclaw/ai"] ? 0 : 1)'; then
             # Core packages are public at this point. Verify the exact packed root
-            # tarball in an isolated prefix before the root package can publish.
-            node scripts/verify-npm-tarball-install.mjs "$publish_target"
+            # tarball without publisher credentials or writable publication
+            # artifacts before the root package can publish.
+            bash scripts/verify-npm-tarball-install-isolated.sh "$publish_target"
           fi
           verify_release_tooling_identity
           bash scripts/openclaw-npm-publish.sh --publish "${publish_target}"

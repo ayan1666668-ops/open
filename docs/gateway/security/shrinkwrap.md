@@ -48,7 +48,7 @@ pnpm deps:shrinkwrap:changed:generate
 pnpm deps:shrinkwrap:changed:check
 ```
 
-The check rejects a shrinkwrap that omits a declared runtime dependency. Workspace dependency versions must already exist in the public registry before generation. Extended-stable npm preflight also installs the packed tarball into a fresh prefix using only the public registry, checks dependency coverage, and runs `openclaw --version` and `openclaw gateway status --no-probe` with isolated state. It does not use locally prepared dependency tarballs for this check.
+The check rejects a shrinkwrap that omits a declared runtime dependency. Workspace dependency versions must already exist in the public registry before generation. Extended-stable preflight uses the prepared local dependency tarball so an unpublished candidate remains testable. During publication, core workspace packages publish first; after their exact versions become visible on the public registry, a credential-free read-only container installs the exact root tarball, checks dependency coverage, and runs `openclaw --version` and `openclaw gateway status --no-probe` before the root package can publish.
 
 The generator resolves npm's publishable lock format but rejects generated package versions that are not already present in `pnpm-lock.yaml`. That keeps the pnpm dependency age, override, and patch-review boundary intact.
 
