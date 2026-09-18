@@ -86,6 +86,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -134,13 +135,14 @@ fun ShellScreen(
   modifier: Modifier = Modifier,
   features: List<DisplayFeature> = emptyList(),
 ) {
+  val appearanceTextScale by viewModel.appearanceTextScale.collectAsState()
   val appearanceThemeMode by viewModel.appearanceThemeMode.collectAsState()
   val appearanceThemeFamily by viewModel.appearanceThemeFamily.collectAsState()
   val appearanceAccentArgb by viewModel.appearanceAccentArgb.collectAsState()
   val gatewayAccentArgb by viewModel.gatewayAccentArgb.collectAsState()
   val shellDark = appearanceThemeMode.isDark(systemDark = isSystemInDarkTheme())
   OpenClawSystemBarAppearance(lightAppearance = !shellDark)
-  ClawDesignTheme(dark = shellDark, family = appearanceThemeFamily, accentArgb = appearanceAccentArgb ?: gatewayAccentArgb) {
+  ClawDesignTheme(dark = shellDark, family = appearanceThemeFamily, accentArgb = appearanceAccentArgb ?: gatewayAccentArgb, textScale = appearanceTextScale) {
     val nav = rememberSaveable(saver = ShellNavigation.Saver) { ShellNavigation() }
     var commandOpen by rememberSaveable { mutableStateOf(false) }
     var conversationScreenWasActive by rememberSaveable { mutableStateOf(false) }
@@ -192,6 +194,11 @@ fun ShellScreen(
         }
         closeSidebar()
         viewModel.clearRequestedHomeDestination()
+      }
+
+      DisposableEffect(nav.activeTab, runtimeInitialized) {
+        if (runtimeInitialized) viewModel.setChatScreenActive(nav.activeTab == Tab.Chat)
+        onDispose { if (runtimeInitialized) viewModel.setChatScreenActive(false) }
       }
 
       LaunchedEffect(nav.activeTab, runtimeInitialized) {

@@ -2,6 +2,7 @@ package ai.openclaw.app.ui
 
 import ai.openclaw.app.AndroidLicenseNotice
 import ai.openclaw.app.AppLanguage
+import ai.openclaw.app.AppearanceTextScale
 import ai.openclaw.app.AppearanceThemeFamily
 import ai.openclaw.app.AppearanceThemeMode
 import ai.openclaw.app.BuildConfig
@@ -2148,6 +2149,7 @@ private fun AppearanceSettingsScreen(
   viewModel: MainViewModel,
   onBack: () -> Unit,
 ) {
+  val textScale by viewModel.appearanceTextScale.collectAsState()
   val themeMode by viewModel.appearanceThemeMode.collectAsState()
   val themeFamily by viewModel.appearanceThemeFamily.collectAsState()
   val accentArgb by viewModel.appearanceAccentArgb.collectAsState()
@@ -2158,6 +2160,14 @@ private fun AppearanceSettingsScreen(
   SettingsDetailFrame(title = nativeString("Appearance"), subtitle = nativeString("Theme and translated Android text."), icon = Icons.Default.Palette, onBack = onBack) {
     ClawPanel {
       Column(verticalArrangement = Arrangement.spacedBy(ClawTheme.spacing.xxs)) {
+        Text(text = nativeString("Text size"), style = ClawTheme.type.section, color = ClawTheme.colors.text)
+        ClawSegmentedControl(
+          options = AppearanceTextScale.entries.map(::appearanceTextScaleLabel),
+          selected = appearanceTextScaleLabel(textScale),
+          onSelect = { selected ->
+            AppearanceTextScale.entries.firstOrNull { appearanceTextScaleLabel(it) == selected }?.let(viewModel::setAppearanceTextScale)
+          },
+        )
         Text(text = nativeString("Theme family"), style = ClawTheme.type.section, color = ClawTheme.colors.text)
         AppearanceThemeFamily.entries.chunked(2).forEach { rowFamilies ->
           Row(
@@ -3548,3 +3558,10 @@ private fun openAppPermissionSettings(context: Context) {
     ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
   context.startActivity(intent)
 }
+
+private fun appearanceTextScaleLabel(scale: AppearanceTextScale): String =
+  when (scale) {
+    AppearanceTextScale.Small -> nativeString("Small")
+    AppearanceTextScale.Standard -> nativeString("Standard")
+    AppearanceTextScale.Large -> nativeString("Large")
+  }

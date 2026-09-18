@@ -19,6 +19,7 @@ internal sealed class ChatTimelineItem {
     /** Resolved separately so full-message reads retain the original call blocks. */
     val hasUnresolvedTools: Boolean = false,
     val knownRunIds: Set<String> = message.runId?.let { setOf(it) }.orEmpty(),
+    val turnRecap: TurnRecap? = message.replyMetrics?.let { TurnRecap(it.runtimeMs, it.outputTokens) },
   ) : ChatTimelineItem()
 
   /** Durable queued/failed offline command shown below the transcript until acked or deleted. */
@@ -66,10 +67,6 @@ internal sealed class ChatTimelineItem {
     val key: String,
     val durationMs: Long?,
     val expanded: Boolean,
-  ) : ChatTimelineItem()
-
-  data class TurnRecapSummary(
-    val recap: TurnRecap,
   ) : ChatTimelineItem()
 
   data class SystemNotice(
@@ -139,6 +136,7 @@ internal fun prepareChatHistory(
         append(latest?.timestampMs ?: "")
         latest?.content?.forEach { appendContentVersion(it) }
         append(latest?.activity)
+        append(latest?.replyMetrics)
         append(":turnBoundary=")
         append(latest?.turnBoundary ?: false)
       },
@@ -411,18 +409,6 @@ internal fun ChatTimeline.containsUserMessageVersion(version: String): Boolean =
     message.role.trim().equals("user", ignoreCase = true) && stableMessageVersion(message) == version
   }
 
-internal fun ChatTimeline.withTurnRecap(recap: TurnRecap?): ChatTimeline {
-  if (recap == null) return this
-  // reverseLayout makes index 0 the newest visual edge. The recap replaces the terminal
-  // thinking slot there, while shifting the saved user-message anchor to the same row.
-  return copy(
-    items = listOf(ChatTimelineItem.TurnRecapSummary(recap)) + items,
-    readAnchorIndex = readAnchorIndex?.plus(1),
-    latestContentIndex = 0,
-    latestContentVersion = "$latestContentVersion:recap=${recap.runtimeMs}:${recap.outputTokens ?: ""}",
-  )
-}
-
 // Reader restoration only needs to detect changes at the live edge. Avoid hashing
 // the full transcript whenever a streamed response updates.
 private fun latestContentVersion(
@@ -508,7 +494,6 @@ internal fun chatTimelineItemKey(item: ChatTimelineItem): String =
     is ChatTimelineItem.SubagentActivity -> "subagent-activity"
     is ChatTimelineItem.QuestionPrompt -> "question:${item.prompt.record.id}"
     is ChatTimelineItem.WorkedSummary -> "worked:${item.key}"
-    is ChatTimelineItem.TurnRecapSummary -> "turn-recap"
     is ChatTimelineItem.SystemNotice -> item.key
     is ChatTimelineItem.SystemDivider -> item.key
     is ChatTimelineItem.StreamingAssistant -> "stream"

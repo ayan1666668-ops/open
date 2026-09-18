@@ -461,12 +461,13 @@ fun OnboardingFlow(
   viewModel: MainViewModel,
   modifier: Modifier = Modifier,
 ) {
+  val appearanceTextScale by viewModel.appearanceTextScale.collectAsState()
   val appearanceThemeMode by viewModel.appearanceThemeMode.collectAsState()
   val appearanceThemeFamily by viewModel.appearanceThemeFamily.collectAsState()
   val appearanceAccentArgb by viewModel.appearanceAccentArgb.collectAsState()
   val gatewayAccentArgb by viewModel.gatewayAccentArgb.collectAsState()
   val onboardingDark = appearanceThemeMode.isDark(systemDark = isSystemInDarkTheme())
-  ClawDesignTheme(dark = onboardingDark, family = appearanceThemeFamily, accentArgb = appearanceAccentArgb ?: gatewayAccentArgb) {
+  ClawDesignTheme(dark = onboardingDark, family = appearanceThemeFamily, accentArgb = appearanceAccentArgb ?: gatewayAccentArgb, textScale = appearanceTextScale) {
     val context = LocalContext.current
     val gatewayConnectionDisplay by viewModel.gatewayConnectionDisplay.collectAsState()
     val statusText = gatewayConnectionDisplay.statusText

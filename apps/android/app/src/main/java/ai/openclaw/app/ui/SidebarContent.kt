@@ -131,8 +131,8 @@ internal enum class SidebarDestination(
 internal fun SidebarDestination.localizedLabel(): String =
   when (this) {
     SidebarDestination.Settings -> nativeString("Settings")
-    SidebarDestination.Work -> nativeString("Work")
-    SidebarDestination.Home -> nativeString("Home")
+    SidebarDestination.Work -> nativeString("Home")
+    SidebarDestination.Home -> nativeString("Chat")
     SidebarDestination.Skills -> nativeString("Skills")
     SidebarDestination.Threads -> nativeString("Threads")
   }
@@ -1020,7 +1020,7 @@ private fun SidebarPagesHeader(
       ) {
         Icon(
           painter = painterResource(R.drawable.ic_web_pen_line),
-          contentDescription = nativeString("Edit pinned items"),
+          contentDescription = nativeString("Customize pages"),
           tint = palette.text,
           modifier = Modifier.size(18.dp),
         )
@@ -1065,7 +1065,7 @@ private fun SidebarPagesHeader(
             }
             HorizontalDivider(color = palette.hairline)
             DropdownMenuItem(
-              text = { Text(nativeString("Edit pinned items"), maxLines = 1) },
+              text = { Text(nativeString("Customize pages"), maxLines = 1) },
               leadingIcon = {
                 Icon(
                   painter = painterResource(R.drawable.ic_web_pen_line),

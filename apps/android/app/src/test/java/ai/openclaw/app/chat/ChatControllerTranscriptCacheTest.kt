@@ -150,6 +150,49 @@ class ChatControllerTranscriptCacheTest {
     )
 
   @Test
+  fun liveHistoryCapturesFinalMetricsAndReloadRestoresEarlierEntries() =
+    runTest {
+      val cache = FakeTranscriptCache()
+      val previousMetrics = ChatReplyMetrics("transcript-one", "answer-1", 200L, 100L, 12L)
+      cache.transcripts[TranscriptKey("gateway-a", "main", "main")] =
+        listOf(
+          cachedMessage("first", role = "assistant", timestampMs = 190L).copy(replyMetrics = previousMetrics),
+        )
+      val controller =
+        createCachedController(cache) { method, _ ->
+          when (method) {
+            "chat.history" -> {
+              """{
+            "sessionId":"transcript-one",
+            "sessionInfo":{"key":"main","status":"done","startedAt":300,"endedAt":500,"runtimeMs":200,"outputTokens":42},
+            "messages":[
+              {"role":"assistant","content":"first","phase":"final_answer","timestamp":190,"__openclaw":{"id":"answer-1"}},
+              {"role":"user","content":"second question","timestamp":310},
+              {"role":"assistant","content":"second","phase":"final_answer","timestamp":490,"__openclaw":{"id":"answer-2"}}
+            ]
+          }"""
+            }
+
+            else -> {
+              emptyChatGatewayResponse(method)
+            }
+          }
+        }
+      controller.loadCurrent("main")
+      advanceUntilIdle()
+
+      val expected = listOf(previousMetrics, null, ChatReplyMetrics("transcript-one", "answer-2", 500L, 200L, 42L))
+      assertEquals(expected, controller.messages.value.map { it.replyMetrics })
+      assertEquals(
+        expected,
+        cache.savedTranscripts
+          .last()
+          .messages
+          .map { it.replyMetrics },
+      )
+    }
+
+  @Test
   fun offlineColdOpenShowsCachedTranscriptAndSessionsAndQueuesSend() =
     runTest {
       for (mainSessionKey in listOf("main", "agent:main:node-offline")) {

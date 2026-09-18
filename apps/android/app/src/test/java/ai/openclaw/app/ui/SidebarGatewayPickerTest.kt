@@ -433,7 +433,7 @@ class SidebarGatewayPickerTest {
           val row = gatewayItem(alpha).captureToImage().toPixelMap()
           val navigation =
             composeRule
-              .onNodeWithText("Home")
+              .onNodeWithText("Chat")
               .assertIsSelected()
               .captureToImage()
               .toPixelMap()

@@ -407,7 +407,23 @@ During Talk, the live waveform replaces the microphone and remains tappable to
 end Talk. If a run is also active, a separate, softly tinted Stop button stays at
 the trailing edge to abort that run.
 
-Open **Home** from the sidebar's **Pages** menu to chat, or select an existing session from the sidebar:
+Settings → Appearance → **Text size** adjusts text on this device only. **Standard**
+preserves existing sizing on installation and upgrade; Small and Large are optional,
+and Android accessibility font scaling still applies. **Customize pages** exposes
+page ordering without changing saved page identities.
+
+Completed reply footers retain duration and output-token counts when history can
+attribute them to that exact successful reply. Missing or ambiguous timing stays
+unshown rather than attaching the latest run's numbers to an older answer. Tap an
+image to open it, then pinch to zoom, pan, or double-tap to zoom/reset.
+
+Reply alerts identify their agent and session. Viewing a chat silences only that
+chat, not other sessions. An active, focused Control UI view for the same account
+and session can also suppress its Android alert; leaving, disconnecting, or expiry
+restores normal notification eligibility. Message delivery and history refresh
+continue regardless. See [session viewing presence](/gateway/protocol/presence).
+
+Open **Chat** from the sidebar's **Pages** menu to chat, or select an existing session from the sidebar:
 
 - History: `chat.history` (display-normalized — inline directive tags, plain-text tool-call XML payloads (`<tool_call>`, `<function_call>`, `<tool_calls>`, `<function_calls>`, and truncated variants), and leaked ASCII/full-width model control tokens are stripped; silent-token assistant rows such as exact `NO_REPLY` / `no_reply` are omitted; oversized rows can be replaced with placeholders)
 - Long replies: tap **View all** on a capped assistant reply to load the full formatted text inline. Attachments stay in the conversation, and message actions use the expanded text. Tap **Show less** or press Back to restore the preview; reopening reuses the loaded reply. Loading, retryable failures, unavailable messages, and required reconnects or Gateway updates appear in the message rather than an alert. Synthetic message-tool and commentary previews retain their existing display and actions but do not offer **View all**, because their copied transcript ID cannot retrieve that synthesized text. This also recognizes the older capped-preview format from released Gateways such as v2026.7.1-2. Android requests up to 1,000,000 characters per text field, matching the Gateway's default retrieval limit; oversized or still-capped results show **The full message is too large to display.** instead of an incomplete reply.
@@ -467,7 +483,7 @@ Camera commands (foreground only; permission-gated): `camera.snap` (jpg), `camer
 
 ### 9. Workspace files (read-only)
 
-Open **Work** from the sidebar's **Pages** menu to find the **Files** card. It browses the active agent's workspace through the read-only `agents.workspace.list` / `agents.workspace.get` Gateway RPCs: directory drill-down, text and image previews, and export through the Android share sheet. There are no write operations, and previews are size-capped by the Gateway.
+Open **Home** from the sidebar's **Pages** menu to find the **Files** card. It browses the active agent's workspace through the read-only `agents.workspace.list` / `agents.workspace.get` Gateway RPCs: directory drill-down, text and image previews, and export through the Android share sheet. There are no write operations, and previews are size-capped by the Gateway.
 
 If the app cannot prepare a file or open the share sheet, it shows **Could not share file** and keeps the preview open so you can retry or go back.
 

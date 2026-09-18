@@ -4661,6 +4661,20 @@ class ChatController internal constructor(
                 if (!synchronized(gatewayScopeApplyLock) { isCurrent() }) return HistoryRefreshResult.Superseded
                 throw err
               }
+            // A fresh process can receive live history before its offline transcript was displayed.
+            // Read only the captured owner; the publication gate below revalidates after this await.
+            val cachedMetricsMessages =
+              if (requestCacheScope != null && transcriptCache != null) {
+                try {
+                  transcriptCache.loadTranscript(requestCacheScope.gatewayId, requestAgentId, sessionKey)
+                } catch (err: CancellationException) {
+                  throw err
+                } catch (_: Exception) {
+                  emptyList()
+                }
+              } else {
+                emptyList()
+              }
             historyPublicationMutex.withLock {
               if (!synchronized(gatewayScopeApplyLock) { isCurrent() }) return@withLock HistoryRefreshResult.Superseded
               val previousState =
@@ -4739,7 +4753,8 @@ class ChatController internal constructor(
                         !unresolvedRepliesByRunId.containsKey(it)
                     }.forEach { clearPendingRun(it, publishRunState = false) }
                 }
-                val nextMessages = mergeOptimisticMessages(incoming = history.messages, optimistic = optimisticMessagesByRunId.values)
+                val annotatedHistory = history.withReplyMetrics(cachedMetricsMessages + _messages.value)
+                val nextMessages = mergeOptimisticMessages(incoming = annotatedHistory.messages, optimistic = optimisticMessagesByRunId.values)
                 _messagesFromCache.value = false
                 _messages.value = nextMessages
                 val previousAnchor = _transcriptAnchor.value?.takeIf { it.sessionKey == sessionKey }
@@ -4784,7 +4799,7 @@ class ChatController internal constructor(
                   requestCacheScope,
                   requestAgentId,
                   sessionKey,
-                  history.messages,
+                  annotatedHistory.messages,
                   appliedHistoryEntry.takeIf { appliedPurpose == HistoryRefreshPurpose.RestoreSession && history.sessionInfo != null },
                 )
                 HistoryRefreshResult.Applied(historyBranchState, appliedPurpose)
@@ -7057,6 +7072,8 @@ class ChatController internal constructor(
     owner: ChatComposerOwner?,
   ) {
     if (payload["state"].asStringOrNull() != "final") return
+    // This recipient hint silences notifications, not terminal processing or history synchronization.
+    if (payload["suppressNotification"].asBooleanOrNull() == true) return
     val normalizedRunId = runId?.trim()?.takeIf(String::isNotEmpty) ?: return
     val verifiedOwner = owner?.takeIf { it.routingVerified } ?: return
     val text = parseAssistantDeltaText(payload)?.trim()?.takeIf(String::isNotEmpty) ?: return

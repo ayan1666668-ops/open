@@ -20,6 +20,19 @@ class SecurePrefsTest {
     )
 
   @Test
+  fun textSizeKeepsUpgradeDefaultAndPersistsExplicitChoice() {
+    val context = RuntimeEnvironment.getApplication()
+    val plain = context.getSharedPreferences("openclaw.node", Context.MODE_PRIVATE)
+    plain.edit().clear().commit()
+    val prefs = testPrefs(context)
+    assertEquals(AppearanceTextScale.Standard, prefs.appearanceTextScale.value)
+    prefs.setAppearanceTextScale(AppearanceTextScale.Large)
+    assertEquals(AppearanceTextScale.Large, testPrefs(context).appearanceTextScale.value)
+    plain.edit().putString("appearance.textScale", "unsupported").commit()
+    assertEquals(AppearanceTextScale.Standard, testPrefs(context).appearanceTextScale.value)
+  }
+
+  @Test
   fun backgroundSettingsResolutionRequiresBothPermissionLevels() {
     assertEquals(
       LocationMode.Always,
