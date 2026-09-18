@@ -103,7 +103,24 @@ function visitPluginEnvelope(
 
 const PLUGIN_SIGNALS = {
   dryRun: (record: Record<string, unknown>, status: string | undefined) =>
-    record.dryRun === true || status === "dry_run",
+    record.dryRun === true || status === "dry_run" || normalizeStatus(record.status) === "dry_run",
+  failure: (record: Record<string, unknown>) =>
+    record.ok === false ||
+    record.success === false ||
+    record.isError === true ||
+    record.delivered === false ||
+    record.complete === false ||
+    Boolean(record.error) ||
+    [record.status, record.deliveryStatus].some((value) => {
+      const status = normalizeStatus(value);
+      return (
+        status === "error" ||
+        status === "incomplete" ||
+        status === "partial_failed" ||
+        status === "dry_run" ||
+        (status !== undefined && NON_DELIVERY_STATUSES.has(status))
+      );
+    }),
   partial: (record: Record<string, unknown>, status: string | undefined) =>
     record.sentBeforeError === true ||
     record.visibleReplySent === true ||
@@ -256,6 +273,10 @@ export function projectEmbeddedMessageDeliveryFact(
   result: MessageActionResult,
   currentSourceReply = false,
 ): EmbeddedMessageDeliveryFact | undefined {
+  const payloadDelivery = result.dryRun
+    ? undefined
+    : projectPluginMessageDeliveryFact(result.payload);
+  const partialDelivery = payloadDelivery?.partialDelivery ? payloadDelivery : undefined;
   if (currentSourceReply && result.handledBy === "plugin") {
     return result.dryRun
       ? { status: "dryRun", ...EMPTY_DELIVERY_FACT }
@@ -270,15 +291,15 @@ export function projectEmbeddedMessageDeliveryFact(
             partialDelivery: false,
             createdThreadIds: [],
           }
-        : undefined;
+        : partialDelivery;
   }
   if (result.kind === "poll") {
     return result.handledBy === "core" && result.pollResult
       ? projectPoll(result.pollResult)
-      : undefined;
+      : partialDelivery;
   }
   if (result.kind !== "broadcast") {
-    return undefined;
+    return partialDelivery;
   }
   const entries = result.payload.results.map((entry) => ({
     entry,
