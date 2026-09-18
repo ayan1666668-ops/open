@@ -8,7 +8,6 @@ import * as commandResolution from "./exec-command-resolution.js";
 import {
   APPROVAL_SCRIPT_OPERAND_DRIFT_DENIED_MESSAGE,
   buildSystemRunApprovalBinding,
-  buildSystemRunApprovalBindingFromPlan,
   buildSystemRunApprovalEnvBinding,
   matchSystemRunApprovalBinding,
   missingSystemRunApprovalBinding,
@@ -270,25 +269,6 @@ describe("buildSystemRunApprovalBinding", () => {
       },
       envKeys: ["alpha", "beta"],
     });
-  });
-
-  it("derives binding identity from the canonical replay plan", () => {
-    const plan = {
-      argv: ["cmd.exe", "/d", "/s", "/c", "%LOCALAPPDATA%\\Synthetic.exe"],
-      cwd: "C:\\work",
-      commandText: "cmd.exe /d /s /c %LOCALAPPDATA%\\Synthetic.exe",
-      commandPreview: "C:\\Users\\synthetic\\AppData\\Local\\Synthetic.exe",
-      agentId: "hermes-worker",
-      sessionKey: "agent:hermes-worker:validation",
-    };
-    expect(buildSystemRunApprovalBindingFromPlan({ plan })).toEqual(
-      buildSystemRunApprovalBinding({
-        argv: plan.argv,
-        cwd: plan.cwd,
-        agentId: plan.agentId,
-        sessionKey: plan.sessionKey,
-      }),
-    );
   });
 });
 

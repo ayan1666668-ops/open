@@ -30,8 +30,9 @@ import { nodeInvokePolicy } from "./nodes-policy.js";
 import { handleNodeInvokeProgress } from "./nodes.handlers.invoke-progress.js";
 import { handleNodeInvokeResult } from "./nodes.handlers.invoke-result.js";
 import {
-  respondUnavailableOnNodeInvokeErrorWithProvenance,
   parseGatewayPayload,
+  respondPreDispatchNodeInvokeError,
+  respondUnavailableOnNodeInvokeErrorWithProvenance,
 } from "./nodes.helpers.js";
 import {
   isForwardedNodeInvokeApprovalAuthorityActive,
@@ -389,15 +390,10 @@ export const nodeInvokeHandlers: GatewayRequestHandlers = {
           execApprovalManager: context.execApprovalManager,
         });
         if (!forwardedParams.ok) {
-          respond(
-            false,
-            undefined,
-            errorShape(ErrorCodes.INVALID_REQUEST, forwardedParams.message, {
-              details: {
-                ...(forwardedParams.details ?? {}),
-                nodeCommandDispatched: false,
-              },
-            }),
+          respondPreDispatchNodeInvokeError(
+            respond,
+            forwardedParams.message,
+            forwardedParams.details,
           );
           return;
         }
@@ -409,19 +405,10 @@ export const nodeInvokeHandlers: GatewayRequestHandlers = {
           releaseApprovalHandoff =
             context.execApprovalManager?.retainForHandoff(authority.recordId) ?? undefined;
           if (!releaseApprovalHandoff) {
-            respond(
-              false,
-              undefined,
-              errorShape(
-                ErrorCodes.INVALID_REQUEST,
-                "approved runtime authority closed before node dispatch",
-                {
-                  details: {
-                    code: "APPROVAL_AUTHORITY_CLOSED",
-                    nodeCommandDispatched: false,
-                  },
-                },
-              ),
+            respondPreDispatchNodeInvokeError(
+              respond,
+              "approved runtime authority closed before node dispatch",
+              { code: "APPROVAL_AUTHORITY_CLOSED" },
             );
             return;
           }

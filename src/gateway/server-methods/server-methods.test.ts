@@ -36,7 +36,6 @@ import { emitAgentEvent } from "../../infra/agent-events.js";
 import { formatZonedTimestamp } from "../../infra/format-time/format-datetime.js";
 import {
   buildSystemRunApprovalBinding,
-  buildSystemRunApprovalBindingFromPlan,
   buildSystemRunApprovalEnvBinding,
 } from "../../infra/system-run-approval-binding.js";
 import { resetLogger, setLoggerOverride } from "../../logging.js";
@@ -3825,13 +3824,6 @@ describe("exec approval handlers", () => {
         allowlistRules: [{ pattern: "/usr/bin/echo" }],
       },
     });
-    expect(request["systemRunBinding"]).toEqual(
-      buildSystemRunApprovalBindingFromPlan({
-        plan: request["systemRunPlan"] as Parameters<
-          typeof buildSystemRunApprovalBindingFromPlan
-        >[0]["plan"],
-      }).binding,
-    );
   });
 
   it("derives a command preview from the fallback command for older node plans", async (testContext) => {

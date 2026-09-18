@@ -6,7 +6,6 @@ import type {
   ExecCommandSegment,
   SystemRunApprovalBinding,
   SystemRunApprovalFileOperand,
-  SystemRunApprovalPlan,
 } from "./exec-approvals.js";
 import { planShellAuthorization } from "./exec-authorization-plan.js";
 import {
@@ -91,20 +90,6 @@ export function buildSystemRunApprovalBinding(params: {
     },
     envKeys: envBinding.envKeys,
   };
-}
-
-/** Derives approval identity from the same canonical plan that replay forwards. */
-export function buildSystemRunApprovalBindingFromPlan(params: {
-  plan: SystemRunApprovalPlan;
-  env?: unknown;
-}): { binding: SystemRunApprovalBinding; envKeys: string[] } {
-  return buildSystemRunApprovalBinding({
-    argv: params.plan.argv,
-    cwd: params.plan.cwd,
-    agentId: params.plan.agentId,
-    sessionKey: params.plan.sessionKey,
-    env: params.env,
-  });
 }
 
 function argvMatches(expectedArgv: string[], actualArgv: string[]): boolean {

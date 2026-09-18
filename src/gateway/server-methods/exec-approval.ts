@@ -31,7 +31,6 @@ import {
 } from "../../infra/exec-approvals.js";
 import {
   buildSystemRunApprovalBinding,
-  buildSystemRunApprovalBindingFromPlan,
   buildSystemRunApprovalEnvBinding,
 } from "../../infra/system-run-approval-binding.js";
 import { resolveSystemRunApprovalRequestContext } from "../../infra/system-run-approval-context.js";
@@ -286,18 +285,13 @@ export function createExecApprovalHandlers(
           : undefined;
       const systemRunBinding =
         host === "node"
-          ? approvalContext.plan
-            ? buildSystemRunApprovalBindingFromPlan({
-                plan: approvalContext.plan,
-                env: p.env,
-              })
-            : buildSystemRunApprovalBinding({
-                argv: effectiveCommandArgv,
-                cwd: effectiveCwd,
-                agentId: effectiveAgentId,
-                sessionKey: effectiveSessionKey,
-                env: p.env,
-              })
+          ? buildSystemRunApprovalBinding({
+              argv: effectiveCommandArgv,
+              cwd: effectiveCwd,
+              agentId: effectiveAgentId,
+              sessionKey: effectiveSessionKey,
+              env: p.env,
+            })
           : null;
       if (explicitId && manager.getSnapshot(explicitId)) {
         respond(

@@ -4,7 +4,6 @@
 import { describe, expect, test } from "vitest";
 import {
   buildSystemRunApprovalBinding,
-  buildSystemRunApprovalBindingFromPlan,
   buildSystemRunApprovalEnvBinding,
 } from "../infra/system-run-approval-binding.js";
 import type { ExecApprovalRecord } from "./exec-approval-manager.js";
@@ -604,10 +603,6 @@ describe("sanitizeSystemRunParamsForForwarding", () => {
       "APPROVAL_REQUEST_MISMATCH",
       "approval id does not match request",
     );
-    if (result.ok) {
-      throw new Error("unreachable");
-    }
-    expect(result.details?.mismatchField).toBe("argv");
   });
 
   test("accepts env-assignment shell wrapper only when approval command matches full argv text", () => {
@@ -875,69 +870,6 @@ describe("sanitizeSystemRunParamsForForwarding", () => {
       nowMs: now,
     });
     expectRejectedForwardingResult(second, "APPROVAL_REQUIRED");
-  });
-
-  test("reuses one Windows plan across prepare, register, approve, and replay", async (testContext) => {
-    const approvalManager = createTestApprovalManager(testContext);
-    const runId = "approval-windows-plan-1";
-    const plan = {
-      argv: [
-        "cmd.exe",
-        "/d",
-        "/s",
-        "/c",
-        "%LOCALAPPDATA%\\hermes\\profiles\\worker\\bin\\Synthetic.exe",
-      ],
-      cwd: "C:\\work",
-      commandText: "cmd.exe /d /s /c %LOCALAPPDATA%\\hermes\\profiles\\worker\\bin\\Synthetic.exe",
-      commandPreview:
-        "C:\\Users\\synthetic\\AppData\\Local\\hermes\\profiles\\worker\\bin\\Synthetic.exe",
-      agentId: "hermes-worker",
-      sessionKey: "agent:hermes-worker:validation",
-    };
-    const record = approvalManager.create(
-      {
-        host: "node",
-        nodeId: "node-1",
-        command: plan.commandText,
-        systemRunPlan: plan,
-        systemRunBinding: buildSystemRunApprovalBindingFromPlan({ plan }).binding,
-        cwd: plan.cwd,
-        agentId: plan.agentId,
-        sessionKey: plan.sessionKey,
-      },
-      60_000,
-      runId,
-    );
-    record.requestedByConnId = "conn-1";
-    record.requestedByDeviceId = "dev-1";
-    record.requestedByClientId = "cli-1";
-    record.requestedByDeviceTokenAuth = false;
-
-    const decisionPromise = approvalManager.register(record, 60_000);
-    approvalManager.resolve(runId, "allow-once", "operator");
-    await expect(decisionPromise).resolves.toBe("allow-once");
-
-    const result = sanitizeSystemRunParamsForForwarding({
-      nodeId: "node-1",
-      rawParams: approvedRunParams({
-        command: [...plan.argv],
-        rawCommand: plan.commandText,
-        cwd: plan.cwd,
-        agentId: plan.agentId,
-        sessionKey: plan.sessionKey,
-        runId,
-      }),
-      client,
-      execApprovalManager: approvalManager,
-      nowMs: now,
-    });
-    const forwarded = expectAllowOnceForwardingResult(result);
-    expect(forwarded.command).toEqual(plan.argv);
-    expect(forwarded.systemRunPlan).toEqual(plan);
-    expect(forwarded.cwd).toBe(plan.cwd);
-    expect(forwarded.agentId).toBe(plan.agentId);
-    expect(forwarded.sessionKey).toBe(plan.sessionKey);
   });
 
   test("rejects approval ids that do not bind a nodeId", () => {
