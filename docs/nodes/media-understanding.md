@@ -115,6 +115,8 @@ Each `models[]` entry is a **provider** entry (default) or a **CLI** entry:
   </Tab>
 </Tabs>
 
+CLI entries need a nonblank `command` and `args` containing `{{AttachmentPath}}`, `{{AttachmentUrl}}`, or `{{AttachmentDir}}` (or the corresponding deprecated `Media*` alias). Empty arguments are not supported: OpenClaw does not feed attachments to CLI stdin. `openclaw doctor` reports unusable entries with the exact config path and a manual fix; it does not invent commands or rewrite these entries. At runtime, an unusable entry records a failure without launching the binary, and the next configured model is tried. If none succeeds, the attachment gets a failure outcome and a warning is logged. Config validation remains permissive for these fields so an existing config can still start the Gateway after an update.
+
 ### Provider credentials
 
 Provider media understanding uses the same auth resolution as normal model calls: auth profiles, environment variables, then `models.providers.<providerId>.apiKey`. `tools.media.models[]` entries do not accept an inline `apiKey` field.

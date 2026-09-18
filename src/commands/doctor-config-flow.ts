@@ -26,6 +26,7 @@ import {
   noteDoctorHookConfigWarnings,
   noteImplicitFallbackClobberWarnings,
   noteMcpOriginWarning,
+  noteMediaCliModelWarnings,
   noteMissingDefaultAgentOwner,
   noteOpencodeProviderOverrides,
   noteSandboxOriginProxyWarning,
@@ -674,6 +675,7 @@ export async function loadAndMaybeMigrateDoctorConfig(params: {
   noteImplicitFallbackClobberWarnings(cfg);
   noteSandboxOriginProxyWarning(cfg);
   noteMcpOriginWarning(cfg);
+  noteMediaCliModelWarnings(cfg);
   noteMissingDefaultAgentOwner(cfg);
 
   const migrationResult = await finalizeMigrationResult({
