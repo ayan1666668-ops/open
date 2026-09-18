@@ -47,9 +47,14 @@ vi.mock("../logging/subsystem.js", async (importOriginal) => {
 });
 
 vi.mock("node:child_process", async (importOriginal) => {
+  const { promisify } = await import("node:util");
   const actual = await importOriginal<typeof import("node:child_process")>();
   const execFileSpy = vi.fn(actual.execFile);
-  Object.defineProperties(execFileSpy, Object.getOwnPropertyDescriptors(actual.execFile));
+  Object.defineProperty(
+    execFileSpy,
+    promisify.custom,
+    Object.getOwnPropertyDescriptor(actual.execFile, promisify.custom)!,
+  );
   return {
     ...actual,
     execFile: execFileSpy,
@@ -67,6 +72,17 @@ beforeEach(() => {
   getCompileCacheDir.mockReset();
 });
 afterEach(() => vi.unstubAllEnvs());
+
+it("keeps execFile resettable while preserving promisified stdout and stderr", async () => {
+  const { promisify } = await import("node:util");
+  expect(() => vi.resetAllMocks()).not.toThrow();
+  await expect(
+    promisify(execFile)(process.execPath, [
+      "-e",
+      'process.stdout.write("synthetic stdout"); process.stderr.write("synthetic stderr");',
+    ]),
+  ).resolves.toEqual({ stdout: "synthetic stdout", stderr: "synthetic stderr" });
+});
 
 function createDatabase(paddingBytes: number | null): string {
   const source = path.join(tempDirs.make("openclaw-snapshot-budget-"), "source.sqlite");
