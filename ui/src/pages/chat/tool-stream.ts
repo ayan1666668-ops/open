@@ -148,10 +148,7 @@ function buildToolStreamMessage(entry: ToolStreamEntry): Record<string, unknown>
     // must not end the running state. Transcript messages never carry these,
     // so historical output-less calls (aborted runs) stay inert.
     __openclawToolStreamLive: true,
-    __openclawToolStreamResultReceived:
-      entry.resultReceived === true ||
-      entry.activity?.some((item) => item.phase === "end" && !item.suppressChannelProgress) ===
-        true,
+    __openclawToolStreamResultReceived: entry.resultReceived === true,
     ...(entry.resultReceived !== true && entry.liveDiffStat
       ? { __openclawToolStreamDiffStat: entry.liveDiffStat }
       : {}),

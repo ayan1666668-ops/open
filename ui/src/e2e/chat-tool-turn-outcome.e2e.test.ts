@@ -16,6 +16,7 @@ beforeEach(() => {
     : undefined;
 });
 import { controlUiSessionUrl, installMockGateway } from "../test-helpers/control-ui-e2e.ts";
+import { registerItemOnlyOutcomeTest } from "./chat-tool-item-outcomes.test-support.ts";
 import { createControlUiE2eSuite } from "./control-ui-e2e-suite.test-support.ts";
 
 const suite = createControlUiE2eSuite({
@@ -74,6 +75,8 @@ async function expandCompletedWorkGroups(page: import("playwright").Page) {
 }
 
 suite.define(() => {
+  registerItemOnlyOutcomeTest(suite, captureToolActivityProof);
+
   it.each([
     { name: "dark-desktop", colorScheme: "dark" as const, height: 900, width: 1200 },
     { name: "light-desktop", colorScheme: "light" as const, height: 900, width: 1200 },
