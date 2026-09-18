@@ -5,6 +5,7 @@ import type { PreManagedServiceStop } from "../cli/update-cli/update-command-ser
 import { isDefaultInstallIdentity, resolveConfigPath, resolveStateDir } from "../config/paths.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { resolvePathViaExistingAncestorSync } from "../infra/boundary-path.js";
+import { assertLegacyGatewayStoppedForMaintenance } from "../infra/gateway-lock-legacy.js";
 import { readActiveGatewayLockIdentity } from "../infra/gateway-lock.js";
 import { readGatewayOwnerLease } from "../infra/gateway-owner-lease.js";
 import {
@@ -13,6 +14,7 @@ import {
 } from "../infra/state-database-coordinator.js";
 import { DoctorUnreadableStateDatabaseError } from "../infra/state-repair-message.js";
 import { UPDATE_RUN_ID_ENV } from "../infra/update-control-plane-sentinel.js";
+import { UpdateDoctorError } from "../infra/update-doctor-result.js";
 import { inspectUpdateRepairDriverAdmission } from "../infra/update-run-activity.js";
 import { listUpdateRuns, recordUpdateRunRepairContinuation } from "../infra/update-run-ledger.js";
 import { hasCommandProcessCleanupError } from "../process/exec-result.js";
@@ -24,6 +26,10 @@ import {
 } from "../state/openclaw-state-db-async-lifecycle.js";
 import { openDoctorStateSchemaReadAdmission } from "../state/openclaw-state-db-doctor-schema.js";
 import { resolveOpenClawStateSqlitePath } from "../state/openclaw-state-db.paths.js";
+import {
+  replaceStaleDoctorGateway,
+  type DoctorStaleGatewayReplacement,
+} from "./doctor-maintenance-stale-service.js";
 import type { DoctorOptions } from "./doctor-prompter.js";
 import { isDoctorUpdateRepairMode, resolveDoctorRepairMode } from "./doctor-repair-mode.js";
 import {
@@ -91,6 +97,8 @@ export async function beginDoctorMaintenance(params: {
     return undefined;
   }
   const env = { ...process.env, ...(params.runId ? { [UPDATE_RUN_ID_ENV]: params.runId } : {}) };
+  // Ordinary activation remains with the parent. Stale-instance recovery below
+  // retains its own maintenance custody after verifying the replacement.
   const parentActivation = isDoctorUpdateRepairMode(resolveDoctorRepairMode(params.options))
     ? resolveUpdateParentGatewayActivation(env)
     : undefined;
@@ -106,6 +114,7 @@ export async function beginDoctorMaintenance(params: {
   let resources: OpenClawDatabaseMaintenanceScope | undefined;
   let inspectingActivation = false;
   let parentMustStopGateway = false;
+  let staleReplacement: DoctorStaleGatewayReplacement | undefined;
   let assertUpdateAdmissionCurrent: (() => void) | undefined;
   let cleanupFailure: { error: unknown } | undefined;
   const settle = async <T>(operation: () => Promise<T>): Promise<T> => {
@@ -243,6 +252,13 @@ export async function beginDoctorMaintenance(params: {
           port,
           env: state.env,
           requireRunningService: true,
+          ...(staleReplacement
+            ? {
+                expectedVersion: staleReplacement.version,
+                expectedBuildId: staleReplacement.buildId,
+                requirePluginHealth: false,
+              }
+            : {}),
         }),
       );
       if (!health.healthy) {
@@ -261,6 +277,9 @@ export async function beginDoctorMaintenance(params: {
       );
     }
     params.runtime.log("Gateway restarted and verified after Doctor repair.");
+    if (staleReplacement) {
+      params.runtime.log(staleReplacement.warning);
+    }
   };
   try {
     await settle(async () => {
@@ -274,7 +293,7 @@ export async function beginDoctorMaintenance(params: {
           await import("../cli/update-cli/update-command-service-maintenance.js");
         const { maybeStopManagedServiceBeforeMutableUpdate } = serviceMaintenance;
         inspectingActivation = true;
-        const inspection = await maybeStopManagedServiceBeforeMutableUpdate({
+        let inspection = await maybeStopManagedServiceBeforeMutableUpdate({
           updateInstallKind: "package",
           root: params.root,
           shouldRestart: true,
@@ -311,8 +330,23 @@ export async function beginDoctorMaintenance(params: {
             };
           }
         }
+        if (inspection.serviceUpdateVerdict?.kind === "owned" && inspection.serviceEnv) {
+          assertDoctorServiceSelection(env, inspection.serviceEnv);
+        }
+        staleReplacement = await replaceStaleDoctorGateway({
+          root: params.root,
+          env,
+          before: inspection,
+          stdout: params.options.json ? process.stderr : process.stdout,
+          assertCurrent: assertUpdateAdmissionCurrent,
+        });
+        if (staleReplacement) {
+          warnings.push(staleReplacement.warning);
+          inspection = staleReplacement.inspection;
+        }
         if (
           parentActivation !== undefined &&
+          !staleReplacement &&
           inspection.serviceUpdateVerdict?.kind === "owned" &&
           inspection.offline !== true
         ) {
@@ -354,7 +388,7 @@ export async function beginDoctorMaintenance(params: {
             assertDoctorServiceSelection(env, inspection.serviceEnv);
           }
           // Even an owning continuation leaves native activation with its parent.
-          if (parentActivation === undefined) {
+          if (parentActivation === undefined || staleReplacement) {
             inspection.serviceUpdateVerdict.refreshDefinition = false;
             stopped = await maybeStopManagedServiceBeforeMutableUpdate({
               updateInstallKind: "package",
@@ -382,6 +416,7 @@ export async function beginDoctorMaintenance(params: {
         }
       }
       inspectingActivation = false;
+      await assertLegacyGatewayStoppedForMaintenance(env);
       // Hold the reentrant lifecycle coordinators, not an in-tree Gateway lock:
       // individual migrations acquire their own in-tree locks under this scope.
       // Gateway ownership lasts until that process stops, not for a short transaction.
@@ -428,6 +463,9 @@ export async function beginDoctorMaintenance(params: {
       });
     }
     if (error instanceof DoctorUnreadableStateDatabaseError) {
+      throw error;
+    }
+    if (error instanceof UpdateDoctorError) {
       throw error;
     }
     const refusal = new Error(

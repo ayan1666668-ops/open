@@ -109,17 +109,29 @@ ownership, write-access, or interactive-only confirmation requirements.
   modify the originals.
 </Warning>
 
-When an updater supplies an explicit Gateway activation policy, Doctor leaves
-stop and restart ownership with that updater. The native manager must confirm
-the service is already offline before repair. If `openclaw update --no-restart`
-reaches Doctor while that service is running, repair fails without stopping or
-restarting it; stop the service through its owner, then retry the update.
+During an update, Doctor respects the updater's service activation policy.
+If the running Gateway has an old version/build or cannot load its WebSocket
+handler after package replacement, Doctor replaces that stale instance through
+the verified service manager and checks the candidate's version and build ID
+before maintenance. A warning names the replaced PID and the serving build.
+HTTP health alone does not prove recovery. A refused or unverified replacement
+records the failure and an exact restart command in the update result.
 
-If service inspection is unavailable or an unmatched service can still run,
-Doctor refuses maintenance before changing config or state. Inspect it with
-`openclaw gateway status --deep`, restore service-manager access, and stop the
-service through its owner. Once the native manager confirms it is offline,
-Doctor can repair its selected state without changing or starting that service.
+Legacy post-core convergence retains service maintenance custody while its fresh
+Doctor processes run, then restores the Gateway before publishing completion.
+An ordinary healthy Gateway still follows the parent's activation policy;
+`openclaw update --no-restart` does not grant state-repair access to a live writer.
+
+Unavailable service inspection becomes a warning and grants no service-control
+authority. Doctor still checks Gateway/state coordinators, agent-database leases,
+and the temporary-file lock used by older Gateways such as 2026.6.33 before
+repair. A live or unverifiable legacy lock owner blocks repair and names its PID
+and lock path; stop that Gateway through its service owner, then run
+`openclaw doctor --fix` from an independent shell. An unmatched service that can
+still run also blocks maintenance; inspect it with `openclaw gateway status --deep`.
+Once the native manager confirms it is offline, Doctor can repair its selected
+state without changing or starting that service. A stopped or disabled systemd
+unit need not remain loaded in the manager for state repair to proceed.
 
 If migration or config repair cannot finish, Doctor leaves the stopped service
 stopped and reports an incomplete repair with exit code 1. When state requires
