@@ -347,9 +347,8 @@ export async function createSessionRowProjection(params: {
         }
       }
     }
-    void ensureMaterialized().catch(() => {
-      /* Dirty keys retain failed background work for the next reader. */
-    });
+    // Dirty keys retain failed background work for the next reader.
+    void ensureMaterialized().catch(() => {});
   }
   function materialize(
     row: records.Row,
@@ -437,7 +436,17 @@ export async function createSessionRowProjection(params: {
       modelCatalog = next;
       catalogDirty = undefined;
     }
-    withAgentRosterFactsBatch(cfg, () => refresh([...dirty].slice(0, 64)));
+    withAgentRosterFactsBatch(cfg, () => {
+      // Refresh can change dirty membership; snapshot only the next batch before consuming it.
+      const ids: string[] = [];
+      for (const id of dirty) {
+        ids.push(id);
+        if (ids.length === 64) {
+          break;
+        }
+      }
+      refresh(ids);
+    });
   }
   async function drain() {
     for (;;) {
