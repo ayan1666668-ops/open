@@ -204,17 +204,27 @@ describe("update CLI shared helpers", () => {
     });
 
     try {
-      await expect(
-        resolveGlobalManager({
-          root: "/opt/homebrew-custom/lib/node_modules/openclaw",
-          installKind: "package",
-          timeoutMs: 1_000,
-        }),
-      ).rejects.toMatchObject({
+      const owner = resolveGlobalManager({
+        root: "/opt/homebrew-custom/lib/node_modules/openclaw",
+        installKind: "package",
+        timeoutMs: 1_000,
+      });
+      await expect(owner).rejects.toBeInstanceOf(UpdatePreMutationError);
+      await expect(owner).rejects.toMatchObject({
         name: "UpdatePreMutationError",
-        message: expect.stringMatching(
-          /No package changes or Gateway restart were attempted\.[\s\S]*Inspected:[\s\S]*\/opt\/homebrew-custom\/lib\/node_modules\/openclaw/,
-        ),
+        message: expect.stringContaining("Root: /opt/homebrew-custom/lib/node_modules/openclaw"),
+        failureFacts: [
+          expect.objectContaining({
+            check: "installation-inspection",
+            code: "installation-unclassified",
+          }),
+        ],
+      });
+      await expect(owner).rejects.toMatchObject({
+        message: expect.stringContaining("No package changes or Gateway restart were attempted."),
+      });
+      await expect(owner).rejects.not.toMatchObject({
+        message: expect.stringContaining("managed by Homebrew"),
       });
     } finally {
       process.env.HOMEBREW_PREFIX = originalPrefix;

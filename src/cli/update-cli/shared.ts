@@ -462,6 +462,7 @@ export async function resolveGlobalManager(params: {
       throw new UpdatePreMutationError(
         reason,
         "This OpenClaw installation is managed by Homebrew. To update OpenClaw, run:\n\n  brew upgrade openclaw-cli\n\nThen restart the gateway:\n\n  openclaw gateway restart",
+        { failureFacts: [] },
       );
     }
     const diagnostics: string[] = [];
