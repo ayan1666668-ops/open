@@ -1,4 +1,5 @@
 import { formatErrorMessage } from "../infra/errors.js";
+import { reconcileInterruptedUpdateRuns } from "../infra/update-run-interruption.js";
 import {
   findActiveUpdateRun,
   getUpdateRun,
@@ -29,6 +30,8 @@ export function startUpdateRunWatcher(params: {
   let watched: { runId: string; revision?: number; phase?: UpdateRunPhase } | undefined;
   let notices = Promise.resolve();
   const reconciled: UpdateRunRecord[] = [];
+  let polling = false;
+  let pollAgain = false;
 
   const schedulePublication = () => {
     if (publicationTimer) {
@@ -53,15 +56,18 @@ export function startUpdateRunWatcher(params: {
     }
   };
 
-  const poll = () => {
+  const scan = (reconcile = true) => {
     if (work.isClosing) {
       return;
     }
+    if (timer) clearTimeout(timer);
     timer = undefined;
     try {
-      reconciled.push(
-        ...reconcileAbandonedUpdateRuns().filter((run) => run.runId !== watched?.runId),
-      );
+      if (reconcile) {
+        reconciled.push(
+          ...reconcileAbandonedUpdateRuns().filter((run) => run.runId !== watched?.runId),
+        );
+      }
       schedulePublication();
       const run = watched
         ? getUpdateRun(watched.runId)
@@ -108,7 +114,7 @@ export function startUpdateRunWatcher(params: {
       }
       if (terminal) {
         watched = undefined;
-        poll();
+        scan(reconcile);
         return;
       }
       // Named freshness-poll exception: the detached orchestrator writes the
@@ -120,6 +126,38 @@ export function startUpdateRunWatcher(params: {
       watched = undefined;
       params.log.warn(`update run watcher stopped: ${formatErrorMessage(error)}`);
     }
+  };
+  const poll = () => {
+    if (work.isClosing) return;
+    if (polling) {
+      pollAgain = true;
+      return;
+    }
+    polling = true;
+    timer = undefined;
+    // Capture a run before awaited probes: a fast terminal result must still
+    // publish its transition. Abandonment waits for candidate verification.
+    scan(false);
+    void work
+      .track(async () => {
+        const settled = await reconcileInterruptedUpdateRuns({ signal: work.signal });
+        if (work.isClosing) return;
+        reconciled.push(...settled.filter((run) => run.runId !== watched?.runId));
+        if (settled.length || watched || pollAgain) scan();
+      })
+      .catch((error: unknown) => {
+        if (!work.isClosing) {
+          params.log.warn(`update run reconciliation deferred: ${formatErrorMessage(error)}`);
+          scan();
+        }
+      })
+      .finally(() => {
+        polling = false;
+        if (pollAgain) {
+          pollAgain = false;
+          if (!timer) poll();
+        }
+      });
   };
   const wake = () => {
     if (!timer && !watched) {
