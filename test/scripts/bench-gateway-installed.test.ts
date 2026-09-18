@@ -67,7 +67,7 @@ if (process.argv.includes("--descendant")) {
     sockets.close(() => server.close(() => {
       record({ type: "stop", index });
       if (${JSON.stringify(mode)} === "lingering") {
-        const leaked = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+        const leaked = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore", detached: true });
         record({ type: "lingering", childPid: leaked.pid });
         leaked.unref();
       }
@@ -292,11 +292,20 @@ describe("installed Gateway startup benchmark entry", () => {
     async ({ signal }) => {
       const target = await fixture("lingering");
       const result = await runFixture(target, signal);
-      expect(result.status, result.stderr).toBe(1);
       const report = JSON.parse(await fs.readFile(target.output, "utf8"));
+      expect(result.status, JSON.stringify({ result, report })).toBe(1);
       expect(report.outerSettlement.beforeCleanup).toBe("indeterminate");
       expect(report.outcome).toBe("failed");
       expect(report.establishedReadySummary).toBeNull();
+      const lingering = (await fs.readFile(target.events, "utf8"))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line))
+        .filter((event) => event.type === "lingering");
+      expect(lingering).toHaveLength(9);
+      for (const { childPid } of lingering) {
+        expect(isProcessAlive(childPid)).toBe(false);
+      }
     },
   );
 });
