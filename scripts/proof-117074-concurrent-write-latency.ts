@@ -17,8 +17,13 @@
  *   `resolveBatchedReferencedSessionIds`
  *   (src/config/sessions/session-accessor.sqlite-reference-batch.ts).
  * - `replaceSessionEntry` / `loadSessionEntry` / `replaceTranscriptEventsSync`
- *   driven from a separate OS process as the concurrent writer, so its commits
- *   reach the sweep's connection exactly the way a running Gateway's would.
+ *   driven both from a separate OS process (so its commits reach the sweep's
+ *   connection exactly the way a running Gateway's would) and from this process
+ *   (so its writes contend for the process-local store writer queue the way an
+ *   unrelated turn inside the Gateway that invoked `sessions.cleanup` would).
+ * - The `openclaw.session.write` diagnostics channel in
+ *   `session-accessor.sqlite-scope.ts`, which is the production telemetry for
+ *   writer queue wait and writer execution time.
  *
  * Stubbed: nothing. No vitest, no mocks, no network. Only `OPENCLAW_STATE_DIR`
  * and the store layout are synthesized, under a temp directory.
@@ -32,18 +37,25 @@
  *    while a writer commits, measured through the real resolver.
  * 4. Cost bound: the unbatched per-candidate reference read on the same store,
  *    which is what an invalidated batch falls back to.
+ * 5. Sweep beside an unrelated writer in the SAME process. The store writer
+ *    queue is process-local and FIFO, so a separate writer process cannot
+ *    observe it at all; this scenario puts the writer on this process's event
+ *    loop and reads the real `openclaw.session.write` diagnostics channel to
+ *    measure how long each writer section holds the lane and how long unrelated
+ *    writes wait for it.
  *
  * Scenario 1 also counts the transcript-archive worker threads the sweep spawns,
  * because attributing the per-candidate cost is what makes the reference-analysis
  * share of it interpretable.
  *
  * Tunables (env): PROOF_LIVE_ROWS, PROOF_CANDIDATES, PROOF_WRITER_INTERVAL_MS,
- * PROOF_BASELINE_MS, PROOF_TAIL_MS. Defaults take about six minutes.
+ * PROOF_BASELINE_MS, PROOF_TAIL_MS. Defaults take about eight minutes.
  *
  * Run: pnpm tsx scripts/proof-117074-concurrent-write-latency.ts
  */
 import asyncHooks from "node:async_hooks";
 import { fork } from "node:child_process";
+import { subscribe, unsubscribe } from "node:diagnostics_channel";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -87,6 +99,19 @@ type WriterSample = {
 type WriterReport = {
   samples: WriterSample[];
   errors: string[];
+};
+
+/** Production diagnostics channel published by every exclusive store write. */
+const SESSION_WRITE_CHANNEL = "openclaw.session.write";
+
+type StoreWriteRecord = {
+  /** Wall-clock ms when the write completed, used to partition by sweep phase. */
+  at: number;
+  operation: string;
+  /** How long this write waited for the process-local writer lane. */
+  queueWaitMs: number;
+  /** How long this write held the lane, which is what blocks everyone else. */
+  writerExecutionMs: number;
 };
 
 let assertions = 0;
@@ -640,6 +665,201 @@ async function scenarioInvalidationRate(): Promise<void> {
   fs.rmSync(stateDir, { recursive: true, force: true });
 }
 
+/**
+ * Records the real writer-queue telemetry every exclusive store write already
+ * publishes. Subscribing is what turns publication on, so this observes the
+ * production timing rather than re-deriving it.
+ */
+function startStoreWriterTelemetry(): { stop: () => StoreWriteRecord[] } {
+  const records: StoreWriteRecord[] = [];
+  const onWrite = (message: unknown) => {
+    const write = message as Partial<Record<keyof StoreWriteRecord, unknown>>;
+    if (
+      typeof write.operation !== "string" ||
+      typeof write.queueWaitMs !== "number" ||
+      typeof write.writerExecutionMs !== "number"
+    ) {
+      return;
+    }
+    records.push({
+      at: Date.now(),
+      operation: write.operation,
+      queueWaitMs: write.queueWaitMs,
+      writerExecutionMs: write.writerExecutionMs,
+    });
+  };
+  subscribe(SESSION_WRITE_CHANNEL, onWrite);
+  return {
+    stop: () => {
+      unsubscribe(SESSION_WRITE_CHANNEL, onWrite);
+      return records;
+    },
+  };
+}
+
+type InProcessWriterHandle = { stop: () => Promise<WriterReport> };
+
+/**
+ * The same Gateway-turn-shaped session work the writer process performs, run on
+ * this process's event loop so it queues on the same store writer lane the
+ * sweep uses. This is the contention a separate process structurally cannot see.
+ */
+async function startInProcessWriter(storePath: string): Promise<InProcessWriterHandle> {
+  const samples: WriterSample[] = [];
+  const errors: string[] = [];
+  const control = { running: true };
+  // One warm operation before the loop: the first write pays database open and
+  // schema validation, which is startup, not steady-state latency.
+  await replaceSessionEntry(
+    { sessionKey: "agent:main:live:inprocess-warmup", storePath },
+    { sessionId: "inprocess-warmup", updatedAt: Date.now() },
+  );
+  const loop = (async () => {
+    let index = 0;
+    while (control.running) {
+      const sessionKey = `agent:main:live:inprocess-${index % 64}`;
+      const sessionId = `inprocess-generation-${index}`;
+      const startedAt = performance.now();
+      try {
+        await replaceSessionEntry({ sessionKey, storePath }, { sessionId, updatedAt: Date.now() });
+        replaceTranscriptEventsSync({ sessionKey, sessionId, storePath }, [
+          { type: "session", id: sessionId, content: `in-process turn ${index}` },
+        ]);
+        loadSessionEntry({ sessionKey, storePath });
+        samples.push({ at: Date.now(), durationMs: performance.now() - startedAt });
+      } catch (error) {
+        errors.push(error instanceof Error ? error.message : String(error));
+      }
+      index += 1;
+      await delay(WRITER_INTERVAL_MS);
+    }
+  })();
+  return {
+    stop: async () => {
+      control.running = false;
+      await loop;
+      return { errors, samples };
+    },
+  };
+}
+
+function maxOf(values: readonly number[]): number {
+  return values.length === 0 ? Number.NaN : Math.max(...values);
+}
+
+async function scenarioSameProcessWriter(): Promise<void> {
+  console.log("\n[5] Sweep beside an unrelated writer in the same process");
+  const stateDir = makeStateDir();
+  process.env.OPENCLAW_STATE_DIR = stateDir;
+  const storePath = path.join(stateDir, "sessions.sqlite");
+  const { candidateKeys } = await seedMixedStore(storePath);
+  check("node rows seeded", countNodeRows(storePath), LIVE_ROWS + CANDIDATE_COUNT);
+
+  const writer = await startInProcessWriter(storePath);
+  const telemetry = startStoreWriterTelemetry();
+  await delay(BASELINE_MS);
+  const sweepStartedAt = Date.now();
+  const sweep = await runSweep(storePath);
+  const sweepEndedAt = Date.now();
+  await delay(TAIL_MS);
+  const report = await writer.stop();
+  const writes = telemetry.stop();
+
+  check("in-process writer recorded no errors", report.errors.slice(0, 3), []);
+  check(
+    "sweep beside a same-process writer removed every candidate",
+    sweep.removedNodes,
+    CANDIDATE_COUNT,
+  );
+  check("no candidate rows remain", countRemainingCandidates(storePath, candidateKeys), 0);
+
+  const inWindow = (at: number) => at >= sweepStartedAt && at <= sweepEndedAt;
+  console.log("    Gateway-shaped session work on the sweep's own event loop:");
+  describeLatency(
+    "before sweep",
+    report.samples
+      .filter((sample) => sample.at < sweepStartedAt)
+      .map((sample) => sample.durationMs),
+    BASELINE_MS,
+  );
+  const during = report.samples.filter((sample) => inWindow(sample.at));
+  describeLatency(
+    "during sweep",
+    during.map((sample) => sample.durationMs),
+    sweep.durationMs,
+  );
+  describeLatency(
+    "after sweep ",
+    report.samples.filter((sample) => sample.at > sweepEndedAt).map((sample) => sample.durationMs),
+    TAIL_MS,
+  );
+
+  const perCandidateMs = sweep.durationMs / CANDIDATE_COUNT;
+  const duringWrites = writes.filter((write) => inWindow(write.at));
+  const sweepSections = duringWrites.filter((write) =>
+    write.operation.startsWith("session.maintenance.tombstone"),
+  );
+  const unrelatedWrites = duringWrites.filter((write) => write.operation === "session-entry.patch");
+  for (const operation of [...new Set(sweepSections.map((write) => write.operation))].toSorted()) {
+    const held = sweepSections
+      .filter((write) => write.operation === operation)
+      .map((write) => write.writerExecutionMs);
+    console.log(
+      `    ${operation}: n=${held.length} mean=${round(held.reduce((sum, value) => sum + value, 0) / held.length)}ms ` +
+        `p95=${round(percentile(held, 0.95))}ms max=${round(maxOf(held))}ms held`,
+    );
+  }
+  console.log(
+    `    unrelated same-process writes: n=${unrelatedWrites.length} ` +
+      `p95 queue wait=${round(
+        percentile(
+          unrelatedWrites.map((write) => write.queueWaitMs),
+          0.95,
+        ),
+      )}ms ` +
+      `max queue wait=${round(maxOf(unrelatedWrites.map((write) => write.queueWaitMs)))}ms\n` +
+      `    sweep: ${round(sweep.durationMs)}ms, ${round(perCandidateMs)}ms per candidate`,
+  );
+
+  // Each reclaim must take the writer lane twice — once to decide, once to
+  // delete — with archive encoding between them. One section per candidate is
+  // the shape that holds the lane across encoding.
+  check(
+    "two store-writer sections per reclaimed candidate",
+    sweepSections.length,
+    2 * CANDIDATE_COUNT,
+  );
+  check(
+    "unrelated same-process writes completed during the sweep",
+    unrelatedWrites.length > 0,
+    true,
+  );
+
+  // Self-calibrating ceiling: a section that spanned archive encoding would last
+  // about as long as a whole candidate, because encoding is ~99.5% of that cost.
+  // A quarter of the per-candidate wall clock separates the two shapes on any
+  // host, since both sides scale with the host.
+  const holdCeilingMs = round(perCandidateMs / 4);
+  checkAtMost(
+    "longest store-writer section held by the sweep (ms)",
+    round(maxOf(sweepSections.map((write) => write.writerExecutionMs))),
+    holdCeilingMs,
+  );
+  checkAtMost(
+    "longest wait an unrelated same-process write spent on the writer lane (ms)",
+    round(maxOf(unrelatedWrites.map((write) => write.queueWaitMs))),
+    holdCeilingMs,
+  );
+  checkAtMost(
+    "worst unrelated same-process operation during the sweep (ms)",
+    round(maxOf(during.map((sample) => sample.durationMs))),
+    OPENCLAW_SQLITE_BUSY_TIMEOUT_MS,
+  );
+
+  closeOpenClawAgentDatabasesForTest();
+  fs.rmSync(stateDir, { recursive: true, force: true });
+}
+
 async function scenarioUnbatchedCostBound(): Promise<void> {
   console.log("\n[4] Cost of the unbatched read an invalidated batch falls back to");
   const stateDir = makeStateDir();
@@ -688,6 +908,7 @@ async function main(): Promise<void> {
   await scenarioConcurrentWriter(quiet.durationMs);
   await scenarioInvalidationRate();
   await scenarioUnbatchedCostBound();
+  await scenarioSameProcessWriter();
   console.log(`\nassertions: ${assertions}, failures: ${failures.length}`);
   if (failures.length > 0) {
     for (const failure of failures) {

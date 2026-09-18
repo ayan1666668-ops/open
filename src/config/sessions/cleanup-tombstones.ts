@@ -26,6 +26,7 @@ import {
   withBatchedSessionReferenceAnalysis,
 } from "./session-accessor.sqlite-lifecycle-state.js";
 import { deleteSessionNodeArtifacts } from "./session-accessor.sqlite-node-artifacts.js";
+import { runExclusiveSqliteSessionReclamation } from "./session-accessor.sqlite-reclamation.js";
 import {
   getSessionKysely,
   resolveSqliteTranscriptArchiveDirectory,
@@ -246,8 +247,8 @@ async function sweepTombstonedCronRunRemnants(params: {
     const result = await runExclusiveSessionLifecycleMutation({
       scope: params.storePath,
       identities: [candidate.sessionKey, ...candidate.generationIds],
-      run: async () =>
-        await runExclusiveSqliteSessionWrite(
+      run: async () => {
+        const plans = await runExclusiveSqliteSessionWrite(
           scope,
           async () => {
             const database = openOpenClawAgentDatabase(toDatabaseOptions(scope));
@@ -269,7 +270,7 @@ async function sweepTombstonedCronRunRemnants(params: {
               return null;
             }
             const archiveDirectory = resolveSqliteTranscriptArchiveDirectory(scope);
-            const plans = candidate.generationIds.flatMap((sessionId) => {
+            const prepared = candidate.generationIds.flatMap((sessionId) => {
               const plan = planSessionStateDeleteIfUnreferenced({
                 archiveDirectory,
                 archiveTranscript: true,
@@ -280,79 +281,101 @@ async function sweepTombstonedCronRunRemnants(params: {
               });
               return plan ? [plan] : [];
             });
-            if (plans.length !== candidate.generationIds.length) {
-              return null;
-            }
-            const materialized = await materializeSessionStateDeletePlans(plans);
-            let archivedTranscripts: ReturnType<typeof deleteMaterializedSessionStatePlans> = [];
-            let removed = false;
-            runOpenClawAgentWriteTransaction(
-              (transactionDb) => {
-                const current = findCanonicalCronRunTombstone(
-                  transactionDb,
-                  cutoffMs,
-                  params.requestedOwners,
-                  candidate.sessionKey,
-                );
-                if (!sameCandidate(candidate, current)) {
-                  return;
-                }
-                const protectedAtDelete = readProtectedSessionIds({
-                  candidate,
-                  database: transactionDb,
-                  storePath: params.storePath,
-                });
-                if (candidate.generationIds.some((sessionId) => protectedAtDelete.has(sessionId))) {
-                  return;
-                }
-                archivedTranscripts = deleteMaterializedSessionStatePlans(
-                  transactionDb,
-                  materialized,
-                  protectedAtDelete,
-                  new Set([candidate.sessionKey]),
-                );
-                const db = getSessionKysely(transactionDb.db);
-                const remainingGenerationIds = executeSqliteQuerySync(
-                  transactionDb.db,
-                  db
-                    .selectFrom("session_windows")
-                    .select("session_id")
-                    .where("session_key", "=", candidate.sessionKey),
-                ).rows;
-                if (remainingGenerationIds.length > 0) {
-                  return;
-                }
-                // This row is an intentionally empty retained-history placeholder,
-                // not a readable SessionEntry. Its owned windows were removed above,
-                // so delete only the node-owned artifacts and placeholder row.
-                deleteSessionNodeArtifacts(transactionDb, candidate.sessionKey);
-                executeSqliteQuerySync(
-                  transactionDb.db,
-                  db.deleteFrom("session_nodes").where("session_key", "=", candidate.sessionKey),
-                );
-                publishSessionEntryCacheInvalidation(transactionDb);
-                removed =
-                  executeSqliteQuerySync(
+            return prepared.length === candidate.generationIds.length ? prepared : null;
+          },
+          "session.maintenance.tombstone-prepare",
+        );
+        if (!plans) {
+          return null;
+        }
+        // Archive materialization is the expensive phase, so it runs between two
+        // short writer-lane sections rather than inside one long hold: the store
+        // writer queue is process-local and FIFO, so holding it across encoding
+        // would make every unrelated session write in this process wait for a
+        // transcript that is being encoded off-thread. The candidate itself stays
+        // fenced by lifecycle admission across the release, and nothing decided
+        // above is trusted afterwards — the deletion transaction re-reads the
+        // placeholder and its references before touching a row. Reclamation
+        // admission bounds materialized archive bytes through their commit, the
+        // same way history eviction and lifecycle deletion already do.
+        return await runExclusiveSqliteSessionReclamation(async () => {
+          const materialized = await materializeSessionStateDeletePlans(plans);
+          return await runExclusiveSqliteSessionWrite(
+            scope,
+            async () => {
+              let archivedTranscripts: ReturnType<typeof deleteMaterializedSessionStatePlans> = [];
+              let removed = false;
+              runOpenClawAgentWriteTransaction(
+                (transactionDb) => {
+                  const current = findCanonicalCronRunTombstone(
+                    transactionDb,
+                    cutoffMs,
+                    params.requestedOwners,
+                    candidate.sessionKey,
+                  );
+                  if (!sameCandidate(candidate, current)) {
+                    return;
+                  }
+                  const protectedAtDelete = readProtectedSessionIds({
+                    candidate,
+                    database: transactionDb,
+                    storePath: params.storePath,
+                  });
+                  if (
+                    candidate.generationIds.some((sessionId) => protectedAtDelete.has(sessionId))
+                  ) {
+                    return;
+                  }
+                  archivedTranscripts = deleteMaterializedSessionStatePlans(
+                    transactionDb,
+                    materialized,
+                    protectedAtDelete,
+                    new Set([candidate.sessionKey]),
+                  );
+                  const db = getSessionKysely(transactionDb.db);
+                  const remainingGenerationIds = executeSqliteQuerySync(
                     transactionDb.db,
                     db
-                      .selectFrom("session_nodes")
-                      .select("session_key")
+                      .selectFrom("session_windows")
+                      .select("session_id")
                       .where("session_key", "=", candidate.sessionKey),
-                  ).rows.length === 0;
-              },
-              scope,
-              { operationLabel: "sessions.cleanup.tombstoned-cron-run-remnants" },
-            );
-            if (!removed) {
-              return null;
-            }
-            return {
-              archivedTranscripts,
-              sweptTranscriptStates: candidate.generationIds.length,
-            };
-          },
-          "session.maintenance.tombstone-sweep",
-        ),
+                  ).rows;
+                  if (remainingGenerationIds.length > 0) {
+                    return;
+                  }
+                  // This row is an intentionally empty retained-history placeholder,
+                  // not a readable SessionEntry. Its owned windows were removed above,
+                  // so delete only the node-owned artifacts and placeholder row.
+                  deleteSessionNodeArtifacts(transactionDb, candidate.sessionKey);
+                  executeSqliteQuerySync(
+                    transactionDb.db,
+                    db.deleteFrom("session_nodes").where("session_key", "=", candidate.sessionKey),
+                  );
+                  publishSessionEntryCacheInvalidation(transactionDb);
+                  removed =
+                    executeSqliteQuerySync(
+                      transactionDb.db,
+                      db
+                        .selectFrom("session_nodes")
+                        .select("session_key")
+                        .where("session_key", "=", candidate.sessionKey),
+                    ).rows.length === 0;
+                },
+                scope,
+                { operationLabel: "sessions.cleanup.tombstoned-cron-run-remnants" },
+              );
+              if (!removed) {
+                return null;
+              }
+              return {
+                archivedTranscripts,
+                sweptTranscriptStates: candidate.generationIds.length,
+              };
+            },
+            "session.maintenance.tombstone-commit",
+          );
+        });
+      },
     });
     if (!result) {
       return;

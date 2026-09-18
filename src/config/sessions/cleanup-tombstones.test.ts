@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync, StatementSync } from "node:sqlite";
+import { setImmediate } from "node:timers/promises";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js";
 import { executeSqliteQuerySync } from "../../infra/kysely-sync.js";
@@ -19,7 +20,17 @@ import { replaceTranscriptEventsSync } from "./session-accessor.sqlite-transcrip
 import { resolveSqliteTargetFromSessionStorePath } from "./session-sqlite-target.js";
 
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
-const materializedHook = vi.hoisted(() => ({ run: undefined as (() => void) | undefined }));
+const materializedHook = vi.hoisted(() => ({
+  run: undefined as (() => void) | undefined,
+  /**
+   * Awaited at the entry of the sweep's materialization await, so a test can
+   * hold the sweep inside the encoding window and observe what else this
+   * process can still do. Only the encoder's duration becomes controllable:
+   * the writer queue, lifecycle admission and reclamation admission around it
+   * all stay real, which is what makes the scheduling assertion meaningful.
+   */
+  beforeRun: undefined as (() => Promise<void>) | undefined,
+}));
 
 vi.mock("./session-accessor.sqlite-archive.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./session-accessor.sqlite-archive.js")>();
@@ -32,6 +43,7 @@ vi.mock("./session-accessor.sqlite-archive.js", async (importOriginal) => {
     materializeSessionStateDeletePlans: async (
       plans: Parameters<typeof actual.materializeSessionStateDeletePlans>[0],
     ) => {
+      await materializedHook.beforeRun?.();
       const materialized = await actual.materializeSessionStateDeletePlans(plans);
       materializedHook.run?.();
       return materialized;
@@ -42,6 +54,29 @@ vi.mock("./session-accessor.sqlite-archive.js", async (importOriginal) => {
 const DAY_MS = 24 * 60 * 60 * 1000;
 const NOW_MS = Date.UTC(2026, 7, 1, 0, 0, 0);
 const CRON_RUN_KEY = "agent:main:cron:job-1:run:run-1";
+
+/**
+ * Whether `promise` settles within a bounded number of event-loop turns.
+ *
+ * Turn-bounded rather than time-bounded on purpose. A write queued behind a
+ * held store-writer lane cannot settle in any number of turns while its holder
+ * is parked, and an admitted one settles within a few, so the verdict is a
+ * property of the scheduling rather than of how fast this host happens to be.
+ */
+async function settlesWithinEventLoopTurns(
+  promise: Promise<unknown>,
+  turns = 500,
+): Promise<"settled" | "pending"> {
+  const observed = { settled: false };
+  const observe = () => {
+    observed.settled = true;
+  };
+  void promise.then(observe, observe);
+  for (let turn = 0; turn < turns && !observed.settled; turn += 1) {
+    await setImmediate();
+  }
+  return observed.settled ? "settled" : "pending";
+}
 
 type SessionStoreReadMetrics = { rows: number; statements: number };
 
@@ -232,6 +267,7 @@ describe("sweepTombstonedCronRunRemnants", () => {
 
   afterEach(() => {
     materializedHook.run = undefined;
+    materializedHook.beforeRun = undefined;
     delete process.env.OPENCLAW_STATE_DIR;
     closeOpenClawAgentDatabasesForTest();
   });
@@ -844,6 +880,56 @@ describe("sweepTombstonedCronRunRemnants", () => {
     expect(countRows("session_windows", "session_key", CRON_RUN_KEY)).toBe(1);
     expect(countRows("transcript_events", "session_id", sessionId)).toBe(1);
     expect(archiveNames(sessionId)).toEqual([]);
+  });
+
+  it("admits an unrelated same-process write while archive encoding is pending", async () => {
+    const sessionId = await seedCanonicalPlaceholder({});
+    const unrelatedKey = "agent:main:direct:unrelated-writer";
+    let signalEncodingEntered = () => {};
+    const encodingEntered = new Promise<void>((resolve) => {
+      signalEncodingEntered = resolve;
+    });
+    let releaseEncoding = () => {};
+    const encodingReleased = new Promise<void>((resolve) => {
+      releaseEncoding = resolve;
+    });
+    materializedHook.beforeRun = async () => {
+      signalEncodingEntered();
+      await encodingReleased;
+    };
+
+    const sweepResult = sweep({ dryRun: false });
+    await encodingEntered;
+    // The sweep is parked exactly where a real one spends nearly all of its
+    // wall clock: awaiting transcript encoding for one candidate. Encoding runs
+    // off-thread, so the only thing that could stall an unrelated write here is
+    // the store writer queue — which is process-local and FIFO, and which this
+    // sweep must therefore have released before awaiting.
+    const unrelatedWrite = replaceSessionEntry(
+      { sessionKey: unrelatedKey, storePath },
+      { sessionId: "unrelated-session", updatedAt: NOW_MS },
+    );
+    let admission: "settled" | "pending";
+    try {
+      admission = await settlesWithinEventLoopTurns(unrelatedWrite);
+    } finally {
+      releaseEncoding();
+      await Promise.allSettled([unrelatedWrite, sweepResult]);
+    }
+
+    expect(admission).toBe("settled");
+    await expect(unrelatedWrite).resolves.toMatchObject({ sessionId: "unrelated-session" });
+    expect(countRows("session_nodes", "session_key", unrelatedKey)).toBe(1);
+    // The candidate still completes normally: releasing the writer around
+    // encoding must not cost the sweep its deletion or its archive.
+    await expect(sweepResult).resolves.toMatchObject({
+      candidates: 1,
+      removedNodes: 1,
+      sweptTranscriptStates: 1,
+    });
+    expect(countRows("session_nodes", "session_key", CRON_RUN_KEY)).toBe(0);
+    expect(countRows("transcript_events", "session_id", sessionId)).toBe(0);
+    expect(archiveNames(sessionId)).toHaveLength(1);
   });
 
   it("keeps a placeholder whose generation id holds a work admission", async () => {
