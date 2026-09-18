@@ -12,6 +12,7 @@ import { OpenClawLightDomElement } from "../../lit/openclaw-element.ts";
 import { SubscriptionsController } from "../../lit/subscriptions-controller.ts";
 import { persistSessionBoardFace } from "./chat-board-face-persistence.ts";
 import { stillOwnsCanonicalLocation } from "./chat-canonical-location.ts";
+import { ChatPageCloseSelection } from "./chat-page-close-selection.ts";
 import { resolveDropIndicator, type DropIndicator } from "./chat-page-drop-indicator.ts";
 import { navigateChatPage } from "./chat-page-navigation.ts";
 import {
@@ -92,6 +93,15 @@ export class ChatPage extends OpenClawLightDomElement implements SessionSplitHos
   private readonly snapshotStore = new SessionSnapshotStore(this.messageCache);
   private classicColumnId = "c1";
   private classicPaneId = "p1";
+  private readonly closeSelection = new ChatPageCloseSelection(this, {
+    data: () => this.data,
+    router: () => this.context?.router,
+    presented: () => this.presented && !this.pendingCreate,
+    changed: () => {
+      this.syncRouteToActivePane();
+      this.syncRouteBindings();
+    },
+  });
   private routeHref = "";
   private pendingCloseFocus:
     | {
@@ -270,7 +280,7 @@ export class ChatPage extends OpenClawLightDomElement implements SessionSplitHos
       return;
     }
 
-    const currentSessionKey = this.data?.sessionKey?.trim();
+    const currentSessionKey = this.closeSelection.sessionKey;
     const layout =
       this.layout ??
       (command.kind === "split" && currentSessionKey
@@ -408,7 +418,7 @@ export class ChatPage extends OpenClawLightDomElement implements SessionSplitHos
       return;
     }
     const activePane = this.layout && findPane(this.layout, this.layout.activePaneId)?.pane;
-    const routeKey = (activePane?.sessionKey ?? this.data?.sessionKey)?.trim();
+    const routeKey = (activePane?.sessionKey ?? this.closeSelection.sessionKey)?.trim();
     if (this.context && routeKey) {
       bindChatPageSession(this.context, routeKey, this.data?.agentId);
     }
@@ -533,7 +543,7 @@ export class ChatPage extends OpenClawLightDomElement implements SessionSplitHos
   };
 
   private readonly openSplitView = () => {
-    const sessionKey = this.data?.sessionKey?.trim();
+    const sessionKey = this.closeSelection.sessionKey;
     if (sessionKey) {
       this.persistLayout(
         insertPane(this.classicLayout(sessionKey), this.classicPaneId, sessionKey, "right"),
@@ -607,12 +617,14 @@ export class ChatPage extends OpenClawLightDomElement implements SessionSplitHos
       if (survivingLocation) {
         this.classicColumnId = survivingLocation.column.id;
         this.classicPaneId = survivingPane.id;
+        this.closeSelection.preserve(survivingPane.sessionKey);
       }
     }
     this.persistLayout(next);
     const activePane = next ? findPane(next, next.activePaneId)?.pane : survivingPane;
     if (activePane) {
       this.updateRoute(activePane.sessionKey, true);
+      this.closeSelection.navigated();
       if (ownsFocus) {
         const abort = new AbortController();
         this.pendingCloseFocus = {
@@ -636,7 +648,7 @@ export class ChatPage extends OpenClawLightDomElement implements SessionSplitHos
     }
   };
 
-  private classicLayout(sessionKey = this.data?.sessionKey?.trim() ?? ""): ChatSplitLayout {
+  private classicLayout(sessionKey = this.closeSelection.sessionKey): ChatSplitLayout {
     return singlePaneLayout(this.classicColumnId, this.classicPaneId, sessionKey);
   }
 
