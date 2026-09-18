@@ -1,5 +1,6 @@
 // Gateway request scope tracks request-local plugin runtime context across async work.
 import { AsyncLocalStorage } from "node:async_hooks";
+import { createRequire } from "node:module";
 import type {
   GatewayContextResolver,
   GatewayRequestContext,
@@ -64,21 +65,15 @@ type PluginRuntimePluginScope = {
   pluginTrustedOfficialInstall?: boolean;
 };
 
-/**
- * Host-minted liveness of one request callback. `authenticated` is fixed from the client the
- * host admitted when the scope was entered; `active` drops in `finally` when that callback
- * settles. Plugins can read the scope object through the SDK but never reach this record.
- */
-type PluginRuntimeRequestLease = {
-  readonly authenticated: boolean;
-  active: boolean;
-};
+// Resolve through Node's private package import, not a bundled/source-aliased import.
+// This keeps lease mutation private while source hosts and built plugin chunks share it.
+type RequestAuthority = typeof import("../../../plugin-request-authority.cjs");
+const require = createRequire(import.meta.url);
+// SAFETY: the private package import resolves the shipped native module with this declaration.
+const requestAuthority = require("#plugin-request-authority") as RequestAuthority;
 
 const PLUGIN_RUNTIME_GATEWAY_REQUEST_SCOPE_KEY: unique symbol = Symbol.for(
   "openclaw.pluginRuntimeGatewayRequestScope",
-);
-const PLUGIN_RUNTIME_REQUEST_LEASES_KEY: unique symbol = Symbol.for(
-  "openclaw.pluginRuntimeRequestLeases",
 );
 const GATEWAY_CONTEXT_RESOLVERS_KEY: unique symbol = Symbol.for("openclaw.gatewayContextResolvers");
 
@@ -93,22 +88,6 @@ const gatewayContextResolvers = resolveGlobalSingleton<WeakMap<object, GatewayCo
   GATEWAY_CONTEXT_RESOLVERS_KEY,
   () => new WeakMap(),
 );
-// Keyed by the exact store object so a scope copied into nested plugin/registry scopes keeps
-// the request lease while a scope mutated or fabricated by plugin code never gains one.
-const pluginRuntimeRequestLeases = resolveGlobalSingleton<
-  WeakMap<object, PluginRuntimeRequestLease>
->(PLUGIN_RUNTIME_REQUEST_LEASES_KEY, () => new WeakMap());
-
-function inheritRequestLease(
-  from: PluginRuntimeGatewayRequestScope | undefined,
-  to: PluginRuntimeGatewayRequestScope,
-): void {
-  const lease = from ? pluginRuntimeRequestLeases.get(from) : undefined;
-  if (lease) {
-    pluginRuntimeRequestLeases.set(to, lease);
-  }
-}
-
 function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
   return (
     typeof value === "object" &&
@@ -126,8 +105,7 @@ function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
 export function hasLivePluginRuntimeRequestAuthority(
   scope: PluginRuntimeGatewayRequestScope | undefined = pluginRuntimeGatewayRequestScope.getStore(),
 ): boolean {
-  const lease = scope ? pluginRuntimeRequestLeases.get(scope) : undefined;
-  return lease?.active === true && lease.authenticated;
+  return requestAuthority.has(scope);
 }
 
 export function bindGatewayContextResolver(
@@ -237,26 +215,20 @@ export function withPluginRuntimeGatewayRequestScope(
   run: () => unknown,
 ): unknown {
   const scoped: PluginRuntimeGatewayRequestScope = { ...scope };
-  const lease: PluginRuntimeRequestLease = {
-    authenticated: scope.client !== undefined,
-    active: true,
-  };
-  pluginRuntimeRequestLeases.set(scoped, lease);
-  const release = () => {
-    lease.active = false;
-  };
+  const release = requestAuthority.mint(scoped, scope.client !== undefined);
   let result: unknown;
   try {
     result = pluginRuntimeGatewayRequestScope.run(scoped, run);
+    // Inspecting a thenable can itself throw (getter/proxy). Release in that case too.
+    if (isPromiseLike(result)) {
+      return Promise.resolve(result).finally(release);
+    }
+    release();
+    return result;
   } catch (error) {
     release();
     throw error;
   }
-  if (isPromiseLike(result)) {
-    return Promise.resolve(result).finally(release);
-  }
-  release();
-  return result;
 }
 
 /** Runs detached work with its captured Gateway binding, including an explicitly unbound owner. */
@@ -277,7 +249,7 @@ export function withPluginRuntimeGatewayContextResolver<T>(
     resolveGatewayContext,
   };
   delete scoped.context;
-  inheritRequestLease(current, scoped);
+  requestAuthority.inherit(current, scoped);
   return pluginRuntimeGatewayRequestScope.run(scoped, run);
 }
 
@@ -298,7 +270,7 @@ export function withPluginRuntimeRegistryScope<T>(
     declaredProviderOwners:
       declaredProviderOwners ?? getPluginRuntimeLoadContextState(registry)?.declaredProviderOwners,
   };
-  inheritRequestLease(current, scoped);
+  requestAuthority.inherit(current, scoped);
   return pluginRuntimeGatewayRequestScope.run(scoped, run);
 }
 
@@ -328,7 +300,7 @@ export function withPluginRuntimePluginScope<T>(scope: PluginRuntimePluginScope,
   } else {
     delete scoped.pluginTrustedOfficialInstall;
   }
-  inheritRequestLease(current, scoped);
+  requestAuthority.inherit(current, scoped);
   return pluginRuntimeGatewayRequestScope.run(scoped, run);
 }
 

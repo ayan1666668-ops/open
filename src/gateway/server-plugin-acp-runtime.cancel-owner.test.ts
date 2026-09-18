@@ -29,7 +29,10 @@ import {
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { resetAgentEventsForTest } from "../infra/agent-events.js";
 import { setActivePluginRegistry } from "../plugins/runtime.js";
-import { withPluginRuntimeGatewayRequestScope } from "../plugins/runtime/gateway-request-scope.js";
+import {
+  getPluginRuntimeGatewayRequestScope,
+  withPluginRuntimeGatewayRequestScope,
+} from "../plugins/runtime/gateway-request-scope.js";
 import {
   type PluginSubagentRequesterContext,
   withPluginSubagentRequesterContext,
@@ -514,6 +517,94 @@ describe("plugin ACP request authority lease", () => {
       ).toEqual([]);
     });
   });
+
+  it("cannot reactivate a completed request through the former global lease registry", async () => {
+    await withCancelHarness(async ({ cfg, runtime, tempRoot }) => {
+      cfg.plugins = { entries: {} };
+      let release!: () => void;
+      const barrier = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let later!: Promise<unknown>;
+      await withPluginRuntimeGatewayRequestScope(
+        {
+          pluginId: PLUGIN_ID,
+          pluginOrigin: "workspace",
+          isWebchatConnect: () => false,
+          client: { connect: { scopes: ["operator.write"] } } as never,
+        },
+        async () => {
+          const scope = getPluginRuntimeGatewayRequestScope()!;
+          later = (async () => {
+            await barrier;
+            const exposed = Reflect.get(
+              globalThis,
+              Symbol.for("openclaw.pluginRuntimeRequestLeases"),
+            ) as WeakMap<object, { active: boolean }> | undefined;
+            const lease = exposed?.get(scope);
+            if (lease) {
+              lease.active = true;
+            }
+            return runtime.spawn({ task: "retained request", cwd: tempRoot });
+          })();
+        },
+      );
+      release();
+      await expect(later).rejects.toMatchObject({ code: "ACP_PLUGIN_DETACHED_FORBIDDEN" });
+      expect(hoisted.initializeSessionMock).not.toHaveBeenCalled();
+      expect(hoisted.agentDispatchMock).not.toHaveBeenCalled();
+      expect(listTasksForOwnerKey(OWNER_KEY)).toEqual([]);
+      expect(
+        listSessionEntryKeysReadOnly({ storePath: cfg.session!.store!, agentId: "codex" }),
+      ).toEqual([]);
+    });
+  });
+
+  it.each(["getter", "proxy"])(
+    "creates nothing after exceptional return inspection (%s)",
+    async (kind) => {
+      await withCancelHarness(async ({ cfg, runtime, tempRoot }) => {
+        cfg.plugins = { entries: {} };
+        let release!: () => void;
+        const barrier = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        let later!: Promise<unknown>;
+        const fail = () => {
+          throw new Error("then inspection failed");
+        };
+        const result =
+          kind === "getter"
+            ? Object.defineProperty({}, "then", { get: fail }) // eslint-disable-line unicorn/no-thenable -- Deliberate throwing getter tests request cleanup.
+            : new Proxy({}, { has: fail, get: fail });
+        expect(() =>
+          withPluginRuntimeGatewayRequestScope(
+            {
+              pluginId: PLUGIN_ID,
+              pluginOrigin: "workspace",
+              isWebchatConnect: () => false,
+              client: { connect: { scopes: ["operator.write"] } } as never,
+            },
+            () => {
+              later = (async () => {
+                await barrier;
+                return runtime.spawn({ task: "late exceptional job", cwd: tempRoot });
+              })();
+              return result;
+            },
+          ),
+        ).toThrow("then inspection failed");
+        release();
+        await expect(later).rejects.toMatchObject({ code: "ACP_PLUGIN_DETACHED_FORBIDDEN" });
+        expect(hoisted.initializeSessionMock).not.toHaveBeenCalled();
+        expect(hoisted.agentDispatchMock).not.toHaveBeenCalled();
+        expect(listTasksForOwnerKey(OWNER_KEY)).toEqual([]);
+        expect(
+          listSessionEntryKeysReadOnly({ storePath: cfg.session!.store!, agentId: "codex" }),
+        ).toEqual([]);
+      });
+    },
+  );
 
   it("stops a spawn the request started but never awaited before any state is written", async () => {
     await withCancelHarness(async ({ cfg, runtime, tempRoot }) => {

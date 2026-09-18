@@ -4,7 +4,10 @@ import type { SessionEntry } from "../config/sessions/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { emitAgentEvent, resetAgentEventsForTest } from "../infra/agent-events.js";
 import { withPluginRuntimeGatewayRequestScope } from "../plugins/runtime/gateway-request-scope.js";
-import { withPluginSubagentRequesterContext } from "../plugins/runtime/subagent-requester-context.js";
+import {
+  createPluginSubagentRequesterContext,
+  withPluginSubagentRequesterContext,
+} from "../plugins/runtime/subagent-requester-context.js";
 import {
   type PluginAcpObserveEvent,
   PluginAcpRuntimeError,
@@ -13,6 +16,7 @@ import {
 import type { PluginRuntime } from "../plugins/runtime/types.js";
 import type { TaskRecord } from "../tasks/task-registry.types.js";
 import type { GatewayRequestContext, GatewayRequestOptions } from "./server-methods/types.js";
+import { registerPluginAcpIdempotencyTests } from "./server-plugin-acp-runtime.test-support.js";
 import * as inProcessDispatch from "./server-plugin-in-process-dispatch.js";
 
 const PLUGIN_ID = "factory-adapter";
@@ -487,6 +491,52 @@ describe("plugin ACP requester-bound completion delivery", () => {
     expect(hoisted.spawnAcpForPluginMock).toHaveBeenCalledTimes(2);
   });
 
+  it("keeps separator-containing host-captured routes distinct and ignores public route overrides", async () => {
+    config.plugins = {};
+    const runtime = createRuntime();
+    let launched = 0;
+    hoisted.spawnAcpForPluginMock.mockImplementation(async () =>
+      acceptedSpawn({ runId: `run-${++launched}`, expectsCompletionMessage: true }),
+    );
+    const origins = [
+      { channel: "slack", to: "channel:A|acct", threadId: "thread" },
+      { channel: "slack", to: "channel:A", accountId: "acct", threadId: "|thread" },
+    ] as const;
+    const spawnFrom = (origin: (typeof origins)[number]) => {
+      const captured = createPluginSubagentRequesterContext({
+        sessionKey: "agent:main:main",
+        origin,
+      });
+      if (!captured) {
+        throw new Error("Expected a routable host capture");
+      }
+      return withPluginSubagentRequesterContext(captured, () =>
+        scoped(() =>
+          runtime.spawn({
+            task: "A",
+            idempotencyKey: "separator-route",
+            completionDelivery: "current-requester",
+            // Public payloads cannot name or replace the host-captured route.
+            completionRequester: { sessionKey: "agent:foreign:main", origin: origins[0] },
+            requesterRoute: origins[0],
+          } as Parameters<PluginRuntime["acp"]["spawn"]>[0]),
+        ),
+      );
+    };
+    const first = await spawnFrom(origins[0]);
+    const second = await spawnFrom(origins[1]);
+    expect(second.runId).not.toBe(first.runId);
+    expect(second.replayed).toBeUndefined();
+    expect(await spawnFrom(origins[0])).toEqual({ ...first, replayed: true });
+    expect(await spawnFrom(origins[1])).toEqual({ ...second, replayed: true });
+    expect(launched).toBe(2);
+    expect(hoisted.spawnAcpForPluginMock.mock.calls[1]?.[1].completionRequester).toEqual({
+      sessionKey: "agent:main:main",
+      origin: origins[1],
+    });
+    expect(hoisted.spawnAcpForPluginMock.mock.calls[1]?.[0]).not.toHaveProperty("requesterRoute");
+  });
+
   it("keys replay on the full host-captured completion route, not the session alone", async () => {
     config.plugins = {};
     const runtime = createRuntime();
@@ -611,120 +661,15 @@ describe("plugin ACP spawn input", () => {
   });
 });
 
-describe("plugin ACP spawn idempotency", () => {
-  it("replays the accepted result for the same key and canonical input", async () => {
-    const runtime = createRuntime();
-    const first = await scoped(() =>
-      runtime.spawn({ task: "same", idempotencyKey: "k1", label: "a" }),
-    );
-    const second = await scoped(() =>
-      runtime.spawn({ task: "same", idempotencyKey: "k1", label: "a" }),
-    );
-    expect(first.replayed).toBeUndefined();
-    expect(second).toEqual({ ...first, replayed: true });
-    expect(hoisted.spawnAcpForPluginMock).toHaveBeenCalledTimes(1);
-  });
-
-  it("does not alias a changed input under the same key", async () => {
-    const runtime = createRuntime();
-    hoisted.spawnAcpForPluginMock
-      .mockResolvedValueOnce(acceptedSpawn({ runId: "run-a" }))
-      .mockResolvedValueOnce(acceptedSpawn({ runId: "run-b" }));
-    const first = await scoped(() => runtime.spawn({ task: "one", idempotencyKey: "k2" }));
-    const second = await scoped(() => runtime.spawn({ task: "two", idempotencyKey: "k2" }));
-    expect(first.runId).toBe("run-a");
-    expect(second.runId).toBe("run-b");
-    expect(second.replayed).toBeUndefined();
-    expect(hoisted.spawnAcpForPluginMock).toHaveBeenCalledTimes(2);
-  });
-
-  it("retains the earlier receipt when the same key alternates inputs (A, B, A)", async () => {
-    const runtime = createRuntime();
-    let launched = 0;
-    hoisted.spawnAcpForPluginMock.mockImplementation(async () =>
-      acceptedSpawn({ runId: `run-${++launched}` }),
-    );
-    const now = vi.spyOn(Date, "now");
-    let clock = 1_000_000;
-    now.mockImplementation(() => clock);
-    const a = await scoped(() => runtime.spawn({ task: "A", idempotencyKey: "same" }));
-    const b = await scoped(() => runtime.spawn({ task: "B", idempotencyKey: "same" }));
-    const aAgain = await scoped(() => runtime.spawn({ task: "A", idempotencyKey: "same" }));
-    const bAgain = await scoped(() => runtime.spawn({ task: "B", idempotencyKey: "same" }));
-    expect(a.runId).toBe("run-1");
-    expect(b.runId).toBe("run-2");
-    expect(aAgain).toEqual({ ...a, replayed: true });
-    expect(bAgain).toEqual({ ...b, replayed: true });
-    expect(launched).toBe(2);
-    // Both receipts share the existing 10 minute window and are pruned together after it.
-    clock += 10 * 60_000;
-    const aLater = await scoped(() => runtime.spawn({ task: "A", idempotencyKey: "same" }));
-    expect(aLater.replayed).toBeUndefined();
-    expect(aLater.runId).toBe("run-3");
-    expect(launched).toBe(3);
-  });
-
-  it("bounds receipts per plugin and evicts the oldest tuple first", async () => {
-    const runtime = createRuntime();
-    let launched = 0;
-    hoisted.spawnAcpForPluginMock.mockImplementation(async () =>
-      acceptedSpawn({ runId: `run-${++launched}` }),
-    );
-    const now = vi.spyOn(Date, "now");
-    let clock = 1_000_000;
-    now.mockImplementation(() => clock);
-    const first = await scoped(() => runtime.spawn({ task: "task-0", idempotencyKey: "bound" }));
-    for (let index = 1; index < 200; index += 1) {
-      clock += 1;
-      await scoped(() => runtime.spawn({ task: `task-${index}`, idempotencyKey: "bound" }));
-    }
-    expect(launched).toBe(200);
-    // The 201st distinct tuple evicts the oldest receipt (task-0) and nothing else.
-    clock += 1;
-    await scoped(() => runtime.spawn({ task: "task-200", idempotencyKey: "bound" }));
-    expect(launched).toBe(201);
-    const replayLatest = await scoped(() =>
-      runtime.spawn({ task: "task-199", idempotencyKey: "bound" }),
-    );
-    expect(replayLatest.replayed).toBe(true);
-    const relaunchOldest = await scoped(() =>
-      runtime.spawn({ task: "task-0", idempotencyKey: "bound" }),
-    );
-    expect(relaunchOldest.replayed).toBeUndefined();
-    expect(relaunchOldest.runId).not.toBe(first.runId);
-    expect(launched).toBe(202);
-  });
-
-  it("scopes replay to the calling plugin", async () => {
-    const runtime = createRuntime();
-    config.plugins = {
-      entries: {
-        [PLUGIN_ID]: { acp: { allowDetachedSpawn: true } },
-        [OTHER_PLUGIN_ID]: { acp: { allowDetachedSpawn: true } },
-      },
-    };
-    await scoped(() => runtime.spawn({ task: "same", idempotencyKey: "k3" }));
-    await scoped(() => runtime.spawn({ task: "same", idempotencyKey: "k3" }), {
-      pluginId: OTHER_PLUGIN_ID,
-    });
-    expect(hoisted.spawnAcpForPluginMock).toHaveBeenCalledTimes(2);
-  });
-
-  it("evicts failed admission or launch so the next attempt runs again", async () => {
-    const runtime = createRuntime();
-    hoisted.spawnAcpForPluginMock.mockResolvedValueOnce({
-      status: "forbidden",
-      errorCode: "subagent_policy",
-      error: "too many",
-    } as SpawnAcpForPluginResult);
-    await expectAcpError(
-      scoped(() => runtime.spawn({ task: "x", idempotencyKey: "k4" })),
-      "ACP_PLUGIN_ADMISSION_REJECTED",
-    );
-    const retry = await scoped(() => runtime.spawn({ task: "x", idempotencyKey: "k4" }));
-    expect(retry.replayed).toBeUndefined();
-    expect(hoisted.spawnAcpForPluginMock).toHaveBeenCalledTimes(2);
-  });
+registerPluginAcpIdempotencyTests({
+  createRuntime,
+  scoped,
+  getConfig: () => config,
+  spawnAcpForPluginMock: hoisted.spawnAcpForPluginMock,
+  acceptedSpawn,
+  expectAcpError,
+  pluginId: PLUGIN_ID,
+  otherPluginId: OTHER_PLUGIN_ID,
 });
 
 describe("plugin ACP run inspection", () => {

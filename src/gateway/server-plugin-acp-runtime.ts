@@ -15,6 +15,7 @@ import { loadSessionEntry } from "../config/sessions/session-accessor.js";
 import type { SessionEntry } from "../config/sessions/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { type AgentEventStream, onAgentEventForRun } from "../infra/agent-events.js";
+import { channelRouteDedupeKey } from "../plugin-sdk/channel-route.js";
 import { normalizePluginsConfig } from "../plugins/config-state.js";
 import {
   bindGatewayContextResolver,
@@ -45,7 +46,6 @@ import { cancelDetachedTaskRunById } from "../tasks/task-executor.js";
 import { isActiveTaskStatus } from "../tasks/task-registry-common.js";
 import { getTaskById, listTasksForOwnerKey } from "../tasks/task-registry-query.js";
 import type { TaskRecord } from "../tasks/task-registry.types.js";
-import { deliveryContextKey } from "../utils/delivery-context.shared.js";
 import type { GatewayContextResolver, GatewayRequestContext } from "./server-methods/types.js";
 import { getInProcessGatewayRequestContext } from "./server-plugin-in-process-dispatch.js";
 import {
@@ -264,16 +264,7 @@ function fingerprintSpawnInput(
       ...(requester
         ? {
             requesterSessionKey: requester.sessionKey,
-            // Fall back to the raw captured fields so an unroutable origin still cannot
-            // collide with a different unroutable origin.
-            requesterRoute:
-              deliveryContextKey(requester.origin) ??
-              JSON.stringify([
-                requester.origin.channel,
-                requester.origin.to,
-                requester.origin.accountId,
-                requester.origin.threadId,
-              ]),
+            requesterRoute: channelRouteDedupeKey(requester.origin),
           }
         : {}),
     })
@@ -534,12 +525,18 @@ export function createGatewayAcpRuntime(
       }
     }
     if (entries.size >= PLUGIN_ACP_IDEMPOTENCY_MAX_ENTRIES_PER_PLUGIN) {
-      const oldest = [...entries.entries()].toSorted(
-        ([, left], [, right]) => left.expiresAt - right.expiresAt,
-      )[0];
-      if (oldest) {
-        entries.delete(oldest[0]);
+      // Pending receipts own in-flight deduplication regardless of age. Only a settled
+      // receipt may make room; otherwise refuse admission before launching another run.
+      const oldest = [...entries.entries()]
+        .filter(([, entry]) => !entry.pending)
+        .toSorted(([, left], [, right]) => left.expiresAt - right.expiresAt)[0];
+      if (!oldest) {
+        throw new PluginAcpRuntimeError(
+          "ACP_PLUGIN_ADMISSION_REJECTED",
+          "Plugin ACP idempotency capacity is occupied by pending spawns; retry after one settles.",
+        );
       }
+      entries.delete(oldest[0]);
     }
     const entry: IdempotencyEntry = { expiresAt: now + PLUGIN_ACP_IDEMPOTENCY_TTL_MS };
     entry.pending = runSpawn(principal, input, completionRequester).then(

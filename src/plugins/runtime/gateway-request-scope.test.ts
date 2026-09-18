@@ -1,4 +1,5 @@
 // Gateway request scope tests cover request-local plugin runtime context propagation.
+import { createRequire } from "node:module";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createEmptyPluginRegistry } from "../registry-empty.js";
 import {
@@ -174,6 +175,52 @@ describe("gateway request scope", () => {
           throw new Error("async boom");
         }),
       ).rejects.toThrow("async boom");
+      expect(runtimeScope.hasLivePluginRuntimeRequestAuthority(scope)).toBe(false);
+    });
+
+    it("shares a private native owner across source, dist, and reloaded scope modules", async () => {
+      const sourceRequire = createRequire(import.meta.url);
+      const distRequire = createRequire(new URL("../../../dist/index.js", import.meta.url));
+      const sourceOwner = sourceRequire("#plugin-request-authority");
+      expect(distRequire("#plugin-request-authority")).toBe(sourceOwner);
+      expect(Object.isFrozen(sourceOwner)).toBe(true);
+      expect(
+        Reflect.get(globalThis, Symbol.for("openclaw.pluginRuntimeRequestLeases")),
+      ).toBeUndefined();
+      const first = await importGatewayRequestScopeModule();
+      let second: typeof first | undefined;
+      let nested: PluginRuntimeGatewayRequestScope | undefined;
+      await first.withPluginRuntimeGatewayRequestScope({ ...TEST_SCOPE, client }, async () => {
+        vi.resetModules();
+        second = await importGatewayRequestScopeModule();
+        expect(second.hasLivePluginRuntimeRequestAuthority()).toBe(true);
+        second.withPluginRuntimePluginIdScope("nested-plugin", () => {
+          nested = second!.getPluginRuntimeGatewayRequestScope();
+          expect(first.hasLivePluginRuntimeRequestAuthority()).toBe(true);
+          expect(second!.hasLivePluginRuntimeRequestAuthority()).toBe(true);
+        });
+      });
+      expect(first.hasLivePluginRuntimeRequestAuthority(nested)).toBe(false);
+      expect(second!.hasLivePluginRuntimeRequestAuthority(nested)).toBe(false);
+      expect(second!.hasLivePluginRuntimeRequestAuthority({ ...nested!, client })).toBe(false);
+    });
+
+    it.each(["getter", "proxy"])("releases when then inspection throws (%s)", async (kind) => {
+      const runtimeScope = await importGatewayRequestScopeModule();
+      let scope: PluginRuntimeGatewayRequestScope | undefined;
+      const fail = () => {
+        throw new Error("then inspection failed");
+      };
+      const result =
+        kind === "getter"
+          ? Object.defineProperty({}, "then", { get: fail }) // eslint-disable-line unicorn/no-thenable -- Deliberate throwing getter tests request cleanup.
+          : new Proxy({}, { has: fail, get: fail });
+      expect(() =>
+        runtimeScope.withPluginRuntimeGatewayRequestScope({ ...TEST_SCOPE, client }, () => {
+          scope = runtimeScope.getPluginRuntimeGatewayRequestScope();
+          return result;
+        }),
+      ).toThrow("then inspection failed");
       expect(runtimeScope.hasLivePluginRuntimeRequestAuthority(scope)).toBe(false);
     });
 

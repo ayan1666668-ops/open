@@ -241,7 +241,9 @@ Start agent work in the background: hook-dispatched turns for external content, 
     never starts a duplicate run. Changed input under the same key is a new
     spawn with its own receipt; earlier receipts for that key stay replayable
     until the window ends or the plugin's bounded receipt cache evicts the
-    oldest. Failed spawns never replay. The registry writes the run's
+    oldest settled receipt. In-flight receipts are never evicted; if all slots
+    are pending, a new unique request fails with `ACP_PLUGIN_ADMISSION_REJECTED`
+    and can be retried after a pending spawn settles. Failed spawns never replay. The registry writes the run's
     plugin-owned task row synchronously during registration, so an accepted
     result normally carries `taskId`; it is absent only when that best-effort
     task write failed (the Gateway logs a warning), and such a run is not
