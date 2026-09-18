@@ -494,6 +494,35 @@ async function createOpenAICompatibleEmbeddingProvider(
 export const openAICompatibleEmbeddingProviderAdapter: EmbeddingProviderAdapter = {
   id: OPENAI_COMPATIBLE_EMBEDDING_PROVIDER_ID,
   transport: "remote",
+  resolveIndexIdentity: (options) => {
+    // Synchronous mirror of the runtime cacheKeyData below, minus auth-bearing
+    // headers: endpoint and model changes must be visible to consumers that
+    // key cached state on provider configuration, without reading secrets.
+    const resolvedProvider = resolveConfiguredProvider(options);
+    const remoteBaseUrl = normalizeOptionalString(options.remote?.baseUrl);
+    const providerBaseUrl = normalizeOptionalString(resolvedProvider?.config.baseUrl);
+    const baseUrl = normalizeBaseUrl(remoteBaseUrl ?? providerBaseUrl);
+    const model = normalizeModel(options.model, options.provider);
+    const dimensions = normalizeDimensions(options.dimensions);
+    const inputType = normalizeOptionalInputType(options.inputType);
+    const queryInputType = normalizeOptionalInputType(options.queryInputType);
+    const documentInputType = normalizeOptionalInputType(options.documentInputType);
+    return {
+      model,
+      cacheKeyData: {
+        provider:
+          resolvedProvider?.providerId ??
+          options.provider?.trim() ??
+          OPENAI_COMPATIBLE_EMBEDDING_PROVIDER_ID,
+        baseUrl,
+        model,
+        ...(dimensions !== undefined ? { dimensions } : {}),
+        ...(inputType ? { inputType } : {}),
+        ...(queryInputType ? { queryInputType } : {}),
+        ...(documentInputType ? { documentInputType } : {}),
+      },
+    };
+  },
   create: async (options) => {
     const { provider, client } = await createOpenAICompatibleEmbeddingProvider(options);
     const cacheHeaders = sanitizeCacheHeaders(client.headers);
