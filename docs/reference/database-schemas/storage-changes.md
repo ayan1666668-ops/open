@@ -24,12 +24,28 @@ and publishes the result. Avoid exposing a generic SQL callback to application
 code or adding an asynchronous wrapper around an existing asynchronous facade.
 The plugin KV API already has asynchronous methods over its SQLite owner.
 
+Managed outgoing image metadata lookups and cleanup inventories read through the
+shared-state worker, retaining their writable, creating database-open behavior.
+Typed columns, ordering, cleanup claims, and original-media references are unchanged.
+Downloads retain ticket or owner authorization and current transcript membership;
+verified descriptors and post-render thumbnail checks remain in place. Inserts, message-commit
+promotion, cleanup claim/deletion transactions, Doctor imports, and native session
+metadata reads keep their existing owners and remain separate worker migrations.
+
 Explicit promotion notice and claim annotations execute in the shared-state
 worker. The CLI awaits their best-effort completion before reporting results;
 storage failures still do not fail a promotion claim. Notice recording retains
 its read-only preflight and atomic sorted slug union, preserving the other feed
 fields. Empty notices leave absent databases absent, and already-recorded notices
 do not open a writer. Claim upserts, stored formats, and retention are unchanged.
+
+Update-check telemetry reads its cached response and retained session-creation
+count through the shared-state worker. Successful responses use the existing
+machine-state transaction, which preserves a newer persisted response. The CLI
+awaits preview reads, and Gateway maintenance joins accepted checks through
+persistence before shutdown retires shared state. Consent, payload fields,
+request policy, cache periods, and the bounded in-memory retry state are unchanged.
+Cold CLI plugin-inventory preparation remains with the plugin metadata owner.
 
 Plugin conversation standing approvals load and upsert in the shared-state worker.
 Core publishes an always-allow grant only after durable completion, serializes cache
@@ -229,6 +245,14 @@ classification stays with the pure record types, so decoding does not load
 provider or plugin runtime ownership. Kernels and their transaction callbacks
 remain synchronous. The asynchronous task and flow read facade runs these read
 kernels in the shared-state worker.
+
+Synchronous task creation and managed-flow worker creation share one create/reuse
+operation. Each adapter keeps its selection order and transaction boundaries.
+Filling a missing delivery origin commits before optional metadata changes; that
+later stage rereads the selected task and revalidates its parent flow and backing.
+Run-scoped native transitions retain their initial ordered task selection, reread
+each exact identity, and finish its publication before processing the next sibling.
+Equivalent terminal updates still repair linked flows and publish observations.
 
 Routine status reads stream task audit metadata through the same shared worker
 and return fixed-size history aggregates plus candidates for live reconciliation.
@@ -655,6 +679,13 @@ existing-only admission, and all stages of a prune use the captured database
 context. The cold hook CLI retains its separate read-only locator worker.
 
 ### Preserve the data and concurrency contracts
+
+Doctor's local device-token inventory executes in the shared-state worker. The
+detector awaits its result and preserves role ordering, malformed-row omission,
+and best-effort diagnostic behavior. Lint keeps this read in its private active
+state view and joins worker cleanup before retiring that snapshot; source-path
+legacy-file checks retain their separate environment. Device identity, pairing
+reads, and client token operations retain their existing owners.
 
 An adapter must make these contracts explicit and verify them against a real
 database:

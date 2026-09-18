@@ -51,6 +51,7 @@ import {
 } from "./openclaw-state-db-contract.js";
 import { closeTrackedStateDatabase } from "./openclaw-state-db-handle.js";
 import { createOpenClawStateDatabaseRuntimeFailureOwner } from "./openclaw-state-db-runtime-failure.js";
+import { assertExistingOpenClawStateSchemaCacheAdmission } from "./openclaw-state-db-schema-policy.js";
 import { resolveOpenClawStateSqlitePath } from "./openclaw-state-db.paths.js";
 import type { OpenClawStateWorkerContext } from "./openclaw-state-worker-context.types.js";
 
@@ -310,6 +311,7 @@ function publishOpenClawStateDatabase(database: OpenClawStateDatabase): OpenClaw
 
 function getCachedOpenClawStateDatabase(pathname: string): OpenClawStateDatabase | undefined {
   getOpenClawDatabaseMaintenanceScope()?.assertAdmission();
+  assertExistingOpenClawStateSchemaCacheAdmission(pathname, stateDatabaseLifecycle);
   const runtimeFailure = runtimeFailures.get(pathname);
   if (runtimeFailure) {
     throw runtimeFailure;
@@ -557,11 +559,7 @@ export function registerOpenClawStateDatabaseAsyncResource(
 }
 
 /** Capture the canonical read generation before any asynchronous worker admission. */
-export function captureOpenClawStateDatabaseReadAdmission(
-  pathname: string,
-): OpenClawStateDatabaseReadAdmission {
-  return asyncResources.capture(pathname);
-}
+export const captureOpenClawStateDatabaseReadAdmission = asyncResources.capture;
 
 /** Bind worker-created storage to its captured admission without publishing a native handle. */
 export function publishOpenClawStateDatabaseWorkerAdmission(
@@ -628,6 +626,7 @@ export const openClawStateDatabaseCache = {
   getCachedOpenClawStateDatabase,
   getOpenClawStateDatabaseRuntimeFailure: runtimeFailures.get,
   getOpenClawStateDatabaseIfOpenAtPath,
+  getKnownOpenClawStateDatabaseIdentity: asyncResources.knownIdentity,
   isOpenClawStateDatabaseOpen,
   publishOpenClawStateDatabase,
   recordOpenClawStateDatabaseOpenFailure,
