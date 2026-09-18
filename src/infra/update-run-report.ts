@@ -16,7 +16,7 @@ import {
   LEGACY_UPDATE_RUN_ADVISORY,
   LEGACY_UPDATE_RUN_EXPIRED_REASON,
 } from "./update-run-legacy-expiry.js";
-import type { UpdateRunRecord } from "./update-run-record.js";
+import { isAcknowledgedAbandonedUpdateRun, type UpdateRunRecord } from "./update-run-record.js";
 import type { UpdateRunReportHealth } from "./update-run-report-health.js";
 import { updateRunStepsFromResultStep, updateRunWarningMessages } from "./update-run-step.js";
 import type { UpdateRunResult } from "./update-runner-types.js";
@@ -167,8 +167,10 @@ export function renderUpdateRunReport(
     doctorHint?: string | null;
     nextAction?: string;
     currentHealth?: UpdateRunReportHealth;
+    mode?: UpdateRunResult["mode"] | "package";
   } = {},
 ): UpdateRunReport {
+  const reconciled = isAcknowledgedAbandonedUpdateRun(run);
   const currentHealth: UpdateRunReportHealth | undefined =
     opts.currentHealth ??
     (run.status !== "running" && opts.nextAction === undefined && run.origin.nextAction
@@ -190,8 +192,9 @@ export function renderUpdateRunReport(
         : "✅ OpenClaw updated.";
       break;
     case "failed":
-      headline =
-        run.reason === LEGACY_UPDATE_RUN_EXPIRED_REASON
+      headline = reconciled
+        ? "ℹ️ OpenClaw abandoned update reconciled."
+        : run.reason === LEGACY_UPDATE_RUN_EXPIRED_REASON
           ? `ℹ️ OpenClaw update abandoned: ${reason}.`
           : `⚠️ OpenClaw update failed: ${reason}.${running ? ` The gateway is running ${running}.` : ""}`;
       break;
@@ -210,6 +213,9 @@ export function renderUpdateRunReport(
   }
   headline = bounded(headline, 500);
   const lines: string[] = [];
+  if (opts.mode && opts.mode !== "unknown") {
+    lines.push(`Update mode: ${opts.mode}`);
+  }
   for (const step of run.steps) {
     if (step.snapshotCapacity) {
       lines.push(formatUpdateSnapshotCapacity(step.snapshotCapacity));
@@ -322,8 +328,9 @@ export function renderUpdateRunReport(
           ? "Doctor could not promote config changes. Review the named keys and writer refusal before continuing recovery."
           : "Doctor could not promote config changes. Review the named keys and writer refusal, then run openclaw doctor --fix under your own authority, or openclaw triage."
         : undefined;
-  const hints =
-    run.status === "running"
+  const hints = reconciled
+    ? []
+    : run.status === "running"
       ? recoveryHints(run)
       : repairHint
         ? [repairHint, ...(nextAction ? [nextAction] : [])]

@@ -1,10 +1,15 @@
 import { isDeepStrictEqual } from "node:util";
+import { resolveSessionParentSessionKey } from "../channels/plugins/session-conversation.js";
+import { projectGatewaySessionEntry } from "../config/sessions/combined-store-gateway.js";
 import type { SessionStoreTarget } from "../config/sessions/targets.js";
 import type { InternalSessionEntry as SessionEntry } from "../config/sessions/types.js";
 import { resolveProjectedAgentRunModel } from "../infra/agent-run-registry.js";
 import { isIncognitoSessionKey, parseAgentSessionKey } from "../routing/session-key.js";
-import type { readSessionRowFacts } from "./server-methods/session-placement-read-projection.js";
-import type { compareSessionEntryPairs } from "./session-list-order.js";
+import {
+  readSessionRowHasBoard,
+  type readSessionRowFacts,
+} from "./server-methods/session-placement-read-projection.js";
+import { compareSessionEntryPairs } from "./session-list-order.js";
 import { resolveStoredSessionKeyForAgentStore } from "./session-store-key.js";
 import type { SessionListRowContext } from "./session-utils-contracts.js";
 import * as rowProjection from "./session-utils-row.js";
@@ -22,6 +27,7 @@ export type Row = {
     typeof rowProjection.readSessionRowInputs
   >["presentation"]["activeModel"];
   facts?: ReturnType<typeof readSessionRowFacts>;
+  hasBoard?: boolean;
   membership: ReadonlySet<string>;
   parents: Set<string>;
   generation: string | symbol;
@@ -30,8 +36,9 @@ export type Query = {
   agentId?: string;
   storePath?: string;
   key?: string;
+  sessionIdOrKey?: string;
   parentSessionKey?: string;
-  sortBy?: Parameters<typeof compareSessionEntryPairs>[2];
+  sortBy?: Parameters<typeof compareSessionEntryPairs>[2] | null;
 };
 export type Inputs = Parameters<typeof rowProjection.readSessionRowInputs>[0];
 export type SnapshotOptions = Pick<
@@ -44,10 +51,44 @@ export const identity = (row: RowTarget) =>
   `${row.agentId}\0${row.storeTarget.storePath}\0${row.key}`;
 export const physical = (storePath: string, key: string) => `physical:${storePath}\0${key}`;
 const logical = (agentId: string, key: string) => `logical:${agentId}\0${key}`;
-export const references = (row: RowTarget) => [
+const references = (row: RowTarget) => [
   logical(row.agentId, row.key),
   physical(row.storeTarget.storePath, row.key),
 ];
+export function dependents(row: Row, byParent: ReadonlyMap<string, Set<string>>) {
+  return new Set(references(row).flatMap((ref) => Array.from(byParent.get(ref) ?? [])));
+}
+export function markRelated(
+  row: Row,
+  indexes: {
+    byParent: ReadonlyMap<string, Set<string>>;
+    byKey: ReadonlyMap<string, Set<string>>;
+  },
+  dirty: Set<string>,
+) {
+  for (const id of dependents(row, indexes.byParent)) {
+    dirty.add(id);
+  }
+  for (const parent of row.parents) {
+    for (const id of indexes.byKey.get(parent) ?? []) {
+      dirty.add(id);
+    }
+  }
+}
+
+/** Mark resident logical owners without changing stored entries, relatives, or backfill. */
+export function markAutomation(
+  rows: Iterable<Row>,
+  agentId: string | undefined,
+  dirty: Set<string>,
+) {
+  for (const row of rows) {
+    if (!agentId || row.agentId === agentId) {
+      dirty.add(identity(row));
+    }
+  }
+}
+
 export function create(target: RowTarget, entry?: SessionEntry): Row {
   return {
     ...target,
@@ -66,7 +107,13 @@ export function ready(row: Row | undefined): row is MaterializedRow {
   return Boolean(row?.entry && row.materialized);
 }
 
-export function sameFallbackModelFacts(previous: Row["storedEntry"], current: SessionEntry) {
+export function sort<T extends EntryRow>(rows: T[], sortBy: Query["sortBy"]): T[] {
+  return sortBy === null
+    ? rows
+    : rows.toSorted((a, b) => compareSessionEntryPairs([a.key, a.entry], [b.key, b.entry], sortBy));
+}
+
+function sameFallbackModelFacts(previous: Row["storedEntry"], current: SessionEntry) {
   return (
     previous?.modelProvider === current.modelProvider &&
     previous?.model === current.model &&
@@ -76,11 +123,17 @@ export function sameFallbackModelFacts(previous: Row["storedEntry"], current: Se
 }
 
 export function first(candidates: Row[], storePaths: Iterable<string>) {
-  return candidates.length < 2
-    ? candidates[0]
-    : [...storePaths].flatMap((sourcePath) =>
-        candidates.filter((row) => row.storeTarget.storePath === sourcePath),
-      )[0];
+  if (candidates.length < 2) {
+    return candidates[0];
+  }
+  for (const sourcePath of storePaths) {
+    for (const row of candidates) {
+      if (row.storeTarget.storePath === sourcePath) {
+        return row;
+      }
+    }
+  }
+  return undefined;
 }
 
 export function present(
@@ -156,7 +209,8 @@ export function changesRowStructure(row: Row, entry: Row["storedEntry"]): boolea
     previous.lifecycleRevision !== entry.lifecycleRevision ||
     previous.parentSessionKey !== entry.parentSessionKey ||
     previous.spawnedBy !== entry.spawnedBy ||
-    previous.incognito !== entry.incognito
+    previous.incognito !== entry.incognito ||
+    previous.archivedAt !== entry.archivedAt
   );
 }
 
@@ -180,4 +234,83 @@ export function parentReference(
   }
   const agentId = parseAgentSessionKey(key)?.agentId ?? fallbackAgentId;
   return logical(agentId, resolveStoredSessionKeyForAgentStore({ cfg, agentId, sessionKey: key }));
+}
+
+/** Drop reader-only graphs while retaining cold metadata and index identity. */
+export function dematerialize(row: Row): Row {
+  return {
+    ...row,
+    materialized: undefined,
+    materializedSequence: undefined,
+    facts: undefined,
+    membership: new Set<string>(),
+    lastMessagePreview: undefined,
+    fallbackModel: undefined,
+  };
+}
+
+export function acquireSessionRowEntry(params: {
+  row: Row;
+  storedEntry: SessionEntry | undefined;
+  cfg: Inputs["cfg"];
+  context: SessionListRowContext;
+  remove: (id: string) => void;
+  put: (row: Row) => void;
+  markRelated: (row: Row) => void;
+  archive: { demote: (row: Row) => Row; forget: (id: string) => void };
+}) {
+  const { row, storedEntry, cfg, context, remove, put, archive } = params;
+  if (!storedEntry || storedEntry.incognito) {
+    remove(identity(row));
+    return undefined;
+  }
+  const entry = projectGatewaySessionEntry(cfg, storedEntry);
+  const parents = new Set(
+    [
+      storedEntry.parentSessionKey ?? resolveSessionParentSessionKey(row.key),
+      storedEntry.spawnedBy,
+      ...(context.subagentRunsByChildSessionKey.get(row.key) ?? []).map(
+        (run) => run.controllerSessionKey || run.requesterSessionKey,
+      ),
+    ].flatMap((key) =>
+      key && key !== row.key
+        ? [parentReference(cfg, key, row.agentId, row.storeTarget.storePath)]
+        : [],
+    ),
+  );
+  const changed = !isDeepStrictEqual([storedEntry, parents], [row.storedEntry, row.parents]);
+  if (changed) {
+    params.markRelated(row);
+  }
+  const generation =
+    !row.entry ||
+    (row.entry.sessionId === entry.sessionId &&
+      row.entry.lifecycleRevision === entry.lifecycleRevision)
+      ? row.generation
+      : Symbol("row");
+  let next: Row = {
+    ...row,
+    storedEntry,
+    entry,
+    parents,
+    generation,
+    hasBoard:
+      entry.archivedAt !== undefined ? (row.hasBoard ?? readSessionRowHasBoard(row)) : row.hasBoard,
+    fallbackModel: sameFallbackModelFacts(row.storedEntry, storedEntry)
+      ? row.fallbackModel
+      : undefined,
+    ...(generation !== row.generation
+      ? { lastMessagePreview: undefined, fallbackModel: undefined, materialized: undefined }
+      : {}),
+  };
+  put(next);
+  if (entry.archivedAt !== undefined && row.entry?.archivedAt === undefined) {
+    next = archive.demote(next);
+  } else if (entry.archivedAt === undefined) {
+    archive.forget(identity(next));
+  }
+  if (changed) {
+    params.markRelated(next);
+  }
+  return next;
 }
