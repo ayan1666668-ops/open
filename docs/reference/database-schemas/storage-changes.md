@@ -302,13 +302,6 @@ updates retain their connection-bound kernels. Push preference and notification
 callers still use the synchronous facade until their preparation and publication
 owners migrate together.
 
-The host captures the database path, state environment, and current admission
-before awaited work. The shared worker owns its canonical connection and schema
-opening, with Gateway schema authority delegated by its live coordinator owner.
-Classified database errors survive transport, and canonical close joins worker
-operations and native cleanup. Cold registry restoration and runtime-configuration
-preparation still retain their existing main-thread behavior.
-
 Fleet registry reads use a separate read-only worker and remain noncreating;
 listing cells does not join Gateway writable lifecycle admission. The existing
 read owner retains inherited snapshot and disposable-source scopes until the
@@ -339,6 +332,25 @@ admitted reads before their resource, reference, and handle cleanup phases.
 A cached reader records shared maintenance ownership only after the worker enters
 its schema-validated query callback, including when that query later fails.
 Startup and schema refusals do not transfer ownership.
+
+The host captures the database path, state environment, and current admission
+before awaited work. The shared worker owns its canonical connection and schema
+opening, with Gateway schema authority delegated by its live coordinator owner.
+Classified database errors survive transport, and canonical close joins worker
+operations and native cleanup. Cold registry restoration and runtime-configuration
+preparation still retain their existing main-thread behavior.
+
+Dynamic model resolution awaits persisted auth-profile reads. Agent-local and
+legacy shared credentials use the isolated read-only child, so reads can coexist
+with the agent database's memory publication worker. Captured source-exclusion
+scopes read through their owned private snapshot. Relocated shared credentials
+and selected personal accounts use the canonical shared-state worker. Missing
+stores remain missing. Bounded transfer frames preserve complete credential
+rows without an aggregate size limit. Reader cleanup settles before the result
+reaches model preparation; host-owned overlays and migration checks retain
+captured persisted facts and revalidate after cleanup. A recorded refusal on an unreadable inherited agent store
+does not hide healthy local credentials; selected-store failures still propagate.
+Credential mutations and synchronous SDK readers retain their existing owners.
 
 Model-context reads and session transcript preparation use the session-transcript
 worker with separate bounded queues. Background preparation cannot occupy the
