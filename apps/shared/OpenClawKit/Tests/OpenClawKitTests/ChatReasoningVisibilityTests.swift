@@ -83,4 +83,36 @@ struct ChatReasoningVisibilityTests {
         #expect(change.session == nil)
         #expect(projected?.first?.reasoningLevel == "on")
     }
+
+    /// History reload must project `sessionInfo.reasoningLevel` through
+    /// `applyInFlightRunSnapshot` into the existing active session row, so the
+    /// relaunch path cannot regress while decode tests still pass.
+    @Test @MainActor func `history reload projects reasoningLevel into the active session entry`() {
+        let viewModel = OpenClawChatViewModel(
+            sessionKey: "sess-x",
+            transport: TestChatTransport(historyResponses: []))
+        defer { viewModel.detachTransport() }
+        viewModel.sessions = [self.entry(key: "sess-x")]
+
+        let payload = OpenClawChatHistoryPayload(
+            sessionKey: "sess-x",
+            sessionId: "sess-x",
+            messages: [],
+            thinkingLevel: nil,
+            sessionInfo: OpenClawChatSessionInfo(
+                hasActiveRun: false,
+                activeRunIds: [],
+                key: "sess-x",
+                agentId: nil,
+                reasoningLevel: "on"),
+            inFlightRun: nil)
+        let applied = viewModel.applyHistoryPayload(
+            payload,
+            for: viewModel.beginHistoryRequest(),
+            preservingOptimisticLocalMessages: false)
+
+        #expect(applied == true)
+        #expect(viewModel.currentSessionEntry()?.reasoningLevel == "on")
+        #expect(viewModel.currentSessionReasoningVisible == true)
+    }
 }
