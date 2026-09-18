@@ -1,16 +1,18 @@
 import assert from "node:assert/strict";
 import { EventEmitter, once } from "node:events";
-import { DatabaseSync, StatementSync } from "node:sqlite";
+import fs from "node:fs/promises";
 import { afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import type { GatewayClient as GatewayClientInstance } from "../gateway/client.js";
 import { closeOpenClawStateDatabaseAsync } from "../state/openclaw-state-db.js";
 import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
 import * as tokens from "./device-auth-store.js";
+import { observeDeviceAuthHostSql } from "./device-auth-store.sql.test-support.js";
 import { holdDeviceAuthWriterForTest } from "./device-auth-store.test-support.js";
 
 let GatewayClient: typeof GatewayClientInstance;
+let prepareGatewayClientDeviceAuth: typeof import("../gateway/client.js").prepareGatewayClientDeviceAuth;
 beforeAll(async () => {
-  ({ GatewayClient } = await import("../gateway/client.js"));
+  ({ GatewayClient, prepareGatewayClientDeviceAuth } = await import("../gateway/client.js"));
 });
 
 class FixtureSocket extends EventEmitter {
@@ -87,14 +89,7 @@ it.each(
       }
       storeSpy.mockClear();
       await closeOpenClawStateDatabaseAsync();
-      const sql = [
-        ...(["prepare", "exec", "close"] as const).map((method) =>
-          vi.spyOn(DatabaseSync.prototype, method),
-        ),
-        ...(["get", "all", "run", "iterate"] as const).map((method) =>
-          vi.spyOn(StatementSync.prototype, method),
-        ),
-      ];
+      const sql = observeDeviceAuthHostSql(state.statePath("state", "openclaw.sqlite"));
       const onHelloOk = vi.fn();
       const onConnectError = vi.fn();
       const client = new GatewayClient({
@@ -164,15 +159,109 @@ it.each(
         });
         await client.stopAndWait();
         await closeOpenClawStateDatabaseAsync();
-        for (const spy of sql) {
-          expect(spy).not.toHaveBeenCalled();
-        }
+        expect(Object.values(sql.counts().data)).toEqual(Array(7).fill(0));
+        expect(Object.values(sql.counts().unknown)).toEqual(Array(7).fill(0));
       } finally {
         await release?.();
         await client.stopAndWait();
-        sql.forEach((spy) => spy.mockRestore());
+        sql.restore();
         await closeOpenClawStateDatabaseAsync();
       }
     });
   },
 );
+
+it("keeps connection token facts fresh after preparation without duplicate reads", async () => {
+  await withOpenClawTestState({ label: "client-token-preparation" }, async (state) => {
+    const options = {
+      url: "ws://127.0.0.1:18789",
+      env: state.env,
+      deviceIdentity: {
+        deviceId: "synthetic-device",
+        privateKeyPem: "synthetic-private",
+        publicKeyPem: "synthetic-public",
+      },
+      hostDeps: {
+        signDevicePayload: () => "synthetic-signature",
+        publicKeyRawBase64UrlFromPem: () => "synthetic-public",
+        beforeConnect: () => {},
+        logError: () => {},
+        logDebug: () => {},
+      },
+    };
+    const load = vi.spyOn(tokens, "loadDeviceAuthToken");
+    await prepareGatewayClientDeviceAuth(options);
+    expect(load).not.toHaveBeenCalled();
+    await tokens.storeDeviceAuthToken({
+      env: state.env,
+      deviceId: options.deviceIdentity.deviceId,
+      role: "operator",
+      token: "synthetic-after-preparation",
+    });
+    const client = new GatewayClient(options);
+    try {
+      client.start();
+      const socket = FixtureSocket.instances[0];
+      assert(socket);
+      socket.open();
+      await socket.waitForConnectFrame();
+      expect(socket.connectFrame().params.auth.deviceToken).toBe("synthetic-after-preparation");
+      expect(load).toHaveBeenCalledOnce();
+    } finally {
+      await client.stopAndWait();
+    }
+  });
+});
+
+it.each([
+  { name: "identity omitted", deviceIdentity: null },
+  {
+    name: "password-only read-only",
+    sharedStateMode: "read-only" as const,
+    password: "synthetic-password",
+  },
+  {
+    name: "explicit origin read-only",
+    sharedStateMode: "read-only" as const,
+    deviceAuthScope: "wss://synthetic.example",
+    token: "synthetic-token",
+  },
+  { name: "invalid transport", url: "ws://synthetic.example" },
+  { name: "invalid edge transport", edgeAuthHeaders: { "x-synthetic": "synthetic-value" } },
+])("does not prepare token storage for $name", async ({ name: _name, ...overrides }) => {
+  await withOpenClawTestState({ label: "client-token-skipped-preparation" }, async (state) => {
+    // A skipped storage path must not even consult the legacy migration guard.
+    await state.writeJson("identity/device-auth.json", { synthetic: true });
+    await prepareGatewayClientDeviceAuth({
+      url: "ws://127.0.0.1:18789",
+      env: state.env,
+      deviceIdentity: {
+        deviceId: "synthetic-device",
+        privateKeyPem: "synthetic-private",
+        publicKeyPem: "synthetic-public",
+      },
+      ...overrides,
+    });
+    await expect(fs.stat(state.statePath("state", "openclaw.sqlite"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+});
+
+it("prepares read-only clients without creating missing state", async () => {
+  await withOpenClawTestState({ label: "client-token-readonly-preparation" }, async (state) => {
+    await prepareGatewayClientDeviceAuth({
+      url: "ws://127.0.0.1:18789",
+      env: state.env,
+      sharedStateMode: "read-only",
+      deviceIdentity: {
+        deviceId: "synthetic-device",
+        privateKeyPem: "synthetic-private",
+        publicKeyPem: "synthetic-public",
+      },
+    });
+    await expect(fs.stat(state.statePath("state", "openclaw.sqlite"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+});

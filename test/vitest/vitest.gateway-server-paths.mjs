@@ -9,7 +9,12 @@ export const gatewayDatabaseWorkerTestFiles = [
   "src/gateway/config-reload.test.ts",
   "src/gateway/config-reload.transcripts.test.ts",
   "src/gateway/device-pairing-prune.test.ts",
+  "src/gateway/gateway-auth-recovery.test.ts",
+  "src/gateway/gateway-cli-backend.connect.test.ts",
   "src/gateway/gateway-code-mode-clock.test.ts",
+  "src/gateway/gateway-cron-process-identity.windows.test.ts",
+  "src/gateway/gateway-route-model-reuse.test.ts",
+  "src/gateway/gateway-ssh-upload-signal.test.ts",
   "src/gateway/gateway.chat-redaction.test.ts",
   "src/gateway/health/collector.queue-health.test.ts",
   "src/gateway/internal-source-reply-persistence.test.ts",
@@ -78,9 +83,10 @@ export const gatewayDatabaseWorkerTestFiles = [
   "src/gateway/session-utils.subagent.test.ts",
   "src/gateway/session-utils.test.ts",
   "src/gateway/setup-inference.first-signin.integration.test.ts",
+  "src/gateway/startup-local-cli-pairing.test.ts",
+  "src/gateway/test-helpers.acquisition.test.ts",
   "src/gateway/tool-resolution.cron-capture.test.ts",
   "src/gateway/worker-environments/provider-crabbox-runtime-preflight.test.ts",
-  "src/gateway/startup-local-cli-pairing.test.ts",
 ];
 
 // Canonical file ownership for the non-isolated Gateway server Vitest project.
@@ -108,6 +114,7 @@ export const gatewayMethodsIsolatedTestFiles = [
   "src/gateway/server-methods/sessions.send-yield-resume.test.ts",
   "src/gateway/server-methods/system-agent-nested-inference.integration.test.ts",
   "src/gateway/server-methods/system-agent-setup-control-ui.test.ts",
+  "src/gateway/server-methods/transcripts.test.ts",
   "src/gateway/server-methods/users-preferences.test.ts",
   "src/gateway/server-methods/usage.test.ts",
   "src/gateway/server-methods/usage.sessions-usage.test.ts",

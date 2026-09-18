@@ -31,12 +31,6 @@ import { getRuntimeConfigSnapshot } from "../config/runtime-snapshot.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { createAbortError } from "../infra/abort-signal.js";
 import {
-  loadDeviceAuthToken,
-  loadDeviceAuthTokenReadOnly,
-  loadOriginDeviceToken,
-  loadOriginDeviceTokenReadOnly,
-} from "../infra/device-auth-store.js";
-import {
   loadDeviceIdentityIfPresent,
   loadOrCreateDeviceIdentity,
   type DeviceIdentity,
@@ -48,6 +42,7 @@ import { roleScopesAllow } from "../shared/operator-scope-compat.js";
 import { resolveSafeTimeoutDelayMs } from "../utils/timer-delay.js";
 import { VERSION } from "../version.js";
 import { resolveGatewayAuth } from "./auth-resolve.js";
+import { loadStoredOperatorDeviceAuthToken } from "./call-device-auth.js";
 import {
   ensureExplicitGatewayAuth,
   GatewayExplicitAuthRequiredError,
@@ -57,6 +52,7 @@ import {
 import {
   GatewayClient,
   isGatewayConnectAssemblyError,
+  prepareGatewayClientDeviceAuth,
   type GatewayClientCloseInfo,
   type GatewayClientOptions,
   type GatewayClientRequestOptions,
@@ -503,37 +499,6 @@ export function resolveDeviceIdentityForGatewayCall(
   } catch {
     // Read-only or restricted environments should still be able to call the
     // gateway with token/password auth without crashing before the RPC.
-    return null;
-  }
-}
-
-async function loadStoredOperatorDeviceAuthToken(
-  deviceIdentity: DeviceIdentity | null,
-  deviceAuthScope?: string,
-  sharedStateMode?: "read-only",
-): Promise<DeviceAuthEntry | null> {
-  if (!deviceIdentity) {
-    return null;
-  }
-  try {
-    if (deviceAuthScope) {
-      const loadToken =
-        sharedStateMode === "read-only" ? loadOriginDeviceTokenReadOnly : loadOriginDeviceToken;
-      return await loadToken({
-        gatewayScope: deviceAuthScope,
-        deviceId: deviceIdentity.deviceId,
-        role: "operator",
-        env: process.env,
-      });
-    }
-    const loadToken =
-      sharedStateMode === "read-only" ? loadDeviceAuthTokenReadOnly : loadDeviceAuthToken;
-    return await loadToken({
-      deviceId: deviceIdentity.deviceId,
-      role: "operator",
-      env: process.env,
-    });
-  } catch {
     return null;
   }
 }
@@ -1238,6 +1203,29 @@ async function callGatewayWithScopes<T = Record<string, unknown>>(
     deviceAuthScope,
     storedAuth,
   });
+  try {
+    await prepareGatewayClientDeviceAuth(
+      {
+        url,
+        token,
+        password,
+        edgeAuthHeaders,
+        tlsFingerprint,
+        deviceIdentity,
+        deviceAuthScope,
+        sharedStateMode: opts.sharedStateMode,
+        preparedDeviceAuth: storedAuth ?? undefined,
+        approvalRuntimeToken: opts.approvalRuntimeToken,
+        agentRuntimeIdentityToken: opts.agentRuntimeIdentityToken,
+      },
+      opts.signal,
+    );
+  } catch (error) {
+    if (opts.signal?.aborted) {
+      throw createGatewayRequestAbortError(opts.method);
+    }
+    throw error;
+  }
   const effectiveScopes =
     requestedStoredDeviceAuth && hasExplicitAuth && opts.requiredStoredDeviceAuthScopes
       ? opts.requiredStoredDeviceAuthScopes

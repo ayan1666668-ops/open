@@ -1,34 +1,28 @@
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
-import { DatabaseSync, StatementSync } from "node:sqlite";
 import { setTimeout as delay } from "node:timers/promises";
 import { afterEach, expect, it, vi } from "vitest";
 import { clearOpenClawStateDatabaseOpenFailure } from "../state/openclaw-state-db-cache.js";
 import { withExistingOpenClawStateSchema } from "../state/openclaw-state-db-schema-policy.js";
-import { closeOpenClawStateDatabaseAsync } from "../state/openclaw-state-db.js";
+import {
+  closeOpenClawStateDatabaseAsync,
+  runOpenClawStateWriteTransaction,
+} from "../state/openclaw-state-db.js";
 import * as workerStore from "../state/openclaw-state-worker-store.js";
 import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
 import * as tokens from "./device-auth-store.js";
+import { storeDeviceAuthTokenInDatabase } from "./device-auth-store.kernel.js";
+import { observeDeviceAuthHostSql } from "./device-auth-store.sql.test-support.js";
 import { holdDeviceAuthWriterForTest } from "./device-auth-store.test-support.js";
+import * as mutationAdmission from "./sqlite-worker-operation-admission.js";
 
 afterEach(() => vi.restoreAllMocks());
 
-function observeHostSql() {
-  return [
-    ...(["prepare", "exec", "close"] as const).map((method) =>
-      vi.spyOn(DatabaseSync.prototype, method),
-    ),
-    ...(["get", "all", "run", "iterate"] as const).map((method) =>
-      vi.spyOn(StatementSync.prototype, method),
-    ),
-  ];
-}
-
-it("keeps cold, warm, read-only, ordered token operations and cleanup off the host SQLite thread", async () => {
+it("keeps cold, warm, read-only, ordered token-data operations and cleanup off the host SQLite thread", async () => {
   await withOpenClawTestState({ label: "device-token-worker" }, async (state) => {
     const lookup = { deviceId: "synthetic-device", role: "operator", env: state.env };
     const origin = { ...lookup, gatewayScope: "wss://synthetic.example/rpc" };
-    const sql = observeHostSql();
+    const sql = observeDeviceAuthHostSql(state.statePath("state", "openclaw.sqlite"));
     try {
       expect(await tokens.loadDeviceAuthTokenReadOnly(lookup)).toBeNull();
       expect(await tokens.loadOriginDeviceTokenReadOnly(origin)).toBeNull();
@@ -74,12 +68,11 @@ it("keeps cold, warm, read-only, ordered token operations and cleanup off the ho
       expect((await fs.readdir(state.statePath("state"))).toSorted()).toEqual(artifacts);
       expect(await tokens.clearOriginDeviceToken(origin)).toBe(true);
       await closeOpenClawStateDatabaseAsync();
-      for (const spy of sql) {
-        expect(spy).not.toHaveBeenCalled();
-      }
+      expect(Object.values(sql.counts().data)).toEqual(Array(7).fill(0));
+      expect(Object.values(sql.counts().unknown)).toEqual(Array(7).fill(0));
       await expect(fs.stat(state.path("changed-state"))).rejects.toMatchObject({ code: "ENOENT" });
     } finally {
-      sql.forEach((spy) => spy.mockRestore());
+      sql.restore();
       await closeOpenClawStateDatabaseAsync();
     }
   });
@@ -143,26 +136,108 @@ it("remains responsive and rechecks token mutation authority after waiting for a
 });
 
 it.each(
-  [false, true].flatMap((origin) => ["cancel", "retire"].map((action) => ({ origin, action }))),
-)(
-  "does not publish an absent worker read after $action (origin: $origin)",
-  async ({ origin, action }) => {
-    await withOpenClawTestState({ label: "device-token-absent-admission" }, async (state) => {
-      // An existing-only open can settle without dispatching the operation callback.
-      vi.spyOn(workerStore, "runOpenClawStateWorkerOperation").mockResolvedValueOnce(undefined);
-      const controller = new AbortController();
-      let current = true;
-      const onSnapshot = vi.fn();
+  ["ordinary", "origin", "prepare"].flatMap((kind) =>
+    ["cancel", "retire"].map((action) => ({ kind, action })),
+  ),
+)("does not settle absent worker $kind after $action", async ({ kind, action }) => {
+  await withOpenClawTestState({ label: "device-token-absent-admission" }, async (state) => {
+    // An existing-only open can settle without dispatching the operation callback.
+    vi.spyOn(workerStore, "runOpenClawStateWorkerOperation").mockResolvedValueOnce(undefined);
+    const controller = new AbortController();
+    let current = true;
+    const onSnapshot = vi.fn();
+    const input = {
+      deviceId: "synthetic-device",
+      role: "operator",
+      env: state.env,
+      signal: controller.signal,
+      assertCurrent: () => {
+        if (!current) {
+          throw new Error("synthetic-retired");
+        }
+      },
+      onSnapshot,
+    };
+    const reading =
+      kind === "prepare"
+        ? tokens.prepareDeviceAuthStore({ ...input, readOnly: true })
+        : kind === "origin"
+          ? tokens.loadOriginDeviceTokenReadOnly({
+              ...input,
+              gatewayScope: "wss://synthetic.example",
+            })
+          : tokens.loadDeviceAuthTokenReadOnly(input);
+    if (action === "cancel") {
+      controller.abort(new Error("synthetic-canceled"));
+    } else {
+      current = false;
+    }
+    await expect(reading).rejects.toThrow(
+      action === "cancel" ? "synthetic-canceled" : "synthetic-retired",
+    );
+    expect(onSnapshot).not.toHaveBeenCalled();
+  });
+});
+
+it("retains host lifecycle custody while a native writer overlaps a token commit", async () => {
+  await withOpenClawTestState({ label: "device-token-native-writer" }, async (state) => {
+    const lookup = { deviceId: "synthetic-device", role: "operator", env: state.env };
+    await tokens.storeDeviceAuthToken({ ...lookup, token: "synthetic-before" });
+    const originalAdmission = mutationAdmission.createSqliteWorkerOperationAdmission;
+    let nativeWriteStarted = false;
+    vi.spyOn(mutationAdmission, "createSqliteWorkerOperationAdmission").mockImplementation(
+      (admit) =>
+        originalAdmission((request, grant) => {
+          admit(request, grant);
+          if (request.stage === "transaction" && !nativeWriteStarted) {
+            nativeWriteStarted = true;
+            runOpenClawStateWriteTransaction(
+              ({ db }) => {
+                storeDeviceAuthTokenInDatabase(db, {
+                  deviceId: "synthetic-native-device",
+                  role: "operator",
+                  token: "synthetic-native-token",
+                });
+              },
+              { env: state.env },
+            );
+          }
+        }),
+    );
+    await expect(
+      tokens.storeDeviceAuthToken({
+        ...lookup,
+        token: "synthetic-after",
+        expectedToken: "synthetic-before",
+      }),
+    ).resolves.toMatchObject({ token: "synthetic-after" });
+    expect(nativeWriteStarted).toBe(true);
+    expect(await tokens.loadDeviceAuthToken(lookup)).toMatchObject({ token: "synthetic-after" });
+    expect(
+      await tokens.loadDeviceAuthToken({ ...lookup, deviceId: "synthetic-native-device" }),
+    ).toMatchObject({ token: "synthetic-native-token" });
+  });
+});
+
+it.each([false, true])(
+  "does not deliver a token observation after source retirement (origin: %s)",
+  async (origin) => {
+    await withOpenClawTestState({ label: "device-token-observation-retirement" }, async (state) => {
+      let retired = false;
+      vi.spyOn(workerStore, "runOpenClawStateWorkerOperation").mockImplementationOnce(async () => {
+        queueMicrotask(() => {
+          queueMicrotask(() => {
+            clearOpenClawStateDatabaseOpenFailure(state.statePath("state", "openclaw.sqlite"));
+            retired = true;
+          });
+        });
+        return undefined;
+      });
+      const onSnapshot = vi.fn(() => retired);
       const input = {
         deviceId: "synthetic-device",
         role: "operator",
         env: state.env,
-        signal: controller.signal,
-        assertCurrent: () => {
-          if (!current) {
-            throw new Error("synthetic-retired");
-          }
-        },
         onSnapshot,
       };
       const reading = origin
@@ -171,15 +246,20 @@ it.each(
             gatewayScope: "wss://synthetic.example",
           })
         : tokens.loadDeviceAuthTokenReadOnly(input);
-      if (action === "cancel") {
-        controller.abort(new Error("synthetic-canceled"));
+      let rejection: unknown;
+      await reading.catch((error: unknown) => {
+        rejection = error;
+      });
+      expect(retired).toBe(true);
+      expect(onSnapshot.mock.results.some((result) => result.value === true)).toBe(false);
+      if (rejection === undefined) {
+        expect(onSnapshot).toHaveBeenCalledOnce();
       } else {
-        current = false;
+        expect(rejection).toMatchObject({
+          message: expect.stringContaining("read admission changed"),
+        });
+        expect(onSnapshot).not.toHaveBeenCalled();
       }
-      await expect(reading).rejects.toThrow(
-        action === "cancel" ? "synthetic-canceled" : "synthetic-retired",
-      );
-      expect(onSnapshot).not.toHaveBeenCalled();
     });
   },
 );

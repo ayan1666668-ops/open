@@ -61,23 +61,7 @@ type DeviceAuthClear = DeviceAuthLookup & {
 
 type DeviceAuthCommand = Extract<keyof OpenClawStateWorkerOperations, `deviceAuth.${string}`>;
 
-function executeDeviceAuth<Type extends DeviceAuthCommand>(
-  params: DeviceAuthOperation,
-  type: Type,
-  input: OpenClawStateWorkerOperations[Type]["input"],
-): Promise<OpenClawStateWorkerOperations[Type]["output"]>;
-function executeDeviceAuth<Type extends DeviceAuthCommand>(
-  params: DeviceAuthOperation,
-  type: Type,
-  input: OpenClawStateWorkerOperations[Type]["input"],
-  readOnly: boolean,
-): Promise<OpenClawStateWorkerOperations[Type]["output"] | undefined>;
-async function executeDeviceAuth<Type extends DeviceAuthCommand>(
-  params: DeviceAuthOperation,
-  type: Type,
-  input: OpenClawStateWorkerOperations[Type]["input"],
-  readOnly = false,
-): Promise<OpenClawStateWorkerOperations[Type]["output"] | undefined> {
+function captureDeviceAuthOperation(params: DeviceAuthOperation) {
   assertNoLegacyDeviceAuth(params.env);
   const context = captureOpenClawStateWorkerContext({ env: params.env });
   const { signal, assertCurrent } = params;
@@ -86,6 +70,29 @@ async function executeDeviceAuth<Type extends DeviceAuthCommand>(
     signal?.throwIfAborted();
     assertCurrent?.();
   };
+  return { context, signal, assertActive };
+}
+
+type CapturedDeviceAuthOperation = ReturnType<typeof captureDeviceAuthOperation>;
+
+function executeDeviceAuth<Type extends DeviceAuthCommand>(
+  captured: CapturedDeviceAuthOperation,
+  type: Type,
+  input: OpenClawStateWorkerOperations[Type]["input"],
+): Promise<OpenClawStateWorkerOperations[Type]["output"]>;
+function executeDeviceAuth<Type extends DeviceAuthCommand>(
+  captured: CapturedDeviceAuthOperation,
+  type: Type,
+  input: OpenClawStateWorkerOperations[Type]["input"],
+  readOnly: boolean,
+): Promise<OpenClawStateWorkerOperations[Type]["output"] | undefined>;
+async function executeDeviceAuth<Type extends DeviceAuthCommand>(
+  captured: CapturedDeviceAuthOperation,
+  type: Type,
+  input: OpenClawStateWorkerOperations[Type]["input"],
+  readOnly = false,
+): Promise<OpenClawStateWorkerOperations[Type]["output"] | undefined> {
+  const { context, signal, assertActive } = captured;
   const mutation =
     type === "deviceAuth.store" ||
     type === "deviceAuth.storeOrigin" ||
@@ -120,21 +127,36 @@ async function executeDeviceAuth<Type extends DeviceAuthCommand>(
   return result;
 }
 
+/** Open the shared actor during request preparation without reading or caching token facts. */
+export async function prepareDeviceAuthStore(
+  params: DeviceAuthOperation & { readOnly?: boolean },
+): Promise<void> {
+  const { context, assertActive } = captureDeviceAuthOperation(params);
+  assertActive();
+  const prepare = async () => {};
+  const options = { assertCurrent: assertActive };
+  await (params.readOnly
+    ? runOpenClawStateWorkerOperation(context, prepare, { ...options, existingOnly: true })
+    : runOpenClawStateWorkerOperation(context, prepare, options));
+  assertActive();
+}
+
 async function readDeviceAuth(
   params: DeviceAuthLookup & DeviceAuthRead & { gatewayScope?: string },
   readOnly: boolean,
 ): Promise<DeviceAuthEntry | null> {
-  const { deviceId, role, gatewayScope, onSnapshot, signal, assertCurrent } = params;
+  const { deviceId, role, gatewayScope, onSnapshot } = params;
+  const captured = captureDeviceAuthOperation(params);
   const observation = (await (gatewayScope === undefined
-    ? executeDeviceAuth(params, "deviceAuth.read", { deviceId, role, readOnly }, readOnly)
+    ? executeDeviceAuth(captured, "deviceAuth.read", { deviceId, role, readOnly }, readOnly)
     : executeDeviceAuth(
-        params,
+        captured,
         "deviceAuth.readOrigin",
         { deviceId, role, gatewayScope, readOnly },
         readOnly,
       ))) ?? { entry: null, expectedToken: null };
-  signal?.throwIfAborted();
-  assertCurrent?.();
+  // Recheck the captured source in the frame that publishes the observation.
+  captured.assertActive();
   onSnapshot?.(observation);
   return observation.entry;
 }
@@ -154,22 +176,26 @@ export function loadDeviceAuthTokenReadOnly(
 export async function loadDeviceAuthTokens(
   params: DeviceAuthOperation & { deviceId: string },
 ): Promise<DeviceAuthEntry[]> {
-  return await executeDeviceAuth(params, "deviceAuth.list", { deviceId: params.deviceId });
+  const deviceId = params.deviceId;
+  return await executeDeviceAuth(captureDeviceAuthOperation(params), "deviceAuth.list", {
+    deviceId,
+  });
 }
 
 export async function storeDeviceAuthToken(
   params: DeviceAuthWrite,
 ): Promise<DeviceAuthEntry | null> {
-  return await executeDeviceAuth(params, "deviceAuth.store", {
+  const input = {
     deviceId: params.deviceId,
     ...createDeviceAuthEntry(params),
     expectedToken: params.expectedToken,
-  });
+  };
+  return await executeDeviceAuth(captureDeviceAuthOperation(params), "deviceAuth.store", input);
 }
 
 export async function clearDeviceAuthToken(params: DeviceAuthClear): Promise<boolean> {
   const { deviceId, role, expectedToken, observedToken } = params;
-  return await executeDeviceAuth(params, "deviceAuth.clear", {
+  return await executeDeviceAuth(captureDeviceAuthOperation(params), "deviceAuth.clear", {
     deviceId,
     role,
     expectedToken,
@@ -192,19 +218,24 @@ export function loadOriginDeviceTokenReadOnly(
 export async function storeOriginDeviceToken(
   params: DeviceAuthWrite & { gatewayScope: string },
 ): Promise<DeviceAuthEntry | null> {
-  return await executeDeviceAuth(params, "deviceAuth.storeOrigin", {
+  const input = {
     gatewayScope: params.gatewayScope,
     deviceId: params.deviceId,
     ...createDeviceAuthEntry(params),
     expectedToken: params.expectedToken,
-  });
+  };
+  return await executeDeviceAuth(
+    captureDeviceAuthOperation(params),
+    "deviceAuth.storeOrigin",
+    input,
+  );
 }
 
 export async function clearOriginDeviceToken(
   params: DeviceAuthClear & { gatewayScope: string },
 ): Promise<boolean> {
   const { deviceId, role, gatewayScope, expectedToken, observedToken } = params;
-  return await executeDeviceAuth(params, "deviceAuth.clearOrigin", {
+  return await executeDeviceAuth(captureDeviceAuthOperation(params), "deviceAuth.clearOrigin", {
     deviceId,
     role,
     gatewayScope,
