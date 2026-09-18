@@ -640,12 +640,14 @@ async function waitForProcessClose(
 
 type WrapperCleanupProof =
   | { kind: "signal"; entrypoint: "node" | "pnpm"; repeated: boolean; cooperative?: boolean }
+  | { kind: "readiness" }
   | { kind: "preparation"; cleanupFails?: boolean }
   | { kind: "stdin"; target: "macos" | "capsule" }
   | { kind: "escaped" }
   | { kind: "removal"; target: "script" | "source"; exitCode: 0 | 23 };
 
 type WrapperFixtureIdentity = { pid: number; parentPid: number; cwd: string };
+type WrapperReadinessPhase = { phase: string; at: number; pid?: number };
 
 async function runWrapperCleanupProof(proof: WrapperCleanupProof): Promise<void> {
   const entrypoint = proof.kind === "signal" ? proof.entrypoint : "node";
@@ -654,7 +656,8 @@ async function runWrapperCleanupProof(proof: WrapperCleanupProof): Promise<void>
   const preparationCleanupFailure = proof.kind === "preparation" && proof.cleanupFails;
   const readsStdin = proof.kind === "stdin" || scriptRemoval;
   const blacksmith = !readsStdin;
-  const hasDescendant = proof.kind === "signal" || proof.kind === "escaped";
+  const hasDescendant =
+    proof.kind === "signal" || proof.kind === "escaped" || proof.kind === "readiness";
   await withShimFixture(
     "scripts/crabbox-wrapper.mjs",
     async ({ checkoutRoot: producer, fixtureRoot, implementationPath, wrapperPath }) => {
@@ -674,20 +677,42 @@ async function runWrapperCleanupProof(proof: WrapperCleanupProof): Promise<void>
       const releasePath = path.join(fixtureRoot, "escaped.release");
       const wrapperPidPath = path.join(fixtureRoot, "wrapper.pid");
       const wrapperExitPath = path.join(fixtureRoot, "wrapper-exit.json");
+      const phasesPath = path.join(fixtureRoot, "readiness-phases.json");
       const ownerPreload = path.join(fixtureRoot, "owner.cjs");
       writeFileSync(
         ownerPreload,
         `
 const fs = require("node:fs");
 const path = require("node:path");
-if (path.resolve(process.argv[1] || ".") === ${JSON.stringify(implementationPath)}) {
+const entry = path.resolve(process.argv[1] || ".");
+const phasesPath = ${JSON.stringify(phasesPath)};
+const phases = fs.existsSync(phasesPath) ? JSON.parse(fs.readFileSync(phasesPath, "utf8")) : [];
+const phase = (name) => {
+  phases.push({ phase: name, at: Date.now(), pid: process.pid });
+  const temporary = phasesPath + "." + process.pid;
+  fs.writeFileSync(temporary, JSON.stringify(phases));
+  fs.renameSync(temporary, phasesPath);
+};
+if (entry === ${JSON.stringify(wrapperPath)}) phase("entrypoint started");
+if (entry === ${JSON.stringify(implementationPath)}) {
+  phase("loading wrapper");
   fs.writeFileSync(${JSON.stringify(wrapperPidPath)}, String(process.pid));
   process.once("exit", (code) => fs.writeFileSync(${JSON.stringify(wrapperExitPath)}, JSON.stringify({ code })));
+  if (${proof.kind === "readiness"}) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0);
   const childProcess = require("node:child_process");
   const spawn = childProcess.spawn;
   childProcess.spawn = (command, args, options) => {
-    if (args?.[0] === "run" && args[1] !== "--help") fs.writeFileSync(${JSON.stringify(runSpawnedPath)}, "spawned");
+    if (args?.[0] === "--version") phase("wrapper loaded; probing Crabbox version");
+    if (args?.[0] === "run" && args[1] !== "--help") {
+      phase("starting Crabbox run");
+      fs.writeFileSync(${JSON.stringify(runSpawnedPath)}, "spawned");
+    }
     return spawn(command, args, options);
+  };
+  const spawnSync = childProcess.spawnSync;
+  childProcess.spawnSync = (command, args, options) => {
+    if (args?.[0] === "sync-plan") phase("preparing source capsule");
+    return spawnSync(command, args, options);
   };
   if (${proof.kind === "stdin"}) {
     const readFile = fs.readFileSync;
@@ -819,6 +844,25 @@ if (path.resolve(process.argv[1] || ".") === ${JSON.stringify(implementationPath
       let preparationIdentity: WrapperFixtureIdentity | undefined;
       let descendantPid = 0;
       let failure: Error | undefined;
+      let readinessFailure: Error | undefined;
+      const readinessTimeoutMs = 8_000;
+      const waitForReadiness = async (file: string) => {
+        try {
+          await waitForCondition(() => existsSync(file), readinessTimeoutMs);
+        } catch (cause) {
+          const phases: WrapperReadinessPhase[] = JSON.parse(readFileSync(phasesPath, "utf8"));
+          const startedAt = phases[0]!.at;
+          readinessFailure = new Error(
+            `wrapper readiness not observed within ${readinessTimeoutMs / 1000} s; last observed phase ${phases.at(-1)!.phase}\n${phases.map(({ phase, at }) => `+${at - startedAt} ms: ${phase}`).join("\n")}\n${output}`,
+            { cause },
+          );
+          throw readinessFailure;
+        }
+      };
+      writeFileSync(
+        phasesPath,
+        JSON.stringify([{ phase: "entrypoint spawn requested", at: Date.now() }]),
+      );
       try {
         let exited: Promise<{ status: number | null; signal: NodeJS.Signals | null }>;
         if (entrypoint === "pnpm") {
@@ -875,20 +919,18 @@ if (path.resolve(process.argv[1] || ".") === ${JSON.stringify(implementationPath
           }
         }
         if (proof.kind === "preparation") {
-          await waitForCondition(() => existsSync(preparationPath));
+          await waitForReadiness(preparationPath);
           preparationIdentity = JSON.parse(readFileSync(preparationPath, "utf8"));
           expect(existsSync(path.join(preparationIdentity!.cwd, "fixture.txt"))).toBe(true);
           stop();
         } else if (proof.kind === "stdin") {
-          await waitForCondition(() => existsSync(stdinReadyPath));
+          await waitForReadiness(stdinReadyPath);
           if (proof.target === "capsule") {
             expect(readdirSync(syncRoot)).toHaveLength(1);
           }
           stop();
         } else if (hasDescendant) {
-          await waitForCondition(() => existsSync(descendantPidPath)).catch((cause: unknown) => {
-            throw new Error(`wrapper did not publish descendant readiness:\n${output}`, { cause });
-          });
+          await waitForReadiness(descendantPidPath);
           descendantPid = Number.parseInt(readFileSync(descendantPidPath, "utf8"), 10);
           identity = JSON.parse(readFileSync(identityPath, "utf8"));
           expect(isProcessAlive(descendantPid)).toBe(true);
@@ -1072,6 +1114,7 @@ if (path.resolve(process.argv[1] || ".") === ${JSON.stringify(implementationPath
           hasDescendant || proof.kind === "removal" || existsSync(runSpawnedPath);
         if (
           failure !== undefined &&
+          readinessFailure === undefined &&
           (!wrapperPid ||
             (runReceiptRequired && !identity) ||
             (hasDescendant && !descendantPid) ||
@@ -1084,13 +1127,19 @@ if (path.resolve(process.argv[1] || ".") === ${JSON.stringify(implementationPath
         throw Object.assign(
           new AggregateError(
             failure === undefined ? [cause] : [failure, cause],
-            "fixture writers did not settle",
+            readinessFailure
+              ? `${readinessFailure.message}\nfixture teardown could not be verified`
+              : "fixture writers did not settle",
             { cause: failure ?? cause },
           ),
           { processTreeState: "indeterminate" },
         );
       }
       if (failure !== undefined) {
+        // A startup timeout cannot certify writers whose ownership receipts never arrived.
+        if (readinessFailure) {
+          Object.assign(failure, { processTreeState: "indeterminate" });
+        }
         throw failure;
       }
     },
@@ -1207,17 +1256,12 @@ function withSparseSyncRoot(
   env: Record<string, string>,
   check: (fixture: { result: ReturnType<typeof runWrapper>; syncRoot: string }) => void,
 ): void {
-  const syncRoot = path.join(repoRoot, name);
-  rmSync(syncRoot, { recursive: true, force: true });
-  try {
-    const result = runDefaultWrapper(["run", "--provider", "aws", "--", "echo ok"], {
-      ...cleanSparseSyncOptions,
-      env: { ...env, OPENCLAW_CRABBOX_SYNC_TMPDIR: syncRoot },
-    });
-    check({ result, syncRoot });
-  } finally {
-    rmSync(syncRoot, { recursive: true, force: true });
-  }
+  const syncRoot = path.join(artifactTempDirs.make("openclaw-crabbox-sparse-sync-"), name);
+  const result = runDefaultWrapper(["run", "--provider", "aws", "--", "echo ok"], {
+    ...cleanSparseSyncOptions,
+    env: { ...env, OPENCLAW_CRABBOX_SYNC_TMPDIR: syncRoot },
+  });
+  check({ result, syncRoot });
 }
 
 function runSparseShell(shellScript: string) {
@@ -5824,6 +5868,20 @@ cp.spawnSync = (command, args, options) => {
     });
   });
 
+  it("keeps overlapping sparse-sync fixtures from deleting each other's files", () => {
+    const name = ".crabbox-test-isolation-sync-root";
+    withSparseSyncRoot(name, {}, ({ result, syncRoot }) => {
+      expectSuccessfulWrapperRun(result);
+      const marker = path.join(syncRoot, "active-fixture.txt");
+      writeFileSync(marker, "owned by the outer fixture");
+      withSparseSyncRoot(name, {}, ({ result: innerResult }) => {
+        expectSuccessfulWrapperRun(innerResult);
+        expect(readFileSync(marker, "utf8")).toBe("owned by the outer fixture");
+      });
+      expect(readFileSync(marker, "utf8")).toBe("owned by the outer fixture");
+    });
+  });
+
   it("fails sparse-sync full checkout early when the sync root is too low on disk", () => {
     withSparseSyncRoot(
       ".crabbox-test-low-disk-sync-root",
@@ -5873,6 +5931,48 @@ cp.spawnSync = (command, args, options) => {
     "terminates Crabbox descendants before parent signal exit through %s",
     async (entrypoint) => {
       await runWrapperCleanupProof({ kind: "signal", entrypoint, repeated: false });
+    },
+    25_000,
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "reports the readiness deadline and last phase without inventing a writer failure",
+    async () => {
+      let failure: Error | undefined;
+      try {
+        await runWrapperCleanupProof({ kind: "readiness" });
+      } catch (error) {
+        if (!(error instanceof Error)) {
+          throw error;
+        }
+        failure = error;
+      }
+      if (!failure) {
+        throw new Error("held wrapper unexpectedly became ready");
+      }
+      const retained = /retained fixture (.+) and output /u.exec(failure.message)?.[1];
+      expect(retained).toBeDefined();
+      if (!retained) {
+        throw failure;
+      }
+      try {
+        expect(failure.message).toContain(
+          "wrapper readiness not observed within 8 s; last observed phase loading wrapper",
+        );
+        expect(failure.message).not.toContain("fixture writers did not settle");
+        expect(failure.message).not.toContain("fixture ownership receipts are incomplete");
+        expect(existsSync(path.join(retained, "run.spawned"))).toBe(false);
+      } finally {
+        // This injected preload cannot spawn children; join both recorded owners before disposal.
+        const phases: WrapperReadinessPhase[] = JSON.parse(
+          readFileSync(path.join(retained, "readiness-phases.json"), "utf8"),
+        );
+        expect(phases.at(-1)?.phase).toBe("loading wrapper");
+        expect(phases.filter(({ pid }) => pid).every(({ pid }) => !isProcessAlive(pid!))).toBe(
+          true,
+        );
+        rmSync(retained, { recursive: true, force: true });
+      }
     },
     25_000,
   );
