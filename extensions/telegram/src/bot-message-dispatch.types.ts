@@ -176,6 +176,7 @@ export type TelegramReplyStateSlice = {
   reasoningStepState: TelegramReasoningStepState;
   bufferedFinalSettlement: TelegramBufferedFinalSettlement | undefined;
   sentBlockMediaUrls: Set<string>;
+  sentBlockMediaTexts: Set<string>;
   splitReasoningOnNextStream: boolean;
 };
 
