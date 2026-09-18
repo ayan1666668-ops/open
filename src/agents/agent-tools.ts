@@ -22,6 +22,7 @@ import {
   bindAssembledAgentToolActionDescriptor,
   copyAgentToolMetadata,
 } from "./agent-tool-metadata.js";
+import { resolveCodingToolsCapabilityProfile } from "./agent-tools.capability-profile.js";
 import { finalizeAgentTools } from "./agent-tools.finalize.js";
 import {
   filterToolsByMessageProvider,
@@ -40,7 +41,6 @@ import { waitForExecScope } from "./bash-process-registry.js";
 import { resolveProcessToolScopeKey } from "./bash-process-scope.js";
 import type { ExecToolDefaults } from "./bash-tools.exec-types.js";
 import { listChannelAgentTools } from "./channel-tools.js";
-import { resolveConversationCapabilityProfile } from "./conversation-capability-profile.js";
 import { isConversationToolAllowed } from "./conversation-tool-policy-pipeline.js";
 import { createCoreCodingTools } from "./core-coding-tools.js";
 import {
@@ -108,54 +108,7 @@ export function createOpenClawCodingToolsInternal(
   // Prefer the already-resolved sandbox context policy. Recomputing from
   // sessionKey/config can lose the real sandbox agent when callers pass a
   // legacy alias like `main` instead of an agent session key.
-  const capabilityProfile =
-    options?.conversationCapabilityProfile ??
-    resolveConversationCapabilityProfile({
-      config: options?.config,
-      sessionKey: options?.sessionKey,
-      runSessionKey: options?.runSessionKey,
-      sessionId: options?.sessionId,
-      runId: options?.runId,
-      agentId: options?.policyAgentId ?? options?.agentId,
-      agentDir: options?.agentDir,
-      agentAccountId: options?.agentAccountId,
-      messageProvider: options?.messageProvider,
-      messageChannel: options?.messageChannel,
-      chatType: options?.chatType,
-      messageTo: options?.messageTo,
-      messageThreadId: options?.messageThreadId,
-      conversationToolPolicy: options?.conversationToolPolicy,
-      currentChannelId: options?.currentChannelId,
-      currentMessagingTarget: options?.currentMessagingTarget,
-      currentThreadTs: options?.currentThreadTs,
-      currentMessageId: options?.currentMessageId,
-      groupId: options?.groupId,
-      groupChannel: options?.groupChannel,
-      groupSpace: options?.groupSpace,
-      memberRoleIds: options?.memberRoleIds,
-      spawnedBy: options?.spawnedBy,
-      senderId: options?.senderId,
-      senderName: options?.senderName,
-      senderUsername: options?.senderUsername,
-      senderE164: options?.senderE164,
-      senderIsOwner: options?.senderIsOwner,
-      modelProvider: options?.modelProvider,
-      modelId: options?.modelId,
-      modelApi: options?.modelApi,
-      modelContextWindowTokens: options?.modelContextWindowTokens,
-      modelHasVision: options?.modelHasVision,
-      workspaceDir: options?.workspaceDir,
-      cwd: options?.cwd,
-      spawnWorkspaceDir: options?.spawnWorkspaceDir,
-      skillsSnapshot: options?.skillsSnapshot,
-      sandboxToolPolicy: sandbox?.tools,
-      runtimeToolAllowlist: options?.runtimeToolAllowlist,
-      inheritRuntimeToolAllowlist: options?.inheritRuntimeToolAllowlist,
-      inputProvenance: options?.inputProvenance,
-      trustedInternalHandoff: options?.trustedInternalHandoff,
-      scheduledToolPolicy: options?.scheduledToolPolicy,
-      pluginMetadataSnapshot: options?.preparedModelRuntime?.metadataSnapshot,
-    });
+  const capabilityProfile = resolveCodingToolsCapabilityProfile({ options, sandbox });
   const { agentId, runtimePluginToolGrant } = capabilityProfile.policy;
   // Tool restrictions can belong to another agent. Never use that owner for
   // credentials, requester identity, or execution hooks.
@@ -320,6 +273,9 @@ export function createOpenClawCodingToolsInternal(
   });
   const processToolAvailabilityRef: NonNullable<ExecToolDefaults["processToolAvailabilityRef"]> =
     {};
+  const fileWriteToolAvailabilityRef: NonNullable<
+    ExecToolDefaults["fileWriteToolAvailabilityRef"]
+  > = {};
   const coreTools = createCoreCodingTools({
     abortSignal: options?.abortSignal,
     attachmentReadRoot,
@@ -358,6 +314,7 @@ export function createOpenClawCodingToolsInternal(
       agentId,
       cleanupMs: options?.exec?.cleanupMs ?? execConfig.cleanupMs,
       processToolAvailabilityRef,
+      fileWriteToolAvailabilityRef,
       scopeKey,
       sessionKey: options?.sessionKey,
       runId: options?.runId,
@@ -745,6 +702,9 @@ export function createOpenClawCodingToolsInternal(
   );
   authorizedTools.forEach(bindAssembledAgentToolActionDescriptor);
   processToolAvailabilityRef.value = authorizedTools.some((tool) => tool.name === "process");
+  fileWriteToolAvailabilityRef.value = authorizedTools.some(
+    (tool) => tool.name === "write" || tool.name === "edit" || tool.name === "apply_patch",
+  );
   if (shouldInheritEffectiveToolAllowlist) {
     // Snapshot exporter only: this copies authorizedTools for descendants and
     // never filters the mandatory structured_output tool from this turn.
