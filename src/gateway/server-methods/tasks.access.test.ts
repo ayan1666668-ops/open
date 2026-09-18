@@ -1,4 +1,4 @@
-import { expectDefined } from "@openclaw/normalization-core";
+import { expectDefined, toErrorObject } from "@openclaw/normalization-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   replaceSessionEntrySync,
@@ -246,7 +246,7 @@ describe("task page access snapshots", () => {
             }
             resolve();
           } catch (error) {
-            reject(error);
+            reject(toErrorObject(error, "Task access mutation failed"));
           }
         });
       });
