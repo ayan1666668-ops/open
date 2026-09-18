@@ -2,7 +2,7 @@
 
 ### Fixes
 
-- Codex: restore background memory narratives and isolated text completions on hosts with administrator-managed hooks, preserving those hooks in a private process while keeping ordinary hooks and model tools isolated.
+- Codex: restore background memory narratives and isolated text completions on agent-scoped local runtimes with administrator-managed hooks, preserving managed hooks and existing native-account/proxy routing while keeping ordinary hooks and model tools isolated. (#151658)
 
 ### Changes
 

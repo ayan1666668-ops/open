@@ -7,6 +7,7 @@ import {
   resolveCodexAppServerRuntimeOptions,
 } from "./config.js";
 import { createAttributedCodexAssistantMessage } from "./event-projector-assistant-message.js";
+import { isCodexAppServerProxyLaunch } from "./launch-args.js";
 import { assertCodexPassiveTurnItems } from "./protocol-validators.js";
 
 type CodexIsolatedCompletionParams = Parameters<
@@ -27,18 +28,19 @@ export async function runCodexIsolatedCompletion(
     throw new Error("Codex native isolated completion requires harness-owned authorization.");
   }
   const pluginConfig = readCodexPluginConfig(options.pluginConfig);
+  const homeScope = resolveCodexAppServerHomeScope({ appServer: pluginConfig.appServer });
+  const { start } = resolveCodexAppServerRuntimeOptions({ pluginConfig: options.pluginConfig });
   const privateStdio =
-    resolveCodexAppServerRuntimeOptions({ pluginConfig: options.pluginConfig }).start.transport ===
-    "stdio";
+    start.transport === "stdio" &&
+    homeScope === "agent" &&
+    !isCodexAppServerProxyLaunch(start.args);
   const authRequirement = authorization.plan.modelRoute?.authRequirement;
   const authHandoff = await resolveCodexAppServerPreparedAuthHandoff({
     authRequirement,
     authProfileId: authorization.plan.forwardedAuthProfileId,
     authProfileStore: authorization.authProfileStore,
     agentDir: params.agentDir,
-    homeScope: privateStdio
-      ? "agent"
-      : resolveCodexAppServerHomeScope({ appServer: pluginConfig.appServer }),
+    homeScope,
     config: params.config,
     subscriptionProfileRequiredError:
       "Prepared Codex subscription route requires a scoped native OAuth or token profile.",
