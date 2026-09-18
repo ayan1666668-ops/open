@@ -182,7 +182,12 @@ export async function resolveDispatchTelegramContext(params: {
           replyChain,
           params.context.cfg,
           { ...telegramCfg, historyLimit: params.context.historyLimit },
-          { threadSpec, promptContextAmbientWatermark: ambientWatermark },
+          {
+            threadSpec,
+            promptContextMinTimestampMs:
+              params.context.ctxPayload.SessionTranscriptContext?.minTimestampMs,
+            promptContextAmbientWatermark: ambientWatermark,
+          },
         )),
       ],
       historyLimit: params.context.historyLimit,

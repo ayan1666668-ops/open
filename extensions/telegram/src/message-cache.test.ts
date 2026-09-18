@@ -336,6 +336,97 @@ describe("telegram message cache", () => {
     ]);
   });
 
+  it("prefers exact stored ancestors over stale embedded content and topic metadata", async () => {
+    const { bucketKey, store } = createMemoryStore();
+    const cache = cacheFor(bucketKey, store);
+    await record(
+      cache,
+      message(8, "Ada", {
+        caption: "Corrected photo",
+        photo: photo("photo-2"),
+        edit_date: 1_736_380_720,
+      }),
+      { providerObservedThread: { scope: "none" } },
+    );
+    const chain = await replyChain(
+      cache,
+      message(10, "Grace", {
+        message_thread_id: 77,
+        reply_to_message: message(9, "Lin", {
+          reply_to_message: message(8, "Ada", {
+            caption: "Stale photo",
+            photo: photo("photo-1"),
+            message_thread_id: 77,
+            reply_to_message: message(7, "Lin", { text: "Stale ancestry" }),
+          }),
+        }),
+      }),
+    );
+    expect(chain.map((node) => node.messageId)).toEqual(["9", "8"]);
+    expect(chain[1]).toMatchObject({
+      body: "Corrected photo",
+      mediaRef: "telegram:file/photo-2",
+    });
+    expect(chain[1]?.threadId).toBeUndefined();
+    expect(chain[1]?.replyToId).toBeUndefined();
+  });
+
+  it("does not borrow local message identities from cross-chat embedded replies", async () => {
+    const { bucketKey, store } = createMemoryStore();
+    const cache = cacheFor(bucketKey, store);
+    await record(cache, message(8, "Ada", { text: "Unrelated local message" }));
+    const chain = await replyChain(
+      cache,
+      message(10, "Grace", {
+        reply_to_message: message(9, "Lin", {
+          reply_to_message: message(8, "Ada", {
+            chat: { id: -1002, type: "supergroup", title: "Other chat" },
+            text: "Foreign snapshot",
+          }),
+        }),
+      }),
+    );
+    expect(chain.map((node) => node.messageId)).toEqual(["9"]);
+  });
+
+  it("propagates ancestor lookup failures instead of using an embedded snapshot", async () => {
+    const { bucketKey, store } = createMemoryStore();
+    const cache = cacheFor(bucketKey, store);
+    const unavailable: Cache = {
+      ...cache,
+      async get(params) {
+        if (params.messageId === "8") {
+          throw new Error("ancestor lookup unavailable");
+        }
+        return cache.get(params);
+      },
+    };
+    await expect(
+      replyChain(
+        unavailable,
+        message(10, "Grace", {
+          reply_to_message: message(9, "Lin", {
+            reply_to_message: message(8, "Ada", { text: "Stale fallback" }),
+          }),
+        }),
+      ),
+    ).rejects.toThrow("ancestor lookup unavailable");
+  });
+
+  it.each([
+    { boundary: "depth cap", ids: [9, 8, 7, 6, 5], expected: ["9", "8", "7", "6"] },
+    { boundary: "cycle", ids: [9, 8, 9], expected: ["9", "8"] },
+  ])("bounds embedded-only reply traversal at the $boundary", async ({ ids, expected }) => {
+    const { bucketKey, store } = createMemoryStore();
+    const cache = cacheFor(bucketKey, store);
+    let reply: Message | undefined;
+    for (const id of ids.toReversed()) {
+      reply = message(id, "Ada", { reply_to_message: reply });
+    }
+    const chain = await replyChain(cache, message(10, "Grace", { reply_to_message: reply }));
+    expect(chain.map((node) => node.messageId)).toEqual(expected);
+  });
+
   it("hydrates reply chains from persisted cached messages", async () => {
     const { bucketKey, store } = createMemoryStore();
     const photoMessage = message(9000, "Kesava", {

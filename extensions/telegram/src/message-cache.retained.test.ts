@@ -414,6 +414,46 @@ describe("Telegram retained message history", () => {
     ).toEqual(["9", "10"]);
   });
 
+  it("preserves embedded-only reply ancestry after legacy promotion and database reopen", async () => {
+    const legacy = {
+      sourceMessage: message(9, {
+        message_thread_id: 77,
+        reply_to_message: message(8, { caption: "Original photo", photo: photo("photo-1") }),
+      }),
+      threadId: "77",
+    };
+    await openStores().bounded.register(`${keyPrefix}9`, legacy);
+    expect(await get(createTelegramMessageCache({ scope }), 9)).toMatchObject({
+      messageId: "9",
+    });
+    resetTelegramMessageCacheForTest();
+    resetPluginStateStoreForTests();
+
+    const reopened = createTelegramMessageCache({ scope });
+    const chain = await buildTelegramReplyChain({
+      cache: reopened,
+      accountId,
+      chatId,
+      msg: message(10, { message_thread_id: 77, reply_to_message: message(9) }),
+    });
+    expect(chain.map((node) => node.messageId)).toEqual(["9", "8"]);
+    expect(chain[1]).toMatchObject({
+      body: "Original photo",
+      mediaRef: "telegram:file/photo-1",
+      threadId: "77",
+    });
+    expect(chain.map((node) => node.historyEligible)).toEqual([undefined, undefined]);
+    expect(await history(reopened, { threadId: 77 })).toEqual({
+      messages: [],
+      hasMore: false,
+    });
+    expect(await get(reopened, 8)).toBeNull();
+    const { bounded, retained } = openStores();
+    expect(await bounded.count()).toBe(0);
+    expect(await retained.count()).toBe(1);
+    expect(await retained.lookup(`${keyPrefix}0000000009`)).toEqual(legacy);
+  });
+
   it("recovers a committed promotion whose completion was interrupted", async () => {
     const { bounded, retained } = openStores();
     await bounded.register(`${keyPrefix}9`, { version: 1, sourceMessage: message(9) });

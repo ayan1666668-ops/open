@@ -36,7 +36,7 @@ import {
   isTelegramHistoryEntryAfterAmbientWatermark,
   isTelegramSelfSenderName,
 } from "./group-history-window.js";
-import { isTelegramHistoryNodeAllowed, readTelegramHistory } from "./history-policy.js";
+import { isTelegramHistoryNodeAllowed, readTelegramHistoryWindow } from "./history-policy.js";
 import {
   isTelegramMessageFromCurrentBot,
   resolveProviderObservedTelegramThreadSpec,
@@ -449,6 +449,13 @@ export function createTelegramMessageContextRuntime({
     mediaByMessageId?: ReadonlyMap<string, TelegramMediaRef>,
     selectedMessageIds?: TelegramPromptContextMessageSelection,
   ): Promise<TelegramPromptContextEntry[]> => {
+    const body = getTelegramTextParts(msg).text.trim();
+    if (
+      /^\/(?:new|reset)(?:@[A-Za-z0-9_]+)?(?:\s|$)/i.test(body) &&
+      !/^\/reset(?:@[A-Za-z0-9_]+)?\s+soft(?:\s|$)/i.test(body)
+    ) {
+      return [];
+    }
     const isGroup = msg.chat.type === "group" || msg.chat.type === "supergroup";
     const groupHistoryLimit = Math.max(
       0,
@@ -460,6 +467,13 @@ export function createTelegramMessageContextRuntime({
       config: runtimeTelegramCfg,
       senderId: msg.from?.id,
     });
+    if (
+      (isGroup ? groupHistoryLimit : dmHistoryLimit) === 0 &&
+      replyChainNodes.length === 0 &&
+      !selectedMessageIds?.size
+    ) {
+      return [];
+    }
     const messageId = typeof msg.message_id === "number" ? String(msg.message_id) : undefined;
     const currentNode = await messageCache.get({ accountId, chatId: msg.chat.id, messageId });
     const threadId =
@@ -491,12 +505,12 @@ export function createTelegramMessageContextRuntime({
       ),
     );
     if (isGroup && groupHistoryLimit > 0) {
-      const history = await readTelegramHistory({
+      const history = await readTelegramHistoryWindow({
         ...historyScope,
         before: messageId,
         limit: groupHistoryLimit,
       });
-      for (const node of history.messages) {
+      for (const node of history) {
         if (
           (options?.promptContextMinTimestampMs !== undefined &&
             node.timestamp !== undefined &&

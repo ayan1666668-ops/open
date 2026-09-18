@@ -164,6 +164,7 @@ export const databaseWorkerExtensionTestFiles = [
   "extensions/sms/src/media.test.ts",
   "extensions/synology-chat/src/outbound-media.test.ts",
   "extensions/telegram/src/action-runtime.test.ts",
+  "extensions/telegram/src/bot-handlers.message-context.runtime.test.ts",
   "extensions/telegram/src/bot-message-dispatch.context-history.test.ts",
   "extensions/telegram/src/bot-message-dispatch.context-recovery.test.ts",
   "extensions/telegram/src/bot-message-dispatch.delivery-transcript.test.ts",

@@ -31,6 +31,7 @@ import { buildTelegramApprovalCallbackData } from "./approval-callback-data.js";
 import type { TelegramBotDeps } from "./bot-deps.js";
 import { telegramBotInfoForTest } from "./bot.create-telegram-bot.test-support.js";
 import {
+  createReplyPhotoMessage,
   createTelegramCallbackContext,
   createTelegramReactionContext,
   makeTelegramKeyedStoreTestMock,
@@ -266,19 +267,6 @@ function createTelegramPluginCallbackHandler(params: {
     },
   });
   return getTelegramCallbackHandlerForTests();
-}
-
-function createReplyPhotoMessage(text: string) {
-  return {
-    chat: { id: 7, type: "private" },
-    text,
-    date: 1_736_380_800,
-    reply_to_message: {
-      message_id: 9001,
-      photo: [{ file_id: "reply-photo-1" }],
-      from: { first_name: "Ada" },
-    },
-  };
 }
 
 function makeExecApprovalTelegramConfig(
@@ -4416,6 +4404,8 @@ describe("createTelegramBot", () => {
           date: 1736380750,
           from: { id: 2, first_name: "Ada" },
           reply_to_message: {
+            chat: { id: 7, type: "private", first_name: "Ada" },
+            date: 1736380700,
             message_id: 9000,
             photo: [{ file_id: "root-photo-1", file_unique_id: "root-photo-unique-1" }],
             from: { id: 1, first_name: "Kesava" },
@@ -4437,6 +4427,8 @@ describe("createTelegramBot", () => {
           date: 1736380800,
           from: { id: 3, first_name: "Grace" },
           reply_to_message: {
+            chat: { id: 7, type: "private", first_name: "Ada" },
+            date: 1736380750,
             message_id: 9001,
             text: "r u back from hermes",
             from: { id: 2, first_name: "Ada" },
@@ -5002,6 +4994,8 @@ describe("createTelegramBot", () => {
           message_id: 101,
           from: { id: 42, first_name: "Ada" },
           reply_to_message: {
+            chat: { id: 7, type: "private", first_name: "Ada" },
+            date: 1736380700,
             message_id: 9001,
             photo: [{ file_id: "reply-photo-1" }],
             from: { first_name: "Ada" },
@@ -5018,6 +5012,8 @@ describe("createTelegramBot", () => {
           message_id: 102,
           from: { id: 42, first_name: "Ada" },
           reply_to_message: {
+            chat: { id: 7, type: "private", first_name: "Ada" },
+            date: 1736380700,
             message_id: 9001,
             photo: [{ file_id: "reply-photo-1" }],
             from: { first_name: "Ada" },

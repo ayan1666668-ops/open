@@ -138,7 +138,7 @@ describeTelegramDispatch("dispatchTelegramMessage context-history", () => {
     }
   });
 
-  it("omits transcript-owned ambient rows from recovered room-event prompt text", async () => {
+  it("keeps transcript and session reset boundaries when recovering room-event history", async () => {
     const oldHistoryKey = "-1003774691294:topic:1";
     await seedHistory([
       { threadId: 1, messageId: 27787, sender: "Cara", body: "ambient current", timestamp: 3 },
@@ -155,6 +155,13 @@ describeTelegramDispatch("dispatchTelegramMessage context-history", () => {
         sender: "Bob",
         body: "persisted recovered ambient two",
         timestamp: 2,
+      },
+      {
+        threadId: 3731,
+        messageId: 201,
+        sender: "Dana",
+        body: "after ambient watermark but before session reset",
+        timestamp: 3,
       },
     ]);
     dispatchReplyWithBufferedBlockDispatcher.mockResolvedValue({
@@ -180,6 +187,7 @@ describeTelegramDispatch("dispatchTelegramMessage context-history", () => {
           TransportThreadId: 1,
           AmbientTranscriptPreviousMessageId: "200",
           AmbientTranscriptPreviousTimestampMs: 2_000,
+          SessionTranscriptContext: { historyLimit: 10, minTimestampMs: 4_000 },
         } as TelegramMessageContext["ctxPayload"],
         msg: {
           chat: { id: -1003774691294, type: "supergroup" },

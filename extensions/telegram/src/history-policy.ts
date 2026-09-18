@@ -158,6 +158,49 @@ export async function isTelegramHistorySenderAllowed(
   }).allowed;
 }
 
+export async function readTelegramHistoryWindow(
+  params: TelegramHistoryScope & {
+    cache: TelegramMessageCache;
+    before?: string;
+    limit: number;
+  },
+): Promise<TelegramCachedMessageNode[]> {
+  if (!Number.isSafeInteger(params.limit) || params.limit <= 0) {
+    return [];
+  }
+  const getConfig = createRuntimeConfigReader(params.cfg);
+  const cfg = getConfig();
+  const assertCurrent = () => {
+    params.assertCurrent?.();
+    if (getConfig() !== cfg) {
+      throw new Error(
+        "Telegram history policy changed during the read; retry with current permissions.",
+      );
+    }
+  };
+  assertCurrent();
+  // Automatic turns inspect a physical window; only explicit reads page deeper for matches.
+  const candidates = await params.cache.readHistoryWindow({
+    accountId: params.accountId,
+    chatId: params.chatId,
+    threadId: params.threadId,
+    before: params.before,
+    limit: Math.max(256, params.limit),
+  });
+  assertCurrent();
+  const messages: TelegramCachedMessageNode[] = [];
+  for (let index = candidates.length - 1; index >= 0 && messages.length < params.limit; index--) {
+    const node = candidates[index]!;
+    const allowed = await isTelegramHistoryNodeAllowed({ ...params, cfg, node, assertCurrent });
+    assertCurrent();
+    if (allowed) {
+      messages.push(node);
+    }
+  }
+  messages.reverse();
+  return messages;
+}
+
 export async function readTelegramHistory(
   params: TelegramHistoryScope & {
     cache: TelegramMessageCache;
