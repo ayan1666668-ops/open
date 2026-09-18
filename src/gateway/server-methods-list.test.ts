@@ -6,7 +6,7 @@ import {
   createCoreGatewayMethodDescriptors,
   listCoreGatewayMethodNames,
   STARTUP_UNAVAILABLE_GATEWAY_METHODS,
-} from "./methods/core-descriptors.js";
+} from "./methods/core-method-policy.js";
 import { GATEWAY_EVENTS, listGatewayMethods } from "./server-methods-list.js";
 import { LEGACY_ADVERTISED_GATEWAY_METHODS } from "./server-methods-list.test-fixtures.js";
 import { coreGatewayHandlers } from "./server-methods.js";
@@ -145,10 +145,24 @@ describe("listGatewayMethods", () => {
     "plugins.catalog.categories",
     "plugins.catalog.get",
   ];
+  const voiceSelectionMethods = ["talk.voice.get", "talk.voice.set", "talk.voice.complete"];
 
   it("advertises plugin surface refresh for capability rotation", () => {
     expect(listGatewayMethods()).toContain("plugin.surface.refresh");
     expect(listGatewayMethods()).toContain("node.pluginSurface.refresh");
+  });
+
+  it("advertises plugin reload with admin mutation policy and generation invalidation", () => {
+    expect(GATEWAY_EVENTS).toContain("plugins.changed");
+    expect(listGatewayMethods()).toContain("plugins.reload");
+    expect(coreGatewayHandlers["plugins.reload"]).toBeTypeOf("function");
+    const descriptors = createCoreGatewayMethodDescriptors(coreGatewayHandlers);
+    for (const name of ["plugins.reload", "plugins.refresh"]) {
+      expect(descriptors.find((descriptor) => descriptor.name === name)).toMatchObject({
+        scope: "operator.admin",
+        controlPlaneWrite: true,
+      });
+    }
   });
 
   it("advertises node plugin tool catalog updates", () => {
@@ -190,6 +204,20 @@ describe("listGatewayMethods", () => {
       "models.authSetApiKey",
       "sessions.storage.status",
       "sessions.storage.run",
+      "plugins.reload",
+      "claws.packages.remove",
+      "canvas.document.preview",
+      "computer.status",
+      "computer.invoke",
+      "sessions.activitySummary.ensure",
+      "controlUi.sessionPullRequests.checks",
+      "diagnostics.cpuProfile",
+      ...voiceSelectionMethods,
+      "plugins.credentials.inspect",
+      "plugins.skills.read",
+      "diagnostics.heapProfile",
+      "desktop.release",
+      "mcp.authLogin",
     ];
     expect(listGatewayMethods().slice(-expectedSuffix.length)).toEqual(expectedSuffix);
     const methods = listGatewayMethods();
@@ -220,6 +248,20 @@ describe("listGatewayMethods", () => {
       "models.authSetApiKey",
       "sessions.storage.status",
       "sessions.storage.run",
+      "plugins.reload",
+      "claws.packages.remove",
+      "canvas.document.preview",
+      "computer.status",
+      "computer.invoke",
+      "sessions.activitySummary.ensure",
+      "controlUi.sessionPullRequests.checks",
+      "diagnostics.cpuProfile",
+      ...voiceSelectionMethods,
+      "plugins.credentials.inspect",
+      "plugins.skills.read",
+      "diagnostics.heapProfile",
+      "desktop.release",
+      "mcp.authLogin",
     ]);
   });
 
@@ -235,6 +277,8 @@ describe("listGatewayMethods", () => {
 
   it("advertises Control UI session pull request detection", () => {
     expect(listGatewayMethods()).toContain("controlUi.sessionPullRequests.subscribe");
+    expect(listGatewayMethods()).toContain("controlUi.sessionPullRequests.checks");
+    expect(coreGatewayHandlers["controlUi.sessionPullRequests.checks"]).toBeTypeOf("function");
     expect(GATEWAY_EVENTS).toContain("controlUi.sessionPullRequests.changed");
   });
 
@@ -377,6 +421,20 @@ describe("listGatewayMethods", () => {
       "models.authSetApiKey",
       "sessions.storage.status",
       "sessions.storage.run",
+      "plugins.reload",
+      "claws.packages.remove",
+      "canvas.document.preview",
+      "computer.status",
+      "computer.invoke",
+      "sessions.activitySummary.ensure",
+      "controlUi.sessionPullRequests.checks",
+      "diagnostics.cpuProfile",
+      ...voiceSelectionMethods,
+      "plugins.credentials.inspect",
+      "plugins.skills.read",
+      "diagnostics.heapProfile",
+      "desktop.release",
+      "mcp.authLogin",
     ];
     expect(coreMethods.slice(-expectedCoreSuffix.length)).toEqual(expectedCoreSuffix);
     expect(methods.indexOf("approval.get")).toBeGreaterThan(methods.indexOf("tts.speak"));
@@ -454,6 +512,10 @@ describe("listGatewayMethods", () => {
     expect(methods).toContain("talk.session.submitToolResult");
     expect(methods).toContain("talk.session.steer");
     expect(methods).toContain("talk.session.close");
+    for (const method of voiceSelectionMethods) {
+      expect(methods).toContain(method);
+      expect(coreGatewayHandlers[method]).toBeTypeOf("function");
+    }
   });
 
   it("advertises and wires cloud worker environment mutations", () => {

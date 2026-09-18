@@ -3,7 +3,6 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { parseStrictPositiveInteger } from "@openclaw/normalization-core/number-coercion";
-import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
 import { theme } from "../../../packages/terminal-core/src/theme.js";
 import { hasErrnoCode } from "../../infra/errors.js";
 import { resolveRequiredHomeDir } from "../../infra/home-dir.js";
@@ -12,6 +11,14 @@ import { readPackageName, readPackageVersion } from "../../infra/package-json.js
 import { normalizePackageTagInput } from "../../infra/package-tag.js";
 import { parseSemver } from "../../infra/runtime-guard.js";
 import { fetchNpmTagVersion } from "../../infra/update-check.js";
+import {
+  normalizeUpdateFailureFacts,
+  type UpdateFailureFact,
+} from "../../infra/update-failure-facts.js";
+import {
+  createFreeBsdPkgOwnershipInspection,
+  type FreeBsdPkgOwnershipInspection,
+} from "../../infra/update-freebsd-pkg-ownership.js";
 import {
   canResolveRegistryVersionForPackageTarget,
   createGlobalInstallEnv,
@@ -26,10 +33,14 @@ import { resolveUnmanagedUpdateInstallReason } from "../../infra/update-runner-i
 import type { UpdateStepProgress, UpdateStepResult } from "../../infra/update-runner.js";
 import { runCommandWithTimeout } from "../../process/exec.js";
 import { defaultRuntime } from "../../runtime.js";
+import type { UpdateRecoveryStep } from "../../shared/update-outcome.js";
 import { UPDATE_INSTALL_SKIP_GUIDANCE } from "../../shared/update-outcome.js";
 import { pathExists } from "../../utils.js";
 import { COMPLETION_SKIP_PLUGIN_COMMANDS_ENV } from "../completion-runtime.js";
 import { isJsonOutputModeActive } from "../json-output-mode.js";
+import { resolveNodeRunner } from "./node-runner.js";
+
+export { resolveNodeRunner } from "./node-runner.js";
 
 export type UpdateCommandOptions = {
   /** In-process executor only; workers must reacquire authority, never deserialize this. */
@@ -39,6 +50,8 @@ export type UpdateCommandOptions = {
   /** Internal orchestration context, shared across update phases and child processes. */
   run?: {
     runId: string;
+    defaultStepTimeoutMs?: number;
+    activationTimeoutMs?: number;
     env: NodeJS.ProcessEnv;
     /** Prepared before replacement; never load the old authority graph after activation. */
     requesterAuthority?: UpdateRequesterAuthority;
@@ -77,13 +90,23 @@ export type UpdateWizardOptions = {
 };
 
 export class UpdatePreMutationError extends Error {
+  readonly recoverySteps?: readonly UpdateRecoveryStep[];
+  readonly failureFacts: UpdateFailureFact[];
+
   constructor(
     readonly reason: string,
     message: string,
-    options?: ErrorOptions,
+    options?: ErrorOptions & {
+      failureFacts?: readonly UpdateFailureFact[];
+      recoverySteps?: readonly UpdateRecoveryStep[];
+    },
   ) {
     super(message, options);
     this.name = "UpdatePreMutationError";
+    this.recoverySteps = options?.recoverySteps;
+    this.failureFacts = normalizeUpdateFailureFacts(
+      options?.failureFacts ?? [{ check: reason, code: reason, message }],
+    );
   }
 }
 
@@ -205,15 +228,6 @@ function resolveDefaultGitDir(): string {
     return path.posix.join(home, "openclaw");
   }
   return path.join(home, "openclaw");
-}
-
-/** Prefer the current Node executable, falling back to `node` when run through another shim. */
-export function resolveNodeRunner(): string {
-  const base = normalizeLowercaseStringOrEmpty(path.basename(process.execPath));
-  if (base === "node" || base === "node.exe") {
-    return process.execPath;
-  }
-  return "node";
 }
 
 export function tryResolveInvocationCwd(): string | undefined {
@@ -424,16 +438,25 @@ export async function resolveGlobalManager(params: {
   root: string;
   installKind: "git" | "package" | "unknown";
   timeoutMs: number;
+  pkgOwnership?: FreeBsdPkgOwnershipInspection;
 }): Promise<GlobalInstallManager> {
+  await (
+    params.pkgOwnership ?? createFreeBsdPkgOwnershipInspection(params.timeoutMs)
+  ).assertUnowned(params.root);
   if (params.installKind === "package") {
+    const diagnostics: string[] = [];
     const detected = await detectGlobalInstallManagerForRoot(
       runCommandWithTimeout,
       params.root,
       params.timeoutMs,
+      diagnostics,
     );
     if (!detected) {
       const reason = resolveUnmanagedUpdateInstallReason();
-      throw new UpdatePreMutationError(reason, UPDATE_INSTALL_SKIP_GUIDANCE[reason]!);
+      throw new UpdatePreMutationError(
+        reason,
+        `${UPDATE_INSTALL_SKIP_GUIDANCE[reason]} Inspected: ${diagnostics.join("; ")}.`,
+      );
     }
     return detected;
   }

@@ -67,6 +67,8 @@ export type McpCatalogTool = {
   excludedFromOpenClawCatalog?: true;
   deniedBySession?: true;
   codexAnnotations?: McpCodexToolAnnotations;
+  /** Trusted requester OAuth sign-in bootstrap; never dispatches into the server's tools. */
+  oauthConnectBootstrap?: true;
 };
 
 /** Complete tool catalog for a session-scoped MCP runtime. */
@@ -178,6 +180,8 @@ export type SessionMcpRuntime = {
 export type SessionMcpRuntimeLease = {
   runtime: SessionMcpRuntime;
   releaseLease: () => void;
+  /** Retires unleased discovery servers outside the final prepared bundle. */
+  retireUnusedServers?: (retainedServerNames: ReadonlySet<string>) => Promise<void>;
 };
 
 /** One requester call's lease and immutable catalog publication version. */
@@ -199,6 +203,7 @@ export type SessionMcpRuntimeManager = {
     agentAccountId?: string | null;
     messageChannel?: string | null;
     toolOverrides?: Pick<SessionToolOverrides, "mcpServers" | "mcpToolsDeny">;
+    toolDenylist?: string[];
   }) => Promise<SessionMcpRuntimeLease>;
   /**
    * Requester-scoped partition only — never creates static transports.
@@ -215,6 +220,7 @@ export type SessionMcpRuntimeManager = {
     agentAccountId?: string | null;
     messageChannel?: string | null;
     toolOverrides?: Pick<SessionToolOverrides, "mcpServers" | "mcpToolsDeny">;
+    toolDenylist?: string[];
   }) => Promise<RequesterScopedMcpRuntimeHandle | undefined>;
   /**
    * Session-stable advertised catalog for scoped servers. Used by shared-thread

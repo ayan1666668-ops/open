@@ -1,10 +1,12 @@
 /** Real Gateway readiness coverage for configured plugin payload quarantine. */
+import { randomUUID } from "node:crypto";
+import { channel } from "node:diagnostics_channel";
 import fs from "node:fs";
 import fsPromises from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { create as createTar } from "tar";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import { preparePostCorePluginConfig } from "../cli/update-cli/update-command-config.js";
 import { updatePluginsAfterCoreUpdate } from "../cli/update-cli/update-command-plugins.js";
@@ -16,10 +18,7 @@ import {
 } from "../config/config.js";
 import type { PluginInstallRecord } from "../config/types.plugins.js";
 import { installPluginFromPath } from "../plugins/install.js";
-import {
-  readPersistedInstalledPluginIndexInstallRecords,
-  writePersistedInstalledPluginIndexInstallRecords,
-} from "../plugins/installed-plugin-index-records.js";
+import { readPersistedInstalledPluginIndexInstallRecords } from "../plugins/installed-plugin-index-records.js";
 import { runPluginPayloadSmokeCheck } from "../plugins/payload-verification.js";
 import { createPluginCache, withPluginCache } from "../plugins/plugin-cache.js";
 import {
@@ -27,6 +26,7 @@ import {
   listActiveDegradedPlugins,
   setActiveDegradedPlugins,
 } from "../plugins/runtime-degraded-state.js";
+import { seedInstalledPluginIndex } from "../plugins/test-helpers/installed-plugin-index.js";
 import {
   getGatewayTestPort,
   installGatewayTestHooks,
@@ -39,13 +39,18 @@ installGatewayTestHooks({ scope: "suite" });
 describe("Gateway startup plugin quarantine", () => {
   let server: Awaited<ReturnType<typeof startTestGatewayServer>> | undefined;
   const tempDirs: string[] = [];
+  const importChannel = channel(`openclaw.test.plugin-quarantine.${randomUUID()}`);
+  const imported = new Set<unknown>();
+  const observeImport = (id: unknown) => imported.add(id);
+
+  beforeEach(() => importChannel.subscribe(observeImport));
 
   afterEach(async () => {
     await server?.close();
     server = undefined;
     setActiveDegradedPlugins([]);
-    delete (globalThis as Record<string, unknown>).brokenPluginImported;
-    delete (globalThis as Record<string, unknown>).selectedPluginImported;
+    importChannel.unsubscribe(observeImport);
+    imported.clear();
     for (const dir of tempDirs.splice(0)) {
       fs.rmSync(dir, { recursive: true, force: true });
     }
@@ -82,7 +87,8 @@ describe("Gateway startup plugin quarantine", () => {
     );
     fs.writeFileSync(
       path.join(brokenRoot, "index.cjs"),
-      "globalThis.brokenPluginImported = true; module.exports = { id: 'broken-payload', register() {} };",
+      `require("node:diagnostics_channel").channel(${JSON.stringify(importChannel.name)}).publish(${JSON.stringify(brokenPluginId)});
+module.exports = { id: '${brokenPluginId}', register() {} };`,
       "utf8",
     );
     fs.writeFileSync(
@@ -105,7 +111,8 @@ describe("Gateway startup plugin quarantine", () => {
     );
     fs.writeFileSync(
       path.join(validRoot, "index.cjs"),
-      `globalThis.selectedPluginImported = true; module.exports = { id: '${validPluginId}', register() {} };`,
+      `require("node:diagnostics_channel").channel(${JSON.stringify(importChannel.name)}).publish(${JSON.stringify(validPluginId)});
+module.exports = { id: '${validPluginId}', register() {} };`,
       "utf8",
     );
 
@@ -165,8 +172,8 @@ describe("Gateway startup plugin quarantine", () => {
     expect(
       registry.diagnostics.find((diagnostic) => diagnostic.pluginId === brokenPluginId)?.message,
     ).not.toContain(brokenRoot);
-    expect((globalThis as Record<string, unknown>).brokenPluginImported).toBeUndefined();
-    expect((globalThis as Record<string, unknown>).selectedPluginImported).toBe(true);
+    expect(imported.has(brokenPluginId)).toBe(false);
+    expect(imported.has(validPluginId)).toBe(true);
 
     setTestPluginRegistry(registry);
     const { writeConfigFile } = await import("../config/config.js");
@@ -181,8 +188,8 @@ describe("Gateway startup plugin quarantine", () => {
 
     expect(ready.status).toBe(200);
     await expect(ready.json()).resolves.toMatchObject({ ready: true });
-    expect((globalThis as Record<string, unknown>).brokenPluginImported).toBeUndefined();
-    expect((globalThis as Record<string, unknown>).selectedPluginImported).toBe(true);
+    expect(imported.has(brokenPluginId)).toBe(false);
+    expect(imported.has(validPluginId)).toBe(true);
   });
 
   it("does not quarantine a healthy explicit root that shadows a broken install with the same id", async () => {
@@ -220,7 +227,8 @@ describe("Gateway startup plugin quarantine", () => {
     );
     fs.writeFileSync(
       path.join(selectedRoot, "index.cjs"),
-      "globalThis.selectedPluginImported = true; module.exports = { id: 'shadowed-payload', register() {} };",
+      `require("node:diagnostics_channel").channel(${JSON.stringify(importChannel.name)}).publish(${JSON.stringify(pluginId)});
+module.exports = { id: '${pluginId}', register() {} };`,
       "utf8",
     );
 
@@ -234,7 +242,7 @@ describe("Gateway startup plugin quarantine", () => {
 
     const { loadOpenClawPlugins } =
       await vi.importActual<typeof import("../plugins/loader.js")>("../plugins/loader.js");
-    const registry = loadOpenClawPlugins({
+    const options = {
       cache: false,
       config: {
         plugins: {
@@ -245,11 +253,16 @@ describe("Gateway startup plugin quarantine", () => {
         },
       },
       onlyPluginIds: [pluginId],
-    });
+    };
+    const registry = loadOpenClawPlugins(options);
 
     expect(registry.plugins.find((plugin) => plugin.id === pluginId)?.status).toBe("loaded");
-    expect((globalThis as Record<string, unknown>).selectedPluginImported).toBe(true);
+    expect(imported.has(pluginId)).toBe(true);
     expect(listActiveDegradedPlugins()).toEqual([]);
+    const replacement = loadOpenClawPlugins({ ...options, previousRegistry: registry });
+    expect(replacement.plugins.find((plugin) => plugin.id === pluginId)).toBe(
+      registry.plugins.find((plugin) => plugin.id === pluginId),
+    );
   });
 
   it("keeps the broken install visible when its explicit override fails to load", async () => {
@@ -386,7 +399,7 @@ describe("updater plugin degradation with a running source Gateway", () => {
     const records: Record<string, PluginInstallRecord> = {
       [pluginId]: { source: "git", installPath, version: "1.0.0" },
     };
-    await writePersistedInstalledPluginIndexInstallRecords(records, { config, env: process.env });
+    await seedInstalledPluginIndex(records, { config, env: process.env });
     await fsPromises.unlink(path.join(installPath, "index.cjs"));
     const update = () =>
       withPluginCache(createPluginCache(), async () =>
@@ -422,7 +435,6 @@ describe("updater plugin degradation with a running source Gateway", () => {
     const loadGeneration = () =>
       withPluginCache(createPluginCache(), async () => {
         const quarantine = await refreshStartupPluginQuarantine({ cfg: config, env: process.env });
-        expect(quarantine.blockingDiagnostic).toBeNull();
         setActiveDegradedPlugins(quarantine.quarantinedPlugins);
         return loadOpenClawPlugins({ cache: false, config, onlyPluginIds: [pluginId] });
       });

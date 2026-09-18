@@ -88,9 +88,12 @@ export abstract class ChatPaneLayoutRender extends ChatPaneBrowserAnnotationRend
       closePanelSlot,
     } = params;
     if (this.inputRegion === "page") {
+      const preview = state.sessionWorkspaceState?.previews.find(
+        (entry) => entry.id === state.sessionWorkspaceState?.activePreviewId,
+      )?.content;
       const file =
-        state.sidebarContent?.kind === "file" && isSidebarSlotVisible(sidebarLayout, "detail")
-          ? state.sidebarContent
+        preview?.kind === "file" && isSidebarSlotVisible(sidebarLayout, "workspace")
+          ? preview
           : undefined;
       const workspace = resolveSessionWorkspace({
         session: selectedSession,
@@ -147,6 +150,7 @@ export abstract class ChatPaneLayoutRender extends ChatPaneBrowserAnnotationRend
     const browserPresented =
       this.active && this.presented && isSidebarSlotVisible(sidebarLayout, "browser");
     const browserTabsInHeader = sidebarMainPanel(sidebarLayout)?.slot !== "browser";
+    const terminalTabsInHeader = sidebarMainPanel(sidebarLayout)?.slot !== "terminal";
     // Another pane can own keyboard focus while this desktop remains visible.
     const desktopPresented =
       this.presented && this.visuallyPresented && isSidebarSlotVisible(sidebarLayout, "desktop");
@@ -176,6 +180,7 @@ export abstract class ChatPaneLayoutRender extends ChatPaneBrowserAnnotationRend
       agentId: currentAgentId,
       browserPresented,
       browserTabsInHeader,
+      terminalTabsInHeader,
       browserRefreshOnPresentation: !this.pendingPanelToggleRequests.has("browser"),
       preferredBrowserTab: [...latestBrowserTabs.values()].at(-1),
       desktopPresented,
@@ -208,6 +213,8 @@ export abstract class ChatPaneLayoutRender extends ChatPaneBrowserAnnotationRend
       lastReadAt: selectedSession?.lastReadAt,
       pullRequests: this.sessionPullRequests,
       companion: companionThread,
+      companionFocusRequest: this.sessionCompanionFocusRequest,
+      canFocusCompanion: () => this.active && this.presented,
       companionPresented:
         this.presented &&
         this.visuallyPresented &&
@@ -217,7 +224,6 @@ export abstract class ChatPaneLayoutRender extends ChatPaneBrowserAnnotationRend
         this.sessionCompanionThreads.setDraft(state.sessionKey, draft, currentAgentId),
       onCompanionVisibilityChange: this.setSessionObserverVisibility,
       connected: state.connected,
-      pendingQuestion: companionThread.pendingQuestion,
       onClearCompanion: () => void this.clearSessionCompanion(),
       onRefreshTasks: backgroundTasks.onRefresh,
       tasksLoading: backgroundTasks.loading,
