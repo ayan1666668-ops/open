@@ -552,8 +552,11 @@ function buildEnabledAppConfig(
     enabled: true,
     destructive_enabled: policy.allowDestructiveActions,
     open_world_enabled: policy.allowOpenWorld !== false,
-    default_tools_approval_mode: "auto",
-    ...(policy.destructiveApprovalMode === "ask" ? { approvals_reviewer: "user" } : {}),
+    // Native app/link/tool approval settings merge underneath this patch. Only
+    // explicit ask replaces them, so native prompt and approve modes survive replay.
+    ...(policy.destructiveApprovalMode === "ask"
+      ? { default_tools_approval_mode: "auto", approvals_reviewer: "user" }
+      : {}),
   };
 }
 

@@ -1197,9 +1197,14 @@ describe("runCodexAppServerSideQuestion", () => {
     );
   });
 
-  it.each(["ok", "missing-app", "binding-changed", "unbound-native-app", "config-unavailable"])(
-    "projects bound ask policy before side-thread forks: %s",
-    async (outcome) => {
+  it.each([
+    ...["ok", "missing-app", "binding-changed", "unbound-native-app", "config-unavailable"].map(
+      (outcome) => ({ outcome, mode: "guardian" }),
+    ),
+    { outcome: "ok", mode: "yolo" },
+  ])(
+    "projects bound app policy before side-thread forks: $outcome ($mode)",
+    async ({ outcome, mode }) => {
       const approvalSpy = vi.spyOn(elicitationBridge, "routeCodexAppServerElicitationRequest");
       const rejectsReplay = outcome === "binding-changed" || outcome === "config-unavailable";
       const nativeAppConfig = {
@@ -1337,7 +1342,7 @@ describe("runCodexAppServerSideQuestion", () => {
       });
 
       const run = runCodexAppServerSideQuestion(sideParams(), {
-        pluginConfig: { appServer: { mode: "guardian" } },
+        pluginConfig: { appServer: { mode } },
       });
       if (rejectsReplay) {
         await expect(run).rejects.toThrow(
@@ -1395,10 +1400,20 @@ describe("runCodexAppServerSideQuestion", () => {
       const forkParams = client.request.mock.calls.find(
         ([method]) => method === "thread/fork",
       )?.[1] as Record<string, unknown> | undefined;
-      expect(forkParams?.approvalsReviewer).toBe("auto_review");
+      expect(forkParams?.approvalsReviewer).toBe(mode === "guardian" ? "auto_review" : "user");
+      expect(forkParams?.approvalPolicy).toEqual({
+        granular: {
+          mcp_elicitations: true,
+          rules: mode !== "yolo",
+          sandbox_approval: mode !== "yolo",
+          request_permissions: mode !== "yolo",
+          skill_approval: mode !== "yolo",
+        },
+      });
       const config = forkParams?.config as Record<string, unknown> | undefined;
       expect(config).not.toHaveProperty("approvals_reviewer");
       expect(config?.["features.code_mode"]).toBe(true);
+      const enabledApp = { enabled: true, destructive_enabled: true, open_world_enabled: true };
       expect(config?.apps).toEqual({
         _default: {
           enabled: false,
@@ -1420,24 +1435,9 @@ describe("runCodexAppServerSideQuestion", () => {
               },
             }
           : { "ask-app": { enabled: false } }),
-        "auto-app": {
-          enabled: true,
-          destructive_enabled: true,
-          open_world_enabled: true,
-          default_tools_approval_mode: "auto",
-        },
-        "false-app": {
-          enabled: true,
-          destructive_enabled: false,
-          open_world_enabled: true,
-          default_tools_approval_mode: "auto",
-        },
-        "true-app": {
-          enabled: true,
-          destructive_enabled: true,
-          open_world_enabled: true,
-          default_tools_approval_mode: "auto",
-        },
+        "auto-app": enabledApp,
+        "false-app": { ...enabledApp, destructive_enabled: false },
+        "true-app": enabledApp,
       });
     },
   );

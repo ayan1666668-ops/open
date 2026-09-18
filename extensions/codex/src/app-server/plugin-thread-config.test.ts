@@ -10,6 +10,12 @@ import {
   resolveOwnedAppApprovalOverrideKeys,
   resolveRecoverableCodexPluginConfigKeys,
 } from "./plugin-inventory.js";
+import {
+  appSummary,
+  pluginInstalled,
+  pluginList,
+  pluginSummary,
+} from "./plugin-inventory.test-helpers.js";
 import { CodexPluginMetadataCache } from "./plugin-metadata-cache.js";
 import { createCodexPluginThreadConfigStartupProvider } from "./plugin-thread-config-deadline.js";
 import {
@@ -339,7 +345,6 @@ describe("Codex plugin thread config", () => {
           enabled: true,
           destructive_enabled: true,
           open_world_enabled: true,
-          default_tools_approval_mode: "auto",
         },
       },
     });
@@ -427,7 +432,6 @@ describe("Codex plugin thread config", () => {
         enabled: true,
         destructive_enabled: false,
         open_world_enabled: true,
-        default_tools_approval_mode: "auto",
       },
     });
     expect(config.policyContext.apps["workspace-data-app"]).toMatchObject({
@@ -661,7 +665,6 @@ describe("Codex plugin thread config", () => {
       enabled: true,
       destructive_enabled: false,
       open_world_enabled: true,
-      default_tools_approval_mode: "auto",
     });
     expect(disabledApps?.["google-calendar-app"]).not.toHaveProperty("default_tools_enabled");
     expect(disabledApps?.["google-calendar-app"]).not.toHaveProperty("approvals_reviewer");
@@ -694,7 +697,6 @@ describe("Codex plugin thread config", () => {
       enabled: true,
       destructive_enabled: true,
       open_world_enabled: true,
-      default_tools_approval_mode: "auto",
     });
     expect(enabledApps?.["google-calendar-app"]).not.toHaveProperty("approvals_reviewer");
     expect(
@@ -724,7 +726,6 @@ describe("Codex plugin thread config", () => {
       enabled: true,
       destructive_enabled: true,
       open_world_enabled: true,
-      default_tools_approval_mode: "auto",
     });
     expect(apps?.["google-calendar-app"]).not.toHaveProperty("approvals_reviewer");
     expect(config.policyContext.apps["google-calendar-app"]).toMatchObject({
@@ -732,6 +733,53 @@ describe("Codex plugin thread config", () => {
       destructiveApprovalMode: "auto",
     });
   });
+
+  it.each([
+    ["prompt", "user"],
+    ["prompt", "auto_review"],
+    ["approve", "user"],
+  ] as const)(
+    "preserves native %s approval with %s review on initial and retained threads",
+    async (mode, reviewer) => {
+      const nativeApp = {
+        default_tools_approval_mode: mode,
+        approvals_reviewer: reviewer,
+        links: { account: { default_tools_approval_mode: "writes" } },
+        tools: { read: { approval_mode: "approve" } },
+      };
+      const nativeConfig = { apps: { "google-calendar-app": nativeApp } };
+      const config = await buildReadyGoogleCalendarThreadConfig(
+        {
+          codexPlugins: {
+            enabled: true,
+            allow_destructive_actions: "auto",
+            plugins: {
+              "google-calendar": {
+                marketplaceName: CODEX_PLUGINS_MARKETPLACE_NAME,
+                pluginName: "google-calendar",
+              },
+            },
+          },
+        },
+        nativeConfig,
+      );
+
+      for (const patch of [
+        config.configPatch,
+        buildCodexPluginAppsConfigPatchFromPolicyContext(config.policyContext),
+      ]) {
+        const effective = mergeCodexThreadConfigs(nativeConfig, patch);
+        expect(effective?.apps).toMatchObject({
+          "google-calendar-app": {
+            ...nativeApp,
+            enabled: true,
+            destructive_enabled: true,
+            open_world_enabled: true,
+          },
+        });
+      }
+    },
+  );
 
   it.each(["Calendar update", "__proto__"])(
     "projects ask approvals without changing saved settings (%s)",
@@ -961,7 +1009,6 @@ describe("Codex plugin thread config", () => {
           enabled: true,
           destructive_enabled: true,
           open_world_enabled: true,
-          default_tools_approval_mode: "auto",
         },
       },
     });
@@ -1230,19 +1277,16 @@ describe("Codex plugin thread config", () => {
           enabled: true,
           destructive_enabled: false,
           open_world_enabled: true,
-          default_tools_approval_mode: "auto",
         },
         "disabled-account-app": {
           enabled: true,
           destructive_enabled: false,
           open_world_enabled: true,
-          default_tools_approval_mode: "auto",
         },
         slack: {
           enabled: true,
           destructive_enabled: false,
           open_world_enabled: true,
-          default_tools_approval_mode: "auto",
         },
       },
     });
@@ -2031,7 +2075,6 @@ describe("Codex plugin thread config", () => {
           enabled: true,
           destructive_enabled: true,
           open_world_enabled: true,
-          default_tools_approval_mode: "auto",
         },
       },
     });
@@ -2566,7 +2609,6 @@ describe("Codex plugin thread config", () => {
         enabled: true,
         destructive_enabled: true,
         open_world_enabled: true,
-        default_tools_approval_mode: "auto",
       },
     });
     expect(config.policyContext.apps["google-calendar-app"]).toEqual({
@@ -2656,7 +2698,6 @@ describe("Codex plugin thread config", () => {
         enabled: true,
         destructive_enabled: true,
         open_world_enabled: true,
-        default_tools_approval_mode: "auto",
       },
     });
     expect(config.policyContext.apps["google-calendar-app"]).toEqual({
@@ -3189,7 +3230,6 @@ describe("Codex plugin thread config", () => {
       enabled: true,
       destructive_enabled: false,
       open_world_enabled: true,
-      default_tools_approval_mode: "auto",
     });
     expect(apps?.["github-app"]).not.toHaveProperty("tools");
   });
@@ -3581,47 +3621,6 @@ describe("Codex plugin thread config", () => {
   });
 });
 
-function pluginInstalled(
-  plugins: v2.PluginSummary[],
-  marketplace: { name?: string; path?: string | null } = {},
-): v2.PluginInstalledResponse {
-  const { featuredPluginIds: _featuredPluginIds, ...installed } = pluginList(plugins, marketplace);
-  return installed;
-}
-
-function pluginList(
-  plugins: v2.PluginSummary[],
-  marketplace: { name?: string; path?: string | null } = {},
-): v2.PluginListResponse {
-  return {
-    marketplaces: [
-      {
-        name: marketplace.name ?? CODEX_PLUGINS_MARKETPLACE_NAME,
-        path: marketplace.path === undefined ? "/marketplaces/openai-curated" : marketplace.path,
-        interface: null,
-        plugins,
-      },
-    ],
-    marketplaceLoadErrors: [],
-    featuredPluginIds: [],
-  };
-}
-
-function pluginSummary(id: string, overrides: Partial<v2.PluginSummary> = {}): v2.PluginSummary {
-  return {
-    id,
-    name: id,
-    source: { type: "remote" },
-    installed: false,
-    enabled: false,
-    installPolicy: "AVAILABLE",
-    authPolicy: "ON_USE",
-    availability: "AVAILABLE",
-    interface: null,
-    ...overrides,
-  };
-}
-
 function pluginDetail(
   pluginName: string,
   apps: v2.AppSummary[],
@@ -3641,16 +3640,6 @@ function pluginDetail(
       apps,
       mcpServers,
     },
-  };
-}
-
-function appSummary(id: string): v2.AppSummary {
-  return {
-    id,
-    name: id,
-    description: null,
-    installUrl: null,
-    category: null,
   };
 }
 
@@ -3674,6 +3663,7 @@ function appInfo(id: string, accessible: boolean, enabled = true): v2.AppInfo {
 
 async function buildReadyGoogleCalendarThreadConfig(
   pluginConfig: unknown,
+  nativeConfig: JsonObject = {},
 ): Promise<Awaited<ReturnType<typeof buildCodexPluginThreadConfig>>> {
   const appCache = new CodexAppInventoryCache();
   await appCache.refreshNow({
@@ -3696,7 +3686,7 @@ async function buildReadyGoogleCalendarThreadConfig(
         return pluginDetail("google-calendar", [appSummary("google-calendar-app")]);
       }
       if (method === "config/read") {
-        return { config: {}, layers: [] };
+        return { config: nativeConfig, layers: [] };
       }
       throw new Error(`unexpected request ${method}`);
     },
