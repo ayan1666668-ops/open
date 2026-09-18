@@ -32,6 +32,17 @@ verified descriptors and post-render thumbnail checks remain in place. Inserts, 
 promotion, cleanup claim/deletion transactions, Doctor imports, and native session
 metadata reads keep their existing owners and remain separate worker migrations.
 
+Profile enumeration for user lists, session-member pickers, and human-mention
+directories runs in the same shared-state worker. Ordered profile metadata,
+tombstones, emails, and verified GitHub handles retain their existing query owner;
+avatar bytes are not part of enumeration. Mention directory preparation respects
+the existing profile-version invalidation, then evaluates current requester,
+session, and role policy synchronously. Prepared directory rows are descriptive
+facts, never permission or current alias authority. Project recents retain a narrow
+fresh canonical-profile and alias query for their disclosure scope. Profile
+mutations, avatar storage, identity merges, and final identity/permission lookups
+keep their existing native owners.
+
 Explicit promotion notice and claim annotations execute in the shared-state
 worker. The CLI awaits their best-effort completion before reporting results;
 storage failures still do not fail a promotion claim. Notice recording retains
@@ -312,17 +323,6 @@ Gateway replies and changed events follow completion. Profile merge and consent
 updates retain their connection-bound kernels. Push preference and notification
 callers still use the synchronous facade until their preparation and publication
 owners migrate together.
-
-Profile enumeration for user lists, session-member pickers, and human-mention
-directories runs in the same shared-state worker. Ordered profile metadata,
-tombstones, emails, and verified GitHub handles retain their existing query owner;
-avatar bytes are not part of enumeration. Mention directory preparation respects
-the existing profile-version invalidation, then evaluates current requester,
-session, and role policy synchronously. Prepared directory rows are descriptive
-facts, never permission or current alias authority. Project recents retain a narrow
-fresh canonical-profile and alias query for their disclosure scope. Profile
-mutations, avatar storage, identity merges, and final identity/permission lookups
-keep their existing native owners.
 
 The host captures the database path, state environment, and current admission
 before awaited work. The shared worker owns its canonical connection and schema
