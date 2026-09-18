@@ -171,15 +171,15 @@
     },
     "model": {
       "label": "Memory Model",
-      "help": "Provider/model used for the blocking memory sub-agent."
+      "help": "The model used for the memory lookup itself. Leave blank to let Active Memory use the normal chat model."
     },
     "modelFallback": {
       "label": "Fallback Memory Model",
-      "help": "Optional provider/model to use if no explicit plugin model, session model, or agent primary model resolves."
+      "help": "Backup model to use only when Active Memory cannot figure out any normal model to run on."
     },
     "modelFallbackPolicy": {
       "label": "Model Fallback Policy",
-      "help": "Deprecated compatibility field. modelFallback is only the chain-resolution last resort when no explicit plugin model, session model, or agent primary model resolves; it is not runtime failover."
+      "help": "Legacy compatibility setting. This does not create live failover between models; it only controls last-resort model selection."
     },
     "allowedChatTypes": {
       "label": "Allowed Chat Types",
@@ -191,7 +191,7 @@
     },
     "deniedChatIds": {
       "label": "Denied Chat IDs",
-      "help": "Optional explicit denylist of chat/user IDs. Sessions whose resolved conversation id matches the list are skipped even when the chat type is allowed. Applied after allowedChatIds."
+      "help": "Optional blocklist of exact chats or users where Active Memory must stay off, even if they would normally be allowed."
     },
     "timeoutMs": {
       "label": "Timeout (ms)",
@@ -203,11 +203,11 @@
     },
     "queryMode": {
       "label": "Query Mode",
-      "help": "Choose whether the blocking memory sub-agent sees only the latest user message, a small recent tail, or the full conversation."
+      "help": "How much of the chat Active Memory looks at when deciding what to search for: just the latest message, the recent back-and-forth, or the whole conversation."
     },
     "promptStyle": {
       "label": "Prompt Style",
-      "help": "Choose how eager or strict the blocking memory sub-agent should be when deciding whether to return memory."
+      "help": "How picky Active Memory should be. Safer modes return memory less often; more eager modes are more willing to surface a possibly useful reminder."
     },
     "toolsAllow": {
       "label": "Allowed Memory Tools",
@@ -215,7 +215,7 @@
     },
     "thinking": {
       "label": "Thinking Override",
-      "help": "Advanced: optional thinking level for the blocking memory sub-agent. Defaults to off for speed."
+      "help": "Optional override for how hard the memory lookup model should think. More thinking may help edge cases, but it usually makes recall slower."
     },
     "fastMode": {
       "label": "Fast Mode Override",
@@ -223,35 +223,39 @@
     },
     "promptOverride": {
       "label": "Prompt Override",
-      "help": "Advanced: replace the default Active Memory sub-agent instructions. Conversation context is still appended."
+      "help": "Replace Active Memory's built-in instructions entirely. Use this only if you want to take full control of its behavior."
     },
     "promptAppend": {
       "label": "Prompt Append",
-      "help": "Advanced: append extra operator instructions after the default Active Memory sub-agent instructions."
+      "help": "Add extra guidance to Active Memory without replacing the default behavior."
     },
     "maxSummaryChars": {
       "label": "Max Summary Characters",
-      "help": "Maximum total characters allowed in the active-memory summary."
+      "help": "Caps how much recalled memory Active Memory may pass into the reply as extra context."
     },
     "logging": {
       "label": "Enable Logging",
-      "help": "Emit active memory timing and result logs."
+      "help": "Write debug logs showing whether Active Memory ran, how long it took, and whether it found anything."
     },
     "circuitBreakerMaxTimeouts": {
       "label": "Circuit Breaker Max Timeouts",
-      "help": "Skip recall after this many consecutive timeouts for the same agent/model. Resets on a successful recall or after the cooldown expires. Default: 3."
+      "help": "How many timeouts in a row Active Memory will tolerate before it temporarily stops trying, to avoid dragging the whole system down."
     },
     "circuitBreakerCooldownMs": {
       "label": "Circuit Breaker Cooldown (ms)",
-      "help": "How long to skip recall after the circuit breaker trips, in milliseconds. Default: 60000 (1 minute)."
+      "help": "How long Active Memory stays paused after too many back-to-back timeouts."
     },
     "persistTranscripts": {
       "label": "Persist Transcripts",
-      "help": "Keep blocking memory sub-agent session transcripts on disk in a separate plugin-owned directory."
+      "help": "Keep the memory lookup transcripts on disk for debugging instead of discarding them after each run."
     },
     "transcriptDir": {
       "label": "Transcript Directory",
       "help": "Relative artifact directory under the plugin-owned per-agent transcript directory in the OpenClaw state directory. The agent id is URI-encoded; the default subdirectory is active-memory."
+    },
+    "qmd.searchMode": {
+      "label": "QMD Search Mode",
+      "help": "Advanced search mode for the memory backend. Leave this alone unless you are tuning search quality or debugging backend behavior."
     }
   }
 }
