@@ -3397,6 +3397,11 @@ export const en: TranslationMap & {
     noResults: "No results",
     searchingSessions: "Searching sessions…",
     searchingCommands: "Searching commands…",
+    clearSearch: "Clear search",
+    escapeKey: "esc",
+    searchNotices: "Search notices ({count})",
+    filterLabel: "Filter search results",
+    filters: { all: "All", sessions: "Sessions", messages: "Messages" },
     searchFailed: "Chat search failed — check the gateway logs and retry",
     modelSearchFailed: "Model search unavailable. Change your search to retry.",
     searchPartial: "Transcript search unavailable — showing chat titles and metadata",
@@ -3405,6 +3410,7 @@ export const en: TranslationMap & {
       search: "Search",
       navigation: "Navigation",
       skills: "Skills",
+      messages: "In messages",
     },
     items: {
       apps: "Apps",
@@ -4271,6 +4277,9 @@ export const en: TranslationMap & {
       disconnected: "Not connected. Try again after reconnecting.",
     },
     imageLightbox: {
+      previous: "Previous image",
+      next: "Next image",
+      position: "{current} / {total}",
       label: "Image preview: {title}",
       open: "Open image {title}",
       openOriginal: "Open in new tab",
@@ -4426,6 +4435,9 @@ export const en: TranslationMap & {
       expandPanel: "Expand {panel}",
       restore: "Restore split",
       useViewAsDefault: "Use current view as default",
+      currentViewIsDefault: "This is the default view",
+      defaultViewDescription:
+        "Used when anyone opens this dashboard. Personal layout choices still apply.",
       savingDefault: "Saving default…",
       defaultSaved: "Dashboard default saved for future opens.",
       defaultSaveFailed:

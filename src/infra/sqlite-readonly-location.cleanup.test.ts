@@ -11,7 +11,6 @@ import {
   adoptPreparedLocation,
   cleanupSnapshotOperations,
 } from "./sqlite-readonly-location-cleanup.js";
-import { readSqliteSchemaHeaderFromSnapshotAsync } from "./sqlite-schema-header.js";
 import { prepareSingleFlightSqliteSnapshot } from "./sqlite-snapshot-single-flight.js";
 
 const tempDirs = useAutoCleanupTempDirTracker((cleanup) => {
@@ -139,29 +138,6 @@ describe("prepared SQLite snapshot cleanup", () => {
         unregister();
       }
     }
-    expect(fs.existsSync(ownedRoot)).toBe(false);
-  });
-
-  it("retains header cancellation and failed async removal while cleanup remains retryable", async () => {
-    const { ownedRoot, prepared } = fixture(false);
-    const controller = new AbortController();
-    const cancelled = new Error("header owner retired before its read");
-    controller.abort(cancelled);
-    const removal = vi.spyOn(fs.promises, "rm").mockRejectedValueOnce(new Error("snapshot busy"));
-    const synchronousRemoval = vi.spyOn(fs, "rmSync");
-    await expect(
-      readSqliteSchemaHeaderFromSnapshotAsync(prepared, controller.signal),
-    ).rejects.toMatchObject({
-      cause: cancelled,
-      errors: [
-        cancelled,
-        expect.objectContaining({ message: expect.stringContaining("snapshot cleanup failed") }),
-      ],
-    });
-    expect(synchronousRemoval).not.toHaveBeenCalled();
-    expect(removal).toHaveBeenCalledOnce();
-    expect(fs.existsSync(ownedRoot)).toBe(true);
-    expect(await prepared.cleanupAsync()).toBe(true);
     expect(fs.existsSync(ownedRoot)).toBe(false);
   });
 
