@@ -19,7 +19,6 @@ const suffix = "(?:[A-Za-z0-9]{6}|[\\da-f]{8}-[\\da-f]{4}-[\\da-f]{4}-[\\da-f]{4
 const legacyMarker = new RegExp(`^openclaw-sqlite-readonly-[1-9]\\d*-${suffix}`, "u");
 const tokenMarker = new RegExp(`^${prefix}${suffix}`, "u");
 const tokenName = SQLITE_SNAPSHOT_CONTROL_FILES[0];
-const scannedRoots = new Set<string>();
 type ReclamationPass = { controller: AbortController; done: Promise<void> };
 const pendingReclamations = new Map<string, ReclamationPass>();
 const legacyAgeMs = 24 * 60 * 60 * 1000;
@@ -174,7 +173,7 @@ function inspectSnapshot(
 }
 
 export function* reclaimAbandonedSqliteSnapshots(root: string, report = warn): Generator<void> {
-  if (stagingParent(root) || scannedRoots.has(root)) {
+  if (stagingParent(root)) {
     return;
   }
   try {
@@ -221,13 +220,12 @@ export function* reclaimAbandonedSqliteSnapshots(root: string, report = warn): G
   } catch (error) {
     report("SQLite snapshot reclamation failed; check private cache permissions.", error);
   }
-  scannedRoots.add(root);
 }
 
 export function reclaimAbandonedSqliteSnapshotsAsync(
   root = resolvePrivateSqliteSnapshotStagingRoot(),
 ): Promise<void> {
-  if (stagingParent(root) || scannedRoots.has(root) || pendingReclamations.has(root)) {
+  if (stagingParent(root) || pendingReclamations.has(root)) {
     return pendingReclamations.get(root)?.done ?? Promise.resolve();
   }
   const controller = new AbortController();
@@ -247,9 +245,6 @@ export function reclaimAbandonedSqliteSnapshotsAsync(
       } catch (error) {
         warn("SQLite snapshot reclamation worker failed; continuing without cache cleanup.", error);
       } finally {
-        if (!controller.signal.aborted) {
-          scannedRoots.add(root);
-        }
         pendingReclamations.delete(root);
       }
     })(),

@@ -62,12 +62,12 @@ function assertReadable(location: string) {
   }
 }
 
-function ageSnapshotTree(directory: string): void {
-  const stale = new Date(Date.now() - 25 * 60 * 60 * 1000);
+function ageSnapshotTree(directory: string, ageMs = 25 * 60 * 60 * 1000): void {
+  const stale = new Date(Date.now() - ageMs);
   for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
     const location = path.join(directory, entry.name);
     if (entry.isDirectory()) {
-      ageSnapshotTree(location);
+      ageSnapshotTree(location, ageMs);
     } else {
       fs.utimesSync(location, stale, stale);
     }
@@ -191,23 +191,37 @@ it("reclaims released-worker cache layouts only after 24 hours", async () => {
   }
 });
 
-it("gives abandoned current-generation snapshots a grace period", () => {
-  const { cache } = createFixture();
-  const abandoned = createSqliteSnapshotStagingDirectorySync(cache);
-  fs.writeFileSync(path.join(abandoned, "database.sqlite"), "recent private snapshot");
-  releaseSnapshotTempDirectory(abandoned);
+it.each(["sync", "async"] as const)(
+  "revisits expired current snapshots in the same %s owner",
+  async (mode) => {
+    const { cache } = createFixture();
+    const abandoned = createSqliteSnapshotStagingDirectorySync(cache);
+    fs.writeFileSync(path.join(abandoned, "database.sqlite"), "recent private snapshot");
+    releaseSnapshotTempDirectory(abandoned);
 
-  const allocated = createSqliteSnapshotStagingDirectorySync(cache);
-  try {
-    for (const _ of reclaimAbandonedSqliteSnapshots(cache)) {
-      // Exercise cleanup independently of allocation.
+    const allocated = createSqliteSnapshotStagingDirectorySync(cache);
+    try {
+      const reclaim = async () => {
+        if (mode === "async") {
+          await reclaimAbandonedSqliteSnapshotsAsync(cache);
+        } else {
+          for (const _ of reclaimAbandonedSqliteSnapshots(cache)) {
+            // Exercise cleanup independently of allocation.
+          }
+        }
+      };
+      await reclaim();
+      expect(fs.existsSync(abandoned)).toBe(true);
+      ageSnapshotTree(abandoned, 30 * 60 * 1000);
+      await reclaim();
+      expect(fs.existsSync(abandoned)).toBe(false);
+      expect(fs.existsSync(allocated)).toBe(true);
+    } finally {
+      removeTempDirectory(allocated);
+      removeTempDirectory(abandoned);
     }
-    expect(fs.existsSync(abandoned)).toBe(true);
-  } finally {
-    removeTempDirectory(allocated);
-    removeTempDirectory(abandoned);
-  }
-});
+  },
+);
 
 it("stops reclamation before exceeding its copied-byte budget", () => {
   const { cache } = createFixture();
