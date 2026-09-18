@@ -100,6 +100,41 @@ describe("shared auth store path resolution", () => {
     expect(resolveSharedAuthStorePath(env)).toBe(resolveOpenClawStateSqlitePath(env));
   });
 
+  it("observes out-of-process relocation through the asynchronous owner resolver", async () => {
+    const env = makeStateEnv();
+    // The off-thread read is the only part that needs the host worker; stub it at
+    // its boundary and keep the real resolver, cache and synchronous path.
+    vi.doMock("../../state/openclaw-state-worker-store.js", () => ({
+      runOpenClawStateWorkerOperation: async () => ({ location: "state-db" }),
+    }));
+    try {
+      const {
+        resolveSharedAuthStoreOwnership,
+        resolveSharedAuthStoreOwnershipAsync,
+        resolveSharedAuthStorePath,
+      } = await import("./path-resolve.js");
+      const context = {
+        admission: {
+          databasePath: path.resolve(resolveOpenClawStateSqlitePath(env)),
+          assertCurrent: () => {},
+        },
+      } as unknown as Parameters<typeof resolveSharedAuthStoreOwnershipAsync>[0];
+
+      // The running process pins the non-terminal legacy owner first.
+      expect(resolveSharedAuthStoreOwnership(env)).toEqual({ location: "legacy-main" });
+
+      // A sibling process relocates the shared store while this one keeps running.
+      writeConfigMachineState("auth.sharedStore", { location: "state-db" }, { env });
+
+      expect(await resolveSharedAuthStoreOwnershipAsync(context)).toEqual({ location: "state-db" });
+      // Callers pair the asynchronous owner with the synchronous shared path to
+      // pick a reader, so the two must never disagree.
+      expect(resolveSharedAuthStorePath(env)).toBe(resolveOpenClawStateSqlitePath(env));
+    } finally {
+      vi.doUnmock("../../state/openclaw-state-worker-store.js");
+    }
+  });
+
   it("keeps a resolved state-db owner pinned after the ownership row disappears", async () => {
     const env = makeStateEnv();
     const { resolveSharedAuthStoreOwnership, resolveSharedAuthStorePath } =

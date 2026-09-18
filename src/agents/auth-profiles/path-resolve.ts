@@ -99,8 +99,21 @@ export async function resolveSharedAuthStoreOwnershipAsync(
 ): Promise<SharedAuthStoreOwnership> {
   const databasePath = context.admission.databasePath;
   const cached = sharedAuthStoreOwnershipByDatabasePath.get(databasePath);
-  if (cached) {
+  // Mirror the synchronous resolver: only the one-way terminal `state-db` owner
+  // stays pinned. A cached `legacy-main` must be re-read here as well, otherwise
+  // this resolver keeps reporting the legacy owner while the synchronous shared
+  // path resolver has already self-healed to the state database, and callers that
+  // pair the two (runtime-read.ts) select a reader that was never prepared.
+  if (cached?.location === "state-db") {
     return cached;
+  }
+  if (
+    !cached &&
+    sharedAuthStoreOwnershipByDatabasePath.size >= SHARED_AUTH_STORE_OWNERSHIP_CACHE_LIMIT
+  ) {
+    throw new Error(
+      "Shared auth store ownership cache exceeded its process root limit; restart OpenClaw.",
+    );
   }
   const value = await runOpenClawStateWorkerOperation(
     context,
@@ -114,15 +127,23 @@ export async function resolveSharedAuthStoreOwnershipAsync(
   context.admission.assertCurrent();
   // An explicit commit/reload while this read waited remains the authoritative owner.
   const current = sharedAuthStoreOwnershipByDatabasePath.get(databasePath);
-  if (current) {
+  if (current && current !== cached) {
     return current;
   }
-  if (sharedAuthStoreOwnershipByDatabasePath.size >= SHARED_AUTH_STORE_OWNERSHIP_CACHE_LIMIT) {
+  const ownership = parseSharedAuthStoreOwnership(value);
+  // Keep the process-stable object while the non-terminal legacy owner is
+  // unchanged; legacy inspection memoizes on this object's identity.
+  if (cached && ownership.location === "legacy-main") {
+    return cached;
+  }
+  if (
+    !current &&
+    sharedAuthStoreOwnershipByDatabasePath.size >= SHARED_AUTH_STORE_OWNERSHIP_CACHE_LIMIT
+  ) {
     throw new Error(
       "Shared auth store ownership cache exceeded its process root limit; restart OpenClaw.",
     );
   }
-  const ownership = parseSharedAuthStoreOwnership(value);
   sharedAuthStoreOwnershipByDatabasePath.set(databasePath, ownership);
   return ownership;
 }
