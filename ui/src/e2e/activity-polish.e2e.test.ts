@@ -52,8 +52,12 @@ suite.define(() => {
             ? "https://img.shields.io/badge/release-ready"
             : `https://images.example.test/screenshot-${index}.png`;
           await page.route(artifact.image.url, async (route) => {
-            referrers.push(route.request().headers().referer);
-            await route.fulfill({ contentType: badge ? "image/svg+xml" : "image/png", body });
+            referrers.push((await route.request().allHeaders()).referer);
+            await route.fulfill({
+              contentType: badge ? "image/svg+xml" : "image/png",
+              headers: { "Cache-Control": "no-store" },
+              body,
+            });
           });
         }
         await gateway.setMethodResponse("artifacts.list", {
@@ -111,6 +115,10 @@ suite.define(() => {
             ),
           )
           .toBe(true);
+        await page.getByRole("button", { name: "Previous image", exact: true }).click();
+        await expect
+          .poll(() => expandedImage.getAttribute("src"))
+          .toBe(images.artifacts[2]!.image.url);
         expect(referrers.every((referrer) => referrer === undefined)).toBe(true);
         await page.keyboard.press("Escape");
         await page.locator("openclaw-image-lightbox").waitFor({ state: "detached" });
