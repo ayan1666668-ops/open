@@ -469,12 +469,14 @@ async function scenarioQuietSweep(): Promise<{ durationMs: number }> {
   // The batched answer must equal an unbatched read of the same quiet store.
   const database = openStore(storePath, "main");
   const probeIds = candidateGenerationIds(8);
-  const batchedAnswers: string[][] = [];
+  // `null` records "the memo declined to answer", which must not read as an empty
+  // answer: a resolver that never serves would otherwise match an empty read.
+  const batchedAnswers: Array<string[] | null> = [];
   await withBatchedSessionReferenceAnalysis(database, probeIds, async () => {
     for (const sessionId of probeIds) {
       const excluded = new Set([`agent:main:cron:job-x:run:run-x`]);
       const served = resolveBatchedReferencedSessionIds(database.db, excluded, [sessionId]);
-      batchedAnswers.push([...(served ?? [])].toSorted());
+      batchedAnswers.push(served ? [...served].toSorted() : null);
     }
     await Promise.resolve();
   });
