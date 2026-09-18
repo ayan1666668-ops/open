@@ -433,7 +433,7 @@ describe("runtime placement observations", () => {
         const crossing = changed.flatMap((job) =>
           job.groups
             .filter((group) => group.runner !== job.runner)
-            .map((group) => ({ ...group, env: { ...job.env, ...group.env } })),
+            .map((group) => Object.assign({}, group, { env: { ...job.env, ...group.env } })),
         );
         expect(crossing.length).toBeGreaterThan(0);
         expect(crossing.every((group) => group.env?.OPENCLAW_VITEST_MAX_WORKERS === "2")).toBe(
