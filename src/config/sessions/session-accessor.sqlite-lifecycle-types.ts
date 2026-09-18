@@ -17,6 +17,7 @@ import type {
   SessionEntryLifecycleRemoval,
 } from "./session-accessor.sqlite-contract.js";
 import type { SqliteLifecycleTargetSnapshot } from "./session-accessor.sqlite-entry-equality.js";
+import type { SessionEntryMaintenanceAgeFact } from "./session-accessor.sqlite-maintenance-age.js";
 import type { SessionMaintenancePreservationSnapshot } from "./store-maintenance-preserve-snapshot.js";
 import type { ResolvedSessionMaintenanceConfig } from "./store-maintenance.js";
 import type { InternalSessionEntry as SessionEntry } from "./types.js";
@@ -40,6 +41,7 @@ export type SqliteSessionDeletionScope =
   | { kind: "entry"; phase: "plan" | "commit" }
   | { kind: "historical-generation"; phase: "plan" | "commit"; sessionId: string };
 export type SessionEntryMaintenanceInput = {
+  ageFact?: SessionEntryMaintenanceAgeFact;
   activeSessionKey?: string;
   activeSessionKeys?: readonly string[];
   archiveDirectory: string;
@@ -56,10 +58,6 @@ type SessionReclamationPlanBase = {
 
 export type SqliteSessionReclamationPlan =
   | (SessionReclamationPlanBase & { kind: "maintenance-statistics" })
-  | (SessionReclamationPlanBase & {
-      kind: "maintenance-schedule";
-      maintenance: ResolvedSessionMaintenanceConfig;
-    })
   | (SessionReclamationPlanBase & {
       kind: "maintenance-plan";
       input: SessionEntryMaintenanceInput;
@@ -95,9 +93,12 @@ export type SqliteSessionReclamationPlan =
 
 export type SqliteSessionReclamationResult =
   | { kind: "maintenance-statistics"; value: true }
-  | { kind: "maintenance-schedule"; value: number | undefined }
   | { kind: "maintenance-preservation-required" }
-  | { kind: "maintenance-plan"; value: SessionEntryMaintenancePlan }
+  | {
+      kind: "maintenance-plan";
+      value: SessionEntryMaintenancePlan;
+      ageFact?: SessionEntryMaintenanceAgeFact;
+    }
   | {
       kind: "maintenance-finalize";
       value: {

@@ -97,9 +97,6 @@ function createAgeReaders(database: DatabaseSync) {
     .selectAll("age_rows");
 
   return {
-    oldest: prepareSqliteQueryIterator(database, () =>
-      ordered.select(["session_key", "updated_at"]),
-    ),
     after: prepareSqliteQueryIterator<number, { session_key: string; updated_at: number }>(
       database,
       (parameter) =>

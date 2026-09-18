@@ -665,23 +665,31 @@ describe("SQLite historical session disk budget", () => {
       );
       const reclamation = await import("./session-accessor.sqlite-reclamation.js");
       const reclaim = reclamation.runSqliteSessionReclamation;
-      const dispatch = vi
-        .spyOn(reclamation, "runSqliteSessionReclamation")
-        .mockImplementationOnce(async (params) => {
-          replaceSessionEntrySync(
-            { sessionKey, storePath },
-            {
-              sessionId: "race-live",
-              updatedAt: Date.now(),
-              ...(field === "age-retention" || field === "manual"
-                ? { archivedAt: Date.now(), archiveReason: field }
-                : field === "recent"
-                  ? {}
-                  : { [field]: Date.now() }),
-            },
-          );
-          return await reclaim(params);
-        });
+      const historyRequests: string[] = [];
+      let protectionChanged = false;
+      vi.spyOn(reclamation, "runSqliteSessionReclamation").mockImplementation(async (params) => {
+        // Automatic entry planning shares this transport; inject only at the history attempt.
+        if (params.plan.kind === "history-eviction") {
+          historyRequests.push(params.plan.sessionId);
+          if (params.plan.sessionId === "race-old") {
+            expect(protectionChanged).toBe(false);
+            replaceSessionEntrySync(
+              { sessionKey, storePath },
+              {
+                sessionId: "race-live",
+                updatedAt: Date.now(),
+                ...(field === "age-retention" || field === "manual"
+                  ? { archivedAt: Date.now(), archiveReason: field }
+                  : field === "recent"
+                    ? {}
+                    : { [field]: Date.now() }),
+              },
+            );
+            protectionChanged = true;
+          }
+        }
+        return await reclaim(params);
+      });
       expect(
         await enforceSqliteSessionHistoryDiskBudget({
           storePath,
@@ -693,7 +701,8 @@ describe("SQLite historical session disk budget", () => {
           },
         }),
       ).toMatchObject({ removedEntries: 0 });
-      expect(dispatch).toHaveBeenCalledOnce();
+      expect(historyRequests).toEqual(["race-old"]);
+      expect(protectionChanged).toBe(true);
       expect(
         loadTranscriptEventsSync({ sessionId: "race-old", sessionKey, storePath }),
       ).not.toEqual([]);

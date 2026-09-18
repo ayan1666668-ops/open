@@ -2,6 +2,7 @@ import { isDeepStrictEqual } from "node:util";
 import { normalizeAgentId } from "@openclaw/normalization-core/agent-id";
 import { executeSqliteQuerySync, getNodeSqliteKysely } from "../../infra/kysely-sync.js";
 import { runWithSqliteBusyTimeout } from "../../infra/sqlite-busy-timeout.js";
+import { getChildLogger } from "../../logging/logger.js";
 import { KeyedAsyncQueue } from "../../plugin-sdk/keyed-async-queue.js";
 import { resolveGlobalSingleton } from "../../shared/global-singleton.js";
 import { readOpenClawAgentDatabaseIdentity } from "../../state/openclaw-agent-db-identity.js";
@@ -28,6 +29,7 @@ import type {
   SqliteSessionReclamationDiagnostics,
 } from "./session-accessor.sqlite-contract.js";
 import { runSqliteSessionDeletionTransaction } from "./session-accessor.sqlite-deletion.js";
+import { publishSessionEntryCacheInvalidation } from "./session-accessor.sqlite-entry-cache.js";
 import {
   sqliteLifecycleTargetSnapshotsEqual,
   sqliteSessionEntriesEqual,
@@ -264,7 +266,6 @@ export function reclaimSqliteSessionInTransaction(
   if (
     plan.kind === "maintenance-plan" ||
     plan.kind === "maintenance-finalize" ||
-    plan.kind === "maintenance-schedule" ||
     plan.kind === "maintenance-statistics"
   ) {
     return reclaimSessionMaintenanceInTransaction(plan, callbacks);
@@ -444,6 +445,7 @@ export async function runSqliteSessionReclamation(params: {
   assertCommitAllowed?: () => void;
   forceInProcess: boolean;
   onInProcessCommit?: (database: OpenClawAgentDatabase) => void;
+  onWorkerResult?: (result: SqliteSessionReclamationResult) => void;
   plan: SqliteSessionReclamationPlan;
 }): Promise<SqliteSessionReclamationResult> {
   if (params.diagnostics) {
@@ -550,6 +552,19 @@ export async function runSqliteSessionReclamation(params: {
                           const completed = await run(refusal);
                           if (completed) {
                             // Publish captured identities after transaction settlement, before releasing the writer.
+                            params.onWorkerResult?.(completed);
+                            const rowsChanged =
+                              completed.kind === "maintenance-plan"
+                                ? completed.value.archived > 0
+                                : completed.kind === "maintenance-finalize"
+                                  ? completed.value.committedEntries.length > 0
+                                  : completed.kind !== "maintenance-preservation-required" &&
+                                    completed.kind !== "maintenance-statistics";
+                            // No-op planning, rolled-back discovery, and statistics must leave
+                            // resident row projections warm; only committed row changes publish.
+                            if (rowsChanged) {
+                              publishSessionEntryCacheInvalidation(database);
+                            }
                             publishCommitted?.();
                             if (plan.kind === "maintenance-finalize") {
                               prepareReclamationPublication(plan, completed)?.();
@@ -559,11 +574,24 @@ export async function runSqliteSessionReclamation(params: {
                               getOpenClawAgentDatabaseIfOpen(plan.databaseOptions)?.db ===
                                 database.db
                             ) {
-                              assertCommitAllowed();
-                              runWithSqliteBusyTimeout(database.db, 0, () => {
-                                // sqlite-allow-raw -- Reload this connection's committed planner metadata without scanning tables.
-                                database.db.exec("ANALYZE sqlite_schema;");
-                              });
+                              try {
+                                assertCommitAllowed();
+                                runWithSqliteBusyTimeout(database.db, 0, () => {
+                                  // sqlite-allow-raw -- Reload this connection's committed planner metadata without scanning tables.
+                                  database.db.exec("ANALYZE sqlite_schema;");
+                                });
+                              } catch (error) {
+                                // The Worker already committed. Parent refresh failure must not
+                                // reject durable success or retire its settled Worker as uncertain.
+                                try {
+                                  getChildLogger({ subsystem: "session-sqlite" }).warn(
+                                    "Committed SQLite session statistics could not refresh parent planner metadata",
+                                    { agentId: database.agentId, error, path: database.path },
+                                  );
+                                } catch {
+                                  // Diagnostic transport failure cannot undo the committed result.
+                                }
+                              }
                             }
                           }
                         },
@@ -640,18 +668,6 @@ export function createSessionMaintenancePlanningOperation(params: {
     databaseOptions: resolveSessionReclamationDatabaseOptions(params.databaseOptions),
     input: params.input,
     kind: "maintenance-plan",
-    materializedPlans: [],
-  };
-}
-
-export function createSessionMaintenanceScheduleOperation(params: {
-  databaseOptions: OpenClawAgentDatabaseOptions;
-  maintenance: SessionEntryMaintenanceInput["maintenance"];
-}): Extract<SqliteSessionReclamationPlan, { kind: "maintenance-schedule" }> {
-  return {
-    databaseOptions: resolveSessionReclamationDatabaseOptions(params.databaseOptions),
-    maintenance: params.maintenance,
-    kind: "maintenance-schedule",
     materializedPlans: [],
   };
 }

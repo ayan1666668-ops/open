@@ -4,7 +4,6 @@ import { executeSqliteQuerySync } from "../../infra/kysely-sync.js";
 import { coerceRequiredSqliteNumber as sqliteNumber } from "../../infra/sqlite-number.js";
 import type { OpenClawAgentDatabase } from "../../state/openclaw-agent-db.js";
 import type { SessionStateDeletePlan } from "./session-accessor.sqlite-archive-types.js";
-import { readSessionEntryCacheValidityToken } from "./session-accessor.sqlite-entry-cache.js";
 import {
   readSessionEntryCount,
   readSessionEntryStore,
@@ -21,8 +20,8 @@ import type {
   SessionEntryMaintenancePlan,
 } from "./session-accessor.sqlite-lifecycle-types.js";
 import {
+  invalidateSessionEntryMaintenanceAgeFact,
   readSessionEntryMaintenanceAgeFact,
-  readSessionEntryMaintenanceNextAgeAt,
   recordSessionEntryMaintenanceAgeFact,
 } from "./session-accessor.sqlite-maintenance-age.js";
 import {
@@ -105,23 +104,13 @@ export function applySessionEntryMaintenanceInDatabase(
       force: params.forceMaintenance,
     })
   ) {
-    const ageFact = readSessionEntryMaintenanceAgeFact(
-      database.db,
-      readSessionEntryCacheValidityToken(database.db),
-    );
-    const pruneAt =
-      maintenance.pruneAfterMs > 0
-        ? (ageFact?.oldestUpdatedAt ?? -Infinity) + maintenance.pruneAfterMs
-        : Infinity;
-    const dashboardAge = maintenance.archiveDashboardAfterMs ?? 0;
-    const dashboardAt =
-      dashboardAge > 0
-        ? (ageFact?.oldestDashboardActivityAt ?? -Infinity) + dashboardAge
-        : Infinity;
-    if (Date.now() <= Math.min(pruneAt, dashboardAt)) {
+    const ageFact = readSessionEntryMaintenanceAgeFact(database.db, maintenance);
+    if (ageFact && Date.now() < ageFact.next.at) {
       return emptySessionEntryMaintenancePlan();
     }
   }
+  invalidateSessionEntryMaintenanceAgeFact(database.db);
+  const plannedAt = Date.now();
   const activeSessionKeys = uniqueStrings([
     params.activeSessionKey ?? "",
     ...(params.activeSessionKeys ?? []),
@@ -191,11 +180,7 @@ export function applySessionEntryMaintenanceInDatabase(
     const expectedEntry = selectedEntries[sessionKey];
     return expectedEntry ? [{ expectedEntry, maintenanceReason, sessionKey }] : [];
   });
-  recordSessionEntryMaintenanceAgeFact(
-    database,
-    readSessionEntryCacheValidityToken(database.db),
-    maintenance,
-  );
+  recordSessionEntryMaintenanceAgeFact(database, maintenance, plannedAt);
   if (removals.length === 0) {
     return {
       ...(archivedWorktrees.length ? { archivedWorktrees } : {}),
@@ -248,15 +233,4 @@ export function applySessionEntryMaintenanceInDatabase(
     pruned,
     capped,
   };
-}
-
-export function readNextSessionEntryMaintenanceAtInDatabase(
-  database: OpenClawAgentDatabase,
-  maintenance: SessionEntryMaintenanceInput["maintenance"],
-): number | undefined {
-  return readSessionEntryMaintenanceNextAgeAt(
-    database,
-    readSessionEntryCacheValidityToken(database.db),
-    maintenance,
-  );
 }

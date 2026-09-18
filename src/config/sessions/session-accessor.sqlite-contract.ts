@@ -33,7 +33,6 @@ export type SqliteSessionReclamationDiagnostics = {
     | "maintenance-plan"
     | "maintenance-finalize"
     | "maintenance-statistics"
-    | "maintenance-schedule"
     | "cold-batch"
     | "cold-maintain"
     | "cold-restore";

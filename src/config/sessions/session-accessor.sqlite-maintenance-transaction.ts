@@ -15,19 +15,18 @@ import type {
   SqliteSessionReclamationResult,
 } from "./session-accessor.sqlite-lifecycle-types.js";
 import {
+  readSessionEntryMaintenanceAgeFact,
+  stageSessionEntryMaintenanceAgeFact,
+} from "./session-accessor.sqlite-maintenance-age.js";
+import {
   applySessionEntryMaintenanceInDatabase,
-  readNextSessionEntryMaintenanceAtInDatabase,
   refreshSessionPlannerStatisticsInDatabase,
 } from "./session-accessor.sqlite-maintenance-store.js";
 
 type MaintenancePlan = Extract<
   SqliteSessionReclamationPlan,
   {
-    kind:
-      | "maintenance-plan"
-      | "maintenance-finalize"
-      | "maintenance-schedule"
-      | "maintenance-statistics";
+    kind: "maintenance-plan" | "maintenance-finalize" | "maintenance-statistics";
   }
 >;
 
@@ -35,13 +34,6 @@ export function reclaimSessionMaintenanceInTransaction(
   plan: MaintenancePlan,
   callbacks: SqliteSessionReclamationCallbacks,
 ): SqliteSessionReclamationResult {
-  if (plan.kind === "maintenance-schedule") {
-    const value = runOpenClawAgentWriteTransaction((database) => {
-      callbacks.beforeMutation?.();
-      return readNextSessionEntryMaintenanceAtInDatabase(database, plan.maintenance);
-    }, plan.databaseOptions);
-    return { kind: plan.kind, value };
-  }
   if (plan.kind === "maintenance-statistics") {
     const database = openOpenClawAgentDatabase(plan.databaseOptions);
     runWithSqliteBusyTimeout(database.db, 0, () =>
@@ -60,8 +52,10 @@ export function reclaimSessionMaintenanceInTransaction(
   if (plan.kind === "maintenance-plan") {
     let preservationRequired: Error | undefined;
     try {
-      const value = runOpenClawAgentWriteTransaction((database) => {
+      return runOpenClawAgentWriteTransaction((database) => {
         callbacks.beforeMutation?.();
+        // Retained Workers receive only the parent's current fact, including its absence.
+        stageSessionEntryMaintenanceAgeFact(database.db, plan.input.ageFact);
         const maintenance = applySessionEntryMaintenanceInDatabase(database, plan.input, () => {
           if (plan.input.preservation === null) {
             preservationRequired = new Error("SQLite maintenance requires session preservation");
@@ -72,9 +66,12 @@ export function reclaimSessionMaintenanceInTransaction(
         if (maintenance.archived > 0 || maintenance.entryRemovals.length > 0) {
           callbacks.onCommit?.(database);
         }
-        return maintenance;
+        return {
+          kind: plan.kind,
+          value: maintenance,
+          ageFact: readSessionEntryMaintenanceAgeFact(database.db, plan.input.maintenance),
+        };
       }, plan.databaseOptions);
-      return { kind: plan.kind, value };
     } catch (error) {
       if (preservationRequired && error === preservationRequired) {
         // Candidate discovery requested protection before writes; the transaction has rolled back.

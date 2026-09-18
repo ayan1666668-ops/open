@@ -351,15 +351,6 @@ it("coalesces automatic maintenance through the shared reclamation writer", asyn
     );
     const finalize = maintenance.finalizeSessionEntryMaintenancePlansAfterWriterReleaseBestEffort;
     const finalized = createDeferredCore<Awaited<ReturnType<typeof finalize>>>();
-    const scheduled = createDeferredCore();
-    const reclaim = reclamation.runSqliteSessionReclamation;
-    vi.spyOn(reclamation, "runSqliteSessionReclamation").mockImplementation(async (params) => {
-      const result = await reclaim(params);
-      if (result.kind === "maintenance-schedule") {
-        scheduled.resolve();
-      }
-      return result;
-    });
     // Row deletion precedes archive publication; join the unchanged finalizer, including both.
     vi.spyOn(
       maintenance,
@@ -390,7 +381,6 @@ it("coalesces automatic maintenance through the shared reclamation writer", asyn
       kickSessionEntryMaintenanceAfterWrite(request);
       kickSessionEntryMaintenanceAfterWrite(request);
       await finalized.promise;
-      await scheduled.promise;
       await yieldToEventLoop();
       expect(operations).toEqual([
         "session.maintenance.plan",
@@ -403,16 +393,12 @@ it("coalesces automatic maintenance through the shared reclamation writer", asyn
         "session.reclamation.worker-commit",
         "session.maintenance.finalize",
         "session.archive.publish-prepare",
-        "session.maintenance.plan",
-        "session.reclamation.retain",
-        "session.reclamation.worker-commit",
       ]);
       expect(reclamationKinds).toEqual([
         "maintenance-plan",
         "maintenance-plan",
         "maintenance-finalize",
         "maintenance-finalize",
-        "maintenance-schedule",
       ]);
       expect(loadSessionEntry({ sessionKey: staleKey, storePath })).toBeUndefined();
       expect(loadSessionEntry({ sessionKey: activeKey, storePath })?.sessionId).toBe("active");

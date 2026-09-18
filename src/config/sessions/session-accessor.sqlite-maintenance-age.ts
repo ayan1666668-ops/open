@@ -2,7 +2,6 @@ import type { DatabaseSync } from "node:sqlite";
 import { stageSqliteTransactionState } from "../../infra/sqlite-post-commit.js";
 import { parseAgentSessionKey } from "../../sessions/session-key-utils.js";
 import type { OpenClawAgentDatabase } from "../../state/openclaw-agent-db.js";
-import type { SqliteSessionEntryRevision } from "./session-accessor.sqlite-entry-revision.js";
 import { readSessionMaintenanceAgeQueries } from "./session-accessor.sqlite-maintenance-age-queries.js";
 import { hasCanonicalSessionValidationProjection } from "./session-canonical-key.js";
 import {
@@ -12,27 +11,29 @@ import {
 } from "./store-maintenance.js";
 import type { SessionEntry } from "./types.js";
 
-type AgeFact = {
-  token: SqliteSessionEntryRevision;
-  oldestUpdatedAt: number;
-  oldestDashboardActivityAt: number;
-  next?: { policy: string; at: number };
+export type SessionEntryMaintenanceAgeFact = {
+  maintenance: ResolvedSessionMaintenanceConfig;
+  next: { at: number };
+  recheckAt: number;
 };
+export type SessionEntryMaintenanceAgeCapture = { fact?: SessionEntryMaintenanceAgeFact };
+
 type Activity = Parameters<typeof getSessionMaintenanceActivityAt>[0];
-type ActivityRow = {
-  updated_at: number;
-  last_activity_at: number | null;
-  last_interaction_at: number | null;
-  session_started_at: number | null;
-};
 
-// Share the entry cache's raw-DML/external-commit revision, not its listing snapshot.
-const ageFacts = new WeakMap<DatabaseSync, AgeFact>();
+export const SESSION_ENTRY_MAINTENANCE_INTERVAL_MS = 30 * 60 * 1_000;
 
-function stageAgeFact(db: DatabaseSync, fact: AgeFact): void {
+// Ordinary writes only make entries younger or remove them, so this lower bound
+// survives entry-cache revision churn. Every maintenance caller enforces the
+// recheck deadline, including callers that do not register a maintenance kick.
+const ageFacts = new WeakMap<DatabaseSync, SessionEntryMaintenanceAgeCapture>();
+
+export function stageSessionEntryMaintenanceAgeFact(
+  db: DatabaseSync,
+  fact: SessionEntryMaintenanceAgeFact | undefined,
+): void {
   if (
     stageSqliteTransactionState(db, {
-      stage: () => ageFacts.set(db, fact),
+      stage: () => ageFacts.set(db, { fact }),
       rollback: () => ageFacts.delete(db),
       commit: () => {},
     })
@@ -40,76 +41,106 @@ function stageAgeFact(db: DatabaseSync, fact: AgeFact): void {
     return;
   }
   if (!db.isTransaction) {
-    ageFacts.set(db, fact);
+    ageFacts.set(db, { fact });
   }
 }
 
-export function hasSessionEntryMaintenanceAgeFact(db: DatabaseSync): boolean {
-  return ageFacts.has(db);
+export function invalidateSessionEntryMaintenanceAgeFact(db: DatabaseSync): void {
+  ageFacts.delete(db);
 }
 
 export function readSessionEntryMaintenanceAgeFact(
   db: DatabaseSync,
-  token: SqliteSessionEntryRevision,
-): AgeFact | undefined {
-  const fact = ageFacts.get(db);
+  maintenance: ResolvedSessionMaintenanceConfig,
+): SessionEntryMaintenanceAgeFact | undefined {
+  const fact = ageFacts.get(db)?.fact;
+  if (!fact) {
+    return undefined;
+  }
+  const now = Date.now();
   if (
-    fact?.token.dataVersion !== token.dataVersion ||
-    fact.token.sessionNodesGeneration !== token.sessionNodesGeneration
+    agePolicy(fact.maintenance) !== agePolicy(maintenance) ||
+    now >= fact.recheckAt ||
+    fact.recheckAt > now + SESSION_ENTRY_MAINTENANCE_INTERVAL_MS
   ) {
-    ageFacts.delete(db);
+    invalidateSessionEntryMaintenanceAgeFact(db);
     return undefined;
   }
   return fact;
+}
+
+/** Capture identity stays local; only its scalar fact crosses the Worker boundary. */
+export function captureSessionEntryMaintenanceAgeFact(
+  db: DatabaseSync,
+  maintenance: ResolvedSessionMaintenanceConfig,
+): SessionEntryMaintenanceAgeCapture {
+  readSessionEntryMaintenanceAgeFact(db, maintenance);
+  let capture = ageFacts.get(db);
+  if (!capture) {
+    capture = {};
+    ageFacts.set(db, capture);
+  }
+  return capture;
+}
+
+export function isSessionEntryMaintenanceAgeCaptureCurrent(
+  db: DatabaseSync,
+  capture: SessionEntryMaintenanceAgeCapture,
+): boolean {
+  return ageFacts.get(db) === capture;
+}
+
+export function adoptSessionEntryMaintenanceAgeFact(
+  db: DatabaseSync,
+  capture: SessionEntryMaintenanceAgeCapture,
+  fact: SessionEntryMaintenanceAgeFact | undefined,
+): void {
+  // A synchronous writer can run after native commit but before parent settlement.
+  // Keep its newer state without turning an already committed result into failure.
+  if (isSessionEntryMaintenanceAgeCaptureCurrent(db, capture)) {
+    capture.fact = fact;
+  }
 }
 
 function isDashboardKey(key: string): boolean {
   return parseAgentSessionKey(key)?.rest.startsWith("dashboard:") === true;
 }
 
-function includeEntryAge(fact: AgeFact, key: string, entry: Activity): void {
-  // Only key-inherent protection is stable without rereading live admissions or row fields.
-  if (shouldPreserveMaintenanceEntry({ key, entry: undefined })) {
-    return;
-  }
-  fact.oldestUpdatedAt = Math.min(fact.oldestUpdatedAt, entry?.updatedAt ?? Infinity);
-  if (isDashboardKey(key)) {
-    fact.oldestDashboardActivityAt = Math.min(
-      fact.oldestDashboardActivityAt,
-      getSessionMaintenanceActivityAt(entry),
-    );
-  }
-}
-
 /** Tracked writes can only bring the conservative age boundary forward. */
 export function advanceSessionEntryMaintenanceAgeFact(
   db: DatabaseSync,
-  generation: { before: number; after: number },
-  update?: { sessionKey: string; entry: SessionEntry; previousEntry?: SessionEntry },
+  update: { sessionKey: string; entry: SessionEntry; previousEntry?: SessionEntry },
 ): void {
-  const fact = ageFacts.get(db);
+  const fact = ageFacts.get(db)?.fact;
   if (!fact) {
+    // An empty capture must also observe writes while Worker results are in flight.
+    invalidateSessionEntryMaintenanceAgeFact(db);
     return;
   }
-  if (!update || fact.token.sessionNodesGeneration !== generation.before) {
-    ageFacts.delete(db);
+  if (update.entry.archivedAt !== undefined) {
     return;
   }
   const { entry, previousEntry } = update;
-  const older =
-    !previousEntry ||
-    (previousEntry.archivedAt !== undefined && entry.archivedAt === undefined) ||
-    entry.updatedAt < previousEntry.updatedAt ||
-    getSessionMaintenanceActivityAt(entry) < getSessionMaintenanceActivityAt(previousEntry);
-  const next: AgeFact = {
-    ...fact,
-    token: { ...fact.token, sessionNodesGeneration: generation.after },
-    next: older ? undefined : fact.next,
-  };
-  if (entry.archivedAt === undefined) {
-    includeEntryAge(next, update.sessionKey, entry);
+  if (
+    previousEntry &&
+    (previousEntry.archivedAt !== undefined ||
+      entry.updatedAt < previousEntry.updatedAt ||
+      getSessionMaintenanceActivityAt(entry) < getSessionMaintenanceActivityAt(previousEntry))
+  ) {
+    // Exact replacement/lifecycle writers also own backdates and archive restores.
+    invalidateSessionEntryMaintenanceAgeFact(db);
+    return;
   }
-  stageAgeFact(db, next);
+  // A newly inserted historical entry must retain already-due transitions too.
+  const at = nextEntryAgeAt(
+    update.sessionKey,
+    entry,
+    fact.maintenance,
+    previousEntry ? Date.now() : -Infinity,
+  );
+  if (at < fact.next.at) {
+    stageSessionEntryMaintenanceAgeFact(db, { ...fact, next: { at } });
+  }
 }
 
 function agePolicy(maintenance: ResolvedSessionMaintenanceConfig): string {
@@ -120,12 +151,43 @@ function agePolicy(maintenance: ResolvedSessionMaintenanceConfig): string {
   ]);
 }
 
-function nextAgeAt(timestamp: number, age: number | null | undefined, now: number): number {
-  const at = age != null && age > 0 ? timestamp + age + 1 : Infinity;
-  return at > now ? at : Infinity;
+function nextEntryAgeAt(
+  key: string,
+  entry: Activity,
+  maintenance: ResolvedSessionMaintenanceConfig,
+  now: number,
+): number {
+  if (shouldPreserveMaintenanceEntry({ key, entry: undefined })) {
+    return Infinity;
+  }
+  const activityAt = getSessionMaintenanceActivityAt(entry);
+  let next = Infinity;
+  for (const [timestamp, age] of [
+    [entry?.updatedAt ?? 0, maintenance.pruneAfterMs],
+    [activityAt, isDashboardKey(key) ? maintenance.archiveDashboardAfterMs : null],
+    [activityAt, maintenance.preserveRecentMs],
+  ]) {
+    if (timestamp != null && age != null && age > 0) {
+      const at = timestamp + age + 1;
+      if (at > now) {
+        next = Math.min(next, at);
+      }
+    }
+  }
+  return next;
 }
 
-function readActivityAt(row: ActivityRow): number {
+function nextAgeAt(timestamp: number, age: number | null | undefined, plannedAt: number): number {
+  const at = age != null && age > 0 ? timestamp + age + 1 : Infinity;
+  return at > plannedAt ? at : Infinity;
+}
+
+function readActivityAt(row: {
+  updated_at: number;
+  last_activity_at: number | null;
+  last_interaction_at: number | null;
+  session_started_at: number | null;
+}): number {
   return getSessionMaintenanceActivityAt({
     updatedAt: row.updated_at,
     lastActivityAt: row.last_activity_at ?? undefined,
@@ -137,29 +199,20 @@ function readActivityAt(row: ActivityRow): number {
 /** The caller's transaction keeps these indexed probes in one snapshot. */
 export function recordSessionEntryMaintenanceAgeFact(
   database: OpenClawAgentDatabase,
-  token: SqliteSessionEntryRevision,
   maintenance: ResolvedSessionMaintenanceConfig,
+  plannedAt: number,
 ): void {
-  const next = { policy: agePolicy(maintenance), at: Infinity };
-  const fact: AgeFact = {
-    token,
-    oldestUpdatedAt: Infinity,
-    oldestDashboardActivityAt: Infinity,
+  const next = { at: Infinity };
+  const fact: SessionEntryMaintenanceAgeFact = {
+    maintenance,
     next,
+    recheckAt: plannedAt + SESSION_ENTRY_MAINTENANCE_INTERVAL_MS,
   };
-  const now = Date.now();
   const queries = readSessionMaintenanceAgeQueries(database.db);
-  for (const row of queries.oldest(undefined)) {
-    if (!shouldPreserveMaintenanceEntry({ key: row.session_key, entry: undefined })) {
-      fact.oldestUpdatedAt = row.updated_at;
-      break;
-    }
-  }
-  next.at = nextAgeAt(fact.oldestUpdatedAt, maintenance.pruneAfterMs, now);
-  if (maintenance.pruneAfterMs > 0 && fact.oldestUpdatedAt + maintenance.pruneAfterMs + 1 <= now) {
-    for (const row of queries.after(now - maintenance.pruneAfterMs - 1)) {
+  if (maintenance.pruneAfterMs > 0) {
+    for (const row of queries.after(plannedAt - maintenance.pruneAfterMs - 1)) {
       if (!shouldPreserveMaintenanceEntry({ key: row.session_key, entry: undefined })) {
-        next.at = nextAgeAt(row.updated_at, maintenance.pruneAfterMs, now);
+        next.at = row.updated_at + maintenance.pruneAfterMs + 1;
         break;
       }
     }
@@ -177,9 +230,10 @@ export function recordSessionEntryMaintenanceAgeFact(
       ) {
         continue;
       }
-      const activity = readActivityAt(row);
-      fact.oldestDashboardActivityAt = Math.min(fact.oldestDashboardActivityAt, activity);
-      next.at = Math.min(next.at, nextAgeAt(activity, maintenance.archiveDashboardAfterMs, now));
+      next.at = Math.min(
+        next.at,
+        nextAgeAt(readActivityAt(row), maintenance.archiveDashboardAfterMs, plannedAt),
+      );
     }
   }
   const recentAge = maintenance.preserveRecentMs;
@@ -190,26 +244,21 @@ export function recordSessionEntryMaintenanceAgeFact(
         break;
       }
       if (!shouldPreserveMaintenanceEntry({ key: row.session_key, entry: undefined })) {
-        next.at = Math.min(next.at, nextAgeAt(readActivityAt(row), recentAge, now));
+        next.at = Math.min(next.at, nextAgeAt(readActivityAt(row), recentAge, plannedAt));
       }
     }
   }
-  stageAgeFact(database.db, fact);
+  stageSessionEntryMaintenanceAgeFact(database.db, fact);
 }
 
-/** Infinity leaves the kick's periodic recheck in charge of released live protection. */
+/** The kick uses the same periodic deadline as inline maintenance callers. */
 export function readSessionEntryMaintenanceNextAgeAt(
   database: OpenClawAgentDatabase,
-  token: SqliteSessionEntryRevision,
   maintenance: ResolvedSessionMaintenanceConfig,
 ): number | undefined {
   if (maintenance.mode !== "enforce") {
     return undefined;
   }
-  const fact = readSessionEntryMaintenanceAgeFact(database.db, token);
-  if (fact?.next?.policy === agePolicy(maintenance) && fact.next.at > Date.now()) {
-    return fact.next.at;
-  }
-  recordSessionEntryMaintenanceAgeFact(database, token, maintenance);
-  return ageFacts.get(database.db)?.next?.at;
+  const fact = readSessionEntryMaintenanceAgeFact(database.db, maintenance);
+  return fact ? Math.min(fact.next.at, fact.recheckAt) : Date.now();
 }
