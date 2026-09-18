@@ -20,6 +20,7 @@ const stagedReportUpload = {
 };
 
 const controlServiceMocks = vi.hoisted(() => ({
+  hasBrowserControlWork: vi.fn(() => false),
   createBrowserControlContext: vi.fn(() => ({ control: true })),
   getBrowserControlState: vi.fn<() => BrowserServerState | null>(() => null),
   startBrowserControlServiceFromConfig: vi.fn<() => Promise<BrowserServerState | null>>(),
@@ -70,6 +71,7 @@ const browserConfigMocks = vi.hoisted(() => ({
 }));
 
 const uploadMocks = vi.hoisted(() => ({
+  hasBrowserProxyUploadWork: vi.fn(() => false),
   stageBrowserProxyUploadRequest: vi.fn(),
   discardStagedBrowserProxyUpload: vi.fn(async () => {}),
   ensureBrowserProxyUploadCleanup: vi.fn(async () => {}),
@@ -198,6 +200,10 @@ vi.mock("../control-service.js", () => ({
   createBrowserControlContext: controlServiceMocks.createBrowserControlContext,
   getBrowserControlState: controlServiceMocks.getBrowserControlState,
   startBrowserControlServiceFromConfig: controlServiceMocks.startBrowserControlServiceFromConfig,
+}));
+
+vi.mock("../browser-control-state.js", () => ({
+  hasBrowserControlWork: controlServiceMocks.hasBrowserControlWork,
 }));
 
 let runBrowserProxyCommand: typeof import("./invoke-browser.js").runBrowserProxyCommand;
