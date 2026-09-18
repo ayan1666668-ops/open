@@ -42,7 +42,6 @@ describe("chat history inline media redaction (real WS gateway)", () => {
       await upsertSessionEntryCore(
         {
           agentId: "main",
-          sessionId: SESSION_ID,
           sessionKey: SESSION_KEY,
           storePath: testState.sessionStorePath,
         },
@@ -160,7 +159,6 @@ describe("chat history inline media redaction (real WS gateway)", () => {
       await upsertSessionEntryCore(
         {
           agentId: "main",
-          sessionId: SESSION_ID,
           sessionKey: SESSION_KEY,
           storePath: testState.sessionStorePath,
         },
