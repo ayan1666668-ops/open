@@ -358,7 +358,7 @@ jobs:
           $ErrorActionPreference = "Stop"
           $evidence = Join-Path $env:GITHUB_WORKSPACE ".artifacts/windows-installed-startup"
           $candidateDir = Join-Path $env:RUNNER_TEMP "startup-package-resolved"
-          node --import ./scripts/tsx.mjs scripts/resolve-openclaw-package-candidate.mts --source artifact --artifact-dir (Join-Path $env:RUNNER_TEMP "startup-package-input") --package-sha256 $env:PACKAGE_SHA256 --output-dir $candidateDir
+          node --import ./scripts/tsx.mjs scripts/resolve-openclaw-package-candidate.mts --source artifact --artifact-dir (Join-Path $env:RUNNER_TEMP "startup-package-input") --package-sha256 $env:PACKAGE_SHA256 --output-dir $candidateDir --metadata (Join-Path $candidateDir "package-candidate.json")
           if ($LASTEXITCODE -ne 0) { throw "Canonical package resolution failed." }
           $candidate = Get-Content -LiteralPath (Join-Path $candidateDir "package-candidate.json") -Raw | ConvertFrom-Json
           $binding = Get-Content -LiteralPath (Join-Path $evidence "package-binding.json") -Raw | ConvertFrom-Json
