@@ -72,6 +72,7 @@ import { createChatRunState } from "../server-chat-state.js";
 import { resolveSessionStoreAgentId } from "../session-store-key.js";
 import { STALE_WORKER_BUILD_REASON } from "../worker-environments/admission.js";
 import { agentWaitHandler } from "./agent-wait.js";
+import { createScopedCliClient } from "./chat-client.test-support.js";
 import { handleChatSend, handleTrustedInternalChatSend } from "./chat-send-handler.js";
 import { readChatSendDedupeResponse } from "./chat-send-pre-admission.js";
 import { initializeSessionReadContext } from "./sessions-read-cache.test-support.js";
@@ -937,31 +938,6 @@ function expectDispatchContextFields(expected: {
   for (const [key, value] of Object.entries(expected)) {
     expect((mockState.lastDispatchCtx as Record<string, unknown> | undefined)?.[key]).toBe(value);
   }
-}
-
-function createScopedCliClient(
-  scopes?: string[],
-  client: Partial<{
-    id: string;
-    mode: string;
-    displayName: string;
-    version: string;
-  }> = {},
-  caps?: string[],
-) {
-  const id = client.id ?? "openclaw-cli";
-  return {
-    connect: {
-      scopes,
-      caps,
-      client: {
-        id,
-        mode: client.mode ?? "cli",
-        displayName: client.displayName ?? id,
-        version: client.version ?? "1.0.0",
-      },
-    },
-  };
 }
 
 function createChatContext() {
@@ -4797,38 +4773,52 @@ describe("chat directive tag stripping for non-streaming final payloads", () => 
     },
   );
 
-  it("keeps visible text and trusted worktree audio on non-agent TTS final media", async () => {
-    await withTempDir("openclaw-command-tts-worktree-", async (worktree) => {
-      const transcriptDir = await createTranscriptFixture("openclaw-chat-send-command-tts-final-");
-      const audioPath = path.join(worktree, "tts.mp3");
-      const audio = Buffer.alloc(6 * 1024 * 1024);
-      createPlaybackMediaFixture("mp3").copy(audio);
-      fs.writeFileSync(audioPath, audio);
-      mockState.config = {
-        agents: { defaults: { workspace: transcriptDir } },
-        tools: { fs: { workspaceOnly: true } },
-      };
-      mockState.sessionEntry = { sessionRoot: worktree, spawnedCwd: worktree };
-      mockState.finalPayload = createSlashCommandMediaReply("final", [audioPath], {
-        text: "Command result with TTS.",
-        spokenText: "Command result with TTS.",
-        mediaUrl: audioPath,
-        audioAsVoice: true,
-      }).payload;
-      const payload = await createChatRequestFixture().send({
-        idempotencyKey: "idem-command-tts",
-      });
+  it.each([false, true])(
+    "keeps trusted worktree TTS media under sender policy (denied=%s)",
+    async (denied) => {
+      await withTempDir("openclaw-command-tts-worktree-", async (worktree) => {
+        const transcriptDir = await createTranscriptFixture(
+          "openclaw-chat-send-command-tts-final-",
+        );
+        const audioPath = path.join(worktree, "tts.mp3");
+        const audio = Buffer.alloc(6 * 1024 * 1024);
+        createPlaybackMediaFixture("mp3").copy(audio);
+        fs.writeFileSync(audioPath, audio);
+        mockState.config = {
+          agents: { defaults: { workspace: transcriptDir } },
+          tools: {
+            fs: { workspaceOnly: true },
+            toolsBySender: { "id:cli": { deny: denied ? ["read"] : [] } },
+          },
+        };
+        mockState.sessionEntry = { sessionRoot: worktree, spawnedCwd: worktree };
+        mockState.finalPayload = createSlashCommandMediaReply("final", [audioPath], {
+          text: "Command result with TTS.",
+          spokenText: "Command result with TTS.",
+          mediaUrl: audioPath,
+          audioAsVoice: true,
+        }).payload;
+        const payload = await createChatRequestFixture().send({
+          idempotencyKey: "idem-command-tts",
+          client: createScopedCliClient(["operator.admin"], { id: "cli" }),
+        });
 
-      const content = getMessageContent(payload);
-      expect(getMessage(payload)?.role).toBe("assistant");
-      expect(content[0]).toEqual({ type: "text", text: "Command result with TTS." });
-      expectManagedAudioBlock(content[1], "tts.mp3", true);
-      expect(JSON.stringify(content[1])).not.toContain(fs.realpathSync(audioPath));
-      const assistantUpdates = findAssistantTranscriptUpdates();
-      expect(assistantUpdates).toHaveLength(1);
-      expect(JSON.stringify(assistantUpdates[0]?.message)).toContain("Command result with TTS.");
-    });
-  });
+        const content = getMessageContent(payload);
+        expect(getMessage(payload)?.role).toBe("assistant");
+        expect(content[0]).toEqual({ type: "text", text: "Command result with TTS." });
+        if (denied) {
+          expect(managedAudioBlocks(content)).toEqual([]);
+          expect(JSON.stringify(content)).not.toContain("/api/chat/media/outgoing/");
+        } else {
+          expectManagedAudioBlock(content[1], "tts.mp3", true);
+          expect(JSON.stringify(content[1])).not.toContain(fs.realpathSync(audioPath));
+        }
+        const assistantUpdates = findAssistantTranscriptUpdates();
+        expect(assistantUpdates).toHaveLength(1);
+        expect(JSON.stringify(assistantUpdates[0]?.message)).toContain("Command result with TTS.");
+      });
+    },
+  );
 
   it("folds block-only non-agent command replies into the final WebChat message", async () => {
     await createTranscriptFixture("openclaw-chat-send-command-block-final-");

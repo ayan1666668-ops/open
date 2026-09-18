@@ -4,11 +4,13 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { createDeferred } from "../../test/helpers/promise.js";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import { withChannelReadAuthority } from "../shared/channel-read-authority.js";
 import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
 import { saveRemoteMedia } from "./fetch.js";
-import { saveMediaStream } from "./store.js";
+import { readLocalMediaFile } from "./local-media-access.js";
+import { saveMediaBuffer, saveMediaSource, saveMediaStream } from "./store.js";
 import { unlinkIfExists } from "./temp-files.js";
 
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
@@ -25,6 +27,90 @@ async function* mediaBytes() {
 }
 
 describe("read-owned media publication", () => {
+  it.each(["local-reader", "source-store"] as const)(
+    "does not read source bytes after authority changes during %s file opening",
+    async (reader) => {
+      await withOpenClawTestState({ layout: "state-only" }, async (state) => {
+        const source = state.statePath("source.pdf");
+        await fs.writeFile(source, bytes);
+        const opened = createDeferred();
+        const resume = createDeferred();
+        const revoked = new Error("Session media authority changed");
+        let active = true;
+        let sourceReads = 0;
+        const open = fs.open.bind(fs);
+        vi.spyOn(fs, "open").mockImplementation(async (...args) => {
+          const handle = await open(...args);
+          if (args[0] === source) {
+            const read = handle.read.bind(handle);
+            vi.spyOn(handle, "read").mockImplementation((...readArgs) => {
+              sourceReads += 1;
+              return read(...readArgs);
+            });
+            opened.resolve();
+            await resume.promise;
+          }
+          return handle;
+        });
+        const operation = withChannelReadAuthority(
+          () => {
+            if (!active) {
+              throw revoked;
+            }
+          },
+          async () => {
+            if (reader === "local-reader") {
+              await readLocalMediaFile(source, [state.stateDir], { maxBytes: 1024 });
+            } else {
+              await saveMediaSource(source, undefined, "outbound");
+            }
+          },
+        );
+        const rejection = expect(operation).rejects.toBe(revoked);
+        await opened.promise;
+        active = false;
+        resume.resolve();
+        await rejection;
+        expect(sourceReads).toBe(0);
+      });
+    },
+  );
+
+  it.each(["buffer", "source"] as const)(
+    "removes %s output when the host rejects the completed read",
+    async (kind) => {
+      await withOpenClawTestState({ layout: "state-only" }, async (state) => {
+        const source = state.statePath("source.pdf");
+        const mediaDir = state.statePath("media", "outbound");
+        await fs.writeFile(source, bytes);
+        await fs.mkdir(mediaDir, { recursive: true });
+        const preserved = path.join(mediaDir, "existing.pdf");
+        await fs.writeFile(preserved, bytes);
+        let active = true;
+        const revoked = new Error("Session media authority changed");
+        await expect(
+          withChannelReadAuthority(
+            () => {
+              if (!active) {
+                throw revoked;
+              }
+            },
+            async () => {
+              const saved =
+                kind === "buffer"
+                  ? await saveMediaBuffer(bytes, "application/pdf", "outbound")
+                  : await saveMediaSource(source, undefined, "outbound");
+              expect(await fs.readFile(saved.path)).toEqual(bytes);
+              active = false;
+            },
+          ),
+        ).rejects.toBe(revoked);
+        expect(await fs.readdir(mediaDir)).toEqual(["existing.pdf"]);
+        expect(await fs.readFile(preserved)).toEqual(bytes);
+      });
+    },
+  );
+
   it.skipIf(process.platform === "win32").each([0o600, 0o644])(
     "does not publish unusable permissions when chmod fails (mode=%i)",
     async (mode) => {
