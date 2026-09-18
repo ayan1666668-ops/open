@@ -21,7 +21,7 @@ import {
   type MemorySearchDeadlineControl,
   type MemorySource,
 } from "openclaw/plugin-sdk/memory-core-host-engine-storage";
-import { MAX_TIMER_TIMEOUT_MS, resolveTimerTimeoutMs } from "openclaw/plugin-sdk/number-runtime";
+import { resolveTimerTimeoutMs } from "openclaw/plugin-sdk/number-runtime";
 import { sleepWithAbort } from "openclaw/plugin-sdk/runtime-env";
 import {
   runSqliteImmediateTransaction,
@@ -53,6 +53,7 @@ import {
   runMemoryEmbeddingBatchRetryWithSplit,
   runMemoryEmbeddingRetryLoop,
 } from "./manager-embedding-policy.js";
+import { resolveEmbeddingTimeoutMs } from "./manager-embedding-timeouts.js";
 import { resolveChunkProvenance } from "./manager-index-preparation.js";
 import {
   resolveMemoryIndexProviderIdentities,
@@ -72,25 +73,10 @@ const EMBEDDING_CACHE_TABLE = MEMORY_EMBEDDING_CACHE_TABLE;
 const EMBEDDING_CACHE_PRUNE_BATCH_SIZE = 100;
 const EMBEDDING_BATCH_MAX_TOKENS = 8000;
 const EMBEDDING_INDEX_CONCURRENCY = 4;
-const EMBEDDING_QUERY_TIMEOUT_REMOTE_MS = 60_000;
-const EMBEDDING_QUERY_TIMEOUT_LOCAL_MS = 5 * 60_000;
-const EMBEDDING_BATCH_TIMEOUT_REMOTE_MS = 2 * 60_000;
-const EMBEDDING_BATCH_TIMEOUT_LOCAL_MS = 10 * 60_000;
 const SOURCE_WIDE_BATCH_MAX_FILES = 2048;
 const SOURCE_WIDE_BATCH_MAX_REQUESTS = 50000;
 
 const log = createSubsystemLogger("memory");
-
-function resolveEmbeddingSecondsTimeoutMs(seconds: number): number {
-  if (!Number.isFinite(seconds)) {
-    return MAX_TIMER_TIMEOUT_MS;
-  }
-  const timeoutMs = Math.floor(seconds * 1000);
-  return resolveTimerTimeoutMs(
-    Number.isFinite(timeoutMs) ? timeoutMs : MAX_TIMER_TIMEOUT_MS,
-    MAX_TIMER_TIMEOUT_MS,
-  );
-}
 
 type MemoryIndexEntry = MemoryIndexWorkItem["entry"];
 
@@ -137,38 +123,6 @@ function formatBatchSourceCounts(counts: Record<string, number>): string {
 
 function splitSourceWideEmbeddingChunks<T>(chunks: T[], maxRequests: number): T[][] {
   return chunkItems(chunks, Math.max(1, Math.floor(maxRequests)));
-}
-
-function resolveEmbeddingTimeoutMs(params: {
-  kind: "query" | "batch";
-  providerId?: string;
-  providerRuntime?: Pick<
-    MemoryEmbeddingProviderRuntime,
-    "inlineQueryTimeoutMs" | "inlineBatchTimeoutMs"
-  >;
-  configuredBatchTimeoutSeconds?: number;
-}): number {
-  if (params.kind === "query") {
-    const runtimeTimeoutMs = params.providerRuntime?.inlineQueryTimeoutMs;
-    if (typeof runtimeTimeoutMs === "number" && runtimeTimeoutMs > 0) {
-      return resolveTimerTimeoutMs(runtimeTimeoutMs, EMBEDDING_QUERY_TIMEOUT_REMOTE_MS);
-    }
-    return params.providerId === "local"
-      ? EMBEDDING_QUERY_TIMEOUT_LOCAL_MS
-      : EMBEDDING_QUERY_TIMEOUT_REMOTE_MS;
-  }
-
-  const configuredTimeoutSeconds = params.configuredBatchTimeoutSeconds;
-  if (typeof configuredTimeoutSeconds === "number" && configuredTimeoutSeconds > 0) {
-    return resolveEmbeddingSecondsTimeoutMs(configuredTimeoutSeconds);
-  }
-  const runtimeTimeoutMs = params.providerRuntime?.inlineBatchTimeoutMs;
-  if (typeof runtimeTimeoutMs === "number" && runtimeTimeoutMs > 0) {
-    return resolveTimerTimeoutMs(runtimeTimeoutMs, EMBEDDING_BATCH_TIMEOUT_REMOTE_MS);
-  }
-  return params.providerId === "local"
-    ? EMBEDDING_BATCH_TIMEOUT_LOCAL_MS
-    : EMBEDDING_BATCH_TIMEOUT_REMOTE_MS;
 }
 
 function resolveMemoryIndexConcurrency(params: {
@@ -591,7 +545,7 @@ export abstract class MemoryManagerEmbeddingOps extends MemoryManagerSyncOps {
               });
               const result = await runEmbeddingOperationWithTimeout({
                 timeoutMs,
-                message: `memory embeddings batch timed out after ${Math.round(timeoutMs / 1000)}s`,
+                message: `memory embeddings ${label} timed out after ${Math.round(timeoutMs / 1000)}s (provider=${provider.id}, model=${provider.model}, items=${batchItems.length})`,
                 run: async (signal) =>
                   await provider.embedBatch(
                     batchItems.map((item) => item.input),
@@ -791,11 +745,17 @@ export abstract class MemoryManagerEmbeddingOps extends MemoryManagerSyncOps {
     provider: EmbeddingProvider | null = this.provider,
     providerRuntime: MemoryEmbeddingProviderRuntime | undefined = this.providerRuntime,
   ): number {
+    const sync = this.settings.sync;
+    // The legacy batch-only key must not shorten query budgets: a released
+    // consumer that sets only `embeddingBatchTimeoutSeconds` keeps its
+    // provider-owned query budget unless the new setting is set.
+    const legacyBatchTimeoutSeconds =
+      kind === "batch" ? sync.embeddingBatchTimeoutSeconds : undefined;
     return resolveEmbeddingTimeoutMs({
       kind,
       providerId: provider?.id,
       providerRuntime,
-      configuredBatchTimeoutSeconds: this.settings.sync.embeddingBatchTimeoutSeconds,
+      configuredTimeoutSeconds: sync.embeddingTimeoutSeconds ?? legacyBatchTimeoutSeconds,
     });
   }
 
@@ -824,7 +784,7 @@ export abstract class MemoryManagerEmbeddingOps extends MemoryManagerSyncOps {
               log.debug("memory embeddings: query start", { provider: provider.id, timeoutMs });
               return await runEmbeddingOperationWithTimeout({
                 timeoutMs,
-                message: `memory embeddings query timed out after ${Math.round(timeoutMs / 1000)}s`,
+                message: `memory embeddings query timed out after ${Math.round(timeoutMs / 1000)}s (provider=${provider.id}, model=${provider.model})`,
                 signal,
                 deadlineControl,
                 run: async (opSignal) =>

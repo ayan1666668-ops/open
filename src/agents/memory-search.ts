@@ -52,7 +52,19 @@ export type ResolvedMemorySearchConfig = Omit<
       extensionPath?: string;
     };
   };
-  sync: Omit<ProducedMemorySearchConfig["sync"], "embeddingBatchTimeoutSeconds"> & {
+  // Both timeout keys are re-declared below: the producer always sets them, so
+  // omitting only the legacy one would leave `embeddingTimeoutSeconds` a required
+  // property and break plugins authoring the released SDK shape.
+  sync: Omit<
+    ProducedMemorySearchConfig["sync"],
+    "embeddingTimeoutSeconds" | "embeddingBatchTimeoutSeconds"
+  > & {
+    /** Operator override for every memory embedding request, in seconds. */
+    embeddingTimeoutSeconds?: number | undefined;
+    /**
+     * @deprecated Renamed to embeddingTimeoutSeconds; kept for SDK source-compat.
+     * ponytail: alias, remove on next major SDK version.
+     */
     embeddingBatchTimeoutSeconds: number | undefined;
   };
 };
@@ -144,7 +156,7 @@ export function resolveMemorySearchIndexConfig(cfg: OpenClawConfig, agentId: str
       },
     },
     experimental: { sessionMemory },
-    sync: resolveSyncConfig(),
+    sync: resolveSyncConfig(cfg, agentId),
   };
 }
 
@@ -277,14 +289,19 @@ export function resolveMemorySearchConfig(
   return produceMemorySearchConfig(cfg, agentId);
 }
 
-function resolveSyncConfig() {
+function resolveSyncConfig(cfg: OpenClawConfig, agentId: string) {
+  const defaults = cfg.memory?.search;
+  const overrides = resolveAgentConfig(cfg, agentId)?.memory?.search;
+  const embeddingTimeoutSeconds =
+    overrides?.embeddingTimeoutSeconds ?? defaults?.embeddingTimeoutSeconds;
   return {
     onSessionStart: true,
     onSearch: true,
     watch: true,
     watchDebounceMs: DEFAULT_WATCH_DEBOUNCE_MS,
     intervalMinutes: 0,
-    embeddingBatchTimeoutSeconds: undefined,
+    embeddingTimeoutSeconds,
+    embeddingBatchTimeoutSeconds: embeddingTimeoutSeconds,
     sessions: {
       deltaBytes: DEFAULT_SESSION_DELTA_BYTES,
       deltaMessages: DEFAULT_SESSION_DELTA_MESSAGES,
@@ -303,5 +320,5 @@ export function resolveMemorySearchSyncConfig(
   if (!enabled) {
     return null;
   }
-  return resolveSyncConfig();
+  return resolveSyncConfig(cfg, agentId);
 }

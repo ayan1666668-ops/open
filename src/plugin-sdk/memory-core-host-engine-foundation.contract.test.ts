@@ -26,6 +26,18 @@ describe("memory core host engine foundation contracts", () => {
     expectTypeOf<
       ResolvedMemorySearchConfig["sync"]["embeddingBatchTimeoutSeconds"]
     >().toEqualTypeOf<number | undefined>();
+    // The producer always sets both keys, so the SDK-authoring shape must keep the
+    // new one optional: a released v2026.9.4 consumer lacks it entirely.
+    expectTypeOf<
+      IsOptional<ResolvedMemorySearchConfig["sync"], "embeddingTimeoutSeconds">
+    >().toEqualTypeOf<true>();
+    const releasedShapedSync: Pick<
+      ResolvedMemorySearchConfig["sync"],
+      "embeddingBatchTimeoutSeconds" | "embeddingTimeoutSeconds"
+    > = { embeddingBatchTimeoutSeconds: 5 };
+    expectTypeOf(releasedShapedSync).toMatchTypeOf<
+      Pick<ResolvedMemorySearchConfig["sync"], "embeddingBatchTimeoutSeconds">
+    >();
 
     const local: ResolvedMemorySearchConfig["local"] = {};
     const vector: ResolvedMemorySearchConfig["store"]["vector"] = { enabled: true };
