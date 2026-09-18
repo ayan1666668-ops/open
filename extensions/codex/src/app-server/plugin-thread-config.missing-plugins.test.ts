@@ -31,7 +31,11 @@ describe("missing configured plugins", () => {
           allow_all_plugins: true,
           allow_destructive_actions: "auto",
           plugins: {
-            healthy: { pluginName: "healthy", allow_destructive_actions: "ask" },
+            healthy: {
+              pluginName: "healthy",
+              marketplaceName: CODEX_PLUGINS_MARKETPLACE_NAME,
+              allow_destructive_actions: "ask",
+            },
             missing: {
               pluginName: "missing",
               marketplaceName,
@@ -56,6 +60,7 @@ describe("missing configured plugins", () => {
       ]);
       expect(result.policyContext.apps["healthy-app"]).toMatchObject({
         pluginName: "healthy",
+        marketplaceName: CODEX_PLUGINS_MARKETPLACE_NAME,
         destructiveApprovalMode: "ask",
       });
       // Even an app display name matching the missing entry follows account policy.
@@ -78,7 +83,10 @@ describe("missing configured plugins", () => {
     const pluginConfig = {
       codexPlugins: {
         enabled: true,
-        plugins: { healthy: { pluginName: "healthy" }, missing: { pluginName: "missing" } },
+        plugins: {
+          healthy: { pluginName: "healthy", marketplaceName: CODEX_PLUGINS_MARKETPLACE_NAME },
+          missing: { pluginName: "missing", marketplaceName: CODEX_PLUGINS_MARKETPLACE_NAME },
+        },
       },
     };
     const savedSettings = structuredClone(pluginConfig);
