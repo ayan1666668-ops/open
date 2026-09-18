@@ -675,7 +675,7 @@ suite.define(() => {
           }
           for (let index = 1; index < resting.length; index++) {
             expect(resting[index].top - resting[index - 1].bottom).toBeCloseTo(
-              width < 768 ? 52 : 32,
+              width < 768 ? 50 : 32,
               1,
             );
           }
@@ -722,6 +722,39 @@ suite.define(() => {
               expect(placement.iconWidth).toBe(0);
             }
           }
+          const actionFor = async (id: string) => {
+            const messageId = await pane
+              .locator(`[data-entry-id="${id}"]`)
+              .getAttribute("data-message-id");
+            const owner = pane.locator(`[data-message-actions-for="${messageId}"]`);
+            expect(await owner.count()).toBe(1);
+            return owner.locator("button").first();
+          };
+          if (width < 768) {
+            const ownership = await pane
+              .locator(".chat-group.user .chat-bubble")
+              .evaluateAll((bubbles) =>
+                bubbles.map((bubble) => {
+                  const group = bubble.closest(".chat-group")!;
+                  const owners = [
+                    ...group.querySelectorAll<HTMLElement>("[data-message-actions-for]"),
+                  ].filter(
+                    (owner) =>
+                      owner.dataset.messageActionsFor === bubble.getAttribute("data-message-id"),
+                  );
+                  return {
+                    count: owners.length,
+                    hasMetadata: Boolean(
+                      owners[0]?.parentElement?.querySelector(".chat-group-timestamp"),
+                    ),
+                  };
+                }),
+              );
+            expect(ownership.length).toBeGreaterThan(4);
+            for (const owner of ownership) {
+              expect(owner).toEqual({ count: 1, hasMetadata: true });
+            }
+          }
           const visibleActionRows = () =>
             peerGroup
               .locator(".chat-message-actions-row, .chat-group-footer-actions")
@@ -735,7 +768,7 @@ suite.define(() => {
               );
           for (const id of ["peer-reply", "peer-short"]) {
             const bubble = pane.locator(`[data-entry-id="${id}"]`);
-            const action = bubble.locator(".chat-message-actions-row button").first();
+            const action = await actionFor(id);
             if (width < 768) {
               await action.focus();
             } else {
@@ -744,15 +777,31 @@ suite.define(() => {
             await expect.poll(visibleActionRows).toBe(1);
             const position = await action.evaluate((button) => {
               const actionBounds = button.getBoundingClientRect();
-              const bubbleBounds = button.closest(".chat-bubble")!.getBoundingClientRect();
+              const owner = button.closest<HTMLElement>("[data-message-actions-for]")!;
+              const bubble = [
+                ...button.closest(".chat-group")!.querySelectorAll<HTMLElement>(".chat-bubble"),
+              ].find(
+                (candidate) => candidate.dataset.messageId === owner.dataset.messageActionsFor,
+              )!;
+              const bubbleBounds = bubble.getBoundingClientRect();
+              const meta = owner
+                .parentElement!.querySelector(".chat-group-footer__meta")
+                ?.getBoundingClientRect();
               return {
                 gap: actionBounds.top - bubbleBounds.bottom,
                 start: actionBounds.left - bubbleBounds.left,
+                lineOffset: meta ? actionBounds.top - meta.top : null,
+                metaHeight: meta?.height,
               };
             });
             expect(position.gap).toBeGreaterThanOrEqual(0);
             expect(position.gap).toBeLessThanOrEqual(8);
-            expect(Math.abs(position.start)).toBeLessThanOrEqual(1);
+            if (width < 768) {
+              expect(position.lineOffset).toBeCloseTo(0, 1);
+              expect(position.metaHeight).toBe(24);
+            } else {
+              expect(Math.abs(position.start)).toBeLessThanOrEqual(1);
+            }
             expect(await stackGeometry()).toEqual(resting);
             if (width >= 768) {
               await action.hover();
@@ -769,11 +818,20 @@ suite.define(() => {
             const peerText = peerReply.locator(".chat-text");
             await peerText.tap();
             await expect.poll(visibleActionRows).toBe(1);
-            const targetHeight = await peerReply
-              .locator(".chat-message-actions-row button")
-              .first()
-              .evaluate((button) => button.getBoundingClientRect().height);
-            expect(targetHeight).toBeGreaterThanOrEqual(44);
+            const target = await actionFor("peer-reply");
+            const targetGeometry = await target.evaluate((button) => {
+              const bounds = button.getBoundingClientRect();
+              return {
+                height: bounds.height,
+                hitEdges: [1, 43].map((offset) =>
+                  button.contains(
+                    document.elementFromPoint(bounds.left + bounds.width / 2, bounds.top + offset),
+                  ),
+                ),
+              };
+            });
+            expect(targetGeometry.height).toBe(24);
+            expect(targetGeometry.hitEdges).toEqual([true, true]);
             expect(await stackGeometry()).toEqual(resting);
             await peerText.tap();
             await page.mouse.move(0, 0);
@@ -791,10 +849,9 @@ suite.define(() => {
             await page.touchscreen.tap(besideImage.x, besideImage.y);
             await expect.poll(visibleActionRows).toBe(1);
             expect(
-              await peerImage
-                .locator(".chat-message-actions-row button")
-                .first()
-                .evaluate((button) => Number(getComputedStyle(button).opacity)),
+              await (
+                await actionFor("peer-image")
+              ).evaluate((button) => Number(getComputedStyle(button).opacity)),
             ).toBeGreaterThan(0.5);
             expect(await page.locator("openclaw-image-lightbox").count()).toBe(0);
             expect(await stackGeometry()).toEqual(resting);

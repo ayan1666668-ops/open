@@ -35,7 +35,7 @@ async function captureProof(page: Page, name: string) {
 }
 
 async function readFooterGeometry(group: Locator) {
-  return group.locator(".chat-group-footer").evaluate((footer) => {
+  return group.locator(":scope > .chat-group-footer").evaluate((footer) => {
     const actions = footer.querySelector<HTMLElement>(".chat-group-footer-actions");
     const identity = footer.querySelector<HTMLElement>(".chat-group-footer__meta");
     const name = footer.querySelector<HTMLElement>(".chat-sender-name");
@@ -459,7 +459,7 @@ suite.define(() => {
       8,
       0,
     );
-    expect(revealedTouchGeometry.footer.height).toBe(24);
+    expect(revealedTouchGeometry.footer.height).toBe(44);
     await expect(longNamePeerGroup.getByRole("button", { name: "Reply to message" })).toHaveCSS(
       "opacity",
       "0.6",
@@ -511,26 +511,31 @@ suite.define(() => {
         }
         await expect(group.locator(".chat-group-timestamp")).toHaveCSS("opacity", "1");
         const actionLayout = await group.evaluate((element) => {
-          const footer = element.querySelector<HTMLElement>(".chat-group-footer")!;
+          const footer = element.querySelector<HTMLElement>(":scope > .chat-group-footer")!;
           const meta = footer.querySelector<HTMLElement>(".chat-group-footer__meta")!;
           const time = footer.querySelector<HTMLElement>(".chat-group-timestamp")!;
           const button = footer.querySelector<HTMLButtonElement>(".chat-reply-btn")!;
           const bounds = button.getBoundingClientRect();
           const centerX = bounds.left + bounds.width / 2;
-          const centerY = bounds.top + bounds.height / 2;
           return {
             footerHeight: footer.getBoundingClientRect().height,
+            metaHeight: meta.getBoundingClientRect().height,
+            afterMeta: footer.getBoundingClientRect().bottom - meta.getBoundingClientRect().bottom,
             lineOffset: bounds.top - meta.getBoundingClientRect().top,
             afterText: bounds.left - time.getBoundingClientRect().right,
-            hitEdges: [-21, 21].map((offset) =>
-              button.contains(document.elementFromPoint(centerX, centerY + offset)),
+            capturesBubble: button.contains(document.elementFromPoint(centerX, bounds.top - 4)),
+            hitEdges: [1, 43].map((offset) =>
+              button.contains(document.elementFromPoint(centerX, bounds.top + offset)),
             ),
           };
         });
-        expect(actionLayout.footerHeight).toBe(24);
+        expect(actionLayout.footerHeight).toBe(44);
+        expect(actionLayout.metaHeight).toBe(24);
+        expect(actionLayout.afterMeta).toBe(20);
         expect(Math.abs(actionLayout.lineOffset)).toBeLessThanOrEqual(2);
         expect(actionLayout.afterText).toBeGreaterThanOrEqual(0);
         expect(actionLayout.hitEdges).toEqual([true, true]);
+        expect(actionLayout.capturesBubble).toBe(false);
       }
     }
 

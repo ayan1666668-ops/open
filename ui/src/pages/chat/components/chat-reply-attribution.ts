@@ -1,5 +1,4 @@
 import { html, nothing } from "lit";
-import { AsyncDirective, directive } from "lit/async-directive.js";
 import { ref } from "lit/directives/ref.js";
 import { stripMarkdown } from "../../../../../src/shared/text/strip-markdown.js";
 import { resolveLocalUserName } from "../../../app/user-identity.ts";
@@ -12,6 +11,7 @@ import { persistedMessageEntryId } from "../chat-thread.ts";
 import { renderChatAuthorAvatar } from "./chat-author-avatar.ts";
 import { prepareChatMessageRender, resolveMessageReplyText } from "./chat-message-markdown.ts";
 import type { ReplyPreview } from "./chat-reply-preview.ts";
+import { chatResponsiveLayout } from "./chat-responsive-layout.ts";
 
 export type ReplyAttribution = {
   sender: SenderIdentity;
@@ -198,35 +198,6 @@ type ReplyAttributionOptions = {
   navigateToUnloaded?: boolean;
 };
 
-class ReplyAttributionLayoutDirective extends AsyncDirective {
-  private readonly media = globalThis.matchMedia?.(
-    "(max-width: 768px), (max-width: 932px) and (max-height: 500px) and (orientation: landscape)",
-  );
-  private content: (mobile: boolean) => unknown = () => nothing;
-  private readonly updateLayout = () => {
-    this.setValue(this.content(this.media?.matches ?? false));
-  };
-
-  render(content: (mobile: boolean) => unknown) {
-    this.content = content;
-    if (this.isConnected) {
-      this.media?.addEventListener("change", this.updateLayout);
-    }
-    return content(this.media?.matches ?? false);
-  }
-
-  protected override disconnected() {
-    this.media?.removeEventListener("change", this.updateLayout);
-  }
-
-  protected override reconnected() {
-    this.media?.addEventListener("change", this.updateLayout);
-    this.updateLayout();
-  }
-}
-
-const replyAttributionLayout = directive(ReplyAttributionLayoutDirective);
-
 export function renderReplyAttribution(
   attribution: ReplyAttribution | undefined,
   onOpenReply?: (id: string) => void,
@@ -238,7 +209,7 @@ export function renderReplyAttribution(
   }
   return options.variant === "inline"
     ? renderReplyAttributionContent(attribution, onOpenReply, onResolveReply, options, false)
-    : replyAttributionLayout((mobile) =>
+    : chatResponsiveLayout((mobile) =>
         renderReplyAttributionContent(attribution, onOpenReply, onResolveReply, options, mobile),
       );
 }

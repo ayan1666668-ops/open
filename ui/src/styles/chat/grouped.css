@@ -1623,12 +1623,38 @@ button.chat-reply-attribution__mobile-target:focus-visible {
 }
 
 @media (max-width: 768px), (max-width: 932px) and (max-height: 500px) and (orientation: landscape) {
+  .chat-group {
+    --chat-reply-attribution-gap: 8px;
+    --chat-footer-action-size: 24px;
+    --chat-footer-touch-size: 44px;
+  }
+
+  .chat-group:has(
+    > .chat-group-messages > :is(.chat-reply-attribution, .chat-message--reply):first-child
+  ) {
+    margin-block-start: 0;
+  }
+
+  .chat-group-messages > .chat-reply-attribution {
+    margin-block-end: calc(var(--chat-reply-attribution-gap) - var(--chat-message-gap));
+  }
+
   .chat-group-footer {
     flex-wrap: nowrap;
+    align-items: flex-start;
+    /* Retain the native touch footer's space after the compact metadata line. */
+    min-height: var(--chat-footer-touch-size);
   }
 
   .chat-group-footer__meta {
-    min-height: 24px;
+    min-height: var(--chat-footer-action-size);
+  }
+
+  .chat-group-messages > .chat-message-footer {
+    /* The following caption's padded link must not cover this row's touch target. */
+    position: relative;
+    z-index: 1;
+    min-height: calc(var(--chat-footer-touch-size) - var(--chat-message-gap));
   }
 
   .chat-group-footer__meta :is(.chat-group-timestamp, .msg-meta) {
@@ -1650,23 +1676,57 @@ button.chat-reply-attribution__mobile-target:focus-visible {
     justify-content: flex-start;
   }
 
+  .chat-group.user.chat-group--peer .chat-message-footer {
+    --chat-footer-disclosure-opacity: 0;
+    --chat-footer-disclosure-pointer-events: none;
+    --chat-footer-action-opacity: 0;
+    opacity: var(--chat-footer-disclosure-opacity);
+    pointer-events: var(--chat-footer-disclosure-pointer-events);
+  }
+
+  .chat-group.user.chat-group--peer .chat-message-footer .chat-group-footer-actions button {
+    opacity: var(--chat-footer-action-opacity);
+    pointer-events: var(--chat-footer-disclosure-pointer-events);
+  }
+
+  .chat-group.user.chat-group--peer
+    .chat-group-messages
+    > .chat-bubble:hover
+    + .chat-message-footer,
+  .chat-group.user.chat-group--peer
+    .chat-group-messages
+    > .chat-message--reply:has(> .chat-bubble:hover)
+    + .chat-message-footer,
+  .chat-group.user.chat-group--peer .chat-message-footer:hover,
+  .chat-group.user.chat-group--peer
+    .chat-group-messages
+    > .chat-bubble:is(:focus-within, .chat-bubble--actions-revealed)
+    + .chat-message-footer,
+  .chat-group.user.chat-group--peer
+    .chat-group-messages
+    > .chat-message--reply:has(> .chat-bubble:is(:focus-within, .chat-bubble--actions-revealed))
+    + .chat-message-footer,
+  .chat-group.user.chat-group--peer .chat-message-footer:focus-within {
+    --chat-footer-disclosure-opacity: 1;
+    --chat-footer-disclosure-pointer-events: auto;
+    --chat-footer-action-opacity: 0.6;
+  }
+
   /* Keep the metadata line compact while its buttons retain a full touch target. */
   .chat-group-footer-actions :is(.chat-copy-btn, .chat-reply-btn) {
     position: relative;
-    min-height: 24px;
+    min-height: var(--chat-footer-action-size);
   }
 
   .chat-group-footer-actions :is(.chat-copy-btn, .chat-reply-btn)::after {
     content: "";
     position: absolute;
     inset-inline: 0;
-    top: 50%;
-    height: 44px;
-    transform: translateY(-50%);
+    top: 0;
+    height: var(--chat-footer-touch-size);
   }
 
   .chat-reply-attribution--reply {
-    --chat-reply-attribution-gap: 8px;
     grid-template-columns: max-content minmax(0, 1fr);
   }
 
