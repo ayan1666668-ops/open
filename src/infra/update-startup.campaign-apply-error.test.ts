@@ -177,7 +177,9 @@ describe("update campaign apply exception boundary", () => {
         expect.objectContaining({ status: "failed", detail: message }),
       ]),
     });
-    const lastRun = readUpdateRunStatus().lastRun;
+    const runStatus = readUpdateRunStatus();
+    assert(!("runStatusError" in runStatus));
+    const { lastRun } = runStatus;
     expect(lastRun).toEqual(run);
     assert(lastRun);
     const report = renderUpdateRunReport(lastRun);
