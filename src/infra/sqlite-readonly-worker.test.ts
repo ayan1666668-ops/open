@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import { mockNodeBuiltinModule } from "../plugin-sdk/test-helpers/node-builtin-mocks.js";
 import { withEnvAsync } from "../test-utils/env.js";
-import { openNodeSqliteDatabase, requireNodeSqlite } from "./node-sqlite.js";
+import { requireNodeSqlite } from "./node-sqlite.js";
 import {
   resolveAggregateSqliteInspectionTimeoutMs,
   resolveSqliteInspectionBudget,
@@ -120,6 +120,7 @@ describe.each(["sync", "async", "schema-header", "scoped"] as const)(
           if (mode === "sync") {
             expect(fs.readFileSync(prepared.location)).toEqual(before);
           }
+          const { openNodeSqliteDatabase } = await import("./node-sqlite.js");
           const snapshot = openNodeSqliteDatabase(prepared.location, {
             readOnly: true,
           });
