@@ -1,6 +1,6 @@
 import path from "node:path";
 import { expectDefined } from "@openclaw/normalization-core";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterAll, describe, expect, test } from "vitest";
 import type { WebSocket } from "ws";
 import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js";
 import {
@@ -12,17 +12,45 @@ import { createNestedToolActivity } from "../../sessions/nested-tool-activity.js
 import { installGatewayTestHooks, rpcReq, testState } from "../test-helpers.js";
 import { installConnectedControlUiServerSuite } from "../test-with-server.js";
 
-installGatewayTestHooks({ scope: "suite" });
-
-let ws: WebSocket;
-installConnectedControlUiServerSuite((started) => {
-  ws = started.ws;
+installGatewayTestHooks({
+  scope: "suite",
+  setup: async () => {
+    testState.sessionStorePath = sessionStorePath;
+    for (const session of [
+      { sessionId: SESSION_ID, sessionKey: SESSION_KEY },
+      ...CURSOR_SESSIONS,
+    ]) {
+      await upsertSessionEntryCore(
+        { agentId: "main", sessionKey: session.sessionKey, storePath: sessionStorePath },
+        { sessionId: session.sessionId, updatedAt: Date.now() },
+      );
+    }
+  },
+  cleanup: async () => {
+    testState.sessionStorePath = undefined;
+  },
 });
 
+let ws: WebSocket;
 const DATA_URL = "DATA:image/png;BASE64,cG5n";
 const SESSION_ID = "sess-inline-media-proof";
 const SESSION_KEY = "agent:main:main";
-const tempDirs = useAutoCleanupTempDirTracker(afterEach);
+const CURSOR_SESSIONS = [
+  {
+    sessionId: "sess-inline-media-responses-proof",
+    sessionKey: "agent:main:inline-media-responses-proof",
+  },
+  {
+    sessionId: "sess-inline-media-nested-proof",
+    sessionKey: "agent:main:inline-media-nested-proof",
+  },
+] as const;
+const tempDirs = useAutoCleanupTempDirTracker(afterAll);
+const sessionStorePath = path.join(tempDirs.make("openclaw-chat-history-redact-"), "sessions.json");
+
+installConnectedControlUiServerSuite((started) => {
+  ws = started.ws;
+});
 
 function expectRedactedInlineMediaBlock(content: unknown): void {
   expect(content).toEqual([
@@ -36,75 +64,62 @@ function expectRedactedInlineMediaBlock(content: unknown): void {
 
 describe("chat history inline media redaction (real WS gateway)", () => {
   test("stored history endpoints redact Responses inline images", async () => {
-    const dir = tempDirs.make("openclaw-chat-history-redact-");
-    testState.sessionStorePath = path.join(dir, "sessions.json");
-    try {
-      await upsertSessionEntryCore(
-        {
-          agentId: "main",
-          sessionKey: SESSION_KEY,
-          storePath: testState.sessionStorePath,
+    const appendResult = appendTranscriptMessageSync(
+      {
+        agentId: "main",
+        sessionId: SESSION_ID,
+        sessionKey: SESSION_KEY,
+        storePath: sessionStorePath,
+      },
+      {
+        message: {
+          role: "assistant",
+          content: [{ type: "input_image", image_url: DATA_URL }],
+          timestamp: Date.now(),
         },
-        { sessionId: SESSION_ID, updatedAt: Date.now() },
-      );
-      const appendResult = appendTranscriptMessageSync(
-        {
-          agentId: "main",
-          sessionId: SESSION_ID,
-          sessionKey: SESSION_KEY,
-          storePath: testState.sessionStorePath,
-        },
-        {
-          message: {
-            role: "assistant",
-            content: [{ type: "input_image", image_url: DATA_URL }],
-            timestamp: Date.now(),
-          },
-          now: Date.now(),
-        },
-      );
-      expect(appendResult.ok).toBe(true);
-      const appended = expectDefined(
-        appendResult.ok ? appendResult.value : undefined,
-        "inline-media transcript append",
-      );
+        now: Date.now(),
+      },
+    );
+    expect(appendResult.ok).toBe(true);
+    const appended = expectDefined(
+      appendResult.ok ? appendResult.value : undefined,
+      "inline-media transcript append",
+    );
 
-      const history = await rpcReq<{ messages?: Array<Record<string, unknown>> }>(
-        ws,
-        "chat.history",
-        { sessionKey: SESSION_KEY, limit: 10 },
-      );
-      expect(history.ok).toBe(true);
-      const historyMessages = history.payload?.messages ?? [];
-      const assistantMessage = historyMessages.find((message) => message.role === "assistant");
-      expect(assistantMessage).toBeDefined();
-      expectRedactedInlineMediaBlock(assistantMessage?.content);
-      expect(JSON.stringify(historyMessages)).not.toContain(DATA_URL);
+    const history = await rpcReq<{ messages?: Array<Record<string, unknown>> }>(
+      ws,
+      "chat.history",
+      { sessionKey: SESSION_KEY, limit: 10 },
+    );
+    expect(history.ok).toBe(true);
+    const historyMessages = history.payload?.messages ?? [];
+    const assistantMessage = historyMessages.find((message) => message.role === "assistant");
+    expect(assistantMessage).toBeDefined();
+    expectRedactedInlineMediaBlock(assistantMessage?.content);
+    expect(JSON.stringify(historyMessages)).not.toContain(DATA_URL);
 
-      const full = await rpcReq<{ ok?: boolean; message?: Record<string, unknown> }>(
-        ws,
-        "chat.message.get",
-        { sessionKey: SESSION_KEY, messageId: appended.messageId },
-      );
-      expect(full.ok).toBe(true);
-      expect(full.payload?.ok).toBe(true);
-      expectRedactedInlineMediaBlock(full.payload?.message?.content);
-      expect(JSON.stringify(full.payload)).not.toContain(DATA_URL);
+    const full = await rpcReq<{ ok?: boolean; message?: Record<string, unknown> }>(
+      ws,
+      "chat.message.get",
+      { sessionKey: SESSION_KEY, messageId: appended.messageId },
+    );
+    expect(full.ok).toBe(true);
+    expect(full.payload?.ok).toBe(true);
+    expectRedactedInlineMediaBlock(full.payload?.message?.content);
+    expect(JSON.stringify(full.payload)).not.toContain(DATA_URL);
 
-      console.log(
-        `chat.history real-request redaction: ${JSON.stringify(assistantMessage?.content ?? null)}`,
-      );
-      console.log(
-        `chat.message.get real-request redaction: ${JSON.stringify(full.payload?.message?.content ?? null)}`,
-      );
-    } finally {
-      testState.sessionStorePath = undefined;
-    }
+    console.log(
+      `chat.history real-request redaction: ${JSON.stringify(assistantMessage?.content ?? null)}`,
+    );
+    console.log(
+      `chat.message.get real-request redaction: ${JSON.stringify(full.payload?.message?.content ?? null)}`,
+    );
   });
 
   test.each([
     {
       name: "Responses inline images",
+      ...CURSOR_SESSIONS[0],
       imageUrl: DATA_URL,
       message: {
         role: "assistant",
@@ -121,6 +136,7 @@ describe("chat history inline media redaction (real WS gateway)", () => {
     },
     {
       name: "nested tool activity inline images",
+      ...CURSOR_SESSIONS[1],
       imageUrl: "DATA:image/png;BASE64,bmVzdGVk",
       message: createNestedToolActivity({
         runId: "nested-image-run",
@@ -152,24 +168,15 @@ describe("chat history inline media redaction (real WS gateway)", () => {
         },
       ],
     },
-  ])("redacts $name from cursor deltas", async ({ expectedContent, imageUrl, message }) => {
-    const dir = tempDirs.make("openclaw-chat-history-cursor-redact-");
-    testState.sessionStorePath = path.join(dir, "sessions.json");
-    try {
-      await upsertSessionEntryCore(
-        {
-          agentId: "main",
-          sessionKey: SESSION_KEY,
-          storePath: testState.sessionStorePath,
-        },
-        { sessionId: SESSION_ID, updatedAt: Date.now() },
-      );
+  ])(
+    "redacts $name from cursor deltas",
+    async ({ expectedContent, imageUrl, message, sessionId, sessionKey }) => {
       await appendTranscriptMessage(
         {
           agentId: "main",
-          sessionId: SESSION_ID,
-          sessionKey: SESSION_KEY,
-          storePath: testState.sessionStorePath,
+          sessionId,
+          sessionKey,
+          storePath: sessionStorePath,
         },
         {
           eventId: "cached",
@@ -178,14 +185,14 @@ describe("chat history inline media redaction (real WS gateway)", () => {
         },
       );
       const page = await rpcReq<{ deltaCursor?: string }>(ws, "chat.history", {
-        sessionKey: SESSION_KEY,
+        sessionKey,
       });
       await appendTranscriptMessage(
         {
           agentId: "main",
-          sessionId: SESSION_ID,
-          sessionKey: SESSION_KEY,
-          storePath: testState.sessionStorePath,
+          sessionId,
+          sessionKey,
+          storePath: sessionStorePath,
         },
         { eventId: "redacted", parentId: "cached", message },
       );
@@ -194,15 +201,13 @@ describe("chat history inline media redaction (real WS gateway)", () => {
         kind?: string;
         messages?: Array<{ message?: { content?: unknown } }>;
       }>(ws, "chat.history", {
-        sessionKey: SESSION_KEY,
+        sessionKey,
         cursor: page.payload?.deltaCursor,
       });
       expect(delta.ok).toBe(true);
       expect(delta.payload?.kind).toBe("delta");
       expect(JSON.stringify(delta.payload?.messages)).not.toContain(imageUrl);
       expect(delta.payload?.messages?.[0]?.message?.content).toMatchObject(expectedContent);
-    } finally {
-      testState.sessionStorePath = undefined;
-    }
-  });
+    },
+  );
 });
