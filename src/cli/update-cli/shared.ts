@@ -24,9 +24,9 @@ import {
   createGlobalInstallEnv,
   detectGlobalInstallManagerByPresence,
   detectGlobalInstallManagerForRoot,
-  isHomebrewInstallRoot,
   type GlobalInstallManager,
 } from "../../infra/update-global.js";
+import { isHomebrewInstallRoot } from "../../infra/update-homebrew.js";
 import type { UpdateRequesterAuthority } from "../../infra/update-requester-authority.js";
 import type { UpdateRecoveryFence } from "../../infra/update-run-recovery.js";
 import { runStep } from "../../infra/update-runner-command.js";
