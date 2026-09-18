@@ -5119,6 +5119,7 @@ td.data-table-key-col {
   color: var(--muted);
   font-size: 13px;
 }
+.cmd-palette__source-error,
 .cmd-palette__notices {
   border-top: 1px solid var(--border);
   padding: 10px 20px;

@@ -176,7 +176,6 @@ export function renderCommandPalette(props: CommandPaletteProps) {
     filter === "all" || item.category === (filter === "sessions" ? "chats" : "messages");
   const grouped = groupItems(matches.filter((item) => matchesFilter(item, props.filter)));
   const notices = [
-    props.modelSearchError,
     props.sessionSearchFailed
       ? t("palette.searchFailed")
       : props.sessionSearchIncomplete
@@ -322,6 +321,7 @@ export function renderCommandPalette(props: CommandPaletteProps) {
                 )
           }
         </div>
+        ${props.modelSearchError ? html`<div class="cmd-palette__source-error" role="status">${props.modelSearchError}</div>` : nothing}
         ${
           notices.length
             ? html`<details
