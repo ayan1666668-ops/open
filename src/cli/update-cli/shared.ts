@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { parseStrictPositiveInteger } from "@openclaw/normalization-core/number-coercion";
 import { theme } from "../../../packages/terminal-core/src/theme.js";
+import { resolveBrewOpenClawPath } from "../../infra/brew.js";
 import { hasErrnoCode } from "../../infra/errors.js";
 import { resolveRequiredHomeDir } from "../../infra/home-dir.js";
 import { resolveOpenClawPackageRoot } from "../../infra/openclaw-root.js";
@@ -26,7 +27,6 @@ import {
   detectGlobalInstallManagerForRoot,
   type GlobalInstallManager,
 } from "../../infra/update-global.js";
-import { isHomebrewInstallRoot } from "../../infra/update-homebrew.js";
 import type { UpdateRequesterAuthority } from "../../infra/update-requester-authority.js";
 import type { UpdateRecoveryFence } from "../../infra/update-run-recovery.js";
 import { runStep } from "../../infra/update-runner-command.js";
@@ -452,7 +452,7 @@ export async function resolveGlobalManager(params: {
     params.pkgOwnership ?? createFreeBsdPkgOwnershipInspection(params.timeoutMs)
   ).assertUnowned(params.root);
   if (params.installKind === "package") {
-    if (isHomebrewInstallRoot(params.root)) {
+    if (await resolveBrewOpenClawPath(params.root)) {
       const reason = resolveUnmanagedUpdateInstallReason();
       throw new UpdatePreMutationError(
         reason,

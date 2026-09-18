@@ -155,20 +155,23 @@ describe("update CLI shared helpers", () => {
     });
   });
 
-  it("guides Homebrew-managed installations to use brew upgrade", async () => {
-    await expect(
-      resolveGlobalManager({
-        root: "/opt/homebrew/Cellar/openclaw-cli/2026.9.2/libexec/lib/node_modules/openclaw",
-        installKind: "package",
-        timeoutMs: 1_000,
-      }),
-    ).rejects.toMatchObject({
-      name: "UpdatePreMutationError",
-      reason: "unmanaged-package-install",
-      message:
-        "This OpenClaw installation is managed by Homebrew. To update OpenClaw, run:\n\n  brew upgrade openclaw-cli\n\nThen restart the gateway:\n\n  openclaw gateway restart",
-    });
-  });
+  it.skipIf(process.platform === "win32")(
+    "guides Homebrew-managed installations to use brew upgrade",
+    async () => {
+      await expect(
+        resolveGlobalManager({
+          root: "/opt/homebrew/Cellar/openclaw-cli/2026.9.2/libexec/lib/node_modules/openclaw",
+          installKind: "package",
+          timeoutMs: 1_000,
+        }),
+      ).rejects.toMatchObject({
+        name: "UpdatePreMutationError",
+        reason: "unmanaged-package-install",
+        message:
+          "This OpenClaw installation is managed by Homebrew. To update OpenClaw, run:\n\n  brew upgrade openclaw-cli\n\nThen restart the gateway:\n\n  openclaw gateway restart",
+      });
+    },
+  );
 
   it("does not treat global npm packages under HOMEBREW_PREFIX as Homebrew formula installs", async () => {
     const originalPrefix = process.env.HOMEBREW_PREFIX;
