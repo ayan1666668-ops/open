@@ -52,7 +52,7 @@ export function hasDeferredUpdateCommandTerminalResult(run: Run): boolean {
 /** Enclose the real executor so its final checks and release precede terminal output. */
 export async function withUpdateCommandTerminalResult<T>(
   operation: (registerRun: (run: Run) => void) => Promise<T>,
-  opts: Pick<UpdateCommandOptions, "json"> = {},
+  opts: Pick<UpdateCommandOptions, "json" | "onResult"> = {},
 ): Promise<T> {
   const owner: { publish?: Publisher } = {};
   let run: Run | undefined;
@@ -102,6 +102,7 @@ export async function withUpdateCommandTerminalResult<T>(
   }
   if (owner.publish) {
     const result = await owner.publish("error" in outcome ? outcome.error : undefined);
+    opts.onResult?.(result);
     if ("error" in outcome) {
       const failure = outcome.error;
       if (
@@ -310,6 +311,9 @@ export async function reportPreMutationUpdateResult(
         }
       : {}),
   }));
+  if (!params.opts.run && params.opts.dryRun && params.reason === "invalid-dev-target") {
+    return exitCliAfterOutput(defaultRuntime, 1);
+  }
   throw new UpdateCommandFailure(
     result,
     params.status === "skipped" ? 0 : resolveManagedServiceUpdateFailureExitCode(result),
@@ -372,6 +376,11 @@ async function publishPreMutationUpdateOutcome(
       jsonMode: Boolean(params.opts.json),
       env: run?.env,
     });
+  }
+  // Existing runs and dry runs keep the legacy stderr-only target refusal.
+  if ((run || params.opts.dryRun) && params.reason === "invalid-dev-target" && params.message) {
+    defaultRuntime.error(params.message);
+    return result;
   }
   if (params.opts.json && params.message) {
     defaultRuntime.error(params.message);
