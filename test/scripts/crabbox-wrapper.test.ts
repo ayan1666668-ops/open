@@ -677,6 +677,7 @@ async function runWrapperCleanupProof(proof: WrapperCleanupProof): Promise<void>
       const releasePath = path.join(fixtureRoot, "escaped.release");
       const wrapperPidPath = path.join(fixtureRoot, "wrapper.pid");
       const wrapperExitPath = path.join(fixtureRoot, "wrapper-exit.json");
+      const terminalCommandPidPath = path.join(fixtureRoot, "terminal-command.pid");
       const phasesPath = path.join(fixtureRoot, "readiness-phases.json");
       const ownerPreload = path.join(fixtureRoot, "owner.cjs");
       writeFileSync(
@@ -839,6 +840,8 @@ if (entry === ${JSON.stringify(implementationPath)}) {
       let output = "";
       let stop: (() => void) | undefined;
       let forceStop: (() => void) | undefined;
+      let entrypointClosed: Promise<unknown> | undefined;
+      let finishTerminal: (() => Promise<void>) | undefined;
       let entrypointPid = 0;
       let identity: WrapperFixtureIdentity | undefined;
       let preparationIdentity: WrapperFixtureIdentity | undefined;
@@ -871,9 +874,31 @@ if (entry === ${JSON.stringify(implementationPath)}) {
             env,
             pnpmArgs: ["crabbox:run", "--", ...args],
           });
+          const terminalOwnerPath = path.join(fixtureRoot, "terminal.cjs");
+          writeFileSync(
+            terminalOwnerPath,
+            `
+const fs = require("node:fs");
+const { spawn } = require("node:child_process");
+const { constants } = require("node:os");
+process.on("SIGINT", () => {});
+setInterval(() => {}, 1000);
+const child = spawn(${JSON.stringify(command.command)}, ${JSON.stringify(command.args)}, { stdio: "inherit" });
+if (child.pid) {
+  fs.writeFileSync(${JSON.stringify(terminalCommandPidPath + ".tmp")}, String(child.pid));
+  fs.renameSync(${JSON.stringify(terminalCommandPidPath + ".tmp")}, ${JSON.stringify(terminalCommandPidPath)});
+}
+child.once("error", (error) => { console.error(error); process.exit(1); });
+child.once("exit", (code, signal) => {
+  const status = signal ? 128 + constants.signals[signal] : code;
+  process.stdout.write("\\nopenclaw-pnpm-exit:" + status + "\\n");
+});
+`,
+          );
+          // A terminal session outlives its foreground command; PNPM exit must not hang up cleanup.
           const terminal = await spawnTerminalPty({
-            file: command.command,
-            args: command.args,
+            file: nodeExecPath,
+            args: [terminalOwnerPath],
             cwd: producer,
             env: Object.fromEntries(
               Object.entries(env).filter(
@@ -884,16 +909,33 @@ if (entry === ${JSON.stringify(implementationPath)}) {
             rows: 24,
           });
           entrypointPid = terminal.pid;
+          let reportExit!: (result: {
+            status: number | null;
+            signal: NodeJS.Signals | null;
+          }) => void;
+          exited = new Promise((resolve) => {
+            reportExit = resolve;
+          });
           terminal.onData((data) => {
             output += data;
+            const receipt = /\r?\nopenclaw-pnpm-exit:(\d+)\r?\n/u.exec(output);
+            if (receipt) {
+              output = output.replace(receipt[0], "");
+              reportExit({ status: Number(receipt[1]), signal: null });
+            }
           });
-          exited = new Promise((resolve) => {
-            terminal.onExit(({ exitCode, signal }) =>
-              resolve({ status: signal ? 128 + signal : exitCode, signal: null }),
-            );
+          entrypointClosed = new Promise<void>((resolve) => {
+            terminal.onExit(({ exitCode, signal }) => {
+              reportExit({ status: signal ? 128 + signal : exitCode, signal: null });
+              resolve();
+            });
           });
           stop = () => terminal.write("\x03");
           forceStop = () => terminal.kill("SIGKILL");
+          finishTerminal = async () => {
+            forceStop!();
+            await entrypointClosed;
+          };
         } else {
           const runner = spawn(process.execPath, [wrapperPath, "run", ...args], {
             cwd: producer,
@@ -908,6 +950,7 @@ if (entry === ${JSON.stringify(implementationPath)}) {
             output += data;
           });
           exited = waitForProcessClose(runner, 20_000);
+          entrypointClosed = exited;
           stop = () => {
             runner.kill(proof.kind === "stdin" ? "SIGINT" : "SIGTERM");
           };
@@ -945,6 +988,11 @@ if (entry === ${JSON.stringify(implementationPath)}) {
           }
         }
         const result = await exited;
+        if (cooperative) {
+          expect(isProcessAlive(entrypointPid), "terminal session still owns cleanup output").toBe(
+            true,
+          );
+        }
         const expectedStatus =
           proof.kind === "escaped"
             ? 1
@@ -1048,6 +1096,9 @@ if (entry === ${JSON.stringify(implementationPath)}) {
         }
         expect(readFileSync(path.join(producer, "fixture.txt"), "utf8")).toBe("original source\n");
         expect(git("ls-files", "--stage", "-z")).toBe(sourceIndex);
+        if (finishTerminal) {
+          await finishTerminal();
+        }
       } catch (error) {
         failure =
           error instanceof Error ? error : new Error("signal proof failed", { cause: error });
@@ -1081,8 +1132,12 @@ if (entry === ${JSON.stringify(implementationPath)}) {
         descendantPid ||= existsSync(descendantPidPath)
           ? Number.parseInt(readFileSync(descendantPidPath, "utf8"), 10)
           : 0;
+        const terminalCommandPid = existsSync(terminalCommandPidPath)
+          ? Number.parseInt(readFileSync(terminalCommandPidPath, "utf8"), 10)
+          : 0;
         const ownedPids = new Set([
           entrypointPid,
+          terminalCommandPid,
           wrapperPid,
           identity?.pid,
           preparationIdentity?.pid,
@@ -1109,6 +1164,7 @@ if (entry === ${JSON.stringify(implementationPath)}) {
             }
           }
         }
+        await entrypointClosed;
         await waitForCondition(() => [...ownedPids].every((pid) => !pid || !isProcessAlive(pid)));
         const runReceiptRequired =
           hasDescendant || proof.kind === "removal" || existsSync(runSpawnedPath);
@@ -1116,6 +1172,7 @@ if (entry === ${JSON.stringify(implementationPath)}) {
           failure !== undefined &&
           readinessFailure === undefined &&
           (!wrapperPid ||
+            (entrypoint === "pnpm" && !terminalCommandPid) ||
             (runReceiptRequired && !identity) ||
             (hasDescendant && !descendantPid) ||
             (proof.kind === "preparation" && !preparationIdentity) ||
