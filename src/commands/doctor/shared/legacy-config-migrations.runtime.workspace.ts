@@ -22,16 +22,22 @@ const BLANK_WORKSPACE_RULES: LegacyConfigRule[] = [
     match: (value) => typeof value === "string" && !value.trim(),
   },
   {
-    path: ["agents", "entries"],
+    path: ["agents"],
     message:
       'blank agents.entries.*.workspace values will be removed to keep each agent\'s default workspace directory. Run "openclaw doctor --fix".',
-    match: (value) =>
-      Array.isArray(value)
-        ? value.some(
-            (entry) =>
-              isRecord(entry) && typeof entry.workspace === "string" && !entry.workspace.trim(),
-          )
-        : isRecord(value) && typeof value.workspace === "string" && !value.workspace.trim(),
+    match: (value) => {
+      if (!isRecord(value)) {
+        return false;
+      }
+      // The rule receives the whole `agents` object; the keyed entries map (and
+      // the legacy list form) hold the per-agent workspace values.
+      const entries = isRecord(value.entries) ? Object.values(value.entries) : [];
+      const list = Array.isArray(value.list) ? value.list : [];
+      return [...entries, ...list].some(
+        (entry) =>
+          isRecord(entry) && typeof entry.workspace === "string" && !entry.workspace.trim(),
+      );
+    },
   },
 ];
 

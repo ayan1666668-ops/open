@@ -249,6 +249,41 @@ const legacyConfigMigrationForTest = await vi.hoisted(async () => {
       changes.push("Moved agents.defaults.sandbox.perSession to scope.");
     }
 
+    const agentsRecord = readNullableRecord(next.agents);
+    const agentDefaults = readNullableRecord(agentsRecord?.defaults);
+    if (
+      agentDefaults &&
+      typeof agentDefaults.workspace === "string" &&
+      !agentDefaults.workspace.trim()
+    ) {
+      delete agentDefaults.workspace;
+      changes.push(
+        "Removed blank agents.defaults.workspace; the agent keeps its default workspace directory.",
+      );
+    }
+    const blankAgentWorkspaces: string[] = [];
+    for (const [agentId, agentRaw] of Object.entries(
+      readNullableRecord(agentsRecord?.entries) ?? {},
+    )) {
+      const agent = readNullableRecord(agentRaw);
+      if (agent && typeof agent.workspace === "string" && !agent.workspace.trim()) {
+        delete agent.workspace;
+        blankAgentWorkspaces.push(agentId);
+      }
+    }
+    for (const agentRaw of Array.isArray(agentsRecord?.list) ? agentsRecord.list : []) {
+      const agent = readNullableRecord(agentRaw);
+      if (agent && typeof agent.workspace === "string" && !agent.workspace.trim()) {
+        delete agent.workspace;
+        blankAgentWorkspaces.push(String(agent.id ?? "agent"));
+      }
+    }
+    if (blankAgentWorkspaces.length > 0) {
+      changes.push(
+        `Removed blank ${blankAgentWorkspaces.map((id) => `agents.entries.${id}.workspace`).join(", ")}; the agents keep their default workspace directories.`,
+      );
+    }
+
     return changes.length > 0 ? { next, changes } : { next: null, changes: [] };
   }
 
@@ -463,6 +498,35 @@ vi.mock("../config/legacy.js", async () => {
           issues,
           ["agents", "defaults", "sandbox"],
           'agents.defaults.sandbox.perSession is legacy; use agents.defaults.sandbox.scope. Run "openclaw doctor --fix".',
+        );
+      }
+      const agentsRecord = readNullableRecord(root.agents);
+      const agentDefaults = readNullableRecord(agentsRecord?.defaults);
+      if (
+        agentDefaults &&
+        typeof agentDefaults.workspace === "string" &&
+        !agentDefaults.workspace.trim()
+      ) {
+        addIssue(
+          issues,
+          ["agents", "defaults", "workspace"],
+          'agents.defaults.workspace is blank; it will be removed to keep the default workspace directory. Run "openclaw doctor --fix".',
+        );
+      }
+      const agentEntries = readNullableRecord(agentsRecord?.entries);
+      const agentList = Array.isArray(agentsRecord?.list) ? agentsRecord.list : [];
+      const blankEntryWorkspace = [
+        ...(agentEntries ? Object.values(agentEntries) : []),
+        ...agentList,
+      ].some((entry) => {
+        const record = readNullableRecord(entry);
+        return !!record && typeof record.workspace === "string" && !record.workspace.trim();
+      });
+      if (blankEntryWorkspace) {
+        addIssue(
+          issues,
+          ["agents"],
+          'blank agents.entries.*.workspace values will be removed to keep each agent\'s default workspace directory. Run "openclaw doctor --fix".',
         );
       }
       const internalHooks = readNullableRecord(readNullableRecord(root.hooks)?.internal);
@@ -1626,6 +1690,27 @@ describe("doctor config flow", () => {
     expect(terminalNoteMock.mock.calls.some(([, title]) => title === "Doctor changes")).toBe(false);
     expect(terminalNoteMock.mock.calls.some(([message]) => message.includes("Persisted"))).toBe(
       false,
+    );
+  });
+
+  it("migrates a saved blank workspace before Doctor resolves it so a sole agent can be repaired", async () => {
+    const result = await runDoctorConfigWithInput({
+      config: {
+        agents: { entries: { main: { workspace: " " } } },
+        gateway: { mode: "local" },
+      },
+      repair: true,
+      preflightMode: "compat",
+      run: loadAndMaybeMigrateDoctorConfig,
+    });
+
+    // The strict resolver (which throws on an explicit blank) must not abort the
+    // repair: Doctor resolves the sole-agent workspace as omitted and the shared
+    // migration strips the saved blank so the agent keeps its default directory.
+    expect(result.cfg.agents?.entries?.main?.workspace).toBeUndefined();
+    expect(result.shouldWriteConfig).toBe(true);
+    expect(result.pendingChangePanels?.join("\n")).toContain(
+      "Removed blank agents.entries.main.workspace",
     );
   });
 

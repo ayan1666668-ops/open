@@ -185,7 +185,13 @@ export async function loadAndMaybeMigrateDoctorConfig(params: {
     return runWithPluginMetadataSnapshot(
       {
         config,
-        workspaceDir: soleAgentId ? resolveAgentWorkspaceDir(config, soleAgentId) : undefined,
+        // A saved blank workspace (accepted before strict rejection) must not
+        // abort Doctor's workspace-dependent preparation: the shared migration
+        // below still strips it, so resolution treats it as omitted (the default
+        // directory), matching listAgentWorkspaceDirs discovery semantics.
+        workspaceDir: soleAgentId
+          ? resolveAgentWorkspaceDir(config, soleAgentId, process.env, { blankAsOmitted: true })
+          : undefined,
       },
       run,
     );

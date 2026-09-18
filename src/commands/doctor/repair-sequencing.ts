@@ -93,7 +93,12 @@ export async function runDoctorRepairSequence(params: {
     const soleAgentId = tryResolveSoleAgentId(config);
     return {
       config,
-      workspaceDir: soleAgentId ? resolveAgentWorkspaceDir(config, soleAgentId, env) : undefined,
+      // A saved blank workspace is stripped by the shared Doctor migration that
+      // runs later in this sequence; resolving it here would abort the advertised
+      // repair, so discovery treats it as omitted (the default directory).
+      workspaceDir: soleAgentId
+        ? resolveAgentWorkspaceDir(config, soleAgentId, env, { blankAsOmitted: true })
+        : undefined,
     };
   };
   const sanitizeLines = (lines: string[]) => lines.map((line) => sanitizeForLog(line)).join("\n");

@@ -16,11 +16,11 @@ export function listAgentWorkspaceDirs(
 ): string[] {
   const dirs = new Set<string>();
   for (const entry of listAgentEntries(cfg)) {
-    dirs.add(resolveAgentWorkspaceDir(cfg, entry.id, env));
+    dirs.add(resolveAgentWorkspaceDir(cfg, entry.id, env, { blankAsOmitted: true }));
   }
   const soleAgentId = tryResolveSoleAgentId(cfg);
   if (soleAgentId) {
-    dirs.add(resolveAgentWorkspaceDir(cfg, soleAgentId, env));
+    dirs.add(resolveAgentWorkspaceDir(cfg, soleAgentId, env, { blankAsOmitted: true }));
   }
   return [...dirs];
 }

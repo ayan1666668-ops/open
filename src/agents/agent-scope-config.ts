@@ -431,15 +431,19 @@ export function resolveAgentWorkspaceDir(
   cfg: OpenClawConfig,
   agentId: string,
   env: NodeJS.ProcessEnv = process.env,
+  options: { blankAsOmitted?: boolean } = {},
 ) {
   const id = normalizeAgentId(agentId);
   // Only omission selects the fallback workspace. An explicit blank value (often
   // from an unset shell variable in `config set`) must fail loudly instead of
-  // silently resolving to the default workspace directory.
+  // silently resolving to the default workspace directory. Discovery paths that
+  // enumerate workspace directories before Doctor's migration has stripped a
+  // saved blank pass blankAsOmitted, which mirrors the migration's semantics:
+  // a saved blank resolves to the same default directory it always resolved to.
   const configuredWorkspace = resolveAgentConfig(cfg, id)?.workspace;
   const configured =
     typeof configuredWorkspace === "string" ? configuredWorkspace.trim() : undefined;
-  if (configuredWorkspace !== undefined && !configured) {
+  if (configuredWorkspace !== undefined && !configured && !options.blankAsOmitted) {
     throw new Error(`agents.${id}.workspace must not be blank`);
   }
   if (configured) {
@@ -449,7 +453,7 @@ export function resolveAgentWorkspaceDir(
   const inheritedWorkspaceAgentId = tryResolveLegacyDataOwnerAgentId(cfg);
   const defaultsWorkspace = cfg.agents?.defaults?.workspace;
   const fallback = typeof defaultsWorkspace === "string" ? defaultsWorkspace.trim() : undefined;
-  if (defaultsWorkspace !== undefined && !fallback) {
+  if (defaultsWorkspace !== undefined && !fallback && !options.blankAsOmitted) {
     throw new Error("agents.defaults.workspace must not be blank");
   }
   if (inheritedWorkspaceAgentId && id === inheritedWorkspaceAgentId) {

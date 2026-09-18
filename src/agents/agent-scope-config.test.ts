@@ -479,6 +479,32 @@ describe("resolveAgentWorkspaceDir blank workspace rejection", () => {
 
     expect(resolveAgentWorkspaceDir(cfg, "main")).toBe(path.resolve("/srv/main"));
   });
+
+  it("treats a saved blank workspace as omitted for discovery before the Doctor migration runs", () => {
+    const cfg = { agents: { entries: { main: { workspace: " " } } } } as OpenClawConfig;
+
+    // Discovery (plugin metadata, file sync, cleanup) must enumerate the same
+    // default directory a saved blank always resolved to, so pre-migration
+    // preparation cannot abort the Doctor repair that strips it. The sole agent
+    // keeps the default agent workspace directory (legacy data-owner path).
+    expect(() =>
+      resolveAgentWorkspaceDir(cfg, "main", process.env, { blankAsOmitted: true }),
+    ).not.toThrow();
+    expect(resolveAgentWorkspaceDir(cfg, "main", process.env, { blankAsOmitted: true })).toBe(
+      path.resolve(
+        process.env.OPENCLAW_STATE_DIR ?? path.join(process.env.HOME ?? "", ".openclaw"),
+        "workspace",
+      ),
+    );
+  });
+
+  it("treats a blank defaults workspace as omitted for discovery", () => {
+    const cfg = { agents: { defaults: { workspace: "   " } } } as OpenClawConfig;
+
+    expect(() =>
+      resolveAgentWorkspaceDir(cfg, "main", process.env, { blankAsOmitted: true }),
+    ).not.toThrow();
+  });
 });
 
 describe("resolveAgentConfig model policy", () => {
