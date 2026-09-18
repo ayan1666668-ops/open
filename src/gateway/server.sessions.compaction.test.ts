@@ -4,7 +4,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { expect, test, vi } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 import { closeGatewayTestWebSocket } from "../../test/helpers/gateway-websocket.js";
 import { createDeferred } from "../../test/helpers/promise.js";
 import type { QueuedCompactionHostOptions } from "../agents/embedded-agent-runner/compact.queued-execution.js";
@@ -37,7 +37,7 @@ import {
 } from "../config/sessions/session-accessor.js";
 import { clearAgentRunContext, registerAgentRunContext } from "../infra/agent-run-registry.js";
 import { loadPendingSessionDeliveries } from "../infra/session-delivery-queue-storage.js";
-import { peekSystemEvents } from "../infra/system-events.js";
+import { peekSystemEvents, resetSystemEventsForTest } from "../infra/system-events.js";
 import { setActivePluginRegistry } from "../plugins/runtime.js";
 import {
   enqueueCommandInLane,
@@ -79,6 +79,14 @@ import {
 
 const { createSessionStoreDir, createSelectedGlobalSessionStore, openClient } =
   setupGatewaySessionsTestHarness();
+
+// Cases here observe `peekSystemEvents` for the shared `agent:main:main` key.
+// Each case must first settle the work it started (see the maxLines trim case
+// below), then hand the next case an empty buffer, so no neighbour can read or
+// inherit another case's lifecycle events.
+afterEach(() => {
+  resetSystemEventsForTest();
+});
 
 type CheckpointFixture = Awaited<ReturnType<typeof createCheckpointFixture>>;
 
@@ -1396,23 +1404,26 @@ test("sessions.compact maxLines releases queued post-compaction delegates after 
 
   const beforeEvents = peekSystemEvents("agent:main:main").length;
 
-  const { ws } = await openClient();
-  const compacted = await rpcReq<{ ok: true; key: string; compacted: boolean; kept?: number }>(
-    ws,
-    "sessions.compact",
-    { key: "main", maxLines: 50 },
-  );
+  // A maxLines trim responds before it releases the staged delegates
+  // (`server-methods/sessions-compact.ts`), so the release - and the system
+  // event it emits - outlive the RPC response. Drive the handler directly:
+  // `directSessionReq` awaits the whole handler, so this case owns its
+  // post-compaction work and settles it here. Polling for the event after an
+  // early response instead lets a slow release surface inside the next case.
+  const compacted = await directSessionReq<{
+    ok: true;
+    key: string;
+    compacted: boolean;
+    kept?: number;
+  }>("sessions.compact", { key: "main", maxLines: 50 });
 
   expect(compacted.ok).toBe(true);
   expect(compacted.payload?.compacted).toBe(true);
   expect(compacted.payload?.kept).toBe(50);
-  await vi.waitFor(() => {
-    expect(peekSystemEvents("agent:main:main").slice(beforeEvents)).toContainEqual(
-      expect.stringContaining("Queued 1 post-compaction delegate(s)"),
-    );
-    expect(stagedPostCompactionDelegateCount("agent:main:main")).toBe(0);
-  });
-  ws.close();
+  expect(peekSystemEvents("agent:main:main").slice(beforeEvents)).toContainEqual(
+    expect.stringContaining("Queued 1 post-compaction delegate(s)"),
+  );
+  expect(stagedPostCompactionDelegateCount("agent:main:main")).toBe(0);
   resetTaskFlowRegistryForTests({ persist: false });
 });
 
