@@ -3732,7 +3732,6 @@ ui/src/pages/chat/components/widget-card.ts	3
 ui/src/pages/chat/components/widget-export.ts	1
 ui/src/pages/chat/composer-dictation.ts	2
 ui/src/pages/chat/connect-error.ts	1
-ui/src/pages/chat/critical-observer-notice.ts	1
 ui/src/pages/chat/export.ts	1
 ui/src/pages/chat/input-history.ts	3
 ui/src/pages/chat/performance.ts	1
