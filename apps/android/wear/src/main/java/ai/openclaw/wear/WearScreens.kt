@@ -2024,10 +2024,9 @@ private fun ConversationContextPicker(
         stringResource(R.string.model),
         modelName,
       ),
-    selected = true,
+    selected = null,
     enabled = !actionBusy,
     onClick = onOpenContextPicker,
-    modifier = Modifier.padding(horizontal = 12.dp),
   )
 }
 
@@ -2228,24 +2227,26 @@ private fun ContextPickerOption(
   title: String,
   detail: String?,
   status: String?,
-  selected: Boolean,
+  selected: Boolean?, // null is the highlighted context-navigation card, not a choice.
   enabled: Boolean,
   onClick: () -> Unit,
-  modifier: Modifier = Modifier,
 ) {
   val colors = OpenClawWearTheme.colors
   Column(
     modifier =
-      modifier
+      Modifier
         .fillMaxWidth()
         .padding(horizontal = 12.dp)
-        .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
         .then(
-          Modifier.border(
-            width = 1.dp,
-            color = if (selected) colors.primary else colors.border,
-            shape = RoundedCornerShape(14.dp),
-          ),
+          if (selected == null) {
+            Modifier.clickable(enabled = enabled, role = Role.Button, onClick = onClick)
+          } else {
+            Modifier.selectable(selected = selected, enabled = enabled, role = Role.RadioButton, onClick = onClick)
+          },
+        ).border(
+          width = 1.dp,
+          color = if (selected != false) colors.primary else colors.border,
+          shape = RoundedCornerShape(14.dp),
         ).padding(horizontal = 12.dp, vertical = 9.dp),
     horizontalAlignment = Alignment.CenterHorizontally,
   ) {
@@ -2262,9 +2263,9 @@ private fun ContextPickerOption(
       Text(
         text = it,
         color = colors.textMuted,
-        fontSize = 9.sp,
+        fontSize = 11.sp,
         textAlign = TextAlign.Center,
-        maxLines = 1,
+        maxLines = 2,
         overflow = TextOverflow.Ellipsis,
       )
     }
@@ -2272,7 +2273,7 @@ private fun ContextPickerOption(
       Text(
         text = it,
         color = colors.primary,
-        fontSize = 9.sp,
+        fontSize = 11.sp,
         fontWeight = FontWeight.Bold,
         textAlign = TextAlign.Center,
       )
