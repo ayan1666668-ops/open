@@ -21,15 +21,6 @@ import {
   mergeCodexThreadConfigs,
   shouldBuildCodexPluginThreadConfig,
 } from "./plugin-thread-config.js";
-import {
-  appInfo,
-  appSummary,
-  nativeAppTools,
-  pluginDetail,
-  pluginInstalled,
-  pluginList,
-  pluginSummary,
-} from "./plugin-thread-config.test-helpers.js";
 import type {
   CodexAppServerRequestParams,
   CodexConfigReadResponse,
@@ -425,12 +416,7 @@ describe("Codex plugin thread config", () => {
       },
     });
 
-    expect(methods).toStrictEqual([
-      "plugin/installed",
-      "plugin/read",
-      "config/read",
-      "mcpServerStatus/list",
-    ]);
+    expect(methods).toStrictEqual(["plugin/installed", "plugin/read", "config/read"]);
     expect(config.configPatch?.apps).toEqual({
       _default: {
         enabled: false,
@@ -440,8 +426,6 @@ describe("Codex plugin thread config", () => {
       "workspace-data-app": {
         enabled: true,
         destructive_enabled: false,
-        default_tools_enabled: false,
-        tools: {},
         open_world_enabled: true,
         default_tools_approval_mode: "auto",
       },
@@ -676,12 +660,12 @@ describe("Codex plugin thread config", () => {
     expect(disabledApps?.["google-calendar-app"]).toEqual({
       enabled: true,
       destructive_enabled: false,
-      default_tools_enabled: false,
-      tools: {},
       open_world_enabled: true,
       default_tools_approval_mode: "auto",
     });
+    expect(disabledApps?.["google-calendar-app"]).not.toHaveProperty("default_tools_enabled");
     expect(disabledApps?.["google-calendar-app"]).not.toHaveProperty("approvals_reviewer");
+    expect(disabledApps?.["google-calendar-app"]).not.toHaveProperty("tools");
     expect(
       pluginOverrideDisabled.policyContext.apps["google-calendar-app"]?.allowDestructiveActions,
     ).toBe(false);
@@ -806,9 +790,6 @@ describe("Codex plugin thread config", () => {
         request: async (method, params) => codexAppInventoryResponse(method, [calendarApp], params),
       });
       const request = vi.fn(async (method: string, params?: unknown) => {
-        if (method === "mcpServerStatus/list") {
-          return nativeAppTools([calendarApp]);
-        }
         if (method === "plugin/installed" || method === "plugin/list") {
           return pluginList([pluginSummary("google-calendar", { installed: true, enabled: true })]);
         }
@@ -1038,9 +1019,6 @@ describe("Codex plugin thread config", () => {
         request: async (method, params) => codexAppInventoryResponse(method, [linearApp], params),
       });
       const request = vi.fn(async (method: string, params?: unknown) => {
-        if (method === "mcpServerStatus/list") {
-          return nativeAppTools([linearApp]);
-        }
         if (method === "app/installed" || method === "app/read") {
           return codexAppInventoryResponse(
             method,
@@ -1251,50 +1229,49 @@ describe("Codex plugin thread config", () => {
         "chatgpt-meetings": {
           enabled: true,
           destructive_enabled: false,
-          default_tools_enabled: false,
-          tools: {},
           open_world_enabled: true,
           default_tools_approval_mode: "auto",
         },
         "disabled-account-app": {
           enabled: true,
           destructive_enabled: false,
-          default_tools_enabled: false,
-          tools: {},
           open_world_enabled: true,
           default_tools_approval_mode: "auto",
         },
         slack: {
           enabled: true,
           destructive_enabled: false,
-          default_tools_enabled: false,
-          tools: {},
           open_world_enabled: true,
           default_tools_approval_mode: "auto",
         },
       },
     });
-    expect(config.policyContext.apps).toEqual(
-      Object.fromEntries(
-        [
-          ["chatgpt-meetings", "ChatGPT Meetings"],
-          ["disabled-account-app", "disabled-account-app"],
-          ["slack", "Slack"],
-        ].map(([id, appName]) => [
-          id,
-          {
-            source: "account",
-            appName,
-            allowDestructiveActions: false,
-            nativeToolMetadataFallback: true,
-            allowOpenWorld: true,
-            destructiveApprovalMode: "deny",
-            mcpServerNames: [],
-          },
-        ]),
-      ),
-    );
-
+    expect(config.policyContext.apps).toEqual({
+      "chatgpt-meetings": {
+        source: "account",
+        appName: "ChatGPT Meetings",
+        allowDestructiveActions: false,
+        allowOpenWorld: true,
+        destructiveApprovalMode: "deny",
+        mcpServerNames: [],
+      },
+      "disabled-account-app": {
+        source: "account",
+        appName: "disabled-account-app",
+        allowDestructiveActions: false,
+        allowOpenWorld: true,
+        destructiveApprovalMode: "deny",
+        mcpServerNames: [],
+      },
+      slack: {
+        source: "account",
+        appName: "Slack",
+        allowDestructiveActions: false,
+        allowOpenWorld: true,
+        destructiveApprovalMode: "deny",
+        mcpServerNames: [],
+      },
+    });
     expect(config.provisionalAppIds).toEqual(["chatgpt-meetings", "disabled-account-app", "slack"]);
     expect(config.diagnostics).toStrictEqual([]);
   });
@@ -3163,7 +3140,7 @@ describe("Codex plugin thread config", () => {
     expect(third).not.toBe(second);
   });
 
-  it("disables tools when destructive access is denied and native tool metadata is absent", async () => {
+  it("uses app-level destructive policy for plugins without OpenClaw tool-name knowledge", async () => {
     const appCache = new CodexAppInventoryCache();
     await appCache.refreshNow({
       key: "runtime",
@@ -3206,11 +3183,10 @@ describe("Codex plugin thread config", () => {
     expect(apps?.["github-app"]).toEqual({
       enabled: true,
       destructive_enabled: false,
-      default_tools_enabled: false,
-      tools: {},
       open_world_enabled: true,
       default_tools_approval_mode: "auto",
     });
+    expect(apps?.["github-app"]).not.toHaveProperty("tools");
   });
 
   it("merges app config with native hook config", () => {
@@ -3599,6 +3575,97 @@ describe("Codex plugin thread config", () => {
     ).toBe(true);
   });
 });
+
+function pluginInstalled(
+  plugins: v2.PluginSummary[],
+  marketplace: { name?: string; path?: string | null } = {},
+): v2.PluginInstalledResponse {
+  const { featuredPluginIds: _featuredPluginIds, ...installed } = pluginList(plugins, marketplace);
+  return installed;
+}
+
+function pluginList(
+  plugins: v2.PluginSummary[],
+  marketplace: { name?: string; path?: string | null } = {},
+): v2.PluginListResponse {
+  return {
+    marketplaces: [
+      {
+        name: marketplace.name ?? CODEX_PLUGINS_MARKETPLACE_NAME,
+        path: marketplace.path === undefined ? "/marketplaces/openai-curated" : marketplace.path,
+        interface: null,
+        plugins,
+      },
+    ],
+    marketplaceLoadErrors: [],
+    featuredPluginIds: [],
+  };
+}
+
+function pluginSummary(id: string, overrides: Partial<v2.PluginSummary> = {}): v2.PluginSummary {
+  return {
+    id,
+    name: id,
+    source: { type: "remote" },
+    installed: false,
+    enabled: false,
+    installPolicy: "AVAILABLE",
+    authPolicy: "ON_USE",
+    availability: "AVAILABLE",
+    interface: null,
+    ...overrides,
+  };
+}
+
+function pluginDetail(
+  pluginName: string,
+  apps: v2.AppSummary[],
+  mcpServers: string[] = [],
+  marketplace: { marketplaceName?: string; marketplacePath?: string | null } = {},
+): v2.PluginReadResponse {
+  return {
+    plugin: {
+      marketplaceName: marketplace.marketplaceName ?? CODEX_PLUGINS_MARKETPLACE_NAME,
+      marketplacePath:
+        marketplace.marketplacePath === undefined
+          ? "/marketplaces/openai-curated"
+          : marketplace.marketplacePath,
+      summary: pluginSummary(pluginName, { installed: true, enabled: true }),
+      description: null,
+      skills: [],
+      apps,
+      mcpServers,
+    },
+  };
+}
+
+function appSummary(id: string): v2.AppSummary {
+  return {
+    id,
+    name: id,
+    description: null,
+    installUrl: null,
+    category: null,
+  };
+}
+
+function appInfo(id: string, accessible: boolean, enabled = true): v2.AppInfo {
+  return {
+    id,
+    name: id,
+    description: null,
+    logoUrl: null,
+    logoUrlDark: null,
+    distributionChannel: null,
+    branding: null,
+    appMetadata: null,
+    labels: null,
+    installUrl: null,
+    isAccessible: accessible,
+    isEnabled: enabled,
+    pluginDisplayNames: [],
+  };
+}
 
 async function buildReadyGoogleCalendarThreadConfig(
   pluginConfig: unknown,

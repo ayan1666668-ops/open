@@ -450,6 +450,13 @@ plugin through stable ownership: an exact app id from plugin detail, a known
 MCP server name, or unique stable metadata. Display-name-only or ambiguous
 ownership is excluded until the next inventory refresh proves ownership.
 
+Missing plugins and marketplaces remain in saved settings for future discovery,
+but are omitted from the effective runtime plugin policy. OpenClaw logs an error
+and continues with healthy plugins and connected account apps. A missing entry's
+permissions do not apply to other apps, even when their display names match.
+The entry is reconsidered on the next normal inventory refresh; no saved settings
+are removed. Found plugins disabled by an administrator retain their restrictions.
+
 ## Connected account apps
 
 Owner-operated agents can opt into every app already connected to their Codex
@@ -481,7 +488,7 @@ and callable for that thread. OpenClaw does not install, authenticate, or enable
 apps globally. Existing threads keep their persisted app set; use `/new`,
 `/reset`, or restart the gateway to pick up newly connected or revoked apps.
 
-An explicitly disabled configured plugin always overrides account-wide app
+An explicitly disabled configured plugin found in the inventory overrides account-wide app
 access. Because Codex `app/read` omits a disabled workspace plugin's display
 names, OpenClaw uses its `plugin/installed` snapshot and reads only that exact
 configured plugin's details to reserve its owned app IDs. This narrow,
@@ -493,22 +500,6 @@ Account apps inherit the global `codexPlugins.allow_destructive_actions` value,
 which accepts `true`, `false`, `"auto"`, or `"ask"`. Explicit per-plugin policy
 overrides the global policy for overlapping app ids. Inventory failures fail
 closed instead of falling back to an unrestricted default.
-
-A missing enabled plugin or marketplace is logged as an error without disabling
-healthy configured apps. If the missing entry has a `false` or `"ask"` action
-policy, account apps whose ownership cannot be established inherit the strictest
-of that restriction and the global policy. This preserves read access while
-preventing missing ownership from granting broader action permissions. Apps
-with proven configured ownership retain their explicit plugin policy.
-
-For `false`, the conversation overlay explicitly disables every currently
-identified non-read-only tool, so saved tool enablement cannot override the
-restriction. Exact namespaced tool keys and connector ownership come from the
-native MCP tool inventory, rather than assuming app display names are policy
-keys. Read-tool settings and saved configuration are preserved. If tool
-metadata is unavailable, tools remain disabled until a safe read-only subset
-can be established. Restrictions are refreshed before a persisted app policy
-is replayed.
 
 ## Thread app config
 

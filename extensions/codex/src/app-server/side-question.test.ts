@@ -1,5 +1,5 @@
-import { Server } from "node:http";
 import "./side-question.test-support.js";
+import { Server } from "node:http";
 // Codex tests cover side question plugin behavior.
 import path from "node:path";
 import {
@@ -28,10 +28,6 @@ import { buildCodexAppServerConnectionFingerprint } from "./plugin-app-cache-key
 import type { JsonObject, JsonValue } from "./protocol.js";
 import { createSandboxContext } from "./sandbox-exec-server.test-helpers.js";
 import { createCodexTestBindingStore } from "./session-binding.test-helpers.js";
-import {
-  createSideQuestionNativeAppConfig,
-  createSideQuestionNativeToolInventory,
-} from "./side-question.plugin-policy.test-helpers.js";
 import {
   createClientHarness,
   createCodexTestModel,
@@ -1206,17 +1202,24 @@ describe("runCodexAppServerSideQuestion", () => {
     async (outcome) => {
       const approvalSpy = vi.spyOn(elicitationBridge, "routeCodexAppServerElicitationRequest");
       const rejectsReplay = outcome === "binding-changed" || outcome === "config-unavailable";
-      const nativeAppConfig = createSideQuestionNativeAppConfig();
+      const nativeAppConfig = {
+        enabled: true,
+        links: {
+          account: { approvals_reviewer: "auto_review", default_tools_approval_mode: "approve" },
+        },
+        tools: {
+          write: { enabled: false, approval_mode: "approve" },
+          read: { approval_mode: "approve" },
+          retired: { approval_mode: "approve" },
+        },
+      };
       const savedAppConfig = structuredClone(nativeAppConfig);
       const client = createFakeClient({ completeTurn: rejectsReplay });
       const baseRequest = client.request.getMockImplementation()!;
       client.request.mockImplementation(async (method: string, requestParams?: unknown) => {
-        if (method === "mcpServerStatus/list") {
-          return createSideQuestionNativeToolInventory();
-        }
         if (method === "app/installed") {
           return {
-            apps: ["ask-app", "false-app", "unbound-app"].map((id) => ({
+            apps: ["ask-app", "unbound-app"].map((id) => ({
               id,
               runtimeName: id,
               enabled: true,
@@ -1225,14 +1228,10 @@ describe("runCodexAppServerSideQuestion", () => {
           };
         }
         if (method === "app/read") {
-          expect(requestParams).toEqual({
-            appIds: outcome === "unbound-native-app" ? ["false-app"] : ["ask-app", "false-app"],
-            includeTools: true,
-          });
+          expect(requestParams).toEqual({ appIds: ["ask-app"], includeTools: true });
           return {
-            apps: [
-              { id: "false-app", name: "False", pluginDisplayNames: [], toolSummaries: [] },
-              ...(outcome === "missing-app" || outcome === "unbound-native-app"
+            apps:
+              outcome === "missing-app"
                 ? []
                 : [
                     {
@@ -1258,8 +1257,7 @@ describe("runCodexAppServerSideQuestion", () => {
                         },
                       ],
                     },
-                  ]),
-            ],
+                  ],
             missingAppIds: outcome === "missing-app" ? ["ask-app"] : [],
           };
         }
@@ -1383,7 +1381,13 @@ describe("runCodexAppServerSideQuestion", () => {
       }
 
       const methods = client.request.mock.calls.map(([method]) => method);
-      expect(methods.indexOf("app/read")).toBeLessThan(methods.indexOf("thread/fork"));
+      if (outcome === "unbound-native-app") {
+        expect(methods).not.toContain("app/installed");
+        expect(methods).not.toContain("app/read");
+        expect(methods).not.toContain("config/batchWrite");
+      } else {
+        expect(methods.indexOf("app/read")).toBeLessThan(methods.indexOf("thread/fork"));
+      }
       expect(methods.filter((method) => method === "config/read")).toHaveLength(1);
       expect(methods).not.toContain("config/batchWrite");
       expect(methods).not.toContain("config/value/write");
@@ -1424,7 +1428,6 @@ describe("runCodexAppServerSideQuestion", () => {
         },
         "false-app": {
           enabled: true,
-          tools: {},
           destructive_enabled: false,
           open_world_enabled: true,
           default_tools_approval_mode: "auto",

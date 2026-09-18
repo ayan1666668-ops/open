@@ -4,7 +4,7 @@ import type { CodexAppServerClient } from "./client.js";
 import type { CodexAppServerRuntimeOptions } from "./config.js";
 import type { CodexInferenceProxy } from "./inference-proxy.js";
 import type { CodexNativeSkillIsolation } from "./native-skill-isolation.js";
-import type { CodexPluginThreadConfig, PluginAppPolicyContext } from "./plugin-thread-config.js";
+import type { CodexPluginThreadConfig } from "./plugin-thread-config.js";
 import type { CodexDynamicToolSpec, CodexTurnEnvironmentParams, JsonObject } from "./protocol.js";
 import type {
   CodexAppServerBindingIdentity,
@@ -53,10 +53,7 @@ export type CodexPluginThreadConfigProvider = {
   enabledPluginConfigKeys?: readonly string[];
   recoverablePluginConfigKeys?: readonly string[];
   accountAppRecoveryEnabled?: boolean;
-  build: (options?: {
-    threadId?: string;
-    previousPolicyContext?: PluginAppPolicyContext;
-  }) => Promise<CodexPluginThreadConfig>;
+  build: (options?: { threadId?: string }) => Promise<CodexPluginThreadConfig>;
 };
 
 export type CodexStartOrResumeThreadParams = {

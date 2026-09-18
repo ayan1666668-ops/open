@@ -1,38 +1,18 @@
 import type { CodexPluginOwnedApp } from "./plugin-inventory.js";
 import { isJsonObject, type JsonObject } from "./protocol.js";
 
-/** Projects action restrictions into the native session layer without changing saved settings. */
+/** Projects ask approvals into the native session layer without changing saved settings. */
 export function buildCodexAppApprovalOverrides(
   config: Record<string, unknown>,
   app: Pick<CodexPluginOwnedApp, "id" | "approvalOverrideToolConfigKeys">,
-  mode: "ask" | "deny" = "ask",
 ): JsonObject {
   const appsRoot = config.apps;
   const appConfig = isJsonObject(appsRoot) ? appsRoot[app.id] : undefined;
+  if (!isJsonObject(appConfig)) {
+    return {};
+  }
   const overrides: JsonObject = {};
   const keys = app.approvalOverrideToolConfigKeys;
-  if (mode === "deny") {
-    // Native per-tool enablement precedes destructive hints. Deny every current
-    // writable alias, including title collisions, even without saved settings.
-    // Missing metadata cannot establish a safe read-only subset.
-    const savedTools =
-      isJsonObject(appConfig) && isJsonObject(appConfig.tools) ? appConfig.tools : {};
-    const deniedKeys = keys ?? Object.keys(savedTools);
-    overrides.tools = Object.fromEntries(deniedKeys.map((key) => [key, { enabled: false }]));
-    if (!keys) {
-      overrides.default_tools_enabled = false;
-    }
-  }
-  if (!isJsonObject(appConfig)) {
-    return overrides;
-  }
-  if (mode === "deny" && !keys && isJsonObject(appConfig.links)) {
-    overrides.links = Object.fromEntries(
-      Object.entries(appConfig.links)
-        .filter(([, link]) => isJsonObject(link))
-        .map(([name]) => [name, { default_tools_enabled: false }]),
-    );
-  }
   // Link and tool policy outrank app defaults. Session overlays survive native
   // user-config reloads; durable writes cannot acknowledge every loaded thread.
   for (const [section, fields] of [
@@ -58,14 +38,7 @@ export function buildCodexAppApprovalOverrides(
       }
     }
     if (projected.length > 0) {
-      const existing = isJsonObject(overrides[section]) ? overrides[section] : {};
-      overrides[section] = Object.fromEntries([
-        ...Object.entries(existing),
-        ...projected.map(([name, projectedFields]) => [
-          name,
-          Object.assign({}, projectedFields, isJsonObject(existing[name]) ? existing[name] : {}),
-        ]),
-      ]);
+      overrides[section] = Object.fromEntries(projected);
     }
   }
   return overrides;

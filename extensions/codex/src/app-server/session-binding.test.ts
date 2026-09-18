@@ -610,6 +610,79 @@ describe("Codex app-server binding store", () => {
     });
   });
 
+  it("round-trips account app policy context", async () => {
+    const { state } = createStateStore();
+    const store = createCodexAppServerBindingStore(state);
+    const identity = { kind: "session" as const, agentId: "main", sessionId: "session-account" };
+    const pluginAppPolicyContext = {
+      fingerprint: "account-policy-1",
+      apps: {
+        "chatgpt-meetings": {
+          source: "account" as const,
+          appName: "ChatGPT Meetings",
+          allowDestructiveActions: true,
+          allowOpenWorld: false,
+          destructiveApprovalMode: "auto" as const,
+          mcpServerNames: [],
+        },
+      },
+      pluginAppIds: {},
+    };
+
+    await store.mutate(identity, {
+      kind: "set",
+      binding: { threadId: "thread-account", cwd: "/repo", pluginAppPolicyContext },
+    });
+    expect(store.read(identity)).toMatchObject({ pluginAppPolicyContext });
+
+    const imported = createStoredCodexAppServerBinding({
+      schemaVersion: 2,
+      threadId: "thread-account",
+      cwd: "/repo",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      pluginAppPolicyContext,
+    });
+    expect(imported?.binding.pluginAppPolicyContext).toEqual(pluginAppPolicyContext);
+  });
+
+  it("round-trips repository marketplace app ownership through stored and imported bindings", async () => {
+    const { state } = createStateStore();
+    const store = createCodexAppServerBindingStore(state);
+    const identity = {
+      kind: "session" as const,
+      agentId: "main",
+      sessionId: "session-security-review",
+    };
+    const pluginAppPolicyContext = {
+      fingerprint: "repository-plugin-policy",
+      apps: {
+        github: {
+          configKey: "security-review@company-tools",
+          marketplaceName: "company-tools",
+          pluginName: "security-review",
+          allowDestructiveActions: true,
+          destructiveApprovalMode: "ask" as const,
+          mcpServerNames: ["github"],
+        },
+      },
+      pluginAppIds: { "security-review@company-tools": ["github"] },
+    };
+
+    await store.mutate(identity, {
+      kind: "set",
+      binding: { threadId: "thread-security-review", cwd: "/repo/company", pluginAppPolicyContext },
+    });
+    expect(store.read(identity)).toMatchObject({ pluginAppPolicyContext });
+
+    const imported = createStoredCodexAppServerBinding({
+      schemaVersion: 2,
+      threadId: "thread-security-review",
+      cwd: "/repo/company",
+      pluginAppPolicyContext,
+    });
+    expect(imported?.binding.pluginAppPolicyContext).toEqual(pluginAppPolicyContext);
+  });
+
   it("rejects unsafe marketplace names in imported plugin app ownership", () => {
     const imported = createStoredCodexAppServerBinding({
       schemaVersion: 2,

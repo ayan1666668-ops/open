@@ -106,7 +106,6 @@ const accountAppPolicyEntrySchema = z
     source: z.literal("account"),
     appName: z.string(),
     allowDestructiveActions: z.boolean(),
-    nativeToolMetadataFallback: z.literal(true).optional(),
     allowOpenWorld: z.boolean().optional(),
     destructiveApprovalMode: destructiveApprovalModeSchema,
     mcpServerNames: z.array(z.string()),
@@ -119,7 +118,6 @@ const pluginAppPolicyEntrySchema = z
     marketplaceName: z.string().regex(CODEX_PLUGIN_MARKETPLACE_NAME_PATTERN),
     pluginName: z.string(),
     allowDestructiveActions: z.boolean(),
-    nativeToolMetadataFallback: z.literal(true).optional(),
     allowOpenWorld: z.boolean().optional(),
     destructiveApprovalMode: destructiveApprovalModeSchema,
     mcpServerNames: z.array(z.string()),
@@ -547,7 +545,6 @@ export function readPluginAppPolicyContext(
       }
       parsedApps[appId] = {
         source: "account",
-        ...(entry.nativeToolMetadataFallback === true ? { nativeToolMetadataFallback: true } : {}),
         appName: entry.appName,
         allowDestructiveActions: entry.allowDestructiveActions,
         ...(typeof entry.allowOpenWorld === "boolean"
@@ -573,7 +570,6 @@ export function readPluginAppPolicyContext(
       return undefined;
     }
     parsedApps[appId] = {
-      ...(entry.nativeToolMetadataFallback === true ? { nativeToolMetadataFallback: true } : {}),
       configKey: entry.configKey,
       marketplaceName: entry.marketplaceName,
       pluginName: entry.pluginName,

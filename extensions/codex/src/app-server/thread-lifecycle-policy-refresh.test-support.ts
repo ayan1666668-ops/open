@@ -3,7 +3,6 @@ import { AgentHarnessPreflightError } from "openclaw/plugin-sdk/agent-harness-ru
 import { expect, it, vi } from "vitest";
 import { retainCodexAppServerLiveThread } from "./client-runtime.js";
 import { CodexAppServerRpcError } from "./client.js";
-import type { CodexPluginThreadConfig } from "./plugin-thread-config.js";
 import type { RpcRequest } from "./protocol.js";
 import { tempDir, threadStartResult } from "./run-attempt-test-harness.js";
 import {
@@ -17,7 +16,6 @@ import {
 } from "./shared-client.js";
 import type { createClientHarness } from "./test-support.js";
 import type { startOrResumeThread as startOrResumeThreadImpl } from "./thread-lifecycle.js";
-import { createLeasedCodexLifecycleHarness } from "./thread-lifecycle.test-fixtures.js";
 
 type StartParams = Omit<Parameters<typeof startOrResumeThreadImpl>[0], "bindingStore">;
 
@@ -41,82 +39,6 @@ export function registerThreadPolicyRefreshTests({
   startOrResumeThread,
   writeCodexAppServerBinding,
 }: PolicyRefreshFixtures) {
-  it("forwards persisted metadata fallback provenance when rebuilding a loaded thread", async () => {
-    const sessionFile = path.join(tempDir, "metadata-fallback-forwarding.jsonl");
-    const workspaceDir = path.join(tempDir, "metadata-fallback-workspace");
-    const fixture = await createLeasedCodexLifecycleHarness({
-      agentDir: path.join(tempDir, "agent"),
-      respond: async (method) => {
-        if (method === "config/read") {
-          return { config: {}, origins: {}, layers: [] };
-        }
-        if (method === "configRequirements/read") {
-          return { requirements: null };
-        }
-        if (method === "thread/start") {
-          return threadStartResult("metadata-fallback-thread");
-        }
-        throw new Error(`unexpected method: ${method}`);
-      },
-    });
-    const config: CodexPluginThreadConfig = {
-      enabled: true,
-      fingerprint: "metadata-fallback-config",
-      inputFingerprint: "metadata-fallback-input",
-      diagnostics: [],
-      configPatch: { apps: { drive: { enabled: true, default_tools_enabled: false } } },
-      policyContext: {
-        fingerprint: "metadata-fallback-policy",
-        apps: {
-          drive: {
-            source: "account",
-            appName: "Drive",
-            allowDestructiveActions: false,
-            destructiveApprovalMode: "deny",
-            nativeToolMetadataFallback: true,
-            mcpServerNames: [],
-          },
-        },
-        pluginAppIds: {},
-      },
-    };
-    const build = vi.fn(async () => config);
-    const common = {
-      client: fixture.client,
-      params: createParams(sessionFile, workspaceDir),
-      cwd: workspaceDir,
-      dynamicTools: [],
-      appServer: createThreadLifecycleAppServerOptions(),
-      userMcpServersEnabled: false,
-      pluginThreadConfig: {
-        enabled: true,
-        requiresCurrentPolicyCheck: true,
-        inputFingerprint: config.inputFingerprint,
-        build,
-      },
-    };
-    const started = await startOrResumeThread(common);
-    await retainCodexAppServerLiveThread(
-      fixture.client,
-      started.threadId,
-      undefined,
-      started.liveThreadConfigFingerprint,
-      null,
-      started.liveThreadEphemeralPolicy,
-    );
-    const persisted = await readCodexAppServerBinding(sessionFile);
-    expect(persisted?.pluginAppPolicyContext).toEqual(config.policyContext);
-    build.mockClear();
-
-    const resumed = await startOrResumeThread(common);
-
-    expect(resumed.threadId).toBe(started.threadId);
-    expect(build).toHaveBeenCalledWith({
-      threadId: started.threadId,
-      previousPolicyContext: config.policyContext,
-    });
-  });
-
   it.each(
     [
       { developerInstructions: "replacement policy", fault: "none" },

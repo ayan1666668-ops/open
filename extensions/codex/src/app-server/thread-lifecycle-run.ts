@@ -394,9 +394,8 @@ export async function startOrResumeThread(
         return undefined;
       }
       try {
-        const { threadId, pluginAppPolicyContext: previousPolicyContext } = current;
         prebuiltPluginThreadConfig = await lifecycleTiming.measure("plugin-config-recovery", () =>
-          params.pluginThreadConfig?.build({ threadId, previousPolicyContext }),
+          params.pluginThreadConfig?.build({ threadId: current.threadId }),
         );
       } catch (error) {
         throwIfAborted();
