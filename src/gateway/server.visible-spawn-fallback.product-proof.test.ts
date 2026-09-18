@@ -63,9 +63,9 @@ type Receipt = { status: string; runId: string; childSessionKey: string };
 type History = { messages: Array<{ role?: string; content?: unknown; stopReason?: string }> };
 type ProviderRequest = {
   model: string;
-  instructions?: string | null;
-  tools?: unknown[];
   input: Array<{ type?: string; role?: string; call_id?: string; output?: string }>;
+  tools?: unknown[];
+  instructions?: string;
 };
 type Scenario = {
   name: string;
@@ -84,17 +84,9 @@ async function startProvider(scenario: Scenario) {
   const requests: Array<{
     model: string;
     child: boolean;
-    title: boolean;
     authorization?: string;
-    purpose: {
-      bodyKeys: string[];
-      inputRoles: (string | undefined)[];
-      toolCount: number | undefined;
-      instructionsTitle: boolean;
-      agentPrompt: boolean;
-      subagentTask: boolean;
-      completionNotice: boolean;
-    };
+    toolCount: number;
+    hasInstructions: boolean;
   }> = [];
   const errors: unknown[] = [];
   let spawn: Receipt | undefined;
@@ -107,28 +99,17 @@ async function startProvider(scenario: Scenario) {
         return;
       }
       const body = (await json(request)) as ProviderRequest;
-      const userInput = JSON.stringify(body.input.filter((item) => item.role === "user"));
-      const systemInput = JSON.stringify(
-        body.input.filter((item) => item.role === "developer" || item.role === "system"),
+      const child = JSON.stringify(body.input.filter((item) => item.role === "user")).includes(
+        WORKER,
       );
-      const child = userInput.includes(WORKER);
-      const title = systemInput.includes("Generate a concise session title");
+      const title = JSON.stringify(
+        body.input.filter((item) => item.role === "developer" || item.role === "system"),
+      ).includes("Generate a concise session title");
       requests.push({
         model: body.model,
         child: child && !title,
-        title,
-        purpose: {
-          bodyKeys: Object.keys(body),
-          inputRoles: body.input.map((item) => item.role ?? item.type),
-          toolCount: Array.isArray(body.tools) ? body.tools.length : undefined,
-          instructionsTitle:
-            body.instructions?.includes("Generate a concise session title") ?? false,
-          agentPrompt:
-            systemInput.includes("openclaw:attempt:STABLE") ||
-            (body.instructions?.includes("openclaw:attempt:STABLE") ?? false),
-          subagentTask: userInput.includes("[Subagent Task]"),
-          completionNotice: userInput.includes("Every subagent spawned"),
-        },
+        toolCount: body.tools?.length ?? 0,
+        hasInstructions: typeof body.instructions === "string",
         authorization: request.headers.authorization,
       });
       if (child && !title && body.model === "primary" && primaryRateLimited) {
@@ -759,35 +740,21 @@ describe("CLI model inheritance through MCP", () => {
               );
               expect(terminal.status).toBe("ok");
               const childRequests = providerRequests.filter((request) => request.child);
+              expect(childRequests.length).toBeGreaterThan(0);
+              expect(
+                childRequests.every((request) => request.model === "primary"),
+                JSON.stringify(
+                  childRequests.map(({ model, toolCount, hasInstructions }) => ({
+                    model,
+                    toolCount,
+                    hasInstructions,
+                  })),
+                ),
+              ).toBe(true);
               const child = loadSessionEntryReadOnly({
                 agentId: "main",
                 sessionKey: spawn.childSessionKey,
               });
-              // Record routing facts before assertions can hide the failing request.
-              // Never include request content or authorization headers in this evidence.
-              console.info(
-                JSON.stringify({
-                  proof: "CLI model inheritance through MCP",
-                  ...scenario,
-                  savedParent: BACKUP,
-                  activeLogicalModel: PRIMARY,
-                  requests: providerRequests.map(({ model, child: isChild, title, purpose }) => ({
-                    model,
-                    child: isChild,
-                    title,
-                    purpose,
-                  })),
-                  childModels: childRequests.map((request) => request.model),
-                  storedChild: {
-                    provider: child?.providerOverride,
-                    model: child?.modelOverride,
-                    source: child?.modelOverrideSource,
-                  },
-                  terminal: terminal.status,
-                }),
-              );
-              expect(childRequests.length).toBeGreaterThan(0);
-              expect(childRequests.every((request) => request.model === "primary")).toBe(true);
               expect(child).toMatchObject({
                 providerOverride: "proof-primary",
                 modelOverride: "primary",
@@ -811,6 +778,16 @@ describe("CLI model inheritance through MCP", () => {
                   .filter((message) => message.role === "assistant")
                   .map((message) => extractTextFromChatContent(message.content)),
               ).toContain(INITIAL_SUCCESS);
+              console.info(
+                JSON.stringify({
+                  proof: "CLI model inheritance through MCP",
+                  ...scenario,
+                  savedParent: BACKUP,
+                  activeLogicalModel: PRIMARY,
+                  childModels: childRequests.map((request) => request.model),
+                  terminal: terminal.status,
+                }),
+              );
             },
           );
           expect(provider.errors).toEqual([]);
