@@ -2,7 +2,6 @@ import "./doctor-health.test-support.js";
 import { execFile, fork, spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { promisify } from "node:util";
 import { beforeEach, expect, it, vi } from "vitest";
 import * as configFlow from "../commands/doctor-config-flow.js";
 import { prepareDoctorDatabasePreflight } from "../commands/doctor-database-preflight.js";
@@ -25,6 +24,7 @@ import { runDoctorHealthFlow } from "./doctor-health.js";
 
 vi.mock("node:child_process", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:child_process")>();
+  const { promisify } = await import("node:util");
   const execFileSpy = vi.fn(actual.execFile);
   Object.defineProperty(
     execFileSpy,

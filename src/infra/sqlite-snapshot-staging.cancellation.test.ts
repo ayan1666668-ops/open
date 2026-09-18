@@ -2,7 +2,6 @@ import type { ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { promisify } from "node:util";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import { acquireOpenClawStateDatabaseFileExclusion } from "../state/openclaw-state-db-cache.js";
@@ -22,6 +21,7 @@ const processMocks = vi.hoisted(() => ({
 }));
 vi.mock("node:child_process", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:child_process")>();
+  const { promisify } = await import("node:util");
   processMocks.execFile.mockImplementation(actual.execFile);
   Object.defineProperty(
     processMocks.execFile,
