@@ -550,7 +550,12 @@ export function tryResolveConfiguredAgentWorkspaceDir(
 ): string | undefined {
   const inheritedWorkspaceAgentId = tryResolveLegacyDataOwnerAgentId(cfg);
   if (inheritedWorkspaceAgentId) {
-    return resolveAgentWorkspaceDir(cfg, inheritedWorkspaceAgentId, env);
+    // Discovery (plugin metadata scope, channel read-only, model selection,
+    // state migration planning) must enumerate the same default directory a
+    // saved blank always resolved to. Doctor strips the blank later; treating
+    // it as omitted here mirrors the migration so pre-migration preparation
+    // cannot abort the advertised repair. Authoritative resolution stays strict.
+    return resolveAgentWorkspaceDir(cfg, inheritedWorkspaceAgentId, env, { blankAsOmitted: true });
   }
   const configured = cfg.agents?.defaults?.workspace?.trim();
   return configured ? stripNullBytes(resolveUserPath(configured, env)) : undefined;

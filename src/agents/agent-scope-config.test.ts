@@ -22,6 +22,7 @@ import {
   resolveSoleAgentId,
   tryResolveAmbientOwnerAgentId,
   tryResolveAgentOperationAgentId,
+  tryResolveConfiguredAgentWorkspaceDir,
   tryResolveDefaultAgentId,
   tryResolveLegacyCompatibilityAgentId,
   tryResolveLegacyDataOwnerAgentId,
@@ -504,6 +505,30 @@ describe("resolveAgentWorkspaceDir blank workspace rejection", () => {
     expect(() =>
       resolveAgentWorkspaceDir(cfg, "main", process.env, { blankAsOmitted: true }),
     ).not.toThrow();
+  });
+
+  it("lets the discovery resolver fall back to the default directory on a saved blank workspace", () => {
+    // The discovery resolver is used by plugin-metadata scope, channel read-only,
+    // model selection, and state-migration planning before Doctor strips a saved
+    // blank. It must resolve the same default directory the blank always resolved
+    // to instead of throwing, or that preparation aborts the advertised repair.
+    const cfg = { agents: { entries: { main: { workspace: "   " } } } } as OpenClawConfig;
+
+    expect(() => tryResolveConfiguredAgentWorkspaceDir(cfg)).not.toThrow();
+    expect(tryResolveConfiguredAgentWorkspaceDir(cfg)).toBe(
+      path.resolve(
+        process.env.OPENCLAW_STATE_DIR ?? path.join(process.env.HOME ?? "", ".openclaw"),
+        "workspace",
+      ),
+    );
+  });
+
+  it("keeps rejecting a blank workspace through the strict resolver", () => {
+    const cfg = { agents: { entries: { main: { workspace: "   " } } } } as OpenClawConfig;
+
+    expect(() => resolveAgentWorkspaceDir(cfg, "main")).toThrow(
+      "agents.main.workspace must not be blank",
+    );
   });
 });
 
