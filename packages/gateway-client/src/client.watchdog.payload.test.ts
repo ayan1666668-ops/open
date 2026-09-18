@@ -3,6 +3,7 @@ import type { HelloOk } from "@openclaw/gateway-protocol";
 import { describe, expect, test, vi } from "vitest";
 import { WebSocket } from "ws";
 import { GatewayClient } from "./client.js";
+import type { GatewayProtocolConnectAuthority } from "./protocol-client-contract.js";
 import type { GatewayProtocolSocket } from "./protocol-client.js";
 
 type ProtocolHarness = {
@@ -19,6 +20,7 @@ type PayloadHarness = {
   handleConnectHello: (
     hello: { auth?: HelloOk["auth"]; policy?: Partial<HelloOk["policy"]> },
     assembled: unknown,
+    authority: GatewayProtocolConnectAuthority,
   ) => void;
   maxPayloadBytes: number | undefined;
 };
@@ -29,6 +31,13 @@ function protocolHarness(client: GatewayClient): ProtocolHarness {
 
 function payloadHarness(client: GatewayClient): PayloadHarness {
   return client as unknown as PayloadHarness;
+}
+
+function currentConnectAuthority(): GatewayProtocolConnectAuthority {
+  return {
+    signal: new AbortController().signal,
+    assertCurrent: vi.fn(),
+  };
 }
 
 function installSyntheticSocket(
@@ -116,13 +125,18 @@ describe("GatewayClient", () => {
   test("keeps the default request payload limit for an invalid policy", async () => {
     const { client, send } = createOpenGatewayClient(25);
     const harness = payloadHarness(client);
-    harness.handleConnectHello({ auth: { role: "operator", scopes: [] } }, {});
+    harness.handleConnectHello(
+      { auth: { role: "operator", scopes: [] } },
+      {},
+      currentConnectAuthority(),
+    );
     harness.handleConnectHello(
       {
         auth: { role: "operator", scopes: [] },
         policy: { maxPayload: 0, maxBufferedBytes: 256, tickIntervalMs: 30_000 },
       },
       {},
+      currentConnectAuthority(),
     );
     markHelloReceived(client);
 
@@ -152,6 +166,7 @@ describe("GatewayClient", () => {
         policy: { maxPayload: 0.5, maxBufferedBytes: 256, tickIntervalMs: 30_000 },
       },
       {},
+      currentConnectAuthority(),
     );
     markHelloReceived(client);
 
@@ -181,10 +196,15 @@ describe("GatewayClient", () => {
         policy: { maxPayload: 128, maxBufferedBytes: 256, tickIntervalMs: 30_000 },
       },
       {},
+      currentConnectAuthority(),
     );
     expect(harness.maxPayloadBytes).toBe(128);
 
-    harness.handleConnectHello({ auth: { role: "operator", scopes: [] } }, {});
+    harness.handleConnectHello(
+      { auth: { role: "operator", scopes: [] } },
+      {},
+      currentConnectAuthority(),
+    );
     markHelloReceived(client);
 
     const request = client.request<{ status: string }>("node.invoke", {
@@ -213,6 +233,7 @@ describe("GatewayClient", () => {
         policy: { maxPayload: 128, maxBufferedBytes: 256, tickIntervalMs: 30_000 },
       },
       {},
+      currentConnectAuthority(),
     );
     markHelloReceived(client);
 
@@ -229,6 +250,7 @@ describe("GatewayClient", () => {
         policy: { maxPayload: 512, maxBufferedBytes: 1_024, tickIntervalMs: 30_000 },
       },
       {},
+      currentConnectAuthority(),
     );
     const request = client.request<{ status: string }>("node.invoke", {
       jsonl: "x".repeat(128),

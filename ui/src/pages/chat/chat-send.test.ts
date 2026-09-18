@@ -6574,7 +6574,7 @@ describe("handleSendChat", () => {
       let queueAfterReconnect: ChatQueueItem[] = [];
       const accepted = await submitAcrossBrowserInput(host, async () => {
         host.connected = true;
-        await retryReconnectableQueuedChatSends(host);
+        await resumeStoredChatOutboxes(host);
         expect(host.request.mock.calls.filter(([method]) => method === "chat.send")).toHaveLength(
           1,
         );
