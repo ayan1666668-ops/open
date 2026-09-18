@@ -162,13 +162,13 @@ import {
 } from "./execution-target.js";
 import { buildCliAgentSystemPrompt, isClaudeCliBackendId, normalizeCliModel } from "./helpers.js";
 import { prepareCliHistoryBoundary } from "./history-boundary.js";
-import { cliBackendLog } from "./log.js";
-import { buildCliMcpGrantContext, normalizeOptionalMcpContextValue } from "./mcp-grant-context.js";
-import { CLAUDE_CLI_CONTEXT_MODEL_ALIASES, detectNodeClaudePlacement } from "./prepare-claude.js";
 import {
   resolveAuthorizedCliPromptBuildHookResult,
   resolveCliPromptBuildHookResult,
-} from "./prepare-prompt-build.js";
+} from "./hook-prompt-build.js";
+import { cliBackendLog } from "./log.js";
+import { buildCliMcpGrantContext, normalizeOptionalMcpContextValue } from "./mcp-grant-context.js";
+import { CLAUDE_CLI_CONTEXT_MODEL_ALIASES, detectNodeClaudePlacement } from "./prepare-claude.js";
 import { composeCliPromptContext } from "./prompt-context.js";
 import {
   buildCliSessionHistoryPrompt,
