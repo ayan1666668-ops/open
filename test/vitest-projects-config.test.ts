@@ -696,7 +696,9 @@ describe("projects vitest config", () => {
       assert(typeof project === "object" && project !== null && "test" in project);
       const test = requireTestConfig(project);
       assert(test.include && test.exclude);
-      return globSync(test.include, { cwd: repoRoot, exclude: test.exclude }).toSorted();
+      return globSync(test.include, { cwd: repoRoot, exclude: test.exclude })
+        .map((file) => file.replaceAll("\\", "/"))
+        .toSorted();
     });
     expect(files).toEqual([shared, isolated]);
   });
@@ -714,7 +716,11 @@ describe("projects vitest config", () => {
       assert(typeof project === "object" && project !== null && "test" in project);
       const test = requireTestConfig(project);
       assert(test.include && test.exclude);
-      selections.push(globSync(test.include, { cwd: repoRoot, exclude: test.exclude }).toSorted());
+      selections.push(
+        globSync(test.include, { cwd: repoRoot, exclude: test.exclude })
+          .map((file) => file.replaceAll("\\", "/"))
+          .toSorted(),
+      );
       expect(normalizeConfigPaths(test.setupFiles)).toEqual([
         "test/setup.ts",
         "ui/src/test-helpers/lit-warnings.setup.ts",
@@ -737,7 +743,9 @@ describe("projects vitest config", () => {
     const all = selections.flat();
     expect(new Set(all).size).toBe(all.length);
     expect(all.toSorted()).toEqual(
-      globSync("ui/src/pages/usage/**/*.test.ts", { cwd: repoRoot }).toSorted(),
+      globSync("ui/src/pages/usage/**/*.test.ts", { cwd: repoRoot })
+        .map((file) => file.replaceAll("\\", "/"))
+        .toSorted(),
     );
   });
 
