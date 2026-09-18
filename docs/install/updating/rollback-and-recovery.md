@@ -158,6 +158,8 @@ and includes the recorded recovery reason. Health is reported as unverified only
 when verification could not run or complete, such as a readiness timeout. Both
 outcomes direct you to `openclaw gateway status --deep` to check the serving version
 and readiness. Rollback uses the same startup allowance as the update's activation check.
+Restart notifications retain the recovery fields understood by the restored runtime.
+Detailed recovery reasons remain in the update result, status diagnostics, and failure report.
 
 Use `openclaw update status` for the recorded reason and `openclaw triage` to
 diagnose a failed check. Recovery guidance reports whether the Gateway is running
