@@ -1,10 +1,13 @@
 import type { DatabaseSync } from "node:sqlite";
+import { executeSqliteQueryTakeFirstSync, getNodeSqliteKysely } from "../../infra/kysely-sync.js";
 import { sessionChanges } from "../../sessions/session-row-changes.js";
 import { runOpenClawStateWriteTransaction } from "../../state/openclaw-state-db.js";
 
 function readTotalChanges(db: DatabaseSync): number {
-  // sqlite-allow-raw -- connection-local change counter for post-commit invalidation.
-  const row = db.prepare("SELECT total_changes() AS value").get();
+  const row = executeSqliteQueryTakeFirstSync(
+    db,
+    getNodeSqliteKysely(db).selectNoFrom((eb) => eb.fn<number>("total_changes", []).as("value")),
+  );
   if (typeof row?.value !== "number") {
     throw new Error("SQLite did not return a numeric total_changes() value");
   }
@@ -14,7 +17,7 @@ function readTotalChanges(db: DatabaseSync): number {
 export function createWorkerEnvironmentStoreWriter(path: string) {
   let inventoryVersion = 0;
   return {
-    write<T>(operation: (db: DatabaseSync) => T): T {
+    write: <T>(operation: (db: DatabaseSync) => T): T => {
       const result = runOpenClawStateWriteTransaction(
         ({ db }) => {
           const changesBefore = readTotalChanges(db);
