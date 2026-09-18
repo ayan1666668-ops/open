@@ -571,13 +571,8 @@ export type CodexDynamicToolCallParams = {
 };
 
 export type CodexDynamicToolCallResponse = {
-  asyncStarted?: boolean;
   contentItems: CodexDynamicToolCallOutputContentItem[];
-  diagnosticTerminalReason?: CodexDynamicToolDiagnosticTerminalReason;
-  diagnosticTerminalType?: CodexDynamicToolDiagnosticTerminalType;
-  sideEffectEvidence?: boolean;
   success: boolean;
-  terminate?: boolean;
 };
 
 export type CodexDynamicToolDiagnosticTerminalType = "blocked" | "completed" | "error";
