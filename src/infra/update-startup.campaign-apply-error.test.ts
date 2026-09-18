@@ -1,5 +1,4 @@
-// Covers runCampaignUpdate's exception boundary: a state write that throws must
-// name its cause in the Gateway log, not only in the update-run ledger.
+import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { closeOpenClawStateDatabaseForTest } from "../state/openclaw-state-db.js";
 import {
@@ -9,11 +8,17 @@ import {
 import type { GatewayActiveWorkInspectors } from "./gateway-active-work.js";
 import type { UpdateCheckResult } from "./update-check.js";
 import { getUpdateRun, listUpdateRuns } from "./update-run-ledger.js";
+import { renderUpdateRunReport } from "./update-run-report.js";
+import { readUpdateRunStatus } from "./update-run-status.js";
 import { getUpdateSchedule } from "./update-status-state.js";
 
-const { sentinelFault } = vi.hoisted((): { sentinelFault: { error?: Error } } => ({
-  sentinelFault: {},
-}));
+const { fault } = vi.hoisted(
+  (): {
+    fault: { at?: "sentinel-read" | "state-write"; error?: Error };
+  } => ({
+    fault: {},
+  }),
+);
 
 vi.mock("./restart-sentinel.js", async () => {
   const actual =
@@ -23,10 +28,23 @@ vi.mock("./restart-sentinel.js", async () => {
     readRestartSentinelSnapshot: async (
       ...args: Parameters<typeof actual.readRestartSentinelSnapshot>
     ) => {
-      if (sentinelFault.error) {
-        throw sentinelFault.error;
+      if (fault.at === "sentinel-read") {
+        throw fault.error;
       }
       return await actual.readRestartSentinelSnapshot(...args);
+    },
+  };
+});
+
+vi.mock("../state/config-machine-state-write.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../state/config-machine-state-write.js")>();
+  return {
+    ...actual,
+    writeConfigMachineState: (...args: Parameters<typeof actual.writeConfigMachineState>) => {
+      if (fault.at === "state-write") {
+        throw fault.error;
+      }
+      return actual.writeConfigMachineState(...args);
     },
   };
 });
@@ -97,7 +115,8 @@ describe("update campaign apply exception boundary", () => {
   });
 
   afterEach(async () => {
-    delete sentinelFault.error;
+    delete fault.at;
+    delete fault.error;
     const { resetUpdateAvailableStateForTest } = await import("./update-startup.js");
     resetUpdateAvailableStateForTest();
     vi.useRealTimers();
@@ -105,7 +124,11 @@ describe("update campaign apply exception boundary", () => {
     await testState.cleanup();
   });
 
-  it("logs the cause when a campaign apply throws before the updater runs", async () => {
+  it.each([
+    { at: "sentinel-read", code: "SQLITE_READONLY", message: "sentinel transaction refused" },
+    { at: "state-write", code: "ERR_SQLITE_ERROR", message: "attempt state write refused" },
+    { at: "sentinel-read", code: undefined, message: "sentinel transaction unavailable" },
+  ] as const)("records and logs $at failure ($code)", async ({ at, code, message }) => {
     const { checkUpdateStatus, resolveNpmChannelTag } = await import("./update-check.js");
     vi.mocked(checkUpdateStatus).mockResolvedValue({
       root: "/opt/openclaw",
@@ -130,7 +153,6 @@ describe("update campaign apply exception boundary", () => {
     const { runGatewayUpdateCheck } = await import("./update-startup.js");
     const runAutoUpdate = vi.fn(async () => ({ status: "handoff" as const }));
     const log = { info: vi.fn() };
-    sentinelFault.error = new Error("state write refused: SQLITE_READONLY");
 
     await runGatewayUpdateCheck({
       getConfig: () => ({ update: { channel: "dev", auto: { enabled: true } } }),
@@ -141,16 +163,30 @@ describe("update campaign apply exception boundary", () => {
       runAutoUpdate,
     });
     expect(getUpdateSchedule()?.campaign?.state).toBe("countdown");
+    fault.at = at;
+    fault.error = Object.assign(new Error(message), { code });
 
     await vi.advanceTimersByTimeAsync(60_000);
 
     const runId = listUpdateRuns()[0]?.runId ?? "";
-    expect(getUpdateRun(runId)).toMatchObject({ status: "failed", reason: "unexpected-error" });
+    const run = getUpdateRun(runId);
+    expect(run).toMatchObject({
+      status: "failed",
+      reason: code ?? "unexpected-error",
+      steps: expect.arrayContaining([
+        expect.objectContaining({ status: "failed", detail: message }),
+      ]),
+    });
+    const lastRun = readUpdateRunStatus().lastRun;
+    expect(lastRun).toEqual(run);
+    assert(lastRun);
+    const report = renderUpdateRunReport(lastRun);
+    expect(report.headline).toContain(code ?? "unexpected-error");
+    expect(report.markdown).toContain(message);
+    expect(report.markdown.length).toBeLessThanOrEqual(1500);
     expect(runAutoUpdate).not.toHaveBeenCalled();
     expect(getUpdateSchedule()?.campaign).toBeUndefined();
-    const failureLog = log.info.mock.calls.find(([message]) =>
-      String(message).includes("state write refused: SQLITE_READONLY"),
-    );
+    const failureLog = log.info.mock.calls.find(([line]) => String(line).includes(message));
     expect(failureLog).toBeDefined();
     expect(failureLog?.[1]).toMatchObject({ channel: "dev", forced: false, tag: "dev" });
   });
