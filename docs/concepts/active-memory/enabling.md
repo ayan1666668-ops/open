@@ -123,6 +123,9 @@ Plugins can replace only the intent decision used by `mode: "escalate"`:
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 
 export default definePluginEntry({
+  id: "local-memory-intent",
+  name: "Local Memory Intent",
+  description: "Provides a local Active Memory escalation decision.",
   register(api) {
     api.registerActiveMemoryEscalationProvider({
       id: "local-memory-intent",
@@ -137,8 +140,11 @@ export default definePluginEntry({
 Select it with `config.escalationProvider: "local-memory-intent"`. The provider
 returns `"recall"`, `"skip"`, or `"abstain"` and receives an abort signal. It
 runs only after deterministic recall has not produced a strong hit. OpenClaw
-bounds the call to 100 ms. A missing provider, timeout, error, invalid result,
-or `"abstain"` preserves the built-in intent matcher. Modes `"off"` and
+bounds accepted decisions to 100 ms and rejects overdue results. Cancellation
+is cooperative: the abort signal cannot interrupt synchronous plugin code, so
+providers must keep computation short or yield to the event loop. A missing
+provider, timeout, error, invalid result, or `"abstain"` preserves the built-in
+intent matcher. Modes `"off"` and
 `"always"` never invoke the provider. `message` is a normalized, bounded
 projection of the latest user text. `searchQuery` is also bounded and may add
 one prior user turn for short follow-ups. Treat both fields as untrusted user

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   hasRecallIntent,
   resolveRecallEscalationDecision,
@@ -281,6 +281,40 @@ describe("active-memory escalation", () => {
       }),
     ).resolves.toBe("recall");
   });
+
+  it.each(["synchronous", "asynchronous"] as const)(
+    "rejects an overdue %s decision before the timeout callback runs",
+    async (kind) => {
+      const now = vi.spyOn(performance, "now").mockReturnValue(0);
+      const fallbacks: string[] = [];
+      let providerSignal: AbortSignal | undefined;
+      try {
+        await expect(
+          resolveRecallEscalationDecisionWithProvider({
+            mode: "escalate",
+            message: "What did we decide last time?",
+            searchQuery: "What did we decide last time?",
+            hasStrongLaneOneHit: false,
+            provider: {
+              id: "overdue-provider",
+              decide: ({ signal }) => {
+                providerSignal = signal;
+                // Computation advances the clock without yielding to timers.
+                now.mockReturnValue(101);
+                return kind === "asynchronous" ? Promise.resolve("skip" as const) : "skip";
+              },
+            },
+            signal: new AbortController().signal,
+            onProviderFallback: (reason) => fallbacks.push(reason),
+          }),
+        ).resolves.toBe("recall");
+        expect(fallbacks).toEqual(["timeout"]);
+        expect(providerSignal?.aborted).toBe(true);
+      } finally {
+        now.mockRestore();
+      }
+    },
+  );
 
   it.each([
     ["off", false, "mode-off"],

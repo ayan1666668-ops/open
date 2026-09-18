@@ -91,8 +91,9 @@ type ActiveMemoryEscalationProviderFallbackReason =
   | "timeout";
 
 /**
- * Gives an explicitly configured provider one bounded chance to replace the
- * built-in intent matcher. Every non-decision preserves existing behavior.
+ * Gives an explicitly configured provider one decision deadline to replace the
+ * built-in intent matcher. Cancellation is cooperative: synchronous plugin work
+ * cannot be interrupted, but an overdue result never overrides the matcher.
  */
 export async function resolveRecallEscalationDecisionWithProvider(params: {
   mode: ActiveMemoryMode;
@@ -124,6 +125,7 @@ export async function resolveRecallEscalationDecisionWithProvider(params: {
       params.timeoutMs ?? ACTIVE_MEMORY_ESCALATION_PROVIDER_TIMEOUT_MS,
     ),
   );
+  const deadline = performance.now() + timeoutMs;
   const timeoutController = new AbortController();
   const timeout = setTimeout(() => timeoutController.abort(), timeoutMs);
   const signal = AbortSignal.any([params.signal, timeoutController.signal]);
@@ -145,7 +147,8 @@ export async function resolveRecallEscalationDecisionWithProvider(params: {
       }),
     );
     const result = await Promise.race([providerPromise, abortPromise]);
-    if (result === aborted) {
+    if (result === aborted || signal.aborted || performance.now() >= deadline) {
+      timeoutController.abort();
       params.onProviderFallback?.("timeout");
       return builtInDecision;
     }

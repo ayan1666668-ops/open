@@ -39,7 +39,9 @@ worker or embedding provider must satisfy. Part of the
 Call `api.registerActiveMemoryEscalationProvider(...)` during plugin
 registration, then select the provider id with the Active Memory plugin's
 `config.escalationProvider`. Providers return `"recall"`, `"skip"`, or
-`"abstain"`, must honor the supplied `AbortSignal`, and are bounded to 100 ms.
+`"abstain"`, and must honor the supplied `AbortSignal`. Decisions arriving after
+100 ms are rejected. Cancellation is cooperative and cannot interrupt synchronous
+plugin computation.
 
 Transcript source providers that share an account namespace with an inbound
 channel declare an `accountOwnership` descriptor with that channel id and a
