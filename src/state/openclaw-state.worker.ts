@@ -18,6 +18,7 @@ import {
 } from "../gateway/managed-image-record-store.kernel.js";
 import { readDeferredPluginMigrations } from "../infra/deferred-plugin-migrations.js";
 import { countFailedDeliveryQueueEntriesInDatabase } from "../infra/delivery-queue-sqlite.kernel.js";
+import { readDeviceAuthTokensFromDatabase } from "../infra/device-auth-store.kernel.js";
 import { executePromotionCommand } from "../infra/promotions-feed.worker.js";
 import {
   readApnsRegistrationFromDatabase,
@@ -68,7 +69,7 @@ import { isTaskRegistryWorkerCommand } from "../tasks/task-registry.worker-contr
 import { executeTaskRegistryCommand } from "../tasks/task-registry.worker.js";
 import {
   listAgentProvenanceInDatabase,
-  readAgentProvenanceInDatabase,
+  readAgentProvenanceBatchInDatabase,
 } from "./agent-provenance.kernel.js";
 import { ensureAgentProvenanceSchema } from "./agent-provenance.schema.js";
 import { recordBackupRunInDatabase } from "./backup-run-records.kernel.js";
@@ -296,6 +297,9 @@ function createSharedStateWorkerBackend(
         );
       }
       const database = open();
+      if (command.type === "deviceAuth.list") {
+        return readDeviceAuthTokensFromDatabase(database.db, command.input);
+      }
       if (command.type === "managedImages.read") {
         return readManagedImageRecordInDatabase(database.db, command.input.attachmentId);
       }
@@ -360,10 +364,10 @@ function createSharedStateWorkerBackend(
         path: context.databasePath,
         env: getSqliteWorkerStateContext().environment,
       };
-      if (command.type === "agentProvenance.read" || command.type === "agentProvenance.list") {
+      if (command.type === "agentProvenance.readBatch" || command.type === "agentProvenance.list") {
         ensureAgentProvenanceSchema(writeOptions);
-        return command.type === "agentProvenance.read"
-          ? readAgentProvenanceInDatabase(database.db, command.input.agentId)
+        return command.type === "agentProvenance.readBatch"
+          ? readAgentProvenanceBatchInDatabase(database.db, command.input.agentIds)
           : listAgentProvenanceInDatabase(database.db);
       }
       if (command.type === "telemetry.persistSuccess") {
