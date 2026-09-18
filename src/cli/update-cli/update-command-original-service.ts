@@ -1,3 +1,4 @@
+import { resolveManagedServiceNodeRunner } from "../../daemon/service-layout.js";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
@@ -35,7 +36,6 @@ import type {
 import { revalidateManagedGatewayServiceAfterUpdate } from "./update-command-service-maintenance.js";
 import {
   assertGatewayServiceManagementAllowedForUpdate,
-  resolveManagedServiceNodeRunner,
 } from "./update-command-service-plan.js";
 
 async function nodeIdentity(nodeRunner: string): Promise<string> {

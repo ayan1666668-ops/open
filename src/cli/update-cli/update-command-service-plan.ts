@@ -18,7 +18,6 @@ import {
 } from "../../daemon/service-inspection-error.js";
 import {
   gatewayServiceCommandMatchesRoot,
-  inspectGatewayServiceInstallationDrift,
   resolveManagedServiceNodeRunner,
   isGatewayServiceSourceCheckoutRoot,
   summarizeGatewayServiceLayout,
@@ -57,7 +56,6 @@ import {
 } from "../../shared/update-outcome.js";
 import { resolveNodeVersionManager } from "../../shared/version-manager-path.js";
 import { formatCliCommand } from "../command-format.js";
-import { formatGatewayServiceInstallationDrift } from "../daemon-cli/shared.js";
 import { quoteCliArg, quotePowerShellArg } from "../quote-cli-arg.js";
 import { resolveNodeRunner } from "./shared.js";
 import type { PackageRuntimeRecovery } from "./update-command-node-runtime-resolution.js";
@@ -588,7 +586,6 @@ export async function resolveManagedServicePackageUpdatePlan(params: {
   serviceRoot?: string;
   nodeRunner?: string;
   serviceUnitTarget?: string;
-  installationDrift?: string;
 }> {
   const pkgOwnership =
     params.pkgOwnership ?? createFreeBsdPkgOwnershipInspection(UPDATE_RUNNER_TIMEOUT_MS);
