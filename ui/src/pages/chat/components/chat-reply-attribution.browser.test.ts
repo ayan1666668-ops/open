@@ -88,9 +88,16 @@ function expectSingleLine(row: HTMLElement) {
     // A second flex line must not hide below an otherwise single-line label.
     expect(textBox.top).toBeLessThan(labelBox.bottom);
     expect(textBox.bottom).toBeGreaterThan(labelBox.top);
-    const range = document.createRange();
-    range.selectNodeContents(text);
-    const lines = [...range.getClientRects()].filter((rect) => rect.height > 0);
+    const walker = document.createTreeWalker(text, NodeFilter.SHOW_TEXT);
+    const lines: DOMRect[] = [];
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      if (!node.textContent?.trim()) {
+        continue;
+      }
+      const range = document.createRange();
+      range.selectNodeContents(node);
+      lines.push(...[...range.getClientRects()].filter((rect) => rect.height > 0));
+    }
     expect(lines.length).toBeGreaterThan(0);
     expect(
       Math.max(...lines.map((rect) => rect.top)) - Math.min(...lines.map((rect) => rect.top)),
@@ -98,7 +105,9 @@ function expectSingleLine(row: HTMLElement) {
   }
 }
 
-const cells = ["light", "dark"].flatMap((theme) => [1440, 390].map((width) => ({ theme, width })));
+const cells = ["light", "dark"].flatMap((theme) =>
+  [1440, 390, 360].map((width) => ({ theme, width })),
+);
 
 describe.each(cells)("reply attribution ($theme, $width px)", ({ theme, width }) => {
   beforeEach(async () => {
@@ -107,31 +116,55 @@ describe.each(cells)("reply attribution ($theme, $width px)", ({ theme, width })
     host.style.width = `${width - 32}px`;
   });
 
-  it.each(["ltr", "rtl"])("connects the avatar to the label in %s layout", async (direction) => {
-    host.dir = direction;
-    const { row } = await draw("Casey Morgan", "Original question");
-    await expect
-      .poll(() => {
-        const group = row.closest(".chat-group")!;
-        const path = group.querySelector<SVGPathElement>(".chat-reply-connector path")!;
-        const svg = path.ownerSVGElement!.getBoundingClientRect();
-        const avatar = group
-          .querySelector(":scope > .chat-avatar, :scope > .chat-avatar-slot")!
-          .getBoundingClientRect();
-        const label = row.querySelector(".chat-reply-attribution__label")!.getBoundingClientRect();
-        const start = path.getPointAtLength(0);
-        const end = path.getPointAtLength(path.getTotalLength());
-        const labelEdge = direction === "rtl" ? label.right : label.left;
-        const expectedEndX = labelEdge + (direction === "rtl" ? 5 : -5);
-        return Math.max(
-          Math.abs(svg.left + start.x - avatar.left - avatar.width / 2),
-          Math.abs(svg.top + start.y - avatar.top - avatar.height / 2),
-          Math.abs(svg.left + end.x - expectedEndX),
-          Math.abs(svg.top + end.y - label.top - label.height / 2),
-        );
-      })
-      .toBeLessThanOrEqual(1);
-  });
+  it.each(["ltr", "rtl"])(
+    "shows the viewport-appropriate reply cue in %s layout",
+    async (direction) => {
+      host.dir = direction;
+      const { row } = await draw("Casey Morgan", "Original question");
+      const group = row.closest(".chat-group")!;
+      const icon = row.querySelector<HTMLElement>(".chat-reply-attribution__mobile-icon")!;
+      if (width < 768) {
+        const avatar = group.querySelector(":scope > .chat-avatar, :scope > .chat-avatar-slot")!;
+        expect(avatar.getBoundingClientRect().width).toBe(0);
+        expect(group.querySelector(".chat-reply-connector")!.getBoundingClientRect().width).toBe(0);
+        expect(icon.getBoundingClientRect().width).toBe(14);
+        expect(icon.getBoundingClientRect().height).toBe(14);
+        const transform = new DOMMatrixReadOnly(getComputedStyle(icon).transform);
+        expect(transform.a).toBe(direction === "rtl" ? -1 : 1);
+        expect(row.querySelector(".chat-author-avatar")!.getBoundingClientRect().width).toBe(16);
+        const bounds = group.getBoundingClientRect();
+        const rowBounds = row.getBoundingClientRect();
+        expect(Math.abs(rowBounds.left - bounds.left)).toBeLessThanOrEqual(1);
+        expect(Math.abs(rowBounds.right - bounds.right)).toBeLessThanOrEqual(1);
+        const content = group.querySelector(".chat-bubble")!.getBoundingClientRect();
+        expect(content.top - rowBounds.bottom).toBeCloseTo(6, 1);
+        return;
+      }
+      expect(icon.getBoundingClientRect().width).toBe(0);
+      await expect
+        .poll(() => {
+          const path = group.querySelector<SVGPathElement>(".chat-reply-connector path")!;
+          const svg = path.ownerSVGElement!.getBoundingClientRect();
+          const avatar = group
+            .querySelector(":scope > .chat-avatar, :scope > .chat-avatar-slot")!
+            .getBoundingClientRect();
+          const label = row
+            .querySelector(".chat-reply-attribution__label")!
+            .getBoundingClientRect();
+          const start = path.getPointAtLength(0);
+          const end = path.getPointAtLength(path.getTotalLength());
+          const labelEdge = direction === "rtl" ? label.right : label.left;
+          const expectedEndX = labelEdge + (direction === "rtl" ? 5 : -5);
+          return Math.max(
+            Math.abs(svg.left + start.x - avatar.left - avatar.width / 2),
+            Math.abs(svg.top + start.y - avatar.top - avatar.height / 2),
+            Math.abs(svg.left + end.x - expectedEndX),
+            Math.abs(svg.top + end.y - label.top - label.height / 2),
+          );
+        })
+        .toBeLessThanOrEqual(1);
+    },
+  );
 
   it("keeps Casey Morgan complete with an emoji and sacrifices a long excerpt first", async () => {
     const short = await draw("Casey Morgan", "👩🏽‍💻");

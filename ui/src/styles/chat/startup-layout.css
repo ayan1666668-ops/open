@@ -247,16 +247,13 @@
 
 @media (max-width: 768px), (max-width: 932px) and (max-height: 500px) and (orientation: landscape) {
   .chat-group {
+    --chat-avatar-column: 0px;
+    --chat-avatar-gap: 0px;
     --chat-message-column-max: 82%;
     margin-inline: 0;
   }
 
-  .chat-group:not(.chat-group--peer) {
-    --chat-avatar-column: 0px;
-    --chat-avatar-gap: 0px;
-  }
-
-  .chat-group:where(:not(.chat-group--peer)) :is(.chat-avatar, .chat-avatar-slot) {
+  .chat-group :is(.chat-avatar, .chat-avatar-slot) {
     display: none;
   }
 }

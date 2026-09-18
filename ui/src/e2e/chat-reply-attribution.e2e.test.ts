@@ -98,7 +98,7 @@ const messages = [
 suite.define(() => {
   it.each([
     ...["light", "dark"].flatMap((theme) =>
-      [1440, 390].flatMap((width) =>
+      [1440, 390, 360].flatMap((width) =>
         [1, 2, 5].map((messageCount) => ({ theme, width, messageCount, nameLength: "short" })),
       ),
     ),
@@ -158,9 +158,16 @@ suite.define(() => {
             )!;
             const content = group.querySelector(".chat-bubble > .chat-text")!;
             const identity = avatar.getBoundingClientRect();
-            return identity.top - content.getBoundingClientRect().top;
+            return {
+              offset: identity.top - content.getBoundingClientRect().top,
+              width: identity.width,
+            };
           });
-          expect(Math.abs(firstAvatar)).toBeLessThanOrEqual(1);
+          if (width < 768) {
+            expect(firstAvatar.width).toBe(0);
+          } else {
+            expect(Math.abs(firstAvatar.offset)).toBeLessThanOrEqual(1);
+          }
           const excerptText = firstGroup.locator(".chat-reply-attribution__excerpt-text");
           expect(await excerptText.textContent()).toBe(
             "Please review the release checklist and the remaining tasks.",
@@ -243,33 +250,60 @@ suite.define(() => {
           expect(Math.abs(geometry.center)).toBeLessThanOrEqual(1);
           expect(geometry.overflow).toBeLessThanOrEqual(1);
           expect(geometry.outsideGroup).toBeLessThanOrEqual(1);
-          const replyGroup = row.locator("..").locator("..");
-          const connector = replyGroup.locator(".chat-reply-connector path");
-          await expect.poll(() => connector.getAttribute("d")).toBeTruthy();
-          const connection = await connector.evaluate((element) => {
-            const path = element as SVGPathElement;
-            const group = path.closest(".chat-group")!;
-            const avatar = group
-              .querySelector(":scope > .chat-avatar, :scope > .chat-avatar-slot")!
-              .getBoundingClientRect();
-            const svg = path.ownerSVGElement!.getBoundingClientRect();
-            const label = group
-              .querySelector(".chat-reply-attribution__label")!
-              .getBoundingClientRect();
-            const start = path.getPointAtLength(0),
-              end = path.getPointAtLength(path.getTotalLength());
-            return {
-              startX: svg.left + start.x,
-              startY: svg.top + start.y,
-              avatarX: avatar.left + avatar.width / 2,
-              avatarY: avatar.top + avatar.height / 2,
-              endY: svg.top + end.y,
-              labelY: label.top + label.height / 2,
-            };
-          });
-          expect(Math.abs(connection.startX - connection.avatarX)).toBeLessThanOrEqual(1);
-          expect(Math.abs(connection.startY - connection.avatarY)).toBeLessThanOrEqual(1);
-          expect(Math.abs(connection.endY - connection.labelY)).toBeLessThanOrEqual(1);
+          if (width < 768) {
+            const mobile = await row.evaluate((element) => {
+              const group = element.closest(".chat-group")!;
+              const bounds = group.getBoundingClientRect();
+              const rowBounds = element.getBoundingClientRect();
+              const content = group.querySelector(".chat-bubble")!.getBoundingClientRect();
+              return {
+                speakerWidth: group
+                  .querySelector(":scope > .chat-avatar, :scope > .chat-avatar-slot")!
+                  .getBoundingClientRect().width,
+                connectorWidth: group
+                  .querySelector(".chat-reply-connector")!
+                  .getBoundingClientRect().width,
+                iconWidth: element
+                  .querySelector(".chat-reply-attribution__mobile-icon")!
+                  .getBoundingClientRect().width,
+                start: rowBounds.left - bounds.left,
+                gap: content.top - rowBounds.bottom,
+              };
+            });
+            expect(mobile.speakerWidth).toBe(0);
+            expect(mobile.connectorWidth).toBe(0);
+            expect(mobile.iconWidth).toBe(14);
+            expect(mobile.start).toBeCloseTo(0, 1);
+            expect(mobile.gap).toBeCloseTo(6, 1);
+          } else {
+            const replyGroup = row.locator("..").locator("..");
+            const connector = replyGroup.locator(".chat-reply-connector path");
+            await expect.poll(() => connector.getAttribute("d")).toBeTruthy();
+            const connection = await connector.evaluate((element) => {
+              const path = element as SVGPathElement;
+              const group = path.closest(".chat-group")!;
+              const avatar = group
+                .querySelector(":scope > .chat-avatar, :scope > .chat-avatar-slot")!
+                .getBoundingClientRect();
+              const svg = path.ownerSVGElement!.getBoundingClientRect();
+              const label = group
+                .querySelector(".chat-reply-attribution__label")!
+                .getBoundingClientRect();
+              const start = path.getPointAtLength(0),
+                end = path.getPointAtLength(path.getTotalLength());
+              return {
+                startX: svg.left + start.x,
+                startY: svg.top + start.y,
+                avatarX: avatar.left + avatar.width / 2,
+                avatarY: avatar.top + avatar.height / 2,
+                endY: svg.top + end.y,
+                labelY: label.top + label.height / 2,
+              };
+            });
+            expect(Math.abs(connection.startX - connection.avatarX)).toBeLessThanOrEqual(1);
+            expect(Math.abs(connection.startY - connection.avatarY)).toBeLessThanOrEqual(1);
+            expect(Math.abs(connection.endY - connection.labelY)).toBeLessThanOrEqual(1);
+          }
           for (const activation of ["click", "Enter"]) {
             await page
               .locator(".chat-thread")
@@ -305,11 +339,13 @@ suite.define(() => {
     },
   );
 
-  it.each(["light", "dark"].flatMap((theme) => [390, 1440].map((width) => ({ theme, width }))))(
+  it.each(
+    ["light", "dark"].flatMap((theme) => [390, 360, 1440].map((width) => ({ theme, width }))),
+  )(
     "keeps self quotes inside and peer quotes above their own bubbles with native gaps in $theme at $width",
     async ({ theme, width }) => {
       await suite.withPage(
-        { viewport: { width, height: 1000 }, locale: "en-US", hasTouch: width === 390 },
+        { viewport: { width, height: 1000 }, locale: "en-US", hasTouch: width < 768 },
         async ({ page }) => {
           const self = {
             senderId: "alice",
@@ -414,10 +450,11 @@ suite.define(() => {
             await document.fonts.ready;
           }, theme);
           for (const dir of ["ltr", "rtl"]) {
-            await pane.evaluate(
-              (element, direction) => element.setAttribute("dir", direction),
-              dir,
-            );
+            await page.evaluate((direction) => {
+              // Locale changes set both; production CSS lowers :dir() to :lang().
+              document.documentElement.dir = direction;
+              document.documentElement.lang = direction === "rtl" ? "ar" : "en";
+            }, dir);
             for (const index of [0, 1]) {
               const plain = pane.locator(`[data-entry-id="plain-${index}"]`);
               const quoted = pane.locator(`[data-entry-id="quoted-${index}"]`);
@@ -470,6 +507,7 @@ suite.define(() => {
               );
               expect(await row.locator(".identity-avatar--agent").count()).toBe(1);
               expect(await row.locator(".chat-reply-connector").count()).toBe(0);
+              expect(await row.locator(".chat-reply-attribution__mobile-icon").count()).toBe(0);
               expect(await row.locator(".chat-reply-attribution__excerpt[title]").count()).toBe(0);
               const target = row.getByRole("button");
               const labelElement = row.locator(".chat-reply-attribution__label");
@@ -509,8 +547,33 @@ suite.define(() => {
                 ),
               );
             expect(peerIdentity.every((overflow) => overflow <= 1)).toBe(true);
+            if (width < 768) {
+              for (const id of ["peer-reply", "peer-short"]) {
+                const cue = await pane.locator(`[data-entry-id="${id}"]`).evaluate((bubble) => {
+                  const owner = bubble.parentElement!;
+                  const row = owner.querySelector(".chat-reply-attribution--reply")!;
+                  const icon = row.querySelector(".chat-reply-attribution__mobile-icon")!;
+                  const rowBounds = row.getBoundingClientRect();
+                  const groupBounds = bubble.closest(".chat-group")!.getBoundingClientRect();
+                  return {
+                    iconWidth: icon.getBoundingClientRect().width,
+                    mirrored: new DOMMatrixReadOnly(getComputedStyle(icon).transform).a,
+                    start:
+                      getComputedStyle(row).direction === "rtl"
+                        ? groupBounds.right - rowBounds.right
+                        : rowBounds.left - groupBounds.left,
+                  };
+                });
+                expect(cue.iconWidth).toBe(14);
+                expect(cue.mirrored).toBe(dir === "rtl" ? -1 : 1);
+                expect(cue.start).toBeCloseTo(0, 1);
+              }
+            }
           }
-          await pane.evaluate((element) => element.setAttribute("dir", "ltr"));
+          await page.evaluate(() => {
+            document.documentElement.dir = "ltr";
+            document.documentElement.lang = "en";
+          });
           if (width === 1440) {
             const shortQuote = pane.locator('[data-entry-id="quoted-0"]');
             const nameOverflow = () =>
@@ -573,9 +636,21 @@ suite.define(() => {
               )
               .count(),
           ).toBe(1);
+          if (width < 768) {
+            const visiblePeerAvatars = await peerGroup
+              .locator(
+                ".chat-message--reply > :is(.chat-avatar, .chat-avatar-slot), .chat-message-avatar-anchor > :is(.chat-avatar, .chat-avatar-slot)",
+              )
+              .evaluateAll(
+                (avatars) =>
+                  avatars.filter((avatar) => avatar.getBoundingClientRect().width > 0).length,
+              );
+            expect(visiblePeerAvatars).toBe(0);
+            expect(await peerGroup.locator(".chat-reply-attribution--reply").count()).toBe(2);
+          }
           for (let index = 1; index < resting.length; index++) {
             expect(resting[index].top - resting[index - 1].bottom).toBeCloseTo(
-              width === 390 ? 52 : 32,
+              width < 768 ? 52 : 32,
               1,
             );
           }
@@ -592,12 +667,32 @@ suite.define(() => {
                 gap: element.getBoundingClientRect().top - row.getBoundingClientRect().bottom,
                 avatarOffset:
                   avatar.getBoundingClientRect().top - element.getBoundingClientRect().top,
-                connectors: owner.querySelectorAll(".chat-reply-connector").length,
+                avatarWidth: avatar.getBoundingClientRect().width,
+                connectorWidth: owner
+                  .querySelector(".chat-reply-connector")!
+                  .getBoundingClientRect().width,
+                iconWidth: row
+                  .querySelector(".chat-reply-attribution__mobile-icon")!
+                  .getBoundingClientRect().width,
+                sourceAvatarWidth: row.querySelector(".chat-author-avatar")!.getBoundingClientRect()
+                  .width,
+                start:
+                  row.getBoundingClientRect().left -
+                  element.closest(".chat-group")!.getBoundingClientRect().left,
               };
             });
             expect(placement.gap).toBeCloseTo(6, 1);
-            expect(placement.avatarOffset).toBeCloseTo(0, 1);
-            expect(placement.connectors).toBe(1);
+            expect(placement.sourceAvatarWidth).toBe(16);
+            if (width < 768) {
+              expect(placement.avatarWidth).toBe(0);
+              expect(placement.connectorWidth).toBe(0);
+              expect(placement.iconWidth).toBe(14);
+              expect(placement.start).toBeCloseTo(0, 1);
+            } else {
+              expect(placement.avatarOffset).toBeCloseTo(0, 1);
+              expect(placement.connectorWidth).toBeGreaterThan(0);
+              expect(placement.iconWidth).toBe(0);
+            }
           }
           const visibleActionRows = () =>
             peerGroup
@@ -613,7 +708,7 @@ suite.define(() => {
           for (const id of ["peer-reply", "peer-short"]) {
             const bubble = pane.locator(`[data-entry-id="${id}"]`);
             const action = bubble.locator(".chat-message-actions-row button").first();
-            if (width === 390) {
+            if (width < 768) {
               await action.focus();
             } else {
               await bubble.hover();
@@ -631,7 +726,7 @@ suite.define(() => {
             expect(position.gap).toBeLessThanOrEqual(8);
             expect(Math.abs(position.start)).toBeLessThanOrEqual(1);
             expect(await stackGeometry()).toEqual(resting);
-            if (width !== 390) {
+            if (width >= 768) {
               await action.hover();
               await expect.poll(visibleActionRows).toBe(1);
               expect(await stackGeometry()).toEqual(resting);
@@ -642,7 +737,7 @@ suite.define(() => {
             expect(await stackGeometry()).toEqual(resting);
             await action.evaluate((element) => element.blur());
           }
-          if (width === 390) {
+          if (width < 768) {
             const peerText = peerReply.locator(".chat-text");
             await peerText.tap();
             await expect.poll(visibleActionRows).toBe(1);

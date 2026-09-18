@@ -266,7 +266,9 @@ export function renderReplyAttribution(
     class=${className}
     ${ref(inline ? inlineReplyTargetRef(resolveMissing) : resolveMissing)}
   >
-    <span class="chat-reply-attribution__label">${t("chat.messages.replyingToLabel")}</span>
+    <span class="chat-reply-attribution__label"
+      >${inline ? nothing : html`<span class="chat-reply-attribution__mobile-icon" aria-hidden="true">${icons.cornerUpLeft}</span>`}${t("chat.messages.replyingToLabel")}</span
+    >
     ${target}
   </div>`;
 }
