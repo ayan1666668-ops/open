@@ -73,6 +73,7 @@ export function refreshSessionPlannerStatisticsInDatabase(database: OpenClawAgen
 
 export function emptySessionEntryMaintenancePlan(): SessionEntryMaintenancePlan {
   return {
+    archivedSessionKeys: [],
     entryRemovals: [],
     stateDeletePlans: [],
     archived: 0,
@@ -154,6 +155,7 @@ export function applySessionEntryMaintenanceInDatabase(
     });
   const selectedKeys = uniqueStrings([...archivedKeys, ...removalReasons.keys()]);
   const selectedEntries = readSessionEntryStore(database, { sessionKeys: selectedKeys });
+  const archivedSessionKeys: string[] = [];
   const archivedWorktrees: NonNullable<SessionEntryMaintenancePlan["archivedWorktrees"]> = [];
   for (const key of archivedKeys) {
     const previousEntry = selectedEntries[key];
@@ -168,6 +170,7 @@ export function applySessionEntryMaintenanceInDatabase(
     };
     delete entry.archivedBy;
     writeSessionEntry(database, key, entry, { canonicalPreviousEntry: previousEntry });
+    archivedSessionKeys.push(key);
     if (entry.worktree) {
       archivedWorktrees.push({
         entry: cloneSessionEntry(entry),
@@ -183,6 +186,7 @@ export function applySessionEntryMaintenanceInDatabase(
   recordSessionEntryMaintenanceAgeFact(database, maintenance, plannedAt);
   if (removals.length === 0) {
     return {
+      archivedSessionKeys,
       ...(archivedWorktrees.length ? { archivedWorktrees } : {}),
       entryRemovals: [],
       stateDeletePlans: [],
@@ -224,6 +228,7 @@ export function applySessionEntryMaintenanceInDatabase(
     }
   }
   return {
+    archivedSessionKeys,
     ...(archivedWorktrees.length ? { archivedWorktrees } : {}),
     entryRemovals: removals,
     stateDeletePlans: deletePlans,

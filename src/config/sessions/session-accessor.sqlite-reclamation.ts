@@ -2,6 +2,10 @@ import { isDeepStrictEqual } from "node:util";
 import { normalizeAgentId } from "@openclaw/normalization-core/agent-id";
 import { executeSqliteQuerySync, getNodeSqliteKysely } from "../../infra/kysely-sync.js";
 import { runWithSqliteBusyTimeout } from "../../infra/sqlite-busy-timeout.js";
+import {
+  deferSqlitePostCommitPublication,
+  withSqlitePostCommitPublications,
+} from "../../infra/sqlite-post-commit.js";
 import { getChildLogger } from "../../logging/logger.js";
 import { KeyedAsyncQueue } from "../../plugin-sdk/keyed-async-queue.js";
 import { resolveGlobalSingleton } from "../../shared/global-singleton.js";
@@ -440,6 +444,32 @@ function prepareReclamationPublication(
   return undefined;
 }
 
+function collectReclamationChangedSessionKeys(
+  plan: SqliteSessionReclamationPlan,
+  result: SqliteSessionReclamationResult,
+): string[] {
+  switch (result.kind) {
+    case "maintenance-plan":
+      return result.value.archivedSessionKeys;
+    case "maintenance-finalize":
+      return result.value.committedEntries.map(({ sessionKey }) => sessionKey);
+    case "maintenance-preservation-required":
+    case "maintenance-statistics":
+      return [];
+    default:
+      return [
+        ...plan.materializedPlans.flatMap(({ snapshot }) =>
+          snapshot.sessionKey ? [snapshot.sessionKey] : [],
+        ),
+        ...(plan.kind === "lifecycle-artifacts"
+          ? plan.entries.map(({ sessionKey }) => sessionKey)
+          : plan.kind === "entry" || plan.kind === "historical-generation"
+            ? [plan.deleteParams.target.canonicalKey, ...plan.deleteParams.target.storeKeys]
+            : []),
+      ];
+  }
+}
+
 export async function runSqliteSessionReclamation(params: {
   diagnostics?: SqliteSessionReclamationDiagnostics;
   assertCommitAllowed?: () => void;
@@ -553,22 +583,22 @@ export async function runSqliteSessionReclamation(params: {
                           if (completed) {
                             // Publish captured identities after transaction settlement, before releasing the writer.
                             params.onWorkerResult?.(completed);
-                            const rowsChanged =
-                              completed.kind === "maintenance-plan"
-                                ? completed.value.archived > 0
-                                : completed.kind === "maintenance-finalize"
-                                  ? completed.value.committedEntries.length > 0
-                                  : completed.kind !== "maintenance-preservation-required" &&
-                                    completed.kind !== "maintenance-statistics";
-                            // No-op planning, rolled-back discovery, and statistics must leave
-                            // resident row projections warm; only committed row changes publish.
-                            if (rowsChanged) {
-                              publishSessionEntryCacheInvalidation(database);
-                            }
-                            publishCommitted?.();
-                            if (plan.kind === "maintenance-finalize") {
-                              prepareReclamationPublication(plan, completed)?.();
-                            }
+                            withSqlitePostCommitPublications(database.db, () => {
+                              const publishRemoval =
+                                plan.kind === "maintenance-finalize"
+                                  ? prepareReclamationPublication(plan, completed)
+                                  : publishCommitted;
+                              if (publishRemoval) {
+                                deferSqlitePostCommitPublication(database.db, publishRemoval);
+                              }
+                              // Clear parent caches before identity observers, then notify row
+                              // listeners so a recreated key cannot precede its old deletion.
+                              for (const sessionKey of new Set(
+                                collectReclamationChangedSessionKeys(plan, completed),
+                              )) {
+                                publishSessionEntryCacheInvalidation(database, { sessionKey });
+                              }
+                            });
                             if (
                               plan.kind === "maintenance-statistics" &&
                               getOpenClawAgentDatabaseIfOpen(plan.databaseOptions)?.db ===

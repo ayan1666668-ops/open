@@ -5,7 +5,7 @@ import {
   beginSessionWorkAdmission,
   runExclusiveSessionLifecycleMutation,
 } from "../../sessions/session-lifecycle-admission.js";
-import { sessionChanges } from "../../sessions/session-row-changes.js";
+import { sessionChanges, type SessionRowChange } from "../../sessions/session-row-changes.js";
 import { createDeferredCore } from "../../shared/deferred.js";
 import { openOpenClawAgentDatabase } from "../../state/openclaw-agent-db.js";
 import { withOpenClawTestState } from "../../test-utils/openclaw-test-state.js";
@@ -417,9 +417,9 @@ it("adopts age facts before synchronous publication reentry", async () => {
     const unsubscribe = sessionChanges.subscribe((change) => {
       if (
         reentered ||
-        !("all" in change) ||
-        typeof change.scope !== "object" ||
-        change.scope.storePath !== database.path
+        !("sessionKey" in change) ||
+        change.sessionKey !== stale.sessionKey ||
+        change.storePath !== database.path
       ) {
         return;
       }
@@ -442,6 +442,100 @@ it("adopts age facts before synchronous publication reentry", async () => {
       expect(observed).toEqual([{ before: true, after: false }]);
       expect(loadSessionEntry(victim)?.archivedAt).toEqual(expect.any(Number));
       expect(loadSessionEntry(stale)?.archivedAt).toEqual(expect.any(Number));
+    } finally {
+      unsubscribe();
+    }
+  });
+});
+
+it("publishes exact archived keys without worktrees after Worker planning", async () => {
+  await withOpenClawTestState({ scenario: "minimal" }, async (state) => {
+    const storePath = path.join(state.sessionsDir(), "sessions.json");
+    const active = { sessionKey: "agent:main:keyed-active", storePath };
+    const stale = { sessionKey: "agent:main:keyed-stale", storePath };
+    replaceSessionEntrySync(active, { sessionId: "active", updatedAt: Date.now() });
+    replaceSessionEntrySync(stale, { sessionId: "stale", updatedAt: 1 });
+    const databaseOptions = { agentId: "main", env: state.env };
+    const database = openOpenClawAgentDatabase(databaseOptions);
+    const published: SessionRowChange[] = [];
+    const unsubscribe = sessionChanges.subscribe((change) => published.push(change));
+    const diagnostics = {};
+    try {
+      const result = await reclamation.runSqliteSessionReclamation({
+        diagnostics,
+        forceInProcess: false,
+        plan: reclamation.createSessionMaintenancePlanningOperation({
+          databaseOptions,
+          input: {
+            activeSessionKey: active.sessionKey,
+            archiveDirectory: state.sessionsDir(),
+            maintenance: resolveMaintenanceConfigFromInput({
+              mode: "enforce",
+              maxEntries: 100,
+              pruneAfter: "1s",
+            }),
+            preservation: { providerKeys: [], workIdentities: [], lifecycleIdentities: [] },
+            storePath,
+          },
+        }),
+      });
+      expect(diagnostics).toMatchObject({ workerThreadId: expect.any(Number) });
+      expect(result).toMatchObject({
+        kind: "maintenance-plan",
+        value: { archived: 1, archivedSessionKeys: [stale.sessionKey], entryRemovals: [] },
+      });
+      expect(published).toEqual([
+        { agentId: "main", storePath: database.path, sessionKey: stale.sessionKey },
+      ]);
+      expect(loadSessionEntry(stale)).toMatchObject({ archivedAt: expect.any(Number) });
+      expect(loadSessionEntry(stale)?.worktree).toBeUndefined();
+      expect(loadSessionEntry(active)?.archivedAt).toBeUndefined();
+    } finally {
+      unsubscribe();
+    }
+  });
+});
+
+it("publishes only committed removal keys after Worker finalization", async () => {
+  await withOpenClawTestState({ scenario: "minimal" }, async (state) => {
+    const storePath = path.join(state.sessionsDir(), "sessions.json");
+    const removed = { sessionKey: "agent:main:keyed-removed", storePath };
+    const changed = { sessionKey: "agent:main:keyed-changed", storePath };
+    const removedEntry = { sessionId: "removed", updatedAt: 1 };
+    const previousEntry = { sessionId: "changed", updatedAt: 1 };
+    replaceSessionEntrySync(removed, removedEntry);
+    replaceSessionEntrySync(changed, previousEntry);
+    const databaseOptions = { agentId: "main", env: state.env };
+    const database = openOpenClawAgentDatabase(databaseOptions);
+    const plan = reclamation.createSessionMaintenanceFinalizationOperation({
+      agentId: "main",
+      databaseOptions,
+      entries: [
+        { sessionKey: removed.sessionKey, expectedEntry: loadSessionEntry(removed) },
+        { sessionKey: changed.sessionKey, expectedEntry: loadSessionEntry(changed) },
+      ],
+      materializedPlans: [],
+    });
+    replaceSessionEntrySync(changed, { ...previousEntry, label: "changed after planning" });
+    const published: SessionRowChange[] = [];
+    const unsubscribe = sessionChanges.subscribe((change) => published.push(change));
+    const diagnostics = {};
+    try {
+      const result = await reclamation.runSqliteSessionReclamation({
+        diagnostics,
+        forceInProcess: false,
+        plan,
+      });
+      expect(diagnostics).toMatchObject({ workerThreadId: expect.any(Number) });
+      expect(result).toMatchObject({
+        kind: "maintenance-finalize",
+        value: { changedEntries: [plan.entries[1]], committedEntries: [plan.entries[0]] },
+      });
+      expect(published).toEqual([
+        { agentId: "main", storePath: database.path, sessionKey: removed.sessionKey },
+      ]);
+      expect(loadSessionEntry(removed)).toBeUndefined();
+      expect(loadSessionEntry(changed)?.label).toBe("changed after planning");
     } finally {
       unsubscribe();
     }
@@ -487,7 +581,8 @@ it.each(["no-op", "preservation", "statistics", "empty-finalization"] as const)(
               });
       const published: unknown[] = [];
       const unsubscribe = sessionChanges.subscribe((change) => {
-        if (typeof change.scope === "object" && change.scope.storePath === database.path) {
+        const scope = "all" in change ? change.scope : change;
+        if (typeof scope === "object" && scope.storePath === database.path) {
           published.push(change);
         }
       });
