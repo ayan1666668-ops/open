@@ -295,7 +295,7 @@ async function runScenario(params: {
   } as unknown as OpenClawConfig;
 
   const { loadOpenClawPlugins } = await import("../src/plugins/loader.js");
-  const registry = await loadOpenClawPlugins({
+  const registry = loadOpenClawPlugins({
     env: { ...process.env, OPENCLAW_STATE_DIR: scenarioDir },
     config,
     activate: true,
