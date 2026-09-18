@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import { describe, expect, it } from "vitest";
 import { sessionNavigationTarget } from "../../lib/sessions/route-navigation.ts";
 import { createControlUiSessionFixtures } from "../../test-helpers/control-ui-session-fixtures.ts";
@@ -22,10 +23,13 @@ describe("resolved exact session identity", () => {
         boardFace: face,
         displayName: "Shared session title",
       };
-      const fixtures = createControlUiSessionFixtures({
-        rows: [selected, other],
-        mainKey: "agent:main:main",
-      });
+      const fixtures = createControlUiSessionFixtures(
+        {
+          rows: [selected, other],
+          mainKey: "agent:main:main",
+        },
+        isRecord,
+      );
       const createContext = () => {
         const result = contextFor();
         result.request.mockImplementation(async (method, params) => {
