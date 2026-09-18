@@ -43,6 +43,7 @@ import {
 import {
   addRetainedWindowSessionReferences,
   collectSessionStateIdsForEntry,
+  SESSION_STATE_ID_TRIM_CHARACTERS,
 } from "./session-accessor.sqlite-references.js";
 import {
   cloneSessionEntry,
@@ -119,16 +120,27 @@ function isNarrowableSessionId(sessionId: string): boolean {
  * Rows that could reference one of `candidateSessionIds`.
  *
  * Exact `IN` membership replaces the former `instr` probe and generalizes to a
- * set. It is not a narrower test: `instr` only ever matched *more* rows than
- * equality by accepting a candidate embedded in some unrelated id, and such a
- * row contributes nothing once JS compares ids. The one case equality alone
- * would miss \u2014 a `current_session_id` holding raw bytes SQLite cannot convert \u2014
- * is retained explicitly by the length branch, which `instr` could silently drop.
+ * set, but equality alone is narrower than the reference parser, so each way a
+ * row can still own a candidate keeps its own branch:
+ *
+ * - `collectSessionStateIdsForEntry` trims every id it collects, and an entry
+ *   parses only when its `sessionId` equals `current_session_id`, so a padded
+ *   current id protects its trimmed form. The `trim` branch reproduces exactly
+ *   the code points `String.prototype.trim` removes. `instr` used to cover this
+ *   case incidentally, by matching the candidate embedded in the padded id.
+ * - A `current_session_id` holding raw bytes SQLite cannot convert is retained
+ *   by the length branch, which `instr` could silently drop.
+ * - Optional reference fields are retained by presence, never by value.
+ *
+ * The narrowing stays a prefilter, never the decision: exact membership is still
+ * settled in JS below, so retaining a row that owns nothing costs only hydration.
  */
 function referenceCandidateNarrowing(candidateSessionIds: readonly string[]) {
   const ids = sql.join(candidateSessionIds.map((sessionId) => sql`${sessionId}`));
+  const trimmedIds = sql.join(candidateSessionIds.map((sessionId) => sql`${sessionId}`));
   return /* kysely-allow-raw: narrow hydration without replacing the reference parser or its raw-text fallbacks. */ sql<boolean>`(
         current_session_id IN (${ids})
+        OR trim(current_session_id, ${SESSION_STATE_ID_TRIM_CHARACTERS}) IN (${trimmedIds})
         OR length(CAST(current_session_id AS BLOB)) != length(CAST(printf('%s', current_session_id) AS BLOB))
         OR NOT json_valid(entry_json)
         OR length(CAST(entry_json AS BLOB)) != length(CAST(printf('%s', entry_json) AS BLOB))
