@@ -29,6 +29,7 @@ import {
   loadPreparedModelRuntimeAuth,
 } from "./prepared-model-runtime-auth.js";
 import {
+  acquirePublishedPreparedModelRuntime,
   getPreparedModelRuntimeSnapshot,
   refreshPreparedModelRuntimeSnapshots,
   registerPreparedModelRuntimePublicationListener,
@@ -658,60 +659,67 @@ describe("Gateway catalog worker pool", () => {
       await Promise.allSettled([first, retired, sibling]);
     }
   });
-  it("keeps replacement preparation alive when the preceding catalog finishes", async () => {
+  it("retains a shared registry while its predecessor borrower finishes during replacement", async ({
+    signal,
+  }) => {
     const fixture = await createFleetFixture();
     await Promise.all(fixture.snapshots.map((snapshot) => loadCompletedFullCatalog(snapshot)));
-    const before = fs.readFileSync(fixture.marker, "utf8");
-    fs.writeFileSync(`${fixture.marker}.hold`, "");
-    const previousCatalog = fixture.snapshots[0]!.loadFullModelCatalog!({ refresh: true });
-    void previousCatalog.catch(() => {});
-    const preparing = createDeferredCore();
+    const predecessorAgentId = fixture.agentIds[0]!;
+    const predecessor = await acquirePublishedPreparedModelRuntime({
+      agentId: predecessorAgentId,
+      agentDir: fixture.entries[predecessorAgentId]!.agentDir,
+      config: fixture.config,
+    });
+    const selected = createDeferredCore();
     const resume = createDeferredCore();
-    const prepareCredentials = agentAuthDiscovery.prepareAmbientAgentCredentialsForDiscovery;
+    const release = () => resume.resolve();
+    signal.addEventListener("abort", release, { once: true });
+    const prepare = agentAuthDiscovery.prepareAmbientAgentCredentialsForDiscovery;
     const preparation = vi
       .spyOn(agentAuthDiscovery, "prepareAmbientAgentCredentialsForDiscovery")
-      .mockImplementationOnce(async (options) => {
-        const credentials = await prepareCredentials(options);
-        preparing.resolve();
+      .mockImplementationOnce(async (...args) => {
+        selected.resolve();
         await resume.promise;
-        return credentials;
+        return await prepare(...args);
       });
-    let publication: Promise<void> | undefined;
+    let replacement: Promise<void> | undefined;
     try {
-      await expect.poll(() => fs.readFileSync(fixture.marker, "utf8")).not.toBe(before);
-      publication = refreshPreparedModelRuntimeSnapshots(fixture.config, {
+      replacement = refreshPreparedModelRuntimeSnapshots(fixture.config, {
         catalogMode: "static",
         allowGatewaySubagentBinding: true,
         pluginMetadataSnapshot: fixture.snapshots[0]!.metadataSnapshot,
       });
-      void publication.catch(() => {});
+      void replacement.catch(() => undefined);
       await Promise.race([
-        preparing.promise,
-        publication.then(() => {
-          throw new Error("Publication completed before its credential preparation");
+        selected.promise,
+        replacement.then(() => {
+          throw new Error("replacement skipped registry preparation");
         }),
       ]);
-      fs.rmSync(`${fixture.marker}.hold`);
-      await expect(previousCatalog).rejects.toThrow("superseded");
+      // The successor has selected the live cached registry. Finishing its predecessor
+      // must not dispose that registry while successor auth capture is still pending.
+      await predecessor[Symbol.asyncDispose]();
       resume.resolve();
-      await publication;
-      const replacement = getPreparedModelRuntimeSnapshot({
-        agentId: fixture.agentIds[0],
-        agentDir: fixture.snapshots[0]!.agentDir,
-        config: fixture.config,
-      })!;
-      expect(replacement).not.toBe(fixture.snapshots[0]);
-      expect(replacement.isCurrent()).toBe(true);
-      expect((await loadCompletedFullCatalog(replacement)).entries).toContainEqual(
-        expect.objectContaining({ provider: PROVIDER_ID, id: "plugin-generation-v1" }),
-      );
+      await expect(replacement).resolves.toBeUndefined();
+      for (const agentId of fixture.agentIds) {
+        const current = getPreparedModelRuntimeSnapshot({
+          agentId,
+          agentDir: fixture.entries[agentId]!.agentDir,
+          config: fixture.config,
+        });
+        expect(current?.isCurrent()).toBe(true);
+        expect(
+          getPreparedModelRuntimeAuthStore(current!)?.profiles[`${PROVIDER_ID}:external`],
+        ).toMatchObject({ type: "oauth", access: "v1:A" });
+      }
     } finally {
-      resume.resolve();
-      fs.rmSync(`${fixture.marker}.hold`, { force: true });
-      await Promise.allSettled([previousCatalog, publication]);
+      release();
+      signal.removeEventListener("abort", release);
+      await Promise.allSettled([replacement, predecessor[Symbol.asyncDispose]()]);
       preparation.mockRestore();
     }
   });
+
   it.for([false, true])(
     "rotates the pinned environment after a full Gateway publication (shutdown: %s)",
     async (shutdown, { signal }) => {

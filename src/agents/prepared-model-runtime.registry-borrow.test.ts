@@ -16,7 +16,6 @@ import {
 import {
   acquireAgentRunPreparedModelRuntime,
   acquirePublishedPreparedModelRuntime,
-  loadPublishedGatewayReplyDispatchRuntime,
   markPreparedModelRuntimeSnapshotsStale,
   prepareModelRuntimeSnapshot,
   refreshPreparedModelRuntimeSnapshots,
@@ -57,80 +56,49 @@ async function acquireConfiguredRegistryBorrower() {
 }
 
 describe("prepared registry construction borrows", () => {
-  it("holds selected inbound resources until a superseded run's selector settles", async () => {
-    mocks.configuredAgentIds = ["default"];
-    const registry = createEmptyPluginRegistry();
-    mocks.loadAgentRuntimePluginRegistryHandle.mockReturnValue(registry);
-    const config = {};
-    const input = {
-      agentId: "default",
-      config,
-      agentDir: state.agentDir("default"),
-      inheritedAuthDir: state.agentDir("default"),
-      workspaceDir: "/tmp/unused-workspace",
-    };
-    await refreshPreparedModelRuntimeSnapshots(config, {
-      gatewayLifecycle: true,
-      catalogMode: "static",
-    });
-    const original = await prepareModelRuntimeSnapshot(input);
-    const configured = await loadPublishedGatewayReplyDispatchRuntime({ agentId: "default" });
-    if (!configured) {
-      throw new Error("Expected configured reply dispatch runtime");
-    }
-    const selecting = createDeferred();
-    const finishSelection = createDeferred();
+  it("retains selected inbound resources until a cancelled initial run inspection settles", async () => {
+    const { registry, input, borrower } = await acquireConfiguredRegistryBorrower();
+    const inspecting = createDeferred();
+    const finishInspection = createDeferred();
     const acquire = runtimePlugins.acquireAgentRuntimePluginRegistry;
-    const selection = vi
+    mocks.loadAgentRuntimePluginRegistryHandle.mockReturnValueOnce(createEmptyPluginRegistry());
+    const inspection = vi
       .spyOn(runtimePlugins, "acquireAgentRuntimePluginRegistry")
       .mockImplementationOnce(async (...args) => {
-        selecting.resolve();
-        await finishSelection.promise;
-        return await acquire(...args);
+        const acquired = await acquire(...args);
+        inspecting.resolve();
+        await finishInspection.promise;
+        return acquired;
       });
-    const run = acquireAgentRunPreparedModelRuntime(
+    const pending = acquireAgentRunPreparedModelRuntime(
       {
         ...input,
-        loadRuntimePlugins: true,
-        runtimePluginSelections: [{ provider: "fixture", modelId: "model", runtime: "openclaw" }],
+        runtimePluginSelections: [{ provider: "custom", modelId: "selected", runtime: "openclaw" }],
       },
-      { pluginGeneration: configured.pluginGeneration, catalogMode: "static" },
+      { catalogMode: "static", pluginGeneration: borrower.pluginGeneration },
     );
-    void run.catch(() => undefined);
-    let replacement: Promise<void> | undefined;
-    let invalidated = false;
+    const settled = Promise.allSettled([pending]);
     try {
       await Promise.race([
-        selecting.promise,
-        run.then(() => {
-          throw new Error("Run admission completed before runtime selection");
+        inspecting.promise,
+        pending.then(() => {
+          throw new Error("Initial run skipped inspection acquisition");
         }),
       ]);
-      markPreparedModelRuntimeSnapshotsStale("selector replacement", { waitForReplacement: true });
-      invalidated = true;
-      expect(original.isCurrent()).toBe(false);
+      markPreparedModelRuntimeSnapshotsStale("configuration replaced during run admission");
+      await borrower[Symbol.asyncDispose]();
       expect(isPluginRegistryRetired(registry)).toBe(false);
-      mocks.loadAgentRuntimePluginRegistryHandle.mockImplementation(createEmptyPluginRegistry);
-      finishSelection.resolve();
-      replacement = refreshPreparedModelRuntimeSnapshots(
-        { plugins: {} },
-        { catalogMode: "static" },
-      );
-      await replacement;
-      await expect(run).rejects.toThrow("plugin generation was superseded");
+      finishInspection.resolve();
+      await expect(pending).rejects.toThrow("superseded");
       expect(isPluginRegistryRetired(registry)).toBe(true);
-      expect((await prepareModelRuntimeSnapshot(input)).config).toEqual({ plugins: {} });
     } finally {
-      mocks.loadAgentRuntimePluginRegistryHandle.mockImplementation(createEmptyPluginRegistry);
-      finishSelection.resolve();
-      if (invalidated && !replacement) {
-        replacement = refreshPreparedModelRuntimeSnapshots(
-          { plugins: {} },
-          { catalogMode: "static" },
-        );
+      finishInspection.resolve();
+      const [outcome] = await settled;
+      if (outcome.status === "fulfilled") {
+        await outcome.value[Symbol.asyncDispose]();
       }
-      await Promise.allSettled([replacement, run.then((lease) => lease[Symbol.asyncDispose]())]);
-      selection.mockRestore();
+      await borrower[Symbol.asyncDispose]();
+      inspection.mockRestore();
     }
   });
 

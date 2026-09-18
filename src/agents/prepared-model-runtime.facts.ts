@@ -162,20 +162,20 @@ export async function prepareWorkspaceBuildGroup(
   options.registryResources?.retainGeneration(reusablePluginGeneration);
   const retainedRegistries = new Set<PluginRegistry>();
   await using registryBorrows = new AsyncDisposableStack();
-  const retainRegistry = (registry: PluginRegistry) => {
-    if (retainedRegistries.has(registry)) {
-      return;
-    }
-    // The final generation takes its own claim before construction releases these borrows.
-    const release = retainPreparedPluginRegistry(registry);
-    retainedRegistries.add(registry);
-    if (release) {
-      registryBorrows.defer(release);
-    }
-  };
   const preparingRegistries = prepareWorkspacePluginRegistries(
     input,
     pluginMetadataSnapshot,
+    (registry) => {
+      // Initial run admission can inspect a new selection before its caller holds
+      // a generation lease. Borrow the selected source before that async load.
+      if (!retainedRegistries.has(registry)) {
+        retainedRegistries.add(registry);
+        const release = retainPreparedPluginRegistry(registry);
+        if (release) {
+          registryBorrows.defer(release);
+        }
+      }
+    },
     loadInboundPluginRegistry,
     preferBuiltPluginArtifacts,
     reusablePluginGeneration,
@@ -183,7 +183,6 @@ export async function prepareWorkspaceBuildGroup(
     options.basePluginIds,
     options.registryResources,
     options.purpose,
-    retainRegistry,
   );
   const { inboundPluginRegistry, runtimePluginRegistry, primaryRegistry } =
     preparingRegistries instanceof Promise ? await preparingRegistries : preparingRegistries;
