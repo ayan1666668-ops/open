@@ -294,7 +294,6 @@ vi.mock("./bot/delivery.js", () => ({
 
 vi.mock("./bot/delivery.replies.js", () => ({
   deliverReplies: deliverRepliesHoisted,
-  emitTelegramMessageSentHooks: emitTelegramMessageSentHooksHoisted,
 }));
 
 vi.mock("./send.js", async () => ({

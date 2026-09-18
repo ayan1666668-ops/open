@@ -31,6 +31,30 @@ describe("createLaneTextDeliverer", () => {
     expect(harness.lanes.answer.finalized).toBe(true);
   });
 
+  it("preserves a finalized preview receipt when the final history write fails", async () => {
+    const harness = createHarness({ answerMessageId: 999 });
+    const historyFailure = new Error("retained Telegram history write failed");
+    harness.recordPromptContextPreview.mockRejectedValueOnce(historyFailure);
+
+    const result = await deliverProjectedFinalAnswer(harness, HELLO_FINAL);
+
+    expect(result).toMatchObject({
+      kind: "preview-finalized-partial",
+      delivery: {
+        content: HELLO_FINAL,
+        messageId: 999,
+        receipt: {
+          primaryPlatformMessageId: "999",
+          platformMessageIds: ["999"],
+        },
+      },
+      error: historyFailure,
+    });
+    expect(harness.sendPayload).not.toHaveBeenCalled();
+    expect(harness.answer?.clear).not.toHaveBeenCalled();
+    expect(harness.lanes.answer.finalized).toBe(true);
+  });
+
   it("claims an equal visible preview and survives a cleanup-only crash", async () => {
     const events: string[] = [];
     const answer = createTestDraftStream({ messageId: 999 });

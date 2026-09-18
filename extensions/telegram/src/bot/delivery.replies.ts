@@ -6,17 +6,9 @@ import {
   createOutboundPayloadPlan,
   createMessageReceiptFromOutboundResults,
   projectOutboundPayloadPlanForDelivery,
+  type MessageReceipt,
 } from "openclaw/plugin-sdk/channel-outbound";
 import type { MarkdownTableMode, ReplyToMode } from "openclaw/plugin-sdk/config-contracts";
-import {
-  buildCanonicalSentMessageHookContext,
-  createInternalHookEvent,
-  fireAndForgetHook,
-  toInternalMessageSentContext,
-  toPluginMessageContext,
-  toPluginMessageSentEvent,
-  triggerInternalHook,
-} from "openclaw/plugin-sdk/hook-runtime";
 import type { ReplyPayloadDelivery } from "openclaw/plugin-sdk/interactive-runtime";
 import { normalizeMessagePresentation } from "openclaw/plugin-sdk/interactive-runtime";
 import {
@@ -68,6 +60,7 @@ import {
   planTelegramTextDeliveryPages,
   type TelegramTextDeliveryPage,
 } from "../telegram-text-delivery.js";
+import { emitTelegramMessageSentHooks } from "./delivery.hooks.js";
 import { resolveTelegramReplyId, type TelegramThreadSpec } from "./helpers.js";
 import type { TelegramNativeQuoteCandidateByMessageId } from "./native-quote.js";
 
@@ -637,84 +630,6 @@ async function maybePinFirstDeliveredMessage(params: {
   }
 }
 
-type EmitMessageSentHookParams = {
-  sessionKeyForInternalHooks?: string;
-  chatId: string;
-  accountId?: string;
-  content: string;
-  success: boolean;
-  error?: string;
-  messageId?: number;
-  isGroup?: boolean;
-  groupId?: string;
-};
-
-function buildTelegramSentHookContext(params: EmitMessageSentHookParams) {
-  return buildCanonicalSentMessageHookContext({
-    to: params.chatId,
-    content: params.content,
-    success: params.success,
-    error: params.error,
-    channelId: "telegram",
-    accountId: params.accountId,
-    conversationId: params.chatId,
-    messageId: typeof params.messageId === "number" ? String(params.messageId) : undefined,
-    isGroup: params.isGroup,
-    groupId: params.groupId,
-  });
-}
-
-function emitInternalMessageSentHook(params: EmitMessageSentHookParams): void {
-  if (!params.sessionKeyForInternalHooks) {
-    return;
-  }
-  const canonical = buildTelegramSentHookContext(params);
-  fireAndForgetHook(
-    triggerInternalHook(
-      createInternalHookEvent(
-        "message",
-        "sent",
-        params.sessionKeyForInternalHooks,
-        toInternalMessageSentContext(canonical),
-      ),
-    ),
-    "telegram: message:sent internal hook failed",
-  );
-}
-
-function emitMessageSentHooks(
-  params: EmitMessageSentHookParams & {
-    hookRunner: ReturnType<typeof getGlobalHookRunner>;
-    enabled: boolean;
-  },
-): void {
-  if (!params.enabled && !params.sessionKeyForInternalHooks) {
-    return;
-  }
-  const canonical = buildTelegramSentHookContext(params);
-  if (params.enabled) {
-    fireAndForgetHook(
-      Promise.resolve(
-        params.hookRunner!.runMessageSent(
-          toPluginMessageSentEvent(canonical),
-          toPluginMessageContext(canonical),
-        ),
-      ),
-      "telegram: message_sent plugin hook failed",
-    );
-  }
-  emitInternalMessageSentHook(params);
-}
-
-export function emitTelegramMessageSentHooks(params: EmitMessageSentHookParams): void {
-  const hookRunner = getGlobalHookRunner();
-  emitMessageSentHooks({
-    ...params,
-    hookRunner,
-    enabled: hookRunner?.hasHooks("message_sent") ?? false,
-  });
-}
-
 export async function deliverReplies(params: {
   replies: ReplyPayload[];
   cfg?: import("openclaw/plugin-sdk/config-contracts").OpenClawConfig;
@@ -765,6 +680,7 @@ export async function deliverReplies(params: {
   assertPlatformSendAuthorized?: () => void;
 }): Promise<{
   delivered: boolean;
+  receipt?: MessageReceipt;
 }> {
   const progress: DeliveryProgress = {
     hasReplied: false,
@@ -787,7 +703,6 @@ export async function deliverReplies(params: {
   const deliveredContents: Array<{ text: string; mediaUrls: string[] }> = [];
   const hookRunner = getGlobalHookRunner();
   const hasMessageSendingHooks = hookRunner?.hasHooks("message_sending") ?? false;
-  const hasMessageSentHooks = hookRunner?.hasHooks("message_sent") ?? false;
   const chunkText: ChunkTextFn = (text) =>
     planTelegramTextDeliveryPages({
       text,
@@ -816,6 +731,32 @@ export async function deliverReplies(params: {
       surface: "telegram",
     }),
   );
+  const sender = createTelegramPreparedSender({
+    api: params.bot.api,
+    chatId: params.chatId,
+    request: createTelegramReplyRequest(params.runtime),
+    warn: (message) => params.runtime.log?.(message),
+    beforeTextPage: params.onPlatformSendDispatch,
+    beforeMedia: params.onPlatformSendDispatch,
+    assertPlatformSendAuthorized: params.assertPlatformSendAuthorized,
+  });
+  const buildDeliveryReceipt = () => {
+    const receipt = createMessageReceiptFromOutboundResults({
+      results: sender.parts.map((part) =>
+        buildTelegramProviderDeliveryResult({
+          message: part.result,
+          messageId: part.messageId,
+          fallbackChatId: params.chatId,
+          ...(params.thread ? { successfulSendThread: params.thread } : {}),
+        }),
+      ),
+    });
+    for (const [index, part] of receipt.parts.entries()) {
+      part.index = index;
+    }
+    return receipt;
+  };
+
   for (const originalReply of normalizedReplies) {
     let reply = canonicalizeTelegramPresentationPayload(originalReply, {
       allowWebAppButtons: resolveTelegramTargetChatType(params.chatId) === "direct",
@@ -909,15 +850,6 @@ export async function deliverReplies(params: {
 
     let contentForSentHook =
       reply.text || (reply.audioAsVoice === true ? resolveVoiceFallbackText(reply) : "") || "";
-    const sender = createTelegramPreparedSender({
-      api: params.bot.api,
-      chatId: params.chatId,
-      request: createTelegramReplyRequest(params.runtime),
-      warn: (message) => params.runtime.log?.(message),
-      beforeTextPage: params.onPlatformSendDispatch,
-      beforeMedia: params.onPlatformSendDispatch,
-      assertPlatformSendAuthorized: params.assertPlatformSendAuthorized,
-    });
 
     try {
       const deliveredCountBeforeReply = progress.deliveredCount;
@@ -1016,9 +948,7 @@ export async function deliverReplies(params: {
         deliveredContents.push({ text: contentForSentHook, mediaUrls: deliveredMediaUrls });
       }
 
-      emitMessageSentHooks({
-        hookRunner,
-        enabled: hasMessageSentHooks,
+      emitTelegramMessageSentHooks({
         sessionKeyForInternalHooks: params.sessionKeyForInternalHooks,
         chatId: params.chatId,
         accountId: params.accountId,
@@ -1029,9 +959,7 @@ export async function deliverReplies(params: {
         groupId: params.mirrorGroupId,
       });
     } catch (error) {
-      emitMessageSentHooks({
-        hookRunner,
-        enabled: hasMessageSentHooks,
+      emitTelegramMessageSentHooks({
         sessionKeyForInternalHooks: params.sessionKeyForInternalHooks,
         chatId: params.chatId,
         accountId: params.accountId,
@@ -1041,7 +969,13 @@ export async function deliverReplies(params: {
         isGroup: params.mirrorIsGroup,
         groupId: params.mirrorGroupId,
       });
-      sender.fail(error);
+      sender.fail(
+        error,
+        0,
+        sender.parts.length
+          ? { receipt: buildDeliveryReceipt(), visibleReplySent: true }
+          : undefined,
+      );
     }
   }
 
@@ -1063,6 +997,9 @@ export async function deliverReplies(params: {
     }
   }
 
-  return { delivered: progress.hasDelivered };
+  return {
+    delivered: progress.hasDelivered,
+    ...(sender.parts.length ? { receipt: buildDeliveryReceipt() } : {}),
+  };
 }
 /* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

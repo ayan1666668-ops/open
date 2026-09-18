@@ -1,8 +1,11 @@
 import type { Message } from "grammy/types";
+import { isChannelPartialDeliveryError } from "openclaw/plugin-sdk/channel-inbound";
+import { dispatchReplyWithBufferedBlockDispatcher as dispatchThroughSharedOwner } from "openclaw/plugin-sdk/reply-dispatch-runtime";
 import { expect, it, vi } from "vitest";
 import {
   describeTelegramDispatch,
   appendAssistantMirrorMessageByIdentity,
+  createBot,
   createContext,
   createDraftStream,
   createTelegramDraftStream,
@@ -26,6 +29,7 @@ import type {
   TelegramBotDeps,
   TelegramMessageContext,
 } from "./bot-message-dispatch.test-harness.js";
+import type * as TelegramDelivery from "./bot/delivery.replies.js";
 import { resolveTelegramMessageCacheScope } from "./message-cache-persistence.js";
 import { buildTelegramConversationContext, createTelegramMessageCache } from "./message-cache.js";
 import { recordOutboundMessageForPromptContext as recordOutboundMessageForPromptContextActual } from "./outbound-message-context.js";
@@ -306,6 +310,145 @@ describeTelegramDispatch("dispatchTelegramMessage delivery-transcript", () => {
       threadSpec: { scope: "dm", id: 777 },
     });
   });
+
+  it.each([
+    { label: "single message", chunks: ["Final answer"], textLimit: 4096, failLastSend: false },
+    {
+      label: "multiple chunks",
+      chunks: ["chunk-one", "chunk-two"],
+      textLimit: 12,
+      failLastSend: false,
+    },
+    {
+      label: "failed send and failed cleanup",
+      chunks: ["chunk-one", "chunk-two"],
+      textLimit: 12,
+      failLastSend: true,
+    },
+  ])(
+    "preserves accepted native quote receipts when history finalization fails: $label",
+    async ({ chunks, textLimit, failLastSend }) => {
+      const actualDelivery = await vi.importActual<typeof TelegramDelivery>(
+        "./bot/delivery.replies.js",
+      );
+      const finalText = chunks.join("\n\n");
+      const historyFailure = new Error("retained Telegram history write failed");
+      const sendFailure = new Error("synthetic terminal send failure");
+      const bot = createBot();
+      let nextMessageId = 2801;
+      const sendMessage = vi
+        .spyOn(bot.api, "sendMessage")
+        .mockImplementation(async (_chatId, text) => {
+          const messageId = nextMessageId++;
+          if (failLastSend && messageId === 2800 + chunks.length) {
+            throw sendFailure;
+          }
+          return {
+            message_id: messageId,
+            message_thread_id: 777,
+            date: 1_779_425_461,
+            chat: { id: 123, type: "private", first_name: "Test user" },
+            text,
+          };
+        });
+      const context = createContext({
+        ctxPayload: {
+          SessionKey: "agent:default:telegram:direct:123",
+          RawBody: "Explain this quote",
+          BodyForAgent: "Explain this quote",
+          ReplyToId: "9001",
+          ReplyToBody: "quoted slice",
+          ReplyToQuoteText: "quoted slice",
+          ReplyToIsQuote: true,
+        } as TelegramMessageContext["ctxPayload"],
+      });
+      mockDefaultSessionEntry();
+      readLatestAssistantTextByIdentity.mockResolvedValue({
+        id: "assistant-native-quote",
+        text: finalText,
+        timestamp: Date.now() + 1_000,
+      });
+      let observedError: unknown;
+      dispatchReplyWithBufferedBlockDispatcher.mockImplementation(async (params) =>
+        dispatchThroughSharedOwner({
+          ...params,
+          replyResolver: async () => ({ text: finalText, replyToId: "9001" }),
+          dispatcherOptions: {
+            ...params.dispatcherOptions,
+            onError: async (error, info) => {
+              observedError = error;
+              await params.dispatcherOptions.onError?.(error, info);
+            },
+          },
+        }),
+      );
+      const finalHistoryWrites: number[] = [];
+
+      await expect(
+        dispatchWithContext({
+          bot,
+          context,
+          replyToMode: "all",
+          textLimit,
+          telegramDeps: {
+            ...telegramDepsForTest,
+            deliverReplies: actualDelivery.deliverReplies,
+            recordOutboundMessageForPromptContext: async (params) => {
+              if (params.promptContextProjection?.finalPart === !failLastSend) {
+                finalHistoryWrites.push(params.messageId);
+                throw historyFailure;
+              }
+              return await recordOutboundMessageForPromptContextActual(params);
+            },
+          },
+        }),
+      ).resolves.toEqual({ kind: "completed" });
+
+      const acceptedCount = chunks.length - Number(failLastSend);
+      expect(finalHistoryWrites).toEqual([2800 + acceptedCount]);
+      expect(sendMessage).toHaveBeenCalledTimes(chunks.length);
+      expect(sendMessage.mock.calls.map(([, text]) => text).join("")).toBe(finalText);
+      for (const call of sendMessage.mock.calls) {
+        expect(call[2]?.reply_parameters).toMatchObject({
+          message_id: 9001,
+          quote: "quoted slice",
+        });
+      }
+      expect(isChannelPartialDeliveryError(observedError)).toBe(true);
+      if (!isChannelPartialDeliveryError(observedError)) {
+        throw observedError;
+      }
+      const messageIds = Array.from({ length: acceptedCount }, (_, index) => String(2801 + index));
+      if (failLastSend) {
+        const cleanupFailure = observedError.cause;
+        expect(cleanupFailure).toBeInstanceOf(AggregateError);
+        if (!(cleanupFailure instanceof AggregateError)) {
+          throw cleanupFailure;
+        }
+        expect(cleanupFailure.errors).toContain(historyFailure);
+        let acceptedFailure: unknown = cleanupFailure.errors[0];
+        while (isChannelPartialDeliveryError(acceptedFailure)) {
+          acceptedFailure = acceptedFailure.cause;
+        }
+        expect(acceptedFailure).toBe(sendFailure);
+      } else {
+        expect(observedError.cause).toBe(historyFailure);
+      }
+      expect(observedError.deliveryResult).toMatchObject({
+        visibleReplySent: true,
+        messageIds,
+        receipt: {
+          primaryPlatformMessageId: "2801",
+          platformMessageIds: messageIds,
+          threadId: "777",
+          parts: messageIds.map((platformMessageId) => ({
+            platformMessageId,
+            threadId: "777",
+          })),
+        },
+      });
+    },
+  );
 
   it("suppresses text-only tool payloads delivered after the final answer", async () => {
     const { answerDraftStream } = setupDraftStreams({ answerMessageId: 2001 });

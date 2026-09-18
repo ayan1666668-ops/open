@@ -385,17 +385,22 @@ export function createLaneTextDeliverer(params: CreateLaneTextDelivererParams): 
       return undefined;
     }
     lane.finalized = true;
-    await recordRetainedPromptContextPages(lane, promptContextSequence);
-    await promptContextSequence.accept({ messageId, text: activeSnapshot.text });
-    if (!followedByDurablePayload) {
-      await promptContextSequence.finish();
-    }
     const delivery = {
       content: previewText,
       messageId,
       buttonsAttached,
       receipt: createPreviewMessageReceipt({ id: messageId }),
     };
+    try {
+      await recordRetainedPromptContextPages(lane, promptContextSequence);
+      await promptContextSequence.accept({ messageId, text: activeSnapshot.text });
+      if (!followedByDurablePayload) {
+        await promptContextSequence.finish();
+      }
+    } catch (error) {
+      promptContextSequence.invalidate();
+      return { kind: "preview-finalized-partial", delivery, error };
+    }
     return buttonAttachmentError
       ? { kind: "preview-finalized-partial", delivery, error: buttonAttachmentError }
       : result("preview-finalized", delivery);
