@@ -167,6 +167,9 @@ export function createWorkerSessionTurnPlacementProvider(options: WorkerTurnLaun
         inputTurn.abortSignal?.throwIfAborted();
         assertRunCurrent?.();
         assertInitialSetupCurrent?.();
+        if (claim.sessionKey !== undefined && claim.sessionKey.trim() !== identity.sessionKey) {
+          resolvePlacementIdentity(claim, options.placements.get(claim.sessionId));
+        }
       };
       let placement: ActiveWorkerPlacement;
       let turnClaim: WorkerSessionTurnClaim;
@@ -213,10 +216,7 @@ export function createWorkerSessionTurnPlacementProvider(options: WorkerTurnLaun
             signal: inputTurn.abortSignal,
           });
           assertAdmissionCurrent();
-          identity = resolvePlacementIdentity(
-            { ...claim, agentId: identity.agentId, sessionKey: identity.sessionKey },
-            routablePlacement,
-          );
+          identity = resolvePlacementIdentity(claim, routablePlacement);
         }
         if (hasPendingWorkspaceResultToSettle(identity.sessionId, claim.runId)) {
           await waitForPendingWorkerResult({
@@ -275,6 +275,7 @@ export function createWorkerSessionTurnPlacementProvider(options: WorkerTurnLaun
             identity,
             placement,
             runId: claim.runId,
+            assertCurrent: assertAdmissionCurrent,
             isCancellationRequested: (activeClaim) => {
               const active = activeWorkerTurns.get(activeClaim.sessionId);
               return Boolean(
@@ -387,7 +388,7 @@ export function createWorkerSessionTurnPlacementProvider(options: WorkerTurnLaun
           return await execute({
             ...executionParams,
             runLocal,
-            assertRunCurrent: remoteExec ? assertRunCurrent : assertAdmissionCurrent,
+            assertRunCurrent: assertAdmissionCurrent,
           });
         } catch (error) {
           if (error instanceof StaleWorkerBuildError) {
