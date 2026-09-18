@@ -43,6 +43,7 @@ import { normalizeProxyIp } from "./proxy-ip.js";
 import { resolveCallAgentId } from "./resolve-call-agent-id.js";
 import type { CallRecord, NormalizedEvent, WebhookContext } from "./types.js";
 import type { WebhookResponsePayload } from "./webhook.types.js";
+import { createAutoResponseSpeaker } from "./webhook/auto-response-speech.js";
 import type { RealtimeCallHandler } from "./webhook/realtime-handler.js";
 import { startStaleCallReaper } from "./webhook/stale-call-reaper.js";
 import {
@@ -1117,35 +1118,16 @@ export class VoiceCallWebhookServer {
     }
 
     const response = this.manager.createAutoResponseGuard(call);
-    // Text already delivered to speech within this auto-response run. A long
-    // reply keeps playback in flight long enough that a second delivery event
-    // (run completion, or a later flush) can request the identical text again,
-    // so the caller would hear the same reply twice back to back.
-    //
-    // Committed only after delivery succeeds: a failed early attempt must leave
-    // the final path free to speak the same text, otherwise a failure to play
-    // early would silently become "already said that" and the caller would hear
-    // nothing at all.
-    let deliveredText: string | null = null;
-    const speakResponse = async (text: string): Promise<boolean> => {
-      if (!response.isCurrent()) {
-        this.logger.info(`Discarding superseded automatic reply ${callId}`);
-        return false;
-      }
-      if (deliveredText === text) {
-        this.logger.info(`Skipping duplicate automatic reply ${callId} chars=${text.length}`);
-        return true;
-      }
-      this.logger.info(`AI response queued ${callId} chars=${text.length}`);
-      const result = await this.manager.speak(callId, text, {
-        listenAfterPlayback: true,
-        isCurrent: response.isCurrent,
-      });
-      if (result.success) {
-        deliveredText = text;
-      }
-      return result.success;
-    };
+    const speakResponse = createAutoResponseSpeaker({
+      callId,
+      isCurrent: response.isCurrent,
+      logger: this.logger,
+      deliver: (text) =>
+        this.manager.speak(callId, text, {
+          listenAfterPlayback: true,
+          isCurrent: response.isCurrent,
+        }),
+    });
     try {
       const { generateVoiceResponse } = await loadResponseGeneratorModule();
       if (!response.isCurrent()) {
