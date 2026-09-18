@@ -1,5 +1,7 @@
 // Non-isolated runner helps execute tests without Vitest isolation.
+import { writeSync } from "node:fs";
 import path from "node:path";
+import { threadId } from "node:worker_threads";
 import type {
   EvaluatedModuleNode as ViteEvaluatedModuleNode,
   EvaluatedModules as ViteEvaluatedModules,
@@ -57,6 +59,44 @@ const DIAGNOSTIC_EVENT_LISTENER_PRESENCE = Symbol.for(
 const SESSION_SUSPENSION_TEST_API = Symbol.for("openclaw.sessionSuspensionTestApi");
 // Shared-worker scoped: the registry lives on the worker global, not in the module graph.
 const CUSTOM_ELEMENT_TRACKING = Symbol.for("openclaw.nonIsolatedCustomElementTracking");
+// Temporary CI attribution for the direct-entrypoint shard stall; remove before landing.
+const CPU_CAMPAIGN_CI_TRACE = Symbol.for("openclaw.cpuCampaignCiTrace");
+type CpuCampaignCiTrace = {
+  remaining: number;
+  targetSeen: boolean;
+  nextCollection?: string;
+};
+
+function traceCpuCampaignCiPhase(phase: string, files: RunnerTestFile[]): void {
+  const stateOwner = globalThis as typeof globalThis & {
+    [CPU_CAMPAIGN_CI_TRACE]?: CpuCampaignCiTrace;
+  };
+  const state = (stateOwner[CPU_CAMPAIGN_CI_TRACE] ??= {
+    remaining: 16,
+    targetSeen: false,
+  });
+  for (const file of files) {
+    const basename = path.posix.basename(file.filepath);
+    const target = basename === "direct-run-entrypoints.test.ts";
+    if (target) {
+      state.targetSeen = true;
+    } else if (state.targetSeen && phase === "collect-start" && !state.nextCollection) {
+      state.nextCollection = basename;
+    }
+    const followingCollection =
+      basename === state.nextCollection &&
+      (phase === "collect-start" || phase === "collect-complete");
+    if (state.remaining === 0 || (!target && !followingCollection)) {
+      continue;
+    }
+    state.remaining -= 1;
+    writeSync(
+      2,
+      `[cpu-ci-phase] ${JSON.stringify({ phase, file: basename, pid: process.pid, threadId, workerId: file.workerId })}\n`,
+    );
+  }
+}
+
 const nativeConsoleMethods = {
   log: console.log,
   info: console.info,
@@ -389,6 +429,7 @@ async function drainMockerResolveMocks(mocker: ModuleMocker | undefined): Promis
 
 export default class OpenClawNonIsolatedRunner extends TestRunner {
   override onCollectStart(file: RunnerTestFile) {
+    traceCpuCampaignCiPhase("collect-start", [file]);
     super.onCollectStart(file);
     if (!this.config.isolate) {
       installCustomElementTracking();
@@ -396,6 +437,7 @@ export default class OpenClawNonIsolatedRunner extends TestRunner {
     restoreRealTimers();
     restoreNativeTimerGlobals();
     restoreSharedTestHomeAfterEnvUnstub(getSharedTestHome());
+    traceCpuCampaignCiPhase("collect-complete", [file]);
   }
 
   override async onBeforeRunTask(test: RunnerTask) {
@@ -419,9 +461,12 @@ export default class OpenClawNonIsolatedRunner extends TestRunner {
   // of its collect/run outcome.
   // oxlint-disable-next-line typescript/no-misused-promises -- Vitest awaits this hook; its concrete TestRunner declaration narrows the return to void.
   override async onAfterRunFiles(files: RunnerTestFile[]) {
+    traceCpuCampaignCiPhase("after-files-start", files);
     super.onAfterRunFiles(files);
     const internals = this as unknown as TestRunnerInternals;
+    traceCpuCampaignCiPhase("mocks-drain-start", files);
     await drainMockerResolveMocks(internals.moduleRunner?.mocker);
+    traceCpuCampaignCiPhase("mocks-drain-complete", files);
 
     // Mirror the missing cleanup from Vitest isolate mode so shared workers do
     // not carry file-scoped timers, stubs, spies, or stale module state
@@ -444,7 +489,9 @@ export default class OpenClawNonIsolatedRunner extends TestRunner {
     resetOpenClawSessionSuspensionState();
     // Lifecycle-owned singletons survive module resets; close them before the next file
     // can observe a previous file's sessions, caches, or registered resources.
+    traceCpuCampaignCiPhase("singletons-drain-start", files);
     await drainGlobalSingletonLifecycleState();
+    traceCpuCampaignCiPhase("singletons-drain-complete", files);
     if (this.config.isolate) {
       return;
     }
@@ -462,5 +509,6 @@ export default class OpenClawNonIsolatedRunner extends TestRunner {
       internals.workerState.evaluatedModules as EvaluatedModules,
       internals.workerState.moduleExecutionInfo,
     );
+    traceCpuCampaignCiPhase("modules-reset-complete", files);
   }
 }
