@@ -20,8 +20,8 @@ import { isRecord, normalizeStringEntries } from "openclaw/plugin-sdk/string-coe
 import { convertMarkdownTables } from "openclaw/plugin-sdk/text-chunking";
 import type { ChannelOutboundAdapter } from "../runtime-api.js";
 import { resolveFeishuAccount } from "./accounts.js";
+import { sendCommentThreadReply } from "./comment-send.js";
 import { parseFeishuCommentTarget } from "./comment-target.js";
-import { sendCommentThreadReply } from "./comment-thread-delivery.js";
 import { resolveFeishuIdentityHeaderTitle } from "./identity-header.js";
 import { normalizePossibleLocalImagePath } from "./local-image-path.js";
 import {
@@ -68,6 +68,7 @@ import {
   cardCarriesWholeTable,
 } from "./presentation-card.js";
 import type { FeishuReplyDeliverySource } from "./reply-delivery-result.js";
+import { withFeishuSendContext } from "./send-context.js";
 import {
   chunkFeishuCardMarkdown,
   sendCardFeishu,
@@ -487,6 +488,32 @@ export function presentationTextRenderer(ctx: Pick<FeishuSendPayloadContext, "cf
   return (text: string) => (tableMode === "block" ? text : convertMarkdownTables(text, tableMode));
 }
 
+function withFeishuOutboundSendContext(adapter: ChannelOutboundAdapter): ChannelOutboundAdapter {
+  // Every text sender this adapter advertises needs the scope, not just the per-message one.
+  // The authority checks deeper in the client read an ambient store, so a sender left out of
+  // this set reaches the transport with no scope to find and every one of those checks
+  // becomes a no-op for that route.
+  const { sendText, sendFormattedText, sendMedia, sendPayload } = adapter;
+  return {
+    ...adapter,
+    ...(sendText
+      ? { sendText: async (ctx) => withFeishuSendContext(ctx, () => sendText(ctx)) }
+      : {}),
+    ...(sendFormattedText
+      ? {
+          sendFormattedText: async (ctx) =>
+            withFeishuSendContext(ctx, () => sendFormattedText(ctx)),
+        }
+      : {}),
+    ...(sendMedia
+      ? { sendMedia: async (ctx) => withFeishuSendContext(ctx, () => sendMedia(ctx)) }
+      : {}),
+    ...(sendPayload
+      ? { sendPayload: async (ctx) => withFeishuSendContext(ctx, () => sendPayload(ctx)) }
+      : {}),
+  };
+}
+
 // `feishuOutbound` keeps the shared `ChannelOutboundAdapter` shape (whose
 // `sendMedia` is optional) so the object literal — which spreads
 // `createAttachedChannelResultAdapter` (returning `sendMedia?: ... | undefined`)
@@ -596,7 +623,7 @@ async function deliverFeishuOutboundText(ctx: FeishuSendTextContext) {
   );
 }
 
-export const feishuOutbound: ChannelOutboundAdapter = {
+export const feishuOutbound: ChannelOutboundAdapter = withFeishuOutboundSendContext({
   deliveryMode: "direct",
   chunker: chunkFeishuMarkdown,
   chunkerMode: "markdown",
@@ -991,5 +1018,5 @@ export const feishuOutbound: ChannelOutboundAdapter = {
       return toFeishuOutboundResult(aggregateFeishuSendResult(mediaResult, results));
     },
   }),
-};
+});
 /* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

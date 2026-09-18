@@ -26,6 +26,34 @@ the old Gateway serves, then activates and verifies the update.
 openclaw update
 ```
 
+Managed-service inspection is best effort. If the service manager is unavailable,
+including Linux hosts without systemd, the update continues and records a warning.
+It leaves unverified service definitions unchanged and skips their automatic
+restart. Restart the Gateway you launched manually after the update, or use its
+actual supervisor. Doctor still checks for active state writers before migrations.
+
+The installed 2026.9.4 updater can refuse with `managed-service-preflight` before
+the target code runs. To reach a release containing this repair, use the
+[manual package-manager procedure](/install/updating/update-methods#alternative-manual-npm-pnpm-or-bun)
+with the same owning package manager, prefix, and state/configuration. Back up
+first, stop the Gateway through its actual supervisor or foreground process owner,
+replace the package, run Doctor, and restart through that same owner.
+`--no-restart` cannot repair the old admission check.
+
+Registry updates inspect the exact candidate's Node requirement before staging.
+An incompatible runtime produces `node-runtime-preflight`, with the target
+version, required engine range, selected Node version, and an upgrade command.
+npm directory permission failures produce `global-install-permission-denied`,
+naming the directory, its owner when available, and the next action. Dry-run JSON
+includes these outcomes in `failures`; the update report and Doctor's update
+history retain recorded failures. The serving Gateway stays in place during
+these preflight checks.
+
+These checks run in the **installed updater**. Older updaters cannot gain new
+preflight behavior from the candidate they have not installed yet. If upgrading
+from an older release, check [Node requirements](/install/node) and the npm
+prefix's permissions first; see [update troubleshooting](/install/update-troubleshooting#node-and-global-install-permissions).
+
 <Note>
 On FreeBSD, OpenClaw 2026.9.4 can stop before staging an update with
 `managed handoff process start identity is unavailable`. Changing the target or

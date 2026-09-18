@@ -17,8 +17,6 @@ import {
   defineChannelMessageAdapter,
   createRuntimeOutboundDelegates,
   createAccountStatusSink,
-  type ChannelMessageSendResult,
-  type MessageReceiptPartKind,
 } from "openclaw/plugin-sdk/channel-outbound";
 import { createPairingPrefixStripper } from "openclaw/plugin-sdk/channel-pairing";
 import {
@@ -110,7 +108,8 @@ import {
 } from "./read-policy.js";
 import { collectRuntimeConfigAssignments, secretTargetRegistryEntries } from "./secret-contract.js";
 import { collectFeishuSecurityAuditFindings } from "./security-audit.js";
-import { createFeishuSendReceipt } from "./send-result.js";
+import { withFeishuSendContext } from "./send-context.js";
+import { toFeishuMessageSendResult } from "./send-result.js";
 import { resolveFeishuSessionConversation } from "./session-conversation.js";
 import { resolveFeishuOutboundSessionRoute } from "./session-route.js";
 import { feishuSetupContract } from "./setup-core.js";
@@ -306,23 +305,6 @@ const resolveFeishuMediaSender = () =>
     resolve: (runtime) => runtime.feishuOutbound.sendMedia,
     unavailableMessage: "Feishu media sending is not available.",
   });
-
-function toFeishuMessageSendResult(
-  result: { messageId?: string; chatId?: string; receipt?: ChannelMessageSendResult["receipt"] },
-  kind: MessageReceiptPartKind,
-): ChannelMessageSendResult {
-  const receipt =
-    result.receipt ??
-    createFeishuSendReceipt({
-      messageId: result.messageId,
-      chatId: result.chatId ?? "",
-      kind,
-    });
-  return {
-    messageId: result.messageId || receipt.primaryPlatformMessageId,
-    receipt,
-  };
-}
 
 const feishuMessageAdapter = defineChannelMessageAdapter({
   id: "feishu",
@@ -1238,6 +1220,10 @@ export const feishuPlugin: ChannelPlugin<ResolvedFeishuAccount, FeishuProbeResul
             return jsonActionResult({ ok: true, channel: "feishu", action: "sticker", ...result });
           }
           if (ctx.action === "send" || ctx.action === "thread-reply") {
+            const sendContext = {
+              assertDirectAdapterHandoff: ctx.assertDirectAdapterHandoff,
+              onPlatformSendDispatch: ctx.onPlatformSendDispatch,
+            };
             const to = resolveFeishuActionTarget(ctx);
             if (!to) {
               throw new Error(`Feishu ${ctx.action} requires a target (to).`);
@@ -1300,6 +1286,7 @@ export const feishuPlugin: ChannelPlugin<ResolvedFeishuAccount, FeishuProbeResul
               // structured presentation; never expose it in the text fallback.
               const fallbackText = textCard ? undefined : text;
               result = await sendPayload({
+                ...sendContext,
                 cfg: ctx.cfg,
                 to,
                 text: fallbackText ?? "",
@@ -1338,16 +1325,19 @@ export const feishuPlugin: ChannelPlugin<ResolvedFeishuAccount, FeishuProbeResul
                   "Feishu card buttons that trigger text or commands must use structured interaction envelopes.",
                 );
               }
-              result = await runtime.sendCardFeishu({
-                cfg: ctx.cfg,
-                to,
-                card,
-                accountId: ctx.accountId ?? undefined,
-                replyToMessageId,
-                replyInThread,
-              });
+              result = await withFeishuSendContext(sendContext, () =>
+                runtime.sendCardFeishu({
+                  cfg: ctx.cfg,
+                  to,
+                  card,
+                  accountId: ctx.accountId ?? undefined,
+                  replyToMessageId,
+                  replyInThread,
+                }),
+              );
             } else {
               const outboundContext = {
+                ...sendContext,
                 cfg: ctx.cfg,
                 to,
                 text: text ?? "",
