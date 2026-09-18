@@ -1,3 +1,5 @@
+import { SHARED_AUTH_STORE_STATE_KEY } from "../agents/auth-profiles/path-resolve.js";
+import { inspectAuthProfileJsonCellReadOnly } from "../agents/auth-profiles/sqlite.js";
 import {
   readNativeHookRelayBridgeSnapshotFromDatabase,
   listNativeHookRelayBridgeSnapshotsInDatabase,
@@ -67,14 +69,18 @@ import {
   pruneSessionStateEventsInDatabase,
   recordSessionStateEventInDatabase,
 } from "../sessions/session-state-events.kernel.js";
+import { listWatchedSessionUpstreamLinksInDatabase } from "../sessions/session-upstream-links.kernel.js";
 import { isTaskRegistryWorkerCommand } from "../tasks/task-registry.worker-contract.js";
 import { executeTaskRegistryCommand } from "../tasks/task-registry.worker.js";
+import { ensureMeetingTranscriptsSchema } from "../transcripts/sqlite-schema.js";
+import { executeTranscriptRead } from "../transcripts/store-worker-read.js";
 import {
   listAgentProvenanceInDatabase,
   readAgentProvenanceBatchInDatabase,
 } from "./agent-provenance.kernel.js";
 import { ensureAgentProvenanceSchema } from "./agent-provenance.schema.js";
 import { recordBackupRunInDatabase } from "./backup-run-records.kernel.js";
+import { readConfigMachineState } from "./config-machine-state.js";
 import {
   openClawStateDatabaseCache,
   retainOpenClawStateDatabase,
@@ -96,6 +102,7 @@ import type {
   OpenClawStateWorkerOperations,
   OpenClawStateWorkerInspectionOperations,
 } from "./openclaw-state-worker-contract.js";
+import { readUserModelAuthProfile } from "./user-model-accounts.js";
 import { executeUserPreferenceCommand } from "./user-preferences.worker.js";
 
 export function createSqliteWorkerBackend(
@@ -149,6 +156,30 @@ function createSharedStateWorkerBackend(
     execute(command) {
       if (closed) {
         throw new Error("Shared-state worker is closed");
+      }
+      if (
+        command.type === "authProfiles.read" ||
+        command.type === "authProfiles.sharedOwnership" ||
+        command.type === "authProfiles.personal"
+      ) {
+        const read = () => {
+          const options = {
+            path: context.databasePath,
+            env: getSqliteWorkerStateContext().environment,
+          };
+          if (command.type === "authProfiles.sharedOwnership") {
+            return readConfigMachineState(SHARED_AUTH_STORE_STATE_KEY, options);
+          }
+          if (command.type === "authProfiles.personal") {
+            return readUserModelAuthProfile(command.input.profileId, options);
+          }
+          const target = { kind: "shared-state" as const, ...options };
+          return {
+            store: inspectAuthProfileJsonCellReadOnly(target, "store"),
+            state: inspectAuthProfileJsonCellReadOnly(target, "state"),
+          };
+        };
+        return command.input.artifactPreserving ? withArtifactPreservingStateReads(read) : read();
       }
       if (command.type === "promotions.markNotified" || command.type === "promotions.recordClaim") {
         return executePromotionCommand(
@@ -308,6 +339,29 @@ function createSharedStateWorkerBackend(
       if (command.type === "deviceAuth.list") {
         return readDeviceAuthTokensFromDatabase(database.db, command.input);
       }
+      switch (command.type) {
+        case "transcripts.sessionEntries":
+        case "transcripts.matches":
+        case "transcripts.session":
+        case "transcripts.entry":
+        case "transcripts.latest":
+        case "transcripts.notes":
+        case "transcripts.libraryEntry":
+        case "transcripts.recentStopped":
+        case "transcripts.summaryRevision":
+        case "transcripts.utterances":
+        case "transcripts.summary": {
+          ensureMeetingTranscriptsSchema({
+            database,
+            path: context.databasePath,
+            env: getSqliteWorkerStateContext().environment,
+            readOnly: command.input.readOnly,
+          });
+          return executeTranscriptRead(database.db, command);
+        }
+        default:
+          break;
+      }
       if (command.type === "managedImages.read") {
         return readManagedImageRecordInDatabase(database.db, command.input.attachmentId);
       }
@@ -340,6 +394,9 @@ function createSharedStateWorkerBackend(
           path: context.databasePath,
           env: getSqliteWorkerStateContext().environment,
         });
+      }
+      if (command.type === "sessionUpstream.listWatched") {
+        return listWatchedSessionUpstreamLinksInDatabase(database.db);
       }
       if (command.type === "cron.loadMutable") {
         return loadMutableCronStoreInWorker(database, command.input.storeKey);
