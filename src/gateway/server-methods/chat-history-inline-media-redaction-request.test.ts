@@ -6,9 +6,10 @@ import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js"
 import {
   appendTranscriptMessage,
   appendTranscriptMessageSync,
+  upsertSessionEntryCore,
 } from "../../config/sessions/session-accessor.js";
 import { createNestedToolActivity } from "../../sessions/nested-tool-activity.js";
-import { installGatewayTestHooks, rpcReq, testState, writeSessionStore } from "../test-helpers.js";
+import { installGatewayTestHooks, rpcReq, testState } from "../test-helpers.js";
 import { installConnectedControlUiServerSuite } from "../test-with-server.js";
 
 installGatewayTestHooks({ scope: "suite" });
@@ -38,11 +39,15 @@ describe("chat history inline media redaction (real WS gateway)", () => {
     const dir = tempDirs.make("openclaw-chat-history-redact-");
     testState.sessionStorePath = path.join(dir, "sessions.json");
     try {
-      await writeSessionStore({
-        entries: {
-          [SESSION_KEY]: { sessionId: SESSION_ID, updatedAt: Date.now() },
+      await upsertSessionEntryCore(
+        {
+          agentId: "main",
+          sessionId: SESSION_ID,
+          sessionKey: SESSION_KEY,
+          storePath: testState.sessionStorePath,
         },
-      });
+        { sessionId: SESSION_ID, updatedAt: Date.now() },
+      );
       const appendResult = appendTranscriptMessageSync(
         {
           agentId: "main",
@@ -152,11 +157,15 @@ describe("chat history inline media redaction (real WS gateway)", () => {
     const dir = tempDirs.make("openclaw-chat-history-cursor-redact-");
     testState.sessionStorePath = path.join(dir, "sessions.json");
     try {
-      await writeSessionStore({
-        entries: {
-          [SESSION_KEY]: { sessionId: SESSION_ID, updatedAt: Date.now() },
+      await upsertSessionEntryCore(
+        {
+          agentId: "main",
+          sessionId: SESSION_ID,
+          sessionKey: SESSION_KEY,
+          storePath: testState.sessionStorePath,
         },
-      });
+        { sessionId: SESSION_ID, updatedAt: Date.now() },
+      );
       await appendTranscriptMessage(
         {
           agentId: "main",
