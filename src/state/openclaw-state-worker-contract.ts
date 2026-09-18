@@ -35,6 +35,7 @@ import type {
   SessionStateEventInput,
   SessionStateNotice,
 } from "../sessions/session-state-events.kernel.js";
+import type { DeviceAuthEntry } from "../shared/device-auth.js";
 import type { SkillProposalEvent, SkillProposalRecord } from "../skills/workshop/types.js";
 import type { TaskRegistryWorkerOperations } from "../tasks/task-registry.worker-contract.js";
 import type { AgentProvenance } from "./agent-provenance.types.js";
@@ -54,6 +55,7 @@ export type OpenClawStateWorkerOperations = WebPushWorkerOperations &
   SessionDeliveryWorkerOperations &
   DeliveryQueueWorkerOperations &
   TaskRegistryWorkerOperations & {
+    "deviceAuth.list": { input: { deviceId: string }; output: DeviceAuthEntry[] };
     "apns.registration.read": { input: string; output: ApnsRegistration | null };
     "apns.registrations.read": { input: readonly string[]; output: Map<string, ApnsRegistration> };
     "agentProvenance.readBatch": {
@@ -78,6 +80,7 @@ export type OpenClawStateWorkerOperations = WebPushWorkerOperations &
     "backup.recordOutcome": { input: PreparedBackupRunRecord; output: void };
     "projects.findRoot": { input: { repoRoot: string }; output: string | undefined };
     "projects.list": { input: undefined; output: ProjectRegistryRecord[] };
+    "projects.resolve": { input: { id: string }; output: ProjectRegistryRecord | undefined };
     "projects.insert": {
       input: { project: ProjectRegistryInsert; lease: OpenClawStateLeaseIdentity };
       output: ProjectRegistryRecord;
