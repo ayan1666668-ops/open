@@ -176,8 +176,9 @@ export async function withSessionPlacementTurnAdmission(
         : runAdmittedLocalTurn(),
     ),
   );
-  if (result.meta.executionTrace?.runner === "cli") {
-    // CLI completion must release placement before admitting a requester successor.
+  if (result.meta.executionTrace?.runner === "cli" && params.isFinalFallbackAttempt === undefined) {
+    // Standalone CLI completion releases placement before admitting a successor;
+    // fallback candidates leave the handoff to their logical run entry.
     settleRequesterRun({ ...params, ...claim }, result, assertCurrent);
   }
   return result;
@@ -195,6 +196,7 @@ export async function withLocalSessionPlacementTurnSettlement(
     | "inputProvenance"
     | "admittedRunContext"
     | "preparedRunAdmission"
+    | "isFinalFallbackAttempt"
   > = {},
 ): Promise<EmbeddedAgentRunResult> {
   const provider = state.provider;
@@ -258,17 +260,20 @@ export async function withLocalSessionPlacementTurnSettlement(
             provider ? provider.executeLocalTurn(claim, runLocal) : runLocal(),
           ),
         );
-        settleRequesterRun({ ...options, ...claim }, result, () => {
-          assertCurrent();
-          options.preparedRunAdmission?.assertSourceCurrent();
-          if (options.admittedRunContext && !assertAdmittedRunCurrent) {
-            throw createAbortError("admitted run authority is no longer active");
-          }
-          assertAdmittedRunCurrent?.();
-          if (!isCommandLaneTaskMarkerCurrent(taskMarker)) {
-            throw createSessionPlacementSettlementClosedAbortError();
-          }
-        });
+        if (options.isFinalFallbackAttempt === undefined) {
+          // Candidate classification is provisional until the outer entry accepts it.
+          settleRequesterRun({ ...options, ...claim }, result, () => {
+            assertCurrent();
+            options.preparedRunAdmission?.assertSourceCurrent();
+            if (options.admittedRunContext && !assertAdmittedRunCurrent) {
+              throw createAbortError("admitted run authority is no longer active");
+            }
+            assertAdmittedRunCurrent?.();
+            if (!isCommandLaneTaskMarkerCurrent(taskMarker)) {
+              throw createSessionPlacementSettlementClosedAbortError();
+            }
+          });
+        }
         return result;
       },
       {

@@ -696,7 +696,10 @@ async function runEmbeddedAgentInternal(
           }
         }
         refresh.mergeTerminalReceipt(result);
-        if (result.meta.executionTrace?.runner !== "cli") {
+        if (
+          result.meta.executionTrace?.runner !== "cli" &&
+          params.isFinalFallbackAttempt === undefined
+        ) {
           settleRequesterRun(params, result, () => {
             throwIfAborted();
             params.preparedRunAdmission?.assertSourceCurrent();

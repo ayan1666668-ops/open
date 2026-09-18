@@ -551,50 +551,59 @@ describe("local turn placement admission", () => {
     );
   });
 
-  it("settles CLI child ownership only after local placement releases", async () => {
-    const events: string[] = [];
-    settleRequesterAfterSessionSpawns.mockImplementation(() => {
-      events.push("settle");
-      return true;
-    });
-    uninstallProvider = installSessionPlacementAdmissionProvider({
-      assertCompactionSuccessorAllowed,
-      async executeLocalTurn<T>(
-        _claim: LocalTurnPlacementClaim,
-        runLocal: () => Promise<T>,
-      ): Promise<T> {
-        events.push("claim");
-        const result = await runLocal();
-        events.push("release");
-        return result;
-      },
-      executeTurn: async (_claim, _params, runLocal) => await runLocal(),
-    });
+  it.each([undefined, false, true])(
+    "settles only standalone CLI ownership after placement releases (candidate marker=%s)",
+    async (isFinalFallbackAttempt) => {
+      const events: string[] = [];
+      settleRequesterAfterSessionSpawns.mockImplementation(() => {
+        events.push("settle");
+        return true;
+      });
+      uninstallProvider = installSessionPlacementAdmissionProvider({
+        assertCompactionSuccessorAllowed,
+        async executeLocalTurn<T>(
+          _claim: LocalTurnPlacementClaim,
+          runLocal: () => Promise<T>,
+        ): Promise<T> {
+          events.push("claim");
+          const result = await runLocal();
+          events.push("release");
+          return result;
+        },
+        executeTurn: async (_claim, _params, runLocal) => await runLocal(),
+      });
 
-    await withLocalSessionPlacementTurnSettlement(
-      {
-        sessionId: "session-cli",
-        sessionKey: "agent:main:cli",
-        agentId: "main",
-        runId: "run-cli",
-      },
-      async () => {
-        events.push("turn");
-        return {
-          acceptedSessionSpawns: [
-            {
-              runId: "child-run",
-              childSessionKey: "agent:main:subagent:child",
-              expectsCompletionMessage: true,
-            },
-          ],
-          meta: { durationMs: 1, yielded: true },
-        };
-      },
-    );
+      await withLocalSessionPlacementTurnSettlement(
+        {
+          sessionId: "session-cli",
+          sessionKey: "agent:main:cli",
+          agentId: "main",
+          runId: "run-cli",
+        },
+        async () => {
+          events.push("turn");
+          return {
+            acceptedSessionSpawns: [
+              {
+                runId: "child-run",
+                childSessionKey: "agent:main:subagent:child",
+                expectsCompletionMessage: true,
+              },
+            ],
+            meta: { durationMs: 1, yielded: true },
+          };
+        },
+        { isFinalFallbackAttempt },
+      );
 
-    expect(events).toEqual(["claim", "turn", "release", "settle"]);
-  });
+      expect(events).toEqual([
+        "claim",
+        "turn",
+        "release",
+        ...(isFinalFallbackAttempt === undefined ? ["settle"] : []),
+      ]);
+    },
+  );
 
   it.each(["settled", "reset-without-successor", "reset-with-successor"] as const)(
     "closes a standalone CLI settlement assertion after its lane task is %s",

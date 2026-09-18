@@ -7,6 +7,7 @@ import {
 } from "../../infra/agent-events.js";
 import { getAgentRunContext } from "../../infra/agent-run-registry.js";
 import { requireActivePluginRegistry } from "../../plugins/runtime.js";
+import { mergeAcceptedSessionSpawnsForRun } from "../accepted-session-spawn.js";
 import type { PreparedAgentRunAdmission } from "../admitted-run-context.js";
 import {
   createAssistantErrorTranscript,
@@ -33,7 +34,7 @@ import type {
   ModelFallbackRouteResolution,
 } from "../model-fallback.types.js";
 import type { ModelManifestNormalizationContext } from "../model-ref-shared.js";
-import { settleFailedRequesterRun } from "../requester-run-settlement.js";
+import { settleFailedRequesterRun, settleRequesterRun } from "../requester-run-settlement.js";
 import { resolveAgentRunAbortLifecycleFields } from "../run-termination.js";
 import {
   didEmbeddedCyberFailoverTargetCommitWork,
@@ -54,6 +55,7 @@ import {
   buildRunEntryTerminal,
   canAdvanceContextEngineTurn,
   mergeRunEntryExecutionTrace,
+  preserveFollowupResultForDelivery,
   resolveRunEntryTerminalOutcome,
   type EmbeddedAgentRunEntryTerminal,
   type RunEntryTerminalBehavior,
@@ -144,34 +146,28 @@ type EmbeddedAgentRunEntryParams<T extends EmbeddedAgentRunResult> = {
   runCandidate: (provider: string, model: string, options: RunEntryCandidateOptions) => Promise<T>;
 };
 
-const PRESERVED_FOLLOWUP_RESULT_CODES = new Set([
-  "empty_result",
-  "reasoning_only_result",
-  "planning_only_result",
-]);
-
-function preserveFollowupResultForDelivery(
-  classification: ModelFallbackResultClassification,
-): ModelFallbackResultClassification {
-  if (
-    !classification ||
-    !("code" in classification) ||
-    !classification.code ||
-    !PRESERVED_FOLLOWUP_RESULT_CODES.has(classification.code)
-  ) {
-    return classification;
-  }
-  // Follow-up delivery owns its terminal fallback, so retain the classified
-  // result for that layer instead of replacing it with a summary error.
-  return {
-    ...classification,
-    preserveResultOnExhaustion: true,
-    preserveResultPriority: -1,
-  };
-}
-
 /** Runs one logical turn across model candidates and advances only the accepted winner. */
 export async function runEmbeddedAgentEntry<T extends EmbeddedAgentRunResult>(
+  params: EmbeddedAgentRunEntryParams<T>,
+): Promise<EmbeddedAgentRunEntryResult<T>> {
+  const admission = params.preparedRunAdmission;
+  const requester = {
+    ...params.identity,
+    preparedRunAdmission: admission,
+    abortSignal: params.abortSignal,
+  };
+  try {
+    const result = await runEmbeddedAgentEntryInternal(params);
+    // Placement and asynchronous terminal cleanup have finished. Only this
+    // accepted logical result may release children retained across candidates.
+    settleRequesterRun(requester, result.result, () => admission?.assertSourceCurrent());
+    return result;
+  } catch (error) {
+    throw settleFailedRequesterRun(requester, error);
+  }
+}
+
+async function runEmbeddedAgentEntryInternal<T extends EmbeddedAgentRunResult>(
   params: EmbeddedAgentRunEntryParams<T>,
 ): Promise<EmbeddedAgentRunEntryResult<T>> {
   const lifecycleGeneration = captureAgentRunLifecycleGeneration(params.identity.runId);
@@ -366,6 +362,15 @@ export async function runEmbeddedAgentEntry<T extends EmbeddedAgentRunResult>(
               return undefined;
             }
             if (!classified || classified.result !== result) {
+              if (params.preparedRunAdmission) {
+                const accepted = mergeAcceptedSessionSpawnsForRun(
+                  params.preparedRunAdmission.operationalRunInstance,
+                  result.acceptedSessionSpawns,
+                );
+                if (accepted.length) {
+                  result.acceptedSessionSpawns = accepted;
+                }
+              }
               const classification =
                 params.behavior.kind === "maintenance"
                   ? undefined
@@ -698,15 +703,6 @@ export async function runEmbeddedAgentEntry<T extends EmbeddedAgentRunResult>(
       }
     };
     return { ...settledResult, terminal, settleSessionOverride };
-  } catch (error) {
-    throw settleFailedRequesterRun(
-      {
-        ...params.identity,
-        preparedRunAdmission: params.preparedRunAdmission,
-        abortSignal: params.abortSignal,
-      },
-      error,
-    );
   } finally {
     if (unsettledContextEngineTurnAttempt) {
       discardContextEngineTurnAttemptIntent({

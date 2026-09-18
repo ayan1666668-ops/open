@@ -212,13 +212,15 @@ describe("sessions_yield orchestration", () => {
   );
 
   it.each([
-    { spawnOnRetry: false, agentHarnessId: "openclaw" },
-    { spawnOnRetry: true, agentHarnessId: "openclaw" },
-    { spawnOnRetry: false, agentHarnessId: "codex" },
-    { spawnOnRetry: true, agentHarnessId: "codex" },
+    { spawnOnRetry: false, agentHarnessId: "openclaw", outerCandidate: false },
+    { spawnOnRetry: true, agentHarnessId: "openclaw", outerCandidate: false },
+    { spawnOnRetry: false, agentHarnessId: "codex", outerCandidate: false },
+    { spawnOnRetry: true, agentHarnessId: "codex", outerCandidate: false },
+    { spawnOnRetry: true, agentHarnessId: "openclaw", outerCandidate: true },
+    { spawnOnRetry: true, agentHarnessId: "codex", outerCandidate: true },
   ])(
-    "hands off every accepted child after a transient retry ($agentHarnessId, new child: $spawnOnRetry)",
-    async ({ spawnOnRetry, agentHarnessId }) => {
+    "preserves child ownership through transient retries ($agentHarnessId, new child: $spawnOnRetry, candidate: $outerCandidate)",
+    async ({ spawnOnRetry, agentHarnessId, outerCandidate }) => {
       const registry = await import("../subagents/registry/subagent-registry.js");
       const { markRequesterTurnYieldedInRuns, settleRequesterTurnAfterSessionSpawns } =
         await import("../subagents/registry/subagent-registry-requester-yield.js");
@@ -305,14 +307,24 @@ describe("sessions_yield orchestration", () => {
           model: "gpt-5.6-luna",
           agentHarnessId,
           replyOperation,
+          ...(outerCandidate ? { isFinalFallbackAttempt: false } : {}),
         });
         expect(mockedRunEmbeddedAttempt).toHaveBeenCalledTimes(2);
         expect(result.meta.yielded).toBe(true);
-        expect(result.requesterContinuationSettled).toBe(true);
+        expect(result.requesterContinuationSettled).toBe(outerCandidate ? undefined : true);
         expect(result.acceptedSessionSpawns?.map((spawn) => spawn.runId).toSorted()).toEqual(
           [...runs.keys()].toSorted(),
         );
         for (const child of runs.values()) {
+          if (outerCandidate) {
+            expect(child).toMatchObject({
+              requesterTurnRunId: params.runId,
+              requesterTurnYielded: true,
+            });
+            expect(child.requesterSettleWake).toBeUndefined();
+            expect(settle).not.toHaveBeenCalled();
+            continue;
+          }
           expect(child).toMatchObject({
             requesterTurnRunId: undefined,
             requesterTurnYielded: undefined,

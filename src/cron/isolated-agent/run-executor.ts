@@ -137,13 +137,8 @@ function resolveCronBootstrapContextMode(
 ): BootstrapContextMode | undefined {
   // Command-like cron prompts benefit from lightweight bootstrap context so
   // simple scheduled command tasks do not spend budget on full repo context.
-  if (payload?.lightContext === true) {
-    return "lightweight";
-  }
-  if (payload?.lightContext === false) {
-    return undefined;
-  }
-  return isCommandStyleCronMessage(payload?.message ?? "") ? "lightweight" : undefined;
+  const lightweight = payload?.lightContext ?? isCommandStyleCronMessage(payload?.message ?? "");
+  return lightweight ? "lightweight" : undefined;
 }
 
 /** Creates the model-fallback executor for one isolated cron prompt run. */
@@ -626,7 +621,12 @@ function createCronPromptExecutor(
                 }
                 return candidateResult;
               },
-              { preparedRunAdmission, abortSignal: cliAbortSignal, trigger: "cron" },
+              {
+                preparedRunAdmission,
+                abortSignal: cliAbortSignal,
+                trigger: "cron",
+                isFinalFallbackAttempt: runOptions.isFinalFallbackAttempt,
+              },
             );
             bootstrapPromptWarningSignaturesSeen = resolveBootstrapWarningSignaturesSeen(
               result.meta?.systemPromptReport,
