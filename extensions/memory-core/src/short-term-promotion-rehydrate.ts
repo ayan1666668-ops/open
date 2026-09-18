@@ -161,6 +161,15 @@ function relocateCandidateRange(
   const targetSnippet = normalizeRecallSnippet(candidate.snippet);
   const preferredSpan = Math.max(1, candidate.endLine - candidate.startLine + 1);
   if (targetSnippet.length === 0) {
+    // normalizeRecallSnippet strips HTML comments, so a stored anchor that was
+    // entirely a comment (recording accepts it) normalizes away to nothing.
+    // Its recorded coordinates then point at whatever text now occupies those
+    // lines; trusting them would promote unrelated content. An anchor that was
+    // empty at recording time is the only shape that may use positional
+    // fallback, because it never claimed to match live text.
+    if (normalizeSnippet(candidate.snippet).length > 0) {
+      return null;
+    }
     const fallbackSnippet = normalizeRangeSnippet(lines, candidate.startLine, candidate.endLine);
     if (!fallbackSnippet) {
       return null;

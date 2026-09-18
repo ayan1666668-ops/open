@@ -2115,6 +2115,33 @@ describe("short-term promotion", () => {
     expect(applied.applied).toBe(0);
   });
 
+  it("does not promote replacement text through a comment-only stored anchor", async (workspaceDir) => {
+    await writeDailyMemoryNote(workspaceDir, "2026-04-01", [
+      "intro",
+      "summary",
+      "Moved backups to S3 Glacier.",
+      "Keep cold storage retention at 365 days.",
+    ]);
+    await recordMemoryRecalls(workspaceDir, "glacier", [
+      memoryRecallResult("memory/2026-04-01.md", 3, 4, 0.94, "<!-- archived backup note -->"),
+    ]);
+    // A comment-only anchor normalizes away to nothing after comment
+    // stripping. The recorded lines were later replaced by unrelated content,
+    // so positional fallback at the recorded coordinates would promote that
+    // replacement text; the candidate must surface as unresolved instead.
+    await writeDailyMemoryNote(workspaceDir, "2026-04-01", [
+      "intro",
+      "summary",
+      "Moved backups to S3 Glacier.",
+      "Unrelated replacement text now occupies the recorded lines.",
+    ]);
+
+    const ranked = await rankAllCandidates(workspaceDir);
+    const applied = await applyAllCandidates(workspaceDir, ranked);
+
+    expect(applied.applied).toBe(0);
+  });
+
   it("rehydrates daily-ingested heading-prefixed list snippets from the live note", async (workspaceDir) => {
     await writeDailyMemoryNote(workspaceDir, "2026-05-28", [
       "# 2026-05-28",
