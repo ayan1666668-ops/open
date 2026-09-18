@@ -92,7 +92,6 @@ export const databaseWorkerCoreTestFiles = [
   "src/flows/doctor-health.dangling-workshop-index.test.ts",
   "src/entry.memory-json.test.ts",
   "src/gateway/server-methods/memory-search.test.ts",
-  "src/gateway/server.visible-spawn-fallback.product-proof.test.ts",
   "src/logging/diagnostic-session-context.test.ts",
   "src/logging/diagnostic-stuck-session-recovery.runtime.test.ts",
   "src/memory/memory-artifact-provenance.test.ts",

@@ -60,6 +60,7 @@ async function startFixtureGatewayGeneration(params: {
   caseIds: readonly string[];
   configPath: string;
   port: number;
+  stateEnv: NodeJS.ProcessEnv;
   token: string;
 }) {
   const { config, snapshot } = createReturnCovenantGatewayConfigSnapshot({
@@ -76,11 +77,11 @@ async function startFixtureGatewayGeneration(params: {
     binding,
     caseIds: params.caseIds,
     config,
-    // Pin the isolated state owner for this generation's lifetime. A live
-    // `process.env` reference lets another case's deferred `state.cleanup()`
-    // restore the environment mid-flight, after which this generation resolves
-    // no state directory at all.
-    env: { ...process.env },
+    // Take the state owner from the case's own isolated state, not from ambient
+    // `process.env`. A timed-out case's deferred `state.cleanup()` restores the
+    // environment while later work is still in flight, and a snapshot of ambient
+    // values taken after that restore resolves no state directory at all.
+    env: { ...process.env, ...params.stateEnv },
   });
   const server = await startGatewayServer(
     params.port,
@@ -142,6 +143,7 @@ describe("return-covenant authenticated Gateway seam", () => {
       port,
       token,
       configPath: state.configPath,
+      stateEnv: state.env,
     });
     const { binding, request, server, service } = generation;
     try {
@@ -309,6 +311,7 @@ describe("return-covenant authenticated Gateway seam", () => {
       bootId: "return-covenant-generation-a",
       caseIds: ["allowed-gateway-restart-replay"],
       configPath: state.configPath,
+      stateEnv: state.env,
       port: firstPort,
       token,
     });
@@ -373,6 +376,7 @@ describe("return-covenant authenticated Gateway seam", () => {
         bootId: "return-covenant-generation-b",
         caseIds: ["allowed-gateway-restart-replay"],
         configPath: state.configPath,
+        stateEnv: state.env,
         port: replacementPort,
         token,
       });
