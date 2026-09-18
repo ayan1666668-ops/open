@@ -40,7 +40,7 @@ import {
   retainFulfilledNodeCapabilities,
 } from "./node-command-policy.js";
 import { resolveEffectiveComputerUseDescriptor } from "./node-computer-use-descriptor.js";
-import { serializeNodeEvent } from "./node-invoke-request.js";
+import { buildNodeInvokeCancel, serializeNodeEvent } from "./node-invoke-request.js";
 import type { NodeInvokeParams, NodeInvokeResult } from "./node-invoke.types.js";
 import {
   createRegisteredNodePluginToolDescriptorMap,
@@ -273,10 +273,8 @@ export class NodeRegistry {
       ) {
         return;
       }
-      this.sendEventToSession(node, "node.invoke.cancel", {
-        invokeId: requestId,
-        nodeId: pending.nodeId,
-      });
+      const cancel = buildNodeInvokeCancel(requestId, pending.nodeId);
+      this.sendEventToSession(node, "node.invoke.cancel", cancel);
     },
     isConnectionActive: (pending) => {
       const node = this.nodesById.get(pending.nodeId);
