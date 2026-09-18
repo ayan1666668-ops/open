@@ -30,6 +30,21 @@ import {
 import { resolveAuthProfileDatabasePath, type AuthProfileStoreOwner } from "./sqlite.js";
 import type { AuthProfileStore, RuntimeAuthProfileStore } from "./types.js";
 
+export function withCredentialSources(
+  store: AuthProfileStore,
+  databasePath: string,
+): RuntimeAuthProfileStore {
+  return {
+    ...store,
+    runtimeCredentialSources: Object.fromEntries(
+      Object.entries(store.profiles).map(([profileId, credential]) => [
+        profileId,
+        { databasePath, provider: credential.provider },
+      ]),
+    ),
+  };
+}
+
 export function createEmptyAuthProfileStore(): AuthProfileStore {
   return { version: AUTH_STORE_VERSION, profiles: {} };
 }
