@@ -5,11 +5,11 @@ import {
   type OpenClawStateDatabaseOptions,
 } from "./openclaw-state-db.js";
 import { listUserProfileGitHubLogins } from "./user-profile-github-identity.js";
-import { listProfiles } from "./user-profile-list.js";
+import { listUserProfilesSync } from "./user-profile-list.js";
 import { ensureUserProfilesSchema } from "./user-profiles-schema.js";
 
 export type UserProfileReadWorkerOperations = {
-  "userProfiles.list": { input: undefined; output: ReturnType<typeof listProfiles> };
+  "userProfiles.list": { input: undefined; output: ReturnType<typeof listUserProfilesSync> };
   "userProfiles.directory": {
     input: { limit: number };
     output: { profiles: Array<{ id: string; logins: string[] }>; truncated: boolean };
@@ -21,14 +21,16 @@ export function executeUserProfileReadCommand(
   options: OpenClawStateDatabaseOptions,
 ): UserProfileReadWorkerOperations[keyof UserProfileReadWorkerOperations]["output"] {
   if (command.type === "userProfiles.list") {
-    return listProfiles(options);
+    return listUserProfilesSync(options);
   }
   const database = openOpenClawStateDatabase(options);
   ensureUserProfilesSchema(options, database);
   return runSqliteDeferredTransactionSync(
     database.db,
     () => {
-      const profiles = listProfiles(options).filter((profile) => profile.mergedInto === null);
+      const profiles = listUserProfilesSync(options).filter(
+        (profile) => profile.mergedInto === null,
+      );
       const logins = listUserProfileGitHubLogins(options);
       return {
         profiles: profiles

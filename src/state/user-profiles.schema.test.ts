@@ -8,7 +8,7 @@ import {
   runOpenClawStateWriteTransaction,
 } from "./openclaw-state-db.js";
 import {
-  listProfiles,
+  listUserProfilesSync,
   readUserProfileIdentity,
   retainUserProfileCatalog,
 } from "./user-profile-list.js";
@@ -66,7 +66,7 @@ describe("user profile role schema", () => {
         id: profile.id,
         hasAvatar: false,
       });
-      expect(listProfiles(options)[0]).not.toHaveProperty("role");
+      expect(listUserProfilesSync(options)[0]).not.toHaveProperty("role");
       expect(tableHasColumn(database, "user_profiles", "role")).toBe(false);
       expect(getUserProfileRole(profile.id, options)).toBeNull();
       expect(database.prepare("PRAGMA user_version").get()?.user_version).toBe(versionBefore);
