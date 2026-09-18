@@ -1,6 +1,6 @@
 import path from "node:path";
 import { expectDefined } from "@openclaw/normalization-core";
-import { afterAll, describe, expect, test } from "vitest";
+import { afterAll, beforeEach, describe, expect, test } from "vitest";
 import type { WebSocket } from "ws";
 import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js";
 import {
@@ -50,6 +50,10 @@ const sessionStorePath = path.join(tempDirs.make("openclaw-chat-history-redact-"
 
 installConnectedControlUiServerSuite((started) => {
   ws = started.ws;
+});
+
+beforeEach(() => {
+  testState.sessionStorePath = sessionStorePath;
 });
 
 function expectRedactedInlineMediaBlock(content: unknown): void {
