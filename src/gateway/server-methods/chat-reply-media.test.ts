@@ -220,6 +220,33 @@ describe("normalizeWebchatReplyMediaPathsForDisplay", () => {
     );
   });
 
+  it.each(["file://attacker/share/probe.mp3", "file:///outside/secret.png"])(
+    "keeps deferred tool media rejection visible for %s",
+    async (mediaUrl) => {
+      const { cfg, stateDir } = createMediaTestContext({ allowRead: true });
+      const payload = await normalizeReplyMedia({
+        cfg,
+        payloads: [{ text: "NO_REPLY", mediaUrls: [mediaUrl] }],
+      });
+      const { assistantContent } = await buildAssistantReplyContent({
+        sessionKey: TEST_SESSION_KEY,
+        agentId: "main",
+        payloads: payload ? [payload] : [],
+        managedMediaLocalRoots: getAgentScopedMediaLocalRoots(cfg, "main"),
+      });
+      expect(assistantContent).toEqual([
+        expect.objectContaining({
+          type: "attachment_error",
+          attachment: expect.objectContaining({
+            code: "delivery-failed",
+            label: path.basename(new URL(mediaUrl).pathname),
+          }),
+        }),
+      ]);
+      await expectOutboundMediaMissing(stateDir);
+    },
+  );
+
   it("preserves ordered document and image metadata beside one rejected SVG", async () => {
     const { workspaceDir, cfg } = createMediaTestContext({ allowRead: true });
     const documentPath = path.join(workspaceDir, "artifact.json");
