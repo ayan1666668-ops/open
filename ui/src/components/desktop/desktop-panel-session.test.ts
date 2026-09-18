@@ -11,9 +11,18 @@ import {
   createConnectionHandle,
   createGatewayClient,
   createPanel,
-  desktopEnvironment,
+  desktopEnvironment as baseDesktopEnvironment,
   settleTasks,
 } from "./desktop-panel.test-support.ts";
+
+const desktopEnvironment = {
+  ...baseDesktopEnvironment,
+  worker: {
+    ...baseDesktopEnvironment.worker,
+    attachedSessionIds: [...baseDesktopEnvironment.worker.attachedSessionIds],
+    desktopApps: [...baseDesktopEnvironment.worker.desktopApps],
+  },
+} satisfies EnvironmentSummary;
 
 describe("session desktop connection", () => {
   beforeEach(() => {
