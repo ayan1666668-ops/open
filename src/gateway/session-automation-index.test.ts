@@ -177,6 +177,7 @@ describe("session automation index", () => {
   });
 
   test("stale services cannot clobber or clear a replacement registration", () => {
+    expect(sessionHasAutomation("agent:main:cron:fresh", cfg)).toBe(false);
     const changes: unknown[] = [];
     const unsubscribe = sessionChanges.subscribe((change) => changes.push(change));
     try {
