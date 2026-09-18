@@ -10,14 +10,21 @@ import org.junit.Test
 class ToolActivityPresentationTest {
   @Test
   fun `summaries consume prepared titles and outcomes instead of tool names`() {
-    val quiet = ai.openclaw.app.chat.ChatAgentActivity("wait", "tool", "end", "Wait", status = "completed", hideFromChannelProgress = true)
-    val failed = ai.openclaw.app.chat.ChatAgentActivity("failed", "tool", "end", "Check process", status = "failed")
-    val unknown = ai.openclaw.app.chat.ChatAgentActivity("unknown", "tool", "end", "Outcome unknown")
-    val tools = listOf(
-      tool("process").copy(activity = quiet, activityPrepared = true),
-      tool("arbitrary_name").copy(activity = failed, activityPrepared = true),
-      tool("read").copy(activity = unknown, activityPrepared = true),
-    )
+    val quiet =
+      ai.openclaw.app.chat
+        .ChatAgentActivity("wait", "tool", "end", "Wait", status = "completed", hideFromChannelProgress = true)
+    val failed =
+      ai.openclaw.app.chat
+        .ChatAgentActivity("failed", "tool", "end", "Check process", status = "failed")
+    val unknown =
+      ai.openclaw.app.chat
+        .ChatAgentActivity("unknown", "tool", "end", "Outcome unknown")
+    val tools =
+      listOf(
+        tool("process").copy(activity = quiet, activityPrepared = true),
+        tool("arbitrary_name").copy(activity = failed, activityPrepared = true),
+        tool("read").copy(activity = unknown, activityPrepared = true),
+      )
     assertEquals("Check process (failed), Outcome unknown", completedToolGroupSummary(tools))
     assertEquals("Tool details", completedToolGroupSummary(listOf(tools.first())))
     assertEquals("Tool details", completedToolGroupSummary(emptyList()))

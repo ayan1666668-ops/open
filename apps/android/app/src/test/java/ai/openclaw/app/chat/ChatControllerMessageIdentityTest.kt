@@ -234,7 +234,14 @@ class ChatControllerMessageIdentityTest {
       )
       assertEquals(null, controller.messages.value[0].activity)
       assertEquals(emptyList<Any>(), controller.messages.value[5].activity)
-      assertEquals("blocked", controller.messages.value.last().activity?.single()?.status)
+      assertEquals(
+        "blocked",
+        controller.messages.value
+          .last()
+          .activity
+          ?.single()
+          ?.status,
+      )
       assertEquals("canonical", controller.messages.value[0].runId)
       assertEquals("active-run", controller.messages.value[0].steerTargetRunId)
       assertEquals("fallback", controller.messages.value[1].runId)
