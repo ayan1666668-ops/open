@@ -32,6 +32,7 @@ import {
   UPDATE_COMPATIBILITY_INVENTORY_FILE,
   writeUpdateCompatibilityChunks,
 } from "./lib/update-compat-chunks.mts";
+import { buildUpdateConfigRuntimeAlias } from "./lib/update-config-runtime-compat.mts";
 import { writeTextFileIfChanged } from "./runtime-postbuild-shared.mjs";
 import { stageBundledPluginRuntime } from "./stage-bundled-plugin-runtime.mts";
 import { writeBuildInfo } from "./write-build-info.ts";
@@ -133,7 +134,10 @@ const LEGACY_ROOT_RUNTIME_COMPAT_ALIASES: Array<readonly [string, string]> = [
   ["text-transforms.runtime-D9-SpAmI.js", "text-transforms.runtime.js"],
   ["text-transforms.runtime-sEqsN4pN.js", "text-transforms.runtime.js"],
 ];
-const ROOT_RUNTIME_STABLE_IMPORT_SKIP_ALIASES = new Set(["text-transforms.runtime.js"]);
+const ROOT_RUNTIME_STABLE_IMPORT_SKIP_ALIASES = new Set([
+  "text-transforms.runtime.js",
+  "io.runtime.js",
+]);
 const LEGACY_PLUGIN_INSTALL_RUNTIME_MARKERS = [
   "scanPackageInstallSource",
   "scanFileInstallSource",
@@ -530,7 +534,13 @@ export function writeStableRootRuntimeAliases(params: RuntimeFsParams = {}) {
       }
       continue;
     }
-    const source = buildRuntimeAliasSource(candidate, distDir, fsImpl);
+    const source =
+      aliasFileName === "io.runtime.js"
+        ? buildUpdateConfigRuntimeAlias(
+            candidate,
+            fsImpl.readFileSync(path.join(distDir, candidate), "utf8"),
+          )
+        : buildRuntimeAliasSource(candidate, distDir, fsImpl);
     const owner = ownership?.chunks[candidate];
     if (ownership && owner) {
       const targetSource = fsImpl.readFileSync(path.join(distDir, candidate));
