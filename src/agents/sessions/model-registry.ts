@@ -22,7 +22,6 @@ import type {
 } from "../../llm/types.js";
 import type { OAuthProviderInterface } from "../../llm/utils/oauth/types.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
-import { isLikelySensitiveModelProviderHeaderName } from "../../secrets/model-provider-header-policy.js";
 import { normalizeOptionalSecretInput } from "../../utils/normalize-secret-input.js";
 import { getAgentDir } from "../config.js";
 import { sanitizeModelHeaders } from "../embedded-agent-runner/model.inline-provider.js";
@@ -58,6 +57,12 @@ import {
   type ModelsConfig,
   type ProviderAuthMode,
 } from "./model-registry-schema.js";
+import {
+  applySanitizedFallbackRequestHeaders,
+  getModelRequestKey,
+  type ProviderRequestConfig,
+  type RegistryProviderSources,
+} from "./model-registry.catalog-composition.js";
 import { BUILT_IN_PROVIDER_DISPLAY_NAMES } from "./provider-display-names.js";
 import {
   resolveConfigValueOrThrow,
@@ -68,13 +73,6 @@ import {
 const log = createSubsystemLogger("agents/model-registry");
 
 type MaxTokensSource = "configured" | "discovered";
-type RegistryProviderSources = Record<
-  string,
-  ProviderModelCatalog &
-    Pick<ModelsConfig["providers"][string], "apiKey" | "auth" | "authHeader"> & {
-      headers?: Record<string, string>;
-    }
->;
 
 function captureInventoryProvider(
   provider: ProviderModelCatalog,
@@ -92,27 +90,6 @@ function captureInventoryProvider(
       compat: source === "static" ? mergeCompat(provider.compat, model.compat) : model.compat,
     })),
   };
-}
-
-function sanitizeFallbackRequestHeaders(
-  headers: Record<string, string> | undefined,
-): Record<string, string> | undefined {
-  const sanitized = sanitizeModelHeaders(headers, { stripSecretRefMarkers: true });
-  if (!sanitized) {
-    return undefined;
-  }
-  const safe = Object.fromEntries(
-    Object.entries(sanitized).filter(([name]) => !isLikelySensitiveModelProviderHeaderName(name)),
-  );
-  return Object.keys(safe).length > 0 ? safe : undefined;
-}
-
-interface ProviderRequestConfig {
-  baseUrls?: readonly string[];
-  apiKey?: string;
-  auth?: ProviderAuthMode;
-  headers?: Record<string, string>;
-  authHeader?: boolean;
 }
 
 export type ResolvedRequestAuth =
@@ -460,7 +437,12 @@ export class ModelRegistry {
     }
     let combined = this.parseModels(providers);
     if (this.modelsJsonSanitizedFallback) {
-      this.applySanitizedFallbackRequestHeaders(customResult.providers, combined);
+      applySanitizedFallbackRequestHeaders({
+        fallbackProviders: customResult.providers,
+        models: combined,
+        providerRequestConfigs: this.providerRequestConfigs,
+        modelRequestHeaders: this.modelRequestHeaders,
+      });
     }
 
     // Let OAuth providers modify their models (e.g., update baseUrl)
@@ -472,48 +454,6 @@ export class ModelRegistry {
     }
 
     this.models = combined;
-  }
-
-  private applySanitizedFallbackRequestHeaders(
-    fallbackProviders: RegistryProviderSources,
-    models: readonly Model[],
-  ): void {
-    for (const model of models) {
-      const fallbackProvider = fallbackProviders[model.provider];
-      const fallbackModel = fallbackProvider?.models?.find(
-        (candidate) => candidate.id === model.id && modelTransportRoutesMatch(candidate, model),
-      );
-      if (!fallbackProvider || !fallbackModel) {
-        continue;
-      }
-
-      const fallbackHeaders = {
-        ...sanitizeFallbackRequestHeaders(fallbackProvider.headers),
-        ...sanitizeFallbackRequestHeaders(fallbackModel.headers),
-      };
-      if (Object.keys(fallbackHeaders).length === 0) {
-        continue;
-      }
-
-      const key = this.getModelRequestKey(model.provider, model.id);
-      const currentProviderHeaders = this.providerRequestConfigs.get(model.provider)?.headers;
-      const currentModelHeaders = this.modelRequestHeaders.get(key);
-      const currentHeaderNames = new Set(
-        [
-          ...Object.keys(currentProviderHeaders ?? {}),
-          ...Object.keys(currentModelHeaders ?? {}),
-        ].map((name) => name.toLowerCase()),
-      );
-      const inheritedHeaders = Object.fromEntries(
-        Object.entries(fallbackHeaders).filter(
-          ([name]) => !currentHeaderNames.has(name.toLowerCase()),
-        ),
-      );
-      this.storeModelHeaders(model.provider, model.id, {
-        ...inheritedHeaders,
-        ...currentModelHeaders,
-      });
-    }
   }
 
   private mergeProviderSources(
@@ -822,10 +762,6 @@ export class ModelRegistry {
     return config;
   }
 
-  private getModelRequestKey(provider: string, modelId: string): string {
-    return JSON.stringify([provider, modelId]);
-  }
-
   private storeProviderRequestConfig(
     providerName: string,
     config: {
@@ -859,7 +795,7 @@ export class ModelRegistry {
     modelId: string,
     headers?: Record<string, string>,
   ): void {
-    const key = this.getModelRequestKey(providerName, modelId);
+    const key = getModelRequestKey(providerName, modelId);
     if (!headers || Object.keys(headers).length === 0) {
       this.modelRequestHeaders.delete(key);
       return;
@@ -894,7 +830,7 @@ export class ModelRegistry {
         `provider "${model.provider}"`,
       );
       const modelHeaders = resolveHeadersOrThrow(
-        this.modelRequestHeaders.get(this.getModelRequestKey(model.provider, model.id)),
+        this.modelRequestHeaders.get(getModelRequestKey(model.provider, model.id)),
         `model "${model.provider}/${model.id}"`,
       );
 

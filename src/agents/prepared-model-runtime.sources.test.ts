@@ -12,7 +12,7 @@ import { createEmptyPluginRegistry } from "../plugins/registry-empty.js";
 import { PLUGIN_MODEL_CATALOG_GENERATED_BY } from "./plugin-model-catalog.js";
 import type { PreparedModelRuntimeAgentFacts } from "./prepared-model-runtime.catalog-contract.js";
 import {
-  captureModelsJsonContents,
+  captureModelsJsonSource,
   prepareConfiguredRuntimeFactsBatch,
   type PreparedConfiguredModelRegistries,
 } from "./prepared-model-runtime.facts.js";
@@ -322,7 +322,7 @@ describe("prepared catalog source composition", () => {
       env: { OPENCLAW_STATE_DIR: stateDir },
     });
 
-    expect(captureModelsJsonContents(input)).toBe("{ malformed");
+    expect(captureModelsJsonSource(input).contents).toBe("{ malformed");
   });
 
   it("uses secondary auth with safe transport headers from an inherited catalog", async () => {
@@ -372,7 +372,7 @@ describe("prepared catalog source composition", () => {
       env: { OPENCLAW_STATE_DIR: stateDir },
     });
 
-    const inherited = JSON.parse(captureModelsJsonContents(input) ?? "null");
+    const inherited = JSON.parse(captureModelsJsonSource(input).contents ?? "null");
     expect(inherited.providers[providerId]).not.toHaveProperty("apiKey");
     expect(inherited.providers[providerId].headers).toEqual({
       "X-Catalog-Route": "keep-provider-route",

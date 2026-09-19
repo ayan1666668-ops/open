@@ -575,11 +575,6 @@ export function captureModelsJsonSource(
       };
 }
 
-export function captureModelsJsonContents(
-  input: Pick<PreparedModelRuntimeInput, "agentDir" | "fallbackAgentDir">,
-): string | null {
-  return captureModelsJsonSource(input).contents;
-}
 export const fingerprintPreparedRuntimeFacts = (value: unknown): string =>
   sha256Base64Url(stableStringify(value));
 
