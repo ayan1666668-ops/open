@@ -1,6 +1,7 @@
 import { channel } from "node:diagnostics_channel";
 import fs from "node:fs";
 import path from "node:path";
+import { setImmediate as nextTurn } from "node:timers/promises";
 import { Worker } from "node:worker_threads";
 import { expect, vi } from "vitest";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
@@ -29,17 +30,16 @@ type GenerationRecoveryFixture = {
 export async function expectPublishedOwnerRecoveryAfterGenerationMismatch(
   fixture: GenerationRecoveryFixture,
   armGenerationMismatch: () => void,
+  options: { activeHealthyBorrower?: boolean; sharedAgentDir?: boolean } = {},
 ): Promise<void> {
   for (const [key, value] of Object.entries(fixture.env)) {
     if (value !== undefined) {
       vi.stubEnv(key, value);
     }
   }
-  const healthyAgentDir = path.join(
-    path.dirname(path.dirname(fixture.agentDir)),
-    "healthy",
-    "agent",
-  );
+  const healthyAgentDir = options.sharedAgentDir
+    ? fixture.agentDir
+    : path.join(path.dirname(path.dirname(fixture.agentDir)), "healthy", "agent");
   const healthyWorkspaceDir = path.join(fixture.root, "healthy-workspace");
   fs.mkdirSync(healthyAgentDir, { recursive: true });
   fs.mkdirSync(healthyWorkspaceDir, { recursive: true });
@@ -54,11 +54,15 @@ export async function expectPublishedOwnerRecoveryAfterGenerationMismatch(
           agentDir: fixture.agentDir,
           workspace: fixture.workspaceDir,
         },
-        {
-          id: "healthy",
-          agentDir: healthyAgentDir,
-          workspace: healthyWorkspaceDir,
-        },
+        ...(!options.sharedAgentDir
+          ? [
+              {
+                id: "healthy",
+                agentDir: healthyAgentDir,
+                workspace: healthyWorkspaceDir,
+              },
+            ]
+          : []),
       ],
     },
   } satisfies OpenClawConfig;
@@ -72,7 +76,7 @@ export async function expectPublishedOwnerRecoveryAfterGenerationMismatch(
       allowGatewaySubagentBinding: true,
     },
     {
-      agentId: "healthy",
+      agentId: options.sharedAgentDir ? "main" : "healthy",
       agentDir: healthyAgentDir,
       inheritedAuthDir: healthyAgentDir,
       workspaceDir: healthyWorkspaceDir,
@@ -81,10 +85,10 @@ export async function expectPublishedOwnerRecoveryAfterGenerationMismatch(
     },
   ] satisfies PreparedModelRuntimeInput[];
   const published: PreparedModelRuntimeSnapshot[] = [];
-  for (const input of inputs) {
+  for (const [index, input] of inputs.entries()) {
     published.push(
       await publishPreparedModelRuntimeSnapshot(input, {
-        provenance: "configured",
+        provenance: options.sharedAgentDir && index === 1 ? "standalone" : "configured",
         catalogMode: "static",
       }),
     );
@@ -130,6 +134,7 @@ export async function expectPublishedOwnerRecoveryAfterGenerationMismatch(
 
   let failedOwner: ReturnType<typeof loadMainCatalog> | undefined;
   let failedAuthOwner: ReturnType<typeof loadPreparedModelRuntimeAuth> | undefined;
+  let healthyWaiter: Promise<unknown> | undefined;
   try {
     await loadPreparedModelRuntimeAuth(published[1]!, { providerIds: [PROVIDER_ID] });
 
@@ -142,6 +147,15 @@ export async function expectPublishedOwnerRecoveryAfterGenerationMismatch(
     armGenerationMismatch();
     failedOwner = loadMainCatalog();
     void failedOwner.catch(() => undefined);
+    if (options.activeHealthyBorrower) {
+      let healthySettled = false;
+      healthyWaiter = published[1]!.loadFullModelCatalog!({ refresh: true }).finally(() => {
+        healthySettled = true;
+      });
+      void healthyWaiter.catch(() => undefined);
+      await nextTurn();
+      expect(healthySettled).toBe(false);
+    }
     // Public catalog reads may return the saved inventory after their bounded foreground wait.
     // Observe native retirement directly so a cold worker cannot make that expected fallback race
     // look like failed recovery coverage.
@@ -159,6 +173,12 @@ export async function expectPublishedOwnerRecoveryAfterGenerationMismatch(
 
     releasePoolRecovery.resolve();
     await expect(failedAuthOwner).rejects.toBeInstanceOf(Error);
+    if (healthyWaiter) {
+      // The public catalog boundary converts the interrupted worker request into its saved
+      // non-authoritative fallback. The same owner must remain open so the refresh below can
+      // rebind it to the replacement pool.
+      await expect(healthyWaiter).resolves.toBeDefined();
+    }
     await vi.waitFor(() => {
       const recoveredMain = getPreparedModelRuntimeSnapshot(inputs[0]!);
       expect(recoveredMain).toBeDefined();
@@ -172,13 +192,14 @@ export async function expectPublishedOwnerRecoveryAfterGenerationMismatch(
     await expect(
       loadPreparedModelRuntimeAuth(recoveredHealthy, { providerIds: [PROVIDER_ID] }),
     ).resolves.toBeDefined();
+    await expect(recoveredHealthy.loadFullModelCatalog!({ refresh: true })).resolves.toBeDefined();
     const recoveredMainCatalog = await loadMainCatalog();
     expect(recoveredMainCatalog.entries).toContainEqual(
       expect.objectContaining({ provider: PROVIDER_ID, id: "plugin-generation-v2" }),
     );
   } finally {
     releasePoolRecovery.resolve();
-    await Promise.allSettled([failedOwner, failedAuthOwner]);
+    await Promise.allSettled([failedOwner, failedAuthOwner, healthyWaiter]);
     restoreTermination?.();
     workerChannel.unsubscribe(holdSharedPoolRecovery);
   }

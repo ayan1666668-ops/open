@@ -130,6 +130,10 @@ type CatalogPoolBorrower = {
   notifyRecovery: (error: Error) => void;
   stop: (error: Error) => Promise<void>;
 };
+const generationMismatchBorrowers = new WeakMap<
+  PreparedModelCatalogGenerationMismatchError,
+  CatalogPoolBorrower
+>();
 type GatewayCatalogPool = {
   cache: ReturnType<typeof getPluginMetadataSnapshotCache>;
   pool: CatalogPool;
@@ -137,7 +141,7 @@ type GatewayCatalogPool = {
   close: (error?: Error) => Promise<void>;
   borrowers: Set<CatalogPoolBorrower>;
   recovery?: Promise<void>;
-  recover: (error: Error, options?: { failedOwnerAgentDir?: string }) => Promise<void>;
+  recover: (error: Error, options?: { failedOwner?: CatalogPoolBorrower }) => Promise<void>;
   validate?: (result: PreparedModelWorkerResult) => void;
 };
 const gatewayCatalog = resolveGlobalSingleton<{
@@ -198,25 +202,23 @@ async function getGatewayCatalogPool(
       recover: (error, options) =>
         (current.recovery ??= (async () => {
           const borrowers = [...current.borrowers];
+          const affectedBorrowers = options?.failedOwner
+            ? borrowers.filter((borrower) => borrower === options.failedOwner)
+            : borrowers;
           if (!signal.aborted) {
-            for (const borrower of borrowers) {
+            for (const borrower of affectedBorrowers) {
               borrower.notifyRecovery(error);
             }
           }
           // Fence every old catalog before releasing the native slot. Recovery publishes new
           // prepared owners; it never replays a failed request under its former source generation.
-          const stopping = borrowers
-            .filter(
-              (borrower) =>
-                !options?.failedOwnerAgentDir || borrower.agentDir === options.failedOwnerAgentDir,
-            )
-            .map((borrower) => borrower.stop(error));
+          const stopping = affectedBorrowers.map((borrower) => borrower.stop(error));
           await current.close(error);
           await Promise.all(stopping);
           if (gatewayCatalog.current === current) {
             gatewayCatalog.current = undefined;
           }
-          if (!options?.failedOwnerAgentDir) {
+          if (!options?.failedOwner) {
             const { recoverPreparedModelRuntimeCatalogWorker } =
               await import("./prepared-model-runtime.js");
             await recoverPreparedModelRuntimeCatalogWorker(borrowers);
@@ -446,12 +448,15 @@ export function createPreparedModelCatalogWorker(
   let sharedOwner: GatewayCatalogPool | undefined;
   const mismatch = (
     message: Extract<PreparedModelWorkerResult, { status: "generation-mismatch" }>,
-  ) =>
-    new PreparedModelCatalogGenerationMismatchError(
+  ) => {
+    const error = new PreparedModelCatalogGenerationMismatchError(
       workerInput.input.agentDir,
       message.generationFingerprint,
       message.reconstructedFingerprint,
     );
+    generationMismatchBorrowers.set(error, borrower);
+    return error;
+  };
   const validate = (message: PreparedModelWorkerResult) => {
     if (!gatewayOwned) {
       assertCurrent();
@@ -617,20 +622,25 @@ export function createPreparedModelCatalogWorker(
         requestPool?.isClosed &&
         !(failure instanceof PreparedModelRuntimePublicationSupersededError)
       ) {
+        const failedOwner =
+          failure instanceof PreparedModelCatalogGenerationMismatchError
+            ? generationMismatchBorrowers.get(failure)
+            : undefined;
         await sharedOwner
           .recover(failure, {
             // A typed mismatch must reach the catalog materialization boundary so it can rebuild
             // the exact configured owner from current plugin facts. The generic shared-pool
             // recovery deliberately retains the captured plugin generation, so stop only that
             // owner. Healthy borrowers can bind their existing owners to the replacement pool.
-            failedOwnerAgentDir:
-              failure instanceof PreparedModelCatalogGenerationMismatchError
-                ? failure.agentDir
-                : undefined,
+            failedOwner,
           })
           .catch((recoveryError: unknown) => {
             process.emitWarning(`Gateway catalog recovery failed: ${String(recoveryError)}`);
           });
+        if (failedOwner && failedOwner !== borrower) {
+          controller.abort(error);
+          throw error;
+        }
       }
       if (!gatewayOwned && failure instanceof PreparedModelCatalogGenerationMismatchError) {
         // Keep the generation open, but retire only this request's pool: a delayed rejection

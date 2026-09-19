@@ -12,15 +12,21 @@ describe("prepared model catalog generation recovery", () => {
     vi.stubEnv("CODEX_HOME", makeTempDir("openclaw-worker-empty-codex-"));
   });
 
-  it("keeps a warmed healthy shared-pool owner usable", async () => {
+  const verifyRecovery = async (options: {
+    activeHealthyBorrower?: boolean;
+    sharedAgentDir?: boolean;
+  }) => {
     const fixture = await createStaticSnapshot(0);
-    const run = WorkerTaskPool.prototype.run;
+    const run = Reflect.get(
+      WorkerTaskPool.prototype,
+      "run",
+    ) as (typeof WorkerTaskPool)["prototype"]["run"];
     let injectMismatch = false;
     const runSpy = vi
       .spyOn(WorkerTaskPool.prototype, "run")
-      .mockImplementation(function (this: (typeof WorkerTaskPool)["prototype"], input, options) {
+      .mockImplementation(function (this: (typeof WorkerTaskPool)["prototype"], input, runOptions) {
         if (typeof input !== "function") {
-          return run.call(this, input, options);
+          return run.call(this, input, runOptions);
         }
         return run.call(
           this,
@@ -32,6 +38,13 @@ describe("prepared model catalog generation recovery", () => {
               task === null ||
               !("value" in task) ||
               !("request" in task) ||
+              typeof task.value !== "object" ||
+              task.value === null ||
+              !("input" in task.value) ||
+              typeof task.value.input !== "object" ||
+              task.value.input === null ||
+              !("agentDir" in task.value.input) ||
+              task.value.input.agentDir !== fixture.agentDir ||
               typeof task.request !== "object" ||
               task.request === null ||
               !("kind" in task.request) ||
@@ -48,15 +61,27 @@ describe("prepared model catalog generation recovery", () => {
               },
             };
           },
-          options,
+          runOptions,
         );
       });
     try {
-      await expectPublishedOwnerRecoveryAfterGenerationMismatch(fixture, () => {
-        injectMismatch = true;
-      });
+      await expectPublishedOwnerRecoveryAfterGenerationMismatch(
+        fixture,
+        () => {
+          injectMismatch = true;
+        },
+        options,
+      );
     } finally {
       runSpy.mockRestore();
     }
+  };
+
+  it("keeps a distinct warmed owner with the same agent directory usable", async () => {
+    await verifyRecovery({ sharedAgentDir: true });
+  });
+
+  it("keeps an active healthy borrower reusable after collateral pool closure", async () => {
+    await verifyRecovery({ activeHealthyBorrower: true });
   });
 });
