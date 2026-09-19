@@ -922,6 +922,13 @@ describe("handleChatGatewayEvent", () => {
       expected: "Visible reply",
     },
     {
+      name: "projects a model special token split across deltas",
+      previous: "Visible <|assi",
+      delta: "stant|> reply",
+      snapshot: "Visible <|assistant|> reply",
+      expected: "Visible  reply",
+    },
+    {
       name: "replaces the stream when gateway deltaText marks a replacement",
       previous: "Alpha beta",
       delta: "Alpha",

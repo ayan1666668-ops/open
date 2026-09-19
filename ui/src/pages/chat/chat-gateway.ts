@@ -64,6 +64,23 @@ function isPendingLocalChatRun(state: ChatState, runId: string): boolean {
   return state.chatQueue.some((item) => item.sendRunId === runId && item.sendState === "sending");
 }
 
+function hasSplitModelSpecialToken(currentStream: string, deltaText: string): boolean {
+  const lastAsciiOpen = currentStream.lastIndexOf("<|");
+  const lastFullWidthOpen = currentStream.lastIndexOf("<｜");
+  const lastBareOpen = currentStream.endsWith("<") ? currentStream.length - 1 : -1;
+  const openIndex = Math.max(lastAsciiOpen, lastFullWidthOpen, lastBareOpen);
+  if (openIndex < 0) {
+    return false;
+  }
+
+  // Only inspect the suffix that can join the incoming delta. A complete
+  // token already present in the stream cannot be changed by this delta.
+  const currentSuffix = currentStream.slice(openIndex);
+  const candidate = `${currentSuffix}${deltaText}`;
+  const candidateToken = /^<[|｜][^|｜]*[|｜]>/u.exec(candidate)?.[0];
+  return Boolean(candidateToken && candidateToken.length > currentSuffix.length);
+}
+
 function resolveDeltaChatStreamText(
   currentStream: string | null,
   payload: ChatEventPayload,
@@ -90,6 +107,13 @@ function resolveDeltaChatStreamText(
     // the shortcut so the canonical sanitizer remains authoritative for that
     // case without rescanning the growing snapshot.
     if (extractText({ role: "assistant", content: deltaText }) !== deltaText) {
+      const snapshot = extractText(payload.message);
+      return typeof snapshot === "string" ? snapshot : `${currentStream}${deltaText}`;
+    }
+
+    // A model control token can begin in one delta and finish in the next;
+    // projecting the delta alone cannot see that boundary-spanning token.
+    if (hasSplitModelSpecialToken(currentStream, deltaText)) {
       const snapshot = extractText(payload.message);
       return typeof snapshot === "string" ? snapshot : `${currentStream}${deltaText}`;
     }
