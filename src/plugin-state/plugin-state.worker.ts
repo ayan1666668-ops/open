@@ -1,27 +1,38 @@
 import { err, ok } from "@openclaw/normalization-core/result";
 import type { SqliteWorkerCommand } from "../infra/sqlite-worker-contract.js";
+import { captureOpenClawStateDatabaseReadAdmission } from "../state/openclaw-state-db-cache.js";
 import type {
   OpenClawStateDatabase,
   OpenClawStateDatabaseOptions,
 } from "../state/openclaw-state-db-contract.js";
 import { runOpenClawStateWriteTransaction } from "../state/openclaw-state-db.js";
 import {
+  compareAndApplyPluginStateEntry,
+  observePluginStateEntry,
+} from "./plugin-state-store.comparison.js";
+import {
+  withPluginStateDatabaseReadOnly,
+  wrapPluginStateError,
+} from "./plugin-state-store.database.js";
+import { registerPluginStateSequencedJournalEntryInDatabase } from "./plugin-state-store.journal.js";
+import {
   countLivePluginStateNamespaceEntries,
   deletePluginStateEntry,
   lookupPluginStateEntry,
-  registerPluginStateEntry,
 } from "./plugin-state-store.kernel.js";
 import {
   clearPluginStateNamespace,
   consumePluginStateEntry,
   deletePluginStateEntryIfEqual,
+  movePluginStateEntries,
   registerPluginStateEntryIfAbsent,
 } from "./plugin-state-store.mutations.js";
-import { listPluginStateEntries, lookupPluginStateEntries } from "./plugin-state-store.reads.js";
 import {
-  withPluginStateDatabaseReadOnly,
-  wrapPluginStateError,
-} from "./plugin-state-store.sqlite.js";
+  listPluginStateEntries,
+  listPluginStateEntriesInKeyRange,
+  lookupPluginStateEntries,
+} from "./plugin-state-store.reads.js";
+import { registerPluginStateEntry } from "./plugin-state-store.retention.js";
 import {
   type PluginStateWorkerOperations,
   pluginStateWorkerOperations,
@@ -39,6 +50,7 @@ export function executePluginStateCommand(
     command.type === "pluginState.lookup" ||
     command.type === "pluginState.lookupMany" ||
     command.type === "pluginState.entries" ||
+    command.type === "pluginState.entriesInKeyRange" ||
     command.type === "pluginState.count"
   ) {
     try {
@@ -62,6 +74,14 @@ export function executePluginStateCommand(
             rows.map((row) => (row.ok ? row : err(capturePluginStateWorkerFailure(row.error)))),
           );
         }
+        case "pluginState.entriesInKeyRange":
+          return ok(
+            withPluginStateDatabaseReadOnly(
+              "entries",
+              (store) => listPluginStateEntriesInKeyRange(store, command.input),
+              options,
+            ) ?? [],
+          );
         case "pluginState.entries":
           return ok(
             withPluginStateDatabaseReadOnly(
@@ -118,14 +138,27 @@ export function executePluginStateCommand(
       runOpenClawStateWriteTransaction(
         (store) => {
           switch (command.type) {
-            case "pluginState.register":
-              return registerPluginStateEntry(store, command.input, command.input.maxPluginEntries);
-            case "pluginState.registerIfAbsent":
-              return registerPluginStateEntryIfAbsent(
+            case "pluginState.appendJournal":
+              return registerPluginStateSequencedJournalEntryInDatabase(store, command.input);
+            case "pluginState.observe":
+              return observePluginStateEntry(
                 store,
                 command.input,
-                command.input.maxPluginEntries,
+                captureOpenClawStateDatabaseReadAdmission(store.path).identity.key,
               );
+            case "pluginState.compareUpdate":
+            case "pluginState.compareDelete":
+              return compareAndApplyPluginStateEntry(
+                store,
+                command.input,
+                captureOpenClawStateDatabaseReadAdmission(store.path).identity.key,
+              );
+            case "pluginState.moveEntries":
+              return movePluginStateEntries(store, command.input);
+            case "pluginState.register":
+              return registerPluginStateEntry(store, command.input);
+            case "pluginState.registerIfAbsent":
+              return registerPluginStateEntryIfAbsent(store, command.input);
             case "pluginState.deleteIfEqual":
               return deletePluginStateEntryIfEqual(store, command.input);
             case "pluginState.consume":

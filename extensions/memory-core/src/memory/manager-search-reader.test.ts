@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
 import {
   dropMemoryPathFtsTriggers,
   ftsTableMatchesSchema,
@@ -11,6 +12,7 @@ import {
 } from "openclaw/plugin-sdk/memory-core-host-engine-storage";
 import { closeOpenClawAgentDatabasesForTest } from "openclaw/plugin-sdk/sqlite-runtime-testing";
 import { describe, expect, it, vi } from "vitest";
+import { MemoryIndexDatabase } from "./manager-database-context.js";
 import { resetMemoryDatabase } from "./manager-db.js";
 import { createManagerIndexFixture } from "./manager-index.test-support.js";
 import type { MemoryIndexMeta } from "./manager-reindex-state.js";
@@ -48,7 +50,7 @@ describe("read-only memory search manager", () => {
     return JSON.parse(row.value) as MemoryIndexMeta;
   }
 
-  it("prepares a fresh index through a writer, then reuses a query-only reader without writes", async () => {
+  it("reuses a query-only reader while a writer refreshes changed files", async () => {
     const cfg = createConfig({ provider: "none", vectorEnabled: false });
     const syncSpy = vi.spyOn(RuntimeMemoryIndexManager.prototype, "sync");
     const getSpy = vi.spyOn(RuntimeMemoryIndexManager, "get");
@@ -70,7 +72,6 @@ describe("read-only memory search manager", () => {
       if (!dbPath) {
         throw new Error("fixture database path is missing");
       }
-      const before = await fs.stat(dbPath);
       await fs.writeFile(
         path.join(fixture.paths.memory, "2026-01-12.md"),
         "# Log\nAlpha memory line.\nFresh-file-token memory line.",
@@ -79,18 +80,128 @@ describe("read-only memory search manager", () => {
       const second = await getReader(cfg);
       expect(second).toBe(first);
       await expect(second.search("alpha", { minScore: 0 })).resolves.not.toEqual([]);
-      await expect(second.search("fresh-file-token", { minScore: 0 })).resolves.toEqual([]);
-      const after = await fs.stat(dbPath);
+      await expect(second.search("fresh-file-token", { minScore: 0 })).resolves.not.toEqual([]);
 
-      expect(syncSpy).not.toHaveBeenCalled();
-      expect(getSpy).not.toHaveBeenCalledWith(expect.objectContaining({ purpose: "maintenance" }));
-      expect({ size: after.size, mtimeMs: after.mtimeMs }).toEqual({
-        size: before.size,
-        mtimeMs: before.mtimeMs,
-      });
+      expect(syncSpy).toHaveBeenCalledWith({ reason: "search" });
+      expect(getSpy).toHaveBeenCalledWith(expect.objectContaining({ purpose: "maintenance" }));
+      expect(managerDb(second).prepare("PRAGMA query_only").get()).toEqual({ query_only: 1 });
     } finally {
       syncSpy.mockRestore();
       getSpy.mockRestore();
+    }
+  });
+
+  it.each([false, true])(
+    "refreshes new files before reader queries with existing writer=%s",
+    async (keepWriter) => {
+      const cfg = createConfig({ provider: "none", vectorEnabled: false });
+      const reader = await getReader(cfg);
+      trackManager(reader);
+      const writer = requireManager(await getMemorySearchManager({ cfg, agentId: "main" }));
+      trackManager(writer);
+      if (!keepWriter) {
+        await writer.close();
+      }
+      await fs.writeFile(path.join(fixture.paths.memory, "fresh.md"), "Giraffe freshness token.");
+      expect(await getReader(cfg)).toBe(reader);
+      await expect(reader.search("giraffe", { minScore: 0 })).resolves.toEqual([
+        expect.objectContaining({ path: "memory/fresh.md" }),
+      ]);
+      expect(managerDb(reader).prepare("PRAGMA query_only").get()).toEqual({ query_only: 1 });
+    },
+  );
+
+  it("keeps unchanged embeddings cached across writer-driven reader refreshes", async () => {
+    const cfg = createConfig({ provider: "openai", vectorEnabled: false, cacheEnabled: true });
+    const reader = await getReader(cfg);
+    trackManager(reader);
+    await reader.search("alpha", { minScore: 0 });
+    const batches = provider.embedBatchCalls;
+    await reader.search("alpha", { minScore: 0 });
+    expect(provider.embedBatchCalls).toBe(batches);
+    expect(await getReader(cfg)).toBe(reader);
+  });
+
+  it("drains accepted writer publication before close and rejects a canceled reader result", async () => {
+    const cfg = createConfig({ provider: "none", vectorEnabled: false });
+    const reader = await getReader(cfg);
+    trackManager(reader);
+    await fs.writeFile(path.join(fixture.paths.memory, "fresh.md"), "Giraffe freshness token.");
+    const entered = createDeferred<void>();
+    const gate = createDeferred<void>();
+    const original = Reflect.get(
+      MemoryIndexDatabase.prototype,
+      "replaceSource",
+    ) as MemoryIndexDatabase["replaceSource"];
+    const publish = vi
+      .spyOn(MemoryIndexDatabase.prototype, "replaceSource")
+      .mockImplementation(async function (this: MemoryIndexDatabase, ...args) {
+        entered.resolve();
+        await gate.promise;
+        return await original.apply(this, args);
+      });
+    const controller = new AbortController();
+    const search = reader.search("giraffe", { minScore: 0, signal: controller.signal });
+    const rejected = expect(search).rejects.toThrow("reader canceled");
+    let closed = false;
+    let closing: Promise<void> | undefined;
+    try {
+      await entered.promise;
+      controller.abort(new Error("reader canceled"));
+      closing = closeAllMemorySearchManagers().then(() => {
+        closed = true;
+      });
+      await new Promise<void>((resolve) => {
+        setImmediate(resolve);
+      });
+      expect(closed).toBe(false);
+      gate.resolve();
+      await rejected;
+      await closing;
+      expect(closed).toBe(true);
+    } finally {
+      gate.resolve();
+      await Promise.allSettled([search, ...(closing ? [closing] : [])]);
+      publish.mockRestore();
+    }
+    const fresh = await getReader(cfg);
+    trackManager(fresh);
+    await expect(fresh.search("giraffe", { minScore: 0 })).resolves.not.toEqual([]);
+    expect(managerDb(fresh).prepare("PRAGMA query_only").get()).toEqual({ query_only: 1 });
+  });
+
+  it("retains failed refresh writer cleanup until registry shutdown retries it", async () => {
+    const cfg = createConfig({ provider: "none", vectorEnabled: false });
+    const reader = await getReader(cfg);
+    trackManager(reader);
+    const originalClose = Reflect.get(
+      RuntimeMemoryIndexManager.prototype,
+      "close",
+    ) as RuntimeMemoryIndexManager["close"];
+    const failedWriters: RuntimeMemoryIndexManager[] = [];
+    let cleanupAttempts = 0;
+    const close = vi
+      .spyOn(RuntimeMemoryIndexManager.prototype, "close")
+      .mockImplementation(async function (this: RuntimeMemoryIndexManager) {
+        if (Reflect.get(this, "purpose") === "maintenance") {
+          cleanupAttempts++;
+          if (failedWriters.length === 0) {
+            failedWriters.push(this);
+            throw new Error("refresh cleanup failed");
+          }
+        }
+        await originalClose.call(this);
+      });
+    try {
+      await expect(reader.search("alpha", { minScore: 0 })).rejects.toThrow(
+        "refresh cleanup failed",
+      );
+      expect(failedWriters).toHaveLength(1);
+      await closeAllMemorySearchManagers();
+      expect(cleanupAttempts).toBe(2);
+      expect(Reflect.get(failedWriters[0]!, "closed")).toBe(true);
+    } finally {
+      close.mockRestore();
     }
   });
 
@@ -105,7 +216,6 @@ describe("read-only memory search manager", () => {
       path.join(fixture.paths.memory, "2026-01-12.md"),
       "# Log\nGiraffe publication token.\n",
     );
-    await expect(reader.search("giraffe", { minScore: 0 })).resolves.toEqual([]);
     await writer.sync({ reason: "test-publication", force: true });
     expect(await getReader(cfg)).toBe(reader);
     await expect(reader.search("giraffe", { minScore: 0 })).resolves.not.toEqual([]);
@@ -137,7 +247,7 @@ describe("read-only memory search manager", () => {
       const populatedReader = await getReader(cfg);
       trackManager(populatedReader);
       expect(populatedReader).toBe(emptyReader);
-      expect(syncSpy).toHaveBeenCalledWith({ reason: "search", force: true });
+      expect(syncSpy).not.toHaveBeenCalled();
       expect(managerDb(populatedReader).prepare("PRAGMA query_only").get()).toEqual({
         query_only: 1,
       });
@@ -389,8 +499,9 @@ describe("read-only memory search manager", () => {
         custom: { indexIdentity: { status: "valid" } },
       });
       expect(await reader.search("alpha", { minScore: 0 })).not.toEqual([]);
-      expect(syncSpy).not.toHaveBeenCalled();
+      expect(syncSpy).toHaveBeenCalledWith({ reason: "search" });
       expect(provider.providerCalls.slice(callsBeforeReader)).toEqual([
+        expect.objectContaining({ provider: "fallback-provider" }),
         expect.objectContaining({ provider: "fallback-provider" }),
       ]);
     } finally {
@@ -399,7 +510,7 @@ describe("read-only memory search manager", () => {
     }
   });
 
-  it("keeps keyword and stored-embedding cosine search available with native-vector debt", async () => {
+  it("keeps query-only semantic search available after the writer repairs native-vector debt", async () => {
     const cfg = createConfig({ vectorEnabled: true });
     const writer = requireManager(await getMemorySearchManager({ cfg, agentId: "main" }));
     await writer.sync({ reason: "test", force: true });
@@ -416,7 +527,8 @@ describe("read-only memory search manager", () => {
     expect(cosine).toEqual(
       expect.arrayContaining([expect.objectContaining({ path: "memory/2026-01-12.md" })]),
     );
-    expect(reader.status().vector?.index).toEqual({ state: "incomplete" });
+    expect(reader.status().vector?.index).toEqual({ state: "complete" });
+    expect(managerDb(reader).prepare("PRAGMA query_only").get()).toEqual({ query_only: 1 });
   });
 
   it("serializes global close with an in-flight reader replacement", async () => {

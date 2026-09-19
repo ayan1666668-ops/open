@@ -623,6 +623,17 @@ describe("memory.search gateway method", () => {
       expect(acquired).toHaveLength(3);
       expect(new Set(acquired).size).toBe(1);
 
+      await fs.writeFile(path.join(memoryDir, "fresh.md"), "Giraffe gateway freshness token.");
+      const fresh = await invokeMemorySearch({ query: "Giraffe", agentId: "main" }, cfg);
+      expect(fresh).toHaveBeenCalledWith(
+        true,
+        expect.objectContaining({
+          results: [expect.objectContaining({ path: "memory/fresh.md" })],
+        }),
+        undefined,
+      );
+      expect(new Set(acquired).size).toBe(1);
+
       markOldProvenance();
       getActiveMemorySearchManagerCore.mockImplementationOnce(async (params) => {
         const result = await acquireReusable({ cfg: params.cfg, agentId: params.agentId });

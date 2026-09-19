@@ -6,7 +6,6 @@ import {
 } from "openclaw/plugin-sdk/memory-core-host-engine-foundation";
 import {
   readMemoryFile,
-  MEMORY_INDEX_FTS_TABLE,
   MEMORY_INDEX_VECTOR_TABLE,
   MEMORY_SEARCH_DEADLINE_CONTROL,
   type MemoryReadResult,
@@ -24,24 +23,43 @@ import {
 } from "./hybrid.js";
 import { applyImportanceMultiplier } from "./importance.js";
 import { runMemoryVectorFallback } from "./manager-cpu-worker-runtime.js";
-import { assertMemorySearchFtsSchema, readMemoryDatabaseRevision } from "./manager-db.js";
+import { readMemoryDatabaseRevision } from "./manager-db-kernel.js";
+import { assertMemorySearchFtsSchema } from "./manager-db.js";
 import { acquireMemoryIndexReadGeneration } from "./manager-index-generation-lease.js";
 import { MemoryKeywordRetrieval, type KeywordSearchHit } from "./manager-keyword-retrieval.js";
 import { runVectorKnnInSubprocess } from "./manager-search-knn-subprocess.js";
+import { runMemorySearchRefresh } from "./manager-search-maintenance.js";
 import { resolveMemorySearchPreflight } from "./manager-search-preflight.js";
-import { resolveExactPathSpecificity, searchVector } from "./manager-search.js";
-import { applyProjectRanking } from "./project-ranking.js";
+import { prepareExactPathMatcher, searchVector } from "./manager-search.js";
+import { applyProjectRanking, prepareActiveProjectKeys } from "./project-ranking.js";
 import { applyTemporalDecayToHybridResults } from "./temporal-decay.js";
 
 const SNIPPET_MAX_CHARS = 700;
 const SEARCH_CANDIDATE_UNIVERSE = 200;
-const VECTOR_TABLE = MEMORY_INDEX_VECTOR_TABLE;
-const FTS_TABLE = MEMORY_INDEX_FTS_TABLE;
 const log = createSubsystemLogger("memory");
 type MemoryIndexSearchOptions = NonNullable<Parameters<MemorySearchManager["search"]>[1]>;
 
 export abstract class MemorySearchOrchestration extends MemoryKeywordRetrieval {
   protected abstract sessionWarm: Set<string>;
+  protected abstract acquireSearchRefreshWriter(): Promise<MemorySearchOrchestration | null>;
+  protected abstract retainSearchRefreshWriter(writer: MemorySearchOrchestration): void;
+  abstract close(): Promise<void>;
+
+  protected async refreshSearchReader(signal?: AbortSignal): Promise<void> {
+    await runMemorySearchRefresh({
+      signal,
+      acquireManager: () => this.acquireSearchRefreshWriter(),
+      refresh: async (writer) => {
+        await writer.adoptPublishedFallbackProviderIfMatched();
+        writer.dirty ||= writer.sources.has("memory");
+        writer.sessionsDirty ||= writer.sources.has("sessions");
+        await writer.sync({ reason: "search" });
+      },
+      retainForCleanup: (writer) => this.retainSearchRefreshWriter(writer),
+    });
+    this.searchReaderWriterPrepared = true;
+  }
+
   protected searchReaderKeywordOnly = false;
   protected searchReaderWriterPrepared = false;
 
@@ -197,6 +215,11 @@ export abstract class MemorySearchOrchestration extends MemoryKeywordRetrieval {
   ): Promise<MemorySearchResult[]> {
     let releaseGeneration: (() => Promise<void>) | undefined;
     const runSearch = async () => {
+      if (this.purpose === "search" && this.settings.sync.onSearch) {
+        await this.refreshSearchReader(opts?.signal);
+        opts?.signal?.throwIfAborted();
+        await this.prepareSearchReader();
+      }
       opts?.onDebug?.({ backend: "builtin" });
       if (this.providerRequirement.mode === "required") {
         await this.ensureProviderInitialized();
@@ -206,10 +229,10 @@ export abstract class MemorySearchOrchestration extends MemoryKeywordRetrieval {
       if (!hasIndexedContent && this.purpose !== "search") {
         try {
           // A fresh process can receive its first search before background watch/session
-          // syncs have built the index. Force one synchronous bootstrap so the first
-          // lookup after restart does not fail closed with empty results.
+          // syncs have built the index. Await fresh source discovery, but let the
+          // sync owner decide whether the index needs a full rebuild.
           await this.syncAdmitted(
-            { reason: "search", force: true },
+            { reason: "search-bootstrap" },
             { allowEmbeddingBootstrapFallback: true },
           );
         } catch (err) {
@@ -225,7 +248,7 @@ export abstract class MemorySearchOrchestration extends MemoryKeywordRetrieval {
               log.warn(`memory search-bootstrap: failed to retire embedding provider: ${message}`);
             });
             this.markEmbeddingBootstrapFailure(err, { provider: failedProvider });
-            await this.syncAdmitted({ reason: "search", force: true }).catch(
+            await this.syncAdmitted({ reason: "search-bootstrap" }).catch(
               (fallbackErr: unknown) => {
                 if (fallbackErr instanceof WorkerTaskError && fallbackErr.code === "overloaded") {
                   throw fallbackErr;
@@ -578,7 +601,8 @@ export abstract class MemorySearchOrchestration extends MemoryKeywordRetrieval {
           sessionSourceMtimes: this.loadSessionSourceMtimes(vectorResults),
         });
         // Decay and importance can reverse the order returned by vector retrieval.
-        return applyProjectRanking(applyImportanceMultiplier(decayed), opts?.activeProjectKeys)
+        const activeProjects = prepareActiveProjectKeys(opts?.activeProjectKeys);
+        return applyProjectRanking(applyImportanceMultiplier(decayed), activeProjects)
           .filter((entry) => entry.score >= minScore)
           .toSorted(
             (left, right) =>
@@ -616,21 +640,6 @@ export abstract class MemorySearchOrchestration extends MemoryKeywordRetrieval {
     });
   }
 
-  private hasIndexedContent(): boolean {
-    if (this.hasIndexedChunks()) {
-      return true;
-    }
-    if (!this.fts.enabled || !this.fts.available) {
-      return false;
-    }
-    const ftsRow = this.db.prepare(`SELECT 1 as found FROM ${FTS_TABLE} LIMIT 1`).get() as
-      | {
-          found?: number;
-        }
-      | undefined;
-    return ftsRow?.found === 1;
-  }
-
   private async searchVector(
     queryVec: number[],
     limit: number,
@@ -640,7 +649,7 @@ export abstract class MemorySearchOrchestration extends MemoryKeywordRetrieval {
   ): Promise<Array<MemorySearchResult & { id: string }>> {
     const results = await searchVector({
       db: this.db,
-      vectorTable: VECTOR_TABLE,
+      vectorTable: MEMORY_INDEX_VECTOR_TABLE,
       providerModel: providerIdentity.model,
       providerModelAliases: providerIdentity.aliases,
       queryVec,
@@ -687,6 +696,7 @@ export abstract class MemorySearchOrchestration extends MemoryKeywordRetrieval {
     temporalDecay?: { enabled: boolean; halfLifeDays: number };
     activeProjectKeys?: readonly string[];
   }): Promise<HybridSearchResult<MemorySource>[]> {
+    const matchExactPath = prepareExactPathMatcher(params.query);
     return mergeHybridResults({
       vector: params.vector.map((r) => ({
         id: r.id,
@@ -699,7 +709,7 @@ export abstract class MemorySearchOrchestration extends MemoryKeywordRetrieval {
         importance: r.importance,
         triggers: r.triggers,
         projectKey: r.projectKey,
-        exactPathSpecificity: resolveExactPathSpecificity(params.query, r.path),
+        exactPathSpecificity: matchExactPath(r.path),
         ...(r.provenance ? { provenance: r.provenance } : {}),
       })),
       keyword: params.keyword.map((r) => ({
