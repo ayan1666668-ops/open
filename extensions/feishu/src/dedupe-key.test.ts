@@ -27,20 +27,25 @@ function postEvent(overrides: {
   createTime?: string;
   senderOpenId?: string;
   chatId?: string;
+  chatType?: FeishuMessageEvent["message"]["chat_type"];
   text?: string;
+  rootId?: string;
+  threadId?: string;
 }): FeishuMessageEvent {
   return {
     sender: { sender_id: { open_id: overrides.senderOpenId ?? "ou-user" } },
     message: {
       message_id: overrides.messageId,
       chat_id: overrides.chatId ?? "oc-dm",
-      chat_type: "p2p",
+      chat_type: overrides.chatType ?? "p2p",
       message_type: "post",
       content: JSON.stringify({
         title: "",
         content: [[{ tag: "text", text: overrides.text ?? "hello" }]],
       }),
       create_time: overrides.createTime,
+      root_id: overrides.rootId,
+      thread_id: overrides.threadId,
     },
   };
 }
@@ -119,6 +124,96 @@ describe("resolveFeishuMessageDedupeKey", () => {
   it("falls back to message_id for an attachment-free post without a stable retry anchor", () => {
     const key = resolveFeishuMessageDedupeKey(postEvent({ messageId: "om_post_no_time" }));
     expect(key).toBe("om_post_no_time");
+  });
+
+  it("keeps attachment-free posts in distinct topics from colliding", () => {
+    const shared = {
+      createTime: "1710000000000",
+      senderOpenId: "ou-same-sender",
+      chatId: "oc-topic-group",
+      chatType: "topic_group" as const,
+    };
+    const a = resolveFeishuMessageDedupeKey(
+      postEvent({
+        ...shared,
+        messageId: "om_topic_a_post",
+        rootId: "om_topic_a_root",
+        threadId: "omt_topic_a",
+      }),
+    );
+    const b = resolveFeishuMessageDedupeKey(
+      postEvent({
+        ...shared,
+        messageId: "om_topic_b_post",
+        rootId: "om_topic_b_root",
+        threadId: "omt_topic_b",
+      }),
+    );
+    expect(a).toBeDefined();
+    expect(b).toBeDefined();
+    expect(a).not.toBe(b);
+    expect(a).not.toBe("om_topic_a_post");
+    expect(b).not.toBe("om_topic_b_post");
+  });
+
+  it("discriminates attachment-free posts on thread_id when root_id is absent", () => {
+    const shared = {
+      createTime: "1710000000000",
+      senderOpenId: "ou-same-sender",
+      chatId: "oc-topic-group",
+      chatType: "topic_group" as const,
+    };
+    const a = resolveFeishuMessageDedupeKey(
+      postEvent({ ...shared, messageId: "om_thread_a_post", threadId: "omt_topic_a" }),
+    );
+    const b = resolveFeishuMessageDedupeKey(
+      postEvent({ ...shared, messageId: "om_thread_b_post", threadId: "omt_topic_b" }),
+    );
+    expect(a).toBeDefined();
+    expect(b).toBeDefined();
+    expect(a).not.toBe(b);
+  });
+
+  it("still collapses same-topic attachment-free post redeliveries", () => {
+    const shared = {
+      createTime: "1710000000000",
+      senderOpenId: "ou-same-sender",
+      chatId: "oc-topic-group",
+      chatType: "topic_group" as const,
+      rootId: "om_topic_a_root",
+      threadId: "omt_topic_a",
+    };
+    const first = resolveFeishuMessageDedupeKey(
+      postEvent({ ...shared, messageId: "om_topic_first_post" }),
+    );
+    const retry = resolveFeishuMessageDedupeKey(
+      postEvent({ ...shared, messageId: "om_topic_retry_post" }),
+    );
+    expect(first).toBeDefined();
+    expect(retry).toBe(first);
+    expect(first).not.toBe("om_topic_first_post");
+  });
+
+  it("keeps media-keyed posts on the media path even when topic fields are present", () => {
+    const event: FeishuMessageEvent = {
+      sender: { sender_id: { open_id: "ou-user" } },
+      message: {
+        message_id: "om_media_post",
+        chat_id: "oc-topic-group",
+        chat_type: "topic_group",
+        message_type: "post",
+        content: JSON.stringify({
+          title: "",
+          content: [[{ tag: "img", image_key: "img_topic" }]],
+        }),
+        create_time: "1710000000000",
+        root_id: "om_topic_a_root",
+        thread_id: "omt_topic_a",
+      },
+    };
+    expect(resolveFeishuMessageDedupeKey(event)).toBe(
+      JSON.stringify(["om_media_post", "image_key:img_topic"]),
+    );
   });
 
   it("keeps media keyed by message_id plus media key", () => {
