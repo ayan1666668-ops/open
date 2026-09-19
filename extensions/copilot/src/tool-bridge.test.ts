@@ -1409,30 +1409,27 @@ describe("createCopilotToolBridge", () => {
       // Bridged tools are dispatched here, not through the embedded tool lifecycle,
       // so nothing reserves a blocking question's prompt before the tool runs. Without
       // this the question is never shown and the turn waits out its full timeout.
+      // Channel turns carry only messageProvider; an explicit messageChannel wins.
       await withTempDir("openclaw-copilot-question-prompt-", async (workspaceDir) => {
-        const onToolResult = vi.fn();
-        let capturedQuestionPrompt: CopilotCodingToolsOptions["questionPrompt"];
-        const createOpenClawCodingTools = vi.fn(async (options?: CopilotCodingToolsOptions) => {
-          capturedQuestionPrompt = options?.questionPrompt;
-          return [];
-        });
-
-        await createCopilotToolBridge({
-          attemptParams: {
-            messageChannel: "telegram",
-            onToolResult,
-            runId: "question-prompt-run",
+        for (const [messageChannel, messageProvider] of [
+          [undefined, "telegram"],
+          ["telegram", "slack"],
+        ]) {
+          const onToolResult = vi.fn();
+          let capturedQuestionPrompt: CopilotCodingToolsOptions["questionPrompt"];
+          await createCopilotToolBridge({
+            attemptParams: { messageChannel, messageProvider, onToolResult, workspaceDir },
+            createOpenClawCodingTools: async (options) => {
+              capturedQuestionPrompt = options?.questionPrompt;
+              return [];
+            },
             sessionKey: "agent:agent-1:question-prompt",
             workspaceDir,
-          },
-          createOpenClawCodingTools,
-          sessionId: "question-prompt-session",
-          sessionKey: "agent:agent-1:question-prompt",
-          workspaceDir,
-        });
+          });
 
-        expect(capturedQuestionPrompt?.send).toBe(onToolResult);
-        expect(capturedQuestionPrompt?.messageChannel).toBe("telegram");
+          expect(capturedQuestionPrompt?.send).toBe(onToolResult);
+          expect(capturedQuestionPrompt?.messageChannel).toBe("telegram");
+        }
       });
     });
 

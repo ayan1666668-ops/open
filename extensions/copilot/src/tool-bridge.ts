@@ -372,11 +372,13 @@ function buildOpenClawCodingToolsOptions(
     messageChannel: a.messageChannel,
     // Bridged tools are dispatched here, not through the embedded tool lifecycle,
     // so no tool-start handler reserves a blocking question's prompt for them.
+    // Channel turns carry only messageProvider, and question tools gate their
+    // chat link on this label, so resolve it like message delivery does.
     ...(a.onToolResult
       ? {
           questionPrompt: {
             send: a.onToolResult,
-            ...(a.messageChannel ? { messageChannel: a.messageChannel } : {}),
+            messageChannel: a.messageChannel ?? a.messageProvider,
           },
         }
       : {}),
