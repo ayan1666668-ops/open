@@ -1334,6 +1334,58 @@ describe("buildGuardedModelFetch", () => {
     expect(items).toEqual([{ ok: true }]);
   });
 
+  it.each([
+    {
+      name: "bare, empty, and Unicode whitespace data",
+      body: "data\n\ndata:\n\ndata: \t\uFEFF\u00A0\n\n",
+      expectedBody: "",
+    },
+    {
+      name: "case-sensitive fields at the start of a line",
+      body: 'Data: ignored\n data: ignored\ndatabase: ignored\n\ndata: {"ok": true}\n\n',
+      expectedBody: 'data: {"ok": true}\n\n',
+    },
+    {
+      name: "multiline data including blank lines",
+      body: 'data:\r\ndata: {\r\ndata: "ok": true}\r\ndata: \t\r\n\r\n',
+      expectedBody: 'data:\r\ndata: {\r\ndata: "ok": true}\r\ndata: \t\r\n\r\n',
+    },
+    {
+      name: "characters outside JavaScript trim whitespace",
+      body: "data: \u0085\r\rdata: \u200B\r\r",
+      expectedBody: "data: \u0085\r\rdata: \u200B\r\r",
+    },
+    {
+      name: "readable EOF tail with a final blank data line",
+      body: 'data: {"ok": true}\ndata: \t',
+      expectedBody: 'data: {"ok": true}\ndata: \t',
+    },
+    {
+      name: "blank EOF tail",
+      body: "event: ping\ndata\ndata: \t\uFEFF\u00A0",
+      expectedBody: "",
+    },
+  ])("preserves SSE readability for $name", async ({ body, expectedBody }) => {
+    fetchWithSsrFGuardMock.mockResolvedValue({
+      response: new Response(body, { headers: { "content-type": "text/event-stream" } }),
+      finalUrl: "https://openrouter.ai/api/v1/chat/completions",
+      release: vi.fn(async () => undefined),
+    });
+    const model = makeProviderModelFixture<"openai-completions">({
+      id: "gpt-5.4",
+      provider: "openrouter",
+      api: "openai-completions",
+      baseUrl: "https://openrouter.ai/api/v1",
+    });
+
+    const response = await buildGuardedModelFetch(model)(
+      "https://openrouter.ai/api/v1/chat/completions",
+      { method: "POST" },
+    );
+
+    await expect(response.text()).resolves.toBe(expectedBody);
+  });
+
   it("continues reading until split SSE frames produce a parser-visible event", async () => {
     const encoder = new TextEncoder();
     let pulls = 0;
