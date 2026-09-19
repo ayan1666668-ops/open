@@ -1,22 +1,46 @@
-// Real-HTTP proof that silent overflow does not renew the overflow recovery
-// budget, and that repeated no-progress compaction terminates.
+// Connected transport-to-accounting-to-recovery trace for the overflow budget.
 //
-// ClawSweeper's `Real behavior: Needs proof` on PR #151076 asked for the
-// production transport and retry loop rather than a stubbed engine with
-// hand-emitted accounting events. This drives the real OpenAI-completions
-// transport over a real `node:http` loopback server so the assistant message
-// that production classifies is transport-truth, then feeds it through the real
-// accounting consumer and the real `recoverEmbeddedRunOverflow` bound.
+// ClawSweeper Revision 5 accepted the real HTTP/SSE transport here but found the
+// chain broken at both ends: the harness hand-computed `admitted` instead of
+// letting the production observer derive it, and it incremented the attempt
+// counter itself instead of letting `recoverEmbeddedRunOverflow` drive it. That
+// criticism was correct. This file connects the whole path:
+//
+//   real node:http + SSE -> streamOpenAICompletions    (real transport)
+//     -> createEmbeddedModelState.captureModelEvent    (real producer)
+//       -> observeContextAccounting                    (real accounting)
+//         -> recoverEmbeddedRunOverflow                (real recovery)
+//
+// The tests assert only observable outcomes of that chain: they never build an
+// `admitted` boolean and never assign `overflowCompactionAttempts`.
+//
+// This is an isolated production-path harness: a loopback server stands in for
+// the provider, which Revision 5 stated is sufficient without an official
+// provider or the full application.
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import type { Context, Model } from "@openclaw/ai";
 import { streamOpenAICompletions } from "@openclaw/ai/internal/openai";
 import { isContextOverflow } from "@openclaw/ai/internal/runtime";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import type { AssistantMessage } from "../../llm/types.js";
 import { MAX_OVERFLOW_COMPACTION_ATTEMPTS } from "../agent-compaction-constants.js";
+import { createEmbeddedModelState } from "../embedded-agent-subscribe.model-state.js";
+import type { SubscribeEmbeddedAgentSessionParams } from "../embedded-agent-subscribe.types.js";
+import { SessionManager } from "../sessions/session-manager.js";
 import { createEmbeddedRunContextRecoveryState } from "./run/context-recovery-state.js";
+import type { EmbeddedContextAccountingEvent } from "./run/internal-params.js";
+import { recoverEmbeddedRunOverflow } from "./run/overflow-context-recovery.js";
 
 const CONTEXT_WINDOW = 200_000;
+
+const silentLog = {
+  debug: () => {},
+  info: () => {},
+  warn: () => {},
+  error: () => {},
+  isEnabled: () => false,
+};
 
 /** Serializes chat-completion chunks as the SSE stream the real transport reads. */
 function serverSentChunks(chunks: Record<string, unknown>[]): string {
@@ -95,27 +119,172 @@ async function realTurn(finishReason: string, content: string, usage: Record<str
   });
 }
 
-describe("overflow recovery budget over real HTTP", () => {
-  it("forwards a real context window into accounting so silent overflow stays detectable", async () => {
+/**
+ * Feeds a real transport message through the production producer.
+ *
+ * `createEmbeddedModelState` derives `admitted` itself and resolves the window
+ * from its own params, exercising the `params.session.model?.contextWindow`
+ * fallback. Callers supply only the session, so the admission rule is never
+ * recomputed in this file.
+ */
+function observeThroughProducer(
+  message: AssistantMessage,
+  window: number | undefined,
+  onEvent: (event: EmbeddedContextAccountingEvent) => void,
+): void {
+  const params = {
+    runId: "run-connected-trace",
+    session: { model: window === undefined ? undefined : { contextWindow: window } },
+    onContextAccountingEvent: onEvent,
+  } as unknown as SubscribeEmbeddedAgentSessionParams;
+  const modelState = createEmbeddedModelState(params, silentLog as never);
+  modelState.captureModelEvent({ type: "message_start", message } as never);
+  modelState.captureModelEvent({ type: "message_end", message } as never);
+}
+
+/**
+ * Recovery input whose context engine commits a compaction that frees nothing.
+ *
+ * The overflow signal is the real transport message: production classifies it
+ * through its own `isContextOverflow(assistant, contextTokenBudget)` branch, so
+ * entry into recovery is decided by production, not asserted here.
+ */
+function makeRecoveryInput(
+  state: ReturnType<typeof createEmbeddedRunContextRecoveryState>,
+  assistantOverflowCandidate: AssistantMessage,
+) {
+  const session = {
+    id: "session-connected",
+    file: "/session/connected.jsonl",
+    target: { sessionId: "session-connected" },
+  };
+  return {
+    runParams: {
+      runId: "run-connected-trace",
+      sessionId: session.id,
+      sessionKey: "agent:main:session-connected",
+      config: {},
+      workspaceDir: "/tmp/workspace",
+      prompt: "continue",
+      timeoutMs: 1_000,
+      onAutoCompactionSucceeded: vi.fn(),
+    },
+    state,
+    assertRecoveryActive: () => {},
+    prepareRecoveryOwner: () => ({
+      session: {
+        ...session,
+        target: {
+          ...session.target,
+          agentId: "main",
+          sessionKey: "agent:main:session-connected",
+          storePath: "/tmp/workspace/openclaw-agent.sqlite",
+        },
+      },
+      assertActive: () => {},
+      withTranscriptWrites: async <T>(_signal: AbortSignal | undefined, run: () => Promise<T>) =>
+        await run(),
+    }),
+    prepareRecoverySession: () => ({
+      sessionManager: SessionManager.inMemory("/tmp/workspace"),
+      assertActive: vi.fn(),
+      withSessionManagerRewriteLock: async <T>(operation: () => Promise<T> | T) =>
+        await operation(),
+    }),
+    getActiveSession: () => session,
+    contextEngine: {
+      info: { id: "legacy", name: "Legacy" },
+      ingest: vi.fn(),
+      assemble: vi.fn(),
+      // A compaction that commits but frees nothing: the no-progress shape.
+      compact: vi.fn(async () => ({
+        ok: true,
+        compacted: true,
+        result: { summary: "compacted", tokensBefore: 199_000, tokensAfter: 199_000 },
+      })),
+    },
+    contextTokenBudget: CONTEXT_WINDOW,
+    attemptCompactionCount: 0,
+    genericCompactionRecoveryAllowed: true,
+    markOwnedTranscriptRetry: vi.fn(),
+    prepareCurrentTranscriptRetry: vi.fn(),
+    prepareCompactedTranscriptRetry: vi.fn(),
+    armPostCompactionGuard: vi.fn(),
+    runOwnsCompactionBeforeHook: vi.fn(),
+    runOwnsCompactionAfterHook: vi.fn(),
+    modelSelection: { provider: "openai", model: "loopback/overflow-model" },
+    resolveContextEnginePluginId: () => undefined,
+    buildRuntimeSettings: () => ({}),
+    adoptCompactionTranscript: async () => {},
+    onCompactionHookMessages: () => {},
+    sessionAgentId: "main",
+    contextEngineAgentId: undefined,
+    aborted: false,
+    signalOwnedInterruption: false,
+    promptError: undefined,
+    // Real transport output drives production's own overflow classification.
+    assistantOverflowCandidate: { message: assistantOverflowCandidate, classification: null },
+    attempt: {
+      terminal: { kind: "completed" },
+      sessionIdUsed: session.id,
+      assistantTexts: [],
+      messagesSnapshot: [],
+      toolMetas: [],
+      replayMetadata: { replaySafe: true, hadPotentialSideEffects: false },
+    },
+  };
+}
+
+/** A real HTTP turn that production classifies as an overflow (Case 3 shape). */
+async function realOverflowTurn() {
+  return await realTurn("length", "", {
+    prompt_tokens: 199_000,
+    completion_tokens: 0,
+    total_tokens: 199_000,
+  });
+}
+
+/** Charges one attempt by running production recovery, never by assignment. */
+async function chargeOneAttemptThroughRecovery(
+  state: ReturnType<typeof createEmbeddedRunContextRecoveryState>,
+  overflowMessage: AssistantMessage,
+): Promise<void> {
+  const result = await recoverEmbeddedRunOverflow(
+    makeRecoveryInput(state, overflowMessage) as never,
+  );
+  expect(result).toMatchObject({ action: "retry" });
+}
+
+describe("connected transport -> accounting -> recovery trace", () => {
+  it("forwards a real context window so silent overflow stays detectable", async () => {
     // `Model.contextWindow` is optional, so a missing value would silently
-    // disable isContextOverflow Case 2/3 and make the whole P1-a fix inert.
-    // This pins the production wiring: attempt-stream-prepare.ts passes
-    // `attempt.model?.contextWindow` through as `contextWindowTokens`.
+    // disable isContextOverflow Case 2/3 and make the whole fix inert.
     const { message, contextWindow } = await realTurn("stop", "ok", {
       prompt_tokens: 220_000,
       completion_tokens: 6,
       total_tokens: 220_006,
     });
     expect(contextWindow).toBe(CONTEXT_WINDOW);
-    expect(typeof contextWindow).toBe("number");
-
-    // Without the window the same response looks like ordinary success, which
-    // is exactly the regression this assertion guards against.
     expect(isContextOverflow(message, undefined)).toBe(false);
     expect(isContextOverflow(message, contextWindow)).toBe(true);
+
+    // Same real message, window withheld from the producer: the production
+    // verdict flips to admitted, which is exactly the inert-fix regression.
+    const withoutWindow: EmbeddedContextAccountingEvent[] = [];
+    observeThroughProducer(message, undefined, (event) => withoutWindow.push(event));
+    expect(withoutWindow).toEqual([
+      { kind: "model", contextTokens: expect.any(Number), admitted: true },
+    ]);
+
+    // With the window the production verdict is not admitted.
+    const withWindow: EmbeddedContextAccountingEvent[] = [];
+    observeThroughProducer(message, contextWindow, (event) => withWindow.push(event));
+    expect(withWindow).toEqual([
+      { kind: "model", contextTokens: expect.any(Number), admitted: false },
+    ]);
   }, 30_000);
 
-  it("does not renew the budget for a silent overflow served as a successful stop", async () => {
+  it("does not renew the budget for a Case 2 silent overflow", async () => {
     // Case 2 shape (z.ai/GLM, openclaw#75799): finish_reason "stop", positive
     // usage, prompt_tokens already past the window.
     const { message, contextWindow } = await realTurn("stop", "ok", {
@@ -124,69 +293,84 @@ describe("overflow recovery budget over real HTTP", () => {
       total_tokens: 220_006,
     });
 
-    // The shared classifier recognizes the transport-truth message as overflow.
-    expect(message.stopReason).toBe("stop");
-    expect(isContextOverflow(message, contextWindow)).toBe(true);
-
-    // Production accounting must therefore refuse to renew a charged attempt.
     const state = createEmbeddedRunContextRecoveryState();
-    state.overflowCompactionAttempts = 2;
-    state.observeContextAccounting({
-      kind: "model",
-      contextTokens: 220_006,
-      admitted:
-        (message.stopReason === "stop" || message.stopReason === "toolUse") &&
-        !isContextOverflow(message, contextWindow),
-    });
-    expect(state.overflowCompactionAttempts).toBe(2);
+    await chargeOneAttemptThroughRecovery(state, message);
+    expect(state.overflowCompactionAttempts).toBe(1);
+
+    observeThroughProducer(message, contextWindow, (event) =>
+      state.observeContextAccounting(event),
+    );
+
+    // Still charged: a silent overflow is not progress.
+    expect(state.overflowCompactionAttempts).toBe(1);
   }, 30_000);
 
-  it("renews the budget for a real completed turn under the window", async () => {
+  it("does not renew the budget for a Case 3 length overflow", async () => {
+    // Case 3 shape: length stop, zero output, prompt at >= 99% of the window.
+    const { message, contextWindow } = await realTurn("length", "", {
+      prompt_tokens: 199_000,
+      completion_tokens: 0,
+      total_tokens: 199_000,
+    });
+
+    const state = createEmbeddedRunContextRecoveryState();
+    await chargeOneAttemptThroughRecovery(state, message);
+    expect(state.overflowCompactionAttempts).toBe(1);
+
+    observeThroughProducer(message, contextWindow, (event) =>
+      state.observeContextAccounting(event),
+    );
+    expect(state.overflowCompactionAttempts).toBe(1);
+  }, 30_000);
+
+  it("renews the budget after a real completed turn under the window", async () => {
+    // Entering recovery requires a real overflow; the admitted turn below is
+    // deliberately under the window, so it cannot be that signal.
+    const overflow = await realOverflowTurn();
     const { message, contextWindow } = await realTurn("stop", "real answer", {
       prompt_tokens: 40_000,
       completion_tokens: 25,
       total_tokens: 40_025,
     });
 
-    expect(isContextOverflow(message, contextWindow)).toBe(false);
-
     const state = createEmbeddedRunContextRecoveryState();
-    state.overflowCompactionAttempts = 2;
-    state.observeContextAccounting({
-      kind: "model",
-      contextTokens: 40_025,
-      admitted:
-        (message.stopReason === "stop" || message.stopReason === "toolUse") &&
-        !isContextOverflow(message, contextWindow),
-    });
+    await chargeOneAttemptThroughRecovery(state, overflow.message);
+    expect(state.overflowCompactionAttempts).toBe(1);
+
+    observeThroughProducer(message, contextWindow, (event) =>
+      state.observeContextAccounting(event),
+    );
+
+    // Real progress renews the whole budget.
     expect(state.overflowCompactionAttempts).toBe(0);
   }, 30_000);
 
-  it("stops after the attempt bound when every real turn keeps overflowing", async () => {
-    // Each round is a real HTTP turn that silently overflows, mirroring a
-    // provider whose retried prompt never fits. The budget must run out.
+  it("terminates recovery after the attempt bound when every real turn overflows", async () => {
     const state = createEmbeddedRunContextRecoveryState();
-    for (let round = 1; round <= MAX_OVERFLOW_COMPACTION_ATTEMPTS; round += 1) {
-      const { message, contextWindow } = await realTurn("length", "", {
-        prompt_tokens: 199_000,
-        completion_tokens: 0,
-        total_tokens: 199_000,
-      });
-      // Case 3 shape: length stop, zero output, prompt at >= 99% of the window.
-      expect(isContextOverflow(message, contextWindow)).toBe(true);
 
-      // Production charges the attempt, then observes the failed turn.
-      state.overflowCompactionAttempts += 1;
-      state.observeContextAccounting({
-        kind: "model",
-        contextTokens: 199_000,
-        admitted: message.stopReason === "stop" && !isContextOverflow(message, contextWindow),
-      });
+    // Each round: production recovery compacts (freeing nothing) and retries,
+    // then a real overflowing HTTP turn is observed through the production
+    // producer. This test never touches the counter itself.
+    let lastOverflowMessage: AssistantMessage | undefined;
+    for (let round = 1; round <= MAX_OVERFLOW_COMPACTION_ATTEMPTS; round += 1) {
+      const { message, contextWindow } = await realOverflowTurn();
+      lastOverflowMessage = message;
+
+      await chargeOneAttemptThroughRecovery(state, message);
+      expect(state.overflowCompactionAttempts).toBe(round);
+
+      observeThroughProducer(message, contextWindow, (event) =>
+        state.observeContextAccounting(event),
+      );
+      // The overflow never renews, so the charge accumulates.
       expect(state.overflowCompactionAttempts).toBe(round);
     }
 
-    // Bound reached: recovery stops instead of compacting forever.
-    expect(state.overflowCompactionAttempts).toBe(MAX_OVERFLOW_COMPACTION_ATTEMPTS);
-    expect(state.overflowCompactionAttempts >= MAX_OVERFLOW_COMPACTION_ATTEMPTS).toBe(true);
-  }, 30_000);
+    // Bound reached: production recovery surfaces instead of compacting again.
+    expect(lastOverflowMessage).toBeDefined();
+    const exhausted = await recoverEmbeddedRunOverflow(
+      makeRecoveryInput(state, lastOverflowMessage as AssistantMessage) as never,
+    );
+    expect(exhausted).toMatchObject({ action: "surface", kind: "context_overflow" });
+  }, 60_000);
 });
