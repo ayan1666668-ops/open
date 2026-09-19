@@ -20,6 +20,9 @@ import android.provider.Settings
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.toPixelMap
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.captureToImage
@@ -162,7 +165,7 @@ class OverviewLayoutTest {
       composeRule.runOnIdle { prefs.setAppearanceThemeMode(if (dark) AppearanceThemeMode.Dark else AppearanceThemeMode.Light) }
       val chat =
         composeRule
-          .onNodeWithText("Chat")
+          .onNode(hasText("Chat") and SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Button))
           .performScrollTo()
           .assertIsDisplayed()
           .assertHasClickAction()

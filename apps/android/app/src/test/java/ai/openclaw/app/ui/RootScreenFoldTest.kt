@@ -702,7 +702,7 @@ class RootScreenFoldTest {
           .config[SemanticsProperties.VerticalScrollAxisRange]
           .value(),
       )
-      composeRule.onNode(hasText("Home") and hasAnyAncestor(hasTestTag("sidebar-permanent"))).performScrollTo().performClick()
+      composeRule.onNode(hasText("Chat") and hasAnyAncestor(hasTestTag("sidebar-permanent"))).performScrollTo().performClick()
       composeRule.onNodeWithTag("chat-composer-surface").assertIsDisplayed()
       composeRule.onNodeWithTag("sidebar-permanent").assertIsDisplayed()
       composeRule.onNode(hasText("Settings") and hasAnyAncestor(hasTestTag("sidebar-permanent"))).performScrollTo().performClick()
@@ -747,7 +747,7 @@ class RootScreenFoldTest {
       composeRule.onNodeWithTag("sidebar-permanent").assertIsDisplayed()
       composeRule.onNodeWithTag("sidebar-drawer").assertIsNotDisplayed()
       Settings.Global.putFloat(view.context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 0f)
-      composeRule.onNode(hasText("Home") and hasAnyAncestor(hasTestTag("sidebar-permanent"))).performTouchInput { click() }
+      composeRule.onNode(hasText("Chat") and hasAnyAncestor(hasTestTag("sidebar-permanent"))).performTouchInput { click() }
       composeRule.onNodeWithTag("chat-composer-surface").assertIsDisplayed()
       emit(emptyList())
       composeRule.runOnIdle { backDispatcher.onBackPressed() }
