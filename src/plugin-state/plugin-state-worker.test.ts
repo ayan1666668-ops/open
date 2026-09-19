@@ -1,10 +1,18 @@
 import { createHash } from "node:crypto";
-import { existsSync } from "node:fs";
-import { serialize } from "node:v8";
+import { existsSync, realpathSync } from "node:fs";
+import type { DatabaseSync } from "node:sqlite";
+import { deserialize, serialize } from "node:v8";
+import { Worker } from "node:worker_threads";
+import { asOptionalRecord } from "@openclaw/normalization-core/record-coerce";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { trackSqliteStatementExecutions } from "../../test/helpers/sqlite-statement-execution-counter.js";
 import { requireNodeSqlite } from "../infra/node-sqlite.js";
 import { SQLITE_WORKER_MAX_RESULT_BYTES } from "../infra/sqlite-worker-contract.js";
+import {
+  acquireStateDatabaseCoordinator,
+  captureStateDatabaseCoordinatorRuntime,
+  resolveStateDatabaseCoordinatorPath,
+} from "../infra/state-database-coordinator.js";
 import {
   appendMemoryHostEvent,
   readMemoryHostEventRecords,
@@ -22,12 +30,91 @@ import {
 import { seedPluginStateEntriesForTests } from "./plugin-state-store.test-helpers.js";
 import { PluginStateStoreError } from "./plugin-state-store.types.js";
 
+function observeNonCoordinatorExec() {
+  const native = requireNodeSqlite();
+  const coordinatorPath = resolveStateDatabaseCoordinatorPath({
+    databasePath: resolveOpenClawStateSqlitePath(),
+    runtimeDirectory: captureStateDatabaseCoordinatorRuntime().directory,
+    uid: process.getuid?.(),
+  });
+  const dataExec = vi.fn();
+  const spy = vi.spyOn(native.DatabaseSync.prototype, "exec");
+  native.DatabaseSync.prototype.exec = function (this: DatabaseSync, sql: string) {
+    // Lifecycle admission uses its separate control database; plugin-state SQL
+    // must still stay off-thread, including raw exec calls and unknown locations.
+    const location = this.location();
+    if (!location || realpathSync(location) !== realpathSync(coordinatorPath)) {
+      dataExec(sql);
+    }
+    return spy.call(this, sql);
+  };
+  return { dataExec, restore: () => spy.mockRestore() };
+}
+
 afterEach(async () => {
   vi.restoreAllMocks();
   await closeOpenClawStateDatabaseAsync();
 });
 
 describe("worker plugin state", () => {
+  it.each(["observe", "compareDelete"] as const)(
+    "shares lifecycle custody with an overlapping host owner during %s",
+    async (operation) => {
+      await withOpenClawTestState({ label: "plugin-state-lock-custody" }, async (state) => {
+        const store = createPluginStateKeyedStore<string>("memory-core", {
+          namespace: "lock-custody",
+          maxEntries: 10,
+          env: state.env,
+        });
+        const messages = vi.spyOn(Worker.prototype, "postMessage");
+        await store.register("workspace", "owner");
+        const worker = messages.mock.contexts[0];
+        messages.mockRestore();
+        if (!(worker instanceof Worker)) {
+          throw new Error("Expected the shared-state worker");
+        }
+        const observation = await store.observe("workspace");
+        let held: ReturnType<typeof acquireStateDatabaseCoordinator> | undefined;
+        const nativePost = worker.postMessage.bind(worker);
+        const dispatch = vi
+          .spyOn(worker, "postMessage")
+          .mockImplementation((message, transferList) => {
+            const request = asOptionalRecord(message);
+            if (
+              request?.type === "execute" &&
+              request.input instanceof Uint8Array &&
+              asOptionalRecord(deserialize(request.input))?.type === "pluginState." + operation
+            ) {
+              // A sibling native owner starts after broker preparation but before
+              // dispatch. Its live custody must be shared with this worker command.
+              held = acquireStateDatabaseCoordinator({
+                databasePath: resolveOpenClawStateSqlitePath(state.env),
+                busyTimeoutMs: 0,
+              });
+            }
+            return nativePost(message, transferList);
+          });
+        try {
+          if (operation === "observe") {
+            await expect(store.observe("workspace")).resolves.toMatchObject({ value: "owner" });
+          } else {
+            await expect(
+              store.compareAndApply("workspace", observation.comparison, {
+                operation: "delete",
+                action: "delete",
+              }),
+            ).resolves.toEqual({ status: "applied" });
+          }
+          expect(held).toBeDefined();
+        } finally {
+          dispatch.mockRestore();
+          held?.release();
+        }
+        expect(await store.lookup("workspace")).toBe(operation === "observe" ? "owner" : undefined);
+      });
+    },
+  );
+
   it("appends and reads the memory journal off-thread with unchanged persisted bytes", async () => {
     await withOpenClawTestState({ label: "memory-journal-worker" }, async (state) => {
       const workspaceDir = state.workspaceDir;
@@ -39,9 +126,10 @@ describe("worker plugin state", () => {
         results: [],
       };
       const native = requireNodeSqlite();
+      const exec = observeNonCoordinatorExec();
       const sql = [
         vi.spyOn(native.DatabaseSync.prototype, "prepare"),
-        vi.spyOn(native.DatabaseSync.prototype, "exec"),
+        exec.dataExec,
         ...(["get", "all", "run", "iterate"] as const).map((method) =>
           vi.spyOn(native.StatementSync.prototype, method),
         ),
@@ -77,6 +165,7 @@ describe("worker plugin state", () => {
         }
       } finally {
         sql.forEach((method) => method.mockRestore());
+        exec.restore();
       }
       const { db } = openOpenClawStateDatabase({ env: state.env });
       const rows = db
@@ -154,11 +243,11 @@ describe("worker plugin state", () => {
       };
       const native = requireNodeSqlite();
       const prepare = vi.spyOn(native.DatabaseSync.prototype, "prepare");
-      const exec = vi.spyOn(native.DatabaseSync.prototype, "exec");
+      const exec = observeNonCoordinatorExec();
       const statements = (["get", "all", "run", "iterate"] as const).map((method) =>
         vi.spyOn(native.StatementSync.prototype, method),
       );
-      const sql = [prepare, exec, ...statements];
+      const sql = [prepare, exec.dataExec, ...statements];
       try {
         const store = createPluginStateKeyedStore<number>("slack", options);
         const legacy = createPluginStateSyncKeyedStore<number>("slack", options);
@@ -219,6 +308,7 @@ describe("worker plugin state", () => {
         }
       } finally {
         sql.forEach((method) => method.mockRestore());
+        exec.restore();
       }
       const persisted = createPluginStateSyncKeyedStore<number>("slack", options);
       expect(persisted.lookup("legacy")).toBe(1);
