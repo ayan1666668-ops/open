@@ -5,7 +5,6 @@ import ai.openclaw.app.selectableAgents
 import ai.openclaw.app.ui.design.ClawAgentAvatar
 import ai.openclaw.app.ui.design.ClawTheme
 import ai.openclaw.app.ui.design.agentAvatarSource
-import ai.openclaw.app.ui.design.clawWindowContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -19,7 +18,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
@@ -105,35 +103,33 @@ internal fun AgentPicker(
       }
     }
 
-    DropdownMenu(
+    AppDropdownMenu(
       expanded = expanded,
       onDismissRequest = { expanded = false },
       containerColor = ClawTheme.colors.surfaceRaised,
-      content =
-        clawWindowContent {
-          state.agents.forEach { agent ->
-            DropdownMenuItem(
-              text = {
-                Text(
-                  text = agentPickerName(agent),
-                  maxLines = 1,
-                  overflow = TextOverflow.Ellipsis,
-                )
-              },
-              leadingIcon = { AgentPickerAvatar(agent = agent, size = 24) },
-              trailingIcon = {
-                if (agent.id == selectedAgentId) {
-                  Icon(imageVector = Icons.Default.Check, contentDescription = null)
-                }
-              },
-              onClick = {
-                expanded = false
-                onSelectAgent(agent.id)
-              },
+    ) {
+      state.agents.forEach { agent ->
+        DropdownMenuItem(
+          text = {
+            Text(
+              text = agentPickerName(agent),
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis,
             )
-          }
-        },
-    )
+          },
+          leadingIcon = { AgentPickerAvatar(agent = agent, size = 24) },
+          trailingIcon = {
+            if (agent.id == selectedAgentId) {
+              Icon(imageVector = Icons.Default.Check, contentDescription = null)
+            }
+          },
+          onClick = {
+            expanded = false
+            onSelectAgent(agent.id)
+          },
+        )
+      }
+    }
   }
 }
 

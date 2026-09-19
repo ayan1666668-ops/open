@@ -4,7 +4,6 @@ import ai.openclaw.app.ProviderAuthController
 import ai.openclaw.app.i18n.nativeString
 import ai.openclaw.app.i18n.resolveNativeText
 import ai.openclaw.app.providerDisplayName
-import ai.openclaw.app.ui.design.ClawAlertDialog
 import ai.openclaw.app.ui.design.ClawTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -80,7 +79,7 @@ internal fun ProviderSignInDialog(
         ?.jsonPrimitive
         ?.booleanOrNull == true
 
-  ClawAlertDialog(
+  AppAlertDialog(
     onDismissRequest = onDismiss,
     title = { Text(nativeString("Sign in")) },
     text = {

@@ -274,7 +274,7 @@ class SecurePrefs(
   val preferredAudioInputDevice: StateFlow<String?> = _preferredAudioInputDevice
 
   private val _appearanceTextScale =
-    MutableStateFlow(AppearanceTextScale.fromRawValue(plainPrefs.getString(appearanceTextScaleKey, null)))
+    MutableStateFlow(AppearanceTextScale.fromPercent(plainPrefs.all[appearanceTextScaleKey] as? Int))
   val appearanceTextScale: StateFlow<AppearanceTextScale> = _appearanceTextScale
 
   private val _appearanceThemeMode =
@@ -829,8 +829,9 @@ class SecurePrefs(
     return emptyList()
   }
 
+  @Synchronized
   fun setAppearanceTextScale(scale: AppearanceTextScale) {
-    plainPrefs.edit { putString(appearanceTextScaleKey, scale.rawValue) }
+    plainPrefs.edit { putInt(appearanceTextScaleKey, scale.percent) }
     _appearanceTextScale.value = scale
   }
 

@@ -17,7 +17,6 @@ import ai.openclaw.app.i18n.verbatimText
 import ai.openclaw.app.locationModeAfterBackgroundSettings
 import ai.openclaw.app.node.DeviceNotificationListenerService
 import ai.openclaw.app.photoReadPermissionsForRequest
-import ai.openclaw.app.ui.design.ClawAlertDialog
 import ai.openclaw.app.ui.design.ClawDesignTheme
 import ai.openclaw.app.ui.design.ClawPrimaryButton
 import ai.openclaw.app.ui.design.ClawScaffold
@@ -461,13 +460,12 @@ fun OnboardingFlow(
   viewModel: MainViewModel,
   modifier: Modifier = Modifier,
 ) {
-  val appearanceTextScale by viewModel.appearanceTextScale.collectAsState()
   val appearanceThemeMode by viewModel.appearanceThemeMode.collectAsState()
   val appearanceThemeFamily by viewModel.appearanceThemeFamily.collectAsState()
   val appearanceAccentArgb by viewModel.appearanceAccentArgb.collectAsState()
   val gatewayAccentArgb by viewModel.gatewayAccentArgb.collectAsState()
   val onboardingDark = appearanceThemeMode.isDark(systemDark = isSystemInDarkTheme())
-  ClawDesignTheme(dark = onboardingDark, family = appearanceThemeFamily, accentArgb = appearanceAccentArgb ?: gatewayAccentArgb, textScale = appearanceTextScale) {
+  ClawDesignTheme(dark = onboardingDark, family = appearanceThemeFamily, accentArgb = appearanceAccentArgb ?: gatewayAccentArgb) {
     val context = LocalContext.current
     val gatewayConnectionDisplay by viewModel.gatewayConnectionDisplay.collectAsState()
     val statusText = gatewayConnectionDisplay.statusText
@@ -2152,7 +2150,7 @@ private fun GatewayRecoveryDiagnosticDialog(
   onDismiss: () -> Unit,
   onCopy: () -> Unit,
 ) {
-  ClawAlertDialog(
+  AppAlertDialog(
     onDismissRequest = onDismiss,
     containerColor = ClawTheme.colors.surfaceRaised,
     title = { Text(nativeString("Connection details"), style = ClawTheme.type.section, color = ClawTheme.colors.text) },
@@ -2274,7 +2272,7 @@ private fun NodeApprovalScreen(
   }
 
   if (showWaitingDialog) {
-    ClawAlertDialog(
+    AppAlertDialog(
       onDismissRequest = { waitingDialogDismissed = true },
       title = { Text(text = nativeString("Still waiting for approval")) },
       text = {

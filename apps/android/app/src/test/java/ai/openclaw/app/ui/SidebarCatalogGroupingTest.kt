@@ -355,8 +355,8 @@ class SidebarCatalogGroupingTest {
           )
         }
       }
-      composeRule.onNodeWithText("Home").assertDoesNotExist()
-      composeRule.onNodeWithText("Chat").assertIsDisplayed()
+      composeRule.onNodeWithText("Work").assertDoesNotExist()
+      composeRule.onNodeWithText("Home").assertIsDisplayed()
       composeRule.onNodeWithText("Settings").assertIsDisplayed().performTouchInput(dragOnePageDown)
 
       composeRule.runOnIdle {
@@ -365,7 +365,7 @@ class SidebarCatalogGroupingTest {
       }
       val homeTop =
         composeRule
-          .onNodeWithText("Chat")
+          .onNodeWithText("Home")
           .fetchSemanticsNode()
           .boundsInRoot.top
       val settingsTop =
@@ -376,9 +376,9 @@ class SidebarCatalogGroupingTest {
       assertTrue("One drag must move Settings below the next visible page", homeTop < settingsTop)
 
       composeRule.onNodeWithTag("sidebar-pages-menu").performClick()
-      composeRule.onNodeWithText("Customize pages").performClick()
+      composeRule.onNodeWithText("Edit pinned items").performClick()
       composeRule.onNodeWithText("EDIT PINNED ITEMS").assertIsDisplayed()
-      composeRule.onNodeWithText("Home").assertIsDisplayed().performTouchInput(dragOnePageDown)
+      composeRule.onNodeWithText("Work").assertIsDisplayed().performTouchInput(dragOnePageDown)
       composeRule.runOnIdle {
         assertEquals(listOf("home", "settings", "work", "skills", "threads"), prefs.sidebarPageOrder.value)
         assertEquals(listOf("settings", "home", "skills", "threads"), prefs.sidebarVisiblePages.value)

@@ -43,7 +43,6 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 
 internal enum class SidebarAttentionKind { Question, Approval }
@@ -147,8 +146,7 @@ internal fun SidebarAttentionIndicator(
   val interactions = remember { MutableInteractionSource() }
   val hovered by interactions.collectIsHoveredAsState()
   val focused by interactions.collectIsFocusedAsState()
-  val density = LocalDensity.current
-  val popupOffset = with(density) { 32.dp.roundToPx() }
+  val popupOffset = with(LocalDensity.current) { 32.dp.roundToPx() }
   // Background requests and summary updates do not replace the request being read.
   val identity = attention.disclosureIdentity
   var opened by remember(identity) { mutableStateOf(false) }
@@ -176,23 +174,21 @@ internal fun SidebarAttentionIndicator(
       }
     }
     if (!dismissed && (opened || hovered || focused)) {
-      Popup(alignment = Alignment.TopEnd, offset = IntOffset(0, popupOffset), onDismissRequest = {
+      AppPopup(alignment = Alignment.TopEnd, offset = IntOffset(0, popupOffset), onDismissRequest = {
         opened = false
         dismissed = true
       }, properties = PopupProperties(focusable = opened)) {
-        CompositionLocalProvider(LocalDensity provides density) {
-          Column(
-            Modifier
-              .widthIn(max = 280.dp)
-              .background(palette.elevated, RoundedCornerShape(10.dp))
-              .padding(12.dp)
-              .testTag("sidebar-attention-detail"),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-          ) {
-            Text(attention.status, color = palette.text, style = ClawTheme.type.caption.copy(fontWeight = FontWeight.SemiBold))
-            if (attention.first.preview.isNotBlank()) Text(attention.first.preview, color = palette.text, style = ClawTheme.type.caption)
-            attention.more?.let { Text(it, color = palette.muted, style = ClawTheme.type.caption) }
-          }
+        Column(
+          Modifier
+            .widthIn(max = 280.dp)
+            .background(palette.elevated, RoundedCornerShape(10.dp))
+            .padding(12.dp)
+            .testTag("sidebar-attention-detail"),
+          verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+          Text(attention.status, color = palette.text, style = ClawTheme.type.caption.copy(fontWeight = FontWeight.SemiBold))
+          if (attention.first.preview.isNotBlank()) Text(attention.first.preview, color = palette.text, style = ClawTheme.type.caption)
+          attention.more?.let { Text(it, color = palette.muted, style = ClawTheme.type.caption) }
         }
       }
     }

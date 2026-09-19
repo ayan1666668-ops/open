@@ -6,7 +6,6 @@ import ai.openclaw.app.GatewaySkillWorkshopSummary
 import ai.openclaw.app.MainViewModel
 import ai.openclaw.app.i18n.nativeString
 import ai.openclaw.app.selectableAgents
-import ai.openclaw.app.ui.design.ClawAlertDialog
 import ai.openclaw.app.ui.design.ClawPanel
 import ai.openclaw.app.ui.design.ClawPrimaryButton
 import ai.openclaw.app.ui.design.ClawSecondaryButton
@@ -15,7 +14,6 @@ import ai.openclaw.app.ui.design.ClawStatus
 import ai.openclaw.app.ui.design.ClawStatusPill
 import ai.openclaw.app.ui.design.ClawTextField
 import ai.openclaw.app.ui.design.ClawTheme
-import ai.openclaw.app.ui.design.clawWindowContent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -25,7 +23,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Text
@@ -292,7 +289,7 @@ private fun SkillWorkshopActionConfirmDialog(
         nativeString("This will quarantine \"\$proposalTitle\" and refresh Skill Workshop state from the gateway.", action.title)
       }
     }
-  ClawAlertDialog(
+  AppAlertDialog(
     onDismissRequest = onDismiss,
     title = { Text(dialogTitle) },
     text = {
@@ -385,32 +382,27 @@ private fun SkillWorkshopAgentMenu(
       modifier = Modifier.fillMaxWidth(),
       enabled = selectableAgents.isNotEmpty(),
     )
-    DropdownMenu(
-      expanded = expanded,
-      onDismissRequest = { expanded = false },
-      content =
-        clawWindowContent {
+    AppDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+      DropdownMenuItem(
+        text = { Text(nativeString("Default agent")) },
+        onClick = {
+          expanded = false
+          onAgentChange("")
+        },
+      )
+      selectableAgents
+        .filter { agent -> agent.id.trim().isNotEmpty() && agent.id != defaultAgentId }
+        .sortedBy { it.name ?: it.id }
+        .forEach { agent ->
           DropdownMenuItem(
-            text = { Text(nativeString("Default agent")) },
+            text = { Text(agent.name?.takeIf { it.isNotBlank() } ?: agent.id) },
             onClick = {
               expanded = false
-              onAgentChange("")
+              onAgentChange(agent.id)
             },
           )
-          selectableAgents
-            .filter { agent -> agent.id.trim().isNotEmpty() && agent.id != defaultAgentId }
-            .sortedBy { it.name ?: it.id }
-            .forEach { agent ->
-              DropdownMenuItem(
-                text = { Text(agent.name?.takeIf { it.isNotBlank() } ?: agent.id) },
-                onClick = {
-                  expanded = false
-                  onAgentChange(agent.id)
-                },
-              )
-            }
-        },
-    )
+        }
+    }
   }
 }
 

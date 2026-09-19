@@ -11,7 +11,6 @@ import ai.openclaw.app.GatewayCronRunSummary
 import ai.openclaw.app.GatewayCronScheduleEdit
 import ai.openclaw.app.i18n.nativeString
 import ai.openclaw.app.i18n.resolveNativeText
-import ai.openclaw.app.ui.design.ClawAlertDialog
 import ai.openclaw.app.ui.design.ClawIconBadge
 import ai.openclaw.app.ui.design.ClawListItem
 import ai.openclaw.app.ui.design.ClawListPanel
@@ -77,7 +76,7 @@ internal fun CronJobManagementPanel(
   var showDeleteConfirmation by remember(job.id) { mutableStateOf(false) }
 
   if (showDeleteConfirmation) {
-    ClawAlertDialog(
+    AppAlertDialog(
       onDismissRequest = { showDeleteConfirmation = false },
       confirmButton = {
         TextButton(

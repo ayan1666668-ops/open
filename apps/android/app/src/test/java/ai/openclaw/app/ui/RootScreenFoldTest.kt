@@ -73,7 +73,7 @@ import androidx.window.layout.FoldingFeature
 import androidx.window.layout.WindowInfoTracker
 import androidx.window.layout.WindowInfoTrackerDecorator
 import androidx.window.layout.WindowLayoutInfo
-import com.google.mlkit.common.internal.MlKitInitProvider
+import com.google.mlkit.common.sdkinternal.MlKitContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -702,7 +702,7 @@ class RootScreenFoldTest {
           .config[SemanticsProperties.VerticalScrollAxisRange]
           .value(),
       )
-      composeRule.onNode(hasText("Chat") and hasAnyAncestor(hasTestTag("sidebar-permanent"))).performScrollTo().performClick()
+      composeRule.onNode(hasText("Home") and hasAnyAncestor(hasTestTag("sidebar-permanent"))).performScrollTo().performClick()
       composeRule.onNodeWithTag("chat-composer-surface").assertIsDisplayed()
       composeRule.onNodeWithTag("sidebar-permanent").assertIsDisplayed()
       composeRule.onNode(hasText("Settings") and hasAnyAncestor(hasTestTag("sidebar-permanent"))).performScrollTo().performClick()
@@ -747,7 +747,7 @@ class RootScreenFoldTest {
       composeRule.onNodeWithTag("sidebar-permanent").assertIsDisplayed()
       composeRule.onNodeWithTag("sidebar-drawer").assertIsNotDisplayed()
       Settings.Global.putFloat(view.context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 0f)
-      composeRule.onNode(hasText("Chat") and hasAnyAncestor(hasTestTag("sidebar-permanent"))).performTouchInput { click() }
+      composeRule.onNode(hasText("Home") and hasAnyAncestor(hasTestTag("sidebar-permanent"))).performTouchInput { click() }
       composeRule.onNodeWithTag("chat-composer-surface").assertIsDisplayed()
       emit(emptyList())
       composeRule.runOnIdle { backDispatcher.onBackPressed() }
@@ -917,7 +917,7 @@ class RootScreenFoldTest {
     val models = ViewModelStore()
     try {
       configureRuntime(runtime)
-      if (!completed) Robolectric.buildContentProvider(MlKitInitProvider::class.java).create()
+      if (!completed) MlKitContext.initializeIfNeeded(RuntimeEnvironment.getApplication())
       val model = MainViewModel(app, prefs, SavedStateHandle())
       models.put("root-fold", model)
       ReflectionHelpers.getField<MutableStateFlow<NodeRuntime?>>(model, "runtimeRef").value = runtime

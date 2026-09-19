@@ -4,14 +4,12 @@ import ai.openclaw.app.MainViewModel
 import ai.openclaw.app.chat.ChatSessionEntry
 import ai.openclaw.app.chat.isSessionRunActive
 import ai.openclaw.app.i18n.nativeString
-import ai.openclaw.app.ui.design.ClawAlertDialog
 import ai.openclaw.app.ui.design.ClawEmptyState
 import ai.openclaw.app.ui.design.ClawLoadingState
 import ai.openclaw.app.ui.design.ClawPlainIconButton
 import ai.openclaw.app.ui.design.ClawPrimaryButton
 import ai.openclaw.app.ui.design.ClawScaffold
 import ai.openclaw.app.ui.design.ClawTheme
-import ai.openclaw.app.ui.design.clawWindowContent
 import ai.openclaw.app.ui.design.sessionColor
 import ai.openclaw.app.ui.design.sessionColorNames
 import ai.openclaw.app.ui.design.sessionColorStripe
@@ -52,7 +50,6 @@ import androidx.compose.material.icons.outlined.AccessTime
 import androidx.compose.material.icons.outlined.Archive
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.MicNone
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -534,7 +531,7 @@ internal fun SessionsScreen(
   }
 
   deleteGroupName?.let { group ->
-    ClawAlertDialog(
+    AppAlertDialog(
       onDismissRequest = { deleteGroupName = null },
       containerColor = ClawTheme.colors.surfaceRaised,
       title = { Text(nativeString("Delete group?"), style = ClawTheme.type.section, color = ClawTheme.colors.text) },
@@ -558,7 +555,7 @@ internal fun SessionsScreen(
   }
 
   deleteSessionTarget?.let { session ->
-    ClawAlertDialog(
+    AppAlertDialog(
       onDismissRequest = { deleteSessionTarget = null },
       containerColor = ClawTheme.colors.surfaceRaised,
       title = { Text(nativeString("Delete thread?"), style = ClawTheme.type.section, color = ClawTheme.colors.text) },
@@ -753,105 +750,103 @@ private fun SessionRow(
         }
         HorizontalDivider(color = ClawTheme.colors.border, thickness = 1.dp)
       }
-      DropdownMenu(
+      AppDropdownMenu(
         expanded = menuExpanded,
         onDismissRequest = {
           menuExpanded = false
           submenu = null
         },
-        content =
-          clawWindowContent {
-            if (submenu == null) {
-              SessionMenuItem(nativeString("Color")) { submenu = SessionRowSubmenu.Color }
-            }
-            if (submenu == SessionRowSubmenu.Color) {
-              SessionMenuItem(nativeString("← Back")) { submenu = null }
-              (listOf(null) + sessionColorNames).forEach { name ->
-                DropdownMenuItem(
-                  text = { Text(sessionColorLabel(name), style = ClawTheme.type.body) },
-                  leadingIcon = {
-                    ClawTheme.colors.sessionColor(name)?.let { color ->
-                      Box(modifier = Modifier.size(16.dp).background(color, CircleShape))
-                    }
-                  },
-                  trailingIcon = {
-                    if (selectedColor == name) Icon(Icons.Default.Check, contentDescription = nativeString("Selected"))
-                  },
-                  onClick = {
-                    menuExpanded = false
-                    submenu = null
-                    onSetColor(name)
-                  },
-                )
-              }
-            } else if (archived) {
-              if (canChangeArchived) {
-                SessionMenuItem(nativeString("Unarchive")) {
-                  menuExpanded = false
-                  onSetArchived(false)
+      ) {
+        if (submenu == null) {
+          SessionMenuItem(nativeString("Color")) { submenu = SessionRowSubmenu.Color }
+        }
+        if (submenu == SessionRowSubmenu.Color) {
+          SessionMenuItem(nativeString("← Back")) { submenu = null }
+          (listOf(null) + sessionColorNames).forEach { name ->
+            DropdownMenuItem(
+              text = { Text(sessionColorLabel(name), style = ClawTheme.type.body) },
+              leadingIcon = {
+                ClawTheme.colors.sessionColor(name)?.let { color ->
+                  Box(modifier = Modifier.size(16.dp).background(color, CircleShape))
                 }
-              }
-              SessionMenuItem(nativeString("Delete…")) {
-                menuExpanded = false
-                onDelete()
-              }
-            } else if (submenu == SessionRowSubmenu.Group) {
-              SessionMenuItem(nativeString("← Back")) { submenu = null }
-              categories.forEach { category ->
-                SessionMenuItem(category) {
-                  menuExpanded = false
-                  submenu = null
-                  onMoveToGroup(category)
-                }
-              }
-              SessionMenuItem(nativeString("New group…")) {
+              },
+              trailingIcon = {
+                if (selectedColor == name) Icon(Icons.Default.Check, contentDescription = nativeString("Selected"))
+              },
+              onClick = {
                 menuExpanded = false
                 submenu = null
-                onNewGroup()
-              }
-              if (!session.category.isNullOrBlank()) {
-                SessionMenuItem(nativeString("Remove from group")) {
-                  menuExpanded = false
-                  submenu = null
-                  onRemoveFromGroup()
-                }
-              }
-            } else {
-              SessionMenuItem(if (session.pinned == true) nativeString("Unpin") else nativeString("Pin")) {
-                menuExpanded = false
-                onSetPinned(session.pinned != true)
-              }
-              SessionMenuItem(if (session.unread == true) nativeString("Mark as read") else nativeString("Mark as unread")) {
-                menuExpanded = false
-                onSetUnread(session.unread != true)
-              }
-              SessionMenuItem(nativeString("Rename…")) {
-                menuExpanded = false
-                onRename()
-              }
-              if (session.modelSelectionLocked != true) {
-                SessionMenuItem(
-                  nativeString(
-                    if (session.hasActiveRun == true) "Fork from last completed message" else "Fork",
-                  ),
-                ) {
-                  menuExpanded = false
-                  onFork()
-                }
-              }
-              SessionMenuItem(nativeString("Move to group")) { submenu = SessionRowSubmenu.Group }
-              if (canChangeArchived) {
-                SessionMenuItem(nativeString("Archive")) {
-                  menuExpanded = false
-                  onSetArchived(true)
-                }
-              }
-              // Delete is archive-gated: the bounded operator session lacks
-              // operator.admin, and the gateway only grants write-scope deletes
-              // for archived sessions. Archived rows keep the Delete item.
+                onSetColor(name)
+              },
+            )
+          }
+        } else if (archived) {
+          if (canChangeArchived) {
+            SessionMenuItem(nativeString("Unarchive")) {
+              menuExpanded = false
+              onSetArchived(false)
             }
-          },
-      )
+          }
+          SessionMenuItem(nativeString("Delete…")) {
+            menuExpanded = false
+            onDelete()
+          }
+        } else if (submenu == SessionRowSubmenu.Group) {
+          SessionMenuItem(nativeString("← Back")) { submenu = null }
+          categories.forEach { category ->
+            SessionMenuItem(category) {
+              menuExpanded = false
+              submenu = null
+              onMoveToGroup(category)
+            }
+          }
+          SessionMenuItem(nativeString("New group…")) {
+            menuExpanded = false
+            submenu = null
+            onNewGroup()
+          }
+          if (!session.category.isNullOrBlank()) {
+            SessionMenuItem(nativeString("Remove from group")) {
+              menuExpanded = false
+              submenu = null
+              onRemoveFromGroup()
+            }
+          }
+        } else {
+          SessionMenuItem(if (session.pinned == true) nativeString("Unpin") else nativeString("Pin")) {
+            menuExpanded = false
+            onSetPinned(session.pinned != true)
+          }
+          SessionMenuItem(if (session.unread == true) nativeString("Mark as read") else nativeString("Mark as unread")) {
+            menuExpanded = false
+            onSetUnread(session.unread != true)
+          }
+          SessionMenuItem(nativeString("Rename…")) {
+            menuExpanded = false
+            onRename()
+          }
+          if (session.modelSelectionLocked != true) {
+            SessionMenuItem(
+              nativeString(
+                if (session.hasActiveRun == true) "Fork from last completed message" else "Fork",
+              ),
+            ) {
+              menuExpanded = false
+              onFork()
+            }
+          }
+          SessionMenuItem(nativeString("Move to group")) { submenu = SessionRowSubmenu.Group }
+          if (canChangeArchived) {
+            SessionMenuItem(nativeString("Archive")) {
+              menuExpanded = false
+              onSetArchived(true)
+            }
+          }
+          // Delete is archive-gated: the bounded operator session lacks
+          // operator.admin, and the gateway only grants write-scope deletes
+          // for archived sessions. Archived rows keep the Delete item.
+        }
+      }
     }
   }
 }
@@ -891,25 +886,20 @@ private fun SessionGroupHeader(
           onLongClick = { menuExpanded = true },
         ),
     )
-    DropdownMenu(
-      expanded = menuExpanded,
-      onDismissRequest = { menuExpanded = false },
-      content =
-        clawWindowContent {
-          SessionMenuItem(nativeString("Rename group…")) {
-            menuExpanded = false
-            onRename()
-          }
-          SessionMenuItem(nativeString("New group…")) {
-            menuExpanded = false
-            onNewGroup()
-          }
-          SessionMenuItem(nativeString("Delete group…")) {
-            menuExpanded = false
-            onDelete()
-          }
-        },
-    )
+    AppDropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+      SessionMenuItem(nativeString("Rename group…")) {
+        menuExpanded = false
+        onRename()
+      }
+      SessionMenuItem(nativeString("New group…")) {
+        menuExpanded = false
+        onNewGroup()
+      }
+      SessionMenuItem(nativeString("Delete group…")) {
+        menuExpanded = false
+        onDelete()
+      }
+    }
   }
 }
 
@@ -936,7 +926,7 @@ private fun SessionTextDialog(
 ) {
   var value by rememberSaveable(stateKey) { mutableStateOf(initialValue) }
   val canConfirm = allowEmpty || value.isNotBlank()
-  ClawAlertDialog(
+  AppAlertDialog(
     onDismissRequest = onDismiss,
     containerColor = ClawTheme.colors.surfaceRaised,
     title = { Text(title, style = ClawTheme.type.section, color = ClawTheme.colors.text) },

@@ -282,6 +282,7 @@ class SidebarGatewayPickerTest {
     val alpha = savedGateway("Gateway Alpha")
     focus(alpha)
     showSidebarAndComposer(showComposer = false)
+    awaitFocus(alpha)
     model.openGatewayAddition()
     val stale = requireNotNull(model.gatewayAdditionRequest.value)
     model.dismissGatewayAddition(stale)
@@ -433,7 +434,7 @@ class SidebarGatewayPickerTest {
           val row = gatewayItem(alpha).captureToImage().toPixelMap()
           val navigation =
             composeRule
-              .onNodeWithText("Chat")
+              .onNodeWithText("Home")
               .assertIsSelected()
               .captureToImage()
               .toPixelMap()

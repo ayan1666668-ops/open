@@ -3,10 +3,10 @@ package ai.openclaw.app.ui.chat
 import ai.openclaw.app.R
 import ai.openclaw.app.chat.ChatMessageContent
 import ai.openclaw.app.i18n.nativeString
-import ai.openclaw.app.ui.design.ClawAlertDialog
+import ai.openclaw.app.ui.AppAlertDialog
+import ai.openclaw.app.ui.AppDropdownMenu
 import ai.openclaw.app.ui.design.ClawIconButton
 import ai.openclaw.app.ui.design.ClawTheme
-import ai.openclaw.app.ui.design.clawWindowContent
 import android.app.Activity
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -27,7 +27,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.LastPage
 import androidx.compose.material.icons.automirrored.filled.NavigateBefore
 import androidx.compose.material.icons.automirrored.filled.NavigateNext
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -94,51 +93,49 @@ internal fun ChatMessageActionHost(
       ),
   ) {
     content()
-    DropdownMenu(
+    AppDropdownMenu(
       expanded = menuExpanded,
       onDismissRequest = { menuExpanded = false },
-      content =
-        clawWindowContent {
-          if (text.isNotBlank()) {
-            onToggleListen?.let { toggleListen ->
-              MessageActionItem(label = if (listenActive) nativeString("Stop") else nativeString("Listen")) {
-                toggleListen()
-                menuExpanded = false
-              }
-            }
-            MessageActionItem(label = nativeString("Copy")) {
-              copyChatText(context, text)
-              menuExpanded = false
-            }
-            MessageActionItem(label = nativeString("Select text")) {
-              menuExpanded = false
-              selectText = true
-            }
-            MessageActionItem(label = nativeString("Share")) {
-              shareChatMessage(context, text)
-              menuExpanded = false
-            }
-            MessageActionItem(label = nativeString("Reply")) {
-              onReply(quoteChatMessage(text))
-              menuExpanded = false
-            }
+    ) {
+      if (text.isNotBlank()) {
+        onToggleListen?.let { toggleListen ->
+          MessageActionItem(label = if (listenActive) nativeString("Stop") else nativeString("Listen")) {
+            toggleListen()
+            menuExpanded = false
           }
-          if (showSessionActions) {
-            onRewind?.let { rewind ->
-              MessageActionItem(label = nativeString("Rewind to here")) {
-                rewind()
-                menuExpanded = false
-              }
-            }
-            onFork?.let { fork ->
-              MessageActionItem(label = nativeString("Fork from here")) {
-                fork()
-                menuExpanded = false
-              }
-            }
+        }
+        MessageActionItem(label = nativeString("Copy")) {
+          copyChatText(context, text)
+          menuExpanded = false
+        }
+        MessageActionItem(label = nativeString("Select text")) {
+          menuExpanded = false
+          selectText = true
+        }
+        MessageActionItem(label = nativeString("Share")) {
+          shareChatMessage(context, text)
+          menuExpanded = false
+        }
+        MessageActionItem(label = nativeString("Reply")) {
+          onReply(quoteChatMessage(text))
+          menuExpanded = false
+        }
+      }
+      if (showSessionActions) {
+        onRewind?.let { rewind ->
+          MessageActionItem(label = nativeString("Rewind to here")) {
+            rewind()
+            menuExpanded = false
           }
-        },
-    )
+        }
+        onFork?.let { fork ->
+          MessageActionItem(label = nativeString("Fork from here")) {
+            fork()
+            menuExpanded = false
+          }
+        }
+      }
+    }
   }
 
   if (selectText) {
@@ -165,7 +162,7 @@ internal fun ChatTextReaderDialog(
   val pages = remember(text) { chatTextLayoutRanges(text) }
   var page by remember(text) { mutableIntStateOf(0) }
   val pageText = remember(text, page) { text.substring(pages[page]) }
-  ClawAlertDialog(
+  AppAlertDialog(
     onDismissRequest = onDismiss,
     title = { Text(title) },
     text = {

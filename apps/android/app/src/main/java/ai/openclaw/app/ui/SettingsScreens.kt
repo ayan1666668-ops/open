@@ -50,7 +50,6 @@ import ai.openclaw.app.photoReadPermissionsForRequest
 import ai.openclaw.app.reconcileRestoredAction
 import ai.openclaw.app.setAppLanguage
 import ai.openclaw.app.ui.design.ClawAgentAvatar
-import ai.openclaw.app.ui.design.ClawAlertDialog
 import ai.openclaw.app.ui.design.ClawIconBadge
 import ai.openclaw.app.ui.design.ClawListItem
 import ai.openclaw.app.ui.design.ClawListPanel
@@ -1569,7 +1568,7 @@ private fun PhoneCapabilitiesScreen(
       showBackgroundLocationExplanation = false
     }
 
-    ClawAlertDialog(
+    AppAlertDialog(
       onDismissRequest = ::cancelBackgroundLocationRequest,
       title = { Text(nativeString("Allow background location?")) },
       text = {
@@ -1605,7 +1604,7 @@ private fun InstalledAppsDisclosureDialog(
   onDismiss: () -> Unit,
   onAgree: () -> Unit,
 ) {
-  ClawAlertDialog(
+  AppAlertDialog(
     onDismissRequest = onDismiss,
     title = { Text(nativeString("Share installed app information?")) },
     text = {
@@ -2160,14 +2159,6 @@ private fun AppearanceSettingsScreen(
   SettingsDetailFrame(title = nativeString("Appearance"), subtitle = nativeString("Theme and translated Android text."), icon = Icons.Default.Palette, onBack = onBack) {
     ClawPanel {
       Column(verticalArrangement = Arrangement.spacedBy(ClawTheme.spacing.xxs)) {
-        Text(text = nativeString("Text size"), style = ClawTheme.type.section, color = ClawTheme.colors.text)
-        ClawSegmentedControl(
-          options = AppearanceTextScale.entries.map(::appearanceTextScaleLabel),
-          selected = appearanceTextScaleLabel(textScale),
-          onSelect = { selected ->
-            AppearanceTextScale.entries.firstOrNull { appearanceTextScaleLabel(it) == selected }?.let(viewModel::setAppearanceTextScale)
-          },
-        )
         Text(text = nativeString("Theme family"), style = ClawTheme.type.section, color = ClawTheme.colors.text)
         AppearanceThemeFamily.entries.chunked(2).forEach { rowFamilies ->
           Row(
@@ -2217,6 +2208,19 @@ private fun AppearanceSettingsScreen(
             }
           }
         }
+      }
+    }
+    ClawPanel {
+      Column(verticalArrangement = Arrangement.spacedBy(ClawTheme.spacing.xxs)) {
+        Text(text = nativeString("Text size"), style = ClawTheme.type.section, color = ClawTheme.colors.text)
+        Text(text = nativeString("Default: 100%. Only on this device."), style = ClawTheme.type.caption, color = ClawTheme.colors.textMuted)
+        ClawSegmentedControl(
+          options = AppearanceTextScale.entries,
+          selected = textScale,
+          onSelect = viewModel::setAppearanceTextScale,
+          maxOptionsPerRow = 3,
+          optionLabel = { "${it.percent}%" },
+        )
       }
     }
     ClawPanel {
@@ -3558,10 +3562,3 @@ private fun openAppPermissionSettings(context: Context) {
     ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
   context.startActivity(intent)
 }
-
-private fun appearanceTextScaleLabel(scale: AppearanceTextScale): String =
-  when (scale) {
-    AppearanceTextScale.Small -> nativeString("Small")
-    AppearanceTextScale.Standard -> nativeString("Standard")
-    AppearanceTextScale.Large -> nativeString("Large")
-  }

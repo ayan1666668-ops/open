@@ -30,7 +30,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.HourglassEmpty
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -247,7 +246,9 @@ internal fun SidebarNavigationRow(
   pinned: Boolean? = null,
   palette: SidebarPalette,
   onClick: () -> Unit,
-  onMove: (Int) -> Unit,
+  canMoveUp: Boolean,
+  canMoveDown: Boolean,
+  onMove: (Int) -> Boolean,
   onDragActiveChange: (Boolean) -> Unit,
 ) {
   val thresholdPx = with(LocalDensity.current) { 48.dp.toPx() }
@@ -302,14 +303,6 @@ internal fun SidebarNavigationRow(
               modifier = Modifier.size(18.dp),
             )
           }
-          if (pinned != null) {
-            Icon(
-              imageVector = Icons.Default.DragHandle,
-              contentDescription = nativeString("Drag to reorder"),
-              tint = palette.muted,
-              modifier = Modifier.size(18.dp),
-            )
-          }
         }
       },
       selected = selected,
@@ -326,20 +319,12 @@ internal fun SidebarNavigationRow(
           .fillMaxWidth()
           .heightIn(min = 48.dp)
           .semantics {
-            if (pinStateDescription != null) {
-              stateDescription = pinStateDescription
-              customActions =
-                listOf(
-                  CustomAccessibilityAction(moveUpLabel) {
-                    currentOnMove(-1)
-                    true
-                  },
-                  CustomAccessibilityAction(moveDownLabel) {
-                    currentOnMove(1)
-                    true
-                  },
-                )
-            }
+            if (pinStateDescription != null) stateDescription = pinStateDescription
+            customActions =
+              buildList {
+                if (canMoveUp) add(CustomAccessibilityAction(moveUpLabel) { currentOnMove(-1) })
+                if (canMoveDown) add(CustomAccessibilityAction(moveDownLabel) { currentOnMove(1) })
+              }
           }.pointerInput(destination, thresholdPx) {
             detectSidebarRowDrag(
               rowHost = rowHost,

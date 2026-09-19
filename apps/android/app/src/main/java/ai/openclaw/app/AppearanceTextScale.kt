@@ -1,19 +1,19 @@
 package ai.openclaw.app
 
-/** Device-local text size; system accessibility font scaling still applies. */
+/** Device-local text-size stops shared with the Web appearance picker. */
 enum class AppearanceTextScale(
-  val rawValue: String,
-  val displayLabel: String,
-  val factor: Float,
+  val percent: Int,
 ) {
-  Small("small", "Small", 0.90f),
-  Standard("standard", "Standard", 1.00f),
-  Large("large", "Large", 1.15f),
+  Small(90),
+  Standard(100),
+  Large(110),
+  ExtraLarge(125),
+  Largest(140),
   ;
 
-  companion object {
-    fun fromRawValue(value: String?): AppearanceTextScale = entries.firstOrNull { it.rawValue == value?.trim()?.lowercase() } ?: Standard
+  val factor: Float get() = percent / 100f
 
-    fun fromDisplayLabel(label: String): AppearanceTextScale = entries.firstOrNull { it.displayLabel.equals(label, ignoreCase = true) } ?: Standard
+  companion object {
+    fun fromPercent(value: Int?): AppearanceTextScale = entries.firstOrNull { it.percent == value } ?: Standard
   }
 }

@@ -1,8 +1,8 @@
 package ai.openclaw.app.ui.chat
 
 import ai.openclaw.app.i18n.nativeString
+import ai.openclaw.app.ui.AppDropdownMenu
 import ai.openclaw.app.ui.design.ClawTheme
-import ai.openclaw.app.ui.design.clawWindowContent
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
@@ -19,7 +19,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -195,37 +194,32 @@ internal fun ChatMermaidBlock(source: String) {
               IconButton(onClick = { menuExpanded = true }) {
                 Icon(Icons.Default.MoreVert, contentDescription = nativeString("Diagram options"), modifier = Modifier.size(20.dp), tint = colors.textMuted)
               }
-              DropdownMenu(
-                expanded = menuExpanded,
-                onDismissRequest = { menuExpanded = false },
-                content =
-                  clawWindowContent {
-                    DropdownMenuItem(
-                      text = { Text(if (showSource) nativeString("View diagram") else nativeString("View source")) },
-                      onClick = {
-                        showSource = !showSource
-                        menuExpanded = false
-                      },
-                    )
-                    DropdownMenuItem(
-                      text = { Text(nativeString("Expand diagram")) },
-                      enabled = rendered?.svg != null,
-                      onClick = {
-                        expanded = true
-                        menuExpanded = false
-                      },
-                    )
-                    if ((state as? MermaidBlockState.Unavailable)?.retryable == true) {
-                      DropdownMenuItem(
-                        text = { Text(nativeString("Retry diagram")) },
-                        onClick = {
-                          retryGeneration += 1
-                          menuExpanded = false
-                        },
-                      )
-                    }
+              AppDropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+                DropdownMenuItem(
+                  text = { Text(if (showSource) nativeString("View diagram") else nativeString("View source")) },
+                  onClick = {
+                    showSource = !showSource
+                    menuExpanded = false
                   },
-              )
+                )
+                DropdownMenuItem(
+                  text = { Text(nativeString("Expand diagram")) },
+                  enabled = rendered?.svg != null,
+                  onClick = {
+                    expanded = true
+                    menuExpanded = false
+                  },
+                )
+                if ((state as? MermaidBlockState.Unavailable)?.retryable == true) {
+                  DropdownMenuItem(
+                    text = { Text(nativeString("Retry diagram")) },
+                    onClick = {
+                      retryGeneration += 1
+                      menuExpanded = false
+                    },
+                  )
+                }
+              }
             }
           }
         }

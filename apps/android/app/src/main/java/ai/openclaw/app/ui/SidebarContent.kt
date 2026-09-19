@@ -16,7 +16,6 @@ import ai.openclaw.app.ui.design.ClawColors
 import ai.openclaw.app.ui.design.ClawTheme
 import ai.openclaw.app.ui.design.OpenClawMascot
 import ai.openclaw.app.ui.design.ProviderBrandIcon
-import ai.openclaw.app.ui.design.clawWindowContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -52,7 +51,6 @@ import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -132,8 +130,8 @@ internal enum class SidebarDestination(
 internal fun SidebarDestination.localizedLabel(): String =
   when (this) {
     SidebarDestination.Settings -> nativeString("Settings")
-    SidebarDestination.Work -> nativeString("Home")
-    SidebarDestination.Home -> nativeString("Chat")
+    SidebarDestination.Work -> nativeString("Work")
+    SidebarDestination.Home -> nativeString("Home")
     SidebarDestination.Skills -> nativeString("Skills")
     SidebarDestination.Threads -> nativeString("Threads")
   }
@@ -512,6 +510,26 @@ internal fun OpenClawSidebar(
   val recentSections = recentPresentation.recentSections
   val orderedPages = orderedSidebarDestinations(pageOrder)
   val visiblePageIdSet = visiblePageIds.toSet()
+  val visiblePages = orderedPages.filter { it.stableId in visiblePageIdSet }
+
+  fun movePage(
+    destination: SidebarDestination,
+    direction: Int,
+    visibleOnly: Boolean,
+  ): Boolean {
+    // Drag and accessibility both recheck authoritative preferences, including back-to-back actions.
+    val current = viewModel.sidebarPageOrder.value
+    val next =
+      moveSidebarDestination(
+        pageIds = current,
+        destinationId = destination.stableId,
+        direction = direction,
+        visiblePageIds = if (visibleOnly) viewModel.sidebarVisiblePages.value.toSet() else null,
+      )
+    if (next == current) return false
+    viewModel.setSidebarPageOrder(next)
+    return true
+  }
   val setSessionPinned: (String, String?, Boolean) -> Unit = { key, ownerAgentId, pinned ->
     scope.launch {
       viewModel.patchChatSession(key = key, ownerAgentId = ownerAgentId, pinned = pinned)
@@ -717,15 +735,7 @@ internal fun OpenClawSidebar(
                 ),
               )
             },
-            onMove = { destination, direction ->
-              viewModel.setSidebarPageOrder(
-                moveSidebarDestination(
-                  pageIds = pageOrder,
-                  destinationId = destination.stableId,
-                  direction = direction,
-                ),
-              )
-            },
+            onMove = { destination, direction -> movePage(destination, direction, visibleOnly = false) },
             onReset = {
               viewModel.setSidebarPageOrder(defaultSidebarPageOrder)
               viewModel.setSidebarVisiblePages(defaultSidebarVisiblePages)
@@ -733,7 +743,7 @@ internal fun OpenClawSidebar(
             onDragActiveChange = onDragActiveChange,
           )
           if (pagesExpanded) {
-            orderedPages.filter { it.stableId in visiblePageIdSet }.forEach { destination ->
+            visiblePages.forEachIndexed { index, destination ->
               key(destination.stableId) {
                 SidebarNavigationRow(
                   destination = destination,
@@ -741,16 +751,9 @@ internal fun OpenClawSidebar(
                   selected = destination == activeDestination,
                   palette = palette,
                   onClick = { onSelectDestination(destination) },
-                  onMove = { direction ->
-                    viewModel.setSidebarPageOrder(
-                      moveSidebarDestination(
-                        pageIds = pageOrder,
-                        destinationId = destination.stableId,
-                        direction = direction,
-                        visiblePageIds = visiblePageIdSet,
-                      ),
-                    )
-                  },
+                  canMoveUp = index > 0,
+                  canMoveDown = index < visiblePages.lastIndex,
+                  onMove = { direction -> movePage(destination, direction, visibleOnly = true) },
                   onDragActiveChange = onDragActiveChange,
                 )
               }
@@ -976,7 +979,7 @@ private fun SidebarPagesHeader(
   onMenuModeChange: (SidebarPagesMenuMode) -> Unit,
   onSelectDestination: (SidebarDestination) -> Unit,
   onVisibilityChange: (SidebarDestination, Boolean) -> Unit,
-  onMove: (SidebarDestination, Int) -> Unit,
+  onMove: (SidebarDestination, Int) -> Boolean,
   onReset: () -> Unit,
   onDragActiveChange: (Boolean) -> Unit,
 ) {
@@ -1021,108 +1024,108 @@ private fun SidebarPagesHeader(
       ) {
         Icon(
           painter = painterResource(R.drawable.ic_web_pen_line),
-          contentDescription = nativeString("Customize pages"),
+          contentDescription = nativeString("Edit pinned items"),
           tint = palette.text,
           modifier = Modifier.size(18.dp),
         )
       }
 
-      DropdownMenu(
+      AppDropdownMenu(
         expanded = menuMode != SidebarPagesMenuMode.Closed,
         onDismissRequest = { onMenuModeChange(SidebarPagesMenuMode.Closed) },
         modifier = Modifier.widthIn(min = 210.dp, max = 340.dp),
         containerColor = palette.elevated,
-        content =
-          clawWindowContent {
-            when (menuMode) {
-              SidebarPagesMenuMode.Closed -> {}
+      ) {
+        when (menuMode) {
+          SidebarPagesMenuMode.Closed -> {}
 
-              SidebarPagesMenuMode.Navigate -> {
-                destinations.forEach { destination ->
-                  DropdownMenuItem(
-                    text = { Text(destination.localizedLabel(), maxLines = 1) },
-                    leadingIcon = {
-                      Icon(
-                        imageVector = destination.icon,
-                        contentDescription = null,
-                        tint = palette.text,
-                        modifier = Modifier.size(18.dp),
-                      )
-                    },
-                    trailingIcon = {
-                      if (destination == activeDestination) {
-                        Icon(
-                          painter = painterResource(R.drawable.ic_web_check),
-                          contentDescription = nativeString("Selected"),
-                          tint = palette.text,
-                          modifier = Modifier.size(18.dp),
-                        )
-                      }
-                    },
-                    onClick = {
-                      onMenuModeChange(SidebarPagesMenuMode.Closed)
-                      onSelectDestination(destination)
-                    },
+          SidebarPagesMenuMode.Navigate -> {
+            destinations.forEach { destination ->
+              DropdownMenuItem(
+                text = { Text(destination.localizedLabel(), maxLines = 1) },
+                leadingIcon = {
+                  Icon(
+                    imageVector = destination.icon,
+                    contentDescription = null,
+                    tint = palette.text,
+                    modifier = Modifier.size(18.dp),
                   )
-                }
-                HorizontalDivider(color = palette.hairline)
-                DropdownMenuItem(
-                  text = { Text(nativeString("Customize pages"), maxLines = 1) },
-                  leadingIcon = {
+                },
+                trailingIcon = {
+                  if (destination == activeDestination) {
                     Icon(
-                      painter = painterResource(R.drawable.ic_web_pen_line),
-                      contentDescription = null,
+                      painter = painterResource(R.drawable.ic_web_check),
+                      contentDescription = nativeString("Selected"),
                       tint = palette.text,
                       modifier = Modifier.size(18.dp),
-                    )
-                  },
-                  onClick = { onMenuModeChange(SidebarPagesMenuMode.Edit) },
-                )
-              }
-
-              SidebarPagesMenuMode.Edit -> {
-                Text(
-                  text = nativeString("EDIT PINNED ITEMS"),
-                  style =
-                    ClawTheme.type.caption.copy(
-                      fontWeight = FontWeight.SemiBold,
-                      letterSpacing = 0.8.sp,
-                    ),
-                  color = palette.muted,
-                  modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                )
-                destinations.forEach { destination ->
-                  key(destination.stableId) {
-                    val visible = destination.stableId in visiblePageIds
-                    SidebarNavigationRow(
-                      destination = destination,
-                      rowHost = rowHost,
-                      selected = false,
-                      pinned = visible,
-                      palette = palette,
-                      onClick = { onVisibilityChange(destination, !visible) },
-                      onMove = { direction -> onMove(destination, direction) },
-                      onDragActiveChange = onDragActiveChange,
                     )
                   }
-                }
-                HorizontalDivider(color = palette.hairline)
-                DropdownMenuItem(
-                  text = { Text(nativeString("Reset pinned items"), maxLines = 1) },
-                  leadingIcon = {
-                    Icon(
-                      painter = painterResource(R.drawable.ic_web_refresh),
-                      contentDescription = null,
-                      tint = palette.text,
-                      modifier = Modifier.size(18.dp),
-                    )
-                  },
-                  onClick = onReset,
+                },
+                onClick = {
+                  onMenuModeChange(SidebarPagesMenuMode.Closed)
+                  onSelectDestination(destination)
+                },
+              )
+            }
+            HorizontalDivider(color = palette.hairline)
+            DropdownMenuItem(
+              text = { Text(nativeString("Edit pinned items"), maxLines = 1) },
+              leadingIcon = {
+                Icon(
+                  painter = painterResource(R.drawable.ic_web_pen_line),
+                  contentDescription = null,
+                  tint = palette.text,
+                  modifier = Modifier.size(18.dp),
+                )
+              },
+              onClick = { onMenuModeChange(SidebarPagesMenuMode.Edit) },
+            )
+          }
+
+          SidebarPagesMenuMode.Edit -> {
+            Text(
+              text = nativeString("EDIT PINNED ITEMS"),
+              style =
+                ClawTheme.type.caption.copy(
+                  fontWeight = FontWeight.SemiBold,
+                  letterSpacing = 0.8.sp,
+                ),
+              color = palette.muted,
+              modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            )
+            destinations.forEachIndexed { index, destination ->
+              key(destination.stableId) {
+                val visible = destination.stableId in visiblePageIds
+                SidebarNavigationRow(
+                  destination = destination,
+                  rowHost = rowHost,
+                  selected = false,
+                  pinned = visible,
+                  palette = palette,
+                  onClick = { onVisibilityChange(destination, !visible) },
+                  canMoveUp = index > 0,
+                  canMoveDown = index < destinations.lastIndex,
+                  onMove = { direction -> onMove(destination, direction) },
+                  onDragActiveChange = onDragActiveChange,
                 )
               }
             }
-          },
-      )
+            HorizontalDivider(color = palette.hairline)
+            DropdownMenuItem(
+              text = { Text(nativeString("Reset pinned items"), maxLines = 1) },
+              leadingIcon = {
+                Icon(
+                  painter = painterResource(R.drawable.ic_web_refresh),
+                  contentDescription = null,
+                  tint = palette.text,
+                  modifier = Modifier.size(18.dp),
+                )
+              },
+              onClick = onReset,
+            )
+          }
+        }
+      }
     }
   }
 }

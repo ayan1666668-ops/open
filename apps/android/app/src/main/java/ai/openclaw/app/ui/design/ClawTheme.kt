@@ -1,6 +1,5 @@
 package ai.openclaw.app.ui.design
 
-import ai.openclaw.app.AppearanceTextScale
 import ai.openclaw.app.AppearanceThemeFamily
 import ai.openclaw.app.R
 import androidx.compose.material3.LocalMinimumInteractiveComponentSize
@@ -18,14 +17,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.luminance
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
@@ -375,7 +371,6 @@ internal fun ClawDesignTheme(
   dark: Boolean = true,
   family: AppearanceThemeFamily = AppearanceThemeFamily.Claw,
   accentArgb: Long? = null,
-  textScale: AppearanceTextScale = AppearanceTextScale.Standard,
   content: @Composable () -> Unit,
 ) {
   val colors = clawColorsForTheme(dark = dark, family = family, accentArgb = accentArgb)
@@ -384,7 +379,6 @@ internal fun ClawDesignTheme(
   val spacing = ClawSpacing()
 
   CompositionLocalProvider(
-    LocalDensity provides appearanceTextDensity(LocalDensity.current, textScale),
     LocalClawColors provides colors,
     LocalClawSpacing provides spacing,
     LocalClawRadii provides ClawRadii(),
@@ -539,22 +533,3 @@ private fun clawMaterialColorScheme(
     onError = colors.primaryText,
   )
 }
-
-/** Keep all dp geometry unchanged; Standard retains the platform density verbatim. */
-internal fun appearanceTextDensity(
-  system: Density,
-  scale: AppearanceTextScale,
-): Density =
-  if (scale == AppearanceTextScale.Standard) {
-    system
-  } else {
-    // Delegate to Android's font converter first, retaining nonlinear accessibility scaling.
-    object : Density {
-      override val density: Float = system.density
-      override val fontScale: Float = system.fontScale * scale.factor
-
-      override fun TextUnit.toDp(): Dp = system.run { this@toDp.toDp() } * scale.factor
-
-      override fun Dp.toSp(): TextUnit = system.run { (this@toSp / scale.factor).toSp() }
-    }
-  }

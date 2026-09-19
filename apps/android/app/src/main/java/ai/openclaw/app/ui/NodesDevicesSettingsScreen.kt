@@ -12,7 +12,6 @@ import ai.openclaw.app.MainViewModel
 import ai.openclaw.app.canApproveGatewayDevicePairing
 import ai.openclaw.app.currentAppLanguage
 import ai.openclaw.app.i18n.nativeString
-import ai.openclaw.app.ui.design.ClawAlertDialog
 import ai.openclaw.app.ui.design.ClawListItem
 import ai.openclaw.app.ui.design.ClawPanel
 import ai.openclaw.app.ui.design.ClawSecondaryButton
@@ -275,7 +274,7 @@ private fun DevicePairingConfirmationDialog(
       is DevicePairingConfirmation.Reject -> nativeString("Reject")
       is DevicePairingConfirmation.Remove -> nativeString("Remove")
     }
-  ClawAlertDialog(
+  AppAlertDialog(
     onDismissRequest = onDismiss,
     title = { Text(title) },
     text = {

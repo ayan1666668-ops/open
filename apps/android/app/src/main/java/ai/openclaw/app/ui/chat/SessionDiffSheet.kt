@@ -9,7 +9,7 @@ import ai.openclaw.app.chat.parseSessionDiffPatch
 import ai.openclaw.app.i18n.nativeString
 import ai.openclaw.app.i18n.resolveNativeTextResource
 import ai.openclaw.app.i18n.verbatimText
-import ai.openclaw.app.ui.design.ClawDialog
+import ai.openclaw.app.ui.AppDialog
 import ai.openclaw.app.ui.design.ClawPlainIconButton
 import ai.openclaw.app.ui.design.ClawTheme
 import ai.openclaw.app.ui.foldAwareSheet
@@ -184,7 +184,7 @@ internal fun SessionDiffSheet(
     }
   }
 
-  ClawDialog(
+  AppDialog(
     onDismissRequest = onDismiss,
     properties =
       DialogProperties(
