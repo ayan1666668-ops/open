@@ -198,10 +198,14 @@ function captureAfter(page: Page, name: string) {
 }
 
 suite.define(() => {
-  it("preserves manual prompt scrolling when background search finishes", async () => {
+  it("preserves manual prompt scrolling when background destination discovery finishes", async () => {
     await suite.withPage(createControlUiE2eContextOptions(), async ({ page }) => {
-      const gateway = await installMockGateway(page, scenario());
+      const gateway = await installMockGateway(page, {
+        ...scenario(),
+        deferredMethods: ["environments.list"],
+      });
       const { composer, url, palette, input } = await openFromForeground(page);
+      await gateway.waitForRequest("environments.list");
       const capture = captureAfter(page, "palette-manual-scroll");
       const prompt = [
         "FIRST WORDS: Review the complete task before starting.",
@@ -213,11 +217,10 @@ suite.define(() => {
         "Verify the repaired behavior in the browser.",
         "LAST WORDS: Open a pull request with the evidence.",
       ].join("\n");
-      await gateway.deferNext("sessions.search");
       await input.fill(prompt);
-      await gateway.waitForRequest("sessions.search");
-      const results = palette.locator(".cmd-palette__results");
-      expect(await results.getAttribute("aria-busy")).toBe("true");
+      const search = palette.locator(".cmd-palette__search");
+      await expect.poll(() => search.evaluate((element: HTMLElement) => element.inert)).toBe(true);
+      expect(await gateway.getRequests("sessions.search")).toEqual([]);
       await expect.poll(() => input.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
       await input.hover();
       await page.mouse.wheel(0, -2000);
@@ -227,8 +230,9 @@ suite.define(() => {
       );
       await capture("scrolled-to-first-words");
 
-      await gateway.resolveDeferred("sessions.search");
-      await expect.poll(() => results.getAttribute("aria-busy")).toBe("false");
+      // Prompt mode pauses search, but destination discovery still updates the
+      // real draft controller and rerenders its input without an edit.
+      await gateway.resolveDeferred("environments.list");
       // Let the render's layout frame and ResizeObserver delivery finish.
       await page.evaluate(
         () =>
@@ -236,7 +240,7 @@ suite.define(() => {
             requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
           }),
       );
-      await capture("after-background-search");
+      await capture("after-background-discovery");
       expect(await input.evaluate((element) => element.scrollTop)).toBe(0);
       expect(await input.inputValue()).toBe(prompt);
       expect(await composer.inputValue()).toBe(foregroundDraft);
