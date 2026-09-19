@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { resolvePnpmRunner } from "../pnpm-runner.mts";
-import { runManagedCommand, signalExitCode } from "./managed-child-process.mts";
+import { hasUnjoinedWork, runManagedCommand, signalExitCode } from "./managed-child-process.mts";
 import { isRecord } from "./record-shared.mjs";
 import {
   collectVitestFileFilters,
@@ -363,7 +363,11 @@ export async function runIsolatedVitestContainer(options: {
     } else if (present.code !== 1) {
       throw new Error(`Container cleanup is uncertain: ${name}`);
     }
-    onAbsent();
+    // Container absence does not join a failed host Podman process: it may still
+    // consume the snapshot or finish creating the container after this observation.
+    if (!hasUnjoinedWork(failure)) {
+      onAbsent();
+    }
   } catch (error) {
     throw new AggregateError(
       failure === undefined ? [error] : [failure, error],
@@ -565,6 +569,9 @@ export async function runIsolatedVitest(
     console.error(`[vitest:isolated] exit=${code}; container absence confirmed`);
     return interrupted ? signalExitCode(interrupted) : code;
   } catch (error) {
+    if (hasUnjoinedWork(error)) {
+      safeToRemove = false;
+    }
     if (interrupted && safeToRemove) {
       return signalExitCode(interrupted);
     }

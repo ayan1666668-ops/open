@@ -365,6 +365,35 @@ describe("isolated container lifecycle", () => {
       expect(fixture.calls.at(-1)).toEqual(["container", "exists", name]);
     },
   );
+  it.each(["live", "indeterminate"])(
+    "retains inputs after an unjoined %s Podman process despite container absence",
+    async (processTreeState) => {
+      const failure = new AggregateError(
+        [Object.assign(new Error("process cleanup unresolved"), { processTreeState })],
+        "Podman create failed",
+      );
+      const calls: string[][] = [];
+      const command: IsolatedPodmanCommand = async (args) => {
+        calls.push(args);
+        if (args[0] === "create") {
+          throw failure;
+        }
+        return { code: 1, stdout: "" };
+      };
+      const onAbsent = vi.fn();
+      await expect(
+        runIsolatedVitestContainer({
+          command,
+          name,
+          createArgs: ["create"],
+          verify: vi.fn(),
+          onAbsent,
+        }),
+      ).rejects.toBe(failure);
+      expect(calls.at(-1)).toEqual(["container", "exists", name]);
+      expect(onAbsent).not.toHaveBeenCalled();
+    },
+  );
   it("reconciles a failed create without starting or falling back", async () => {
     const fixture = lifecycle({ failCreate: true });
     await expect(fixture.run()).rejects.toThrow("create failed");
