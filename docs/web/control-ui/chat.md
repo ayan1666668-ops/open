@@ -62,8 +62,10 @@ Document-relative hrefs are never session links; file references such as
 `src/utils/foo.ts` and `qa-café/index.md` retain workspace file handling, including
 Unicode names and percent-encoded Markdown link destinations. Explicit Markdown
 file links also support spaces, emoji, and punctuation in filenames; for example,
-`[Read notes](notes/caf%C3%A9%20note.md)` opens the workspace file. Plain-text and
-inline-code file detection stays conservative to avoid turning prose into links.
+`[Read notes](notes/caf%C3%A9%20note.md)` opens the workspace file. Bare CSV
+filenames in authored links, such as `[Read inventory](inventory.csv)`, and code
+spans also open the file preview. Plain-text and inline-code file detection stays
+conservative to avoid turning prose into links.
 
 While composing text with an input method in model search, Enter, Escape, and arrow keys stay with the input method. They do not select a model, clear the search, or move the highlighted model until composition finishes.
 
@@ -193,6 +195,10 @@ Tool activity summaries count the operations inside a workflow rather than count
 A turn that fails before producing any reply leaves a durable notice in the thread. Failed and timed-out turns also show the available failure reason in the sidebar's compact summary and run-error tooltip, including while a session refresh is still catching up.
 
 Chat error banners, including cloud runner failures, show short messages in full. Use **Copy error** beside **Details** in the header to copy the complete diagnostic received by the UI, even while collapsed. **Details** appears only when the complete diagnostic adds information beyond the preview, such as additional lines or text shortened for the preview; repeated lines and whitespace-only differences do not add details. Open it to read and select the complete diagnostic. The disclosure works with Enter or Space; the expanded text wraps long lines and can be scrolled with the keyboard. Copying does not open or close the details, and neither copying nor expanding an error retries the failed operation. Retry and other recovery actions remain separate from the disclosure.
+
+When an active run compacts the conversation while your next message is being prepared, OpenClaw follows the verified continuation automatically, even if the earlier run finishes before preparation does. This keeps the original message and send identity without displaying a retry error.
+
+Run-error banners offer **Refresh** to reload the conversation without resending a message or replacing your draft. If the conversation changes before a message can run and dispatch cannot verify a safe continuation, the banner explains that the message did not run and asks you to refresh before sending it again. The original diagnostic remains under **Details**. OpenClaw does not automatically redirect that message into a replacement conversation.
 
 <AccordionGroup>
   <Accordion title="Send and history semantics">
@@ -483,6 +489,10 @@ swipe the transcript or footer to scroll that region.
 Scrolling down at the end keeps the final reply above the pull request bar and
 composer as images or other message content finish resizing. Scrolling upward
 keeps your reading position instead.
+
+Task progress cards are enabled by default. Toggle **Show task progress cards** in
+**Settings → Appearance → Chat** to hide or show the composer card in this browser.
+Hiding it does not stop agent work or clear saved progress.
 
 The task progress card above the composer collapses after deliberate upward
 scrolling settles. Returning to the end and progress updates leave it collapsed;
