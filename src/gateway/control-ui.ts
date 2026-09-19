@@ -30,11 +30,7 @@ import {
   toMediaProbeResult,
   type MediaProbeResult,
 } from "../media/media-probe.js";
-import { resolveInboundMediaOwnership } from "../media/inbound-media-ownership.js";
-import {
-  parseInboundMediaUri,
-  resolveMediaReferenceLocalPathInfo,
-} from "../media/media-reference.js";
+import { resolveMediaReferenceLocalPathInfo } from "../media/media-reference.js";
 import {
   replacePlaybackFileExtension,
   resolvePlaybackModeForSource,
@@ -64,6 +60,7 @@ import {
 import type { AuthRateLimiter } from "./auth-rate-limit.js";
 import type { ResolvedGatewayAuth } from "./auth.js";
 import type { ControlUiAssetRetention } from "./control-ui-asset-retention.js";
+import * as stagedMedia from "./control-ui-assistant-media-ownership.js";
 import {
   buildControlUiRootAssetPath,
   CONTROL_UI_BASE_PATH_ATTRIBUTE,
@@ -365,53 +362,6 @@ function verifyAssistantMediaTicket(
   }
 }
 
-function classifyAssistantMediaError(err: unknown): AssistantMediaAvailability {
-  if (err instanceof FsSafeError) {
-    switch (err.code) {
-      case "not-found":
-        return { available: false, code: "file-not-found", reason: "File not found" };
-      case "not-file":
-        return { available: false, code: "not-a-file", reason: "Not a file" };
-      case "invalid-path":
-      case "path-mismatch":
-      case "symlink":
-        return { available: false, code: "invalid-file", reason: "Invalid file" };
-      default:
-        return {
-          available: false,
-          code: "attachment-unavailable",
-          reason: "Attachment unavailable",
-        };
-    }
-  }
-  if (err instanceof Error && "code" in err) {
-    const errorCode = (err as { code?: unknown }).code;
-    switch (typeof errorCode === "string" ? errorCode : "") {
-      case "unsupported-media-type":
-        return { available: false, code: "unsupported-media-type", reason: "Not an image" };
-      case "path-not-allowed":
-        return {
-          available: false,
-          code: "outside-allowed-folders",
-          reason: "Outside allowed folders",
-        };
-      case "invalid-file-url":
-      case "invalid-path":
-      case "unsafe-bypass":
-      case "network-path-not-allowed":
-      case "invalid-root":
-        return { available: false, code: "blocked-local-file", reason: "Blocked local file" };
-      case "not-found":
-        return { available: false, code: "file-not-found", reason: "File not found" };
-      case "not-file":
-        return { available: false, code: "not-a-file", reason: "Not a file" };
-      default:
-        break;
-    }
-  }
-  return { available: false, code: "attachment-unavailable", reason: "Attachment unavailable" };
-}
-
 type AssistantMediaPolicy = NonNullable<ReturnType<typeof resolveAssistantMediaPolicy>>;
 type AssistantMediaFile = NonNullable<AssistantMediaTicketPayload["file"]>;
 
@@ -484,19 +434,6 @@ async function openAssistantMedia(
   }
 }
 
-/** Resolves the inbound id of a managed media:// reference, or undefined for anything else. */
-function managedInboundMediaId(source: string): string | undefined {
-  try {
-    return parseInboundMediaUri(source)?.id;
-  } catch {
-    return undefined;
-  }
-}
-
-function isManagedInboundSource(source: string): boolean {
-  return managedInboundMediaId(source) !== undefined;
-}
-
 async function resolveAssistantMediaAvailability(
   source: string,
   policy: AssistantMediaPolicy,
@@ -539,16 +476,7 @@ async function resolveAssistantMediaAvailability(
       await opened.handle.close().catch(() => {});
     }
   } catch (error) {
-    const classified = classifyAssistantMediaError(error);
-    // A managed inbound reference names one file in our own store, so a path or
-    // containment failure on one means the store no longer holds it. Reporting that as a
-    // blocked local file sends the reader after a policy they cannot change, so name the
-    // file as gone instead; both answers are definitive, only the copy differs.
-    return !classified.available &&
-      classified.code === "blocked-local-file" &&
-      isManagedInboundSource(source)
-      ? { available: false, code: "file-not-found", reason: "File not found" }
-      : classified;
+    return stagedMedia.reclassifyManagedInboundAvailability(source, error);
   }
 }
 
@@ -640,24 +568,16 @@ export async function handleControlUiAssistantMediaRequest(
     respondControlUiNotFound(res);
     return true;
   }
-  // A staged object is bound to the session that published it. The media store is one of
-  // the default media roots, so without this a reader who learned the reference could
-  // fetch it while naming no session at all, and outlive the visibility of the session
-  // whose history published it. An owned reference therefore needs a session that
-  // matches its owner, and an ownerless request is refused rather than falling back to
-  // general reader authority.
-  const stagedOwnership = isManagedInboundSource(source)
-    ? await resolveInboundMediaOwnership(managedInboundMediaId(source) ?? "")
-    : undefined;
-  if (stagedOwnership) {
-    const sessionBoundKeys = [policy.session?.sessionKey, sessionKey, ticket?.session?.sessionKey];
-    const matchesOwner =
-      !stagedOwnership.sessionKey ||
-      sessionBoundKeys.some((candidate) => candidate && candidate === stagedOwnership.sessionKey);
-    if (!matchesOwner) {
-      respondControlUiNotFound(res);
-      return true;
-    }
+  if (
+    !(await stagedMedia.managedInboundOwnershipAllows(
+      source,
+      policy.session?.sessionKey,
+      sessionKey,
+      ticket?.session?.sessionKey,
+    ))
+  ) {
+    respondControlUiNotFound(res);
+    return true;
   }
   const allowance = explicitAllow
     ? true
@@ -698,22 +618,10 @@ export async function handleControlUiAssistantMediaRequest(
       respondControlUiNotFound(res);
       return true;
     }
-    const outsideAllowed =
-      !availability.available && availability.code === "outside-allowed-folders";
-    // A managed inbound reference lives in our own store, so nothing recreates the file
-    // the media-store pruner deleted. A retry can never succeed there, and offering one
-    // turns an honest "gone" state into a button that lies; a local path may simply be
-    // mid-write, so it keeps its retry.
-    const prunedFromStore =
-      !availability.available && !outsideAllowed && isManagedInboundSource(source);
     sendJson(
       res,
       200,
-      outsideAllowed
-        ? { ...availability, retryable: false, ...(current.canAllow ? { canAllow: true } : {}) }
-        : prunedFromStore
-          ? { ...availability, retryable: false }
-          : availability,
+      stagedMedia.resolveAssistantMediaMetaResponse(source, availability, current.canAllow),
     );
     return true;
   }
