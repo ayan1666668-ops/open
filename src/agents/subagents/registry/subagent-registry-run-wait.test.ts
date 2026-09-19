@@ -34,19 +34,29 @@ function createRunningEntry(startedAt: number): SubagentRunRecord {
 function createWaitManager(params: {
   entry: SubagentRunRecord;
   wait: AgentWaitResponse;
+  /** Responses for waits after the first; the last one repeats once exhausted. */
+  laterWaits?: AgentWaitResponse[];
   reportSubagentWaitExpiry?: SubagentManagerOptions["reportSubagentWaitExpiry"];
+  resolveSubagentSessionStartedAt?: SubagentManagerOptions["resolveSubagentSessionStartedAt"];
 }) {
   const completions: SubagentCompletionRequest[] = [];
   const waitExpiries: Parameters<SubagentManagerOptions["reportSubagentWaitExpiry"]>[0][] = [];
   const runs = new Map([[params.entry.runId, params.entry]]);
+  const laterWaits = [...(params.laterWaits ?? [])];
+  let waitCalls = 0;
   const options = {
     runs,
     getRunsForChildSession: () => runs.values(),
     resumedRuns: new Set<string>(),
     persist: vi.fn(),
     persistOrThrow: vi.fn(),
-    callGateway: (async (_opts: CallGatewayOptions) =>
-      params.wait) as SubagentManagerOptions["callGateway"],
+    callGateway: (async (_opts: CallGatewayOptions) => {
+      waitCalls += 1;
+      if (waitCalls === 1 || laterWaits.length === 0) {
+        return waitCalls === 1 ? params.wait : (laterWaits.at(-1) ?? params.wait);
+      }
+      return laterWaits.length > 1 ? laterWaits.shift() : laterWaits[0];
+    }) as SubagentManagerOptions["callGateway"],
     getRuntimeConfig: (() => ({})) as SubagentManagerOptions["getRuntimeConfig"],
     ensureListener: vi.fn(),
     startSweeper: vi.fn(),
@@ -58,7 +68,8 @@ function createWaitManager(params: {
     scheduleSweep: vi.fn(),
     // No reconciled session completion exists while the child is mid-turn.
     resolveSubagentSessionCompletion: () => null,
-    resolveSubagentSessionStartedAt: () => params.entry.execution.startedAt,
+    resolveSubagentSessionStartedAt:
+      params.resolveSubagentSessionStartedAt ?? (() => params.entry.execution.startedAt),
     notifyContextEngineSubagentEnded: async () => {},
     completeCleanupBookkeeping: vi.fn(),
     completeSubagentRun: async (request: SubagentCompletionRequest) => {
@@ -142,6 +153,58 @@ describe("subagent run wait disposition", () => {
 
     await manager.waitForSubagentCompletion(RUN_ID, 50, entry);
     await expect.poll(() => reportSubagentWaitExpiry.mock.calls.length).toBe(2);
+  });
+
+  it("keeps the persisted observation identity when a child starts between publication attempts", async () => {
+    // The first wait expires on `createdAt + timeout` because the child has not
+    // started yet, and its announcement fails retryably. The child then starts,
+    // which moves the computed deadline to `startedAt + timeout`. The retry must
+    // still present the observation the row already persisted, or the registry's
+    // identity fence drops it and the parent is never woken.
+    const createdAt = Date.now() - (RUN_TIMEOUT_SECONDS + 1) * 1_000;
+    const observedStartedAt = createdAt + 1_000;
+    const entry = createRunningEntry(createdAt);
+    entry.execution = { status: "queued" };
+    const accepted: number[] = [];
+    let attempts = 0;
+    // Mirrors the registry's real acceptance fence (subagent-registry.ts): the
+    // observation is recorded before the announcement, and a later call whose
+    // observedAt differs is rejected without notifying anyone.
+    const reportSubagentWaitExpiry = vi.fn(
+      async ({
+        entry: current,
+        observedAt,
+      }: Parameters<SubagentManagerOptions["reportSubagentWaitExpiry"]>[0]) => {
+        if (
+          typeof current.waitExpiryAnnouncedAt === "number" ||
+          (typeof current.waitExpiryObservedAt === "number" &&
+            current.waitExpiryObservedAt !== observedAt)
+        ) {
+          return;
+        }
+        current.waitExpiryObservedAt ??= observedAt;
+        attempts += 1;
+        if (attempts === 1) {
+          throw new Error("transient publication failure");
+        }
+        accepted.push(observedAt);
+        current.waitExpiryAnnouncedAt = Date.now();
+      },
+    );
+    const { manager, completions } = createWaitManager({
+      entry,
+      wait: { status: "timeout" },
+      laterWaits: [{ status: "timeout", startedAt: observedStartedAt }],
+      reportSubagentWaitExpiry,
+      resolveSubagentSessionStartedAt: () => entry.execution.startedAt,
+    });
+
+    await manager.waitForSubagentCompletion(RUN_ID, 50, entry);
+    await expect.poll(() => reportSubagentWaitExpiry.mock.calls.length).toBe(2);
+    await expect.poll(() => accepted).toEqual([createdAt + RUN_TIMEOUT_SECONDS * 1_000]);
+    expect(entry.waitExpiryObservedAt).toBe(createdAt + RUN_TIMEOUT_SECONDS * 1_000);
+    expect(typeof entry.waitExpiryAnnouncedAt).toBe("number");
+    expect(completions).toHaveLength(0);
   });
 
   it("reports an exited child when a stop reason proves the run settled", async () => {
