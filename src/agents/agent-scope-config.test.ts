@@ -458,21 +458,30 @@ describe("agent roster resolution", () => {
   });
 });
 
-describe("resolveAgentWorkspaceDir blank workspace rejection", () => {
-  it.each(["", "   ", "\t\n "])("rejects a blank per-agent workspace %j", (workspace) => {
-    const cfg = { agents: { entries: { main: { workspace } } } } as OpenClawConfig;
-
-    expect(() => resolveAgentWorkspaceDir(cfg, "main")).toThrow(
-      "agents.main.workspace must not be blank",
+describe("resolveAgentWorkspaceDir blank workspace fallback", () => {
+  const defaultDir = () =>
+    path.resolve(
+      process.env.OPENCLAW_STATE_DIR ?? path.join(process.env.HOME ?? "", ".openclaw"),
+      "workspace",
     );
-  });
 
-  it("rejects a blank defaults workspace instead of silently using the default directory", () => {
+  it.each(["", "   ", "\t\n "])(
+    "falls back to the default directory for a blank per-agent workspace %j",
+    (workspace) => {
+      // Blank workspace values are rejected at the config-input boundary
+      // (validation reports a field-level issue) and stripped by the shared
+      // Doctor migration. The public resolver preserves the shipped fallback for
+      // existing SDK callers and pre-migration saved configs.
+      const cfg = { agents: { entries: { main: { workspace } } } } as OpenClawConfig;
+
+      expect(resolveAgentWorkspaceDir(cfg, "main")).toBe(defaultDir());
+    },
+  );
+
+  it("falls back to the default directory for a blank defaults workspace", () => {
     const cfg = { agents: { defaults: { workspace: "   " } } } as OpenClawConfig;
 
-    expect(() => resolveAgentWorkspaceDir(cfg, "main")).toThrow(
-      "agents.defaults.workspace must not be blank",
-    );
+    expect(resolveAgentWorkspaceDir(cfg, "main")).toBe(defaultDir());
   });
 
   it("still trims surrounding whitespace from a non-blank workspace", () => {
@@ -481,30 +490,19 @@ describe("resolveAgentWorkspaceDir blank workspace rejection", () => {
     expect(resolveAgentWorkspaceDir(cfg, "main")).toBe(path.resolve("/srv/main"));
   });
 
-  it("treats a saved blank workspace as omitted for discovery before the Doctor migration runs", () => {
+  it("keeps the shipped fallback for a saved blank workspace before the Doctor migration runs", () => {
+    // Discovery (plugin metadata, file sync, cleanup) and the public resolver
+    // must enumerate the same default directory a saved blank always resolved to
+    // so pre-migration preparation cannot abort the Doctor repair that strips it.
     const cfg = { agents: { entries: { main: { workspace: " " } } } } as OpenClawConfig;
 
-    // Discovery (plugin metadata, file sync, cleanup) must enumerate the same
-    // default directory a saved blank always resolved to, so pre-migration
-    // preparation cannot abort the Doctor repair that strips it. The sole agent
-    // keeps the default agent workspace directory (legacy data-owner path).
-    expect(() =>
-      resolveAgentWorkspaceDir(cfg, "main", process.env, { blankAsOmitted: true }),
-    ).not.toThrow();
-    expect(resolveAgentWorkspaceDir(cfg, "main", process.env, { blankAsOmitted: true })).toBe(
-      path.resolve(
-        process.env.OPENCLAW_STATE_DIR ?? path.join(process.env.HOME ?? "", ".openclaw"),
-        "workspace",
-      ),
-    );
+    expect(resolveAgentWorkspaceDir(cfg, "main")).toBe(defaultDir());
   });
 
-  it("treats a blank defaults workspace as omitted for discovery", () => {
+  it("treats a blank defaults workspace as the default directory", () => {
     const cfg = { agents: { defaults: { workspace: "   " } } } as OpenClawConfig;
 
-    expect(() =>
-      resolveAgentWorkspaceDir(cfg, "main", process.env, { blankAsOmitted: true }),
-    ).not.toThrow();
+    expect(resolveAgentWorkspaceDir(cfg, "main")).toBe(defaultDir());
   });
 
   it("lets the discovery resolver fall back to the default directory on a saved blank workspace", () => {
@@ -514,21 +512,7 @@ describe("resolveAgentWorkspaceDir blank workspace rejection", () => {
     // to instead of throwing, or that preparation aborts the advertised repair.
     const cfg = { agents: { entries: { main: { workspace: "   " } } } } as OpenClawConfig;
 
-    expect(() => tryResolveConfiguredAgentWorkspaceDir(cfg)).not.toThrow();
-    expect(tryResolveConfiguredAgentWorkspaceDir(cfg)).toBe(
-      path.resolve(
-        process.env.OPENCLAW_STATE_DIR ?? path.join(process.env.HOME ?? "", ".openclaw"),
-        "workspace",
-      ),
-    );
-  });
-
-  it("keeps rejecting a blank workspace through the strict resolver", () => {
-    const cfg = { agents: { entries: { main: { workspace: "   " } } } } as OpenClawConfig;
-
-    expect(() => resolveAgentWorkspaceDir(cfg, "main")).toThrow(
-      "agents.main.workspace must not be blank",
-    );
+    expect(tryResolveConfiguredAgentWorkspaceDir(cfg)).toBe(defaultDir());
   });
 });
 

@@ -15,7 +15,7 @@ export function listAgentWorkspaceDirs(
 ): string[] {
   const dirs = new Set<string>();
   for (const agentId of listAgentIds(cfg)) {
-    dirs.add(resolveAgentWorkspaceDir(cfg, agentId, env, { blankAsOmitted: true }));
+    dirs.add(resolveAgentWorkspaceDir(cfg, agentId, env));
   }
   return [...dirs];
 }
