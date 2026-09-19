@@ -24,6 +24,8 @@ import ai.openclaw.app.i18n.nativeText
 import ai.openclaw.app.i18n.resolveNativeTextResource
 import ai.openclaw.app.i18n.verbatimText
 import ai.openclaw.app.systemagent.SystemAgentChatAccess
+import ai.openclaw.app.ui.chat.ChatConversationScreen
+import ai.openclaw.app.ui.chat.rememberChatRealtimeTalkLauncher
 import ai.openclaw.app.ui.design.AgentAvatarSource
 import ai.openclaw.app.ui.design.ClawAgentAvatar
 import ai.openclaw.app.ui.design.ClawDesignTheme
@@ -142,6 +144,15 @@ fun ShellScreen(
   OpenClawSystemBarAppearance(lightAppearance = !shellDark)
   ClawDesignTheme(dark = shellDark, family = appearanceThemeFamily, accentArgb = appearanceAccentArgb ?: gatewayAccentArgb) {
     val nav = rememberSaveable(saver = ShellNavigation.Saver) { ShellNavigation() }
+    // The permission registry stays mounted while any shell page is visible.
+    val launchTalk = rememberChatRealtimeTalkLauncher(viewModel)
+    val openTalk: () -> Unit = {
+      launchTalk()
+      nav.openConversation()
+    }
+    LaunchedEffect(viewModel, nav.activeTab) {
+      if (nav.activeTab == Tab.Chat) viewModel.refreshTalkSetupReadiness()
+    }
     var commandOpen by rememberSaveable { mutableStateOf(false) }
     var conversationScreenWasActive by rememberSaveable { mutableStateOf(false) }
     val pendingTrust by viewModel.pendingGatewayTrust.collectAsState()
@@ -150,7 +161,7 @@ fun ShellScreen(
       features = features,
       modifier = modifier.background(ClawTheme.colors.canvas),
       bookPanesEnabled = !commandOpen && pendingTrust == null,
-      tabletopEnabled = nav.activeTab == Tab.Chat && !commandOpen && pendingTrust == null,
+      tabletopEnabled = nav.activeTab == Tab.Chat && !nav.conversationOpen && !commandOpen && pendingTrust == null,
     ) { foldBounds ->
       val bookPanes = foldBounds.book
       val permanentSidebar = bookPanes != null
@@ -305,22 +316,32 @@ fun ShellScreen(
                 showSidebarButton = !permanentSidebar,
                 onOpenSidebar = openSidebar,
                 onSelectTab = nav::selectTab,
+                onOpenTalk = openTalk,
                 onOpenSettingsRoute = nav::openSettingsRoute,
                 onOpenCommand = { commandOpen = true },
               )
             }
 
             Tab.Chat -> {
-              UnifiedChatShellScreen(
-                viewModel = viewModel,
-                tabletopPanes = foldBounds.tabletop,
-                features = features,
-                showSidebarButton = !permanentSidebar,
-                onOpenSidebar = openSidebar,
-                onOpenDashboard = nav::openSessionDashboard,
-                onOpenGatewaySettings = { nav.openSettingsRoute(SettingsRoute.Gateway) },
-                onOpenProvidersModels = { nav.openDetailTab(Tab.ProvidersModels) },
-              )
+              if (nav.conversationOpen) {
+                ChatConversationScreen(
+                  viewModel = viewModel,
+                  onGoToChat = nav::closeConversation,
+                  onStartTalk = openTalk,
+                )
+              } else {
+                UnifiedChatShellScreen(
+                  viewModel = viewModel,
+                  tabletopPanes = foldBounds.tabletop,
+                  features = features,
+                  showSidebarButton = !permanentSidebar,
+                  onOpenSidebar = openSidebar,
+                  onOpenDashboard = nav::openSessionDashboard,
+                  onOpenGatewaySettings = { nav.openSettingsRoute(SettingsRoute.Gateway) },
+                  onOpenProvidersModels = { nav.openDetailTab(Tab.ProvidersModels) },
+                  onOpenTalk = openTalk,
+                )
+              }
             }
 
             Tab.ProvidersModels -> {
@@ -374,8 +395,12 @@ fun ShellScreen(
             onDismiss = { commandOpen = false },
             onOpen = { action ->
               when (action) {
-                CommandAction.Chat, CommandAction.Voice -> {
+                CommandAction.Chat -> {
                   nav.selectTab(Tab.Chat)
+                }
+
+                CommandAction.Voice -> {
+                  openTalk()
                 }
 
                 CommandAction.Sessions -> {
@@ -431,6 +456,7 @@ private fun OverviewScreen(
   showSidebarButton: Boolean,
   onOpenSidebar: () -> Unit,
   onSelectTab: (Tab) -> Unit,
+  onOpenTalk: () -> Unit,
   onOpenSettingsRoute: (SettingsRoute) -> Unit,
   onOpenCommand: () -> Unit,
 ) {
@@ -545,7 +571,7 @@ private fun OverviewScreen(
             sessionCount = overviewSessionCount,
             cronJobCount = cronStatus.jobs,
             onOpenChat = { onSelectTab(Tab.Chat) },
-            onOpenVoice = { onSelectTab(Tab.Chat) },
+            onOpenVoice = onOpenTalk,
             onOpenAgent = { onOpenSettingsRoute(SettingsRoute.Agents) },
             onOpenGateway = { onOpenSettingsRoute(SettingsRoute.Gateway) },
           )
@@ -566,7 +592,7 @@ private fun OverviewScreen(
         }
 
         item {
-          TalkEntryPanel(onOpenVoice = { onSelectTab(Tab.Chat) }, onOpenVoiceSettings = { onOpenSettingsRoute(SettingsRoute.Voice) })
+          TalkEntryPanel(onOpenVoice = onOpenTalk, onOpenVoiceSettings = { onOpenSettingsRoute(SettingsRoute.Voice) })
         }
 
         item { RecentSessionsHeader(onOpenSessions = { onSelectTab(Tab.Sessions) }) }

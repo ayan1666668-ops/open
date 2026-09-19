@@ -1,5 +1,6 @@
 package ai.openclaw.app.ui.chat
 
+import ai.openclaw.app.chat.ChatAgentActivity
 import ai.openclaw.app.chat.ChatToolActivity
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
@@ -8,6 +9,34 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class ToolActivityPresentationTest {
+  // Preserve the feature's grouping regressions using the upstream prepared-title contract.
+  @Test
+  fun `matches web group summary grammar`() {
+    val calls = listOf(prepared("x", "1", "Run command"), prepared("y", "2", "Run command"), prepared("z", "3", "Progress"), prepared("z", "4", "Progress"))
+    assertEquals("Run command ×2, Progress ×2", completedToolGroupSummary(calls))
+  }
+
+  @Test
+  fun `group summaries preserve category grammar and ordering`() {
+    val calls = listOf(prepared("exec", "1", "Inspect file"), prepared("read", "2", "Run check"), prepared("edit", "3", "Search docs"))
+    assertEquals("Inspect file, Run check, Search docs", completedToolGroupSummary(calls))
+    assertEquals("Search docs, Run check, Inspect file", completedToolGroupSummary(calls.reversed()))
+    assertEquals("Tool details", completedToolGroupSummary(listOf(tool("exec"), tool("read"))))
+  }
+
+  @Test
+  fun `other tool summaries preserve first occurrence order and distinct names`() {
+    val calls = listOf(prepared("other", "a", "Old status"), prepared("other", "b", "Inspect"), prepared("other", "a", "Run check", "failed"), prepared("other", "c", "Hidden").let { it.copy(activity = it.activity?.copy(suppressChannelProgress = true)) })
+    assertEquals("Run check (failed), Inspect", completedToolGroupSummary(calls))
+  }
+
+  private fun prepared(
+    name: String,
+    id: String,
+    title: String,
+    status: String? = null,
+  ): ChatToolActivity = tool(name).copy(activity = ChatAgentActivity(id, "tool", "end", title, toolCallId = id, status = status), activityPrepared = true)
+
   @Test
   fun `summaries consume prepared titles and outcomes instead of tool names`() {
     val quiet =

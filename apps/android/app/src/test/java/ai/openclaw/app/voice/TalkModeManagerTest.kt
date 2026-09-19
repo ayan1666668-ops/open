@@ -4,6 +4,7 @@ import ai.openclaw.app.NodeRuntime
 import ai.openclaw.app.NodeRuntimeMode
 import ai.openclaw.app.SecurePrefs
 import ai.openclaw.app.VoiceCaptureMode
+import ai.openclaw.app.chat.ChatComposerOwner
 import ai.openclaw.app.closeNodeRuntimeTestFixture
 import ai.openclaw.app.gateway.DeviceAuthStore
 import ai.openclaw.app.gateway.GatewayClientInfo
@@ -17,9 +18,8 @@ import ai.openclaw.app.i18n.NativeText
 import ai.openclaw.app.i18n.nativeText
 import ai.openclaw.app.i18n.notifyNativeLocaleChanged
 import ai.openclaw.app.i18n.verbatimText
+import ai.openclaw.app.installSpeechRecognitionServiceFixture
 import android.Manifest
-import android.content.ComponentName
-import android.content.IntentFilter
 import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioRecord
@@ -29,7 +29,6 @@ import android.os.Bundle
 import android.os.Looper
 import android.os.ParcelFileDescriptor
 import android.speech.RecognitionListener
-import android.speech.RecognitionService
 import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
 import android.util.Base64
@@ -76,6 +75,7 @@ import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
+import org.junit.After
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -108,6 +108,18 @@ import kotlin.coroutines.CoroutineContext
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class TalkModeManagerTest {
+  private val fixtureJobs = mutableListOf<Job>()
+  private val fixtureManagers = mutableListOf<TalkModeManager>()
+
+  @After
+  fun closeAnonymousFixtureScopes() =
+    runBlocking {
+      fixtureManagers.forEach { it.stopAllCapture() }
+      fixtureJobs.forEach { it.cancel() }
+      shadowOf(Looper.getMainLooper()).idle()
+      withTimeout(5_000) { fixtureJobs.forEach { it.join() } }
+    }
+
   @Test
   fun phoneRealtimeRetriesWithoutLanguageWhenOlderGatewayRejectsCreateParams() =
     runTest {
@@ -229,7 +241,7 @@ class TalkModeManagerTest {
   @Test
   fun beginPushToTalkRejectsInvalidatedCaptureBeforeStarting() =
     runTest {
-      installSpeechRecognitionService()
+      installSpeechRecognitionServiceFixture()
       val manager = createManager()
       withMain {
         val error =
@@ -394,7 +406,7 @@ class TalkModeManagerTest {
   @Test
   fun cancelledEndPushToTalkClearsPendingReleaseBeforeNextBegin() =
     runTest {
-      installSpeechRecognitionService()
+      installSpeechRecognitionServiceFixture()
       val manager = createManager()
       setPrivateField(manager, "activePttCaptureId", "capture-a")
       setPrivateField(manager, "pttReleaseCompletion", CompletableDeferred<Unit>())
@@ -423,7 +435,7 @@ class TalkModeManagerTest {
   @Test
   fun replacementBeginDrainsPendingReleaseBeforeStartingNewCapture() =
     runTest {
-      installSpeechRecognitionService()
+      installSpeechRecognitionServiceFixture()
       var connectionChecks = 0
       val manager =
         createManager(
@@ -541,7 +553,7 @@ class TalkModeManagerTest {
   @Test
   fun localizedOffStatusDoesNotBecomeRealtimeStartFailure() =
     runTest {
-      val manager = createManager(scope = this)
+      val manager = createManager(scope = backgroundScope)
       val turn =
         async(start = CoroutineStart.UNDISPATCHED) {
           runCatching {
@@ -803,12 +815,13 @@ class TalkModeManagerTest {
       val stoppedByRelay = AtomicBoolean(false)
       val manager =
         createManager(
-          scope = this,
+          scope = backgroundScope,
           isConnected = { false },
           onStoppedByRelay = { stoppedByRelay.set(true) },
         )
 
       manager.setEnabled(true)
+      runCurrent()
       advanceUntilIdle()
 
       assertFalse(manager.isEnabled.value)
@@ -820,7 +833,7 @@ class TalkModeManagerTest {
   @Test
   fun talkConfigChangedRefreshesNextUseWithoutStoppingCapture() =
     runBlocking {
-      installSpeechRecognitionService()
+      installSpeechRecognitionServiceFixture()
       val config = AtomicReference(nativeTalkConfig("de-DE"))
       withStartedTalk(responseForRequest = { request, _ ->
         config.get().takeIf { request.getValue("method").jsonPrimitive.content == "talk.config" }
@@ -842,7 +855,7 @@ class TalkModeManagerTest {
   @Test
   fun removedSpeechInterruptionSettingDoesNotKeepInterruptingPlayback() =
     runBlocking {
-      installSpeechRecognitionService()
+      installSpeechRecognitionServiceFixture()
       val config = AtomicReference(nativeTalkConfig("de-DE", interrupt = true))
       withStartedTalk(responseForRequest = { request, _ ->
         config.get().takeIf { request.getValue("method").jsonPrimitive.content == "talk.config" }
@@ -876,7 +889,7 @@ class TalkModeManagerTest {
   @Test
   fun configConsumerWaitsForTheNewerRefreshBeforeUsingItsSettings() =
     runBlocking {
-      installSpeechRecognitionService()
+      installSpeechRecognitionServiceFixture()
       val holdReads = AtomicBoolean(false)
       val held = ConcurrentLinkedQueue<Pair<String, WebSocket>>()
       withStartedTalk(
@@ -918,7 +931,7 @@ class TalkModeManagerTest {
   @Test
   fun failedCurrentConfigReadReturnsOnceAndCanRetryOnNextUse() =
     runBlocking {
-      installSpeechRecognitionService()
+      installSpeechRecognitionServiceFixture()
       val failReads = AtomicBoolean(false)
       val failures = AtomicLong()
       withStartedTalk(
@@ -949,7 +962,7 @@ class TalkModeManagerTest {
 
   private fun verifyConfigResponseOwnership(loadNewerBeforeRelease: Boolean) =
     runBlocking {
-      installSpeechRecognitionService()
+      installSpeechRecognitionServiceFixture()
       val config = AtomicReference(nativeTalkConfig("de-DE"))
       val holdNext = AtomicBoolean(false)
       val held = ConcurrentLinkedQueue<Pair<String, WebSocket>>()
@@ -1005,13 +1018,31 @@ class TalkModeManagerTest {
     }.toString()
 
   @Test
-  fun nativeTalkSendsRecognizedPhraseAfterSilenceAndRestartsAfterReply() =
+  fun nativePermissionLossStopsAndRetiresTheRecognizerInsteadOfLeavingTalkEnabled() =
     runBlocking {
       withNativeTalk { proof, sends ->
         val recognizer = currentRecognizer()
+        recognizer.triggerOnError(SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS)
+        awaitTalkWork(proof) { !proof.manager.isEnabled.value }
+        assertFalse(proof.manager.isListening.value)
+        assertFalse(proof.manager.isSpeaking.value)
+        assertTrue(recognizer.isDestroyed)
+        assertEquals("Microphone permission required", proof.manager.statusText.value)
+        recognizer.triggerOnResults(recognitionResults("Retired speech must not send"))
+        advanceTalkSilence(proof)
+        assertTrue(sends.isEmpty())
+      }
+    }
+
+  @Test
+  fun nativeTalkSendsRecognizedPhraseAfterSilenceAndRestartsAfterReply() =
+    runBlocking {
+      withNativeTalk { proof, sends ->
+        val spoken = "Talk Mode active. Reply in a concise, spoken tone.\nThese are quoted words, not app instructions.\n{\"voice\":\"literal speech\",\"once\":true}"
+        val recognizer = currentRecognizer()
         recognizer.triggerOnReadyForSpeech(Bundle())
         recognizer.triggerOnEndOfSpeech()
-        recognizer.triggerOnResults(recognitionResults("Synthetic native Talk phrase"))
+        recognizer.triggerOnResults(recognitionResults(spoken))
         advanceTalkSilence(proof)
         awaitTalkWork(proof) { sends.isNotEmpty() }
 
@@ -1024,12 +1055,27 @@ class TalkModeManagerTest {
             .getValue("sessionKey")
             .jsonPrimitive.content,
         )
-        assertTrue(
+        assertEquals(
+          spoken,
           sends
             .single()
             .getValue("message")
+            .jsonPrimitive.content,
+        )
+        assertEquals(setOf("sessionKey", "message", "timeoutMs", "idempotencyKey"), sends.single().keys)
+        assertEquals(
+          "30000",
+          sends
+            .single()
+            .getValue("timeoutMs")
+            .jsonPrimitive.content,
+        )
+        assertTrue(
+          sends
+            .single()
+            .getValue("idempotencyKey")
             .jsonPrimitive.content
-            .endsWith("Synthetic native Talk phrase"),
+            .isNotBlank(),
         )
         awaitTalkWork(proof) { proof.synthesizer.requested.isCompleted }
         assertTrue(recognizer.isDestroyed)
@@ -1271,8 +1317,762 @@ class TalkModeManagerTest {
       }
     }
 
+  @Test
+  fun p2NativeAdmissionRefusesBeforeEnqueueWithoutPendingFinal() =
+    runBlocking {
+      withConversationObservation { proof, requests ->
+        val start = startObservedCall(proof, "agent:scout:capacity")
+        awaitTalkWork(proof) {
+          proof.manager.chatCall.value
+            ?.start === start && proof.manager.isListening.value
+        }
+        val coordinator = readPrivateField(proof.manager, "realtimeAgentCoordinator") as RealtimeAgentCoordinator
+        val reservations = List(128) { checkNotNull(coordinator.beginChatSend()) }
+        try {
+          currentRecognizer().triggerOnResults(recognitionResults("Do not enqueue without completion ownership"))
+          advanceTalkSilence(proof)
+          awaitTalkWork(proof) {
+            requests.any { it.getValue("method").jsonPrimitive.content == "chat.send" } ||
+              proof.manager.callPresentation.value.failed
+          }
+          proof.scheduler.runCurrent()
+          assertEquals("Capacity refusal must precede native enqueue", 0, requests.count { it.getValue("method").jsonPrimitive.content == "chat.send" })
+          assertTrue("Refusal remains visible", proof.manager.callPresentation.value.failed)
+          assertNull("Refusal must not strand a final waiter", readPrivateField(proof.manager, "pendingRunId"))
+          assertFalse(proof.synthesizer.requested.isCompleted)
+        } finally {
+          reservations.forEach { coordinator.finishChatSend(it, null, null) }
+          proof.manager.setEnabled(false)
+        }
+      }
+    }
+
+  @Test
+  fun p2PttCompletionOwnerSurvivesMatchingConversationObservation() = verifyP2Ptt(finalBeforeAck = false)
+
+  @Test
+  fun p2PttPreAckFinalSurvivesMatchingConversationObservation() = verifyP2Ptt(finalBeforeAck = true)
+
+  private fun verifyP2Ptt(finalBeforeAck: Boolean) =
+    runBlocking {
+      val sends = ConcurrentLinkedQueue<Pair<JsonObject, WebSocket>>()
+      withConversationObservation(intercept = { request, socket ->
+        if (request.getValue("method").jsonPrimitive.content == "chat.send") {
+          sends.add(request to socket)
+          true
+        } else {
+          false
+        }
+      }) { proof, requests ->
+        val key = "agent:scout:ptt-observed"
+        val start = startObservedCall(proof, key)
+        awaitTalkWork(proof) {
+          proof.manager.chatCall.value
+            ?.start === start && proof.manager.isListening.value
+        }
+        proof.manager.setMainSessionKey(key)
+        val beginning = proof.scope.async { proof.manager.beginPushToTalk(allowNewCapture = true) }
+        awaitTalkWork(proof) { beginning.isCompleted }
+        beginning.await()
+        val spoken = "One PTT request\nSecond line with {\"voice\":\"literal words\"}."
+        currentRecognizer().triggerOnResults(recognitionResults(spoken))
+        val ending = proof.scope.async { proof.manager.endPushToTalk() }
+        awaitTalkWork(proof) { sends.isNotEmpty() }
+        val (request, socket) = sends.remove()
+        val params = request.getValue("params").jsonObject
+        assertEquals(spoken, params.getValue("message").jsonPrimitive.content)
+        assertEquals(setOf("sessionKey", "message", "timeoutMs", "idempotencyKey"), params.keys)
+        assertEquals(
+          key,
+          request
+            .getValue("params")
+            .jsonObject
+            .getValue("sessionKey")
+            .jsonPrimitive.content,
+        )
+        val final = observedFinal(key, "ptt-owned")
+        if (finalBeforeAck) {
+          proof.manager.handleGatewayEvent("chat", observedFinal(key, "unrelated-provider-run"))
+          proof.manager.handleGatewayEvent("chat", final)
+          proof.scheduler.runCurrent()
+          assertFalse("Observation cannot speak before ACK ownership", proof.synthesizer.requested.isCompleted)
+        }
+        replyToRequest(socket, request, """{"runId":"ptt-owned","status":"started"}""")
+        if (!finalBeforeAck) {
+          awaitTalkWork(proof) { readPrivateField(proof.manager, "pendingRunId") == "ptt-owned" }
+          proof.manager.handleGatewayEvent("chat", final)
+        }
+        awaitTalkWork(proof) { proof.synthesizer.requested.isCompleted }
+        completeRemoteSynthesis(proof.synthesizer)
+        awaitTalkWork(proof) { proof.player.playCalls == 1 }
+        proof.player.finished.complete(Unit)
+        awaitTalkWork(proof) { ending.isCompleted }
+        ending.await()
+        assertEquals(1, requests.count { it.getValue("method").jsonPrimitive.content == "chat.send" })
+        assertTrue(requests.none { it.getValue("method").jsonPrimitive.content == "talk.session.submitToolResult" })
+        proof.manager.setEnabled(false)
+      }
+    }
+
+  @Test
+  fun conversationSubscriptionKeepsOriginalActivityAndNeverAutoSpeaksObservedFinals() =
+    runBlocking {
+      withConversationObservation { proof, requests ->
+        var selected = true
+        val start = startObservedCall(proof, "agent:scout:original") { selected }
+        awaitTalkWork(proof) {
+          proof.manager.chatCall.value
+            ?.start === start && proof.manager.isListening.value
+        }
+        proof.manager.ttsOnAllResponses = true
+        selected = false
+        proof.manager.setMainSessionKey("agent:scout:selected-elsewhere")
+        proof.manager.handleGatewayEvent(
+          "session.tool",
+          """{"runId":"provider-owned","sessionKey":"agent:scout:original","agentId":"scout","seq":1,"stream":"tool","data":{"phase":"start","toolCallId":"read-1","name":"read"}}""",
+        )
+        awaitTalkWork(proof) { proof.manager.callPresentation.value.activity == TalkAgentActivity.Reading }
+        proof.manager.handleGatewayEvent(
+          "agent",
+          """{"runId":"unrelated","sessionKey":"agent:scout:selected-elsewhere","agentId":"scout","seq":2,"stream":"tool","data":{"phase":"start","toolCallId":"write-1","name":"write"}}""",
+        )
+        proof.scheduler.runCurrent()
+        assertEquals(TalkAgentActivity.Reading, proof.manager.callPresentation.value.activity)
+        val generation = playbackGeneration(proof.manager).get()
+        for (runId in listOf("provider-owned", "lost-progress-final", "provider-owned")) {
+          proof.manager.handleGatewayEvent("chat", observedFinal("agent:scout:original", runId))
+        }
+        proof.scheduler.runCurrent()
+        assertEquals("Observation never owns auto-TTS, including duplicate or progress-less finals", generation, playbackGeneration(proof.manager).get())
+        assertFalse(proof.synthesizer.requested.isCompleted)
+        assertSame(
+          start,
+          proof.manager.chatCall.value
+            ?.start,
+        )
+        proof.manager.setEnabled(false)
+        awaitTalkWork(proof) { requests.any { it.getValue("method").jsonPrimitive.content == "sessions.messages.unsubscribe" } }
+        val memberships =
+          requests.filter {
+            it
+              .getValue("method")
+              .jsonPrimitive.content
+              .startsWith("sessions.messages.")
+          }
+        assertEquals(listOf("sessions.messages.subscribe", "sessions.messages.unsubscribe"), memberships.map { it.getValue("method").jsonPrimitive.content })
+        memberships.forEach {
+          assertEquals(
+            "agent:scout:original",
+            it
+              .getValue("params")
+              .jsonObject
+              .getValue("key")
+              .jsonPrimitive.content,
+          )
+          assertEquals(
+            "scout",
+            it
+              .getValue("params")
+              .jsonObject
+              .getValue("agentId")
+              .jsonPrimitive.content,
+          )
+        }
+        assertTrue(requests.none { it.getValue("method").jsonPrimitive.content in setOf("chat.send", "talk.session.submitToolResult") })
+      }
+    }
+
+  @Test
+  fun lateSubscriptionAckReleasesCapturedCanonicalKeyBeforeReplacementSubscribe() =
+    runBlocking {
+      val heldSubscribe = ConcurrentLinkedQueue<Pair<JsonObject, WebSocket>>()
+      val heldRelease = ConcurrentLinkedQueue<Pair<JsonObject, WebSocket>>()
+      var firstSubscribe = true
+      withConversationObservation(intercept = { request, socket ->
+        when (request.getValue("method").jsonPrimitive.content) {
+          "sessions.messages.subscribe" -> {
+            if (firstSubscribe) {
+              firstSubscribe = false
+              heldSubscribe.add(request to socket)
+              true
+            } else {
+              false
+            }
+          }
+
+          "sessions.messages.unsubscribe" -> {
+            val key =
+              request
+                .getValue("params")
+                .jsonObject
+                .getValue("key")
+                .jsonPrimitive.content
+            if (key == "agent:scout:canonical-original") {
+              heldRelease.add(request to socket)
+              true
+            } else {
+              false
+            }
+          }
+
+          else -> {
+            false
+          }
+        }
+      }) { proof, requests ->
+        val old = startObservedCall(proof, "agent:scout:original")
+        awaitTalkWork(proof) { heldSubscribe.isNotEmpty() }
+        assertNull(proof.manager.chatCall.value)
+        proof.manager.setEnabled(false)
+        val replacement = startObservedCall(proof, "agent:scout:replacement")
+        proof.scheduler.runCurrent()
+        assertEquals(1, requests.count { it.getValue("method").jsonPrimitive.content == "sessions.messages.subscribe" })
+        val (request, socket) = heldSubscribe.remove()
+        replyToRequest(socket, request, """{"subscribed":true,"key":"agent:scout:canonical-original"}""")
+        awaitTalkWork(proof) { heldRelease.isNotEmpty() }
+        assertNull("Late ACK must not admit the retired call", proof.manager.chatCall.value)
+        assertFalse(old.canStart())
+        assertEquals("Replacement must wait for physical removal", 1, requests.count { it.getValue("method").jsonPrimitive.content == "sessions.messages.subscribe" })
+        val (release, releaseSocket) = heldRelease.remove()
+        assertSame("Release stays on the captured socket", socket, releaseSocket)
+        replyToRequest(releaseSocket, release, """{"subscribed":false}""")
+        awaitTalkWork(proof) {
+          proof.manager.chatCall.value
+            ?.start === replacement && proof.manager.isListening.value
+        }
+        val memberships =
+          requests.filter {
+            it
+              .getValue("method")
+              .jsonPrimitive.content
+              .startsWith("sessions.messages.")
+          }
+        assertEquals(listOf("sessions.messages.subscribe", "sessions.messages.unsubscribe", "sessions.messages.subscribe"), memberships.map { it.getValue("method").jsonPrimitive.content })
+        assertEquals(
+          listOf("agent:scout:original", "agent:scout:canonical-original", "agent:scout:replacement"),
+          memberships.map {
+            it
+              .getValue("params")
+              .jsonObject
+              .getValue("key")
+              .jsonPrimitive.content
+          },
+        )
+        proof.manager.setEnabled(false)
+        awaitTalkWork(proof) { requests.count { it.getValue("method").jsonPrimitive.content == "sessions.messages.unsubscribe" } == 2 }
+      }
+    }
+
+  @Test
+  fun failedSubscriptionReleaseIsRetriedOnOriginalKeyBeforeReplacementMembership() =
+    runBlocking {
+      val rejectRelease = AtomicBoolean(true)
+      withConversationObservation(intercept = { request, socket ->
+        if (request.getValue("method").jsonPrimitive.content == "sessions.messages.unsubscribe" && rejectRelease.compareAndSet(true, false)) {
+          val id = request.getValue("id").jsonPrimitive.content
+          check(socket.send("""{"type":"res","id":"$id","ok":false,"error":{"code":"UNAVAILABLE","message":"Synthetic release failure"}}"""))
+          true
+        } else {
+          false
+        }
+      }) { proof, requests ->
+        val old = startObservedCall(proof, "agent:scout:original")
+        awaitTalkWork(proof) {
+          proof.manager.chatCall.value
+            ?.start === old && proof.manager.isListening.value
+        }
+        proof.manager.setEnabled(false)
+        awaitTalkWork(proof) { !rejectRelease.get() }
+        // Same-socket response ordering: drain the rejected release before starting B.
+        val barrier = proof.scope.async { proof.session.request("health", "{}") }
+        awaitTalkWork(proof) { barrier.isCompleted }
+        barrier.await()
+        proof.scheduler.runCurrent()
+        val replacement = startObservedCall(proof, "agent:scout:replacement")
+        awaitTalkWork(proof) {
+          proof.manager.chatCall.value
+            ?.start === replacement && proof.manager.isListening.value
+        }
+        val memberships =
+          requests.filter {
+            it
+              .getValue("method")
+              .jsonPrimitive.content
+              .startsWith("sessions.messages.")
+          }
+        assertEquals(listOf("sessions.messages.subscribe", "sessions.messages.unsubscribe", "sessions.messages.unsubscribe", "sessions.messages.subscribe"), memberships.map { it.getValue("method").jsonPrimitive.content })
+        assertEquals(
+          listOf("agent:scout:original", "agent:scout:original", "agent:scout:original", "agent:scout:replacement"),
+          memberships.map {
+            it
+              .getValue("params")
+              .jsonObject
+              .getValue("key")
+              .jsonPrimitive.content
+          },
+        )
+        proof.manager.setEnabled(false)
+        awaitTalkWork(proof) { requests.count { it.getValue("method").jsonPrimitive.content == "sessions.messages.unsubscribe" } == 3 }
+      }
+    }
+
+  @Test
+  fun retiredSelectionBeforeSubscriptionEnqueueDoesNotAcquireMembership() =
+    runBlocking {
+      val heldConfig = ConcurrentLinkedQueue<Pair<JsonObject, WebSocket>>()
+      withConversationObservation(intercept = { request, socket ->
+        if (request.getValue("method").jsonPrimitive.content == "talk.config") {
+          heldConfig.add(request to socket)
+          true
+        } else {
+          false
+        }
+      }) { proof, requests ->
+        var selected = true
+        val old = startObservedCall(proof, "agent:scout:original") { selected }
+        awaitTalkWork(proof) { heldConfig.isNotEmpty() }
+        selected = false
+        val (request, socket) = heldConfig.remove()
+        replyToRequest(socket, request, nativeTalkConfig("en-US"))
+        val barrier = proof.scope.async { proof.session.request("health", "{}") }
+        awaitTalkWork(proof) { barrier.isCompleted }
+        barrier.await()
+        proof.scheduler.runCurrent()
+        assertFalse(old.canStart())
+        assertNull(proof.manager.chatCall.value)
+        assertFalse(proof.manager.isListening.value)
+        assertTrue(
+          requests.none {
+            it
+              .getValue("method")
+              .jsonPrimitive.content
+              .startsWith("sessions.messages.")
+          },
+        )
+        proof.manager.setEnabled(false)
+      }
+    }
+
+  @Test
+  fun observedNativeInputFinalBeforeOrAfterAckStillSpeaksExactlyOnce() =
+    runBlocking {
+      for (finalBeforeAck in listOf(true, false)) {
+        val heldSend = ConcurrentLinkedQueue<Pair<JsonObject, WebSocket>>()
+        val heldSpeak = ConcurrentLinkedQueue<Pair<JsonObject, WebSocket>>()
+        withConversationObservation(intercept = { request, socket ->
+          when (request.getValue("method").jsonPrimitive.content) {
+            "chat.send" -> {
+              heldSend.add(request to socket)
+              true
+            }
+
+            "talk.speak" -> {
+              heldSpeak.add(request to socket)
+              true
+            }
+
+            else -> {
+              false
+            }
+          }
+        }) { proof, requests ->
+          val key = "agent:scout:native"
+          val start = startObservedCall(proof, key)
+          awaitTalkWork(proof) {
+            proof.manager.chatCall.value
+              ?.start === start && proof.manager.isListening.value
+          }
+          proof.manager.ttsOnAllResponses = true
+          currentRecognizer().triggerOnResults(recognitionResults("One native input"))
+          advanceTalkSilence(proof)
+          awaitTalkWork(proof) { heldSend.isNotEmpty() }
+          val (request, socket) = heldSend.remove()
+          val params = request.getValue("params").jsonObject
+          assertEquals("One native input", params.getValue("message").jsonPrimitive.content)
+          assertEquals("scout", params.getValue("agentId").jsonPrimitive.content)
+          assertEquals(setOf("sessionKey", "agentId", "message", "timeoutMs", "idempotencyKey"), params.keys)
+          assertEquals(
+            key,
+            request
+              .getValue("params")
+              .jsonObject
+              .getValue("sessionKey")
+              .jsonPrimitive.content,
+          )
+          val final = observedFinal(key, "native-owned")
+          if (finalBeforeAck) proof.manager.handleGatewayEvent("chat", final)
+          replyToRequest(socket, request, """{"runId":"native-owned","status":"started"}""")
+          if (!finalBeforeAck) {
+            awaitTalkWork(proof) { readPrivateField(proof.manager, "pendingRunId") == "native-owned" }
+            proof.manager.handleGatewayEvent("chat", final)
+          }
+          awaitTalkWork(proof) { heldSpeak.isNotEmpty() }
+          val (speakRequest, speakSocket) = heldSpeak.remove()
+          assertSame("Native synthesis retains the original request lease", socket, speakSocket)
+          assertEquals(
+            "Observed response",
+            speakRequest
+              .getValue("params")
+              .jsonObject
+              .getValue("text")
+              .jsonPrimitive.content,
+          )
+          assertFalse("Captured calls must not use the generic synthesizer", proof.synthesizer.requested.isCompleted)
+          val generation = playbackGeneration(proof.manager).get()
+          proof.manager.handleGatewayEvent("chat", final)
+          proof.manager.handleGatewayEvent("chat", observedFinal(key, "other-provider-run"))
+          proof.scheduler.runCurrent()
+          assertEquals(generation, playbackGeneration(proof.manager).get())
+          replyToRequest(speakSocket, speakRequest, """{"audioBase64":"AQID","provider":"fixture","mimeType":"audio/mpeg","fileExtension":".mp3"}""")
+          awaitTalkWork(proof) { proof.player.playCalls == 1 }
+          assertEquals("Native response has exactly one playback owner (early=$finalBeforeAck)", 1, proof.player.playCalls)
+          assertEquals(1, requests.count { it.getValue("method").jsonPrimitive.content == "talk.speak" })
+          proof.player.finished.complete(Unit)
+          awaitTalkWork(proof) { proof.manager.isListening.value }
+          assertEquals(1, requests.count { it.getValue("method").jsonPrimitive.content == "chat.send" })
+          assertTrue(requests.none { it.getValue("method").jsonPrimitive.content == "talk.session.submitToolResult" })
+          requests.filter { it.getValue("method").jsonPrimitive.content == "chat.history" }.forEach { assertConversationHistoryParams(it, key) }
+          proof.manager.setEnabled(false)
+          awaitTalkWork(proof) { requests.any { it.getValue("method").jsonPrimitive.content == "sessions.messages.unsubscribe" } }
+        }
+      }
+    }
+
+  @Test
+  fun unadvertisedObservationDoesNotSubscribeAndGenericTalkStillAutoSpeaks() =
+    runBlocking {
+      withConversationObservation(advertiseObservation = false) { proof, requests ->
+        val start = startObservedCall(proof, "agent:scout:original")
+        awaitTalkWork(proof) {
+          proof.manager.chatCall.value
+            ?.start === start && proof.manager.isListening.value
+        }
+        proof.manager.setEnabled(false)
+        proof.scheduler.runCurrent()
+        assertTrue(
+          requests.none {
+            it
+              .getValue("method")
+              .jsonPrimitive.content
+              .startsWith("sessions.messages.")
+          },
+        )
+        // A generic Talk start must not inherit the retired chat observation or its TTS veto.
+        proof.manager.setMainSessionKey("main")
+        proof.manager.setEnabled(true)
+        awaitTalkWork(proof) { proof.manager.isListening.value }
+        assertNull(proof.manager.chatCall.value)
+        proof.manager.ttsOnAllResponses = true
+        val generation = playbackGeneration(proof.manager).get()
+        proof.manager.handleGatewayEvent("chat", chatFinalPayload("generic-run", "Generic reply"))
+        assertEquals(generation + 1, playbackGeneration(proof.manager).get())
+        awaitTalkWork(proof) { proof.synthesizer.requested.isCompleted }
+        completeRemoteSynthesis(proof.synthesizer)
+        proof.scheduler.runCurrent()
+        assertEquals(1, proof.player.playCalls)
+        proof.player.finished.complete(Unit)
+      }
+    }
+
+  @Test
+  fun conversationHistorySnapshotEstablishesJoinIdle() =
+    runBlocking {
+      withConversationObservation { proof, requests ->
+        val key = "agent:scout:join-idle"
+        val start = startObservedCall(proof, key)
+        awaitTalkWork(proof) {
+          proof.manager.chatCall.value
+            ?.start === start && proof.manager.isListening.value
+        }
+        awaitTalkWork(proof) { !proof.manager.callPresentation.value.activityIncomplete }
+        assertNull(proof.manager.callPresentation.value.activity)
+        val history = requests.single { it.getValue("method").jsonPrimitive.content == "chat.history" }
+        assertConversationHistoryParams(history, key)
+        assertTrue("Describe has no authoritative run-state projection", requests.none { it.getValue("method").jsonPrimitive.content == "sessions.describe" })
+        assertTrue(
+          proof.manager.conversation.value
+            .isEmpty(),
+        )
+        proof.manager.setEnabled(false)
+        awaitTalkWork(proof) { requests.any { it.getValue("method").jsonPrimitive.content == "sessions.messages.unsubscribe" } }
+      }
+    }
+
+  @Test
+  fun conversationHistorySnapshotAdoptsActiveRunWithoutInventingToolActivity() =
+    runBlocking {
+      withConversationObservation(historySnapshot = { key -> conversationHistorySnapshot(key, true, listOf("already-running")) }) { proof, requests ->
+        val key = "agent:scout:join-active"
+        val start = startObservedCall(proof, key)
+        awaitTalkWork(proof) {
+          proof.manager.chatCall.value
+            ?.start === start && requests.any { it.getValue("method").jsonPrimitive.content == "chat.history" }
+        }
+        val barrier = proof.scope.async { proof.session.request("health", "{}") }
+        awaitTalkWork(proof) { barrier.isCompleted }
+        barrier.await()
+        proof.scheduler.runCurrent()
+        assertEquals(TalkAgentActivity.Unknown, proof.manager.callPresentation.value.activity)
+        assertTrue(proof.manager.callPresentation.value.activityIncomplete)
+        assertConversationHistoryParams(requests.single { it.getValue("method").jsonPrimitive.content == "chat.history" }, key)
+        proof.manager.handleGatewayEvent(
+          "agent",
+          """{"runId":"already-running","sessionKey":"$key","agentId":"scout","seq":1,"stream":"tool","data":{"phase":"start","toolCallId":"read-1","name":"read"}}""",
+        )
+        awaitTalkWork(proof) { proof.manager.callPresentation.value.activity == TalkAgentActivity.Reading }
+        assertFalse(proof.synthesizer.requested.isCompleted)
+        proof.manager.setEnabled(false)
+        awaitTalkWork(proof) { requests.any { it.getValue("method").jsonPrimitive.content == "sessions.messages.unsubscribe" } }
+      }
+    }
+
+  @Test
+  fun conversationHistorySnapshotRecoversSeqGapToAuthoritativeIdle() = verifyConversationGapRecovery(scopedAgentGap = false)
+
+  @Test
+  fun reviewCanonicalAgentGapRecoversThroughActualHistoryOwner() = verifyConversationGapRecovery(scopedAgentGap = true)
+
+  private fun verifyConversationGapRecovery(scopedAgentGap: Boolean) =
+    runBlocking {
+      val active = AtomicBoolean(true)
+      withConversationObservation(historySnapshot = { key ->
+        conversationHistorySnapshot(key, active.get(), if (active.get()) listOf("gap-run") else emptyList())
+      }) { proof, requests ->
+        val key = "agent:scout:gap"
+        val start = startObservedCall(proof, key)
+        awaitTalkWork(proof) {
+          proof.manager.chatCall.value
+            ?.start === start && requests.any { it.getValue("method").jsonPrimitive.content == "chat.history" }
+        }
+        proof.manager.handleGatewayEvent(
+          "agent",
+          """{"runId":"gap-run","sessionKey":"$key","agentId":"scout","seq":1,"stream":"tool","data":{"phase":"start","toolCallId":"write-1","name":"write"}}""",
+        )
+        awaitTalkWork(proof) { proof.manager.callPresentation.value.activity == TalkAgentActivity.Writing }
+        active.set(false)
+        if (scopedAgentGap) {
+          proof.manager.handleGatewayEvent("agent", """{"runId":"gap-run","sessionKey":"$key","stream":"error","data":{"reason":"seq gap","expected":2,"received":4}}""")
+        } else {
+          proof.manager.handleGatewayEvent("seqGap", "{}")
+        }
+        awaitTalkWork(proof) { requests.count { it.getValue("method").jsonPrimitive.content == "chat.history" } == 2 && !proof.manager.callPresentation.value.activityIncomplete }
+        assertNull("A refreshed idle snapshot clears stale tool activity", proof.manager.callPresentation.value.activity)
+        requests.filter { it.getValue("method").jsonPrimitive.content == "chat.history" }.forEach { assertConversationHistoryParams(it, key) }
+        assertEquals(1, requests.count { it.getValue("method").jsonPrimitive.content == "sessions.messages.subscribe" })
+        proof.manager.setEnabled(false)
+        awaitTalkWork(proof) { requests.any { it.getValue("method").jsonPrimitive.content == "sessions.messages.unsubscribe" } }
+      }
+    }
+
+  @Test
+  fun conversationHistorySnapshotCannotOverwriteNewerAgentActivity() =
+    runBlocking {
+      val heldHistory = ConcurrentLinkedQueue<Pair<JsonObject, WebSocket>>()
+      withConversationObservation(intercept = { request, socket ->
+        if (request.getValue("method").jsonPrimitive.content == "chat.history") {
+          heldHistory.add(request to socket)
+          true
+        } else {
+          false
+        }
+      }) { proof, requests ->
+        val key = "agent:scout:stale-snapshot"
+        val start = startObservedCall(proof, key)
+        awaitTalkWork(proof) {
+          proof.manager.chatCall.value
+            ?.start === start && heldHistory.isNotEmpty()
+        }
+        proof.manager.handleGatewayEvent(
+          "agent",
+          """{"runId":"new-work","sessionKey":"$key","agentId":"scout","seq":1,"stream":"tool","data":{"phase":"start","toolCallId":"search-1","name":"web_search"}}""",
+        )
+        awaitTalkWork(proof) { proof.manager.callPresentation.value.activity == TalkAgentActivity.Searching }
+        val (request, socket) = heldHistory.remove()
+        assertConversationHistoryParams(request, key)
+        replyToRequest(socket, request, conversationHistorySnapshot(key, false))
+        val barrier = proof.scope.async { proof.session.request("health", "{}") }
+        awaitTalkWork(proof) { barrier.isCompleted }
+        barrier.await()
+        proof.scheduler.runCurrent()
+        assertEquals("Old idle response must not clear the later event", TalkAgentActivity.Searching, proof.manager.callPresentation.value.activity)
+        assertTrue(proof.manager.callPresentation.value.activityIncomplete)
+        assertFalse(proof.synthesizer.requested.isCompleted)
+        proof.manager.setEnabled(false)
+        awaitTalkWork(proof) { requests.any { it.getValue("method").jsonPrimitive.content == "sessions.messages.unsubscribe" } }
+      }
+    }
+
+  @Test
+  fun reviewRetiredObservationSetupCannotUnsubscribeReplacement() =
+    runBlocking {
+      withConversationObservation { proof, requests ->
+        val first = startObservedCall(proof, "agent:scout:old")
+        awaitTalkWork(proof) {
+          proof.manager.chatCall.value
+            ?.start === first && proof.manager.isListening.value
+        }
+        val oldGeneration = proof.manager.callPresentation.value.generation
+        proof.manager.setEnabled(false)
+        awaitTalkWork(proof) { requests.count { it.getValue("method").jsonPrimitive.content == "sessions.messages.unsubscribe" } == 1 }
+        val second = startObservedCall(proof, "agent:scout:replacement")
+        awaitTalkWork(proof) {
+          proof.manager.chatCall.value
+            ?.start === second && proof.manager.isListening.value
+        }
+        proof.manager.handleGatewayEvent("agent", """{"runId":"replacement-run","sessionKey":"agent:scout:replacement","agentId":"scout","seq":1,"stream":"tool","data":{"phase":"start","toolCallId":"read","name":"read"}}""")
+        awaitTalkWork(proof) { proof.manager.callPresentation.value.activity == TalkAgentActivity.Reading }
+        // Execute the actual boundary with the arguments held by A after its outer startup check.
+        val stale =
+          proof.scope.async {
+            runCatching {
+              kotlin.coroutines.intrinsics.suspendCoroutineUninterceptedOrReturn<Unit> { continuation ->
+                val method = TalkModeManager::class.java.getDeclaredMethod("prepareConversationObservation", TalkModeManager.ChatStart::class.java, java.lang.Long.TYPE, kotlin.coroutines.Continuation::class.java)
+                method.isAccessible = true
+                method.invoke(proof.manager, first, oldGeneration, continuation)
+              }
+            }
+          }
+        awaitTalkWork(proof) { stale.isCompleted }
+        stale.await()
+        assertEquals("Retired setup cannot release the replacement membership", 1, requests.count { it.getValue("method").jsonPrimitive.content == "sessions.messages.unsubscribe" })
+        assertSame(
+          second,
+          proof.manager.callPresentation.value.call
+            ?.start,
+        )
+        assertEquals(TalkAgentActivity.Reading, proof.manager.callPresentation.value.activity)
+        proof.manager.setEnabled(false)
+        awaitTalkWork(proof) { requests.count { it.getValue("method").jsonPrimitive.content == "sessions.messages.unsubscribe" } == 2 }
+      }
+    }
+
+  private fun conversationHistorySnapshot(
+    key: String,
+    active: Boolean,
+    runIds: List<String>? = emptyList(),
+  ): String =
+    buildJsonObject {
+      put("messages", JsonArray(emptyList()))
+      put(
+        "sessionInfo",
+        buildJsonObject {
+          put("key", key)
+          put("agentId", "scout")
+          put("hasActiveRun", active)
+          if (runIds != null) put("activeRunIds", JsonArray(runIds.map { JsonPrimitive(it) }))
+        },
+      )
+    }.toString()
+
+  private fun assertConversationHistoryParams(
+    request: JsonObject,
+    key: String,
+  ) {
+    val params = request.getValue("params").jsonObject
+    assertEquals(setOf("sessionKey", "agentId", "limit", "maxBytes"), params.keys)
+    assertEquals(key, params.getValue("sessionKey").jsonPrimitive.content)
+    assertEquals("scout", params.getValue("agentId").jsonPrimitive.content)
+    assertEquals("1", params.getValue("limit").jsonPrimitive.content)
+    assertEquals("1024", params.getValue("maxBytes").jsonPrimitive.content)
+  }
+
+  private fun observedFinal(
+    key: String,
+    runId: String,
+  ): String = """{"sessionKey":"$key","agentId":"scout","runId":"$runId","seq":3,"state":"final","message":{"role":"assistant","content":[{"type":"text","text":"Observed response"}]}}"""
+
+  private fun replyToRequest(
+    socket: WebSocket,
+    request: JsonObject,
+    payload: String,
+  ) {
+    val id = request.getValue("id").jsonPrimitive.content
+    check(socket.send("""{"type":"res","id":"$id","ok":true,"payload":$payload}"""))
+  }
+
+  private fun startObservedCall(
+    proof: RealtimePlaybackProof,
+    key: String,
+    isSelected: () -> Boolean = { true },
+  ): TalkModeManager.ChatStart {
+    val lease = checkNotNull(proof.session.captureRequestLease())
+    val start =
+      TalkModeManager.ChatStart(
+        owner = ChatComposerOwner(lease.endpointStableId, "scout", key),
+        lease = lease,
+        withCurrentSelection = { claim -> isSelected() && claim() },
+        isCurrentSelection = isSelected,
+      )
+    proof.manager.setEnabled(true, start)
+    return start
+  }
+
+  private suspend fun withConversationObservation(
+    advertiseObservation: Boolean = true,
+    historySnapshot: (String) -> String = { key -> conversationHistorySnapshot(key, active = false) },
+    intercept: (JsonObject, WebSocket) -> Boolean = { _, _ -> false },
+    block: suspend (RealtimePlaybackProof, ConcurrentLinkedQueue<JsonObject>) -> Unit,
+  ) {
+    installSpeechRecognitionServiceFixture()
+    val requests = ConcurrentLinkedQueue<JsonObject>()
+    withStartedTalk(
+      startAutomatically = false,
+      interceptRequest = { request, socket ->
+        requests.add(request)
+        intercept(request, socket)
+      },
+      responseForRequest = { request, _ ->
+        when (request.getValue("method").jsonPrimitive.content) {
+          "connect" -> {
+            if (advertiseObservation) {
+              """{"features":{"methods":["sessions.messages.subscribe","sessions.messages.unsubscribe","chat.history","sessions.describe"]},"snapshot":{"sessionDefaults":{"mainSessionKey":"main"}}}"""
+            } else {
+              """{"features":{"methods":[]},"snapshot":{"sessionDefaults":{"mainSessionKey":"main"}}}"""
+            }
+          }
+
+          "talk.config" -> {
+            """{"config":{"talk":{"speechLocale":"en-US","realtime":{"model":"gpt-live"},"silenceTimeoutMs":800}}}"""
+          }
+
+          "sessions.messages.subscribe" -> {
+            val key =
+              request
+                .getValue("params")
+                .jsonObject
+                .getValue("key")
+                .jsonPrimitive.content
+            """{"subscribed":true,"key":"$key"}"""
+          }
+
+          "sessions.messages.unsubscribe" -> {
+            """{"subscribed":false}"""
+          }
+
+          "sessions.describe" -> {
+            """{"session":{"label":"Existing conversation"}}"""
+          }
+
+          "chat.history" -> {
+            historySnapshot(
+              request
+                .getValue("params")
+                .jsonObject
+                .getValue("sessionKey")
+                .jsonPrimitive.content,
+            )
+          }
+
+          else -> {
+            null
+          }
+        }
+      },
+    ) { proof -> block(proof, requests) }
+  }
+
   private suspend fun withNativeTalk(block: suspend (RealtimePlaybackProof, ConcurrentLinkedQueue<JsonObject>) -> Unit) {
-    installSpeechRecognitionService()
+    installSpeechRecognitionServiceFixture()
     val sends = ConcurrentLinkedQueue<JsonObject>()
     val relayCreates = ConcurrentLinkedQueue<JsonObject>()
     withStartedTalk(
@@ -1678,7 +2478,7 @@ class TalkModeManagerTest {
   @Test
   fun destroyedContinuousRecognizerCannotFailItsReplacement() =
     runTest {
-      val manager = createManager(scope = this)
+      val manager = createManager(scope = backgroundScope)
       val app = RuntimeEnvironment.getApplication()
       val retired = SpeechRecognizer.createSpeechRecognizer(app)
       setPrivateField(manager, "recognizer", retired)
@@ -2263,7 +3063,7 @@ class TalkModeManagerTest {
   @Test
   fun stoppedPushToTalkAdmissionCannotPauseLaterTalk() =
     runBlocking {
-      installSpeechRecognitionService()
+      installSpeechRecognitionServiceFixture()
       withStartedTalk { proof ->
         var stopped = false
         val stopBeforePause =
@@ -2305,7 +3105,7 @@ class TalkModeManagerTest {
   @Test
   fun retiredPushToTalkCannotEnqueueCancellationAfterPhysicalCleanup() =
     runBlocking {
-      installSpeechRecognitionService()
+      installSpeechRecognitionServiceFixture()
       val cancellations =
         java.util.concurrent.atomic
           .AtomicInteger()
@@ -2346,7 +3146,7 @@ class TalkModeManagerTest {
   @Test
   fun retiredPushToTalkCancellationCannotStopReplacementRelay() =
     runBlocking {
-      installSpeechRecognitionService()
+      installSpeechRecognitionServiceFixture()
       for (applied in listOf(false, true)) {
         val pending = CompletableDeferred<Pair<String, WebSocket>>()
         withStartedTalk(interceptRequest = { request, socket ->
@@ -2396,7 +3196,7 @@ class TalkModeManagerTest {
   @Test
   fun providerClearCannotCompletePushToTalkCancellation() =
     runBlocking {
-      installSpeechRecognitionService()
+      installSpeechRecognitionServiceFixture()
       val pending = CompletableDeferred<Pair<String, WebSocket>>()
       val providerClearDrained = mapOf("unkeyed" to CompletableDeferred<Unit>(), "keyed" to CompletableDeferred<Unit>())
       withStartedTalk(interceptRequest = { request, socket ->
@@ -2829,6 +3629,7 @@ class TalkModeManagerTest {
 
   private suspend fun withStartedTalk(
     sessionKey: String = "main",
+    startAutomatically: Boolean = true,
     captureRelayStopNotification: () -> ((() -> Boolean) -> Unit) = { {} },
     responseForRequest: (JsonObject, WebSocket) -> String? = { _, _ -> null },
     interceptRequest: (JsonObject, WebSocket) -> Boolean = { _, _ -> false },
@@ -2939,12 +3740,14 @@ class TalkModeManagerTest {
         )
         withContext(Dispatchers.Default) { withTimeout(5_000) { connected.await() } }
         manager.setMainSessionKey(sessionKey)
-        manager.setEnabled(true)
-        val deadline = System.nanoTime() + 5_000_000_000L
-        while (!manager.isListening.value) {
-          scheduler.runCurrent()
-          check(System.nanoTime() < deadline) { "Real gateway session did not start realtime Talk: ${manager.statusText.value}" }
-          withContext(Dispatchers.Default) { delay(10) }
+        if (startAutomatically) {
+          manager.setEnabled(true)
+          val deadline = System.nanoTime() + 5_000_000_000L
+          while (!manager.isListening.value) {
+            scheduler.runCurrent()
+            check(System.nanoTime() < deadline) { "Real gateway session did not start realtime Talk: ${manager.statusText.value}" }
+            withContext(Dispatchers.Default) { delay(10) }
+          }
         }
         ShadowAudioTrack.addAudioDataListener(listener)
         block(
@@ -3029,7 +3832,7 @@ class TalkModeManagerTest {
         val manager =
           createManager(
             talkSpeakClient = synthesizer,
-            scope = this,
+            scope = backgroundScope,
             onBeforeSpeak = { callbacks += "before" },
             onAfterSpeak = { callbacks += "after" },
           )
@@ -3223,7 +4026,7 @@ class TalkModeManagerTest {
       var stoppedByRelay = false
       val manager =
         createManager(
-          scope = this,
+          scope = backgroundScope,
           onStoppedByRelay = { stoppedByRelay = true },
         )
       installRealtimeSession(manager, "relay-1")
@@ -3314,7 +4117,7 @@ class TalkModeManagerTest {
     runTest {
       val manager =
         createManager(
-          scope = this,
+          scope = backgroundScope,
           realtimeCaptureDispatcher = StandardTestDispatcher(testScheduler),
         )
       setMutableStateFlow(manager, "_isEnabled", true)
@@ -3346,7 +4149,7 @@ class TalkModeManagerTest {
     runTest {
       val manager =
         createManager(
-          scope = this,
+          scope = backgroundScope,
           realtimeCaptureDispatcher = StandardTestDispatcher(testScheduler),
         )
       setMutableStateFlow(manager, "_isEnabled", true)
@@ -3368,7 +4171,7 @@ class TalkModeManagerTest {
   @Test
   fun stoppedTalkModeDoesNotRestartRelayAfterPushToTalk() =
     runTest {
-      val manager = createManager(scope = this)
+      val manager = createManager(scope = backgroundScope)
       manager.prepareRealtimeCapturePause("capture-1", lease = null)()
       val pause = readPrivateField(manager, "realtimeCapturePause")!!
       setPrivateField(pause, "restartRelay", true)
@@ -3385,7 +4188,7 @@ class TalkModeManagerTest {
   @Test
   fun pausedPushToTalkTurnSuppressesSpeechInterruptListener() =
     runTest {
-      val manager = createManager(scope = this)
+      val manager = createManager(scope = backgroundScope)
       setPrivateField(manager, "listeningMode", true)
       assertTrue(manager.shouldAllowSpeechInterrupt())
 
@@ -3399,7 +4202,7 @@ class TalkModeManagerTest {
   @Test
   fun finishingPushToTalkTurnRejectsReplacementCapture() =
     runTest {
-      val manager = createManager(scope = this)
+      val manager = createManager(scope = backgroundScope)
       setPrivateField(manager, "finishingPttCaptureId", "capture-1")
 
       val error =
@@ -3447,7 +4250,7 @@ class TalkModeManagerTest {
   @Test
   fun relayClosePreservesFinishingPushToTalkOwnership() =
     runTest {
-      val manager = createManager(scope = this)
+      val manager = createManager(scope = backgroundScope)
       manager.prepareRealtimeCapturePause("capture-1", lease = null)()
       installRealtimeSession(manager, "relay-1")
       setPrivateField(manager, "finishingPttCaptureId", "capture-1")
@@ -3464,7 +4267,7 @@ class TalkModeManagerTest {
       var stoppedByRelay = false
       val manager =
         createManager(
-          scope = this,
+          scope = backgroundScope,
           isConnected = { false },
           onStoppedByRelay = { stoppedByRelay = true },
         )
@@ -3489,7 +4292,7 @@ class TalkModeManagerTest {
   @Test
   fun chatFinalWaitUsesGatewayEventTimeout() =
     runTest {
-      val manager = createManager(scope = this)
+      val manager = createManager(scope = backgroundScope)
 
       setPrivateField(manager, "pendingRunId", "run-missing-final")
       setPrivateField(manager, "pendingFinal", CompletableDeferred<Boolean>())
@@ -3501,7 +4304,7 @@ class TalkModeManagerTest {
   private fun createManager(
     talkSpeakClient: TalkSpeechSynthesizing = TalkSpeakClient(),
     talkAudioPlayer: TalkAudioPlaying? = null,
-    scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
+    scope: CoroutineScope? = null,
     isConnected: () -> Boolean = { true },
     onBeforeSpeak: suspend () -> Unit = {},
     onAfterSpeak: suspend () -> Unit = {},
@@ -3511,9 +4314,10 @@ class TalkModeManagerTest {
     realtimeMarkAcknowledger: (suspend (String, String) -> Unit)? = null,
   ): TalkModeManager {
     val app = RuntimeEnvironment.getApplication()
+    val managerScope = scope ?: CoroutineScope(SupervisorJob().also(fixtureJobs::add) + Dispatchers.Default)
     val session =
       GatewaySession(
-        scope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
+        scope = CoroutineScope(SupervisorJob().also(fixtureJobs::add) + Dispatchers.Default),
         identityStore = testDeviceIdentityStore(app),
         deviceAuthStore = DeviceAuthStore(SecurePrefs(app, app.getSharedPreferences("talk-mode-test-${System.nanoTime()}", 0))),
         onConnected = {},
@@ -3522,7 +4326,7 @@ class TalkModeManagerTest {
       )
     return TalkModeManager(
       context = app,
-      scope = scope,
+      scope = managerScope,
       session = session,
       isConnected = isConnected,
       onBeforeSpeak = onBeforeSpeak,
@@ -3533,7 +4337,10 @@ class TalkModeManagerTest {
       realtimeCaptureDispatcher = realtimeCaptureDispatcher,
       realtimePlaybackDispatcher = realtimePlaybackDispatcher,
       realtimeMarkAcknowledger = realtimeMarkAcknowledger,
-    ).also { setPrivateField(it, "relayStopNotification", onStoppedByRelay) }
+    ).also {
+      fixtureManagers += it
+      setPrivateField(it, "relayStopNotification", onStoppedByRelay)
+    }
   }
 
   private fun createRealtimeManager(): TalkModeManager = createManager().also { installRealtimeSession(it, "relay-1") }
@@ -3559,16 +4366,6 @@ class TalkModeManagerTest {
   ) = handleGatewayEvent("talk.event", realtimeTranscriptPayload(role, text, final))
 
   private fun TalkModeManager.realtimeEvent(payload: String) = handleGatewayEvent("talk.event", payload)
-
-  private fun installSpeechRecognitionService() {
-    val app = RuntimeEnvironment.getApplication()
-    shadowOf(app).grantPermissions(Manifest.permission.RECORD_AUDIO)
-    val speechService = ComponentName(app, "TestSpeechRecognitionService")
-    shadowOf(app.packageManager).apply {
-      addServiceIfNotPresent(speechService)
-      addIntentFilterForService(speechService, IntentFilter(RecognitionService.SERVICE_INTERFACE))
-    }
-  }
 
   @Suppress("UNCHECKED_CAST")
   private fun playbackGeneration(manager: TalkModeManager) = readPrivateField(manager, "playbackGeneration") as AtomicLong

@@ -30,7 +30,10 @@ import ai.openclaw.app.gateway.GatewayMediaKind
 import ai.openclaw.app.gateway.GatewayRegistryEntry
 import ai.openclaw.app.gateway.GatewayRegistryEntryKind
 import ai.openclaw.app.gateway.GatewayUpdateAvailableSummary
+import ai.openclaw.app.i18n.NativeText
 import ai.openclaw.app.i18n.nativeString
+import ai.openclaw.app.i18n.nativeText
+import ai.openclaw.app.node.CameraCaptureManager
 import ai.openclaw.app.systemagent.SystemAgentChatState
 import ai.openclaw.app.ui.GatewayConnectPlan
 import ai.openclaw.app.ui.GatewaySavedAuthAction
@@ -44,6 +47,7 @@ import ai.openclaw.app.ui.chat.shouldMigrateComposerDraft
 import ai.openclaw.app.ui.chat.toOutgoingAttachment
 import ai.openclaw.app.voice.AndroidAudioInputSession
 import ai.openclaw.app.voice.AudioInputDeviceOption
+import ai.openclaw.app.voice.TalkModeManager
 import ai.openclaw.app.voice.VoiceWakePreferences
 import android.Manifest
 import android.app.Application
@@ -71,6 +75,8 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicLong
 
@@ -642,6 +648,8 @@ class MainViewModel private constructor(
   val talkModeSpeaking: StateFlow<Boolean> = runtimeState(initial = false) { it.talkModeSpeaking }
   val talkAwaitingAgent: StateFlow<Boolean> = runtimeState(initial = false) { it.talkAwaitingAgent }
   val talkModeStatusText: StateFlow<String> = runtimeState(initial = "Off") { it.talkModeStatusText }
+  internal val talkCallPresentation: StateFlow<TalkModeManager.CallPresentation> = runtimeState(initial = TalkModeManager.CallPresentation()) { it.talkCallPresentation }
+  internal val chatTalkCall: StateFlow<TalkModeManager.ChatCall?> = runtimeState(initial = null) { it.chatTalkCall }
 
   val chatSessionKey: StateFlow<String> = runtimeState(initial = "main") { it.chatSessionKey }
   internal val chatPermissionSettingsAvailable: StateFlow<Boolean> = runtimeState(initial = false) { it.chatPermissionSettingsAvailable }
@@ -1178,7 +1186,7 @@ class MainViewModel private constructor(
     viewModelScope.launch {
       try {
         val accepted =
-          sendChatForOwnerAwaitAcceptance(
+          ensureRuntime().sendChatForOwnerAwaitAcceptance(
             owner = pending.owner,
             message = prompt,
             thinking = thinking,
@@ -1211,8 +1219,95 @@ class MainViewModel private constructor(
     }
   }
 
-  fun setTalkModeEnabled(enabled: Boolean) {
-    ensureRuntime().setTalkModeEnabled(enabled)
+  internal fun captureChatTalkStart(): TalkModeManager.ChatStart? {
+    val runtime = runtimeRef.value ?: return null
+    val generation = runtime.chatSelectionGeneration.value
+    val owner = currentChatComposerOwner() ?: return null
+    return runtime.captureChatTalkStart(owner, generation) {
+      runtimeRef.value === runtime && isCurrentChatSelection(owner, generation)
+    }
+  }
+
+  internal fun startChatTalk(start: TalkModeManager.ChatStart) {
+    if (start.isCurrent()) runtimeRef.value?.startChatTalk(start)
+  }
+
+  internal fun endChatTalk(start: TalkModeManager.ChatStart) {
+    runtimeRef.value?.endChatTalk(start)
+  }
+
+  internal fun returnToChatTalkOwner(start: TalkModeManager.ChatStart): Boolean {
+    val runtime = runtimeRef.value ?: return false
+    if (runtime.chatTalkCall.value?.start !== start || !start.lease.isCurrent()) return false
+    switchChatSession(start.owner.sessionKey, start.owner.agentId)
+    return true
+  }
+
+  internal fun captureTalkEndAction(generation: Long): () -> Unit {
+    val runtime = runtimeRef.value ?: return {}
+    val end = runtime.captureTalkEndAction(generation)
+    return { if (runtimeRef.value === runtime) end() }
+  }
+
+  internal fun removeChatTalkAttachment(
+    start: TalkModeManager.ChatStart,
+    id: String,
+  ) {
+    val runtime = runtimeRef.value ?: return
+    runtime.removeChatTalkAttachment(start) {
+      if (runtimeRef.value === runtime) chatComposerState.removeAttachments(start.owner, setOf(id))
+    }
+  }
+
+  internal fun beginChatTalkPhotoSend(
+    start: TalkModeManager.ChatStart,
+    photos: List<PendingAttachment>,
+  ): ChatComposerSendStartResult {
+    val runtime = runtimeRef.value ?: return ChatComposerSendStartResult.Unavailable
+    val ownsPhoto = runtime.captureChatTalkPhotoOwner(start)
+    return beginChatComposerSend(
+      owner = start.owner,
+      thinking = chatThinkingLevel.value,
+      photos = photos,
+      canAdmit = { runtimeRef.value === runtime && ownsPhoto() },
+    )
+  }
+
+  internal fun toggleChatTalkAudio(start: TalkModeManager.ChatStart) {
+    runtimeRef.value?.toggleChatTalkAudio(start)
+  }
+
+  internal suspend fun stageChatTalkPhoto(
+    start: TalkModeManager.ChatStart,
+    facing: String = "front",
+    capturePhoto: suspend (runtime: NodeRuntime, isCurrent: () -> Boolean) -> CameraCaptureManager.Payload =
+      { runtime, isCurrent -> runtime.camera.snap(buildJsonObject { put("facing", JsonPrimitive(facing)) }.toString(), isCurrent = isCurrent) },
+  ): NativeText {
+    val runtime = runtimeRef.value ?: return nativeText("Call is no longer active.")
+    val owner = start.owner
+    val authorization =
+      chatComposerState.beginMediaAcquisition(owner)
+        ?: return nativeText("Return to the call's chat before taking a photo.")
+    try {
+      return runtime.stageChatTalkPhoto(
+        start = start,
+        requestPermission = {
+          permissionRequester?.requestIfMissing(listOf(Manifest.permission.CAMERA))?.get(Manifest.permission.CAMERA) == true
+        },
+        isCurrentOwner = { runtimeRef.value === runtime && chatComposerState.isMediaAcquisitionActive(authorization) },
+        stage = { image ->
+          chatComposerState.addAuthorizedAttachments(
+            owner,
+            authorization,
+            listOf(PendingAttachment(UUID.randomUUID().toString(), "camera.jpg", "image/jpeg", image)),
+          )
+        },
+        capturePhoto = { isCurrent -> capturePhoto(runtime, isCurrent) },
+      )
+    } finally {
+      // Permission, capture, cancellation and failed staging all release the original owner.
+      chatComposerState.cancelMediaAcquisition(authorization)
+    }
   }
 
   suspend fun requestVoiceNotePermission(): Boolean = requestRecordAudioPermission()
@@ -2075,40 +2170,28 @@ class MainViewModel private constructor(
 
   suspend fun getBackgroundTask(taskId: String): BackgroundTask = ensureRuntime().getBackgroundTask(taskId)
 
-  internal suspend fun sendChatForOwnerAwaitAcceptance(
-    owner: ChatComposerOwner,
-    message: String,
-    thinking: String,
-    attachments: List<OutgoingAttachment>,
-    idempotencyKey: String,
-  ): Boolean =
-    ensureRuntime().sendChatForOwnerAwaitAcceptance(
-      owner = owner,
-      message = message,
-      thinking = thinking,
-      attachments = attachments,
-      idempotencyKey = idempotencyKey,
-    )
-
   /** Admission outlives the composing Activity; accepted payloads clear by owner and snapshot. */
   internal fun beginChatComposerSend(
     owner: ChatComposerOwner,
     thinking: String,
+    photos: List<PendingAttachment>? = null,
+    canAdmit: () -> Boolean = { true },
   ): ChatComposerSendStartResult {
-    if (!isCurrentChatComposerOwner(owner)) return ChatComposerSendStartResult.Unavailable
-    val start = chatComposerState.beginSend(owner)
+    if (!isCurrentChatComposerOwner(owner) || !canAdmit()) return ChatComposerSendStartResult.Unavailable
+    val start = chatComposerState.beginSend(owner, photos)
     val request = start.request ?: return start.result
     val outgoing = request.attachments.map(PendingAttachment::toOutgoingAttachment)
     viewModelScope.launch {
       var accepted: Boolean? = null
       try {
         accepted =
-          sendChatForOwnerAwaitAcceptance(
+          ensureRuntime().sendChatForOwnerAwaitAcceptance(
             owner = request.owner,
             message = request.message,
             thinking = thinking,
             attachments = outgoing,
             idempotencyKey = request.commandId,
+            canAdmit = canAdmit,
           )
       } catch (err: CancellationException) {
         throw err

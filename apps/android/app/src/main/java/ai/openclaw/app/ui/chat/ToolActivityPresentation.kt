@@ -1,25 +1,13 @@
 package ai.openclaw.app.ui.chat
 
 import ai.openclaw.app.chat.ChatToolActivity
+import ai.openclaw.app.chat.ChatToolKind
+import ai.openclaw.app.chat.chatToolKind
 import ai.openclaw.app.i18n.nativeString
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
-
-internal enum class CompletedToolKind { Command, Read, Edit, Write, Search, Fetch, Progress, Other }
-
-internal fun completedToolKind(name: String): CompletedToolKind =
-  when (name.trim().lowercase()) {
-    "bash", "exec", "shell", "run_command", "run_terminal_cmd", "terminal", "exec_command" -> CompletedToolKind.Command
-    "read", "read_file", "readfile", "notebookread", "notebook_read" -> CompletedToolKind.Read
-    "edit", "edit_file", "multiedit", "multi_edit", "apply_patch", "applypatch", "patch" -> CompletedToolKind.Edit
-    "write", "write_file", "create_file" -> CompletedToolKind.Write
-    "grep", "find", "glob", "ls", "list", "codebase_search" -> CompletedToolKind.Search
-    "web_fetch", "webfetch", "fetch" -> CompletedToolKind.Fetch
-    "progress_card" -> CompletedToolKind.Progress
-    else -> CompletedToolKind.Other
-  }
 
 internal fun completedToolDisplayName(name: String): String =
   when (name.trim().lowercase()) {
@@ -76,7 +64,7 @@ internal data class CompletedToolResultPresentation(
 internal fun completedToolResultPresentation(tool: ChatToolActivity): CompletedToolResultPresentation {
   val result = tool.result?.takeIf { it.isNotBlank() }
   val hasDetail =
-    if (completedToolKind(tool.name) == CompletedToolKind.Command) {
+    if (chatToolKind(tool.name) == ChatToolKind.Command) {
       completedCommandText(tool, singleLine = false)?.isNotBlank() == true
     } else {
       tool.detail?.isNotBlank() == true

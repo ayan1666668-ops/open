@@ -1,6 +1,8 @@
 package ai.openclaw.app.voice
 
+import ai.openclaw.app.chat.ChatComposerOwner
 import ai.openclaw.app.gateway.ChatSendAck
+import ai.openclaw.app.gateway.GatewayRequestNotEnqueued
 import ai.openclaw.app.gateway.GatewayRequestRejected
 import ai.openclaw.app.gateway.GatewaySession
 import ai.openclaw.app.gateway.TalkSessionCancelOutputResult
@@ -10,6 +12,7 @@ import ai.openclaw.app.i18n.LocaleResolvingStateFlow
 import ai.openclaw.app.i18n.NativeText
 import ai.openclaw.app.i18n.nativeText
 import ai.openclaw.app.i18n.resolveNativeText
+import ai.openclaw.app.resolveAgentIdFromMainSessionKey
 import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
@@ -53,8 +56,12 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.updateAndGet
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
@@ -241,6 +248,108 @@ class TalkModeManager internal constructor(
     private const val pushToTalkRestartDelayMs = 200L
   }
 
+  /** One chat tap owns permission, pending admission, and the admitted call's immutable route. */
+  internal class ChatStart(
+    val owner: ChatComposerOwner,
+    val lease: GatewaySession.RequestLease,
+    private val withCurrentSelection: (() -> Boolean) -> Boolean,
+    private val isCurrentSelection: () -> Boolean,
+  ) {
+    private enum class Admission {
+      Pending,
+      Admitted,
+      Retired,
+    }
+
+    private val admission = AtomicReference(Admission.Pending)
+
+    fun isCurrent(): Boolean = admission.get() != Admission.Retired && lease.isCurrent() && isCurrentSelection()
+
+    fun canStart(): Boolean =
+      when (admission.get()) {
+        Admission.Pending -> isCurrent()
+        Admission.Admitted -> lease.isCurrent()
+        else -> false
+      }
+
+    fun admit(): Boolean =
+      admission.get() == Admission.Admitted ||
+        withCurrentSelection {
+          lease.isCurrent() &&
+            (admission.compareAndSet(Admission.Pending, Admission.Admitted) || admission.get() == Admission.Admitted)
+        }
+
+    fun cancelPending(): Boolean = admission.compareAndSet(Admission.Pending, Admission.Retired)
+
+    fun retire() {
+      admission.set(Admission.Retired)
+    }
+  }
+
+  @Volatile private var chatStart: ChatStart? = null
+
+  internal data class CallUtterance(
+    val role: VoiceConversationRole,
+    val text: String,
+  )
+
+  internal data class ChatCall(
+    val start: ChatStart,
+    val utterance: CallUtterance? = null,
+  )
+
+  internal data class CallPresentation(
+    val generation: Long = 0,
+    val call: ChatCall? = null,
+    val status: NativeText = nativeText("Off"),
+    val listening: Boolean = false,
+    val thinking: Boolean = false,
+    val speaking: Boolean = false,
+    val failed: Boolean = false,
+    val activity: TalkAgentActivity? = null,
+    val activityIncomplete: Boolean = false,
+  )
+
+  private val chatCallState = MutableStateFlow<ChatCall?>(null)
+  internal val chatCall: StateFlow<ChatCall?> = chatCallState
+  private val activeSessionKey: String get() = chatStart?.owner?.sessionKey ?: mainSessionKey.ifBlank { "main" }
+
+  /** Reinstalling native capture or a voice route keeps only this admitted call's caption. */
+  private fun installChatCall(target: ChatStart?) {
+    val previous = chatCallState.value?.takeIf { it.start === target }
+    chatCallState.value = target?.let { ChatCall(it, previous?.utterance) }
+  }
+
+  /** A presentation value, not transcript history; producers retain their own speech authority. */
+  private fun publishCallUtterance(
+    target: ChatStart?,
+    generation: Long,
+    role: VoiceConversationRole,
+    text: String,
+  ) {
+    synchronized(realtimeCapturePauseLock) {
+      val call = chatCallState.value ?: return
+      if (call.start !== target || chatStart !== target || generation != startGeneration.value ||
+        !_isEnabled.value || stopRequested || !call.start.lease.isCurrent() || text.isBlank()
+      ) {
+        return
+      }
+      chatCallState.value = call.copy(utterance = CallUtterance(role, text))
+    }
+  }
+
+  /** Only an installed chat call may retain its foreground-started microphone service. */
+  internal fun isActiveChatCall(target: ChatStart): Boolean =
+    synchronized(realtimeCapturePauseLock) {
+      chatCallState.value?.start === target && _isEnabled.value && !stopRequested && target.lease.isCurrent()
+    }
+
+  internal fun canKeepChatCallInBackground(): Boolean =
+    synchronized(realtimeCapturePauseLock) {
+      val target = chatCallState.value?.start ?: return@synchronized false
+      isActiveChatCall(target) && activePttCaptureId == null && finishingPttCaptureId == null
+    }
+
   private val mainHandler = Handler(Looper.getMainLooper())
   private var gatewayWorkJob = SupervisorJob()
   private var gatewayWorkScope = CoroutineScope(scope.coroutineContext + gatewayWorkJob)
@@ -316,11 +425,13 @@ class TalkModeManager internal constructor(
   private val realtimeRelayModelSupported get() = configCache.get().value.realtimeRelayModelSupported
 
   @Volatile private var pendingRunId: String? = null
+
+  @Volatile private var pendingRunSessionKey: String? = null
   private var pendingFinal: CompletableDeferred<Boolean>? = null
   private val completedRunsLock = Any()
   private val completedRunStates = LinkedHashMap<String, Boolean>()
   private val completedRunTexts = LinkedHashMap<String, String>()
-  private val startGeneration = AtomicLong(0L)
+  private val startGeneration = MutableStateFlow(0L)
   private var relayStopNotification: ((() -> Boolean) -> Unit) = {}
   private val audioInputGeneration = AtomicLong(0L)
 
@@ -378,6 +489,205 @@ class TalkModeManager internal constructor(
         )
       },
     )
+
+  private class ConversationSubscription(
+    val owner: ChatStart,
+    var key: String = owner.owner.sessionKey,
+    var enqueued: Boolean = false,
+  )
+
+  private data class CapturedVoiceRoute(
+    val owner: ChatStart,
+    val key: String,
+  )
+
+  private val conversationSubscriptionMutex = Mutex()
+  private var conversationSubscription: ConversationSubscription? = null
+
+  @Volatile private var capturedVoiceRoute: CapturedVoiceRoute? = null
+  private var conversationSnapshotJob: Job? = null
+
+  private fun observationParams(
+    target: ChatStart,
+    key: String,
+  ): String =
+    buildJsonObject {
+      put("key", JsonPrimitive(key))
+      put("agentId", JsonPrimitive(target.owner.agentId))
+    }.toString()
+
+  private fun isCurrentChatStart(
+    target: ChatStart,
+    generation: Long,
+  ): Boolean =
+    synchronized(realtimeCapturePauseLock) {
+      chatStart === target && generation == startGeneration.value && _isEnabled.value && !stopRequested && target.canStart()
+    }
+
+  /** A single physical membership is serialized across late ACK, End, and replacement. */
+  private suspend fun prepareConversationObservation(
+    target: ChatStart,
+    generation: Long,
+  ) {
+    conversationSubscriptionMutex.withLock {
+      synchronized(realtimeCapturePauseLock) {
+        if (!isCurrentChatStart(target, generation)) throw CancellationException("Call changed before observation")
+        realtimeAgentCoordinator.beginConversationObservation(target)
+      }
+      val previous = conversationSubscription
+      if (previous?.owner === target) return@withLock
+      if (previous != null && !releaseConversationSubscriptionLocked(previous)) {
+        realtimeAgentCoordinator.confirmConversationObservation(target, target.owner.sessionKey)
+        return@withLock
+      }
+      val lease = target.lease
+      if (!lease.supportsMethod("sessions.messages.subscribe") || !lease.supportsMethod("sessions.messages.unsubscribe")) {
+        realtimeAgentCoordinator.confirmConversationObservation(target, target.owner.sessionKey)
+        return@withLock
+      }
+      if (!isCurrentChatStart(target, generation)) throw CancellationException("Call changed before observation")
+      val pending = ConversationSubscription(target)
+      conversationSubscription = pending
+      try {
+        val response =
+          lease.request("sessions.messages.subscribe", observationParams(target, pending.key)) { enqueue ->
+            if (!isCurrentChatStart(target, generation)) throw GatewayRequestNotEnqueued("Call observation retired")
+            pending.enqueued = true
+            enqueue()
+          }
+        val result = json.parseToJsonElement(response).asObjectOrNull()
+        val key = result?.get("key").asStringOrNull()?.takeIf(String::isNotBlank)
+        check(result?.get("subscribed").asBooleanOrNull() == true && key != null) { "Activity subscription unavailable" }
+        pending.key = key
+        if (!isCurrentChatStart(target, generation) || !realtimeAgentCoordinator.confirmConversationObservation(target, key)) {
+          releaseConversationSubscriptionLocked(pending)
+          throw CancellationException("Call changed before observation acknowledgment")
+        }
+        refreshConversationSnapshot(pending)
+      } catch (error: CancellationException) {
+        withContext(NonCancellable) { releaseConversationSubscriptionLocked(pending) }
+        throw error
+      } catch (_: Exception) {
+        realtimeAgentCoordinator.confirmConversationObservation(target, target.owner.sessionKey)
+        realtimeAgentCoordinator.markObservationIncomplete(target)
+        releaseConversationSubscriptionLocked(pending)
+      }
+    }
+  }
+
+  private suspend fun releaseConversationSubscriptionLocked(record: ConversationSubscription): Boolean {
+    if (conversationSubscription !== record) return true
+    val lease = record.owner.lease
+    if (!record.enqueued || !lease.isCurrent()) {
+      conversationSubscription = null
+      return true
+    }
+    return try {
+      lease.request("sessions.messages.unsubscribe", observationParams(record.owner, record.key))
+      if (conversationSubscription === record) conversationSubscription = null
+      true
+    } catch (error: CancellationException) {
+      throw error
+    } catch (_: Exception) {
+      // A timeout is not proof of removal. Keep the original lease obligation;
+      // the next explicit start retries it before acquiring any replacement.
+      Log.w(tag, "Call activity release unconfirmed; original subscription retained")
+      false
+    }
+  }
+
+  private fun retireConversationObservation(target: ChatStart?) {
+    if (target == null) return
+    realtimeAgentCoordinator.retireConversationObservation(target)
+    capturedVoiceRoute = capturedVoiceRoute?.takeUnless { it.owner === target }
+    conversationSnapshotJob?.cancel()
+    conversationSnapshotJob = null
+    scope.launch {
+      yield()
+      conversationSubscriptionMutex.withLock {
+        conversationSubscription?.takeIf { it.owner === target }?.let { releaseConversationSubscriptionLocked(it) }
+      }
+    }
+  }
+
+  private fun refreshConversationAfterGap(target: ChatStart) {
+    scope.launch {
+      conversationSubscriptionMutex.withLock { conversationSubscription?.takeIf { it.owner === target }?.let(::refreshConversationSnapshot) }
+    }
+  }
+
+  private fun refreshConversationSnapshot(record: ConversationSubscription) {
+    conversationSnapshotJob?.cancel()
+    conversationSnapshotJob =
+      scope.launch {
+        yield()
+        val target = record.owner
+        val revision = realtimeAgentCoordinator.observationRevision(target) ?: return@launch
+        try {
+          if (target.lease.supportsMethod("chat.history")) {
+            // History owns the live-run snapshot; describe omits it. Use metadata only,
+            // leaving canonical message storage and rendering with ChatController.
+            val params =
+              buildJsonObject {
+                put("sessionKey", JsonPrimitive(record.key))
+                put("agentId", JsonPrimitive(target.owner.agentId))
+                put("limit", JsonPrimitive(1))
+                put("maxBytes", JsonPrimitive(1024))
+              }.toString()
+            val response = target.lease.request("chat.history", params)
+            val payload = json.parseToJsonElement(response).asObjectOrNull()
+            if (payload != null) realtimeAgentCoordinator.applyConversationSnapshot(target, revision, payload)
+          }
+          if (target.lease.supportsMethod("question.list") && realtimeAgentCoordinator.observationRevision(target) != null) {
+            val response = target.lease.request("question.list", "{}")
+            val records = (json.parseToJsonElement(response).asObjectOrNull()?.get("questions") as? JsonArray).orEmpty()
+            if (realtimeAgentCoordinator.observationRevision(target) != null) {
+              records.forEach { question ->
+                (question as? JsonObject)?.let { realtimeAgentCoordinator.handleQuestionEvent("question.requested", it) }
+              }
+            }
+          }
+        } catch (error: CancellationException) {
+          throw error
+        } catch (_: Exception) {
+          // Existing scopes and protocol availability decide what can be observed.
+          // Do not ask for new permissions or manufacture idle from an absent snapshot.
+          realtimeAgentCoordinator.markObservationIncomplete(target)
+        }
+      }
+  }
+
+  /** Resolve a supported qualified alias; never blindly prefix a persisted/global key. */
+  private suspend fun resolveCapturedVoiceRoute(target: ChatStart): String {
+    val original = target.owner.sessionKey
+    resolveAgentIdFromMainSessionKey(original)?.let { agent ->
+      check(agent == target.owner.agentId) { "Talk agent does not match the conversation" }
+      return original
+    }
+    val lease = target.lease
+    check(lease.supportsMethod("sessions.resolve")) { "Cannot verify this conversation's Talk route. Open an agent-scoped conversation." }
+
+    suspend fun resolve(key: String): JsonObject {
+      val params =
+        buildJsonObject {
+          put("key", JsonPrimitive(key))
+          put("agentId", JsonPrimitive(target.owner.agentId))
+          put("includeGlobal", JsonPrimitive(true))
+          put("includeUnknown", JsonPrimitive(true))
+          put("allowMissing", JsonPrimitive(true))
+        }
+      val result = json.parseToJsonElement(lease.request("sessions.resolve", params.toString())).asObjectOrNull() ?: error("Talk route response missing")
+      check(target.canStart() && result["ok"].asBooleanOrNull() == true && result["agentId"].asStringOrNull() == target.owner.agentId) { "Cannot verify this conversation's Talk owner" }
+      return result
+    }
+    val canonical = resolve(original)["key"].asStringOrNull() ?: error("Talk conversation key missing")
+    if (resolveAgentIdFromMainSessionKey(canonical) == target.owner.agentId) return canonical
+    val alias = "agent:${target.owner.agentId}:main"
+    val resolvedAlias = resolve(alias)["key"].asStringOrNull()
+    check(resolvedAlias == canonical) { "This conversation has no verified agent-scoped Talk route. Select an agent-scoped conversation." }
+    return alias
+  }
+
   private var realtimeUserEntryId: String? = null
   private var realtimeUserEntryAwaitingFinal = false
   private var realtimeUserEntryAwaitingFinalStartedAtMs: Long? = null
@@ -427,7 +737,32 @@ class TalkModeManager internal constructor(
   private var realtimePlaying = false
   private val systemSpeech = SystemSpeechSpeaker(context)
 
-  /** Updates the chat session used for TalkMode turns and wake-command replies. */
+  // One owner-tagged snapshot prevents separate ViewModel collectors pairing A's
+  // call identity with B's status/playout. Never join this with the selected chat.
+  internal val callPresentation: StateFlow<CallPresentation> =
+    combine(chatCallState, status, _isListening, _isSpeaking, realtimeAgentCoordinator.activity, startGeneration) { _ ->
+      synchronized(realtimeCapturePauseLock) {
+        val activity =
+          realtimeAgentCoordinator.activity.value?.takeIf {
+            if (it.observationOwner != null) it.observationOwner === chatStart else it.session.relaySessionId == realtimeSessionId
+          }
+        CallPresentation(
+          generation = startGeneration.value,
+          call = chatCallState.value,
+          status = currentStatus.text,
+          listening = _isListening.value,
+          thinking = currentStatus.awaitingAgent,
+          speaking = _isSpeaking.value,
+          failed = currentStatus.state == TalkStatusState.TalkFailure,
+          activity = activity?.activity,
+          activityIncomplete = activity?.incomplete == true,
+        )
+      }
+    }.stateIn(scope, SharingStarted.Eagerly, CallPresentation())
+
+  internal fun isCurrentCallGeneration(generation: Long): Boolean = synchronized(realtimeCapturePauseLock) { startGeneration.value == generation }
+
+  /** Updates the non-chat Talk/PTT default; a chat call retains its captured route. */
   fun setMainSessionKey(sessionKey: String?) {
     val trimmed = sessionKey?.trim().orEmpty()
     if (trimmed.isEmpty()) return
@@ -435,8 +770,15 @@ class TalkModeManager internal constructor(
   }
 
   /** Starts or stops continuous realtime TalkMode capture. */
-  fun setEnabled(enabled: Boolean) {
+  fun setEnabled(enabled: Boolean) = setEnabled(enabled, null)
+
+  internal fun setEnabled(
+    enabled: Boolean,
+    chatStart: ChatStart?,
+  ) {
     if (_isEnabled.value == enabled) return
+    if (enabled && chatStart?.canStart() == false) return
+    if (enabled) this.chatStart = chatStart
     _isEnabled.value = enabled
     if (enabled) {
       Log.d(tag, "enabled")
@@ -454,11 +796,24 @@ class TalkModeManager internal constructor(
     failure?.let(::setTalkFailure)
   }
 
+  /** Terminal external interruption: retire audio now and notify the same capture owner. */
+  internal fun interruptChatCall(failure: NativeText) {
+    val generation =
+      synchronized(realtimeCapturePauseLock) {
+        if (chatStart == null) return
+        startGeneration.value
+      }
+    stop(expectedGeneration = generation, failure = failure)
+  }
+
   /** Cancels work carrying voice/session data before a replacement gateway can connect. */
   fun onGatewayScopeChanging() {
     synchronized(realtimeCapturePauseLock) {
       gatewayGeneration.incrementAndGet()
       stopRealtimeRelay(closeSession = false)
+      chatCallState.value = null
+      retireConversationObservation(chatStart)
+      chatStart?.retire()
     }
     realtimeAgentCoordinator.resetTransport()
     configCache.set(TalkConfigCache())
@@ -570,7 +925,7 @@ class TalkModeManager internal constructor(
     }
 
     val captureId = UUID.randomUUID().toString()
-    val captureGeneration = startGeneration.get()
+    val captureGeneration = startGeneration.value
     return try {
       withContext(Dispatchers.Main) {
         val hasPendingRelease = pttReleaseCompletion != null
@@ -585,7 +940,7 @@ class TalkModeManager internal constructor(
         finishingPttCaptureId?.let {
           throw IllegalStateException("PTT_BUSY: previous push-to-talk turn is still finishing")
         }
-        if (captureGeneration != startGeneration.get() || !canStartCapture()) {
+        if (captureGeneration != startGeneration.value || !canStartCapture()) {
           throw IllegalStateException("NODE_BACKGROUND_UNAVAILABLE: command requires foreground")
         }
         cancelActivePlayback()
@@ -593,7 +948,7 @@ class TalkModeManager internal constructor(
         val lease = session.captureRequestLease(gatewayStableId())
         val finishPause =
           synchronized(realtimeCapturePauseLock) {
-            if (captureGeneration != startGeneration.get() || !canStartCapture()) {
+            if (captureGeneration != startGeneration.value || !canStartCapture()) {
               throw IllegalStateException("NODE_BACKGROUND_UNAVAILABLE: command requires foreground")
             }
             pttTimeoutJob?.cancel()
@@ -624,7 +979,7 @@ class TalkModeManager internal constructor(
           synchronized(realtimeCapturePauseLock) {
             if (
               activePttCaptureId != captureId ||
-              captureGeneration != startGeneration.get() ||
+              captureGeneration != startGeneration.value ||
               !canStartCapture() ||
               stopRequested
             ) {
@@ -652,7 +1007,7 @@ class TalkModeManager internal constructor(
         } catch (err: Throwable) {
           if (clearPushToTalkRecognition(captureId) != null) {
             synchronized(realtimeCapturePauseLock) {
-              if (captureGeneration == startGeneration.get()) {
+              if (captureGeneration == startGeneration.value) {
                 setStatus(if (_isEnabled.value) nativeText("Listening") else nativeText("Ready"))
               }
             }
@@ -839,10 +1194,11 @@ class TalkModeManager internal constructor(
   /** Plays one text response through the configured Android/TalkMode TTS output. */
   fun playTtsForText(text: String) {
     val playbackToken = cancelActivePlayback()
+    val target = chatStart
     invalidateConfig()
     gatewayWorkScope.launch {
       ensureConfigLoaded()
-      playAssistant(text, playbackToken)
+      playAssistant(text, playbackToken, target)
     }
   }
 
@@ -866,7 +1222,21 @@ class TalkModeManager internal constructor(
     if (ttsOnAllResponses) {
       Log.d(tag, "gateway event: $event")
     }
-    if (event == "agent" && ttsOnAllResponses) {
+    if (event == "question.requested" || event == "question.resolved") {
+      val payload = payloadJson?.let { runCatching { json.parseToJsonElement(it) as? JsonObject }.getOrNull() }
+      if (payload != null) realtimeAgentCoordinator.handleQuestionEvent(event, payload)
+      return
+    }
+    if (event == "seqGap") {
+      chatStart?.let { target ->
+        realtimeAgentCoordinator.markObservationIncomplete(target, clearTransient = true)
+        refreshConversationAfterGap(target)
+      }
+      return
+    }
+    if (event == "agent" || event == "session.tool") {
+      val payload = payloadJson?.let { runCatching { json.parseToJsonElement(it) as? JsonObject }.getOrNull() }
+      if (payload != null) realtimeAgentCoordinator.handleAgentEvent(payload)?.let(::refreshConversationAfterGap)
       return
     }
     if (event != "chat") return
@@ -889,6 +1259,12 @@ class TalkModeManager internal constructor(
         runId = runId,
         state = state,
         message = obj["message"],
+        agentId = obj["agentId"].asStringOrNull(),
+        sequence = (obj["seq"] as? JsonPrimitive)?.content?.toLongOrNull(),
+        yielded = obj["yielded"].asBooleanOrNull() == true,
+        // Metadata observation must not consume an existing native/PTT final waiter.
+        // The existing handler below retains its session filter and sole speech owner.
+        externalCompletionOwner = pendingRunId == runId || hasRunCompletion(runId),
       )
     ) {
       return
@@ -908,16 +1284,19 @@ class TalkModeManager internal constructor(
     state: String,
     message: JsonElement?,
   ) {
-    val activeSession = mainSessionKey.ifBlank { "main" }
-    if (sessionKey != null && sessionKey != activeSession) return
-
-    // If this is a response we initiated, handle normally below.
-    // Otherwise, if ttsOnAllResponses, finish streaming TTS on terminal events.
     val pending = pendingRunId
     val knownRun = pending == runId || hasRunCompletion(runId)
+    val activeSession = if (knownRun) pendingRunSessionKey ?: activeSessionKey else activeSessionKey
+    if (sessionKey != null && sessionKey != activeSession) return
+
+    // PTT retains its own node target; unrelated replies follow the admitted chat call.
+    // Otherwise, if ttsOnAllResponses, finish streaming TTS on terminal events.
     if (!knownRun) {
+      // A conversation subscription also carries provider-owned finals, including
+      // finals whose progress frames were lost. Observation never authorizes speech.
+      if (chatStart != null) return
       if (ttsOnAllResponses && state == "final") {
-        val text = extractTextFromChatEventMessage(message)
+        val text = ChatEventText.assistantTextFromMessage(message)
         if (!text.isNullOrBlank()) {
           playTtsForText(text)
         }
@@ -933,7 +1312,7 @@ class TalkModeManager internal constructor(
       } ?: return
     // Cache text from final event so we never need to poll chat.history
     if (terminal) {
-      val text = extractTextFromChatEventMessage(message)
+      val text = ChatEventText.assistantTextFromMessage(message)
       if (!text.isNullOrBlank()) {
         synchronized(completedRunsLock) {
           completedRunTexts[runId] = text
@@ -1008,18 +1387,23 @@ class TalkModeManager internal constructor(
         relayStopNotification = notifyStopped
         stopRequested = false
         listeningMode = true
-        startGeneration.incrementAndGet()
+        startGeneration.updateAndGet { it + 1 }
       }
+    val target = chatStart
     Log.d(tag, "start")
     gatewayWorkScope.launch {
       try {
         audioRetirement.await()
+        if (generation != startGeneration.value || !_isEnabled.value || stopRequested || target?.canStart() == false) return@launch
         ensureConfigLoaded()
-        if (generation != startGeneration.get() || !_isEnabled.value || stopRequested) return@launch
+        if (generation != startGeneration.value || !_isEnabled.value || stopRequested || target?.canStart() == false) return@launch
+        if (target != null) prepareConversationObservation(target, generation)
+        if (generation != startGeneration.value || !_isEnabled.value || stopRequested || target?.canStart() == false) return@launch
         if (realtimeRelayModelSupported) {
-          startRealtimeRelay(generation)
+          if (target != null) capturedVoiceRoute = CapturedVoiceRoute(target, resolveCapturedVoiceRoute(target))
+          startRealtimeRelay(generation, target = target)
         } else {
-          startNativeTalk(generation)
+          startNativeTalk(generation, target)
         }
       } catch (err: Throwable) {
         if (err is CancellationException) return@launch
@@ -1029,13 +1413,19 @@ class TalkModeManager internal constructor(
     }
   }
 
-  private fun stop() {
+  private fun stop(
+    expectedGeneration: Long? = null,
+    failure: NativeText? = null,
+  ) {
+    var notify: (() -> Unit)? = null
     val cancelled =
       synchronized(realtimeCapturePauseLock) {
+        if (expectedGeneration != null && (startGeneration.value != expectedGeneration || !_isEnabled.value)) return
+        if (expectedGeneration != null) _isEnabled.value = false
         stopRequested = true
         listeningMode = false
         activePttCaptureId = null
-        startGeneration.incrementAndGet()
+        startGeneration.updateAndGet { it + 1 }
         val jobs =
           listOfNotNull(
             synchronized(finishingPttLock) { finishingPttJob },
@@ -1061,18 +1451,30 @@ class TalkModeManager internal constructor(
         setStatus(nativeText("Off"), state = TalkStatusState.Off)
         stopRealtimeRelay()
         pendingRunId = null
+        pendingRunSessionKey = null
         pendingFinal = null
+        chatCallState.value = null
+        retireConversationObservation(chatStart)
+        chatStart?.retire()
+        chatStart = null
         synchronized(completedRunsLock) {
           completedRunStates.clear()
           completedRunTexts.clear()
         }
         retireRecognizer()
+        failure?.let(::setTalkFailure)
+        if (expectedGeneration != null) {
+          val generation = startGeneration.value
+          val stopped = relayStopNotification
+          notify = { stopped { synchronized(realtimeCapturePauseLock) { startGeneration.value == generation && !_isEnabled.value } } }
+        }
         jobs
       }
     // Completion handlers and SystemSpeech's beforeSpeak callback can reenter capture ownership.
     cancelled.forEach { it.cancel() }
     cancelActivePlayback()
     systemSpeech.shutdown()
+    notify?.invoke()
   }
 
   private fun retireRecognizer() =
@@ -1114,6 +1516,7 @@ class TalkModeManager internal constructor(
   private suspend fun startRealtimeRelay(
     generation: Long,
     change: RealtimeVoiceChange? = null,
+    target: ChatStart? = chatStart,
   ) {
     if (!isConnected()) {
       Log.w(tag, "realtime start: gateway not connected")
@@ -1133,20 +1536,20 @@ class TalkModeManager internal constructor(
     ensureConfigLoaded()
     cancelActivePlayback()
     synchronized(realtimeCapturePauseLock) {
-      if (generation != startGeneration.get() || stopRequested) throw CancellationException("realtime talk stopped while connecting")
+      if (generation != startGeneration.value || stopRequested || target?.canStart() == false) throw CancellationException("realtime talk stopped while connecting")
       if (activePttCaptureId == null) retireRecognizer()
     }
     audioRetirement.await()
 
     synchronized(realtimeCapturePauseLock) {
-      if (generation != startGeneration.get() || !_isEnabled.value || stopRequested) throw CancellationException("realtime talk stopped while connecting")
+      if (generation != startGeneration.value || !_isEnabled.value || stopRequested || target?.canStart() == false) throw CancellationException("realtime talk stopped while connecting")
       setStatus(nativeText("Connecting…"), awaitingAgent = true)
     }
     val language = realtimeTranscriptionLanguage(resolvedSpeechLocaleTag())
-    val lease = change?.lease ?: session.captureRequestLease(gatewayStableId()) ?: error("Gateway not connected")
+    val lease = change?.lease ?: target?.lease ?: session.captureRequestLease(gatewayStableId()) ?: error("Gateway not connected")
     val supportsVoiceSelection = listOf("talk.voice.get", "talk.voice.set", "talk.voice.complete").all(lease::supportsMethod)
     val transportGeneration = change?.gatewayGeneration ?: gatewayGeneration.get()
-    val sessionKey = change?.sessionKey ?: mainSessionKey.ifBlank { "main" }
+    val sessionKey = change?.sessionKey ?: capturedVoiceRoute?.takeIf { it.owner === target }?.key ?: target?.owner?.sessionKey ?: mainSessionKey.ifBlank { "main" }
     val create: suspend (String?) -> String = { requestedLanguage ->
       val params =
         buildJsonObject {
@@ -1163,7 +1566,7 @@ class TalkModeManager internal constructor(
         }
       lease.request("talk.session.create", params.toString(), timeoutMs = 15_000) { enqueue ->
         synchronized(realtimeCapturePauseLock) {
-          if (generation != startGeneration.get() || transportGeneration != gatewayGeneration.get() || !_isEnabled.value || stopRequested) {
+          if (generation != startGeneration.value || transportGeneration != gatewayGeneration.get() || !_isEnabled.value || stopRequested || target?.canStart() == false) {
             throw CancellationException("realtime talk stopped while connecting")
           }
           if (change != null) assertVoiceChangeCurrent(change)
@@ -1179,9 +1582,11 @@ class TalkModeManager internal constructor(
     if (sessionId.isNullOrBlank()) {
       throw IllegalStateException("talk.session.create returned no session id")
     }
+    // Selection owns admission; never acquire its lock while holding the audio owner lock.
+    val targetAdmitted = target?.admit() != false
     val admitted =
       synchronized(realtimeCapturePauseLock) {
-        if (generation != startGeneration.get() || transportGeneration != gatewayGeneration.get() || !lease.isCurrent() || !_isEnabled.value || stopRequested || (change != null && realtimeVoiceChange !== change)) {
+        if (generation != startGeneration.value || transportGeneration != gatewayGeneration.get() || !lease.isCurrent() || !_isEnabled.value || stopRequested || (change != null && realtimeVoiceChange !== change) || !targetAdmitted) {
           return@synchronized false
         }
         // Session publication and capture installation are one transition. PTT
@@ -1191,6 +1596,7 @@ class TalkModeManager internal constructor(
             relaySessionId = sessionId,
             sessionKey = sessionKey,
           ),
+          observationOwner = target,
         )
         realtimeSessionId = sessionId
         realtimeSessionKey = sessionKey
@@ -1207,9 +1613,11 @@ class TalkModeManager internal constructor(
           if (change == null) setStatus(nativeText("Listening"))
           startRealtimeCaptureLocked(sessionId)
         }
+        installChatCall(target)
         true
       }
     if (!admitted) {
+      if (target?.canStart() == false) disableRealtimeModeAndNotifyOwner(generation, nativeText("Off"))
       // Stop never owned this session; the creator must close it even if its job was cancelled.
       withContext(NonCancellable) {
         runCatching { lease.request("talk.session.close", buildJsonObject { put("sessionId", JsonPrimitive(sessionId)) }.toString()) }
@@ -1221,7 +1629,7 @@ class TalkModeManager internal constructor(
 
   private fun assertVoiceChangeCurrent(change: RealtimeVoiceChange) {
     check(
-      realtimeVoiceChange === change && change.generation == startGeneration.get() &&
+      realtimeVoiceChange === change && change.generation == startGeneration.value &&
         change.gatewayGeneration == gatewayGeneration.get() && change.lease.isCurrent() &&
         _isEnabled.value && !stopRequested,
     ) { "Voice change is no longer active" }
@@ -1253,7 +1661,7 @@ class TalkModeManager internal constructor(
           return@synchronized null
         }
         val lease = realtimeRequestLease?.takeIf { it.isCurrent() } ?: return@synchronized null
-        RealtimeVoiceChange(id, originalId, sessionKey, voice, lease, startGeneration.get(), gatewayGeneration.get()).also {
+        RealtimeVoiceChange(id, originalId, sessionKey, voice, lease, startGeneration.value, gatewayGeneration.get()).also {
           realtimeVoiceChange = it
         }
       }
@@ -1372,7 +1780,10 @@ class TalkModeManager internal constructor(
     }
   }
 
-  private suspend fun startNativeTalk(generation: Long) {
+  private suspend fun startNativeTalk(
+    generation: Long,
+    target: ChatStart?,
+  ) {
     if (!isConnected()) {
       disableRealtimeModeAndNotifyOwner(generation, nativeText("Gateway not connected"))
       return
@@ -1389,16 +1800,19 @@ class TalkModeManager internal constructor(
       return
     }
     synchronized(realtimeCapturePauseLock) {
-      if (generation != startGeneration.get() || !_isEnabled.value || stopRequested) return
+      if (generation != startGeneration.value || !_isEnabled.value || stopRequested || target?.canStart() == false) return
       retireRecognizer()
     }
     audioRetirement.await()
     withContext(Dispatchers.Main) {
+      val targetAdmitted = target?.admit() != false
       synchronized(realtimeCapturePauseLock) {
-        if (generation != startGeneration.get() || !_isEnabled.value || stopRequested) return@withContext
+        if (generation != startGeneration.value || !_isEnabled.value || stopRequested || !targetAdmitted) return@withContext
         recognizer = SpeechRecognizer.createSpeechRecognizer(context).also { it.setRecognitionListener(recognitionListener(null, it)) }
         startListeningInternal(markListening = true)
         startSilenceMonitor()
+        target?.let { realtimeAgentCoordinator.beginSession(RealtimeAgentSession(null, it.owner.sessionKey), observationOwner = it) }
+        installChatCall(target)
       }
     }
   }
@@ -1409,7 +1823,7 @@ class TalkModeManager internal constructor(
   ) {
     val stopped =
       synchronized(realtimeCapturePauseLock) {
-        if (generation != startGeneration.get()) return
+        if (generation != startGeneration.value) return
         setStatus(status)
         stopRealtimeRelay(closeSession = false, preserveStatus = true)
         disableRealtimeModeLocked()
@@ -1422,9 +1836,13 @@ class TalkModeManager internal constructor(
     if (!_isEnabled.value) return null
     _isEnabled.value = false
     _isListening.value = false
-    val generation = startGeneration.get()
+    chatCallState.value = null
+    retireConversationObservation(chatStart)
+    chatStart?.retire()
+    chatStart = null
+    val generation = startGeneration.value
     val notify = relayStopNotification
-    return { notify { synchronized(realtimeCapturePauseLock) { startGeneration.get() == generation && !_isEnabled.value } } }
+    return { notify { synchronized(realtimeCapturePauseLock) { startGeneration.value == generation && !_isEnabled.value } } }
   }
 
   private fun failRealtimeRelay(
@@ -1852,7 +2270,7 @@ class TalkModeManager internal constructor(
     realtimeOutputTurn = null
     pendingRealtimeOutputClear?.cancel()
     pendingRealtimeOutputClear = null
-    realtimeAgentCoordinator.endSession(sessionId)
+    realtimeAgentCoordinator.endSession(sessionId, observationOwner = chatStart.takeIf { _isEnabled.value })
     realtimeUserEntryId = null
     realtimeUserEntryAwaitingFinal = false
     realtimeUserEntryAwaitingFinalStartedAtMs = null
@@ -1916,7 +2334,7 @@ class TalkModeManager internal constructor(
   private fun isRealtimeCapturePaused(): Boolean = synchronized(realtimeCapturePauseLock) { realtimeCapturePause != null }
 
   internal fun resumeRealtimeCaptureAfterPushToTalk(captureId: String) {
-    val generation = startGeneration.get()
+    val generation = startGeneration.value
     val outcome =
       synchronized(realtimeCapturePauseLock) {
         val current = realtimeCapturePause ?: return@synchronized RealtimeCaptureResume.Skipped
@@ -2033,6 +2451,11 @@ class TalkModeManager internal constructor(
       VoiceConversationRole.Assistant -> {
         realtimeAssistantEntryId = if (isFinal) null else resolvedEntryId
       }
+    }
+    // Late finals can rewrite an earlier user entry after the assistant has begun.
+    // Only the latest entry updated by this live relay may replace the caption.
+    _conversation.value.lastOrNull()?.takeIf { it.id == resolvedEntryId }?.let { entry ->
+      publishCallUtterance(chatStart, startGeneration.value, entry.role, entry.text)
     }
   }
 
@@ -2496,6 +2919,7 @@ class TalkModeManager internal constructor(
     if (trimmed.isNotEmpty()) {
       lastTranscript = trimmed
       lastHeardAtMs = SystemClock.elapsedRealtime()
+      publishCallUtterance(chatStart, startGeneration.value, VoiceConversationRole.User, trimmed)
     }
 
     if (isFinal) {
@@ -2538,10 +2962,14 @@ class TalkModeManager internal constructor(
       return
     }
     // The listening job owns the turn, so stop or PTT takeover also cancels pending finalization.
-    finalizeTranscript(transcript)
+    finalizeTranscript(transcript, chatStart)
   }
 
-  private suspend fun finalizeTranscript(transcript: String) {
+  private suspend fun finalizeTranscript(
+    transcript: String,
+    target: ChatStart? = null,
+  ) {
+    val sessionKey = target?.owner?.sessionKey ?: mainSessionKey.ifBlank { "main" }
     listeningMode = false
     _isListening.value = false
     setStatus(nativeText("Thinking…"), awaitingAgent = true)
@@ -2550,20 +2978,23 @@ class TalkModeManager internal constructor(
     // Do not start synthesis while native recognition is still queued for teardown on Main.
     retireRecognizer()
     audioRetirement.await()
+    var activityRunId: String? = null
+    val speechGeneration = startGeneration.value
+    var resumeAfterTurn = true
 
     try {
       ensureConfigLoaded()
       currentCoroutineContext().ensureActive()
-      val prompt = buildPrompt(transcript)
       if (!isConnected()) {
         setStatus(nativeText("Gateway not connected"))
         Log.w(tag, "finalize: gateway not connected")
         return
       }
       val startedAt = System.currentTimeMillis().toDouble() / 1000.0
-      Log.d(tag, "chat.send start sessionKey=${mainSessionKey.ifBlank { "main" }} chars=${prompt.length}")
-      val ack = sendChat(prompt)
+      Log.d(tag, "chat.send start sessionKey=$sessionKey chars=${transcript.length}")
+      val ack = sendChat(transcript, sessionKey, target)
       val runId = ack.runId ?: throw IllegalStateException("chat.send returned no run id")
+      activityRunId = runId
       Log.d(tag, "chat.send ok runId=$runId status=${ack.status}")
       if (ack.isTerminalFailure) {
         setStatus(if (ack.normalizedStatus == "error") nativeText("Chat error") else nativeText("Aborted"))
@@ -2579,18 +3010,23 @@ class TalkModeManager internal constructor(
           ?: waitForAssistantText(
             chatSendAckHistorySinceSeconds(ack, startedAt),
             if (ok) 12_000 else 25_000,
+            sessionKey,
+            target,
           )
       if (assistant.isNullOrBlank()) {
         setStatus(nativeText("No reply"))
         Log.w(tag, "assistant text timeout runId=$runId")
         return
       }
+      currentCoroutineContext().ensureActive()
+      // The captured native turn owns its text even when speaker audio is muted.
+      publishCallUtterance(target, speechGeneration, VoiceConversationRole.Assistant, TalkDirectiveParser.parse(assistant).stripped.trim())
       Log.d(tag, "assistant text ok chars=${assistant.length}")
       val playbackToken = cancelActivePlayback()
       // Muting owns only this reply's audio. Stopping capture still cancels the
       // parent turn and must never restart listening over a replacement PTT hold.
       supervisorScope {
-        val playback = async { playAssistant(assistant, playbackToken) }
+        val playback = async { playAssistant(assistant, playbackToken, target) }
         try {
           playback.await()
         } catch (err: CancellationException) {
@@ -2602,10 +3038,29 @@ class TalkModeManager internal constructor(
         Log.d(tag, "finalize speech cancelled")
         return
       }
-      setTalkFailure(nativeText("Talk failed: \$message", err.message ?: err::class.simpleName.orEmpty()))
+      val failure = nativeText("Talk failed: \$message", err.message ?: err::class.simpleName.orEmpty())
+      if (err is NativeChatCapacityException) {
+        resumeAfterTurn = false
+        synchronized(realtimeCapturePauseLock) {
+          if (chatStart === target && startGeneration.value == speechGeneration && _isEnabled.value && !stopRequested) {
+            setTalkFailure(failure)
+          }
+        }
+      } else {
+        setTalkFailure(failure)
+      }
       Log.w(tag, "finalize failed: ${err.message ?: err::class.simpleName}")
     } finally {
-      if (currentCoroutineContext().isActive && _isEnabled.value) start()
+      realtimeAgentCoordinator.endChatRun(activityRunId)
+      if (resumeAfterTurn && currentCoroutineContext().isActive && _isEnabled.value) {
+        if (target == null) {
+          start()
+        } else {
+          synchronized(realtimeCapturePauseLock) {
+            if (chatStart === target && startGeneration.value == speechGeneration && !stopRequested) start()
+          }
+        }
+      }
     }
   }
 
@@ -2736,37 +3191,52 @@ class TalkModeManager internal constructor(
       true
     }
 
-  private fun buildPrompt(transcript: String): String =
-    listOf(
-      "Talk Mode active. Reply in a concise, spoken tone.",
-      "You may optionally prefix the response with JSON (first line) to set ElevenLabs voice (id or alias), e.g. {\"voice\":\"<id>\",\"once\":true}.",
-      "",
-      transcript,
-    ).joinToString("\n")
+  private class NativeChatCapacityException : IllegalStateException("Too many pending Talk requests. End the call and try again.")
 
-  private suspend fun sendChat(message: String): ChatSendAck {
+  private suspend fun sendChat(
+    message: String,
+    sessionKey: String,
+    target: ChatStart?,
+  ): ChatSendAck {
+    // Generic Talk/PTT has its existing completion owner; captured native calls
+    // must reserve correlation before changing pending state or enqueueing.
+    val activityObservation =
+      if (target != null) {
+        synchronized(realtimeCapturePauseLock) {
+          if (chatStart !== target || !target.lease.isCurrent()) throw CancellationException("Captured Talk retired")
+          realtimeAgentCoordinator.beginChatSend() ?: throw NativeChatCapacityException()
+        }
+      } else {
+        realtimeAgentCoordinator.beginExternalChatSend(sessionKey)
+      }
     val runId = UUID.randomUUID().toString()
+    var ownedRunId = runId
+    pendingRunSessionKey = sessionKey
     armPendingRun(runId)
     val params =
       buildJsonObject {
-        put("sessionKey", JsonPrimitive(mainSessionKey.ifBlank { "main" }))
+        put("sessionKey", JsonPrimitive(sessionKey))
+        target?.owner?.agentId?.let { put("agentId", JsonPrimitive(it)) }
         put("message", JsonPrimitive(message))
         put("timeoutMs", JsonPrimitive(30_000))
         put("idempotencyKey", JsonPrimitive(runId))
       }
     try {
-      val res = requestGateway("chat.send", params.toString())
+      val res = target?.lease?.request("chat.send", params.toString()) ?: requestGateway("chat.send", params.toString())
       val parsed = parseChatSendAck(json, res)
       val actualRunId = parsed.runId ?: runId
+      ownedRunId = actualRunId
       if (actualRunId != runId) {
         pendingRunId = actualRunId
       }
+      realtimeAgentCoordinator.finishChatSend(activityObservation, actualRunId, target?.owner?.agentId, parsed.isTerminal)
       if (parsed.isTerminal) {
         clearPendingRun(actualRunId)
       }
       return parsed.copy(runId = actualRunId)
     } catch (err: Throwable) {
-      clearPendingRun(runId)
+      realtimeAgentCoordinator.finishChatSend(activityObservation, null, null)
+      clearPendingRun(ownedRunId)
       throw err
     }
   }
@@ -2841,15 +3311,15 @@ class TalkModeManager internal constructor(
     }
   }
 
-  private fun extractTextFromChatEventMessage(messageEl: JsonElement?): String? = ChatEventText.assistantTextFromMessage(messageEl)
-
   private suspend fun waitForAssistantText(
     sinceSeconds: Double?,
     timeoutMs: Long,
+    sessionKey: String,
+    target: ChatStart?,
   ): String? {
     val deadline = SystemClock.elapsedRealtime() + timeoutMs
     while (SystemClock.elapsedRealtime() < deadline) {
-      val text = fetchLatestAssistantText(sinceSeconds)
+      val text = fetchLatestAssistantText(sinceSeconds, sessionKey, target)
       if (!text.isNullOrBlank()) return text
       delay(300)
     }
@@ -2857,10 +3327,16 @@ class TalkModeManager internal constructor(
   }
 
   private suspend fun fetchLatestAssistantText(
-    sinceSeconds: Double? = null,
+    sinceSeconds: Double?,
+    sessionKey: String,
+    target: ChatStart?,
   ): String? {
-    val key = mainSessionKey.ifBlank { "main" }
-    val res = requestGateway("chat.history", "{\"sessionKey\":\"$key\"}")
+    val params =
+      buildJsonObject {
+        put("sessionKey", JsonPrimitive(sessionKey))
+        target?.owner?.agentId?.let { put("agentId", JsonPrimitive(it)) }
+      }.toString()
+    val res = target?.lease?.request("chat.history", params) ?: requestGateway("chat.history", params)
     val root = json.parseToJsonElement(res).asObjectOrNull() ?: return null
     val messages = root["messages"] as? JsonArray ?: return null
     for (item in messages.reversed()) {
@@ -2870,17 +3346,8 @@ class TalkModeManager internal constructor(
         val timestamp = obj["timestamp"].asDoubleOrNull()
         if (timestamp != null && !TalkModeRuntime.isMessageTimestampAfter(timestamp, sinceSeconds)) continue
       }
-      val content = obj["content"] as? JsonArray ?: continue
-      val text =
-        content
-          .mapNotNull { entry ->
-            entry
-              .asObjectOrNull()
-              ?.get("text")
-              ?.asStringOrNull()
-              ?.trim()
-          }.filter { it.isNotEmpty() }
-      if (text.isNotEmpty()) return text.joinToString("\n")
+      val text = ChatEventText.assistantTextFromMessage(obj)
+      if (!text.isNullOrBlank()) return text
     }
     return null
   }
@@ -2888,6 +3355,7 @@ class TalkModeManager internal constructor(
   private suspend fun playAssistant(
     text: String,
     playbackToken: Long,
+    target: ChatStart? = chatStart,
   ) {
     val lease = PlaybackLease(playbackToken, checkNotNull(coroutineContext[Job]))
     var shouldResumeAfterSpeak = false
@@ -2913,7 +3381,19 @@ class TalkModeManager internal constructor(
       }
       try {
         val started = SystemClock.elapsedRealtime()
-        when (val result = talkSpeakClient.synthesize(text = cleaned, directive = directive)) {
+        val synthesizer =
+          if (target == null) {
+            talkSpeakClient
+          } else {
+            TalkSpeakClient(requestDetailed = { method, params, timeout ->
+              try {
+                GatewaySession.RpcResult(true, target.lease.request(method, params, timeout), null)
+              } catch (error: GatewayRequestRejected) {
+                GatewaySession.RpcResult(false, null, error.gatewayError)
+              }
+            })
+          }
+        when (val result = synthesizer.synthesize(text = cleaned, directive = directive)) {
           is TalkSpeakResult.Success -> {
             markAudioPlaybackStarting(playbackToken)
             talkAudioPlayer.play(result.audio)
@@ -3264,6 +3744,9 @@ class TalkModeManager internal constructor(
           }
           if (error == SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS) {
             setStatus(nativeText("Microphone permission required"))
+            val generation = startGeneration.value
+            // Leave the recognizer lock before notifying NodeRuntime's capture owner.
+            mainHandler.post { stop(expectedGeneration = generation, failure = nativeText("Microphone permission required")) }
             return@withCurrentRecognition
           }
 

@@ -34,6 +34,7 @@ import ai.openclaw.app.chat.ChatSubagentActivity
 import ai.openclaw.app.chat.ChatThinkingLevelOption
 import ai.openclaw.app.chat.ChatThinkingLevelSelection
 import ai.openclaw.app.chat.ChatToolActivity
+import ai.openclaw.app.chat.ChatToolKind
 import ai.openclaw.app.chat.ChatTranscriptAnchorState
 import ai.openclaw.app.chat.ChatWidgetResource
 import ai.openclaw.app.chat.MessageSpeechPhase
@@ -41,6 +42,7 @@ import ai.openclaw.app.chat.MessageSpeechState
 import ai.openclaw.app.chat.SessionBranch
 import ai.openclaw.app.chat.VoiceNoteRecorderState
 import ai.openclaw.app.chat.chatOutboxQueueFailureText
+import ai.openclaw.app.chat.chatToolKind
 import ai.openclaw.app.chat.isTranscriptOnlyOpenClawAssistant
 import ai.openclaw.app.chat.questionsForSession
 import ai.openclaw.app.chat.resolveChatComposerOwner
@@ -288,9 +290,10 @@ internal fun resolveChatComposerPrimaryAction(
   talkActive: Boolean,
   runActive: Boolean,
   hasContent: Boolean,
+  allowSendDuringTalk: Boolean = false,
 ): ChatComposerPrimaryAction =
   when {
-    hasContent && !talkActive -> ChatComposerPrimaryAction.Send
+    hasContent && (!talkActive || allowSendDuringTalk) -> ChatComposerPrimaryAction.Send
     runActive -> ChatComposerPrimaryAction.Stop
     talkActive -> ChatComposerPrimaryAction.None
     else -> ChatComposerPrimaryAction.StartTalk
@@ -405,6 +408,7 @@ internal fun ChatScreen(
   val micCooldown by viewModel.micCooldown.collectAsState()
   val talkModeEnabled by viewModel.talkModeEnabled.collectAsState()
   val talkModeListening by viewModel.talkModeListening.collectAsState()
+  val chatTalkCall by viewModel.chatTalkCall.collectAsState()
   val inlineMediaPlaybackBlocked = messageSpeechState?.isActive == true || talkModeEnabled || talkModeListening
   val thinkingSupported =
     chatThinkingSupported(
@@ -1050,6 +1054,7 @@ internal fun ChatScreen(
     },
   ) { onJumpToLatest, compactHeight, tabletop ->
     ChatComposer(
+      chatCallActive = chatTalkCall != null,
       ownerReady = composerOwnerReady,
       compactHeight = compactHeight,
       detailsExpanded = detailsExpanded,
@@ -2573,12 +2578,12 @@ private fun CompletedToolActivityItem(
   saveableKey: String,
   parentStableKey: String,
 ) {
-  if (completedToolKind(tool.name) == CompletedToolKind.Progress) {
+  if (chatToolKind(tool.name) == ChatToolKind.Progress) {
     ProgressToolReceipt(tool)
     return
   }
   var expanded by rememberSaveable(parentStableKey, saveableKey) { mutableStateOf(false) }
-  val kind = completedToolKind(tool.name)
+  val kind = chatToolKind(tool.name)
   val resultPresentation = completedToolResultPresentation(tool)
   val preview =
     tool.detail
@@ -2586,7 +2591,7 @@ private fun CompletedToolActivityItem(
       ?.firstOrNull { it.isNotBlank() }
       ?.trim()
   val summary =
-    if (kind == CompletedToolKind.Command) {
+    if (kind == ChatToolKind.Command) {
       completedCommandText(tool).orEmpty()
     } else {
       val name = completedToolDisplayName(tool.name)
@@ -2622,10 +2627,10 @@ private fun CompletedToolActivityItem(
               Icons.Default.Close
             } else {
               when (kind) {
-                CompletedToolKind.Command -> Icons.Default.Terminal
-                CompletedToolKind.Read -> Icons.Default.Description
-                CompletedToolKind.Edit, CompletedToolKind.Write -> Icons.Default.Edit
-                CompletedToolKind.Search, CompletedToolKind.Fetch -> Icons.Default.Search
+                ChatToolKind.Command -> Icons.Default.Terminal
+                ChatToolKind.Read -> Icons.Default.Description
+                ChatToolKind.Edit, ChatToolKind.Write -> Icons.Default.Edit
+                ChatToolKind.Search, ChatToolKind.Fetch -> Icons.Default.Search
                 else -> Icons.AutoMirrored.Filled.List
               }
             },
@@ -2640,7 +2645,7 @@ private fun CompletedToolActivityItem(
           modifier = Modifier.weight(1f),
           horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-          if (kind == CompletedToolKind.Command) {
+          if (kind == ChatToolKind.Command) {
             Text(
               text = nativeString("\$"),
               modifier = Modifier.alignByBaseline().padding(end = 2.dp),
@@ -2667,7 +2672,7 @@ private fun CompletedToolActivityItem(
         }
       }
     }
-    if (expanded && kind == CompletedToolKind.Command) {
+    if (expanded && kind == ChatToolKind.Command) {
       CompletedCommandOutput(tool)
     } else if (expanded) {
       tool.detail?.let { detail ->
@@ -3164,6 +3169,7 @@ private fun minimumChatInputHeight(): Dp {
 
 @Composable
 private fun ChatComposer(
+  chatCallActive: Boolean,
   ownerReady: Boolean,
   compactHeight: Boolean,
   detailsExpanded: Boolean,
@@ -3229,7 +3235,7 @@ private fun ChatComposer(
   val sendEnabled =
     chatComposerSendEnabled(
       voiceNoteState = voiceNoteState,
-      talkActive = talkActive,
+      talkActive = talkActive && !chatCallActive,
       hasContent = hasContent,
       shareStaging = shareStaging,
       sendInFlight = sendInFlight,
@@ -3307,12 +3313,20 @@ private fun ChatComposer(
   }
 
   BoxWithConstraints(Modifier.fillMaxWidth().padding(horizontal = 8.dp)) {
-    val inputHeightLimit = if (compactHeight) maxHeight else maxOf(minimumChatInputHeight(), maxHeight - ClawTheme.spacing.touchTarget)
+    val inputHeightLimit =
+      when {
+        // Reserve a usable text/action row; the existing auxiliary scroller owns card/preview overflow.
+        chatCallActive -> minOf(minimumChatInputHeight(), maxHeight)
+
+        compactHeight -> maxHeight
+
+        else -> maxOf(minimumChatInputHeight(), maxHeight - ClawTheme.spacing.touchTarget)
+      }
     Column(
       modifier = if (detailsExpanded) Modifier.clearAndSetSemantics {} else Modifier,
-      verticalArrangement = Arrangement.spacedBy(if (attachedProgress && !compactHeight && !detailsExpanded) (-18).dp else 4.dp),
+      verticalArrangement = Arrangement.spacedBy(if (attachedProgress && !chatCallActive && !compactHeight && !detailsExpanded) (-18).dp else 4.dp),
     ) {
-      if (!compactHeight && !detailsExpanded) {
+      if ((!compactHeight || chatCallActive) && !detailsExpanded) {
         BoxWithConstraints(Modifier.weight(1f, fill = false)) {
           val auxiliaryHeight = maxHeight
           Column(
@@ -3356,7 +3370,8 @@ private fun ChatComposer(
             dictationEnabled = ownerReady && dictationEnabled,
             onToggleDictation = onToggleDictation,
             talkActive = talkActive,
-            onToggleTalk = { if (ownerReady) onToggleTalk() },
+            allowSendDuringTalk = chatCallActive,
+            onToggleTalk = { if (talkActive || ownerReady) onToggleTalk() },
             runActive = pendingRunCount > 0,
             onAbort = onAbort,
             hasContent = hasContent,
@@ -4256,6 +4271,7 @@ private fun ChatInputPill(
   dictationEnabled: Boolean,
   onToggleDictation: () -> Unit,
   talkActive: Boolean,
+  allowSendDuringTalk: Boolean,
   onToggleTalk: () -> Unit,
   runActive: Boolean,
   onAbort: () -> Unit,
@@ -4394,7 +4410,7 @@ private fun ChatInputPill(
             onStartVoiceNote = onStartVoiceNote,
           )
         }
-        when (resolveChatComposerPrimaryAction(talkActive = talkActive, runActive = runActive, hasContent = hasContent)) {
+        when (resolveChatComposerPrimaryAction(talkActive = talkActive, runActive = runActive, hasContent = hasContent, allowSendDuringTalk = allowSendDuringTalk)) {
           ChatComposerPrimaryAction.Send -> SendButton(enabled = inputEnabled && sendEnabled, onClick = onSend)
           ChatComposerPrimaryAction.StartTalk -> LiveTalkButton(active = false, onClick = onToggleTalk)
           ChatComposerPrimaryAction.Stop -> StopButton(onClick = onAbort)
@@ -4649,7 +4665,7 @@ private fun LiveTalkButton(
   active: Boolean,
   onClick: () -> Unit,
 ) {
-  val buttonDescription = if (active) nativeString("End Talk") else nativeString("Start Talk")
+  val buttonDescription = if (active) nativeString("Return to conversation") else nativeString("Start Talk")
   Surface(
     onClick = onClick,
     modifier =
@@ -4718,16 +4734,24 @@ private fun LiveTalkWaveform(
 }
 
 @Composable
-private fun AttachmentStrip(
+internal fun AttachmentStrip(
   attachments: List<PendingAttachment>,
   onRemoveAttachment: (String) -> Unit,
 ) {
   BoxWithConstraints(Modifier.fillMaxWidth()) {
-    // Capture the composer width before horizontal scrolling makes the row unbounded.
-    val chipMaxWidth = maxWidth
+    val availableWidth = maxWidth
     Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
       attachments.forEach { attachment ->
-        AttachmentChip(attachment = attachment, maxWidth = chipMaxWidth, onRemove = { onRemoveAttachment(attachment.id) })
+        if (attachment.mimeType.startsWith("image/")) {
+          Column(modifier = Modifier.width(minOf(160.dp, availableWidth)), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            ChatBase64Image(base64 = attachment.base64, mimeType = attachment.mimeType, source = Base64ImageSource.Composer)
+            AttachmentChip(attachment = attachment, onRemove = { onRemoveAttachment(attachment.id) }, modifier = Modifier.fillMaxWidth())
+          }
+        } else {
+          // The scroller measures children with infinite width. Restore the actual
+          // viewport bound before allocating filename space; short chips still wrap.
+          AttachmentChip(attachment = attachment, onRemove = { onRemoveAttachment(attachment.id) }, modifier = Modifier.widthIn(max = availableWidth))
+        }
       }
     }
   }
@@ -4736,15 +4760,15 @@ private fun AttachmentStrip(
 @Composable
 private fun AttachmentChip(
   attachment: PendingAttachment,
-  maxWidth: Dp,
   onRemove: () -> Unit,
+  modifier: Modifier = Modifier,
 ) {
   val videoThumbnail =
     remember(attachment.videoThumbnailBase64) {
       attachment.videoThumbnailBase64?.let(::decodeBase64Bitmap)
     }
   Surface(
-    modifier = Modifier.widthIn(max = maxWidth),
+    modifier = modifier,
     shape = RoundedCornerShape(ClawTheme.radii.pill),
     color = ClawTheme.colors.surfaceRaised,
     contentColor = ClawTheme.colors.text,

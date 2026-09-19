@@ -6,6 +6,29 @@ import org.junit.Test
 
 class MascotAnimatorTest {
   @Test
+  fun speechMouthIsBoundedAndLeavesExistingBodyAndSilentMoodsUntouched() {
+    for (mood in MascotMood.entries) {
+      val speechMouths = mutableSetOf<Double>()
+      var differsFromSilentPose = false
+      val animator = MascotAnimator(seed = 13uL)
+      animator.setMood(mood, 0.0)
+      for (frame in 0..100) {
+        val time = frame / 20.0
+        val body = animator.poseAt(time)
+        val speaking = body.withSpeechMouth(true, time)
+        speechMouths += speaking.mouthRound
+        differsFromSilentPose = differsFromSilentPose || speaking.mouthRound != body.mouthRound
+        assertEquals(body.mouthOpen, speaking.mouthOpen, 0.0)
+        assertTrue(speaking.mouthRound in 0.0..1.0)
+        assertEquals(body, speaking.copy(mouthRound = body.mouthRound))
+        assertEquals(body, body.withSpeechMouth(false, time))
+      }
+      assertTrue("Speech must change the mouth, not merely preserve bounded body coordinates", differsFromSilentPose)
+      assertTrue("The speech mouth must move across playback frames", speechMouths.size > 1)
+    }
+  }
+
+  @Test
   fun allMoodChannelsStayInsideBoundsForThirtySeconds() {
     MascotMood.entries.forEachIndexed { index, mood ->
       val animator = MascotAnimator(seed = (index + 1).toULong())
