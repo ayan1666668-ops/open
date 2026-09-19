@@ -1,7 +1,4 @@
-import type {
-  JudgmentAnswer,
-  JudgmentRuntimeV1,
-} from "../../judgments/types.js";
+import type { JudgmentAnswer, JudgmentRuntimeV1 } from "../../judgments/types.js";
 import { fingerprint } from "./compaction-safeguard-semantic.js";
 import type {
   CompactionFidelityResult,
@@ -13,10 +10,7 @@ const MAX_SEGMENTS_PER_JUDGMENT = 64;
 const DEFAULT_SEMANTIC_TIMEOUT_MS = 750;
 const MAX_SEMANTIC_TIMEOUT_MS = 5_000;
 
-type CompactionJudgmentRuntime = Pick<
-  JudgmentRuntimeV1,
-  "evaluate" | "recordOutcome"
->;
+type CompactionJudgmentRuntime = Pick<JudgmentRuntimeV1, "evaluate" | "recordOutcome">;
 
 function clampTimeoutMs(value: unknown): number {
   if (typeof value !== "number" || !Number.isFinite(value)) {
@@ -46,9 +40,9 @@ function allRetainedResult(
   };
 }
 
-function asChoiceAnswer(answer: JudgmentAnswer | undefined):
-  | Extract<JudgmentAnswer, { type: "choice" }>
-  | undefined {
+function asChoiceAnswer(
+  answer: JudgmentAnswer | undefined,
+): Extract<JudgmentAnswer, { type: "choice" }> | undefined {
   return answer?.type === "choice" ? answer : undefined;
 }
 
@@ -78,7 +72,8 @@ export async function evaluateCompactionShadowCuration(params: {
         criteria: {
           keep: "Keep this segment because it may materially affect an active obligation or unresolved work.",
           drop: "This segment is not needed to preserve the meaning or execution of the active obligations and unresolved work.",
-          uncertain: "The supplied evidence is insufficient to safely decide whether this segment can be omitted.",
+          uncertain:
+            "The supplied evidence is insufficient to safely decide whether this segment can be omitted.",
         },
       },
     ]),
@@ -191,8 +186,7 @@ export async function evaluateCompactionFidelity(params: {
             "The retained context preserves this obligation's meaning, scope, and unresolved state.",
           missing:
             "The retained context omits material information required to continue this obligation correctly.",
-          contradicted:
-            "The retained context conflicts with the source-backed obligation.",
+          contradicted: "The retained context conflicts with the source-backed obligation.",
           uncertain:
             "The supplied source and retained context do not support a reliable classification.",
         },
@@ -232,19 +226,23 @@ export async function evaluateCompactionFidelity(params: {
     };
   }
 
-  const assessments = params.snapshot.obligations.map((obligation) => {
-    const answer = asChoiceAnswer(outcome.result.answers[obligation.id]);
-    return {
-      obligationId: obligation.id,
-      classification:
-        answer?.choice === "preserved" ||
-        answer?.choice === "missing" ||
-        answer?.choice === "contradicted"
-          ? answer.choice
-          : ("uncertain" as const),
-      probabilities: answer?.probabilities ?? {},
-    };
-  });
+  const assessments: Extract<CompactionFidelityResult, { status: "ok" }>["assessments"] =
+    params.snapshot.obligations.map((obligation) => {
+      const answer =
+        obligation.complete && obligation.sourceSegmentId
+          ? asChoiceAnswer(outcome.result.answers[obligation.id])
+          : undefined;
+      return {
+        obligationId: obligation.id,
+        classification:
+          answer?.choice === "preserved" ||
+          answer?.choice === "missing" ||
+          answer?.choice === "contradicted"
+            ? answer.choice
+            : ("uncertain" as const),
+        probabilities: answer?.probabilities ?? {},
+      };
+    });
 
   await params.runtime.recordOutcome(
     assessments.every((assessment) => assessment.classification === "preserved")

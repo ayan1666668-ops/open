@@ -8,6 +8,7 @@ const MAX_OBLIGATION_TEXT_CHARS = 6_000;
 export type CompactionSemanticMode = "off" | "shadow";
 
 export type CompactionSemanticProtectionReason =
+  | "user-authored"
   | "recent-turn"
   | "turn-prefix"
   | "obligation-source"
@@ -128,6 +129,7 @@ function hasUnsupportedContent(content: unknown): boolean {
     if (!block || typeof block !== "object") {
       return true;
     }
+    // SAFETY: The object check above permits reading optional fields as unknown.
     const type = (block as { type?: unknown }).type;
     return type !== "text" && type !== "toolCall" && type !== "toolUse" && type !== "functionCall";
   });
@@ -145,6 +147,7 @@ function renderContent(content: unknown): string {
       if (!block || typeof block !== "object") {
         return [];
       }
+      // SAFETY: The object check above permits reading optional fields as unknown.
       const record = block as Record<string, unknown>;
       if (record.type === "text" && typeof record.text === "string") {
         return [record.text];
@@ -175,16 +178,12 @@ function renderMessage(message: AgentMessage): {
 } {
   const role = typeof message.role === "string" ? message.role : "unknown";
   const toolName =
-    message.role === "toolResult" &&
-    typeof (message as { toolName?: unknown }).toolName === "string"
-      ? String((message as { toolName?: unknown }).toolName)
-      : "";
+    message.role === "toolResult" && typeof message.toolName === "string" ? message.toolName : "";
+  // SAFETY: Read only an optional unknown field across built-in and custom message roles.
   const rawContent = (message as { content?: unknown }).content;
   const unsupported = hasUnsupportedContent(rawContent);
   const content = renderContent(rawContent).trim();
-  const rendered = [toolName ? `${role}(${toolName})` : role, content]
-    .filter(Boolean)
-    .join(": ");
+  const rendered = [toolName ? `${role}(${toolName})` : role, content].filter(Boolean).join(": ");
   if (rendered.length <= MAX_SEGMENT_TEXT_CHARS) {
     return { text: rendered, originalChars: rendered.length, truncated: false, unsupported };
   }
@@ -237,8 +236,14 @@ function buildSegments(params: {
     }
 
     const rendered = members.map(renderMessage);
-    const text = rendered.map((item) => item.text).filter(Boolean).join("\n");
+    const text = rendered
+      .map((item) => item.text)
+      .filter(Boolean)
+      .join("\n");
     const protectionReasons = new Set<CompactionSemanticProtectionReason>();
+    if (members.some((message) => message.role === "user")) {
+      protectionReasons.add("user-authored");
+    }
     if (members.some((message) => params.protectedMessages.has(message))) {
       protectionReasons.add("recent-turn");
     }
@@ -290,10 +295,7 @@ function buildObligations(params: {
 }): CompactionSemanticObligation[] {
   const obligations: CompactionSemanticObligation[] = [];
   const seen = new Set<string>();
-  const add = (
-    kind: CompactionSemanticObligation["kind"],
-    value: string | null | undefined,
-  ) => {
+  const add = (kind: CompactionSemanticObligation["kind"], value: string | null | undefined) => {
     const raw = value?.trim();
     if (!raw || seen.has(raw)) {
       return;
@@ -316,12 +318,19 @@ export function fingerprintCompactionMessages(messages: readonly AgentMessage[])
   return fingerprint(
     messages.map((message) => ({
       role: message.role,
+      // SAFETY: Read only an optional unknown field across built-in and custom message roles.
       timestamp: (message as { timestamp?: unknown }).timestamp,
+      // SAFETY: Read only an optional unknown field across built-in and custom message roles.
       content: (message as { content?: unknown }).content,
+      // SAFETY: Read only an optional unknown field across built-in and custom message roles.
       toolCallId: (message as { toolCallId?: unknown }).toolCallId,
+      // SAFETY: Read only an optional unknown field across built-in and custom message roles.
       toolUseId: (message as { toolUseId?: unknown }).toolUseId,
+      // SAFETY: Read only an optional unknown field across built-in and custom message roles.
       toolName: (message as { toolName?: unknown }).toolName,
+      // SAFETY: Read only an optional unknown field across built-in and custom message roles.
       isError: (message as { isError?: unknown }).isError,
+      // SAFETY: Read only an optional unknown field across built-in and custom message roles.
       details: (message as { details?: unknown }).details,
     })),
   );

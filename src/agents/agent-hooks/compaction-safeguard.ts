@@ -19,7 +19,7 @@ import {
 import { extractSections } from "../../auto-reply/reply/post-compaction-context.js";
 import { openRootFile } from "../../infra/boundary-file-read.js";
 import { formatErrorMessage } from "../../infra/errors.js";
-import { evaluateJudgment } from "../../judgments/runtime.js";
+import { evaluateJudgment, recordJudgmentOutcome } from "../../judgments/runtime.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import {
   getCompactionProvider,
@@ -55,16 +55,6 @@ import {
 } from "../workspace-bootstrap-read.js";
 import { resolveCompactionInstructions } from "./compaction-instructions.js";
 import {
-  appendSummarySection,
-  auditSummaryQuality,
-  buildCompactionStructureInstructions,
-  buildStructuredFallbackSummary,
-  createSummaryQualityRetentionPlan,
-  extractOpaqueIdentifiers,
-  nestRequiredSummaryHeadings,
-  wrapUntrustedInstructionBlock,
-} from "./compaction-safeguard-quality.js";
-import {
   buildPreservedTurnsSection,
   buildSplitTurnContextSection,
   type CompactionLoss,
@@ -77,6 +67,16 @@ import {
   SPLIT_TURN_SECTION_HEADING,
   splitPreservedRecentTurns,
 } from "./compaction-safeguard-context.js";
+import {
+  appendSummarySection,
+  auditSummaryQuality,
+  buildCompactionStructureInstructions,
+  buildStructuredFallbackSummary,
+  createSummaryQualityRetentionPlan,
+  extractOpaqueIdentifiers,
+  nestRequiredSummaryHeadings,
+  wrapUntrustedInstructionBlock,
+} from "./compaction-safeguard-quality.js";
 import {
   getCompactionSafeguardRuntime,
   setCompactionSafeguardCancellation,
@@ -129,10 +129,6 @@ function prependPreviousSummaryForRedistill(params: {
     } as AgentMessage,
     ...params.messages,
   ];
-}
-
-function nestMarkdownHeadings(text: string): string {
-  return text.replace(/^##(?=[ \t]+\S)/gmu, "###");
 }
 
 function normalizeLegacySplitTurnSummary(summary: string | undefined): string | undefined {
@@ -743,11 +739,7 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
               (preparation.isSplitTurn ? extractLatestUserAsk(turnPrefixMessages) : null) ??
               extractLatestUserAsk(baseMessagesToSummarize);
             const semanticIdentifiers = extractOpaqueIdentifiers(
-              semanticSourceMessages
-                .slice(-10)
-                .map(extractMessageText)
-                .filter(Boolean)
-                .join("\n"),
+              semanticSourceMessages.slice(-10).map(extractMessageText).filter(Boolean).join("\n"),
             );
             return buildCompactionSemanticSnapshot({
               messages: semanticSourceMessages,
@@ -766,13 +758,13 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
       try {
         const [shadow, fidelity] = await Promise.all([
           evaluateCompactionShadowCuration({
-            runtime: { evaluate: evaluateJudgment },
+            runtime: { evaluate: evaluateJudgment, recordOutcome: recordJudgmentOutcome },
             snapshot: semanticSnapshot,
             signal: semanticSignal,
             timeoutMs: semanticTimeoutMs,
           }),
           evaluateCompactionFidelity({
-            runtime: { evaluate: evaluateJudgment },
+            runtime: { evaluate: evaluateJudgment, recordOutcome: recordJudgmentOutcome },
             snapshot: semanticSnapshot,
             candidateSummary: summary,
             signal: semanticSignal,
