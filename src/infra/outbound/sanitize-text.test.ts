@@ -323,9 +323,14 @@ describe("sanitizeForPlainText", () => {
     expect(sanitizeForPlainText(input)).toBe(expected);
   });
 
-  it("strips remaining tags that use boolean attributes", () => {
-    expect(sanitizeForPlainText('x^2 • <input type="checkbox" checked/>done')).toBe("x^2 • done");
-    expect(sanitizeForPlainText('<input type="checkbox" disabled/>todo')).toBe("todo");
+  it.each([
+    ["checkbox-after-value", 'x^2 • <input type="checkbox" checked/>done', "x^2 • done"],
+    ["boolean-after-value", '<input type="checkbox" disabled/>todo', "todo"],
+    ["boolean-only", "<input disabled/>todo", "todo"],
+    ["boolean-first", '<input checked type="checkbox"/>done', "done"],
+    ["interleaved", '<input checked type="checkbox" disabled/>done', "done"],
+  ])("strips remaining tags that use boolean attributes (%s)", (_name, input, expected) => {
+    expect(sanitizeForPlainText(input)).toBe(expected);
   });
 
   // --- mixed content ------------------------------------------------------
