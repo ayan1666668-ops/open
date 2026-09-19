@@ -14,6 +14,18 @@ record_postpublish_diagnostics() {
     || echo "Warning: postpublish diagnostics unavailable; primary result unchanged." >&2
 }
 
+print_release_resume_command() {
+  local inputs_json command
+  inputs_json="$(jq -ce '.inputs | select(type == "object")' "$GITHUB_EVENT_PATH")" || return 1
+  printf -v command 'printf %%s %q | gh workflow run openclaw-release-publish.yml --repo %q --ref %q --json' \
+    "$inputs_json" "$GITHUB_REPOSITORY" "$GITHUB_REF_NAME"
+  {
+    printf '\n### Resume publication\n\n'
+    printf 'Prepared button releases recover through a new Release Button run with the same prepared artifact. For direct publication, reconcile failed stages, then resume with these frozen inputs; the original successful npm publisher is recovered automatically.\n\n'
+    printf '```bash\n%s\n```\n' "$command"
+  } >> "$GITHUB_STEP_SUMMARY"
+}
+
 is_stable_release() {
   [[ "${RELEASE_TAG}" != *"-alpha."* && "${RELEASE_TAG}" != *"-beta."* ]]
 }
@@ -578,7 +590,7 @@ guard_existing_public_release() {
 
 resolve_openclaw_npm_publish_state() {
   local artifact_name manifest_dir manifest_path manifest_sha manifest_tarball_sha published_sha published_tarball_path published_tarball_url release_version
-  local resume_state resume_url
+  local resume_state resume_url provenance_path published_sha512
 
   openclaw_npm_already_published="false"
   if [[ "${PUBLISH_OPENCLAW_NPM}" != "true" ]]; then
@@ -630,15 +642,19 @@ resolve_openclaw_npm_publish_state() {
     exit 1
   fi
 
-  if [[ -z "${OPENCLAW_NPM_RESUME_RUN_ID//[[:space:]]/}" ]]; then
-    echo "openclaw@${release_version} is already published; openclaw_npm_resume_run_id is required to bind postpublish proof to the original workflow identity." >&2
-    exit 1
-  fi
+  provenance_path="${manifest_dir}/npm-provenance.json"
+  curl -fsSL --connect-timeout 10 --max-time 60 --max-filesize 4194304 \
+    "https://registry.npmjs.org/-/npm/v1/attestations/openclaw@${release_version}" \
+    -o "${provenance_path}"
+  published_sha512="$(sha512sum "${published_tarball_path}" | awk '{print $1}')"
   resume_state="$(node --import tsx "${GITHUB_WORKSPACE}/.release-harness/scripts/openclaw-npm-resume-run.mts" \
     --repo "${GITHUB_REPOSITORY}" \
     --run-id "${OPENCLAW_NPM_RESUME_RUN_ID}" \
-    --trusted-workflow-ref "${PARENT_WORKFLOW_BRANCH}" \
-    --trusted-workflow-full-ref "${GITHUB_REF}")"
+    --version "${release_version}" \
+    --tarball-sha512 "${published_sha512}" \
+    --provenance-file "${provenance_path}")"
+  OPENCLAW_NPM_RESUME_RUN_ID="$(printf '%s' "${resume_state}" | jq -er '.runId')"
+  echo "openclaw_npm_resume_run_id=${OPENCLAW_NPM_RESUME_RUN_ID}" >> "$GITHUB_OUTPUT"
   resume_url="$(printf '%s' "${resume_state}" | jq -er '.url')"
   openclaw_npm_expected_workflow_ref="$(printf '%s' "${resume_state}" | jq -er '.workflowRef')"
   openclaw_npm_expected_workflow_sha="$(printf '%s' "${resume_state}" | jq -er '.workflowSha')"
@@ -1124,8 +1140,8 @@ verify_published_release() {
     --evidence-out "${evidence_path}"
     --skip-github-release
   )
-  # Resumed publishes have no core npm run of their own; the
-  # registry package check still verifies the published state.
+  # Resumed publications retain the original publisher, whose tooling identity
+  # can differ from the current parent and plugin workflows.
   if [[ -n "${openclaw_npm_run_id// }" ]]; then
     verify_args+=(--openclaw-npm-run "${openclaw_npm_run_id}")
   fi
@@ -1300,8 +1316,7 @@ const section = [
   `- plugin npm publish: https://github.com/${process.env.RELEASE_REPO}/actions/runs/${process.env.PLUGIN_NPM_RUN_ID}`,
   process.env.CLAWHUB_LINE,
   process.env.CLAWHUB_BOOTSTRAP_LINE,
-  // Resumed publishes reuse the already-published npm package and
-  // have no core npm run of their own to cite.
+  // Resumed publishes cite the original npm publisher.
   ...(process.env.OPENCLAW_NPM_RUN_ID
     ? [
         `- OpenClaw npm publish: https://github.com/${process.env.RELEASE_REPO}/actions/runs/${process.env.OPENCLAW_NPM_RUN_ID}`,
