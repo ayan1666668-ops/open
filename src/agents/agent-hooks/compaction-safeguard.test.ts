@@ -1152,7 +1152,46 @@ describe("compaction-safeguard runtime registry", () => {
     expect(getCompactionSafeguardRuntime(sm)).toBeNull();
   });
 
-  it("does not enable semantic curation when the quality guard is explicitly disabled", () => {
+  it.each([
+    {
+      label: "omitted",
+      qualityGuard: {},
+      expected: { quality: true, semantic: false, curation: false },
+    },
+    {
+      label: "boolean false",
+      qualityGuard: { semanticJudgments: false },
+      expected: { quality: true, semantic: false, curation: false },
+    },
+    {
+      label: "boolean true",
+      qualityGuard: { semanticJudgments: true },
+      expected: { quality: true, semantic: true, curation: false },
+    },
+    {
+      label: "object disabled",
+      qualityGuard: { semanticJudgments: { enabled: false } },
+      expected: { quality: true, semantic: false, curation: false },
+    },
+    {
+      label: "object enabled",
+      qualityGuard: { semanticJudgments: { enabled: true } },
+      expected: { quality: true, semantic: true, curation: false },
+    },
+    {
+      label: "curation implies semantic checks",
+      qualityGuard: { semanticJudgments: { curateInput: true } },
+      expected: { quality: true, semantic: true, curation: true },
+    },
+    {
+      label: "explicitly disabled quality guard",
+      qualityGuard: {
+        enabled: false,
+        semanticJudgments: { enabled: true, curateInput: true },
+      },
+      expected: { quality: false, semantic: false, curation: false },
+    },
+  ])("resolves semantic judgment runtime compatibility: $label", ({ qualityGuard, expected }) => {
     const sessionManager = {} as unknown as Parameters<
       typeof buildEmbeddedExtensionFactories
     >[0]["sessionManager"];
@@ -1161,13 +1200,7 @@ describe("compaction-safeguard runtime registry", () => {
         defaults: {
           compaction: {
             mode: "safeguard",
-            qualityGuard: {
-              enabled: false,
-              semanticJudgments: {
-                enabled: true,
-                curateInput: true,
-              },
-            },
+            qualityGuard,
           },
         },
       },
@@ -1184,9 +1217,9 @@ describe("compaction-safeguard runtime registry", () => {
     });
 
     const runtime = getCompactionSafeguardRuntime(sessionManager);
-    expect(runtime?.qualityGuardEnabled).toBe(false);
-    expect(runtime?.semanticJudgmentsEnabled).toBe(false);
-    expect(runtime?.semanticJudgmentCurationEnabled).toBe(false);
+    expect(runtime?.qualityGuardEnabled).toBe(expected.quality);
+    expect(runtime?.semanticJudgmentsEnabled).toBe(expected.semantic);
+    expect(runtime?.semanticJudgmentCurationEnabled).toBe(expected.curation);
   });
 
   it("wires oversized safeguard runtime values when config validation is bypassed", () => {
