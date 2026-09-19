@@ -323,6 +323,11 @@ describe("sanitizeForPlainText", () => {
     expect(sanitizeForPlainText(input)).toBe(expected);
   });
 
+  it("strips remaining tags that use boolean attributes", () => {
+    expect(sanitizeForPlainText('x^2 • <input type="checkbox" checked/>done')).toBe("x^2 • done");
+    expect(sanitizeForPlainText('<input type="checkbox" disabled/>todo')).toBe("todo");
+  });
+
   // --- mixed content ------------------------------------------------------
 
   it("handles mixed HTML content", () => {

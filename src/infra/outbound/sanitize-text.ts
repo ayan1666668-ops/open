@@ -9,10 +9,12 @@ export { stripInternalRuntimeScaffolding };
 
 // A tag name ends at whitespace, `/`, or `>`; `<user@example.com>` is prose, not markup.
 // A `/` after the name may consume through `>` (`<users/id>`, `<https://…>`).
-// Whitespace after the name only admits `=` attributes or `/>`, so
-// `attempts<max and backoffMs>0` stays prose instead of one unbounded tag.
+// After whitespace: one or more `name=value` attrs (quoted and unquoted values are
+// mutually exclusive so `<a !=` + `"" !=` cannot explode), then optional boolean
+// names (`checked`, `disabled`). `and` is not `name=value`, so
+// `attempts<max and backoffMs>0` stays prose.
 const HTML_TAG_RE =
-  /<\/?[a-z][a-z0-9_.:-]*(?:\/[^>]*|(?:\s+[^\s>/=][^\s>=]*=(?:"[^"]*"|'[^']*'|[^\s>]+))+)?\s*\/?>/gi;
+  /<\/?[a-z][a-z0-9_.:-]*(?:\/[^>]*|(?:\s+[^\s"'>=/]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'>=]+))+(?:\s+[^\s"'>=/]+)*)?\s*\/?>/gi;
 const LABELED_ANGLE_LINK_RE =
   /<(?:https?:\/\/|mailto:)[^<>\s|]+\|([^<>\r\n|]*[^<>\s|][^<>\r\n|]*)>/gi;
 const MAY_CONTAIN_MARKDOWN_CODE_RE = /[`~]|\t| {4}/;
