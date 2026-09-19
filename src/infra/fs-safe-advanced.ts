@@ -7,6 +7,7 @@ export {
   assertNoSymlinkParentsSync,
   buildRandomTempFilePath,
   probePathCaseInsensitiveSync,
+  probePathSuffixAliasesSync,
   readFileHandleBounded,
   resolvePathPrefixSync,
   type FileIdentityStat,
