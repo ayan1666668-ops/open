@@ -52,10 +52,58 @@ describe("github item references", () => {
     "UnknownProject PR #1576",
     'repository "Unknown Project" PR #1576',
   ])("does not bind an unresolved named reference to the checkout: %s", (source) => {
-    expect(
-      htmlFragment(toSanitizedMarkdownHtml(source, { githubRepo })).querySelector("a"),
-    ).toBeNull();
+    for (const rendered of [
+      toSanitizedMarkdownHtml(source, { githubRepo }),
+      toStreamingMarkdownParts(source, { githubRepo }).join(""),
+    ]) {
+      expect(htmlFragment(rendered).querySelector("a")).toBeNull();
+    }
   });
+
+  it.each([
+    ["Original Tools", "tools"],
+    ["original tools", "tools"],
+    ["Follow-up TOOLS", "tools"],
+    ["follow-up Tools", "tools"],
+    ["Original Widgets", "widgets"],
+    ["Follow-up widgets", "widgets"],
+    ["ORIGINAL WIDGETS", "widgets"],
+    ["Original Clawsweeper", "clawsweeper"],
+    ["follow-up CLAWSWEEPER", "clawsweeper"],
+  ])("does not reinterpret ordinary prose before the known alias in %s", (prefix, repo) => {
+    const options = {
+      githubRepo,
+      githubRepositories: [
+        { owner: "acme", repo: "tools", aliases: ["Tools"] },
+        { owner: "acme", repo: "widgets", aliases: ["Widgets"] },
+        { owner: "acme", repo: "clawsweeper", aliases: ["ClawSweeper"] },
+      ],
+    };
+    for (const html of [
+      toSanitizedMarkdownHtml(prefix + " PR #42", options),
+      toStreamingMarkdownParts(prefix + " PR #42", options).join(""),
+    ]) {
+      expect(htmlFragment(html).querySelector("a")?.getAttribute("href")).toBe(
+        "https://github.com/acme/" + repo + "/pull/42",
+      );
+    }
+  });
+
+  it.each(["Unknown Tools", "Original Unknown Tools", "unknown tools"])(
+    "prefers a known unresolved full alias to its resolved suffix in %s",
+    (prefix) => {
+      const options = {
+        githubRepo,
+        githubRepositories: [
+          { owner: "acme", repo: "tools", aliases: ["Tools"] },
+          { aliases: ["Unknown Tools"] },
+        ],
+      };
+      expect(
+        htmlFragment(toSanitizedMarkdownHtml(prefix + " PR #42", options)).querySelector("a"),
+      ).toBeNull();
+    },
+  );
 
   it("does not pick a repository when an alias is ambiguous", () => {
     const options = {
@@ -101,11 +149,15 @@ describe("github item references", () => {
     ["(CLAWsweeper) PR #42", "clawsweeper"],
     ['"ClawSweeper": PR #42', "clawsweeper"],
     ["Original **ClawSweeper _PR_** **#42 merged**", "clawsweeper"],
+    ["See ClawSweeper PR #42", "clawsweeper"],
+    ["Fixed ClawSweeper PR #42", "clawsweeper"],
     ["OpenClaw PR #42", "openclaw"],
     ["Original PR #42", "openclaw"],
     ["Follow-up PR #42", "openclaw"],
     ["See PR #42", "openclaw"],
     ["Fixed PR #42", "openclaw"],
+    ["Please review PR #42", "openclaw"],
+    ["Finished. Follow-up PR #42", "openclaw"],
   ])("recognizes exact aliases but preserves ordinary prose: %s", (source, repo) => {
     const rendered = htmlFragment(
       toSanitizedMarkdownHtml(source, { githubRepo, githubRepositories }),
@@ -173,6 +225,21 @@ describe("github item references", () => {
       githubRepositories: [{ owner: "acme", repo: "tools", aliases: ["Tools"] }],
     };
     expect(htmlFragment(toSanitizedMarkdownHtml(source, options)).querySelector("a")).toBeNull();
+  });
+
+  it("prefers complete registered names over ordinary reference prefixes", () => {
+    const options = {
+      githubRepo,
+      githubRepositories: [
+        { owner: "acme", repo: "tools", aliases: ["Tools"] },
+        { owner: "other", repo: "original-tools", aliases: ["Original Tools"] },
+      ],
+    };
+    expect(
+      htmlFragment(toSanitizedMarkdownHtml("Original Tools PR #42", options))
+        .querySelector("a")
+        ?.getAttribute("href"),
+    ).toBe("https://github.com/other/original-tools/pull/42");
   });
 
   it("matches an entire paired-quote alias containing apostrophes", () => {

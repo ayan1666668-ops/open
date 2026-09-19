@@ -8,7 +8,6 @@ import { CONTROL_UI_SESSION_PULL_REQUESTS_CHANGED_EVENT } from "../../../src/gat
 import { runQaGatewayFixture } from "../../../test/helpers/qa-gateway-cleanup.ts";
 import { SESSION_PULL_REQUESTS_SUBSCRIBE_METHOD } from "../lib/session-pull-requests.ts";
 import { createControlUiE2eArtifactDir } from "../test-helpers/control-ui-e2e-artifacts.ts";
-import { waitForWatchedSessionKey } from "./chat-github-publication.test-support.ts";
 import {
   defaultControlUiFeatureMethods,
   canRunPlaywrightChromium,
@@ -19,6 +18,7 @@ import {
   type ControlUiE2eServer,
 } from "../test-helpers/control-ui-e2e.ts";
 import { TEST_LINK_READER } from "../test-helpers/link-reader.ts";
+import { waitForWatchedSessionKey } from "./chat-github-publication.test-support.ts";
 
 let artifactDir: string | undefined;
 beforeEach(() => {
@@ -261,10 +261,12 @@ describeControlUiE2e("GitHub link hover cards", () => {
       const namedRepository = { owner: "openclaw", repo: "clawsweeper" };
       const projectName = late ? "clawsweeper" : "ClawSweeper";
       const gateway = await installMockGateway(page, {
+        controlUiLinkReaders: [TEST_LINK_READER],
         featureMethods: [
+          ...defaultControlUiFeatureMethods,
           SESSION_PULL_REQUESTS_SUBSCRIBE_METHOD,
           "projects.list",
-          "controlUi.githubPreview",
+          "forge.preview",
         ],
         deferredMethods: late ? ["projects.list"] : [],
         historyMessages: [
@@ -301,14 +303,15 @@ describeControlUiE2e("GitHub link hover cards", () => {
               },
             ],
           },
-          "controlUi.githubPreview": {
+          "forge.preview": {
             cases: [repository, namedRepository].flatMap((repo) =>
               [1558, 1576].map((number) => ({
-                match: { ...repo, kind: "pull", number },
+                match: { url: `https://github.com/${repo.owner}/${repo.repo}/pull/${number}` },
                 response: {
                   ...pullPreviewResponse,
-                  ...repo,
-                  number,
+                  url: `https://github.com/${repo.owner}/${repo.repo}/pull/${number}`,
+                  subtitle: `${repo.owner}/${repo.repo} #${number}`,
+                  author: "reviewer",
                   title:
                     repo.repo === "clawsweeper"
                       ? "Synthetic ClawSweeper pull request"
@@ -339,12 +342,12 @@ describeControlUiE2e("GitHub link hover cards", () => {
       const followUp = followUpRow.locator("a");
       await followUp.waitFor({ state: "visible" });
       await followUp.focus();
-      const card = page.locator(".github-link-hovercard");
+      const card = page.locator(".link-reader-hovercard");
       await card.waitFor({ state: "visible" });
       await captureArtifact(page, "named-repository-reference");
       const href = "https://github.com/openclaw/clawsweeper/pull/1576";
       expect(await followUp.getAttribute("href")).toBe(href);
-      expect(await card.locator(".github-link-hovercard__title").getAttribute("href")).toBe(href);
+      expect(await card.locator(".link-reader-hovercard__title").getAttribute("href")).toBe(href);
       await expectText(card, "Synthetic ClawSweeper pull request");
       expect(
         await page.locator('a[href="https://github.com/openclaw/clawsweeper/pull/1558"]').count(),
@@ -360,7 +363,7 @@ describeControlUiE2e("GitHub link hover cards", () => {
         const target = "https://github.com/" + repo.owner + "/" + repo.repo + "/pull/" + number;
         await page.locator('a[href="' + target + '"]').focus();
         await expect
-          .poll(() => card.locator(".github-link-hovercard__title").getAttribute("href"))
+          .poll(() => card.locator(".link-reader-hovercard__title").getAttribute("href"))
           .toBe(target);
         await expectText(
           card,
@@ -369,11 +372,14 @@ describeControlUiE2e("GitHub link hover cards", () => {
             : "Synthetic OpenClaw pull request",
         );
       }
-      const requests = (await gateway.getRequests("controlUi.githubPreview")).map(({ params }) => {
+      const requests = (await gateway.getRequests("forge.preview")).map(({ params }) => {
         if (!isRecord(params)) {
           throw new Error("Expected GitHub preview parameters");
         }
-        return [params.owner, params.repo, params.kind, params.number].join("/");
+        if (typeof params.url !== "string") {
+          throw new Error("Expected link-reader preview URL");
+        }
+        return new URL(params.url).pathname.slice(1);
       });
       expect(requests.toSorted()).toEqual([
         "openclaw/clawsweeper/pull/1558",
@@ -397,7 +403,12 @@ describeControlUiE2e("GitHub link hover cards", () => {
     const href = "https://github.com/synthetic/formatting-demo/pull/1576";
     const otherHref = "https://github.com/synthetic/other-project/pull/1576#issuecomment-1";
     const gateway = await installMockGateway(page, {
-      featureMethods: [SESSION_PULL_REQUESTS_SUBSCRIBE_METHOD, "controlUi.githubPreview"],
+      controlUiLinkReaders: [TEST_LINK_READER],
+      featureMethods: [
+        ...defaultControlUiFeatureMethods,
+        SESSION_PULL_REQUESTS_SUBSCRIBE_METHOD,
+        "forge.preview",
+      ],
       historyMessages: [
         {
           role: "assistant",
@@ -417,32 +428,26 @@ describeControlUiE2e("GitHub link hover cards", () => {
       ],
       methodResponses: {
         [SESSION_PULL_REQUESTS_SUBSCRIBE_METHOD]: { subscribed: true },
-        "controlUi.githubPreview": {
+        "forge.preview": {
           cases: [
-            ...["pull", "issue"].map((kind) => ({
-              match: { ...repository, kind, number: 1576 },
-              response: {
-                ...pullPreviewResponse,
-                ...repository,
-                kind,
-                number: 1576,
-                title: "Synthetic formatting example",
-                login: "reviewer",
-                coAuthors: [],
-                coAuthorCount: 0,
-              },
-            })),
             {
-              match: { owner: "synthetic", repo: "other-project", kind: "pull", number: 1576 },
+              match: { url: href },
               response: {
                 ...pullPreviewResponse,
-                owner: "synthetic",
-                repo: "other-project",
-                number: 1576,
+                url: href,
+                subtitle: "synthetic/formatting-demo #1576",
+                title: "Synthetic formatting example",
+                author: "reviewer",
+              },
+            },
+            {
+              match: { url: otherHref },
+              response: {
+                ...pullPreviewResponse,
+                url: otherHref,
+                subtitle: "synthetic/other-project #1576",
                 title: "Separate repository example",
-                login: "reviewer",
-                coAuthors: [],
-                coAuthorCount: 0,
+                author: "reviewer",
               },
             },
           ],
@@ -457,12 +462,12 @@ describeControlUiE2e("GitHub link hover cards", () => {
     const formatted = page.locator("strong a.markdown-github-item");
     await formatted.waitFor({ state: "visible" });
     await formatted.focus();
-    const card = page.locator(".github-link-hovercard");
+    const card = page.locator(".link-reader-hovercard");
     await expectText(card, "Synthetic formatting example");
     await captureArtifact(page, "formatted-pr-reference");
     expect(await formatted.getAttribute("href")).toBe(href);
     expect(await formatted.getAttribute("data-github-kind")).toBe("pull");
-    expect(await card.locator(".github-link-hovercard__title").getAttribute("href")).toBe(href);
+    expect(await card.locator(".link-reader-hovercard__title").getAttribute("href")).toBe(href);
     expect(await page.locator(`a[href="${href}"]`).count()).toBeGreaterThanOrEqual(2);
     expect(
       await page.locator('a[href="https://github.com/synthetic/formatting-demo/pull/42"]').count(),
@@ -471,23 +476,23 @@ describeControlUiE2e("GitHub link hover cards", () => {
     const other = page.locator(`a[href="${otherHref}"]`);
     await other.focus();
     await expectText(card, "Separate repository example");
-    expect(await card.locator(".github-link-hovercard__title").getAttribute("href")).toBe(
+    expect(await card.locator(".link-reader-hovercard__title").getAttribute("href")).toBe(
       otherHref,
     );
-    const requests = await gateway.getRequests("controlUi.githubPreview");
+    const requests = await gateway.getRequests("forge.preview");
     expect(requests.map((request) => request.params)).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ ...repository, kind: "pull", number: 1576 }),
-        expect.objectContaining({
-          owner: "synthetic",
-          repo: "other-project",
-          kind: "pull",
-          number: 1576,
-        }),
+        expect.objectContaining({ url: href }),
+        expect.objectContaining({ url: otherHref }),
       ]),
     );
     expect(
-      requests.some((request) => isRecord(request.params) && request.params.kind === "issue"),
+      requests.some(
+        ({ params }) =>
+          isRecord(params) &&
+          typeof params.url === "string" &&
+          new URL(params.url).pathname.includes("/issues/"),
+      ),
     ).toBe(false);
   });
 

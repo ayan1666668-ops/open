@@ -101,6 +101,29 @@ describe("registered project catalog", () => {
     expect(picker.snapshot.result?.recents).toEqual(recents);
   });
 
+  it("retires aliases for every consumer before an invalidating refresh can fail", async () => {
+    const h = harness();
+    await h.store.refresh();
+    const listener = vi.fn();
+    onTestFinished(h.store.subscribe(listener));
+    const failed = createDeferred<ProjectsListResult>();
+    h.request.mockReturnValueOnce(failed.promise);
+    const refresh = h.store.refresh(true);
+    const invalidated = h.store.snapshot;
+    failed.reject(new Error("catalog unavailable"));
+    await refresh;
+    expect(invalidated).toEqual({ result: null, repositories: [], ready: false });
+    expect(listener).toHaveBeenCalledTimes(2);
+    expect(h.store.snapshot).toEqual({ result: null, repositories: [], ready: true });
+    h.request.mockResolvedValue({
+      projects: [{ ...project, originUrl: "https://github.com/replacement/clawsweeper.git" }],
+    });
+    await h.store.refresh(true);
+    expect(h.store.snapshot.repositories).toEqual([
+      { owner: "replacement", repo: "clawsweeper", aliases: ["ClawSweeper"] },
+    ]);
+  });
+
   it.each(["client", "reconnect", "principal", "scope", "connection"])(
     "rejects a late %s result and loads the current projection",
     async (change) => {
@@ -136,6 +159,25 @@ describe("registered project catalog", () => {
       expect(h.store.snapshot.repositories).toEqual([{ aliases: ["Hidden Project"] }]);
     },
   );
+
+  it("keeps read-only display names unresolved without inventing hidden origin aliases", async () => {
+    const h = harness();
+    await h.store.refresh();
+    h.snapshot.hello!.auth!.scopes = ["operator.read"];
+    h.request.mockResolvedValue({
+      projects: [{ ...project, displayName: "Release Tools", originUrl: undefined }],
+    });
+    h.emit();
+    await h.store.refresh();
+    expect(h.store.snapshot.result?.projects[0]?.displayName).toBe("Release Tools");
+    expect(h.store.snapshot.repositories).toEqual([{ aliases: ["Release Tools"] }]);
+    expect(
+      markdownGitHubAliases(h.store.snapshot.repositories, { owner: "acme", repo: "tools" }),
+    ).toEqual([
+      ["release tools", null],
+      ["tools", { owner: "acme", repo: "tools" }],
+    ]);
+  });
 
   it("clears aliases on read permission loss without requesting wider access", async () => {
     const h = harness();

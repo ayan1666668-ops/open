@@ -83,6 +83,11 @@ export function projectsForGateway(gateway: ApplicationGateway): ProjectCatalog 
   let signature = "";
   let pending: Promise<void> | null = null;
   let unsubscribe: (() => void) | undefined;
+  const retire = () => {
+    connection.invalidate();
+    pending = null;
+    snapshot = { result: null, repositories: [], ready: false };
+  };
   const notify = () => {
     for (const listener of listeners) {
       listener();
@@ -102,9 +107,7 @@ export function projectsForGateway(gateway: ApplicationGateway): ProjectCatalog 
     const transitioned = connection.transition(next);
     if (transitioned || nextSignature !== signature) {
       signature = nextSignature;
-      connection.invalidate();
-      pending = null;
-      snapshot = { result: null, repositories: [], ready: false };
+      retire();
       return true;
     }
     return false;
@@ -112,8 +115,8 @@ export function projectsForGateway(gateway: ApplicationGateway): ProjectCatalog 
   const refresh = (invalidate = false): Promise<void> => {
     synchronize();
     if (invalidate) {
-      connection.invalidate();
-      pending = null;
+      retire();
+      notify();
     }
     if (pending) {
       return pending;
@@ -184,9 +187,7 @@ export function projectsForGateway(gateway: ApplicationGateway): ProjectCatalog 
         if (!listeners.size) {
           unsubscribe?.();
           unsubscribe = undefined;
-          connection.invalidate();
-          pending = null;
-          snapshot = { result: null, repositories: [], ready: false };
+          retire();
         }
       };
     },
