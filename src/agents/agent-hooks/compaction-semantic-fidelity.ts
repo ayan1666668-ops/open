@@ -29,6 +29,25 @@ export type CompactionSemanticFinding = {
 
 export const COMPACTION_SEMANTIC_REPAIR_MIN_PROBABILITY = 0.8;
 
+const MAX_SEMANTIC_REPAIR_EVIDENCE_CHARS = 3_000;
+
+export function buildCompactionSemanticRepairEvidence(
+  findings: CompactionSemanticFinding[],
+): string {
+  const lines: string[] = [];
+  let used = 0;
+  for (const finding of findings) {
+    const line = `- ${finding.relation}: ${finding.sourceText}`;
+    const extra = line.length + (lines.length > 0 ? 1 : 0);
+    if (used + extra > MAX_SEMANTIC_REPAIR_EVIDENCE_CHARS) {
+      break;
+    }
+    lines.push(line);
+    used += extra;
+  }
+  return lines.join("\n");
+}
+
 export function isCompactionSemanticRepairFinding(
   finding: CompactionSemanticFinding,
 ): boolean {
