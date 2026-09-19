@@ -1,14 +1,19 @@
 /** Tests exec-completion steering queue enqueue, leasing, ack/release, ownership, and shared occurrence. */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  consumeSelectedSystemEventEntries,
+  drainSystemEventEntries,
   enqueueSystemEventEntry,
+  enqueueSystemEventReceipt,
   peekSystemEventEntries,
   resetSystemEventsForTest,
 } from "../infra/system-events.js";
 import {
   ackLeasedExecSteeringItems,
+  ensureExecSteeringConsumptionObserver,
   enqueueExecSteeringCompletion,
   hasPendingExecSteeringItems,
+  invalidateExecSteeringByDurableEventId,
   invalidateExecSteeringByOccurrence,
   leasePendingExecSteeringItems,
   prependExecSteeringPrompt,
@@ -29,12 +34,14 @@ function enqueue(
     requesterSessionKey?: string;
     ownerAgentId?: string;
     occurrenceKey?: string;
+    durableEventId?: string;
   } = {},
 ): string {
   const itemId = enqueueExecSteeringCompletion({
     requesterSessionKey: overrides.requesterSessionKey ?? requesterSessionKey,
     ...(overrides.ownerAgentId ? { ownerAgentId: overrides.ownerAgentId } : {}),
     occurrenceKey: overrides.occurrenceKey ?? `exec:${overrides.execId ?? "abcd1234"}`,
+    ...(overrides.durableEventId ? { durableEventId: overrides.durableEventId } : {}),
     execId: overrides.execId ?? "abcd1234",
     status: overrides.status ?? "completed",
     exitLabel: overrides.exitLabel ?? "exit 0",
@@ -45,6 +52,43 @@ function enqueue(
     throw new Error("expected an enqueued item id");
   }
   return itemId;
+}
+
+/**
+ * Enqueues a durable system event and a steering copy that shares its
+ * globally-unique id, mirroring the exec-runtime notification path so
+ * settlement can be exercised through the real consumption observer.
+ */
+function enqueueSharedOccurrence(overrides: {
+  execId: string;
+  requesterSessionKey?: string;
+  ownerAgentId?: string;
+  text?: string;
+}): { durableEventId: string; queueKey: string; occurrenceKey: string } {
+  const sessionKey = overrides.requesterSessionKey ?? requesterSessionKey;
+  const occurrenceKey = `exec:${overrides.execId}`;
+  const receipt = enqueueSystemEventReceipt(
+    `Exec completed (${overrides.execId}, exit 0) :: ${overrides.text ?? "job done"}`,
+    {
+      sessionKey,
+      contextKey: occurrenceKey,
+    },
+    { allowDuplicate: true },
+  );
+  if (!receipt) {
+    throw new Error("expected a durable system event receipt");
+  }
+  enqueue({
+    execId: overrides.execId,
+    occurrenceKey,
+    durableEventId: receipt.eventId,
+    text: overrides.text,
+    ...(overrides.requesterSessionKey
+      ? { requesterSessionKey: overrides.requesterSessionKey }
+      : {}),
+    ...(overrides.ownerAgentId ? { ownerAgentId: overrides.ownerAgentId } : {}),
+  });
+  return { durableEventId: receipt.eventId, queueKey: sessionKey, occurrenceKey };
 }
 
 describe("exec-steering-queue", () => {
@@ -208,6 +252,116 @@ describe("exec-steering-queue", () => {
     expect(hasPendingExecSteeringItems({ requesterSessionKey })).toBe(true);
     // A terminal poll or heartbeat consumed this occurrence's durable event.
     expect(invalidateExecSteeringByOccurrence("exec:zzz99999")).toBe(1);
+    expect(hasPendingExecSteeringItems({ requesterSessionKey })).toBe(false);
+  });
+
+  it("settles the steering copy by durable event id, not the reusable occurrence key", () => {
+    // Two occurrences reuse the same exec:<sessionId> context across time, each
+    // with its own globally-unique durable id. Consuming the first durable
+    // event must retire only the first steering copy.
+    const reused = "exec:reused01";
+    const first = enqueueSystemEventReceipt("Exec completed (reused01, exit 0) :: first", {
+      sessionKey: requesterSessionKey,
+      contextKey: reused,
+    });
+    const second = enqueueSystemEventReceipt("Exec completed (reused01, exit 0) :: second", {
+      sessionKey: requesterSessionKey,
+      contextKey: reused,
+    });
+    if (!first || !second || first.eventId === second.eventId) {
+      throw new Error("expected two distinct durable event ids under one context");
+    }
+    enqueue({
+      occurrenceKey: reused,
+      execId: "reused01",
+      durableEventId: first.eventId,
+      text: "first",
+    });
+    enqueue({
+      occurrenceKey: reused,
+      execId: "reused01",
+      durableEventId: second.eventId,
+      text: "second",
+    });
+
+    // Directly invalidating by the first durable id retires only its copy.
+    expect(invalidateExecSteeringByDurableEventId(first.eventId)).toBe(1);
+    const remaining = leasePendingExecSteeringItems({
+      requesterSessionKey,
+      leaseId: "run-1:exec-steering",
+    });
+    expect(remaining?.itemIds).toHaveLength(1);
+    expect(remaining?.prompt).toContain("second");
+    expect(remaining?.prompt).not.toContain(":: first");
+  });
+
+  it("routes heartbeat/poll settlement through the shared observer to retire the steering copy", () => {
+    // The exec-runtime path enqueues a durable event and a steering copy that
+    // shares its id. Consuming that durable event on the settlement path (as a
+    // delivered heartbeat does) must invalidate the steering copy through the
+    // single registered consumption observer, keyed on the durable id.
+    const { durableEventId } = enqueueSharedOccurrence({ execId: "obs00001", text: "observed" });
+    expect(hasPendingExecSteeringItems({ requesterSessionKey })).toBe(true);
+
+    const consumed = consumeSelectedSystemEventEntries(requesterSessionKey, [
+      { id: durableEventId, text: "", ts: 0 },
+    ]);
+    expect(consumed).toHaveLength(1);
+    // The observer fired and retired the steering copy sharing that id.
+    expect(hasPendingExecSteeringItems({ requesterSessionKey })).toBe(false);
+  });
+
+  it("retires the steering copy when a whole-queue drain settles the durable event", () => {
+    const { durableEventId } = enqueueSharedOccurrence({ execId: "drain001", text: "drained" });
+    expect(hasPendingExecSteeringItems({ requesterSessionKey })).toBe(true);
+    const drained = drainSystemEventEntries(requesterSessionKey);
+    expect(drained.some((event) => event.id === durableEventId)).toBe(true);
+    expect(hasPendingExecSteeringItems({ requesterSessionKey })).toBe(false);
+  });
+
+  it("re-registers the settlement observer after a reset via the exported entrypoint", () => {
+    // The enqueue path registers the observer, but the entrypoint is also the
+    // public contract: calling it after a reset restores the single membership
+    // so a durable-event consumption fans out to the steering copy again.
+    resetExecSteeringQueueForTest();
+    resetSystemEventsForTest();
+    ensureExecSteeringConsumptionObserver();
+    const { durableEventId } = enqueueSharedOccurrence({
+      execId: "reReg001",
+      text: "re-registered",
+    });
+    consumeSelectedSystemEventEntries(requesterSessionKey, [
+      { id: durableEventId, text: "", ts: 0 },
+    ]);
+    expect(hasPendingExecSteeringItems({ requesterSessionKey })).toBe(false);
+  });
+
+  it("does not leak the settlement observer across a reset (isolation guard)", () => {
+    // Register the observer via a first steered completion, then reset both
+    // queues. A stale observer would fire against the fresh queue when the next
+    // file's durable event is consumed; after reset it must be inert until a
+    // new enqueue re-registers it.
+    enqueueSharedOccurrence({ execId: "leak0001", text: "before reset" });
+    resetExecSteeringQueueForTest();
+    resetSystemEventsForTest();
+
+    // A durable event consumed with no steering copy present must not throw and
+    // must not resurrect anything: the observer set was cleared by the reset.
+    const orphan = enqueueSystemEventReceipt("Exec completed (orphan01, exit 0) :: none", {
+      sessionKey: requesterSessionKey,
+      contextKey: "exec:orphan01",
+    });
+    if (!orphan) {
+      throw new Error("expected an orphan durable receipt");
+    }
+    expect(() => orphan.remove()).not.toThrow();
+    expect(hasPendingExecSteeringItems({ requesterSessionKey })).toBe(false);
+
+    // Re-enqueuing re-registers the observer, so settlement works again.
+    const { durableEventId } = enqueueSharedOccurrence({ execId: "after001", text: "after reset" });
+    consumeSelectedSystemEventEntries(requesterSessionKey, [
+      { id: durableEventId, text: "", ts: 0 },
+    ]);
     expect(hasPendingExecSteeringItems({ requesterSessionKey })).toBe(false);
   });
 

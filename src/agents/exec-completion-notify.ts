@@ -10,9 +10,11 @@
  * stays within its line-cap budget.
  *
  * The steering copy carries the same agent owner and occurrence key
- * (\`exec:<sessionId>\`) as the durable system event so the two representations
- * share one identity: another agent sharing a literal session key cannot lease
- * this output, and acknowledging either path retires the other.
+ * (\`exec:<sessionId>\`) as the durable system event, and also its durable
+ * event id, so the two representations share one identity: another agent
+ * sharing a literal session key cannot lease this output, and settling either
+ * representation retires the other through the shared consumption observer,
+ * keyed on the globally-unique durable id rather than the reusable occurrence.
  */
 import {
   resolveEventSessionKeyForPolicy,
@@ -29,8 +31,9 @@ export function steerExecCompletionToRequester(params: {
   sessionKey: string;
   status: "completed" | "failed";
   output: string;
+  durableEventId?: string;
 }): void {
-  const { session, sessionKey, status, output } = params;
+  const { session, sessionKey, status, output, durableEventId } = params;
   const eventRouting = session.eventRouting ?? {};
   enqueueExecSteeringCompletion({
     requesterSessionKey: resolveEventSessionKeyForPolicy(sessionKey, eventRouting),
@@ -38,6 +41,9 @@ export function steerExecCompletionToRequester(params: {
     // Shared occurrence identity with the durable system event enqueued in
     // bash-tools.exec-runtime.ts (contextKey `exec:<sessionId>`).
     occurrenceKey: `exec:${session.id}`,
+    // Bind to the durable event's globally-unique id so settlement on any path
+    // retires exactly this copy through the shared consumption observer.
+    ...(durableEventId ? { durableEventId } : {}),
     execId: session.id.slice(0, 8),
     status,
     exitLabel: renderExecExitLabel(session),

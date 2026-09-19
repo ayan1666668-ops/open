@@ -29,7 +29,10 @@
  */
 import { truncateUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
 import { resolveSystemEventQueueKey } from "../infra/system-event-ownership.js";
-import { removeSystemEventsByContextKey } from "../infra/system-events.js";
+import {
+  registerSystemEventConsumptionObserver,
+  removeSystemEventsByContextKey,
+} from "../infra/system-events.js";
 import { resolveGlobalSingleton } from "../shared/global-singleton.js";
 import { sanitizeForPromptLiteral, wrapPromptDataBlock } from "./sanitize-for-prompt.js";
 
@@ -62,6 +65,13 @@ type ExecSteeringQueueItem = {
    * completion across the steering queue and the durable system event.
    */
   occurrenceKey: string;
+  /**
+   * Globally-unique id of the durable system event this copy shares. Settlement
+   * routes through this id, not the reusable `occurrenceKey`, so consuming the
+   * durable event on any path retires exactly this copy and never a
+   * re-enqueued occurrence that reuses the same `exec:<sessionId>` context.
+   */
+  durableEventId?: string;
   /** Short exec id shown to the operator (process session id prefix). */
   execId: string;
   /** "completed" | "failed" outcome label. */
@@ -104,6 +114,7 @@ type ExecSteeringRuntime = {
     requesterSessionKey: string;
     ownerAgentId?: string;
     occurrenceKey: string;
+    durableEventId?: string;
     execId: string;
     status: string;
     exitLabel: string;
@@ -131,6 +142,13 @@ type ExecSteeringRuntime = {
    * a heartbeat or terminal poll. Returns the number of entries removed.
    */
   invalidateExecSteeringByOccurrence: (occurrenceKey: string) => number;
+  /**
+   * Invalidates any queued or leased completion bound to a durable system
+   * event id, called from the shared settlement observer when that exact event
+   * is consumed on any path. Keyed on the globally-unique id, so it retires
+   * only the copy that shares the settled occurrence. Returns entries removed.
+   */
+  invalidateExecSteeringByDurableEventId: (durableEventId: string) => number;
   /**
    * Retires every pending and leased completion for the given requester session
    * keys, called on conversation reset so stale output cannot reach the next
@@ -216,6 +234,7 @@ function createExecSteeringRuntime(): ExecSteeringRuntime {
     requesterSessionKey: string;
     ownerAgentId?: string;
     occurrenceKey: string;
+    durableEventId?: string;
     execId: string;
     status: string;
     exitLabel: string;
@@ -247,6 +266,7 @@ function createExecSteeringRuntime(): ExecSteeringRuntime {
       queueKey,
       ...(input.ownerAgentId ? { ownerAgentId: input.ownerAgentId } : {}),
       occurrenceKey,
+      ...(input.durableEventId ? { durableEventId: input.durableEventId } : {}),
       execId: input.execId,
       status: input.status,
       exitLabel: input.exitLabel,
@@ -259,6 +279,9 @@ function createExecSteeringRuntime(): ExecSteeringRuntime {
     };
     queue.set(itemId, { item, lease: { status: "pending" } });
     queues.set(queueKey, queue);
+    // Wire the shared settlement observer on first use (and after a reset), so
+    // consuming this occurrence's durable event on any path retires this copy.
+    ensureExecSteeringConsumptionObserver();
     return itemId;
   }
 
@@ -441,6 +464,26 @@ function createExecSteeringRuntime(): ExecSteeringRuntime {
     return removed;
   }
 
+  function invalidateExecSteeringByDurableEventId(durableEventId: string): number {
+    const id = durableEventId.trim();
+    if (!id) {
+      return 0;
+    }
+    let removed = 0;
+    for (const [queueKey, queue] of queues) {
+      for (const [itemId, stored] of queue) {
+        if (stored.item.durableEventId === id) {
+          queue.delete(itemId);
+          removed += 1;
+        }
+      }
+      if (queue.size === 0) {
+        queues.delete(queueKey);
+      }
+    }
+    return removed;
+  }
+
   function retireExecSteeringForSessionKeys(params: {
     requesterSessionKeys: ReadonlyArray<string | undefined>;
     ownerAgentId?: string;
@@ -478,6 +521,7 @@ function createExecSteeringRuntime(): ExecSteeringRuntime {
     releaseLeasedExecSteeringItems,
     hasPendingExecSteeringItems,
     invalidateExecSteeringByOccurrence,
+    invalidateExecSteeringByDurableEventId,
     retireExecSteeringForSessionKeys,
     resetExecSteeringQueueForTest,
   };
@@ -492,9 +536,42 @@ export const {
   releaseLeasedExecSteeringItems,
   hasPendingExecSteeringItems,
   invalidateExecSteeringByOccurrence,
+  invalidateExecSteeringByDurableEventId,
   retireExecSteeringForSessionKeys,
   resetExecSteeringQueueForTest,
 } = resolveGlobalSingleton(Symbol.for("openclaw.execSteeringQueue"), createExecSteeringRuntime);
+
+// Route every durable-event consumer through one settlement observer: when the
+// system-event queue consumes an occurrence on any path (heartbeat settlement,
+// terminal poll, steering ack, reset), invalidate the steering copy bound to
+// that same globally-unique id.
+//
+// The observer is a single stable-identity function, and
+// registerSystemEventConsumptionObserver deduplicates by identity, so calling
+// this on every enqueue keeps exactly one membership. Crucially, no local
+// "already registered" flag is kept: the observer set lives in system-events
+// and is cleared independently by resetSystemEventsForTest(). A local flag
+// would desync from that clear and skip re-registration, silently dropping the
+// fan-out across test files (isolated pass, batched fail). Re-adding an
+// already-present stable-identity callback is a cheap no-op, so this stays
+// correct whether or not the set was reset since the last enqueue.
+function onDurableSystemEventConsumed(params: { consumedEventIds: readonly string[] }): void {
+  for (const durableEventId of params.consumedEventIds) {
+    invalidateExecSteeringByDurableEventId(durableEventId);
+  }
+}
+
+/**
+ * Ensures the steering queue's settlement observer is registered.
+ *
+ * Called from the enqueue path so a steered completion always has its
+ * settlement fan-out wired. Idempotent by callback identity: the underlying set
+ * holds one `onDurableSystemEventConsumed` entry no matter how often this runs,
+ * and it re-registers transparently after a reset cleared the set.
+ */
+export function ensureExecSteeringConsumptionObserver(): void {
+  registerSystemEventConsumptionObserver(onDurableSystemEventConsumed);
+}
 
 /** Prepends an exec-steering prompt to an existing user prompt when items exist. */
 export function prependExecSteeringPrompt(params: {

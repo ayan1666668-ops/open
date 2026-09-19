@@ -18,7 +18,7 @@ import {
 } from "../infra/exec-approvals.js";
 import { findPathKey, mergePathPrepend } from "../infra/path-prepend.js";
 import { withSystemEventOwner } from "../infra/system-event-ownership.js";
-import { enqueueSystemEventWithReceipt } from "../infra/system-events.js";
+import { enqueueSystemEventReceipt } from "../infra/system-events.js";
 import { logWarn } from "../logger.js";
 import { redactToolPayloadText } from "../logging/redact.js";
 import type { ManagedRun } from "../process/supervisor/index.js";
@@ -383,20 +383,28 @@ function maybeNotifyOnExit(session: ProcessSession, status: "completed" | "faile
     contextKey: `exec:${session.id}`,
     deliveryContext: session.notifyDeliveryContext,
   };
-  const remove = enqueueSystemEventWithReceipt(
+  const receipt = enqueueSystemEventReceipt(
     eventText,
     session.agentId ? withSystemEventOwner(eventOptions, session.agentId) : eventOptions,
     { allowDuplicate: true },
   );
-  if (remove) {
-    recordNotifyOnExitRemoval(session, remove);
+  if (receipt) {
+    recordNotifyOnExitRemoval(session, receipt.remove);
   }
   // Subagent sessions receive exec results via process poll and announce flow;
   // the heartbeat would fall back to the main session and cause spurious wakes.
   if (!isSubagentSessionKey(sessionKey)) {
     // Steer the completion into the requester session's active or next turn and
-    // wake it; the durable system event above remains the idle fallback.
-    steerExecCompletionToRequester({ session, sessionKey, status, output });
+    // wake it; the durable system event above remains the idle fallback. The
+    // steering copy binds to the durable event's globally-unique id so settling
+    // either representation retires the other through the shared observer.
+    steerExecCompletionToRequester({
+      session,
+      sessionKey,
+      status,
+      output,
+      ...(receipt ? { durableEventId: receipt.eventId } : {}),
+    });
   }
 }
 
