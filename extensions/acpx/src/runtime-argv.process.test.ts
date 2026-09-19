@@ -64,15 +64,53 @@ it.each([
 ])(
   "preserves ACP argv through real processes and reconnect (leased=$wrapped, command=$form)",
   async ({ wrapped, form }) => {
-    // Only fixed fixture labels: never log commands, paths, state, or environment.
+    // Only fixture labels and peer lifecycle: never log commands, paths, or environment.
     // A timeout alone cannot distinguish ACP work from fixture cleanup.
     const phase = (name: string) => {
       console.error(`[acpx-argv-process leased=${wrapped} command=${form}] ${name}`);
     };
     phase("state:setup");
     await withOpenClawTestState({ label: "acpx-argv-process" }, async (state) => {
-      phase("fixture:setup");
       const peerDirectory = path.join(state.root, "peer");
+      // Keep the fixture's real cleanup owner; distinguish its drain from file removal.
+      const restoreEnv = state.restoreEnv;
+      state.restoreEnv = async () => {
+        phase("state:release-resources");
+        await restoreEnv();
+        phase("state:resources-released");
+        // Read only this synthetic peer's log; do not sample unrelated processes.
+        const trace = await fs
+          .readFile(path.join(peerDirectory, "process-lifecycle.log"), "utf8")
+          .catch(() => "");
+        const records = trace.trim().split("\n");
+        for (const line of records) {
+          if (/^\d+ (?:started|stdin-end|exit)$/.test(line)) {
+            phase(`peer:${line}`);
+          }
+        }
+        const pids = new Set(records.map((line) => Number(line.split(" ")[0])));
+        for (const pid of pids) {
+          if (!Number.isSafeInteger(pid) || pid <= 0) {
+            continue;
+          }
+          let alive = false;
+          try {
+            process.kill(pid, 0);
+            alive = true;
+          } catch {
+            // Signal zero only observes the synthetic fixture PID.
+          }
+          phase(`peer:${pid} alive=${alive}`);
+        }
+      };
+      const cleanup = state.cleanup;
+      state.cleanup = async () => {
+        phase("state:cleanup-entered");
+        await cleanup();
+        phase("state:cleanup-complete");
+      };
+      phase("fixture:setup");
+      vi.stubEnv("OPENCLAW_ACPX_TEST_PROCESS_TRACE", "1");
       await fs.mkdir(peerDirectory);
       const executable = path.join(
         state.root,
