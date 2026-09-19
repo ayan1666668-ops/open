@@ -3,7 +3,11 @@ import type { AgentsListResult, GatewaySessionRow, SessionsListResult } from "..
 import { installMockGateway, waitForControlUiRoute } from "../test-helpers/control-ui-e2e.ts";
 import { createControlUiE2eSuite } from "./control-ui-e2e-suite.test-support.ts";
 import { captureSidebarUiProof } from "./sidebar-customization.test-support.ts";
-import { closeSidebarMenu, openSidebarMenu } from "./sidebar-session-menu.test-support.ts";
+import {
+  chooseSidebarOwner,
+  closeSidebarMenu,
+  openSidebarMenu,
+} from "./sidebar-session-menu.test-support.ts";
 
 const suite = createControlUiE2eSuite({ name: "Control UI sidebar agent roster" });
 
@@ -295,7 +299,7 @@ suite.define(() => {
         expect(
           await sidebar
             .locator(".sidebar-session-sort-menu")
-            .getByRole("radiogroup", { name: "Group by", exact: true })
+            .locator("#sidebar-sessions-group")
             .count(),
         ).toBe(0);
         expect(
@@ -305,7 +309,7 @@ suite.define(() => {
             .count(),
         ).toBe(0);
         await openSidebarMenu(page);
-        await sidebar.locator("#sidebar-sessions-owner").selectOption("owner:profile-riley");
+        await chooseSidebarOwner(page, "owner:profile-riley");
         await closeSidebarMenu(page);
         await expect.poll(() => sessionRows.count()).toBe(4);
         expect(await sessionRows.allTextContents()).toEqual([
@@ -316,7 +320,7 @@ suite.define(() => {
         ]);
         await sidebar.locator(".sidebar-session-sort").click();
         await openSidebarMenu(page);
-        await sidebar.locator("#sidebar-sessions-owner").selectOption("all");
+        await chooseSidebarOwner(page, "all");
         await closeSidebarMenu(page);
         await expect.poll(() => sessionRows.count()).toBe(12);
 
