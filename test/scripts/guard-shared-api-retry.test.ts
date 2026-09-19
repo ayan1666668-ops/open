@@ -88,6 +88,10 @@ describe("createGitHubApi transient status retries", () => {
 describe("guard-shared retry coverage stays registered", () => {
   it("maps this suite to the helper it covers, so a change there runs it", () => {
     const targets = readFileSync("scripts/test-projects.test-support.mts", "utf8");
-    expect(targets).toContain('["test/scripts/guard-shared-api-retry.test.ts"]');
+    // Read the owners of the entry keyed on the helper alone, rather than a fixed array
+    // literal, so the guard survives an owner being added beside this one.
+    const entry = targets.match(/guard-shared\\\.mjs\$\/u,\s*\[([^\]]*)\]/u);
+    expect(entry, "no mapping entry keyed on guard-shared.mjs alone").not.toBeNull();
+    expect(entry?.[1]).toContain('"test/scripts/guard-shared-api-retry.test.ts"');
   });
 });
