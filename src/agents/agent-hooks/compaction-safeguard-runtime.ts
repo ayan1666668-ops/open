@@ -25,7 +25,7 @@ type CompactionSafeguardRuntimeValue = {
   postCompactionSections?: string[];
   qualityGuardEnabled?: boolean;
   qualityGuardMaxRetries?: number;
-  semanticCurationMode?: "off" | "shadow";
+  semanticCurationMode?: "off" | "shadow" | "apply";
   semanticCurationTimeoutMs?: number;
   /**
    * Id of a registered compaction provider plugin.

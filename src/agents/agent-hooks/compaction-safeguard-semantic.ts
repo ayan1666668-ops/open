@@ -386,3 +386,40 @@ export function buildCompactionSemanticSnapshot(params: {
     complete,
   };
 }
+
+export function projectCompactionSemanticSelection(params: {
+  messages: AgentMessage[];
+  snapshot: CompactionSemanticSnapshot;
+  selection: CompactionShadowCurationResult;
+}): AgentMessage[] | null {
+  if (
+    params.selection.status !== "ok" ||
+    !params.selection.complete ||
+    params.selection.sourceFingerprint !== params.snapshot.sourceFingerprint ||
+    fingerprintCompactionMessages(params.messages) !== params.snapshot.sourceFingerprint
+  ) {
+    return null;
+  }
+  const selected = new Set(params.selection.selectedSegmentIds);
+  if (
+    params.snapshot.segments.some(
+      (segment) => segment.protected && !selected.has(segment.id),
+    )
+  ) {
+    return null;
+  }
+  const sourceIndexes = new Set<number>();
+  for (const segment of params.snapshot.segments) {
+    if (!selected.has(segment.id)) {
+      continue;
+    }
+    for (const sourceIndex of segment.sourceIndexes) {
+      if (sourceIndex < 0 || sourceIndex >= params.messages.length) {
+        return null;
+      }
+      sourceIndexes.add(sourceIndex);
+    }
+  }
+  const projected = params.messages.filter((_, index) => sourceIndexes.has(index));
+  return projected.length > 0 ? projected : null;
+}

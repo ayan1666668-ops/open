@@ -183,7 +183,7 @@ export const AgentDefaultsBaseSchema = z
         semanticCuration: z
           .object({
             /** Observation mode. Shadow mode never changes summarizer input. */
-            mode: z.enum(["off", "shadow"]).optional(),
+            mode: z.enum(["off", "shadow", "apply"]).optional(),
             /** Per-decision deadline in milliseconds. */
             timeoutMs: z.number().int().positive().max(5000).optional(),
           })
