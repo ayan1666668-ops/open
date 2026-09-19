@@ -1,4 +1,3 @@
-// Telegram plugin module implements delivery.replies behavior.
 import type { Bot } from "grammy";
 import type { Message } from "grammy/types";
 import { isChannelPartialDeliveryError } from "openclaw/plugin-sdk/channel-inbound";
@@ -185,7 +184,7 @@ async function deliverTextReply(params: {
   replyToId?: number;
   replyToMode: ReplyToMode;
   progress: DeliveryProgress;
-  recordMessageId: (messageId: number) => void;
+  recordMessageId: (messageId: number) => Promise<void>;
   quoteOnlyOnFirstChunk?: boolean;
 }): Promise<number | undefined> {
   const chunks = filterEmptyTelegramTextChunks(params.chunkText(params.text));
@@ -255,7 +254,7 @@ async function deliverTextReply(params: {
         });
       }
       params.runtime.log?.(`telegram text delivery ok chat=${params.chatId} message=${messageId}`);
-      params.recordMessageId(messageId);
+      await params.recordMessageId(messageId);
       await params.progress.promptContext?.accept({ messageId, text: plainText });
     },
   });
@@ -297,7 +296,7 @@ async function deliverMediaReply(params: {
   replyToId?: number;
   replyToMode: ReplyToMode;
   progress: DeliveryProgress;
-  recordMessageId: (messageId: number) => void;
+  recordMessageId: (messageId: number) => Promise<void>;
   textMode?: "html";
 }): Promise<{
   firstDeliveredMessageId?: number;
@@ -334,7 +333,7 @@ async function deliverMediaReply(params: {
     if (captionRemoved) {
       visibleFallbackText = "";
     }
-    params.recordMessageId(messageId);
+    await params.recordMessageId(messageId);
     await recordPromptContextMessage(message, plainText || undefined);
     markDelivered(params.progress);
   };
@@ -772,15 +771,15 @@ export async function deliverReplies(params: {
     deliveredCount: 0,
     ...(params.promptContextSequence ? { promptContext: params.promptContextSequence } : {}),
   };
-  const recordMessageId = (messageId: number) => {
+  const recordMessageId = async (messageId: number) => {
     if (params.accountId || params.ownerAgentId) {
-      recordSentMessage(params.chatId, messageId, params.cfg, {
+      await recordSentMessage(params.chatId, messageId, params.cfg, {
         accountId: params.accountId,
         agentId: params.ownerAgentId,
       });
       return;
     }
-    recordSentMessage(params.chatId, messageId, params.cfg);
+    await recordSentMessage(params.chatId, messageId, params.cfg);
   };
   const mediaLoader = params.mediaLoader ?? loadWebMedia;
   const transcriptMirror = params.transcriptMirror;

@@ -1,4 +1,3 @@
-// Telegram plugin module implements bot message context behavior.
 import type { ReactionTypeEmoji } from "grammy/types";
 import {
   resolveAckReaction,
@@ -51,6 +50,7 @@ import {
 } from "./conversation-route.js";
 import { enforceTelegramDmAccess } from "./dm-access.js";
 import { evaluateTelegramGroupBaseAccess } from "./group-access.js";
+import { resolveTelegramNativeCommandAdmission } from "./ingress.js";
 import {
   buildTelegramStatusReactionVariants,
   type TelegramReactionEmoji,
@@ -121,6 +121,7 @@ export type TelegramMessageContext = {
 };
 
 export const buildTelegramMessageContext = async ({
+  nativeCommandNames,
   primaryCtx,
   allMedia,
   replyMedia = [],
@@ -291,6 +292,17 @@ export const buildTelegramMessageContext = async ({
   const effectiveGroupAllow = normalizeAllowFrom(expandedGroupAllowFrom);
   const hasGroupAllowOverride = groupAllowOverride !== undefined;
   const senderUsername = msg.from?.username ?? "";
+  const commandAuthorizedByConfig = await resolveTelegramNativeCommandAdmission({
+    msg,
+    nativeCommandNames,
+    botUsername: primaryCtx.me?.username,
+    cfg,
+    accountId: account.accountId,
+    dmPolicy: effectiveDmPolicy,
+    isGroup,
+    chatId,
+    senderId,
+  });
   const baseAccess = evaluateTelegramGroupBaseAccess({
     isGroup,
     groupConfig,
@@ -363,6 +375,7 @@ export const buildTelegramMessageContext = async ({
   };
 
   if (
+    !commandAuthorizedByConfig &&
     !(await enforceTelegramDmAccess({
       isGroup,
       dmPolicy: effectiveDmPolicy,
@@ -461,6 +474,7 @@ export const buildTelegramMessageContext = async ({
 
   const originatingTo = buildTelegramInboundOriginTarget(chatId, threadSpec);
   const bodyResult = await resolveTelegramInboundBody({
+    nativeCommandNames,
     cfg,
     primaryCtx,
     msg,
@@ -535,7 +549,8 @@ export const buildTelegramMessageContext = async ({
     groupRequireMention: Boolean(groupRequireMention),
     mentionFacts: bodyResult.mentionFacts,
     groupThread: bodyResult.groupThread,
-    hasControlCommand: bodyResult.hasControlCommand,
+    commandSource: bodyResult.commandSource,
+    nativeCommandBody: bodyResult.nativeCommandBody,
     stickerCacheHit: bodyResult.stickerCacheHit,
     ...(bodyResult.audioTranscribedMediaIndex !== undefined
       ? { audioTranscribedMediaIndex: bodyResult.audioTranscribedMediaIndex }

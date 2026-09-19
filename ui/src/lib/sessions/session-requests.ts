@@ -1,4 +1,9 @@
-import type { SessionsDeleteResult } from "../../../../packages/gateway-protocol/src/index.js";
+import type {
+  SessionsDeleteResult,
+  SessionsSetInvolvementParams,
+  SessionsPatchManyParams,
+  SessionsPatchManyResult,
+} from "../../../../packages/gateway-protocol/src/index.js";
 import { SESSION_ARCHIVE_REQUEST_OPTIONS } from "../../../../src/shared/session-archive-timeout.ts";
 import { SIDEBAR_SESSION_ROSTER_LIMIT } from "../../../../src/shared/session-list-limits.ts";
 import type {
@@ -24,6 +29,14 @@ import type {
   SessionRequestClient,
   SessionResetOptions,
 } from "./session-capability.ts";
+
+/** Personal list choices share one RPC contract across all session menus. */
+export async function requestSessionInvolvement(
+  client: SessionRequestClient,
+  params: SessionsSetInvolvementParams,
+): Promise<void> {
+  await client.request("sessions.setInvolvement", params);
+}
 
 /** Gateway rosters omit recency so Chat and Settings agree, and carry the shared
  *  sidebar page size: a roster smaller than the store empties whole categories
@@ -208,6 +221,19 @@ export function requestSessionPatch(
   return patch.archived === true
     ? client.request<SessionsPatchResult>("sessions.patch", params, SESSION_ARCHIVE_REQUEST_OPTIONS)
     : client.request<SessionsPatchResult>("sessions.patch", params);
+}
+
+export function requestSessionPatchMany(
+  client: SessionRequestClient,
+  params: SessionsPatchManyParams,
+): Promise<SessionsPatchManyResult> {
+  return params.patch.archived === true
+    ? client.request<SessionsPatchManyResult>(
+        "sessions.patchMany",
+        params,
+        SESSION_ARCHIVE_REQUEST_OPTIONS,
+      )
+    : client.request<SessionsPatchManyResult>("sessions.patchMany", params);
 }
 
 export function requestSessionDelete(
