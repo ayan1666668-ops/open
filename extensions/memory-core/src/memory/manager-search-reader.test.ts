@@ -94,6 +94,26 @@ describe("read-only memory search manager", () => {
     }
   });
 
+  it("observes writer-published content without replacing or writing through the retained reader", async () => {
+    const cfg = createConfig({ provider: "none", vectorEnabled: false });
+    const reader = await getReader(cfg);
+    trackManager(reader);
+    const writer = requireManager(await getMemorySearchManager({ cfg, agentId: "main" }));
+    trackManager(writer);
+    expect(writer).not.toBe(reader);
+    await fs.writeFile(
+      path.join(fixture.paths.memory, "2026-01-12.md"),
+      "# Log\nGiraffe publication token.\n",
+    );
+    await expect(reader.search("giraffe", { minScore: 0 })).resolves.toEqual([]);
+    await writer.sync({ reason: "test-publication", force: true });
+    expect(await getReader(cfg)).toBe(reader);
+    await expect(reader.search("giraffe", { minScore: 0 })).resolves.not.toEqual([]);
+    await expect(reader.search("alpha", { minScore: 0 })).resolves.toEqual([]);
+    expect(managerDb(reader).prepare("PRAGMA query_only").get()).toEqual({ query_only: 1 });
+    expect(() => managerDb(reader).exec("CREATE TABLE reader_probe (id INTEGER)")).toThrow();
+  });
+
   it("bootstraps a valid empty index through the writer after the first note arrives", async () => {
     const file = path.join(fixture.paths.memory, "2026-01-12.md");
     await fs.writeFile(file, "");
