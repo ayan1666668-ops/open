@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { JudgmentOutcome } from "../../judgments/types.js";
+import type { DecisionOutcome } from "../../decisions/types.js";
 import type { AgentMessage } from "../runtime/index.js";
 import {
   isCompactionSemanticRepairFinding,
@@ -39,7 +39,7 @@ describe("compaction semantic fidelity", () => {
   });
 
   it("preserves choice distributions and provenance", async () => {
-    const outcome: JudgmentOutcome = {
+    const outcome: DecisionOutcome = {
       status: "ok",
       result: {
         model: "fixture",
@@ -90,8 +90,36 @@ describe("compaction semantic fidelity", () => {
         },
       ],
     });
+    expect(evaluate).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({ agentId: undefined }),
+    );
   });
 
+  it("passes the compaction owner to the decision runtime", async () => {
+    const evaluate = vi.fn(
+      async () =>
+        ({
+          status: "unavailable",
+          reason: "not-configured",
+        }) satisfies DecisionOutcome,
+    );
+
+    await observeCompactionSemanticFidelity(
+      {
+        sourceMessages: [user("Keep production untouched.")],
+        retainedContext: "Deployment notes.",
+        agentId: "specialist",
+        signal: new AbortController().signal,
+      },
+      evaluate,
+    );
+
+    expect(evaluate).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({ agentId: "specialist" }),
+    );
+  });
 
   it("only qualifies strong missing or contradicted findings with complete source evidence", () => {
     expect(
@@ -133,7 +161,7 @@ describe("compaction semantic fidelity", () => {
   });
 
   it("checks omitted tool evidence alongside user requirements", async () => {
-    const outcome: JudgmentOutcome = {
+    const outcome: DecisionOutcome = {
       status: "ok",
       result: {
         model: "fixture",
@@ -188,10 +216,13 @@ describe("compaction semantic fidelity", () => {
   });
 
   it("returns provider unavailability without inventing a semantic result", async () => {
-    const evaluate = vi.fn(async () => ({
-      status: "unavailable",
-      reason: "circuit-open",
-    }) satisfies JudgmentOutcome);
+    const evaluate = vi.fn(
+      async () =>
+        ({
+          status: "unavailable",
+          reason: "circuit-open",
+        }) satisfies DecisionOutcome,
+    );
 
     const result = await observeCompactionSemanticFidelity(
       {

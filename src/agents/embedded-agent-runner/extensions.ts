@@ -159,6 +159,7 @@ export function buildEmbeddedExtensionFactories(params: {
         defaultTokens: DEFAULT_CONTEXT_TOKENS,
       }).tokens;
     setCompactionSafeguardRuntime(params.sessionManager, {
+      agentId: params.agentId,
       contextWindowTokens,
       identifierPolicy: compactionCfg?.identifierPolicy,
       qualityGuardEnabled,

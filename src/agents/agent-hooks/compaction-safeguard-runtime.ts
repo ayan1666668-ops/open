@@ -7,6 +7,8 @@ export type CompactionSafeguardCancellation = { reason: string; error?: unknown 
 
 /** Runtime knobs consumed by the compaction safeguard extension. */
 type CompactionSafeguardRuntimeValue = {
+  /** Owner used for per-agent decision-model selection when no persisted session target exists. */
+  agentId?: string;
   maxHistoryShare?: number;
   contextWindowTokens?: number;
   identifierPolicy?: AgentCompactionIdentifierPolicy | "custom";

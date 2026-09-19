@@ -1,6 +1,6 @@
 import { truncateUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
-import type { JudgmentOutcome } from "../../judgments/types.js";
-import { evaluateJudgment } from "../../judgments/runtime.js";
+import { evaluateDecision } from "../../decisions/runtime.js";
+import type { DecisionAnswer } from "../../decisions/types.js";
 import { collectTextContentBlocks } from "../content-blocks.js";
 import type { AgentMessage } from "../runtime/index.js";
 
@@ -48,9 +48,7 @@ export function buildCompactionSemanticRepairEvidence(
   return lines.join("\n");
 }
 
-export function isCompactionSemanticRepairFinding(
-  finding: CompactionSemanticFinding,
-): boolean {
+export function isCompactionSemanticRepairFinding(finding: CompactionSemanticFinding): boolean {
   if (finding.sourceTruncated) {
     return false;
   }
@@ -58,8 +56,7 @@ export function isCompactionSemanticRepairFinding(
     return false;
   }
   return (
-    (finding.probabilities[finding.relation] ?? 0) >=
-    COMPACTION_SEMANTIC_REPAIR_MIN_PROBABILITY
+    (finding.probabilities[finding.relation] ?? 0) >= COMPACTION_SEMANTIC_REPAIR_MIN_PROBABILITY
   );
 }
 
@@ -87,7 +84,7 @@ export type CompactionSemanticObservation = {
     }
 );
 
-type EvaluateJudgment = typeof evaluateJudgment;
+type EvaluateDecision = typeof evaluateDecision;
 
 function extractUserText(message: AgentMessage): string {
   if (message.role !== "user") {
@@ -105,15 +102,9 @@ export function prepareCompactionSemanticFidelityEvidence(params: {
   retainedContext: string;
   additionalSourceItems?: Array<{ id: string; text: string }>;
 }) {
-  const retainedContext = truncateUtf16Safe(
-    params.retainedContext,
-    MAX_RETAINED_CONTEXT_CHARS,
-  );
+  const retainedContext = truncateUtf16Safe(params.retainedContext, MAX_RETAINED_CONTEXT_CHARS);
   const retainedContextTruncated = retainedContext.length < params.retainedContext.length;
-  const recentUserTexts = params.sourceMessages
-    .map(extractUserText)
-    .filter(Boolean)
-    .toReversed();
+  const recentUserTexts = params.sourceMessages.map(extractUserText).filter(Boolean).toReversed();
 
   let verbatimPreserved = 0;
   let truncatedSourceItems = 0;
@@ -169,18 +160,14 @@ export function prepareCompactionSemanticFidelityEvidence(params: {
 }
 
 function relationFromAnswer(
-  answer: Extract<JudgmentOutcome, { status: "ok" }>["result"]["answers"][string],
+  answer: DecisionAnswer | undefined,
 ): CompactionSemanticFinding["relation"] | undefined {
   if (answer?.type !== "choice") {
     return undefined;
   }
-  return [
-    "preserved",
-    "missing",
-    "contradicted",
-    "inactive_or_completed",
-    "uncertain",
-  ].includes(answer.choice)
+  return ["preserved", "missing", "contradicted", "inactive_or_completed", "uncertain"].includes(
+    answer.choice,
+  )
     ? (answer.choice as CompactionSemanticRelation)
     : undefined;
 }
@@ -190,9 +177,10 @@ export async function observeCompactionSemanticFidelity(
     sourceMessages: AgentMessage[];
     retainedContext: string;
     additionalSourceItems?: Array<{ id: string; text: string }>;
+    agentId?: string;
     signal: AbortSignal;
   },
-  evaluate: EvaluateJudgment = evaluateJudgment,
+  evaluate: EvaluateDecision = evaluateDecision,
 ): Promise<CompactionSemanticObservation> {
   const evidence = prepareCompactionSemanticFidelityEvidence(params);
   if (evidence.sourceItems.length === 0) {
@@ -243,6 +231,7 @@ export async function observeCompactionSemanticFidelity(
       questions,
     },
     {
+      agentId: params.agentId,
       purpose: PURPOSE,
       rubricVersion: RUBRIC_VERSION,
       timeoutMs: TIMEOUT_MS,

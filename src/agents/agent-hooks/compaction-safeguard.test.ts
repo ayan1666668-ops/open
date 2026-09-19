@@ -8,8 +8,8 @@ import { createAssistantMessageEventStream, type Model } from "openclaw/plugin-s
 import { createRequireRecord } from "openclaw/plugin-sdk/test-fixtures";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../../config/config.js";
-import * as judgmentRuntimeModule from "../../judgments/runtime.js";
-import type { JudgmentOutcome } from "../../judgments/types.js";
+import * as decisionRuntimeModule from "../../decisions/runtime.js";
+import type { DecisionOutcome } from "../../decisions/types.js";
 import type { CompactionProvider } from "../../plugins/compaction-provider.js";
 import {
   requireActivePluginRegistry,
@@ -50,11 +50,11 @@ const { compactionLogger } = vi.hoisted(() => {
   return { compactionLogger: logger };
 });
 
-vi.mock("../../judgments/runtime.js", async () => {
-  const actual = await vi.importActual<typeof import("../../judgments/runtime.js")>(
-    "../../judgments/runtime.js",
+vi.mock("../../decisions/runtime.js", async () => {
+  const actual = await vi.importActual<typeof import("../../decisions/runtime.js")>(
+    "../../decisions/runtime.js",
   );
-  return { ...actual, evaluateJudgment: vi.fn(actual.evaluateJudgment) };
+  return { ...actual, evaluateDecision: vi.fn(actual.evaluateDecision) };
 });
 
 vi.mock("../../logging/subsystem.js", async () => {
@@ -93,7 +93,7 @@ const mockSummarizeInStages = vi.mocked(compactionModule.summarizeInStages);
 const mockCurateCompactionSummarizerInput = vi.mocked(
   compactionInputCurationModule.curateCompactionSummarizerInput,
 );
-const mockEvaluateJudgment = vi.mocked(judgmentRuntimeModule.evaluateJudgment);
+const mockEvaluateDecision = vi.mocked(decisionRuntimeModule.evaluateDecision);
 const actualCompactionInputCurationModule = await vi.importActual<
   typeof compactionInputCurationModule
 >("./compaction-input-curation.js");
@@ -165,7 +165,7 @@ beforeEach(() => {
     actualCompactionInputCurationModule.curateCompactionSummarizerInput,
   );
   mockCurateCompactionSummarizerInput.mockClear();
-  mockEvaluateJudgment.mockReset();
+  mockEvaluateDecision.mockReset();
   compactionLogger.warn.mockClear();
 });
 
@@ -3791,7 +3791,9 @@ describe("compaction-safeguard recent-turn preservation", () => {
       messageText: "summarize this conversation",
       tokensBefore: 1_500,
     });
-    (event.preparation as { settings?: { reserveTokens: number }; isSplitTurn?: boolean }).settings = {
+    (
+      event.preparation as { settings?: { reserveTokens: number }; isSplitTurn?: boolean }
+    ).settings = {
       reserveTokens: 4_000,
     };
     (event.preparation as { isSplitTurn?: boolean }).isSplitTurn = false;
@@ -3838,7 +3840,7 @@ describe("compaction-safeguard recent-turn preservation", () => {
     mockSummarizeInStages
       .mockResolvedValueOnce(summaryResult(firstSummary))
       .mockResolvedValueOnce(summaryResult(recoveredSummary));
-    mockEvaluateJudgment
+    mockEvaluateDecision
       .mockResolvedValueOnce({
         status: "ok",
         result: {
@@ -3862,7 +3864,7 @@ describe("compaction-safeguard recent-turn preservation", () => {
           rubricVersion: "1",
           runtimeGeneration: "curation",
         },
-      } satisfies JudgmentOutcome)
+      } satisfies DecisionOutcome)
       .mockResolvedValueOnce({
         status: "ok",
         result: {
@@ -3886,7 +3888,7 @@ describe("compaction-safeguard recent-turn preservation", () => {
           rubricVersion: "1",
           runtimeGeneration: "fidelity",
         },
-      } satisfies JudgmentOutcome);
+      } satisfies DecisionOutcome);
 
     const sessionManager = stubSessionManager();
     setCompactionSafeguardRuntime(sessionManager, {
@@ -3934,7 +3936,7 @@ describe("compaction-safeguard recent-turn preservation", () => {
     });
 
     expect(result.cancel).not.toBe(true);
-    expect(mockEvaluateJudgment).toHaveBeenCalledTimes(2);
+    expect(mockEvaluateDecision).toHaveBeenCalledTimes(2);
     expect(mockSummarizeInStages).toHaveBeenCalledTimes(2);
     const curatedCall = requireRecord(mockCallArg(mockSummarizeInStages, 0));
     expect(JSON.stringify(curatedCall.messages)).toContain(
@@ -3966,7 +3968,7 @@ describe("compaction-safeguard recent-turn preservation", () => {
     mockSummarizeInStages
       .mockResolvedValueOnce(summaryResult("invalid curated summary"))
       .mockResolvedValueOnce(summaryResult(recoveredSummary));
-    mockEvaluateJudgment.mockResolvedValueOnce({
+    mockEvaluateDecision.mockResolvedValueOnce({
       status: "ok",
       result: {
         model: "fixture",
@@ -3989,7 +3991,7 @@ describe("compaction-safeguard recent-turn preservation", () => {
         rubricVersion: "1",
         runtimeGeneration: "curation",
       },
-    } satisfies JudgmentOutcome);
+    } satisfies DecisionOutcome);
 
     const sessionManager = stubSessionManager();
     setCompactionSafeguardRuntime(sessionManager, {
@@ -4037,7 +4039,7 @@ describe("compaction-safeguard recent-turn preservation", () => {
     });
 
     expect(result.cancel).not.toBe(true);
-    expect(mockEvaluateJudgment).toHaveBeenCalledTimes(1);
+    expect(mockEvaluateDecision).toHaveBeenCalledTimes(1);
     expect(mockSummarizeInStages).toHaveBeenCalledTimes(2);
     const firstCall = requireRecord(mockCallArg(mockSummarizeInStages, 0));
     expect(JSON.stringify(firstCall.messages)).toContain(
@@ -4084,7 +4086,7 @@ describe("compaction-safeguard recent-turn preservation", () => {
     mockSummarizeInStages
       .mockResolvedValueOnce(summaryResult(curatedSummary))
       .mockResolvedValueOnce(summaryResult(recoveredSummary));
-    mockEvaluateJudgment
+    mockEvaluateDecision
       .mockResolvedValueOnce({
         status: "ok",
         result: {
@@ -4108,11 +4110,11 @@ describe("compaction-safeguard recent-turn preservation", () => {
           rubricVersion: "1",
           runtimeGeneration: "curation",
         },
-      } satisfies JudgmentOutcome)
+      } satisfies DecisionOutcome)
       .mockResolvedValueOnce({
         status: "unavailable",
         reason: "circuit-open",
-      } satisfies JudgmentOutcome);
+      } satisfies DecisionOutcome);
 
     const sessionManager = stubSessionManager();
     setCompactionSafeguardRuntime(sessionManager, {
@@ -4160,7 +4162,7 @@ describe("compaction-safeguard recent-turn preservation", () => {
     });
 
     expect(result.cancel).not.toBe(true);
-    expect(mockEvaluateJudgment).toHaveBeenCalledTimes(2);
+    expect(mockEvaluateDecision).toHaveBeenCalledTimes(2);
     expect(mockSummarizeInStages).toHaveBeenCalledTimes(2);
     const firstCall = requireRecord(mockCallArg(mockSummarizeInStages, 0));
     expect(JSON.stringify(firstCall.messages)).not.toContain(materialFact);
@@ -4207,7 +4209,7 @@ describe("compaction-safeguard recent-turn preservation", () => {
     mockSummarizeInStages
       .mockResolvedValueOnce(summaryResult(firstSummary))
       .mockResolvedValueOnce(summaryResult(recoveredSummary));
-    mockEvaluateJudgment
+    mockEvaluateDecision
       .mockResolvedValueOnce({
         status: "ok",
         result: {
@@ -4231,7 +4233,7 @@ describe("compaction-safeguard recent-turn preservation", () => {
           rubricVersion: "1",
           runtimeGeneration: "curation",
         },
-      } satisfies JudgmentOutcome)
+      } satisfies DecisionOutcome)
       .mockResolvedValueOnce({
         status: "ok",
         result: {
@@ -4266,7 +4268,7 @@ describe("compaction-safeguard recent-turn preservation", () => {
           rubricVersion: "1",
           runtimeGeneration: "fidelity",
         },
-      } satisfies JudgmentOutcome);
+      } satisfies DecisionOutcome);
 
     const sessionManager = stubSessionManager();
     setCompactionSafeguardRuntime(sessionManager, {
@@ -4324,7 +4326,7 @@ describe("compaction-safeguard recent-turn preservation", () => {
     });
 
     expect(result.cancel).not.toBe(true);
-    expect(mockEvaluateJudgment).toHaveBeenCalledTimes(2);
+    expect(mockEvaluateDecision).toHaveBeenCalledTimes(2);
     expect(mockSummarizeInStages).toHaveBeenCalledTimes(2);
     const firstCall = requireRecord(mockCallArg(mockSummarizeInStages, 0));
     const secondCall = requireRecord(mockCallArg(mockSummarizeInStages, 1));
@@ -4385,7 +4387,7 @@ describe("compaction-safeguard recent-turn preservation", () => {
       .mockResolvedValueOnce(summaryResult(firstSummary))
       .mockResolvedValueOnce(summaryResult(semanticRepairSummary))
       .mockResolvedValueOnce(summaryResult(recoveredSummary));
-    mockEvaluateJudgment
+    mockEvaluateDecision
       .mockResolvedValueOnce({
         status: "ok",
         result: {
@@ -4409,7 +4411,7 @@ describe("compaction-safeguard recent-turn preservation", () => {
           rubricVersion: "1",
           runtimeGeneration: "curation",
         },
-      } satisfies JudgmentOutcome)
+      } satisfies DecisionOutcome)
       .mockResolvedValueOnce({
         status: "ok",
         result: {
@@ -4444,7 +4446,7 @@ describe("compaction-safeguard recent-turn preservation", () => {
           rubricVersion: "1",
           runtimeGeneration: "first-fidelity",
         },
-      } satisfies JudgmentOutcome)
+      } satisfies DecisionOutcome)
       .mockResolvedValueOnce({
         status: "ok",
         result: {
@@ -4468,7 +4470,7 @@ describe("compaction-safeguard recent-turn preservation", () => {
           rubricVersion: "1",
           runtimeGeneration: "second-fidelity",
         },
-      } satisfies JudgmentOutcome);
+      } satisfies DecisionOutcome);
 
     const sessionManager = stubSessionManager();
     setCompactionSafeguardRuntime(sessionManager, {
@@ -4526,7 +4528,7 @@ describe("compaction-safeguard recent-turn preservation", () => {
     });
 
     expect(result.cancel).not.toBe(true);
-    expect(mockEvaluateJudgment).toHaveBeenCalledTimes(3);
+    expect(mockEvaluateDecision).toHaveBeenCalledTimes(3);
     expect(mockSummarizeInStages).toHaveBeenCalledTimes(3);
     const firstCall = requireRecord(mockCallArg(mockSummarizeInStages, 0));
     const secondCall = requireRecord(mockCallArg(mockSummarizeInStages, 1));
@@ -4535,9 +4537,7 @@ describe("compaction-safeguard recent-turn preservation", () => {
     expect(JSON.stringify(secondCall.messages)).not.toContain(materialFact);
     expect(secondCall.customInstructions).toContain("Semantic fidelity feedback");
     expect(JSON.stringify(thirdCall.messages)).toContain(materialFact);
-    expect(thirdCall.customInstructions).toContain(
-      "curated attempt lost tool-derived context",
-    );
+    expect(thirdCall.customInstructions).toContain("curated attempt lost tool-derived context");
     expect(expectCompactionResult(result).summary).toContain(materialFact);
   });
 
@@ -4591,7 +4591,7 @@ describe("compaction-safeguard recent-turn preservation", () => {
       .mockResolvedValueOnce(summaryResult(firstSummary))
       .mockResolvedValueOnce(summaryResult(semanticRepairSummary))
       .mockResolvedValueOnce(summaryResult(recoveredSummary));
-    mockEvaluateJudgment
+    mockEvaluateDecision
       .mockResolvedValueOnce({
         status: "ok",
         result: {
@@ -4615,7 +4615,7 @@ describe("compaction-safeguard recent-turn preservation", () => {
           rubricVersion: "1",
           runtimeGeneration: "curation",
         },
-      } satisfies JudgmentOutcome)
+      } satisfies DecisionOutcome)
       .mockResolvedValueOnce({
         status: "ok",
         result: {
@@ -4650,11 +4650,11 @@ describe("compaction-safeguard recent-turn preservation", () => {
           rubricVersion: "1",
           runtimeGeneration: "first-fidelity",
         },
-      } satisfies JudgmentOutcome)
+      } satisfies DecisionOutcome)
       .mockResolvedValueOnce({
         status: "unavailable",
         reason: "circuit-open",
-      } satisfies JudgmentOutcome);
+      } satisfies DecisionOutcome);
 
     const sessionManager = stubSessionManager();
     setCompactionSafeguardRuntime(sessionManager, {
@@ -4712,7 +4712,7 @@ describe("compaction-safeguard recent-turn preservation", () => {
     });
 
     expect(result.cancel).not.toBe(true);
-    expect(mockEvaluateJudgment).toHaveBeenCalledTimes(3);
+    expect(mockEvaluateDecision).toHaveBeenCalledTimes(3);
     expect(mockSummarizeInStages).toHaveBeenCalledTimes(3);
     const secondCall = requireRecord(mockCallArg(mockSummarizeInStages, 1));
     const thirdCall = requireRecord(mockCallArg(mockSummarizeInStages, 2));
@@ -4941,7 +4941,7 @@ describe("compaction-safeguard recent-turn preservation", () => {
     mockSummarizeInStages
       .mockResolvedValueOnce(summaryResult(firstSummary))
       .mockResolvedValueOnce(summaryResult(repairedSummary));
-    mockEvaluateJudgment.mockResolvedValueOnce({
+    mockEvaluateDecision.mockResolvedValueOnce({
       status: "ok",
       result: {
         model: "fixture",
@@ -4964,7 +4964,7 @@ describe("compaction-safeguard recent-turn preservation", () => {
         rubricVersion: "1",
         runtimeGeneration: "test-generation",
       },
-    } satisfies JudgmentOutcome);
+    } satisfies DecisionOutcome);
 
     const sessionManager = stubSessionManager();
     setCompactionSafeguardRuntime(sessionManager, {
@@ -4984,7 +4984,7 @@ describe("compaction-safeguard recent-turn preservation", () => {
     const { result } = await runCompactionScenario({ sessionManager, event, apiKey: "test-key" });
 
     expect(result.cancel).not.toBe(true);
-    expect(mockEvaluateJudgment).toHaveBeenCalledTimes(1);
+    expect(mockEvaluateDecision).toHaveBeenCalledTimes(1);
     expect(mockSummarizeInStages).toHaveBeenCalledTimes(2);
     const repairCall = requireRecord(mockCallArg(mockSummarizeInStages, 1));
     expect(repairCall.customInstructions).toContain("Semantic fidelity feedback");
@@ -5010,7 +5010,7 @@ describe("compaction-safeguard recent-turn preservation", () => {
     mockSummarizeInStages
       .mockResolvedValueOnce(summaryResult(acceptedSummary))
       .mockRejectedValueOnce(new Error("semantic repair failed"));
-    mockEvaluateJudgment.mockResolvedValueOnce({
+    mockEvaluateDecision.mockResolvedValueOnce({
       status: "ok",
       result: {
         model: "fixture",
@@ -5033,7 +5033,7 @@ describe("compaction-safeguard recent-turn preservation", () => {
         rubricVersion: "1",
         runtimeGeneration: "test-generation",
       },
-    } satisfies JudgmentOutcome);
+    } satisfies DecisionOutcome);
 
     const sessionManager = stubSessionManager();
     setCompactionSafeguardRuntime(sessionManager, {
@@ -5054,9 +5054,7 @@ describe("compaction-safeguard recent-turn preservation", () => {
 
     expect(result).not.toEqual({ cancel: true });
     expect(mockSummarizeInStages).toHaveBeenCalledTimes(2);
-    const firstFinalizedSummary = requireRecord(
-      mockCallArg(mockAuditSummaryQuality, 0),
-    ).summary;
+    const firstFinalizedSummary = requireRecord(mockCallArg(mockAuditSummaryQuality, 0)).summary;
     expect(expectCompactionResult(result).summary).toBe(firstFinalizedSummary);
     expect(consumeCompactionSafeguardCancellation(sessionManager)).toBeNull();
     expect(compactionLogger.warn.mock.calls.flat().join("\n")).toContain(
@@ -5082,7 +5080,7 @@ describe("compaction-safeguard recent-turn preservation", () => {
     mockSummarizeInStages
       .mockResolvedValueOnce(summaryResult(acceptedSummary))
       .mockResolvedValueOnce(summaryResult("invalid replacement"));
-    mockEvaluateJudgment.mockResolvedValueOnce({
+    mockEvaluateDecision.mockResolvedValueOnce({
       status: "ok",
       result: {
         model: "fixture",
@@ -5105,7 +5103,7 @@ describe("compaction-safeguard recent-turn preservation", () => {
         rubricVersion: "1",
         runtimeGeneration: "test-generation",
       },
-    } satisfies JudgmentOutcome);
+    } satisfies DecisionOutcome);
 
     const sessionManager = stubSessionManager();
     setCompactionSafeguardRuntime(sessionManager, {
@@ -5126,9 +5124,7 @@ describe("compaction-safeguard recent-turn preservation", () => {
 
     expect(result).not.toEqual({ cancel: true });
     expect(mockSummarizeInStages).toHaveBeenCalledTimes(2);
-    const firstFinalizedSummary = requireRecord(
-      mockCallArg(mockAuditSummaryQuality, 0),
-    ).summary;
+    const firstFinalizedSummary = requireRecord(mockCallArg(mockAuditSummaryQuality, 0)).summary;
     expect(expectCompactionResult(result).summary).toBe(firstFinalizedSummary);
     expect(compactionLogger.warn.mock.calls.flat().join("\n")).toContain(
       "semantic corrective retry did not produce a deterministic-valid replacement",
@@ -5153,13 +5149,13 @@ describe("compaction-safeguard recent-turn preservation", () => {
     mockSummarizeInStages.mockResolvedValueOnce(summaryResult(acceptedSummary));
 
     const controller = new AbortController();
-    let settleJudgment!: () => void;
+    let settleDecision!: () => void;
     const judgmentStarted = new Promise<void>((resolve) => {
-      mockEvaluateJudgment.mockImplementationOnce(async (_batch, options) => {
+      mockEvaluateDecision.mockImplementationOnce(async (_batch, options) => {
         resolve();
         await new Promise<void>((settle) => {
-          settleJudgment = settle;
-          options.signal?.addEventListener("abort", settle, { once: true });
+          settleDecision = settle;
+          options.signal?.addEventListener("abort", () => settle(), { once: true });
         });
         options.signal?.throwIfAborted();
         throw new Error("unreachable");
@@ -5185,7 +5181,7 @@ describe("compaction-safeguard recent-turn preservation", () => {
     const run = runCompactionScenario({ sessionManager, event, apiKey: "test-key" });
     await judgmentStarted;
     controller.abort();
-    settleJudgment?.();
+    settleDecision?.();
 
     await expect(run).rejects.toMatchObject({ name: "AbortError" });
     expect(mockSummarizeInStages).toHaveBeenCalledTimes(1);

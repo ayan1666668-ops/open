@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { JudgmentOutcome } from "../../judgments/types.js";
+import type { DecisionOutcome } from "../../decisions/types.js";
 import type { AgentMessage } from "../runtime/index.js";
 import { curateCompactionSummarizerInput } from "./compaction-input-curation.js";
 
@@ -36,10 +36,13 @@ describe("compaction input curation", () => {
 
   it("keeps eligible content when the judgment is unavailable", async () => {
     const output = "x".repeat(3_000);
-    const evaluate = vi.fn(async () => ({
-      status: "unavailable",
-      reason: "circuit-open",
-    }) satisfies JudgmentOutcome);
+    const evaluate = vi.fn(
+      async () =>
+        ({
+          status: "unavailable",
+          reason: "circuit-open",
+        }) satisfies DecisionOutcome,
+    );
 
     const result = await curateCompactionSummarizerInput(
       {
@@ -59,7 +62,7 @@ describe("compaction input curation", () => {
 
   it("replaces only strongly redundant tool output in the temporary view", async () => {
     const output = "test log\n".repeat(400);
-    const outcome: JudgmentOutcome = {
+    const outcome: DecisionOutcome = {
       status: "ok",
       result: {
         model: "fixture",
@@ -101,7 +104,7 @@ describe("compaction input curation", () => {
       {
         id: "tool-result-1",
         toolName: "exec",
-        text: output,
+        text: output.trim(),
       },
     ]);
     expect(result.messages).not.toBe(original);
@@ -109,8 +112,36 @@ describe("compaction input curation", () => {
       role: "toolResult",
       toolCallId: "call-1",
     });
-    expect(JSON.stringify(result.messages[0])).toContain("omitted from compaction summarizer input");
-    expect(JSON.stringify(original[0])).toContain(output.slice(0, 100));
+    expect(JSON.stringify(result.messages[0])).toContain(
+      "omitted from compaction summarizer input",
+    );
+    expect(original[0]).toMatchObject({
+      content: [{ type: "text", text: output }],
+    });
+  });
+
+  it("passes the compaction owner to the decision runtime", async () => {
+    const evaluate = vi.fn(
+      async () =>
+        ({
+          status: "unavailable",
+          reason: "not-configured",
+        }) satisfies DecisionOutcome,
+    );
+
+    await curateCompactionSummarizerInput(
+      {
+        messages: [toolResult("x".repeat(3_000))],
+        agentId: "specialist",
+        signal: new AbortController().signal,
+      },
+      evaluate,
+    );
+
+    expect(evaluate).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({ agentId: "specialist" }),
+    );
   });
 
   it("keeps oversized tool results when the judgment cannot inspect the whole output", async () => {
@@ -136,7 +167,7 @@ describe("compaction input curation", () => {
 
   it("keeps uncertain and low-probability results", async () => {
     const output = "x".repeat(3_000);
-    const outcome: JudgmentOutcome = {
+    const outcome: DecisionOutcome = {
       status: "ok",
       result: {
         model: "fixture",

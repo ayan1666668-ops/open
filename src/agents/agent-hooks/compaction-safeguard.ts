@@ -55,13 +55,8 @@ import {
   MAX_WORKSPACE_BOOTSTRAP_FILE_BYTES,
   readWorkspaceBootstrapFile,
 } from "../workspace-bootstrap-read.js";
-import { resolveCompactionInstructions } from "./compaction-instructions.js";
 import { curateCompactionSummarizerInput } from "./compaction-input-curation.js";
-import {
-  buildCompactionSemanticRepairEvidence,
-  isCompactionSemanticRepairFinding,
-  observeCompactionSemanticFidelity,
-} from "./compaction-semantic-fidelity.js";
+import { resolveCompactionInstructions } from "./compaction-instructions.js";
 import {
   appendSummarySection,
   auditSummaryQuality,
@@ -76,6 +71,11 @@ import {
   getCompactionSafeguardRuntime,
   setCompactionSafeguardCancellation,
 } from "./compaction-safeguard-runtime.js";
+import {
+  buildCompactionSemanticRepairEvidence,
+  isCompactionSemanticRepairFinding,
+  observeCompactionSemanticFidelity,
+} from "./compaction-semantic-fidelity.js";
 
 const log = createSubsystemLogger("compaction-safeguard");
 
@@ -1269,6 +1269,7 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
           !preservedTurnsSectionLocal.text.includes(requiredAskContext));
       messagesToSummarize = includePreservedContext ? messagesToSummarize : summaryTargetMessages;
       const uncuratedMessagesToSummarize = messagesToSummarize;
+      const semanticAgentId = ctx.sessionManager.getSessionTarget()?.agentId ?? runtime?.agentId;
       let omittedCurationEvidence: Array<{ id: string; text: string }> = [];
       let curationApplied = false;
       if (
@@ -1277,13 +1278,12 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
         runtime?.semanticJudgmentCurationEnabled
       ) {
         if (!signal) {
-          log.debug(
-            "Compaction safeguard: input curation skipped; reason=no-cancellation-signal",
-          );
+          log.debug("Compaction safeguard: input curation skipped; reason=no-cancellation-signal");
         } else {
           const curation = await curateCompactionSummarizerInput({
             messages: messagesToSummarize,
             unresolvedAsk: latestUnresolvedUserRequest ?? latestUserAsk,
+            agentId: semanticAgentId,
             signal,
           });
           messagesToSummarize = curation.messages;
@@ -1344,8 +1344,7 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
         });
         maxChunkTokens = Math.max(
           1,
-          Math.floor(contextWindowTokens * retryAdaptiveRatio) -
-            SUMMARIZATION_OVERHEAD_TOKENS,
+          Math.floor(contextWindowTokens * retryAdaptiveRatio) - SUMMARIZATION_OVERHEAD_TOKENS,
         );
         correctiveInstructions = reason;
       };
@@ -1478,6 +1477,7 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
                 sourceMessages: semanticSourceMessages,
                 retainedContext: finalized.summary,
                 additionalSourceItems: omittedCurationEvidence,
+                agentId: semanticAgentId,
                 signal,
               });
               if (observation.status === "ok") {
@@ -1518,8 +1518,7 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
                       "Semantic fidelity feedback",
                       repairEvidence,
                     );
-                    const budgetInstruction =
-                      `Keep the complete summary body within ${finalized.bodyBudget} UTF-16 code units so the finalized artifact remains valid after required suffixes.`;
+                    const budgetInstruction = `Keep the complete summary body within ${finalized.bodyBudget} UTF-16 code units so the finalized artifact remains valid after required suffixes.`;
                     semanticFallbackSummary = finalized.summary;
                     const semanticRepairInstructions = [
                       "Preserve the active meaning of the source requirements below. Do not mark them complete or superseded unless the retained conversation supports that conclusion.",
