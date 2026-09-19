@@ -106,7 +106,7 @@ export function resolveFeishuMessageDedupeKey(event: FeishuMessageDedupeInput): 
   if (mediaParts.length > 0) {
     return buildMediaDedupeKey(messageId, mediaParts);
   }
-  if (messageType === "text") {
+  if (messageType === "text" || messageType === "post") {
     return resolveTextRetryDedupeKey(event) ?? messageId;
   }
   return messageId;

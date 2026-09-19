@@ -22,6 +22,29 @@ function textEvent(overrides: {
   };
 }
 
+function postEvent(overrides: {
+  messageId: string;
+  createTime?: string;
+  senderOpenId?: string;
+  chatId?: string;
+  text?: string;
+}): FeishuMessageEvent {
+  return {
+    sender: { sender_id: { open_id: overrides.senderOpenId ?? "ou-user" } },
+    message: {
+      message_id: overrides.messageId,
+      chat_id: overrides.chatId ?? "oc-dm",
+      chat_type: "p2p",
+      message_type: "post",
+      content: JSON.stringify({
+        title: "",
+        content: [[{ tag: "text", text: overrides.text ?? "hello" }]],
+      }),
+      create_time: overrides.createTime,
+    },
+  };
+}
+
 describe("resolveFeishuMessageDedupeKey", () => {
   it("collapses redelivered text with a fresh message_id but identical sender/chat/create_time/content (#46778)", () => {
     const first = resolveFeishuMessageDedupeKey(
@@ -69,6 +92,33 @@ describe("resolveFeishuMessageDedupeKey", () => {
       textEvent({ messageId: "om_bad_time", createTime: "1710000000000ms" }),
     );
     expect(key).toBe("om_bad_time");
+  });
+
+  it("collapses redelivered attachment-free post with a fresh message_id (#152553)", () => {
+    const first = resolveFeishuMessageDedupeKey(
+      postEvent({ messageId: "om_first_post", createTime: "1710000000000" }),
+    );
+    const retry = resolveFeishuMessageDedupeKey(
+      postEvent({ messageId: "om_second_post", createTime: "1710000000000" }),
+    );
+    expect(first).toBeDefined();
+    expect(retry).toBe(first);
+    expect(first).not.toBe("om_first_post");
+  });
+
+  it("keeps genuine repeat attachment-free posts distinct via create_time", () => {
+    const a = resolveFeishuMessageDedupeKey(
+      postEvent({ messageId: "om_post_a", createTime: "1710000000000" }),
+    );
+    const b = resolveFeishuMessageDedupeKey(
+      postEvent({ messageId: "om_post_b", createTime: "1710000001000" }),
+    );
+    expect(a).not.toBe(b);
+  });
+
+  it("falls back to message_id for an attachment-free post without a stable retry anchor", () => {
+    const key = resolveFeishuMessageDedupeKey(postEvent({ messageId: "om_post_no_time" }));
+    expect(key).toBe("om_post_no_time");
   });
 
   it("keeps media keyed by message_id plus media key", () => {
