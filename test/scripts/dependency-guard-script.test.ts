@@ -12,10 +12,7 @@ import {
   dependencyFieldChanges,
   githubApi,
   isAutoscrubbedDependencyComment,
-  isDependencyFile,
   isDependencyGuardMarkerComment,
-  isDependencyManifest,
-  isPackageLockfile,
   isRemovalOnlyDependencyGraphChange,
   readBoundedGitHubErrorText,
   renderAutoscrubbedDependencyComment,
@@ -24,10 +21,12 @@ import {
   renderRemovalOnlyDependencyComment,
   shouldAutoscrubDependencyLockfiles,
 } from "../../scripts/github/dependency-guard.mjs";
+import { loadSecurityReviewPolicy } from "../../scripts/github/security-review-policy.mjs";
 import { useAutoCleanupTempDirTracker } from "../helpers/temp-dir.js";
 
 const headSha = "a".repeat(40);
 const staleSha = "b".repeat(40);
+const { isDependencyFile, isDependencyManifest, isPackageLockfile } = loadSecurityReviewPolicy();
 
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 const pullPath = "/repos/openclaw/openclaw/pulls/7";

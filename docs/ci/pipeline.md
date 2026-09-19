@@ -152,7 +152,7 @@ small set of security policy and enforcement files that require SecOps approval.
 | SecOps-owned files in `.github/CODEOWNERS` | Independent SecOps code-owner approval           | Independent SecOps code-owner approval                                                     |
 
 The **Security Sensitive Guard** publishes `openclaw/security-sensitive-review`.
-Its inventory in `scripts/github/security-sensitive-policy.mjs` covers Gateway
+Its inventory in `.github/security-review-policy.yml` covers Gateway
 authentication, pairing and permissions; credentials, secrets and redaction;
 sandbox and execution policies; product security checks; and `.gitignore`.
 Ordinary documentation, tests, and test support do not trigger this inventory.
@@ -162,6 +162,25 @@ remove its review requirement.
 The **Dependency Guard** publishes `openclaw/dependency-review` and retains its
 dependency classification and lockfile autoscrub behavior. Dependency removals
 that already qualify as informational remain informational.
+
+Edit `.github/security-review-policy.yml` to change path classification. Its
+`categories` group product paths with descriptions and review guidance;
+`exclude` names the product-only exclusions; and `dependencies` lists manifests,
+lockfiles, and other dependency files. Paths are quoted, repository-relative
+globs: `*` stays within a path segment, `**` crosses directories, and `{a,b}`
+matches either alternative. Hidden paths are included. Matching is
+case-sensitive unless an exclusion explicitly sets `case-insensitive: true`.
+Product exclusions never exempt dependency changes. The first matching product
+category supplies the notice's guidance; matches are not CODEOWNERS rules.
+
+The JavaScript loader handles validation and matching; it contains no path
+inventory. Invalid policy fails the guard with the head left pending. Both the
+YAML inventory and its loader require SecOps code-owner approval. Guard workflows
+load them from the trusted checkout and install only the locked parser/matcher
+runtime through `.github/actions/setup-security-review`, with lifecycle scripts
+and dependency caches disabled. That action's manifest and npm lock mirror the
+root dependency pins and `pnpm-lock.yaml`; update them together when those pins
+change. Approval decisions and dependency graph analysis remain in JavaScript.
 
 Both guards use current repository permissions. `write` access, organization
 membership, an approval comment, and a label do not grant maintainer authority.

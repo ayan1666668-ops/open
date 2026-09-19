@@ -20,6 +20,7 @@ import {
   readBoundedGitHubJson,
   sanitizeGuardDisplayValue,
 } from "./guard-shared.mjs";
+import { loadSecurityReviewPolicy } from "./security-review-policy.mjs";
 
 /** Marker used to identify dependency guard comments. */
 const dependencyChangeMarker = "<!-- openclaw:dependency-guard -->";
@@ -64,23 +65,6 @@ const dependencyManifestFields = [
  *   { kind: "failed", reason: string }} AutoscrubStatus
  */
 
-export function isDependencyFile(filename) {
-  return (
-    filename.endsWith("package-lock.json") ||
-    filename.endsWith("pnpm-lock.yaml") ||
-    filename === "pnpm-workspace.yaml" ||
-    filename.startsWith("patches/")
-  );
-}
-
-export function isDependencyManifest(filename) {
-  return filename.endsWith("package.json");
-}
-
-export function isPackageLockfile(filename) {
-  return filename.endsWith("pnpm-lock.yaml") || filename.endsWith("package-lock.json");
-}
-
 export function dependencyFieldChanges(baseManifest, headManifest) {
   const changes = [];
   for (const field of dependencyManifestFields) {
@@ -107,6 +91,7 @@ export function shouldAutoscrubDependencyLockfiles({
   lockfileChanges,
   dependencyManifestChanges = [],
 }) {
+  const { isPackageLockfile } = loadSecurityReviewPolicy();
   return (
     lockfileChanges.length > 0 &&
     dependencyManifestChanges.length === 0 &&
@@ -431,6 +416,7 @@ async function readBase64FileAtRef(api, { owner, repo, path, ref }) {
 }
 
 async function collectDependencyManifestChanges(api, { owner, repo, pullRequest, files }) {
+  const { isDependencyManifest } = loadSecurityReviewPolicy();
   const changes = [];
   for (const file of files) {
     const basePath = file.previous_filename ?? file.filename;
@@ -534,6 +520,7 @@ async function main() {
     return;
   }
   const { api, owner, repo, pullRequest, issuePath, files } = guard;
+  const { isDependencyFile, isDependencyManifest, isPackageLockfile } = loadSecurityReviewPolicy();
   const mode = process.env.OPENCLAW_DEPENDENCY_GUARD_MODE ?? "enforce";
   if (!["detect", "autoscrub", "enforce"].includes(mode)) {
     throw new Error(`Unknown dependency guard mode: ${mode}`);

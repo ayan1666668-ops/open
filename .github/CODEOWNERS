@@ -19,7 +19,9 @@
 /.github/workflows/security-review-events.yml @openclaw/openclaw-secops
 /scripts/github/dependency-guard.mjs @openclaw/openclaw-secops
 /scripts/github/security-sensitive-guard.mjs @openclaw/openclaw-secops
-/scripts/github/security-sensitive-policy.mjs @openclaw/openclaw-secops
+/.github/security-review-policy.yml @openclaw/openclaw-secops
+/.github/actions/setup-security-review/ @openclaw/openclaw-secops
+/scripts/github/security-review-policy.mjs @openclaw/openclaw-secops
 /scripts/github/guard-review.mjs @openclaw/openclaw-secops
 /scripts/github/guard-shared.mjs @openclaw/openclaw-secops
 /scripts/lib/bounded-response.mjs @openclaw/openclaw-secops

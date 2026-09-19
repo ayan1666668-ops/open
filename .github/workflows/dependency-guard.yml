@@ -39,6 +39,9 @@ jobs:
           ref: ${{ github.workflow_sha }}
           persist-credentials: false
 
+      - name: Setup trusted policy runtime
+        uses: ./.github/actions/setup-security-review
+
       - name: Detect dependency changes
         id: guard
         env:
@@ -62,6 +65,9 @@ jobs:
         with:
           ref: ${{ github.workflow_sha }}
           persist-credentials: false
+
+      - name: Setup trusted policy runtime
+        uses: ./.github/actions/setup-security-review
 
       - name: Create autoscrub app token
         id: app-token
@@ -106,6 +112,9 @@ jobs:
         with:
           ref: ${{ github.workflow_sha }}
           persist-credentials: false
+
+      - name: Setup trusted policy runtime
+        uses: ./.github/actions/setup-security-review
 
       - name: Enforce dependency guard
         env:

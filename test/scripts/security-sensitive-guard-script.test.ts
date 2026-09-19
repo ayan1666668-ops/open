@@ -1,8 +1,15 @@
 import { spawnSync } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { collectSecuritySensitiveChanges } from "../../scripts/github/security-sensitive-policy.mjs";
+import { loadSecurityReviewPolicy } from "../../scripts/github/security-review-policy.mjs";
 import { useAutoCleanupTempDirTracker } from "../helpers/temp-dir.js";
 
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
@@ -11,6 +18,7 @@ const author = { id: 1, login: "contributor", type: "User" };
 const reviewer = { id: 2, login: "maintainer", type: "User" };
 const pullPath = "/repos/openclaw/openclaw/pulls/7";
 const approval = { id: 1, user: reviewer, state: "APPROVED", commit_id: headSha };
+const { collectSecuritySensitiveChanges } = loadSecurityReviewPolicy();
 
 type Options = {
   authorRole?: string;
@@ -22,6 +30,8 @@ type Options = {
   event?: object;
   routes?: Record<string, unknown>;
   changedFiles?: number;
+  policy?: string;
+  script?: "security-sensitive-guard" | "dependency-guard";
 };
 
 function runGuard(options: Options = {}) {
@@ -56,13 +66,31 @@ function runGuard(options: Options = {}) {
   writeFileSync(eventPath, JSON.stringify(options.event ?? { pull_request: pr }));
   writeFileSync(fixturePath, JSON.stringify({ routes, logPath }));
   writeFileSync(logPath, "");
+  const script = options.script ?? "security-sensitive-guard";
+  let scriptPath = path.resolve(`scripts/github/${script}.mjs`);
+  if (options.policy !== undefined) {
+    // Exercise policy edits in a separate trusted checkout without modifying the
+    // shared source tree or adding a production-only-for-tests policy override.
+    for (const source of [
+      "scripts/github/security-sensitive-guard.mjs",
+      "scripts/github/dependency-guard.mjs",
+      "scripts/github/security-review-policy.mjs",
+      "scripts/github/guard-review.mjs",
+      "scripts/github/guard-shared.mjs",
+      "scripts/lib/bounded-response.mjs",
+    ]) {
+      const target = path.join(root, source);
+      mkdirSync(path.dirname(target), { recursive: true });
+      copyFileSync(source, target);
+    }
+    mkdirSync(path.join(root, ".github"));
+    writeFileSync(path.join(root, ".github/security-review-policy.yml"), options.policy);
+    symlinkSync(path.resolve("node_modules"), path.join(root, "node_modules"), "junction");
+    scriptPath = realpathSync(path.join(root, `scripts/github/${script}.mjs`));
+  }
   const result = spawnSync(
     process.execPath,
-    [
-      "--import",
-      path.resolve("test/fixtures/github-guard-fetch.mjs"),
-      "scripts/github/security-sensitive-guard.mjs",
-    ],
+    ["--import", path.resolve("test/fixtures/github-guard-fetch.mjs"), scriptPath],
     {
       encoding: "utf8",
       env: {
@@ -267,6 +295,45 @@ describe("security-sensitive guard entry point", () => {
     expect(result.statuses).toEqual(["pending", "success"]);
     expect(result.comment).toBeUndefined();
   });
+
+  describe("trusted YAML policy", () => {
+    const policy = `
+exclude: {}
+categories:
+  custom:
+    description: Custom protected responsibility.
+    review: Inspect this responsibility carefully.
+    paths: ["custom/product.ts"]
+dependencies:
+  manifests: ["**/package.json"]
+  lockfiles: ["**/pnpm-lock.yaml"]
+  other: ["custom/dependency-policy"]
+`;
+
+    it.each([
+      { script: "security-sensitive-guard" as const, filename: "custom/product.ts" },
+      { script: "dependency-guard" as const, filename: "custom/dependency-policy" },
+    ])(
+      "$script reads changed classification from YAML beside its checkout",
+      ({ script, filename }) => {
+        const result = runGuard({ script, policy, files: [{ filename }] });
+        expect(result.statuses).toEqual(["pending", "failure"]);
+        expect(result.comment).toContain("custom/");
+      },
+    );
+
+    it.each(["security-sensitive-guard", "dependency-guard"] as const)(
+      "%s cannot preserve an old success when YAML is invalid",
+      (script) => {
+        for (const invalidPolicy of ["categories: [", policy.replace("paths:", "pathz:")]) {
+          const result = runGuard({ script, policy: invalidPolicy });
+          expect(result.status).toBe(1);
+          expect(result.statuses).toEqual(["pending"]);
+          expect(result.stderr).toContain("Invalid security-review-policy.yml");
+        }
+      },
+    );
+  });
 });
 
 describe("sensitive change classification", () => {
@@ -285,6 +352,8 @@ describe("sensitive change classification", () => {
     "src/agents/agent-tools.policy.ts",
     "src/gateway/server/ws-connection/message-handler.ts",
     "src/secrets/resolve.ts",
+    "src/secrets/.hidden-store/key.ts",
+    "src/gateway/.internal/auth.ts",
     "src/agents/auth-profiles/store.ts",
     "src/agents/sandbox/docker.ts",
     "src/infra/exec-approvals.ts",
@@ -303,5 +372,20 @@ describe("sensitive change classification", () => {
       { filename: "docs/gateway/authentication.md" },
     ]);
     expect(changes.map((change) => change.path)).toEqual(["src/gateway/auth.ts"]);
+  });
+
+  it("preserves exclusion boundaries and case sensitivity", () => {
+    const changes = collectSecuritySensitiveChanges([
+      "src/secrets/nested/TEST/store.ts",
+      "src/secrets/store.MD",
+      "src/secrets/store.test.ts",
+      "src/secrets/nested-fixtures/store.ts",
+      "src/secrets/store.TEST.ts",
+      "src/secrets/fixtureless-store.ts",
+    ]);
+    expect(changes.map((change) => change.path)).toEqual([
+      "src/secrets/fixtureless-store.ts",
+      "src/secrets/store.TEST.ts",
+    ]);
   });
 });

@@ -3,7 +3,7 @@
 import { appendFile } from "node:fs/promises";
 import { finishGuard, openGuard } from "./guard-review.mjs";
 import { createIssueMutationHelpers, sanitizeGuardDisplayValue } from "./guard-shared.mjs";
-import { collectSecuritySensitiveChanges } from "./security-sensitive-policy.mjs";
+import { loadSecurityReviewPolicy } from "./security-review-policy.mjs";
 
 const marker = "<!-- openclaw:security-sensitive-guard -->";
 const changedLabel = "security-sensitive-changed";
@@ -68,6 +68,7 @@ async function main() {
     return;
   }
   const { api, owner, repo, issuePath, files, pullRequest } = guard;
+  const { collectSecuritySensitiveChanges } = loadSecurityReviewPolicy();
   const changes = collectSecuritySensitiveChanges(files);
   const [comments, labels] = await Promise.all([
     api.paginate(`${issuePath}/comments`),

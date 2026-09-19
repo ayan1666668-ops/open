@@ -114,6 +114,10 @@ additional security approval. Other authors, including bots, need a normal GitHu
 **Approve** review from a human with either role on the current PR head. A later
 push requires a fresh approval. Dependency changes use the same authority.
 
+The human-readable [security review policy](.github/security-review-policy.yml)
+lists sensitive product categories, review guidance, exclusions, and dependency
+paths. Changes to that inventory require SecOps approval.
+
 Security policy, CodeQL, and the security-review enforcement files listed in
 [CODEOWNERS](.github/CODEOWNERS) require an independent
 `@openclaw/openclaw-secops` approval, including on maintainer-authored PRs. A

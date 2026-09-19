@@ -35,6 +35,9 @@ jobs:
           ref: ${{ github.workflow_sha }}
           persist-credentials: false
 
+      - name: Setup trusted policy runtime
+        uses: ./.github/actions/setup-security-review
+
       - name: Review security-sensitive changes
         env:
           GITHUB_TOKEN: ${{ github.token }}
