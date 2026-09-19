@@ -1,7 +1,7 @@
 import { normalizeTrimmedStringList } from "@openclaw/normalization-core/string-normalization";
 import type { PluginManifestDefaultPlatform } from "./manifest-types.js";
 
-const MANIFEST_PLATFORMS = new Set<PluginManifestDefaultPlatform>([
+const MANIFEST_PLATFORMS: ReadonlySet<string> = new Set<PluginManifestDefaultPlatform>([
   "aix",
   "android",
   "darwin",
@@ -17,7 +17,6 @@ const MANIFEST_PLATFORMS = new Set<PluginManifestDefaultPlatform>([
 
 export function normalizeManifestPlatforms(value: unknown): PluginManifestDefaultPlatform[] {
   return normalizeTrimmedStringList(value).filter(
-    (platform): platform is PluginManifestDefaultPlatform =>
-      MANIFEST_PLATFORMS.has(platform as PluginManifestDefaultPlatform),
+    (platform): platform is PluginManifestDefaultPlatform => MANIFEST_PLATFORMS.has(platform),
   );
 }

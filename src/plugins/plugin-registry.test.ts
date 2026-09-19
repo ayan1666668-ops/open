@@ -11,7 +11,6 @@ import { recordPluginCandidateInstallOwner } from "./candidate-install-owner.js"
 import type { PluginCandidate } from "./discovery.js";
 import { writePersistedInstalledPluginIndex } from "./installed-plugin-index-store-write.js";
 import {
-  getInstalledPluginRecord,
   isInstalledPluginEnabled,
   resolveInstalledPluginIndexPolicyHash,
   type InstalledPluginIndex,
@@ -230,10 +229,13 @@ describe("plugin registry facade", () => {
     });
 
     expect(listPluginRecords({ index }).map((plugin) => plugin.pluginId)).toEqual(["demo"]);
-    expectPluginRecordFields(getInstalledPluginRecord(index, "demo"), {
-      pluginId: "demo",
-      enabled: true,
-    });
+    expectPluginRecordFields(
+      index.plugins.find((plugin) => plugin.pluginId === "demo"),
+      {
+        pluginId: "demo",
+        enabled: true,
+      },
+    );
     expect(isInstalledPluginEnabled(index, "demo")).toBe(true);
     expect(listPluginContributionIds({ index, contribution: "providers" })).toEqual(["demo"]);
     expect(listPluginContributionIds({ index, contribution: "modelCatalogProviders" })).toEqual([
@@ -282,10 +284,13 @@ describe("plugin registry facade", () => {
       preferPersisted: false,
     });
 
-    expectPluginRecordFields(getInstalledPluginRecord(index, "demo"), {
-      pluginId: "demo",
-      enabled: false,
-    });
+    expectPluginRecordFields(
+      index.plugins.find((plugin) => plugin.pluginId === "demo"),
+      {
+        pluginId: "demo",
+        enabled: false,
+      },
+    );
     const config = {
       plugins: {
         entries: {
@@ -319,10 +324,13 @@ describe("plugin registry facade", () => {
     const result = loadPluginRegistrySnapshotWithMetadata({ stateDir, config, env });
 
     expect(result.source).toBe("persisted");
-    expectPluginRecordFields(getInstalledPluginRecord(result.snapshot, "demo"), {
-      pluginId: "demo",
-      enabled: false,
-    });
+    expectPluginRecordFields(
+      result.snapshot.plugins.find((plugin) => plugin.pluginId === "demo"),
+      {
+        pluginId: "demo",
+        enabled: false,
+      },
+    );
   });
 
   it("preserves raw declarations and indexed owners without rereading manifests", () => {

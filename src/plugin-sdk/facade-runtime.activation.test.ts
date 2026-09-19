@@ -31,7 +31,7 @@ it.each(
         paddedId: false,
       },
       { defaults: "normalized IDs", manifest: { enabledByDefault: true }, paddedId: true },
-    ].map((fixture) => ({ ...fixture, kind, load })),
+    ].map(({ defaults, manifest, paddedId }) => ({ defaults, manifest, paddedId, kind, load })),
   ),
 )(
   "$kind activation with $defaults preserves policy errors, cached exports, and artifact failures",

@@ -865,6 +865,7 @@ src/plugins/manifest-metadata-scan.ts
 src/plugins/manifest-model-id-normalization.ts
 src/plugins/manifest-model-provider-normalizers.ts
 src/plugins/manifest-owner-policy.ts
+src/plugins/manifest-platforms.ts
 src/plugins/manifest-record.ts
 src/plugins/manifest-registry-installed.ts
 src/plugins/manifest-registry.ts
