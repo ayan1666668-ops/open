@@ -322,6 +322,33 @@ class ScreenTypographyLayoutTest {
     )
   }
 
+  @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+  @Test
+  fun appTextSizeReachesMaterialSheetWindow() {
+    model.setAppearanceTextScale(AppearanceTextScale.Largest)
+    showApp {
+      AppModalBottomSheet(
+        onDismissRequest = {},
+        sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor = ClawTheme.colors.surface,
+        contentColor = ClawTheme.colors.text,
+      ) {
+        androidx.compose.material3.Text("Native sheet scale")
+      }
+    }
+    val layouts = mutableListOf<TextLayoutResult>()
+    composeRule
+      .onNodeWithText("Native sheet scale", useUnmergedTree = true)
+      .performSemanticsAction(SemanticsActions.GetTextLayoutResult) { assertTrue(it(layouts)) }
+    assertEquals(
+      1.4f,
+      layouts
+        .single()
+        .layoutInput.density.fontScale,
+      0.001f,
+    )
+  }
+
   @Test
   fun providerPageKeepsHeadingHierarchyAndPhoneGutters() {
     show { ProvidersModelsScreen(model, onBack = {}) }

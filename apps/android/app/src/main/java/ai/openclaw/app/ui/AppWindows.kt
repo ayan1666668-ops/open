@@ -2,7 +2,10 @@ package ai.openclaw.app.ui
 
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.material3.AlertDialogDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MenuDefaults
+import androidx.compose.material3.ModalBottomSheetProperties
+import androidx.compose.material3.SheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Alignment
@@ -15,6 +18,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.PopupProperties
 import androidx.compose.material3.AlertDialog as PlatformAlertDialog
 import androidx.compose.material3.DropdownMenu as PlatformDropdownMenu
+import androidx.compose.material3.ModalBottomSheet as PlatformModalBottomSheet
 import androidx.compose.ui.window.Dialog as PlatformDialog
 import androidx.compose.ui.window.Popup as PlatformPopup
 
@@ -82,4 +86,28 @@ internal fun AppPopup(
 ) {
   val density = LocalDensity.current
   PlatformPopup(alignment, offset, onDismissRequest, properties, windowContent(density, content))
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun AppModalBottomSheet(
+  onDismissRequest: () -> Unit,
+  sheetState: SheetState,
+  containerColor: Color,
+  contentColor: Color,
+  modifier: Modifier = Modifier,
+  properties: ModalBottomSheetProperties = ModalBottomSheetProperties(),
+  content: @Composable ColumnScope.() -> Unit,
+) {
+  val density = LocalDensity.current
+  PlatformModalBottomSheet(
+    onDismissRequest = onDismissRequest,
+    sheetState = sheetState,
+    containerColor = containerColor,
+    contentColor = contentColor,
+    modifier = modifier,
+    properties = properties,
+  ) {
+    CompositionLocalProvider(LocalDensity provides density) { content() }
+  }
 }
