@@ -8,6 +8,8 @@ import { createAssistantMessageEventStream, type Model } from "openclaw/plugin-s
 import { createRequireRecord } from "openclaw/plugin-sdk/test-fixtures";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../../config/config.js";
+import * as judgmentRuntimeModule from "../../judgments/runtime.js";
+import type { JudgmentOutcome } from "../../judgments/types.js";
 import type { CompactionProvider } from "../../plugins/compaction-provider.js";
 import {
   requireActivePluginRegistry,
@@ -48,6 +50,13 @@ const { compactionLogger } = vi.hoisted(() => {
   return { compactionLogger: logger };
 });
 
+vi.mock("../../judgments/runtime.js", async () => {
+  const actual = await vi.importActual<typeof import("../../judgments/runtime.js")>(
+    "../../judgments/runtime.js",
+  );
+  return { ...actual, evaluateJudgment: vi.fn(actual.evaluateJudgment) };
+});
+
 vi.mock("../../logging/subsystem.js", async () => {
   const actual = await vi.importActual<typeof import("../../logging/subsystem.js")>(
     "../../logging/subsystem.js",
@@ -84,6 +93,10 @@ const mockSummarizeInStages = vi.mocked(compactionModule.summarizeInStages);
 const mockCurateCompactionSummarizerInput = vi.mocked(
   compactionInputCurationModule.curateCompactionSummarizerInput,
 );
+const mockEvaluateJudgment = vi.mocked(judgmentRuntimeModule.evaluateJudgment);
+const actualCompactionInputCurationModule = await vi.importActual<
+  typeof compactionInputCurationModule
+>("./compaction-input-curation.js");
 const actualCompactionModule = await vi.importActual<typeof compactionModule>("../compaction.js");
 const actualCompactionQualityModule = await vi.importActual<typeof compactionQualityModule>(
   "./compaction-safeguard-quality.js",
@@ -149,9 +162,10 @@ beforeEach(() => {
   mockAuditSummaryQuality.mockImplementation(actualCompactionQualityModule.auditSummaryQuality);
   mockAuditSummaryQuality.mockClear();
   mockCurateCompactionSummarizerInput.mockImplementation(
-    compactionInputCurationModule.curateCompactionSummarizerInput,
+    actualCompactionInputCurationModule.curateCompactionSummarizerInput,
   );
   mockCurateCompactionSummarizerInput.mockClear();
+  mockEvaluateJudgment.mockReset();
   compactionLogger.warn.mockClear();
 });
 
