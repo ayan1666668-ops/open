@@ -2,9 +2,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
-import type { JudgmentOutcome } from "../src/judgments/types.js";
-import { estimateMessagesTokens } from "../src/agents/compaction-planning.js";
 import { curateCompactionSummarizerInput } from "../src/agents/agent-hooks/compaction-input-curation.js";
+import { estimateMessagesTokens } from "../src/agents/compaction-planning.js";
+import type { JudgmentOutcome } from "../src/judgments/types.js";
 import {
   COMPACTION_CURATION_CALIBRATION_CASES,
   type CompactionCurationCalibrationCase,
@@ -39,7 +39,12 @@ function summarize(values: number[]): NumericSummary {
   };
 }
 
-function parseInteger(raw: string | undefined, fallback: number, label: string, min: number): number {
+function parseInteger(
+  raw: string | undefined,
+  fallback: number,
+  label: string,
+  min: number,
+): number {
   if (raw === undefined) {
     return fallback;
   }
@@ -55,7 +60,9 @@ function buildFixtureOutcome(
   questionIds: string[],
 ): JudgmentOutcome {
   if (!calibrationCase.expectedChoice || calibrationCase.expectedProbability === undefined) {
-    throw new Error(`Calibration case ${calibrationCase.id} unexpectedly reached judgment evaluation`);
+    throw new Error(
+      `Calibration case ${calibrationCase.id} unexpectedly reached judgment evaluation`,
+    );
   }
   const choice = calibrationCase.expectedChoice;
   const probability = calibrationCase.expectedProbability;
@@ -243,7 +250,9 @@ function printReport(report: Awaited<ReturnType<typeof runCompactionCurationCali
   console.log(
     `Estimated summarizer input tokens: ${report.aggregate.originalTokens} -> ${report.aggregate.curatedTokens} (${report.aggregate.tokenSavingsPct}% reduction across corpus)`,
   );
-  console.log("Note: token counts use OpenClaw's compaction planning estimator; timings use fixture judgments.");
+  console.log(
+    "Note: token counts use OpenClaw's compaction planning estimator; timings use fixture judgments.",
+  );
   console.log("");
   for (const entry of report.cases) {
     console.log(

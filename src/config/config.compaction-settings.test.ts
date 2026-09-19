@@ -62,9 +62,7 @@ describe("config compaction settings", () => {
     ["object-enabled-curation", { enabled: true, curateInput: true }],
   ] as const)("preserves semanticJudgments compatibility form: %s", (_label, semanticJudgments) => {
     const compaction = materializeCompactionConfig({
-      qualityGuard: {
-        ...(semanticJudgments === undefined ? {} : { semanticJudgments }),
-      },
+      qualityGuard: semanticJudgments === undefined ? {} : { semanticJudgments },
     });
 
     expect(compaction?.qualityGuard?.semanticJudgments).toEqual(semanticJudgments);

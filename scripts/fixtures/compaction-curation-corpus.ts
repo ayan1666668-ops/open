@@ -144,7 +144,8 @@ export const COMPACTION_CURATION_CALIBRATION_CASES: readonly CompactionCurationC
   },
   {
     id: "repeated-directory-listing",
-    description: "A large directory listing is redundant after a later summary preserves its useful state.",
+    description:
+      "A large directory listing is redundant after a later summary preserves its useful state.",
     unresolvedAsk: "Confirm the generated files exist.",
     messages: [
       toolCall("exec", "call-list", 1),

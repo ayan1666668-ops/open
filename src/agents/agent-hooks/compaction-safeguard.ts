@@ -25,10 +25,8 @@ import {
   getCompactionProvider,
   type CompactionProvider,
 } from "../../plugins/compaction-provider.js";
-import { normalizeAcceptedSessionSpawnResult } from "../accepted-session-spawn.js";
 import { computeAdaptiveChunkRatioWithWorker } from "../compaction-planning-worker.js";
 import { buildHistoryPrunePlan } from "../compaction-planning.js";
-import { isRealConversationMessage } from "../compaction-real-conversation.js";
 import {
   BASE_CHUNK_RATIO,
   MIN_CHUNK_RATIO,
@@ -38,17 +36,11 @@ import {
   resolveContextWindowTokens,
   summarizeInStages,
 } from "../compaction.js";
-import { collectTextContentBlocks } from "../content-blocks.js";
-import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "../copilot-dynamic-headers.js";
 import { stripRuntimeContextCustomMessages } from "../internal-runtime-context.js";
-import {
-  buildSessionContext as buildCoreSessionContext,
-  type AgentMessage,
-  type SessionTreeEntry as CoreSessionTreeEntry,
-} from "../runtime/index.js";
+import type { AgentMessage } from "../runtime/index.js";
 import { repairToolUseResultPairing } from "../session-transcript-repair.js";
 import type { SessionModelUsageSink } from "../sessions/compaction/runtime.js";
-import type { ExtensionAPI, ExtensionContext } from "../sessions/index.js";
+import type { ExtensionAPI } from "../sessions/index.js";
 import { recordSessionModelUsage } from "../sessions/session-model-usage.js";
 import { extractToolCallsFromAssistant, extractToolResultId } from "../tool-call-id.js";
 import {
@@ -57,6 +49,13 @@ import {
 } from "../workspace-bootstrap-read.js";
 import { curateCompactionSummarizerInput } from "./compaction-input-curation.js";
 import { resolveCompactionInstructions } from "./compaction-instructions.js";
+import {
+  buildCompactionSummaryHeaders,
+  clampNonNegativeInt,
+  resolveModelAuth,
+  resolveQualityGuardMaxRetries,
+  resolveRecentTurnsPreserve,
+} from "./compaction-safeguard-model-runtime.js";
 import {
   appendSummarySection,
   auditSummaryQuality,
@@ -72,6 +71,15 @@ import {
   setCompactionSafeguardCancellation,
 } from "./compaction-safeguard-runtime.js";
 import {
+  collectPreparationRangeMessages,
+  collectSessionContextMessages,
+  containsRealConversation,
+} from "./compaction-safeguard-session-context.js";
+import {
+  collectToolFailures,
+  formatToolFailuresSection,
+} from "./compaction-safeguard-tool-failures.js";
+import {
   buildCompactionSemanticRepairEvidence,
   isCompactionSemanticRepairFinding,
   observeCompactionSemanticFidelity,
@@ -82,18 +90,13 @@ const log = createSubsystemLogger("compaction-safeguard");
 // Track session managers that have already logged the missing-model warning to avoid log spam.
 const missedModelWarningSessions = new WeakSet<object>();
 const SPLIT_TURN_SECTION_HEADING = "**Turn Context (split turn):**";
-const MAX_TOOL_FAILURES = 8;
-const MAX_TOOL_FAILURE_CHARS = 240;
 const CONTEXT_TRUNCATED_MARKER = "\n\n[Earlier compaction context truncated to fit budget]\n\n";
 // Split-turn context supplements the generated summary and must not claim its
 // guaranteed half of the final artifact before common finalization runs.
 const MAX_SPLIT_TURN_CONTEXT_CHARS = Math.floor(MAX_COMPACTION_SUMMARY_CHARS / 2);
 const SPLIT_TURN_TRUNCATED_MARKER = "[Earlier split-turn messages truncated]\n";
 const PRESERVED_TURNS_TRUNCATED_MARKER = "[Earlier preserved messages truncated]\n";
-const DEFAULT_RECENT_TURNS_PRESERVE = 3;
-const DEFAULT_QUALITY_GUARD_MAX_RETRIES = 1;
 const MAX_RECENT_TURNS_PRESERVE = 12;
-const MAX_QUALITY_GUARD_MAX_RETRIES = 3;
 const MAX_RECENT_TURN_TEXT_CHARS = 600;
 const MAX_REQUIRED_ASK_CONTEXT_CHARS = 2_000;
 const REQUIRED_ASK_CONTEXT_TRUNCATED_MARKER = "\n[... split-turn ask context truncated ...]\n";
@@ -146,58 +149,6 @@ function normalizeLegacySplitTurnSummary(summary: string | undefined): string | 
   // Shipped safeguard summaries nested a second complete summary after this owned boundary.
   // Demote its headings only in the next model input; the persisted old boundary stays untouched.
   return `${summary.slice(0, splitTurnContentStart)}${nestRequiredSummaryHeadings(summary.slice(splitTurnContentStart))}`;
-}
-
-/**
- * Messages the model currently sees: the last reset/compaction boundary's kept
- * tail plus everything after it. Never the raw branch — that re-reads history
- * behind every boundary and turns one compaction into dozens of model calls.
- */
-function collectSessionContextMessages(sessionManager: unknown): AgentMessage[] {
-  return projectBranchEntries(readSessionBranch(sessionManager));
-}
-
-/**
- * The boundary-scoped range a preparation was meant to cover: everything the
- * current context holds before its kept tail, minus the prior summary message
- * (that is re-distilled separately). Bounded by construction — it can never
- * reach behind the last reset/compaction boundary.
- */
-function collectPreparationRangeMessages(
-  sessionManager: unknown,
-  firstKeptEntryId: string,
-): AgentMessage[] {
-  const entries = readSessionBranch(sessionManager);
-  const firstKeptIndex = entries.findIndex((entry) => entry.id === firstKeptEntryId);
-  if (firstKeptIndex < 0) {
-    return [];
-  }
-  return projectBranchEntries(entries.slice(0, firstKeptIndex)).filter(
-    (message) => message.role !== "compactionSummary",
-  );
-}
-
-function readSessionBranch(sessionManager: unknown): CoreSessionTreeEntry[] {
-  try {
-    const entries: unknown = (sessionManager as { getBranch?: () => unknown })?.getBranch?.();
-    return Array.isArray(entries) ? (entries as CoreSessionTreeEntry[]) : [];
-  } catch {
-    return [];
-  }
-}
-
-function projectBranchEntries(entries: CoreSessionTreeEntry[]): AgentMessage[] {
-  try {
-    return buildCoreSessionContext(entries).messages as AgentMessage[];
-  } catch {
-    return [];
-  }
-}
-
-function containsRealConversation(messages: AgentMessage[]): boolean {
-  return messages.some((message, index, allMessages) =>
-    isRealConversationMessage(message, allMessages, index),
-  );
 }
 
 /**
@@ -283,195 +234,6 @@ function assembleSuffix(parts: {
     }
   }
   return { text, contextRanges };
-}
-
-type ToolFailure = {
-  toolCallId: string;
-  toolName: string;
-  summary: string;
-  meta?: string;
-};
-
-type ModelRegistryWithRequestAuthLookup = {
-  getApiKeyAndHeaders?: (
-    model: NonNullable<ExtensionContext["model"]>,
-  ) => Promise<ResolvedRequestAuth>;
-};
-
-type ResolvedRequestAuth =
-  | {
-      ok: true;
-      apiKey?: string;
-      headers?: Record<string, string>;
-    }
-  | {
-      ok: false;
-      error: string;
-    };
-
-/**
- * Resolve model credentials. Returns auth details on success or a cancel reason on failure.
- * Extracted to keep the main handler readable when model/auth is conditional.
- */
-async function resolveModelAuth(
-  ctx: ExtensionContext,
-  model: NonNullable<ExtensionContext["model"]>,
-): Promise<
-  { ok: true; apiKey?: string; headers?: Record<string, string> } | { ok: false; reason: string }
-> {
-  let requestAuth: ResolvedRequestAuth;
-  try {
-    const modelRegistry = ctx.modelRegistry as ModelRegistryWithRequestAuthLookup;
-    if (typeof modelRegistry.getApiKeyAndHeaders !== "function") {
-      throw new Error("model registry auth lookup unavailable");
-    }
-    requestAuth = await modelRegistry.getApiKeyAndHeaders(model);
-  } catch (err) {
-    const error = formatErrorMessage(err);
-    log.warn(
-      `Compaction safeguard: request credentials unavailable; cancelling compaction. ${error}`,
-    );
-    return {
-      ok: false,
-      reason: `Compaction safeguard could not resolve request credentials for ${model.provider}/${model.id}: ${error}`,
-    };
-  }
-  if (!requestAuth.ok) {
-    log.warn(
-      `Compaction safeguard: request credential resolution failed for ${model.provider}/${model.id}: ${requestAuth.error}`,
-    );
-    return {
-      ok: false,
-      reason: `Compaction safeguard could not resolve request credentials for ${model.provider}/${model.id}: ${requestAuth.error}`,
-    };
-  }
-  // `ok: true` is the registry's authoritative success signal; it already returns
-  // `ok: false` when auth cannot resolve. Do not re-derive failure from absent
-  // key/headers. SDK-managed modes (aws-sdk, oauth) sign the request later and
-  // legitimately carry neither, so gating on them wedges compaction forever.
-  return { ok: true, apiKey: requestAuth.apiKey, headers: requestAuth.headers };
-}
-
-function buildCompactionSummaryHeaders(params: {
-  model: NonNullable<ExtensionContext["model"]>;
-  messages: AgentMessage[];
-  headers?: Record<string, string>;
-}): Record<string, string> | undefined {
-  if (params.model.provider !== "github-copilot") {
-    return params.headers;
-  }
-  const messages = params.messages as unknown as Parameters<
-    typeof buildCopilotDynamicHeaders
-  >[0]["messages"];
-  return {
-    ...buildCopilotDynamicHeaders({
-      messages,
-      hasImages: hasCopilotVisionInput(messages),
-    }),
-    ...params.headers,
-  };
-}
-
-function clampNonNegativeInt(
-  value: unknown,
-  fallback: number,
-  max = Number.POSITIVE_INFINITY,
-): number {
-  const normalized = typeof value === "number" && Number.isFinite(value) ? value : fallback;
-  return Math.min(max, Math.max(0, Math.floor(normalized)));
-}
-
-function resolveRecentTurnsPreserve(value: unknown): number {
-  return clampNonNegativeInt(value, DEFAULT_RECENT_TURNS_PRESERVE, MAX_RECENT_TURNS_PRESERVE);
-}
-
-function resolveQualityGuardMaxRetries(value: unknown): number {
-  return clampNonNegativeInt(
-    value,
-    DEFAULT_QUALITY_GUARD_MAX_RETRIES,
-    MAX_QUALITY_GUARD_MAX_RETRIES,
-  );
-}
-
-function formatToolFailureMeta(details: unknown): string | undefined {
-  if (!details || typeof details !== "object") {
-    return undefined;
-  }
-  const record = details as Record<string, unknown>;
-  return (
-    [
-      typeof record.status === "string" && record.status ? `status=${record.status}` : "",
-      typeof record.exitCode === "number" && Number.isFinite(record.exitCode)
-        ? `exitCode=${record.exitCode}`
-        : "",
-    ]
-      .filter(Boolean)
-      .join(" ") || undefined
-  );
-}
-
-function collectToolFailures(messages: AgentMessage[]): ToolFailure[] {
-  const failures: ToolFailure[] = [];
-  const seen = new Set<string>();
-
-  for (const message of messages) {
-    if (message.role !== "toolResult" || !message.isError) {
-      continue;
-    }
-    const toolResult = message as {
-      toolCallId?: unknown;
-      toolName?: unknown;
-      content?: unknown;
-      details?: unknown;
-      isError?: unknown;
-    };
-    // Accepted sessions_spawn launches are successes, not failures, even when a legacy
-    // transcript persisted them with isError:true. Mirror the observer's detection
-    // (toolName + accepted child-run identity, see embedded-agent-subscribe.handlers.tools)
-    // so only real failures stay in the summary and non-spawn tools are never matched by shape.
-    if (
-      typeof toolResult.toolName === "string" &&
-      toolResult.toolName.trim() === "sessions_spawn" &&
-      normalizeAcceptedSessionSpawnResult(toolResult)
-    ) {
-      continue;
-    }
-    const toolCallId = typeof toolResult.toolCallId === "string" ? toolResult.toolCallId : "";
-    if (!toolCallId || seen.has(toolCallId)) {
-      continue;
-    }
-    seen.add(toolCallId);
-
-    const toolName =
-      typeof toolResult.toolName === "string" && toolResult.toolName.trim()
-        ? toolResult.toolName
-        : "tool";
-    const meta = formatToolFailureMeta(toolResult.details);
-    const failureText =
-      collectTextContentBlocks(toolResult.content).join("\n").replace(/\s+/g, " ").trim() ||
-      (meta ? "failed" : "failed (no output)");
-    const summary =
-      failureText.length > MAX_TOOL_FAILURE_CHARS
-        ? `${truncateUtf16Safe(failureText, MAX_TOOL_FAILURE_CHARS - 3)}...`
-        : failureText;
-    failures.push({ toolCallId, toolName, summary, meta });
-  }
-
-  return failures;
-}
-
-function formatToolFailuresSection(failures: ToolFailure[]): string {
-  if (failures.length === 0) {
-    return "";
-  }
-  const lines = failures.slice(0, MAX_TOOL_FAILURES).map((failure) => {
-    const meta = failure.meta ? ` (${failure.meta})` : "";
-    return `- ${failure.toolName}${meta}: ${failure.summary}`;
-  });
-  if (failures.length > MAX_TOOL_FAILURES) {
-    lines.push(`- ...and ${failures.length - MAX_TOOL_FAILURES} more`);
-  }
-  return `\n\n## Tool Failures\n${lines.join("\n")}`;
 }
 
 function normalizeCompactionSuffix(suffix: string | CompactionSuffix): CompactionSuffix {

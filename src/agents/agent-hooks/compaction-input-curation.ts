@@ -15,7 +15,7 @@ const TIMEOUT_MS = 1_000;
 
 type EvaluateDecision = typeof evaluateDecision;
 
-export type CompactionInputCurationEvidence = {
+type CompactionInputCurationEvidence = {
   id: string;
   toolName: string;
   text: string;
