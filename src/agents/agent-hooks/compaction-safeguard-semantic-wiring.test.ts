@@ -1,27 +1,17 @@
 import type { AgentMessage } from "openclaw/plugin-sdk/agent-core";
 import type { ExtensionAPI, ExtensionContext } from "openclaw/plugin-sdk/agent-sessions";
 import type { Model } from "openclaw/plugin-sdk/llm";
-import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
-import {
-  clearRuntimeConfigSnapshot,
-  setRuntimeConfigSnapshot,
-  type OpenClawConfig,
-} from "../../config/config.js";
-import { prepareJudgmentProviderReload } from "../../judgments/runtime.js";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CompactionProvider } from "../../plugins/compaction-provider.js";
-import { runPluginRegisterSyncInRegistry } from "../../plugins/loader-module-runtime.js";
-import { createPluginRecord } from "../../plugins/loader-records.js";
-import { getPluginInstance } from "../../plugins/plugin-instance-scope.js";
-import { createTestPluginRegistry } from "../../plugins/registry-runtime.test-helpers.js";
 import {
   resetPluginRuntimeStateForTest,
-  setActivePluginRegistry,
   requireActivePluginRegistry,
 } from "../../plugins/runtime.js";
 import type { summarizeInStages } from "../compaction.js";
 import { castAgentMessage } from "../test-helpers/agent-message-fixtures.js";
 import { timestampedTextAssistant } from "../test-helpers/sparse-transcript.test-support.js";
 import { setCompactionSafeguardRuntime } from "./compaction-safeguard-runtime.js";
+import { installDecisionFixture } from "./compaction-safeguard-semantic.test-support.js";
 import compactionSafeguardExtension from "./compaction-safeguard.js";
 import { testing } from "./compaction-safeguard.test-support.js";
 
@@ -63,11 +53,19 @@ function installCompactionProviderForTest(provider: CompactionProvider): void {
   requireActivePluginRegistry().compactionProviders.push({ provider });
 }
 
-function stubSessionManager(): ExtensionContext["sessionManager"] {
+function stubSessionManager(agentId?: string): ExtensionContext["sessionManager"] {
   const stub: ExtensionContext["sessionManager"] = {
     getCwd: () => "/stub",
     getSessionId: () => "stub-id",
-    getSessionTarget: () => undefined,
+    getSessionTarget: () =>
+      agentId
+        ? {
+            agentId,
+            sessionId: "stub-id",
+            sessionKey: `agent:${agentId}:stub`,
+            storePath: "/stub/sessions",
+          }
+        : undefined,
     getLeafId: () => null,
     getAppendParentId: () => null,
     getAppendMode: () => undefined,
@@ -185,69 +183,21 @@ async function runCompactionScenario(params: {
 }
 
 describe("compaction semantic observer wiring", () => {
-  it.each([false, true])(
-    "records shadow observations without changing the summary (registered provider=%s)",
-    async (registeredProvider) => {
-      const config: OpenClawConfig = { judgments: { provider: "semantic-fixture" } };
-      const builder = createTestPluginRegistry();
-      const record = createPluginRecord({
-        id: "semantic-fixture-owner",
-        source: "/synthetic/semantic-fixture.ts",
-        origin: "global",
-        enabled: true,
-        configSchema: false,
-        contracts: { judgmentProviders: ["semantic-fixture"] },
-      });
-      const api = builder.createApi(record, { config });
-      runPluginRegisterSyncInRegistry(
-        (registration) => {
-          registration.registerJudgmentProvider({
-            id: "semantic-fixture",
-            contractVersion: 1,
-            async evaluate(batch) {
-              return {
-                status: "ok",
-                result: {
-                  model: "deterministic-fixture",
-                  answers: Object.fromEntries(
-                    Object.entries(batch.questions).map(([id, question]) => {
-                      if (question.type !== "choice") {
-                        throw new Error("Expected choice question");
-                      }
-                      const choice = "drop" in question.criteria ? "drop" : "preserved";
-                      return [
-                        id,
-                        {
-                          type: "choice",
-                          choice,
-                          probabilities: Object.fromEntries(
-                            Object.keys(question.criteria).map((label) => [
-                              label,
-                              label === choice ? 1 : 0,
-                            ]),
-                          ),
-                        },
-                      ];
-                    }),
-                  ),
-                },
-              };
-            },
-          });
-        },
-        api,
-        builder.registry,
-        record.id,
-      );
-      builder.registry.plugins.push(record);
-      setActivePluginRegistry(builder.registry);
-      setRuntimeConfigSnapshot(config);
-      onTestFinished(async () => {
-        clearRuntimeConfigSnapshot();
-        prepareJudgmentProviderReload(builder.registry, new Set([record.id]));
-        await getPluginInstance(record)?.dispose();
-      });
-
+  it.each(
+    [false, true].flatMap((registeredProvider) =>
+      [
+        { agentId: undefined, persisted: false },
+        { agentId: "inherited", persisted: true },
+        { agentId: "specialist", persisted: true },
+        { agentId: "disabled", persisted: true },
+        { agentId: "specialist", persisted: false },
+        { agentId: "disabled", persisted: false },
+      ].map((scope) => ({ registeredProvider, ...scope })),
+    ),
+  )(
+    "preserves output and owner decisions (registered provider=$registeredProvider, agent=$agentId, persisted=$persisted)",
+    async ({ registeredProvider, agentId, persisted }) => {
+      const { config, builder, requests } = installDecisionFixture();
       mockSummarizeInStages.mockReset();
       mockSummarizeInStages.mockResolvedValue("The report remains pending.");
       if (registeredProvider) {
@@ -257,8 +207,9 @@ describe("compaction semantic observer wiring", () => {
           summarize: async () => "The report remains pending.",
         });
       }
-      const sessionManager = stubSessionManager();
+      const sessionManager = stubSessionManager(persisted ? agentId : undefined);
       const settings = {
+        agentId: persisted ? "ambient" : agentId,
         model: createAnthropicModelFixture(),
         recentTurnsPreserve: 0,
         ...(registeredProvider ? { provider: "summary-fixture" } : {}),
@@ -280,7 +231,7 @@ describe("compaction semantic observer wiring", () => {
         event: preparedEvent,
         apiKey: "test-key",
       });
-      expect(builder.registry.judgmentProviders[0]?.host.inspect(config).successCount).toBe(0);
+      expect(builder.registry.decisionProviders[0]?.host.inspect(config).successCount).toBe(0);
       setCompactionSafeguardRuntime(sessionManager, {
         ...settings,
         semanticCurationMode: "shadow",
@@ -295,14 +246,27 @@ describe("compaction semantic observer wiring", () => {
       expect(observed.result).toEqual(baseline.result);
       expect(event.preparation.messagesToSummarize).toEqual(sourceBefore);
       expect(compactionLogger.info).toHaveBeenCalledWith(
-        expect.stringContaining("Compaction semantic shadow:"),
+        expect.stringContaining(
+          `Compaction semantic shadow${agentId === "disabled" ? " unavailable" : ""}:`,
+        ),
       );
       expect(compactionLogger.info).toHaveBeenCalledWith(
-        expect.stringContaining("Compaction semantic fidelity:"),
+        expect.stringContaining(
+          `Compaction semantic fidelity${agentId === "disabled" ? " unavailable" : ""}:`,
+        ),
       );
-      expect(builder.registry.judgmentProviders[0]?.host.inspect(config)).toMatchObject({
-        consumerOutcomes: { accepted: 1, fallback: 0, "no-change": 1 },
+      expect(builder.registry.decisionProviders[0]?.host.inspect(config)).toMatchObject({
+        successCount: agentId === "disabled" ? 0 : 2,
+        activeRequests: 0,
       });
+      expect(requests).toEqual(
+        agentId === "disabled"
+          ? []
+          : Array.from({ length: 2 }, () => ({
+              agentId,
+              model: agentId === "specialist" ? "owner-v1" : "default-v1",
+            })),
+      );
       expect(compactionLogger.warn).not.toHaveBeenCalledWith(
         expect.stringContaining("semantic observation failed"),
       );
