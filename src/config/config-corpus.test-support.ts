@@ -13,6 +13,63 @@ export function listConfigCorpusFixtureNames(): string[] {
   ].toSorted();
 }
 
+function readOperatorContainer() {
+  const config: typeof operatorContainer = JSON.parse(
+    fs.readFileSync(path.join(corpusDir, "operator-container.json"), "utf8"),
+  );
+  config.skills.entries = Object.fromEntries(
+    [
+      "1password",
+      "apple-notes",
+      "apple-reminders",
+      "bear-notes",
+      "blogwatcher",
+      "blucli",
+      "bluebubbles",
+      "camsnap",
+      "clawhub",
+      "coding-agent",
+      "discord",
+      "eightctl",
+      "gemini",
+      "gifgrep",
+      "gog",
+      "goplaces",
+      "himalaya",
+      "imsg",
+      "mcporter",
+      "model-usage",
+      "nano-pdf",
+      "notion",
+      "obsidian",
+      "openai-whisper",
+      "openai-whisper-api",
+      "openhue",
+      "oracle",
+      "ordercli",
+      "peekaboo",
+      "sag",
+      "session-logs",
+      "sherpa-onnx-tts",
+      "slack",
+      "songsee",
+      "sonoscli",
+      "spotify-player",
+      "things-mac",
+      "trello",
+      "video-frames",
+      "voice-call",
+      "wacli",
+      "xurl",
+      "gh-issues",
+      "github",
+      "summarize",
+      "tmux",
+    ].map((name) => [name, { enabled: false }]),
+  );
+  return config;
+}
+
 function readPeanuttoFixture(): string {
   const config: typeof peanutto = JSON.parse(
     fs.readFileSync(path.join(corpusDir, "peanutto.json"), "utf8"),
@@ -53,15 +110,16 @@ function readPeanuttoFixture(): string {
 }
 
 export function readConfigCorpusFixture(name: string): string {
+  if (name === "operator-container.json") {
+    return `${JSON.stringify(readOperatorContainer(), null, 2)}\n`;
+  }
   if (name === "peanutto.json") {
     return readPeanuttoFixture();
   }
   if (name !== "hamverbot.json") {
     return fs.readFileSync(path.join(corpusDir, name), "utf8");
   }
-  const config: typeof operatorContainer = JSON.parse(
-    fs.readFileSync(path.join(corpusDir, "operator-container.json"), "utf8"),
-  );
+  const config = readOperatorContainer();
   config.env.vars.BH_CONFIG_DIR = "/home/fixture/path0-0/path1-0/path2-0/path3-0";
   const models = config.agents.defaults.models;
   models["openai/gpt-5.4-nano"].alias = "fixture-13";
