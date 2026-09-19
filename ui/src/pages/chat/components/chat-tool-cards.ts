@@ -93,7 +93,7 @@ export function renderBrowserTabPreviews(
         }),
       ];
     })
-    .reverse();
+    .toReversed();
 }
 
 export function shouldToggleSelectableDisclosure(event: MouseEvent): boolean {
