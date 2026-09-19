@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import type { JudgmentOutcome } from "../src/judgments/types.js";
 import { estimateMessagesTokens } from "../src/agents/compaction-planning.js";
@@ -308,7 +309,7 @@ summarizer latency; use it to make calibration and before/after runs repeatable.
   }
 }
 
-if (import.meta.url === new URL(`file://${process.argv[1] ?? ""}`).href) {
+if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   await main().catch((error: unknown) => {
     console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = 1;
