@@ -100,6 +100,7 @@ export type DiscordMessageQuery = {
 export type DiscordMessageEdit = {
   content?: string;
   flags?: number;
+  /** Maps to Discord's allowed_mentions; omission sends no field and preserves existing edit behavior. */
   allowedMentions?: APIAllowedMentions;
 };
 
