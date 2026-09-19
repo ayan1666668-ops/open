@@ -50,6 +50,22 @@ describe("config compaction settings", () => {
     expect(compaction?.maxActiveTranscriptBytes).toBe("20mb");
   });
 
+  it("preserves semantic judgment object config for optional input curation", () => {
+    const compaction = materializeCompactionConfig({
+      qualityGuard: {
+        semanticJudgments: {
+          enabled: true,
+          curateInput: true,
+        },
+      },
+    });
+
+    expect(compaction?.qualityGuard?.semanticJudgments).toEqual({
+      enabled: true,
+      curateInput: true,
+    });
+  });
+
   it("defaults compaction mode to safeguard", () => {
     const compaction = materializeCompactionConfig({});
 
