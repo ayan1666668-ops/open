@@ -176,8 +176,18 @@ export const AgentDefaultsBaseSchema = z
             enabled: z.boolean().optional(),
             /** Maximum regeneration retries after a failed quality audit. Default: 1 when enabled. */
             maxRetries: z.number().int().nonnegative().optional(),
-            /** Check semantic preservation and use qualified findings in the existing corrective retry. Default: false. */
-            semanticJudgments: z.boolean().optional(),
+            /** Typed semantic checks. Boolean true enables fidelity checks; object form adds optional curation. */
+            semanticJudgments: z
+              .union([
+                z.boolean(),
+                z
+                  .object({
+                    enabled: z.boolean().optional(),
+                    curateInput: z.boolean().optional(),
+                  })
+                  .strict(),
+              ])
+              .optional(),
           })
           .strict()
           .optional(),
