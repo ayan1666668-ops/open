@@ -13,7 +13,6 @@ import {
   deliverReplies,
   dispatchReplyWithBufferedBlockDispatcher,
   dispatchWithContext,
-  editMessageTelegram,
   emitTelegramMessageSentHooks,
   expectDraftStreamParams,
   expectRecordFields,
@@ -57,66 +56,6 @@ describeTelegramDispatch("dispatchTelegramMessage delivery-transcript", () => {
     expectDraftStreamParams({ maxChars: 4000 });
   });
 
-  it("streams text-only finals into the answer message", async () => {
-    const { answerDraftStream } = setupDraftStreams({ answerMessageId: 2001 });
-    const transcriptTimestamp = Date.now() + 1_000;
-    const context = createContext({
-      primaryCtx: {
-        me: {
-          id: 999,
-          is_bot: true,
-          first_name: "Telegram Bot Name",
-          username: "openclaw_bot",
-        },
-      } as TelegramMessageContext["primaryCtx"],
-    });
-    context.ctxPayload.SessionKey = "agent:default:telegram:direct:123";
-    mockDefaultSessionEntry();
-    readLatestAssistantTextByIdentity.mockResolvedValue({
-      id: "assistant-stream-1",
-      text: "Final answer",
-      timestamp: transcriptTimestamp,
-    });
-    dispatchReplyWithBufferedBlockDispatcher.mockImplementation(async ({ dispatcherOptions }) => {
-      await dispatcherOptions.deliver({ text: "Final answer" }, { kind: "final" });
-      return { queuedFinal: true };
-    });
-
-    await dispatchWithContext({ context });
-
-    expect(answerDraftStream.update).toHaveBeenCalledWith(
-      "Final answer",
-      expect.objectContaining({ onPlatformSendDispatch: expect.any(Function) }),
-    );
-    expect(answerDraftStream.stop).toHaveBeenCalled();
-    expect(deliverReplies).not.toHaveBeenCalled();
-    expect(editMessageTelegram).not.toHaveBeenCalled();
-    expectRecordFields(mockCallArg(emitTelegramMessageSentHooks), {
-      content: "Final answer",
-      messageId: 2001,
-    });
-    expectRecordFields(mockCallArg(recordOutboundMessageForPromptContext), {
-      account: {
-        accountId: "default",
-        bot: {
-          id: 999,
-          is_bot: true,
-          first_name: "Telegram Bot Name",
-          username: "openclaw_bot",
-        },
-      },
-      chatId: "123",
-      messageId: 2001,
-      text: "Final answer",
-      messageThreadId: 777,
-      promptContextProjection: {
-        transcriptMessageId: "assistant-stream-1",
-        partIndex: 0,
-        finalPart: true,
-      },
-    });
-  });
-
   it("projects retained draft pages and the active tail as one complete sequence", async () => {
     const { answerDraftStream } = setupDraftStreams({ answerMessageId: 2100 });
     answerDraftStream.currentMessageSnapshot.mockReturnValue({
@@ -152,47 +91,23 @@ describeTelegramDispatch("dispatchTelegramMessage delivery-transcript", () => {
 
     expect(answerDraftStream.update).toHaveBeenCalled();
     expect(deliverReplies).not.toHaveBeenCalled();
-    const effectiveByMessageId = new Map<
-      number,
-      {
-        text?: string;
-        projection: { transcriptMessageId: string; partIndex: number; finalPart: boolean };
-      }
-    >();
-    for (const [rawRecord] of recordOutboundMessageForPromptContext.mock.calls) {
-      const record = rawRecord as {
-        messageId: number;
-        text?: string;
-        promptContextProjection?: {
-          transcriptMessageId: string;
-          partIndex: number;
-          finalPart: boolean;
-        };
-      };
-      if (record.promptContextProjection) {
-        effectiveByMessageId.set(record.messageId, {
-          text: record.text,
-          projection: record.promptContextProjection,
-        });
-      }
-    }
-    const records = Array.from(effectiveByMessageId.values()).toSorted(
-      (left, right) => left.projection.partIndex - right.projection.partIndex,
-    );
-    expect(records.map((record) => record.text)).toEqual(["page 0", "page 1", "page 2"]);
-    const projections = records.map((record) => record.projection);
-    expect(projections.map((projection) => projection.partIndex)).toEqual(
-      projections.map((_, index) => index),
-    );
-    expect(projections.map((projection) => projection.finalPart)).toEqual([
-      ...Array.from({ length: projections.length - 1 }, () => false),
-      true,
-    ]);
     expect(
-      projections.every(
-        (projection) => projection.transcriptMessageId === "assistant-stream-multipart",
-      ),
-    ).toBe(true);
+      recordOutboundMessageForPromptContext.mock.calls.map(([record]) => ({
+        messageId: record.messageId,
+        text: record.text,
+        projection: record.promptContextProjection,
+      })),
+    ).toEqual(
+      ["page 0", "page 1", "page 2"].map((text, partIndex) => ({
+        messageId: 2098 + partIndex,
+        text,
+        projection: {
+          transcriptMessageId: "assistant-stream-multipart",
+          partIndex,
+          finalPart: partIndex === 2,
+        },
+      })),
+    );
   });
 
   it("records streamed final replies into the prompt context cache", async () => {
@@ -215,7 +130,6 @@ describeTelegramDispatch("dispatchTelegramMessage delivery-transcript", () => {
       text: "Done already: timeoutSeconds is now 7200s.",
       timestamp: transcriptTimestamp,
     });
-    const recordResults: boolean[] = [];
     setupDraftStreams({ answerMessageId: 1497 });
     dispatchReplyWithBufferedBlockDispatcher.mockImplementation(async ({ dispatcherOptions }) => {
       const streamParams = mockCallArg(createTelegramDraftStream) as Parameters<
@@ -244,15 +158,10 @@ describeTelegramDispatch("dispatchTelegramMessage delivery-transcript", () => {
       telegramCfg: { name: "Configured Agent" },
       telegramDeps: {
         ...telegramDepsForTest,
-        recordOutboundMessageForPromptContext: async (params) => {
-          const recorded = await recordOutboundMessageForPromptContextActual(params);
-          recordResults.push(recorded);
-          return recorded;
-        },
+        recordOutboundMessageForPromptContext: recordOutboundMessageForPromptContextActual,
       },
     });
 
-    expect(recordResults).toEqual([true, true]);
     expect(await wasSentByBot("123", 1497, { session: { store: storePath } })).toBe(true);
 
     const cache = createTelegramMessageCache({

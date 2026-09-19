@@ -185,16 +185,3 @@ export class PluginStateStoreError extends Error {
     }
   }
 }
-
-export type PluginStateStoreProbeStep = {
-  name: string;
-  ok: boolean;
-  code?: PluginStateStoreErrorCode;
-  message?: string;
-};
-
-export type PluginStateStoreProbeResult = {
-  ok: boolean;
-  databasePath: string;
-  steps: PluginStateStoreProbeStep[];
-};

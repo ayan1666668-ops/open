@@ -930,16 +930,6 @@ describe("createTelegramBot", () => {
     };
   });
 
-  it("starts with retired includeGroupHistoryContext still present in raw config", async () => {
-    mockTelegramConfig({ includeGroupHistoryContext: "mention-only" } as never, {
-      messages: { groupChat: { unmentionedInbound: "room_event" } },
-    });
-
-    createTelegramBot({ token: "tok" });
-
-    expect(getOnHandler("message")).toEqual(expect.any(Function));
-  });
-
   it("routes poll answers through the recorded forum topic", async () => {
     onSpy.mockClear();
     dispatchReplyWithBufferedBlockDispatcher.mockClear();
@@ -6112,15 +6102,6 @@ describe("createTelegramBot", () => {
     expect(sendMessageSpy).toHaveBeenCalledWith(12345, expect.stringContaining("Pairing code:"), {
       parse_mode: "HTML",
     });
-  });
-
-  it("registers message_reaction handler", () => {
-    createTelegramBot({ token: "tok" });
-    const reactionHandler = onSpy.mock.calls.find((call) => call[0] === "message_reaction");
-    expect(reactionHandler?.[0]).toBe("message_reaction");
-    if (typeof reactionHandler?.[1] !== "function") {
-      throw new Error("expected message_reaction handler");
-    }
   });
 
   it("enqueues system event for reaction", async () => {

@@ -1,33 +1,21 @@
 import { hasErrnoCode } from "../infra/errno.js";
-import { requireNodeSqlite } from "../infra/node-sqlite.js";
 import { isTerminalSqliteIntegrityError } from "../infra/sqlite-integrity.js";
 import { isSqliteSchemaVersionError } from "../infra/sqlite-user-version.js";
 import { resolveDatabasePath } from "../state/openclaw-state-db-maintenance.js";
 import { withExistingOpenClawStateDatabaseReadOnly } from "../state/openclaw-state-db-readonly.js";
 import { hasOpenClawStateTablesBeyondStartupCheckpoint } from "../state/openclaw-state-db-schema-helpers.js";
 import {
-  closeOpenClawStateDatabase,
   isOpenClawStateDatabaseOpen,
   openOpenClawStateDatabase,
   runOpenClawStateWriteTransaction,
   type OpenClawStateDatabaseOptions,
 } from "../state/openclaw-state-db.js";
 import { resolveOpenClawStateSqlitePath } from "../state/openclaw-state-db.paths.js";
-import {
-  bindPluginStateEntry,
-  createPluginStateError,
-  deletePluginStateEntry,
-  resolvePluginStateExpiresAtMs,
-  selectPluginStateEntry,
-  upsertPluginStateEntry,
-  type PluginStateDatabase,
-} from "./plugin-state-store.kernel.js";
+import { createPluginStateError, type PluginStateDatabase } from "./plugin-state-store.kernel.js";
 import {
   PluginStateStoreError,
   type PluginStateStoreErrorCode,
   type PluginStateStoreOperation,
-  type PluginStateStoreProbeResult,
-  type PluginStateStoreProbeStep,
 } from "./plugin-state-store.types.js";
 export function wrapPluginStateError(
   error: unknown,
@@ -135,89 +123,4 @@ export function runWriteTransaction<T>(
     openPluginStateDatabase(operation, options);
   }
   return runOpenClawStateWriteTransaction(write, options);
-}
-export function probePluginStateStore(): PluginStateStoreProbeResult {
-  const databasePath = resolveOpenClawStateSqlitePath(process.env);
-  const steps: PluginStateStoreProbeStep[] = [];
-  const stateWasOpen = isOpenClawStateDatabaseOpen();
-
-  const pushOk = (name: string) => steps.push({ name, ok: true });
-  const pushFailure = (name: string, error: unknown) => {
-    const wrapped =
-      error instanceof PluginStateStoreError
-        ? error
-        : createPluginStateError({
-            code: "PLUGIN_STATE_OPEN_FAILED",
-            operation: "probe",
-            message: error instanceof Error ? error.message : String(error),
-            path: databasePath,
-            cause: error,
-          });
-    steps.push({ name, ok: false, code: wrapped.code, message: wrapped.message });
-  };
-
-  try {
-    requireNodeSqlite();
-    pushOk("load-sqlite");
-  } catch (error) {
-    pushFailure(
-      "load-sqlite",
-      createPluginStateError({
-        code: "PLUGIN_STATE_SQLITE_UNAVAILABLE",
-        operation: "load-sqlite",
-        message: "SQLite support is unavailable for plugin state storage.",
-        path: databasePath,
-        cause: error,
-      }),
-    );
-    return { ok: false, databasePath, steps };
-  }
-
-  try {
-    openPluginStateDatabase("probe");
-    pushOk("open");
-    pushOk("schema");
-    runWriteTransaction("probe", ({ db }) => {
-      const now = Date.now();
-      const expiresAt = resolvePluginStateExpiresAtMs({
-        ttlMs: 60_000,
-        now,
-        operation: "probe",
-        path: databasePath,
-      });
-      upsertPluginStateEntry(
-        db,
-        bindPluginStateEntry({
-          pluginId: "core:plugin-state-probe",
-          namespace: "diagnostics",
-          key: "probe",
-          valueJson: JSON.stringify({ ok: true }),
-          createdAt: now,
-          expiresAt,
-        }),
-      );
-      selectPluginStateEntry(db, {
-        pluginId: "core:plugin-state-probe",
-        namespace: "diagnostics",
-        key: "probe",
-        now,
-      });
-      deletePluginStateEntry(db, {
-        pluginId: "core:plugin-state-probe",
-        namespace: "diagnostics",
-        key: "probe",
-      });
-    });
-    pushOk("write-read-delete");
-    openOpenClawStateDatabase().walMaintenance.checkpoint();
-    pushOk("checkpoint");
-  } catch (error) {
-    pushFailure("probe", error);
-  } finally {
-    if (!stateWasOpen) {
-      closeOpenClawStateDatabase();
-    }
-  }
-
-  return { ok: steps.every((step) => step.ok), databasePath, steps };
 }

@@ -53,8 +53,6 @@ type TelegramCachedMessageObservation = {
   mode: TelegramMessageObservationMode;
 };
 
-type TelegramEmbeddedReplyMessage = NonNullable<Message["reply_to_message"]>;
-
 export function retainedMessageId(messageId: string): string | undefined {
   const id = parseSafeMessageId(messageId);
   return id !== undefined && id <= 9_999_999_999 ? String(id).padStart(10, "0") : undefined;
@@ -70,10 +68,6 @@ export function resolveReplyMessage(msg: Message) {
   }
   const externalReply = msg.external_reply;
   return externalReply?.chat && externalReply.chat.id === msg.chat?.id ? externalReply : undefined;
-}
-
-function resolveEmbeddedReplyMessage(msg: Message): TelegramEmbeddedReplyMessage | undefined {
-  return msg.reply_to_message;
 }
 
 export function isTelegramMessageFromCurrentBot(msg: Message, botUserId?: number): boolean {
@@ -202,73 +196,50 @@ export function resolveProviderObservedTelegramThreadSpec(
 
 export function normalizeMessageNodes(
   msg: Message,
-  params: {
-    threadId?: number;
-    promptContextProjectionMarker?: TelegramPromptContextProjectionMarker;
-    resolvedMedia?: TelegramResolvedMedia;
-    threadBinding?: TelegramMessageThreadBinding;
-    historyEligible?: boolean;
-  },
+  params: Parameters<typeof normalizeMessageNode>[1],
 ): TelegramCachedMessageObservation[] {
   const observations: TelegramCachedMessageObservation[] = [];
   const visited = new Set<string>();
-  const nodeThreadId = (node: TelegramCachedMessageNode) =>
-    parseTelegramMessageThreadId(node.threadId);
   const visit = (
     message: Message,
-    inheritedThreadId: number | undefined,
+    options: Parameters<typeof normalizeMessageNode>[1],
     mode: TelegramMessageObservationMode,
-    promptContextProjectionMarker?: TelegramPromptContextProjectionMarker,
-    threadBinding?: TelegramMessageThreadBinding,
-    resolvedMedia?: TelegramResolvedMedia,
   ) => {
     const embeddedThreadId = parseTelegramMessageThreadId(message.message_thread_id);
-    const inheritedThread = parseTelegramMessageThreadId(inheritedThreadId);
-    const observedBinding = normalizeTelegramMessageThreadBinding(threadBinding);
+    const inheritedThread = parseTelegramMessageThreadId(options.threadId);
+    const observedBinding = normalizeTelegramMessageThreadBinding(options.threadBinding);
     const threadId =
       mode === "authoritative"
         ? observedBinding?.threadSpec.scope === "none"
           ? undefined
           : (observedBinding?.threadSpec.id ?? inheritedThread ?? embeddedThreadId)
         : (embeddedThreadId ?? inheritedThread);
-    const matchingBinding =
-      observedBinding?.threadSpec.id === threadId ? observedBinding : undefined;
     const node = normalizeMessageNode(message, {
-      ...(threadId !== undefined ? { threadId } : {}),
-      ...(promptContextProjectionMarker ? { promptContextProjectionMarker } : {}),
-      ...(resolvedMedia ? { resolvedMedia } : {}),
-      ...(matchingBinding ? { threadBinding: matchingBinding } : {}),
-      ...(mode === "authoritative" && params.historyEligible === true
-        ? { historyEligible: true }
-        : {}),
+      ...options,
+      threadId,
+      threadBinding: observedBinding?.threadSpec.id === threadId ? observedBinding : undefined,
     });
     if (visited.has(node.messageId)) {
       return;
     }
     visited.add(node.messageId);
-    const replyMessage = resolveEmbeddedReplyMessage(message);
+    const replyMessage = message.reply_to_message;
     if (replyMessage?.message_id != null) {
       visit(
         replyMessage,
-        node.threadBinding?.threadSpec.scope === "none"
-          ? undefined
-          : (nodeThreadId(node) ?? inheritedThreadId),
+        {
+          threadId:
+            node.threadBinding?.threadSpec.scope === "none"
+              ? undefined
+              : (parseTelegramMessageThreadId(node.threadId) ?? options.threadId),
+          threadBinding: node.threadBinding,
+        },
         "partial",
-        undefined,
-        node.threadBinding,
-        undefined,
       );
     }
     observations.push({ node, mode });
   };
-  visit(
-    msg,
-    params.threadId,
-    "authoritative",
-    params.promptContextProjectionMarker,
-    params.threadBinding,
-    params.resolvedMedia,
-  );
+  visit(msg, params, "authoritative");
   return observations;
 }
 
@@ -315,8 +286,8 @@ export function parsePersistedCacheValue(key: string, value: unknown) {
 }
 
 function mergeTelegramSourceMessage<T extends Message>(existing: T, incoming: Message): T {
-  const existingReply = resolveEmbeddedReplyMessage(existing);
-  const incomingReply = resolveEmbeddedReplyMessage(incoming);
+  const existingReply = existing.reply_to_message;
+  const incomingReply = incoming.reply_to_message;
   if (!incomingReply || (existingReply && existingReply.message_id !== incomingReply.message_id)) {
     return existing;
   }

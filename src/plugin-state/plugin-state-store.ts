@@ -10,7 +10,6 @@ import {
   type PluginStateKeyRangeParams,
 } from "./plugin-state-store.reads.js";
 import {
-  clearPluginStateDatabaseForTests,
   closePluginStateDatabase,
   MAX_PLUGIN_STATE_VALUE_BYTES,
   PLUGIN_STATE_DOCTOR_IMPORT_BATCH_ROWS,
@@ -319,31 +318,19 @@ function createSyncKeyedStore<T>(
   { pluginId, namespace, maxEntries, overflowPolicy, defaultTtlMs, env }: PreparedKeyedStoreOptions,
   assertActive?: () => void,
 ): Required<PluginStateSyncKeyedStore<T>> {
+  const scope = { pluginId, namespace, env };
+  const writeScope = { ...scope, maxEntries, overflowPolicy };
   return {
     register(key, value, opts) {
-      const params = prepareRegisterParams(key, value, defaultTtlMs, opts);
       pluginStateRegister({
-        pluginId,
-        namespace,
-        key: params.key,
-        valueJson: params.valueJson,
-        maxEntries,
-        overflowPolicy,
-        ...(env ? { env } : {}),
-        ...(params.ttlMs != null ? { ttlMs: params.ttlMs } : {}),
+        ...writeScope,
+        ...prepareRegisterParams(key, value, defaultTtlMs, opts),
       });
     },
     registerIfAbsent(key, value, opts) {
-      const params = prepareRegisterParams(key, value, defaultTtlMs, opts);
       return pluginStateRegisterIfAbsent({
-        pluginId,
-        namespace,
-        key: params.key,
-        valueJson: params.valueJson,
-        maxEntries,
-        overflowPolicy,
-        ...(env ? { env } : {}),
-        ...(params.ttlMs != null ? { ttlMs: params.ttlMs } : {}),
+        ...writeScope,
+        ...prepareRegisterParams(key, value, defaultTtlMs, opts),
       });
     },
     update(key, updateValue, opts) {
@@ -353,91 +340,52 @@ function createSyncKeyedStore<T>(
       }
       const normalizedKey = validateKey(key, "register");
       return pluginStateUpdate({
-        pluginId,
-        namespace,
+        ...writeScope,
         key: normalizedKey,
-        maxEntries,
-        overflowPolicy,
         updateValueJson: (current) => {
           const next = updateValue(current as T | undefined);
           assertActive?.();
-          if (next === undefined) {
-            return undefined;
-          }
-          const params = prepareRegisterParams(normalizedKey, next, defaultTtlMs, opts, namespace);
-          return {
-            valueJson: params.valueJson,
-            ...(params.ttlMs != null ? { ttlMs: params.ttlMs } : {}),
-          };
+          return next === undefined
+            ? undefined
+            : prepareRegisterParams(normalizedKey, next, defaultTtlMs, opts, namespace);
         },
-        ...(env ? { env } : {}),
       });
     },
     deleteIf(key, predicate) {
       assertActive?.();
-      const normalizedKey = validateKey(key, "delete");
       return pluginStateDeleteIf({
-        pluginId,
-        namespace,
-        key: normalizedKey,
+        ...scope,
+        key: validateKey(key, "delete"),
         predicate: (current) => {
           const result = predicate(current as T);
           assertActive?.();
           return result;
         },
-        ...(env ? { env } : {}),
       });
     },
     lookup(key) {
-      const normalizedKey = validateKey(key, "lookup");
-      return pluginStateLookup({
-        pluginId,
-        namespace,
-        key: normalizedKey,
-        ...(env ? { env } : {}),
-      }) as T | undefined;
+      return pluginStateLookup({ ...scope, key: validateKey(key, "lookup") }) as T | undefined;
     },
     lookupMany(keys) {
-      const normalizedKeys = prepareLookupKeys(keys);
-      const values = pluginStateLookupMany({
-        pluginId,
-        namespace,
-        keys: normalizedKeys,
-        ...(env ? { env } : {}),
-      });
       // SAFETY: This namespace uses the caller's JSON value type, as with lookup.
-      return values as Array<Result<T | undefined, PluginStateStoreError>>;
+      return pluginStateLookupMany({ ...scope, keys: prepareLookupKeys(keys) }) as Array<
+        Result<T | undefined, PluginStateStoreError>
+      >;
     },
     consume(key) {
-      const normalizedKey = validateKey(key, "consume");
-      return pluginStateConsume({
-        pluginId,
-        namespace,
-        key: normalizedKey,
-        ...(env ? { env } : {}),
-      }) as T | undefined;
+      return pluginStateConsume({ ...scope, key: validateKey(key, "consume") }) as T | undefined;
     },
     delete(key) {
-      const normalizedKey = validateKey(key, "delete");
-      return pluginStateDelete({
-        pluginId,
-        namespace,
-        key: normalizedKey,
-        ...(env ? { env } : {}),
-      });
+      return pluginStateDelete({ ...scope, key: validateKey(key, "delete") });
     },
     entries() {
-      return pluginStateEntries({
-        pluginId,
-        namespace,
-        ...(env ? { env } : {}),
-      }) as PluginStateEntry<T>[];
+      return pluginStateEntries(scope) as PluginStateEntry<T>[];
     },
     count() {
-      return pluginStateCount({ pluginId, namespace, ...(env ? { env } : {}) });
+      return pluginStateCount(scope);
     },
     clear() {
-      pluginStateClear({ pluginId, namespace, ...(env ? { env } : {}) });
+      pluginStateClear(scope);
     },
   };
 }
@@ -612,20 +560,11 @@ export function importPluginStateEntriesForDoctor(
     throw invalidInput("Plugin ids starting with 'core:' are reserved for core consumers.", "open");
   }
   requireBoundedOptions(options);
-  const namespace = validateNamespace(options.namespace);
-  const maxEntries = validateMaxEntries(options.maxEntries);
-  const overflowPolicy = optionPolicy.resolveOverflowPolicy(options.overflowPolicy);
-  const defaultTtlMs = validateOptionalTtlMs(options.defaultTtlMs);
-  const env = options.env;
-  optionPolicy.assertConsistent(pluginId, namespace, {
-    maxEntries,
-    overflowPolicy,
-    defaultTtlMs,
-  });
+  const preparedOptions = prepareKeyedStoreOptions(pluginId, options);
 
   let batch: Array<PreparedRegisterParams & { createdAtMs: number }> = [];
   const flush = () => {
-    pluginStateImportBatch({ pluginId, namespace, maxEntries, overflowPolicy, env }, batch);
+    pluginStateImportBatch(preparedOptions, batch);
     batch = [];
   };
   for (const entry of entries) {
@@ -636,7 +575,7 @@ export function importPluginStateEntriesForDoctor(
       const prepared = prepareRegisterParams(
         entry.key,
         entry.value,
-        defaultTtlMs,
+        preparedOptions.defaultTtlMs,
         entry.ttlMs != null ? { ttlMs: entry.ttlMs } : undefined,
       );
       batch.push({ ...prepared, createdAtMs: entry.createdAt });
@@ -666,12 +605,6 @@ export function createCorePluginStateSyncKeyedStore<T>(
   return createSyncKeyedStoreForPluginId<T>(options.ownerId, options);
 }
 
-/** Clears plugin-state rows and option signatures for tests. */
-function clearPluginStateStoreForTests(): void {
-  clearPluginStateDatabaseForTests();
-  optionPolicy.clear();
-}
-
 /** Resets plugin-state module/database state for isolated tests. */
 export function resetPluginStateStoreForTests(options: { closeDatabase?: boolean } = {}): void {
   if (options.closeDatabase !== false) {
@@ -679,10 +612,4 @@ export function resetPluginStateStoreForTests(options: { closeDatabase?: boolean
     closeOpenClawStateDatabaseForTest();
   }
   optionPolicy.clear();
-}
-
-if (process.env.VITEST || process.env.NODE_ENV === "test") {
-  (globalThis as Record<PropertyKey, unknown>)[Symbol.for("openclaw.pluginStateStoreTestApi")] = {
-    clearPluginStateStoreForTests,
-  };
 }

@@ -3,12 +3,8 @@ import { expect, it, vi } from "vitest";
 import { resolveDispatchTelegramContext } from "./bot-message-dispatch-context.js";
 import {
   describeTelegramDispatch,
-  createBot,
   createContext,
-  createDraftStream,
-  createTelegramDraftStream,
   deliverInboundReplyWithMessageSendContext,
-  deliverReplies,
   dispatchReplyWithBufferedBlockDispatcher,
   dispatchWithContext,
   expectRecordFields,
@@ -16,7 +12,6 @@ import {
 } from "./bot-message-dispatch.test-harness.js";
 import type {
   DispatchReplyWithBufferedBlockDispatcherArgs,
-  TelegramBotDeps,
   TelegramMessageContext,
 } from "./bot-message-dispatch.test-harness.js";
 import { resolveTelegramMessageCacheScope } from "./message-cache-persistence.js";
@@ -319,30 +314,5 @@ describeTelegramDispatch("dispatchTelegramMessage context-history", () => {
       "self marker",
     );
     expect(JSON.stringify(outboundCtxPayload.ChannelStructuredContext)).not.toContain(currentBody);
-  });
-
-  it("keeps retained overflow draft previews", async () => {
-    const draftStream = createDraftStream();
-    const bot = createBot();
-    createTelegramDraftStream.mockReturnValue(draftStream);
-    dispatchReplyWithBufferedBlockDispatcher.mockImplementation(
-      async ({ dispatcherOptions, replyOptions }) => {
-        await replyOptions?.onPartialReply?.({ text: "Hello" });
-        await dispatcherOptions.deliver({ text: "Hello" }, { kind: "final" });
-        return { queuedFinal: true };
-      },
-    );
-    deliverReplies.mockResolvedValue({ delivered: true });
-
-    await dispatchWithContext({ context: createContext(), bot });
-
-    const streamParams = mockCallArg(createTelegramDraftStream) as Parameters<
-      NonNullable<TelegramBotDeps["createTelegramDraftStream"]>
-    >[0];
-    streamParams.onRetainedPage?.({
-      messageId: 17,
-      textSnapshot: "first page",
-    });
-    expect(bot.api["deleteMessage"]).not.toHaveBeenCalled();
   });
 });

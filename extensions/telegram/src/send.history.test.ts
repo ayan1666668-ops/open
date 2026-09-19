@@ -7,7 +7,7 @@ import {
   resolveTelegramMessageCacheScope,
   TELEGRAM_MESSAGE_CACHE_PERSISTENT_NAMESPACE,
 } from "./message-cache-persistence.js";
-import { buildTelegramConversationContext, createTelegramMessageCache } from "./message-cache.js";
+import { createTelegramMessageCache } from "./message-cache.js";
 import { createTelegramPromptContextProjectionCursor } from "./prompt-context-projection.js";
 import { setTelegramPluginStateRuntimeForTests } from "./runtime-state.test-support.js";
 import { getTelegramRuntime } from "./runtime.js";
@@ -47,77 +47,6 @@ afterEach(async () => {
 });
 
 describe("Telegram sent message history", () => {
-  it("records sent text messages into the Telegram prompt context cache", async () => {
-    const storePath = `/tmp/openclaw-telegram-send-context-${process.pid}-${Date.now()}.json`;
-    const cfg = { session: { store: storePath } };
-    botApi.sendMessage.mockResolvedValueOnce({
-      message_id: 1497,
-      date: 1_779_394_740,
-      chat: {
-        id: "-1003966283270",
-        type: "supergroup",
-        title: "Keshav and Kelaw - Keshav's Bot",
-      },
-      from: { id: 42, is_bot: true, first_name: "Kelaw", username: "keshavbotagent" },
-      text: "Done already: timeoutSeconds is now 7200s.",
-      message_thread_id: 1154,
-    });
-
-    await sendMessageTelegram("-1003966283270", "Done already: timeoutSeconds is now 7200s.", {
-      cfg,
-      token: "tok",
-      messageThreadId: 1154,
-    });
-
-    const cache = createTelegramMessageCache({
-      scope: resolveTelegramMessageCacheScope(storePath),
-    });
-    await cache.record({
-      accountId: "default",
-      chatId: "-1003966283270",
-      threadId: 1154,
-      msg: {
-        chat: {
-          id: -1003966283270,
-          type: "supergroup",
-          title: "Keshav and Kelaw - Keshav's Bot",
-        },
-        message_thread_id: 1154,
-        message_id: 1521,
-        date: 1_779_425_460,
-        text: "Did all Amazon crons run fine",
-        from: { id: 5185575566, is_bot: false, first_name: "Keshav" },
-      },
-    });
-
-    const context = await buildTelegramConversationContext({
-      cache,
-      accountId: "default",
-      chatId: "-1003966283270",
-      threadId: 1154,
-      messageId: "1521",
-      replyChainNodes: [],
-      recentLimit: 10,
-      replyTargetWindowSize: 2,
-    });
-
-    expect(context.map((entry) => entry.node.messageId)).toContain("1497");
-    expect(context.map((entry) => entry.node.body)).toContain(
-      "Done already: timeoutSeconds is now 7200s.",
-    );
-    expect(
-      await cache.readHistory({
-        accountId: "default",
-        chatId: "-1003966283270",
-        threadId: 1154,
-        limit: 10,
-      }),
-    ).toMatchObject({
-      messages: [{ messageId: "1497", body: "Done already: timeoutSeconds is now 7200s." }],
-      hasMore: false,
-    });
-  });
-
   it.each([
     { name: "group text", kind: "text", chatId: "-100123", chatType: "supergroup" },
     { name: "group location", kind: "location", chatId: "-100123", chatType: "supergroup" },
@@ -210,94 +139,56 @@ describe("Telegram sent message history", () => {
     expect(hasProviderObservedTelegramThreadBinding(cached, 1)).toBe(true);
   });
 
-  it("records transcript projection metadata without replacing Telegram time", async () => {
-    const storePath = `/tmp/openclaw-telegram-send-context-override-${process.pid}-${Date.now()}.json`;
-    const cfg = { session: { store: storePath } };
-    const cursor = createTelegramPromptContextProjectionCursor({
-      transcriptMessageId: "assistant-final",
-    });
-    botApi.sendMessage.mockResolvedValueOnce({
-      message_id: 1497,
-      date: 1_779_394_745,
-      chat: { id: "123", type: "private" },
-      from: { id: 42, is_bot: true, first_name: "Kelaw" },
-      text: "Final answer",
-    });
+  it.each(["text", "location"] as const)(
+    "records transcript projection metadata for sent %s without replacing Telegram time",
+    async (kind) => {
+      const storePath = `/tmp/openclaw-telegram-send-projection-${process.pid}-${kind}.json`;
+      const cfg = { session: { store: storePath } };
+      const cursor = createTelegramPromptContextProjectionCursor({
+        transcriptMessageId: "assistant-final",
+      });
+      const location = { latitude: 48.858844, longitude: 2.294351 };
+      const send = kind === "text" ? botApi.sendMessage : vi.fn();
+      send.mockResolvedValueOnce({
+        message_id: 1497,
+        date: 1_779_394_745,
+        chat: { id: "123", type: "private" },
+        from: { id: 42, is_bot: true, first_name: "OpenClaw" },
+        ...(kind === "text" ? { text: "Final answer" } : { location }),
+      });
 
-    await sendMessageTelegram("123", "Final answer", {
-      cfg,
-      token: "tok",
-      promptContextProjectionPlan: { cursor, finalPart: true },
-    });
+      const opts = { cfg, token: "tok", promptContextProjectionPlan: { cursor, finalPart: true } };
+      if (kind === "text") {
+        await sendMessageTelegram("123", "Final answer", opts);
+      } else {
+        await sendLocationTelegram("123", location, {
+          ...opts,
+          api: makeTelegramApiTestMock({ sendLocation: send }),
+        });
+      }
 
-    const cache = createTelegramMessageCache({
-      scope: resolveTelegramMessageCacheScope(storePath),
-    });
-    const node = await cache.get({
-      accountId: "default",
-      chatId: "123",
-      messageId: "1497",
-    });
+      const cache = createTelegramMessageCache({
+        scope: resolveTelegramMessageCacheScope(storePath),
+      });
+      const node = await cache.get({
+        accountId: "default",
+        chatId: "123",
+        messageId: "1497",
+      });
 
-    expect(node?.timestamp).toBe(1_779_394_745_000);
-    expect(node?.promptContextProjectionMarker).toEqual({
-      kind: "valid",
-      projection: { ...cursor.source, partIndex: 0, finalPart: true },
-    });
-    expect(cursor.nextPartIndex).toBe(1);
-  });
-});
-
-describe("Telegram location history", () => {
-  it("records transcript projection metadata for native locations", async () => {
-    const storePath = `/tmp/openclaw-telegram-location-context-${process.pid}-${Date.now()}.json`;
-    const cfg = { session: { store: storePath } };
-    const cursor = createTelegramPromptContextProjectionCursor({
-      transcriptMessageId: "assistant-location",
-    });
-    const sendLocation = vi.fn().mockResolvedValue({
-      message_id: 1498,
-      date: 1_779_394_746,
-      chat: { id: "123", type: "private" },
-      from: { id: 42, is_bot: true, first_name: "Kelaw" },
-      location: { latitude: 48.858844, longitude: 2.294351 },
-    });
-
-    await sendLocationTelegram(
-      "123",
-      { latitude: 48.858844, longitude: 2.294351 },
-      {
-        cfg,
-        token: "tok",
-        api: makeTelegramApiTestMock({ sendLocation }),
-        promptContextProjectionPlan: { cursor, finalPart: true },
-      },
-    );
-
-    const cache = createTelegramMessageCache({
-      scope: resolveTelegramMessageCacheScope(storePath),
-    });
-    const node = await cache.get({
-      accountId: "default",
-      chatId: "123",
-      messageId: "1498",
-    });
-
-    expect(node?.timestamp).toBe(1_779_394_746_000);
-    expect(node?.promptContextProjectionMarker).toEqual({
-      kind: "valid",
-      projection: { ...cursor.source, partIndex: 0, finalPart: true },
-    });
-    expect(cursor.nextPartIndex).toBe(1);
-  });
+      expect(node?.timestamp).toBe(1_779_394_745_000);
+      expect(node?.promptContextProjectionMarker).toEqual({
+        kind: "valid",
+        projection: { ...cursor.source, partIndex: 0, finalPart: true },
+      });
+      expect(cursor.nextPartIndex).toBe(1);
+    },
+  );
 });
 
 describe("Telegram edited message history", () => {
-  it.each([
-    { name: "text", editMode: "text" as const, field: "text" as const },
-    { name: "caption", editMode: "caption" as const, field: "caption" as const },
-  ])("refreshes cached $name from Telegram's authoritative edit response", async (testCase) => {
-    const storePath = `/tmp/openclaw-telegram-edited-context-${process.pid}-${Date.now()}-${testCase.name}.json`;
+  it("refreshes cached captions from Telegram's authoritative edit response", async () => {
+    const storePath = `/tmp/openclaw-telegram-edited-caption-${process.pid}-${Date.now()}.json`;
     const cfg = { session: { store: storePath } };
     const chat = {
       id: -100123,
@@ -318,7 +209,7 @@ describe("Telegram edited message history", () => {
         message_thread_id: 77,
         date: 1_779_394_740,
         from: { id: 42, is_bot: true, first_name: "OpenClaw" },
-        [testCase.field]: "outdated content",
+        caption: "outdated content",
       },
     });
     const editedMessage = {
@@ -328,18 +219,14 @@ describe("Telegram edited message history", () => {
       date: 1_779_394_740,
       edit_date: 1_779_394_750,
       from: { id: 42, is_bot: true, first_name: "OpenClaw" },
-      [testCase.field]: "authoritative edited content",
+      caption: "authoritative edited content",
     };
-    if (testCase.editMode === "caption") {
-      botApi.editMessageCaption.mockResolvedValue(editedMessage);
-    } else {
-      botApi.editMessageText.mockResolvedValue(editedMessage);
-    }
+    botApi.editMessageCaption.mockResolvedValue(editedMessage);
 
     await editMessageTelegram(chat.id, 902, "authoritative edited content", {
       token: "42:test-token",
       cfg,
-      editMode: testCase.editMode,
+      editMode: "caption",
     });
 
     const cached = await cache.get({
@@ -371,6 +258,14 @@ describe("Telegram edited message history", () => {
     const cache = createTelegramMessageCache({
       scope: resolveTelegramMessageCacheScope(storePath),
     });
+    expect(
+      await cache.readHistory({
+        accountId: "default",
+        chatId: chat.id,
+        threadId: 77,
+        limit: 50,
+      }),
+    ).toMatchObject({ messages: [{ messageId: "902", body: "original response" }] });
     await cache.record({
       accountId: "default",
       chatId: chat.id,

@@ -66,7 +66,6 @@ import type { TelegramNativeQuoteCandidateByMessageId } from "./native-quote.js"
 
 type DeliveryProgress = {
   hasReplied: boolean;
-  hasDelivered: boolean;
   deliveredCount: number;
   promptContext?: TelegramPromptContextProjectionSequence;
 };
@@ -90,7 +89,6 @@ type TelegramReplyQuoteForSend = {
 type ChunkTextFn = (text: string) => TelegramTextDeliveryPage[];
 
 function markDelivered(progress: DeliveryProgress): void {
-  progress.hasDelivered = true;
   progress.deliveredCount += 1;
 }
 
@@ -301,14 +299,6 @@ async function deliverMediaReply(params: {
   let visibleFallbackText: string | undefined;
   let firstDeliveredCaption: string | undefined;
   const mediaUrls: string[] = [];
-  const recordPromptContextMessage = async (message: Message, text?: string) => {
-    const promptContextMessage = {
-      messageId: message.message_id,
-      message,
-      ...(text ? { text } : {}),
-    };
-    await params.progress.promptContext?.accept(promptContextMessage);
-  };
   const observeMedia = async (
     { result: message, messageId, plainText }: TelegramPreparedSender["parts"][number],
     captionRemoved?: true,
@@ -328,7 +318,11 @@ async function deliverMediaReply(params: {
       visibleFallbackText = "";
     }
     await params.recordMessageId(messageId);
-    await recordPromptContextMessage(message, plainText || undefined);
+    await params.progress.promptContext?.accept({
+      messageId,
+      message,
+      ...(plainText ? { text: plainText } : {}),
+    });
     markDelivered(params.progress);
   };
   const deliverAcceptedMedia = async (options: {
@@ -344,7 +338,6 @@ async function deliverMediaReply(params: {
   };
   const createVoiceFallbackProgress = (): DeliveryProgress => ({
     hasReplied: false,
-    hasDelivered: false,
     deliveredCount: 0,
     ...(params.progress.promptContext ? { promptContext: params.progress.promptContext } : {}),
   });
@@ -684,7 +677,6 @@ export async function deliverReplies(params: {
 }> {
   const progress: DeliveryProgress = {
     hasReplied: false,
-    hasDelivered: false,
     deliveredCount: 0,
     ...(params.promptContextSequence ? { promptContext: params.promptContextSequence } : {}),
   };
@@ -873,8 +865,7 @@ export async function deliverReplies(params: {
           verbose: false,
         });
         if (reactionResult.ok) {
-          progress.hasDelivered = true;
-          progress.deliveredCount += 1;
+          markDelivered(progress);
         } else {
           params.runtime.error?.(danger(reactionResult.warning));
           continue;
@@ -979,7 +970,7 @@ export async function deliverReplies(params: {
     }
   }
 
-  if (progress.hasDelivered && transcriptMirror) {
+  if (progress.deliveredCount > 0 && transcriptMirror) {
     const text = deliveredContents
       .map((content) => content.text)
       .filter(Boolean)
@@ -998,7 +989,7 @@ export async function deliverReplies(params: {
   }
 
   return {
-    delivered: progress.hasDelivered,
+    delivered: progress.deliveredCount > 0,
     ...(sender.parts.length ? { receipt: buildDeliveryReceipt() } : {}),
   };
 }

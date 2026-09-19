@@ -33,10 +33,6 @@ type LanePreviewFinalizedDelivery = {
   receipt: MessageReceipt;
 };
 
-type LanePreviewFinalizedDeliveryInput = Omit<LanePreviewFinalizedDelivery, "receipt"> & {
-  receipt?: MessageReceipt;
-};
-
 export type LaneDeliveryResult =
   | {
       kind: "preview-finalized";
@@ -95,23 +91,6 @@ type DeliverLaneTextParams = {
 };
 
 export type LaneTextDeliverer = (params: DeliverLaneTextParams) => Promise<LaneDeliveryResult>;
-
-function result(
-  kind: Exclude<LaneDeliveryResult["kind"], "preview-finalized-partial">,
-  delivery?: LanePreviewFinalizedDeliveryInput,
-): LaneDeliveryResult {
-  if (kind === "preview-finalized") {
-    const finalized = delivery!;
-    return {
-      kind,
-      delivery: {
-        ...finalized,
-        receipt: finalized.receipt ?? createPreviewMessageReceipt({ id: finalized.messageId }),
-      },
-    };
-  }
-  return { kind };
-}
 
 export function createLaneTextDeliverer(params: CreateLaneTextDelivererParams): LaneTextDeliverer {
   const mediaChannelData = (
@@ -335,7 +314,7 @@ export function createLaneTextDeliverer(params: CreateLaneTextDelivererParams): 
         await promptContextSequence.fail();
         lane.finalized = true;
         params.markDelivered();
-        return result("preview-retained");
+        return { kind: "preview-retained" };
       }
       if (!finalizePreview) {
         await discardUnmaterializedStream(lane);
@@ -376,7 +355,7 @@ export function createLaneTextDeliverer(params: CreateLaneTextDelivererParams): 
       }
     }
     if (!finalizePreview && buttonAttachmentError === undefined) {
-      return result("preview-updated");
+      return { kind: "preview-updated" };
     }
     if (!activeSnapshot) {
       if (finalizePreview) {
@@ -403,7 +382,7 @@ export function createLaneTextDeliverer(params: CreateLaneTextDelivererParams): 
     }
     return buttonAttachmentError
       ? { kind: "preview-finalized-partial", delivery, error: buttonAttachmentError }
-      : result("preview-finalized", delivery);
+      : { kind: "preview-finalized", delivery };
   };
 
   return async ({
@@ -554,6 +533,6 @@ export function createLaneTextDeliverer(params: CreateLaneTextDelivererParams): 
     if (delivered && finalizePreview) {
       lane.finalized = true;
     }
-    return delivered ? result("sent") : result("skipped");
+    return { kind: delivered ? "sent" : "skipped" };
   };
 }

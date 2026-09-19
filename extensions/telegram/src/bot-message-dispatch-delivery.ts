@@ -502,20 +502,6 @@ async function deliverTelegramProgressModeFinalAnswer(
     await cleanupProgressWithoutBlockingFinal("teardown", async () => {
       await teardownProgressWindow(turn);
     });
-    const delivered = await sendPayload(turn, applyTextToPayload(payload, text), {
-      afterAcceptedDraft,
-      durable: true,
-      promptContextSequence,
-      onPlatformSendDispatch,
-      assertPlatformSendAuthorized,
-      bindPendingFinalDelivery,
-    });
-    if (!delivered) {
-      return { kind: "skipped" };
-    }
-    turn.answerLane.finalized = true;
-    markFinalDelivered(turn);
-    return { kind: "sent" };
   }
   const delivered = await sendPayload(turn, applyTextToPayload(payload, text), {
     afterAcceptedDraft,
@@ -525,11 +511,13 @@ async function deliverTelegramProgressModeFinalAnswer(
     assertPlatformSendAuthorized,
     bindPendingFinalDelivery,
   });
-  // The final must dispatch before the activity window retires, so the answer
-  // lane cannot accept follow-ups against a stale preview message.
-  await cleanupProgressWithoutBlockingFinal("teardown", async () => {
-    await teardownProgressWindow(turn);
-  });
+  if (payload.isError !== true) {
+    // The final must dispatch before the activity window retires, so the answer
+    // lane cannot accept follow-ups against a stale preview message.
+    await cleanupProgressWithoutBlockingFinal("teardown", async () => {
+      await teardownProgressWindow(turn);
+    });
+  }
   if (!delivered) {
     return { kind: "skipped" };
   }

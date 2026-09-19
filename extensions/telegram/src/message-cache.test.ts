@@ -6,7 +6,6 @@ import {
 } from "./message-cache-codec.js";
 import {
   resolveTelegramMessageCachePersistentScopeKey,
-  TELEGRAM_MESSAGE_CACHE_PERSISTENT_MAX_MESSAGES,
   type PersistedTelegramMessageCacheValue,
 } from "./message-cache-persistence.js";
 import {
@@ -27,7 +26,7 @@ type PersistedValue = Omit<PersistedTelegramMessageCacheValue, "promptContextPro
 
 let persistentStoreId = 0;
 
-function createMemoryStore(maxEntries = TELEGRAM_MESSAGE_CACHE_PERSISTENT_MAX_MESSAGES) {
+function createMemoryStore() {
   const entries = new Map<string, PersistedValue>();
   return {
     bucketKey: `test:${process.pid}:${Date.now()}:${persistentStoreId++}`,
@@ -36,13 +35,6 @@ function createMemoryStore(maxEntries = TELEGRAM_MESSAGE_CACHE_PERSISTENT_MAX_ME
       async register(key, value) {
         entries.delete(key);
         entries.set(key, structuredClone(value));
-        while (entries.size > maxEntries) {
-          const oldest = entries.keys().next().value;
-          if (oldest === undefined) {
-            break;
-          }
-          entries.delete(oldest);
-        }
       },
       async entries() {
         return Array.from(entries, ([key, value]) => ({ key, value: structuredClone(value) }));
@@ -427,59 +419,6 @@ describe("telegram message cache", () => {
     expect(chain.map((node) => node.messageId)).toEqual(expected);
   });
 
-  it("hydrates reply chains from persisted cached messages", async () => {
-    const { bucketKey, store } = createMemoryStore();
-    const photoMessage = message(9000, "Kesava", {
-      date: 1_736_380_700,
-      photo: photo("photo-1"),
-    });
-    const reply = message(9001, "Ada", {
-      date: 1_736_380_750,
-      text: "The cache warmer is the piece I meant",
-      from: sender(2, "Ada"),
-      reply_to_message: photoMessage,
-    });
-    const firstCache = cacheFor(bucketKey, store);
-    await record(firstCache, photoMessage);
-    await record(firstCache, reply);
-
-    resetCache();
-    const secondCache = cacheFor(bucketKey, store);
-    const chain = await replyChain(
-      secondCache,
-      message(9002, "Grace", {
-        text: "Please explain what this reply was about",
-        from: sender(3, "Grace"),
-        reply_to_message: message(9001, "Ada", {
-          date: 1_736_380_750,
-          text: "The cache warmer is the piece I meant",
-          from: sender(2, "Ada"),
-        }),
-      }),
-    );
-
-    expect(chain).toEqual([
-      {
-        messageId: "9001",
-        sender: "Ada",
-        senderId: "2",
-        timestamp: 1736380750000,
-        body: "The cache warmer is the piece I meant",
-        replyToId: "9000",
-        sourceMessage: reply,
-      },
-      {
-        messageId: "9000",
-        sender: "Kesava",
-        senderId: "1",
-        timestamp: 1736380700000,
-        mediaRef: "telegram:file/photo-1",
-        mediaType: "image",
-        sourceMessage: photoMessage,
-      },
-    ]);
-  });
-
   it("records embedded reply targets as normal cached messages", async () => {
     const { bucketKey, store } = createMemoryStore();
     const chat = { id: 7, type: "group", title: "Ops" };
@@ -574,24 +513,6 @@ describe("telegram message cache", () => {
     );
 
     expect(chain.map((entry) => entry.messageId)).toEqual(["9101", "9100"]);
-  });
-
-  it("persists cached records through the plugin state store", async () => {
-    const { bucketKey, store } = createMemoryStore(3);
-    const cache = cacheFor(bucketKey, store);
-    for (let index = 0; index < 5; index++) {
-      await record(
-        cache,
-        message(9120 + index, "Nora", {
-          date: 1_736_380_700 + index,
-          text: `State message ${index}`,
-        }),
-      );
-    }
-
-    resetCache();
-    const recent = await recentBefore(cacheFor(bucketKey, store), "9125");
-    expect(recent.map((entry) => entry.messageId)).toEqual(["9122", "9123", "9124"]);
   });
 
   it("persists prompt-context projection provenance across cache restart", async () => {

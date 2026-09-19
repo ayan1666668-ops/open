@@ -28,6 +28,21 @@ type TelegramHistoryScope = {
   assertCurrent?: () => void;
 };
 
+function createTelegramHistoryPolicyAssertion(
+  params: TelegramHistoryScope,
+  cfg: OpenClawConfig,
+  getConfig: () => OpenClawConfig,
+) {
+  return () => {
+    params.assertCurrent?.();
+    if (getConfig() !== cfg) {
+      throw new Error(
+        "Telegram history policy changed during the read; retry with current permissions.",
+      );
+    }
+  };
+}
+
 export async function isTelegramHistoryNodeAllowed(
   params: TelegramHistoryScope & { node: TelegramCachedMessageNode },
 ): Promise<boolean> {
@@ -57,6 +72,7 @@ export async function isTelegramHistorySenderAllowed(
   params.assertCurrent?.();
   const getConfig = createRuntimeConfigReader(params.cfg);
   const cfg = getConfig();
+  const assertCurrent = createTelegramHistoryPolicyAssertion(params, cfg, getConfig);
   const telegramCfg = mergeTelegramAccountConfig(cfg, params.accountId);
   if (
     !cfg.channels?.telegram ||
@@ -84,14 +100,6 @@ export async function isTelegramHistorySenderAllowed(
       allowFrom: groupAllowOverride ?? telegramCfg.groupAllowFrom ?? telegramCfg.allowFrom,
     }),
   );
-  const assertCurrent = () => {
-    params.assertCurrent?.();
-    if (getConfig() !== cfg) {
-      throw new Error(
-        "Telegram history policy changed during the read; retry with current permissions.",
-      );
-    }
-  };
   assertCurrent();
   if (
     !evaluateTelegramGroupBaseAccess({
@@ -170,14 +178,7 @@ export async function readTelegramHistoryWindow(
   }
   const getConfig = createRuntimeConfigReader(params.cfg);
   const cfg = getConfig();
-  const assertCurrent = () => {
-    params.assertCurrent?.();
-    if (getConfig() !== cfg) {
-      throw new Error(
-        "Telegram history policy changed during the read; retry with current permissions.",
-      );
-    }
-  };
+  const assertCurrent = createTelegramHistoryPolicyAssertion(params, cfg, getConfig);
   assertCurrent();
   // Automatic turns inspect a physical window; only explicit reads page deeper for matches.
   const candidates = await params.cache.readHistoryWindow({
@@ -214,14 +215,7 @@ export async function readTelegramHistory(
   }
   const getConfig = createRuntimeConfigReader(params.cfg);
   const cfg = getConfig();
-  const assertCurrent = () => {
-    params.assertCurrent?.();
-    if (getConfig() !== cfg) {
-      throw new Error(
-        "Telegram history policy changed during the read; retry with current permissions.",
-      );
-    }
-  };
+  const assertCurrent = createTelegramHistoryPolicyAssertion(params, cfg, getConfig);
   const ascending = params.after !== undefined && params.before === undefined;
   let before = params.before;
   let after = params.after;
