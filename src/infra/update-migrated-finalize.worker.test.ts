@@ -366,6 +366,7 @@ it.each([
   process.argv = [process.execPath, "update-migrated-finalize.worker.js"];
   vi.spyOn(process.stdin, Symbol.asyncIterator).mockImplementation(async function* () {
     yield JSON.stringify(input);
+    return undefined;
   });
 
   await import("./update-migrated-finalize.worker.js");
