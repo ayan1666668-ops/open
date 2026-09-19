@@ -187,11 +187,15 @@ describe("assistant image session policy", () => {
       // this narrows staged references rather than every managed one.
       const controlId = "unstaged-channel-attachment.png";
       await fs.writeFile(path.join(inboundDir, controlId), PNG);
-      const control = await request(`media://inbound/${controlId}`, {
-        unscoped: true,
-        omitAgent: true,
-      });
+      const controlReference = `media://inbound/${controlId}`;
+      const control = await request(controlReference, { unscoped: true, omitAgent: true });
       expect(control.payload).toMatchObject({ available: true });
+      // The unbound control is served end to end, so the binding narrows staged objects
+      // rather than every managed inbound reference.
+      const controlTicket = String((await request(controlReference)).payload!.mediaTicket);
+      const controlBytes = await request(controlReference, { ticket: controlTicket, bytes: true });
+      expect(controlBytes.res.statusCode).toBe(200);
+      expect(controlBytes.bytes).toEqual(PNG);
 
       // Withdraw the session's visibility: the staged reference stops being served, both
       // to the session that published it and to the retained ticket.
@@ -199,6 +203,20 @@ describe("assistant image session policy", () => {
       invalidateSessionSharingSnapshot(sessionKey);
       expect((await request(reference)).res.statusCode).toBe(404);
       expect((await request(reference, { ticket, bytes: true })).res.statusCode).toBe(404);
+
+      // Reconfirmation: restoring visibility restores the presenting session's access, so
+      // the refusals above are the binding and the visibility check, not a broken path.
+      entry.visibility = undefined;
+      invalidateSessionSharingSnapshot(sessionKey);
+      const reconfirmed = await request(reference);
+      expect(reconfirmed.payload).toMatchObject({ available: true });
+      const reconfirmedTicket = String(reconfirmed.payload!.mediaTicket);
+      const reconfirmedBytes = await request(reference, {
+        ticket: reconfirmedTicket,
+        bytes: true,
+      });
+      expect(reconfirmedBytes.res.statusCode).toBe(200);
+      expect(reconfirmedBytes.bytes).toEqual(PNG);
     });
   });
 
