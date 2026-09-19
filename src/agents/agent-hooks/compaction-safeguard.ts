@@ -85,7 +85,11 @@ import {
   evaluateCompactionFidelity,
   evaluateCompactionShadowCuration,
 } from "./compaction-safeguard-semantic-judgments.js";
-import { buildCompactionSemanticSnapshot } from "./compaction-safeguard-semantic.js";
+import {
+  buildCompactionSemanticSnapshot,
+  fingerprint,
+  fingerprintCompactionMessages,
+} from "./compaction-safeguard-semantic.js";
 
 const log = createSubsystemLogger("compaction-safeguard");
 
@@ -775,6 +779,20 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
             timeoutMs: semanticTimeoutMs,
           }),
         ]);
+        semanticSignal.throwIfAborted();
+        const currentSemanticMode =
+          getCompactionSafeguardRuntime(ctx.sessionManager)?.semanticCurationMode ?? "off";
+        if (
+          currentSemanticMode !== "shadow" ||
+          fingerprintCompactionMessages(semanticSourceMessages) !==
+            semanticSnapshot.sourceFingerprint ||
+          shadow.sourceFingerprint !== semanticSnapshot.sourceFingerprint ||
+          fidelity.sourceFingerprint !== semanticSnapshot.sourceFingerprint ||
+          fidelity.candidateFingerprint !== fingerprint(summary)
+        ) {
+          log.info("Compaction semantic observation discarded because its source or mode changed.");
+          return;
+        }
         if (shadow.status === "ok") {
           log.info(
             "Compaction semantic shadow: " +
