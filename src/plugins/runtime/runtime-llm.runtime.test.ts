@@ -7,7 +7,7 @@ import { buildAfterTurnRuntimeContext } from "../../agents/embedded-agent-runner
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { withPluginRuntimePluginScope } from "./gateway-request-scope.js";
 import { createRuntimeLlm } from "./runtime-llm.runtime.js";
-import type { RuntimeLogger } from "./types-core.js";
+import type { LlmCompleteParams, RuntimeLogger } from "./types-core.js";
 
 const hoisted = vi.hoisted(() => ({
   acquireSimpleCompletionModelForAgent:
@@ -1085,6 +1085,7 @@ describe("runtime.llm.complete", () => {
     const result = await llm.complete({
       model: "openai/gpt-5.4-mini",
       messages: [{ role: "user", content: "summarize" }],
+      execution: undefined,
     });
 
     expect(result).toMatchObject({ text: "summarized", stopReason: "stop" });
@@ -1114,9 +1115,7 @@ describe("runtime.llm.complete", () => {
       (call) => call[0],
     );
     expect(acquireArgs).toHaveLength(2);
-    expect(acquireArgs[0]).toEqual(
-      expect.objectContaining({ preferredProfile: "openai:primary" }),
-    );
+    expect(acquireArgs[0]).toEqual(expect.objectContaining({ preferredProfile: "openai:primary" }));
     expect(acquireArgs[1]).toEqual(
       expect.not.objectContaining({ preferredProfile: "openai:primary" }),
     );
@@ -1161,9 +1160,10 @@ describe("runtime.llm.complete", () => {
         preferredProfile: "openai:primary",
       },
     });
-    const request = {
+    const request: LlmCompleteParams = {
       model: "openai/gpt-5.4-mini",
       messages: [{ role: "user", content: "summarize" }],
+      execution: undefined,
     };
 
     await expect(llm.complete(request)).resolves.toMatchObject({
@@ -1205,6 +1205,7 @@ describe("runtime.llm.complete", () => {
       llm.complete({
         model: "openai/gpt-5.4-mini@openai:primary",
         messages: [{ role: "user", content: "summarize" }],
+        execution: undefined,
       }),
     ).resolves.toMatchObject({ text: "", stopReason: "error" });
     expect(hoisted.completeWithPreparedSimpleCompletionModel).toHaveBeenCalledOnce();
