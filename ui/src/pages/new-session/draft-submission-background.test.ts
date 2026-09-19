@@ -8,6 +8,7 @@ afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  document.body.replaceChildren();
   sessionStorage.clear();
   localStorage.clear();
 });
@@ -77,6 +78,13 @@ describe("DraftSubmissionFlow background completion", () => {
         if (method === "agent.wait") {
           if (scenario === "selected session") {
             context.gateway.snapshot.sessionKey = "agent:main:dashboard:background";
+            const pane = document.createElement("openclaw-chat-pane");
+            Object.defineProperties(pane, {
+              conversationPresented: { value: true },
+              sessionKey: { value: "agent:main:dashboard:background" },
+              agentId: { value: "main" },
+            });
+            document.body.append(pane);
           } else {
             context.gateway.snapshot.client = null;
           }

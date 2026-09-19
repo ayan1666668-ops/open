@@ -3,6 +3,8 @@ import type {
   WebPushDevicePreferences,
   WebPushNotificationPreferences,
 } from "../../../../packages/gateway-protocol/src/schema/push.js";
+import type { ApplicationContext } from "../../app/context.ts";
+import type { InAppNotificationsSnapshot } from "../../app/in-app-notifications.ts";
 import type {
   NativeNotificationsPermission,
   NativeNotificationTestOutcome,
@@ -34,6 +36,8 @@ type NotificationsSectionProps = {
   };
   onNativeNotificationsRequestPermission?: () => void;
   onNativeNotificationsSendTest?: () => void;
+  inAppNotifications?: InAppNotificationsSnapshot;
+  onInAppNotificationsSetEnabled?: (enabled: boolean) => void;
   webPush?: WebPushSnapshot;
   onWebPushSubscribe?: () => void;
   onWebPushUnsubscribe?: () => void;
@@ -41,6 +45,28 @@ type NotificationsSectionProps = {
   onWebPushSetUserPreferences?: (preferences: WebPushNotificationPreferences) => void;
   onWebPushSetDevicePreferences?: (preferences: WebPushDevicePreferences) => void;
 };
+
+/** Bind notification controls to their application-owned capabilities. */
+export function createNotificationsSectionProps(
+  context: ApplicationContext,
+): Omit<NotificationsSectionProps, "connected"> {
+  return {
+    nativeNotifications: context.nativeNotifications?.snapshot,
+    onNativeNotificationsRequestPermission: () => context.nativeNotifications?.requestPermission(),
+    onNativeNotificationsSendTest: () => context.nativeNotifications?.sendTest(),
+    inAppNotifications: context.inAppNotifications?.snapshot,
+    onInAppNotificationsSetEnabled: (enabled) =>
+      void context.inAppNotifications.setEnabled(enabled),
+    webPush: context.webPush.snapshot,
+    onWebPushSubscribe: () => void context.webPush.run({ kind: "enable" }),
+    onWebPushUnsubscribe: () => void context.webPush.run({ kind: "disable" }),
+    onWebPushTest: () => void context.webPush.run({ kind: "test" }),
+    onWebPushSetUserPreferences: (preferences) =>
+      void context.webPush.run({ kind: "set", scope: "user", preferences }),
+    onWebPushSetDevicePreferences: (preferences) =>
+      void context.webPush.run({ kind: "set", scope: "device", preferences }),
+  };
+}
 
 const WEB_PUSH_CATEGORIES = [
   ["approvalRequested", () => t("configView.notifications.approvalRequested")],
@@ -322,6 +348,28 @@ function nativeNotificationsStatus(permission: NativeNotificationsPermission | "
   }
 }
 
+function renderInAppNotifications(props: NotificationsSectionProps) {
+  const state = props.inAppNotifications;
+  return html`
+    <section class="settings-section">
+      <div class="settings-section__header">
+        <h2 class="settings-section__heading">${t("configView.notifications.inAppTitle")}</h2>
+      </div>
+      <div class="settings-group">
+        ${renderSettingsToggleRow({
+          title: t("configView.notifications.otherSessionsFinished"),
+          description: t("configView.notifications.otherSessionsFinishedHint"),
+          checked: state?.enabled ?? false,
+          disabled: !props.connected || !state?.available || state.loading,
+          onChange: (enabled) => props.onInAppNotificationsSetEnabled?.(enabled),
+        })}
+        ${!state?.available && !state?.loading ? html`<p class="settings-section__desc">${t("configView.notifications.inAppAccountRequired")}</p>` : nothing}
+        ${state?.error ? html`<p class="cfg-field__error">${formatUiExternalText(state.error)}</p>` : nothing}
+      </div>
+    </section>
+  `;
+}
+
 export function renderNotificationsSection(props: NotificationsSectionProps) {
   const native = props.nativeNotifications;
   if (native) {
@@ -362,6 +410,7 @@ export function renderNotificationsSection(props: NotificationsSectionProps) {
 
     return html`
       <div class="settings-page">
+        ${renderInAppNotifications(props)}
         <section class="settings-section" id=${COMMUNICATION_SETTINGS_TARGET_IDS.notifications}>
           <div class="settings-section__header">
             <h2 class="settings-section__heading">${t("configView.notifications.nativeTitle")}</h2>
@@ -427,6 +476,7 @@ export function renderNotificationsSection(props: NotificationsSectionProps) {
   if (!push) {
     return html`
       <div class="settings-page">
+        ${renderInAppNotifications(props)}
         <section class="settings-section" id=${COMMUNICATION_SETTINGS_TARGET_IDS.notifications}>
           <div class="settings-section__header">
             <h2 class="settings-section__heading">${t("configView.notifications.title")}</h2>
@@ -526,6 +576,7 @@ export function renderNotificationsSection(props: NotificationsSectionProps) {
 
   return html`
     <div class="settings-page">
+      ${renderInAppNotifications(props)}
       <section class="settings-section" id=${COMMUNICATION_SETTINGS_TARGET_IDS.notifications}>
         <div class="settings-section__header">
           <h2 class="settings-section__heading">${t("configView.notifications.title")}</h2>
