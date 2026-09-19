@@ -12,6 +12,7 @@ import {
 } from "../components/command-palette-contract.ts";
 import {
   BROWSER_PANEL_TOGGLE_EVENT,
+  LINK_READER_PANEL_TOGGLE_EVENT,
   CUSTODIAN_PANEL_TOGGLE_EVENT,
   HOME_PANEL_TOGGLE_EVENT,
   DEBUG_OVERLAY_REQUEST_EVENT,
@@ -26,14 +27,22 @@ import type { BoardFace } from "../lib/board/settings.ts";
 import { canCallGatewayMethod } from "../lib/gateway-methods.ts";
 import {
   KEYBOARD_SHORTCUT_COMBOS,
+  type KeyboardShortcutsDialogElement,
   matchesShortcutCombo,
 } from "../lib/keyboard-shortcut-contract.ts";
 import { readSessionMethodAccess } from "../lib/session-method-access.ts";
 import { isTerminalAvailable } from "../lib/terminal-availability.ts";
+import {
+  readDebugOverlayMode,
+  shouldCloseDebugOverlay,
+  type DebugOverlayElement,
+  type DebugOverlayMode,
+} from "../pages/debug/debug-overlay-frame.ts";
 import { ShellPanelOwner, type ShellPanelHost } from "./app-shell-panels.ts";
 import type { ApplicationNavigationOptions } from "./context.ts";
 import {
   isOptionalElementDefined,
+  DEBUG_OVERLAY_ELEMENT,
   KEYBOARD_SHORTCUTS_ELEMENT,
   type OptionalCustomElement,
 } from "./lazy-custom-element.ts";
@@ -62,15 +71,6 @@ import {
 import { isHomePanelAvailable } from "./panel-availability.ts";
 import { NAV_WIDTH_MAX, NAV_WIDTH_MIN } from "./settings.ts";
 import { retryStaleChunkReloadWhenReachable } from "./stale-chunk-reload.ts";
-
-type DebugOverlayElement = HTMLElement & {
-  toggle: () => void;
-};
-
-type KeyboardShortcutsDialogElement = HTMLElement & {
-  isOpen: boolean;
-  toggle: () => void;
-};
 
 let nativeCommandsOwner: AbortController | undefined;
 
@@ -141,6 +141,7 @@ export class ShellChromeOwner {
       ["openclaw:native-navigate", this.handleNativeNavigate],
       [TERMINAL_PANEL_TOGGLE_EVENT, this.panels.handleDeferredTerminalToggle],
       [BROWSER_PANEL_TOGGLE_EVENT, this.panels.handleDeferredBrowserToggle],
+      [LINK_READER_PANEL_TOGGLE_EVENT, this.panels.handleDeferredLinkReaderToggle],
       [DESKTOP_PANEL_TOGGLE_EVENT, this.panels.handleDeferredDesktopToggle],
       [CUSTODIAN_PANEL_TOGGLE_EVENT, this.handleAssistantToggleBeforeMount],
       [HOME_PANEL_TOGGLE_EVENT, this.handleAssistantToggleBeforeMount],
@@ -385,6 +386,18 @@ export class ShellChromeOwner {
 
   readonly handleDocumentKeydown = (event: KeyboardEvent): void => {
     const host = this.host;
+    if (
+      host.lazyCustomElements.visibleState?.element === DEBUG_OVERLAY_ELEMENT &&
+      shouldCloseDebugOverlay(
+        event,
+        this.pendingDebugOverlayMode,
+        host.querySelector(".debug-overlay"),
+      )
+    ) {
+      event.preventDefault();
+      host.lazyCustomElements.close();
+      return;
+    }
     if (document.openClawModalLayers?.size) {
       return;
     }
@@ -465,21 +478,65 @@ export class ShellChromeOwner {
     }
   };
 
+  get pendingDebugOverlayMode(): DebugOverlayMode {
+    return readDebugOverlayMode(this.pendingLazyAction);
+  }
+
+  togglePendingDebugOverlayMode(): void {
+    const event = this.pendingLazyAction;
+    if (
+      event?.eventType !== DEBUG_OVERLAY_REQUEST_EVENT ||
+      this.host.lazyCustomElements.visibleState?.element !== DEBUG_OVERLAY_ELEMENT
+    ) {
+      return;
+    }
+    event.detail = {
+      mode: this.pendingDebugOverlayMode === "minimized" ? "expanded" : "minimized",
+    };
+    persistLazyShellAction(event);
+    this.host.requestUpdate();
+  }
+
   private readonly handleDebugOverlayRequest = (event: Event): void => {
     const host = this.host;
     if (host.navDrawerOpen && isMobileNavLayout()) {
       host.closeNavDrawer({ restoreFocus: false });
     }
-    const descriptor = lazyShellEvent(DEBUG_OVERLAY_REQUEST_EVENT, event);
-    const overlay = host.querySelector<DebugOverlayElement>("openclaw-debug-overlay");
-    if (overlay) {
-      this.clearPendingLazyAction(descriptor);
-      overlay.toggle();
+    if (host.lazyCustomElements.visibleState?.element === DEBUG_OVERLAY_ELEMENT) {
+      if (this.pendingDebugOverlayMode === "minimized") {
+        this.togglePendingDebugOverlayMode();
+      } else {
+        host.lazyCustomElements.close();
+      }
       return;
     }
-    this.pendingLazyAction = descriptor;
-    persistLazyShellAction(descriptor);
-    host.requestUpdate();
+    const descriptor = lazyShellEvent(DEBUG_OVERLAY_REQUEST_EVENT, event);
+    const overlay = isOptionalElementDefined(DEBUG_OVERLAY_ELEMENT)
+      ? host.querySelector<DebugOverlayElement>(DEBUG_OVERLAY_ELEMENT.tagName)
+      : null;
+    if (overlay) {
+      this.clearPendingLazyAction(descriptor);
+      if (descriptor.detail && "mode" in descriptor.detail) {
+        overlay.open(readDebugOverlayMode(descriptor));
+      } else {
+        overlay.toggle();
+      }
+      return;
+    }
+    this.requestLazyElement(DEBUG_OVERLAY_ELEMENT, descriptor, () => {
+      if (this.pendingLazyAction !== descriptor) {
+        return;
+      }
+      const mounted = host.querySelector<DebugOverlayElement>(DEBUG_OVERLAY_ELEMENT.tagName);
+      if (!mounted) {
+        return;
+      }
+      const mode = this.pendingDebugOverlayMode;
+      // Opening starts inner-content recovery. Retire only the outer intent first,
+      // or the shell would erase the new reload action recorded by the overlay.
+      this.clearPendingLazyAction(descriptor);
+      mounted.open(mode);
+    });
   };
 
   private readonly handleAssistantToggleBeforeMount = (event: Event): void => {
@@ -518,8 +575,8 @@ export class ShellChromeOwner {
     this.requestLazyElement(KEYBOARD_SHORTCUTS_ELEMENT, descriptor);
   };
 
-  // Open controls own Escape. Slotted options hide their listbox in shadow DOM,
-  // so recognize the open select host before Settings can consume the key.
+  // Open controls own Escape. Slotted items hide their menu/listbox in shadow DOM,
+  // so recognize the open control host before Settings can consume the key.
   shouldIgnoreSettingsEscape(event: KeyboardEvent): boolean {
     const host = this.host;
     const overlaySnapshot = host.context?.overlays.snapshot;
@@ -537,7 +594,7 @@ export class ShellChromeOwner {
     return (
       target instanceof Element &&
       target.closest(
-        "input, textarea, select, wa-select[open], [contenteditable], dialog, [role='dialog'], [role='menu'], [role='listbox']",
+        "input, textarea, select, wa-select[open], wa-dropdown[open], [contenteditable], dialog, [role='dialog'], [role='menu'], [role='listbox']",
       ) !== null
     );
   }
@@ -588,10 +645,11 @@ export class ShellChromeOwner {
     const host = this.host;
     const elements: Record<LazyShellEvent["eventType"], string> = {
       [COMMAND_PALETTE_OPEN_EVENT]: host.commandPaletteElement.tagName,
-      [DEBUG_OVERLAY_REQUEST_EVENT]: "openclaw-debug-overlay",
+      [DEBUG_OVERLAY_REQUEST_EVENT]: DEBUG_OVERLAY_ELEMENT.tagName,
       [KEYBOARD_SHORTCUTS_REQUEST_EVENT]: KEYBOARD_SHORTCUTS_ELEMENT.tagName,
       [TERMINAL_PANEL_TOGGLE_EVENT]: host.terminalPanelElement.tagName,
       [BROWSER_PANEL_TOGGLE_EVENT]: host.browserPanelElement.tagName,
+      [LINK_READER_PANEL_TOGGLE_EVENT]: host.linkReaderPanelElement.tagName,
       [DESKTOP_PANEL_TOGGLE_EVENT]: host.desktopPanelElement.tagName,
       [CUSTODIAN_PANEL_TOGGLE_EVENT]: "openclaw-assistant-panel",
       [HOME_PANEL_TOGGLE_EVENT]: "openclaw-assistant-panel",

@@ -4,7 +4,6 @@ import type { GatewayBrowserClient, GatewayEventFrame } from "../api/gateway.ts"
 import "../components/app-topbar.ts";
 import "../components/assistant-panel.ts";
 import "../components/modal-dialog.ts";
-import "../pages/debug/debug-overlay.ts";
 import {
   formatDocumentTitle,
   isSettingsNavigationRoute,
@@ -65,6 +64,7 @@ import {
   DESKTOP_PANEL_ELEMENT,
   EXEC_APPROVAL_ELEMENT,
   LazyCustomElementRequestController,
+  LINK_READER_PANEL_ELEMENT,
   type OptionalCustomElement,
   TERMINAL_PANEL_ELEMENT,
 } from "./lazy-custom-element.ts";
@@ -116,6 +116,7 @@ class OpenClawShell
   readonly commandPaletteElement = COMMAND_PALETTE_ELEMENT;
   readonly terminalPanelElement = TERMINAL_PANEL_ELEMENT;
   readonly browserPanelElement = BROWSER_PANEL_ELEMENT;
+  readonly linkReaderPanelElement = LINK_READER_PANEL_ELEMENT;
   readonly desktopPanelElement = DESKTOP_PANEL_ELEMENT;
   readonly execApprovalElement = EXEC_APPROVAL_ELEMENT;
   readonly onboardingMemoryImportElement = {
@@ -202,12 +203,7 @@ class OpenClawShell
       }
     });
   }
-  // Lazy: the critical-notice module stays out of the startup chunk (perf
-  // budget); loaded on the first session.observer digest after boot.
-  criticalNoticeRuntime: Promise<
-    typeof import("../pages/chat/critical-observer-notice.runtime.ts")
-  > | null = null;
-  // Lazy for the same reason: the pairing modal is opened from Settings, not at
+  // Lazy: the pairing modal is opened from Settings, not at
   // boot, so its template, icons, and strings stay off the startup chunk.
   @state() devicePairSetupRenderer:
     | typeof import("../pages/devices/view-pairing.runtime.ts").renderDevicePairSetup
@@ -285,7 +281,9 @@ class OpenClawShell
       ? normalizeAgentLabel(agent)
       : resolveSessionDisplayName(
           sessionKey,
-          context.sessions.state.result?.sessions.find((session) => session.key === sessionKey),
+          context.sessions.presentation.result?.sessions.find(
+            (session) => session.key === sessionKey,
+          ),
         );
   }
 
@@ -345,6 +343,14 @@ class OpenClawShell
         (selection, notify) => selection.subscribe(notify),
       )
       .watch(
+        () => this.context?.settingsAgentSelection,
+        (selection, notify) => selection.subscribe(notify),
+      )
+      .watch(
+        () => this.context?.agentIdentity,
+        (identity, notify) => identity.subscribe(notify),
+      )
+      .watch(
         () => this.context?.gateway,
         (gateway, notify) => gateway.subscribe(notify),
         (gateway) => this.shellGateway.synchronizeGateway(gateway.snapshot),
@@ -392,6 +398,16 @@ class OpenClawShell
         (sessions) => {
           this.observeDeletedSessions(sessions.state);
           this.recoverDeletedActiveSession(sessions.state);
+        },
+        () => this.performUpdate(),
+      )
+      .watch(
+        () => this.context?.placementStartup,
+        (startup, notify) => startup.subscribe(notify),
+        () => {
+          if (this.context) {
+            this.recoverDeletedActiveSession(this.context.sessions.state);
+          }
         },
       )
       .watch(
@@ -557,9 +573,9 @@ class OpenClawShell
     this.shellNavigation.navigate(routeId, options);
   }
 
-  recoverNotFoundRoute() {
+  readonly recoverNotFoundRoute = () => {
     return this.shellNavigation.recoverNotFoundRoute();
-  }
+  };
 
   recoverDeletedActiveSession(sessionState: ApplicationContext["sessions"]["state"]) {
     this.shellNavigation.recoverDeletedActiveSession(sessionState);
@@ -604,6 +620,10 @@ class OpenClawShell
   readonly handleNativeHistoryState = this.shellChrome.handleNativeHistoryState;
   readonly handleWindowResize = this.shellChrome.handleWindowResize;
   readonly handleDocumentKeydown = this.shellChrome.handleDocumentKeydown;
+  get pendingDebugOverlayMode() {
+    return this.shellChrome.pendingDebugOverlayMode;
+  }
+  readonly togglePendingDebugOverlayMode = () => this.shellChrome.togglePendingDebugOverlayMode();
   readonly openPalette = this.shellChrome.openPalette;
   readonly refreshControlUi = (): Promise<boolean> => {
     const context = this.context;
@@ -678,6 +698,9 @@ class OpenClawShell
     const context = this.context;
     if (!context) {
       return;
+    }
+    if (this.querySelector(".settings-sidebar__agent")) {
+      void context.agentIdentity.ensure([context.settingsAgentSelection.state.selectedId]);
     }
     if (this.workspaceChromeVisible) {
       this.shellChrome.panels.restore();
