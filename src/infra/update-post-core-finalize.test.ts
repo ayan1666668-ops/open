@@ -249,8 +249,7 @@ fs.writeFileSync(process.env.OPENCLAW_TEST_OUTPUT_PATH, JSON.stringify({
     expect(call.env.OPENCLAW_UPDATE_EFFECTIVE_CHANNEL).toBe("dev");
     expect(call.argv).not.toContain("--channel");
     expect(call.argv).not.toContain("--timeout");
-    // Doctor has no separate automatic deadline; the enclosing activation is bounded.
-    expect(call.timeoutMs).toBeGreaterThanOrEqual(20 * 60_000);
+    expect(call.timeoutMs).toBeUndefined();
   });
 
   it("passes and removes the pre-update config payload for channel restoration", async () => {
