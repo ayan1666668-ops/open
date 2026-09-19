@@ -295,6 +295,7 @@ class MeetingsPage extends OpenClawLightDomElement {
     const nextCursor = this.readerPages.at(-1)?.nextCursor;
     if (
       this.readerTask.status === TaskStatus.COMPLETE &&
+      document.visibilityState !== "hidden" &&
       !this.readerDenial &&
       nextCursor &&
       nextCursor !== this.readerCursor

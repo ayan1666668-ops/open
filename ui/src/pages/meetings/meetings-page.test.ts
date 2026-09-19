@@ -133,14 +133,26 @@ describe("meeting transcript library", () => {
   it("pauses background reads when hidden, catches up on return, and stops on archive denial", async () => {
     vi.useFakeTimers();
     let denied = false;
-    const request = vi.fn(async (method: string) => {
-      if (denied) {
-        throw new GatewayRequestError({ code: "FORBIDDEN", message: "Restricted" });
-      }
-      return method === "transcripts.list"
-        ? { sessions: [meetingEntry], nextCursor: null }
-        : { ...meetingPage, session: { ...meetingEntry, active: true } };
-    });
+    const firstPage = deferred<unknown>();
+    const request = vi.fn(
+      async (method: string, params: { includeUtterances?: boolean; cursor?: string }) => {
+        if (denied) {
+          throw new GatewayRequestError({ code: "FORBIDDEN", message: "Restricted" });
+        }
+        if (method === "transcripts.get" && params.includeUtterances) {
+          return params.cursor
+            ? {
+                ...meetingPage,
+                utterances: [{ sequence: 1, text: "Second page" }],
+                nextCursor: null,
+              }
+            : firstPage.promise;
+        }
+        return method === "transcripts.list"
+          ? { sessions: [meetingEntry], nextCursor: null }
+          : { ...meetingPage, session: { ...meetingEntry, active: true } };
+      },
+    );
     const { page } = mount(request, "?selector=meeting&tab=summary");
     await vi.waitFor(() => expect(page.textContent).toContain("Reader layout discussed."));
     expect(page.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toContain(
@@ -148,12 +160,23 @@ describe("meeting transcript library", () => {
     );
     const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
     const initialCount = request.mock.calls.length;
+    firstPage.resolve({ ...meetingPage, nextCursor: "more" });
     await vi.advanceTimersByTimeAsync(9_000);
     expect(request).toHaveBeenCalledTimes(initialCount);
     visibility.mockReturnValue("visible");
     document.dispatchEvent(new Event("visibilitychange"));
     await vi.advanceTimersByTimeAsync(0);
     expect(request.mock.calls.length).toBeGreaterThan(initialCount);
+    page
+      .querySelector<HTMLElement>("#transcript-reader-tab-text")!
+      .dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    await page.updateComplete;
+    await vi.waitFor(() =>
+      expect(page.querySelectorAll(".transcripts-utterances li")).toHaveLength(2),
+    );
+    expect(
+      [...page.querySelectorAll(".transcripts-utterances p")].map((entry) => entry.textContent),
+    ).toEqual(["Keep the reader quiet and readable.", "Second page"]);
     denied = true;
     await vi.advanceTimersByTimeAsync(3_000);
     expect(page.textContent).toContain("Transcript access is restricted");
