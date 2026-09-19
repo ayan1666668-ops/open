@@ -10,9 +10,9 @@ import {
 import { captureDeliveryQueueStateContext } from "../delivery-queue-sqlite.js";
 import { createQueuedDeliveryOwner } from "./deliver-queue-state.js";
 import { ackDelivery } from "./delivery-queue-ack.js";
-import type { AckDeliveryOptions } from "./delivery-queue-ack.kernel.js";
 import { holdAcknowledgementReply } from "./delivery-queue-ack.worker.test-support.js";
 import { OUTBOUND_DELIVERY_QUEUE_NAME } from "./delivery-queue-namespaces.js";
+import type { AckDeliveryOptions } from "./delivery-queue-settlement.types.js";
 import {
   claimDeliveryPlatformSendAttempt,
   enqueueDelivery,

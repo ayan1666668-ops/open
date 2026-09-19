@@ -13,14 +13,16 @@ import { executeDeliveryQueueOperation } from "../delivery-queue-worker-store.js
 import {
   failPendingDeliveryInDatabase,
   retireUnsentDeliveryInDatabase,
-  type AckDeliveryOptions,
-  type FailPendingDeliveryResult,
 } from "./delivery-queue-ack.kernel.js";
 import { collectEntrySpoolPaths, releaseSpoolArtifacts } from "./delivery-queue-media-spool.js";
 import {
   cancelDeliveryQueueMediaRetention,
   OUTBOUND_DELIVERY_QUEUE_NAME,
 } from "./delivery-queue-media-staging.js";
+import type {
+  AckDeliveryOptions,
+  FailPendingDeliveryResult,
+} from "./delivery-queue-settlement.types.js";
 import { acceptedPreparedOutboundEntries } from "./prepared-batch.js";
 
 /** Retires an unsent live claim while its adapter preparation still owns resources. */

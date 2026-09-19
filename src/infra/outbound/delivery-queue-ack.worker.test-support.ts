@@ -13,11 +13,9 @@ export function holdAcknowledgementReply(id: string) {
   let publish: (() => void) | undefined;
   let captured = false;
   let attempts = 0;
-  // oxlint-disable-next-line typescript/unbound-method -- Called with the intercepted worker receiver.
-  const originalPost = Worker.prototype.postMessage;
-  // oxlint-disable-next-line typescript/unbound-method -- Reflect.apply preserves the emitting worker receiver.
-  const originalEmit = Worker.prototype.emit;
-  const post = vi.spyOn(Worker.prototype, "postMessage").mockImplementation(function (
+  const post = vi.spyOn(Worker.prototype, "postMessage");
+  const emit = vi.spyOn(Worker.prototype, "emit");
+  Worker.prototype.postMessage = function (
     this: Worker,
     request: SqliteWorkerRequest,
     transferList,
@@ -35,13 +33,9 @@ export function holdAcknowledgementReply(id: string) {
         posted.resolve();
       }
     }
-    return originalPost.call(this, request, transferList);
-  });
-  const emit = vi.spyOn(Worker.prototype, "emit").mockImplementation(function (
-    this: Worker,
-    event: string | symbol,
-    ...args: unknown[]
-  ) {
+    return post.call(this, request, transferList);
+  };
+  Worker.prototype.emit = function (this: Worker, event: string | symbol, ...args: unknown[]) {
     const reply = args[0];
     if (
       !captured &&
@@ -59,14 +53,14 @@ export function holdAcknowledgementReply(id: string) {
       ) {
         captured = true;
         publish = () => {
-          Reflect.apply(originalEmit, this, [event, ...args]);
+          Reflect.apply(emit, this, [event, ...args]);
         };
         held.resolve(result);
         return true;
       }
     }
-    return Reflect.apply(originalEmit, this, [event, ...args]);
-  });
+    return Reflect.apply(emit, this, [event, ...args]);
+  };
   return {
     posted: posted.promise,
     held: held.promise,
