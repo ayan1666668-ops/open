@@ -252,7 +252,7 @@ struct AppProfileTests {
             computed: first) == "/custom/approvals.sock")
     }
 
-    @Test func `first-run onboarding is skipped once setup has actually completed`() {
+    @MainActor @Test func `first-run onboarding is skipped once setup has actually completed`() {
         // The common case: onboarding finished normally, so onboardingSeen is true.
         #expect(AppDelegate.shouldSkipFirstRunOnboarding(
             connectionMode: .local, onboardingSeen: true, seenOnboardingVersion: currentOnboardingVersion))
@@ -267,7 +267,7 @@ struct AppProfileTests {
             connectionMode: .unconfigured, onboardingSeen: false, seenOnboardingVersion: 0))
     }
 
-    @Test func `first-run onboarding resumes after quitting mid-wizard instead of being marked complete`() {
+    @MainActor @Test func `first-run onboarding resumes after quitting mid-wizard instead of being marked complete`() {
         // Regression guard: selecting a connection on the wizard's connection page sets
         // connectionMode immediately, two pages before CLI install/AI setup finish. Quitting or
         // crashing in between must not be treated as a completed installation.
