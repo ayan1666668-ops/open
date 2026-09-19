@@ -334,7 +334,9 @@ it("rechecks a queued claim's captured authority and leaves the outcome unclaime
     ...target,
     runId: "retired-run",
     assertCurrent() {
-      if (!current) throw new Error("authority retired");
+      if (!current) {
+        throw new Error("authority retired");
+      }
     },
   };
   const claim = claimHeartbeatOutcomeForRun(input);
