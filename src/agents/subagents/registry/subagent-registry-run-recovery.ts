@@ -218,6 +218,8 @@ export class SubagentRecoveryManager extends SubagentWaitManager {
       spawnMode,
       archiveAtMs: undefined,
       runTimeoutSeconds,
+      waitExpiryObservedAt: undefined,
+      waitExpiryAnnouncedAt: undefined,
     });
     bindGatewayContextResolver(
       next,
