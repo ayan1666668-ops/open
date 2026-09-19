@@ -512,6 +512,13 @@ function createExecSteeringRuntime(): ExecSteeringRuntime {
   function resetExecSteeringQueueForTest(): void {
     queues.clear();
     sequence = 0;
+    // Drop this queue's settlement observer alongside its state. The observer is
+    // a process-wide singleton lazily registered on enqueue; without clearing it
+    // here a test file that populated the queue would leak the observer into a
+    // later file in the same non-isolated worker, where it would fire against an
+    // unrelated queue. Clearing both together makes the reset self-contained: the
+    // next enqueue re-registers it, so a durable-event consumption still fans out.
+    unregisterExecSteeringConsumptionObserver();
   }
 
   return {
@@ -561,6 +568,10 @@ function onDurableSystemEventConsumed(params: { consumedEventIds: readonly strin
   }
 }
 
+// Handle returned by the most recent observer registration, used to drop the
+// observer in resetExecSteeringQueueForTest so it never outlives the queue.
+let unregisterConsumptionObserver: (() => void) | undefined;
+
 /**
  * Ensures the steering queue's settlement observer is registered.
  *
@@ -570,7 +581,21 @@ function onDurableSystemEventConsumed(params: { consumedEventIds: readonly strin
  * and it re-registers transparently after a reset cleared the set.
  */
 export function ensureExecSteeringConsumptionObserver(): void {
-  registerSystemEventConsumptionObserver(onDurableSystemEventConsumed);
+  unregisterConsumptionObserver = registerSystemEventConsumptionObserver(
+    onDurableSystemEventConsumed,
+  );
+}
+
+/**
+ * Unregisters this queue's settlement observer, if one is currently registered.
+ *
+ * Test-only lifecycle helper invoked by resetExecSteeringQueueForTest so the
+ * observer never outlives the queue state it serves. Safe to call when no
+ * observer is registered; the next enqueue re-registers lazily.
+ */
+function unregisterExecSteeringConsumptionObserver(): void {
+  unregisterConsumptionObserver?.();
+  unregisterConsumptionObserver = undefined;
 }
 
 /** Prepends an exec-steering prompt to an existing user prompt when items exist. */

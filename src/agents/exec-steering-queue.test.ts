@@ -365,6 +365,37 @@ describe("exec-steering-queue", () => {
     expect(hasPendingExecSteeringItems({ requesterSessionKey })).toBe(false);
   });
 
+  it("drops the settlement observer on queue reset even without a system-events reset", () => {
+    // A test file may reset only the steering queue (its own state) and never
+    // touch the shared system-events module. The queue reset must still drop
+    // this queue's observer so it cannot fire against a later file's queue in a
+    // shared, non-isolated worker. This is the cross-file leak that passed in
+    // isolation but failed batched before the reset became self-contained.
+    enqueueSharedOccurrence({ execId: "noSysRe", text: "registers the observer" });
+    resetExecSteeringQueueForTest();
+
+    // Simulate the next file enqueuing a durable event and consuming it. With a
+    // leaked observer this consumption would fan out into the (now empty) queue;
+    // the assertion here is simply that nothing throws and no phantom item is
+    // resurrected. The observer must be inert until a fresh enqueue re-adds it.
+    const orphan = enqueueSystemEventReceipt("Exec completed (nextfile, exit 0) :: none", {
+      sessionKey: requesterSessionKey,
+      contextKey: "exec:nextfile",
+    });
+    if (!orphan) {
+      throw new Error("expected a durable receipt for the simulated next file");
+    }
+    expect(() => orphan.remove()).not.toThrow();
+    expect(hasPendingExecSteeringItems({ requesterSessionKey })).toBe(false);
+
+    // A fresh enqueue re-registers the observer, so settlement fans out again.
+    const { durableEventId } = enqueueSharedOccurrence({ execId: "reRe001", text: "re-armed" });
+    consumeSelectedSystemEventEntries(requesterSessionKey, [
+      { id: durableEventId, text: "", ts: 0 },
+    ]);
+    expect(hasPendingExecSteeringItems({ requesterSessionKey })).toBe(false);
+  });
+
   it("invalidates an already-leased copy before dispatch when its occurrence is acknowledged", () => {
     enqueue({ occurrenceKey: "exec:leased01", execId: "leased01" });
     const leased = leasePendingExecSteeringItems({
