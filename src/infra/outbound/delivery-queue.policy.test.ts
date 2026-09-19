@@ -3,7 +3,7 @@
 import { describe, expect, it } from "vitest";
 import { isProvenDeliveryNotSentError } from "../delivery-recovery.shared.js";
 import { recordRetryAttemptErrors } from "../retry-attempt-errors.js";
-import { PlatformMessageNotDispatchedError } from "./deliver-types.js";
+import { OutboundDeliveryError, PlatformMessageNotDispatchedError } from "./deliver-types.js";
 
 describe("delivery-queue policy", () => {
   describe("isProvenDeliveryNotSentError", () => {
@@ -36,6 +36,45 @@ describe("delivery-queue policy", () => {
       const marker = createMarker();
       recordRetryAttemptErrors(marker, [new Error("connection reset after write"), marker]);
       expect(isProvenDeliveryNotSentError(marker)).toBe(false);
+    });
+
+    it("treats a connect-stage ECONNRESET as proven not sent (replayable)", () => {
+      const connectReset = Object.assign(new Error("connect ECONNRESET"), {
+        code: "ECONNRESET",
+        syscall: "connect",
+      });
+      expect(isProvenDeliveryNotSentError(connectReset)).toBe(true);
+    });
+
+    it.each([
+      ["read", "read ECONNRESET"],
+      ["write", "write ECONNRESET"],
+    ])("keeps a post-connect %s ECONNRESET ambiguous (not replayable)", (_syscall, message) => {
+      const postConnectReset = Object.assign(new Error(message), {
+        code: "ECONNRESET",
+        syscall: _syscall,
+      });
+      expect(isProvenDeliveryNotSentError(postConnectReset)).toBe(false);
+    });
+
+    it("keeps a connect ECONNRESET ambiguous when the platform send already started", () => {
+      const connectReset = Object.assign(new Error("connect ECONNRESET"), {
+        code: "ECONNRESET",
+        syscall: "connect",
+      });
+      const dispatched = new OutboundDeliveryError("send failed", {
+        cause: connectReset,
+        payloadOutcomes: [
+          {
+            index: 0,
+            status: "failed" as const,
+            error: connectReset,
+            sentBeforeError: true,
+            stage: "send" as const,
+          },
+        ],
+      });
+      expect(isProvenDeliveryNotSentError(dispatched)).toBe(false);
     });
   });
 });
