@@ -8,8 +8,8 @@ import { createAssistantMessageEventStream, type Model } from "openclaw/plugin-s
 import { createRequireRecord } from "openclaw/plugin-sdk/test-fixtures";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../../config/config.js";
-import * as judgmentRuntimeModule from "../../judgments/runtime.js";
-import type { JudgmentOutcome } from "../../judgments/types.js";
+import * as decisionRuntimeModule from "../../decisions/runtime.js";
+import type { DecisionOutcome } from "../../decisions/types.js";
 import type { CompactionProvider } from "../../plugins/compaction-provider.js";
 import {
   requireActivePluginRegistry,
@@ -49,11 +49,11 @@ const { compactionLogger } = vi.hoisted(() => {
   return { compactionLogger: logger };
 });
 
-vi.mock("../../judgments/runtime.js", async () => {
-  const actual = await vi.importActual<typeof import("../../judgments/runtime.js")>(
-    "../../judgments/runtime.js",
+vi.mock("../../decisions/runtime.js", async () => {
+  const actual = await vi.importActual<typeof import("../../decisions/runtime.js")>(
+    "../../decisions/runtime.js",
   );
-  return { ...actual, evaluateJudgment: vi.fn(actual.evaluateJudgment) };
+  return { ...actual, evaluateDecision: vi.fn(actual.evaluateDecision) };
 });
 
 vi.mock("../../logging/subsystem.js", async () => {
@@ -79,7 +79,7 @@ vi.mock("../compaction.js", async () => {
 });
 
 const mockSummarizeInStages = vi.mocked(compactionModule.summarizeInStages);
-const mockEvaluateJudgment = vi.mocked(judgmentRuntimeModule.evaluateJudgment);
+const mockEvaluateDecision = vi.mocked(decisionRuntimeModule.evaluateDecision);
 const actualCompactionModule = await vi.importActual<typeof compactionModule>("../compaction.js");
 const actualCompactionQualityModule = await vi.importActual<typeof compactionQualityModule>(
   "./compaction-safeguard-quality.js",
@@ -144,7 +144,7 @@ beforeEach(() => {
   testing.setSummarizeInStagesForTest(mockSummarizeInStages);
   mockAuditSummaryQuality.mockImplementation(actualCompactionQualityModule.auditSummaryQuality);
   mockAuditSummaryQuality.mockClear();
-  mockEvaluateJudgment.mockReset();
+  mockEvaluateDecision.mockReset();
   compactionLogger.warn.mockClear();
 });
 
@@ -157,11 +157,19 @@ function installCompactionProviderForTest(provider: CompactionProvider): void {
   requireActivePluginRegistry().compactionProviders.push({ provider });
 }
 
-function stubSessionManager(): ExtensionContext["sessionManager"] {
+function stubSessionManager(agentId?: string): ExtensionContext["sessionManager"] {
   const stub: ExtensionContext["sessionManager"] = {
     getCwd: () => "/stub",
     getSessionId: () => "stub-id",
-    getSessionTarget: () => undefined,
+    getSessionTarget: () =>
+      agentId
+        ? {
+            agentId,
+            sessionId: "stub-id",
+            sessionKey: `agent:${agentId}:stub`,
+            storePath: "/stub/sessions",
+          }
+        : undefined,
     getLeafId: () => null,
     getAppendParentId: () => null,
     getAppendMode: () => undefined,
@@ -3888,7 +3896,7 @@ describe("compaction-safeguard recent-turn preservation", () => {
     mockSummarizeInStages
       .mockResolvedValueOnce(summaryResult(firstSummary))
       .mockResolvedValueOnce(summaryResult(repairedSummary));
-    mockEvaluateJudgment.mockResolvedValueOnce({
+    mockEvaluateDecision.mockResolvedValueOnce({
       status: "ok",
       result: {
         model: "fixture",
@@ -3911,15 +3919,16 @@ describe("compaction-safeguard recent-turn preservation", () => {
         rubricVersion: "1",
         runtimeGeneration: "test-generation",
       },
-    } satisfies JudgmentOutcome);
+    } satisfies DecisionOutcome);
 
-    const sessionManager = stubSessionManager();
+    const sessionManager = stubSessionManager("persisted-owner");
     setCompactionSafeguardRuntime(sessionManager, {
       model: createAnthropicModelFixture(),
       recentTurnsPreserve: 0,
       qualityGuardEnabled: true,
       qualityGuardMaxRetries: 1,
-      semanticJudgmentsEnabled: true,
+      semanticDecisionsEnabled: true,
+      agentId: "prepared-owner",
     });
     const latestAsk = "Deploy after tests pass.";
     const event = createSemanticCompactionEvent({
@@ -3931,7 +3940,11 @@ describe("compaction-safeguard recent-turn preservation", () => {
     const { result } = await runCompactionScenario({ sessionManager, event, apiKey: "test-key" });
 
     expect(result.cancel).not.toBe(true);
-    expect(mockEvaluateJudgment).toHaveBeenCalledTimes(1);
+    expect(mockEvaluateDecision).toHaveBeenCalledTimes(1);
+    expect(mockEvaluateDecision).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ agentId: "persisted-owner" }),
+    );
     expect(mockSummarizeInStages).toHaveBeenCalledTimes(2);
     const repairCall = requireRecord(mockCallArg(mockSummarizeInStages, 1));
     expect(repairCall.customInstructions).toContain("Semantic fidelity feedback");
@@ -3957,7 +3970,7 @@ describe("compaction-safeguard recent-turn preservation", () => {
     mockSummarizeInStages
       .mockResolvedValueOnce(summaryResult(acceptedSummary))
       .mockRejectedValueOnce(new Error("semantic repair failed"));
-    mockEvaluateJudgment.mockResolvedValueOnce({
+    mockEvaluateDecision.mockResolvedValueOnce({
       status: "ok",
       result: {
         model: "fixture",
@@ -3980,7 +3993,7 @@ describe("compaction-safeguard recent-turn preservation", () => {
         rubricVersion: "1",
         runtimeGeneration: "test-generation",
       },
-    } satisfies JudgmentOutcome);
+    } satisfies DecisionOutcome);
 
     const sessionManager = stubSessionManager();
     setCompactionSafeguardRuntime(sessionManager, {
@@ -3988,7 +4001,8 @@ describe("compaction-safeguard recent-turn preservation", () => {
       recentTurnsPreserve: 0,
       qualityGuardEnabled: true,
       qualityGuardMaxRetries: 1,
-      semanticJudgmentsEnabled: true,
+      semanticDecisionsEnabled: true,
+      agentId: "prepared-owner",
     });
     const latestAsk = "Deploy after tests pass.";
     const event = createSemanticCompactionEvent({
@@ -4000,10 +4014,12 @@ describe("compaction-safeguard recent-turn preservation", () => {
     const { result } = await runCompactionScenario({ sessionManager, event, apiKey: "test-key" });
 
     expect(result).not.toEqual({ cancel: true });
+    expect(mockEvaluateDecision).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ agentId: "prepared-owner" }),
+    );
     expect(mockSummarizeInStages).toHaveBeenCalledTimes(2);
-    const firstFinalizedSummary = requireRecord(
-      mockCallArg(mockAuditSummaryQuality, 0),
-    ).summary;
+    const firstFinalizedSummary = requireRecord(mockCallArg(mockAuditSummaryQuality, 0)).summary;
     expect(expectCompactionResult(result).summary).toBe(firstFinalizedSummary);
     expect(consumeCompactionSafeguardCancellation(sessionManager)).toBeNull();
     expect(compactionLogger.warn.mock.calls.flat().join("\n")).toContain(
@@ -4029,7 +4045,7 @@ describe("compaction-safeguard recent-turn preservation", () => {
     mockSummarizeInStages
       .mockResolvedValueOnce(summaryResult(acceptedSummary))
       .mockResolvedValueOnce(summaryResult("invalid replacement"));
-    mockEvaluateJudgment.mockResolvedValueOnce({
+    mockEvaluateDecision.mockResolvedValueOnce({
       status: "ok",
       result: {
         model: "fixture",
@@ -4052,7 +4068,7 @@ describe("compaction-safeguard recent-turn preservation", () => {
         rubricVersion: "1",
         runtimeGeneration: "test-generation",
       },
-    } satisfies JudgmentOutcome);
+    } satisfies DecisionOutcome);
 
     const sessionManager = stubSessionManager();
     setCompactionSafeguardRuntime(sessionManager, {
@@ -4060,7 +4076,7 @@ describe("compaction-safeguard recent-turn preservation", () => {
       recentTurnsPreserve: 0,
       qualityGuardEnabled: true,
       qualityGuardMaxRetries: 1,
-      semanticJudgmentsEnabled: true,
+      semanticDecisionsEnabled: true,
     });
     const latestAsk = "Deploy after tests pass.";
     const event = createSemanticCompactionEvent({
@@ -4073,16 +4089,14 @@ describe("compaction-safeguard recent-turn preservation", () => {
 
     expect(result).not.toEqual({ cancel: true });
     expect(mockSummarizeInStages).toHaveBeenCalledTimes(2);
-    const firstFinalizedSummary = requireRecord(
-      mockCallArg(mockAuditSummaryQuality, 0),
-    ).summary;
+    const firstFinalizedSummary = requireRecord(mockCallArg(mockAuditSummaryQuality, 0)).summary;
     expect(expectCompactionResult(result).summary).toBe(firstFinalizedSummary);
     expect(compactionLogger.warn.mock.calls.flat().join("\n")).toContain(
       "semantic corrective retry did not produce a deterministic-valid replacement",
     );
   });
 
-  it("propagates caller cancellation while a semantic judgment is pending", async () => {
+  it("propagates caller cancellation while a semantic decision is pending", async () => {
     mockSummarizeInStages.mockReset();
     const sourceRequirement = "Deploy to staging only. Production is not authorized.";
     const acceptedSummary = [
@@ -4100,12 +4114,12 @@ describe("compaction-safeguard recent-turn preservation", () => {
     mockSummarizeInStages.mockResolvedValueOnce(summaryResult(acceptedSummary));
 
     const controller = new AbortController();
-    let settleJudgment!: () => void;
-    const judgmentStarted = new Promise<void>((resolve) => {
-      mockEvaluateJudgment.mockImplementationOnce(async (_batch, options) => {
+    let settleDecision!: () => void;
+    const decisionStarted = new Promise<void>((resolve) => {
+      mockEvaluateDecision.mockImplementationOnce(async (_batch, options) => {
         resolve();
         await new Promise<void>((settle) => {
-          settleJudgment = settle;
+          settleDecision = settle;
           options.signal?.addEventListener("abort", settle, { once: true });
         });
         options.signal?.throwIfAborted();
@@ -4119,7 +4133,7 @@ describe("compaction-safeguard recent-turn preservation", () => {
       recentTurnsPreserve: 0,
       qualityGuardEnabled: true,
       qualityGuardMaxRetries: 1,
-      semanticJudgmentsEnabled: true,
+      semanticDecisionsEnabled: true,
     });
     const latestAsk = "Deploy after tests pass.";
     const event = createSemanticCompactionEvent({
@@ -4130,9 +4144,9 @@ describe("compaction-safeguard recent-turn preservation", () => {
     event.signal = controller.signal;
 
     const run = runCompactionScenario({ sessionManager, event, apiKey: "test-key" });
-    await judgmentStarted;
+    await decisionStarted;
     controller.abort();
-    settleJudgment?.();
+    settleDecision?.();
 
     await expect(run).rejects.toMatchObject({ name: "AbortError" });
     expect(mockSummarizeInStages).toHaveBeenCalledTimes(1);

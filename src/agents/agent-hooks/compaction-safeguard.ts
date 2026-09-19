@@ -57,11 +57,6 @@ import {
 } from "../workspace-bootstrap-read.js";
 import { resolveCompactionInstructions } from "./compaction-instructions.js";
 import {
-  buildCompactionSemanticRepairEvidence,
-  isCompactionSemanticRepairFinding,
-  observeCompactionSemanticFidelity,
-} from "./compaction-semantic-fidelity.js";
-import {
   appendSummarySection,
   auditSummaryQuality,
   buildCompactionStructureInstructions,
@@ -75,6 +70,11 @@ import {
   getCompactionSafeguardRuntime,
   setCompactionSafeguardCancellation,
 } from "./compaction-safeguard-runtime.js";
+import {
+  buildCompactionSemanticRepairEvidence,
+  isCompactionSemanticRepairFinding,
+  observeCompactionSemanticFidelity,
+} from "./compaction-semantic-fidelity.js";
 
 const log = createSubsystemLogger("compaction-safeguard");
 
@@ -1407,7 +1407,7 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
           identifierPolicy,
         });
         if (quality.ok) {
-          if (runtime?.semanticJudgmentsEnabled) {
+          if (runtime?.semanticDecisionsEnabled) {
             if (!signal) {
               log.debug(
                 "Compaction safeguard: semantic fidelity observation skipped; reason=no-cancellation-signal",
@@ -1416,6 +1416,7 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
               const observation = await observeCompactionSemanticFidelity({
                 sourceMessages: semanticSourceMessages,
                 retainedContext: finalized.summary,
+                agentId: ctx.sessionManager.getSessionTarget?.()?.agentId ?? runtime.agentId,
                 signal,
               });
               if (observation.status === "ok") {
@@ -1442,8 +1443,7 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
                       "Semantic fidelity feedback",
                       repairEvidence,
                     );
-                    const budgetInstruction =
-                      `Keep the complete summary body within ${finalized.bodyBudget} UTF-16 code units so the finalized artifact remains valid after required suffixes.`;
+                    const budgetInstruction = `Keep the complete summary body within ${finalized.bodyBudget} UTF-16 code units so the finalized artifact remains valid after required suffixes.`;
                     semanticFallbackSummary = finalized.summary;
                     correctiveInstructions = [
                       "Preserve the active meaning of the source requirements below. Do not mark them complete or superseded unless the retained conversation supports that conclusion.",

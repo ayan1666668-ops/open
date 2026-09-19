@@ -34,15 +34,16 @@ of corrective attempts. If no finalized summary passes, compaction stops before
 writing a transcript entry, keeps the original history, and surfaces the
 existing recovery outcome.
 
-When `agents.defaults.compaction.qualityGuard.semanticJudgments: true` is set,
-the built-in safeguard can also ask the configured `judgments.provider` to
+When `agents.defaults.compaction.qualityGuard.semanticDecisions: true` is set,
+the built-in safeguard can also ask the owning agent's configured
+`decisionModel` to
 classify whether a bounded sample of recent user requirements was preserved,
 missed, contradicted, completed/superseded, or remains uncertain. This setting
 is off by default and applies only to the built-in safeguard path after the
 ordinary deterministic quality checks pass. Strong missing or contradicted
 findings may use the quality guard's existing corrective retry budget; they do
 not add a second retry loop or independently authorize a transcript write. If
-the judgment provider is unavailable, normal compaction behavior is preserved.
+the decision provider is unavailable, normal compaction behavior is preserved.
 Caller cancellation remains terminal.
 
 ## Auto-compaction
