@@ -9,6 +9,8 @@ import type { Usage } from "../llm/types.js";
 
 export type ContextUsage = NonNullable<Usage["contextUsage"]>;
 
+export const USAGE_COST_COMPONENTS = ["input", "output", "cacheRead", "cacheWrite"] as const;
+
 type PromptTokenDetails = {
   cached_tokens?: number;
   cache_write_tokens?: number;
@@ -74,7 +76,8 @@ export type NormalizedUsage = {
   contextUsage?: ContextUsage;
   reasoningTokens?: number;
   total?: number;
-  cost?: Pick<Usage["cost"], "total" | "totalOrigin">;
+  cost?: Pick<Usage["cost"], "total" | "totalOrigin"> &
+    Partial<Pick<Usage["cost"], "input" | "output" | "cacheRead" | "cacheWrite">>;
 };
 
 /** OpenAI chat-completions compatible usage shape. */
@@ -160,7 +163,7 @@ export function hasRecordedUsageCost(value: unknown): boolean {
   );
 }
 
-/** Empty transport snapshots synthesize $0; only a billed zero is an observed model cost. */
+/** Empty transport snapshots synthesize $0; recorded cost evidence can establish an observation. */
 export function hasObservedModelUsage(usage?: NormalizedUsage | null): usage is NormalizedUsage {
   return hasRecordedUsageCost(usage?.cost) || hasNonzeroUsage(usage);
 }
@@ -286,6 +289,15 @@ export function normalizeUsage(raw?: UsageLike | null): NormalizedUsage | undefi
             : {}),
         }
       : undefined;
+  if (cost?.total === 0) {
+    // Retain the component evidence that distinguishes a recorded zero from an adapter default.
+    for (const key of USAGE_COST_COMPONENTS) {
+      const component = asFiniteNumber(raw.cost?.[key]);
+      if (component !== undefined && component !== 0) {
+        cost[key] = component;
+      }
+    }
+  }
 
   if (
     input === undefined &&
