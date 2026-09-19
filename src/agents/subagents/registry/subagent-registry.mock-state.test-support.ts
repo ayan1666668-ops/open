@@ -1,9 +1,9 @@
 import { vi } from "vitest";
 import type { SessionEntry } from "../../../config/sessions.js";
 import type {
-  SessionAccessScope,
-  SessionEntryPatchContext,
-  SessionEntryPatchOptions,
+  listSessionEntriesCore,
+  loadSessionEntry,
+  patchSessionEntryCore,
 } from "../../../config/sessions/session-accessor.js";
 import type { OpenClawConfig } from "../../../config/types.openclaw.js";
 import type { GatewayRecoveryRuntime } from "../../../gateway/server-instance-runtime.types.js";
@@ -40,60 +40,37 @@ export function createSubagentRegistryMockState() {
       agents: { defaults: { subagents: { archiveAfterMinutes: 0 } } },
       session: { mainKey: "main", scope: "per-sender" as const },
     })),
-    loadSessionEntry: vi.fn((scope: SessionAccessScope) => {
-      const store = mocks.loadSessionStore(scope.storePath, { clone: false }) as Record<
-        string,
-        SessionEntry
-      >;
-      return store[scope.sessionKey];
-    }),
-    listSessionEntriesCore: vi.fn((scope: Omit<SessionAccessScope, "sessionKey">) => {
-      const store = mocks.loadSessionStore(scope.storePath, { clone: false }) as Record<
-        string,
-        SessionEntry
-      >;
-      return Object.entries(store).map(([sessionKey, entry]) => ({ sessionKey, entry }));
-    }),
-    loadSessionStore: vi.fn((_storePath?: string, _options?: { clone?: boolean }) => ({})),
-    patchSessionEntryCore: vi.fn(
-      async (
-        scope: SessionAccessScope,
-        update: (
-          entry: SessionEntry,
-          context: SessionEntryPatchContext,
-        ) => Partial<SessionEntry> | null | Promise<Partial<SessionEntry> | null>,
-        options: SessionEntryPatchOptions = {},
-      ) => {
-        let updatedEntry: SessionEntry | null = null;
-        const store = mocks.loadSessionStore(scope.storePath, { clone: false }) as Record<
-          string,
-          SessionEntry
-        >;
-        const currentEntry = store[scope.sessionKey];
-        if (!currentEntry) {
+    entries: {} as Record<string, SessionEntry>,
+    loadSessionEntry: vi.fn<typeof loadSessionEntry>(
+      (scope): ReturnType<typeof loadSessionEntry> => mocks.entries[scope.sessionKey],
+    ),
+    listSessionEntriesCore: vi.fn<typeof listSessionEntriesCore>(
+      (): ReturnType<typeof listSessionEntriesCore> =>
+        Object.entries(mocks.entries).map(([sessionKey, entry]) => ({ sessionKey, entry })),
+    ),
+    patchSessionEntryCore: vi.fn<typeof patchSessionEntryCore>(
+      async (scope, update, options = {}): ReturnType<typeof patchSessionEntryCore> => {
+        const current = mocks.entries[scope.sessionKey];
+        if (!current) {
           return null;
         }
-        const patch = await update(currentEntry, { existingEntry: { ...currentEntry } });
-        if (!patch) {
-          return currentEntry;
+        const patch = await update({ ...current }, { existingEntry: { ...current } });
+        if (options.shouldCommit?.() === false) {
+          return null;
         }
-        const applyPatch = (targetStore: Record<string, SessionEntry>) => {
-          const targetEntry = targetStore[scope.sessionKey] ?? currentEntry;
-          updatedEntry = options.replaceEntry
-            ? (patch as SessionEntry)
-            : { ...targetEntry, ...patch };
-          targetStore[scope.sessionKey] = updatedEntry;
-        };
-        mocks.updateSessionStore(scope.storePath, applyPatch);
-        applyPatch(store);
-        return updatedEntry;
+        options.assertCommitAllowed?.();
+        if (!patch) {
+          return current;
+        }
+        const next = options.replaceEntry ? (patch as SessionEntry) : { ...current, ...patch };
+        mocks.entries[scope.sessionKey] = next;
+        return next;
       },
     ),
     resolveAgentIdFromSessionKey: vi.fn((sessionKey: string) => {
       return sessionKey.match(/^agent:([^:]+)/)?.[1] ?? "main";
     }),
     resolveStorePath: vi.fn(() => "/tmp/test-session-store.json"),
-    updateSessionStore: vi.fn(),
     emitSessionLifecycleEvent: vi.fn(),
     onSessionIdentityMutation: vi.fn((listener: SessionIdentityMutationListener) =>
       registerListener(sessionIdentityMutationListeners, listener),

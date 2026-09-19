@@ -4,6 +4,7 @@ import { isValidAgentId, normalizeAgentId } from "../../../routing/session-key.j
 import { listAgentIds } from "../../agent-scope-config.js";
 import { resolveSessionAgentId } from "../../agent-scope.js";
 import { reserveChildAdmissionSlot } from "../../child-admission.js";
+import { summarizeSpawnError } from "../../spawn-pipeline.js";
 import { resolveSpawnAdmission, resolveSpawnMode } from "../../spawn-plan.js";
 import { listSwarmRunsForGroup } from "../registry/subagent-registry.js";
 import { resolveSwarmConfig } from "../swarm/swarm-config.js";
@@ -127,16 +128,24 @@ export function resolveSubagentSpawnRequest(
 
   // Capture the requester window before launch; a reset must not move child
   // progress receipts or private results to a replacement session at the same key.
-  const target = resolveGatewaySessionStoreTarget({
-    cfg,
-    key: ownership.completionRequesterSessionKey,
-    agentId: ctx.requesterAgentIdOverride,
-  });
-  const completionRequesterSessionId = loadSessionEntry({
-    storePath: target.storePath,
-    sessionKey: target.canonicalKey,
-    clone: false,
-  })?.sessionId;
+  let completionRequesterSessionId: string | undefined;
+  try {
+    const target = resolveGatewaySessionStoreTarget({
+      cfg,
+      key: ownership.completionRequesterSessionKey,
+      agentId: ctx.requesterAgentIdOverride,
+    });
+    completionRequesterSessionId = loadSessionEntry({
+      storePath: target.storePath,
+      sessionKey: target.canonicalKey,
+      clone: false,
+    })?.sessionId;
+  } catch (error) {
+    return rejectSubagentSpawnRequest(
+      "error",
+      `sessions_spawn could not read the requester session: ${summarizeSpawnError(error)}`,
+    );
+  }
   if (params.completionTarget === "parent" && !completionRequesterSessionId) {
     return rejectSubagentSpawnRequest(
       "error",
