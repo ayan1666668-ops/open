@@ -382,7 +382,7 @@ async function sendFollowupPayloads(params: {
   const typing = createTypingSignaler({
     typing: defaults.typing,
     mode: defaults.typingMode,
-    isHeartbeat: turn.queued.run.terminalReplyExpectation === "optional",
+    isHeartbeat: false,
   });
   const crossChannelFailures: ReplyPayload[] = [];
   const queuedPayloads: ReplyPayload[] = [];

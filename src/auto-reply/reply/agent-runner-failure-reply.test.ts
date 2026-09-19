@@ -16,14 +16,14 @@ import {
 import { resolveSourceReplyExpectation } from "./source-reply-delivery-mode.js";
 
 describe("buildEmptyInteractiveReplyPayload", () => {
-  it("surfaces missing output for an unmentioned group request even when silence is allowed", () => {
+  it("surfaces missing output for a mentioned group request even when silence is allowed", () => {
     const expectation = resolveSourceReplyExpectation({
       ctx: {
         Provider: "discord",
         Surface: "discord",
         ChatType: "group",
         InboundEventKind: "user_request",
-        WasMentioned: false,
+        WasMentioned: true,
       },
       cfg: { agents: { defaults: { silentReply: { group: "allow" } } } },
     });

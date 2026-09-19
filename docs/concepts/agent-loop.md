@@ -125,7 +125,7 @@ Final payloads are assembled from assistant text (plus optional reasoning), inli
 - Messaging tool duplicates are removed from the final payload list.
 - A fallback tool error warning appears only when a run ends with a tool failure and would otherwise leave the user with no reply. This guard is not configurable; a user-facing reply, including one already delivered by a messaging tool, prevents the warning.
 
-The host decides whether an input requires a visible reply. Model-authored `NO_REPLY` is empty output, not permission to waive that requirement. Optional helper turns can remain silent; required turns with no delivered reply still need an answer.
+The host decides whether an input requires a visible reply. Direct requests, mentions, and authorized commands require an answer; unaddressed group messages remain optional when the configured [silence policy](/concepts/messages#silent-replies) allows it. Model-authored `NO_REPLY` is empty output, not permission to waive a required response. Optional helper turns can remain silent; required turns with no delivered reply still need an answer.
 
 If a required-reply turn ends after a fully settled tool batch without a composed answer, OpenClaw can make a tool-free finalization pass. Earlier tool errors, pre-tool progress, and superseded, undelivered confirmations do not count as a final answer. This pass uses the settled results and does not repeat completed tools. Fatal automation failures, including denied execution, remain failures even when finalization produces an answer.
 

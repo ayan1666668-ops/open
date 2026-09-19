@@ -2,9 +2,11 @@
 import type { ReplyExpectation } from "../../agents/reply-completion.js";
 import { normalizeChatType } from "../../channels/chat-type.js";
 import type { InboundEventKind } from "../../channels/inbound-event/kind.js";
+import { resolveSilentReplySettings } from "../../config/silent-reply.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import type { InputProvenance } from "../../sessions/input-provenance.js";
 import type { SessionSendPolicyDecision } from "../../sessions/send-policy.js";
+import { classifySilentReplyConversationType } from "../../shared/silent-reply-policy.js";
 import { INTERNAL_MESSAGE_CHANNEL, normalizeMessageChannel } from "../../utils/message-channel.js";
 import { resolveCommandTurnContext, type CommandTurnContext } from "../command-turn-context.js";
 import { isExplicitCommandTurnContext } from "../command-turn-detection.js";
@@ -13,6 +15,7 @@ import type { SourceReplyDeliveryMode } from "../get-reply-options.types.js";
 /** Minimal inbound context needed for source-reply delivery decisions. */
 export type SourceReplyDeliveryModeContext = {
   ChatType?: string;
+  SessionKey?: string;
   InboundEventKind?: InboundEventKind;
   Provider?: string;
   Surface?: string;
@@ -131,7 +134,7 @@ export function isSyntheticSourceReplyTurn(params: {
   );
 }
 
-/** Accepted user requests owe an answer; lifecycle and ambient inputs do not. */
+/** Selects reply requiredness at admission, preserving configured ambient group silence. */
 export function resolveSourceReplyExpectation(params: {
   ctx: SourceReplyDeliveryModeContext;
   cfg: OpenClawConfig;
@@ -145,10 +148,30 @@ export function resolveSourceReplyExpectation(params: {
   ) {
     return "optional";
   }
-  return params.ctx.InboundEventKind === "room_event" &&
-    !isExplicitSourceReplyCommand(params.ctx, params.cfg)
-    ? "optional"
-    : "required";
+  if (isExplicitSourceReplyCommand(params.ctx, params.cfg)) {
+    return "required";
+  }
+  if (params.ctx.InboundEventKind === "room_event") {
+    return "optional";
+  }
+  const chatType = normalizeChatType(params.ctx.ChatType);
+  const conversationType = classifySilentReplyConversationType({
+    conversationType: chatType === "group" || chatType === "channel" ? "group" : chatType,
+    sessionKey: params.ctx.SessionKey,
+    surface: params.ctx.Surface ?? params.ctx.Provider,
+  });
+  if (
+    conversationType === "group" &&
+    params.ctx.WasMentioned !== true &&
+    resolveSilentReplySettings({
+      cfg: params.cfg,
+      surface: params.ctx.Surface ?? params.ctx.Provider,
+      conversationType: "group",
+    }).policy === "allow"
+  ) {
+    return "optional";
+  }
+  return "required";
 }
 
 /** Full source-reply suppression decision consumed by run and hook code. */

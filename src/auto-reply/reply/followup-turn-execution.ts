@@ -89,7 +89,8 @@ export async function executeFollowupTurn(params: {
       cfg: turn.config,
     });
   turn.queued.run.terminalReplyExpectation = terminalReplyExpectation;
-  const isHeartbeat = terminalReplyExpectation === "optional";
+  // Heartbeats can refresh a drain callback but never enter its queue.
+  const isHeartbeat = false;
   const roomEvent = turn.queued.currentInboundEventKind === "room_event";
   const progressAllowed = () => turn.sendPolicy === "allow" && !roomEvent;
   const currentVerboseLevel = (): VerboseLevel => {

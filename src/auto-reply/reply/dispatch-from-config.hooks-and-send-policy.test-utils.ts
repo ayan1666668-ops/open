@@ -439,34 +439,57 @@ describe("sendPolicy deny — suppress delivery, not processing (#53328)", () =>
     expect(dispatcher.sendFinalReply).not.toHaveBeenCalled();
   });
 
-  it.each([undefined, "allow", "disallow"] as const)(
-    "delivers fallback for an accepted unmentioned group request with silence policy %s",
-    async (group) => {
-      setNoAbort();
-      const dispatcher = createDispatcher();
-      const replyResolver = vi.fn(async () => undefined);
-      const ctx = buildTestCtx({
-        ChatType: "group",
-        Surface: "feishu",
-        Provider: "feishu",
-        SessionKey: "agent:main:feishu:group:oc_group",
-        InboundEventKind: "user_request",
-      });
+  it.each([
+    { name: "default silence", cfg: emptyConfig, required: false },
+    { name: "allowed silence", cfg: groupSilenceConfig("allow"), required: false },
+    { name: "disallowed silence", cfg: groupSilenceConfig("disallow"), required: true },
+    {
+      name: "surface allows silence",
+      cfg: {
+        ...groupSilenceConfig("disallow"),
+        surfaces: { feishu: { silentReply: { group: "allow" } } },
+      } satisfies OpenClawConfig,
+      required: false,
+    },
+    {
+      name: "surface disallows silence",
+      cfg: {
+        ...groupSilenceConfig("allow"),
+        surfaces: { feishu: { silentReply: { group: "disallow" } } },
+      } satisfies OpenClawConfig,
+      required: true,
+    },
+  ])("preserves $name for an unmentioned group request", async ({ cfg, required }) => {
+    setNoAbort();
+    const dispatcher = createDispatcher();
+    const replyResolver = vi.fn(async () => undefined);
+    const ctx = buildTestCtx({
+      ChatType: "group",
+      Surface: "feishu",
+      Provider: "feishu",
+      SessionKey: "agent:main:feishu:group:oc_group",
+      InboundEventKind: "user_request",
+    });
 
-      const result = await dispatchReplyFromConfig({
-        ctx,
-        cfg: group === undefined ? emptyConfig : groupSilenceConfig(group),
-        dispatcher,
-        replyResolver,
-      });
+    const result = await dispatchReplyFromConfig({
+      ctx,
+      cfg,
+      dispatcher,
+      replyResolver,
+    });
 
+    if (required) {
       expect(dispatcher.sendFinalReply).toHaveBeenCalledExactlyOnceWith({
         text: NO_VISIBLE_REPLY_FALLBACK_TEXT,
       });
       expect(result.noVisibleReplyFallbackDelivered).toBe(true);
       expect(result.deliberateSilentTerminalReply).toBeUndefined();
-    },
-  );
+    } else {
+      expect(dispatcher.sendFinalReply).not.toHaveBeenCalled();
+      expect(result.noVisibleReplyFallbackDelivered).toBeUndefined();
+      expect(result.deliberateSilentTerminalReply).toBe(true);
+    }
+  });
 
   it.each([
     {
