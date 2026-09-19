@@ -1,3 +1,4 @@
+// Demo only: verify security review for an external contributor. Do not merge.
 // Gateway authorization checks.
 import type { IncomingMessage } from "node:http";
 import {
