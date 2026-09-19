@@ -221,7 +221,7 @@ Chat error banners, including cloud runner failures, show short messages in full
     - The chat header model and thinking pickers patch the active session immediately through `sessions.patch`; they are persistent session overrides, not one-turn-only send options. A confirmed model selection stays visible if the following session refresh fails; later Gateway updates can still change it. For catalog-backed OpenAI models, the effort picker offers **Off** only when the model advertises disabled reasoning. Inheriting the model's default effort does not turn reasoning off.
     - Diff syntax highlighting uses each file's language and the current theme; unknown file types and oversized previews remain plain text. Inline and session diffs do not require the optional [Diffs plugin](/tools/diffs), which creates standalone viewer links and PNG/PDF attachments.
     - **Split view:** open it from the chat title bar (beside the thread diff, background tasks, and thread files toggles), then split the active pane right or down for as many panes as fit. Each pane has its own thread, transcript, composer, and tool stream.
-    - Agents with the `screen` tool can request the same pane, sidebar, terminal, browser, focus, and navigation changes while a capable Control UI is connected. Protocol v1 applies the command to every connected capable Control UI; see [Screen](/tools/screen).
+    - Agents with the `screen` tool can request pane, sidebar, terminal, browser, desktop, portal, focus, and navigation changes in the capable Control UI browser that requested the turn. Other connected browsers keep their own layout; see [Screen](/tools/screen).
     - Drag a session from the sidebar into chat to open it in a pane. An animated drop preview glides between zones and labels the outcome — "Split" over the exact half a new pane will occupy, "Open here" over a whole pane — and drops also work from single-pane mode.
     - The active split pane drives the sidebar selection and URL. Selecting another pane or closing the active pane uses the surviving conversation's Chat or Dashboard preference; it does not copy the previous pane's view. Closing a pane that holds keyboard focus returns focus to the surviving pane's header, which is labeled with the session title for assistive technology. Its title bar adds split and close controls; dividers resize columns and stacked panes, and the browser stores the layout locally across reloads.
     - On narrow screens, split view keeps the layout but renders only the active pane at the full available width and height, including its header with the close control. Widening the window restores the saved column and row proportions without losing drafts.
@@ -309,9 +309,21 @@ an explanation in chat.
 
 ### Source previews and copying code
 
-Select **Open** on a text attachment to read it directly in the **Files** side
-panel. Plain-text attachments, including pasted `.txt` files, CSV, and JSON,
-preserve line breaks and indentation. Markdown attachments render as documents
+Long clipboard text appears as a compact chip in the composer and transcript.
+Its label shows the first 30 characters of a plain-text excerpt, with HTML and
+Markdown formatting removed. Empty or unavailable excerpts show **Pasted text**.
+In the transcript, chips sit above the text bubble alongside other attachments;
+multiple chips share a row and wrap when needed. Click a chip or press Enter to
+open the existing attachment side panel and copy the original text, preserving
+markup, line breaks, and indentation. The composer panel also offers **Show in
+text field** and removal. Messages containing only comment or pasted-text chips
+use a transparent shell.
+Newly uploaded text files remain file cards, even when their names resemble
+pasted-text attachments. Older history without origin metadata recognizes
+`text/plain` attachments named `pasted-text-<digits>.txt` as pasted text.
+
+Select **Open** on an uploaded text attachment to read it directly in the **Files** side
+panel. Plain-text attachments, CSV, and JSON preserve line breaks and indentation. Markdown attachments render as documents
 with interactive code blocks. When an open attachment refreshes with unchanged
 text, its code blocks keep your expansion and wrapping choices after loading.
 A different attachment or changed text starts with fresh controls. Long previews

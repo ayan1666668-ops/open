@@ -18,7 +18,12 @@ import {
   syncGitHubIdentity,
 } from "../state/user-profiles.js";
 import { createMentionInbox } from "./mention-inbox.js";
-import { read, SESSION_ID, SESSION_KEY, withInbox } from "./mention-inbox.test-support.js";
+import {
+  SESSION_KEY,
+  SESSION_ID,
+  withMentionInbox as withInbox,
+  readMentionInbox as read,
+} from "./mention-inbox.test-support.js";
 import { invalidateOperatorRolePolicy } from "./operator-role-policy.js";
 import { identifiedClient, soloClient } from "./server-methods/sessions-sharing.test-support.js";
 

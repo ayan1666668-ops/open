@@ -11,16 +11,17 @@ import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
 import { createMentionInbox } from "./mention-inbox.js";
 import type { MentionCommittedInput, MentionInbox } from "./mention-inbox.types.js";
 import { mentionHandlers } from "./server-methods/mentions.js";
+import { sessionMutationHandlers } from "./server-methods/sessions-mutations.js";
 import { identifiedClient } from "./server-methods/sessions-sharing.test-support.js";
 import type { GatewayClient, GatewayRequestContext } from "./server-methods/types.js";
 import { usersMentionableHandlers } from "./server-methods/users-mentionable.js";
 
 export const SESSION_KEY = "agent:main:dashboard:mention-test";
 export const SESSION_ID = "mention-test-session";
-const handlers = { ...mentionHandlers, ...usersMentionableHandlers };
+const handlers = { ...mentionHandlers, ...usersMentionableHandlers, ...sessionMutationHandlers };
 type InboxFixtureOptions = { notifications?: boolean; beforeInbox?: () => void };
 
-export async function withInbox(
+export async function withMentionInbox(
   run: (fixture: Awaited<ReturnType<typeof createFixture>>) => Promise<void>,
   cfg: OpenClawConfig = {},
   options: InboxFixtureOptions = {},
@@ -75,8 +76,9 @@ async function createFixture(cfg: OpenClawConfig, options: InboxFixtureOptions) 
     return inbox;
   };
   options.beforeInbox?.();
+  const committedSources = new Map<string, MentionCommittedInput["committedSource"]>();
   const inbox = openInbox();
-  const context = { mentionInbox: inbox } as GatewayRequestContext;
+  const context = { mentionInbox: inbox, getRuntimeConfig: () => cfg } as GatewayRequestContext;
   async function call(method: string, params: Record<string, unknown>, client = bobClient) {
     let response: { ok: boolean; payload?: unknown; error?: ErrorShape } | undefined;
     const handler = handlers[method];
@@ -119,8 +121,18 @@ async function createFixture(cfg: OpenClawConfig, options: InboxFixtureOptions) 
       }
     },
     post(sourceId = "source-one", overrides: Partial<MentionCommittedInput> = {}, target = inbox) {
+      let committedSource = committedSources.get(sourceId);
+      if (!committedSource) {
+        committedSource = {
+          generation: "test-generation",
+          sequence: committedSources.size + 1,
+          timestamp: Date.now(),
+        };
+        committedSources.set(sourceId, committedSource);
+      }
       target.recordCommittedInput({
         sourceId,
+        committedSource,
         sessionKey: SESSION_KEY,
         agentId: "main",
         sessionId: SESSION_ID,
@@ -134,7 +146,7 @@ async function createFixture(cfg: OpenClawConfig, options: InboxFixtureOptions) 
   };
 }
 
-export function read(inbox: MentionInbox, client: GatewayClient) {
+export function readMentionInbox(inbox: MentionInbox, client: GatewayClient) {
   const result = inbox.list(client);
   if (!result.ok) {
     throw new Error(result.error.message);

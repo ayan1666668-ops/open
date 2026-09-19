@@ -380,6 +380,7 @@ function createSharedStateWorkerBackend(
         case "transcripts.libraryEntry":
         case "transcripts.recentStopped":
         case "transcripts.summaryRevision":
+        case "transcripts.summarySnapshot":
         case "transcripts.utterances":
         case "transcripts.summary": {
           ensureMeetingTranscriptsSchema({
