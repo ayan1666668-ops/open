@@ -1,6 +1,7 @@
 import { once } from "node:events";
 import { createServer } from "node:http";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { captureClawInstallSchemaVersionFacts } from "../claws/provenance-runtime-read.js";
 import { createConfigIoContext } from "../config/io.context.js";
 import { readConfigFileSnapshotFromContext } from "../config/io.snapshot.js";
 import {
@@ -12,14 +13,15 @@ import {
   clearRuntimeConfigSnapshot,
   setRuntimeConfigSnapshot,
 } from "../config/runtime-snapshot.js";
+import { captureRuntimeConfig } from "../config/runtime-source-projection.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { NON_ENV_SECRETREF_MARKER } from "../secrets/provider-credential-values.js";
 import {
   createOpenClawTestState,
   type OpenClawTestState,
 } from "../test-utils/openclaw-test-state.js";
 import { clearRuntimeAuthProfileStoreSnapshots } from "./auth-profiles/runtime-snapshots.js";
 import type { AuthProfileStore } from "./auth-profiles/types.js";
-import { NON_ENV_SECRETREF_MARKER } from "./model-auth-markers.js";
 import { resolveUsableCustomProviderApiKey } from "./model-auth-provider-config.js";
 import * as modelsConfig from "./models-config.js";
 import { createPreparedModelCatalogWorkerInput } from "./prepared-model-catalog-worker.js";
@@ -230,7 +232,11 @@ module.exports = {
               : {},
         };
         const params = {
-          agentFacts: { ...prepared.agentFacts[0]!, authStore },
+          agentFacts: {
+            ...prepared.agentFacts[0]!,
+            authStore,
+            input: { ...prepared.agentFacts[0]!.input, config: captureRuntimeConfig(runtime) },
+          },
           pluginMetadataSnapshot: prepared.pluginGeneration.pluginMetadataSnapshot,
         };
         expect(params.agentFacts.providerIds).toContain(provider);
@@ -310,6 +316,7 @@ module.exports = {
         const result = await runPreparedModelCatalogWorkerRequest(serialized, {
           kind: "catalog",
           syntheticAuth: [],
+          clawInstallSchemaVersions: captureClawInstallSchemaVersionFacts({ env }),
         });
         expect(result.status).toBe("ok");
         const runtimeFacts = getConfigResolutionFacts(serialized.input.config);

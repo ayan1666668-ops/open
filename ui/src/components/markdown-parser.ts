@@ -1,4 +1,5 @@
 import MarkdownIt, { type MarkdownIt as MarkdownItParser, type Token } from "markdown-it";
+import markdownItCjkFriendly from "markdown-it-cjk-friendly";
 import markdownItTaskLists from "markdown-it-task-lists";
 import { t } from "../i18n/index.ts";
 import { fileKindForPath, shortestFileLabels } from "./file-kind.ts";
@@ -20,6 +21,7 @@ import {
   splitMarkdownFileLineSuffix,
 } from "./markdown-file-links.ts";
 import { installMarkdownGitHubRefs } from "./markdown-github-refs.ts";
+import { installMarkdownHumanMentions } from "./markdown-human-mentions.ts";
 import { hasMarkdownLinkBoundaries } from "./markdown-link-boundary.ts";
 import { installMarkdownMath } from "./markdown-math.ts";
 import type { MarkdownRenderEnv } from "./markdown-render-options.ts";
@@ -87,6 +89,9 @@ function renderRawMarkdownHtml(
   if (progressBars) {
     return PROGRESS_HTML_RE.test(content.trim()) ? content : "";
   }
+  if (/^<br\s*\/?>$/iu.test(content.trim())) {
+    return block ? "<br>\n" : "<br>";
+  }
   return escapeMarkdownHtml(content) + (block ? "\n" : "");
 }
 
@@ -145,6 +150,7 @@ export function createMarkdownParser(): MarkdownItParser {
     breaks: true,
     linkify: true,
   });
+  markdownParser.use(markdownItCjkFriendly);
   const defaultCodeInlineRenderer = markdownParser.renderer.rules.code_inline!;
 
   // Enable GFM strikethrough (~~text~~) to match original marked.js behavior.
@@ -735,5 +741,6 @@ export function createMarkdownParser(): MarkdownItParser {
     });
   };
 
+  installMarkdownHumanMentions(markdownParser);
   return markdownParser;
 }

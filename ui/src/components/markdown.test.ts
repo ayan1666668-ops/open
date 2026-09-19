@@ -55,24 +55,6 @@ describe("toSanitizedMarkdownHtml", () => {
     ]);
   });
 
-  // ── Additional tests for markdown-it migration ──
-  describe("HTML escaping", () => {
-    it("escapes HTML tags as text", () => {
-      const html = toSanitizedMarkdownHtml("<div>**bold**</div>");
-      expect(html).toBe("&lt;div&gt;**bold**&lt;/div&gt;\n");
-    });
-
-    it("strips script tags", () => {
-      const html = toSanitizedMarkdownHtml("<script>alert(1)</script>");
-      expect(html).toBe("&lt;script&gt;alert(1)&lt;/script&gt;\n");
-    });
-
-    it("escapes inline HTML tags", () => {
-      const html = toSanitizedMarkdownHtml("Check <b>this</b> out");
-      expect(html).toBe("<p>Check &lt;b&gt;this&lt;/b&gt; out</p>\n");
-    });
-  });
-
   describe("task lists", () => {
     it("renders task list checkboxes", () => {
       const html = toSanitizedMarkdownHtml("- [ ] Unchecked\n- [x] Checked");
@@ -311,6 +293,28 @@ describe("toSanitizedMarkdownHtml", () => {
   });
 
   describe("LaTeX", () => {
+    it.each([
+      ["$x^2$", false],
+      ["\\(x^2\\)", false],
+      ["$$x^2$$", true],
+      ["\\[x^2\\]", true],
+      ["$$\nx^2\n\n+ y^2\n$$", true],
+      ["\\[\nx^2\n\n+ y^2\n\\]", true],
+    ])("renders delimiter variant %j", (source, display) => {
+      const fragment = htmlFragment(toSanitizedMarkdownHtml(source));
+      expect(fragment.querySelectorAll(".katex")).toHaveLength(1);
+      expect(fragment.querySelector(".katex-display") !== null).toBe(display);
+      expect(fragment.querySelector("math")).not.toBeNull();
+    });
+
+    it.each([
+      "```tex\n$x^2$\n\\[y\\]\n```",
+      "    $x^2$\n\n    \\(y\\)",
+      "\\$x^2\\$",
+    ])("does not interpret code or escaped delimiters: %j", (source) => {
+      expect(htmlFragment(toSanitizedMarkdownHtml(source)).querySelector(".katex")).toBeNull();
+    });
+
     it("renders inline and display math with KaTeX", () => {
       const fragment = htmlFragment(
         toSanitizedMarkdownHtml("Inline $x^2$ and:\n\n$$\n\\frac{1}{2}\n$$"),
@@ -367,6 +371,17 @@ describe("toSanitizedMarkdownHtml", () => {
       expect(fragment.querySelector("math")).not.toBeNull();
       expect(fragment.querySelector(".katex-html[aria-hidden='true']")).not.toBeNull();
       expect(fragment.querySelector(".strut[style]")).not.toBeNull();
+    });
+
+    it("escapes authored HTML instead of granting KaTeX geometry styles", () => {
+      const fragment = htmlFragment(
+        toSanitizedMarkdownHtml(
+          '<a href="https://example.com" style="position:fixed;inset:0;z-index:9999">fake</a>',
+        ),
+      );
+      expect(fragment.querySelector("a")).toBeNull();
+      expect(fragment.querySelector("[style]")).toBeNull();
+      expect(fragment.textContent).toContain("<a href=");
     });
 
     it("does not preserve authored progress styles", () => {

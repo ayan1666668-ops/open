@@ -15,7 +15,7 @@ const INLINE_DELIMITERS = [
 const MAX_MATH_SCAN = 4096;
 const MAX_MATH_EXPRESSIONS = 200;
 let renderedMathExpressions = 0;
-const BARE_URL_START_RE = /(?:https?:\/\/|www\.)/giu;
+const BARE_URL_RE = /(?:https?:\/\/|www\.)[^\s<]*/giu;
 
 export function resetMarkdownMathBudget() {
   renderedMathExpressions = 0;
@@ -52,7 +52,7 @@ function escapeMathFallback(source: string): string {
   return source.replace(/&/gu, "&amp;").replace(/</gu, "&lt;").replace(/>/gu, "&gt;");
 }
 
-function findUnescaped(source: string, needle: string, start: number): number {
+export function findUnescapedMathDelimiter(source: string, needle: string, start: number): number {
   const end = Math.min(source.length, start + MAX_MATH_SCAN);
   for (let index = start; index < end; index += 1) {
     if (source[index] !== needle[0] || !source.startsWith(needle, index)) {
@@ -69,16 +69,29 @@ function findUnescaped(source: string, needle: string, start: number): number {
   return -1;
 }
 
-function isInsideBareUrl(source: string, position: number): boolean {
-  BARE_URL_START_RE.lastIndex = 0;
-  for (const match of source.matchAll(BARE_URL_START_RE)) {
-    const start = match.index ?? -1;
-    if (start < 0 || start > position) {
-      continue;
+// Inline states own one source string; reuse its URL ranges across delimiter probes.
+const bareUrlRanges = new WeakMap<StateInline, Array<readonly [number, number]>>();
+
+function isInsideBareUrl(state: StateInline): boolean {
+  let ranges = bareUrlRanges.get(state);
+  if (!ranges) {
+    ranges = [];
+    BARE_URL_RE.lastIndex = 0;
+    for (const match of state.src.matchAll(BARE_URL_RE)) {
+      ranges.push([match.index, match.index + match[0].length]);
     }
-    const end = source.slice(start).search(/[\s<]/u);
-    const urlEnd = end < 0 ? source.length : start + end;
-    if (position < urlEnd) {
+    bareUrlRanges.set(state, ranges);
+  }
+  let low = 0;
+  let high = ranges.length;
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+    const [start, end] = ranges[middle]!;
+    if (state.pos < start) {
+      high = middle;
+    } else if (state.pos >= end) {
+      low = middle + 1;
+    } else {
       return true;
     }
   }
@@ -94,7 +107,7 @@ function parseDisplayMath(state: StateBlock, startLine: number, endLine: number,
     return false;
   }
   const afterOpen = line.slice(delimiter.open.length);
-  const sameLineClose = findUnescaped(afterOpen, delimiter.close, 0);
+  const sameLineClose = findUnescapedMathDelimiter(afterOpen, delimiter.close, 0);
   let nextLine = startLine;
   let latex: string;
   if (sameLineClose >= 0) {
@@ -108,7 +121,7 @@ function parseDisplayMath(state: StateBlock, startLine: number, endLine: number,
     for (let lineIndex = startLine + 1; lineIndex < endLine; lineIndex += 1) {
       const currentStart = state.bMarks[lineIndex]! + state.tShift[lineIndex]!;
       const current = state.src.slice(currentStart, state.eMarks[lineIndex]!);
-      const close = findUnescaped(current, delimiter.close, 0);
+      const close = findUnescapedMathDelimiter(current, delimiter.close, 0);
       if (close >= 0) {
         if (current.slice(close + delimiter.close.length).trim()) {
           return false;
@@ -143,11 +156,11 @@ function parseInlineMath(state: StateInline, silent: boolean): boolean {
   if (!delimiter) {
     return false;
   }
-  if (isInsideBareUrl(state.src, state.pos)) {
+  if (isInsideBareUrl(state)) {
     return false;
   }
   const contentStart = delimiter.open.length;
-  const close = findUnescaped(source, delimiter.close, contentStart);
+  const close = findUnescapedMathDelimiter(source, delimiter.close, contentStart);
   if (close <= contentStart) {
     return false;
   }
@@ -156,7 +169,6 @@ function parseInlineMath(state: StateInline, silent: boolean): boolean {
     (/\s/u.test(source.charAt(contentStart)) ||
       /\s/u.test(source.charAt(close - 1)) ||
       /^(?:-\$?\d|\d)/u.test(source.slice(close + delimiter.close.length)) ||
-      isInsideBareUrl(state.src, state.pos) ||
       /\d-$/u.test(state.src.slice(0, state.pos)))
   ) {
     return false;

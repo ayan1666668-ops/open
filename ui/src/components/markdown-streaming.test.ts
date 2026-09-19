@@ -31,11 +31,28 @@ describe("toStreamingMarkdownParts", () => {
     }
   });
 
+  it("does not reparse a literal container line on each append", () => {
+    const prefixes = Array.from(
+      { length: 48 },
+      (_, index) => `<details>\n> <!--\n> ${"literal ".repeat((index + 1) * 30)}`,
+    );
+    const findRawRanges = vi.spyOn(markdownDetails, "findMarkdownRawHtmlRanges");
+    try {
+      const fullHtml = prefixes.map((value) => toStreamingMarkdownParts(value).join(""));
+      expect(findRawRanges).toHaveBeenCalledTimes(prefixes.length);
+      findRawRanges.mockClear();
+
+      const incrementalHtml = prefixes.map((value) =>
+        toStreamingMarkdownParts(value, {}, "literal-line-scan-regression").join(""),
+      );
+      expect(incrementalHtml).toEqual(fullHtml);
+      expect(findRawRanges).toHaveBeenCalledTimes(1);
+    } finally {
+      findRawRanges.mockRestore();
+    }
+  });
+
   it("keeps chunked-prefix splits identical to full splits", () => {
-    const splitIncrementally = splitStableStreamingMarkdown as (
-      markdown: string,
-      streamKey: string,
-    ) => ReturnType<typeof splitStableStreamingMarkdown>;
     const cases = [
       [
         "## Result",
@@ -57,13 +74,36 @@ describe("toStreamingMarkdownParts", () => {
       "`` multiline\n<details> remains code\n``\n\n<details>\n<summary>Real</summary>",
       "- item\n\n    <details>\n    <summary>Logs</summary>\n\n    still inside",
       "1. item\n\n    <details>\n    <summary>Logs</summary>\n\n    still inside",
+      ...[
+        "> <!--\n> **literal",
+        "- item\n\n  <pre>\n  **literal\n\n  **still literal",
+        "> - item\n>\n>   <!--\n>   **literal",
+        "10. item\n\n    <pre>\n    **literal",
+        "-\t<pre>\n\t**literal",
+      ].map(
+        (raw) =>
+          `<details>\n<summary>X</summary>\n\n${raw}\n\n</details>\n\n**outside\n\n<details>\n<summary>Next`,
+      ),
+      "<details>\r\n> <!--\r\n> **literal\r\n\r\n</details>\r\n\r\n**outside",
+      ...["<!--\n</details>\n-->", "<pre>\n</details>\n</pre>", "<!doctype\n</details>\n>"].flatMap(
+        (raw) =>
+          [
+            `<details>\n<summary>X</summary>\n\n<div>\n${raw}\n</div>\n\nStill inside\n</details>\n\nFollowing`,
+            `${raw.replace("</details>", "<details>")}\n\n<details><summary>Next</summary>body`,
+          ].concat(
+            ["**", "`"].map(
+              (delimiter) =>
+                `<details>\n<summary>X</summary>\n\n${raw.replace("</details>", `${delimiter}literal`)}\n${delimiter}outside`,
+            ),
+          ),
+      ),
     ];
     for (const [caseIndex, markdown] of cases.entries()) {
       for (const chunkSize of [1, 7, 64]) {
         for (let end = chunkSize; end <= markdown.length + chunkSize; end += chunkSize) {
           const prefix = markdown.slice(0, Math.min(end, markdown.length));
           const key = `${caseIndex}-${chunkSize}`;
-          expect(splitIncrementally(prefix, `split-parity-${key}`)).toEqual(
+          expect(splitStableStreamingMarkdown(prefix, `split-parity-${key}`)).toEqual(
             splitStableStreamingMarkdown(prefix),
           );
           expect(toStreamingMarkdownParts(prefix, {}, `html-parity-${key}`).join("")).toBe(
@@ -78,18 +118,15 @@ describe("toStreamingMarkdownParts", () => {
   });
 
   it("resets replaced streams and keeps interleaved streams independent", () => {
-    const splitIncrementally = splitStableStreamingMarkdown as (
-      markdown: string,
-      streamKey: string,
-    ) => ReturnType<typeof splitStableStreamingMarkdown>;
     const streams = new Map([
       ["a", "First stream\n\n```ts\nconst a = 1;"],
       ["b", "Second stream\n\n<details>\n<summary>B</summary>"],
+      ["raw", "<details>\n> <pre>\n> literal"],
     ]);
     for (const end of [8, 16, 32, 64]) {
       for (const [key, markdown] of streams) {
         const prefix = markdown.slice(0, end);
-        expect(splitIncrementally(prefix, `interleaved-${key}`)).toEqual(
+        expect(splitStableStreamingMarkdown(prefix, `interleaved-${key}`)).toEqual(
           splitStableStreamingMarkdown(prefix),
         );
       }
@@ -99,9 +136,11 @@ describe("toStreamingMarkdownParts", () => {
       "Replacement\n\n- starts a different list",
       "A much longer replacement\n\n```ts\nconst changed = true;",
     ]) {
-      expect(splitIncrementally(replacement, "interleaved-a")).toEqual(
-        splitStableStreamingMarkdown(replacement),
-      );
+      for (const key of ["a", "raw"]) {
+        expect(splitStableStreamingMarkdown(replacement, `interleaved-${key}`)).toEqual(
+          splitStableStreamingMarkdown(replacement),
+        );
+      }
     }
   });
 
@@ -247,10 +286,47 @@ describe("toStreamingMarkdownParts", () => {
     expect(html).toBe("<p>prices are $$50 and</p>\n");
   });
 
-  it.each(["$", "\\\\"])("keeps a partial math opener resumable: %j", (suffix) => {
-    const source = `before\n\n$$x${suffix}`;
-    const split = splitStableStreamingMarkdown(source, `partial-math:${suffix}`);
-    expect(split.tailRepairStart).toBeNull();
+  it("rescans a backslash that becomes a display opener on the next chunk", () => {
+    const partial = "before\n\n\\";
+    const completed = partial + "[\nx^2\n\n+ y^2\n\\]";
+    const key = "split-bracket-display-opener";
+    toStreamingMarkdownParts(partial, {}, key);
+
+    const html = toStreamingMarkdownParts(completed, {}, key).join("");
+    expect(html).toBe(toStreamingMarkdownParts(completed).join(""));
+    expect(htmlFragment(html).querySelectorAll(".katex-display")).toHaveLength(1);
+  });
+
+  it.each([
+    "before\n\n$$\nx^2\n\n+ y^2\n$$\n\nafter",
+    "before\n\n\\[\nx^2\n\n+ y^2\n\\]\n\nafter",
+    "before\n\nInline $x^2$ and \\(y^2\\).",
+    "before\n\n$$x^2$$ and text",
+    "before\n\n\\[x^2\\] and text",
+    "before\n\n`$literal$` and $x^2$",
+    "before\n\nPrices $5-$10; https://example.com/$schema$/query?$x$=1",
+    "before\n\n$$x\\$$ still open\n\n+ y\n$$",
+    "before\n\n$$\nx^2\n> $$\n\n+ y\n$$",
+  ])("keeps keyed and unkeyed math HTML equal at every chunk: %j", (source) => {
+    for (const chunkSize of [1, 7]) {
+      const key = `math-chunks:${source}:${chunkSize}`;
+      for (let end = chunkSize; end < source.length + chunkSize; end += chunkSize) {
+        const prefix = source.slice(0, end);
+        expect(toStreamingMarkdownParts(prefix, {}, key).join("")).toBe(
+          toStreamingMarkdownParts(prefix).join(""),
+        );
+      }
+    }
+  });
+
+  it("keeps parser-rejected distant closers in the reparsed math suffix", () => {
+    const partial = "before\n\n$$\nx" + " ".repeat(4096) + "$$\n\n";
+    const completed = partial + "+ y\n$$";
+    const key = "distant-display-closer";
+    toStreamingMarkdownParts(partial, {}, key);
+    expect(toStreamingMarkdownParts(completed, {}, key).join("")).toBe(
+      toStreamingMarkdownParts(completed).join(""),
+    );
   });
 
   it("does not close streaming display math on an escaped delimiter", () => {
