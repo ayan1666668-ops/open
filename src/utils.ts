@@ -1,17 +1,18 @@
 // Shared filesystem, path, and process helpers for the CLI.
 import fs from "node:fs";
 import os from "node:os";
-import { resolveConfigDir } from "./config/config-dir.js";
+import { normalizeHomeDirValue } from "@openclaw/normalization-core/home-dir";
+import { resolveConfigDir } from "./infra/config-dir.js";
 import { pathExists as fsSafePathExists } from "./infra/fs-safe.js";
 import { resolveEffectiveHomeDir, resolveUserPath } from "./infra/home-dir.js";
 import { shortenPathWithHome } from "./infra/home-display.js";
-import { isPlainObject } from "./infra/plain-object.js";
+import "./infra/plain-object.js";
 import { escapeRegExp as escapeRegExpValue } from "./shared/regexp.js";
+export { isPlainObject } from "./infra/plain-object.js";
 export { escapeRegExp } from "./shared/regexp.js";
 export { sleep } from "./utils/sleep.js";
 export { isRecord } from "@openclaw/normalization-core/record-coerce";
-export { resolveConfigDir };
-export { resolveUserPath };
+export { resolveConfigDir, resolveUserPath };
 
 /** Creates a directory tree if it does not already exist. */
 export async function ensureDir(dir: string) {
@@ -43,8 +44,6 @@ export function tryParseJson<T>(raw: string): T | null {
   }
 }
 
-export { isPlainObject };
-
 /** Normalizes phone-like input into the loose E.164 shape used by channel helpers. */
 export function normalizeE164(number: string): string {
   const withoutPrefix = number.replace(/^[a-z][a-z0-9-]*:/i, "").trim();
@@ -67,7 +66,7 @@ function resolveHomeDisplayPrefix(): { home: string; prefix: string } | undefine
   if (!home) {
     return undefined;
   }
-  const explicitHome = process.env.OPENCLAW_HOME?.trim();
+  const explicitHome = normalizeHomeDirValue(process.env.OPENCLAW_HOME);
   if (explicitHome) {
     return { home, prefix: "$OPENCLAW_HOME" };
   }

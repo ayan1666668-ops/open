@@ -1,7 +1,7 @@
 // Owns dotenv file selection separately from dotenv parsing and mutation.
 import os from "node:os";
 import path from "node:path";
-import { resolveConfigDir } from "../config/config-dir.js";
+import { resolveConfigDir } from "./config-dir.js";
 import { resolveRequiredHomeDir } from "./home-dir.js";
 import { tryProcessCwd } from "./safe-cwd.js";
 
