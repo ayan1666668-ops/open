@@ -50,8 +50,9 @@ actions without a page URL still update the Browser panel's selection. Sandbox
 browser results remain available to the agent but do not open a host-browser preview.
 Repeated opens of the same page in one chat activity group share one preview card
 for the same browser profile and host or node. The card opens the most recently
-used tab; different page URLs or browser routes stay separate. Expand the tool
-activity to inspect every original call and result.
+used tab; different page URLs or browser routes stay separate. Long URLs that
+may have been shortened in tool metadata keep separate tab cards to avoid hiding
+different pages. Expand the tool activity to inspect every original call and result.
 
 If a listed tab cannot be accessed, the panel explains whether navigation rules
 blocked it or its address could not be verified. Select another tab, enter an

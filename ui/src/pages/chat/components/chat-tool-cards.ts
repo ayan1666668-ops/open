@@ -72,10 +72,12 @@ export function renderBrowserTabPreviews(
       if (preview?.kind !== "browser-tab") {
         return [];
       }
-      // Display URLs are shortened; page identity uses the full recorded URL and
-      // browser route. The newest representative keeps its real tab and revision.
-      const url = asNullableRecord(asNullableRecord(card.details)?.browserTab)?.url;
-      const pageKey = JSON.stringify([browserRouteKey(preview), url]);
+      // Browser/history descriptors cap URLs at 2,048 UTF-16 units, or 2,047
+      // when a surrogate pair straddles the cut. Keep ambiguous prefixes per tab.
+      const pageKey =
+        preview.url.length < 2_047
+          ? JSON.stringify([browserRouteKey(preview), preview.url])
+          : tabKey;
       if (seenPages.has(pageKey)) {
         return [];
       }

@@ -1,6 +1,8 @@
 /* @vitest-environment jsdom */
+import { truncateUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
 import { render } from "lit";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { projectToolResultDetails } from "../../../../../src/gateway/chat-display-projection.canvas.js";
 import { createDeferred } from "../../../../../test/helpers/promise.js";
 import type { GatewayBrowserClient } from "../../../api/gateway.ts";
 import type { RouteId } from "../../../app-route-paths.ts";
@@ -331,6 +333,47 @@ describe("browser tab card", () => {
     expect(elements).toHaveLength(2);
     expect(elements.map((element) => element.preview?.targetId)).toEqual(["first", "second"]);
   });
+
+  it.each(
+    [2_046, 2_047, 2_048].flatMap((length) =>
+      [false, true].map((history) => ({ length, history })),
+    ),
+  )(
+    "preserves ambiguous URL prefixes ($length units, history: $history)",
+    ({ length, history }) => {
+      const prefix = "https://example.com/blog?value=".padEnd(length, "x");
+      const messages = ["first", "second"].map((targetId) => {
+        const url =
+          length === 2_046 ? prefix : `${prefix}${length === 2_047 ? "😀" : ""}${targetId}`;
+        const browserTab = { target: "host", profile: "managed", targetId, url };
+        return {
+          role: "toolResult",
+          toolName: "browser",
+          toolCallId: targetId,
+          content: "ok",
+          details: history
+            ? projectToolResultDetails({ browserTab }, 2_048).details
+            : { browserTab: { ...browserTab, url: truncateUtf16Safe(url, 2_048) } },
+        };
+      });
+      const group: MessageGroup = {
+        kind: "group",
+        key: "bounded-browser-results",
+        role: "tool",
+        visibleContent: "text",
+        isStreaming: false,
+        timestamp: 1,
+        messages: messageEntries(messages),
+      };
+      const host = container();
+      render(renderActivityGroup([group], { showReasoning: false }), host);
+      const elements = [...host.querySelectorAll("openclaw-browser-tab-card")];
+      expect(elements.map((element) => element.preview?.targetId)).toEqual(
+        length === 2_046 ? ["second"] : ["first", "second"],
+      );
+      expect(elements.every((element) => element.preview?.url.length === length)).toBe(true);
+    },
+  );
 
   it("discards a pending image when browser access disappears", async () => {
     const gateway = gatewayContext();
