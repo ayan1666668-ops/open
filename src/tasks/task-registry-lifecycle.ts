@@ -1,5 +1,11 @@
 import { subagentRuns } from "../agents/subagents/registry/subagent-registry-memory.js";
-import { onAgentEvent, type AgentEventPayload } from "../infra/agent-events.js";
+import { onSubagentRegistryPersisted } from "../agents/subagents/registry/subagent-registry-state.js";
+import {
+  onAgentEvent,
+  registerAgentEventLifecycleRotationHandler,
+  type AgentEventPayload,
+} from "../infra/agent-events.js";
+import { onSessionIdentityMutation } from "../sessions/session-lifecycle-events.js";
 import { hasResidentTaskBacking, readTaskBackingInstance } from "./task-backing-authority.js";
 import { recordTaskActivityEvent } from "./task-registry-activity.js";
 import { enqueueTaskAgentEvent, taskAgentEventMutations } from "./task-registry-agent-events.js";
@@ -8,10 +14,18 @@ import {
   setTaskRegistryListenerStarter,
   setTaskRegistryListenerStop,
 } from "./task-registry-listener-state.js";
-import { scheduleYieldedSubagentTaskProgress } from "./task-registry-progress.js";
+import {
+  reconcileTaskProgressBatches,
+  retireTaskProgressForSession,
+  scheduleYieldedSubagentTaskProgress,
+} from "./task-registry-progress.js";
 import { filterTasksByRunScope } from "./task-registry-records.js";
 import { getTasksByRunScope, tasks } from "./task-registry-state.js";
-import { getTaskRegistryProcessState } from "./task-registry.process-state.js";
+import {
+  clearTaskProgressBatches,
+  getTaskRegistryProcessState,
+} from "./task-registry.process-state.js";
+import { onTaskRegistryChange } from "./task-registry.store.js";
 import { isTerminalTaskStatus, type TaskRecord } from "./task-registry.types.js";
 
 function selectEventTasks(evt: AgentEventPayload): TaskRecord[] {
@@ -58,6 +72,9 @@ function ensureListener() {
     return;
   }
   const stop = onAgentEvent((event) => {
+    if (event.stream === "lifecycle" && event.data.phase === "start") {
+      reconcileTaskProgressBatches();
+    }
     for (const task of selectEventTasks(event)) {
       const backing = readTaskBackingInstance(task.detail);
       const subagent = subagentRuns.get(event.runId);
@@ -72,12 +89,23 @@ function ensureListener() {
         continue;
       }
       if (enqueueTaskAgentEvent(task, event)) {
-        recordTaskActivityEvent(task, event);
-        scheduleYieldedSubagentTaskProgress(task, event);
+        const prepared = recordTaskActivityEvent(task, event);
+        scheduleYieldedSubagentTaskProgress(task, event, prepared);
       }
     }
   });
-  setTaskRegistryListenerStop(stop);
+  const stopTasks = onTaskRegistryChange(reconcileTaskProgressBatches);
+  const stopRuns = onSubagentRegistryPersisted(() => reconcileTaskProgressBatches());
+  const stopIdentity = onSessionIdentityMutation(retireTaskProgressForSession);
+  setTaskRegistryListenerStop(() => {
+    stop();
+    stopTasks();
+    stopRuns();
+    stopIdentity();
+  });
+  // Initial task restoration can publish before these listeners attach.
+  reconcileTaskProgressBatches({ kind: "restored" });
 }
 
 setTaskRegistryListenerStarter(ensureListener);
+registerAgentEventLifecycleRotationHandler("tasks:progress", clearTaskProgressBatches);

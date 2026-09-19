@@ -8,13 +8,16 @@ import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
 import { createInMemoryTaskRegistryStore } from "../test-utils/task-registry-store.js";
 import { getTaskActivitySnapshot } from "./task-registry-activity.js";
 import {
-  onTaskRegistryChange,
   reloadTaskRegistryFromStoreAsync,
   runTaskRegistryWorkerMutation,
   tasks,
 } from "./task-registry-state.js";
 import { findTaskByRunId, getTaskById } from "./task-registry.js";
-import { configureTaskRegistryRuntime, getTaskRegistryStore } from "./task-registry.store.js";
+import {
+  configureTaskRegistryRuntime,
+  getTaskRegistryStore,
+  onTaskRegistryChange,
+} from "./task-registry.store.js";
 import { createTaskFixture } from "./task-registry.test-support.js";
 import {
   resetTaskFlowRegistryForTests,

@@ -3,6 +3,9 @@ import * as timers from "node:timers/promises";
 import { expectDefined } from "@openclaw/normalization-core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createDeferred, withTestTimeout } from "../../test/helpers/promise.js";
+import { subagentRuns } from "../agents/subagents/registry/subagent-registry-memory.js";
+import { settleRequesterTurnAfterSessionSpawns } from "../agents/subagents/registry/subagent-registry-requester-yield.js";
+import type { SubagentRunRecord } from "../agents/subagents/registry/subagent-registry.types.js";
 import { createSubagentsTool } from "../agents/tools/subagents-tool.js";
 import {
   createGatewayMethodRegistry,
@@ -23,15 +26,21 @@ import {
 } from "../state/openclaw-state-db.js";
 import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
 import { holdStateDatabaseCoordinator } from "../test-utils/state-database-contention.js";
+import {
+  createSubagentTaskBackingDetail,
+  resolveManagedTaskBackingDetail,
+} from "./task-backing-authority.js";
 import { createRunningTaskRunCoreWithReceiptAsync } from "./task-executor-create.async.js";
+import { createManagedTaskFlow, createTaskFlowForTask } from "./task-flow-registry.js";
 import {
   getTaskById,
   listTaskRecordPage,
   listFreshTasksForOwnerKey,
 } from "./task-registry-query.js";
 import { prepareTaskRegistryRead } from "./task-registry-read.js";
-import { onTaskRegistryChange, tasks } from "./task-registry-state.js";
-import { getTaskRegistryStore } from "./task-registry.store.js";
+import { linkTaskToFlowById } from "./task-registry-record-api.js";
+import { tasks, taskProgressBatches } from "./task-registry-state.js";
+import { getTaskRegistryStore, onTaskRegistryChange } from "./task-registry.store.js";
 import { loadTaskRegistryStateFromSqliteReadOnly } from "./task-registry.store.sqlite.js";
 import { createTaskFixture } from "./task-registry.test-support.js";
 import {
@@ -47,6 +56,7 @@ afterEach(() => {
   resetTaskFlowRegistryForTests({ persist: false });
   resetAgentEventsForTest({ preserveListeners: true });
   resetGatewayWorkAdmission();
+  subagentRuns.clear();
 });
 
 async function withReadState(run: () => Promise<void>) {
@@ -79,6 +89,82 @@ function createReadTask(runId: string) {
     notifyPolicy: "silent",
     deliveryStatus: "not_applicable",
   });
+}
+
+function createReadProgressBatch() {
+  const entry: SubagentRunRecord = {
+    runId: "contended-progress-child",
+    childSessionKey: "agent:main:subagent:contended-progress",
+    requesterSessionKey: "agent:main:progress-requester",
+    requesterAgentId: "main",
+    requesterDisplayKey: "progress-requester",
+    requesterTurnRunId: "progress-requester-turn",
+    requesterTurnYielded: true,
+    completionRequesterSessionId: "progress-requester-window",
+    task: "Progress under contention",
+    cleanup: "keep",
+    createdAt: Date.now(),
+    generation: 1,
+    execution: { status: "running", startedAt: Date.now() },
+    expectsCompletionMessage: true,
+  };
+  subagentRuns.set(entry.runId, entry);
+  const origin = { channel: "discord", to: "channel:synthetic-progress" };
+  const params = {
+    runId: entry.runId,
+    childSessionKey: entry.childSessionKey,
+    ownerKey: entry.requesterSessionKey,
+    requesterAgentId: entry.requesterAgentId,
+    task: entry.task,
+    notifyPolicy: "state_changes" as const,
+    requesterOrigin: origin,
+  };
+  const canonical = createTaskFixture("subagent", {
+    ...params,
+    detail: createSubagentTaskBackingDetail(entry.generation!),
+  });
+  const mirrored = expectDefined(createTaskFlowForTask({ task: canonical }), "canonical task flow");
+  expect(linkTaskToFlowById({ taskId: canonical.taskId, flowId: mirrored.flowId })).not.toBeNull();
+  const flow = expectDefined(
+    createManagedTaskFlow({
+      ownerKey: entry.requesterSessionKey,
+      controllerId: "tests/read-progress",
+      goal: entry.task,
+      requesterOrigin: origin,
+    }),
+    "managed progress flow",
+  );
+  const managed = createTaskFixture("subagent", {
+    ...params,
+    parentFlowId: flow.flowId,
+    detail: resolveManagedTaskBackingDetail({
+      ...params,
+      runtime: "subagent",
+      scopeKind: "session",
+    }),
+  });
+  expect(
+    settleRequesterTurnAfterSessionSpawns({
+      requesterSessionKey: entry.requesterSessionKey,
+      requesterAgentId: entry.requesterAgentId,
+      requesterTurnRunId: entry.requesterTurnRunId!,
+      requesterYielded: true,
+      acceptedSessionSpawns: [
+        {
+          runId: entry.runId,
+          childSessionKey: entry.childSessionKey,
+          expectsCompletionMessage: true,
+        },
+      ],
+      progressPresentation: { operationId: "contended-progress-card" },
+      runs: subagentRuns,
+      persistOrThrow: () => {},
+      schedule: () => {},
+    }),
+  ).toBe(true);
+  expect([...taskProgressBatches.values()].some((batch) => batch.members.has(managed.taskId))).toBe(
+    true,
+  );
 }
 
 describe("task registry read preparation", () => {
@@ -313,11 +399,15 @@ describe("task registry read preparation", () => {
     });
   });
 
-  it.each([false, true])(
-    "keeps registered tasks.list responsive during contention (pending events: %s)",
-    async (pending) => {
+  it.each(["idle", "pending events", "active progress"] as const)(
+    "keeps registered tasks.list responsive during contention with %s",
+    async (scenario) => {
       await withReadState(async () => {
-        const task = createReadTask(`registered-read-${pending}`);
+        const pending = scenario !== "idle";
+        const task = createReadTask(`registered-read-${scenario}`);
+        if (scenario === "active progress") {
+          createReadProgressBatch();
+        }
         const registry = createGatewayMethodRegistry(
           createCoreGatewayMethodDescriptors(coreGatewayHandlers),
         );
@@ -340,7 +430,12 @@ describe("task registry read preparation", () => {
         const request = async () => {
           const respond = vi.fn();
           await handleGatewayRequest({
-            req: { type: "req", id: "task-read", method: "tasks.list", params: { limit: 5 } },
+            req: {
+              type: "req",
+              id: "task-read",
+              method: "tasks.list",
+              params: { limit: 5, sessionKey: task.ownerKey },
+            },
             client,
             context,
             methodRegistry: registry,
@@ -364,6 +459,13 @@ describe("task registry read preparation", () => {
               runId: task.runId!,
               stream: "lifecycle",
               data: { phase: "end", endedAt: Date.now() },
+            });
+          }
+          if (scenario === "active progress") {
+            emitAgentEvent({
+              runId: "unrelated-requester-start",
+              stream: "lifecycle",
+              data: { phase: "start", startedAt: Date.now() },
             });
           }
           read = request();

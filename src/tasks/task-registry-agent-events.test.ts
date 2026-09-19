@@ -28,14 +28,17 @@ import { updateTask } from "./task-registry-mutation.js";
 import { publishTaskRecordAfterAtomicStore } from "./task-registry-publication.js";
 import { linkTaskToFlowById, markTaskTerminalById } from "./task-registry-record-api.js";
 import {
-  onTaskRegistryChange,
   tasks,
   taskRegistryLog,
   taskFlowSyncOwner,
   runTaskRegistryWorkerMutation,
 } from "./task-registry-state.js";
 import { getTaskById } from "./task-registry.js";
-import { configureTaskRegistryRuntime, getTaskRegistryStore } from "./task-registry.store.js";
+import {
+  configureTaskRegistryRuntime,
+  getTaskRegistryStore,
+  onTaskRegistryChange,
+} from "./task-registry.store.js";
 import { loadTaskRegistryStateFromSqliteReadOnly } from "./task-registry.store.sqlite.js";
 import { createTaskFixture } from "./task-registry.test-support.js";
 import {

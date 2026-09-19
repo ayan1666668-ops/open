@@ -8,9 +8,9 @@ import {
 } from "../process/gateway-work-admission.js";
 import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
 import { publishTaskRecordAfterAtomicStore } from "./task-registry-publication.js";
-import { onTaskRegistryChange, tasks } from "./task-registry-state.js";
+import { tasks } from "./task-registry-state.js";
 import { getTaskById } from "./task-registry.js";
-import { getTaskRegistryStore } from "./task-registry.store.js";
+import { getTaskRegistryStore, onTaskRegistryChange } from "./task-registry.store.js";
 import { loadTaskRegistryStateFromSqliteReadOnly } from "./task-registry.store.sqlite.js";
 import { createTaskFixture } from "./task-registry.test-support.js";
 import {
