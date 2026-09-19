@@ -378,7 +378,7 @@ describe("update plugin lifecycle lease boundaries", () => {
     },
   );
 
-  it.each(["read", "write", "write-provisional"] as const)(
+  it.each(["read", "write", "write-provisional", "read-write"] as const)(
     "preserves the phase failure when recovery history cannot %s",
     async (operation) => {
       await prepareFinalizationPackage(await resolveUpdateRoot());
@@ -405,7 +405,7 @@ describe("update plugin lifecycle lease boundaries", () => {
         throw failure;
       });
       const unavailable = new Error("recovery database unavailable");
-      if (operation === "read") {
+      if (operation === "read" || operation === "read-write") {
         const read = updateLedger.getUpdateRun;
         vi.spyOn(updateLedger, "getUpdateRun").mockImplementation((...args) => {
           if (failedPhase) {
@@ -414,7 +414,8 @@ describe("update plugin lifecycle lease boundaries", () => {
           }
           return read(...args);
         });
-      } else {
+      }
+      if (operation !== "read") {
         vi.spyOn(updateLedger, "recordUpdateRunDiagnostics").mockImplementationOnce(
           (_runId, _diagnostics, warn) => {
             warn(unavailable.message);
@@ -429,15 +430,16 @@ describe("update plugin lifecycle lease boundaries", () => {
       }
       expect(listUpdateRuns()[0]?.status).toBe("failed");
       if (operation !== "read") {
-        expect(mocks.triage).toHaveBeenCalledWith(
-          expect.objectContaining({
-            failure: expect.objectContaining({
-              result: expect.objectContaining({
-                recovery: { serviceRestartSafe: false, reason: "state-migration-started" },
-              }),
-            }),
-          }),
-        );
+        expect(mocks.triage.mock.calls.at(-1)?.[0]).toMatchObject({
+          failure: {
+            result: {
+              recovery:
+                operation === "read-write"
+                  ? undefined
+                  : { serviceRestartSafe: false, reason: "state-migration-started" },
+            },
+          },
+        });
       }
       expect(defaultRuntime.error).toHaveBeenCalledWith(
         expect.stringContaining(unavailable.message),
