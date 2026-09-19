@@ -1,6 +1,5 @@
 /** Session-manager scoped runtime state for compaction safeguard configuration. */
 import type { AgentCompactionIdentifierPolicy } from "../../config/types.agent-defaults.js";
-import type { CompactionJudgmentMode } from "./compaction-judgment.js";
 import type { Model } from "../../llm/types.js";
 import { createSessionManagerRuntimeRegistry } from "./session-manager-runtime-registry.js";
 
@@ -24,9 +23,6 @@ export type CompactionSafeguardRuntimeValue = {
   postCompactionSections?: string[];
   qualityGuardEnabled?: boolean;
   qualityGuardMaxRetries?: number;
-  judgmentCurationMode?: CompactionJudgmentMode;
-  judgmentTimeoutMs?: number;
-  judgmentMaxSegments?: number;
   semanticCurationMode?: "off" | "shadow";
   semanticCurationTimeoutMs?: number;
   /**
