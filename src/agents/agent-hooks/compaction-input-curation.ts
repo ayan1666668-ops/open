@@ -15,6 +15,12 @@ const TIMEOUT_MS = 1_000;
 
 type EvaluateJudgment = typeof evaluateJudgment;
 
+export type CompactionInputCurationEvidence = {
+  id: string;
+  toolName: string;
+  text: string;
+};
+
 export type CompactionInputCurationResult = {
   messages: AgentMessage[];
   status: "ok" | "unavailable" | "no-candidates";
@@ -22,6 +28,7 @@ export type CompactionInputCurationResult = {
   omitted: number;
   originalChars: number;
   curatedChars: number;
+  omittedEvidence: CompactionInputCurationEvidence[];
   reason?: string;
 };
 
@@ -63,7 +70,7 @@ function collectCandidates(messages: AgentMessage[]): CurationCandidate[] {
       continue;
     }
     const output = textForMessage(message);
-    if (output.length < MIN_TOOL_RESULT_CHARS) {
+    if (output.length < MIN_TOOL_RESULT_CHARS || output.length > MAX_RESULT_CHARS) {
       continue;
     }
     const toolName =
@@ -74,7 +81,7 @@ function collectCandidates(messages: AgentMessage[]): CurationCandidate[] {
       id: `tool-result-${candidates.length + 1}`,
       index,
       toolName,
-      output: truncateUtf16Safe(output, MAX_RESULT_CHARS),
+      output,
       laterContext: collectLaterContext(messages, index),
     });
     if (candidates.length >= MAX_CANDIDATES) {
@@ -126,6 +133,7 @@ export async function curateCompactionSummarizerInput(
       omitted: 0,
       originalChars,
       curatedChars: originalChars,
+      omittedEvidence: [],
     };
   }
 
@@ -182,6 +190,7 @@ export async function curateCompactionSummarizerInput(
       omitted: 0,
       originalChars,
       curatedChars: originalChars,
+      omittedEvidence: [],
     };
   }
 
@@ -200,6 +209,7 @@ export async function curateCompactionSummarizerInput(
       omitted: 0,
       originalChars,
       curatedChars: originalChars,
+      omittedEvidence: [],
     };
   }
 
@@ -216,5 +226,10 @@ export async function curateCompactionSummarizerInput(
     omitted: byIndex.size,
     originalChars,
     curatedChars,
+    omittedEvidence: [...byIndex.values()].map((candidate) => ({
+      id: candidate.id,
+      toolName: candidate.toolName,
+      text: candidate.output,
+    })),
   };
 }
