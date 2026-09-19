@@ -330,6 +330,7 @@ const APP_RESOURCE_PATH_PREFIXES = [
 ];
 const markdownCache = new Map<string, string>();
 const STREAMING_INPUT_CACHE_LIMIT = 8;
+const STREAMING_INPUT_CACHE_MAX_CHARS = MARKDOWN_CHAR_LIMIT;
 type StreamingInputCacheEntry = { source: string; normalized: string };
 const streamingInputCache = new Map<string, StreamingInputCacheEntry>();
 
@@ -369,13 +370,17 @@ function normalizeStreamingMarkdownInput(markdownLocal: string, streamKey?: stri
         ? `${cached.normalized.slice(0, -1)}${normalizedAppend}`
         : `${cached.normalized}${normalizedAppend}`;
     streamingInputCache.delete(streamKey);
-    streamingInputCache.set(streamKey, { source, normalized });
+    if (source.length <= STREAMING_INPUT_CACHE_MAX_CHARS) {
+      streamingInputCache.set(streamKey, { source, normalized });
+    }
     return normalized;
   }
 
   const normalized = normalizeMarkdownLineBreaks(source);
   streamingInputCache.delete(streamKey);
-  streamingInputCache.set(streamKey, { source, normalized });
+  if (source.length <= STREAMING_INPUT_CACHE_MAX_CHARS) {
+    streamingInputCache.set(streamKey, { source, normalized });
+  }
   while (streamingInputCache.size > STREAMING_INPUT_CACHE_LIMIT) {
     const oldest = streamingInputCache.keys().next().value;
     if (oldest === undefined) {
