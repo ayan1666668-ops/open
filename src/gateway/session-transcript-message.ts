@@ -58,6 +58,7 @@ export function projectSessionMessagePayload(params: {
         subagentCoordination: params.subagentCoordination,
         includeCommentaryFallbacks: true,
         redactInlineMedia: params.redactInlineMedia,
+        activity: false,
       })
     : undefined;
   if (
@@ -85,6 +86,7 @@ export function projectSessionMessagePayload(params: {
             redactInlineMedia: params.redactInlineMedia,
             assistantErrorPending: params.projectionState.assistantErrorPending,
             turnBoundaryPending: params.projectionState.turnBoundaryPending,
+            activity: false,
             subagentCoordination: params.subagentCoordination,
           })
         : {
