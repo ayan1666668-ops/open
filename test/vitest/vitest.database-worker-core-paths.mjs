@@ -181,6 +181,7 @@ export const databaseWorkerCoreTestFiles = [
   "src/plugin-state/plugin-state-store.errors.test.ts",
   "src/plugin-state/plugin-state-store.expiry.test.ts",
   "src/plugin-state/plugin-state-store.fresh-store.test.ts",
+  "src/plugin-state/plugin-state-store.namespace-independence.test.ts",
   "src/plugin-state/plugin-state-store.persistence.test.ts",
   "src/plugin-state/plugin-state-store.retention.test.ts",
   "src/plugin-state/plugin-state-store.runtime.test.ts",
