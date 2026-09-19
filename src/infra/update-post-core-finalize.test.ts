@@ -111,6 +111,20 @@ describe("runPostCoreFinalizeAfterGatewayUpdate", () => {
     expect(call.timeoutMs).toBeGreaterThanOrEqual(120_000);
   });
 
+  it("leaves forward finalization unbounded when the caller omits its work deadline", async () => {
+    const spawnFinalize = vi.fn<PostCoreFinalizeSpawner>(async () => ({ code: 0 }));
+    await expect(
+      runPostCoreFinalizeAfterGatewayUpdate({
+        result: gitOkResult(),
+        resolveEntrypoint: resolveEntrypointOk,
+        spawnFinalize,
+      }),
+    ).resolves.toEqual({ status: "ok", entrypoint: ENTRYPOINT });
+    const call = expectDefined(spawnFinalize.mock.calls[0], "finalizer was started")[0];
+    expect(call.argv).not.toContain("--timeout");
+    expect(call.timeoutMs).toBeUndefined();
+  });
+
   it("strips the gateway service identity from the finalizer child env", async () => {
     const spawnFinalize = vi.fn<PostCoreFinalizeSpawner>(async () => ({ code: 0 }));
     await runPostCoreFinalizeAfterGatewayUpdate({
