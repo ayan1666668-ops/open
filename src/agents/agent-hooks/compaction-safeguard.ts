@@ -1332,6 +1332,24 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
       let semanticFallbackSummary: string | undefined;
       const totalAttempts = qualityGuardEnabled ? qualityGuardMaxRetries + 1 : 1;
 
+      const restoreUncuratedInput = async (reason: string) => {
+        messagesToSummarize = uncuratedMessagesToSummarize;
+        omittedCurationEvidence = [];
+        curationApplied = false;
+        const retryMessages = [...messagesToSummarize, ...turnPrefixMessages];
+        const retryAdaptiveRatio = await computeAdaptiveChunkRatioWithWorker({
+          messages: retryMessages,
+          contextWindow: contextWindowTokens,
+          signal,
+        });
+        maxChunkTokens = Math.max(
+          1,
+          Math.floor(contextWindowTokens * retryAdaptiveRatio) -
+            SUMMARIZATION_OVERHEAD_TOKENS,
+        );
+        correctiveInstructions = reason;
+      };
+
       for (let attempt = 0; attempt < totalAttempts; attempt += 1) {
         let splitTurnSectionLocal = "";
         let splitTurnSummaryLocal = "";
@@ -1489,22 +1507,9 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
                     canRegenerate &&
                     attempt < totalAttempts - 1
                   ) {
-                    messagesToSummarize = uncuratedMessagesToSummarize;
-                    omittedCurationEvidence = [];
-                    curationApplied = false;
-                    const retryMessages = [...messagesToSummarize, ...turnPrefixMessages];
-                    const retryAdaptiveRatio = await computeAdaptiveChunkRatioWithWorker({
-                      messages: retryMessages,
-                      contextWindow: contextWindowTokens,
-                      signal,
-                    });
-                    maxChunkTokens = Math.max(
-                      1,
-                      Math.floor(contextWindowTokens * retryAdaptiveRatio) -
-                        SUMMARIZATION_OVERHEAD_TOKENS,
+                    await restoreUncuratedInput(
+                      "Regenerate from the original uncurated input. The curated attempt lost tool-derived context required for continuity.",
                     );
-                    correctiveInstructions =
-                      "Regenerate from the original uncurated input. The curated attempt lost tool-derived context required for continuity.";
                     continue;
                   }
                   if (canRegenerate && attempt < totalAttempts - 1) {
@@ -1531,6 +1536,16 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
                   );
                 }
               } else if (observation.status === "unavailable") {
+                if (curationApplied && canRegenerate && attempt < totalAttempts - 1) {
+                  log.warn(
+                    "Compaction safeguard: semantic fidelity unavailable after input curation; retrying from original uncurated input. " +
+                      `reason=${observation.reason}`,
+                  );
+                  await restoreUncuratedInput(
+                    "Regenerate from the original uncurated input because the post-curation semantic fidelity check was unavailable.",
+                  );
+                  continue;
+                }
                 log.debug(
                   "Compaction safeguard: semantic fidelity observation unavailable; " +
                     `reason=${observation.reason} checked=${observation.checked}`,
@@ -1566,6 +1581,21 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
           return { cancel: true };
         }
         const reasons = quality.reasons.join(", ");
+        if (curationApplied && attempt >= totalAttempts - 2) {
+          const qualityFeedbackReasons = wrapUntrustedInstructionBlock(
+            "Quality check feedback",
+            `Previous curated summary failed quality checks (${reasons}).`,
+          );
+          await restoreUncuratedInput(
+            [
+              "Regenerate from the original uncurated input. The final available corrective attempt is reserved for full source evidence.",
+              qualityFeedbackReasons,
+            ]
+              .filter(Boolean)
+              .join("\n\n"),
+          );
+          continue;
+        }
         const qualityFeedbackInstruction =
           identifierPolicy === "strict"
             ? "Fix all issues and include every required section with exact identifiers preserved."
