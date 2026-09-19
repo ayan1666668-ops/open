@@ -1,5 +1,6 @@
 import { truncateUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
 import { evaluateJudgment } from "../../judgments/runtime.js";
+import type { JudgmentOutcome } from "../../judgments/types.js";
 import { collectTextContentBlocks } from "../content-blocks.js";
 import type { AgentMessage } from "../runtime/index.js";
 
@@ -84,13 +85,7 @@ function collectCandidates(messages: AgentMessage[]): CurationCandidate[] {
 }
 
 function shouldOmit(
-  answer:
-    | {
-        type: "choice";
-        choice: string;
-        probabilities: Readonly<Record<string, number>>;
-      }
-    | undefined,
+  answer: Extract<JudgmentOutcome, { status: "ok" }>["result"]["answers"][string],
 ): boolean {
   if (!answer || answer.type !== "choice") {
     return false;
@@ -192,7 +187,7 @@ export async function curateCompactionSummarizerInput(
 
   const byIndex = new Map<number, CurationCandidate>();
   for (const candidate of candidates) {
-    if (shouldOmit(outcome.result.answers[candidate.id] as never)) {
+    if (shouldOmit(outcome.result.answers[candidate.id])) {
       byIndex.set(candidate.index, candidate);
     }
   }
