@@ -20,6 +20,7 @@ import { timestampedTextAssistant } from "../test-helpers/sparse-transcript.test
 import { createZeroUsageFixture } from "../test-helpers/usage-fixtures.js";
 import { jsonResult } from "../tools/common.js";
 import { MAX_WORKSPACE_BOOTSTRAP_FILE_BYTES } from "../workspace-bootstrap-read.js";
+import * as compactionInputCurationModule from "./compaction-input-curation.js";
 import * as compactionQualityModule from "./compaction-safeguard-quality.js";
 import {
   consumeCompactionSafeguardCancellation,
@@ -54,6 +55,16 @@ vi.mock("../../logging/subsystem.js", async () => {
   return { ...actual, createSubsystemLogger: () => compactionLogger };
 });
 
+vi.mock("./compaction-input-curation.js", async () => {
+  const actual = await vi.importActual<typeof compactionInputCurationModule>(
+    "./compaction-input-curation.js",
+  );
+  return {
+    ...actual,
+    curateCompactionSummarizerInput: vi.fn(actual.curateCompactionSummarizerInput),
+  };
+});
+
 vi.mock("./compaction-safeguard-quality.js", async () => {
   const actual = await vi.importActual<typeof compactionQualityModule>(
     "./compaction-safeguard-quality.js",
@@ -70,6 +81,9 @@ vi.mock("../compaction.js", async () => {
 });
 
 const mockSummarizeInStages = vi.mocked(compactionModule.summarizeInStages);
+const mockCurateCompactionSummarizerInput = vi.mocked(
+  compactionInputCurationModule.curateCompactionSummarizerInput,
+);
 const actualCompactionModule = await vi.importActual<typeof compactionModule>("../compaction.js");
 const actualCompactionQualityModule = await vi.importActual<typeof compactionQualityModule>(
   "./compaction-safeguard-quality.js",
@@ -134,6 +148,10 @@ beforeEach(() => {
   testing.setSummarizeInStagesForTest(mockSummarizeInStages);
   mockAuditSummaryQuality.mockImplementation(actualCompactionQualityModule.auditSummaryQuality);
   mockAuditSummaryQuality.mockClear();
+  mockCurateCompactionSummarizerInput.mockImplementation(
+    compactionInputCurationModule.curateCompactionSummarizerInput,
+  );
+  mockCurateCompactionSummarizerInput.mockClear();
   compactionLogger.warn.mockClear();
 });
 
@@ -3627,6 +3645,39 @@ describe("compaction-safeguard recent-turn preservation", () => {
     expect(auditInput.summary).toContain(latestAsk);
     expect(mockAuditSummaryQuality.mock.results[0]?.value).toEqual({ ok: true, reasons: [] });
     expect(consumeCompactionSafeguardCancellation(sessionManager)).toBeNull();
+  });
+
+  it("does not run input curation when the quality guard is disabled", async () => {
+    mockSummarizeInStages.mockReset();
+    mockSummarizeInStages.mockResolvedValueOnce(summaryResult("summary without quality guard"));
+
+    const sessionManager = stubSessionManager();
+    setCompactionSafeguardRuntime(sessionManager, {
+      model: createAnthropicModelFixture(),
+      recentTurnsPreserve: 0,
+      qualityGuardEnabled: false,
+      qualityGuardMaxRetries: 1,
+      semanticJudgmentsEnabled: true,
+      semanticJudgmentCurationEnabled: true,
+    });
+
+    const event = createCompactionEvent({
+      messageText: "summarize this conversation",
+      tokensBefore: 1_500,
+    });
+    (event.preparation as { settings?: { reserveTokens: number }; isSplitTurn?: boolean }).settings = {
+      reserveTokens: 4_000,
+    };
+    (event.preparation as { isSplitTurn?: boolean }).isSplitTurn = false;
+
+    const { result } = await runCompactionScenario({
+      sessionManager,
+      event,
+      apiKey: "test-key",
+    });
+
+    expect(result.cancel).not.toBe(true);
+    expect(mockCurateCompactionSummarizerInput).not.toHaveBeenCalled();
   });
 
   it("retries when generated summary misses headings even if preserved turns contain them", async () => {
