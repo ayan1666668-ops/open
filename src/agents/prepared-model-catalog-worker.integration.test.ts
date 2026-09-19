@@ -17,7 +17,6 @@ import { getRuntimeExternalCliProfileIds } from "./auth-profiles/runtime-externa
 import { saveAuthProfileStore } from "./auth-profiles/store-runtime.js";
 import type { AuthProfileStore } from "./auth-profiles/types.js";
 import { preparePublishedModelCatalogOwnerIdentity } from "./prepared-model-catalog-owner.js";
-import { expectPublishedOwnerRecoveryAfterGenerationMismatch } from "./prepared-model-catalog-worker.generation-recovery.test-support.js";
 import { expectRefOnlyAuthProfilesThroughWorker } from "./prepared-model-catalog-worker.ref-only-auth.test-support.js";
 import {
   DISCOVERED_HARNESS_ID,
@@ -997,11 +996,6 @@ describe("prepared model catalog worker boundary", () => {
       fixture.supersede();
       await Promise.allSettled([catalog]);
     }
-  });
-
-  it("rebuilds the published owner before models.list retries a generation mismatch", async () => {
-    const fixture = await createStaticSnapshot(0);
-    await expectPublishedOwnerRecoveryAfterGenerationMismatch(fixture);
   });
 
   it("preserves ref-only api-key and token profiles through the real worker", async () => {

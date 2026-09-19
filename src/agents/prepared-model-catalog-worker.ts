@@ -137,7 +137,7 @@ type GatewayCatalogPool = {
   close: (error?: Error) => Promise<void>;
   borrowers: Set<CatalogPoolBorrower>;
   recovery?: Promise<void>;
-  recover: (error: Error) => Promise<void>;
+  recover: (error: Error, options?: { replaceOwners?: boolean }) => Promise<void>;
   validate?: (result: PreparedModelWorkerResult) => void;
 };
 const gatewayCatalog = resolveGlobalSingleton<{
@@ -195,7 +195,7 @@ async function getGatewayCatalogPool(
       cache,
       envFingerprint: environmentFingerprint,
       borrowers: new Set(),
-      recover: (error) =>
+      recover: (error, options) =>
         (current.recovery ??= (async () => {
           const borrowers = [...current.borrowers];
           if (!signal.aborted) {
@@ -211,9 +211,11 @@ async function getGatewayCatalogPool(
           if (gatewayCatalog.current === current) {
             gatewayCatalog.current = undefined;
           }
-          const { recoverPreparedModelRuntimeCatalogWorker } =
-            await import("./prepared-model-runtime.js");
-          await recoverPreparedModelRuntimeCatalogWorker(borrowers);
+          if (options?.replaceOwners !== false) {
+            const { recoverPreparedModelRuntimeCatalogWorker } =
+              await import("./prepared-model-runtime.js");
+            await recoverPreparedModelRuntimeCatalogWorker(borrowers);
+          }
         })()),
       close: async (error) => {
         signal.removeEventListener("abort", retire);
@@ -609,9 +611,17 @@ export function createPreparedModelCatalogWorker(
         requestPool?.isClosed &&
         !(failure instanceof PreparedModelRuntimePublicationSupersededError)
       ) {
-        await sharedOwner.recover(failure).catch((recoveryError: unknown) => {
-          process.emitWarning(`Gateway catalog recovery failed: ${String(recoveryError)}`);
-        });
+        await sharedOwner
+          .recover(failure, {
+            // A typed mismatch must reach the catalog materialization boundary so it can rebuild
+            // the exact configured owner from current plugin facts. The generic shared-pool
+            // recovery deliberately retains the captured plugin generation and would otherwise
+            // supersede that owner with the same mismatched plan first.
+            replaceOwners: !(failure instanceof PreparedModelCatalogGenerationMismatchError),
+          })
+          .catch((recoveryError: unknown) => {
+            process.emitWarning(`Gateway catalog recovery failed: ${String(recoveryError)}`);
+          });
       }
       if (!gatewayOwned && failure instanceof PreparedModelCatalogGenerationMismatchError) {
         // Keep the generation open, but retire only this request's pool: a delayed rejection
