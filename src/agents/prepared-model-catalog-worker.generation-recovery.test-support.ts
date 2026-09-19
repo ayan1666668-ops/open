@@ -1,21 +1,17 @@
 import { channel } from "node:diagnostics_channel";
 import fs from "node:fs";
 import path from "node:path";
-import { setImmediate as nextTurn } from "node:timers/promises";
 import { Worker } from "node:worker_threads";
 import { expect, vi } from "vitest";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { loadGatewayModelCatalogSnapshot } from "../gateway/server-model-catalog.js";
 import { createDeferredCore } from "../shared/deferred.js";
-import {
-  PLUGIN_ID,
-  PROVIDER_ID,
-  writeFixturePlugin,
-} from "./prepared-model-catalog-worker.test-support.js";
+import { PROVIDER_ID, writeFixturePlugin } from "./prepared-model-catalog-worker.test-support.js";
 import { loadPreparedModelRuntimeAuth } from "./prepared-model-runtime-auth.js";
 import {
   getPreparedModelRuntimeSnapshot,
   loadPublishedGatewayReplyDispatchRuntime,
+  prepareModelRuntimeSnapshot,
   publishPreparedModelRuntimeSnapshot,
   type PreparedModelRuntimeInput,
   type PreparedModelRuntimeSnapshot,
@@ -94,13 +90,6 @@ export async function expectPublishedOwnerRecoveryAfterGenerationMismatch(
     );
   }
 
-  writeFixturePlugin({
-    root: fixture.root,
-    spinMs: 0,
-    pluginVersion: "v2",
-  });
-  fixture.config.plugins!.entries![PLUGIN_ID] = { enabled: true, config: {} };
-
   const loadCatalog = async (agentId: string, agentDir: string, workspaceDir: string) =>
     await loadGatewayModelCatalogSnapshot({
       agentId,
@@ -141,8 +130,15 @@ export async function expectPublishedOwnerRecoveryAfterGenerationMismatch(
 
   let failedOwner: ReturnType<typeof loadMainCatalog> | undefined;
   let failedAuthOwner: ReturnType<typeof loadPreparedModelRuntimeAuth> | undefined;
-  let healthyWaiter: ReturnType<typeof loadCatalog> | undefined;
   try {
+    await loadPreparedModelRuntimeAuth(published[1]!, { providerIds: [PROVIDER_ID] });
+
+    writeFixturePlugin({
+      root: fixture.root,
+      spinMs: 0,
+      pluginVersion: "v2",
+    });
+
     armGenerationMismatch();
     failedOwner = loadMainCatalog();
     void failedOwner.catch(() => undefined);
@@ -160,29 +156,29 @@ export async function expectPublishedOwnerRecoveryAfterGenerationMismatch(
       providerIds: [PROVIDER_ID],
     });
     void failedAuthOwner.catch(() => undefined);
-    let healthySettled = false;
-    healthyWaiter = loadCatalog("healthy", healthyAgentDir, healthyWorkspaceDir).finally(() => {
-      healthySettled = true;
-    });
-    void healthyWaiter.catch(() => undefined);
-    await nextTurn();
-    expect(healthySettled).toBe(false);
 
     releasePoolRecovery.resolve();
     await expect(failedAuthOwner).rejects.toBeInstanceOf(Error);
-    const recovered = await healthyWaiter;
     await vi.waitFor(() => {
-      expect(getPreparedModelRuntimeSnapshot(inputs[0]!)).not.toBe(published[0]);
+      const recoveredMain = getPreparedModelRuntimeSnapshot(inputs[0]!);
+      expect(recoveredMain).toBeDefined();
+      expect(recoveredMain).not.toBe(published[0]);
     });
     await expect(
       loadPublishedGatewayReplyDispatchRuntime({ agentId: "main" }),
     ).resolves.toBeUndefined();
-    expect(recovered.entries).toContainEqual(
+    const recoveredHealthy = await prepareModelRuntimeSnapshot(inputs[1]!);
+    expect(recoveredHealthy).toBe(published[1]);
+    await expect(
+      loadPreparedModelRuntimeAuth(recoveredHealthy, { providerIds: [PROVIDER_ID] }),
+    ).resolves.toBeDefined();
+    const recoveredMainCatalog = await loadMainCatalog();
+    expect(recoveredMainCatalog.entries).toContainEqual(
       expect.objectContaining({ provider: PROVIDER_ID, id: "plugin-generation-v2" }),
     );
   } finally {
     releasePoolRecovery.resolve();
-    await Promise.allSettled([failedOwner, failedAuthOwner, healthyWaiter]);
+    await Promise.allSettled([failedOwner, failedAuthOwner]);
     restoreTermination?.();
     workerChannel.unsubscribe(holdSharedPoolRecovery);
   }

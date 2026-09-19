@@ -137,7 +137,7 @@ type GatewayCatalogPool = {
   close: (error?: Error) => Promise<void>;
   borrowers: Set<CatalogPoolBorrower>;
   recovery?: Promise<void>;
-  recover: (error: Error, options?: { replaceOwners?: boolean }) => Promise<void>;
+  recover: (error: Error, options?: { failedOwnerAgentDir?: string }) => Promise<void>;
   validate?: (result: PreparedModelWorkerResult) => void;
 };
 const gatewayCatalog = resolveGlobalSingleton<{
@@ -205,13 +205,18 @@ async function getGatewayCatalogPool(
           }
           // Fence every old catalog before releasing the native slot. Recovery publishes new
           // prepared owners; it never replays a failed request under its former source generation.
-          const stopping = borrowers.map((borrower) => borrower.stop(error));
+          const stopping = borrowers
+            .filter(
+              (borrower) =>
+                !options?.failedOwnerAgentDir || borrower.agentDir === options.failedOwnerAgentDir,
+            )
+            .map((borrower) => borrower.stop(error));
           await current.close(error);
           await Promise.all(stopping);
           if (gatewayCatalog.current === current) {
             gatewayCatalog.current = undefined;
           }
-          if (options?.replaceOwners !== false) {
+          if (!options?.failedOwnerAgentDir) {
             const { recoverPreparedModelRuntimeCatalogWorker } =
               await import("./prepared-model-runtime.js");
             await recoverPreparedModelRuntimeCatalogWorker(borrowers);
@@ -616,9 +621,12 @@ export function createPreparedModelCatalogWorker(
           .recover(failure, {
             // A typed mismatch must reach the catalog materialization boundary so it can rebuild
             // the exact configured owner from current plugin facts. The generic shared-pool
-            // recovery deliberately retains the captured plugin generation and would otherwise
-            // supersede that owner with the same mismatched plan first.
-            replaceOwners: !(failure instanceof PreparedModelCatalogGenerationMismatchError),
+            // recovery deliberately retains the captured plugin generation, so stop only that
+            // owner. Healthy borrowers can bind their existing owners to the replacement pool.
+            failedOwnerAgentDir:
+              failure instanceof PreparedModelCatalogGenerationMismatchError
+                ? failure.agentDir
+                : undefined,
           })
           .catch((recoveryError: unknown) => {
             process.emitWarning(`Gateway catalog recovery failed: ${String(recoveryError)}`);

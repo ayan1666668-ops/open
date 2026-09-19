@@ -12,13 +12,13 @@ describe("prepared model catalog generation recovery", () => {
     vi.stubEnv("CODEX_HOME", makeTempDir("openclaw-worker-empty-codex-"));
   });
 
-  it("isolates a failed owner from a healthy shared-pool waiter", async () => {
+  it("keeps a warmed healthy shared-pool owner usable", async () => {
     const fixture = await createStaticSnapshot(0);
     const run = WorkerTaskPool.prototype.run;
     let injectMismatch = false;
     const runSpy = vi
       .spyOn(WorkerTaskPool.prototype, "run")
-      .mockImplementation(function (input, options) {
+      .mockImplementation(function (this: (typeof WorkerTaskPool)["prototype"], input, options) {
         if (typeof input !== "function") {
           return run.call(this, input, options);
         }
