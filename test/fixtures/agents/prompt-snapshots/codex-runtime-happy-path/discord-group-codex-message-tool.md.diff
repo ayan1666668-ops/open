@@ -1,5 +1,5 @@
---- telegram-direct-codex-message-tool.md	sha256=c3e3368ac1b5e8c441dd119606bcfa1d11bb2f4bf3518774dc5ccc22a6f9154b
-+++ discord-group-codex-message-tool.md	sha256=83a32928ff0841f6af2009da45bedea7e752205080a71fe8218491dac1f1412e
+--- telegram-direct-codex-message-tool.md	sha256=bbb555d41bcb4a25ba9005baffb4ec381a16457b7410317b5a239fa3d04e861a
++++ discord-group-codex-message-tool.md	sha256=7fea82dad4864c5bb14c6843c79a16bed3b77450c5193dc569d5f8838d56890e
 @@ -1,1 +1,1 @@
 -# Telegram Direct Codex Message Tool Turn
 +# Discord Group Codex Message Tool Turn
@@ -32,25 +32,25 @@
 -    "chars": 882,
 +    "chars": 881,
 @@ -261,2 +261,2 @@
--    "chars": 2867,
--    "roughTokens": 717
-+    "chars": 4040,
-+    "roughTokens": 1010
+-    "chars": 2983,
+-    "roughTokens": 746
++    "chars": 4156,
++    "roughTokens": 1039
 @@ -269,2 +269,2 @@
--    "chars": 26701,
--    "roughTokens": 6676
-+    "chars": 28244,
-+    "roughTokens": 7061
+-    "chars": 26903,
+-    "roughTokens": 6726
++    "chars": 28445,
++    "roughTokens": 7112
 @@ -273,2 +273,2 @@
--    "chars": 91266,
--    "roughTokens": 22817
-+    "chars": 92809,
-+    "roughTokens": 23203
+-    "chars": 93063,
+-    "roughTokens": 23266
++    "chars": 94605,
++    "roughTokens": 23652
 @@ -277,2 +277,2 @@
--    "chars": 793,
--    "roughTokens": 199
-+    "chars": 1164,
-+    "roughTokens": 291
+-    "chars": 879,
+-    "roughTokens": 220
++    "chars": 1249,
++    "roughTokens": 313
 @@ -504,4 +504,4 @@
 -  "channel": "telegram",
 -  "provider": "telegram",
@@ -68,16 +68,19 @@
 @@ -522,1 +524,1 @@
 -<external_openclaw_current_sender>{"sender":{"id":"1000001","name":"Pash","username":"pash"}}</external_openclaw_current_sender>
 +<external_openclaw_current_sender>{"sender":{"id":"424242","name":"Pash","username":"pash"}}</external_openclaw_current_sender>
-@@ -564,1 +566,1 @@
+@@ -546,1 +548,1 @@
+-[OpenClaw conversation info: sender={"id":"1000001","name":"Pash","username":"pash"}]
++[OpenClaw conversation info: sender={"id":"424242","name":"Pash","username":"pash"}]
+@@ -565,1 +567,1 @@
 -{"chat_id":"user:1000001","message_id":"tg-msg-0001","sender":{"id":"1000001","name":"Pash","username":"pash"}}
 +{"chat_id":"channel:987654321","message_id":"discord-msg-0001","conversation_label":"OpenClaw/#agent-sandbox","sender":{"id":"424242","name":"Pash","username":"pash"},"group_subject":"OpenClaw maintainers","group_channel":"#agent-sandbox","group_space":"OpenClaw","is_group_chat":true,"was_mentioned":true,"history_count":2}
-@@ -567,1 +569,5 @@
+@@ -568,1 +570,5 @@
 -Can you check whether the nightly build finished and tell me what happened?
 +Chat history since last reply: ⟦openclaw:ctx⟧
 +Peter: I pushed the Discord-side message-tool bridge.
 +Pash: @OpenClaw please verify the Codex happy path too.
 +
 +can you audit whether this prompt path has conflicting silence instructions?
-@@ -572,1 +578,1 @@
+@@ -573,1 +579,1 @@
 -Full JSON: `codex-dynamic-tools.telegram-direct.json`
 +Full tool overrides: `codex-dynamic-tools.discord-group.json` (base: `codex-dynamic-tools.telegram-direct.json`)
