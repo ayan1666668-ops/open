@@ -56,6 +56,7 @@ import {
   readWorkspaceBootstrapFile,
 } from "../workspace-bootstrap-read.js";
 import { resolveCompactionInstructions } from "./compaction-instructions.js";
+import { curateCompactionSummarizerInput } from "./compaction-input-curation.js";
 import {
   buildCompactionSemanticRepairEvidence,
   isCompactionSemanticRepairFinding,
@@ -1267,6 +1268,32 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
         (summaryTargetMessages.length > 0 ||
           !preservedTurnsSectionLocal.text.includes(requiredAskContext));
       messagesToSummarize = includePreservedContext ? messagesToSummarize : summaryTargetMessages;
+      if (runtime?.semanticJudgmentCurationEnabled) {
+        if (!signal) {
+          log.debug(
+            "Compaction safeguard: input curation skipped; reason=no-cancellation-signal",
+          );
+        } else {
+          const curation = await curateCompactionSummarizerInput({
+            messages: messagesToSummarize,
+            unresolvedAsk: latestUnresolvedUserRequest ?? latestUserAsk,
+            signal,
+          });
+          messagesToSummarize = curation.messages;
+          if (curation.status === "ok") {
+            log.info(
+              "Compaction safeguard: judgment-assisted input curation completed; " +
+                `considered=${curation.considered} omitted=${curation.omitted} ` +
+                `originalChars=${curation.originalChars} curatedChars=${curation.curatedChars}`,
+            );
+          } else if (curation.status === "unavailable") {
+            log.debug(
+              "Compaction safeguard: input curation unavailable; preserving original summarizer input. " +
+                `reason=${curation.reason} considered=${curation.considered}`,
+            );
+          }
+        }
+      }
       const allMessages = [...messagesToSummarize, ...turnPrefixMessages];
 
       // Use adaptive chunk ratio based on message sizes, reserving headroom for
