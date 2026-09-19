@@ -148,7 +148,13 @@ function restoreTranscriptPrependAnchor(
   if (Math.abs(delta) <= 1) {
     return false;
   }
-  const offset = Math.max(0, scrollElement.scrollTop + delta);
+  const maxOffset = Math.max(0, scrollElement.scrollHeight - scrollElement.clientHeight);
+  const offset = Math.max(0, Math.min(maxOffset, scrollElement.scrollTop + delta));
+  // A retained message can become unreachable at an edge when provisional rows retire.
+  // Reissuing that clamped correction would keep the measurement loop alive forever.
+  if (Math.abs(offset - scrollElement.scrollTop) <= 1) {
+    return false;
+  }
   // Commit one measured message target through the scroll owner. This also
   // retires deferred row corrections already represented by the measured DOM.
   virtualizer.scrollToOffset(offset, { behavior: "instant" });
