@@ -115,7 +115,10 @@ export function registerWaitingStatusCases({
           mediaUrls: ["https://example.com/direct.png"],
         });
         source.setComplete(!completeAtSettlement);
-        return { payloads: [], meta: { yielded: true, yieldAcknowledgment: "Waiting sentinel" } };
+        return {
+          payloads: [],
+          meta: { durationMs: 0, yielded: true, yieldAcknowledgment: "Waiting sentinel" },
+        };
       });
       const { run } = createMinimalRun({ opts: { onBlockReply } });
 
@@ -180,7 +183,7 @@ export function registerWaitingStatusCases({
           params.onBlockReply?.({
             text: "Late caption",
             mediaUrls: ["https://example.com/late.png"],
-            isStatusNotice: late === "progress",
+            isCommentary: late === "progress",
           }),
         );
         await transportStarted.promise;
@@ -198,10 +201,18 @@ export function registerWaitingStatusCases({
             events.push("cleanup completed");
           },
         });
-        return { payloads: [], meta: { yielded: true, yieldAcknowledgment: "Waiting sentinel" } };
+        return {
+          payloads: [],
+          meta: { durationMs: 0, yielded: true, yieldAcknowledgment: "Waiting sentinel" },
+        };
       });
       const { run } = createMinimalRun({
-        opts: { onBlockReply, onToolResult, forceToolResultProgress: true },
+        opts: {
+          onBlockReply,
+          onToolResult,
+          forceToolResultProgress: true,
+          commentaryPayloadsEnabled: true,
+        },
       });
 
       try {
