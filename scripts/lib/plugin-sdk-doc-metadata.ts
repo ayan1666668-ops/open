@@ -12,6 +12,9 @@ type PluginSdkDocMetadata = {
 };
 
 export const pluginSdkDocMetadata = {
+  "control-ui-link-reader": {
+    category: "core",
+  },
   core: {
     category: "core",
   },
@@ -63,6 +66,9 @@ export const pluginSdkDocMetadata = {
   "channel-setup": {
     category: "channel",
   },
+  "channel-dm-policy": {
+    category: "channel",
+  },
   "command-auth": {
     category: "channel",
   },
@@ -81,13 +87,25 @@ export const pluginSdkDocMetadata = {
   "runtime-store": {
     category: "runtime",
   },
+  "plugin-command-runtime": {
+    category: "runtime",
+  },
   "session-store-runtime": {
+    category: "runtime",
+  },
+  "conversation-binding-inspection-runtime": {
+    category: "runtime",
+  },
+  "agent-scope-runtime": {
     category: "runtime",
   },
   "agent-runtime": {
     category: "runtime",
   },
   "agent-harness-runtime": {
+    category: "runtime",
+  },
+  "agent-workspace-runtime": {
     category: "runtime",
   },
   "speech-settings": {
@@ -97,6 +115,9 @@ export const pluginSdkDocMetadata = {
     category: "utilities",
   },
   "reply-payload": {
+    category: "utilities",
+  },
+  "media-local-roots": {
     category: "utilities",
   },
 } as const satisfies Record<string, PluginSdkDocMetadata>;

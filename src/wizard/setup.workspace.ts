@@ -3,7 +3,7 @@ import {
   type OnboardingWorkspaceConflict,
 } from "../commands/onboard-config.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
-import { shortenHomePath } from "../utils.js";
+import { resolveUserPath, shortenHomePath } from "../utils.js";
 import { t } from "./i18n/index.js";
 import type { WizardPrompter } from "./prompts.js";
 
@@ -13,15 +13,24 @@ export async function resolveSetupWorkspaceSelection(params: {
   requestedWorkspaceDir: string;
   prompter: WizardPrompter;
   canConfirmMove?: boolean;
+  hasAuthoredRoster?: boolean;
+  /** Workspace already approved by the current setup receipt. */
+  approvedWorkspaceDir?: string;
 }): Promise<{
   workspaceDir: string;
   allowWorkspaceChange: boolean;
   conflict?: OnboardingWorkspaceConflict;
 }> {
-  const conflict = resolveOnboardingWorkspaceConflict(
-    params.baseConfig,
-    params.requestedWorkspaceDir,
-  );
+  if (
+    params.approvedWorkspaceDir &&
+    resolveUserPath(params.approvedWorkspaceDir) === resolveUserPath(params.requestedWorkspaceDir)
+  ) {
+    return { workspaceDir: params.requestedWorkspaceDir, allowWorkspaceChange: true };
+  }
+  const conflict =
+    params.hasAuthoredRoster === false
+      ? undefined
+      : resolveOnboardingWorkspaceConflict(params.baseConfig, params.requestedWorkspaceDir);
   if (!conflict) {
     return { workspaceDir: params.requestedWorkspaceDir, allowWorkspaceChange: false };
   }

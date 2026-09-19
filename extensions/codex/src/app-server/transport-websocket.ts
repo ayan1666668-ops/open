@@ -7,40 +7,32 @@ import net from "node:net";
 import path from "node:path";
 import { PassThrough, Writable } from "node:stream";
 import { StringDecoder } from "node:string_decoder";
-import WebSocket, { type RawData } from "ws";
+import { type ClientOptions, type RawData, WebSocket } from "openclaw/plugin-sdk/websocket-runtime";
 import { resolveCodexAppServerUserHomeDir, type CodexAppServerStartOptions } from "./config.js";
 import type { CodexAppServerTransport } from "./transport.js";
 
-// Default matches resolveCodexAppServerRuntimeOptions().requestTimeoutMs (60s).
-// Production callers pass the resolved budget via handshakeOpts from
-// CodexAppServerClient.start; without a bound, TCP accept without upgrade leaves
-// initialize/RPC waiting forever for `open`.
-const CODEX_APP_SERVER_WS_HANDSHAKE_TIMEOUT_MS = 60_000;
-
-/** Fields `createWebSocketTransport` actually reads from start options. */
-type CodexWebSocketTransportStartOptions = Pick<
-  CodexAppServerStartOptions,
-  "url" | "transport" | "authToken" | "env"
-> & {
-  headers?: Record<string, string>;
-};
+const WEBSOCKET_HANDSHAKE_TIMEOUT_MS = 10_000;
+const WEBSOCKET_PING_INTERVAL_MS = 20_000;
+const WEBSOCKET_PONG_TIMEOUT_MS = 20_000;
+const MAX_CONSECUTIVE_MISSED_WEBSOCKET_PONGS = 5;
 
 function buildCodexAppServerWebSocketOptions(params: {
   headers: Record<string, string>;
   handshakeTimeoutMs: number;
-}): WebSocket.ClientOptions {
+  websocketTransport: boolean;
+}): ClientOptions {
   return {
     headers: params.headers,
     // Codex app-server closes Unix upgrade handshakes that offer compression.
     perMessageDeflate: false,
-    handshakeTimeout: params.handshakeTimeoutMs,
+    ...(params.websocketTransport ? { handshakeTimeout: params.handshakeTimeoutMs } : {}),
   };
 }
 
 /** Opens a WebSocket app-server transport and maps newline-delimited frames to stdout/stdin. */
 export function createWebSocketTransport(
-  options: CodexWebSocketTransportStartOptions,
-  // Override the handshake timeout budget. Tests supply short floors to keep
+  options: CodexAppServerStartOptions,
+  // Overrides the handshake timeout budget. Tests supply short floors to keep
   // stalled-handshake regression proofs fast; production passes the resolved
   // requestTimeoutMs from CodexAppServerClient.start.
   handshakeOpts?: { handshakeTimeoutMs?: number },
@@ -58,10 +50,11 @@ export function createWebSocketTransport(
     ...(options.authToken ? { Authorization: `Bearer ${options.authToken}` } : {}),
   };
   const handshakeTimeoutMs =
-    handshakeOpts?.handshakeTimeoutMs ?? CODEX_APP_SERVER_WS_HANDSHAKE_TIMEOUT_MS;
+    handshakeOpts?.handshakeTimeoutMs ?? WEBSOCKET_HANDSHAKE_TIMEOUT_MS;
   const websocketOptions = buildCodexAppServerWebSocketOptions({
     headers,
     handshakeTimeoutMs,
+    websocketTransport: options.transport === "websocket",
   });
   const unixSocketPath = resolveCodexAppServerUnixSocketPath(options);
   const socket = unixSocketPath
@@ -74,6 +67,24 @@ export function createWebSocketTransport(
   const stdinDecoder = new StringDecoder("utf8");
   let pendingLine = "";
   let killed = false;
+  let exitCode: number | null = null;
+  let pingTimeout: NodeJS.Timeout | undefined;
+  let pongTimeout: NodeJS.Timeout | undefined;
+  let expectedPong: Buffer | undefined;
+  let consecutiveMissedPongs = 0;
+  let heartbeatSequence = 0;
+
+  const clearConnectionHealthTimers = () => {
+    if (pingTimeout) {
+      clearTimeout(pingTimeout);
+      pingTimeout = undefined;
+    }
+    if (pongTimeout) {
+      clearTimeout(pongTimeout);
+      pongTimeout = undefined;
+    }
+    expectedPong = undefined;
+  };
 
   // ws.handshakeTimeout does not abort custom createConnection (Unix) upgrades.
   // Mirror the same budget with an explicit CONNECTING deadline for both paths.
@@ -84,6 +95,57 @@ export function createWebSocketTransport(
     }
   }, handshakeTimeoutMs);
   handshakeDeadline.unref?.();
+
+  const sendHeartbeatPing = () => {
+    if (socket.readyState !== WebSocket.OPEN || pongTimeout) {
+      return;
+    }
+
+    const payload = Buffer.from(`openclaw-codex-${++heartbeatSequence}`);
+    expectedPong = payload;
+    pongTimeout = setTimeout(() => {
+      pongTimeout = undefined;
+      expectedPong = undefined;
+      consecutiveMissedPongs += 1;
+      if (consecutiveMissedPongs >= MAX_CONSECUTIVE_MISSED_WEBSOCKET_PONGS) {
+        socket.terminate();
+        return;
+      }
+      sendHeartbeatPing();
+    }, WEBSOCKET_PONG_TIMEOUT_MS);
+    pongTimeout.unref();
+    socket.ping(payload, undefined, (error) => {
+      if (error) {
+        socket.terminate();
+      }
+    });
+  };
+
+  const scheduleHeartbeatPing = () => {
+    if (
+      options.transport !== "websocket" ||
+      socket.readyState !== WebSocket.OPEN ||
+      pingTimeout ||
+      pongTimeout
+    ) {
+      return;
+    }
+    pingTimeout = setTimeout(() => {
+      pingTimeout = undefined;
+      sendHeartbeatPing();
+    }, WEBSOCKET_PING_INTERVAL_MS);
+    pingTimeout.unref();
+  };
+
+  const recordConnectionActivity = () => {
+    consecutiveMissedPongs = 0;
+    if (pongTimeout) {
+      clearTimeout(pongTimeout);
+      pongTimeout = undefined;
+    }
+    expectedPong = undefined;
+    scheduleHeartbeatPing();
+  };
 
   const sendFrame = (frame: string) => {
     const trimmed = frame.trim();
@@ -104,23 +166,45 @@ export function createWebSocketTransport(
     for (const frame of pendingFrames.splice(0)) {
       socket.send(frame);
     }
+    scheduleHeartbeatPing();
+  });
+  socket.on("pong", (payload) => {
+    if (expectedPong?.equals(payload)) {
+      recordConnectionActivity();
+    }
   });
   // EventEmitter throws on unhandled `error` emits. Callers like CodexAppServerClient
   // subscribe; raw transport consumers (and handshake timeouts) may only wait on exit.
   socket.once("error", (error) => {
     clearHandshakeDeadline();
+    clearConnectionHealthTimers();
     if (events.listenerCount("error") > 0) {
       events.emit("error", error);
     }
   });
   socket.once("close", (code, reason) => {
     clearHandshakeDeadline();
+    clearConnectionHealthTimers();
     killed = true;
+    exitCode = code;
     events.emit("exit", code, reason.toString("utf8"));
   });
   socket.on("message", (data) => {
-    const text = websocketFrameToText(data);
-    stdout.write(text.endsWith("\n") ? text : `${text}\n`);
+    if (options.transport === "websocket") {
+      recordConnectionActivity();
+    }
+    const frame = websocketFrameToBuffer(data);
+    const writable = stdout.write(frame);
+    const delimited = frame.at(-1) === 10 || stdout.write(Buffer.from("\n"));
+    if (!writable || !delimited) {
+      socket.pause();
+    }
+  });
+
+  stdout.on("drain", () => {
+    if (socket.readyState === WebSocket.OPEN) {
+      socket.resume();
+    }
   });
 
   const stdin = new Writable({
@@ -153,18 +237,29 @@ export function createWebSocketTransport(
   stdin.once("close", closeSocket);
 
   return {
+    // Codex uses tungstenite defaults: one uncompressed frame is limited to 16 MiB.
+    maxFrameBytes: 16 * 1024 * 1024,
     stdin,
     stdout,
     stderr,
     get killed() {
       return killed;
     },
-    kill: () => {
-      clearHandshakeDeadline();
+    get exitCode() {
+      return exitCode;
+    },
+    kill: (signal) => {
       killed = true;
-      socket.close();
+      clearHandshakeDeadline();
+      clearConnectionHealthTimers();
+      if (signal === "SIGKILL") {
+        socket.terminate();
+      } else {
+        socket.close();
+      }
     },
     once: (event, listener) => events.once(event, listener),
+    off: (event, listener) => events.off(event, listener),
   };
 }
 
@@ -198,15 +293,15 @@ function resolveCodexAppServerUnixSocketPath(
   );
 }
 
-function websocketFrameToText(data: RawData): string {
+function websocketFrameToBuffer(data: RawData): Buffer {
   if (typeof data === "string") {
-    return data;
+    return Buffer.from(data);
   }
   if (Buffer.isBuffer(data)) {
-    return data.toString("utf8");
+    return data;
   }
   if (Array.isArray(data)) {
-    return Buffer.concat(data).toString("utf8");
+    return Buffer.concat(data);
   }
-  return Buffer.from(data).toString("utf8");
+  return Buffer.from(data);
 }

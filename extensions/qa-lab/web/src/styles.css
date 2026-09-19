@@ -511,6 +511,7 @@ select {
 
 .scenario-item {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   gap: 10px;
   padding: 10px 12px;
@@ -1600,6 +1601,11 @@ select {
 
 .evidence-filters {
   grid-template-columns: minmax(112px, 0.8fr) minmax(112px, 0.8fr) minmax(0, 1.4fr);
+}
+
+.evidence-search-field,
+.evidence-search-field input {
+  min-width: 0;
 }
 
 .evidence-filters label {
