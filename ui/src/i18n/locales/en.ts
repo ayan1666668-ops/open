@@ -3606,8 +3606,9 @@ export const en: TranslationMap & {
       resettingThread: "Resetting session...",
       stoppingCurrentRun: "Stopping current run...",
       chatHistoryCleared: "Chat history cleared.",
-      exportingThread: "Exporting session...",
       emptyExport: "There are no messages to export yet.",
+      exportPathUnsupported:
+        "Control UI exports Markdown through your browser. Run /export without a file path.",
       unknownCommand: "Unknown command: `{command}`",
       options: "Options: {options}.",
       sessionUnavailable: "Session capability is unavailable",
@@ -4046,6 +4047,7 @@ export const en: TranslationMap & {
       clearDescription: "Clear chat history",
       redirectDescription: "Abort and restart with a new message",
       steerDescription: "Inject a message into the active run",
+      exportDescription: "Download this conversation as Markdown",
       categories: {
         session: "Session",
         model: "Model",
