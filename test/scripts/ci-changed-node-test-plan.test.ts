@@ -361,7 +361,7 @@ describe("CI changed Node test plan", () => {
     (runnerBackend) => {
       const yieldTest = "src/agents/embedded-agent-runner/run/attempt-yield-handoff.test.ts";
       const siblings = [
-        "src/agents/embedded-agent-runner/model.test.ts",
+        "src/agents/embedded-agent-runner/model-resolution-consistency.test.ts",
         "src/agents/embedded-agent-runner/run.incomplete-turn.classification.test.ts",
         "src/agents/embedded-agent-runner/run.overflow-compaction.test.ts",
       ];
@@ -1163,8 +1163,21 @@ describe("CI changed Node test plan", () => {
     ).toBe(true);
   });
 
-  it("fails safe to the full plan for broad changes", () => {
-    expect(createChangedNodeTestShards(["package.json"])).toBeNull();
+  it.each([
+    ["package.json", "blacksmith", true],
+    ["test/scripts/ci-node-test-plan.test.ts", "blacksmith", true],
+    ["test/scripts/ci-node-test-plan.test.ts", "hybrid", true],
+    ["test/scripts/ci-node-test-plan.test.ts", "github", false],
+  ] as const)("resolves full-plan coverage for %s on %s", (changedPath, runnerBackend, full) => {
+    const shards = createChangedNodeTestShards([changedPath], { runnerBackend });
+    if (full) {
+      expect(shards).toBeNull();
+    } else {
+      expect(shards).not.toBeNull();
+      expect(
+        fallbackGroups(shards ?? []).flatMap((group) => group.includePatterns ?? []),
+      ).toContain(changedPath);
+    }
   });
 
   it("fails safe for raw Git paths that resemble normalized script paths", () => {
@@ -1862,7 +1875,10 @@ describe("CI changed Node test plan", () => {
     expect(workerShards).toEqual([
       expect.objectContaining({
         configs: ["test/vitest/vitest.extension-database-workers.config.ts"],
-        includePatterns: ["extensions/qa-lab/src/execution-identity-storage-inspection.test.ts"],
+        includePatterns: [
+          "extensions/qa-lab/src/execution-identity-storage-inspection.test.ts",
+          "extensions/qa-lab/src/live-transports/matrix/scenarios/scenario-runtime-state-files.test.ts",
+        ],
         requiresDist: false,
       }),
     ]);
@@ -1884,7 +1900,10 @@ describe("CI changed Node test plan", () => {
     expect(shards?.filter((shard) => !qaShards.includes(shard))).toEqual([
       expect.objectContaining({
         configs: ["test/vitest/vitest.extension-database-workers.config.ts"],
-        includePatterns: ["extensions/qa-lab/src/execution-identity-storage-inspection.test.ts"],
+        includePatterns: [
+          "extensions/qa-lab/src/execution-identity-storage-inspection.test.ts",
+          "extensions/qa-lab/src/live-transports/matrix/scenarios/scenario-runtime-state-files.test.ts",
+        ],
         requiresDist: false,
       }),
       expect.objectContaining({ configs: ["test/vitest/vitest.boundary.config.ts"] }),

@@ -21,9 +21,9 @@ import type {
 import {
   ExecutionDecisionCursorError,
   isExecutionDecisionCursor,
-  type InternalAuditRunInspectResult,
 } from "../../audit/execution-decision-receipts.js";
 import { inspectExecutionIdentityRun } from "../../audit/execution-identity-context.js";
+import type { InternalAuditRunInspectResult } from "../../audit/execution-identity-inspection.types.js";
 import type { GatewayRequestHandlers } from "./types.js";
 import { assertValidParams } from "./validation.js";
 
@@ -111,7 +111,7 @@ function invalidRangeOrCursor(params: { cursor?: string; after?: number; before?
 }
 
 export const auditHandlers: GatewayRequestHandlers = {
-  "audit.list": ({ params, respond }) => {
+  "audit.list": async ({ params, respond }) => {
     if (!assertValidParams(params, validateAuditListParams, "audit.list", respond)) {
       return;
     }
@@ -127,7 +127,7 @@ export const auditHandlers: GatewayRequestHandlers = {
     const agentId = normalizeOptionalString(params.agentId);
     const sessionKey = normalizeOptionalString(params.sessionKey);
     const runId = normalizeOptionalString(params.runId);
-    const page = listAuditEvents({
+    const page = await listAuditEvents({
       limit: Math.min(params.limit ?? DEFAULT_AUDIT_LIST_LIMIT, MAX_AUDIT_LIST_LIMIT),
       ...(parsed.cursor !== undefined ? { cursor: parsed.cursor } : {}),
       filters: {
@@ -147,7 +147,7 @@ export const auditHandlers: GatewayRequestHandlers = {
       ...(page.nextCursor !== undefined ? { nextCursor: String(page.nextCursor) } : {}),
     });
   },
-  "audit.activity.list": ({ params, respond }) => {
+  "audit.activity.list": async ({ params, respond }) => {
     if (
       !assertValidParams(params, validateAuditActivityListParams, "audit.activity.list", respond)
     ) {
@@ -178,7 +178,7 @@ export const auditHandlers: GatewayRequestHandlers = {
     const agentId = normalizeOptionalString(params.agentId);
     const sessionKey = normalizeOptionalString(params.sessionKey);
     const runId = normalizeOptionalString(params.runId);
-    const page = listAuditEvents({
+    const page = await listAuditEvents({
       limit: Math.min(params.limit ?? DEFAULT_AUDIT_LIST_LIMIT, MAX_AUDIT_LIST_LIMIT),
       ...(parsed.cursor !== undefined ? { cursor: parsed.cursor } : {}),
       filters: {
@@ -202,7 +202,7 @@ export const auditHandlers: GatewayRequestHandlers = {
       ...(page.nextCursor !== undefined ? { nextCursor: String(page.nextCursor) } : {}),
     });
   },
-  "audit.run.inspect": ({ params, respond }) => {
+  "audit.run.inspect": async ({ params, respond }) => {
     if (!assertValidParams(params, validateAuditRunInspectParams, "audit.run.inspect", respond)) {
       return;
     }
@@ -229,7 +229,7 @@ export const auditHandlers: GatewayRequestHandlers = {
       respond(
         true,
         serializeAuditRunInspectResult(
-          inspectExecutionIdentityRun({
+          await inspectExecutionIdentityRun({
             ...(typeof params.runId === "string"
               ? {
                   runId: params.runId,

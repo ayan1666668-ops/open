@@ -12,6 +12,7 @@ import {
   resolveCachedGitHubIdentity,
   resolveUserProfileGitHubAttribution,
 } from "./user-profile-github-identity.js";
+import { listUserProfilesSync } from "./user-profile-list.js";
 import {
   ensureProfileForEmail,
   ensureProfileForTailscaleIdentity,
@@ -19,7 +20,6 @@ import {
   getUserProfileDisplay,
   getUserProfileListItem,
   linkEmail,
-  listProfiles,
   setAvatar,
   syncGitHubIdentity,
 } from "./user-profiles.js";
@@ -163,11 +163,18 @@ describe("multi-account people", () => {
         [GIT_COAUTHOR_PREFERENCE_KEY]: false,
       });
     }
-    expect(listProfiles(options).filter((profile) => profile.mergedInto === null)).toHaveLength(1);
+    expect(
+      listUserProfilesSync(options).filter((profile) => profile.mergedInto === null),
+    ).toHaveLength(1);
     expect(listUserProfileGitHubLogins(options).get(person.id)?.toSorted()).toEqual([
       "person",
       "person-work",
     ]);
+    const signInAlias = ensureProfileForTailscaleIdentity(
+      { login: `${secondary.canonicalLogin}@github` },
+      options,
+    );
+    expect(signInAlias.id).not.toBe(person.id);
     expect(
       syncTailscaleGitHubProfile(
         {
@@ -176,8 +183,9 @@ describe("multi-account people", () => {
           login: secondary.canonicalLogin,
         },
         options,
-      ).id,
-    ).toBe(person.id);
+      ),
+    ).toMatchObject({ id: person.id, githubIdentity: { login: primary.canonicalLogin } });
+    expect(getUserProfileDisplay(signInAlias.id, options).id).toBe(person.id);
     expect(
       resolveCachedGitHubIdentity({ accountId: 73, email: primary.email }, options),
     ).toBeUndefined();

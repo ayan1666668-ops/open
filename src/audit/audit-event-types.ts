@@ -377,3 +377,10 @@ export type AuditEventListPage = {
   events: AuditEventRecord[];
   nextCursor?: number;
 };
+
+export type AuditEventListQuery = {
+  filters?: AuditEventListFilters;
+  cursor?: number;
+  limit: number;
+  now: number;
+};

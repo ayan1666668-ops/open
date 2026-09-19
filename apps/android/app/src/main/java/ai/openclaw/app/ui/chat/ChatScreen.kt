@@ -60,6 +60,7 @@ import ai.openclaw.app.operatorScopesAllowAdmin
 import ai.openclaw.app.operatorScopesAllowWrite
 import ai.openclaw.app.providerDisplayName
 import ai.openclaw.app.resolveAgentIdFromMainSessionKey
+import ai.openclaw.app.ui.AppModalBottomSheet
 import ai.openclaw.app.ui.FoldAwareDropdownMenu
 import ai.openclaw.app.ui.FoldAwareMenuItem
 import ai.openclaw.app.ui.ProviderSignInDialog
@@ -179,7 +180,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.LocalContentColor
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.ModalBottomSheetProperties
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderState
@@ -253,9 +253,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.text.DateFormat
 import java.time.Instant
-import java.util.Date
 import java.util.Locale
 import java.util.UUID
 import kotlin.math.abs
@@ -374,7 +372,7 @@ internal fun ChatScreen(
   val thinkingLevel by viewModel.chatThinkingLevel.collectAsState()
   val thinkingLevelSelection by viewModel.chatThinkingLevelSelection.collectAsState()
   val streamingAssistantText by viewModel.chatStreamingAssistantText.collectAsState()
-  val pendingToolCalls by viewModel.chatPendingToolCalls.collectAsState()
+  val pendingToolCalls by viewModel.chatToolActivities.collectAsState()
   val subagentActivities by viewModel.chatSubagentActivities.collectAsState()
   val questions by viewModel.chatQuestions.collectAsState()
   val progressCard by viewModel.chatProgressCard.collectAsState()
@@ -1766,6 +1764,7 @@ private fun ChatMessageList(
                         live = false,
                         content = visibleContent(item.message).filter { it.toolActivity == null },
                         timestampMs = item.message.timestampMs,
+                        metadata = chatMessageMetadata(item.message),
                         onReplyMessage = onReplyMessage,
                         sessionActionsEnabled = sessionActionsEnabled,
                         onRewindMessage = onRewindMessage,
@@ -2123,6 +2122,7 @@ internal fun ChatBubble(
   sourcePreviewConfig: GatewaySourcePreviewConfig? = null,
   loadSourceFavicon: suspend (GatewaySourcePreviewConfig, String) -> GatewayLoadedImage? = { _, _ -> null },
   senderLabel: String? = null,
+  metadata: List<Pair<String, String>> = emptyList(),
   disclosure: @Composable () -> Unit = {},
 ) {
   val normalizedRole = role.trim().lowercase(Locale.US)
@@ -2285,10 +2285,9 @@ internal fun ChatBubble(
       )
     }
     timestampMs?.let {
-      Text(
-        text = formatChatTimestamp(it),
-        style = ClawTheme.type.caption.copy(fontSize = 11.5.sp, lineHeight = 14.sp, fontWeight = FontWeight.Normal),
-        color = ClawTheme.colors.textSubtle,
+      ChatMessageTimestamp(
+        timestampMs = it,
+        metadata = if (normalizedRole == "assistant" && !live) metadata else emptyList(),
         modifier = Modifier.align(if (isUser) Alignment.End else Alignment.Start),
       )
     }
@@ -2417,17 +2416,27 @@ private fun ChatText(
 private fun ToolBubble(toolCalls: List<ChatPendingToolCall>) {
   ClawPanel {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-      ClawStatusPill(text = nativeString("Tools running"), status = ClawStatus.Warning)
-      toolCalls.take(4).forEach { tool ->
+      ClawStatusPill(text = nativeString("Tool activity"), status = ClawStatus.Warning)
+      toolCalls.filter { it.activity?.isVisible != false }.forEach { tool ->
         ClawListItem(
-          title = tool.name,
-          subtitle = nativeString("OpenClaw is working"),
+          title = tool.activity?.title ?: tool.name,
+          subtitle =
+            when (tool.activity?.status) {
+              "running" -> nativeString("OpenClaw is working")
+              "completed" -> nativeString("Finished")
+              "failed" -> nativeString("Failed")
+              "blocked" -> nativeString("Blocked")
+              else -> if (tool.activity == null && !tool.isComplete) nativeString("OpenClaw is working") else nativeString("No result")
+            },
           trailing = { tool.liveDiff?.let { DiffStatChips(it) } },
         )
       }
-      if (toolCalls.size > 4) {
-        Text(text = nativeString("+\${toolCalls.size - 4} more", toolCalls.size - 4), style = ClawTheme.type.caption, color = ClawTheme.colors.textSubtle)
-      }
+      CompletedToolActivity(
+        toolCalls.filter { it.activity?.isVisible == false }.map {
+          ChatToolActivity(it.toolCallId, it.name, null, null, it.isError == true, it.args, it.activity, true)
+        },
+        stableKey = "pending-tool-details",
+      )
     }
   }
 }
@@ -2438,7 +2447,7 @@ private fun CompletedToolActivity(
   stableKey: String,
 ) {
   if (tools.isEmpty()) return
-  if (tools.size == 1) {
+  if (tools.size == 1 && !tools.single().activityPrepared && tools.single().activity == null) {
     val tool = tools.single()
     CompletedToolActivityItem(
       tool = tool,
@@ -2447,15 +2456,10 @@ private fun CompletedToolActivity(
     )
     return
   }
-  if (tools.all { completedToolKind(it.name) == CompletedToolKind.Progress }) {
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-      tools.forEach { ProgressToolReceipt(it) }
-    }
-    return
-  }
   var expanded by rememberSaveable(stableKey) { mutableStateOf(false) }
   var showAll by rememberSaveable(stableKey) { mutableStateOf(false) }
   val summary = completedToolGroupSummary(tools)
+  val hasError = tools.any { it.isError }
   val state = if (expanded) nativeString("Expanded") else nativeString("Collapsed")
   // Remeasure disclosures immediately: nested size springs leave blank space
   // while the reverse-layout transcript readjusts its bottom anchor.
@@ -2484,11 +2488,14 @@ private fun CompletedToolActivity(
         verticalAlignment = Alignment.CenterVertically,
       ) {
         Icon(
-          imageVector = Icons.AutoMirrored.Filled.List,
+          imageVector = if (hasError) Icons.Default.Close else Icons.AutoMirrored.Filled.List,
           contentDescription = null,
           modifier = Modifier.size(16.dp),
-          tint = ClawTheme.colors.textMuted,
+          tint = if (hasError) ClawTheme.colors.danger else ClawTheme.colors.textMuted,
         )
+        if (hasError) {
+          Text(text = nativeString("Tool error"), style = ClawTheme.type.caption, color = ClawTheme.colors.danger)
+        }
         Text(
           text = summary,
           modifier = Modifier.weight(1f, fill = false),
@@ -2610,17 +2617,24 @@ private fun CompletedToolActivityItem(
       ) {
         Icon(
           imageVector =
-            when (kind) {
-              CompletedToolKind.Command -> Icons.Default.Terminal
-              CompletedToolKind.Read -> Icons.Default.Description
-              CompletedToolKind.Edit, CompletedToolKind.Write -> Icons.Default.Edit
-              CompletedToolKind.Search, CompletedToolKind.Fetch -> Icons.Default.Search
-              else -> Icons.AutoMirrored.Filled.List
+            if (tool.isError) {
+              Icons.Default.Close
+            } else {
+              when (kind) {
+                CompletedToolKind.Command -> Icons.Default.Terminal
+                CompletedToolKind.Read -> Icons.Default.Description
+                CompletedToolKind.Edit, CompletedToolKind.Write -> Icons.Default.Edit
+                CompletedToolKind.Search, CompletedToolKind.Fetch -> Icons.Default.Search
+                else -> Icons.AutoMirrored.Filled.List
+              }
             },
           contentDescription = null,
           modifier = Modifier.size(16.dp),
-          tint = ClawTheme.colors.textMuted,
+          tint = if (tool.isError) ClawTheme.colors.danger else ClawTheme.colors.textMuted,
         )
+        resultPresentation.outcome?.let { outcome ->
+          Text(text = outcome, style = ClawTheme.type.caption, color = ClawTheme.colors.danger)
+        }
         Row(
           modifier = Modifier.weight(1f),
           horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -2920,7 +2934,7 @@ private fun ChatNotice(
       Box(modifier = Modifier.size(6.dp).background(ClawTheme.colors.warning, CircleShape))
       Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Text(text = title, style = ClawTheme.type.section, color = ClawTheme.colors.text)
-        Text(text = body, style = ClawTheme.type.caption, color = ClawTheme.colors.textMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(text = body, style = ClawTheme.type.caption, color = ClawTheme.colors.textMuted)
       }
     }
   }
@@ -3655,7 +3669,7 @@ private fun ChatEffortSheet(
   onDismiss: () -> Unit,
 ) {
   val thinkingOptions = if (thinkingSupported) options else emptyList()
-  ModalBottomSheet(
+  AppModalBottomSheet(
     modifier = Modifier.foldAwareSheet(opening.geometry),
     onDismissRequest = onDismiss,
     sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
@@ -3715,7 +3729,7 @@ private fun BranchSwitcherSheet(
   onDismiss: () -> Unit,
   onSelect: (String) -> Unit,
 ) {
-  ModalBottomSheet(
+  AppModalBottomSheet(
     modifier = Modifier.foldAwareSheet(opening.geometry),
     onDismissRequest = onDismiss,
     sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
@@ -3815,7 +3829,7 @@ private fun ChatModelPickerSheet(
   LaunchedEffect(permissionPickerEnabled) {
     if (showPermissionPicker && !permissionPickerEnabled && admit()) showPermissionPicker = false
   }
-  ModalBottomSheet(
+  AppModalBottomSheet(
     modifier = Modifier.foldAwareSheet(opening.geometry),
     onDismissRequest = onDismiss,
     // IME dismissal can remove a partial-height anchor while the selector opens.
@@ -4910,5 +4924,3 @@ internal fun chatThinkingOptionLabel(
     }
   return localizedUppercase(localizedLabel.take(1), languageTag) + localizedLabel.drop(1)
 }
-
-private fun formatChatTimestamp(timestampMs: Long): String = DateFormat.getTimeInstance(DateFormat.SHORT, Locale.getDefault()).format(Date(timestampMs))

@@ -153,7 +153,7 @@ describe("hidden-run skill-selection audit attribution", () => {
     });
   });
 
-  it("adds the skill-selection companion table on an existing audit database", () => {
+  it("adds the skill-selection companion table on an existing audit database", async () => {
     const database = createDatabaseOptions();
     recordAuditEvent(auditInput(), database);
     const { db } = openOpenClawStateDatabase(database);
@@ -167,15 +167,17 @@ describe("hidden-run skill-selection audit attribution", () => {
       toolName: "debug-toolkit",
     });
     expect(
-      listAuditEvents({
-        database,
-        limit: 10,
-        filters: { kind: "skill_selection", sessionKey: "agent:main:main" },
-      }).events,
+      (
+        await listAuditEvents({
+          database,
+          limit: 10,
+          filters: { kind: "skill_selection", sessionKey: "agent:main:main" },
+        })
+      ).events,
     ).toEqual([
       expect.objectContaining({ kind: "skill_selection", sessionKey: "agent:main:main" }),
     ]);
-    expect(listAuditEvents({ database, limit: 10 }).events.map((event) => event.kind)).toEqual([
+    expect((await listAuditEvents({ database, limit: 10 })).events.map((event) => event.kind)).toEqual([
       "agent_run",
     ]);
   });
@@ -236,11 +238,13 @@ describe("hidden-run skill-selection audit attribution", () => {
       sessionKey,
     });
     expect(
-      listAuditEvents({
-        database,
-        limit: 10,
-        filters: { kind: "skill_selection", sessionKey },
-      }).events,
+      (
+        await listAuditEvents({
+          database,
+          limit: 10,
+          filters: { kind: "skill_selection", sessionKey },
+        })
+      ).events,
     ).toEqual([
       expect.objectContaining({
         kind: "skill_selection",
