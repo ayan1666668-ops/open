@@ -5072,9 +5072,11 @@ describe("deliverOutboundPayloads", () => {
       deliveryQueueStateDir: "/queue-state",
     });
 
-    expect(queueMocks.ackDelivery).toHaveBeenCalledWith("recovery-queue-id", "/queue-state", {
-      retainSpoolArtifacts: true,
-    });
+    expect(queueMocks.ackDelivery).toHaveBeenCalledWith(
+      "recovery-queue-id",
+      path.resolve("/queue-state"),
+      { retainSpoolArtifacts: true },
+    );
     expect(sendMatrix).toHaveBeenCalledOnce();
   });
 
