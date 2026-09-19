@@ -7,6 +7,7 @@ import {
 } from "../../config/sessions/goals-operations.js";
 import { SESSION_ROUTING_CHANGED_ERROR_REASON } from "../../config/sessions/main-session.js";
 import { readSessionSubmittedInput } from "../../config/sessions/session-accessor.js";
+import { isSessionTranscriptProjectionUnavailableError } from "../../config/sessions/session-transcript-projection-error.js";
 import { resolveSendPolicy } from "../../sessions/send-policy.js";
 import { extractTextFromChatContent } from "../../shared/chat-content.js";
 import { sessionDeliveryChannel } from "../../utils/delivery-context.shared.js";
@@ -80,6 +81,18 @@ export function respondChatSendAdmissionError(
       undefined,
       errorShape(ErrorCodes.INVALID_REQUEST, "Session settings changed before send. Retry.", {
         details: { reason: SESSION_SETTINGS_CHANGED_ERROR_REASON },
+      }),
+    );
+    return;
+  }
+  if (isSessionTranscriptProjectionUnavailableError(error)) {
+    respond(
+      false,
+      undefined,
+      errorShape(ErrorCodes.UNAVAILABLE, "session transcript is rebuilding; retry shortly", {
+        details: { method: "chat.send" },
+        retryable: true,
+        retryAfterMs: 250,
       }),
     );
     return;
