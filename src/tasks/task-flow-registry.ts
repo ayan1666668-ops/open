@@ -10,8 +10,8 @@ import {
   registerOpenClawStateDatabaseLifecycleListener,
 } from "../state/openclaw-state-db-cache.js";
 import { resolveOpenClawStateSqlitePath } from "../state/openclaw-state-db.paths.js";
-import { captureOpenClawStateWorkerContext } from "../state/openclaw-state-worker-context.js";
 import type { OpenClawStateWorkerContext } from "../state/openclaw-state-worker-context.types.js";
+import { createTaskFlowRegistryReaders } from "./task-flow-registry.read.js";
 import {
   assertControllerId,
   buildFlowRecord,
@@ -20,7 +20,6 @@ import {
   cloneFlowRecord,
   normalizeRestoredFlowRecord,
   prepareTaskMirroredFlowSyncFromCurrent,
-  selectTaskFlowRecords,
   type CreateFlowRecordParams,
   type ManagedTaskFlowCreateFields,
   type FlowRecordPatch,
@@ -42,13 +41,12 @@ import type {
   TaskFlowRegistryUpdateResult,
   TaskFlowRegistryUpdatePublication,
 } from "./task-flow-registry.store.types.js";
-import {
-  isTerminalTaskFlow,
-  type JsonValue,
-  type TaskFlowRecord,
-  type TaskFlowStatus,
-  type TaskFlowUpdateResult,
-  type TaskFlowSyncResult,
+import type {
+  JsonValue,
+  TaskFlowRecord,
+  TaskFlowStatus,
+  TaskFlowUpdateResult,
+  TaskFlowSyncResult,
 } from "./task-flow-registry.types.js";
 import {
   reconcileTaskFlowWorkerPublication,
@@ -294,68 +292,29 @@ export const ensureTaskFlowRegistryReadyAsync = createAsyncRegistryRestore<
   },
 });
 
-export type TaskFlowRegistryRead = {
-  assertCurrent(): void;
-  isTaskFlowCurrent(flowId: string): boolean;
-  getTaskFlowById(flowId: string): TaskFlowRecord | undefined;
-};
-
-/** Join the accepted write prefix once; later writes remain visible through dirty flow witnesses. */
-export async function prepareTaskFlowRegistryRead(): Promise<TaskFlowRegistryRead | undefined> {
-  const context = captureOpenClawStateWorkerContext();
-  const store = getTaskFlowRegistryStore();
-  const accepted = [...pendingFlowWrites.values()].flatMap((pending) => [...pending.completions]);
-  const assertOwner = () => {
-    context.admission.assertCurrent();
-    if (!isCurrentTaskFlowDatabase(context.admission) || getTaskFlowRegistryStore() !== store) {
-      throw new Error("Task-flow registry read owner is no longer current.");
-    }
-  };
-  await Promise.all(accepted);
-  assertOwner();
-  await ensureTaskFlowRegistryReadyAsync(context);
-  assertOwner();
-  for (let attempt = 0; projectionDirty || dirtyFlowIds.size > 0; attempt += 1) {
-    if (attempt === 3) {
-      return undefined;
-    }
-    const epoch = projectionEpoch;
-    let installed = false;
-    await store.withSnapshotAsync(context, (snapshot) => {
-      assertOwner();
-      if (epoch === projectionEpoch) {
-        installTaskFlowRegistrySnapshot(snapshot, context.admission);
-        installed = true;
-      }
-    });
-    assertOwner();
-    if (installed) {
-      break;
-    }
-  }
-  const assertCurrent = () => {
-    assertOwner();
-    if (projectionDirty || taskFlowRegistryRestoreState.status !== "ready") {
-      throw new Error("Task-flow registry read projection is no longer ready.");
-    }
-  };
-  assertCurrent();
-  return {
-    assertCurrent,
-    isTaskFlowCurrent(flowId) {
-      assertCurrent();
-      return !dirtyFlowIds.has(flowId);
-    },
-    getTaskFlowById(flowId) {
-      assertCurrent();
-      if (dirtyFlowIds.has(flowId)) {
-        throw new Error("Task-flow registry read identity requires preparation.");
-      }
-      const flow = flows.get(flowId);
-      return flow ? cloneFlowRecord(flow) : undefined;
-    },
-  };
-}
+export const {
+  prepareTaskFlowRegistryRead,
+  getTaskFlowById,
+  getTaskMirroredFlowIds,
+  listTaskFlowsForOwnerKey,
+  findLatestTaskFlowForOwnerKey,
+  findTaskFlowForOwnerLookup,
+  resolveTaskFlowForLookupToken,
+  listTaskFlowRecords,
+} = createTaskFlowRegistryReaders({
+  projection: () => ({
+    flows,
+    epoch: projectionEpoch,
+    dirty: projectionDirty,
+    ready: taskFlowRegistryRestoreState.status === "ready",
+    dirtyFlowIds,
+  }),
+  pendingWrites: pendingFlowWrites,
+  ensureReady: ensureTaskFlowRegistryReady,
+  ensureReadyAsync: ensureTaskFlowRegistryReadyAsync,
+  isCurrentDatabase: isCurrentTaskFlowDatabase,
+  installSnapshot: installTaskFlowRegistrySnapshot,
+});
 
 export async function reloadTaskFlowRegistryFromStoreAsync(
   context: OpenClawStateWorkerContext,
@@ -729,52 +688,6 @@ export function publishTaskFlowAfterAtomicStore(
       previous: prepared.current,
     })),
   );
-}
-
-export function getTaskFlowById(flowId: string): TaskFlowRecord | undefined {
-  ensureTaskFlowRegistryReady();
-  const flow = flows.get(flowId);
-  return flow ? cloneFlowRecord(flow) : undefined;
-}
-
-export function getTaskMirroredFlowIds(flowIds: Iterable<string>): ReadonlySet<string> {
-  ensureTaskFlowRegistryReady();
-  const mirrored = new Set<string>();
-  for (const flowId of flowIds) {
-    if (flows.get(flowId)?.syncMode === "task_mirrored") {
-      mirrored.add(flowId);
-    }
-  }
-  return mirrored;
-}
-
-export function listTaskFlowsForOwnerKey(ownerKey: string): TaskFlowRecord[] {
-  ensureTaskFlowRegistryReady();
-  return selectTaskFlowRecords(flows, ownerKey);
-}
-
-export function findLatestTaskFlowForOwnerKey(ownerKey: string): TaskFlowRecord | undefined {
-  return listTaskFlowsForOwnerKey(ownerKey)[0];
-}
-
-// Owner-key actions must target live work before retained terminal history;
-// otherwise `show` and `cancel` silently act on a completed flow.
-export function findTaskFlowForOwnerLookup(ownerKey: string): TaskFlowRecord | undefined {
-  const ownerFlows = listTaskFlowsForOwnerKey(ownerKey);
-  return ownerFlows.find((flow) => !isTerminalTaskFlow(flow)) ?? ownerFlows[0];
-}
-
-export function resolveTaskFlowForLookupToken(token: string): TaskFlowRecord | undefined {
-  const lookup = token.trim();
-  if (!lookup) {
-    return undefined;
-  }
-  return getTaskFlowById(lookup) ?? findTaskFlowForOwnerLookup(lookup);
-}
-
-export function listTaskFlowRecords(): TaskFlowRecord[] {
-  ensureTaskFlowRegistryReady();
-  return selectTaskFlowRecords(flows);
 }
 
 export function deleteTaskFlowRecordById(flowId: string): boolean {

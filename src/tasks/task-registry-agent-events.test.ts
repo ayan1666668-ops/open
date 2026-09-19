@@ -572,7 +572,12 @@ describe("task agent event persistence", () => {
         },
       });
       const terminal = taskPublication(task.taskId, (current) => current.status === "succeeded");
-      const holder = holdCoordinator(10_000);
+      const context = captureOpenClawStateWorkerContext();
+      const holder = holdCoordinator(
+        context.admission.databasePath,
+        context.coordinatorRuntime,
+        10_000,
+      );
       try {
         await holder.ready;
         emitAgentEvent({
@@ -647,7 +652,12 @@ describe("task agent event persistence", () => {
           task.taskId,
           (current) => current.status === (phase === "end" ? "succeeded" : "failed"),
         );
-        const { ready, released, joined, release } = holdCoordinator(300);
+        const context = captureOpenClawStateWorkerContext();
+        const { ready, released, joined, release } = holdCoordinator(
+          context.admission.databasePath,
+          context.coordinatorRuntime,
+          300,
+        );
         try {
           await ready;
           const timer = sleep(10).then(() => Atomics.load(released, 0));
@@ -694,7 +704,12 @@ describe("task agent event persistence", () => {
         deliveryStatus: "not_applicable",
       });
       const terminal = taskPublication(task.taskId, (current) => current.status === "succeeded");
-      const holder = holdCoordinator(10_000);
+      const context = captureOpenClawStateWorkerContext();
+      const holder = holdCoordinator(
+        context.admission.databasePath,
+        context.coordinatorRuntime,
+        10_000,
+      );
       try {
         await holder.ready;
         emitTool(task.runId!, "accepted");
