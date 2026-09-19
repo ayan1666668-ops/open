@@ -33,6 +33,7 @@ import {
   writeControlPlaneUpdateRestartSentinelBestEffort,
 } from "./update-command-result.js";
 import { rollbackFailedUpdate } from "./update-command-rollback.js";
+import type { UpdateServiceDefinitionRecovery } from "./update-command-service-context-types.js";
 import { withOwnedManagedUpdateEnv } from "./update-command-service-env.js";
 import { UpdateServiceLoadBoundaryError } from "./update-command-service-load.js";
 import { createWindowsTaskAutoStartGuard } from "./update-command-service-maintenance.js";
@@ -62,6 +63,7 @@ export async function finishUpdate(
   params: FinishUpdateParams,
   { candidateRuntime = false } = {},
 ): Promise<UpdateRunResult> {
+  const definitionRecovery: UpdateServiceDefinitionRecovery = {};
   if (params.serviceLoadBoundary && process.platform !== "linux") {
     throw new Error("Deferred native service loading is not supported on this platform.");
   }
@@ -129,8 +131,7 @@ export async function finishUpdate(
   let pendingRestartAtMs =
     params.preManagedServiceStop?.stoppedAtMs ??
     params.controlPlaneUpdateSentinelMeta?.serviceStoppedAtMs;
-  // Health resets replace ledger verification. Keep completed outages here
-  // until final reporting, including a separately verified rollback.
+  // Retain completed outages across verification resets and rollback until final reporting.
   const recordVerifiedDowntime = (verifiedAtMs: number) => {
     if (pendingRestartAtMs !== undefined) {
       completedDowntimeMs =
@@ -138,7 +139,6 @@ export async function finishUpdate(
       pendingRestartAtMs = undefined;
     }
   };
-  // Finalization owns the complete outcome, including recovery, restart, and completion work.
   const completedResult = (result: UpdateRunResult): UpdateRunResult =>
     normalizeControlPlaneUpdateResult({
       ...result,
@@ -207,6 +207,7 @@ export async function finishUpdate(
           timeoutMs: params.updateStepTimeoutMs,
           nodeRunner: params.packageUpdateNodeRunner,
           invocationCwd: params.invocationCwd,
+          definitionRecovery,
         }),
       );
       result = rollback.result;
@@ -322,17 +323,14 @@ export async function finishUpdate(
       finalResult.reason =
         result.status === "error" ? result.reason : "windows-task-autostart-restore-failed";
       finalResult.recovery = { serviceRestartSafe: false, reason: "runtime-verification-failed" };
-      finalResult.steps = [
-        ...finalResult.steps,
-        {
-          name: "Windows task autostart recovery",
-          command: "openclaw update",
-          cwd: finalResult.root ?? params.root,
-          durationMs: 0,
-          exitCode: 1,
-          stderrTail: formatErrorMessage(restoreFailure.cause),
-        },
-      ];
+      finalResult.steps = finalResult.steps.concat({
+        name: "Windows task autostart recovery",
+        command: "openclaw update",
+        cwd: finalResult.root ?? params.root,
+        durationMs: 0,
+        exitCode: 1,
+        stderrTail: formatErrorMessage(restoreFailure.cause),
+      });
     }
     assertCurrent();
     if (finalResult.status === "error" && !rolledBack && currentServiceStop()?.stopped) {
@@ -519,6 +517,7 @@ export async function finishUpdate(
           result: resultWithPostUpdate,
           opts: params.opts,
           refreshServiceEnv: restartContext.refreshGatewayServiceEnv,
+          definitionRecovery,
           serviceLoadBoundary: params.serviceLoadBoundary,
           serviceUpdateVerdict: restartContext.serviceUpdateVerdict,
           serviceManagerUid: restartContext.serviceManagerUid,
@@ -665,8 +664,7 @@ export async function finishUpdate(
       }
       return await reportResult(resultWithPostUpdate);
     }
-    // Restart and health verification own recovery of the service stopped for this update.
-    // Optional completion refresh must run only after that lifecycle boundary settles.
+    // Refresh optional completions only after restart and health recovery settle.
     await tryInstallShellCompletion({
       root: postUpdateRoot,
       jsonMode: Boolean(params.opts.json),
