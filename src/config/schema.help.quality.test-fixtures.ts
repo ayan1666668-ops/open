@@ -397,7 +397,7 @@ export const ENUM_EXPECTATIONS: Record<string, string[]> = {
     '"inherit"',
   ],
   "agents.defaults.compaction.identifierPolicy": ['"strict"', '"off"'],
-  "agents.defaults.compaction.semanticCuration.mode": ['"off"', '"shadow"'],
+  "agents.defaults.compaction.semanticCuration.mode": ['"off"', '"shadow"', '"apply"'],
 };
 
 export const TOOLS_HOOKS_TARGET_KEYS = [

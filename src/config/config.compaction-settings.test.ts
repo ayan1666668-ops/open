@@ -79,6 +79,18 @@ describe("config compaction settings", () => {
     expect(compaction?.qualityGuard?.maxRetries).toBe(99);
   });
 
+  it("preserves active semantic curation mode during materialization", () => {
+    const compaction = materializeCompactionConfig({
+      semanticCuration: {
+        mode: "apply",
+        timeoutMs: 700,
+      },
+    });
+
+    expect(compaction?.semanticCuration?.mode).toBe("apply");
+    expect(compaction?.semanticCuration?.timeoutMs).toBe(700);
+  });
+
   it.each(["off", "low", "adaptive", "max", "ultra", "inherit"] as const)(
     "preserves compaction thinkingLevel=%s during materialization",
     (thinkingLevel) => {

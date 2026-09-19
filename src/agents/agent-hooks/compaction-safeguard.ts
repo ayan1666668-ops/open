@@ -87,8 +87,7 @@ import {
 } from "./compaction-safeguard-semantic-judgments.js";
 import {
   buildCompactionSemanticSnapshot,
-  fingerprint,
-  fingerprintCompactionMessages,
+  projectCompactionSemanticSelection,
 } from "./compaction-safeguard-semantic.js";
 
 const log = createSubsystemLogger("compaction-safeguard");
@@ -1057,92 +1056,332 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
         }
       }
 
-      const oracleMessages = [...messagesToSummarize, ...turnPrefixMessages];
+      const uncuratedSemanticSource = messagesToSummarize;
+      const oracleMessages = [...uncuratedSemanticSource, ...turnPrefixMessages];
       const splitUserAsk = preparation.isSplitTurn
         ? extractLatestUserAsk(turnPrefixMessages)
         : null;
-      const latestUserAsk = splitUserAsk ?? extractLatestUserAsk(messagesToSummarize);
+      const latestUserAsk = splitUserAsk ?? extractLatestUserAsk(uncuratedSemanticSource);
       const identifiers = extractOpaqueIdentifiers(
         oracleMessages.slice(-10).map(extractMessageText).filter(Boolean).join("\n"),
       );
-      const {
-        summarizableMessages: summaryTargetMessages,
-        preservedMessages: preservedRecentMessages,
-      } = splitPreservedRecentTurns({
-        messages: messagesToSummarize,
-        recentTurnsPreserve,
-      });
-      const preservedTurnsSectionLocal = buildPreservedTurnsSection(preservedRecentMessages);
-      const latestPreparedAsk = extractLatestUserAsk(messagesToSummarize);
       const requiredAskContext = formatRequiredAskContext(latestUserAsk ?? "");
-      const includePreservedContext =
-        !latestUnresolvedUserRequest &&
-        qualityGuardEnabled &&
-        latestPreparedAsk === latestUserAsk &&
-        Boolean(latestPreparedAsk) &&
-        (summaryTargetMessages.length > 0 ||
-          !preservedTurnsSectionLocal.text.includes(requiredAskContext));
-      messagesToSummarize = includePreservedContext ? messagesToSummarize : summaryTargetMessages;
-      const allMessages = [...messagesToSummarize, ...turnPrefixMessages];
 
-      // Use adaptive chunk ratio based on message sizes, reserving headroom for
-      // the summarization prompt, system prompt, previous summary, and reasoning budget
-      // that generateSummary adds on top of the serialized conversation chunk.
-      const adaptiveRatio = await computeAdaptiveChunkRatioWithWorker({
-        messages: allMessages,
-        contextWindow: contextWindowTokens,
-        signal,
-      });
-      const maxChunkTokens = Math.max(
-        1,
-        Math.floor(contextWindowTokens * adaptiveRatio) - SUMMARIZATION_OVERHEAD_TOKENS,
-      );
+      let activeSemanticSnapshot:
+        | ReturnType<typeof buildCompactionSemanticSnapshot>
+        | undefined;
+      let uncuratedMessagesForSemanticFallback: AgentMessage[] | undefined;
+      if (semanticMode === "apply") {
+        const { preservedMessages: protectedRecentMessages } = splitPreservedRecentTurns({
+          messages: uncuratedSemanticSource,
+          recentTurnsPreserve,
+        });
+        const snapshot = buildCompactionSemanticSnapshot({
+          messages: uncuratedSemanticSource,
+          protectedMessages: new Set(protectedRecentMessages),
+          identifiers,
+          latestUnresolvedUserRequest,
+          latestUserAsk,
+        });
+        try {
+          const selection = await evaluateCompactionShadowCuration({
+            runtime: { evaluate: evaluateJudgment },
+            snapshot,
+            signal: semanticSignal,
+            timeoutMs: semanticTimeoutMs,
+          });
+          const projected = projectCompactionSemanticSelection({
+            messages: uncuratedSemanticSource,
+            snapshot,
+            selection,
+          });
+          if (projected && projected.length < uncuratedSemanticSource.length) {
+            activeSemanticSnapshot = snapshot;
+            uncuratedMessagesForSemanticFallback = uncuratedSemanticSource;
+            messagesToSummarize = projected;
+            if (selection.status === "ok") {
+              log.info(
+                "Compaction semantic curation applied: " +
+                  `sourceMessages=${uncuratedSemanticSource.length} selectedMessages=${projected.length} ` +
+                  `sourceChars=${selection.originalChars} selectedChars=${selection.selectedChars} ` +
+                  `reduction=${(selection.reductionRatio * 100).toFixed(1)}% provider=${selection.provenance.providerId}`,
+              );
+            }
+          } else if (selection.status !== "ok") {
+            log.info(
+              `Compaction semantic curation skipped: status=${selection.status} reason=${selection.reason}`,
+            );
+          } else if (!selection.complete) {
+            log.info("Compaction semantic curation skipped: selection was incomplete or uncertain.");
+          }
+        } catch (err) {
+          if (semanticSignal.aborted) {
+            semanticSignal.throwIfAborted();
+          }
+          log.warn(
+            `Compaction semantic curation unavailable; using uncurated input: ${formatErrorMessage(err)}`,
+          );
+        }
+      }
+
+      const prepareSummaryInput = (sourceMessages: AgentMessage[]) => {
+        const {
+          summarizableMessages: summaryTargetMessages,
+          preservedMessages: preservedRecentMessages,
+        } = splitPreservedRecentTurns({
+          messages: sourceMessages,
+          recentTurnsPreserve,
+        });
+        const preservedTurnsSection = buildPreservedTurnsSection(preservedRecentMessages);
+        const latestPreparedAsk = extractLatestUserAsk(sourceMessages);
+        const includePreservedContext =
+          !latestUnresolvedUserRequest &&
+          qualityGuardEnabled &&
+          latestPreparedAsk === latestUserAsk &&
+          Boolean(latestPreparedAsk) &&
+          (summaryTargetMessages.length > 0 ||
+            !preservedTurnsSection.text.includes(requiredAskContext));
+        return {
+          messages: includePreservedContext ? sourceMessages : summaryTargetMessages,
+          preservedTurnsSection,
+        };
+      };
+
+      const preparedSummaryInput = prepareSummaryInput(messagesToSummarize);
+      messagesToSummarize = preparedSummaryInput.messages;
+      const preservedTurnsSectionLocal = preparedSummaryInput.preservedTurnsSection;
       // Feed dropped-messages summary as previousSummary so the main summarization
       // incorporates context from pruned messages instead of losing it entirely.
       const effectivePreviousSummary = droppedSummary ?? previousSummary;
+
+      const summarizePreparedInput = async (params: {
+        sourceMessages: AgentMessage[];
+        preservedTurnsSection: ContextSection;
+        correctiveInstructions: string;
+      }) => {
+        const adaptiveRatio = await computeAdaptiveChunkRatioWithWorker({
+          messages: [...params.sourceMessages, ...turnPrefixMessages],
+          contextWindow: contextWindowTokens,
+          signal,
+        });
+        const maxChunkTokens = Math.max(
+          1,
+          Math.floor(contextWindowTokens * adaptiveRatio) - SUMMARIZATION_OVERHEAD_TOKENS,
+        );
+        let splitTurnSection = "";
+        let splitTurnSummary = "";
+        const producerLosses = new Set<CompactionLoss>();
+        const historySummary =
+          params.sourceMessages.length > 0
+            ? await summarizeViaLLM({
+                ...llmSummaryParams,
+                headers: buildCompactionSummaryHeaders({
+                  model,
+                  messages: params.sourceMessages,
+                  headers: authResult.headers,
+                }),
+                messages: params.sourceMessages,
+                maxChunkTokens,
+                summaryPrompt: { kind: "custom", instructions: structuredInstructions },
+                customInstructions: params.correctiveInstructions,
+                previousSummary: effectivePreviousSummary,
+              })
+            : buildStructuredFallbackSummary(effectivePreviousSummary);
+
+        if (preparation.isSplitTurn && turnPrefixMessages.length > 0) {
+          const splitTurnFocus = wrapUntrustedInstructionBlock(
+            "Additional context from /compact",
+            customInstructions,
+          );
+          const prefixSummary = await summarizeViaLLM({
+            ...llmSummaryParams,
+            messages: turnPrefixMessages,
+            maxChunkTokens,
+            summaryPrompt: { kind: "turn-prefix" },
+            customInstructions: [splitTurnFocus, params.correctiveInstructions]
+              .filter(Boolean)
+              .join("\n\n"),
+            previousSummary: undefined,
+          });
+          splitTurnSummary = prefixSummary;
+          splitTurnSection = formatGeneratedSplitTurnSection(prefixSummary, () => {
+            producerLosses.add("split-turn-tail");
+          });
+        }
+
+        const unbudgetedSummary = appendSummarySection(
+          historySummary,
+          splitTurnSection ? `\n\n${splitTurnSection}` : "",
+        );
+        const structuralSummary = qualityGuardEnabled ? historySummary : unbudgetedSummary;
+        const finalized = await finalizeSummaryText(
+          structuralSummary,
+          {
+            generatedSplitTurnSection:
+              qualityGuardEnabled && splitTurnSection ? `\n\n${splitTurnSection}` : undefined,
+            preservedTurnsSection: params.preservedTurnsSection,
+          },
+          producerLosses,
+          qualityGuardEnabled
+            ? {
+                auditSummary: unbudgetedSummary,
+                identifiers,
+                latestAsk: latestUserAsk,
+                latestAskInRetainedTurn: splitUserAsk !== null,
+                latestUnresolvedUserRequest: latestUnresolvedUserRequest ?? undefined,
+                requiredAskContext,
+                identifierPolicy,
+              }
+            : undefined,
+        );
+        return { finalized, historySummary, splitTurnSummary };
+      };
+
+      const auditPreparedSummary = (params: {
+        finalized: Awaited<ReturnType<typeof summarizePreparedInput>>["finalized"];
+        historySummary: string;
+        splitTurnSummary: string;
+      }) => {
+        if (!qualityGuardEnabled) {
+          return { ok: true as const, reasons: [] as string[] };
+        }
+        if (params.finalized.qualityRetentionInfeasible) {
+          return {
+            ok: false as const,
+            reasons: ["quality-retention-infeasible"],
+          };
+        }
+        return auditSummaryQuality({
+          summary: params.finalized.summary,
+          structuralSummary: params.finalized.structuralSummary,
+          sourceSummaries: [params.historySummary, params.splitTurnSummary].filter(Boolean),
+          identifiers,
+          latestAsk: latestUserAsk,
+          latestUnresolvedUserRequest: latestUnresolvedUserRequest ?? undefined,
+          retainedTurnSummary: splitUserAsk !== null ? params.splitTurnSummary : undefined,
+          identifierPolicy,
+        });
+      };
+
+      const semanticCandidateIsSafe = async (summary: string): Promise<boolean> => {
+        if (!activeSemanticSnapshot) {
+          return true;
+        }
+        semanticSignal.throwIfAborted();
+        const currentSemanticMode =
+          getCompactionSafeguardRuntime(ctx.sessionManager)?.semanticCurationMode ?? "off";
+        if (
+          currentSemanticMode !== "apply" ||
+          !uncuratedMessagesForSemanticFallback ||
+          fingerprintCompactionMessages(uncuratedMessagesForSemanticFallback) !==
+            activeSemanticSnapshot.sourceFingerprint
+        ) {
+          log.warn("Compaction semantic curation result became stale before acceptance.");
+          return false;
+        }
+        try {
+          const fidelity = await evaluateCompactionFidelity({
+            runtime: { evaluate: evaluateJudgment },
+            snapshot: activeSemanticSnapshot,
+            candidateSummary: summary,
+            signal: semanticSignal,
+            timeoutMs: semanticTimeoutMs,
+          });
+          if (fidelity.status !== "ok") {
+            log.warn(
+              `Compaction semantic fidelity unavailable after curation: status=${fidelity.status} reason=${fidelity.reason}`,
+            );
+            return false;
+          }
+          if (
+            fidelity.sourceFingerprint !== activeSemanticSnapshot.sourceFingerprint ||
+            fidelity.candidateFingerprint !== fingerprint(summary)
+          ) {
+            log.warn("Compaction semantic fidelity result did not match the active candidate.");
+            return false;
+          }
+          const unsafe = fidelity.assessments.filter(
+            (assessment) => assessment.classification !== "preserved",
+          );
+          if (unsafe.length > 0) {
+            log.warn(
+              "Compaction semantic fidelity rejected curated candidate: " +
+                `nonPreserved=${unsafe.length} total=${fidelity.assessments.length} ` +
+                `provider=${fidelity.provenance.providerId}`,
+            );
+            return false;
+          }
+          return fidelity.assessments.length > 0;
+        } catch (err) {
+          if (semanticSignal.aborted) {
+            semanticSignal.throwIfAborted();
+          }
+          log.warn(
+            `Compaction semantic fidelity failed after curation: ${formatErrorMessage(err)}`,
+          );
+          return false;
+        }
+      };
+
+      const buildUncuratedSemanticFallback = async (): Promise<string | null> => {
+        if (!uncuratedMessagesForSemanticFallback) {
+          return null;
+        }
+        const fallbackInput = prepareSummaryInput(uncuratedMessagesForSemanticFallback);
+        try {
+          const candidate = await summarizePreparedInput({
+            sourceMessages: fallbackInput.messages,
+            preservedTurnsSection: fallbackInput.preservedTurnsSection,
+            correctiveInstructions: "",
+          });
+          const audit = auditPreparedSummary(candidate);
+          if (!audit.ok) {
+            log.warn(
+              "Compaction semantic uncurated fallback failed deterministic quality checks: " +
+                `reasonCount=${audit.reasons.length}`,
+            );
+            return null;
+          }
+          log.warn("Compaction semantic curation fell back to the uncurated summary input.");
+          return candidate.finalized.summary;
+        } catch (err) {
+          if (signal?.aborted) {
+            signal.throwIfAborted();
+          }
+          log.warn(
+            `Compaction semantic uncurated fallback generation failed: ${formatErrorMessage(err)}`,
+          );
+          return null;
+        }
+      };
+
+      const acceptSummary = async (summary: string) => {
+        if (!(await semanticCandidateIsSafe(summary))) {
+          const fallback = await buildUncuratedSemanticFallback();
+          if (fallback) {
+            return compactionResult(fallback);
+          }
+          setCompactionSafeguardCancellation(
+            ctx.sessionManager,
+            "Compaction semantic curation could not preserve required source meaning.",
+          );
+          return { cancel: true as const };
+        }
+        await observeSemanticSummary(summary);
+        return compactionResult(summary);
+      };
 
       let correctiveInstructions = "";
       const totalAttempts = qualityGuardEnabled ? qualityGuardMaxRetries + 1 : 1;
 
       for (let attempt = 0; attempt < totalAttempts; attempt += 1) {
-        let splitTurnSectionLocal = "";
-        let splitTurnSummaryLocal = "";
-        let historySummary = "";
-        const producerLosses = new Set<CompactionLoss>();
+        let candidate: Awaited<ReturnType<typeof summarizePreparedInput>>;
         try {
-          historySummary =
-            messagesToSummarize.length > 0
-              ? await summarizeViaLLM({
-                  ...llmSummaryParams,
-                  messages: messagesToSummarize,
-                  maxChunkTokens,
-                  summaryPrompt: { kind: "custom", instructions: structuredInstructions },
-                  customInstructions: correctiveInstructions,
-                  previousSummary: effectivePreviousSummary,
-                })
-              : buildStructuredFallbackSummary(effectivePreviousSummary);
-
-          if (preparation.isSplitTurn && turnPrefixMessages.length > 0) {
-            const splitTurnFocusLabel = "Additional context from /compact";
-            const splitTurnFocus = wrapUntrustedInstructionBlock(
-              splitTurnFocusLabel,
-              customInstructions,
-            );
-            const prefixSummary = await summarizeViaLLM({
-              ...llmSummaryParams,
-              messages: turnPrefixMessages,
-              maxChunkTokens,
-              summaryPrompt: { kind: "turn-prefix" },
-              customInstructions: [splitTurnFocus, correctiveInstructions]
-                .filter(Boolean)
-                .join("\n\n"),
-              previousSummary: undefined,
-            });
-            splitTurnSummaryLocal = prefixSummary;
-            splitTurnSectionLocal = formatGeneratedSplitTurnSection(prefixSummary, () => {
-              producerLosses.add("split-turn-tail");
-            });
-          }
+          candidate = await summarizePreparedInput({
+            sourceMessages: messagesToSummarize,
+            preservedTurnsSection: preservedTurnsSectionLocal,
+            correctiveInstructions,
+          });
         } catch (attemptError) {
           if (signal?.aborted) {
             signal.throwIfAborted();
@@ -1160,40 +1399,14 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
           }
           throw attemptError;
         }
-        const unbudgetedSummary = appendSummarySection(
-          historySummary,
-          splitTurnSectionLocal ? `\n\n${splitTurnSectionLocal}` : "",
-        );
-        const structuralSummary = qualityGuardEnabled ? historySummary : unbudgetedSummary;
-        const finalized = await finalizeSummaryText(
-          structuralSummary,
-          {
-            generatedSplitTurnSection:
-              qualityGuardEnabled && splitTurnSectionLocal
-                ? `\n\n${splitTurnSectionLocal}`
-                : undefined,
-            preservedTurnsSection: preservedTurnsSectionLocal,
-          },
-          producerLosses,
-          qualityGuardEnabled
-            ? {
-                auditSummary: unbudgetedSummary,
-                identifiers,
-                latestAsk: latestUserAsk,
-                latestAskInRetainedTurn: splitUserAsk !== null,
-                latestUnresolvedUserRequest: latestUnresolvedUserRequest ?? undefined,
-                requiredAskContext,
-                identifierPolicy,
-              }
-            : undefined,
-        );
 
+        const { finalized } = candidate;
         const canRegenerate =
           messagesToSummarize.length > 0 ||
           (preparation.isSplitTurn && turnPrefixMessages.length > 0);
+        const quality = auditPreparedSummary(candidate);
         if (!qualityGuardEnabled) {
-          await observeSemanticSummary(finalized.summary);
-          return compactionResult(finalized.summary);
+          return acceptSummary(finalized.summary);
         }
         if (finalized.qualityRetentionInfeasible) {
           log.warn(
@@ -1206,19 +1419,8 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
           );
           return { cancel: true };
         }
-        const quality = auditSummaryQuality({
-          summary: finalized.summary,
-          structuralSummary: finalized.structuralSummary,
-          sourceSummaries: [historySummary, splitTurnSummaryLocal].filter(Boolean),
-          identifiers,
-          latestAsk: latestUserAsk,
-          latestUnresolvedUserRequest: latestUnresolvedUserRequest ?? undefined,
-          retainedTurnSummary: splitUserAsk !== null ? splitTurnSummaryLocal : undefined,
-          identifierPolicy,
-        });
         if (quality.ok) {
-          await observeSemanticSummary(finalized.summary);
-          return compactionResult(finalized.summary);
+          return acceptSummary(finalized.summary);
         }
         if (!canRegenerate || attempt >= totalAttempts - 1) {
           const reasonCodes = [

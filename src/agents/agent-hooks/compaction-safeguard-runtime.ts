@@ -6,7 +6,7 @@ import { createSessionManagerRuntimeRegistry } from "./session-manager-runtime-r
 export type CompactionSafeguardCancellation = { reason: string; error?: unknown };
 
 /** Runtime knobs consumed by the compaction safeguard extension. */
-export type CompactionSafeguardRuntimeValue = {
+type CompactionSafeguardRuntimeValue = {
   maxHistoryShare?: number;
   contextWindowTokens?: number;
   identifierPolicy?: AgentCompactionIdentifierPolicy | "custom";
@@ -23,7 +23,7 @@ export type CompactionSafeguardRuntimeValue = {
   postCompactionSections?: string[];
   qualityGuardEnabled?: boolean;
   qualityGuardMaxRetries?: number;
-  semanticCurationMode?: "off" | "shadow";
+  semanticCurationMode?: "off" | "shadow" | "apply";
   semanticCurationTimeoutMs?: number;
   /**
    * Id of a registered compaction provider plugin.

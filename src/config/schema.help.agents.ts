@@ -151,7 +151,7 @@ export const AGENT_FIELD_HELP: Record<string, string> = {
   "agents.defaults.compaction.semanticCuration":
     "Optional typed-judgment semantic observation for safeguard compaction. Shadow mode measures a conservative relevance-selected view without changing summarizer input.",
   "agents.defaults.compaction.semanticCuration.mode":
-    'Semantic curation observation mode: "off" disables judgment calls and "shadow" measures a projected curated input while preserving existing compaction behavior.',
+    'Semantic curation mode: "off" disables judgment calls, "shadow" measures a projected curated input without changing behavior, and "apply" may send a validated curated view to built-in safeguard summarization with conservative fallback.',
   "agents.defaults.compaction.semanticCuration.timeoutMs":
     "Per-judgment semantic compaction deadline in milliseconds, capped at 5000. Keep this small so observation does not dominate compaction latency.",
   "agents.defaults.compaction.midTurnPrecheck":
