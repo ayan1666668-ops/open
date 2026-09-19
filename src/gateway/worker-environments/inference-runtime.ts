@@ -684,4 +684,3 @@ export const executeWorkerInference: WorkerInferenceExecutor = async (params) =>
     }
   });
 };
-/* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */
