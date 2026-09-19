@@ -39,7 +39,12 @@ describe("tool group disclosures", () => {
     const onToggle = vi.fn();
     const work = { key: "work-exec", durationMs: 22_000, groups: [group] };
     render(renderWorkGroupSummary(work, { expanded: false, onToggle }), container);
-    expect(container.querySelector(".chat-activity-group__label")?.textContent).toBe("Exec ×3");
+    expect(container.querySelector(".chat-activity-group__label")?.textContent).toBe(
+      "Worked for 22s",
+    );
+    expect(container.querySelector("button")?.textContent?.replace(/\s+/g, " ").trim()).toBe(
+      "Worked for 22s",
+    );
     const summary = container.querySelector("button")!;
     expect(summary.getAttribute("aria-description")).toContain(fullTitle);
     expect(summary.getAttribute("aria-description")).toContain("22s");

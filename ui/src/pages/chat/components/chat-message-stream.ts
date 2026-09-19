@@ -155,7 +155,7 @@ export function renderStreamGroup(parts: StreamGroupPart[], opts: StreamGroupOpt
   `;
 }
 
-/** Completed work keeps its operation summary and elapsed time above the expanded groups. */
+/** Completed work keeps its duration above the nested operation summaries. */
 export function renderWorkGroupSummary(
   item: { key: string; durationMs: number | null; groups: readonly MessageGroup[] },
   opts: {
@@ -175,8 +175,6 @@ export function renderWorkGroupSummary(
   const workedLabel = duration
     ? t("chat.workRun.workedFor", { duration })
     : t("chat.workRun.worked");
-  // Expanded work already exposes its tool summaries in the nested disclosures.
-  const label = cards.length && !opts.expanded ? summarizeToolGroup(activity) : workedLabel;
   const fullLabel = cards.length ? summarizeToolGroup(activity, { full: true }) : workedLabel;
   const content = html`
     <div class="chat-activity-group chat-work-group ${opts.expanded ? "is-open" : ""}">
@@ -194,17 +192,8 @@ export function renderWorkGroupSummary(
         }}
       >
         <span class="chat-tool-disclosure__content">
-          <span class="chat-activity-group__label" title=${fullLabel}>${label}</span>
+          <span class="chat-activity-group__label" title=${fullLabel}>${workedLabel}</span>
         </span>
-        ${
-          cards.length && duration && !opts.expanded
-            ? html`<span
-                class="chat-activity-group__duration"
-                aria-label=${t("chat.workRun.workedFor", { duration })}
-                >${duration}</span
-              >`
-            : nothing
-        }
         ${opts.expanded ? nothing : renderToolOutcomeSummary(cards)}
         <span class="chat-tool-row__chevron" aria-hidden="true">${icons.chevronRight}</span>
       </button>
