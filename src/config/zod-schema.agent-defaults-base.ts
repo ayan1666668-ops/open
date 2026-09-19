@@ -189,6 +189,14 @@ export const AgentDefaultsBaseSchema = z
           })
           .strict()
           .optional(),
+        judgmentCuration: z
+          .object({
+            mode: z.union([z.literal("off"), z.literal("shadow")]).optional(),
+            timeoutMs: z.number().int().min(50).max(5000).optional(),
+            maxSegments: z.number().int().min(1).max(32).optional(),
+          })
+          .strict()
+          .optional(),
         /** Mid-turn precheck for tool-loop context pressure. Default: disabled. */
         midTurnPrecheck: z
           .object({
