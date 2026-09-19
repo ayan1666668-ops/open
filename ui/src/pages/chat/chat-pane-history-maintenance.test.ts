@@ -30,6 +30,7 @@ afterEach(() => {
 it.each(["idle measurement", "end-command measurement", "native end clamp"] as const)(
   "does not request older history or take reader ownership after %s",
   async (movement) => {
+    vi.useFakeTimers();
     transcriptDomState.measuredRowHeight = 120;
     const context = createInitializationContext();
     context.config.subscribe = () => () => {};
@@ -58,11 +59,12 @@ it.each(["idle measurement", "end-command measurement", "native end clamp"] as c
       key: `row:${index}`,
       content: html`<div>Message ${index}</div>`,
     }));
-    const { container, renderRows, transcript } = await mountTestTranscript(
-      "maintenance-history",
-      rows,
-      props.transcript,
-    );
+    const mounting = mountTestTranscript("maintenance-history", rows, props.transcript);
+    await vi.advanceTimersByTimeAsync(0);
+    const { container, renderRows, transcript } = await mounting;
+    // Run initial pane end-follow and its stable virtualizer reconciliation frame
+    // before installing the idle viewport used below.
+    await vi.advanceTimersByTimeAsync(32);
     let maximum = 1400;
     Object.defineProperties(container, {
       clientHeight: { configurable: true, value: 600 },
@@ -97,7 +99,6 @@ it.each(["idle measurement", "end-command measurement", "native end clamp"] as c
       disconnect() {}
     }
     vi.stubGlobal("IntersectionObserver", HistoryIntersectionObserver);
-    vi.useFakeTimers();
     await vi.advanceTimersByTimeAsync(150);
     expect(request).not.toHaveBeenCalled();
     expect(state.chatFollowLocked).toBe(false);
