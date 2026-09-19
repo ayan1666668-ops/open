@@ -184,6 +184,18 @@ export const AgentDefaultsBaseSchema = z
           })
           .strict()
           .optional(),
+        /** Optional typed-judgment semantic observation and shadow curation. */
+        judgmentCuration: z
+          .object({
+            /** Observation mode. Shadow never changes summarizer input. Default: off. */
+            mode: z.union([z.literal("off"), z.literal("shadow")]).optional(),
+            /** Per-observation judgment deadline in milliseconds. */
+            timeoutMs: z.number().int().min(50).max(5000).optional(),
+            /** Maximum bounded source segments submitted for semantic evaluation. */
+            maxSegments: z.number().int().min(1).max(32).optional(),
+          })
+          .strict()
+          .optional(),
         /** Mid-turn precheck for tool-loop context pressure. Default: disabled. */
         midTurnPrecheck: z
           .object({
