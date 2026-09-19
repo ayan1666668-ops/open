@@ -1198,6 +1198,8 @@ describe("scripts/test-projects changed-target routing", () => {
         "test/scripts/pr-crabbox-merge-bypass.test.ts",
         "test/scripts/release-ci-summary.test.ts",
         "test/scripts/release-tooling-identity.test.ts",
+        "test/scripts/security-review-event.test.ts",
+        "test/scripts/security-review-script.test.ts",
         "test/scripts/validate-release-publish-approval.test.ts",
       ],
     );
@@ -1383,6 +1385,7 @@ describe("scripts/test-projects changed-target routing", () => {
         "test/scripts/openclaw-npm-plugin-recovery-workflow.test.ts",
         "test/scripts/openclaw-npm-resume-run.test.ts",
         "test/scripts/release-candidate-checklist.test.ts",
+        "test/scripts/security-review-workflow.test.ts",
         "test/scripts/verify-stable-main-closeout.test.ts",
         "test/scripts/ci-workflow-guards.test.ts",
       ],
