@@ -46,6 +46,7 @@ function hasSensitiveUrlHintPath(hints: ConfigUiHints | undefined, paths: string
 }
 
 function collectSensitiveStrings(value: unknown, values: string[]): void {
+  const visited = new WeakSet<object>();
   const stack: unknown[] = [value];
   while (stack.length > 0) {
     const current = stack.pop();
@@ -56,6 +57,10 @@ function collectSensitiveStrings(value: unknown, values: string[]): void {
       continue;
     }
     if (Array.isArray(current)) {
+      if (visited.has(current)) {
+        continue;
+      }
+      visited.add(current);
       for (let i = current.length - 1; i >= 0; i -= 1) {
         stack.push(current[i]);
       }
@@ -64,6 +69,10 @@ function collectSensitiveStrings(value: unknown, values: string[]): void {
     if (!isObjectRecord(current)) {
       continue;
     }
+    if (visited.has(current)) {
+      continue;
+    }
+    visited.add(current);
     // SecretRef objects include structural fields like source/provider that are
     // not secret material and may appear widely in config text.
     if (isSecretRefShape(current)) {
@@ -197,6 +206,10 @@ function redactValue(
 
   while (stack.length > 0) {
     const frame = stack[stack.length - 1];
+    if (!frame) {
+      stack.pop();
+      continue;
+    }
     if (frame.mode === "start") {
       const current = frame.obj;
       if (current === null || current === undefined) {
@@ -291,8 +304,12 @@ function redactValue(
       stack.pop();
       continue;
     }
-    const [key, value] = entries[objectIndex];
+    const objectEntry = entries[objectIndex];
     frame.objectIndex = objectIndex + 1;
+    if (!objectEntry) {
+      continue;
+    }
+    const [key, value] = objectEntry;
     const path = frame.prefix ? `${frame.prefix}.${key}` : key;
     const wildcardPath = frame.prefix ? `${frame.prefix}.*` : "*";
     const candidate = frame.context.lookup

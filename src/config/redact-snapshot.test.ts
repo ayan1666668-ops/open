@@ -1562,5 +1562,30 @@ describe("redactConfigSnapshot", () => {
     }
     expect((originalCursor as { token: string }).token).toBe(secret);
   });
+
+  it("terminates cyclic sensitive objects and still collects their secrets", () => {
+    const secret = "cycle-secret-private-key-abcdefghij";
+    const cyclic: Record<string, unknown> = {
+      type: "service_account",
+      private_key: secret,
+    };
+    cyclic.self = cyclic;
+
+    expect(() => redactConfigObject({ serviceAccount: cyclic })).not.toThrow();
+    const redacted = redactConfigObject({ serviceAccount: cyclic });
+    expect(redacted.serviceAccount).toBe(REDACTED_SENTINEL);
+    expect(JSON.stringify(redacted)).not.toContain(secret);
+    expect(cyclic.private_key).toBe(secret);
+
+    const raw = `{
+  "serviceAccount": {
+    "type": "service_account",
+    "private_key": "${secret}"
+  }
+}`;
+    const result = redactConfigSnapshot(makeSnapshot({ serviceAccount: cyclic }, raw));
+    expect((result.config as { serviceAccount: unknown }).serviceAccount).toBe(REDACTED_SENTINEL);
+    expect(JSON.stringify(result)).not.toContain(secret);
+  }, 3000);
 });
 /* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */
