@@ -113,6 +113,7 @@ async function materializeRequestedModelCatalog(
   } catch (error) {
     if (
       error instanceof PreparedModelCatalogGenerationMismatchError &&
+      error.agentDir === snapshot.agentDir &&
       (await replacePreparedModelRuntimeSnapshotAfterCatalogGenerationMismatch(snapshot))
     ) {
       throw new PreparedModelRuntimePublicationSupersededError(

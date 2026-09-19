@@ -3,6 +3,7 @@ import {
   createPreparedModelRuntimeReplacement,
   ownerKey,
   publishPreparedModelRuntimeOwnerBatch,
+  resolveConfiguredOwner,
   resolvePreparedModelRuntimeOwnerBySnapshot,
   type PreparedModelRuntimeOwner,
   type PreparedModelRuntimeReplacement,
@@ -40,8 +41,16 @@ export class PreparedModelCatalogGenerationRecoveryOwner {
     dependencies: RecoveryDependencies,
   ): Promise<boolean> {
     const owner = resolvePreparedModelRuntimeOwnerBySnapshot(snapshot);
+    if (!owner) {
+      const replacement = resolveConfiguredOwner(dependencies.owners, snapshot);
+      return Boolean(
+        replacement?.snapshot &&
+        replacement.snapshot !== snapshot &&
+        !replacement.needsRefresh &&
+        !replacement.pending,
+      );
+    }
     if (
-      !owner ||
       dependencies.owners.get(ownerKey(owner.input)) !== owner ||
       owner.provenance !== "configured"
     ) {

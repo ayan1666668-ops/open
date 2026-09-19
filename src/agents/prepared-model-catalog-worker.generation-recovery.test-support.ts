@@ -14,6 +14,7 @@ import {
 } from "./prepared-model-catalog-worker.test-support.js";
 import { loadPreparedModelRuntimeAuth } from "./prepared-model-runtime-auth.js";
 import {
+  getPreparedModelRuntimeSnapshot,
   loadPublishedGatewayReplyDispatchRuntime,
   publishPreparedModelRuntimeSnapshot,
   type PreparedModelRuntimeInput,
@@ -112,8 +113,8 @@ export async function expectPublishedOwnerRecoveryAfterGenerationMismatch(
   const loadMainCatalog = async () =>
     await loadCatalog("main", fixture.agentDir, fixture.workspaceDir);
 
-  const workerStopped = createDeferredCore<void>();
-  const releasePoolRecovery = createDeferredCore<void>();
+  const workerStopped = createDeferredCore();
+  const releasePoolRecovery = createDeferredCore();
   let restoreTermination: (() => void) | undefined;
   const workerChannel = channel("worker_threads");
   const holdSharedPoolRecovery = (message: unknown) => {
@@ -145,17 +146,15 @@ export async function expectPublishedOwnerRecoveryAfterGenerationMismatch(
     armGenerationMismatch();
     failedOwner = loadMainCatalog();
     void failedOwner.catch(() => undefined);
-    await Promise.race([
-      workerStopped.promise,
-      failedOwner.then(
-        () => {
-          throw new Error("generation mismatch request completed before shared-pool retirement");
-        },
-        (error: unknown) => {
-          throw error;
-        },
-      ),
-    ]);
+    // Public catalog reads may return the saved inventory after their bounded foreground wait.
+    // Observe native retirement directly so a cold worker cannot make that expected fallback race
+    // look like failed recovery coverage.
+    await workerStopped.promise;
+    const failedCatalog = await failedOwner;
+    expect(failedCatalog.authoritative).toBe(false);
+    expect(failedCatalog.entries).not.toContainEqual(
+      expect.objectContaining({ provider: PROVIDER_ID, id: "plugin-generation-v2" }),
+    );
 
     failedAuthOwner = loadPreparedModelRuntimeAuth(published[0]!, {
       providerIds: [PROVIDER_ID],
@@ -170,13 +169,11 @@ export async function expectPublishedOwnerRecoveryAfterGenerationMismatch(
     expect(healthySettled).toBe(false);
 
     releasePoolRecovery.resolve();
-    const failedCatalog = await failedOwner;
-    expect(failedCatalog.authoritative).toBe(false);
-    expect(failedCatalog.entries).not.toContainEqual(
-      expect.objectContaining({ provider: PROVIDER_ID, id: "plugin-generation-v2" }),
-    );
     await expect(failedAuthOwner).rejects.toBeInstanceOf(Error);
     const recovered = await healthyWaiter;
+    await vi.waitFor(() => {
+      expect(getPreparedModelRuntimeSnapshot(inputs[0]!)).not.toBe(published[0]);
+    });
     await expect(
       loadPublishedGatewayReplyDispatchRuntime({ agentId: "main" }),
     ).resolves.toBeUndefined();

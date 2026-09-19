@@ -387,6 +387,7 @@ export function createPreparedModelCatalogWorkerInput(params: {
 type PreparedModelCatalogWorker = Readonly<{
   loadAuth: (
     scope: PreparedModelRuntimeAuthScope,
+    onRecovery?: (error: Error) => void,
   ) => Promise<PreparedModelRuntimeAuth & { credentials: Readonly<AuthStorageData> }>;
   loadCatalog: (
     providerIds?: readonly string[],
@@ -676,18 +677,21 @@ export function createPreparedModelCatalogWorker(
         configuredProviderModelIds: message.configuredProviderModelIds,
       };
     },
-    loadAuth: async ({ providerIds, profileIds }) => {
+    loadAuth: async ({ providerIds, profileIds }, onRecovery) => {
       const normalizedProviderIds = [...new Set(providerIds)].toSorted((left, right) =>
         left.localeCompare(right),
       );
       const normalizedProfileIds = profileIds
         ? [...new Set(profileIds)].toSorted((left, right) => left.localeCompare(right))
         : undefined;
-      const message = await request({
-        kind: "auth-refresh",
-        providerIds: normalizedProviderIds,
-        ...(normalizedProfileIds ? { profileIds: normalizedProfileIds } : {}),
-      });
+      const message = await request(
+        {
+          kind: "auth-refresh",
+          providerIds: normalizedProviderIds,
+          ...(normalizedProfileIds ? { profileIds: normalizedProfileIds } : {}),
+        },
+        onRecovery,
+      );
       if (message.kind !== "auth-refresh") {
         throw new Error("prepared model auth refresh worker returned a catalog result");
       }

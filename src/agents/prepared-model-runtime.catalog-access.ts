@@ -25,7 +25,10 @@ import {
   preparedProviderCatalogCredentials,
   preparedProviderCatalogSource,
 } from "./prepared-model-runtime.catalog-source.js";
-import { assertPreparedModelRuntimeInputCurrent } from "./prepared-model-runtime.errors.js";
+import {
+  assertPreparedModelRuntimeInputCurrent,
+  PreparedModelCatalogGenerationMismatchError,
+} from "./prepared-model-runtime.errors.js";
 import {
   fingerprintPreparedRuntimeFacts,
   preparedModelInventoryKey,
@@ -66,7 +69,7 @@ export function createFullModelCatalogAccess(params: {
   pluginGeneration: PreparedModelRuntimePluginGeneration;
   isCurrent: () => boolean;
   inventoryOwner: Pick<PreparedModelRuntimeOwner, "catalogInventory" | "catalogAttempt"> &
-    Partial<Pick<PreparedModelRuntimeOwner, "provenance">>;
+    Partial<Pick<PreparedModelRuntimeOwner, "provenance" | "snapshot">>;
 }): PreparedModelRuntimeCatalogAccess {
   const readUsage = createPreparedRuntimeAuthProfileUsageReader(
     params.agentFacts.input.agentDir,
@@ -111,6 +114,26 @@ export function createFullModelCatalogAccess(params: {
     { key: inventoryKey, pluginFingerprint, credentials: params.agentFacts.credentials },
     params.isCurrent,
   );
+  const recoverCatalogGeneration = (error: Error) => {
+    if (
+      !(error instanceof PreparedModelCatalogGenerationMismatchError) ||
+      error.agentDir !== params.agentFacts.input.agentDir ||
+      params.inventoryOwner.provenance !== "configured" ||
+      !params.inventoryOwner.snapshot
+    ) {
+      return;
+    }
+    const snapshot = params.inventoryOwner.snapshot;
+    void import("./prepared-model-runtime.js")
+      .then(async ({ replacePreparedModelRuntimeSnapshotAfterCatalogGenerationMismatch }) => {
+        await replacePreparedModelRuntimeSnapshotAfterCatalogGenerationMismatch(snapshot);
+      })
+      .catch((recoveryError: unknown) => {
+        process.emitWarning(
+          `Prepared model catalog generation recovery failed: ${String(recoveryError)}`,
+        );
+      });
+  };
   const eligibleProviders = [
     ...new Set(
       [...params.agentFacts.providerIds, ...Object.keys(params.agentFacts.credentials)].map(
@@ -367,14 +390,16 @@ export function createFullModelCatalogAccess(params: {
             runtimeModels,
             providerExpiries,
             configuredProviderModelIds,
-          } = await worker.loadCatalog(
-            providerIds,
-            (providerIds ?? providers).some((provider) =>
-              published.inventory?.providers.has(provider),
-            )
-              ? (error) => fail(error, providerIds, "provider")
-              : undefined,
-          );
+          } = await worker.loadCatalog(providerIds, (error) => {
+            if (
+              (providerIds ?? providers).some((provider) =>
+                published.inventory?.providers.has(provider),
+              )
+            ) {
+              fail(error, providerIds, "provider");
+            }
+            recoverCatalogGeneration(error);
+          });
           assertCurrent();
           const scope = new Set(
             (
@@ -554,7 +579,7 @@ export function createFullModelCatalogAccess(params: {
         const auth = getPreparedModelFullCatalogAuth(current) ?? currentAuth;
         const nativeAuth =
           nativeDiscoveryStarted && discoveredProviders.length
-            ? await worker.loadAuth({ providerIds: discoveredProviders })
+            ? await worker.loadAuth({ providerIds: discoveredProviders }, recoverCatalogGeneration)
             : undefined;
         assertCurrent();
         const retainOther = <T>(values: Readonly<Record<string, T>>) => {
@@ -653,7 +678,10 @@ export function createFullModelCatalogAccess(params: {
           [Symbol.asyncDispose]: retainPreparedPluginGeneration(params.pluginGeneration),
         };
         return await worker
-          .loadAuth({ providerIds, ...(profileIds?.length ? { profileIds } : {}) })
+          .loadAuth(
+            { providerIds, ...(profileIds?.length ? { profileIds } : {}) },
+            recoverCatalogGeneration,
+          )
           .then((refreshed) => {
             const authModes = {
               ...resolveUsableAgentCredentialModes(params.agentFacts.credentials),
