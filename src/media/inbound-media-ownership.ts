@@ -191,7 +191,7 @@ export async function recordInboundMediaOwner(
     (existing, now) => ({
       stagedAt: existing?.stagedAt ?? now,
       sessionKey: owner.sessionKey,
-      ...(owner.agentId ?? existing?.agentId
+      ...((owner.agentId ?? existing?.agentId)
         ? { agentId: owner.agentId ?? existing?.agentId }
         : {}),
     }),
@@ -209,11 +209,7 @@ export async function resolveInboundMediaOwnership(
   return (await readOwnershipIndex())[id];
 }
 
-function collectInboundMediaIdsFromValue(
-  value: unknown,
-  found: Set<string>,
-  depth: number,
-): void {
+function collectInboundMediaIdsFromValue(value: unknown, found: Set<string>, depth: number): void {
   if (depth > MAX_REFERENCE_WALK_DEPTH || found.size >= 32) {
     return;
   }

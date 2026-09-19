@@ -56,7 +56,14 @@ describe("inbound media ownership", () => {
 
   it("refuses ids that are not a single bounded path component", async () => {
     await withStateDir(async () => {
-      for (const id of ["", ".", "..", "../escape.png", "nested/escape.png", "nested\\escape.png"]) {
+      for (const id of [
+        "",
+        ".",
+        "..",
+        "../escape.png",
+        "nested/escape.png",
+        "nested\\escape.png",
+      ]) {
         expect(isSafeInboundMediaId(id), id).toBe(false);
         expect(await recordStagedInboundMedia(id), id).toBe(false);
         expect(await resolveInboundMediaOwnership(id), id).toBeUndefined();
@@ -91,10 +98,7 @@ describe("inbound media ownership", () => {
         ],
         details: { media: { mediaUrls: ["media://inbound/never-staged.png"] } },
       };
-      expect(collectInboundMediaIds(message)).toEqual([
-        "persisted.png",
-        "never-staged.png",
-      ]);
+      expect(collectInboundMediaIds(message)).toEqual(["persisted.png", "never-staged.png"]);
       const bound = await recordInboundMediaOwnersInValue(message, { sessionKey: "agent:main:b" });
       expect(bound).toEqual(["persisted.png"]);
       expect((await resolveInboundMediaOwnership("persisted.png"))?.sessionKey).toBe(
