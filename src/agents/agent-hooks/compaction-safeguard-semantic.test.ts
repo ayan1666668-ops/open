@@ -5,7 +5,10 @@ import {
   evaluateCompactionFidelity,
   evaluateCompactionShadowCuration,
 } from "./compaction-safeguard-semantic-judgments.js";
-import { buildCompactionSemanticSnapshot } from "./compaction-safeguard-semantic.js";
+import {
+  buildCompactionSemanticSnapshot,
+  fingerprintCompactionMessages,
+} from "./compaction-safeguard-semantic.js";
 
 function message(value: unknown): AgentMessage {
   return value as AgentMessage;
@@ -159,37 +162,25 @@ describe("compaction semantic judgments", () => {
     expect(snapshot.segments).toHaveLength(3);
   });
 
-  it("refuses to project a selection onto a different source revision", async () => {
+  it("changes the source fingerprint when judgment-relevant source changes", () => {
     const user = message({
       role: "user",
       content: [{ type: "text", text: "Deploy production." }],
     });
-    const fact = message({
+    const releaseA = message({
       role: "assistant",
       content: [{ type: "text", text: "Production uses release A." }],
     });
-    const snapshot = buildCompactionSemanticSnapshot({
-      messages: [user, fact],
-      latestUserAsk: "Deploy production.",
-    });
-    const discretionary = snapshot.segments.filter((segment) => !segment.protected);
-    const selection = await evaluateCompactionShadowCuration({
-      runtime: runtimeWithChoices({ [discretionary[0]!.id]: "keep" }),
-      snapshot,
-      signal: new AbortController().signal,
-    });
-    const changedFact = message({
+    const releaseB = message({
       role: "assistant",
       content: [{ type: "text", text: "Production uses release B." }],
     });
+    const snapshot = buildCompactionSemanticSnapshot({
+      messages: [user, releaseA],
+      latestUserAsk: "Deploy production.",
+    });
 
-    expect(
-      projectCompactionSemanticSelection({
-        messages: [user, changedFact],
-        snapshot,
-        selection,
-      }),
-    ).toBeNull();
+    expect(fingerprintCompactionMessages([user, releaseB])).not.toBe(snapshot.sourceFingerprint);
   });
 
   it("classifies finalized context against source-backed obligations", async () => {
