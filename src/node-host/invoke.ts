@@ -43,7 +43,11 @@ import {
 } from "../infra/node-commands.js";
 import { logWarn } from "../logger.js";
 import { NODE_DESKTOP_STREAM_COMMAND } from "../shared/node-desktop-stream.js";
-import type { NodeHostClient } from "./client.js";
+import {
+  createNodeInvokeResponder,
+  type NodeHostClient,
+  type NodeInvokeResponder,
+} from "./client.js";
 import { invokeNodeWorkerComputerCommand, type NodeWorkerComputer } from "./computer-command.js";
 import { invokeNodeDesktopStream } from "./desktop-stream-command.js";
 import {
@@ -344,42 +348,6 @@ async function runViaMacAppExecHost(params: {
     signal: params.signal,
   });
 }
-
-function createNodeInvokeResponder(client: NodeHostClient, frame: NodeInvokeRequestPayload) {
-  const send = async (result: {
-    ok: boolean;
-    payload?: unknown;
-    payloadJSON?: string | null;
-    error?: { code?: string; message?: string } | null;
-  }) => {
-    try {
-      await client.request("node.invoke.result", {
-        id: frame.id,
-        nodeId: frame.nodeId,
-        ok: result.ok,
-        ...(result.payload !== undefined ? { payload: result.payload } : {}),
-        ...(typeof result.payloadJSON === "string" ? { payloadJSON: result.payloadJSON } : {}),
-        ...(result.error ? { error: result.error } : {}),
-      });
-    } catch {
-      // Node invoke responses are best-effort.
-    }
-  };
-  const error = async (code: string, message: string) =>
-    await send({ ok: false, error: { code, message } });
-  return {
-    send,
-    error,
-    async json(payload: unknown) {
-      await send({ ok: true, payloadJSON: JSON.stringify(payload) });
-    },
-    async invalid(err: unknown) {
-      await error("INVALID_REQUEST", String(err));
-    },
-  };
-}
-
-export type NodeInvokeResponder = ReturnType<typeof createNodeInvokeResponder>;
 
 function classifyExecApprovalsStorageError(err: unknown): "TIMEOUT" | "UNAVAILABLE" {
   const errorCode = err && typeof err === "object" && "code" in err ? err.code : null;

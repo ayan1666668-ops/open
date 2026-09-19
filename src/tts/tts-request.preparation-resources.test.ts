@@ -12,6 +12,7 @@ import {
   useNoBundledPlugins,
   writePlugin,
 } from "../plugins/loader.test-fixtures.js";
+import { waitForPluginCacheRetirement } from "../plugins/plugin-cache.js";
 import { clearPluginMetadataLifecycleCaches } from "../plugins/plugin-metadata-lifecycle.js";
 import { withPluginRuntimeRegistryScope } from "../plugins/runtime/gateway-request-scope.js";
 import { createPluginRuntime } from "../plugins/runtime/index.js";
@@ -375,23 +376,24 @@ describe("async speech preparation resources", () => {
       try {
         await fixture.withEnvironment(async () => {
           useNoBundledPlugins();
-          const registry =
-            mode === "active" ? loadPluginRegistryHandle({ config: fixture.cfg }) : undefined;
-          for (let index = 0; index < 4; index++) {
-            const result = await withPluginRuntimeRegistryScope(registry, fixture.prepare);
-            expect(result.directives.hasDirective).toBe(true);
+          try {
+            const registry =
+              mode === "active" ? loadPluginRegistryHandle({ config: fixture.cfg }) : undefined;
+            for (let index = 0; index < 4; index++) {
+              const result = await withPluginRuntimeRegistryScope(registry, fixture.prepare);
+              expect(result.directives.hasDirective).toBe(true);
+            }
+            expect(fixture.state.connections.length).toBe(1);
+            await fixture.host.close();
+            expect(fixture.state.connections[0]?.database.isOpen).toBe(true);
+            expect(fixture.state.connections[0]?.disposals).toBe(0);
+          } finally {
+            clearPluginMetadataLifecycleCaches();
+            const cleanup = await waitForPluginCacheRetirement();
+            expect(cleanup.failures).toEqual([]);
           }
-          expect(fixture.state.connections.length).toBe(1);
-          await fixture.host.close();
-          expect(fixture.state.connections[0]?.database.isOpen).toBe(true);
-          expect(fixture.state.connections[0]?.disposals).toBe(0);
-          if (registry) {
-            const lifecycle = registry.runtimeLifecycles.find(
-              (entry) => entry.lifecycle.id === "speech-preparation-resource",
-            );
-            await lifecycle?.lifecycle.cleanup?.({ reason: "restart" });
-            expect(fixture.state.connections[0]?.cleanups).toBe(1);
-          }
+          expect(fixture.state.connections[0]?.database.isOpen).toBe(false);
+          expect(fixture.state.connections[0]?.cleanups).toBe(1);
         });
       } finally {
         await fixture.cleanup();

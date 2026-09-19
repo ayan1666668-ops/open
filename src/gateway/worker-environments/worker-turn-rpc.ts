@@ -47,10 +47,10 @@ import type { WorkerSessionPlacementGate } from "./placement-worker-gate.js";
 import type { WorkerEnvironmentStore } from "./store.js";
 import type { WorkerTranscriptCommitOutcome } from "./transcript-commit-store.js";
 import type { WorkerTranscriptCommitApplication } from "./transcript-commit.js";
-import type { createWorkerSessionToolExecutor } from "./worker-session-tool-executor.js";
 import {
   serializeWorkerSessionToolResult,
   workerSessionToolErrorResult,
+  type WorkerSessionToolExecutor,
 } from "./worker-session-tool-result.js";
 import {
   createWorkerComputerRpc,
@@ -121,7 +121,7 @@ type WorkerTurnRpcOptions = {
   liveEvents?: Pick<WorkerLiveEventReceiver, "apply">;
   placementStore?: WorkerSessionPlacementGate;
   executeComputer?: WorkerComputerExecutor;
-  executeSessionTool?: ReturnType<typeof createWorkerSessionToolExecutor>;
+  executeSessionTool?: WorkerSessionToolExecutor;
   inference: ReturnType<typeof createWorkerInferenceManager>;
   isStopping: () => boolean;
   now: () => number;

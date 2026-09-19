@@ -4,7 +4,7 @@ import { createExecApprovalPolicySnapshot } from "../infra/exec-approvals.js";
 import type { scanInstalledApps } from "../infra/installed-apps.js";
 import type { OpenClawPluginNodeHostCommandIo } from "../plugins/types.js";
 import type { OpenClawPluginNodeHostCommandContext } from "../plugins/types.node-host.js";
-import type { NodeHostClient } from "./client.js";
+import type { NodeHostClient, NodeInvokeResponder } from "./client.js";
 import {
   decodeClaudeCliNodeRunParams,
   type ClaudeCliNodeRunParams,
@@ -17,7 +17,6 @@ import {
   resolveEffectiveSystemRunExecPolicy,
 } from "./invoke-system-run.js";
 import type { NodeInvokeRequestPayload, RunResult, SkillBinsProvider } from "./invoke-types.js";
-import type { NodeInvokeResponder } from "./invoke.js";
 
 export type NodeHostInvokeRuntime = {
   claudePath?: string;
