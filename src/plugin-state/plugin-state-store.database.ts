@@ -48,7 +48,7 @@ export function wrapPluginStateError(
   });
 }
 
-export function openPluginStateDatabase(
+function openPluginStateDatabase(
   operation: PluginStateStoreOperation = "open",
   options: OpenClawStateDatabaseOptions = {},
 ): PluginStateDatabase {
