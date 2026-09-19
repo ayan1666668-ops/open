@@ -59,12 +59,6 @@ type CapturedTrajectoryEvent = {
   workspaceDir?: string;
 };
 
-function normalizeMockProviderId(providerId?: string): string {
-  // Provider ids in mocked model routing follow the same lowercase normalization
-  // as production helpers.
-  return normalizeLowercaseStringOrEmpty(providerId);
-}
-
 type SessionManagerMocks = {
   getSessionTarget: Mock<() => undefined>;
   getAppendParentId: Mock<() => string | null>;
@@ -660,15 +654,15 @@ vi.mock("../../model-selection.js", () => ({
     if (!entries) {
       return undefined;
     }
-    const providerKey = normalizeMockProviderId(provider);
+    const providerKey = normalizeLowercaseStringOrEmpty(provider);
     for (const [key, value] of Object.entries(entries)) {
-      if (normalizeMockProviderId(key) === providerKey) {
+      if (normalizeLowercaseStringOrEmpty(key) === providerKey) {
         return value;
       }
     }
     return undefined;
   },
-  normalizeProviderId: normalizeMockProviderId,
+  normalizeProviderId: normalizeLowercaseStringOrEmpty,
   resolveDefaultModelForAgent: () => ({ provider: "openai", model: "gpt-test" }),
 }));
 
