@@ -1120,6 +1120,43 @@ describe("compaction-safeguard runtime registry", () => {
     expect(getCompactionSafeguardRuntime(sm)).toBeNull();
   });
 
+  it("does not enable semantic curation when the quality guard is explicitly disabled", () => {
+    const sessionManager = {} as unknown as Parameters<
+      typeof buildEmbeddedExtensionFactories
+    >[0]["sessionManager"];
+    const cfg = {
+      agents: {
+        defaults: {
+          compaction: {
+            mode: "safeguard",
+            qualityGuard: {
+              enabled: false,
+              semanticJudgments: {
+                enabled: true,
+                curateInput: true,
+              },
+            },
+          },
+        },
+      },
+    } as OpenClawConfig;
+
+    buildEmbeddedExtensionFactories({
+      cfg,
+      sessionManager,
+      provider: "anthropic",
+      modelId: "claude-3-opus",
+      model: {
+        contextWindow: 200_000,
+      } as Parameters<typeof buildEmbeddedExtensionFactories>[0]["model"],
+    });
+
+    const runtime = getCompactionSafeguardRuntime(sessionManager);
+    expect(runtime?.qualityGuardEnabled).toBe(false);
+    expect(runtime?.semanticJudgmentsEnabled).toBe(false);
+    expect(runtime?.semanticJudgmentCurationEnabled).toBe(false);
+  });
+
   it("wires oversized safeguard runtime values when config validation is bypassed", () => {
     const sessionManager = {} as unknown as Parameters<
       typeof buildEmbeddedExtensionFactories
