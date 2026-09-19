@@ -199,10 +199,6 @@ async function inspectContainerImage(
   throw new Error(`Failed to inspect sandbox image with ${engine.displayName}: ${stderr}`);
 }
 
-export async function ensureDockerImage(image: string) {
-  await ensureContainerImage(DOCKER_SANDBOX_ENGINE, image);
-}
-
 export async function ensureContainerImage(engine: SandboxContainerEngine, image: string) {
   const imageState = await inspectContainerImage(engine, image);
   if (imageState === "exists") {
@@ -523,6 +519,7 @@ type EnsureSandboxContainerParams = {
   workspaceDir: string;
   agentWorkspaceDir: string;
   skillsWorkspaceDir?: string;
+  readOnlyResourceMounts?: Array<{ hostPath: string; containerPath: string }>;
   cfg: SandboxConfig;
   requireCurrentConfig?: boolean;
 };
@@ -592,6 +589,7 @@ async function ensureSandboxContainerLifecycle(
     workspaceAccess: params.cfg.workspaceAccess,
     binds: params.cfg.docker.binds,
     tmpfs: params.cfg.docker.tmpfs,
+    readOnlyResourceMounts: params.readOnlyResourceMounts,
   });
   const genericConfigHash = computeSandboxConfigHash({
     docker: params.cfg.docker,
