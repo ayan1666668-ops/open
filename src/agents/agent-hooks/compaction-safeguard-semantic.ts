@@ -225,7 +225,7 @@ function buildSegments(params: {
           ...frame.occurrences.flatMap((occurrence) =>
             occurrence.sourceResultIndex === undefined ? [] : [occurrence.sourceResultIndex],
           ),
-        ].sort((a, b) => a - b)
+        ].toSorted((a, b) => a - b)
       : [index];
     const members = memberIndexes.flatMap((memberIndex) => {
       const message = params.messages[memberIndex];
@@ -266,7 +266,7 @@ function buildSegments(params: {
     segments.push({
       id: `segment-${memberIndexes[0] ?? index}`,
       sourceIndexes: memberIndexes,
-      roles: members.map((message) => String(message.role)),
+      roles: members.map((message) => message.role),
       text,
       originalChars: rendered.reduce((total, item) => total + item.originalChars, 0),
       protected: protectionReasons.size > 0,
