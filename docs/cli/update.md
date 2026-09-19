@@ -192,7 +192,8 @@ deferred-install activation checks.
 
 Post-core repair Doctor and `openclaw update finalize` run without a separate
 per-Doctor deadline unless the operator supplies `--timeout`. A fresh post-core
-process preserves that choice. Existing install, build, plugin-operation and
+process receives the operator choice separately from its internal step allowance.
+Older targets retain their existing allowance and deadline behavior. Existing install, build, plugin-operation and
 enclosing activation deadlines still apply. An explicit `--timeout <seconds>`
 limits each finalization phase and its child commands. Admission and config phases scale with shared SQLite state.
 Post-plugin config validation and readiness checks use the measured shared and
