@@ -561,6 +561,7 @@ async function stopManagedServiceBeforeMutableUpdate(
       env: currentState.env,
       stdout: params.jsonMode ? JSON_MODE_SERVICE_STDOUT : process.stdout,
       assertCurrent,
+      ...(updateRun ? { updateHandoff: { root: params.root, runId: updateRun.runId } } : {}),
       // Native stop may unload the service before a later port check fails.
       onMutation: () => params.onStopped?.({ ...inspected, stopped: true, stoppedAtMs }),
     });
