@@ -2425,13 +2425,14 @@ describe("runReplyAgent heartbeat followup guard", () => {
   });
 
   it.each(["reasoning", "commentary"] as const)(
-    "rethrows after %s-only block streaming",
+    "reports failure after visible %s-only block streaming",
     async (lane) => {
       const accounting = await import("./session-usage.js");
       const persistSpy = vi
         .spyOn(accounting, "persistSessionUsageUpdate")
         .mockRejectedValueOnce(new Error("persist exploded"));
       const onBlockReply = vi.fn();
+      const runState: ReplyOperationRunState = {};
       state.runEmbeddedAgentMock.mockImplementationOnce(async (params: AgentRunParams) => {
         await params.onBlockReply?.({
           text: `internal ${lane}`,
@@ -2448,12 +2449,17 @@ describe("runReplyAgent heartbeat followup guard", () => {
           blockStreamingEnabled: true,
           opts: {
             onBlockReply,
+            [REPLY_OPERATION_RUN_STATE]: runState,
             reasoningPayloadsEnabled: lane === "reasoning",
             commentaryPayloadsEnabled: lane === "commentary",
           },
         });
 
-        await expect(run()).rejects.toThrow("persist exploded");
+        await expect(run()).resolves.toMatchObject({
+          text: GENERIC_EXTERNAL_RUN_FAILURE_TEXT,
+          isError: true,
+        });
+        expect(resolveReplyOperationAgentTurn(runState)).toBe("failed");
         expect(onBlockReply).toHaveBeenCalledWith(
           expect.objectContaining({ text: `internal ${lane}` }),
           expect.any(Object),

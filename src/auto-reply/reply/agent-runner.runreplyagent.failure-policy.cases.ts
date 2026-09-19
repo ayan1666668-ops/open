@@ -4,6 +4,7 @@ import { FailoverError } from "../../agents/failover-error.js";
 import { GENERIC_EXTERNAL_RUN_FAILURE_TEXT } from "../../agents/failover/user-copy.js";
 import type { TemplateContext } from "../templating.js";
 import type { ReplyPayload } from "../types.js";
+import { setBlockReplyDelivery } from "./block-reply-delivery.js";
 import type { InternalGetReplyOptions } from "./get-reply.types.js";
 import type { FollowupRun } from "./queue.js";
 import { createReplyDispatcher } from "./reply-dispatcher.js";
@@ -14,6 +15,7 @@ import {
 } from "./reply-operation-run-state.js";
 
 type FailureRunParams = {
+  blockStreamingEnabled?: boolean;
   opts?: InternalGetReplyOptions;
   sessionCtx?: Partial<TemplateContext>;
   runOverrides?: Partial<FollowupRun["run"]>;
@@ -37,6 +39,7 @@ export function registerImmediateFailurePolicyCases({
       const runState: ReplyOperationRunState = {};
       const cfg = { agents: { defaults: { silentReply: { group: "allow" as const } } } };
       const { run } = createMinimalRun({
+        blockStreamingEnabled: params.blockStreamingEnabled,
         sessionCtx: {
           Provider: "discord",
           Surface: "discord",
@@ -127,6 +130,41 @@ export function registerImmediateFailurePolicyCases({
         ]);
         expect(fixture.delivered[0]?.text).not.toBe(GENERIC_EXTERNAL_RUN_FAILURE_TEXT);
         expect(fixture.delivered[0]?.text).not.toContain("private-provider-diagnostic");
+      },
+    );
+
+    it.each([
+      ["delivered", true],
+      ["channel-transform", false],
+    ] as const)(
+      "uses the %s direct-progress receipt for failure closure",
+      async (outcome, visible) => {
+        const progress: string[] = [];
+        state.runEmbeddedAgentMock.mockImplementationOnce(async (params: AgentRunParams) => {
+          await params.onBlockReply?.({ text: "Checking the request.", isCommentary: true });
+          throw new Error("opaque-private-runner-detail");
+        });
+        const fixture = createFailureRun({
+          blockStreamingEnabled: false,
+          opts: {
+            commentaryPayloadsEnabled: true,
+            onBlockReply: async (payload) => {
+              setBlockReplyDelivery(Promise.resolve({ outcome }), payload);
+              if (visible && payload.text) {
+                progress.push(payload.text);
+              }
+            },
+          },
+        });
+
+        const receipt = await fixture.run();
+
+        expect(progress).toEqual(visible ? ["Checking the request."] : []);
+        expect(receipt?.anyVisibleDelivered).toBe(visible);
+        expect(fixture.delivered).toEqual(
+          visible ? [expect.objectContaining({ isError: true, text: expect.any(String) })] : [],
+        );
+        expect(resolveReplyOperationAgentTurn(fixture.runState)).toBe("failed");
       },
     );
 

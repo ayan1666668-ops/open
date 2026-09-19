@@ -8,7 +8,7 @@ import {
 } from "../reply-payload.js";
 import { SILENT_REPLY_TOKEN } from "../tokens.js";
 import type { BlockReplyContext, ReplyPayload, ReplyThreadingPolicy } from "../types.js";
-import { deliverBlockReply, hasBlockReplyDeliveryCustody } from "./block-reply-delivery.js";
+import { deliverBlockReply } from "./block-reply-delivery.js";
 import type { BlockReplyPipeline } from "./block-reply-pipeline.js";
 import { parseReplyDirectives } from "./reply-directives.js";
 import { resolveReplyDispatchErrorOutcome } from "./reply-dispatch-outcome.js";
@@ -23,7 +23,7 @@ export type DirectBlockDelivery = Awaited<ReturnType<typeof deliverBlockReply>> 
   terminalDeliveryConfirmed?: true;
 };
 
-/** Visible or uncertain output needs a failure outcome, even if it was not a final answer. */
+/** Visible progress needs a failure outcome, but retained or suppressed sends are not visibility. */
 export async function resolveReplyFailureVisibility(
   resolveVisibleReplyDelivery: (() => Promise<boolean>) | undefined,
   directBlockDeliveries: readonly DirectBlockDelivery[],
@@ -32,8 +32,8 @@ export async function resolveReplyFailureVisibility(
     (await resolveVisibleReplyDelivery?.()) === true ||
     directBlockDeliveries.some(
       (delivery) =>
-        hasOutboundReplyContent(delivery.payload, { trimText: true }) &&
-        (delivery.outcome === "delivered" || hasBlockReplyDeliveryCustody(delivery)),
+        delivery.outcome === "delivered" &&
+        hasOutboundReplyContent(delivery.payload, { trimText: true }),
     )
   );
 }
