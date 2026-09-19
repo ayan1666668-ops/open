@@ -54,9 +54,11 @@ describe("config compaction settings", () => {
     ["omitted", undefined],
     ["false", false],
     ["true", true],
+    ["object-empty", {}],
     ["object-disabled", { enabled: false }],
     ["object-enabled", { enabled: true }],
     ["object-curation", { curateInput: true }],
+    ["object-disabled-curation", { enabled: false, curateInput: true }],
     ["object-enabled-curation", { enabled: true, curateInput: true }],
   ] as const)("preserves semanticJudgments compatibility form: %s", (_label, semanticJudgments) => {
     const compaction = materializeCompactionConfig({
