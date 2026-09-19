@@ -142,14 +142,14 @@ function messageOverflowRef(expanded: boolean, forwarded: boolean) {
     }
     const read = () => {
       if (generation !== currentGeneration) {
-        return;
+        return undefined;
       }
       const disclosure = element.parentElement;
       const toggle = disclosure?.querySelector<HTMLButtonElement>(
         ":scope > .chat-message-disclosure__toggle",
       );
       if (!disclosure || !toggle) {
-        return;
+        return undefined;
       }
       let clamp: string | undefined;
       let fadeSize: string | undefined;
