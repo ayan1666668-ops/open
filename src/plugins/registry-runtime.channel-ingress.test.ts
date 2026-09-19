@@ -5,19 +5,23 @@ import {
   configureChannelAdmissionEvidenceCollection,
   consumeChannelAdmissionEvidence,
   copyChannelParticipantAdmissionEvidence,
-  readChannelContextGatewayContextResolver,
   readChannelContextAdmissionEvidence,
+  readChannelContextGatewayContextResolver,
 } from "../channels/message-access/admission-evidence.js";
 import type { ResolvedChannelMessageIngress } from "../channels/message-access/runtime-types.js";
 import { resolveStableChannelMessageIngress } from "../channels/message-access/runtime.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
-import type { GatewayContextResolver } from "../gateway/server-methods/types.js";
+import type {
+  GatewayContextResolver,
+  GatewayRequestContext,
+} from "../gateway/server-methods/types.js";
 import type { PluginOrigin } from "./plugin-origin.types.js";
 import { markPluginRegistryActive, markPluginRegistryRetired } from "./registry-lifecycle.js";
 import { createPluginRegistry } from "./registry.js";
 import {
   bindGatewayContextResolver,
   getCanonicalGatewayContextResolver,
+  hasGatewayContextOwner,
 } from "./runtime/gateway-request-scope.js";
 import { createPluginRuntime } from "./runtime/index.js";
 import type { PluginRuntime } from "./runtime/types.js";
@@ -26,10 +30,11 @@ import { createPluginRecord } from "./status.test-fixtures.js";
 function createRuntimeBuilder(params: {
   origin: PluginOrigin;
   id?: string;
-  gatewayResolver?: GatewayContextResolver;
+  trustedOfficialInstall?: boolean;
+  gatewayContextResolver?: GatewayContextResolver;
 }) {
-  const subagent = {};
-  bindGatewayContextResolver(subagent, params.gatewayResolver);
+  const subagent = {} as PluginRuntime["subagent"];
+  bindGatewayContextResolver(subagent, params.gatewayContextResolver);
   const registryBuilder = createPluginRegistry({
     logger: { info() {}, warn() {}, error() {}, debug() {} },
     runtime: {
@@ -41,6 +46,7 @@ function createRuntimeBuilder(params: {
   const record = createPluginRecord({
     id: params.id ?? "channel-owner",
     origin: params.origin,
+    trustedOfficialInstall: params.trustedOfficialInstall,
   });
   const api = registryBuilder.createApi(record, {
     config: {} as OpenClawConfig,
@@ -149,18 +155,39 @@ function inspect(context: object) {
 }
 
 describe("bundled channel ingress runtime ownership", () => {
+  it.each(["bundled", "global", "config"] as const)(
+    "retains the host Gateway resolver for a trusted %s channel ingress",
+    async (origin) => {
+      const gatewayContext = {} as GatewayRequestContext;
+      const gatewayContextResolver = vi.fn(() => gatewayContext);
+      const channel = createRuntimeBuilder({
+        origin,
+        trustedOfficialInstall: origin !== "bundled",
+        gatewayContextResolver,
+      });
+      const ingress = await resolveIngress("person-a");
+      const context = channel.buildContext(contextParams({ ingress }));
+
+      const retainedResolver = readChannelContextGatewayContextResolver(context);
+      expect(retainedResolver?.()).toBe(gatewayContext);
+      expect(hasGatewayContextOwner(retainedResolver!, gatewayContextResolver)).toBe(true);
+      markPluginRegistryRetired(channel.registryBuilder.registry);
+      expect(retainedResolver?.()).toBeUndefined();
+    },
+  );
+
   it.each(["retired", "replaced"] as const)(
     "revokes copied Gateway resolution when the channel is %s while Gateway remains live",
     async (lifecycle) => {
       // A typed sentinel observes callback invocation without a fabricated Gateway context.
       const gatewayReached = new Error("Live Gateway resolver reached");
-      const gatewayResolver: GatewayContextResolver = () => {
+      const gatewayContextResolver: GatewayContextResolver = () => {
         throw gatewayReached;
       };
       const first = createRuntimeBuilder({
         origin: "bundled",
         id: "gateway-channel-owner",
-        gatewayResolver,
+        gatewayContextResolver,
       });
       const ingress = await resolveIngress("person-a", { channelId: first.record.id });
       const context = first.buildContext(contextParams({ ingress, channelId: first.record.id }));
@@ -171,13 +198,13 @@ describe("bundled channel ingress runtime ownership", () => {
       if (!retained) {
         throw new Error("Expected registered channel Gateway resolution");
       }
-      expect(getCanonicalGatewayContextResolver(retained)).toBe(gatewayResolver);
+      expect(getCanonicalGatewayContextResolver(retained)).toBe(gatewayContextResolver);
       if (lifecycle === "retired") {
         markPluginRegistryRetired(first.registryBuilder.registry);
       } else {
-        createRuntimeBuilder({ origin: "bundled", id: first.record.id, gatewayResolver });
+        createRuntimeBuilder({ origin: "bundled", id: first.record.id, gatewayContextResolver });
       }
-      expect(gatewayResolver).toThrow(gatewayReached);
+      expect(gatewayContextResolver).toThrow(gatewayReached);
       expect(retained()).toBeUndefined();
     },
   );
@@ -269,7 +296,8 @@ describe("bundled channel ingress runtime ownership", () => {
 
   it("defers and preserves the exact active runtime across an inactive prepared load", async () => {
     let channelReads = 0;
-    const channel = { inbound: { buildContext: buildChannelInboundEventContext } };
+    const inbound = { buildContext: buildChannelInboundEventContext, dispatch: vi.fn() };
+    const channel = { inbound, turn: inbound };
     const runtime = Object.defineProperty({} as PluginRuntime, "channel", {
       configurable: true,
       get: () => {
@@ -322,13 +350,15 @@ describe("bundled channel ingress runtime ownership", () => {
     const registeredRuntime = registryBuilder.registry.channels[0]?.resolveChannelRuntime?.();
     expect(registeredRuntime).toBeDefined();
     expect(channelReads).toBe(1);
+    expect(registeredRuntime!.turn).toBe(registeredRuntime!.inbound);
+    expect(registeredRuntime!.turn.dispatch).toBe(inbound.dispatch);
 
     const cleanup = configureChannelAdmissionEvidenceCollection(true);
     try {
       const ingress = await resolveIngress("person-a", { channelId: "deferred-channel" });
       expect(
         inspect(
-          registeredRuntime!.inbound.buildContext(
+          registeredRuntime!.turn.buildContext(
             contextParams({ ingress, channelId: "deferred-channel" }),
           ),
         ),
