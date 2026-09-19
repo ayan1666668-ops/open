@@ -1,18 +1,16 @@
 import { createHash } from "node:crypto";
-import { existsSync, realpathSync } from "node:fs";
-import type { DatabaseSync } from "node:sqlite";
+import { existsSync } from "node:fs";
 import { deserialize, serialize } from "node:v8";
 import { Worker } from "node:worker_threads";
 import { asOptionalRecord } from "@openclaw/normalization-core/record-coerce";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { trackSqliteStatementExecutions } from "../../test/helpers/sqlite-statement-execution-counter.js";
+import {
+  observeHostDataSql,
+  trackSqliteStatementExecutions,
+} from "../../test/helpers/sqlite-statement-execution-counter.js";
 import { requireNodeSqlite } from "../infra/node-sqlite.js";
 import { SQLITE_WORKER_MAX_RESULT_BYTES } from "../infra/sqlite-worker-contract.js";
-import {
-  acquireStateDatabaseCoordinator,
-  captureStateDatabaseCoordinatorRuntime,
-  resolveStateDatabaseCoordinatorPath,
-} from "../infra/state-database-coordinator.js";
+import { acquireStateDatabaseCoordinator } from "../infra/state-database-coordinator.js";
 import {
   appendMemoryHostEvent,
   readMemoryHostEventRecords,
@@ -29,27 +27,6 @@ import {
 } from "./plugin-state-store.js";
 import { seedPluginStateEntriesForTests } from "./plugin-state-store.test-helpers.js";
 import { PluginStateStoreError } from "./plugin-state-store.types.js";
-
-function observeNonCoordinatorExec() {
-  const native = requireNodeSqlite();
-  const coordinatorPath = resolveStateDatabaseCoordinatorPath({
-    databasePath: resolveOpenClawStateSqlitePath(),
-    runtimeDirectory: captureStateDatabaseCoordinatorRuntime().directory,
-    uid: process.getuid?.(),
-  });
-  const dataExec = vi.fn();
-  const spy = vi.spyOn(native.DatabaseSync.prototype, "exec");
-  native.DatabaseSync.prototype.exec = function (this: DatabaseSync, sql: string) {
-    // Lifecycle admission uses its separate control database; plugin-state SQL
-    // must still stay off-thread, including raw exec calls and unknown locations.
-    const location = this.location();
-    if (!location || realpathSync(location) !== realpathSync(coordinatorPath)) {
-      dataExec(sql);
-    }
-    return spy.call(this, sql);
-  };
-  return { dataExec, restore: () => spy.mockRestore() };
-}
 
 afterEach(async () => {
   vi.restoreAllMocks();
@@ -125,15 +102,8 @@ describe("worker plugin state", () => {
         resultCount: 0,
         results: [],
       };
-      const native = requireNodeSqlite();
-      const exec = observeNonCoordinatorExec();
-      const sql = [
-        vi.spyOn(native.DatabaseSync.prototype, "prepare"),
-        exec.dataExec,
-        ...(["get", "all", "run", "iterate"] as const).map((method) =>
-          vi.spyOn(native.StatementSync.prototype, method),
-        ),
-      ];
+      const observation = observeHostDataSql(state.env);
+      const sql = observation.calls;
       const timings: Record<string, number> = {};
       try {
         expect(await readMemoryHostEventRecords({ workspaceDir, env: state.env })).toEqual([]);
@@ -164,8 +134,7 @@ describe("worker plugin state", () => {
           expect(method).not.toHaveBeenCalled();
         }
       } finally {
-        sql.forEach((method) => method.mockRestore());
-        exec.restore();
+        observation.restore();
       }
       const { db } = openOpenClawStateDatabase({ env: state.env });
       const rows = db
@@ -241,13 +210,8 @@ describe("worker plugin state", () => {
         maxEntries: 10,
         overflowPolicy: "reject-new" as const,
       };
-      const native = requireNodeSqlite();
-      const prepare = vi.spyOn(native.DatabaseSync.prototype, "prepare");
-      const exec = observeNonCoordinatorExec();
-      const statements = (["get", "all", "run", "iterate"] as const).map((method) =>
-        vi.spyOn(native.StatementSync.prototype, method),
-      );
-      const sql = [prepare, exec.dataExec, ...statements];
+      const observation = observeHostDataSql();
+      const sql = observation.calls;
       try {
         const store = createPluginStateKeyedStore<number>("slack", options);
         const legacy = createPluginStateSyncKeyedStore<number>("slack", options);
@@ -307,8 +271,7 @@ describe("worker plugin state", () => {
           expect(method).not.toHaveBeenCalled();
         }
       } finally {
-        sql.forEach((method) => method.mockRestore());
-        exec.restore();
+        observation.restore();
       }
       const persisted = createPluginStateSyncKeyedStore<number>("slack", options);
       expect(persisted.lookup("legacy")).toBe(1);
