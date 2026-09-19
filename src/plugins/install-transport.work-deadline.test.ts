@@ -69,7 +69,7 @@ describe("plugin transport work deadlines", () => {
       });
       expect(result.ok).toBe(true);
       expect(transport.archive).toHaveBeenCalledOnce();
-      expect(transport.archive.mock.calls[0][0].workTimeoutMs).toBe(workTimeoutMs);
+      expect(transport.archive).toHaveBeenCalledWith(expect.objectContaining({ workTimeoutMs }));
       expect(transport.metadata).toHaveBeenCalledWith(expect.objectContaining({ timeoutMs: 1000 }));
       expect(transport.download).toHaveBeenCalledWith(expect.objectContaining({ timeoutMs: 1000 }));
       expect(transport.cleanup).toHaveBeenCalledOnce();
@@ -99,10 +99,12 @@ describe("plugin transport work deadlines", () => {
         });
         expect(result.ok).toBe(true);
         expect(transport.directory).toHaveBeenCalledOnce();
-        const request = transport.directory.mock.calls[0][0];
-        expect(request.workTimeoutMs).toBe(workTimeoutMs);
-        expect(request.timeoutMs).toBe(1000);
-        expect(request.trustedSourceLinkedOfficialInstall).toBeUndefined();
+        expect(transport.directory).toHaveBeenCalledWith(
+          expect.objectContaining({ workTimeoutMs, timeoutMs: 1000 }),
+        );
+        expect(
+          transport.directory.mock.calls[0]?.[0].trustedSourceLinkedOfficialInstall,
+        ).toBeUndefined();
       });
     },
   );

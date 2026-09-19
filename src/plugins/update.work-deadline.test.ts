@@ -1,8 +1,12 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { updateFinalizeCommand } from "../cli/update-cli/update-command-finalize.js";
 import { convergePostCoreUpdatePlugins } from "../cli/update-cli/update-command-resume.js";
+import { UpdateFinalizationLifecycle } from "../cli/update-cli/update-finalization-lifecycle.js";
+import * as temporaryState from "../infra/tmp-openclaw-dir.js";
 import type { CommandOptions } from "../process/exec.js";
+import { defaultRuntime } from "../runtime.js";
 import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
 import { loadInstalledPluginIndexInstallRecords } from "./installed-plugin-index-records.js";
 import { seedInstalledPluginIndex } from "./test-helpers/installed-plugin-index.js";
@@ -51,13 +55,25 @@ const fixture = vi.hoisted(() => ({
   events: "",
   delay: 1500,
   mode: "",
+  root: "",
+  entrypoint: "",
   calls: [] as { argv: string[]; timeoutMs: number | undefined }[],
+}));
+vi.mock("../cli/update-cli/shared.js", async (original) => ({
+  ...(await original<typeof import("../cli/update-cli/shared.js")>()),
+  resolveUpdateRoot: async () => fixture.root,
+}));
+vi.mock("../daemon/gateway-entrypoint.js", () => ({
+  resolveGatewayInstallEntrypoint: async () => fixture.entrypoint,
 }));
 vi.mock("../process/exec.js", async (original) => {
   const actual = await original<typeof import("../process/exec.js")>();
   return {
     ...actual,
     runCommandWithTimeout: (argv: string[], options: CommandOptions) => {
+      if (argv[0] === "git") {
+        return actual.runCommandWithTimeout(argv, options);
+      }
       if (argv[0] !== "npm") {
         throw new Error(`Unexpected fixture command ${argv[0]}`);
       }
@@ -77,6 +93,7 @@ vi.mock("../process/exec.js", async (original) => {
   };
 });
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.unstubAllEnvs();
 });
 
@@ -87,6 +104,9 @@ describe("post-core plugin work deadlines", () => {
     "explicit-expiry",
     "direct-omission",
     "direct-fallback",
+    "finalize-ordinary",
+    "finalize-larger-explicit",
+    "finalize-explicit-expiry",
   ] as const)("%s", async (scenario) => {
     await withOpenClawTestState(
       { label: `post-core-budget-${scenario}`, env: { OPENCLAW_DISABLE_BUNDLED_PLUGINS: "1" } },
@@ -95,9 +115,13 @@ describe("post-core plugin work deadlines", () => {
         fixture.events = state.path("events.jsonl");
         fixture.calls = [];
         const allowance = 1000;
-        fixture.delay = 1500;
+        fixture.delay = 1800;
         fixture.mode = scenario === "direct-fallback" ? "first-metadata-miss" : "";
         const direct = scenario.startsWith("direct-");
+        const finalize = scenario.startsWith("finalize-");
+        const expires = scenario.endsWith("explicit-expiry");
+        const larger = scenario.endsWith("larger-explicit");
+        const report = vi.spyOn(defaultRuntime, "writeJson").mockImplementation(() => undefined);
         vi.stubEnv("NPM_CONFIG_GLOBALCONFIG", await state.writeText("global-npmrc", ""));
         const oldPath = state.statePath("extensions", "budget-fixture");
         await fs.mkdir(oldPath, { recursive: true });
@@ -135,12 +159,44 @@ describe("post-core plugin work deadlines", () => {
         };
         await state.writeConfig(cfg);
         await seedInstalledPluginIndex(records, { config: cfg, env: state.env });
-        const explicit =
-          scenario === "larger-explicit"
-            ? String((allowance * 3) / 1000)
-            : scenario === "explicit-expiry"
-              ? String(allowance / 1000)
-              : undefined;
+        const explicit = larger
+          ? String((allowance * 3) / 1000)
+          : expires
+            ? String(allowance / 1000)
+            : undefined;
+        if (finalize) {
+          fixture.root = state.workspaceDir;
+          const control = state.path("control");
+          await fs.mkdir(control, { mode: 0o700 });
+          vi.spyOn(temporaryState, "resolvePreferredOpenClawTmpDir").mockReturnValue(control);
+          fixture.entrypoint = await state.writeText(
+            "doctor.cjs",
+            `const fs = require('node:fs');
+const event = kind => fs.appendFileSync(${JSON.stringify(fixture.events)}, JSON.stringify({kind, pid:process.pid, command:process.argv[2], at:Date.now()}) + '\\n');
+event('start');
+if (process.argv[2] === 'doctor' && process.argv.includes('--lint')) {
+  process.stdout.write(JSON.stringify({ok:true, checksRun:1, checksSkipped:0, findings:[]}));
+} else if (process.argv[2] !== 'doctor' && process.argv[2] !== 'config') {
+  throw new Error('Unexpected fixture command');
+}
+event('complete');\n`,
+          );
+          const budget = UpdateFinalizationLifecycle.prototype.budget;
+          vi.spyOn(UpdateFinalizationLifecycle.prototype, "budget").mockImplementation(
+            function (this: UpdateFinalizationLifecycle, phase) {
+              return phase === "plugins" && explicit === undefined
+                ? allowance
+                : budget.call(this, phase);
+            },
+          );
+          await updateFinalizeCommand({
+            json: true,
+            yes: true,
+            timeout: explicit,
+            acceptCapabilities: true,
+            deferCompletionCache: true,
+          });
+        }
         const directResult = direct
           ? await updateNpmInstalledPlugins({
               config: { ...cfg, plugins: { ...cfg.plugins, installs: records } },
@@ -150,16 +206,17 @@ describe("post-core plugin work deadlines", () => {
               onCapabilityConsent: async (review) => ({ reviewToken: review.reviewToken }),
             })
           : undefined;
-        const convergence = direct
-          ? undefined
-          : await convergePostCoreUpdatePlugins({
-              root: state.workspaceDir,
-              channel: "stable",
-              requestedChannel: null,
-              opts: { json: true, timeout: explicit, acceptCapabilities: true },
-              timeoutMs: scenario === "larger-explicit" ? allowance * 3 : allowance,
-              parentOwnsCompletion: true,
-            });
+        const convergence =
+          direct || finalize
+            ? undefined
+            : await convergePostCoreUpdatePlugins({
+                root: state.workspaceDir,
+                channel: "stable",
+                requestedChannel: null,
+                opts: { json: true, timeout: explicit, acceptCapabilities: true },
+                timeoutMs: larger ? allowance * 3 : allowance,
+                parentOwnsCompletion: true,
+              });
         const events: Array<{ kind: string; pid: number; command: string; planning: boolean }> = (
           await fs.readFile(fixture.events, "utf8")
         )
@@ -184,10 +241,30 @@ describe("post-core plugin work deadlines", () => {
           ? JSON.parse(await fs.readFile(path.join(installedPath, "package.json"), "utf8")).version
           : undefined;
         expect(alive).toEqual([]);
-        const installed = outcomes.find((o) => o.pluginId === "budget-fixture");
-        if (scenario === "explicit-expiry") {
-          expect(installed?.status).toBe("error");
-          expect(installed?.message).toContain("timeout");
+        const expectedOutcome = expect.objectContaining({
+          pluginId: "budget-fixture",
+          status: expires ? "error" : "updated",
+          ...(expires ? { message: expect.stringContaining("timeout") } : {}),
+        });
+        if (finalize) {
+          expect(report).toHaveBeenCalledWith(
+            expect.objectContaining({
+              mode: "finalize",
+              postUpdate: expect.objectContaining({
+                plugins: expect.objectContaining({
+                  npm: expect.objectContaining({
+                    outcomes: expect.arrayContaining([expectedOutcome]),
+                  }),
+                }),
+              }),
+            }),
+          );
+          expect(events.some((e) => e.kind === "complete" && e.command === "doctor")).toBe(true);
+          expect(events.some((e) => e.kind === "complete" && e.command === "config")).toBe(true);
+        } else {
+          expect(outcomes).toEqual(expect.arrayContaining([expectedOutcome]));
+        }
+        if (expires) {
           expect(installedVersion).toBe("1.0.0");
           expect(
             JSON.parse(await fs.readFile(path.join(oldPath, "package.json"), "utf8")).version,
@@ -196,7 +273,6 @@ describe("post-core plugin work deadlines", () => {
             events.some((e) => e.kind === "complete" && e.command === "install" && !e.planning),
           ).toBe(false);
         } else {
-          expect(installed?.status).toBe("updated");
           expect(installedVersion).toBe("2.0.0");
           expect(
             events.some((e) => e.kind === "complete" && e.command === "install" && !e.planning),
@@ -205,6 +281,15 @@ describe("post-core plugin work deadlines", () => {
         const metadataCalls = fixture.calls.filter((call) => call.argv[1] === "view");
         expect(metadataCalls.length).toBeGreaterThan(0);
         expect(metadataCalls.every((call) => Number.isFinite(call.timeoutMs))).toBe(true);
+        const workCalls = fixture.calls.filter(
+          (call) => call.argv[1] === "install" && !call.argv.includes("--package-lock-only"),
+        );
+        expect(workCalls.length).toBeGreaterThan(0);
+        expect(
+          workCalls.every(
+            (call) => call.timeoutMs === (explicit ? Number(explicit) * 1000 : undefined),
+          ),
+        ).toBe(true);
         if (scenario === "direct-fallback") {
           expect(events.some((event) => event.kind === "unavailable")).toBe(true);
         }
