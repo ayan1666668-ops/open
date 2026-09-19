@@ -8,6 +8,7 @@ import {
 } from "../../../packages/tool-call-repair/src/grammar.js";
 import { stripPlainTextToolCallBlocks } from "../../../packages/tool-call-repair/src/index.js";
 import { findCodeRegions, isInsideCode, stripLinesOutsideCode } from "./code-regions.js";
+import { isGlmArgPayload } from "./glm-arg-key-payload.js";
 import { stripModelSpecialTokens } from "./model-special-tokens.js";
 import { stripReasoningTagsFromText } from "./reasoning-tags.js";
 import {
@@ -16,6 +17,11 @@ import {
   trimTextFilter,
   type TextFilter,
 } from "./text-projection.js";
+import {
+  createQuotedStringScanner,
+  parseXmlTagAt,
+  type ParsedToolCallTag,
+} from "./xml-tag-at.js";
 
 const MEMORY_TAG_RE = /<\s*(\/?)\s*relevant[-_]memories\b[^<>]*>/gi;
 const MEMORY_TAG_QUICK_RE = /<\s*\/?\s*relevant[-_]memories\b/i;
@@ -55,78 +61,9 @@ const TOOL_CALL_JSON_PAYLOAD_START_RE =
   /^(?:\s+[A-Za-z_:][-A-Za-z0-9_:.]*\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+))*\s*(?:\r?\n\s*)?[[{]/;
 const TOOL_CALL_XML_PAYLOAD_START_RE =
   /^\s*(?:\r?\n\s*)?<(?:antml:)?(?:function_call|tool_call|function|invoke|parameters?|arguments?)\b/i;
-const GLM_TOOL_NAME_RE = /^[A-Za-z_][\w./:-]*/;
-const GLM_ARG_KEY = "arg_key";
 const NESTED_JSON_TOOL_CALL_PAYLOAD_START_RE = /^\s*(?:\r?\n\s*)?<(?:function_call|tool_call)\b/i;
 
 type ToolCallPayloadKind = "json" | "xml" | null;
-
-function createQuotedStringScanner(text: string, start: number): (end: number) => boolean {
-  let quoteChar: "'" | '"' | null = null;
-  let isEscaped = false;
-  // Candidate closing tags share one monotonic scan through their payload.
-  let cursor = start;
-  return (end) => {
-    for (; cursor < end; cursor += 1) {
-      const char = text[cursor];
-      if (quoteChar === null) {
-        if (char === '"' || char === "'") {
-          quoteChar = char;
-        }
-      } else if (isEscaped) {
-        isEscaped = false;
-      } else if (char === "\\") {
-        isEscaped = true;
-      } else if (char === quoteChar) {
-        quoteChar = null;
-      }
-    }
-    return quoteChar !== null;
-  };
-}
-
-interface ParsedToolCallTag {
-  contentStart: number;
-  end: number;
-  isClose: boolean;
-  isSelfClosing: boolean;
-  tagName: string;
-  isTruncated: boolean;
-}
-
-// Match only the tag head; quote-aware scanning owns the close boundary.
-const XML_TAG_HEAD_RE = /<\s*(?:(\/)\s*)?([A-Za-z_:][A-Za-z0-9_.:-]*)(?=$|[\s/>])/y;
-
-function parseXmlTagAt(text: string, start: number): ParsedToolCallTag | null {
-  XML_TAG_HEAD_RE.lastIndex = start;
-  const match = XML_TAG_HEAD_RE.exec(text);
-  if (!match) {
-    return null;
-  }
-  const contentStart = XML_TAG_HEAD_RE.lastIndex;
-  const isClose = match[1] === "/";
-  const closeIndex = findTagCloseIndex(text, contentStart);
-  const isTruncated = closeIndex === -1;
-  return {
-    contentStart,
-    end: isTruncated ? text.length : closeIndex + 1,
-    isClose,
-    isSelfClosing: !isTruncated && !isClose && /\/\s*$/.test(text.slice(contentStart, closeIndex)),
-    tagName: normalizeLowercaseStringOrEmpty(match[2]),
-    isTruncated,
-  };
-}
-
-function findTagCloseIndex(text: string, start: number): number {
-  const isInsideQuote = createQuotedStringScanner(text, start);
-  for (let idx = start; idx < text.length; idx += 1) {
-    const char = text[idx];
-    if ((char === "<" || char === ">") && !isInsideQuote(idx)) {
-      return char === ">" ? idx : -1;
-    }
-  }
-  return -1;
-}
 
 function detectToolCallPayloadKind(
   text: string,
@@ -144,66 +81,6 @@ function detectToolCallPayloadKind(
     return "xml";
   }
   return null;
-}
-
-// Hold a <tool_call> tool-name / whitespace / partial <arg_key> prefix until
-// classified. Name-only and whitespace-only prefixes are stream-only: a later
-// replacement cannot unsay an emitted prefix, but a finished answer ending
-// `Use <tool_call>exec` is literal prose.
-function isGlmArgPayload(rest: string, streaming: boolean): boolean {
-  const name = GLM_TOOL_NAME_RE.exec(rest)?.[0];
-  if (!name) {
-    return false;
-  }
-  const start = skipWhitespace(rest, name.length);
-  if (start === rest.length) {
-    return streaming;
-  }
-  const open = parseXmlTagAt(rest, start);
-  if (!open) {
-    return /^<\s*$/.test(rest.slice(start));
-  }
-  if (open.isClose || open.isSelfClosing || !isGlmArgKeyTag(rest, open)) {
-    return false;
-  }
-  if (open.isTruncated) {
-    return true;
-  }
-  // Only this first key's own close establishes a payload. Never borrow a
-  // matching tag from later prose or code examples.
-  const keyStart = skipWhitespace(rest, open.end);
-  let cursor = keyStart;
-  while (cursor < rest.length && !/[\s<]/.test(rest.charAt(cursor))) {
-    cursor += 1;
-  }
-  // GLM trims formatting whitespace around keys. A leading-space prefix is
-  // ambiguous with literal `<arg_key> prose` until this first key's own close.
-  if (cursor > keyStart) {
-    cursor = skipWhitespace(rest, cursor);
-  }
-  if (cursor === rest.length) {
-    return keyStart === open.end || streaming;
-  }
-  if (keyStart > open.end && cursor === keyStart) {
-    return false;
-  }
-  // A malformed provider close can omit `>` before the outer wrapper. Parse
-  // that bounded fragment too, without searching past this first key's close.
-  const nextTagStart = rest.indexOf("<", cursor + 1);
-  const close =
-    parseXmlTagAt(rest, cursor) ??
-    (nextTagStart === -1 ? null : parseXmlTagAt(rest.slice(0, nextTagStart), cursor));
-  if (!close) {
-    return /^<(?:\/\s*)?$/.test(rest.slice(cursor));
-  }
-  return close.isClose && isGlmArgKeyTag(rest, close);
-}
-
-function isGlmArgKeyTag(text: string, tag: ParsedToolCallTag): boolean {
-  return (
-    tag.tagName === GLM_ARG_KEY ||
-    (tag.isTruncated && GLM_ARG_KEY.startsWith(tag.tagName) && tag.contentStart === text.length)
-  );
 }
 
 function startsWithNestedJsonToolCallPayload(text: string, start: number): boolean {
