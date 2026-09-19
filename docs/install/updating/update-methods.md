@@ -224,8 +224,10 @@ on their maintenance tick. If the running and installed builds differ, the
 Gateway records the replacement, stops accepting new work, and gives active work
 its existing bounded shutdown window before handing over to its service manager.
 A foreground Gateway exits with instructions to run `openclaw gateway run` again.
-Status and Doctor report the replacement while the Gateway drains;
-`openclaw gateway status --deep` retains the recorded shutdown reason afterward.
+Status and Doctor report the replacement while the Gateway drains. Afterward,
+`openclaw gateway status --deep`, `openclaw update status`, and Doctor show the
+recorded replacement as historical information until the next Gateway shutdown.
+This record does not by itself confirm that the new Gateway is healthy.
 If a reply's delivery module disappears before sending starts, the reply remains
 eligible for recovery instead of being treated as an uncertain send.
 This recovery cannot prevent every failure during a package manager's in-place
