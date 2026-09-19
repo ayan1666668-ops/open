@@ -486,7 +486,11 @@ export async function acceptTriageContinuation(): Promise<
         !lease ||
         !process.connected ||
         process.ppid !== parent.pid ||
-        !store.owns(lease, "executor")
+        !store.owns(lease, "executor") ||
+        (lease.action.kind === "triage" &&
+          lease.action.lifetime.kind === "native" &&
+          (lease.action.lifetime.placement.kind !== "attached" ||
+            !store.isInNativeScope(lease.action.lifetime)))
       ) {
         cancel();
       }

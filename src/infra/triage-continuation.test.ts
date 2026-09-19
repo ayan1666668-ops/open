@@ -814,3 +814,56 @@ fs.readFileSync = function(file, ...args) {
     }
   },
 );
+
+unix.each([
+  { format: "v2 foreign path", membership: "0::/foreign.scope\n" },
+  { format: "v1 suffix lookalike", membership: "7:name=systemd:/prefix$GROUP\n" },
+  { format: "v1 descendant", membership: "7:name=systemd:$GROUP/child\n" },
+])(
+  "revokes admitted continuation after $format placement loss before its fixer effect",
+  async ({ membership }) => {
+    const boundary = await createTriageBoundary("startup", undefined, undefined, async (root) => {
+      const candidate = path.join(root, "candidate.mjs");
+      const marker = path.join(root, "placement-lost");
+      const code = await fs.readFile(candidate, "utf8");
+      await fs.writeFile(
+        candidate,
+        code.replace(
+          "event('fixer', {failure:admission.failure});",
+          `event('admitted');
+fs.writeFileSync(${JSON.stringify(marker)}, '');
+admission.assertCurrent();
+event('fixer', {failure:admission.failure});`,
+        ),
+      );
+      await fs.appendFile(
+        path.join(root, "placement.cjs"),
+        `
+const currentRead = fs.readFileSync;
+fs.readFileSync = function(file, ...args) {
+  const value = currentRead.call(this, file, ...args);
+  if (file !== '/proc/self/cgroup' || process.argv[1] !== root + '/candidate.mjs' ||
+      !fs.existsSync(${JSON.stringify(marker)})) return value;
+  event('placement-lost');
+  return ${JSON.stringify(membership)}.replaceAll('$GROUP', value.trim().slice(3));
+};
+`,
+      );
+    });
+    cleanups.push(() => boundary.cleanup());
+    expect(await boundary.response(), boundary.stderr()).toBe("OPENCLAW_UPDATE_HANDOFF_READY");
+    expect(await boundary.control("commit")).toBe("committed");
+    await vi.waitFor(
+      async () => {
+        const events = await boundary.readEvents();
+        expect(events.filter((event) => event.kind === "admitted")).toHaveLength(1);
+        expect(events.some((event) => event.kind === "placement-lost")).toBe(true);
+        expect(events.filter((event) => event.kind === "fixer")).toHaveLength(0);
+        expect(events.filter((event) => event.kind === "branch")).toHaveLength(0);
+      },
+      { timeout: 15_000 },
+    );
+    await boundary.exit;
+    expect((await boundary.readEvents()).filter((event) => event.kind === "fixer")).toHaveLength(0);
+  },
+);
