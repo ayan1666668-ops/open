@@ -85,6 +85,14 @@ Native Windows uses Crabbox's authenticated VNC service and its password file at
 
 Warm-image reuse remains Linux only. Native desktops use cold provisioning even when the shared profile enables warm images. macOS also requires existing EC2 Mac Dedicated Host capacity in the selected provider region.
 
+Before downgrading to a version without native desktop support, stop and release
+all macOS and native Windows worker environments, including primary session
+placements and conversation attachments. Wait for confirmed lease teardown;
+closing the viewer or suspending a worker is not sufficient. Older Gateways can
+reject persisted Windows password paths or discard the macOS account metadata
+needed for authentication. Confirmed teardown clears the desktop descriptor so
+those records can be read by the older version.
+
 ## Desktop size
 
 Open **Systems** in the Control UI sidebar to select a worker and use its desktop
