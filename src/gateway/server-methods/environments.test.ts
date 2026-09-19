@@ -633,7 +633,10 @@ describe("environment gateway methods", () => {
     );
 
     expect(ok).toBe(true);
-    expect(create).toHaveBeenCalledWith("development", "request-1");
+    expect(create).toHaveBeenCalledWith({
+      profileId: "development",
+      idempotencyKey: "request-1",
+    });
     expect(payload).toMatchObject({
       id: "worker-1",
       type: "worker",

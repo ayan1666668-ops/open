@@ -777,14 +777,12 @@ it.each([
     const attaching = createDeferredCore();
     const attached = createDeferredCore();
     let dispatchSignal: AbortSignal | undefined;
-    vi.mocked(harness.environments.create).mockImplementationOnce(
-      async (_profile, _key, _machine, _mode, _project, signal) => {
-        dispatchSignal = signal;
-        provisioning.resolve();
-        await provisioned.promise;
-        return harness.ready;
-      },
-    );
+    vi.mocked(harness.environments.create).mockImplementationOnce(async ({ signal }) => {
+      dispatchSignal = signal;
+      provisioning.resolve();
+      await provisioned.promise;
+      return harness.ready;
+    });
     if (advance === "syncing") {
       const attach = harness.environments.attachSession;
       harness.environments.attachSession = vi.fn(async (request) => {

@@ -413,13 +413,9 @@ export function createHarness(
       preparedManifestRef: MANIFEST_REF,
     })),
     schedulePreparedRefill: vi.fn(),
-    create: vi.fn(async () => {
+    create: vi.fn<WorkerDispatchEnvironmentService["create"]>(async ({ inheritedProfile }) => {
       fail("create");
-      return currentEnvironment ?? ready;
-    }),
-    createFromProfileSnapshot: vi.fn(async () => {
-      fail("create");
-      return ready;
+      return inheritedProfile ? ready : (currentEnvironment ?? ready);
     }),
     get: vi.fn(() => currentEnvironment),
     attachSession: vi.fn(async ({ environmentId: attachedEnvironmentId }) => {

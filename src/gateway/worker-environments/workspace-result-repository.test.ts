@@ -219,7 +219,6 @@ describe("repository workspace result ownership", () => {
       },
       get: () => attachedEnvironment(),
       create: vi.fn(async () => attachedEnvironment()),
-      createFromProfileSnapshot: vi.fn(async () => attachedEnvironment()),
       attachSession: vi.fn(async () => credential()),
       destroy: vi.fn(async () => attachedEnvironment()),
       startTunnel: vi.fn(async () => tunnel),
@@ -624,7 +623,6 @@ describe("repository workspace result ownership", () => {
         },
         get: () => undefined,
         create: vi.fn(async () => attachedEnvironment()),
-        createFromProfileSnapshot: vi.fn(async () => attachedEnvironment()),
         attachSession: vi.fn(async () => credential()),
         destroy: vi.fn(async () => attachedEnvironment()),
         startTunnel: vi.fn(async () => {

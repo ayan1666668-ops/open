@@ -3,7 +3,7 @@ import { racePromiseWithAbortSignal } from "../../infra/abort-signal.js";
 import { withTimeout } from "../../infra/fs-safe.js";
 import { isSqliteLockError } from "../../infra/sqlite-error-diagnostics.js";
 import { KeyedAsyncQueue } from "../../plugin-sdk/keyed-async-queue.js";
-import type { WorkerExecutionMode, WorkerProfile } from "../../plugins/types.js";
+import type { WorkerExecutionMode } from "../../plugins/types.js";
 import { runTasksWithConcurrency } from "../../utils/run-with-concurrency.js";
 import { workerBootstrapOperationTimeoutMs } from "./bootstrap.js";
 import { createWorkerEnvironmentBuildPreparation } from "./build-preparation.js";
@@ -28,6 +28,7 @@ import type {
   WorkerEnvironmentAbandonment,
   WorkerProviderLifecycleInputOptions,
 } from "./provider-lifecycle.types.js";
+import type { WorkerEnvironmentCreateRequest } from "./service-contract.js";
 import {
   createWorkerEnvironmentSessionAttachments,
   type WorkerEnvironmentSessionAttachmentOptions,
@@ -613,59 +614,38 @@ export function createWorkerEnvironmentService(options: WorkerEnvironmentService
     listMachineOptions: providerLifecycle.listMachineOptions,
     listOperatingSystems: providerLifecycle.listOperatingSystems,
     bindPreparedWorkspace: environmentAccess.bindPreparedWorkspace,
-    create: async (
-      profileId: string,
-      idempotencyKey: string,
-      machineClass?: string,
-      executionMode?: WorkerExecutionMode,
-      projectPath?: string,
-      signal?: AbortSignal,
-      os?: string,
-      runSetupScript?: boolean,
-      admittedIntent?: WorkerProviderPreparedIntent,
-    ) => {
+    create: async ({
+      profileId,
+      idempotencyKey,
+      inheritedProfile,
+      admittedIntent,
+      machineClass,
+      executionMode,
+      projectPath,
+      signal,
+      os,
+      runSetupScript,
+    }: WorkerEnvironmentCreateRequest & { admittedIntent?: WorkerProviderPreparedIntent }) => {
       providerLifecycle.warmMachineShape(profileId);
       if (executionMode) {
-        requireProviderExecutionMode(configuredProfileProviderId(profileId), executionMode);
+        requireProviderExecutionMode(
+          inheritedProfile ? inheritedProfile.providerId : configuredProfileProviderId(profileId),
+          executionMode,
+        );
       }
       return environmentAccess.project(
         await providerLifecycle.createWithProfile(
           profileId,
           idempotencyKey,
           {
-            machineClass,
-            os,
-            executionMode,
-            projectPath,
-            runSetupScript,
-            signal,
-          },
-          admittedIntent,
-        ),
-      );
-    },
-    createFromProfileSnapshot: async (
-      profile: { profileId: string; providerId: string; profileSnapshot: WorkerProfile },
-      idempotencyKey: string,
-      machineClass?: string,
-      executionMode?: WorkerExecutionMode,
-      projectPath?: string,
-      signal?: AbortSignal,
-      os?: string,
-      runSetupScript?: boolean,
-      admittedIntent?: WorkerProviderPreparedIntent,
-    ) => {
-      providerLifecycle.warmMachineShape(profile.profileId);
-      requireProviderExecutionMode(profile.providerId, executionMode);
-      return environmentAccess.project(
-        await providerLifecycle.createWithProfile(
-          profile.profileId,
-          idempotencyKey,
-          {
-            inherited: {
-              providerId: profile.providerId,
-              profileSnapshot: profile.profileSnapshot,
-            },
+            ...(inheritedProfile
+              ? {
+                  inherited: {
+                    providerId: inheritedProfile.providerId,
+                    profileSnapshot: inheritedProfile.profileSnapshot,
+                  },
+                }
+              : {}),
             machineClass,
             os,
             executionMode,

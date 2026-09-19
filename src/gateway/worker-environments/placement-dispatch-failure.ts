@@ -91,7 +91,6 @@ export type WorkerDispatchEnvironmentService = Pick<
   | "getPreparedCandidates"
   | "schedulePreparedRefill"
   | "create"
-  | "createFromProfileSnapshot"
   | "destroy"
   | "get"
   | "reconcileEnvironment"

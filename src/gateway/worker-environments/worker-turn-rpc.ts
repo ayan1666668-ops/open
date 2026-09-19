@@ -47,6 +47,7 @@ import type { WorkerSessionPlacementGate } from "./placement-worker-gate.js";
 import type { WorkerEnvironmentStore } from "./store.js";
 import type { WorkerTranscriptCommitOutcome } from "./transcript-commit-store.js";
 import type { WorkerTranscriptCommitApplication } from "./transcript-commit.js";
+import type { createWorkerSessionToolExecutor } from "./worker-session-tool-executor.js";
 import {
   serializeWorkerSessionToolResult,
   workerSessionToolErrorResult,
@@ -120,33 +121,7 @@ type WorkerTurnRpcOptions = {
   liveEvents?: Pick<WorkerLiveEventReceiver, "apply">;
   placementStore?: WorkerSessionPlacementGate;
   executeComputer?: WorkerComputerExecutor;
-  executeSessionTool?: (
-    params:
-      | {
-          identity: WorkerConnectionIdentity;
-          toolName: "skill_workshop";
-          request: WorkerSkillWorkshopParams;
-          signal?: AbortSignal;
-        }
-      | {
-          identity: WorkerConnectionIdentity;
-          toolName: "sessions_spawn";
-          request: WorkerSessionsSpawnParams;
-          signal?: AbortSignal;
-        }
-      | {
-          identity: WorkerConnectionIdentity;
-          toolName: "sessions_send";
-          request: WorkerSessionsSendParams;
-          signal?: AbortSignal;
-        }
-      | {
-          identity: WorkerConnectionIdentity;
-          toolName: "portal";
-          request: WorkerPortalParams;
-          signal?: AbortSignal;
-        },
-  ) => Promise<WorkerSessionToolResult>;
+  executeSessionTool?: ReturnType<typeof createWorkerSessionToolExecutor>;
   inference: ReturnType<typeof createWorkerInferenceManager>;
   isStopping: () => boolean;
   now: () => number;

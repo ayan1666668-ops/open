@@ -331,7 +331,6 @@ describe("prepared worker dispatch", () => {
         executionMode,
       });
       expect(harness.environments.create).not.toHaveBeenCalled();
-      expect(harness.environments.createFromProfileSnapshot).not.toHaveBeenCalled();
       expect(store.get(ready.environmentId)?.preparation?.consumedAtMs).toBe(1_000);
       expect(store.getCredential(ready.environmentId)).toMatchObject({
         sessionId: request.sessionId,
@@ -354,17 +353,13 @@ describe("prepared worker dispatch", () => {
     const active = await harness.service.dispatch(request);
 
     expect(active.environmentId).toBe(ready.environmentId);
-    expect(harness.environments.create).toHaveBeenCalledWith(
-      request.profileId,
-      expect.any(String),
-      undefined,
-      request.executionMode,
-      "/gateway/workspace",
-      undefined,
-      undefined,
-      undefined,
-      intent,
-    );
+    expect(harness.environments.create).toHaveBeenCalledWith({
+      profileId: request.profileId,
+      idempotencyKey: expect.any(String),
+      executionMode: request.executionMode,
+      projectPath: "/gateway/workspace",
+      admittedIntent: intent,
+    });
     expect(store.get(ready.environmentId)?.preparation).toBeNull();
     expect(harness.environments.bindPreparedWorkspace).toHaveBeenCalledOnce();
     expect(harness.log.indexOf("workspace:bind-prepared")).toBeLessThan(
@@ -698,7 +693,6 @@ describe("prepared worker dispatch", () => {
         workspaceBaseManifestRef: current.manifestRef,
       });
       expect(harness.environments.create).not.toHaveBeenCalled();
-      expect(harness.environments.createFromProfileSnapshot).not.toHaveBeenCalled();
       expect(store.get(ready.environmentId)?.preparation?.consumedAtMs).toBe(1_000);
       expect(harness.log.indexOf("workspace:bind-prepared")).toBeLessThan(
         harness.log.indexOf("sync"),

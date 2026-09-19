@@ -79,6 +79,18 @@ export type WorkerDesktopLaunchResult = {
   status: "ready";
 };
 
+export type WorkerEnvironmentCreateRequest = {
+  profileId: string;
+  idempotencyKey: string;
+  machineClass?: string;
+  executionMode?: WorkerPlacementExecutionMode;
+  projectPath?: string;
+  signal?: AbortSignal;
+  os?: string;
+  runSetupScript?: boolean;
+  inheritedProfile?: { providerId: string; profileSnapshot: WorkerProfile };
+};
+
 /** Request-facing lifecycle methods, kept separate from persistence and provider internals. */
 export type WorkerEnvironmentServiceContract = {
   getSessionAttachment(sessionId: string): WorkerEnvironmentAttachment | undefined;
@@ -131,16 +143,7 @@ export type WorkerEnvironmentServiceContract = {
     request: { profileId: string; projectPath: string },
     authorize?: () => void,
   ): Promise<{ environmentId: string; preparationKey: string; reused: boolean }>;
-  create(
-    profileId: string,
-    idempotencyKey: string,
-    machineClass?: string,
-    executionMode?: WorkerPlacementExecutionMode,
-    projectPath?: string,
-    signal?: AbortSignal,
-    os?: string,
-    runSetupScript?: boolean,
-  ): Promise<WorkerEnvironmentServiceRecord>;
+  create(request: WorkerEnvironmentCreateRequest): Promise<WorkerEnvironmentServiceRecord>;
   destroy(environmentId: string): Promise<WorkerEnvironmentServiceRecord>;
   destroyUnattached(environmentId: string): Promise<WorkerEnvironmentServiceRecord>;
   observeDesktop(request: {

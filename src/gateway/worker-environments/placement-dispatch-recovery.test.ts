@@ -232,12 +232,11 @@ describe("worker placement restart recovery", () => {
       const environments = support.createService(
         support.createProvider({ inspect: async () => ({ status: "unknown" }), destroy }),
       );
-      const ready = await environments.create(
-        "development",
-        "provider-loss-cleanup",
-        undefined,
-        "remote-exec",
-      );
+      const ready = await environments.create({
+        profileId: "development",
+        idempotencyKey: "provider-loss-cleanup",
+        executionMode: "remote-exec",
+      });
       const attached = await environments.attachSession({
         environmentId: ready.environmentId,
         ownerEpoch: ready.ownerEpoch,
@@ -474,9 +473,6 @@ describe("worker placement restart recovery", () => {
         attachedSessionIds: ["session-unrelated"],
       };
       vi.mocked(harness.environments.create).mockResolvedValue(unrelatedEnvironment);
-      vi.mocked(harness.environments.createFromProfileSnapshot).mockResolvedValue(
-        unrelatedEnvironment,
-      );
       vi.mocked(harness.environments.get).mockImplementation((environmentId) => {
         if (environmentId === unrelatedEnvironment.environmentId) {
           return unrelatedEnvironment;
