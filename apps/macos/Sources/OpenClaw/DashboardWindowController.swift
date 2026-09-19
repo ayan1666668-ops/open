@@ -138,6 +138,9 @@ final class DashboardWindowController: NSWindowController, WKNavigationDelegate,
     private var browserProfileImportOfferRetryPending = false
     private var hasLiveContent = false
     private var nativeCommandsReady = false
+    private(set) var gatewayHealth: DashboardGatewayHealth?
+    private var gatewayHealthReadRevision: UInt64 = 0
+    var onGatewayHealthChanged: (() -> Void)?
     private(set) var isShowingFailurePage = false
     private(set) var signedOut: DashboardFailurePage.SignedOut?
     private(set) var signedOutNeedsRefresh = false
@@ -397,6 +400,7 @@ final class DashboardWindowController: NSWindowController, WKNavigationDelegate,
     }
 
     func invalidateBrowserSession(error: GatewayBrowserSessionError? = nil) {
+        self.invalidateGatewayHealth()
         if self.signedOut != nil {
             self.signedOutNeedsRefresh = true
             return
@@ -486,6 +490,7 @@ final class DashboardWindowController: NSWindowController, WKNavigationDelegate,
         window?.orderFrontRegardless()
         NSApp.activate(ignoringOtherApps: true)
         self.requestBrowserProfileImportOfferIfNeeded()
+        self.refreshGatewayHealth()
     }
 
     func closeDashboard() {
@@ -503,6 +508,9 @@ final class DashboardWindowController: NSWindowController, WKNavigationDelegate,
         self.deviceSettingsMessageHandler.stopObserving()
         self.webView.stopLoading()
         self.nativeBrowser.dispose()
+        self.hasLiveContent = false
+        self.invalidateGatewayHealth()
+        self.onGatewayHealthChanged = nil
         self.onClosed = nil
         window.delegate = nil
         window.saveFrame(usingName: self.dashboardFrameAutosaveName)
@@ -513,6 +521,7 @@ final class DashboardWindowController: NSWindowController, WKNavigationDelegate,
 
     private func load(_ url: URL) {
         self.retirePendingLoad()
+        self.invalidateGatewayHealth()
         // Endpoint swaps must queue commands for the replacement document.
         self.hasLiveContent = false
         self.nativeCommandsReady = false
@@ -820,6 +829,7 @@ final class DashboardWindowController: NSWindowController, WKNavigationDelegate,
         // here would queue native commands forever with no reload to flush.
         if nsError.domain == NSURLErrorDomain, nsError.code == NSURLErrorCancelled {
             refreshNativeCommandReadiness()
+            refreshGatewayHealth()
             return
         }
         prepareForFailure()
@@ -979,6 +989,7 @@ extension DashboardWindowController {
 extension DashboardWindowController {
     private func prepareForFailure(preservingPendingCommands: Bool = false) {
         self.retirePendingLoad()
+        self.invalidateGatewayHealth()
         self.hasLiveContent = false
         self.nativeCommandsReady = false
         self.isShowingFailurePage = true
@@ -1201,6 +1212,51 @@ extension DashboardWindowController {
         }
     }
 
+    func refreshGatewayHealth() {
+        self.gatewayHealthReadRevision &+= 1
+        guard self.hasLiveContent, self.hasRetainedWindow, self.hasCurrentBrowserSession,
+              !self.isShowingFailurePage, !self.webView.isLoading, self.isTrustedDashboardDocument,
+              let window else { return }
+        let revision = self.gatewayHealthReadRevision
+        let sourceID = self.notificationSourceID
+        let sourceURL = self.currentURL
+        let lifetime = self.windowLifetimeRevision
+        // A wake-up carries no health evidence: read the current main document,
+        // even when a retired same-URL document sent the message.
+        self.webView.evaluateJavaScript(Self.scopedDashboardScript(
+            "return window.__OPENCLAW_NATIVE_GATEWAY_HEALTH__;", url: sourceURL))
+        { [weak self, weak window] value, _ in
+            guard let self, let window, self.window === window,
+                  self.gatewayHealthReadRevision == revision, self.notificationSourceID == sourceID,
+                  self.windowLifetimeRevision == lifetime, self.currentURL == sourceURL,
+                  self.hasLiveContent, self.hasRetainedWindow, self.hasCurrentBrowserSession,
+                  !self.isShowingFailurePage, !self.webView.isLoading, self.isTrustedDashboardDocument
+            else { return }
+            // The web connection can change independently of the native picker.
+            // Its health must never be attributed to this window's saved Gateway.
+            let health: DashboardGatewayHealth? = if let report = value as? [String: Any],
+                                                    let expectedURL = self.auth.gatewayUrl,
+                                                    report["gatewayUrl"] as? String == expectedURL
+            {
+                (report["health"] as? String).flatMap(DashboardGatewayHealth.init(rawValue:))
+            } else {
+                nil
+            }
+            self.setGatewayHealth(health)
+        }
+    }
+
+    private func invalidateGatewayHealth() {
+        self.gatewayHealthReadRevision &+= 1
+        self.setGatewayHealth(nil)
+    }
+
+    private func setGatewayHealth(_ health: DashboardGatewayHealth?) {
+        guard self.gatewayHealth != health else { return }
+        self.gatewayHealth = health
+        self.onGatewayHealthChanged?()
+    }
+
     private func flushReadyNativeActions() {
         guard self.canDispatchNativeCommands else { return }
         self.flushPendingNativeCommands()
@@ -1238,6 +1294,7 @@ extension DashboardWindowController {
         self.advanceNavigationGeneration()
         self.hasLiveContent = false
         self.nativeCommandsReady = false
+        self.invalidateGatewayHealth()
         self.pendingNativeCommands = []
         self.pendingNativeNavigation = nil
         self.pendingGatewaySwitch = nil
@@ -1587,6 +1644,7 @@ extension DashboardWindowController {
     func webView(_ webView: WKWebView, didCommit _: WKNavigation!) {
         guard webView === self.webView else { return }
         self.notificationSourceID = UUID().uuidString
+        self.invalidateGatewayHealth()
         self.deviceSettingsMessageHandler.cancelRequests()
         self.nativeBrowser.releaseAllScopes()
         self.hasLiveContent = false
@@ -1612,6 +1670,7 @@ extension DashboardWindowController {
             self.publishNativeHistoryState()
             self.nativeBrowser.scheduleStatePush()
             self.refreshNativeCommandReadiness()
+            self.refreshGatewayHealth()
             self.flushReadyNativeActions()
         }
     }
@@ -1639,8 +1698,13 @@ extension DashboardWindowController {
     }
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
-        guard self.nativeBrowser.owns(webView) else { return }
-        webView.reload()
+        if webView === self.webView {
+            self.hasLiveContent = false
+            self.nativeCommandsReady = false
+            self.invalidateGatewayHealth()
+        } else if self.nativeBrowser.owns(webView) {
+            webView.reload()
+        }
     }
 
     func webView(

@@ -1,3 +1,4 @@
+import type { ApplicationGateway } from "./gateway.ts";
 import { webKitHostWindow } from "./native-webkit-bridge.ts";
 
 export type NativeGateway = {
@@ -12,6 +13,7 @@ export type NativeGateway = {
 export type NativeGatewaysSnapshot = { gateways: NativeGateway[]; currentId: string };
 type NativeGatewaysWindow = Window & {
   __OPENCLAW_NATIVE_GATEWAYS__?: unknown;
+  __OPENCLAW_NATIVE_GATEWAY_HEALTH__?: { gatewayUrl: string; health: NativeGateway["health"] };
 };
 
 const NATIVE_GATEWAYS_CHANGED_EVENT = "openclaw:native-gateways-changed";
@@ -77,6 +79,42 @@ function createNativeGatewaysCapability(): NativeGatewaysCapability | null {
     reconnect: (id) => postWithId("reconnect", id),
     reconnectCancel: (id) => postWithId("reconnect-cancel", id),
     openSettings: () => post({ type: "open-settings" }),
+  };
+}
+
+let healthReporter: object | undefined;
+
+export function startNativeGatewayHealthReporting(gateway: ApplicationGateway): () => void {
+  // SAFETY: The native document owns these optional globals; this reporter writes the typed health value.
+  const nativeWindow = window as NativeGatewaysWindow;
+  const owner = {};
+  healthReporter = owner;
+  const publish = (health: NativeGateway["health"]) => {
+    if (healthReporter !== owner) {
+      return;
+    }
+    const gatewayUrl = gateway.connection.gatewayUrl;
+    const previous = nativeWindow["__OPENCLAW_NATIVE_GATEWAY_HEALTH__"];
+    if (previous?.gatewayUrl === gatewayUrl && previous.health === health) {
+      return;
+    }
+    nativeWindow["__OPENCLAW_NATIVE_GATEWAY_HEALTH__"] = { gatewayUrl, health };
+    // The Mac embedder forwards this wake-up and reads the current document.
+    // Linux shares the action bridge but does not implement health reporting.
+    window.dispatchEvent(new Event("openclaw:native-gateway-health-changed"));
+  };
+  const refresh = () => {
+    const { phase, lastError } = gateway.snapshot;
+    publish(phase === "connected" ? "ok" : phase !== "stopped" && lastError ? "error" : "unknown");
+  };
+  const unsubscribe = gateway.subscribe(refresh);
+  refresh();
+  return () => {
+    unsubscribe();
+    if (healthReporter === owner) {
+      publish("unknown");
+      healthReporter = undefined;
+    }
   };
 }
 

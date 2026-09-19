@@ -46,6 +46,7 @@ final class DashboardManager {
     @ObservationIgnored private var profileRemovalTasks: [String: (id: UUID, task: Task<Void, Error>)] = [:]
     @ObservationIgnored private let observesGatewayChanges: Bool
     @ObservationIgnored private let automaticGatewayProfileRefreshEnabled: Bool
+    @ObservationIgnored private var gatewayCatalogEntries: [DashboardGatewayEntry] = []
     private(set) var gatewayEntries: [DashboardGatewayEntry] = []
     private(set) var frontmostDashboardTarget: DashboardGatewayTarget?
 
@@ -594,6 +595,8 @@ final class DashboardManager {
         for controller in controllers {
             controller.closeDashboard()
         }
+        // Auxiliary owners were removed before their close callbacks could project health.
+        self.publishGatewaySnapshots()
         synchronizeProfileObservations()
         self.frontmostDashboardTarget = nil
     }
@@ -737,13 +740,35 @@ final class DashboardManager {
             }
             observation?.needsRefresh = false
         }
-        self.gatewayEntries = entries
+        self.gatewayCatalogEntries = entries
         self.profileCredentialsNeedRefresh = false
-        if let controller, let snapshot = snapshot(for: mainTarget) {
+        self.publishGatewaySnapshots()
+    }
+
+    /// A live dashboard is stronger evidence than a separate native connection
+    /// (notably browser sign-in). One failing/closing window cannot hide another
+    /// connected window for the same target. Nil means no dashboard evidence.
+    func dashboardHealth(for target: DashboardGatewayTarget) -> DashboardGatewayHealth? {
+        let health = self.dashboardControllers().filter { $0.target == target }
+            .compactMap(\.controller.gatewayHealth)
+        if health.contains(.ok) { return .ok }
+        if health.contains(.error) { return .error }
+        return health.isEmpty ? nil : .unknown
+    }
+
+    private func publishGatewaySnapshots() {
+        self.gatewayEntries = self.gatewayCatalogEntries.map { entry in
+            guard let target = DashboardGatewayTarget(bridgeID: entry.id),
+                  let health = self.dashboardHealth(for: target) else { return entry }
+            return DashboardGatewayEntry(
+                id: entry.id, name: entry.name, kind: entry.kind,
+                isPrimary: entry.isPrimary, canPromote: entry.canPromote, health: health)
+        }
+        if let controller, let snapshot = snapshot(for: mainTarget), controller.gatewaySnapshot != snapshot {
             controller.updateGatewaySnapshot(snapshot)
         }
         for instance in self.auxiliaryWindows.values {
-            if let snapshot = snapshot(for: instance.target) {
+            if let snapshot = snapshot(for: instance.target), instance.controller.gatewaySnapshot != snapshot {
                 instance.controller.updateGatewaySnapshot(snapshot)
             }
         }
@@ -1111,6 +1136,10 @@ extension DashboardManager {
                 await self?.openBackgroundSession(
                     completion, target: target, sourceURL: sourceURL)
             }
+        }
+        controller.onGatewayHealthChanged = { [weak self, weak controller] in
+            guard let self, let controller, self.target(for: controller) != nil else { return }
+            self.publishGatewaySnapshots()
         }
         controller.onClosed = { [weak self, weak controller] in
             guard let self, let controller else { return }

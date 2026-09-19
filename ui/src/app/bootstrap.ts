@@ -578,11 +578,24 @@ export function bootstrapApplication(): ApplicationRuntime {
       const nativeWindow = window as Window & {
         webkit?: {
           messageHandlers?: {
+            openclawGateways?: { postMessage?: unknown };
             openclawDeviceSettings?: { postMessage?: unknown };
             openclawNotifications?: { postMessage?: unknown };
           };
         };
       };
+      if (
+        typeof nativeWindow.webkit?.messageHandlers?.openclawGateways?.postMessage === "function"
+      ) {
+        steps.unshift(async () => {
+          const { startNativeGatewayHealthReporting } =
+            await import("./native-gateways.runtime.ts");
+          if (!startupLifecycle.signal.aborted) {
+            return startNativeGatewayHealthReporting(gateway);
+          }
+          return undefined;
+        });
+      }
       if (
         typeof nativeWindow.webkit?.messageHandlers?.openclawNotifications?.postMessage ===
         "function"
