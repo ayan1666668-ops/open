@@ -34,13 +34,24 @@ it.each([
   { failure: "identity_call", recover: false, retryEnabled: false },
   { failure: "identity_call", recover: false, repeatFailure: true },
   { failure: "identity_call", recover: false, beforeConflict: "text" },
+  { failure: "identity_call", recover: false, beforeConflict: "erased-text" },
+  { failure: "identity_call", recover: false, beforeConflict: "erased-refusal" },
   { failure: "identity_call", recover: true, beforeConflict: "empty-text" },
   { failure: "identity_call", recover: false, beforeConflict: "function" },
   { failure: "identity_call", recover: false, beforeConflict: "provider" },
   { failure: "identity_call", recover: false, unprovenRequest: true },
+  { failure: "identity_content_filter", recover: false },
+  { failure: "identity_early_filter", recover: false },
+  { failure: "identity_early_failed", recover: false },
+  { failure: "identity_terminal_refusal", recover: false },
 ])(
   "handles Responses $failure after settled tools (recovery: $recover, repeated: $repeatFailure, output: $beforeConflict)",
   async ({ failure, recover, retryEnabled, repeatFailure, beforeConflict, unprovenRequest }) => {
+    const identityFailure = failure.startsWith("identity_");
+    const filteredConflict = failure === "identity_content_filter";
+    const earlyConflict =
+      failure === "identity_early_filter" || failure === "identity_early_failed";
+    const terminalRefusal = failure === "identity_terminal_refusal";
     const execute = vi.fn(async () => ({
       content: [{ type: "text" as const, text: "saved result" }],
       details: {},
@@ -80,19 +91,48 @@ it.each([
             item_id: "fc_unfinished",
             delta: '{"value":',
           };
-          if (failure === "identity_type" || failure === "identity_call") {
+          if (identityFailure) {
+            if (earlyConflict) {
+              yield {
+                type: "response.output_item.done",
+                output_index: 0,
+                item: {
+                  type: "function_call",
+                  id: "fc_unfinished",
+                  call_id: "different_call",
+                  name: "record",
+                  arguments: "{}",
+                  status: "completed",
+                },
+              };
+              yield {
+                type:
+                  failure === "identity_early_failed" ? "response.failed" : "response.incomplete",
+                response: {
+                  id: "resp_rejected",
+                  status: failure === "identity_early_failed" ? "failed" : "incomplete",
+                  incomplete_details: { reason: "content_filter" },
+                  output: [],
+                },
+              };
+              return;
+            }
             if (beforeConflict) {
+              const erased =
+                beforeConflict === "erased-text" || beforeConflict === "erased-refusal";
               const item =
-                beforeConflict === "text" || beforeConflict === "empty-text"
+                beforeConflict === "text" || beforeConflict === "empty-text" || erased
                   ? {
                       type: "message",
                       id: "msg_partial",
-                      content: [
-                        {
-                          type: "output_text",
-                          text: beforeConflict === "text" ? "Partial answer" : "",
-                        },
-                      ],
+                      content: erased
+                        ? []
+                        : [
+                            {
+                              type: "output_text",
+                              text: beforeConflict === "text" ? "Partial answer" : "",
+                            },
+                          ],
                     }
                   : beforeConflict === "function"
                     ? {
@@ -107,28 +147,58 @@ it.each([
               if (beforeConflict === "function") {
                 yield { type: "response.output_item.added", output_index: 1, item };
               }
+              if (erased) {
+                yield { type: "response.output_item.added", output_index: 1, item };
+                yield {
+                  type:
+                    beforeConflict === "erased-refusal"
+                      ? "response.refusal.delta"
+                      : "response.output_text.delta",
+                  output_index: 1,
+                  content_index: 0,
+                  item_id: "msg_partial",
+                  delta: "Partial answer",
+                };
+              }
               yield {
                 type: "response.output_item.done",
                 output_index: 1,
-                item,
+                item: erased ? { ...item, content: [] } : item,
               };
             }
             yield {
-              type: "response.completed",
+              type: filteredConflict ? "response.incomplete" : "response.completed",
               response: {
                 id: "resp_conflicting",
-                status: "completed",
+                status: filteredConflict ? "incomplete" : "completed",
+                ...(filteredConflict ? { incomplete_details: { reason: "content_filter" } } : {}),
                 output: [
-                  failure === "identity_type"
-                    ? { type: "message", id: "msg_conflicting", content: [] }
-                    : {
-                        type: "function_call",
-                        id: "fc_unfinished",
-                        call_id: "different_call",
-                        name: "record",
-                        arguments: "{}",
-                        status: "completed",
-                      },
+                  filteredConflict
+                    ? {
+                        type: "reasoning",
+                        id: "rs_conflicting",
+                        encrypted_content: "test-encrypted-placeholder",
+                        summary: [],
+                      }
+                    : failure === "identity_type"
+                      ? { type: "message", id: "msg_conflicting", content: [] }
+                      : {
+                          type: "function_call",
+                          id: "fc_unfinished",
+                          call_id: "different_call",
+                          name: "record",
+                          arguments: "{}",
+                          status: "completed",
+                        },
+                  ...(terminalRefusal
+                    ? [
+                        {
+                          type: "message",
+                          id: "msg_refusal",
+                          content: [{ type: "refusal", refusal: "Declined" }],
+                        },
+                      ]
+                    : []),
                 ],
               },
             };
@@ -192,6 +262,9 @@ it.each([
     await session.prompt("Record once and report the result.");
 
     expect(transportEvents).toContain("toolcall_start");
+    if (beforeConflict === "erased-text" || beforeConflict === "erased-refusal") {
+      expect(transportEvents).toContain("text_delta");
+    }
     expect(transportEvents.includes("toolcall_end")).toBe(beforeConflict === "function");
     expect(execute).toHaveBeenCalledOnce();
     expect(session.getLastAssistantText()).toBe(
@@ -202,7 +275,7 @@ it.each([
           : undefined,
     );
     expect(requests).toHaveLength(recover || repeatFailure ? 3 : 2);
-    if (failure === "identity_type" || failure === "identity_call") {
+    if (identityFailure) {
       const recorded = sessionManager
         .getBranch()
         .findLast(
@@ -218,13 +291,26 @@ it.each([
         throw new Error("Missing recorded identity conflict");
       }
       expect(JSON.parse(recorded.message.errorBody ?? "{}")).toMatchObject({
-        eventType: "response.completed",
+        eventType: earlyConflict
+          ? "response.output_item.done"
+          : filteredConflict
+            ? "response.incomplete"
+            : "response.completed",
         outputIndex: 0,
         expectedType: "function_call",
-        actualType: failure === "identity_type" ? "message" : "function_call",
-        mismatch: failure === "identity_type" ? "type" : "call_id",
+        actualType: filteredConflict
+          ? "reasoning"
+          : failure === "identity_type"
+            ? "message"
+            : "function_call",
+        mismatch: filteredConflict || failure === "identity_type" ? "type" : "call_id",
         completedToolCall: beforeConflict === "function",
-        retrySafe: (!beforeConflict || beforeConflict === "empty-text") && !unprovenRequest,
+        retrySafe:
+          !filteredConflict &&
+          !earlyConflict &&
+          !terminalRefusal &&
+          (!beforeConflict || beforeConflict === "empty-text") &&
+          !unprovenRequest,
       });
     }
     if (!recover) {

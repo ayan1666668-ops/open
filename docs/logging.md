@@ -250,7 +250,12 @@ retry policy when the failing response produced no visible text or completed too
 calls and its request enabled only client-executed function tools. Continuation
 keeps earlier tool results, so those completed actions are not replayed. Conflicts
 after output or with provider-hosted tools remain terminal; inspect earlier
-results before continuing. The identity checks stay enforced on every attempt.
+results before continuing. Previously emitted text remains terminal even if a
+later snapshot clears it. Automatic recovery requires a successful completed
+response without a refusal; conflicts before that terminal cannot be retried
+because the final outcome is unknown. Failed or incomplete terminal responses,
+including content filtering, cannot be overridden by identity recovery. The
+identity checks stay enforced on every attempt.
 
 A worker message-size failure is separate from a model context-window limit.
 Retry with a smaller response or continue on the Gateway. If the worker cannot

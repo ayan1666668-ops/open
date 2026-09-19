@@ -5,6 +5,7 @@ import {
   ResponsesOutputIdentityError,
 } from "./openai-responses-stream-errors.js";
 import type {
+  ResponsesEventSink,
   ResponsesThinkingBlock,
   TextBlockReference,
 } from "./openai-responses-stream-terminal-internal.js";
@@ -57,6 +58,8 @@ export function createResponsesOutputTracker(params: {
   const outputs = new Map<string | number, ResponsesOutputState>();
   let currentEventType = "unknown";
   let providerToolObserved = false;
+  let visibleTextEmitted = false;
+  let terminalAllowsRetry = false;
   const identity = (item: ResponsesOutputIdentityItem): string | undefined => {
     if ((item.type === "reasoning" || item.type === "message") && item.id) {
       return `${item.type}:${item.id}`;
@@ -93,21 +96,47 @@ export function createResponsesOutputTracker(params: {
         retrySafe:
           params.canRetryIdentityConflict?.() === true &&
           !providerToolObserved &&
+          !visibleTextEmitted &&
+          terminalAllowsRetry &&
           !params.output.content.some((block) => block.type === "text" && block.text.length > 0),
       });
     }
     return output;
   };
   return {
+    trackStream(sink: ResponsesEventSink): ResponsesEventSink {
+      return {
+        push(event) {
+          // A later snapshot can clear text that has already reached the consumer.
+          visibleTextEmitted ||=
+            (event.type === "text_delta" && event.delta.length > 0) ||
+            (event.type === "text_end" && event.content.length > 0);
+          sink.push(event);
+        },
+      };
+    },
     observeEvent(event: OpenAIResponsesStreamEvent): void {
       currentEventType = event.type;
+      // An earlier conflict cannot establish whether a later terminal will reject the response.
+      terminalAllowsRetry = false;
       if (
         event.type === "response.output_item.added" ||
         event.type === "response.output_item.done"
       ) {
         providerToolObserved ||= isResponsesProviderTool(event.item);
       } else if (event.type === "response.completed" || event.type === "response.incomplete") {
-        providerToolObserved ||= (event.response.output ?? []).some(isResponsesProviderTool);
+        let terminalHasRefusal = false;
+        for (const item of event.response.output ?? []) {
+          providerToolObserved ||= isResponsesProviderTool(item);
+          terminalHasRefusal ||=
+            item.type === "message" && (item.content ?? []).some((part) => part.type === "refusal");
+        }
+        terminalAllowsRetry =
+          event.type === "response.completed" &&
+          event.response.status === "completed" &&
+          event.response.error == null &&
+          event.response.incomplete_details == null &&
+          !terminalHasRefusal;
       }
     },
     get,

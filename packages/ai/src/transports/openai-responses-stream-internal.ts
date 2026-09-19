@@ -54,7 +54,7 @@ export type { OpenAIResponsesStreamEvent } from "./openai-responses-stream-types
 export async function processResponsesStream<TApi extends Api>(
   openaiStream: AsyncIterable<unknown>,
   output: AssistantMessage,
-  stream: ResponsesEventSink,
+  sink: ResponsesEventSink,
   model: Model<TApi>,
   options?: ResponsesStreamOptions,
 ) {
@@ -78,6 +78,7 @@ export async function processResponsesStream<TApi extends Api>(
     output,
     canRetryIdentityConflict: options?.canRetryIdentityConflict,
   });
+  const stream = outputs.trackStream(sink);
   let terminalResponse: CompletedResponse | null | undefined;
   let incompleteToolCall: CompletedToolCall | undefined;
   let lastTextBlock: TextBlockReference | null = null;
