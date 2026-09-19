@@ -16,6 +16,8 @@ const hoisted = vi.hoisted(() => ({
     >(),
   completeWithPreparedSimpleCompletionModel: vi.fn(),
   resolveSimpleCompletionSelectionForAgent: vi.fn(),
+  loadAuthProfileStoreForRuntimeAsync: vi.fn(),
+  markAuthProfileFailure: vi.fn(),
 }));
 
 vi.mock("../../agents/simple-completion-runtime.js", () => ({
@@ -23,6 +25,15 @@ vi.mock("../../agents/simple-completion-runtime.js", () => ({
   completeWithPreparedSimpleCompletionModel: hoisted.completeWithPreparedSimpleCompletionModel,
   resolveSimpleCompletionSelectionForAgent: hoisted.resolveSimpleCompletionSelectionForAgent,
 }));
+
+vi.mock("../../agents/auth-profiles.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../agents/auth-profiles.js")>();
+  return {
+    ...actual,
+    loadAuthProfileStoreForRuntimeAsync: hoisted.loadAuthProfileStoreForRuntimeAsync,
+    markAuthProfileFailure: hoisted.markAuthProfileFailure,
+  };
+});
 
 const cfg = {
   agents: {
@@ -34,6 +45,7 @@ const cfg = {
 
 function createPreparedModel(
   modelId = "gpt-5.5",
+  profileId?: string,
 ): Extract<
   Awaited<ReturnType<typeof hoisted.acquireSimpleCompletionModelForAgent>>,
   { model: unknown }
@@ -61,6 +73,7 @@ function createPreparedModel(
       apiKey: "test-api-key",
       source: "test",
       mode: "api-key",
+      ...(profileId ? { profileId } : {}),
     },
   };
 }
@@ -155,6 +168,13 @@ describe("runtime.llm.complete", () => {
     hoisted.acquireSimpleCompletionModelForAgent.mockReset();
     hoisted.completeWithPreparedSimpleCompletionModel.mockReset();
     hoisted.resolveSimpleCompletionSelectionForAgent.mockReset();
+    hoisted.loadAuthProfileStoreForRuntimeAsync.mockReset();
+    hoisted.markAuthProfileFailure.mockReset();
+    hoisted.loadAuthProfileStoreForRuntimeAsync.mockResolvedValue({
+      version: 1,
+      profiles: {},
+    });
+    hoisted.markAuthProfileFailure.mockResolvedValue(undefined);
     primeCompletionMocks();
   });
 
@@ -1025,5 +1045,79 @@ describe("runtime.llm.complete", () => {
     expectSingleLogPayload(logger.warn as unknown as MockCalls, "plugin llm completion denied", {
       reason: "not trusted",
     });
+  });
+
+  it("records a 429 on the first auth profile and retries the backup", async () => {
+    hoisted.acquireSimpleCompletionModelForAgent
+      .mockResolvedValueOnce(createPreparedModel("gpt-5.4-mini", "openai:primary"))
+      .mockResolvedValueOnce(createPreparedModel("gpt-5.4-mini", "openai:backup"));
+    hoisted.completeWithPreparedSimpleCompletionModel
+      .mockResolvedValueOnce({
+        content: [{ type: "text", text: "" }],
+        stopReason: "error",
+        errorMessage: "429 The usage limit has been reached",
+        errorType: "usage_limit_reached",
+      })
+      .mockResolvedValueOnce({
+        content: [{ type: "text", text: "summarized" }],
+        stopReason: "stop",
+        usage: { input: 3, output: 2, total: 5 },
+      });
+
+    const llm = createRuntimeLlm({
+      getConfig: () => cfg,
+      authority: {
+        allowComplete: true,
+        allowModelOverride: true,
+        preferredProfile: "openai:primary",
+      },
+    });
+
+    const result = await llm.complete({
+      model: "openai/gpt-5.4-mini",
+      messages: [{ role: "user", content: "summarize" }],
+    });
+
+    expect(result).toMatchObject({ text: "summarized", stopReason: "stop" });
+    expect(hoisted.completeWithPreparedSimpleCompletionModel).toHaveBeenCalledTimes(2);
+    expect(hoisted.markAuthProfileFailure).toHaveBeenCalledOnce();
+    expect(hoisted.markAuthProfileFailure).toHaveBeenCalledWith(
+      expect.objectContaining({
+        profileId: "openai:primary",
+        reason: "rate_limit",
+        modelId: "gpt-5.4-mini",
+      }),
+    );
+    expect(hoisted.acquireSimpleCompletionModelForAgent.mock.calls.map((call) => call[0])).toEqual([
+      expect.objectContaining({ preferredProfile: "openai:primary" }),
+      expect.objectContaining({ preferredProfile: "openai:primary" }),
+    ]);
+  });
+
+  it("does not rotate when the caller pinned a model auth profile", async () => {
+    hoisted.acquireSimpleCompletionModelForAgent.mockResolvedValue(
+      createPreparedModel("gpt-5.4-mini", "openai:primary"),
+    );
+    hoisted.completeWithPreparedSimpleCompletionModel.mockResolvedValue({
+      content: [{ type: "text", text: "" }],
+      stopReason: "error",
+      errorMessage: "429 The usage limit has been reached",
+      errorType: "usage_limit_reached",
+    });
+
+    const llm = createRuntimeLlm({
+      getConfig: () => cfg,
+      authority: { allowComplete: true, allowModelOverride: true },
+    });
+
+    await expect(
+      llm.complete({
+        model: "openai/gpt-5.4-mini@openai:primary",
+        messages: [{ role: "user", content: "summarize" }],
+      }),
+    ).resolves.toMatchObject({ text: "", stopReason: "error" });
+    expect(hoisted.completeWithPreparedSimpleCompletionModel).toHaveBeenCalledOnce();
+    expect(hoisted.markAuthProfileFailure).toHaveBeenCalledOnce();
+    expect(hoisted.acquireSimpleCompletionModelForAgent).toHaveBeenCalledOnce();
   });
 });
