@@ -1,4 +1,3 @@
-// Telegram plugin module implements message cache behavior.
 import type { Message } from "grammy/types";
 import type { PluginStateKeyedStore } from "openclaw/plugin-sdk/plugin-state-runtime";
 import { logVerbose } from "openclaw/plugin-sdk/runtime-env";

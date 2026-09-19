@@ -1,4 +1,3 @@
-// Telegram plugin module implements group history window behavior.
 import type { HistoryEntry } from "openclaw/plugin-sdk/reply-history";
 import type {
   TelegramAmbientTranscriptWatermark,

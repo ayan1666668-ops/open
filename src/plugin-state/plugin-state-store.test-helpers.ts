@@ -6,7 +6,6 @@ import {
   upsertPluginStateEntry,
 } from "./plugin-state-store.kernel.js";
 import { optionPolicy } from "./plugin-state-store.validation.js";
-import "./plugin-state-store.sqlite.js";
 
 type PluginStateSeedEntry = {
   pluginId: string;
@@ -21,13 +20,6 @@ export function clearPluginStateStoreForTests(): void {
   const { db } = openPluginStateDatabase("clear");
   executeSqliteQuerySync(db, getPluginStateKysely(db).deleteFrom("plugin_state_entries"));
   optionPolicy.clear();
-}
-
-export function setMaxPluginStateEntriesPerPluginForTests(value?: number): void {
-  const api = (globalThis as Record<PropertyKey, unknown>)[
-    Symbol.for("openclaw.pluginStateSqliteTestApi")
-  ] as { setMaxPluginStateEntriesPerPluginForTests(value?: number): void };
-  api.setMaxPluginStateEntriesPerPluginForTests(value);
 }
 
 /** Seeds plugin state entries for tests without opening public store handles. */

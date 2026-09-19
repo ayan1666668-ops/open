@@ -25,7 +25,6 @@ import {
   pluginStateRegister,
   pluginStateRegisterIfAbsent,
   pluginStateUpdate,
-  resolveMaxPluginStateEntriesPerPlugin,
 } from "./plugin-state-store.sqlite.js";
 import type {
   OpenAsyncKeyedStoreOptions,
@@ -74,7 +73,7 @@ import {
 import { serializePluginStoreJson } from "./plugin-store-validation.js";
 
 // Public plugin-state facade over the sqlite-backed store. It validates plugin
-// ids, namespaces, JSON values, TTLs, and per-plugin limits before persistence.
+// ids, namespaces, JSON values, TTLs, and namespace limits before persistence.
 export type {
   OpenAsyncKeyedStoreOptions,
   OpenRetainedKeyedStoreOptions,
@@ -93,12 +92,10 @@ export type { PluginDoctorRawStateEntry } from "./plugin-state-store.sqlite.js";
 
 export {
   closePluginStateDatabaseAsync,
-  countPluginStateLiveEntries,
   getPluginStateCapacity,
   MAX_PLUGIN_STATE_BULK_DELETE_ENTRIES,
   pluginStateDeleteEntriesIfUnchanged,
   pluginStateDoctorEntriesInKeyRange,
-  resolveMaxPluginStateEntriesPerPlugin,
   sweepExpiredPluginStateEntries,
 } from "./plugin-state-store.sqlite.js";
 
@@ -139,7 +136,6 @@ function createKeyedStoreForPluginId<T>(
         comparison,
         maxEntries: prepared.maxEntries,
         overflowPolicy: prepared.overflowPolicy,
-        maxPluginEntries: resolveMaxPluginStateEntriesPerPlugin(),
       };
       let result: PluginStateCompareResult<unknown>;
       if (intent.operation === "update" && intent.action === "set") {
@@ -190,7 +186,6 @@ function createKeyedStoreForPluginId<T>(
         ...entry,
         maxEntries: prepared.maxEntries,
         overflowPolicy: prepared.overflowPolicy,
-        maxPluginEntries: resolveMaxPluginStateEntriesPerPlugin(),
       });
     },
     registerIfAbsent: async (key, value, opts) => {
@@ -206,7 +201,6 @@ function createKeyedStoreForPluginId<T>(
         maxEntries: prepared.maxEntries,
         overflowPolicy: prepared.overflowPolicy,
         ...entry,
-        maxPluginEntries: resolveMaxPluginStateEntriesPerPlugin(),
       });
     },
     update: async (...args) => store.update(...args),
@@ -537,7 +531,6 @@ export async function registerPluginStateSequencedJournalEntry(params: {
     },
     journalKeyPrefix,
     journalValueJson,
-    maxPluginEntries: resolveMaxPluginStateEntriesPerPlugin(),
     ...(params.cursorOptions.env ? { env: params.cursorOptions.env } : {}),
   });
 }

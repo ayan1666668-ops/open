@@ -27,9 +27,8 @@ import {
 import { recordTelegramPollRegistryEntry } from "./poll-registry.js";
 import { createTelegramPromptContextProjectionCursor } from "./prompt-context-projection.js";
 import {
-  countInputRichBlockMedia,
-  countInputRichBlocks,
   inputRichBlocksToPlainText,
+  measureInputRichBlocks,
   type InputRichBlock,
 } from "./rich-block-model.js";
 import { setTelegramRuntime } from "./runtime.js";
@@ -252,7 +251,7 @@ function markdownTable(columns: number): string {
 }
 
 function countTelegramRichBlocks(blocks: readonly InputRichBlock[] | undefined): number {
-  return countInputRichBlocks(blocks ?? []);
+  return measureInputRichBlocks(blocks ?? []).blocks;
 }
 
 beforeEach(async () => {
@@ -1427,17 +1426,11 @@ describe("sendMessageTelegram", () => {
     const albums = blocks.filter((block) => block.type === "collage");
 
     expect(requests.length).toBeGreaterThan(1);
-    expect(requests.every((request) => countInputRichBlocks(request?.blocks ?? []) <= 500)).toBe(
-      true,
-    );
     expect(
-      requests.every(
-        (request) =>
-          (request?.blocks ?? []).reduce(
-            (total, block) => total + countInputRichBlockMedia(block),
-            0,
-          ) <= 50,
-      ),
+      requests.every((request) => measureInputRichBlocks(request?.blocks ?? []).blocks <= 500),
+    ).toBe(true);
+    expect(
+      requests.every((request) => measureInputRichBlocks(request?.blocks ?? []).media <= 50),
     ).toBe(true);
     expect(items.map((item) => item.value)).toEqual(
       Array.from({ length: 250 }, (_, index) => index + 1),

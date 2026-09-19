@@ -31,7 +31,7 @@ export type PluginStatePreparedComparison = Key & { comparison: string } & (
 export type PluginStateComparisonLimits = Pick<
   PluginStateRegisterEntryParams,
   "maxEntries" | "overflowPolicy"
-> & { maxPluginEntries: number };
+>;
 
 const COMPARISON_PATTERN = /^1:([a-f0-9]{64}):([a-f0-9]{64}|-)$/u;
 

@@ -7,12 +7,8 @@ import { openOpenClawStateDatabase } from "../state/openclaw-state-db.js";
 import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
 import {
   closePluginStateDatabaseAsync,
-  countPluginStateLiveEntries,
   createPluginStateKeyedStore,
   createPluginStateSyncKeyedStore,
-  getPluginStateCapacity,
-  importPluginStateEntriesForDoctor,
-  registerPluginStateSequencedJournalEntry,
   resetPluginStateStoreForTests,
 } from "./plugin-state-store.js";
 import { seedPluginStateEntriesForTests } from "./plugin-state-store.test-helpers.js";
@@ -30,7 +26,7 @@ afterEach(async () => {
 });
 
 describe("retained plugin state", () => {
-  it("survives 50000 rows and reopen without charging cold bounded writers for retained rows", async () => {
+  it("retains all rows across writes and reopening beyond bounded-store limits", async () => {
     await withOpenClawTestState({ label: "retained-storage-capacity" }, async () => {
       seedPluginStateEntriesForTests(
         Array.from({ length: 50_001 }, (_, id) => ({
@@ -43,45 +39,6 @@ describe("retained plugin state", () => {
       );
       await closePluginStateDatabaseAsync();
       resetPluginStateStoreForTests();
-
-      // No retained opener has run: every writer must classify persisted namespaces itself.
-      const options = {
-        namespace: "0-bounded",
-        maxEntries: 10,
-        overflowPolicy: "reject-new" as const,
-      };
-      const bounded = createPluginStateKeyedStore<number>(pluginId, options);
-      await bounded.register("register", 1);
-      expect(await bounded.registerIfAbsent("claim", 2)).toBe(true);
-      const observed = await bounded.observe("comparison");
-      expect(
-        await bounded.compareAndApply("comparison", observed.comparison, {
-          operation: "update",
-          action: "set",
-          value: 3,
-        }),
-      ).toEqual({ status: "applied" });
-      const sync = createPluginStateSyncKeyedStore<number>(pluginId, options);
-      sync.register("sync", 4);
-      expect(sync.update("callback", () => 5)).toBe(true);
-      importPluginStateEntriesForDoctor(pluginId, { namespace: "z-import", maxEntries: 10 }, [
-        { key: "a", value: 6, createdAt: 1 },
-        { key: "b", value: 7, createdAt: 2 },
-      ]);
-      expect(
-        await registerPluginStateSequencedJournalEntry({
-          pluginId,
-          cursorOptions: { namespace: "cursor", maxEntries: 10 },
-          cursorKey: "workspace",
-          journalOptions: { namespace: "journal", maxEntries: 10 },
-          journalKeyPrefix: "event:",
-          journalKeyRange: { keyStartInclusive: "event:", keyEndExclusive: "event;" },
-          journalValue: { body: "bounded journal" },
-        }),
-      ).toBe(1);
-      expect(await bounded.count()).toBe(5);
-      expect(getPluginStateCapacity(pluginId)).toEqual({ liveEntries: 9, maxEntries: 50_000 });
-      expect(countPluginStateLiveEntries(pluginId)).toBe(50_010);
 
       const retained = createPluginStateKeyedStore<number>(pluginId, retainedOptions);
       await retained.register(key(50_001), 50_001);
@@ -101,46 +58,6 @@ describe("retained plugin state", () => {
       expect(await reopened.count()).toBe(50_005);
       expect(await reopened.lookup(key(0))).toBe(0);
       expect(await reopened.lookup(key(50_004))).toBe(50_004);
-      expect(getPluginStateCapacity(pluginId)).toEqual({ liveEntries: 9, maxEntries: 50_000 });
-      expect(countPluginStateLiveEntries(pluginId)).toBe(50_014);
-    });
-  });
-
-  it("keeps the bounded plugin fuse while retained writes remain admissible", async () => {
-    await withOpenClawTestState({ label: "retained-storage-bounded-fuse" }, async () => {
-      seedPluginStateEntriesForTests(
-        Array.from({ length: 50_000 }, (_, id) => ({
-          pluginId,
-          namespace: "z-bounded-full",
-          key: key(id),
-          value: id,
-        })),
-      );
-      const retained = createPluginStateKeyedStore<number>(pluginId, retainedOptions);
-      await retained.register("durable", 1);
-      const bounded = createPluginStateKeyedStore<number>(pluginId, {
-        namespace: "new-bounded",
-        maxEntries: 10,
-        overflowPolicy: "reject-new",
-      });
-      await expect(bounded.register("overflow", 2)).rejects.toMatchObject({
-        code: "PLUGIN_STATE_LIMIT_EXCEEDED",
-      });
-      expect(await bounded.lookup("overflow")).toBeUndefined();
-      expect(() =>
-        importPluginStateEntriesForDoctor(
-          pluginId,
-          {
-            namespace: "new-import",
-            maxEntries: 10,
-            overflowPolicy: "reject-new",
-          },
-          [{ key: "overflow", value: 3, createdAt: 1 }],
-        ),
-      ).toThrow(expect.objectContaining({ code: "PLUGIN_STATE_LIMIT_EXCEEDED" }));
-      expect(await retained.lookup("durable")).toBe(1);
-      expect(getPluginStateCapacity(pluginId)).toEqual({ liveEntries: 50_000, maxEntries: 50_000 });
-      expect(countPluginStateLiveEntries(pluginId)).toBe(50_001);
     });
   });
 
@@ -247,7 +164,6 @@ describe("retained plugin state", () => {
       seedPluginStateEntriesForTests([
         { pluginId, namespace, key: "legacy", value: 1, createdAt: 1 },
       ]);
-      expect(getPluginStateCapacity(pluginId)).toEqual({ liveEntries: 1, maxEntries: 50_000 });
       const options = { namespace, maxEntries: 1 };
       const sync = createPluginStateSyncKeyedStore<number>(pluginId, options);
       expect(sync.lookup("legacy")).toBe(1);
@@ -261,8 +177,6 @@ describe("retained plugin state", () => {
       expect(sync.lookup("legacy")).toBeUndefined();
       expect(sync.lookup("fresh")).toBe(2);
       expect(await retained.lookup("fresh")).toBe(3);
-      expect(getPluginStateCapacity(pluginId)).toEqual({ liveEntries: 1, maxEntries: 50_000 });
-      expect(countPluginStateLiveEntries(pluginId)).toBe(2);
     });
   });
 
