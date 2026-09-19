@@ -453,16 +453,18 @@ export function createMentionInbox(params: {
   refresh();
 
   return {
-    async mentionable(...args: Parameters<typeof policy.mentionable>) {
+    async mentionable(client, input, publish) {
+      let preparationFailure: Result<never, ErrorShape> | undefined;
       try {
         // A committed profile change can invalidate preparation before this continuation runs.
         while (policy.needsDirectoryPreparation()) {
           await policy.prepareDirectory();
         }
       } catch {
-        return unavailable(true);
+        preparationFailure = unavailable(true);
       }
-      return readOperation(() => policy.mentionable(...args));
+      // Current policy selection and response publication must not cross another await.
+      publish(preparationFailure ?? readOperation(() => policy.mentionable(client, input)));
     },
     validateRecipients: (...args: Parameters<typeof policy.validateRecipients>) =>
       readOperation(() => policy.validateRecipients(...args)),

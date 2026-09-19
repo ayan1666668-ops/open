@@ -22,7 +22,12 @@ export const usersMentionableHandlers: GatewayRequestHandlers = {
       );
       return;
     }
-    const result = await context.mentionInbox.mentionable(client, params);
-    respond(result.ok, result.ok ? result.value : undefined, result.ok ? undefined : result.error);
+    await context.mentionInbox.mentionable(client, params, (result) => {
+      respond(
+        result.ok,
+        result.ok ? result.value : undefined,
+        result.ok ? undefined : result.error,
+      );
+    });
   },
 };

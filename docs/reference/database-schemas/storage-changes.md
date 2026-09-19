@@ -51,7 +51,8 @@ directories runs in the same shared-state worker. Ordered profile metadata,
 tombstones, emails, and verified GitHub handles retain their existing query owner;
 avatar bytes are not part of enumeration. Mention directory preparation respects
 the existing profile-version invalidation, then evaluates current requester,
-session, and role policy synchronously. Prepared directory rows are descriptive
+session, and role policy and publishes the RPC response in one synchronous step.
+Prepared directory rows are descriptive
 facts, never permission or current alias authority. Project recents retain a narrow
 fresh canonical-profile and alias query for their disclosure scope. Profile
 mutations, avatar storage, identity merges, and final identity/permission lookups

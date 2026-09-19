@@ -73,16 +73,20 @@ describe("gateway connection state", () => {
         state.clients.add(peer.client);
       }
       const recipientOnline = async () => {
-        const result = await state.mentionInbox.mentionable(requester.client, {
-          agentId: "main",
-          visibility: "shared",
-        });
-        if (!result.ok) {
-          throw new Error(result.error.message);
-        }
-        return result.value.users.find(
-          (user) => user.profileId === recipient.client.authenticatedUserProfile?.profileId,
-        )?.online;
+        let online: boolean | undefined;
+        await state.mentionInbox.mentionable(
+          requester.client,
+          { agentId: "main", visibility: "shared" },
+          (result) => {
+            if (!result.ok) {
+              throw new Error(result.error.message);
+            }
+            online = result.value.users.find(
+              (user) => user.profileId === recipient.client.authenticatedUserProfile?.profileId,
+            )?.online;
+          },
+        );
+        return online;
       };
 
       expect(await recipientOnline()).toBe(true);

@@ -29,6 +29,7 @@ export const gatewayDatabaseWorkerTestFiles = [
   "src/gateway/managed-image-attachments.test.ts",
   "src/gateway/managed-image-record-store.test.ts",
   "src/gateway/managed-outgoing-gc-availability.test.ts",
+  "src/gateway/mention-directory.test.ts",
   "src/gateway/mention-inbox.test.ts",
   "src/gateway/probe.device-auth-scope.test.ts",
   "src/gateway/server-methods/agent.create-event.test.ts",
