@@ -3,7 +3,6 @@ import { truncateUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
 import { html, nothing } from "lit";
 import { repeat } from "lit/directives/repeat.js";
 import { styleMap } from "lit/directives/style-map.js";
-import { isMobileNavLayout } from "../../../app/mobile-nav-layout.ts";
 import { icons } from "../../../components/icons.ts";
 import { scrollState } from "../../../components/scroll-state.ts";
 import "../../../components/tooltip.ts";
@@ -21,6 +20,7 @@ import { admitAttachmentFiles } from "./chat-attachment-admission.ts";
 import type { ChatAttachmentControlsProps } from "./chat-attachment-controls.types.ts";
 import { renderAttachmentFileIcon } from "./chat-attachment-file-icon.ts";
 import { renderCompactAttachmentFile } from "./chat-attachment-file.ts";
+import { useSingleAttachmentPicker } from "./chat-attachment-picker-policy.ts";
 import { ChatAttachmentReadLifecycle, type ChatAttachmentRead } from "./chat-attachment-reads.ts";
 import { encodeTextAsDataUrl } from "./chat-attachment-text.ts";
 import { renderChatSelectionAnnotations } from "./chat-selection-annotations.ts";
@@ -489,9 +489,7 @@ export function renderChatAttachmentMenuTrigger(
 }
 
 export function renderChatAttachmentMenuOptions(fileIcon = icons.folder) {
-  // The compact layout leaves source selection to the existing generic native input.
-  const compact = isMobileNavLayout();
-  const options = compact
+  const options = useSingleAttachmentPicker()
     ? [{ value: "file", icon: fileIcon, label: t("chat.composer.attach") }]
     : [
         { value: "camera", icon: icons.camera, label: t("chat.composer.takePhoto") },
