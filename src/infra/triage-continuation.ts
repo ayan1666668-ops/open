@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 // Private live continuations across the installed CLI, never serialized execution authority.
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
-import { readFileSync, realpathSync } from "node:fs";
+import { realpathSync } from "node:fs";
 import { z } from "zod";
 import { resolveNodeRunner } from "../cli/update-cli/shared.js";
 import {
@@ -544,12 +544,7 @@ export async function acceptTriageContinuation(): Promise<
     lease = admitted;
     if (admitted.action.lifetime.kind === "native") {
       const life = admitted.action.lifetime;
-      if (
-        life.placement.kind !== "attached" ||
-        !readFileSync("/proc/self/cgroup", "utf8")
-          .trim()
-          .endsWith("/" + life.scope)
-      ) {
+      if (life.placement.kind !== "attached" || !store.isInNativeScope(life)) {
         throw new Error("automatic triage executor is outside its native scope");
       }
     }
