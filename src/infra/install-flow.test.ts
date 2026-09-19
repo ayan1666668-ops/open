@@ -59,7 +59,9 @@ describe("withExtractedArchiveRoot", () => {
         const openSpy = vi.spyOn(fs, "open").mockImplementation(async (...args) => {
           if (String(args[0]).endsWith(`${path.sep}data.txt`)) {
             delayed = true;
-            await new Promise((resolve) => setTimeout(resolve, 50));
+            await new Promise<void>((resolve) => {
+              setTimeout(resolve, 50);
+            });
           }
           return await originalOpen(...args);
         });
