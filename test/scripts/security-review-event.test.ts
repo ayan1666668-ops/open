@@ -296,23 +296,70 @@ describe("automatic security review event resolution", () => {
     ).toMatchObject({ status: 1, output: "" });
   });
 
-  it.each(["edited", "deleted"])("resolves command %s even when its text is gone", (action) => {
+  it.each([
+    { action: "created", body: "/allow-security-sensitive-change" },
+    {
+      action: "created",
+      body: " \r\n /allow-dependencies-change \r\n/allow-security-sensitive-change\n",
+    },
+    { action: "edited", body: "Removed", previousBody: "/allow-dependencies-change" },
+    {
+      action: "edited",
+      body: "> /allow-security-sensitive-change",
+      previousBody: "/allow-security-sensitive-change",
+    },
+    { action: "edited", body: "/allow-dependencies-change", previousBody: "Thanks" },
+    { action: "deleted", body: "/allow-security-sensitive-change" },
+    { action: "deleted", body: "/allow-dependencies-change\n/allow-security-sensitive-change" },
+  ])("reevaluates approval comment activity: %j", ({ action, body, previousBody }) => {
     expect(
       evaluate({
         eventName: "issue_comment",
-        event: { action, issue: { number: 42, pull_request: {} }, comment: { body: "Removed" } },
+        event: {
+          action,
+          issue: { number: 42, pull_request: {} },
+          comment: { body },
+          changes: { body: { from: previousBody } },
+        },
       }),
-    ).toMatchObject({ status: 0, matrix: { include: [{ pr: 42, head }] } });
+    ).toMatchObject({
+      status: 0,
+      matrix: { include: [{ pr: 42, head }] },
+      published: [{ body: { context: "openclaw/ci-gate", state: "failure" } }],
+    });
   });
 
   it.each([
-    { issue: { number: 42 }, comment: { body: "/allow-security-sensitive-change" } },
-    { issue: { number: 42, pull_request: {} }, comment: { body: "Thanks" } },
-  ])("ignores ordinary issue/comment events without GitHub lookups", (event) => {
-    expect(
-      evaluate({ eventName: "issue_comment", event: { action: "created", ...event } }),
-    ).toMatchObject({ status: 0, matrix: { include: [] }, requests: [] });
-  });
+    { action: "created", body: "Thanks" },
+    { action: "edited", body: "Thanks again", previousBody: "Thanks" },
+    { action: "deleted", body: "Thanks" },
+    { action: "created", body: "Please post /allow-dependencies-change" },
+    { action: "created", body: "> /allow-security-sensitive-change" },
+    { action: "created", body: "```\n/allow-dependencies-change\n```" },
+    { action: "created", body: "/allow-dependencies-change-extra" },
+    { action: "created", body: "/allow-dependencies-change\nThanks" },
+    { action: "edited", body: "Removed", previousBody: "Please post /allow-dependencies-change" },
+    { action: "deleted", body: "> /allow-security-sensitive-change" },
+    { action: "created", body: "/ALLOW-DEPENDENCIES-CHANGE" },
+    { action: "created", body: " \r\n " },
+    { action: "deleted", body: null },
+    { action: "created", body: "/allow-security-sensitive-change", issueOnly: true },
+  ])(
+    "ignores non-approval comments without API reads or status writes: %j",
+    ({ action, body, previousBody, issueOnly }) => {
+      expect(
+        evaluate({
+          eventName: "issue_comment",
+          event: {
+            action,
+            issue: { number: 42, ...(issueOnly ? {} : { pull_request: {} }) },
+            comment: { body },
+            changes: { body: { from: previousBody } },
+          },
+        }),
+      ).toMatchObject({ status: 0, matrix: { include: [] }, requests: [] });
+    },
+  );
 
   it("rejects manual inputs rather than providing a dispatch escape hatch", () => {
     expect(

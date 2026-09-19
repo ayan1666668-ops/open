@@ -1,10 +1,14 @@
 #!/usr/bin/env node
 
 import { appendFile, readFile } from "node:fs/promises";
-import { createGitHubApi, publishGuardStatus, readSecurityReviewHistory } from "./guard-shared.mjs";
+import {
+  createGitHubApi,
+  parseApprovalCommands,
+  publishGuardStatus,
+  readSecurityReviewHistory,
+} from "./guard-shared.mjs";
 
 const shaPattern = /^[a-f0-9]{40}$/u;
-const commands = ["/allow-security-sensitive-change", "/allow-dependencies-change"];
 
 function positiveInteger(value) {
   return Number.isSafeInteger(value) && value > 0;
@@ -43,8 +47,11 @@ async function resolvePullRequests(api, event, eventName, repository) {
       eventName === "issue_comment" &&
       (!event.issue?.pull_request ||
         !["created", "edited", "deleted"].includes(event.action) ||
-        (event.action === "created" &&
-          !commands.some((command) => event.comment?.body?.includes(command))))
+        // An edit can remove the command entirely. Its previous body still
+        // identifies a revocation; authorization always uses live comments.
+        (parseApprovalCommands(event.comment?.body).length === 0 &&
+          (event.action !== "edited" ||
+            parseApprovalCommands(event.changes?.body?.from).length === 0)))
     ) {
       return [];
     }

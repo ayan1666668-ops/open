@@ -132,8 +132,21 @@ describe("security review workflow trust boundaries", () => {
       { action: "created", body: "/allow-security-sensitive-change", allowed: true },
       { action: "created", body: "/allow-dependencies-change", allowed: true },
       { action: "created", body: "Thanks", allowed: false },
-      { action: "edited", body: "Command removed", allowed: true },
+      {
+        action: "edited",
+        body: "Command removed",
+        previousBody: "/allow-dependencies-change",
+        allowed: true,
+      },
+      {
+        action: "edited",
+        body: "/allow-security-sensitive-change",
+        previousBody: "Thanks",
+        allowed: true,
+      },
       { action: "deleted", body: "/allow-dependencies-change", allowed: true },
+      { action: "edited", body: "Thanks again", previousBody: "Thanks", allowed: false },
+      { action: "deleted", body: "Thanks", allowed: false },
       { action: "created", body: "/allow-dependencies-change", issue: true, allowed: false },
       { action: "edited", issue: true, allowed: false },
     ]) {
@@ -143,6 +156,7 @@ describe("security review workflow trust boundaries", () => {
           event: {
             action: event.action,
             comment: { body: event.body ?? "" },
+            changes: { body: { from: event.previousBody ?? "" } },
             issue: { pull_request: event.issue ? null : {} },
             workflow_run: { event: event.sourceEvent },
           },

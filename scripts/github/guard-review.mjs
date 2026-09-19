@@ -1,12 +1,8 @@
 import { readFile } from "node:fs/promises";
-import { createGitHubApi, publishGuardStatus } from "./guard-shared.mjs";
+import { createGitHubApi, parseApprovalCommands, publishGuardStatus } from "./guard-shared.mjs";
 import { securityReviewRollout } from "./security-review-rollout.mjs";
 
 const requestMarker = "<!-- openclaw:approval-request ";
-const approvalCommands = new Set([
-  "/allow-security-sensitive-change",
-  "/allow-dependencies-change",
-]);
 
 function pullRequestNumber(event) {
   if (event.pull_request) {
@@ -199,13 +195,8 @@ export async function findMaintainerApproval(guard) {
     return null;
   }
   for (const comment of comments.toReversed()) {
-    const lines = (comment.body ?? "")
-      .split(/\r?\n/u)
-      .map((line) => line.trim())
-      .filter(Boolean);
     if (
-      !lines.includes(guard.approvalCommand) ||
-      !lines.every((line) => approvalCommands.has(line)) ||
+      !parseApprovalCommands(comment.body).includes(guard.approvalCommand) ||
       !(Date.parse(comment.created_at) > since) ||
       comment.updated_at !== comment.created_at ||
       comment.user?.id === pullRequest.user.id

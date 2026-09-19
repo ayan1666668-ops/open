@@ -226,9 +226,15 @@ distinct commit; security review evaluates the affected PRs automatically.
 Each guard updates one PR comment with affected files, review guidance, the
 current revision, and the remaining action. The sensitive-change label remains
 after approval so reviewers can still identify the affected responsibility.
-Trusted `issue_comment` events reevaluate command comments and comment edits
-or deletions automatically. Ordinary new comments do not start guard
-jobs. Evaluation uses trusted repository code and GitHub metadata without
+Trusted `issue_comment` events reevaluate approval commands and edits or
+deletions of approval comments automatically. Edits inspect both the previous
+and current text so removing a command still revokes approval. Ordinary comment
+activity does not reevaluate the guards or change their statuses. Command mentions
+in prose, quotes, or code fences are not approval comments. The workflow filters
+ordinary comments before allocating a runner; a command mention can start the
+lightweight resolver, which validates the syntax before scheduling review.
+Both guards share one review job, and comment events do not rerun the test suite.
+Evaluation uses trusted repository code and GitHub metadata without
 executing contributor code or comment text.
 
 The hard tier lives only in `.github/CODEOWNERS`: security policy, ownership,

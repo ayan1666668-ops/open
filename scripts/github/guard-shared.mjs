@@ -7,6 +7,18 @@ export const GITHUB_API_REQUEST_TIMEOUT_MS = 30_000;
 
 const githubApiRetryStatuses = new Set([502, 503, 504]);
 const githubApiRetryDelaysMs = [1_000, 2_000, 4_000];
+const approvalCommands = new Set([
+  "/allow-security-sensitive-change",
+  "/allow-dependencies-change",
+]);
+
+export function parseApprovalCommands(body) {
+  const lines = (body ?? "")
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  return lines.every((line) => approvalCommands.has(line)) ? lines : [];
+}
 
 // Commit statuses are the publisher's durable record of which PRs it evaluated.
 // GitHub's commit-to-PR association index is incomplete across fork repositories.
