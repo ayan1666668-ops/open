@@ -84,7 +84,9 @@ describe("memory index", () => {
       Reflect.set(manager, "provider", null);
       Reflect.set(manager, "providerLifecycle", {
         mode: "degraded",
-        providerId: "auto",
+        // The resolved settings provider for this fixture (auto → openai); the
+        // recovery gate only skips re-init when the degraded id matches it.
+        providerId: "openai",
         reason: "connection reset",
       });
       providerFixture.forceNoProvider = true;
