@@ -374,13 +374,12 @@ async function testPreflightCandidate(params: {
       source ??
       (await runCandidateCheck("rebase", ["git", "-C", params.worktreeDir, "rebase", params.sha]));
     if (rebase) {
-      await runCandidateCheck("rebase --abort", [
-        "git",
-        "-C",
-        params.worktreeDir,
-        "rebase",
-        "--abort",
-      ]);
+      await runCandidateCheck(
+        "rebase --abort",
+        ["git", "-C", params.worktreeDir, "rebase", "--abort"],
+        undefined,
+        params.step,
+      );
       return { status: classifyPreflightFailure(rebase) };
     }
   }

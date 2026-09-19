@@ -706,12 +706,24 @@ describe("Git candidate activation", () => {
       // A deliberately non-signing executable rejects Git's signing request without a key.
       await git(root, "config", "gpg.program", process.execPath);
       await git(root, "config", "commit.gpgSign", "true");
+      const abortTimeouts: Array<number | undefined> = [];
+      const execute = runCommand;
+      runCommand = (argv, options) => {
+        if (argv.includes("rebase") && argv.includes("--abort")) {
+          abortTimeouts.push(options.timeoutMs);
+        }
+        return execute(argv, options);
+      };
       const result = await update(inspection ? { inspectGitTarget: async () => undefined } : {});
       // The existing fallback can retain the old candidate without creating a commit.
       expect(result.status, JSON.stringify(result)).toBe("ok");
       expect(
         result.steps.some((step) => /preflight rebase \(/u.test(step.name) && step.exitCode !== 0),
       ).toBe(true);
+      expect(abortTimeouts.length).toBeGreaterThan(0);
+      for (const timeoutMs of abortTimeouts) {
+        expect(timeoutMs).toBe(5_000);
+      }
       expect(await git(root, "rev-parse", "HEAD")).toBe(beforeSha);
       await expectRuntime(root, beforeSha);
     },
