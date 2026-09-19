@@ -1,11 +1,13 @@
-// Tool image staging tests cover the managed media reference staged inline images
-// carry, so the chat display projection renders the image instead of a
-// non-recoverable "omitted from history" placeholder.
+// Tool image staging tests cover the managed media reference an explicitly presentable
+// inline image carries, so the chat display projection renders the image instead of a
+// non-recoverable "omitted from history" placeholder, and cover the inverse: an
+// inspection-only result never reaches the shared store.
 import fs from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { sanitizeChatHistoryContentBlock } from "../gateway/chat-display-projection.sanitize.js";
 import type { ImageContent } from "../llm/types.js";
+import { resolveInboundMediaOwnership } from "../media/inbound-media-ownership.js";
 import { withTestDir } from "../test-helpers/temp-dir.js";
 import { captureEnv, setTestEnvValue } from "../test-utils/env.js";
 import { sanitizeToolResultImages } from "./tool-images.js";
@@ -21,9 +23,15 @@ const imageBlock = (): ImageContent => ({
   mimeType: "image/png",
 });
 
+/** The explicit presentation decision publication requires; production callers omit it. */
+const PRESENTABLE_DETAILS = { media: { present: true } };
+
 /** Stages one block the way a tool result does, so these cases exercise the real path. */
-async function stageViaToolResult(block: ImageContent): Promise<unknown> {
-  const result = await sanitizeToolResultImages({ content: [block], details: {} }, "image:native");
+async function stageViaToolResult(
+  block: ImageContent,
+  details: unknown = PRESENTABLE_DETAILS,
+): Promise<unknown> {
+  const result = await sanitizeToolResultImages({ content: [block], details }, "image:native");
   return result.content[0];
 }
 
@@ -44,7 +52,7 @@ async function withMediaStore(run: (stateDir: string) => Promise<void>): Promise
 }
 
 describe("inline image staging", () => {
-  it("stages the presented bytes so the display projection keeps a reference", async () => {
+  it("publishes an explicitly presentable image so the display projection keeps a reference", async () => {
     await withMediaStore(async (stateDir) => {
       const staged = (await stageViaToolResult(imageBlock())) as ImageContent;
       expect(staged.type).toBe("image");
@@ -57,6 +65,12 @@ describe("inline image staging", () => {
 
       // The model payload survives, because provider hydration reads it.
       expect(Buffer.from(staged.data, "base64").equals(stored)).toBe(true);
+
+      // The object is session-bound from the moment it is published, so the route can
+      // refuse it to a request that names no session, even before the result lands in one.
+      const ownership = await resolveInboundMediaOwnership(id);
+      expect(ownership?.stagedAt).toEqual(expect.any(Number));
+      expect(ownership?.sessionKey).toBeUndefined();
 
       // Display projection: the reference is kept, the private payload dropped, and the
       // block is not marked omitted, because omission means the media is gone rather
@@ -100,6 +114,37 @@ describe("inline image staging", () => {
       expect(staged.type).toBe("text");
       expect(staged.url).toBeUndefined();
       expect(await storedInboundEntries(stateDir)).toEqual([]);
+    });
+  });
+
+  // The shipped inspection contract: a native vision result marks media.outbound false,
+  // the shared read tool and private reads carry no decision at all, and none of them may
+  // copy bytes into storage the media route serves.
+  it.each([
+    ["no presentation decision", {}],
+    ["native inspection", { media: { outbound: false } }],
+    ["an explicit refusal", { media: { present: false } }],
+    ["no details at all", undefined],
+  ])("keeps an inspection-only result private with %s", async (_name, details) => {
+    await withMediaStore(async (stateDir) => {
+      const block = imageBlock();
+      // Absent details are omitted rather than passed as undefined, because the staging
+      // helper's default argument is the presentable decision.
+      const staged = (await sanitizeToolResultImages(
+        details === undefined ? { content: [block] } : { content: [block], details },
+        "image:native",
+      ).then((result) => result.content[0])) as ImageContent;
+
+      expect(staged.url).toBeUndefined();
+      expect(staged.data).toBe(PNG_BASE64);
+      expect(await storedInboundEntries(stateDir)).toEqual([]);
+
+      // The projection still protects the private payload, so nothing about the
+      // inspection path changed.
+      const projected = sanitizeChatHistoryContentBlock(staged).block as Record<string, unknown>;
+      expect(projected.url).toBeUndefined();
+      expect(projected.data).toBeUndefined();
+      expect(projected.omitted).toBe(true);
     });
   });
 });

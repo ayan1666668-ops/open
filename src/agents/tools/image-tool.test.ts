@@ -1868,7 +1868,7 @@ describe("image tool implicit imageModel config", () => {
       expect(tool.label).toBe("View Image");
       expect(tool.catalogMode).toBe("direct-only");
       expect(tool.description).toContain("private model context");
-      expect(tool.description).toContain("never attached or sent to the user");
+      expect(tool.description).toContain("Does not display, attach, or send");
 
       const result = await tool.execute("native-image", {
         prompt: "Read the screenshot error.",
@@ -1884,7 +1884,7 @@ describe("image tool implicit imageModel config", () => {
       expect(content).toEqual([
         {
           type: "text",
-          text: "Loaded 1 image into private model context for inspection; the conversation renders them from local storage and nothing is attached or sent.",
+          text: "Loaded 1 image into private model context for inspection; not displayed, attached, or sent to the user.",
         },
         expect.objectContaining({ type: "image", mimeType: "image/jpeg" }),
       ]);

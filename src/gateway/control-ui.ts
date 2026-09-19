@@ -30,6 +30,7 @@ import {
   toMediaProbeResult,
   type MediaProbeResult,
 } from "../media/media-probe.js";
+import { resolveInboundMediaOwnership } from "../media/inbound-media-ownership.js";
 import {
   parseInboundMediaUri,
   resolveMediaReferenceLocalPathInfo,
@@ -483,12 +484,17 @@ async function openAssistantMedia(
   }
 }
 
-function isManagedInboundSource(source: string): boolean {
+/** Resolves the inbound id of a managed media:// reference, or undefined for anything else. */
+function managedInboundMediaId(source: string): string | undefined {
   try {
-    return parseInboundMediaUri(source) !== null;
+    return parseInboundMediaUri(source)?.id;
   } catch {
-    return false;
+    return undefined;
   }
+}
+
+function isManagedInboundSource(source: string): boolean {
+  return managedInboundMediaId(source) !== undefined;
 }
 
 async function resolveAssistantMediaAvailability(
@@ -633,6 +639,25 @@ export async function handleControlUiAssistantMediaRequest(
   if (!isMetaRequest && url.searchParams.has("mediaTicket") && (!ticket || !sameSession)) {
     respondControlUiNotFound(res);
     return true;
+  }
+  // A staged object is bound to the session that published it. The media store is one of
+  // the default media roots, so without this a reader who learned the reference could
+  // fetch it while naming no session at all, and outlive the visibility of the session
+  // whose history published it. An owned reference therefore needs a session that
+  // matches its owner, and an ownerless request is refused rather than falling back to
+  // general reader authority.
+  const stagedOwnership = isManagedInboundSource(source)
+    ? await resolveInboundMediaOwnership(managedInboundMediaId(source) ?? "")
+    : undefined;
+  if (stagedOwnership) {
+    const sessionBoundKeys = [policy.session?.sessionKey, sessionKey, ticket?.session?.sessionKey];
+    const matchesOwner =
+      !stagedOwnership.sessionKey ||
+      sessionBoundKeys.some((candidate) => candidate && candidate === stagedOwnership.sessionKey);
+    if (!matchesOwner) {
+      respondControlUiNotFound(res);
+      return true;
+    }
   }
   const allowance = explicitAllow
     ? true

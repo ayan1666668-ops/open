@@ -3,6 +3,7 @@ import { applyAssistantDeliveryDirectives } from "../../config/sessions/transcri
 import { getStreamLlmRuntime } from "../../llm/model-runtime-binding.js";
 import type { AssistantMessage, Model } from "../../llm/types.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
+import { recordInboundMediaOwnersInValue } from "../../media/inbound-media-ownership.js";
 import type {
   Agent,
   AgentEvent,
@@ -425,6 +426,15 @@ export abstract class AgentSessionBase {
         const toolResultChangedByExtension =
           event.message.role === "toolResult" &&
           this.extensionModifiedToolResultIds.delete(event.message.toolCallId);
+        if (event.message.role === "toolResult" && this.sessionKey) {
+          // A staged media reference is readable only by the session that published its
+          // result, and this is where that reference lands in a session. Best-effort: the
+          // staged object already refuses a request that names no session, so a failure
+          // here narrows nothing away from the shipped private behaviour.
+          void recordInboundMediaOwnersInValue(event.message.content, {
+            sessionKey: this.sessionKey,
+          }).catch(() => undefined);
+        }
         try {
           // Normalize live delivery facts before persistence makes its redacted copy.
           // Stored arguments must never replace the values used for tool execution.
