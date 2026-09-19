@@ -24,6 +24,13 @@ type ControlUiGitHubPreviewCoAuthor = {
   avatarDataUrl?: string;
 };
 
+/** Anonymous public-page presentation; remote URLs never cross into the renderer. */
+export type ControlUiLinkPreview = {
+  title?: string;
+  imageDataUrl?: string;
+  faviconDataUrl?: string;
+};
+
 export type ControlUiGitHubPreview = {
   additions?: number;
   avatarDataUrl?: string;
