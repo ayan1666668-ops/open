@@ -11,10 +11,11 @@ import {
 import {
   createPluginStateKeyedStore,
   createPluginStateSyncKeyedStore,
+  type OpenAsyncKeyedStoreOptions,
   type OpenKeyedStoreOptions,
 } from "../plugin-state/plugin-state-store.js";
 import { createLazyRuntimeSurface } from "../shared/lazy-runtime.js";
-import { formatPluginTrustRefusal } from "./plugin-trust.js";
+import { PluginTrustRefusalError } from "./plugin-trust.js";
 import {
   capturePluginLifecycleAuthority,
   getPluginRecordRegistry,
@@ -31,7 +32,6 @@ import {
   getGatewayContextResolver,
   getPluginRuntimeGatewayRequestScope,
   withPluginRuntimePluginScope,
-  withPluginRuntimeRegistryScope,
 } from "./runtime/gateway-request-scope.js";
 import type { PluginRuntime } from "./runtime/types.js";
 
@@ -169,7 +169,7 @@ export function createPluginRuntimeResolver(state: PluginRegistryState) {
       return cached;
     }
     const currentRegistry = () => getPluginRecordRegistry(registry, record);
-    const currentJudgmentRegistry = () => {
+    const currentDecisionRegistry = () => {
       const owner = currentRegistry();
       const invocationView = getPluginRuntimeGatewayRequestScope()?.pluginRegistry;
       // An admitted prepared view may borrow a Gateway provider. Keep that exact
@@ -213,14 +213,13 @@ export function createPluginRuntimeResolver(state: PluginRegistryState) {
         | "openChannelIngressDrain",
     ) => {
       if (record.origin !== "bundled" && record.trustedOfficialInstall !== true) {
-        throw new Error(
-          formatPluginTrustRefusal({
-            methodName,
-            pluginId,
-            origin: record.origin,
-            trust: record.trust,
-          }),
-        );
+        throw new PluginTrustRefusalError({
+          methodName,
+          pluginId,
+          source: record.source,
+          origin: record.origin,
+          trust: record.trust,
+        });
       }
     };
     const runtime = new Proxy(registryParams.runtime, {
@@ -229,16 +228,16 @@ export function createPluginRuntimeResolver(state: PluginRegistryState) {
           if (requireActive) {
             assertRuntimeCurrent();
           }
-          return withPluginRuntimeRegistryScope(currentRegistry(), () =>
-            withPluginRuntimePluginScope(
-              {
-                pluginId,
-                pluginSource: record.source,
-                pluginOrigin: record.origin,
-                pluginTrustedOfficialInstall: record.trustedOfficialInstall,
-              },
-              run,
-            ),
+          const scopedRegistry = currentRegistry();
+          return withPluginRuntimePluginScope(
+            {
+              pluginId,
+              pluginSource: record.source,
+              pluginOrigin: record.origin,
+              pluginTrustedOfficialInstall: record.trustedOfficialInstall,
+            },
+            run,
+            scopedRegistry,
           );
         };
         const getRuntimeProperty = () => {
@@ -256,9 +255,12 @@ export function createPluginRuntimeResolver(state: PluginRegistryState) {
               assertTrustedPluginRuntime("openBlobStore");
               return createPluginBlobStore<TMetadata>(pluginId, options);
             },
-            openKeyedStore: <T>(options: OpenKeyedStoreOptions) => {
+            openKeyedStore: <T>(options: OpenAsyncKeyedStoreOptions) => {
               assertTrustedPluginRuntime("openKeyedStore");
-              return createPluginStateKeyedStore<T>(pluginId, options);
+              if (options.retention === "retained") {
+                assertRuntimeCurrent();
+              }
+              return createPluginStateKeyedStore<T>(pluginId, options, assertRuntimeCurrent);
             },
             openSyncKeyedStore: <T>(options: OpenKeyedStoreOptions) => {
               assertTrustedPluginRuntime("openSyncKeyedStore");
@@ -345,22 +347,16 @@ export function createPluginRuntimeResolver(state: PluginRegistryState) {
         if (prop === "channel") {
           return resolveRecordChannelRuntime(record, true);
         }
-        if (prop === "judgments") {
+        if (prop === "decisions") {
           return {
-            recordOutcome: async (outcome) => {
-              assertRuntimeCurrent();
-              const { recordJudgmentOutcome } = await import("../judgments/runtime.js");
-              assertRuntimeCurrent();
-              await recordJudgmentOutcome(outcome, currentJudgmentRegistry());
-            },
             evaluate: async (batch, options) => {
               assertRuntimeCurrent();
-              const { evaluateJudgmentInRegistry } = await import("../judgments/runtime.js");
+              const { evaluateDecisionInRegistry } = await import("../decisions/runtime.js");
               assertRuntimeCurrent();
-              const result = await evaluateJudgmentInRegistry(
+              const result = await evaluateDecisionInRegistry(
                 batch,
                 options,
-                currentJudgmentRegistry(),
+                currentDecisionRegistry(),
                 getRuntimeConfig(),
                 record.id,
               );
@@ -368,7 +364,7 @@ export function createPluginRuntimeResolver(state: PluginRegistryState) {
               options.signal.throwIfAborted();
               return result;
             },
-          } satisfies PluginRuntime["judgments"];
+          } satisfies PluginRuntime["decisions"];
         }
         if (prop === "llm") {
           const llm = getRuntimeProperty();

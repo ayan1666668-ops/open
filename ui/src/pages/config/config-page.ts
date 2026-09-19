@@ -34,7 +34,6 @@ import type { TypefaceId } from "../../app/typography.ts";
 import {
   confirmAndStartUpdate,
   createUpdateProgressWatcher,
-  type UpdateProgress,
 } from "../../app/update-confirmation.ts";
 import { canReportUpdateFailure } from "../../app/update-failure-report-controller.ts";
 import { CONTROL_UI_BUILD_INFO } from "../../build-info.ts";
@@ -881,17 +880,11 @@ export class ConfigPage extends OpenClawLightDomElement {
     context?: Parameters<typeof startThemeTransition>[0]["context"],
   ) {
     const preference = this.currentSyncedPref("themeMode");
-    const reset = preference.overridden && mode === preference.resetValue;
-    const currentTheme = resolveTheme(this.settings.theme, this.settings.themeMode);
-    startThemeTransition({
-      currentTheme,
-      nextTheme: resolveTheme(this.settings.theme, mode),
-      context,
-      applyTheme: () =>
-        reset
-          ? this.resetSyncedAppearancePref("themeMode")
-          : this.applySettings({ themeMode: mode }),
-    });
+    if (preference.overridden && mode === preference.resetValue) {
+      this.resetSyncedAppearancePref("themeMode");
+    } else {
+      this.context.theme.setMode(mode, context?.element);
+    }
   }
 
   private setSetting<K extends ConfigPageSetting>(key: K, value: UiSettings[K]) {
@@ -962,11 +955,6 @@ export class ConfigPage extends OpenClawLightDomElement {
     return update.updateRunning || update.updateReconciliationPending;
   }
 
-  // The update dialog outlives this page and the connection, so it reads live
-  // snapshots rather than the values captured during a render.
-  private readonly watchUpdateProgress = (listener: (progress: UpdateProgress) => void) =>
-    createUpdateProgressWatcher(this.context)(listener);
-
   private isCuratedConfigMutationDisabled(): boolean {
     const runtimeState = this.context.runtimeConfig.state;
     return (
@@ -989,6 +977,7 @@ export class ConfigPage extends OpenClawLightDomElement {
       const overlaySnapshot = this.context.overlays.snapshot;
       const canAdmin = hasOperatorAdminAccess(gatewaySnapshot.hello?.auth ?? null);
       return renderUpdates({
+        update: overlaySnapshot,
         nativeDeviceSettings: this.context.nativeDeviceSettings,
         configObject,
         gatewayVersion:
@@ -998,15 +987,6 @@ export class ConfigPage extends OpenClawLightDomElement {
         controlUiCommit: CONTROL_UI_BUILD_INFO.commit,
         controlUiCommitAt: CONTROL_UI_BUILD_INFO.commitAt,
         controlUiBuiltAt: CONTROL_UI_BUILD_INFO.builtAt,
-        schedule: overlaySnapshot.updateSchedule,
-        heldUpdateCampaignId: overlaySnapshot.heldUpdateCampaignId,
-        updateAvailable: overlaySnapshot.updateAvailable,
-        statusBanner: overlaySnapshot.updateStatusBanner,
-        statusCheckBanner: overlaySnapshot.updateStatusCheckBanner,
-        reportableUpdateFailureId: overlaySnapshot.reportableUpdateFailureId,
-        updateFailureReportBusy: overlaySnapshot.updateFailureReportBusy,
-        updateFailureReportNotice: overlaySnapshot.updateFailureReportNotice,
-        run: overlaySnapshot.updateRun,
         connected: gatewaySnapshot.phase === "connected",
         configBusy: this.isCuratedConfigMutationDisabled(),
         canAdmin,
@@ -1015,7 +995,6 @@ export class ConfigPage extends OpenClawLightDomElement {
         canHoldUpdate: canCallGatewayMethod(gatewaySnapshot, "update.hold", "operator.admin"),
         canReport: canReportUpdateFailure(gatewaySnapshot),
         updateBusy: this.isUpdateBusy(),
-        statusChecking: overlaySnapshot.updateStatusRefreshing,
         onChannelChange: (channel) => runtimeConfig.patchForm(["update", "channel"], channel),
         onUpdateChecksChange: (enabled) =>
           runtimeConfig.patchForm(["update", "checkOnStart"], enabled),
@@ -1024,7 +1003,8 @@ export class ConfigPage extends OpenClawLightDomElement {
         onUpdateNow: () =>
           void confirmAndStartUpdate({
             startGatewayUpdate: () => void this.context.overlays.runUpdate(),
-            watchUpdateProgress: this.watchUpdateProgress,
+            // The dialog outlives this page, so read live snapshots after each change.
+            watchUpdateProgress: createUpdateProgressWatcher(this.context),
             onCheckStatus: () => this.context.overlays.refreshUpdateStatus(),
             onAcknowledge: () => this.context.overlays.acknowledgeUpdateRun(),
             updateAvailable: overlaySnapshot.updateAvailable,
@@ -1140,6 +1120,8 @@ export class ConfigPage extends OpenClawLightDomElement {
         ? localePref.resetValue
         : undefined,
       onLocaleChange: (locale) => this.setLocale(locale),
+      themeCatalog: this.pageId === "appearance" ? this.context.theme.catalog : undefined,
+      onRetryThemeCatalog: () => this.context.theme.retryCatalog?.(),
       setTheme: (theme, transitionContext) => this.setTheme(theme, transitionContext),
       setThemeMode: (mode, transitionContext) => this.setThemeMode(mode, transitionContext),
       setAccent: (accent) =>

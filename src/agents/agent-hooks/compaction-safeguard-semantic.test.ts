@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import type { JudgmentRuntimeV1 } from "../../judgments/types.js";
+import type { DecisionRuntimeV1 } from "../../decisions/types.js";
 import type { AgentMessage } from "../runtime/index.js";
 import {
   evaluateCompactionFidelity,
   evaluateCompactionShadowCuration,
-} from "./compaction-safeguard-semantic-judgments.js";
+} from "./compaction-safeguard-semantic-decisions.js";
 import {
   buildCompactionSemanticSnapshot,
   fingerprintCompactionMessages,
@@ -14,10 +14,9 @@ function message(value: unknown): AgentMessage {
   return value as AgentMessage;
 }
 
-function runtimeWithChoices(choices: Record<string, string>): JudgmentRuntimeV1 {
+function runtimeWithChoices(choices: Record<string, string>): DecisionRuntimeV1 {
   return {
-    recordOutcome: vi.fn(async () => {}),
-    evaluate: vi.fn<JudgmentRuntimeV1["evaluate"]>(async (batch, options) => {
+    evaluate: vi.fn<DecisionRuntimeV1["evaluate"]>(async (batch, options) => {
       options.signal.throwIfAborted();
       const answers = Object.fromEntries(
         Object.entries(batch.questions).map(([id, question]) => {
@@ -44,7 +43,7 @@ function runtimeWithChoices(choices: Record<string, string>): JudgmentRuntimeV1 
       return {
         status: "ok" as const,
         result: {
-          model: "test-judgment",
+          model: "test-decision",
           answers,
           usage: { inputTokens: 10, outputTokens: 2 },
         },
@@ -120,7 +119,7 @@ describe("compaction semantic snapshot", () => {
   });
 });
 
-describe("compaction semantic judgments", () => {
+describe("compaction semantic decisions", () => {
   it("retains an older user constraint outside the tracked obligations", async () => {
     const olderConstraint = message({ role: "user", content: "Keep all existing behavior." });
     const latestAsk = "Finish the report.";
@@ -216,7 +215,7 @@ describe("compaction semantic judgments", () => {
     expect(snapshot.segments).toHaveLength(3);
   });
 
-  it("changes the source fingerprint when judgment-relevant source changes", () => {
+  it("changes the source fingerprint when decision-relevant source changes", () => {
     const user = message({
       role: "user",
       content: [{ type: "text", text: "Deploy production." }],

@@ -5,6 +5,7 @@ import { DEV_BRANCH, type UpdateChannel } from "./update-channels.js";
 import { getUpdateDoctorConfigFailureReason } from "./update-doctor-config.js";
 import { createUpdateErrorFact } from "./update-failure-facts.js";
 import { readBuiltGatewayBuildId, verifyGitUpdateRecovery } from "./update-git-runtime.js";
+import { createUpdatePreflightFailure } from "./update-preflight-details.js";
 import { UpdateRequesterRevokedError } from "./update-requester-authority.js";
 import { runStep } from "./update-runner-command.js";
 import {
@@ -13,7 +14,10 @@ import {
 } from "./update-runner-doctor.js";
 import { gitCleanCheckArgs } from "./update-runner-git-commands.js";
 import { runGitCandidatePreflight } from "./update-runner-git-preflight.js";
-import { readCurrentGitUpdateRecovery } from "./update-runner-git-recovery.js";
+import {
+  readCurrentGitUpdateRecovery,
+  recordGitRollbackOutcome,
+} from "./update-runner-git-recovery.js";
 import { prepareGitRuntimePromotion } from "./update-runner-git-runtime.js";
 import {
   resolveGitDoctorEntry,
@@ -115,6 +119,10 @@ export async function updateGitCheckout(params: {
   let candidateTransfer: Awaited<ReturnType<typeof prepareGitCandidateTransfer>>;
   let stateMigrationStarted = false;
   let recovery = await verifyGitUpdateRecovery({ root: gitRoot, sha: beforeSha });
+  let rollbackOutcome: NonNullable<UpdateRunResult["rollbackOutcome"]> = {
+    status: "not-needed",
+    reason: "Installed checkout was not changed",
+  };
   const prepareMutation = async (revision: string, root = gitRoot, runner = runCommand) => {
     if (mutationPrepared) {
       // Remote transport can outlive the earlier service inspection. Recheck
@@ -149,6 +157,7 @@ export async function updateGitCheckout(params: {
     reason,
     before,
     recovery,
+    rollbackOutcome,
     steps,
     durationMs: Date.now() - startedAt,
   });
@@ -269,39 +278,67 @@ export async function updateGitCheckout(params: {
     return restored && verified;
   };
   const rollbackError = async (reason: string) => {
-    // Admission can stop the service before import changes any source or runtime.
-    // Reverify retained artifacts without resetting an untouched checkout.
-    if (!sourceMutationStarted) {
-      if (!(await checkSourceUnchanged())) {
-        recovery = await verifyGitUpdateRecovery({ root: gitRoot, sha: beforeSha });
-      }
-      return buildError(reason);
-    }
-    // Doctor can migrate state before failing. Restoring code cannot undo that boundary.
-    if (stateMigrationStarted) {
-      return buildError(reason);
-    }
-    const sourceRestored = await rollback();
-    let runtimeRestored = true;
     try {
-      await runtimePromotion?.restore();
+      // Admission can stop the service before import changes any source or runtime.
+      // Reverify retained artifacts without resetting an untouched checkout.
+      if (!sourceMutationStarted) {
+        if (!(await checkSourceUnchanged())) {
+          recovery = await verifyGitUpdateRecovery({ root: gitRoot, sha: beforeSha });
+        }
+        return buildError(reason);
+      }
+      // Doctor can migrate state before failing. Restoring code cannot undo that boundary.
+      if (stateMigrationStarted) {
+        rollbackOutcome = {
+          status: "not-attempted",
+          reason: "State migration started; restoring code alone cannot restore operator state",
+        };
+        return buildError(reason);
+      }
+      const sourceRestored = await rollback();
+      let runtimeRestored = true;
+      try {
+        await runtimePromotion?.restore();
+      } catch (error) {
+        runtimeRestored = false;
+        steps.push({
+          name: "git runtime rollback",
+          command: "restore previous runtime",
+          cwd: gitRoot,
+          durationMs: 0,
+          exitCode: 1,
+          stderrTail: String(error),
+        });
+      }
+      recovery = !sourceRestored
+        ? { serviceRestartSafe: false, reason: "source-rollback-failed" }
+        : !runtimeRestored
+          ? { serviceRestartSafe: false, reason: "runtime-verification-failed" }
+          : await verifyGitUpdateRecovery({ root: gitRoot, sha: beforeSha });
+      const restored = sourceRestored && runtimeRestored && recovery.serviceRestartSafe;
+      rollbackOutcome = {
+        status: restored ? "succeeded" : "failed",
+        reason: restored
+          ? "Previous checkout and runtime restored and verified"
+          : "Previous checkout or runtime restoration could not be verified",
+      };
+      return buildError(reason);
     } catch (error) {
-      runtimeRestored = false;
-      steps.push({
-        name: "git runtime rollback",
-        command: "restore previous runtime",
-        cwd: gitRoot,
-        durationMs: 0,
-        exitCode: 1,
-        stderrTail: String(error),
+      if (sourceMutationStarted && !stateMigrationStarted) {
+        rollbackOutcome = {
+          status: "failed",
+          reason: "Rollback threw before restoration could be verified",
+        };
+      }
+      throw error;
+    } finally {
+      recordGitRollbackOutcome({
+        outcome: rollbackOutcome,
+        progress: opts.progress,
+        root: gitRoot,
+        steps,
       });
     }
-    recovery = !sourceRestored
-      ? { serviceRestartSafe: false, reason: "source-rollback-failed" }
-      : !runtimeRestored
-        ? { serviceRestartSafe: false, reason: "runtime-verification-failed" }
-        : await verifyGitUpdateRecovery({ root: gitRoot, sha: beforeSha });
-    return buildError(reason);
   };
   const runRequiredStep = async (name: string, argv: string[], reason: string) => {
     const result = await runStep(step(name, argv, gitRoot));
@@ -472,6 +509,16 @@ export async function updateGitCheckout(params: {
         : buildError(inspectedTarget.reason, inspectedTarget.status);
     }
     if (!inspectedTarget && opts.publishGitCheckout) {
+      const failure = createUpdatePreflightFailure("target-git-inspection-missing");
+      steps.push({
+        name: "target-metadata-preflight",
+        command: "openclaw update",
+        cwd: gitRoot,
+        durationMs: 0,
+        exitCode: 1,
+        stderrTail: failure.message,
+        failureFacts: failure.failureFacts,
+      });
       return buildError("target-metadata-preflight");
     }
     if (!inspectedTarget) {
