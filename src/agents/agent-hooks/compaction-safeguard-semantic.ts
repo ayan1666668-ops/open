@@ -5,9 +5,9 @@ import type { AgentMessage } from "../runtime/index.js";
 const MAX_SEGMENT_TEXT_CHARS = 6_000;
 const MAX_OBLIGATION_TEXT_CHARS = 6_000;
 
-export type CompactionSemanticMode = "off" | "shadow";
+type CompactionSemanticMode = "off" | "shadow";
 
-export type CompactionSemanticProtectionReason =
+type CompactionSemanticProtectionReason =
   | "user-authored"
   | "recent-turn"
   | "turn-prefix"
@@ -17,7 +17,7 @@ export type CompactionSemanticProtectionReason =
   | "unsupported-content"
   | "oversized-segment";
 
-export type CompactionSemanticSegment = {
+type CompactionSemanticSegment = {
   id: string;
   sourceIndexes: number[];
   roles: string[];
@@ -27,7 +27,7 @@ export type CompactionSemanticSegment = {
   protectionReasons: CompactionSemanticProtectionReason[];
 };
 
-export type CompactionSemanticObligation = {
+type CompactionSemanticObligation = {
   id: string;
   kind: "unresolved-request" | "latest-user-ask";
   text: string;
