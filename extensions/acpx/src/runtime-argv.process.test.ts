@@ -39,20 +39,15 @@ async function prompt(
   runtime: AcpxRuntime,
   handle: Awaited<ReturnType<AcpxRuntime["ensureSession"]>>,
   text: string,
-  phase: (name: string) => void = () => {},
 ) {
-  phase(`${text}:start-turn`);
   const turn = runtime.startTurn({ handle, text, mode: "prompt", requestId: text });
   const chunks: string[] = [];
-  phase(`${text}:events`);
   for await (const event of turn.events) {
     if (event.type === "text_delta") {
       chunks.push(event.text);
     }
   }
-  phase(`${text}:result`);
   expect(await turn.result).toMatchObject({ status: "completed" });
-  phase(`${text}:complete`);
   return JSON.parse(chunks.join(""));
 }
 
@@ -64,81 +59,8 @@ it.each([
 ])(
   "preserves ACP argv through real processes and reconnect (leased=$wrapped, command=$form)",
   async ({ wrapped, form }) => {
-    // Only synthetic fixture labels, relative paths and peer lifecycle; no contents or environment.
-    // A timeout alone cannot distinguish ACP work from fixture cleanup.
-    const phase = (name: string) => {
-      console.error(`[acpx-argv-process leased=${wrapped} command=${form}] ${name}`);
-    };
-    phase("state:setup");
     await withOpenClawTestState({ label: "acpx-argv-process" }, async (state) => {
       const peerDirectory = path.join(state.root, "peer");
-      // Keep the fixture's real cleanup owner; distinguish its drain from file removal.
-      const restoreEnv = state.restoreEnv;
-      state.restoreEnv = async () => {
-        phase("state:release-resources");
-        await restoreEnv();
-        phase("state:resources-released");
-        // Read only this synthetic peer's log; do not sample unrelated processes.
-        const trace = await fs
-          .readFile(path.join(peerDirectory, "process-lifecycle.log"), "utf8")
-          .catch(() => "");
-        const records = trace.trim().split("\n");
-        for (const line of records) {
-          if (/^\d+ (?:started|stdin-end|exit)$/.test(line)) {
-            phase(`peer:${line}`);
-          }
-        }
-        const pids = new Set(records.map((line) => Number(line.split(" ")[0])));
-        for (const pid of pids) {
-          if (!Number.isSafeInteger(pid) || pid <= 0) {
-            continue;
-          }
-          let alive = false;
-          try {
-            process.kill(pid, 0);
-            alive = true;
-          } catch {
-            // Signal zero only observes the synthetic fixture PID.
-          }
-          phase(`peer:${pid} alive=${alive}`);
-        }
-      };
-      const cleanup = state.cleanup;
-      state.cleanup = async () => {
-        phase("state:cleanup-entered");
-        const reportRemaining = async () => {
-          const pending = [state.root];
-          let count = 0;
-          while (pending.length > 0 && count < 64) {
-            const directory = pending.shift()!;
-            const entries = await fs.readdir(directory, { withFileTypes: true }).catch(() => []);
-            for (const entry of entries) {
-              if (count++ >= 64) {
-                break;
-              }
-              const filename = path.join(directory, entry.name);
-              const relative = path.relative(state.root, filename);
-              phase(`remaining:${entry.isDirectory() ? "directory" : "file"}:${relative}`);
-              if (entry.isDirectory() && relative.split(path.sep).length < 8) {
-                pending.push(filename);
-              }
-            }
-          }
-        };
-        // One read-only snapshot, not a retry or a change to the cleanup timeout.
-        const timer = setTimeout(() => {
-          void reportRemaining().catch(() => phase("remaining:unavailable"));
-        }, 1_000);
-        timer.unref();
-        try {
-          await cleanup();
-          phase("state:cleanup-complete");
-        } finally {
-          clearTimeout(timer);
-        }
-      };
-      phase("fixture:setup");
-      vi.stubEnv("OPENCLAW_ACPX_TEST_PROCESS_TRACE", "1");
       await fs.mkdir(peerDirectory);
       const executable = path.join(
         state.root,
@@ -172,7 +94,6 @@ it.each([
         const codexHome = path.join(state.root, "empty-codex-home");
         await fs.mkdir(codexHome);
         vi.stubEnv("CODEX_HOME", codexHome);
-        phase("wrapper:prepare");
         config = await prepareAcpxCodexAuthConfig({
           pluginConfig: config,
           stateDir: state.root,
@@ -180,7 +101,6 @@ it.each([
           resolveInstalledClaudeAcpBinPath: async () => script,
         });
       }
-      phase("stores:setup");
       const store = createFileSessionStore({ stateDir: config.stateDir });
       const leases = createAcpxProcessLeaseStore({
         store: openAcpxProcessLeaseStateStore((options) =>
@@ -205,24 +125,20 @@ it.each([
               }
             : {}),
         });
-      phase("runtime:create");
       let runtime = createRuntime();
       let handle: Awaited<ReturnType<AcpxRuntime["ensureSession"]>> | undefined;
       try {
-        phase("session:ensure");
         handle = await runtime.ensureSession({ sessionKey, agent, mode: "persistent" });
-        expect(await prompt(runtime, handle, "first", phase)).toMatchObject({
+        expect(await prompt(runtime, handle, "first")).toMatchObject({
           argv: samples,
           history: ["first"],
         });
-        phase("record:load");
         const record = await store.load(handle.acpxRecordId!);
         const command = splitCommandParts(config.agents[agent]!);
         expect(record?.agentArgv?.slice(0, command.length)).toEqual(command);
         const identity = readAcpxProcessLeaseIdentity(record?.agentArgv);
         if (wrapped) {
           expect(identity?.gatewayInstanceId).toBe("argv-test");
-          phase("lease:load");
           expect(await leases.load(identity!.leaseId)).toMatchObject({
             rootPid: record!.pid,
             sessionKey,
@@ -231,11 +147,8 @@ it.each([
         } else {
           expect(record?.agentArgv).toEqual([spawnExecutable, ...args]);
         }
-        phase("runtime:close-restart");
         await runtime.close({ handle, reason: "restart" });
-        phase("runtime:recreate");
         runtime = createRuntime();
-        phase("session:reconnect");
         const resumed = await runtime.ensureSession({
           sessionKey,
           agent,
@@ -243,28 +156,23 @@ it.each([
         });
         expect(resumed.backendSessionId).toBe(handle.backendSessionId);
         handle = resumed;
-        expect(await prompt(runtime, handle, "second", phase)).toMatchObject({
+        expect(await prompt(runtime, handle, "second")).toMatchObject({
           argv: samples,
           history: ["first", "second"],
         });
-        phase("record:reload");
         expect(
           readAcpxProcessLeaseIdentity((await store.load(handle.acpxRecordId!))?.agentArgv),
         ).toEqual(identity);
       } finally {
         try {
           if (handle) {
-            phase("runtime:close-final");
             await runtime.close({ handle, reason: "test-complete" });
           }
         } finally {
-          phase("stores:reset");
           resetPluginStateStoreForTests();
-          phase("state:cleanup");
         }
       }
     });
-    phase("state:cleaned");
   },
 );
 

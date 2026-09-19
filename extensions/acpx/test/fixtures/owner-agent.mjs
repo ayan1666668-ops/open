@@ -1,21 +1,12 @@
 #!/usr/bin/env node
 // Synthetic ACP peer: persists its own conversation so restart tests must really load it.
 import { randomUUID } from "node:crypto";
-import { appendFileSync } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { Readable, Writable } from "node:stream";
 import { AgentSideConnection, ndJsonStream, PROTOCOL_VERSION } from "@agentclientprotocol/sdk";
 
 const directory = process.argv[2];
-const trace = (event) => {
-  if (process.env.OPENCLAW_ACPX_TEST_PROCESS_TRACE === "1") {
-    appendFileSync(path.join(directory, "process-lifecycle.log"), `${process.pid} ${event}\n`);
-  }
-};
-trace("started");
-process.once("exit", () => trace("exit"));
-process.stdin.once("end", () => trace("stdin-end"));
 const sessions = new Map();
 const configOptions = (state) => [
   {
