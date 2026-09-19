@@ -121,7 +121,7 @@ describe("channel-inbound public helpers", () => {
     const { runChannelInboundEvent } = await import("openclaw/plugin-sdk/channel-inbound");
     const scope = resolveSqliteReadScope({ storePath, sessionKey: activeSessionKey });
     const finalize = maintenance.finalizeSessionEntryMaintenancePlansAfterWriterReleaseBestEffort;
-    const completed = createDeferredCore<void>();
+    const completed = createDeferredCore();
     // Worker startup can outlast a polling window; join this store's real maintenance
     // without changing dispatch order or substituting in-process maintenance.
     vi.spyOn(
