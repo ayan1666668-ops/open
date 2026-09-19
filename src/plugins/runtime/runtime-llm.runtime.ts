@@ -4,6 +4,7 @@ import { normalizeOptionalString } from "@openclaw/normalization-core/string-coe
 import {
   loadAuthProfileStoreForRuntimeAsync,
   markAuthProfileFailure,
+  markAuthProfileSuccess,
 } from "../../agents/auth-profiles.js";
 import { classifyAssistantFailoverReason } from "../../agents/embedded-agent-helpers/assistant-message-failures.js";
 import { resolveAuthProfileFailureReason } from "../../agents/embedded-agent-runner/run/auth-profile-failure-policy.js";
@@ -633,6 +634,11 @@ export function createRuntimeLlm(
                     );
                   }
 
+                  const profileId = normalizeOptionalString(current.auth.profileId);
+                  if (lastFailure && (!profileId || attemptedProfiles.has(profileId))) {
+                    return lastFailure;
+                  }
+
                   const context = {
                     systemPrompt: buildSystemPrompt(params),
                     messages: buildMessages({
@@ -685,16 +691,30 @@ export function createRuntimeLlm(
                       audit,
                     },
                   });
-                  if (
-                    ["stop", "length", "toolUse"].includes(result.stopReason) ||
-                    result.stopReason === "aborted" ||
-                    params.signal?.aborted
-                  ) {
+                  const succeeded = ["stop", "length", "toolUse"].includes(result.stopReason);
+                  if (succeeded || result.stopReason === "aborted" || params.signal?.aborted) {
+                    if (profileId && succeeded && !params.signal?.aborted) {
+                      try {
+                        const store = await loadAuthProfileStoreForRuntimeAsync(
+                          current.selection.agentDir,
+                        );
+                        await markAuthProfileSuccess({
+                          store,
+                          provider: current.selection.provider,
+                          profileId,
+                          agentDir: current.selection.agentDir,
+                        });
+                      } catch (error) {
+                        logger.warn("plugin llm auth profile success bookkeeping failed", {
+                          profileId,
+                          error: error instanceof Error ? error.message : String(error),
+                        });
+                      }
+                    }
                     return completed;
                   }
 
                   lastFailure = completed;
-                  const profileId = normalizeOptionalString(current.auth.profileId);
                   const failoverReason = classifyAssistantFailoverReason(result, {
                     provider: current.model.provider,
                   });
@@ -724,16 +744,21 @@ export function createRuntimeLlm(
                       return completed;
                     }
                   }
-                  const alreadyTried = profileId ? attemptedProfiles.has(profileId) : true;
-                  if (profileId) {
-                    attemptedProfiles.add(profileId);
-                  }
-                  if (requestedModelProfile || !failureReason || !profileId || alreadyTried) {
+                  if (requestedModelProfile || !failureReason || !profileId) {
                     return completed;
                   }
+                  attemptedProfiles.add(profileId);
 
-                  const retry = await acquireSimpleCompletionModelForAgent(acquireParams);
+                  const retry = await acquireSimpleCompletionModelForAgent({
+                    ...acquireParams,
+                    preferredProfile: undefined,
+                  });
                   if ("error" in retry) {
+                    return lastFailure;
+                  }
+                  const retryProfileId = normalizeOptionalString(retry.auth.profileId);
+                  if (!retryProfileId || attemptedProfiles.has(retryProfileId)) {
+                    await retry[Symbol.asyncDispose]();
                     return lastFailure;
                   }
                   if (retryLease) {
