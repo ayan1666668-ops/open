@@ -252,11 +252,28 @@ struct AppProfileTests {
             computed: first) == "/custom/approvals.sock")
     }
 
-    @Test func `first-run onboarding is skipped once a Gateway connection is configured`() {
-        // A configured connection proves setup already happened even when the onboarding-seen
-        // preference itself was lost (e.g. across an in-place app update over an old bundle).
-        #expect(AppDelegate.shouldSkipFirstRunOnboarding(connectionMode: .local))
-        #expect(AppDelegate.shouldSkipFirstRunOnboarding(connectionMode: .remote))
-        #expect(!AppDelegate.shouldSkipFirstRunOnboarding(connectionMode: .unconfigured))
+    @Test func `first-run onboarding is skipped once setup has actually completed`() {
+        // The common case: onboarding finished normally, so onboardingSeen is true.
+        #expect(AppDelegate.shouldSkipFirstRunOnboarding(
+            connectionMode: .local, onboardingSeen: true, seenOnboardingVersion: currentOnboardingVersion))
+        #expect(AppDelegate.shouldSkipFirstRunOnboarding(
+            connectionMode: .remote, onboardingSeen: true, seenOnboardingVersion: currentOnboardingVersion))
+        // onboardingSeen itself was lost (e.g. across an in-place app update over an old bundle),
+        // but the onboarding-version marker written at the same finish() call survived — still
+        // proof a full pass through the wizard completed.
+        #expect(AppDelegate.shouldSkipFirstRunOnboarding(
+            connectionMode: .local, onboardingSeen: false, seenOnboardingVersion: currentOnboardingVersion))
+        #expect(!AppDelegate.shouldSkipFirstRunOnboarding(
+            connectionMode: .unconfigured, onboardingSeen: false, seenOnboardingVersion: 0))
+    }
+
+    @Test func `first-run onboarding resumes after quitting mid-wizard instead of being marked complete`() {
+        // Regression guard: selecting a connection on the wizard's connection page sets
+        // connectionMode immediately, two pages before CLI install/AI setup finish. Quitting or
+        // crashing in between must not be treated as a completed installation.
+        #expect(!AppDelegate.shouldSkipFirstRunOnboarding(
+            connectionMode: .local, onboardingSeen: false, seenOnboardingVersion: 0))
+        #expect(!AppDelegate.shouldSkipFirstRunOnboarding(
+            connectionMode: .remote, onboardingSeen: false, seenOnboardingVersion: 0))
     }
 }
