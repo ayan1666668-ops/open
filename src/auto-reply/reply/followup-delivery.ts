@@ -17,6 +17,7 @@ import {
   getReplyPayloadMetadata,
   isReplyPayloadTerminalContent,
   markReplyPayloadForSourceSuppressionDelivery,
+  setReplyPayloadMetadata,
 } from "../reply-payload.js";
 import type { ReplyPayload } from "../types.js";
 import {
@@ -229,7 +230,7 @@ export async function resolveFollowupDeliveryDecision(params: {
           sourceReplyDeliveryMode: sourcePolicy.sourceReplyDeliveryMode,
           sendPolicyDenied: sourcePolicy.sendPolicyDenied,
           successfulSourceReplyDelivery: completedSourceDelivery,
-          isHeartbeat: terminalReplyExpectation === "optional",
+          isHeartbeat: false,
           isRoomEvent: false,
         });
   if (recovery.kind === "retry") {
@@ -254,24 +255,6 @@ export async function resolveFollowupDeliveryDecision(params: {
       resolved: runtimeResolved,
     };
   }
-  const fallbackPayload = accounting.terminalFailurePayload
-    ? isInteractive && completion.outcome === "missing"
-      ? sourcePolicy.sourceReplyDeliveryMode === "message_tool_only"
-        ? markReplyPayloadForSourceSuppressionDelivery(accounting.terminalFailurePayload)
-        : accounting.terminalFailurePayload
-      : undefined
-    : (buildWaitingStatusPayload({
-        completion,
-        continuationPending: result.meta?.continuationPending === true,
-        yielded: result.meta?.yielded === true,
-        yieldAcknowledgment: result.meta?.yieldAcknowledgment,
-        // Child spawns are side effects, not user-visible messages. They must not
-        // suppress the explicit waiting reply for the parent turn.
-        hasVisibleMessageDelivery:
-          hasCommittedSourceReplyDeliveryEvidence(result) ||
-          hasVisibleCommittedMessagingToolDeliveryEvidence(result) ||
-          result.didSendDeterministicApprovalPrompt === true,
-      }) ?? buildEmptyInteractiveReplyPayload({ completion }));
   const hasTerminalPayload = payloads.some(
     (payload) =>
       isReplyPayloadTerminalContent(payload) &&
@@ -281,6 +264,28 @@ export async function resolveFollowupDeliveryDecision(params: {
         sourcePolicy.sourceReplyDeliveryMode !== "message_tool_only" ||
         getReplyPayloadMetadata(payload)?.deliverDespiteSourceReplySuppression === true),
   );
+  const waitingStatusParams = {
+    completion,
+    continuationPending: result.meta?.continuationPending === true,
+    yielded: result.meta?.yielded === true,
+    yieldAcknowledgment: result.meta?.yieldAcknowledgment,
+    // Child spawns are side effects, not user-visible messages. They must not
+    // suppress the explicit waiting reply for the parent turn.
+    hasVisibleMessageDelivery:
+      hasCommittedSourceReplyDeliveryEvidence(result) ||
+      hasVisibleCommittedMessagingToolDeliveryEvidence(result) ||
+      result.didSendDeterministicApprovalPrompt === true,
+  };
+  const waitingStatusPayload = accounting.terminalFailurePayload
+    ? undefined
+    : buildWaitingStatusPayload(waitingStatusParams);
+  const fallbackPayload = accounting.terminalFailurePayload
+    ? isInteractive && completion.outcome === "missing"
+      ? sourcePolicy.sourceReplyDeliveryMode === "message_tool_only"
+        ? markReplyPayloadForSourceSuppressionDelivery(accounting.terminalFailurePayload)
+        : accounting.terminalFailurePayload
+      : undefined
+    : (waitingStatusPayload ?? buildEmptyInteractiveReplyPayload({ completion }));
   if (!hasTerminalPayload && fallbackPayload) {
     payloads = [
       ...payloads,
@@ -325,12 +330,33 @@ export async function resolveFollowupDeliveryDecision(params: {
   }
   payloads = renderFailurePayloads(payloads);
   if (sourcePolicy.sourceReplyDeliveryMode === "message_tool_only") {
-    const explicitlyDeliverable = payloads.filter(
+    payloads = payloads.filter(
       (payload) => getReplyPayloadMetadata(payload)?.deliverDespiteSourceReplySuppression === true,
     );
-    return explicitlyDeliverable.length > 0
-      ? { kind: "deliver", payloads: explicitlyDeliverable, resolved: runtimeResolved }
-      : { kind: "suppress", reason: "message-tool-only" };
+    if (payloads.length === 0) {
+      return { kind: "suppress", reason: "message-tool-only" };
+    }
+  }
+  if (result.meta?.yielded === true && result.acceptedSessionSpawns?.length) {
+    const statusPayload = payloads.find(
+      (payload) => getReplyPayloadMetadata(payload)?.continuationStatus === true,
+    );
+    const requesterSessionKey =
+      turn.session.kind === "session" ? turn.session.key : turn.queued.run.sessionKey;
+    if (statusPayload && requesterSessionKey) {
+      // Only accepted waiting replies need the task presentation runtime.
+      const { createTaskProgressContinuation } =
+        await import("../../tasks/task-progress-requester.js");
+      const progressContinuation = createTaskProgressContinuation({
+        requesterSessionKey,
+        requesterAgentId: turn.queued.run.agentId,
+        requesterTurnRunId: execution.runId,
+        acceptedSessionSpawns: result.acceptedSessionSpawns,
+      });
+      if (progressContinuation) {
+        setReplyPayloadMetadata(statusPayload, { progressContinuation });
+      }
+    }
   }
   return payloads.length > 0
     ? { kind: "deliver", payloads, resolved: runtimeResolved }

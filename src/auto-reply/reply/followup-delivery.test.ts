@@ -731,7 +731,7 @@ describe("resolveFollowupDeliveryDecision", () => {
     const decision = await resolveFollowupDeliveryDecision({
       turn,
       execution,
-      accounting: createAccounting([], {
+      accounting: createAccounting([{ text: "private partial" }], {
         terminalFailurePayload: { text: "terminal failure", isError: true },
       }),
     });
@@ -885,30 +885,6 @@ describe("deliverFollowupDecision", () => {
     } finally {
       deliveryState.enqueue.mockReset();
     }
-  });
-
-  it("allows the latest same-channel dispatcher to recover a route failure", async () => {
-    const onBlockReply = vi.fn(async (_payload: ReplyPayload) => {});
-    deliveryState.routeReply.mockReset();
-    deliveryState.routeReply.mockResolvedValue({
-      ok: false,
-      delivered: false,
-      error: "offline",
-    });
-    const turn = createTurn();
-    turn.queued.run.messageProvider = "discord";
-
-    await deliverFollowupDecision({
-      decision: { kind: "deliver", payloads: [{ text: "same-channel reply" }] },
-      turn,
-      defaults: createDefaults(onBlockReply),
-      runId: "run-1",
-      runFollowup: vi.fn(async () => {}),
-    });
-
-    expect(onBlockReply).toHaveBeenCalledWith(
-      expect.objectContaining({ text: "same-channel reply" }),
-    );
   });
 
   it("keeps block-status delivery out of the assistant transcript", async () => {

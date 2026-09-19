@@ -4860,7 +4860,6 @@ describe("runReplyAgent typing (heartbeat)", () => {
     createMinimalRun,
     runEmbeddedAgentMock: state.runEmbeddedAgentMock,
   });
-
   it.each([
     { label: "default status" },
     { label: "explicit status", acknowledgment: "Research started; results will follow." },

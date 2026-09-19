@@ -66,15 +66,13 @@ export function registerWaitingStatusCases({
     {
       label: "implicit continuation",
       meta: { continuationPending: true as const },
-      implicit: true,
     },
-    { label: "yield without acknowledgment", meta: { yielded: true }, implicit: false },
+    { label: "yield without acknowledgment", meta: { yielded: true } },
     {
       label: "explicit acknowledgment",
       meta: { yielded: true, yieldAcknowledgment: "Research started; results will follow." },
-      implicit: false,
     },
-  ])("delivers one waiting status for $label", async ({ meta, implicit }) => {
+  ])("delivers one waiting status for $label", async ({ meta }) => {
     await mockAcceptedWaitingStatusRun(runEmbeddedAgentMock, {
       payloads: [],
       meta: { durationMs: 0, ...meta },
@@ -92,11 +90,10 @@ export function registerWaitingStatusCases({
     expect(onPendingContinuation).toHaveBeenCalledOnce();
     assert(result && !Array.isArray(result));
     const metadata = getReplyPayloadMetadata(result);
-    expect(metadata?.deliverDespiteSourceReplySuppression).toBe(true);
-    expect(metadata?.continuationStatus === true).toBe(implicit);
-    expect(onPendingContinuation.mock.calls[0]).toEqual(
-      implicit ? [{ settle: expect.any(Function) }] : [],
-    );
+    expect(metadata).toMatchObject({
+      continuationStatus: true,
+      deliverDespiteSourceReplySuppression: true,
+    });
   });
 
   it.each([false, true])(

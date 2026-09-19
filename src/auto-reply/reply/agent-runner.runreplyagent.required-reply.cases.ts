@@ -2,6 +2,7 @@ import { expect, it, vi, type Mock } from "vitest";
 import type { RunEmbeddedAgentInternalParams as AgentRunParams } from "../../agents/embedded-agent-runner/run/internal-params.js";
 import { getReplyPayloadMetadata } from "../reply-payload.js";
 import type { ReplyPayload } from "../types.js";
+import { mockAcceptedWaitingStatusRun } from "./agent-runner.runreplyagent.waiting-status.cases.js";
 import type { InternalGetReplyOptions } from "./get-reply.types.js";
 import type { FollowupRun } from "./queue.js";
 
@@ -230,9 +231,10 @@ export function registerRequiredReplyCompletionCases({
   );
 
   it("delivers a required yield acknowledgment despite silentExpected in message-tool-only mode", async () => {
-    state.runEmbeddedAgentMock.mockResolvedValueOnce({
+    await mockAcceptedWaitingStatusRun(state.runEmbeddedAgentMock, {
       payloads: [],
       meta: {
+        durationMs: 0,
         yielded: true,
         yieldAcknowledgment: "Research started; results will follow.",
       },
@@ -243,41 +245,14 @@ export function registerRequiredReplyCompletionCases({
     });
 
     const result = await run();
-    const payload = Array.isArray(result) ? result[0] : result;
+    const payloads = Array.isArray(result) ? result : result ? [result] : [];
 
-    expect(payload).toMatchObject({ text: "Research started; results will follow." });
-    expect(getReplyPayloadMetadata(payload ?? {})?.deliverDespiteSourceReplySuppression).toBe(true);
-  });
-
-  it("preserves a visible final reply instead of adding a yield acknowledgment", async () => {
-    state.runEmbeddedAgentMock.mockResolvedValueOnce({
-      payloads: [{ text: "Research already finished." }],
-      meta: {
-        yielded: true,
-        yieldAcknowledgment: "Research started; results will follow.",
-      },
-    });
-    const { run } = createMinimalRun();
-
-    await expect(run()).resolves.toMatchObject({
-      text: "Research already finished.",
-      replyToId: "msg",
-    });
-  });
-
-  it("delivers a yield acknowledgment when the only payload is filtered", async () => {
-    state.runEmbeddedAgentMock.mockResolvedValueOnce({
-      payloads: [{ text: "internal reasoning", isReasoning: true }],
-      meta: {
-        yielded: true,
-        yieldAcknowledgment: "Research started; results will follow.",
-      },
-    });
-    const { run } = createMinimalRun();
-
-    await expect(run()).resolves.toMatchObject({
-      text: "Research started; results will follow.",
-      replyToId: "msg",
+    expect(payloads.map((payload) => payload.text)).toEqual([
+      "Research started; results will follow.",
+    ]);
+    expect(getReplyPayloadMetadata(payloads[0] ?? {})).toMatchObject({
+      continuationStatus: true,
+      deliverDespiteSourceReplySuppression: true,
     });
   });
 

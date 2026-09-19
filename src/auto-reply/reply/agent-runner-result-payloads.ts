@@ -12,6 +12,7 @@ import {
   toDiagnosticUsage,
 } from "../../agents/usage.js";
 import { normalizeChatType } from "../../channels/chat-type.js";
+import type { ProgressContinuationState } from "../../channels/progress-continuation.js";
 import { emitAgentEvent } from "../../infra/agent-events.js";
 import { emitTrustedDiagnosticEvent, isDiagnosticsEnabled } from "../../infra/diagnostic-events.js";
 import {
@@ -29,6 +30,7 @@ import {
   isReplyPayloadStatusNotice,
   isReplyPayloadTerminalContent,
   markReplyPayloadForSourceSuppressionDelivery,
+  setReplyPayloadMetadata,
 } from "../reply-payload.js";
 import type { ReplyPayload } from "../types.js";
 import {
@@ -55,7 +57,10 @@ import { attachMcpConnectChannelAction } from "./mcp-connect-channel-action.js";
 import { normalizeReplyPayload } from "./normalize-reply.js";
 import { resolveReplyOperationRunState } from "./reply-operation-run-state.js";
 import { createReplyToModeFilterForChannel } from "./reply-threading.js";
-import { resolveSourceReplyExpectation } from "./source-reply-delivery-mode.js";
+import {
+  isSyntheticSourceReplyTurn,
+  resolveSourceReplyExpectation,
+} from "./source-reply-delivery-mode.js";
 import { resolveStrandedReplyRecovery } from "./stranded-reply-recovery.js";
 import { buildWaitingStatusPayload } from "./waiting-status.js";
 type ReplyAgentAccounting = Awaited<ReturnType<typeof accountAgentTurn>>;
@@ -196,7 +201,6 @@ export async function prepareReplyAgentPayloads(state: {
   const fallbackFailureKnown =
     fallbackAttempts.length > 0 || configuredFallbackModel.persistedAutoFallback;
   const hasSpecificFallbackFailure = fallbackTransition.fallbackActive && fallbackFailureKnown;
-  const isInteractive = terminalReplyExpectation === "required";
   const waitingStatusPayload = terminalFailurePayload
     ? undefined
     : buildWaitingStatusPayload({
@@ -341,8 +345,11 @@ export async function prepareReplyAgentPayloads(state: {
   };
   const providerPolicyRetry = runResult.meta?.executionTrace?.providerPolicyRetry;
   const successfulProviderPolicyRetry =
-    isInteractive &&
-    !isHeartbeat &&
+    followupRun.currentInboundEventKind !== "room_event" &&
+    !isSyntheticSourceReplyTurn({
+      inputProvenance: followupRun.run.inputProvenance,
+      isHeartbeat,
+    }) &&
     context.execution.status === "ok" &&
     runResult.meta?.aborted !== true &&
     providerPolicyRetry?.category === "cyber"
@@ -551,34 +558,83 @@ export async function prepareReplyAgentPayloads(state: {
       ? appendUnscheduledReminderNote(replyPayloads)
       : replyPayloads;
 
-  if (implicitContinuation) {
+  if (implicitContinuation || (pendingContinuation && runResult.acceptedSessionSpawns?.length)) {
     const statusPayload = guardedReplyPayloads.find(
       (payload) => getReplyPayloadMetadata(payload)?.continuationStatus === true,
     );
     const acceptedSessionSpawns = runResult.acceptedSessionSpawns;
-    if (!sessionKey || !acceptedSessionSpawns?.length || !statusPayload) {
+    const requesterSessionKey = sessionKey ?? followupRun.run.sessionKey;
+    if (
+      implicitContinuation &&
+      (!requesterSessionKey || !acceptedSessionSpawns?.length || !statusPayload)
+    ) {
       throw new Error("accepted continuation status could not be prepared for delivery");
     }
-    const settlement: PendingContinuationSettlement = {
-      settle: async (statusDelivered) => {
-        const { settleRequesterAfterSessionSpawns } =
-          await import("../../agents/subagents/registry/subagent-registry.js");
-        if (
-          !settleRequesterAfterSessionSpawns({
-            requesterSessionKey: sessionKey,
-            requesterAgentId: followupRun.run.agentId,
-            requesterTurnRunId: runId,
-            requesterYielded: statusDelivered,
-            acceptedSessionSpawns,
-          })
-        ) {
-          throw new Error("accepted continuation children could not transfer terminal delivery");
-        }
-      },
-    };
-    opts?.onPendingContinuation?.(settlement);
+    if (requesterSessionKey && acceptedSessionSpawns?.length && statusPayload) {
+      let progressPresentation: ProgressContinuationState | undefined;
+      if (implicitContinuation) {
+        const settlement: PendingContinuationSettlement = {
+          settle: async (statusDelivered) => {
+            const presentation = progressPresentation;
+            progressPresentation = undefined;
+            try {
+              const { settleRequesterAfterSessionSpawns } =
+                await import("../../agents/subagents/registry/subagent-registry.js");
+              const requester = {
+                requesterSessionKey,
+                requesterAgentId: followupRun.run.agentId,
+                requesterTurnRunId: runId,
+                acceptedSessionSpawns,
+              };
+              const requesterYielded = statusDelivered || presentation !== undefined;
+              try {
+                if (
+                  !settleRequesterAfterSessionSpawns({
+                    ...requester,
+                    requesterYielded,
+                    ...(presentation ? { progressPresentation: presentation } : {}),
+                  })
+                ) {
+                  throw new Error(
+                    "accepted continuation children could not transfer terminal delivery",
+                  );
+                }
+              } catch (error) {
+                // Adoption is positive visibility even when the later transport
+                // outcome is unknown. A failed handoff must still release the child.
+                if (!statusDelivered && requesterYielded) {
+                  settleRequesterAfterSessionSpawns({ ...requester, requesterYielded: false });
+                }
+                throw error;
+              }
+            } finally {
+              getReplyPayloadMetadata(statusPayload)?.progressContinuation?.close();
+            }
+          },
+        };
+        opts?.onPendingContinuation?.(settlement);
+      }
+      // Ordinary replies must not load the task presentation runtime.
+      const { createTaskProgressContinuation } =
+        await import("../../tasks/task-progress-requester.js");
+      const progressContinuation = createTaskProgressContinuation({
+        requesterSessionKey,
+        requesterAgentId: followupRun.run.agentId,
+        requesterTurnRunId: runId,
+        acceptedSessionSpawns,
+        ...(implicitContinuation
+          ? {
+              onAdopted: (presentation: ProgressContinuationState) => {
+                progressPresentation = presentation;
+              },
+            }
+          : {}),
+      });
+      if (progressContinuation) {
+        setReplyPayloadMetadata(statusPayload, { progressContinuation });
+      }
+    }
   }
-
   await signalTypingIfNeeded(guardedReplyPayloads, typingSignals);
 
   const diagnosticUsage = runResult.meta?.agentMeta?.diagnosticUsage ?? usage;

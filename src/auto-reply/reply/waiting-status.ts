@@ -25,7 +25,7 @@ export function buildWaitingStatusPayload(params: {
     },
     {
       deliverDespiteSourceReplySuppression: true,
-      ...(params.continuationPending ? { continuationStatus: true } : {}),
+      continuationStatus: true,
     },
   );
 }
