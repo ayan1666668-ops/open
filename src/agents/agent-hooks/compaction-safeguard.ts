@@ -20,6 +20,7 @@ import { classifyToolUseResultPairing } from "../../../packages/agent-core/src/h
 import { extractSections } from "../../auto-reply/reply/post-compaction-context.js";
 import { openRootFile } from "../../infra/boundary-file-read.js";
 import { formatErrorMessage } from "../../infra/errors.js";
+import { evaluateJudgment } from "../../judgments/runtime.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import {
   getCompactionProvider,
@@ -70,6 +71,11 @@ import {
   getCompactionSafeguardRuntime,
   setCompactionSafeguardCancellation,
 } from "./compaction-safeguard-runtime.js";
+import {
+  evaluateCompactionFidelity,
+  evaluateCompactionShadowCuration,
+} from "./compaction-safeguard-semantic-judgments.js";
+import { buildCompactionSemanticSnapshot } from "./compaction-safeguard-semantic.js";
 
 const log = createSubsystemLogger("compaction-safeguard");
 
@@ -1011,6 +1017,97 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
       summarizationInstructions,
       latestUnresolvedUserRequest ?? undefined,
     );
+
+    const semanticMode = runtime?.semanticCurationMode ?? "off";
+    const semanticTimeoutMs = runtime?.semanticCurationTimeoutMs;
+    const semanticSignal = signal ?? new AbortController().signal;
+    const semanticSourceMessages = [...baseMessagesToSummarize, ...turnPrefixMessages];
+    const semanticSnapshot =
+      semanticMode === "shadow"
+        ? (() => {
+            const { preservedMessages } = splitPreservedRecentTurns({
+              messages: baseMessagesToSummarize,
+              recentTurnsPreserve,
+            });
+            const semanticLatestAsk =
+              (preparation.isSplitTurn ? extractLatestUserAsk(turnPrefixMessages) : null) ??
+              extractLatestUserAsk(baseMessagesToSummarize);
+            const semanticIdentifiers = extractOpaqueIdentifiers(
+              semanticSourceMessages
+                .slice(-10)
+                .map(extractMessageText)
+                .filter(Boolean)
+                .join("\n"),
+            );
+            return buildCompactionSemanticSnapshot({
+              messages: semanticSourceMessages,
+              protectedMessages: new Set(preservedMessages),
+              turnPrefixMessages: new Set(turnPrefixMessages),
+              identifiers: semanticIdentifiers,
+              latestUnresolvedUserRequest,
+              latestUserAsk: semanticLatestAsk,
+            });
+          })()
+        : undefined;
+    const observeSemanticSummary = async (summary: string) => {
+      if (!semanticSnapshot) {
+        return;
+      }
+      try {
+        const [shadow, fidelity] = await Promise.all([
+          evaluateCompactionShadowCuration({
+            runtime: { evaluate: evaluateJudgment },
+            snapshot: semanticSnapshot,
+            signal: semanticSignal,
+            timeoutMs: semanticTimeoutMs,
+          }),
+          evaluateCompactionFidelity({
+            runtime: { evaluate: evaluateJudgment },
+            snapshot: semanticSnapshot,
+            candidateSummary: summary,
+            signal: semanticSignal,
+            timeoutMs: semanticTimeoutMs,
+          }),
+        ]);
+        if (shadow.status === "ok") {
+          log.info(
+            "Compaction semantic shadow: " +
+              `segments=${semanticSnapshot.segments.length} evaluated=${shadow.evaluatedSegmentIds.length} ` +
+              `excluded=${shadow.excludedSegmentIds.length} uncertain=${shadow.uncertainSegmentIds.length} ` +
+              `sourceChars=${shadow.originalChars} selectedChars=${shadow.selectedChars} ` +
+              `reduction=${(shadow.reductionRatio * 100).toFixed(1)}% complete=${shadow.complete} ` +
+              `provider=${shadow.provenance.providerId}`,
+          );
+        } else {
+          log.info(
+            `Compaction semantic shadow unavailable: status=${shadow.status} reason=${shadow.reason}`,
+          );
+        }
+        if (fidelity.status === "ok") {
+          const counts = fidelity.assessments.reduce<Record<string, number>>((acc, assessment) => {
+            acc[assessment.classification] = (acc[assessment.classification] ?? 0) + 1;
+            return acc;
+          }, {});
+          log.info(
+            "Compaction semantic fidelity: " +
+              `preserved=${counts.preserved ?? 0} missing=${counts.missing ?? 0} ` +
+              `contradicted=${counts.contradicted ?? 0} uncertain=${counts.uncertain ?? 0} ` +
+              `provider=${fidelity.provenance.providerId}`,
+          );
+        } else {
+          log.info(
+            `Compaction semantic fidelity unavailable: status=${fidelity.status} reason=${fidelity.reason}`,
+          );
+        }
+      } catch (err) {
+        if (semanticSignal.aborted) {
+          semanticSignal.throwIfAborted();
+        }
+        log.warn(
+          `Compaction semantic observation failed without changing compaction behavior: ${formatErrorMessage(err)}`,
+        );
+      }
+    };
     let workspaceContextPromise: Promise<string> | undefined;
     const finalizeSummaryText = async (
       body: string,
@@ -1102,6 +1199,7 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
               },
               producerLosses,
             );
+            await observeSemanticSummary(finalized.summary);
             return compactionResult(finalized.summary);
           }
           log.warn(
@@ -1370,6 +1468,7 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
           messagesToSummarize.length > 0 ||
           (preparation.isSplitTurn && turnPrefixMessages.length > 0);
         if (!qualityGuardEnabled) {
+          await observeSemanticSummary(finalized.summary);
           return compactionResult(finalized.summary);
         }
         if (finalized.qualityRetentionInfeasible) {
@@ -1394,6 +1493,7 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
           identifierPolicy,
         });
         if (quality.ok) {
+          await observeSemanticSummary(finalized.summary);
           return compactionResult(finalized.summary);
         }
         if (!canRegenerate || attempt >= totalAttempts - 1) {
