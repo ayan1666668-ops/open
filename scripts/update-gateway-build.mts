@@ -11,6 +11,38 @@ import { listTsdownOutputRoots } from "./tsdown-build.mts";
 
 const log = (message: string) => console.error(`[update-gateway] ${message}`);
 
+// Mirrors a backup entry into staging without allocating another data copy:
+// regular files share their inode with the backup via hard links, symlinks are
+// recreated verbatim. Build outputs are only ever replaced (never modified in
+// place), so sharing inodes with the backup is safe for rollback purposes.
+function mirrorTreeWithHardlinks(source: string, destination: string): void {
+  const st = fs.lstatSync(source);
+  if (st.isSymbolicLink()) {
+    fs.symlinkSync(fs.readlinkSync(source), destination);
+    return;
+  }
+  if (st.isDirectory()) {
+    fs.mkdirSync(destination, { recursive: true });
+    for (const name of fs.readdirSync(source)) {
+      mirrorTreeWithHardlinks(path.join(source, name), path.join(destination, name));
+    }
+    return;
+  }
+  if (st.isFile()) {
+    fs.linkSync(source, destination);
+    return;
+  }
+  throw new Error(`Unsupported backup entry type: ${source}`);
+}
+
+function isCrossDeviceError(error: unknown): boolean {
+  if (!error || typeof error !== "object" || !("code" in error)) {
+    return false;
+  }
+  const code = (error as { code?: unknown }).code;
+  return code === "EXDEV" || code === "ENOSYS";
+}
+
 export async function runUpdateGatewayBuild(
   stopCommand: string,
   restartCommand: string,
@@ -88,7 +120,9 @@ export async function runUpdateGatewayBuild(
         }
       }
       // Secure rollback staging before the build can mutate live output or
-      // exhaust disk space: a staging failure fails while live output is still
+      // exhaust disk space: staging shares backup data through hard links, so
+      // it allocates no additional file contents and cannot fail with ENOSPC
+      // on data blocks. A staging failure fails while live output is still
       // untouched, so recovery never depends on allocating another complete
       // generation after failure.
       staging = fs.mkdtempSync(path.join(root, ".update-restore-staging."));
@@ -97,12 +131,22 @@ export async function runUpdateGatewayBuild(
         if (fs.existsSync(previous)) {
           const stagedPath = path.join(staging, output);
           fs.mkdirSync(path.dirname(stagedPath), { recursive: true });
-          fs.cpSync(previous, stagedPath, {
-            recursive: true,
-            dereference: false,
-            verbatimSymlinks: true,
-            preserveTimestamps: true,
-          });
+          try {
+            mirrorTreeWithHardlinks(previous, stagedPath);
+          } catch (error) {
+            if (!isCrossDeviceError(error)) {
+              throw error;
+            }
+            // Exotic layouts (staging on another filesystem) fall back to a
+            // full copy for this entry only.
+            fs.rmSync(stagedPath, { recursive: true, force: true });
+            fs.cpSync(previous, stagedPath, {
+              recursive: true,
+              dereference: false,
+              verbatimSymlinks: true,
+              preserveTimestamps: true,
+            });
+          }
         }
       }
       buildStarted = true;

@@ -244,21 +244,25 @@ describe("source update build output transaction", () => {
       writeOutput(output, `old:${output}`);
     }
     const events: string[] = [];
-    // Backup creation copies each live root before the build runs; fail only
-    // the pre-build staging copy (the second dist-runtime copy overall).
-    const realCpSync = fs.cpSync.bind(fs);
-    let runtimeCopies = 0;
-    const cpSpy = vi.spyOn(fs, "cpSync").mockImplementation(((
-      ...args: Parameters<typeof fs.cpSync>
+    // Staging shares backup data through hard links and must never allocate a
+    // full copy: fail the pre-build staging link for the second root (backup
+    // creation copies, so the first dist-runtime link is the staging one) and
+    // observe that no copy touches the staging area.
+    const realLinkSync = fs.linkSync.bind(fs);
+    let runtimeLinks = 0;
+    const linkSpy = vi.spyOn(fs, "linkSync").mockImplementation(((
+      ...args: Parameters<typeof fs.linkSync>
     ) => {
       if (String(args[0]).includes("dist-runtime")) {
-        runtimeCopies += 1;
-        if (runtimeCopies === 2) {
+        runtimeLinks += 1;
+        if (runtimeLinks === 1) {
           throw new Error("injected staging failure before build mutation");
         }
       }
-      return realCpSync(...args);
-    }) as typeof fs.cpSync);
+      return realLinkSync(...args);
+    }) as typeof fs.linkSync);
+    const realCpSync = fs.cpSync.bind(fs);
+    const cpSpy = vi.spyOn(fs, "cpSync").mockImplementation((...args) => realCpSync(...args));
     try {
       await expect(
         runTransaction("stop", "restart", {
@@ -277,8 +281,12 @@ describe("source update build output transaction", () => {
         }),
       ).rejects.toThrow("injected staging failure before build mutation");
     } finally {
+      linkSpy.mockRestore();
       cpSpy.mockRestore();
     }
+    expect(
+      cpSpy.mock.calls.filter((args) => String(args[0]).includes(".update-restore-staging.")),
+    ).toEqual([]);
     // The build never ran and the gateway restarts on the untouched previous
     // generation; rollback never depends on allocating after failure.
     expect(events).toEqual(["stop", "restart"]);
