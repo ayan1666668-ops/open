@@ -27,6 +27,8 @@ type ProgressCardEntry = {
   target: ProgressCardGetParams;
   wireKey: string;
   generation: number;
+  /** Invalidates conditional dismissals when newer numbered progress arrives. */
+  dismissalGeneration: number;
   dirty: boolean;
   /** Latest invalidation observed while a read is already in flight. */
   pendingRefreshRevision?: number | null;
@@ -239,6 +241,7 @@ function createStore(gateway: ApplicationGateway): SessionProgressCardStore {
       target: resolved.target,
       wireKey: resolved.wireKey,
       generation: 0,
+      dismissalGeneration: 0,
       dirty: true,
     };
     remember(resolved.key, entry);
@@ -362,6 +365,7 @@ function createStore(gateway: ApplicationGateway): SessionProgressCardStore {
       }
       entry.dirty = true;
       delete entry.error;
+      entry.dismissalGeneration += 1;
       if (entry.load) {
         queueRefresh(entry, revision);
         continue;
@@ -426,6 +430,7 @@ function createStore(gateway: ApplicationGateway): SessionProgressCardStore {
         return false;
       }
       const generation = entry.generation;
+      const dismissalGeneration = entry.dismissalGeneration;
       const current = () =>
         entries.get(resolved.key) === entry &&
         connection.isCurrent(scope) &&
@@ -436,7 +441,11 @@ function createStore(gateway: ApplicationGateway): SessionProgressCardStore {
           expectedRevision: card.revision,
         })
         .catch((error: unknown) => {
-          if (current() && entry.generation === generation) {
+          if (
+            current() &&
+            entry.generation === generation &&
+            entry.dismissalGeneration === dismissalGeneration
+          ) {
             recordRequestError(entry, error);
           }
           throw error;
@@ -447,7 +456,11 @@ function createStore(gateway: ApplicationGateway): SessionProgressCardStore {
       }
       const dismissed = resultCard === null;
       // Its own invalidation may precede the reply; a clear still owns the captured revision.
-      if (resultCard ? entry.generation === generation : entry.card?.revision === card.revision) {
+      if (
+        resultCard
+          ? entry.generation === generation && entry.dismissalGeneration === dismissalGeneration
+          : entry.card?.revision === card.revision
+      ) {
         entry.card = resultCard;
         entry.dirty = false;
         delete entry.error;
