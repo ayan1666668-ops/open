@@ -192,7 +192,7 @@ describe("compaction semantic observer wiring", () => {
         { agentId: "disabled", persisted: true },
         { agentId: "specialist", persisted: false },
         { agentId: "disabled", persisted: false },
-      ].map((scope) => ({ registeredProvider, ...scope })),
+      ].map(({ agentId, persisted }) => ({ registeredProvider, agentId, persisted })),
     ),
   )(
     "preserves output and owner decisions (registered provider=$registeredProvider, agent=$agentId, persisted=$persisted)",
