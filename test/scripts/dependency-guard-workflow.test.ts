@@ -23,10 +23,10 @@ const workflow = parse(readFileSync(".github/workflows/dependency-guard.yml", "u
 };
 
 describe("dependency guard autoscrub workflow", () => {
-  it("never schedules autoscrub from the review signal", () => {
-    expect(workflow.jobs["dependency-guard-detect"]?.if).toContain(
-      "github.event_name == 'pull_request_target'",
-    );
+  it("never schedules detection or autoscrub from comments or manual refresh", () => {
+    for (const job of ["dependency-guard-detect", "dependency-guard-autoscrub"]) {
+      expect(workflow.jobs[job]?.if).toContain("github.event_name == 'pull_request_target'");
+    }
   });
   it("limits app write credentials to the detected autoscrub repository", () => {
     const autoscrub = workflow.jobs["dependency-guard-autoscrub"];

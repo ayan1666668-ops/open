@@ -8,6 +8,7 @@ import {
   findMaintainerApproval,
   finishGuard,
   openGuard,
+  withApprovalRequest,
 } from "./guard-review.mjs";
 import {
   GITHUB_API_REQUEST_TIMEOUT_MS,
@@ -25,6 +26,7 @@ import { loadSecurityReviewPolicy } from "./security-review-policy.mjs";
 /** Marker used to identify dependency guard comments. */
 const dependencyChangeMarker = "<!-- openclaw:dependency-guard -->";
 const dependencyGraphGuardMarker = "<!-- openclaw:dependency-graph-guard -->";
+const dependencyApprovalCommand = "/allow-dependencies-change";
 export const dependencyChangedLabel = "dependencies-changed";
 export {
   GITHUB_API_REQUEST_TIMEOUT_MS,
@@ -165,13 +167,14 @@ function renderApprovedDependencyComment(approval) {
     "",
     approval.kind === "author"
       ? "This PR changes dependency resolution. The guard is informational because the PR author has repository Maintain or Admin access."
-      : "A maintainer approved this revision using GitHub's normal review action. SecOps approval is not required.",
+      : "A maintainer approved this revision with an explicit dependency approval comment. SecOps approval is not required.",
     "",
     `- Current SHA: ${markdownCode(approval.sha)}`,
     `- Maintainer: @${sanitizeGuardDisplayValue(approval.login)}`,
     `- Repository role: ${markdownCode(approval.role)}`,
+    ...(approval.kind === "comment" ? [`- Approval comment: ${approval.url}`] : []),
     "",
-    "Review resolved package changes and dependency policy before merging. A later push requires fresh approval for an external contributor's PR.",
+    "Review resolved package changes and dependency policy before merging. A later push requires a fresh approval comment for an external contributor's PR.",
   ].join("\n");
 }
 
@@ -225,7 +228,7 @@ export function renderClearedDependencyGuardComment({ headSha }) {
     "",
     "### Dependency graph guard cleared",
     "",
-    "This PR no longer has dependency changes awaiting review. A future dependency graph change from an external contributor requires a maintainer's normal GitHub approval of that revision.",
+    `This PR no longer has dependency changes awaiting review. A future dependency graph change from an external contributor requires a maintainer's ${markdownCode(dependencyApprovalCommand)} comment after the guard notice identifies that revision.`,
     "",
     `- Current SHA: ${markdownCode(headSha ?? "<head-sha>")}`,
   ].join("\n");
@@ -285,9 +288,15 @@ export function renderBlockedDependencyComment({
     ...autoscrubLines,
     ...removalSteps,
     "",
-    "Approve this revision with GitHub's normal review action. SecOps approval is not required; this check updates automatically.",
+    "After reviewing the changes, post a new PR comment containing only approval commands, each on its own line:",
     "",
-    `Current head SHA: ${markdownCode(headSha ?? "<head-sha>")}. A later push requires a fresh approval.`,
+    "```text",
+    dependencyApprovalCommand,
+    "```",
+    "",
+    "Post the comment after this guard notice identifies the current head SHA below. Do not edit an earlier comment. A normal GitHub Approve review does not satisfy this check. SecOps approval is not required; this check updates automatically.",
+    "",
+    `Current head SHA: ${markdownCode(headSha ?? "<head-sha>")}. A later push requires a fresh approval comment.`,
   ].join("\n");
 }
 
@@ -468,7 +477,7 @@ export async function createAutoscrubCommit(
     }
   }
   // Recheck after reading file contents: neither an old workflow event nor the
-  // detection job authorizes a write after the PR or its review has changed.
+  // detection job authorizes a write after the PR or its approval has changed.
   await assertGuardUnchanged(guard);
   if (await findMaintainerApproval(guard)) {
     return null;
@@ -515,7 +524,11 @@ async function setOutput(name, value) {
 }
 
 async function main() {
-  const guard = await openGuard({ context: "openclaw/dependency-review" });
+  const guard = await openGuard({
+    context: "openclaw/dependency-review",
+    commentMarker: dependencyGraphGuardMarker,
+    approvalCommand: dependencyApprovalCommand,
+  });
   if (!guard) {
     return;
   }
@@ -689,24 +702,27 @@ async function main() {
             dependencyGraphChanges,
             headSha: pullRequest.head.sha,
           })
-        : renderApprovedDependencyComment(guard.approval);
+        : withApprovalRequest(guard, renderApprovedDependencyComment(guard.approval));
       await upsertComment(existingGuardComment, body);
       await writeSummary(body);
       return;
     }
   }
-  const body = renderBlockedDependencyComment({
-    baseBranch: pullRequest.base.ref,
-    headSha: pullRequest.head.sha,
-    lockfileChanges,
-    dependencyManifestChanges,
-    autoscrubStatus,
-    dependencyFiles,
-  });
+  const body = withApprovalRequest(
+    guard,
+    renderBlockedDependencyComment({
+      baseBranch: pullRequest.base.ref,
+      headSha: pullRequest.head.sha,
+      lockfileChanges,
+      dependencyManifestChanges,
+      autoscrubStatus,
+      dependencyFiles,
+    }),
+  );
   await upsertComment(existingGuardComment, body);
   await writeSummary(body);
   throw new Error(
-    "Dependency changes require a maintainer's GitHub approval of the current revision.",
+    "Dependency changes require a maintainer's /allow-dependencies-change comment for the current revision.",
   );
 }
 

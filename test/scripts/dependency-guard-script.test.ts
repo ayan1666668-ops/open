@@ -42,9 +42,18 @@ const pullRequest = {
 };
 const approval = {
   id: 11,
-  state: "APPROVED",
-  commit_id: headSha,
+  body: "/allow-dependencies-change",
+  created_at: "2026-01-01T00:00:01Z",
+  updated_at: "2026-01-01T00:00:01Z",
+  html_url: "https://github.com/openclaw/openclaw/pull/7#issuecomment-11",
   user: { id: 2, login: "maintainer", type: "User" },
+};
+const approvalNotice = {
+  id: 4,
+  user: { login: "github-actions[bot]", type: "Bot" },
+  created_at: "2026-01-01T00:00:00Z",
+  updated_at: "2026-01-01T00:00:00Z",
+  body: `<!-- openclaw:dependency-graph-guard -->\n<!-- openclaw:approval-request ${JSON.stringify({ head: headSha, base: "main", requestedAt: "2026-01-01T00:00:00Z" })} -->\n`,
 };
 
 function runDependencyGuard(routes: Record<string, unknown> = {}, mode = "enforce") {
@@ -63,7 +72,6 @@ function runDependencyGuard(routes: Record<string, unknown> = {}, mode = "enforc
       routes: {
         [`GET ${pullPath}`]: pullRequest,
         [`GET ${pullPath}/files`]: [{ filename: "pnpm-workspace.yaml" }],
-        [`GET ${pullPath}/reviews`]: [],
         [`GET ${issuePath}/comments`]: [],
         [`GET ${issuePath}/labels`]: [],
         "GET /repos/openclaw/openclaw/collaborators/contributor/permission": { role_name: "write" },
@@ -127,39 +135,50 @@ describe("dependency guard script", () => {
   });
 
   it.each([
-    { name: "current maintainer approval", reviews: [approval], role: "maintain", allowed: true },
-    { name: "current admin approval", reviews: [approval], role: "admin", allowed: true },
-    { name: "write-only reviewer", reviews: [approval], role: "write", allowed: false },
+    { name: "current maintainer command", comment: approval, role: "maintain", allowed: true },
+    { name: "current admin command", comment: approval, role: "admin", allowed: true },
+    { name: "write-only commenter", comment: approval, role: "write", allowed: false },
     {
-      name: "stale review",
-      reviews: [{ ...approval, commit_id: staleSha }],
+      name: "command before the current request",
+      comment: {
+        ...approval,
+        created_at: "2025-12-31T00:00:00Z",
+        updated_at: "2025-12-31T00:00:00Z",
+      },
       role: "maintain",
       allowed: false,
     },
     {
-      name: "dismissed review",
-      reviews: [{ ...approval, state: "DISMISSED" }],
+      name: "edited comment",
+      comment: { ...approval, updated_at: "2026-01-01T00:00:02Z" },
       role: "maintain",
       allowed: false,
     },
     {
-      name: "bot approval",
-      reviews: [{ ...approval, user: { ...approval.user, type: "Bot" } }],
+      name: "bot command",
+      comment: { ...approval, user: { ...approval.user, type: "Bot" } },
       role: "maintain",
       allowed: false,
     },
-  ])("uses $name for an external dependency PR", ({ reviews, role, allowed }) => {
+    {
+      name: "security-only command",
+      comment: { ...approval, body: "/allow-security-sensitive-change" },
+      role: "maintain",
+      allowed: false,
+    },
+    {
+      name: "both commands on separate lines",
+      comment: {
+        ...approval,
+        body: "/allow-security-sensitive-change\n/allow-dependencies-change",
+      },
+      role: "maintain",
+      allowed: true,
+    },
+  ])("uses $name for an external dependency PR", ({ comment, role, allowed }) => {
     const result = runDependencyGuard({
-      [`GET ${pullPath}/reviews`]: reviews,
       "GET /repos/openclaw/openclaw/collaborators/maintainer/permission": { role_name: role },
-      [`GET ${issuePath}/comments`]: [
-        {
-          id: 4,
-          user: { login: "github-actions[bot]" },
-          body: `<!-- openclaw:dependency-graph-guard -->\n<!-- openclaw:dependency-graph-guard state=authorized sha=${headSha} -->\n`,
-        },
-        { id: 5, user: approval.user, body: "/allow-dependencies-change" },
-      ],
+      [`GET ${issuePath}/comments`]: [approvalNotice, comment],
     });
     expect(result.status, result.stderr).toBe(allowed ? 0 : 1);
     expect(result.statuses.map((call) => call.body?.state)).toEqual([
@@ -169,12 +188,13 @@ describe("dependency guard script", () => {
     expect(result.stdout).toContain(
       allowed ? "Dependency graph changes approved" : "Maintainer dependency review required",
     );
+    expect(result.stdout).toContain("<!-- openclaw:approval-request ");
   });
 
-  it("rechecks a review before publishing dependency success", () => {
+  it("rechecks a command comment before publishing dependency success", () => {
     const result = runDependencyGuard({
-      [`GET ${pullPath}/reviews`]: {
-        responses: [[approval], [{ ...approval, state: "DISMISSED" }]],
+      [`GET ${issuePath}/comments`]: {
+        responses: [[approvalNotice, approval], [approvalNotice, approval], [approvalNotice]],
       },
     });
     expect(result.status).toBe(1);
@@ -253,11 +273,17 @@ describe("dependency guard script", () => {
     expect(result.statuses.at(-1)?.body?.state).toBe("success");
   });
 
-  it.each([false, true])("preserves autoscrub with late approval=%s", (lateApproval) => {
+  it.each([false, true])("preserves autoscrub with late command approval=%s", (lateApproval) => {
     const result = runDependencyGuard(
       {
         [`GET ${pullPath}/files`]: [{ filename: "pnpm-lock.yaml" }],
-        [`GET ${pullPath}/reviews`]: { responses: [[], lateApproval ? [approval] : []] },
+        [`GET ${issuePath}/comments`]: {
+          responses: [
+            [approvalNotice],
+            [approvalNotice],
+            lateApproval ? [approvalNotice, approval] : [approvalNotice],
+          ],
+        },
         [`GET /repos/openclaw/openclaw/dependency-graph/compare/${staleSha}...${headSha}`]: [],
         "GET /repos/openclaw/openclaw/contents/pnpm-lock.yaml": {
           type: "file",
@@ -433,10 +459,12 @@ describe("dependency guard script", () => {
     expect(body).toContain(
       "git checkout 'origin/main' -- 'pnpm-lock.yaml' 'tools/nested/pnpm-lock.yaml'",
     );
-    expect(body).toContain("GitHub's normal review action");
+    expect(body).toContain("```text\n/allow-dependencies-change\n```");
+    expect(body).toContain("Post the comment after this guard notice identifies the current head");
+    expect(body).toContain("A normal GitHub Approve review does not satisfy this check");
     expect(body).toContain("SecOps approval is not required");
     expect(body).toContain(`Current head SHA: \`${headSha}\``);
-    expect(body).toContain("A later push requires a fresh approval.");
+    expect(body).toContain("A later push requires a fresh approval comment.");
   });
 
   it("shell-quotes PR-controlled paths in removal guidance", () => {
@@ -628,7 +656,7 @@ describe("dependency guard script", () => {
 
     const autoscrubPullRequest = {
       user: { id: 1, login: "contributor", type: "User" },
-      base: { sha: "base-sha" },
+      base: { ref: "main", sha: "base-sha" },
       head: { ref: "contributor/change", sha: headSha },
     };
     const guard = {
@@ -636,10 +664,18 @@ describe("dependency guard script", () => {
       repo: "openclaw",
       pullRequest: autoscrubPullRequest,
       pullPath: "/repos/openclaw/openclaw/pulls/1",
+      issuePath: "/repos/openclaw/openclaw/issues/1",
+      commentMarker: "<!-- openclaw:dependency-graph-guard -->",
+      approvalCommand: "/allow-dependencies-change",
       api: {
         request: async (requestPath: string) =>
           requestPath.endsWith("/permission") ? { role_name: "read" } : autoscrubPullRequest,
-        paginate: async () => [],
+        paginate: async (requestPath: string) => {
+          if (requestPath === "/repos/openclaw/openclaw/issues/1/comments") {
+            return [];
+          }
+          throw new Error(`unexpected guard request: ${requestPath}`);
+        },
       },
     };
     const commit = await createAutoscrubCommit(
@@ -684,7 +720,7 @@ describe("dependency guard script", () => {
     expect(body).toContain("<!-- openclaw:dependency-graph-guard -->");
     expect(body).toContain("Dependency graph guard cleared");
     expect(body).toContain(headSha);
-    expect(body).toContain("requires a maintainer's normal GitHub approval");
+    expect(body).toContain("requires a maintainer's `/allow-dependencies-change` comment");
   });
 
   it("bounds GitHub error bodies by content-length", async () => {

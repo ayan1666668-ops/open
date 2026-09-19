@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { appendFile } from "node:fs/promises";
-import { finishGuard, openGuard } from "./guard-review.mjs";
+import { finishGuard, openGuard, withApprovalRequest } from "./guard-review.mjs";
 import { createIssueMutationHelpers, sanitizeGuardDisplayValue } from "./guard-shared.mjs";
 import { loadSecurityReviewPolicy } from "./security-review-policy.mjs";
 
@@ -46,14 +46,18 @@ function renderComment({ changes, pullRequest, approval }) {
       );
     } else if (approval) {
       lines.push(
-        `@${approval.login} approved this revision with repository ${code(approval.role)} access.`,
+        `@${approval.login} approved this revision with ${code("/allow-security-sensitive-change")} and repository ${code(approval.role)} access.`,
       );
     } else {
       lines.push(
-        "A human with repository `maintain` or `admin` access must approve this revision using GitHub's normal review action. SecOps approval is not required for this tier.",
+        "A human with repository `maintain` or `admin` access must post a new comment containing `/allow-security-sensitive-change` after this notice names the current revision. SecOps approval is not required for this tier.",
+        "Use only the command, or include `/allow-dependencies-change` on a separate line if both guards need approval. A normal GitHub Approve review does not satisfy this check.",
       );
     }
-    lines.push("", "A later push requires a fresh approval for contributor-authored changes.");
+    lines.push(
+      "",
+      "A later push requires a new approval comment after the notice updates. Editing an old comment does not renew approval; deleting the command removes its approval.",
+    );
   }
   lines.push(
     "",
@@ -63,7 +67,11 @@ function renderComment({ changes, pullRequest, approval }) {
 }
 
 async function main() {
-  const guard = await openGuard({ context: "openclaw/security-sensitive-review" });
+  const guard = await openGuard({
+    context: "openclaw/security-sensitive-review",
+    commentMarker: marker,
+    approvalCommand: "/allow-security-sensitive-change",
+  });
   if (!guard) {
     return;
   }
@@ -101,7 +109,10 @@ async function main() {
   } else {
     await addLabelIfMissing(reviewLabel);
   }
-  const body = renderComment({ changes, pullRequest, approval: guard.approval });
+  const body = withApprovalRequest(
+    guard,
+    renderComment({ changes, pullRequest, approval: guard.approval }),
+  );
   if (changes.length > 0 || existing) {
     await upsertComment(existing, body);
   }

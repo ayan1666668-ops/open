@@ -110,9 +110,20 @@ must declare their own development dependencies rather than rely on hoisting.
 Changes to authentication, credentials, secret handling, sandboxing, or execution
 permissions receive a security-review notice with the affected files and review
 guidance. A human PR author with repository `maintain` or `admin` access needs no
-additional security approval. Other authors, including bots, need a normal GitHub
-**Approve** review from a human with either role on the current PR head. A later
-push requires a fresh approval. Dependency changes use the same authority.
+additional security approval. Other authors, including bots, need a command
+comment from a human with either role:
+
+- `/allow-security-sensitive-change` for sensitive product changes.
+- `/allow-dependencies-change` for dependency changes that require approval.
+
+Wait for the guard notice to show the current PR commit, then post the applicable
+command on its own line in a new PR comment. Use only command lines in that
+comment. If both guards require approval, post both commands; they can be on
+separate lines in one comment. A later push requires a new comment after the
+notices update. Editing an older comment does
+not grant fresh approval. Deleting the comment or removing a command revokes that
+command's approval. Normal GitHub **Approve** reviews and labels do not satisfy
+these command requirements.
 
 The human-readable [security review policy](.github/security-review-policy.yml)
 lists sensitive product categories, review guidance, exclusions, and dependency
@@ -124,8 +135,7 @@ Security policy, CodeQL, and the security-review enforcement files listed in
 maintainer approval of product code does not replace that code-owner requirement.
 Normal project review and release-owner requirements still apply.
 
-Use the review action rather than an approval comment or label. See
-[security review checks](https://docs.openclaw.ai/ci/pipeline#security-review-checks)
+See [security review checks](https://docs.openclaw.ai/ci/pipeline#security-review-checks)
 for check behavior and enforcement setup.
 
 ## Local commit hook

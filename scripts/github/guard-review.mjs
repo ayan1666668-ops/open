@@ -1,21 +1,23 @@
 import { readFile } from "node:fs/promises";
 import { createGitHubApi } from "./guard-shared.mjs";
 
+const requestMarker = "<!-- openclaw:approval-request ";
+const approvalCommands = new Set([
+  "/allow-security-sensitive-change",
+  "/allow-dependencies-change",
+]);
+
 function pullRequestNumber(event) {
   if (event.pull_request) {
     return event.pull_request.number;
   }
+  if (event.issue?.pull_request && event.comment) {
+    return event.issue.number;
+  }
   if (/^[1-9][0-9]*$/u.test(event.inputs?.pr_number ?? "")) {
     return Number(event.inputs.pr_number);
   }
-  const run = event.workflow_run;
-  if (run?.event !== "pull_request_review" || run.name !== "Security review events") {
-    return null;
-  }
-  // This untrusted title locates a PR only. All authority comes from fresh GitHub reads;
-  // no artifacts, source, approval claims, or credentials from the signal run are used.
-  const match = /^PR ([1-9][0-9]*)$/u.exec(run.display_title ?? "");
-  return match ? Number(match[1]) : null;
+  return null;
 }
 
 function snapshot(pr) {
@@ -60,7 +62,7 @@ async function publishStatus(guard, state, description) {
   );
 }
 
-export async function openGuard({ context }) {
+export async function openGuard({ context, commentMarker, approvalCommand }) {
   const { GITHUB_TOKEN, GITHUB_EVENT_PATH, GITHUB_REPOSITORY, GITHUB_RUN_ID } = process.env;
   if (!GITHUB_TOKEN || !GITHUB_EVENT_PATH || !GITHUB_REPOSITORY) {
     throw new Error("GITHUB_TOKEN, GITHUB_EVENT_PATH, and GITHUB_REPOSITORY are required.");
@@ -86,6 +88,8 @@ export async function openGuard({ context }) {
     pullPath,
     issuePath: `/repos/${owner}/${repo}/issues/${number}`,
     context,
+    commentMarker,
+    approvalCommand,
     runUrl: `https://github.com/${owner}/${repo}/actions/runs/${GITHUB_RUN_ID}`,
   };
   // Replace any previous green result before reading files or authority. A failed
@@ -121,6 +125,49 @@ async function maintainerRole(guard, user) {
     : null;
 }
 
+function approvalRequest(guard, comments) {
+  const current = { head: guard.pullRequest.head.sha, base: guard.pullRequest.base.ref };
+  const notice = comments.find(
+    (comment) =>
+      comment.user?.type === "Bot" &&
+      comment.user.login === "github-actions[bot]" &&
+      comment.body?.startsWith(`${guard.commentMarker}\n`),
+  );
+  const line = notice?.body?.split("\n")[1];
+  if (!line?.startsWith(requestMarker) || !line.endsWith(" -->")) {
+    return current;
+  }
+  let recorded;
+  try {
+    recorded = JSON.parse(line.slice(requestMarker.length, -4));
+  } catch {
+    return current;
+  }
+  if (recorded?.head !== current.head || recorded?.base !== current.base) {
+    return current;
+  }
+  // The first notice for a revision has no timestamp. On the next evaluation,
+  // freeze GitHub's update time before rewriting the sticky notice. A queued
+  // comment can never be rebound to a head first observed after it was posted.
+  const requestedAt = recorded.requestedAt ?? notice.updated_at;
+  const since = Date.parse(requestedAt);
+  const updatedAt = Date.parse(notice.updated_at);
+  if (!Number.isFinite(since) || !Number.isFinite(updatedAt) || since > updatedAt) {
+    return current;
+  }
+  return { ...current, requestedAt };
+}
+
+export function withApprovalRequest(guard, body) {
+  if (!guard.approvalRequest) {
+    return body;
+  }
+  const record = JSON.stringify(guard.approvalRequest)
+    .replaceAll("<", "\\u003c")
+    .replaceAll(">", "\\u003e");
+  return `${guard.commentMarker}\n${requestMarker}${record} -->${body.slice(guard.commentMarker.length)}`;
+}
+
 export async function findMaintainerApproval(guard) {
   const { pullRequest } = guard;
   const sha = pullRequest.head.sha;
@@ -128,26 +175,29 @@ export async function findMaintainerApproval(guard) {
   if (authorRole) {
     return { kind: "author", login: pullRequest.user.login, role: authorRole, sha };
   }
-  const reviews = await guard.api.paginate(`${guard.pullPath}/reviews`);
-  const latest = new Map();
-  // GitHub returns reviews chronologically. Comments and pending drafts do not
-  // revoke an approval; a dismissal or a subsequent verdict does.
-  for (const review of reviews) {
-    if (["APPROVED", "CHANGES_REQUESTED", "DISMISSED"].includes(review.state)) {
-      latest.set(review.user?.id, review);
-    }
+  const comments = await guard.api.paginate(`${guard.issuePath}/comments`);
+  guard.approvalRequest = approvalRequest(guard, comments);
+  const since = Date.parse(guard.approvalRequest.requestedAt);
+  if (!Number.isFinite(since)) {
+    return null;
   }
-  for (const review of [...latest.values()].toReversed()) {
+  for (const comment of comments.toReversed()) {
+    const lines = (comment.body ?? "")
+      .split(/\r?\n/u)
+      .map((line) => line.trim())
+      .filter(Boolean);
     if (
-      review.state !== "APPROVED" ||
-      review.commit_id !== sha ||
-      review.user?.id === pullRequest.user.id
+      !lines.includes(guard.approvalCommand) ||
+      !lines.every((line) => approvalCommands.has(line)) ||
+      !(Date.parse(comment.created_at) > since) ||
+      comment.updated_at !== comment.created_at ||
+      comment.user?.id === pullRequest.user.id
     ) {
       continue;
     }
-    const role = await maintainerRole(guard, review.user);
+    const role = await maintainerRole(guard, comment.user);
     if (role) {
-      return { kind: "review", login: review.user.login, role, sha, url: review.html_url };
+      return { kind: "comment", login: comment.user.login, role, sha, url: comment.html_url };
     }
   }
   return null;

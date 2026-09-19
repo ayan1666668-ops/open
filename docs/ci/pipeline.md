@@ -145,11 +145,11 @@ All four scans use `scripts/install-periphery.sh` to install the checksum-pinned
 Security review separates product changes that maintainers can approve from the
 small set of security policy and enforcement files that require SecOps approval.
 
-| Change                                     | Human author with `maintain` or `admin` access   | Other authors, including bots                                                              |
-| ------------------------------------------ | ------------------------------------------------ | ------------------------------------------------------------------------------------------ |
-| Sensitive product code                     | Informational notice; no extra security approval | Normal GitHub approval by a human with `maintain` or `admin` access on the current PR head |
-| Dependency changes requiring review        | Same maintainer exemption                        | Same maintainer approval                                                                   |
-| SecOps-owned files in `.github/CODEOWNERS` | Independent SecOps code-owner approval           | Independent SecOps code-owner approval                                                     |
+| Change                                     | Human author with `maintain` or `admin` access   | Other authors, including bots                                                     |
+| ------------------------------------------ | ------------------------------------------------ | --------------------------------------------------------------------------------- |
+| Sensitive product code                     | Informational notice; no extra security approval | `/allow-security-sensitive-change` from a human with `maintain` or `admin` access |
+| Dependency changes requiring review        | Same maintainer exemption                        | `/allow-dependencies-change` from a human with either role                        |
+| SecOps-owned files in `.github/CODEOWNERS` | Independent SecOps code-owner approval           | Independent SecOps code-owner approval                                            |
 
 The **Security Sensitive Guard** publishes `openclaw/security-sensitive-review`.
 Its inventory in `.github/security-review-policy.yml` covers Gateway
@@ -182,19 +182,38 @@ and dependency caches disabled. That action's manifest and npm lock mirror the
 root dependency pins and `pnpm-lock.yaml`; update them together when those pins
 change. Approval decisions and dependency graph analysis remain in JavaScript.
 
-Both guards use current repository permissions. `write` access, organization
-membership, an approval comment, and a label do not grant maintainer authority.
-The PR author exemption applies only to human authors; a maintainer pushing to an
-external contributor's branch does not transfer that exemption. A qualifying
-review must approve the current head; a new head or dismissed approval requires
-reevaluation. **Security review events** forwards review changes to the trusted
-guard workflows so approving a PR does not require a manual rerun.
+Both guards use current repository permissions. Only human users with `maintain`
+or `admin` access can grant command approval or receive the author exemption.
+`write` access and organization membership are insufficient. A maintainer pushing
+to an external contributor's branch does not transfer the author exemption.
 
-The guard updates one PR comment with affected files, review guidance, and the
-remaining action. The sensitive-change label remains after approval so reviewers
-can still identify the affected responsibility. Comments and labels display the
-decision; they are not approval evidence. Evaluation uses trusted repository code
-and GitHub metadata without executing contributor code.
+For other authors, wait for the applicable guard notice to show the current PR
+commit, then post the command on its own line in a new PR comment:
+
+```text
+/allow-security-sensitive-change
+/allow-dependencies-change
+```
+
+Each command approves only its own guard. When both guards require approval, both
+commands are required and can appear on separate lines in one comment. Use only
+command lines in that comment, without prose, quotes, or code fences. Normal
+GitHub **Approve** reviews and labels do not replace these commands.
+
+The guard associates a command with the revision recorded in its trusted notice.
+A command posted before the notice requests approval for that revision cannot
+approve it. After a new commit, wait for the notice to update and post a new
+comment. Editing an older comment does not grant fresh approval. Deleting an
+approval comment or removing its command revokes that approval; current roles
+are checked again whenever the guard runs.
+
+Each guard updates one PR comment with affected files, review guidance, the
+current revision, and the remaining action. The sensitive-change label remains
+after approval so reviewers can still identify the affected responsibility.
+Trusted `issue_comment` workflows reevaluate command comments and comment edits
+or deletions without a manual rerun. Ordinary new comments do not start guard
+jobs. Evaluation uses trusted repository code and GitHub metadata without
+executing contributor code or comment text.
 
 The hard tier lives only in `.github/CODEOWNERS`: security policy, ownership,
 CodeQL, selected scanning configuration, and the security-review enforcement
@@ -211,8 +230,8 @@ This is an accepted tradeoff to avoid a separate credential-bearing publisher.
 Native CODEOWNERS review enforcement remains independent of these statuses.
 
 Results apply to the PR head evaluated by the workflow. New PR heads, base-branch
-retargeting, and review events reevaluate automatically; unrelated pushes to
-`main` do not. When changing the sensitive-path inventory, review policy, or
+retargeting, and command comment events reevaluate automatically; unrelated
+pushes to `main` do not. When changing the sensitive-path inventory, review policy, or
 maintainer permissions, refresh affected open PRs before merging them. From the
 default branch, run both workflows with the PR number:
 
@@ -222,8 +241,8 @@ gh workflow run dependency-guard.yml --ref main -f pr_number=123
 ```
 
 Wait for the newly dispatched runs to finish and verify their status on the
-current PR head. Dispatch reevaluates current files, permissions, and reviews;
-it grants no approval and cannot initiate dependency autoscrub. Use this refresh
+current PR head. Dispatch reevaluates current files, permissions, and command
+comments; it grants no approval and cannot initiate dependency autoscrub. Use this refresh
 instead of rerunning an old workflow revision after a policy change. This policy
 does not impose a new requirement to update every PR after every `main` push.
 
@@ -232,8 +251,8 @@ does not impose a new requirement to update every PR after every `main` push.
 Merging workflow files does not enable GitHub merge protection. After these
 workflows and the reviewed CODEOWNERS inventory are on the default branch:
 
-1. Verify both review checks appear on a PR's current head, including after an
-   approval and a subsequent push.
+1. Verify both review checks appear on a PR's current head, including after a
+   command approval and a subsequent push.
 2. Require `openclaw/security-sensitive-review` and `openclaw/dependency-review`
    alongside the existing CI checks, bound to the GitHub Actions app.
 3. Enable **Require review from Code Owners** and **Dismiss stale pull request

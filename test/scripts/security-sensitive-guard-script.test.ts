@@ -15,14 +15,34 @@ import { useAutoCleanupTempDirTracker } from "../helpers/temp-dir.js";
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 const headSha = "a".repeat(40);
 const author = { id: 1, login: "contributor", type: "User" };
-const reviewer = { id: 2, login: "maintainer", type: "User" };
+const approver = { id: 2, login: "maintainer", type: "User" };
 const pullPath = "/repos/openclaw/openclaw/pulls/7";
-const approval = { id: 1, user: reviewer, state: "APPROVED", commit_id: headSha };
+const marker = "<!-- openclaw:security-sensitive-guard -->";
+const requestedAt = "2026-01-01T00:00:00Z";
+const notice = {
+  id: 4,
+  user: { id: 3, login: "github-actions[bot]", type: "Bot" },
+  created_at: requestedAt,
+  updated_at: requestedAt,
+  body: `${marker}\n<!-- openclaw:approval-request ${JSON.stringify({ head: headSha, base: "main" })} -->\nReview this revision.`,
+};
+const approval = {
+  id: 11,
+  user: approver,
+  body: "/allow-security-sensitive-change",
+  created_at: "2026-01-01T00:01:00Z",
+  updated_at: "2026-01-01T00:01:00Z",
+};
+const commentEvent = {
+  action: "created",
+  issue: { number: 7, pull_request: {} },
+  comment: approval,
+};
 const { collectSecuritySensitiveChanges } = loadSecurityReviewPolicy();
 
 type Options = {
   authorRole?: string;
-  reviewerRole?: string;
+  approverRole?: string;
   authorType?: string;
   reviews?: object[];
   files?: object[];
@@ -53,13 +73,13 @@ function runGuard(options: Options = {}) {
     [`GET ${pullPath}`]: pr,
     [`GET ${pullPath}/files`]: files,
     [`GET ${pullPath}/reviews`]: options.reviews ?? [],
-    "GET /repos/openclaw/openclaw/issues/7/comments": options.comments ?? [],
+    "GET /repos/openclaw/openclaw/issues/7/comments": options.comments ?? [notice],
     "GET /repos/openclaw/openclaw/issues/7/labels": [],
     "GET /repos/openclaw/openclaw/collaborators/contributor/permission": {
       role_name: options.authorRole ?? "read",
     },
     "GET /repos/openclaw/openclaw/collaborators/maintainer/permission": {
-      role_name: options.reviewerRole ?? "maintain",
+      role_name: options.approverRole ?? "maintain",
     },
     ...options.routes,
   };
@@ -121,8 +141,10 @@ function runGuard(options: Options = {}) {
     statuses: requests
       .filter((request) => request.path.includes("/statuses/"))
       .map((request) => request.body?.state),
-    comment: requests.find(
-      (request) => request.method === "POST" && request.path.endsWith("/comments"),
+    comment: requests.findLast(
+      (request) =>
+        (request.method === "POST" && request.path.endsWith("/comments")) ||
+        (request.method === "PATCH" && request.path.includes("/issues/comments/")),
     )?.body?.body,
   };
 }
@@ -139,39 +161,98 @@ describe("security-sensitive guard entry point", () => {
     { name: "an external author", options: {} },
     { name: "write access", options: { authorRole: "write" } },
     { name: "an admin bot", options: { authorRole: "admin", authorType: "Bot" } },
-    { name: "a stale review", options: { reviews: [{ ...approval, commit_id: "c".repeat(40) }] } },
-    { name: "a write-only reviewer", options: { reviews: [approval], reviewerRole: "write" } },
     {
-      name: "a bot reviewer",
-      options: { reviews: [{ ...approval, user: { ...reviewer, type: "Bot" } }] },
+      name: "a normal GitHub Approve review without the command",
+      options: { reviews: [{ user: approver, state: "APPROVED", commit_id: headSha }] },
     },
-    { name: "a dismissed review", options: { reviews: [{ ...approval, state: "DISMISSED" }] } },
     {
-      name: "a later request for changes",
-      options: { reviews: [approval, { ...approval, id: 2, state: "CHANGES_REQUESTED" }] },
+      name: "a write-only approver",
+      options: { comments: [notice, approval], approverRole: "write" },
+    },
+    {
+      name: "a bot command",
+      options: { comments: [notice, { ...approval, user: { ...approver, type: "Bot" } }] },
     },
     {
       name: "a removed maintainer",
       options: {
-        reviews: [approval],
+        comments: [notice, approval],
         routes: {
           "GET /repos/openclaw/openclaw/collaborators/maintainer/permission": { httpError: 404 },
         },
       },
     },
+    { name: "a command before the first notice", options: { comments: [approval] } },
     {
-      name: "an old authorized bot comment",
+      name: "a command simultaneous with the notice",
+      options: {
+        comments: [notice, { ...approval, created_at: requestedAt, updated_at: requestedAt }],
+      },
+    },
+    {
+      name: "an old comment edited to add the command",
+      options: { comments: [notice, { ...approval, created_at: requestedAt }] },
+    },
+    {
+      name: "an edited command",
+      options: { comments: [notice, { ...approval, updated_at: "2026-01-01T00:02:00Z" }] },
+    },
+    {
+      name: "a comment posted before a new revision's sticky notice update",
+      options: { comments: [{ ...notice, updated_at: "2026-01-01T00:02:00Z" }, approval] },
+    },
+    {
+      name: "a different guard's command",
+      options: { comments: [notice, { ...approval, body: "/allow-dependencies-change" }] },
+    },
+    {
+      name: "a quoted command",
+      options: { comments: [notice, { ...approval, body: "> /allow-security-sensitive-change" }] },
+    },
+    {
+      name: "a command inside a code block",
+      options: {
+        comments: [notice, { ...approval, body: "```\n/allow-security-sensitive-change\n```" }],
+      },
+    },
+    {
+      name: "an untrusted notice copied by the contributor",
+      options: { comments: [{ ...notice, user: author }, approval] },
+    },
+    {
+      name: "a malformed request record",
       options: {
         comments: [
-          {
-            id: 4,
-            user: { login: "github-actions[bot]" },
-            body: `<!-- openclaw:security-sensitive-guard -->\n### Security-sensitive change authorized\nApproved SHA: \`${headSha}\``,
-          },
+          { ...notice, body: `${marker}\n<!-- openclaw:approval-request { -->` },
+          approval,
         ],
       },
     },
-  ])("requires review for $name", ({ options }) => {
+    {
+      name: "a future request timestamp",
+      options: {
+        comments: [
+          {
+            ...notice,
+            body: `${marker}\n<!-- openclaw:approval-request ${JSON.stringify({ head: headSha, base: "main", requestedAt: "2026-01-02T00:00:00Z" })} -->`,
+          },
+          approval,
+        ],
+      },
+    },
+    {
+      name: "a legacy authorized bot comment",
+      options: {
+        comments: [
+          {
+            ...notice,
+            body: `${marker}\n### Security-sensitive change authorized\nApproved SHA: \`${headSha}\``,
+          },
+          approval,
+        ],
+      },
+    },
+  ])("requires a fresh command for $name", ({ options }) => {
     const result = runGuard(options);
     expect(result.status).toBe(1);
     expect(result.statuses).toEqual(["pending", "failure"]);
@@ -182,9 +263,9 @@ describe("security-sensitive guard entry point", () => {
   });
 
   it.each(["maintain", "admin"])(
-    "accepts normal current-head approval by a %s reviewer",
-    (reviewerRole) => {
-      const result = runGuard({ reviews: [approval], reviewerRole });
+    "accepts a current-revision command from a %s user",
+    (approverRole) => {
+      const result = runGuard({ comments: [notice, approval], approverRole, event: commentEvent });
       expect(result.status, result.stderr).toBe(0);
       expect(result.statuses).toEqual(["pending", "success"]);
       expect(result.comment).toContain("@maintainer approved");
@@ -196,52 +277,76 @@ describe("security-sensitive guard entry point", () => {
     },
   );
 
-  it("does not treat a later review comment as a revoked approval", () => {
-    const result = runGuard({ reviews: [approval, { ...approval, id: 2, state: "COMMENTED" }] });
+  it("accepts both commands in one comment", () => {
+    const result = runGuard({
+      comments: [notice, { ...approval, body: `${approval.body}\n/allow-dependencies-change` }],
+    });
     expect(result.status, result.stderr).toBe(0);
   });
 
-  it("reevaluates fork reviews using the signal only as a PR locator", () => {
-    const result = runGuard({
-      event: {
-        workflow_run: {
-          name: "Security review events",
-          event: "pull_request_review",
-          display_title: "PR 7",
-          pull_requests: [],
-        },
-      },
-      reviews: [approval],
-    });
-    expect(result.status, result.stderr).toBe(0);
-    expect(result.statuses.at(-1)).toBe("success");
-  });
+  it.each(["created", "edited", "deleted"])(
+    "uses the %s comment event only as a PR locator and rereads live command authority",
+    (action) => {
+      const result = runGuard({ event: { ...commentEvent, action } });
+      expect(result.statuses).toEqual(["pending", "failure"]);
+    },
+  );
 
-  it("does not grant approval from signal metadata", () => {
-    const result = runGuard({
-      event: {
-        workflow_run: {
-          name: "Security review events",
-          event: "pull_request_review",
-          display_title: "PR 7",
-          conclusion: "success",
-          actor: reviewer,
-        },
-      },
-    });
+  it.each([
+    { name: "head", oldRecord: { head: "c".repeat(40), base: "main" } },
+    { name: "target branch", oldRecord: { head: headSha, base: "stable" } },
+  ])("rejects a delayed or replayed command after the $name changes", ({ oldRecord }) => {
+    const oldNotice = {
+      ...notice,
+      body: `${marker}\n<!-- openclaw:approval-request ${JSON.stringify({ ...oldRecord, requestedAt })} -->`,
+    };
+    const result = runGuard({ comments: [oldNotice, approval], event: commentEvent });
     expect(result.statuses).toEqual(["pending", "failure"]);
+    expect(result.comment).toContain(JSON.stringify({ head: headSha, base: "main" }));
+    expect(result.comment).not.toContain('"requestedAt"');
+  });
+
+  it("keeps an approval through notice updates and revokes it when the command disappears", () => {
+    const first = runGuard({ comments: [] });
+    expect(first.statuses.at(-1)).toBe("failure");
+    const waiting = runGuard({ comments: [{ ...notice, body: first.comment }] });
+    expect(waiting.statuses.at(-1)).toBe("failure");
+    const updatedNotice = { ...notice, body: waiting.comment, updated_at: "2026-01-01T00:02:00Z" };
+    const allowed = runGuard({ comments: [updatedNotice, approval] });
+    expect(allowed.status, allowed.stderr).toBe(0);
+    const approvedNotice = {
+      ...updatedNotice,
+      body: allowed.comment,
+      updated_at: "2026-01-01T00:03:00Z",
+    };
+    const refreshed = runGuard({
+      comments: [approvedNotice, approval],
+      event: { inputs: { pr_number: "7" } },
+    });
+    expect(refreshed.status, refreshed.stderr).toBe(0);
+    const revoked = runGuard({
+      comments: [approvedNotice],
+      event: { ...commentEvent, action: "deleted" },
+    });
+    expect(revoked.statuses).toEqual(["pending", "failure"]);
   });
 
   it.each([
-    { reviews: [], expected: "failure" },
-    { reviews: [approval], expected: "success" },
+    { comments: [notice], expected: "failure" },
+    { comments: [notice, approval], expected: "success" },
   ])(
     "refreshes policy from a dispatch without granting approval: $expected",
-    ({ reviews, expected }) => {
-      const result = runGuard({ event: { inputs: { pr_number: "7" } }, reviews });
+    ({ comments, expected }) => {
+      const result = runGuard({ event: { inputs: { pr_number: "7" } }, comments });
       expect(result.statuses).toEqual(["pending", expected]);
     },
   );
+
+  it("ignores issue comments outside a PR", () => {
+    const result = runGuard({ event: { ...commentEvent, issue: { number: 7 } } });
+    expect(result.status).toBe(1);
+    expect(result.requests).toEqual([]);
+  });
 
   it("rejects invalid dispatch PR numbers before making requests", () => {
     const result = runGuard({ event: { inputs: { pr_number: "7/../../issues" } } });
@@ -277,7 +382,7 @@ describe("security-sensitive guard entry point", () => {
       base: { sha: "b".repeat(40), ref: "main", repo: { id: 1 } },
     };
     const result = runGuard({
-      reviews: [approval],
+      comments: [notice, approval],
       routes: {
         [`GET ${pullPath}`]: {
           responses: [pr, pr, { ...pr, head: { ...pr.head, sha: "c".repeat(40) } }],
@@ -290,7 +395,10 @@ describe("security-sensitive guard entry point", () => {
   });
 
   it("leaves hard-tier approval to CODEOWNERS and ignores ordinary changes", () => {
-    const result = runGuard({ files: [{ filename: "SECURITY.md" }, { filename: "src/utils.ts" }] });
+    const result = runGuard({
+      comments: [],
+      files: [{ filename: "SECURITY.md" }, { filename: "src/utils.ts" }],
+    });
     expect(result.status, result.stderr).toBe(0);
     expect(result.statuses).toEqual(["pending", "success"]);
     expect(result.comment).toBeUndefined();

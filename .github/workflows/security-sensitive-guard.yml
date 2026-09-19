@@ -9,9 +9,8 @@ on:
         type: string
   pull_request_target: # zizmor: ignore[dangerous-triggers] checks trusted base script only; never checks out PR head
     types: [opened, reopened, synchronize, ready_for_review, edited]
-  workflow_run: # zizmor: ignore[dangerous-triggers] reads live PR metadata only; no signal artifacts or code
-    workflows: [Security review events]
-    types: [completed]
+  issue_comment:
+    types: [created, edited, deleted]
 
 permissions:
   contents: read
@@ -20,12 +19,20 @@ permissions:
   statuses: write
 
 concurrency:
-  group: security-sensitive-guard-${{ github.event.pull_request.number && format('PR {0}', github.event.pull_request.number) || github.event.workflow_run.display_title || format('PR {0}', inputs.pr_number) }}
+  # Skipped runs must not replace a pending approval or revocation evaluation.
+  group: >-
+    security-sensitive-guard-${{ (github.event_name != 'workflow_dispatch' || github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) &&
+    (github.event_name != 'issue_comment' || (github.event.issue.pull_request &&
+    (github.event.action != 'created' || contains(github.event.comment.body, '/allow-security-sensitive-change')))) &&
+    (github.event.pull_request.number || github.event.issue.number || inputs.pr_number) || format('ignored-{0}', github.run_id) }}
   cancel-in-progress: false
 
 jobs:
   security-sensitive-guard:
-    if: ${{ github.event_name != 'workflow_dispatch' || github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+    if: >-
+      ${{ (github.event_name != 'workflow_dispatch' || github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) &&
+      (github.event_name != 'issue_comment' || (github.event.issue.pull_request &&
+      (github.event.action != 'created' || contains(github.event.comment.body, '/allow-security-sensitive-change')))) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:

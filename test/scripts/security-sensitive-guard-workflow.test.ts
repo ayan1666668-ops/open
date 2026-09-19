@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { runInNewContext } from "node:vm";
 import ignore from "ignore";
 import { afterEach, describe, expect, it } from "vitest";
 import { parse } from "yaml";
@@ -17,11 +18,13 @@ type WorkflowStep = {
 
 type Workflow = {
   name: string;
-  "run-name"?: string;
-  on: Record<string, { types?: string[]; workflows?: string[]; inputs?: Record<string, unknown> }>;
+  on: Record<string, { types?: string[]; inputs?: Record<string, unknown> }>;
   permissions: Record<string, string>;
   concurrency?: { group: string; "cancel-in-progress": boolean };
-  jobs: Record<string, { permissions?: Record<string, string>; steps: WorkflowStep[] }>;
+  jobs: Record<
+    string,
+    { if?: string; permissions?: Record<string, string>; steps: WorkflowStep[] }
+  >;
 };
 
 function readWorkflow(name: string): Workflow {
@@ -85,45 +88,98 @@ describe("security review workflow trust boundaries", () => {
   );
 
   it.each(["security-sensitive-guard", "dependency-guard"])(
-    "%s reevaluates pushes and review changes in the same PR concurrency group",
+    "%s reevaluates pushes and comment changes without canceling active work",
     (name) => {
       const workflow = readWorkflow(name);
-      const signal = readWorkflow("security-review-events");
       expect(workflow.on.pull_request_target?.types).toEqual(
         expect.arrayContaining(["opened", "reopened", "synchronize", "ready_for_review", "edited"]),
       );
-      expect(workflow.on.workflow_run).toEqual({
-        workflows: [signal.name],
-        types: ["completed"],
-      });
-      expect(signal["run-name"]).toBe("PR ${{ github.event.pull_request.number }}");
-      expect(workflow.concurrency?.group).toContain(
-        "github.event.pull_request.number && format('PR {0}', github.event.pull_request.number) || github.event.workflow_run.display_title",
-      );
+      expect(workflow.on.issue_comment?.types).toEqual(["created", "edited", "deleted"]);
+      expect(workflow.on.workflow_run).toBeUndefined();
+      expect(workflow.on.pull_request_review).toBeUndefined();
       expect(workflow.on.workflow_dispatch?.inputs?.pr_number).toMatchObject({
         required: true,
         type: "string",
       });
-      expect(workflow.concurrency?.group).toContain("format('PR {0}', inputs.pr_number)");
       expect(workflow.concurrency?.["cancel-in-progress"]).toBe(false);
     },
   );
 
-  it("keeps the fork review signal credential-free and unable to execute contributor code", () => {
-    const signal = readWorkflow("security-review-events");
-    expect(signal.on).toEqual({
-      pull_request_review: { types: ["submitted", "edited", "dismissed"] },
-    });
-    expect(signal.permissions).toEqual({});
-    const jobs = Object.values(signal.jobs);
-    expect(jobs.length).toBeGreaterThan(0);
-    for (const job of jobs) {
-      expect(job.permissions ?? signal.permissions).toEqual({});
-      for (const step of job.steps) {
-        expect(step.uses).toBeUndefined();
-        expect(step.env).toBeUndefined();
-        // The signal carries the PR number in run-name, never files or shell input.
-        expect(step.run).toMatch(/^echo '[A-Za-z ]+'$/u);
+  it.each([
+    ["security-sensitive-guard", "/allow-security-sensitive-change"],
+    ["dependency-guard", "/allow-dependencies-change"],
+  ])("%s keeps ignored runs out of the pending PR evaluation group", (name, command) => {
+    const workflow = readWorkflow(name);
+    const condition = workflow.jobs[name]!.if!;
+    const events = [
+      { eventName: "pull_request_target", action: "synchronize", allowed: true },
+      {
+        eventName: "pull_request_target",
+        action: "edited",
+        draft: true,
+        allowed: name !== "dependency-guard",
+      },
+      { action: "created", body: command, allowed: true },
+      {
+        action: "created",
+        body: "/allow-security-sensitive-change\n/allow-dependencies-change",
+        allowed: true,
+      },
+      {
+        action: "created",
+        body:
+          command === "/allow-dependencies-change"
+            ? "/allow-security-sensitive-change"
+            : "/allow-dependencies-change",
+        allowed: false,
+      },
+      { action: "created", body: "Thanks for the update", allowed: false },
+      { action: "edited", body: "Command removed", allowed: true },
+      { action: "deleted", body: command, allowed: true },
+      { action: "created", body: command, isPullRequest: false, allowed: false },
+      { action: "edited", body: command, isPullRequest: false, allowed: false },
+      { action: "deleted", body: command, isPullRequest: false, allowed: false },
+      { eventName: "workflow_dispatch", ref: "refs/heads/main", allowed: true },
+      { eventName: "workflow_dispatch", ref: "refs/heads/feature", allowed: false },
+    ];
+    for (const event of events) {
+      for (const runId of [201, 202]) {
+        const eventName = event.eventName ?? "issue_comment";
+        const context = {
+          github: {
+            event_name: eventName,
+            run_id: runId,
+            ref: event.ref ?? "refs/heads/main",
+            event: {
+              action: event.action,
+              comment: { body: event.body ?? "" },
+              issue: {
+                number: eventName === "issue_comment" ? 123 : undefined,
+                pull_request: event.isPullRequest === false ? null : {},
+              },
+              pull_request: {
+                number: eventName === "pull_request_target" ? 123 : undefined,
+                draft: event.draft,
+              },
+              repository: { default_branch: "main" },
+            },
+          },
+          inputs: { pr_number: eventName === "workflow_dispatch" ? "123" : undefined },
+          always: () => true,
+          contains: (value: string, search: string) =>
+            value.toLowerCase().includes(search.toLowerCase()),
+          format: (pattern: string, value: string | number) =>
+            pattern.replace("{0}", String(value)),
+        };
+        const result = runInNewContext(condition.replace(/^\$\{\{|\}\}$/gu, ""), context);
+        expect(Boolean(result), JSON.stringify(event)).toBe(event.allowed);
+        const group = workflow.concurrency!.group.replace(
+          /\$\{\{(.*?)\}\}/gsu,
+          (_, expression: string) => String(runInNewContext(expression, context)),
+        );
+        expect(group, JSON.stringify(event)).toBe(
+          event.allowed ? `${name}-123` : `${name}-ignored-${runId}`,
+        );
       }
     }
   });
@@ -284,7 +340,6 @@ describe("security review ownership", () => {
     ".github/codeql/openclaw-boundary/queries/managed-proxy-runtime-mutation.ql",
     ".github/workflows/codeql-macos-critical-security.yml",
     ".github/workflows/security-sensitive-guard.yml",
-    ".github/workflows/security-review-events.yml",
     ".github/workflows/dependency-guard.yml",
     ".github/security-review-policy.yml",
     ".github/actions/setup-security-review/action.yml",
