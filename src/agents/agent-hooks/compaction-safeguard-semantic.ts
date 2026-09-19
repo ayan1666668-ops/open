@@ -5,8 +5,6 @@ import type { AgentMessage } from "../runtime/index.js";
 const MAX_SEGMENT_TEXT_CHARS = 6_000;
 const MAX_OBLIGATION_TEXT_CHARS = 6_000;
 
-type CompactionSemanticMode = "off" | "shadow";
-
 type CompactionSemanticProtectionReason =
   | "user-authored"
   | "recent-turn"
