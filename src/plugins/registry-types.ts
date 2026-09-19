@@ -109,6 +109,8 @@ type PluginRegistrationOwner = {
 /** Agent tool factory registered by one plugin runtime. */
 export type PluginToolRegistration = PluginRegistrationOwner & {
   factory: OpenClawPluginToolFactory;
+  /** Explicitly registered required-authority context, never inferred from plugin identity. */
+  contextVersion?: 2;
   names: string[];
   declaredNames?: string[];
   optional: boolean;
@@ -254,12 +256,14 @@ type PluginBlockedHookRegistration = {
 };
 
 export type PluginServiceRegistration = PluginRegistrationOwner & {
+  readonly id: string;
   service: OpenClawPluginService;
   origin: PluginOrigin;
   trustedOfficialInstall?: boolean;
 };
 
 export type PluginGatewayDiscoveryServiceRegistration = PluginRegistrationOwner & {
+  readonly id: string;
   service: OpenClawGatewayDiscoveryService;
   instance?: PluginInstanceExecution;
 };
