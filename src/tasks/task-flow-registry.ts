@@ -2,6 +2,7 @@
 import { formatErrorMessage } from "../infra/errors.js";
 import { stageSqliteTransactionState } from "../infra/sqlite-post-commit.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
+import { createDeferredCore } from "../shared/deferred.js";
 import type { OpenClawStateDatabaseReadAdmission } from "../state/openclaw-state-db-async-lifecycle.js";
 import {
   captureOpenClawStateDatabaseReadAdmission,
@@ -9,6 +10,7 @@ import {
   registerOpenClawStateDatabaseLifecycleListener,
 } from "../state/openclaw-state-db-cache.js";
 import { resolveOpenClawStateSqlitePath } from "../state/openclaw-state-db.paths.js";
+import { captureOpenClawStateWorkerContext } from "../state/openclaw-state-worker-context.js";
 import type { OpenClawStateWorkerContext } from "../state/openclaw-state-worker-context.types.js";
 import {
   assertControllerId,
@@ -63,7 +65,10 @@ let flows = new Map<string, TaskFlowRecord>();
 let projectionEpoch = 0;
 let projectionDirty = false;
 const dirtyFlowIds = new Set<string>();
-const pendingFlowWrites = new Map<string, PendingTaskFlowPublication & { count: number }>();
+const pendingFlowWrites = new Map<
+  string,
+  PendingTaskFlowPublication & { completions: Set<Promise<void>> }
+>();
 
 function recordFlowProjectionWrite(flowId?: string): void {
   for (const [id, pending] of pendingFlowWrites) {
@@ -289,6 +294,69 @@ export const ensureTaskFlowRegistryReadyAsync = createAsyncRegistryRestore<
   },
 });
 
+export type TaskFlowRegistryRead = {
+  assertCurrent(): void;
+  isTaskFlowCurrent(flowId: string): boolean;
+  getTaskFlowById(flowId: string): TaskFlowRecord | undefined;
+};
+
+/** Join the accepted write prefix once; later writes remain visible through dirty flow witnesses. */
+export async function prepareTaskFlowRegistryRead(): Promise<TaskFlowRegistryRead | undefined> {
+  const context = captureOpenClawStateWorkerContext();
+  const store = getTaskFlowRegistryStore();
+  const accepted = [...pendingFlowWrites.values()].flatMap((pending) => [...pending.completions]);
+  const assertOwner = () => {
+    context.admission.assertCurrent();
+    if (!isCurrentTaskFlowDatabase(context.admission) || getTaskFlowRegistryStore() !== store) {
+      throw new Error("Task-flow registry read owner is no longer current.");
+    }
+  };
+  await Promise.all(accepted);
+  assertOwner();
+  await ensureTaskFlowRegistryReadyAsync(context);
+  assertOwner();
+  for (let attempt = 0; projectionDirty || dirtyFlowIds.size > 0; attempt += 1) {
+    if (attempt === 3) {
+      return undefined;
+    }
+    const epoch = projectionEpoch;
+    let installed = false;
+    await store.withSnapshotAsync(context, (snapshot) => {
+      assertOwner();
+      if (epoch === projectionEpoch) {
+        installTaskFlowRegistrySnapshot(snapshot, context.admission);
+        installed = true;
+      }
+    });
+    assertOwner();
+    if (installed) {
+      break;
+    }
+  }
+  const assertCurrent = () => {
+    assertOwner();
+    if (projectionDirty || taskFlowRegistryRestoreState.status !== "ready") {
+      throw new Error("Task-flow registry read projection is no longer ready.");
+    }
+  };
+  assertCurrent();
+  return {
+    assertCurrent,
+    isTaskFlowCurrent(flowId) {
+      assertCurrent();
+      return !dirtyFlowIds.has(flowId);
+    },
+    getTaskFlowById(flowId) {
+      assertCurrent();
+      if (dirtyFlowIds.has(flowId)) {
+        throw new Error("Task-flow registry read identity requires preparation.");
+      }
+      const flow = flows.get(flowId);
+      return flow ? cloneFlowRecord(flow) : undefined;
+    },
+  };
+}
+
 export async function reloadTaskFlowRegistryFromStoreAsync(
   context: OpenClawStateWorkerContext,
 ): Promise<void> {
@@ -345,11 +413,12 @@ export async function runTaskFlowRegistryWorkerMutation<T>(
   const store = getTaskFlowRegistryStore();
   admission.assertCurrent();
   const pending = pendingFlowWrites.get(flowId) ?? {
-    count: 0,
+    completions: new Set<Promise<void>>(),
     lastPublished: flows.get(flowId),
     readers: new Set<{ written: boolean }>(),
   };
-  pending.count += 1;
+  const completion = createDeferredCore();
+  pending.completions.add(completion.promise);
   pendingFlowWrites.set(flowId, pending);
   dirtyFlowIds.add(flowId);
   projectionEpoch += 1;
@@ -390,13 +459,14 @@ export async function runTaskFlowRegistryWorkerMutation<T>(
       // Persistence has settled. A projection failure must not invite replay of that write.
       log.warn("Failed to reconcile task-flow state after worker operation", { flowId, error });
     } finally {
-      pending.count -= 1;
-      if (pending.count === 0) {
+      pending.completions.delete(completion.promise);
+      if (pending.completions.size === 0) {
         pendingFlowWrites.delete(flowId);
         if (reconciled) {
           dirtyFlowIds.delete(flowId);
         }
       }
+      completion.resolve();
     }
   }
 }

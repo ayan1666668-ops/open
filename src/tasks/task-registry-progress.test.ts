@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import { expectDefined } from "@openclaw/normalization-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../test/helpers/promise.js";
 import { subagentRuns } from "../agents/subagents/registry/subagent-registry-memory.js";
@@ -27,15 +28,25 @@ import {
   createInMemoryTaskFlowRegistryStore,
   createInMemoryTaskRegistryStore,
 } from "../test-utils/task-registry-store.js";
-import { createSubagentTaskBackingDetail } from "./task-backing-authority.js";
+import {
+  createSubagentTaskBackingDetail,
+  resolveManagedTaskBackingDetail,
+} from "./task-backing-authority.js";
+import {
+  createManagedTaskFlow,
+  createTaskFlowForTask,
+  runTaskFlowRegistryWorkerMutation,
+} from "./task-flow-registry.js";
+import { getTaskFlowRegistryStore } from "./task-flow-registry.store.js";
 import {
   createTaskProgressContinuation,
   withTaskProgressRequesterContinuation,
 } from "./task-progress-requester.js";
+import { captureTaskAgentEventTarget } from "./task-registry-agent-event-target.js";
 import { resetTaskRegistryListenerState } from "./task-registry-listener-state.js";
 import type * as ProgressRuntime from "./task-registry-progress-runtime.js";
 import type { TaskProgressPublication } from "./task-registry-progress-runtime.js";
-import { updateTaskStateByRunId } from "./task-registry-record-api.js";
+import { linkTaskToFlowById, updateTaskStateByRunId } from "./task-registry-record-api.js";
 import type { TaskRegistryDeliveryRuntime } from "./task-registry-runtime-loaders.js";
 import { runTaskRegistryWorkerMutation, tasks } from "./task-registry-state.js";
 import {
@@ -156,6 +167,42 @@ function child(
 
 type Child = { entry: SubagentRunRecord; task: TaskRecord; claim: string };
 
+function managedChild() {
+  const item = child("Managed", { notifyPolicy: "silent" });
+  const mirror = expectDefined(createTaskFlowForTask({ task: item.task }), "canonical flow");
+  linkTaskToFlowById({ taskId: item.task.taskId, flowId: mirror.flowId });
+  const flow = expectDefined(
+    createManagedTaskFlow({
+      ownerKey: PARENT,
+      controllerId: "tests/progress-authority",
+      goal: "Show admitted progress",
+      requesterOrigin: origin,
+    }),
+    "managed flow",
+  );
+  const scope = {
+    runtime: "subagent" as const,
+    scopeKind: "session" as const,
+    ownerKey: PARENT,
+    childSessionKey: item.entry.childSessionKey,
+    runId: item.entry.runId,
+  };
+  expect(
+    createTaskRecord({
+      ...scope,
+      requesterAgentId: "main",
+      task: "Show admitted progress",
+      status: "running",
+      deliveryStatus: "pending",
+      notifyPolicy: "state_changes",
+      parentFlowId: flow.flowId,
+      requesterOrigin: origin,
+      detail: resolveManagedTaskBackingDetail(scope),
+    }),
+  ).not.toBeNull();
+  return { item, flow };
+}
+
 function accepted(items: readonly Child[]) {
   return items.map(({ entry }) => ({
     runId: entry.runId,
@@ -193,7 +240,7 @@ function continuation(items: readonly Child[]) {
 }
 
 async function adopt(items: readonly Child[], card = receipt()) {
-  const capability = continuation(items);
+  const capability = await continuation(items);
   if (!capability) {
     throw new Error("Expected current requester handoff capability");
   }
@@ -492,7 +539,7 @@ describe("adopted requester progress", () => {
       const second = child("Second");
       if (state === "adoption refused") {
         runtime.adoptTaskProgressMessage.mockResolvedValueOnce(false);
-        const capability = continuation([first, second])!;
+        const capability = (await continuation([first, second]))!;
         expect(await capability.adopt(receipt())).toBe(false);
         expect(await capability.adopt(receipt("retry-card"))).toBe(false);
         capability.close();
@@ -629,7 +676,7 @@ describe("adopted requester progress", () => {
 
   it("keeps silent children silent and allows done-only children to continue an adopted card", async () => {
     const quiet = child("Quiet", { notifyPolicy: "silent" });
-    expect(continuation([quiet])).toBeUndefined();
+    expect(await continuation([quiet])).toBeUndefined();
     expect(settle([quiet])).toBe(true);
     tool(quiet.entry);
     const doneOnly = child("Done only", { notifyPolicy: "done_only", turn: "quiet-turn" });
@@ -648,10 +695,10 @@ describe("adopted requester progress", () => {
 
   it("rejects a retained capability after close and a second adoption after use", async () => {
     const item = child("Worker");
-    const closed = continuation([item])!;
+    const closed = (await continuation([item]))!;
     closed.close();
     expect(await closed.adopt(receipt("closed-card"))).toBe(false);
-    const used = continuation([item])!;
+    const used = (await continuation([item]))!;
     expect(await used.adopt(receipt())).toBe(true);
     expect(await used.adopt(receipt("replacement-card"))).toBe(false);
     used.close();
@@ -670,7 +717,7 @@ describe("adopted requester progress", () => {
         entered.resolve();
         return finished.promise;
       });
-      const capability = continuation([item])!;
+      const capability = (await continuation([item]))!;
       const pending = capability.adopt(receipt());
       await entered.promise;
       expect(await capability.adopt(receipt("concurrent-replacement"))).toBe(false);
@@ -917,7 +964,7 @@ describe("adopted requester progress", () => {
       throw new Error("Replacement execution did not acquire its own claim");
     }
     runContextClaims.push({ runId: item.entry.runId, claim });
-    const capability = createTaskProgressContinuation({
+    const capability = await createTaskProgressContinuation({
       requesterSessionKey: PARENT,
       requesterAgentId: "main",
       requesterTurnRunId: TURN,
@@ -961,7 +1008,7 @@ describe("adopted requester progress", () => {
     const large = Array.from({ length: 33 }, (_, index) =>
       child(`Batch ${index}`, { turn: "large-turn" }),
     );
-    expect(continuation(large)).toBeUndefined();
+    expect(await continuation(large)).toBeUndefined();
     expect(settle(large)).toBe(true);
     tool(large[0]!.entry);
     await vi.advanceTimersByTimeAsync(15_000);
@@ -982,14 +1029,102 @@ describe("adopted requester progress", () => {
     expect(publications[0]!.content).toContain("public-notes-32.txt");
   });
 
-  it("rejects missing or cross-audience accepted members rather than adopting a partial batch", () => {
+  it("rejects missing or cross-audience accepted members rather than adopting a partial batch", async () => {
     const first = child("First");
     const second = child("Second");
     second.entry.completionRequesterSessionId = "different-requester-window";
-    expect(continuation([first, second])).toBeUndefined();
+    expect(await continuation([first, second])).toBeUndefined();
     subagentRuns.delete(second.entry.runId);
-    expect(continuation([first, second])).toBeUndefined();
+    expect(await continuation([first, second])).toBeUndefined();
   });
+
+  it.each(["same child", "unrelated child"] as const)(
+    "checks accepted nonresident canonical candidates at publication (%s)",
+    async (relation) => {
+      const { item } = managedChild();
+      await adopt([item]);
+      const candidate: TaskRecord = {
+        ...item.task,
+        taskId: "accepted-new-canonical-task",
+        runId: "new-canonical-run",
+        ownerKey: "agent:main:another-owner",
+        childSessionKey:
+          relation === "same child" ? item.entry.childSessionKey : "agent:main:subagent:unrelated",
+        detail: createSubagentTaskBackingDetail(2),
+      };
+      const mirror = expectDefined(
+        createTaskFlowForTask({ task: candidate }),
+        "new canonical flow",
+      );
+      candidate.parentFlowId = mirror.flowId;
+      const store = getTaskRegistryStore();
+      const context = captureOpenClawStateWorkerContext();
+      const release = createDeferred();
+      let pending: Promise<void> | undefined;
+      const publish = runtime.publishTaskProgressMessage.getMockImplementation()!;
+      runtime.publishTaskProgressMessage.mockImplementationOnce(async (params) => {
+        pending = runTaskRegistryWorkerMutation(
+          {
+            admission: context.admission,
+            scope: { taskId: candidate.taskId, runId: candidate.runId },
+            readEventTarget: () => captureTaskAgentEventTarget(candidate),
+            publicationRecords: () => new Map([[candidate.taskId, candidate]]),
+          },
+          async () => {
+            await release.promise;
+            store.upsertTaskWithDeliveryState({ task: candidate });
+          },
+          async () => store.loadSnapshot(),
+        );
+        expect(tasks.has(candidate.taskId)).toBe(false);
+        return publish(params);
+      });
+      try {
+        await vi.advanceTimersByTimeAsync(15_000);
+        expect(runtime.publishTaskProgressMessage).toHaveBeenCalledOnce();
+        expect(publications).toHaveLength(relation === "same child" ? 0 : 1);
+      } finally {
+        release.resolve();
+        await pending;
+      }
+    },
+  );
+
+  it.each(["audience", "classification"] as const)(
+    "rejects an adopted-card send while its flow %s change is unpublished",
+    async (change) => {
+      const { item, flow } = managedChild();
+      await adopt([item]);
+      const context = captureOpenClawStateWorkerContext();
+      const store = getTaskFlowRegistryStore();
+      const release = createDeferred();
+      const publish = runtime.publishTaskProgressMessage.getMockImplementation()!;
+      runtime.publishTaskProgressMessage.mockImplementationOnce(async (params) => {
+        const pending = runTaskFlowRegistryWorkerMutation(
+          { flowId: flow.flowId, admission: context.admission },
+          async () => {
+            await release.promise;
+            store.upsertFlow({
+              ...flow,
+              ...(change === "audience"
+                ? { requesterOrigin: { ...origin, to: "new-audience" } }
+                : { syncMode: "task_mirrored" as const }),
+            });
+          },
+          () => store.readFlowAsync(context, flow.flowId),
+        );
+        try {
+          return await publish(params);
+        } finally {
+          release.resolve();
+          await pending;
+        }
+      });
+      await vi.advanceTimersByTimeAsync(15_000);
+      expect(runtime.publishTaskProgressMessage).toHaveBeenCalledOnce();
+      expect(publications).toEqual([]);
+    },
+  );
 
   it("rechecks authority at publication and preserves newer activity arriving during transport", async () => {
     const first = child("First");

@@ -8,8 +8,13 @@ import {
   prepareTaskRegistryProjectionAsync,
   tasks,
   taskIdsByOwnerKey,
+  taskIdsByRelatedSessionKey,
 } from "./task-registry-state.js";
-import { getTaskRegistryProcessState, matchesScope } from "./task-registry.process-state.js";
+import {
+  getTaskRegistryProcessState,
+  matchesScope,
+  type PendingTaskRegistryMutation,
+} from "./task-registry.process-state.js";
 import { getTaskRegistryStore } from "./task-registry.store.js";
 import type { TaskRegistryMutationScope } from "./task-registry.store.types.js";
 import type { TaskRecord } from "./task-registry.types.js";
@@ -17,9 +22,40 @@ import type { TaskRecord } from "./task-registry.types.js";
 export type TaskRegistryRead = {
   assertCurrent: () => void;
   isTaskCurrent: (taskId: string) => boolean;
+  isChildSessionCurrent: (childSessionKey: string) => boolean;
   getTaskById: (taskId: string) => TaskRecord | undefined;
+  getTasksByRunId: (runId: string) => TaskRecord[];
+  listTaskRecordsForChildSessionKey: (childSessionKey: string) => TaskRecord[];
   listTaskRecordsForOwnerTree: (rootOwnerKeys: ReadonlySet<string>) => TaskRecord[];
 };
+
+function isTaskRegistryReadScopeCurrent(
+  field: "runId" | "childSessionKey",
+  value: string,
+): boolean {
+  const { projection } = getTaskRegistryProcessState();
+  const observed = new Set<TaskRegistryMutationScope>();
+  const intersects = (scope: TaskRegistryMutationScope, pending?: PendingTaskRegistryMutation) => {
+    const facts = [
+      tasks.get(scope.taskId),
+      ...(pending?.published.values() ?? []),
+      ...(pending?.publication?.records.values() ?? []),
+      pending?.readEventTarget?.(),
+    ];
+    return (
+      scope[field] === value ||
+      facts.some((fact) => fact?.[field]?.trim() === value) ||
+      (scope[field] === undefined && facts.every((fact) => !fact?.[field]))
+    );
+  };
+  for (const pending of projection.pending) {
+    observed.add(pending.scope);
+    if (pending.readIdentity !== "preserved" && intersects(pending.scope, pending)) {
+      return false;
+    }
+  }
+  return [...projection.dirtyScopes].every((scope) => observed.has(scope) || !intersects(scope));
+}
 
 function isTaskRegistryReadIdentityCurrent(taskId: string): boolean {
   const { projection } = getTaskRegistryProcessState();
@@ -77,15 +113,48 @@ export async function prepareTaskRegistryRead(): Promise<TaskRegistryRead | unde
     assertCurrent();
     return isTaskRegistryReadIdentityCurrent(taskId.trim());
   };
+  const readScope = (field: "runId" | "childSessionKey", value: string, ids: Iterable<string>) => {
+    assertCurrent();
+    if (!isTaskRegistryReadScopeCurrent(field, value)) {
+      throw new Error("Task registry read candidate scope requires preparation");
+    }
+    return [...ids].flatMap((taskId) => {
+      if (!isTaskCurrent(taskId)) {
+        throw new Error("Task registry read identity requires preparation");
+      }
+      const task = tasks.get(taskId);
+      return task ? [cloneTaskRecord(task)] : [];
+    });
+  };
   return {
     assertCurrent,
     isTaskCurrent,
+    isChildSessionCurrent(childSessionKey) {
+      assertCurrent();
+      return isTaskRegistryReadScopeCurrent("childSessionKey", childSessionKey.trim());
+    },
     getTaskById(taskId) {
       if (!isTaskCurrent(taskId)) {
         throw new Error("Task registry read identity requires preparation");
       }
       const task = tasks.get(taskId.trim());
       return task ? cloneTaskRecord(task) : undefined;
+    },
+    getTasksByRunId(runId) {
+      const normalized = runId.trim();
+      return readScope(
+        "runId",
+        normalized,
+        getTaskRegistryProcessState().taskIdsByRunId.get(normalized) ?? [],
+      );
+    },
+    listTaskRecordsForChildSessionKey(childSessionKey) {
+      const normalized = childSessionKey.trim();
+      return readScope(
+        "childSessionKey",
+        normalized,
+        taskIdsByRelatedSessionKey.get(normalized) ?? [],
+      );
     },
     listTaskRecordsForOwnerTree(rootOwnerKeys) {
       assertCurrent();

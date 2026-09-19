@@ -1,17 +1,19 @@
 import { Worker } from "node:worker_threads";
 import { createDeferred } from "../../test/helpers/promise.js";
 import {
-  captureStateDatabaseCoordinatorRuntime,
   resolveStateDatabaseCoordinatorPath,
+  type StateDatabaseCoordinatorRuntime,
 } from "../infra/state-database-coordinator.js";
-import { openOpenClawStateDatabase } from "../state/openclaw-state-db.js";
 
 /** Hold only the synthetic fixture's coordinator, with release independent of its main thread. */
-export function holdStateDatabaseCoordinator(releaseAfterMs: number) {
-  const database = openOpenClawStateDatabase();
+export function holdStateDatabaseCoordinator(
+  databasePath: string,
+  runtime: StateDatabaseCoordinatorRuntime,
+  releaseAfterMs: number,
+) {
   const coordinatorPath = resolveStateDatabaseCoordinatorPath({
-    databasePath: database.path,
-    runtimeDirectory: captureStateDatabaseCoordinatorRuntime().directory,
+    databasePath,
+    runtimeDirectory: runtime.directory,
     uid: process.getuid?.(),
   });
   const released = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT));
@@ -21,7 +23,8 @@ export function holdStateDatabaseCoordinator(releaseAfterMs: number) {
     const { parentPort, workerData } = require("node:worker_threads");
     const { DatabaseSync } = require("node:sqlite");
     const db = new DatabaseSync(workerData.path);
-    db.exec("PRAGMA journal_mode = MEMORY; BEGIN EXCLUSIVE");
+    try { db.exec("BEGIN EXCLUSIVE"); }
+    catch (error) { throw new Error("Contention holder exclusive acquisition failed", { cause: error }); }
     let done = false;
     const release = () => {
       if (done) return;
@@ -38,16 +41,37 @@ export function holdStateDatabaseCoordinator(releaseAfterMs: number) {
   `,
     {
       eval: true,
+      execArgv: [],
+      env: {},
       workerData: { path: coordinatorPath, released: released.buffer, releaseAfterMs },
     },
   );
+  let readyObserved = false;
+  let exited = false;
+  let failure: Error | undefined;
   const joined = new Promise<number>((resolve, reject) => {
-    holder.once("message", () => ready.resolve());
-    holder.once("error", (error: Error) => {
-      ready.reject(error);
-      reject(error);
+    holder.once("message", () => {
+      readyObserved = true;
+      ready.resolve();
     });
-    holder.once("exit", resolve);
+    holder.once("error", (error: Error) => {
+      failure = error;
+      ready.reject(error);
+    });
+    holder.once("exit", (code) => {
+      exited = true;
+      if (!readyObserved || code !== 0) {
+        failure ??= new Error(
+          `Contention holder exited ${readyObserved ? "after" : "before"} readiness (code ${code})`,
+        );
+      }
+      if (failure) {
+        ready.reject(failure);
+        reject(failure);
+      } else {
+        resolve(code);
+      }
+    });
   });
   void joined.catch(() => undefined);
   return {
@@ -55,7 +79,7 @@ export function holdStateDatabaseCoordinator(releaseAfterMs: number) {
     released,
     joined,
     release: () => {
-      if (Atomics.load(released, 0) === 0) {
+      if (!exited && !failure && Atomics.load(released, 0) === 0) {
         holder.postMessage("release", []);
       }
     },

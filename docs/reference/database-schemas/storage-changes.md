@@ -427,9 +427,20 @@ Gateway setup and synchronous run-scoped terminal finalization, including comman
 failure before execution starts. This operation retains the original live registration;
 retirement or replacement stops it with a warning. Its shipped run-scoped semantics
 do not become an exact-task cleanup guarantee. Worker failures never switch to a
-legacy creator. Coordinator SQL remains on the host. Other detached lifecycle
-callers retain their synchronous paths until their complete admission and settlement
-owners migrate.
+legacy creator. These retained native adapters keep coordinator SQL on the host.
+Other detached lifecycle operations retain their existing admission and settlement
+owners.
+
+Detached progress-card adoption, requester binding, publication, finalization, and
+individual typing ticks prepare task and flow projections asynchronously. Preparation
+joins a fixed prefix of accepted event batches and flow writes; later identity-changing
+mutations and dirty flow records invalidate the affected members. Canonical backing
+selection includes the full child-session scope, including accepted candidates that
+have not reached the resident projection. Dirty flow refresh still hydrates a full
+snapshot on the host. Send guards recheck current backing, generation, and audience
+without synchronous shared-state refresh. Each batch retains its publication owner
+until asynchronous finalization settles. Agent-database session, conversation, and
+receipt guards keep their separate owners and synchronous readers.
 
 Routine status reads stream task audit metadata through the same shared worker
 and return fixed-size history aggregates plus candidates for live reconciliation.

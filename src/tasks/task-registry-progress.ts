@@ -23,9 +23,10 @@ import {
 import type { SessionIdentityMutation } from "../sessions/session-lifecycle-events.js";
 import { createLazyPromise } from "../shared/lazy-runtime.js";
 import {
-  hasAuthoritativeTaskBacking,
   hasResidentTaskBacking,
+  prepareTaskBackingRead,
   readTaskBackingInstance,
+  type TaskBackingRead,
 } from "./task-backing-authority.js";
 import { shouldAutoDeliverTaskStateChange } from "./task-executor-policy.js";
 import { readResidentTaskFlow } from "./task-flow-runtime-internal.js";
@@ -36,7 +37,6 @@ import {
   tasks,
   taskProgressBatches,
   taskRegistryLog,
-  withTaskRegistryMutation,
 } from "./task-registry-state.js";
 import type {
   TaskProgressBatch,
@@ -53,12 +53,21 @@ export const MAX_PROGRESS_BATCH_MEMBERS = 32;
 const MAX_PENDING_PROGRESS_ITEMS = 128;
 const loadProgressPresentation = createLazyPromise(() => import("./task-progress-presentation.js"));
 const loadProgressRuntime = createLazyPromise(() => import("./task-registry-progress-runtime.js"));
+type ProgressRead = Pick<
+  TaskBackingRead,
+  "getTaskById" | "getTaskFlowById" | "hasAuthoritativeTaskBacking"
+>;
+const residentProgressRead: ProgressRead = {
+  getTaskById: (taskId) => tasks.get(taskId),
+  getTaskFlowById: readResidentTaskFlow,
+  hasAuthoritativeTaskBacking: hasResidentTaskBacking,
+};
 
 function resolveYieldedTaskProgress(
   task: TaskRecord,
   runId: string,
-  hasBacking = hasAuthoritativeTaskBacking,
-  readFlow?: Parameters<typeof resolveTaskDeliveryOwner>[1],
+  hasBacking: ProgressRead["hasAuthoritativeTaskBacking"],
+  readFlow: ProgressRead["getTaskFlowById"],
 ) {
   if (task.runtime !== "subagent" || task.notifyPolicy === "silent") {
     return undefined;
@@ -223,7 +232,11 @@ function trimPendingItems(batch: TaskProgressBatch): void {
   }
 }
 
-export function getTaskProgressBatchesForRuns(entries: readonly SubagentRunRecord[]) {
+export async function getTaskProgressBatchesForRuns(entries: readonly SubagentRunRecord[]) {
+  const read = await prepareTaskBackingRead();
+  if (!read) {
+    return [];
+  }
   const generations = new Map(entries.map((entry) => [entry.runId, entry.generation]));
   for (const entry of entries) {
     scheduleYieldedSubagentRunProgress(entry);
@@ -233,7 +246,7 @@ export function getTaskProgressBatchesForRuns(entries: readonly SubagentRunRecor
     [...batch.members.values()].some(
       (member) => generations.get(member.runId) === member.generation,
     ) &&
-    prepareProgressBatch(key, batch)
+    prepareProgressBatch(key, batch, read)
       ? [{ key, batch }]
       : [],
   );
@@ -248,7 +261,7 @@ export function recordRequesterTaskProgress(
   if (
     !requester ||
     !requester.isCurrent() ||
-    !prepareProgressBatch(key, batch, hasResidentTaskBacking, readResidentTaskFlow)
+    !prepareProgressBatch(key, batch, residentProgressRead)
   ) {
     return;
   }
@@ -276,7 +289,7 @@ export async function flushTaskProgressBatch(key: string, batch: TaskProgressBat
   clearTimeout(batch.timer);
   batch.timer = undefined;
   await batch.publication;
-  if (prepareProgressBatch(key, batch)) {
+  if (taskProgressBatches.get(key) === batch) {
     clearTimeout(batch.timer);
     batch.timer = undefined;
     await publishProgressBatch(key, batch);
@@ -318,7 +331,7 @@ export function reconcileTaskProgressBatches(event?: TaskRegistryObserverEvent):
     if (taskId && !batch.members.has(taskId)) {
       continue;
     }
-    const current = prepareProgressBatch(key, batch, hasResidentTaskBacking, readResidentTaskFlow);
+    const current = prepareProgressBatch(key, batch, residentProgressRead);
     if (!current) {
       retireProgressBatch(key, batch);
     } else if (event || current.complete) {
@@ -364,12 +377,7 @@ export function retireTaskProgressForSession(mutation: SessionIdentityMutation):
   }
 }
 
-function prepareProgressBatch(
-  key: string,
-  batch: TaskProgressBatch,
-  hasBacking = hasAuthoritativeTaskBacking,
-  readFlow?: Parameters<typeof resolveTaskDeliveryOwner>[1],
-) {
+function prepareProgressBatch(key: string, batch: TaskProgressBatch, read: ProgressRead) {
   if (
     taskProgressBatches.get(key) !== batch ||
     batch.abortController.signal.aborted ||
@@ -387,7 +395,7 @@ function prepareProgressBatch(
   let awaitingTerminal = false;
   let hasPendingWake = false;
   for (const [taskId, member] of batch.members) {
-    const task = tasks.get(taskId);
+    const task = read.getTaskById(taskId);
     const backing = task ? readTaskBackingInstance(task.detail) : undefined;
     if (
       !task ||
@@ -401,7 +409,7 @@ function prepareProgressBatch(
     ) {
       continue;
     }
-    const owner = resolveTaskDeliveryOwner(task, readFlow);
+    const owner = resolveTaskDeliveryOwner(task, read.getTaskFlowById);
     if (
       owner.agentId !== batch.requesterAgentId ||
       (owner.requesterOrigin &&
@@ -429,7 +437,12 @@ function prepareProgressBatch(
     ) {
       continue;
     }
-    const active = resolveYieldedTaskProgress(task, member.runId, hasBacking, readFlow);
+    const active = resolveYieldedTaskProgress(
+      task,
+      member.runId,
+      read.hasAuthoritativeTaskBacking,
+      read.getTaskFlowById,
+    );
     if (active?.key === key) {
       hasPendingWake = true;
       rows.push({ task, entry: member });
@@ -476,7 +489,8 @@ async function ensureProgressTyping(key: string, batch: TaskProgressBatch): Prom
   if (batch.typingStarted || batch.abortController.signal.aborted) {
     return;
   }
-  const current = prepareProgressBatch(key, batch);
+  const read = await prepareTaskBackingRead();
+  const current = read && prepareProgressBatch(key, batch, read);
   const requesterSessionId = batch.requesterSessionId;
   const operationId = batch.operationId;
   if (
@@ -491,7 +505,7 @@ async function ensureProgressTyping(key: string, batch: TaskProgressBatch): Prom
   }
   try {
     const { startTaskProgressTyping } = await loadProgressRuntime();
-    if (!prepareProgressBatch(key, batch)) {
+    if (!read || !prepareProgressBatch(key, batch, read)) {
       return;
     }
     batch.typingStarted = startTaskProgressTyping({
@@ -501,10 +515,16 @@ async function ensureProgressTyping(key: string, batch: TaskProgressBatch): Prom
       sessionKey: current.sessionKey,
       origin: current.origin,
       signal: AbortSignal.any([batch.abortController.signal, getGatewayRestartDrainSignal()]),
-      assertCurrent: () => {
-        if (!prepareProgressBatch(key, batch)) {
+      prepareCurrent: async () => {
+        const currentRead = await prepareTaskBackingRead();
+        if (!currentRead) {
           throw new Error("Task progress typing owner retired");
         }
+        return () => {
+          if (!prepareProgressBatch(key, batch, currentRead)) {
+            throw new Error("Task progress typing owner retired");
+          }
+        };
       },
       isExecutionActive: () => {
         if (batch.requesterContinuation?.isCurrent()) {
@@ -535,25 +555,35 @@ function publishProgressBatch(key: string, batch: TaskProgressBatch): Promise<vo
     return batch.publication;
   }
   const revision = batch.revision;
-  const publication = runProgressPublication(key, batch).finally(() => {
-    if (batch.publication === publication) {
-      batch.publication = undefined;
-    }
-    if (taskProgressBatches.get(key) !== batch) {
-      return;
-    }
+  const publication = runProgressPublication(key, batch).finally(async () => {
+    let reschedule = false;
     try {
-      const current = prepareProgressBatch(key, batch);
+      if (taskProgressBatches.get(key) !== batch) {
+        return;
+      }
+      const read = await prepareTaskBackingRead();
+      if (!read) {
+        reschedule = true;
+        return;
+      }
+      const current = prepareProgressBatch(key, batch, read);
       if (!current || ((!batch.operationId || current.complete) && batch.revision === revision)) {
         retireProgressBatch(key, batch);
       } else if (batch.revision !== revision) {
-        scheduleProgressBatch(key, batch);
+        reschedule = true;
       }
     } catch (error) {
       retireProgressBatch(key, batch);
       taskRegistryLog.debug("Progress owner could not settle", {
         error: formatErrorMessage(error),
       });
+    } finally {
+      if (batch.publication === publication) {
+        batch.publication = undefined;
+        if (reschedule && taskProgressBatches.get(key) === batch) {
+          scheduleProgressBatch(key, batch);
+        }
+      }
     }
   });
   batch.publication = publication;
@@ -566,15 +596,13 @@ async function runProgressPublication(key: string, batch: TaskProgressBatch): Pr
       return;
     }
     await runWithGatewayDetachedWorkContinuation(async () => {
-      const fresh = withTaskRegistryMutation(
-        () => prepareProgressBatch(key, batch),
-        () => undefined,
-      );
-      if (!fresh || fresh.rows.length === 0) {
+      const read = await prepareTaskBackingRead();
+      const fresh = read && prepareProgressBatch(key, batch, read);
+      if (!read || !fresh || fresh.rows.length === 0) {
         return null;
       }
       const assertCurrent = () => {
-        const current = prepareProgressBatch(key, batch);
+        const current = prepareProgressBatch(key, batch, read);
         if (!current || current.membersKey !== fresh.membersKey) {
           throw new Error("Background progress was superseded before delivery");
         }

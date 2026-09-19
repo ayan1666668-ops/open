@@ -1,4 +1,5 @@
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
+import { createSqliteLifecycleAggregateError } from "../infra/sqlite-coordinator.js";
 import {
   createAcpTaskBackingDetail,
   createManagedTaskBackingDetail,
@@ -8,11 +9,13 @@ import {
   selectCurrentCanonicalTaskBacking,
   type TaskBackingInstance,
 } from "./task-backing-records.js";
+import { prepareTaskFlowRegistryRead, type TaskFlowRegistryRead } from "./task-flow-registry.js";
 import {
   getTaskFlowById,
   getTaskMirroredFlowIds,
   readResidentTaskFlow,
 } from "./task-flow-runtime-internal.js";
+import { prepareTaskRegistryRead, type TaskRegistryRead } from "./task-registry-read.js";
 import {
   ensureTaskRegistryReady,
   taskIdsByRelatedSessionKey,
@@ -25,6 +28,97 @@ export {
   createSubagentTaskBackingDetail,
   type TaskBackingInstance,
 } from "./task-backing-records.js";
+
+export type TaskBackingRead = Pick<
+  TaskRegistryRead,
+  "assertCurrent" | "getTaskById" | "getTasksByRunId"
+> & {
+  getTaskFlowById: TaskFlowRegistryRead["getTaskFlowById"];
+  hasAuthoritativeTaskBacking(task: TaskRecord): boolean;
+};
+
+/** Side effects use both admitted projections; their synchronous guards never reopen storage. */
+export async function prepareTaskBackingRead(): Promise<TaskBackingRead | undefined> {
+  const [taskRead, flowRead] = await Promise.allSettled([
+    prepareTaskRegistryRead(),
+    prepareTaskFlowRegistryRead(),
+  ]);
+  const errors = [taskRead, flowRead].flatMap((result) =>
+    result.status === "rejected" ? [result.reason] : [],
+  );
+  if (errors.length === 1) {
+    throw errors[0];
+  }
+  if (errors.length > 1) {
+    throw createSqliteLifecycleAggregateError(
+      errors,
+      "Task backing read preparation failed",
+      errors[0],
+    );
+  }
+  if (
+    taskRead.status !== "fulfilled" ||
+    flowRead.status !== "fulfilled" ||
+    !taskRead.value ||
+    !flowRead.value
+  ) {
+    return undefined;
+  }
+  const task = taskRead.value;
+  const flow = flowRead.value;
+  const assertCurrent = () => {
+    task.assertCurrent();
+    flow.assertCurrent();
+  };
+  assertCurrent();
+  return {
+    assertCurrent,
+    getTasksByRunId: task.getTasksByRunId,
+    getTaskById(taskId) {
+      assertCurrent();
+      if (!task.isTaskCurrent(taskId)) {
+        return undefined;
+      }
+      const record = task.getTaskById(taskId);
+      return record?.parentFlowId && !flow.isTaskFlowCurrent(record.parentFlowId)
+        ? undefined
+        : record;
+    },
+    getTaskFlowById: flow.getTaskFlowById,
+    hasAuthoritativeTaskBacking(record) {
+      assertCurrent();
+      if (
+        !task.isTaskCurrent(record.taskId) ||
+        (record.parentFlowId && !flow.isTaskFlowCurrent(record.parentFlowId))
+      ) {
+        return false;
+      }
+      return hasAuthoritativeTaskBackingFromRecords(record, {
+        isManagedFlow: (flowId) => flow.getTaskFlowById(flowId)?.syncMode === "managed",
+        resolveCurrentCanonicalBacking: (scope) => {
+          if (!task.isChildSessionCurrent(scope.childSessionKey)) {
+            return undefined;
+          }
+          const candidates = task.listTaskRecordsForChildSessionKey(scope.childSessionKey);
+          if (
+            candidates.some(
+              (candidate) =>
+                candidate.parentFlowId && !flow.isTaskFlowCurrent(candidate.parentFlowId),
+            )
+          ) {
+            return undefined;
+          }
+          return selectCurrentCanonicalTaskBacking({
+            ...scope,
+            candidates,
+            isTaskMirroredFlow: (flowId) =>
+              flow.getTaskFlowById(flowId)?.syncMode === "task_mirrored",
+          });
+        },
+      });
+    },
+  };
+}
 
 function resolveCurrentCanonicalBacking(
   params: Omit<
