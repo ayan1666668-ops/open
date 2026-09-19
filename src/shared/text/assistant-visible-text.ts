@@ -17,11 +17,7 @@ import {
   trimTextFilter,
   type TextFilter,
 } from "./text-projection.js";
-import {
-  createQuotedStringScanner,
-  parseXmlTagAt,
-  type ParsedToolCallTag,
-} from "./xml-tag-at.js";
+import { createQuotedStringScanner, parseXmlTagAt, type ParsedToolCallTag } from "./xml-tag-at.js";
 
 const MEMORY_TAG_RE = /<\s*(\/?)\s*relevant[-_]memories\b[^<>]*>/gi;
 const MEMORY_TAG_QUICK_RE = /<\s*\/?\s*relevant[-_]memories\b/i;
