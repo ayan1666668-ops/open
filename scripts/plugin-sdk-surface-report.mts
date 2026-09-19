@@ -206,7 +206,8 @@ export function readPluginSdkSurfaceBudgets(env: NodeJS.ProcessEnv = process.env
       // +1: runtime-neutral WebSocket client/server adapter for bundled and external plugins.
       // +1: approved host-owned workspace access runtime entrypoint.
       // +1: passive docked link-reader contracts.
-      156,
+      // +1: typed decision provider contract.
+      157,
       env,
     ),
     publicExports: readPluginSdkSurfaceBudgetEnv(
@@ -388,7 +389,8 @@ export function readPluginSdkSurfaceBudgets(env: NodeJS.ProcessEnv = process.env
       // +1: shared workspace bootstrap file policy.
       // +2: typed workspace unavailability and its structural classifier.
       // +1: preserve accepted modifier media selection during transcript recovery.
-      4504,
+      // +13: twelve decision contract types and one prepared plugin secret reader.
+      4517,
       env,
     ),
     publicFunctionExports: readPluginSdkSurfaceBudgetEnv(
@@ -537,7 +539,8 @@ export function readPluginSdkSurfaceBudgets(env: NodeJS.ProcessEnv = process.env
       // +1: shared workspace bootstrap file policy.
       // +1: workspace unavailability classifier.
       // +1: preserve accepted modifier media selection during transcript recovery.
-      2659,
+      // +1: prepared plugin capability secret reader.
+      2660,
       env,
     ),
     publicDeprecatedExports: readPluginSdkSurfaceBudgetEnv(
