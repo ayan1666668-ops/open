@@ -320,11 +320,12 @@ function relocateCandidateRange(
         const groupIndex = topGroups.findIndex((group) => lineRangesOverlap(group, matchRange));
         const group = groupIndex >= 0 ? topGroups[groupIndex] : undefined;
         if (group) {
-          const groupStart = Math.min(group.startLine, startLine);
           topGroups[groupIndex] = {
-            startLine: groupStart,
+            startLine: Math.min(group.startLine, startLine),
             endLine: Math.max(group.endLine, endLine),
-            distance: Math.abs(groupStart - candidate.startLine),
+            // Group distance matches bestMatch's window distance semantics, so the
+            // ambiguity check compares the same notion selection does (#151299 Rev 3).
+            distance: Math.min(group.distance, distance),
           };
         } else if (topGroups.length < MAX_TRACKED_MATCHES) {
           topGroups.push({ ...matchRange, distance });
