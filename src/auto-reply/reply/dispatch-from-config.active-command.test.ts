@@ -261,6 +261,7 @@ describe("dispatch active command admission", () => {
     activeOperation.setPhase("running");
 
     const acknowledgement = { text: "Thinking level set to high.", isStatusNotice: true };
+    const finalReply = { text: "The calculation is complete." };
     const dispatcher = createDispatcher();
     const dispatchPromise = dispatchReplyFromConfig({
       ctx: buildTestCtx({
@@ -286,7 +287,7 @@ describe("dispatch active command admission", () => {
       dispatcher,
       replyResolver: async (_resolverCtx, options) => {
         await options?.onBlockReply?.(acknowledgement);
-        return undefined;
+        return finalReply;
       },
     });
 
@@ -306,7 +307,8 @@ describe("dispatch active command admission", () => {
     } finally {
       activeOperation.complete();
     }
-    await expect(dispatchPromise).resolves.toMatchObject({ queuedFinal: false });
+    await expect(dispatchPromise).resolves.toMatchObject({ queuedFinal: true });
+    expect(dispatcher.sendFinalReply).toHaveBeenCalledExactlyOnceWith(finalReply);
     expect(getActiveReplyRunCount()).toBe(0);
   });
 

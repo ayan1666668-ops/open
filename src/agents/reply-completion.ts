@@ -1,4 +1,4 @@
-import type { RunEmbeddedAgentParams } from "./embedded-agent-runner/run/params.js";
+import type { EmbeddedRunTrigger } from "./run-trigger.js";
 
 export type ReplyExpectation = "required" | "optional";
 export type ReplyDeliveryState = "delivered" | "pending" | "missing";
@@ -19,12 +19,11 @@ export type ReplyCompletion =
     };
 
 /** Resolve legacy runtime inputs once; explicit host requiredness always wins. */
-export function resolveReplyExpectation(
-  params: Pick<
-    RunEmbeddedAgentParams,
-    "terminalReplyExpectation" | "allowEmptyAssistantReplyAsSilent" | "trigger"
-  >,
-): ReplyExpectation {
+export function resolveReplyExpectation(params: {
+  terminalReplyExpectation?: ReplyExpectation;
+  allowEmptyAssistantReplyAsSilent?: boolean;
+  trigger?: EmbeddedRunTrigger;
+}): ReplyExpectation {
   return (
     params.terminalReplyExpectation ??
     ((params.allowEmptyAssistantReplyAsSilent ??

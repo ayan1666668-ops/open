@@ -113,7 +113,11 @@ export function resolveIncompleteTurnPayloadText(params: {
     return null;
   }
 
-  if (hasAsyncActivity(params.attempt.toolMetas)) {
+  if (
+    params.attempt.itemLifecycle.activeCount > 0 ||
+    params.attempt.itemLifecycle.completedCount < params.attempt.itemLifecycle.startedCount ||
+    hasAsyncActivity(params.attempt.toolMetas)
+  ) {
     return null;
   }
 

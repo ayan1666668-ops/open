@@ -39,7 +39,6 @@ import type { FailoverReason } from "../embedded-agent-helpers.js";
 import type { EmbeddedAgentExecutionPhase } from "../embedded-agent-runner/execution-phase.js";
 import type {
   CurrentInboundPromptContext,
-  EmbeddedRunTrigger,
   ResolvedToolPromptFinalizer,
 } from "../embedded-agent-runner/run/params.js";
 import type { ExecPolicyOverrides } from "../exec-defaults.js";
@@ -47,6 +46,7 @@ import type { PreparedQuestionAnswerAuthority } from "../harness/host-private-ca
 import type { AgentHarnessIsolatedCompletionParamsV2 } from "../harness/types.js";
 import type { ReplyExpectation } from "../reply-completion.js";
 import type { RootedExecutionRequest } from "../rooted-run-params.js";
+import type { EmbeddedRunTrigger } from "../run-trigger.js";
 import type { SilentReplyPromptMode } from "../system-prompt.types.js";
 import type { prepareCliBundleMcpConfig } from "./bundle-mcp.js";
 

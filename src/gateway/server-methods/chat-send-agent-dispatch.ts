@@ -32,7 +32,10 @@ import {
   resolveWebchatPromptCacheKey,
   scheduleChatDashboardSessionTitle,
 } from "./chat-send-background.js";
-import { createChatSendDispatchErrorLifecycle } from "./chat-send-dispatch-errors.js";
+import {
+  createChatSendDispatchErrorLifecycle,
+  formatReturnedAgentErrors,
+} from "./chat-send-dispatch-errors.js";
 import type { ChatSendExternalAuthorityAdmission } from "./chat-send-external-authority-contract.js";
 import { finalizeAcceptedChatSendMessageInjection } from "./chat-send-message-injection.js";
 import {
@@ -97,17 +100,6 @@ type StartChatDispatchParams = {
   turn: ReturnType<typeof prepareChatSendUserTurn>;
   userTurn: ReturnType<typeof createGatewayChatUserTurnController>;
 };
-
-function formatReturnedAgentErrors(messages: string[]): string | undefined {
-  const [primary, ...additional] = [...new Set(messages)];
-  if (!primary || additional.length === 0) {
-    return primary;
-  }
-  if (additional.length === 1) {
-    return `${primary}\n\nAdditional error: ${additional[0]}`;
-  }
-  return `${primary}\n\nAdditional errors:\n${additional.map((message) => `- ${message}`).join("\n")}`;
-}
 
 export function startChatDispatch(params: StartChatDispatchParams): void {
   const {

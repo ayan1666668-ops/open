@@ -1000,7 +1000,7 @@ describe("runPreparedReply media-only handling", () => {
     expect(requireRunReplyAgentCall().followupRun.run.spawnedBy).toBe(spawnedBy);
   });
 
-  it("requires a reply to accepted unmentioned group input despite silent transport policy", async () => {
+  it("keeps accepted unmentioned group input optional when silence is allowed", async () => {
     const defaults = baseParams();
     await runPrepared({
       defaultActivation: "mention",
@@ -1019,7 +1019,7 @@ describe("runPreparedReply media-only handling", () => {
     });
 
     expect(requireLastRunReplyAgentCall().followupRun.run.terminalReplyExpectation).toBe(
-      "required",
+      "optional",
     );
   });
 

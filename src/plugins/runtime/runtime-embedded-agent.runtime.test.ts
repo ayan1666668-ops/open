@@ -268,7 +268,7 @@ describe("plugin embedded-agent runtime admission", () => {
   });
 
   it("does not restore earlier-input custody when an old callback resolves late", async () => {
-    const accepted = createDeferred<void>();
+    const accepted = createDeferred();
     mocks.runEmbeddedAgentCore.mockImplementationOnce(
       async (input: Parameters<PluginRuntime["agent"]["runEmbeddedAgent"]>[0]) => {
         const oldReply = input.onBlockReply?.({ text: "Old answer" }, { assistantMessageIndex: 1 });
@@ -289,7 +289,7 @@ describe("plugin embedded-agent runtime admission", () => {
   });
 
   it("retains uncertain custody while a callback is pending and after it rejects", async () => {
-    const callback = createDeferred<void>();
+    const callback = createDeferred();
     mocks.runEmbeddedAgentCore.mockImplementationOnce(
       async (input: Parameters<PluginRuntime["agent"]["runEmbeddedAgent"]>[0]) => {
         const pending = input.onBlockReply?.(
@@ -310,7 +310,7 @@ describe("plugin embedded-agent runtime admission", () => {
 
   it.each(["abort", "completion"] as const)("retires legacy custody on %s", async (end) => {
     const controller = new AbortController();
-    const accepted = createDeferred<void>();
+    const accepted = createDeferred();
     let observe: Parameters<PluginRuntime["agent"]["runEmbeddedAgent"]>[0]["resolveReplyDelivery"];
     mocks.runEmbeddedAgentCore.mockImplementationOnce(
       async (input: Parameters<PluginRuntime["agent"]["runEmbeddedAgent"]>[0]) => {

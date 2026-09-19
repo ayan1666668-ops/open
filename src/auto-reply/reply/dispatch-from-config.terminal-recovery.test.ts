@@ -212,14 +212,63 @@ describe("dispatchReplyFromConfig terminal visible admission recovery", () => {
   });
 
   it.each([
-    { surface: "slack", origin: "slack", progress: false, chatType: "direct", mentioned: false },
-    { surface: "slack", origin: "slack", progress: true, chatType: "direct", mentioned: false },
-    { surface: "slack", origin: "slack", progress: true, chatType: "group", mentioned: true },
-    { surface: "slack", origin: "slack", progress: false, chatType: "group", mentioned: false },
-    { surface: "slack", origin: "discord", progress: true, chatType: "direct", mentioned: false },
-  ])(
-    "settles an adopted failure on $surface → $origin ($chatType, progress=$progress, mentioned=$mentioned)",
-    async ({ surface, origin, progress, chatType, mentioned }) => {
+    {
+      surface: "slack",
+      origin: "slack",
+      progress: false,
+      chatType: "direct",
+      mentioned: false,
+      silentReply: "allow",
+      expectedFinal: true,
+    },
+    {
+      surface: "slack",
+      origin: "slack",
+      progress: true,
+      chatType: "direct",
+      mentioned: false,
+      silentReply: "allow",
+      expectedFinal: true,
+    },
+    {
+      surface: "slack",
+      origin: "slack",
+      progress: true,
+      chatType: "group",
+      mentioned: true,
+      silentReply: "allow",
+      expectedFinal: true,
+    },
+    {
+      surface: "slack",
+      origin: "slack",
+      progress: false,
+      chatType: "group",
+      mentioned: false,
+      silentReply: "allow",
+      expectedFinal: false,
+    },
+    {
+      surface: "slack",
+      origin: "slack",
+      progress: false,
+      chatType: "group",
+      mentioned: false,
+      silentReply: "disallow",
+      expectedFinal: true,
+    },
+    {
+      surface: "slack",
+      origin: "discord",
+      progress: true,
+      chatType: "direct",
+      mentioned: false,
+      silentReply: "allow",
+      expectedFinal: true,
+    },
+  ] as const)(
+    "settles an adopted failure on $surface → $origin ($chatType, progress=$progress, mentioned=$mentioned, silence=$silentReply)",
+    async ({ surface, origin, progress, chatType, mentioned, silentReply, expectedFinal }) => {
       sessionStoreMocks.currentEntry = { verboseLevel: "on" };
       const resolverError = new Error("private synthetic failure detail");
       const delivered: Array<{ kind: string; payload: ReplyPayload }> = [];
@@ -252,6 +301,7 @@ describe("dispatchReplyFromConfig terminal visible admission recovery", () => {
       };
       const params = {
         ...createVisibleDispatchParams(replyResolver),
+        cfg: { agents: { defaults: { silentReply: { group: silentReply } } } },
         dispatcher,
         replyOptions: {
           turnAdoptionLifecycle: { onAdopted: vi.fn(async () => {}) },
@@ -268,11 +318,15 @@ describe("dispatchReplyFromConfig terminal visible admission recovery", () => {
         withReplyDispatcher({ dispatcher, run: () => dispatchReplyFromConfig(params) }),
       );
 
-      expect(delivered.map(({ kind }) => kind)).toEqual(progress ? ["tool", "final"] : ["final"]);
-      expect(delivered.at(-1)?.payload).toMatchObject({
-        text: expect.stringContaining("Something went wrong"),
-        isError: true,
-      });
+      expect(delivered.map(({ kind }) => kind)).toEqual(
+        expectedFinal ? (progress ? ["tool", "final"] : ["final"]) : [],
+      );
+      if (expectedFinal) {
+        expect(delivered.at(-1)?.payload).toMatchObject({
+          text: expect.stringContaining("Something went wrong"),
+          isError: true,
+        });
+      }
       expect(JSON.stringify(delivered)).not.toContain(resolverError.message);
       expect(operation?.result).toEqual({
         kind: "failed",

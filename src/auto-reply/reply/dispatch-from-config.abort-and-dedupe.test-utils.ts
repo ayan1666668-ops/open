@@ -1,5 +1,6 @@
 // Imported by a dispatch-from-config entrypoint to keep its mocked suite in one Vitest module graph.
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { resolveReplyCompletion } from "../../agents/reply-completion.js";
 import { readAgentRunTerminalOutcome } from "../../channels/turn/agent-run-terminal-outcome.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import { racePromiseWithAbortSignal } from "../../infra/abort-signal.js";
@@ -45,6 +46,7 @@ import {
   describe0BeforeEach0,
 } from "./dispatch-from-config.test-harness.js";
 import { withDispatchProcessedOutcomeSink } from "./dispatch-processed-outcome.js";
+import { resolveReplyOperationRunState } from "./reply-operation-run-state.js";
 import { buildTestCtx } from "./test-ctx.js";
 
 const FAST_ABORT_SESSION_MODEL = Object.freeze({
@@ -435,6 +437,14 @@ describe("dispatchReplyFromConfig", () => {
           },
         },
       });
+      const runState = resolveReplyOperationRunState(opts);
+      if (!runState) {
+        throw new Error("expected reply operation run state");
+      }
+      runState.replyCompletion = resolveReplyCompletion(
+        runState.replyCompletion?.expectation ?? "required",
+        "blocked",
+      );
       return { text: "NO_REPLY" } satisfies ReplyPayload;
     };
 
@@ -454,7 +464,7 @@ describe("dispatchReplyFromConfig", () => {
         allowedDecisions: ["allow-once", "allow-always", "deny"],
       },
     });
-    expect(dispatcher.sendFinalReply).toHaveBeenCalledWith({ text: "NO_REPLY" });
+    expect(dispatcher.sendFinalReply).not.toHaveBeenCalled();
   });
 
   it("fast-aborts without calling the reply resolver", async () => {
