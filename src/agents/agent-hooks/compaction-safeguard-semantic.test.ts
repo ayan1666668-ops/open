@@ -102,6 +102,18 @@ describe("compaction semantic snapshot", () => {
     expect(snapshot.segments[0]?.protectionReasons).toContain("oversized-segment");
     expect(snapshot.complete).toBe(false);
   });
+
+  it("protects unsupported non-text source and marks coverage incomplete", () => {
+    const image = message({
+      role: "user",
+      content: [{ type: "image", mimeType: "image/png", data: "synthetic" }],
+    });
+    const snapshot = buildCompactionSemanticSnapshot({ messages: [image] });
+
+    expect(snapshot.segments[0]?.protected).toBe(true);
+    expect(snapshot.segments[0]?.protectionReasons).toContain("unsupported-content");
+    expect(snapshot.complete).toBe(false);
+  });
 });
 
 describe("compaction semantic judgments", () => {
@@ -145,6 +157,39 @@ describe("compaction semantic judgments", () => {
     expect(result.uncertainSegmentIds).toEqual([discretionary[1]!.id]);
     expect(result.selectedSegmentIds).toContain(discretionary[1]!.id);
     expect(snapshot.segments).toHaveLength(3);
+  });
+
+  it("refuses to project a selection onto a different source revision", async () => {
+    const user = message({
+      role: "user",
+      content: [{ type: "text", text: "Deploy production." }],
+    });
+    const fact = message({
+      role: "assistant",
+      content: [{ type: "text", text: "Production uses release A." }],
+    });
+    const snapshot = buildCompactionSemanticSnapshot({
+      messages: [user, fact],
+      latestUserAsk: "Deploy production.",
+    });
+    const discretionary = snapshot.segments.filter((segment) => !segment.protected);
+    const selection = await evaluateCompactionShadowCuration({
+      runtime: runtimeWithChoices({ [discretionary[0]!.id]: "keep" }),
+      snapshot,
+      signal: new AbortController().signal,
+    });
+    const changedFact = message({
+      role: "assistant",
+      content: [{ type: "text", text: "Production uses release B." }],
+    });
+
+    expect(
+      projectCompactionSemanticSelection({
+        messages: [user, changedFact],
+        snapshot,
+        selection,
+      }),
+    ).toBeNull();
   });
 
   it("classifies finalized context against source-backed obligations", async () => {
