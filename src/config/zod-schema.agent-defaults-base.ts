@@ -174,10 +174,10 @@ export const AgentDefaultsBaseSchema = z
           })
           .strict()
           .optional(),
-        /** Optional typed-judgment semantic observation for safeguard compaction. */
+        /** Optional typed-judgment semantic curation for safeguard compaction. */
         semanticCuration: z
           .object({
-            /** Observation mode. Shadow mode never changes summarizer input. */
+            /** Curation mode. Shadow observes only; apply may reduce built-in summarizer input. */
             mode: z.enum(["off", "shadow", "apply"]).optional(),
             /** Per-judgment deadline in milliseconds. */
             timeoutMs: z.number().int().positive().max(5000).optional(),
