@@ -16,7 +16,7 @@ import {
   createOutboundPayloadPlan,
   createStructuredOutboundPayloadPlan,
 } from "../../infra/outbound/payloads.js";
-import { preserveReplyPayloadMediaSelection } from "../../infra/outbound/reply-media-entries.js";
+import { preserveReplyPayloadMediaSelectionCore } from "../../infra/outbound/reply-media-entries.js";
 import type { OutboundPayloadPlan } from "../../infra/outbound/reply-payload-parts.js";
 import { closeOpenClawAgentDatabasesForTest } from "../../state/openclaw-agent-db.js";
 import { getReplyPayloadMetadata, setReplyPayloadMetadata } from "../reply-payload.js";
@@ -88,7 +88,7 @@ describe("beforeDeliver in reply dispatcher", () => {
       const delivered: ReplyPayload[] = [];
       const deliver = async (payload: ReplyPayload) => {
         delivered.push(
-          preserveReplyPayloadMediaSelection(payload, {
+          preserveReplyPayloadMediaSelectionCore(payload, {
             ...payload,
             text: "Recovered full text",
             mediaUrls: ["/tmp/rejected.png", "/tmp/selected.png"],

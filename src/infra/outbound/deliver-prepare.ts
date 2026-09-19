@@ -10,8 +10,8 @@ import { splitMediaFromOutput } from "../../media/parse.js";
 import { getGlobalHookRunner } from "../../plugins/hook-runner-global.js";
 import type { HookRunner } from "../../plugins/hooks.js";
 import { throwIfAborted } from "./abort.js";
-import { createChannelHandler, resolveChannelOutboundDirectiveOptions } from "./deliver-channel.js";
-import type { DeliverOutboundPayloadsParams } from "./deliver-contracts.js";
+import { createChannelHandler } from "./deliver-channel.js";
+import type { ChannelHandler, DeliverOutboundPayloadsParams } from "./deliver-contracts.js";
 import { applyMessageSendingHook, applyReplyPayloadSendingHook } from "./deliver-hooks.js";
 import {
   buildPayloadSummary,
@@ -176,22 +176,15 @@ export async function prepareOutboundPayloadBatch(
   params: DeliverOutboundPayloadsParams,
   options?: OutboundPayloadPreparationOptions,
 ): Promise<PreparedOutboundBatch> {
-  const directiveOptions = await resolveChannelOutboundDirectiveOptions({
-    cfg: params.cfg,
-    agentId: params.session?.agentId,
-    channel: params.channel,
-  });
+  const handler = await createPreparationHandler(params);
   const plan = createOutboundPayloadPlan(params.payloads, {
     cfg: params.cfg,
     sessionKey: params.session?.policyKey ?? params.session?.key,
     surface: params.channel,
     conversationType: params.session?.conversationType,
-    extractMarkdownImages: directiveOptions.extractMarkdownImages,
+    extractMarkdownImages: handler.extractMarkdownImages,
   });
-  return await prepareOutboundPlan(params, plan, {
-    ...options,
-    extractMarkdownImages: directiveOptions.extractMarkdownImages,
-  });
+  return await prepareOutboundPlan(params, plan, handler, options);
 }
 
 export async function prepareStructuredOutboundPayloadBatch(
@@ -199,12 +192,8 @@ export async function prepareStructuredOutboundPayloadBatch(
   plan: readonly OutboundPayloadPlan[],
   options?: OutboundPayloadPreparationOptions,
 ): Promise<PreparedOutboundBatch> {
-  const directiveOptions = await resolveChannelOutboundDirectiveOptions({
-    cfg: params.cfg,
-    agentId: params.session?.agentId,
-    channel: params.channel,
-  });
-  const channelPlan = directiveOptions.extractMarkdownImages
+  const handler = await createPreparationHandler(params);
+  const channelPlan = handler.extractMarkdownImages
     ? plan.flatMap((entry) => {
         const payload = projectMarkdownImages(entry.payload);
         if (payload === entry.payload) {
@@ -217,7 +206,8 @@ export async function prepareStructuredOutboundPayloadBatch(
   return await prepareOutboundPlan(
     params,
     channelPlan,
-    { ...options, extractMarkdownImages: directiveOptions.extractMarkdownImages },
+    handler,
+    options,
     preserveTransformedPayloadMetadata,
   );
 }
@@ -225,11 +215,11 @@ export async function prepareStructuredOutboundPayloadBatch(
 async function prepareOutboundPlan(
   params: DeliverOutboundPayloadsParams,
   plan: readonly OutboundPayloadPlan[],
-  options?: OutboundPayloadPreparationOptions & { extractMarkdownImages?: boolean },
+  handler: ChannelHandler,
+  options?: OutboundPayloadPreparationOptions,
   preservePayloadMetadata?: (source: ReplyPayload, payload: ReplyPayload) => ReplyPayload,
 ): Promise<PreparedOutboundBatch> {
   const copyMetadata = preservePayloadMetadata ?? ((_source, payload) => payload);
-  const handler = await createPreparationHandler(params);
   const normalized = normalizePayloadsForChannelDelivery(plan, handler, preservePayloadMetadata);
   const normalizedIndexes = new Set(normalized.map((entry) => entry.index));
   const entries: PreparedOutboundBatchEntry[] = [];
@@ -283,7 +273,7 @@ async function prepareOutboundPlan(
       replyHookPayload,
       stripInternalRuntimeScaffoldingFromPayload(replyHookPayload),
     );
-    if (options?.extractMarkdownImages && replyHookResult.changed) {
+    if (handler.extractMarkdownImages && replyHookResult.changed) {
       replyPayload = projectMarkdownImages(replyPayload);
     }
     let messageHookResult: Awaited<ReturnType<typeof applyMessageSendingHook>>;
@@ -332,7 +322,7 @@ async function prepareOutboundPlan(
       messageHookPayload,
       stripInternalRuntimeScaffoldingFromPayload(messageHookPayload),
     );
-    if (options?.extractMarkdownImages && messageHookResult.contentRewritten) {
+    if (handler.extractMarkdownImages && messageHookResult.contentRewritten) {
       postHookPayload = projectMarkdownImages(postHookPayload);
     }
     // Adapter normalization may project visible text into transport fields. Re-run it

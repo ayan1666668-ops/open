@@ -5,7 +5,7 @@ import {
   createDraftStream,
   createMockDraftApi,
   type MockSentMessage,
-} from "./draft-stream.api.test-fixtures.js";
+} from "./draft-stream.api.test-helpers.js";
 import { createTelegramDraftStream } from "./draft-stream.js";
 import {
   markdownToTelegramChunks,

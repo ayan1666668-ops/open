@@ -8,6 +8,26 @@ import type { Model } from "openclaw/plugin-sdk/llm";
 import { closeQaRuntimeStores } from "openclaw/plugin-sdk/qa-runtime";
 import { patchSessionEntry } from "openclaw/plugin-sdk/session-store-runtime";
 import { expect, it, vi } from "vitest";
+import { buildEmbeddedRunPayloads } from "../../../src/agents/embedded-agent-runner/run/payloads.js";
+import { subscribeEmbeddedAgentSession } from "../../../src/agents/embedded-agent-subscribe.js";
+import {
+  createAssistant,
+  createAssistantResultStream,
+  createTestSession,
+  registerAgentSessionLoopTestLifecycle,
+  streamMocks,
+} from "../../../src/agents/sessions/agent-session-loop-correctness.test-support.js";
+import { buildReplyPayloads } from "../../../src/auto-reply/reply/agent-runner-payloads.js";
+import { createReplyTurnLedger } from "../../../src/auto-reply/reply/dispatch-from-config.turn-ledger.js";
+import { createReplyDispatcher } from "../../../src/auto-reply/reply/reply-dispatcher.js";
+import { createReplyMediaContext } from "../../../src/auto-reply/reply/reply-media-paths.js";
+import { runReplyPayloadSendingHook } from "../../../src/auto-reply/reply/reply-payload-sending-hook.js";
+import { createReplyToModeFilterForChannel } from "../../../src/auto-reply/reply/reply-threading.js";
+import { getAgentScopedMediaLocalRoots } from "../../../src/media/local-roots.js";
+import type { PluginHookReplyPayloadSendingEvent } from "../../../src/plugins/hook-types.js";
+import { createHookRunner } from "../../../src/plugins/hooks.js";
+import { addTestHook } from "../../../src/plugins/hooks.test-fixtures.js";
+import { createEmptyPluginRegistry } from "../../../src/plugins/registry.js";
 import {
   createContext,
   describeTelegramDispatch,
@@ -15,32 +35,12 @@ import {
   dispatchWithContext,
   readLatestAssistantTextByIdentity,
   telegramDepsForTest,
-} from "../extensions/telegram/src/bot-message-dispatch.test-harness.js";
-import { buildEmbeddedRunPayloads } from "../src/agents/embedded-agent-runner/run/payloads.js";
-import { subscribeEmbeddedAgentSession } from "../src/agents/embedded-agent-subscribe.js";
-import {
-  createAssistant,
-  createAssistantResultStream,
-  createTestSession,
-  registerAgentSessionLoopTestLifecycle,
-  streamMocks,
-} from "../src/agents/sessions/agent-session-loop-correctness.test-support.js";
-import { buildReplyPayloads } from "../src/auto-reply/reply/agent-runner-payloads.js";
-import { createReplyTurnLedger } from "../src/auto-reply/reply/dispatch-from-config.turn-ledger.js";
-import { createReplyDispatcher } from "../src/auto-reply/reply/reply-dispatcher.js";
-import { createReplyMediaContext } from "../src/auto-reply/reply/reply-media-paths.js";
-import { runReplyPayloadSendingHook } from "../src/auto-reply/reply/reply-payload-sending-hook.js";
-import { createReplyToModeFilterForChannel } from "../src/auto-reply/reply/reply-threading.js";
-import { getAgentScopedMediaLocalRoots } from "../src/media/local-roots.js";
-import type { PluginHookReplyPayloadSendingEvent } from "../src/plugins/hook-types.js";
-import { createHookRunner } from "../src/plugins/hooks.js";
-import { addTestHook } from "../src/plugins/hooks.test-fixtures.js";
-import { createEmptyPluginRegistry } from "../src/plugins/registry.js";
-import { telegramReplyTarget, withTelegramReplyApi } from "./helpers/telegram-reply-api.js";
+} from "./bot-message-dispatch.test-harness.js";
+import { telegramReplyTarget, withTelegramReplyApi } from "./telegram-reply-api.test-helpers.js";
 
-const realTelegram = await vi.importActual<
-  typeof import("../extensions/telegram/src/bot/delivery.replies.js")
->("../extensions/telegram/src/bot/delivery.replies.js");
+const realTelegram = await vi.importActual<typeof import("./bot/delivery.replies.js")>(
+  "./bot/delivery.replies.js",
+);
 registerAgentSessionLoopTestLifecycle();
 const prefix = "The complete answer preserves this sufficiently long opening paragraph";
 const fullText =
@@ -98,8 +98,7 @@ describeTelegramDispatch("hook media selection during transcript recovery", () =
       readLatestAssistantTextByIdentity.mockImplementation(
         transcript.readLatestAssistantTextByIdentity,
       );
-      const telegramRuntime =
-        await import("../extensions/telegram/src/bot-message-dispatch.runtime.js");
+      const telegramRuntime = await import("./bot-message-dispatch.runtime.js");
       vi.mocked(telegramRuntime.getAgentScopedMediaLocalRoots).mockImplementation(
         getAgentScopedMediaLocalRoots,
       );

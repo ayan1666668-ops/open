@@ -8,7 +8,7 @@ import {
   resolveChannelProgressDraftConfig as readProgressDraftConfig,
   type StreamingCompatEntry as ProgressDraftCompatEntry,
 } from "../channels/streaming.js";
-import { preserveReplyPayloadMediaSelection as preserveMediaSelection } from "../infra/outbound/reply-media-entries.js";
+import { preserveReplyPayloadMediaSelectionCore } from "../infra/outbound/reply-media-entries.js";
 import { createLazyRuntimeModule } from "../shared/lazy-runtime.js";
 import type { ReplyPayload } from "./reply-payload.js";
 
@@ -91,7 +91,7 @@ export function preserveReplyPayloadMediaSelection(
   source: ReplyPayload,
   recovered: ReplyPayload,
 ): ReplyPayload {
-  return preserveMediaSelection(source, recovered);
+  return preserveReplyPayloadMediaSelectionCore(source, recovered);
 }
 
 export type { OutboundPayloadPlan } from "../infra/outbound/reply-payload-parts.js";

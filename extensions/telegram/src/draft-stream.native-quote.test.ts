@@ -4,7 +4,7 @@ import {
   createDraftStream,
   createMockDraftApi,
   type MockSentMessage,
-} from "./draft-stream.api.test-fixtures.js";
+} from "./draft-stream.api.test-helpers.js";
 import { buildTelegramRichMarkdown } from "./rich-message.js";
 
 const replyQuote = {

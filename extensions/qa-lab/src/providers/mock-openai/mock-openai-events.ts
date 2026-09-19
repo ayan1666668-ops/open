@@ -191,7 +191,7 @@ export function splitMockStreamingText(text: string, parts = 3) {
   return chunks.length > 1 ? chunks : [text.slice(0, 1), text.slice(1)];
 }
 
-export function buildQaLongFinalText({
+function buildQaLongFinalText({
   endMarker = "TELEGRAM-LONG-FINAL-END",
   segmentPrefix = "telegram-long-final-segment",
   segmentCount = 42,

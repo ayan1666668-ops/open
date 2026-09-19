@@ -24,7 +24,7 @@ export function recordReplyPayloadMediaSelectionChange(
 }
 
 /** Recover media without undoing modifiers or duplicating a current prepared reference. */
-export function preserveReplyPayloadMediaSelection(
+export function preserveReplyPayloadMediaSelectionCore(
   source: ReplyPayload,
   recovered: ReplyPayload,
 ): ReplyPayload {

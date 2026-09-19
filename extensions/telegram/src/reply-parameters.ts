@@ -130,7 +130,7 @@ export function isTelegramQuoteParamError(err: unknown): boolean {
   return QUOTE_PARAM_RE.test(formatErrorMessage(err));
 }
 
-export function removeTelegramNativeQuoteParam(
+function removeTelegramNativeQuoteParam(
   params: Record<string, unknown> | undefined,
 ): Record<string, unknown> {
   if (!params) {

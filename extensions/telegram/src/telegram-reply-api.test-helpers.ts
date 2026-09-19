@@ -1,5 +1,5 @@
-import { asOptionalRecord } from "@openclaw/normalization-core/record-coerce";
 import { Bot } from "grammy";
+import { asOptionalRecord } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { withServer } from "openclaw/plugin-sdk/test-env";
 
 export type TelegramReplyApiCall = {

@@ -1,26 +1,26 @@
 import { AssistantMessageEventStream, type Message, type Model } from "openclaw/plugin-sdk/llm";
 import { expect, it, vi } from "vitest";
+import { consumeGoogleGenerateContentStream } from "../../../packages/ai/src/providers/google-stream.js";
+import { createAssistantOutput } from "../../../packages/ai/src/transports/assistant-output.js";
+import { createSubscribedSessionHarness } from "../../../src/agents/embedded-agent-subscribe.e2e-harness.js";
+import { createReplyTurnLedger } from "../../../src/auto-reply/reply/dispatch-from-config.turn-ledger.js";
+import { createBlockReplyDeliveryHandler } from "../../../src/auto-reply/reply/reply-delivery.js";
+import { createReplyDispatcher } from "../../../src/auto-reply/reply/reply-dispatcher.js";
+import { createReplyToModeFilterForChannel } from "../../../src/auto-reply/reply/reply-threading.js";
+import { createTypingSignaler } from "../../../src/auto-reply/reply/typing-mode.js";
+import { createTypingController } from "../../../src/auto-reply/reply/typing.js";
+import { runAgentLoop } from "../../../src/plugin-sdk/agent-core.js";
 import {
   createContext,
   describeTelegramDispatch,
   dispatchReplyWithBufferedBlockDispatcher,
   dispatchWithContext,
   telegramDepsForTest,
-} from "../extensions/telegram/src/bot-message-dispatch.test-harness.js";
-import { consumeGoogleGenerateContentStream } from "../packages/ai/src/providers/google-stream.js";
-import { createAssistantOutput } from "../packages/ai/src/transports/assistant-output.js";
-import { createSubscribedSessionHarness } from "../src/agents/embedded-agent-subscribe.e2e-harness.js";
-import { createReplyTurnLedger } from "../src/auto-reply/reply/dispatch-from-config.turn-ledger.js";
-import { createBlockReplyDeliveryHandler } from "../src/auto-reply/reply/reply-delivery.js";
-import { createReplyDispatcher } from "../src/auto-reply/reply/reply-dispatcher.js";
-import { createReplyToModeFilterForChannel } from "../src/auto-reply/reply/reply-threading.js";
-import { createTypingSignaler } from "../src/auto-reply/reply/typing-mode.js";
-import { createTypingController } from "../src/auto-reply/reply/typing.js";
-import { runAgentLoop } from "../src/plugin-sdk/agent-core.js";
-import { telegramReplyTarget, withTelegramReplyApi } from "./helpers/telegram-reply-api.js";
-const realTelegram = await vi.importActual<
-  typeof import("../extensions/telegram/src/bot/delivery.replies.js")
->("../extensions/telegram/src/bot/delivery.replies.js");
+} from "./bot-message-dispatch.test-harness.js";
+import { telegramReplyTarget, withTelegramReplyApi } from "./telegram-reply-api.test-helpers.js";
+const realTelegram = await vi.importActual<typeof import("./bot/delivery.replies.js")>(
+  "./bot/delivery.replies.js",
+);
 const model: Model<"google-generative-ai"> = {
   id: "gemini-2.5-flash",
   name: "Gemini 2.5 Flash",
