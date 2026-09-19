@@ -364,7 +364,7 @@ const thrownCases = [
   ],
 ];
 for (const [name, makeError] of thrownCases) {
-  test(`production restart: ${name} stays unverified`, async () => {
+  void test(`production restart: ${name} stays unverified`, async () => {
     const f = await fixture({ error: makeError() });
     assert.equal(await f.direct(), "failed");
     assert.equal(f.counts().verifyCalls, 1);
@@ -379,7 +379,7 @@ for (const [name, makeError] of thrownCases) {
     );
     assert.deepEqual(f.unexpected, []);
   });
-  test(`production finishUpdate: ${name} retains transaction backup`, async () => {
+  void test(`production finishUpdate: ${name} retains transaction backup`, async () => {
     const f = await fixture({ error: makeError() });
     await assert.rejects(f.finish(), (error) => {
       assert.ok(error instanceof f.failureClass);
@@ -397,14 +397,14 @@ for (const [name, makeError] of thrownCases) {
     assert.deepEqual(f.unexpected, []);
   });
 }
-test("production restart success requires actual verification seam success", async () => {
+void test("production restart success requires actual verification seam success", async () => {
   const f = await fixture();
   assert.equal(await f.direct(), "ok");
   assert.equal(f.counts().verifyCalls, 1);
   assert.equal(f.counts().verifiedCalls, 1);
   assert.deepEqual(f.unexpected, []);
 });
-test("production finishUpdate authorizes backup retirement only after verified success", async () => {
+void test("production finishUpdate authorizes backup retirement only after verified success", async () => {
   const f = await fixture();
   assert.equal((await f.finish()).status, "ok");
   assert.deepEqual(f.completion, [true]);
@@ -413,7 +413,7 @@ test("production finishUpdate authorizes backup retirement only after verified s
   assert.ok(!f.events.includes("rollback-unverified"));
   assert.deepEqual(f.unexpected, []);
 });
-test("accepted restart without healthy successor cannot authorize retirement", async () => {
+void test("accepted restart without healthy successor cannot authorize retirement", async () => {
   const f = await fixture({ verification: { ok: false, summary: "successor-not-healthy" } });
   await assert.rejects(
     f.finish(),
@@ -424,7 +424,7 @@ test("accepted restart without healthy successor cannot authorize retirement", a
   assert.deepEqual(f.unexpected, []);
 });
 if (main) {
-  test("current-main service-load boundary error propagates unchanged", async () => {
+  void test("current-main service-load boundary error propagates unchanged", async () => {
     const error = new UpdateServiceLoadBoundaryError("fixture service load boundary");
     const f = await fixture({ commandError: error });
     await assert.rejects(f.direct(), (actual) => actual === error);
@@ -432,13 +432,13 @@ if (main) {
     assert.equal(f.counts().commandCalls, 1);
     assert.deepEqual(f.unexpected, []);
   });
-  test("current-main cannot turn executor replacement during thrown verification into success", async () => {
+  void test("current-main cannot turn executor replacement during thrown verification into success", async () => {
     const f = await fixture({ error: thrownCases[0][1](), mutateExecutor: true });
     await assert.rejects(f.direct(), /lost its original update executor/);
     assert.equal(f.counts().verifyCalls, 1);
     assert.deepEqual(f.unexpected, []);
   });
-  test("current-main readiness pending remains distinct from verified success", async () => {
+  void test("current-main readiness pending remains distinct from verified success", async () => {
     const f = await fixture({
       verification: { ok: false, stopReason: "gateway-readiness-pending" },
     });
@@ -446,7 +446,7 @@ if (main) {
     assert.equal(f.counts().verifiedCalls, 0);
     assert.deepEqual(f.unexpected, []);
   });
-  test("current-main health error observes successor without a second restart", async () => {
+  void test("current-main health error observes successor without a second restart", async () => {
     const f = await fixture({
       commandError: new GatewayRestartHealthError("not ready at child exit"),
     });
@@ -459,7 +459,7 @@ if (main) {
 }
 
 if (main) {
-  test("current-main still-starting keeps the restart unverified and records the reason", async () => {
+  void test("current-main still-starting keeps the restart unverified and records the reason", async () => {
     const f = await fixture({ verification: { ok: false, stopReason: "still-starting" } });
     const update = result();
     assert.equal(await f.direct({ result: update }), "readiness-pending");
@@ -472,7 +472,7 @@ if (main) {
 // Synthetic tiny package bytes, real production transaction/filesystem owners.
 // This is not authenticated Gateway health or published-driver artifact proof.
 for (const failure of ["ERR_MODULE_NOT_FOUND", "ENOENT", "verified-result-control"]) {
-  test(`filesystem swap: ${failure} cannot retire an unverified backup`, async (t) => {
+  void test(`filesystem swap: ${failure} cannot retire an unverified backup`, async (t) => {
     const base = await fs.mkdtemp(path.join(os.tmpdir(), "restart-142102-"));
     t.after(() => fs.rm(base, { recursive: true, force: true }));
     const disk = await createDiskSwap(
@@ -527,8 +527,14 @@ for (const failure of ["ERR_MODULE_NOT_FOUND", "ENOENT", "verified-result-contro
       }
       const backupExists = await fs.stat(disk.transaction.backupRoot).then(
         () => true,
+        /** @param {unknown} error */
         (error) => {
-          if (error.code === "ENOENT") {
+          if (
+            error !== null &&
+            typeof error === "object" &&
+            "code" in error &&
+            error.code === "ENOENT"
+          ) {
             return false;
           }
           throw error;

@@ -4,9 +4,9 @@ import { promisify } from "node:util";
 import { expect, test } from "vitest";
 
 const execFileAsync = promisify(execFile);
-const sourceRoot = fileURLToPath(new URL("../../../", import.meta.url));
+const sourceRoot = fileURLToPath(new URL("../../", import.meta.url));
 const regression = fileURLToPath(
-  new URL("../../../scripts/tests/update-restart-module-outcome.test.mjs", import.meta.url),
+  new URL("../../scripts/tests/update-restart-module-outcome.mjs", import.meta.url),
 );
 
 test("retains package backups after unverified post-swap module failures", async () => {
