@@ -4,6 +4,7 @@ import { formatCliCommand } from "../cli/command-format.js";
 import type { PreManagedServiceStop } from "../cli/update-cli/update-command-service-maintenance.js";
 import { isDefaultInstallIdentity, resolveConfigPath, resolveStateDir } from "../config/paths.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { acquireWithWait } from "../infra/acquire-with-wait.js";
 import { resolvePathViaExistingAncestorSync } from "../infra/boundary-path.js";
 import { assertLegacyGatewayStoppedForMaintenance } from "../infra/gateway-lock-legacy.js";
 import { readActiveGatewayLockIdentity } from "../infra/gateway-lock.js";
@@ -11,6 +12,7 @@ import { readGatewayOwnerLease } from "../infra/gateway-owner-lease.js";
 import {
   acquireGatewayMaintenanceCoordinator,
   acquireStateDatabaseCoordinator,
+  StateDatabaseCoordinatorContentionError,
 } from "../infra/state-database-coordinator.js";
 import { DoctorUnreadableStateDatabaseError } from "../infra/state-repair-message.js";
 import { UPDATE_RUN_ID_ENV } from "../infra/update-control-plane-sentinel.js";
@@ -43,6 +45,16 @@ import {
   recordUpdateDoctorRefusal,
   resolveUpdateDoctorGitRecovery,
 } from "./doctor-update-refusal.js";
+
+// Matches LaunchAgent ExitTimeOut. systemd stop already waits for inactive;
+// this only covers a predecessor that has left the port but still holds the lock.
+const GATEWAY_MAINTENANCE_COORDINATOR_DRAIN_MS = 20_000;
+
+function isGatewayLifecycleContention(error: unknown): boolean {
+  return (
+    error instanceof StateDatabaseCoordinatorContentionError && error.family === "gateway-lifecycle"
+  );
+}
 
 function assertDoctorServiceSelection(env: NodeJS.ProcessEnv, serviceEnv: NodeJS.ProcessEnv): void {
   const selection = (candidate: NodeJS.ProcessEnv) => {
@@ -454,7 +466,20 @@ export async function beginDoctorMaintenance(params: {
       // Hold the reentrant lifecycle coordinators, not an in-tree Gateway lock:
       // individual migrations acquire their own in-tree locks under this scope.
       // Gateway ownership lasts until that process stops, not for a short transaction.
-      acquireMaintenanceResources();
+      // Managed stop can return once the port is free while the predecessor still
+      // holds gateway-lifecycle. Wait only after we stopped; a foreign holder
+      // must still fail immediately without a drain budget.
+      if (stopped?.stopped) {
+        await acquireWithWait({
+          deadlineMs: performance.now() + GATEWAY_MAINTENANCE_COORDINATOR_DRAIN_MS,
+          pollIntervalMs: 100,
+          maxPollIntervalMs: 1_000,
+          acquire: acquireMaintenanceResources,
+          shouldRetry: isGatewayLifecycleContention,
+        });
+      } else {
+        acquireMaintenanceResources();
+      }
       const { assertNoOpenClawAgentDatabaseLeasesReadOnly, OpenClawAgentDatabaseLeaseActiveError } =
         await import("../state/openclaw-agent-db-lease.js");
       try {

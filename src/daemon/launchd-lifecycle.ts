@@ -144,7 +144,9 @@ export async function repairLaunchAgentBootstrap(args: {
   }
   return { ok: true, status: repairStatus };
 }
-type LaunchAgentRestoreResult = { loaded: true } | { loaded: false; detail: string };
+type LaunchAgentRestoreResult =
+  | { loaded: true; restored: boolean }
+  | { loaded: false; detail: string };
 
 function writeLaunchAgentActionLine(
   stdout: NodeJS.WritableStream,
@@ -168,7 +170,7 @@ async function ensureLaunchAgentLoadedAfterFailure(params: {
 }): Promise<LaunchAgentRestoreResult> {
   const probe = await execLaunchctl(["print", params.serviceTarget]);
   if (probe.code === 0) {
-    return { loaded: true };
+    return { loaded: true, restored: false };
   }
   try {
     await bootstrapLaunchAgentOrThrow({
@@ -178,7 +180,7 @@ async function ensureLaunchAgentLoadedAfterFailure(params: {
       actionHint: "openclaw gateway start",
       onMutation: params.onMutation,
     });
-    return { loaded: true };
+    return { loaded: true, restored: true };
   } catch (error) {
     // A failed restore is not recoverable by launchd: the label is gone, so
     // KeepAlive has nothing to respawn. Report it instead of dropping it.
@@ -401,6 +403,7 @@ export async function restartLaunchAgent({
     return { outcome: "completed" };
   }
 
+  const startFailure = `launchctl kickstart failed: ${start.stderr || start.stdout}`.trim();
   if (!isLaunchctlNotLoaded(start)) {
     const restored = await ensureLaunchAgentLoadedAfterFailure({
       domain,
@@ -408,29 +411,32 @@ export async function restartLaunchAgent({
       plistPath,
       onMutation: reportMutation,
     });
-    const failure = `launchctl kickstart failed: ${start.stderr || start.stdout}`.trim();
-    if (restored.loaded) {
-      throw new Error(failure);
+    if (!restored.loaded) {
+      throw new Error(
+        formatLaunchAgentLeftUnloadedError({
+          domain,
+          serviceTarget,
+          plistPath,
+          failure: startFailure,
+          restoreDetail: restored.detail,
+        }),
+      );
     }
-    throw new Error(
-      formatLaunchAgentLeftUnloadedError({
-        domain,
-        serviceTarget,
-        plistPath,
-        failure,
-        restoreDetail: restored.detail,
-      }),
-    );
+    // Job was still registered. A later kickstart would hide the original
+    // failure; bootstrap would duplicate a loaded agent.
+    if (!restored.restored) {
+      throw new Error(startFailure);
+    }
+  } else {
+    // A preserved plist may be demand-only; bootstrap alone only registers it.
+    await bootstrapLaunchAgentOrThrow({
+      domain,
+      serviceTarget,
+      plistPath,
+      actionHint: "openclaw gateway restart",
+      onMutation: reportMutation,
+    });
   }
-
-  // A preserved plist may be demand-only; bootstrap alone only registers it.
-  await bootstrapLaunchAgentOrThrow({
-    domain,
-    serviceTarget,
-    plistPath,
-    actionHint: "openclaw gateway restart",
-    onMutation: reportMutation,
-  });
   if (preserveDefinition) {
     const kick = await execLaunchctl(["kickstart", serviceTarget]);
     if (kick.code !== 0) {

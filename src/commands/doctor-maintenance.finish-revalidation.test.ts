@@ -108,6 +108,7 @@ type StoppedUnitState =
   | "competing-during-inspection"
   | "lifecycle-contended"
   | "gateway-lifecycle-contended"
+  | "gateway-lifecycle-draining"
   | "legacy-gateway-lifecycle-contended";
 type Continuation =
   | "own"
@@ -305,7 +306,10 @@ async function runDoctorFinishForStoppedUnit(
             `CREATE INDEX idx_skill_workshop_collection_reviews_workspace_time ON skill_workshop_collection_reviews(${legacyCatalog === "unknown" ? "unexpected_column" : "workspace_dir"}, create_time DESC, review_id DESC)`,
             "idx_skill_workshop_collection_reviews_workspace_time",
           );
-          if (scenario === "gateway-lifecycle-contended") {
+          if (
+            scenario === "gateway-lifecycle-contended" ||
+            scenario === "gateway-lifecycle-draining"
+          ) {
             const startedAt = getFileLockProcessStartTime(process.pid);
             if (startedAt === null) {
               throw new Error("Current process start identity is unavailable");
@@ -493,6 +497,10 @@ async function runDoctorFinishForStoppedUnit(
             ) {
               otherOwner?.release();
               otherOwner = undefined;
+            } else if (scenario === "gateway-lifecycle-draining") {
+              const draining = otherOwner;
+              otherOwner = undefined;
+              setTimeout(() => draining?.release(), 50);
             }
           }),
           restart,
@@ -509,6 +517,7 @@ async function runDoctorFinishForStoppedUnit(
       const coordinator =
         scenario === "lifecycle-contended" ||
         scenario === "gateway-lifecycle-contended" ||
+        scenario === "gateway-lifecycle-draining" ||
         scenario === "legacy-gateway-lifecycle-contended"
           ? acquireGatewayLifecycleCoordinator({
               databasePath,
@@ -655,6 +664,17 @@ it("admits exact legacy catalog reads for an owned running service without repai
 it("admits the exact legacy catalog while a live supervised Gateway owns lifecycle", async () => {
   const result = await runDoctorFinishForStoppedUnit(
     "gateway-lifecycle-contended",
+    undefined,
+    "exact",
+  );
+  expect(result.finishError).toBeUndefined();
+  expect(mocks.stops).toBe(1);
+  expect(result.restartCalls).toBe(1);
+});
+
+it("waits for the supervised Gateway to release lifecycle after stop", async () => {
+  const result = await runDoctorFinishForStoppedUnit(
+    "gateway-lifecycle-draining",
     undefined,
     "exact",
   );
