@@ -122,7 +122,7 @@ class SystemsSidebar extends OpenClawLightDomElement {
           ].some((value) => value.toLocaleLowerCase().includes(query))
         );
       })
-      .sort((a, b) => {
+      .toSorted((a, b) => {
         if (controller.sortMode !== "name") {
           const firstStatus = controller.sortMode === "online-first" ? "available" : "unavailable";
           const statusOrder =
