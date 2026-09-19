@@ -133,7 +133,13 @@ it.each([
   const keys = expected
     .map((label) => `agent:main:${label}`)
     .toSorted((a, b) => a.localeCompare(b));
-  expect.soft(rows.map((row) => row[0]).toSorted((a, b) => a.localeCompare(b))).toEqual(keys);
+  const rowKeys = rows.map(([key]) => {
+    if (key === undefined) {
+      throw new Error("Exported CSV row is missing its session key");
+    }
+    return key;
+  });
+  expect.soft(rowKeys.toSorted((a, b) => a.localeCompare(b))).toEqual(keys);
   expect
     .soft(rows.reduce((sum, row) => sum + Number(row[header!.indexOf("totalTokens")]), 0))
     .toBe(tokens);
