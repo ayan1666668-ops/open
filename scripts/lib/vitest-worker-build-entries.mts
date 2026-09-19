@@ -35,12 +35,14 @@ import { agentWorkerStoreFixtureEntrypoint } from "../../src/state/openclaw-agen
 import {
   agentDatabaseHeldRuntimeEntrypoint,
   stateLeaseProcessExitRuntimeEntrypoint,
+  stateLeaseRetentionRuntimeEntrypoint,
 } from "../../src/state/openclaw-state-lease-runtime.test-support.ts";
 import { groqSetupSdkEntrypoints } from "../../src/system-agent/setup-inference-groq-sdk.test-support.ts";
 import { tuiPtyRuntimeEntrypoints } from "../../src/tui/tui-pty-runtime-test-support.ts";
 import { channelIngressGatewayRestartEntrypoint } from "../../test/fixtures/channel-ingress-gateway-restart-entrypoint.ts";
 import { runtimeProcessBuildEntrypoints } from "./runtime-process-build-entries.mts";
 import { createRuntimeProcessBuildEntries } from "./runtime-process-core-build-entries.mts";
+import { nativeSchtasksIntegrationEnabled } from "./vitest-worker-declarations.mts";
 
 // These fixture hooks require physical module boundaries and complete namespaces.
 export const legacyFinalizerBuildSources = [
@@ -82,6 +84,12 @@ export const vitestWorkerBuildEntries = {
     stateDirGatewayFixtureEntrypoint,
     ...Object.values(doctorConfigRuntimeEntrypoints),
     ...Object.values(cronOwnerHardeningEntrypoints),
+    ...(nativeSchtasksIntegrationEnabled
+      ? Object.values(
+          (await import("../../src/daemon/schtasks-native-entrypoints.test-support.ts"))
+            .schtasksNativeEntrypoints,
+        )
+      : []),
     ...Object.values(tuiPtyRuntimeEntrypoints),
     ...Object.values(sessionTitleRetentionEntrypoints),
     sessionChildCacheRetentionEntrypoint,
@@ -94,6 +102,7 @@ export const vitestWorkerBuildEntries = {
     workboardSqliteBackendEntrypoint,
     ...Object.values(agentDatabaseModuleIdentityEntrypoints),
     stateLeaseProcessExitRuntimeEntrypoint,
+    stateLeaseRetentionRuntimeEntrypoint,
     agentDatabaseHeldRuntimeEntrypoint,
   ]),
   // The retention fixture executes the real nested QuickJS worker.
@@ -105,6 +114,8 @@ export const vitestWorkerBuildEntries = {
   "plugins/provider-hook-runtime": "src/plugins/provider-hook-runtime.ts",
   // Real provider preparation uses packaged JavaScript, avoiding per-child source transforms.
   "extensions/anthropic/index": "extensions/anthropic/index.ts",
+  // Candidate finalization runs the real mandatory post-plugin readiness surface.
+  "extensions/memory-core/doctor-health-api": "extensions/memory-core/doctor-health-api.ts",
   "test-support/anthropic-preparation": "test/scripts/anthropic-preparation-probe.ts",
   // Exercise native writes through the existing plugin facade in the private graph.
   "plugin-sdk/file-access-runtime": "src/plugin-sdk/file-access-runtime.ts",

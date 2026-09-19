@@ -21,6 +21,8 @@ import { ensureProfileForEmail } from "../state/user-profiles.js";
 import { withStateDirEnv } from "../test-helpers/state-dir-env.js";
 import * as usageFormat from "../utils/usage-format.js";
 import type { GatewayClient } from "./server-methods/types.js";
+import * as sessionOrder from "./session-list-order.js";
+import { readSessionListSelectionFacts } from "./session-list-target.js";
 import * as projectionWork from "./session-projection-work.js";
 import { createSessionRowProjection, type SessionRowProjection } from "./session-row-projection.js";
 import { createSessionRowProjectionFixture } from "./session-row-projection.test-support.js";
@@ -47,6 +49,46 @@ import { writeResidentEntries } from "./session-utils.perf.test-support.js";
  * are the actual scaling failure mode we care about.
  */
 describe("session list resolver cache", () => {
+  test("bounds first-page comparisons while preserving the latest-row order", async () => {
+    await withStateDirEnv("openclaw-list-order-work-", async () => {
+      resetPluginRuntimeStateForTest();
+      setActivePluginRegistry(createEmptyPluginRegistry());
+      const cfg: OpenClawConfig = {
+        agents: { entries: { main: {} }, defaults: { thinkingDefault: "off" } },
+      };
+      resetConfigRuntimeState();
+      setRuntimeConfigSnapshot(cfg);
+      const count = 256;
+      const store = Object.fromEntries(
+        Array.from({ length: count }, (_, index) => [
+          `agent:main:ordered-${index}`,
+          { sessionId: `ordered-${index}`, updatedAt: ((index * 71) % count) + 1 },
+        ]),
+      );
+      writeResidentEntries(store);
+      const projection = await createSessionRowProjection({ cfg });
+      try {
+        await projection.ensureMaterialized();
+        const compare = vi.spyOn(sessionOrder, "compareSessionEntryPairs");
+        try {
+          const result = await listProjectedSessions({ projection, opts: { limit: 5 } });
+          expect(result.sessions.map((row) => row.key)).toEqual(
+            Object.entries(store)
+              .toSorted((a, b) => b[1].updatedAt - a[1].updatedAt)
+              .slice(0, 5)
+              .map(([key]) => key),
+          );
+          expect(result.totalCount).toBe(count);
+          expect(compare.mock.calls.length).toBeLessThanOrEqual(count * 4);
+        } finally {
+          compare.mockRestore();
+        }
+      } finally {
+        projection.dispose();
+      }
+    });
+  });
+
   test.each(["entries", "list"] as const)(
     "bounds owner roster traversal for %s and observes the next request's roster",
     (kind) => {
@@ -85,7 +127,10 @@ describe("session list resolver cache", () => {
         filterAndSortSessionEntries({
           cfg,
           entries: Object.entries(store),
-          getTarget: () => undefined,
+          getTarget: (key) => ({
+            agentId: "agent-29",
+            selection: readSessionListSelectionFacts(key, store[key]),
+          }),
           getRowContext: () => buildSessionListRowMetadataContext({ now: 100 }),
           now: 100,
           opts: { ownerId: "agent-29", limit: 10 },
@@ -295,6 +340,7 @@ describe("session list resolver cache", () => {
             projection = await createSessionRowProjection({ cfg });
           }
           await control;
+          await projection.ensureMaterialized();
           expect(rowsAtControl).toBeGreaterThan(0);
           expect(rowsAtControl).toBeLessThan(rowCount);
           expect(projectedRows).toBe(rowCount);
@@ -344,7 +390,10 @@ describe("session list resolver cache", () => {
           filterAndSortSessionEntries({
             cfg: selectionConfig,
             entries: Object.entries(store),
-            getTarget: () => undefined,
+            getTarget: (key) => ({
+              agentId: "owner",
+              selection: readSessionListSelectionFacts(key),
+            }),
             getRowContext: () => buildSessionListRowMetadataContext({ now: 2 }),
             now: 2,
             opts: {},
@@ -354,7 +403,10 @@ describe("session list resolver cache", () => {
           filterAndSortSessionEntries({
             cfg: selectionConfig,
             entries: Object.entries(store),
-            getTarget: () => undefined,
+            getTarget: (key) => ({
+              agentId: "owner",
+              selection: readSessionListSelectionFacts(key),
+            }),
             getRowContext: () => buildSessionListRowMetadataContext({ now: 2 }),
             now: 2,
             opts: {},
@@ -411,6 +463,7 @@ describe("session list resolver cache", () => {
         let projection: SessionRowProjection | undefined;
         try {
           projection = await createSessionRowProjection({ cfg });
+          await projection.ensureMaterialized();
           expect(resolver).toHaveBeenCalledTimes(2);
           resolver.mockClear();
           for (let request = 0; request < 2; request++) {
