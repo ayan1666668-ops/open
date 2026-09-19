@@ -376,7 +376,7 @@ suite.define(() => {
         const codeModeRow = settingsRow(page, "Code Mode");
         const codeModeSwitch = codeModeRow.getByRole("switch", { name: "Code Mode", exact: true });
         await codeModeSwitch.waitFor();
-        await expect.poll(() => codeModeRow.textContent()).toContain("Using default: Disabled");
+        await expect.poll(() => codeModeRow.textContent()).not.toContain("Using default:");
 
         const configGetsBeforePatch = (await gateway.getRequests("config.get")).length;
         await gateway.deferNext("config.patch");
@@ -514,7 +514,7 @@ suite.define(() => {
     );
   });
 
-  it("refreshes config after reconnect and client replacement before the next save", async () => {
+  it("config.set refreshes config after reconnect and client replacement before the next save", async () => {
     await suite.withPage(
       {
         colorScheme: "dark",
@@ -601,7 +601,10 @@ suite.define(() => {
           tools: {},
         });
         expect(await gateway.getRequests("config.set")).toHaveLength(setsBeforeEdit + 1);
-        await gateway.resolveDeferred("config.set", { hash: "snapshot-saved" });
+        await gateway.resolveDeferred("config.set", {
+          config: JSON.parse(String(save.raw)),
+          hash: "snapshot-saved",
+        });
         await expect
           .poll(() => page.locator("openclaw-settings-save-indicator").textContent())
           .toContain("Saved");
@@ -610,7 +613,7 @@ suite.define(() => {
     );
   });
 
-  it("keeps a dirty draft and adopts an opaque revision after an unchanged reconnect", async () => {
+  it("config.set keeps a dirty draft and adopts an opaque revision after an unchanged reconnect", async () => {
     await suite.withPage(
       {
         colorScheme: "dark",
@@ -704,7 +707,10 @@ suite.define(() => {
             "hmac-sha256:v1:opaque-next",
           ),
         );
-        await gateway.resolveDeferred("config.set", { hash: "hmac-sha256:v1:opaque-next" });
+        await gateway.resolveDeferred("config.set", {
+          config: JSON.parse(String(save.raw)),
+          hash: "hmac-sha256:v1:opaque-next",
+        });
         await expect.poll(() => endpoint.inputValue()).toBe("retained-draft");
       },
     );

@@ -173,7 +173,7 @@ export function startNodeHostConnection({
     label: string,
     isRetry = false,
   ): void => {
-    if (!gatewayHelloReceived) {
+    if (!gatewayHelloReceived || prepared.restrictedSurface) {
       return;
     }
     const connectionGeneration = gatewayConnectionGeneration;
@@ -386,6 +386,9 @@ export function startNodeHostConnection({
               ...(gatewayCapabilities.has(GATEWAY_SERVER_CAPS.NODE_WORKER_ENVIRONMENT_SESSION)
                 ? { environmentSession: NODE_WORKER_ENVIRONMENT_SESSION_VERSION }
                 : {}),
+              ...(gatewayCapabilities.has(GATEWAY_SERVER_CAPS.NODE_WORKER_CAPTURED_EXEC_POLICY)
+                ? { capturedExecPolicy: true }
+                : {}),
             }
           : { enabled: false },
       },
@@ -447,7 +450,9 @@ export function startNodeHostConnection({
         ...(connection.cloudflareAccess ? { cloudflareAccess: connection.cloudflareAccess } : {}),
       });
       gatewayHelloReceived = true;
-      startHostStatsPublication();
+      if (!prepared.restrictedSurface) {
+        startHostStatsPublication();
+      }
       connectedGatewayProtocol = connection.protocol;
       gatewayCapabilities = new Set(connection.capabilities);
       publishRunnerInventory();

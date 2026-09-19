@@ -399,36 +399,6 @@ describe("legacy state migration caller mode", () => {
     expect(snapshotFiles(fixture.root)).toEqual(before);
   });
 
-  it("does not request migration authority for an explicitly configured profile workspace", async () => {
-    const fixture = await makeFixture();
-    fixture.env.OPENCLAW_PROFILE = "work";
-    const source = path.join(fixture.homeDir, ".openclaw", "workspace-work");
-    fs.mkdirSync(source, { recursive: true });
-    fs.writeFileSync(
-      fixture.configPath,
-      `${JSON.stringify({ agents: { defaults: { workspace: source } } })}\n`,
-    );
-    const before = snapshotFiles(fixture.root);
-
-    const plan = await planLegacyStateMigrationsReadOnly({
-      mode: "doctor",
-      candidate: candidateAt(fixture.root),
-      snapshot: createCallerModeSnapshot(fixture),
-      env: fixture.env,
-    });
-
-    expect(plan.steps.find((step) => step.id === "profile-workspace")).toMatchObject({
-      source: [],
-      target: [],
-      requiredness: "not-required",
-      outcome: "skipped",
-    });
-    expect(plan.steps.find((step) => step.id === "profile-workspace")).not.toHaveProperty(
-      "refusal",
-    );
-    expect(snapshotFiles(fixture.root)).toEqual(before);
-  });
-
   it("binds plan targets and identity to every resolved copied config input", async () => {
     const fixture = await makeFixture();
     const intermediatePath = path.join(fixture.root, "planner-base.json");
@@ -754,9 +724,19 @@ describe("legacy state migration caller mode", () => {
           ),
         ).toBe(false);
       }
-      for (const stepId of ["sessions", "acp-session-metadata", "agent-dir"]) {
+      for (const stepId of ["sessions", "acp-session-metadata"]) {
         expect(plan.steps.find((step) => step.id === stepId)).toBeUndefined();
         expect(result.stepReceipts.find((receipt) => receipt.id === stepId)).toBeUndefined();
+      }
+      if (overrideKey === "OPENCLAW_AGENT_DIR") {
+        expect(plan.steps.find((step) => step.id === "agent-dir")).toBeDefined();
+        expect(result.stepReceipts.find((receipt) => receipt.id === "agent-dir")).toMatchObject({
+          outcome: "refused",
+          refusal: { code: "blocked-by-prior-refusal" },
+        });
+      } else {
+        expect(plan.steps.find((step) => step.id === "agent-dir")).toBeUndefined();
+        expect(result.stepReceipts.find((receipt) => receipt.id === "agent-dir")).toBeUndefined();
       }
       expect(fs.existsSync(sources.legacyAgentDir)).toBe(true);
       expect(fs.existsSync(sources.legacySessionStorePath)).toBe(true);

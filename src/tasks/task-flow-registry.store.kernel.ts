@@ -14,8 +14,15 @@ import {
 } from "../infra/kysely-sync.js";
 import { normalizeSqliteNumber } from "../infra/sqlite-number.js";
 import type { DB as OpenClawStateKyselyDatabase } from "../state/openclaw-state-db.generated.js";
-import { applyFlowPatch, normalizeRestoredFlowRecord } from "./task-flow-registry.records.js";
+import {
+  applyFlowPatch,
+  isTaskMirroredFlowSyncUnchanged,
+  normalizeRestoredFlowRecord,
+  prepareTaskMirroredFlowSyncFromCurrent,
+  type TaskFlowSyncInput,
+} from "./task-flow-registry.records.js";
 import type {
+  TaskFlowRegistryMirroredSync,
   TaskFlowRegistryStoreSnapshot,
   TaskFlowRegistryUpdate,
   TaskFlowRegistryUpdateResult,
@@ -136,8 +143,33 @@ function getFlowRegistryKysely(db: DatabaseSync) {
   return getNodeSqliteKysely<FlowRegistryStoreDatabase>(db);
 }
 
+const FLOW_RUN_SELECT_COLUMNS = [
+  "flow_id",
+  "sync_mode",
+  "shape",
+  "owner_key",
+  "requester_origin_json",
+  "controller_id",
+  "revision",
+  "status",
+  "notify_policy",
+  "goal",
+  "current_step",
+  "blocked_task_id",
+  "blocked_summary",
+  "state_json",
+  "wait_json",
+  "cancel_requested_at",
+  "created_at",
+  "updated_at",
+  "ended_at",
+] as const;
+
 type TaskFlowRegistryQueries = {
   point?: ReturnType<typeof prepareSqliteQuerySync<string, FlowRegistryRow>>;
+  owner?: ReturnType<typeof prepareSqliteQuerySync<string, FlowRegistryRow>>;
+  viewOwner?: ReturnType<typeof prepareSqliteQuerySync<string, FlowRegistryRow>>;
+  viewPoint?: ReturnType<typeof prepareSqliteQuerySync<string, FlowRegistryRow>>;
 };
 const taskFlowRegistryQueries = new WeakMap<DatabaseSync, TaskFlowRegistryQueries>();
 
@@ -150,30 +182,30 @@ function getTaskFlowRegistryQueries(db: DatabaseSync): TaskFlowRegistryQueries {
   return queries;
 }
 
+export function listTaskFlowRecordsForOwnerReadInDatabase(
+  db: DatabaseSync,
+  ownerKey: string,
+): TaskFlowRecord[] {
+  const queries = getTaskFlowRegistryQueries(db);
+  const read = (queries.owner ??= prepareSqliteQuerySync<string, FlowRegistryRow>(db, (parameter) =>
+    getFlowRegistryKysely(db)
+      .selectFrom("flow_runs")
+      .selectAll()
+      .where(
+        "owner_key",
+        "=",
+        parameter((value) => value),
+      )
+      .orderBy("created_at", "desc")
+      .orderBy("flow_id", "asc"),
+  ));
+  return read(ownerKey).rows.map(rowToFlowRecord);
+}
+
 export function readTaskFlowRegistrySnapshot(db: DatabaseSync): TaskFlowRegistryStoreSnapshot {
   const query = getFlowRegistryKysely(db)
     .selectFrom("flow_runs")
-    .select([
-      "flow_id",
-      "sync_mode",
-      "shape",
-      "owner_key",
-      "requester_origin_json",
-      "controller_id",
-      "revision",
-      "status",
-      "notify_policy",
-      "goal",
-      "current_step",
-      "blocked_task_id",
-      "blocked_summary",
-      "state_json",
-      "wait_json",
-      "cancel_requested_at",
-      "created_at",
-      "updated_at",
-      "ended_at",
-    ])
+    .select(FLOW_RUN_SELECT_COLUMNS)
     .orderBy("created_at", "asc")
     .orderBy("flow_id", "asc");
   const flows = new Map<string, TaskFlowRecord>();
@@ -182,6 +214,58 @@ export function readTaskFlowRegistrySnapshot(db: DatabaseSync): TaskFlowRegistry
     flows.set(row.flow_id, rowToFlowRecord(row));
   }
   return { flows };
+}
+
+const FLOW_VIEW_SELECT_COLUMNS = FLOW_RUN_SELECT_COLUMNS.filter(
+  (column) => column !== "state_json" && column !== "wait_json",
+);
+
+function flowViewQuery(db: DatabaseSync) {
+  return getFlowRegistryKysely(db)
+    .selectFrom("flow_runs")
+    .select(FLOW_VIEW_SELECT_COLUMNS)
+    .select((expression) => [
+      expression.val(null).as("state_json"),
+      expression.val(null).as("wait_json"),
+    ]);
+}
+
+export function listTaskFlowViewRecordsForOwnerInDatabase(
+  db: DatabaseSync,
+  ownerKey: string,
+): TaskFlowRecord[] {
+  const queries = getTaskFlowRegistryQueries(db);
+  const read = (queries.viewOwner ??= prepareSqliteQuerySync<string, FlowRegistryRow>(
+    db,
+    (parameter) =>
+      flowViewQuery(db)
+        .where(
+          "owner_key",
+          "=",
+          parameter((value) => value),
+        )
+        .orderBy("created_at", "desc")
+        .orderBy("flow_id", "asc"),
+  ));
+  return read(ownerKey).rows.map(rowToFlowRecord);
+}
+
+export function readTaskFlowViewRecordInDatabase(
+  db: DatabaseSync,
+  flowId: string,
+): TaskFlowRecord | undefined {
+  const queries = getTaskFlowRegistryQueries(db);
+  const read = (queries.viewPoint ??= prepareSqliteQuerySync<string, FlowRegistryRow>(
+    db,
+    (parameter) =>
+      flowViewQuery(db).where(
+        "flow_id",
+        "=",
+        parameter((value) => value),
+      ),
+  ));
+  const row = read(flowId).rows[0];
+  return row ? rowToFlowRecord(row) : undefined;
 }
 
 export function upsertTaskFlowRowInDatabase(db: DatabaseSync, row: BoundTaskFlowRecord): void {
@@ -228,6 +312,33 @@ export function readTaskFlowRecord(db: DatabaseSync, flowId: string): TaskFlowRe
   ));
   const row = read(flowId).rows[0];
   return row ? rowToFlowRecord(row) : undefined;
+}
+
+/** Select and prepare only after the owning transaction has acquired its writer. */
+export function syncTaskMirroredFlowRecordInDatabase(
+  db: DatabaseSync,
+  task: TaskFlowSyncInput,
+  assertSelected?: (current: TaskFlowRecord) => void,
+): TaskFlowRegistryMirroredSync {
+  if (!db.isTransaction) {
+    throw new Error("Task-mirrored flow synchronization requires a write transaction");
+  }
+  const flowId = task.parentFlowId?.trim();
+  const stored = flowId ? readTaskFlowRecord(db, flowId) : undefined;
+  if (!stored) {
+    return { changed: false, flow: null };
+  }
+  const current = normalizeRestoredFlowRecord(stored);
+  if (current.syncMode !== "task_mirrored") {
+    return { changed: false, flow: current };
+  }
+  assertSelected?.(current);
+  const prepared = prepareTaskMirroredFlowSyncFromCurrent(task, current);
+  if (isTaskMirroredFlowSyncUnchanged(prepared)) {
+    return { changed: false, flow: current };
+  }
+  upsertTaskFlowRowInDatabase(db, bindTaskFlowRecord(prepared.next));
+  return { changed: true, flow: prepared.next, previous: current };
 }
 
 /** The caller holds the SQLite write transaction across the revision check and update. */

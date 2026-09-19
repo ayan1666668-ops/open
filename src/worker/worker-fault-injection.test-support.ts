@@ -186,7 +186,7 @@ export class ComposedGatewayHarness {
   private readonly requestMethods = new Map<string, string>();
   private readonly faults: FaultRule[] = [];
   private readonly liveEventGates: LiveEventGate[] = [];
-  private serviceValue!: workerEnv.WorkerEnvironmentService;
+  serviceValue!: workerEnv.WorkerEnvironmentService;
   private liveEventsValue!: liveEvents.WorkerLiveEventReceiver;
   private readonly placementLifecycle: WorkerFaultPlacementLifecycle;
   private placementGateValue: WorkerSessionPlacementGate | undefined;
@@ -693,7 +693,7 @@ export class ComposedGatewayHarness {
     });
   }
 
-  private send(socket: WebSocket, frame: unknown): void {
+  private send(socket: WebSocket, frame: unknown) {
     const response =
       frame && typeof frame === "object" && !Array.isArray(frame)
         ? (frame as { event?: unknown; id?: unknown; payload?: { seq?: unknown } })
@@ -713,17 +713,18 @@ export class ComposedGatewayHarness {
       } else {
         socket.terminate();
       }
-      return;
+      return { kind: "unavailable" } as const;
     }
     if (socket.readyState !== WebSocket.OPEN) {
-      return;
+      return { kind: "unavailable" } as const;
     }
     const encoded = JSON.stringify(frame);
     if (fault?.kind === "partition-after-inference-event") {
       socket.send(encoded, () => socket.terminate());
-      return;
+    } else {
+      socket.send(encoded);
     }
-    socket.send(encoded);
+    return { kind: "sent" } as const;
   }
 
   private terminateSockets(): void {

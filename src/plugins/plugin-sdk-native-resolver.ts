@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import { isPathInside, isPathStrictlyInside } from "../infra/path-guards.js";
+import { escapeRegExp } from "../shared/regexp.js";
 import { supportsNativeModuleAliasHooks, type BunPluginRuntime } from "./native-module-require.js";
 import { pluginCacheExistsSync, pluginCacheRealpathSync } from "./plugin-cache-files.js";
 import { getPluginSdkHostFacts } from "./plugin-cache-sdk.js";
@@ -25,18 +26,6 @@ type ResolveFilename = (
 
 type ModuleWithResolver = typeof Module & {
   _resolveFilename?: ResolveFilename;
-  registerHooks?: (options: {
-    resolve?: (
-      specifier: string,
-      context: { parentURL?: string | undefined; conditions: readonly string[] },
-      nextResolve: (
-        specifier: string,
-        context?: { parentURL?: string | undefined },
-      ) => {
-        url: string;
-      },
-    ) => { shortCircuit?: boolean; url: string };
-  }) => { deregister: () => void };
 };
 
 /** Resolver install options for CJS `_resolveFilename` and modern ESM loader hooks. */
@@ -100,6 +89,7 @@ const INTERNAL_CORE_PACKAGE_ALIASES = [
     packageDir: "llm-core",
     subpaths: [
       ["", "index.ts"],
+      ["model-contracts/anthropic", path.join("model-contracts", "anthropic.ts")],
       ["diagnostics", path.join("utils", "diagnostics.ts")],
       ["event-stream", path.join("utils", "event-stream.ts")],
       ["types", "types.ts"],
@@ -107,6 +97,22 @@ const INTERNAL_CORE_PACKAGE_ALIASES = [
     ],
   },
 ] as const;
+const INTERNAL_CORE_EXPORTED_PACKAGE_DIRS = [
+  "media-core",
+  "normalization-core",
+  "acp-core",
+] as const;
+const BUN_NATIVE_ALIAS_FILTER = new RegExp(
+  `^(?:${[
+    "openclaw/plugin-sdk",
+    "@openclaw/plugin-sdk",
+    ...INTERNAL_CORE_PACKAGE_ALIASES.map((entry) => entry.packageName),
+    ...INTERNAL_CORE_EXPORTED_PACKAGE_DIRS.map((packageDir) => `@openclaw/${packageDir}`),
+  ]
+    .map(escapeRegExp)
+    .join("|")})(?:/|$)`,
+  "u",
+);
 let installed = false;
 
 function resolveLoaderModulePath(options: InstallOpenClawPluginSdkNativeResolverOptions): string {
@@ -254,18 +260,14 @@ function isWithinRoot(candidate: string, root: string): boolean {
   return isPathInside(root, normalizePathForBoundary(candidate));
 }
 
-function resolveAliasTargetForParent(
-  request: string,
-  parent: NodeJS.Module | undefined,
-): string | undefined {
-  return resolveAliasTargetForParentPath(request, parent?.filename);
-}
-
 function resolveAliasTargetForParentUrl(
   request: string,
   parentUrl: string | undefined,
 ): string | undefined {
-  if (!parentUrl?.startsWith("file:")) {
+  if (
+    !parentUrl?.startsWith("file:") ||
+    (!isPluginSdkAliasSpecifier(request) && !getPluginCache().sdk.native.aliases.has(request))
+  ) {
     return undefined;
   }
   try {
@@ -305,10 +307,7 @@ function resolveAliasTargetForParentPath(
   return entries.find((entry) => isWithinRoot(parentFilename, entry.parentRoot))?.target;
 }
 
-function listInternalCorePackageNativeAliases(
-  options: InstallOpenClawPluginSdkNativeResolverOptions,
-  packageRoot = resolveInternalCorePackageHostRoot(resolveLoaderModulePath(options)),
-): Array<{
+function listInternalCorePackageNativeAliases(packageRoot: string): Array<{
   request: string;
   target: string;
   parentRoots: string[];
@@ -328,7 +327,7 @@ function listInternalCorePackageNativeAliases(
   }> = [];
   const internalCorePackageAliases = [
     ...INTERNAL_CORE_PACKAGE_ALIASES,
-    ...["media-core", "normalization-core", "acp-core"].map((packageDir) => ({
+    ...INTERNAL_CORE_EXPORTED_PACKAGE_DIRS.map((packageDir) => ({
       packageName: `@openclaw/${packageDir}`,
       packageDir,
       subpaths: listWorkspacePackageExportAliasEntries({
@@ -362,7 +361,7 @@ function installResolver(): void {
       name: "openclaw-plugin-sdk-alias",
       setup(builder) {
         builder.onResolve(
-          { filter: /^(?:openclaw|@openclaw)\/plugin-sdk\//u, namespace: "file" },
+          { filter: BUN_NATIVE_ALIAS_FILTER, namespace: "file" },
           ({ path: request, importer }) => {
             const target = resolveAliasTargetForParentPath(request, importer);
             return target ? { path: target, namespace: "file" } : undefined;
@@ -378,7 +377,7 @@ function installResolver(): void {
     return;
   }
   moduleWithResolver[nodeResolveFilenameProperty] = ((request, parent, isMain, options) =>
-    resolveAliasTargetForParent(request, parent) ??
+    resolveAliasTargetForParentPath(request, parent?.filename) ??
     previousResolveFilename(request, parent, isMain, options)) satisfies ResolveFilename;
   moduleWithResolver.registerHooks?.({
     resolve(specifier, context, nextResolve) {
@@ -457,7 +456,7 @@ function registerInternalCorePackageNativeAliases(
   if (registeredInternalCorePackageHosts.has(packageRoot)) {
     return;
   }
-  for (const alias of listInternalCorePackageNativeAliases(options, packageRoot)) {
+  for (const alias of listInternalCorePackageNativeAliases(packageRoot)) {
     registerNativeAlias(alias);
   }
   registeredInternalCorePackageHosts.add(packageRoot);

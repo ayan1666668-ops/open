@@ -96,7 +96,7 @@ export type PreparedModelRuntimeSnapshot = Readonly<{
    * Full inventory discovery is deliberately outside the startup publication boundary.
    */
   modelCatalog: ModelCatalogSnapshot;
-  /** Reads a completed full catalog without starting provider discovery. */
+  /** Returns saved inventory immediately while expired provider catalogs renew separately. */
   readFullModelCatalog?: () => ModelCatalogSnapshot | undefined;
   /** Reads validated executable rows from this owner's accepted provider publication. */
   readPublishedModels?: () => ReadonlyMap<string, readonly Model[]> | undefined;
@@ -106,6 +106,13 @@ export type PreparedModelRuntimeSnapshot = Readonly<{
   ) => Promise<ModelCatalogSnapshot>;
   /** Full static models for configured refs, resolved once at the lifecycle boundary. */
   configuredRuntimeModels: readonly PreparedConfiguredRuntimeModel[];
+  /** Exact logical IDs precede static equivalence within this policy generation. */
+  findConfiguredRuntimeModel: (
+    provider: string,
+    modelId: string,
+  ) => ProviderRuntimeModel | undefined;
+  /** Supported aliases for this immutable turn generation, separate from catalog metadata. */
+  configuredModelAliases?: readonly Readonly<{ alias: string; provider: string; model: string }>[];
   /** Inline provider projection prepared once for all resolutions owned by this snapshot. */
   inlineProviderModels: readonly InlineModelEntry[];
   createStores: () => PreparedModelRuntimeStores;
@@ -173,6 +180,8 @@ export type PreparedModelRuntimePublicationOptions = {
 
 export type PreparedModelRuntimeRefreshOptions = {
   gatewayLifecycle?: boolean;
+  /** Startup may serve settled agents while the remaining publication continues. */
+  startup?: boolean;
   defaultWorkspaceDir?: string;
   catalogMode?: PreparedModelRuntimeCatalogMode;
   onBuildStats?: (stats: PreparedModelRuntimeBuildStats) => void;
@@ -210,13 +219,15 @@ export type PreparedModelRuntimeBuildStats = Readonly<{
 export type PreparedModelCatalogInventory = {
   catalog: ModelCatalogSnapshot;
   runtimeModels: ReadonlyMap<string, readonly Model[]>;
+  configuredProviderModelIds: ReadonlyMap<string, readonly string[]>;
   key: string;
   pluginFingerprint: string;
   nativeSource: string;
-  providerSources: ReadonlyMap<string, string>;
-  providerCredentials: ReadonlyMap<string, string>;
+  providers: ReadonlyMap<string, { source: string; credentials: string; expiresAt?: number }>;
   discoveryOrigins: readonly { provider: string; profileId?: string }[];
 };
+
+export type PreparedModelCatalogAcquisitionKind = "provider" | "native";
 
 export type PreparedModelCatalogAttempt = {
   source: {
@@ -224,7 +235,8 @@ export type PreparedModelCatalogAttempt = {
     pluginFingerprint: string;
     credentials: Readonly<AuthStorageData>;
   };
-  error?: Error;
+  /** Undefined records a failure before an individual provider scope starts. */
+  failedProviders: Record<PreparedModelCatalogAcquisitionKind, Set<string | undefined>>;
 };
 
 export type PreparedModelRuntimeOwner = {
@@ -234,6 +246,8 @@ export type PreparedModelRuntimeOwner = {
   catalogMode: PreparedModelRuntimeCatalogMode;
   provenance: "configured" | "standalone" | "explicit" | "run" | "ephemeral";
   generation: number;
+  /** First-build auth events need replay only once this owner has begun reading credentials. */
+  authCaptureStarted?: boolean;
   needsRefresh: boolean;
   catalogStale: boolean;
   /** Completed discovery facts; runtime capability projection belongs to each generation. */
@@ -252,6 +266,7 @@ export type PreparedModelRuntimeOwner = {
 };
 
 export type PreparedModelRuntimeReplacement = {
+  degraded?: boolean;
   gateId: PreparedModelRuntimeReplacementGateId;
   promise: Promise<void>;
   resolve: () => void;

@@ -37,6 +37,7 @@ import {
   expandToolGroups,
   mergeAlsoAllowPolicy,
   normalizeToolPolicyName,
+  readToolAllowlistIntersection,
   toolPolicyRestrictsTools,
 } from "../tool-policy.js";
 import type { SystemAgentToolOptions } from "../tools/system-agent-tool.js";
@@ -158,16 +159,6 @@ export function selectAgentHarnessForPreparedModelProviders(
     decisions.find((decision) => decision.selectedHarnessId === "openclaw")?.harness ??
     createOpenClawAgentHarness()
   );
-}
-
-/** Returns whether a plugin harness constructs OpenClaw tools inside its runtime. */
-export function agentHarnessBuildsOpenClawTools(harnessId: string): boolean {
-  return harnessId === "codex" || harnessId === "copilot";
-}
-
-/** Returns whether the selected harness exposes OpenClaw's agent-tool surface. */
-export function agentHarnessExposesOpenClawTools(harnessId: string): boolean {
-  return harnessId === "openclaw" || agentHarnessBuildsOpenClawTools(harnessId);
 }
 
 function selectAgentHarnessDecision(
@@ -405,12 +396,19 @@ export async function runAgentHarnessAttempt(
       yieldAborted:
         result.terminal.kind === "aborted" && result.terminal.source === "yield_cleanup",
       isHeartbeat: isHeartbeatLifecycleRunKind(internalParams.bootstrapContextRunKind),
-      runtimeContext: {
-        provider: internalParams.provider,
-        modelId: internalParams.modelId,
-        modelContextWindow: internalParams.modelContextWindow,
-        tokenBudget: internalParams.contextTokenBudget,
-      },
+      // Native model identity does not attest the host's window or context cap.
+      runtimeContext:
+        nativeSessionRuntime && result.runtimeModelSelection
+          ? {
+              provider: result.runtimeModelSelection.provider,
+              modelId: result.runtimeModelSelection.model,
+            }
+          : {
+              provider: internalParams.provider,
+              modelId: internalParams.modelId,
+              modelContextWindow: internalParams.modelContextWindow,
+              tokenBudget: internalParams.contextTokenBudget,
+            },
     });
   }
   const { contextEngineTerminalAnchor: _contextEngineTerminalAnchor, ...publicResult } = result;
@@ -739,8 +737,10 @@ export function resolvePluginHarnessToolPolicies(
   };
   const { policy } = capabilityProfile;
   // Runtime allowlists treat [] as deny-all; config allow: [] means unrestricted.
+  const runtimeRestrictions =
+    params.toolsAllow && (readToolAllowlistIntersection(params.toolsAllow) ?? [params.toolsAllow]);
   const requestedToolPolicy =
-    params.disableTools || params.toolsAllow?.length === 0
+    params.disableTools || runtimeRestrictions?.some((allow) => allow.length === 0)
       ? { deny: ["*"] }
       : params.toolsAllow
         ? { allow: params.toolsAllow }

@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -26,16 +25,24 @@ import { appendSkillProposalEvent } from "../skills/workshop/store-sqlite-event.
 import { importLegacySkillProposal } from "../skills/workshop/store.js";
 import { writeConfigMachineState } from "../state/config-machine-state-write.js";
 import { readConfigMachineState } from "../state/config-machine-state.js";
-import { closeOpenClawStateDatabaseByPath } from "../state/openclaw-state-db-cache.js";
+import {
+  captureOpenClawStateDatabaseReadAdmission,
+  closeOpenClawStateDatabaseByPathAsync,
+  registerOpenClawStateDatabaseAsyncResource,
+} from "../state/openclaw-state-db-cache.js";
+import { openOpenClawStateReadConnection } from "../state/openclaw-state-db-read-connection.js";
 import { withExistingOpenClawStateDatabaseReadOnly } from "../state/openclaw-state-db-readonly.js";
 import {
+  closeOpenClawStateDatabaseAsync,
   closeOpenClawStateDatabaseForTest,
   openOpenClawStateDatabase,
 } from "../state/openclaw-state-db.js";
 import { resolveOpenClawStateSqlitePath } from "../state/openclaw-state-db.paths.js";
 import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
 import { collectDoctorFindings, runDoctorLintCli } from "./doctor-lint.js";
+import { snapshotDoctorLintSqliteFamily } from "./doctor-lint.test-support.js";
 import { createAppliedLegacyProposal } from "./doctor-skill-workshop-sqlite.test-support.js";
+import { createTestRuntime } from "./test-runtime-config-helpers.js";
 
 const mocks = vi.hoisted(() => ({
   resolveDoctorContributionHealthChecks: vi.fn(),
@@ -61,17 +68,14 @@ vi.mock("../infra/node-sqlite.js", async (importOriginal) => {
   return {
     ...actual,
     openNodeSqliteDatabase(...args: Parameters<typeof actual.openNodeSqliteDatabase>) {
-      mocks.sqliteOpen(args[0], args[1]?.readOnly === true);
-      return actual.openNodeSqliteDatabase(...args);
+      const database = actual.openNodeSqliteDatabase(...args);
+      mocks.sqliteOpen(args[0], args[1]?.readOnly === true, database);
+      return database;
     },
   };
 });
 
-const runtime = {
-  log: vi.fn(),
-  error: vi.fn(),
-  exit: vi.fn(),
-};
+const runtime = createTestRuntime();
 
 const originalEnv = {
   HOME: process.env.HOME,
@@ -87,7 +91,8 @@ describe("doctor lint state isolation", () => {
     mocks.sqliteOpen.mockClear();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await closeOpenClawStateDatabaseAsync();
     closeOpenClawStateDatabaseForTest();
     restoreEnv(originalEnv);
   });
@@ -121,8 +126,8 @@ describe("doctor lint state isolation", () => {
           importLegacySkillProposal({ record, ownerAgentId: owner, store: { env: state.env } });
         }
         const databasePath = resolveOpenClawStateSqlitePath(state.env);
-        closeOpenClawStateDatabaseByPath(databasePath);
-        const before = snapshotSqliteFamily(databasePath);
+        await closeOpenClawStateDatabaseByPathAsync(databasePath);
+        const before = snapshotDoctorLintSqliteFamily(databasePath);
         const filesBefore = fs
           .readdirSync(state.stateDir, { recursive: true, encoding: "utf8" })
           .toSorted((left, right) => left.localeCompare(right));
@@ -151,7 +156,7 @@ describe("doctor lint state isolation", () => {
           }
           expect(mocks.sqliteOpen).toHaveBeenCalled();
           expect(mocks.sqliteOpen.mock.calls.every(([file]) => file !== databasePath)).toBe(true);
-          expect(snapshotSqliteFamily(databasePath)).toEqual(before);
+          expect(snapshotDoctorLintSqliteFamily(databasePath)).toEqual(before);
           expect(
             fs
               .readdirSync(state.stateDir, { recursive: true, encoding: "utf8" })
@@ -235,8 +240,8 @@ describe("doctor lint state isolation", () => {
             },
           );
           const databasePath = resolveOpenClawStateSqlitePath(state.env);
-          closeOpenClawStateDatabaseByPath(databasePath);
-          const before = snapshotSqliteFamily(databasePath);
+          await closeOpenClawStateDatabaseByPathAsync(databasePath);
+          const before = snapshotDoctorLintSqliteFamily(databasePath);
           const backupBefore = fs.readFileSync(backup, "utf8");
           await selectWorkshopCheckWithUnavailableSource(databasePath);
           mocks.sqliteOpen.mockClear();
@@ -264,7 +269,7 @@ describe("doctor lint state isolation", () => {
             );
             expect(mocks.sqliteOpen).toHaveBeenCalled();
             expect(mocks.sqliteOpen.mock.calls.every(([file]) => file !== databasePath)).toBe(true);
-            expect(snapshotSqliteFamily(databasePath)).toEqual(before);
+            expect(snapshotDoctorLintSqliteFamily(databasePath)).toEqual(before);
             expect(fs.readFileSync(backup, "utf8")).toBe(backupBefore);
             expect(fs.readFileSync(record.target.skillFile, "utf8")).toBe("# Saved procedure\n");
           } finally {
@@ -302,8 +307,8 @@ describe("doctor lint state isolation", () => {
         );
         const sourcePath = await state.writeText("identity/device-auth.json", "legacy-file-marker");
         const databasePath = resolveOpenClawStateSqlitePath(state.env);
-        closeOpenClawStateDatabaseByPath(databasePath);
-        const before = snapshotSqliteFamily(databasePath);
+        await closeOpenClawStateDatabaseByPathAsync(databasePath);
+        const before = snapshotDoctorLintSqliteFamily(databasePath);
         const actual = await vi.importActual<
           typeof import("../flows/doctor-health-contributions.js")
         >("../flows/doctor-health-contributions.js");
@@ -371,7 +376,7 @@ describe("doctor lint state isolation", () => {
             }
           }
           expect(fs.readFileSync(sourcePath, "utf8")).toBe("legacy-file-marker");
-          const after = snapshotSqliteFamily(databasePath);
+          const after = snapshotDoctorLintSqliteFamily(databasePath);
           if (entry.isolated) {
             expect(after).toEqual(before);
           } else {
@@ -513,6 +518,90 @@ describe("doctor lint state isolation", () => {
       });
     },
   );
+
+  it("retires private runtime-schema handles before Windows snapshot removal", async () => {
+    await withOpenClawTestState({ prefix: "openclaw-doctor-lint-retirement-" }, async (state) => {
+      await state.writeConfig({ memory: { search: { enabled: false } } });
+      const source = openOpenClawStateDatabase();
+      const before = snapshotDoctorLintSqliteFamily(source.path);
+      const opened: Array<{ filename: string; database: DatabaseSync }> = [];
+      mocks.sqliteOpen.mockImplementation(
+        (filename: string, _readOnly: boolean, database: DatabaseSync) => {
+          opened.push({ filename, database });
+        },
+      );
+      let privateWriter: ReturnType<typeof openOpenClawStateDatabase> | undefined;
+      let privateReader: ReturnType<typeof openOpenClawStateReadConnection> | undefined;
+      let unregister: (() => void) | undefined;
+      let removedSnapshot = false;
+      mocks.resolveDoctorContributionHealthChecks.mockResolvedValue([
+        {
+          id: "core/doctor/runtime-tool-schemas",
+          kind: "core",
+          description: "inspects private runtime state",
+          async detect() {
+            writeConfigMachineState("doctorLint.synthetic.privateWrite", true);
+            const writer = openOpenClawStateDatabase();
+            const reader = openOpenClawStateReadConnection(writer.path, writer.path);
+            const admission = captureOpenClawStateDatabaseReadAdmission(writer.path);
+            privateWriter = writer;
+            privateReader = reader;
+            unregister = registerOpenClawStateDatabaseAsyncResource({
+              async close(identity) {
+                if (identity !== undefined && identity.key !== admission.identity.key) {
+                  return;
+                }
+                await Promise.resolve();
+                reader.close();
+              },
+            });
+            return [];
+          },
+        },
+      ]);
+      const remove = fs.promises.rm;
+      const removal = vi.spyOn(fs.promises, "rm").mockImplementation(async (target, options) => {
+        const directory = String(target);
+        const prefix = `${directory}${path.sep}`;
+        // Windows refuses removal while SQLite or its coordinator retains a native handle.
+        if (
+          opened.some(({ filename, database }) => filename.startsWith(prefix) && database.isOpen)
+        ) {
+          throw Object.assign(new Error("Snapshot still has an open native handle"), {
+            code: "EPERM",
+          });
+        }
+        await remove(target, options);
+        if (privateWriter?.path.startsWith(prefix)) {
+          removedSnapshot = true;
+        }
+      });
+      const stdout = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+      try {
+        await expect(
+          runDoctorLintCli(runtime, {
+            json: true,
+            onlyIds: ["core/doctor/runtime-tool-schemas"],
+          }),
+        ).resolves.toBe(0);
+        expect(JSON.parse(String(stdout.mock.calls.at(-1)?.[0])).findings).toEqual([]);
+        expect(privateWriter?.db.isOpen).toBe(false);
+        expect(privateReader?.database.db.isOpen).toBe(false);
+        expect(removedSnapshot).toBe(true);
+        expect(source.db.isOpen).toBe(true);
+        expect(snapshotDoctorLintSqliteFamily(source.path)).toEqual(before);
+        expect(readConfigMachineState("doctorLint.synthetic.privateWrite")).toBeUndefined();
+      } finally {
+        removal.mockRestore();
+        stdout.mockRestore();
+        mocks.sqliteOpen.mockReset();
+        if (privateWriter) {
+          await closeOpenClawStateDatabaseByPathAsync(privateWriter.path);
+        }
+        unregister?.();
+      }
+    });
+  });
 
   it.each([
     {
@@ -741,7 +830,7 @@ describe("doctor lint state isolation", () => {
         writer.exec(
           "PRAGMA journal_mode = WAL; CREATE TABLE marker(value TEXT); INSERT INTO marker VALUES ('committed');",
         );
-        const before = snapshotSqliteFamily(databasePath);
+        const before = snapshotDoctorLintSqliteFamily(databasePath);
         let observed: unknown;
         mocks.resolveDoctorContributionHealthChecks.mockResolvedValue([
           {
@@ -765,7 +854,7 @@ describe("doctor lint state isolation", () => {
             await collectDoctorFindings(runtime);
           }
           expect(observed).toEqual([{ value: "committed" }]);
-          expect(snapshotSqliteFamily(databasePath)).toEqual(before);
+          expect(snapshotDoctorLintSqliteFamily(databasePath)).toEqual(before);
         } finally {
           stdout.mockRestore();
           writer.close();
@@ -791,10 +880,10 @@ describe("doctor lint state isolation", () => {
       expires_in: 3600,
     });
     const databasePath = resolveOpenClawStateSqlitePath(process.env);
-    closeOpenClawStateDatabaseByPath(databasePath);
+    await closeOpenClawStateDatabaseByPathAsync(databasePath);
     const lock = new DatabaseSync(databasePath);
     lock.exec("BEGIN IMMEDIATE");
-    const before = snapshotSqliteFamily(databasePath);
+    const before = snapshotDoctorLintSqliteFamily(databasePath);
     mocks.resolveDoctorContributionHealthChecks.mockResolvedValue([
       {
         id: "core/doctor/runtime-tool-schemas",
@@ -825,12 +914,12 @@ describe("doctor lint state isolation", () => {
         checksRun: 1,
         findings: [],
       });
-      expect(snapshotSqliteFamily(databasePath)).toEqual(before);
+      expect(snapshotDoctorLintSqliteFamily(databasePath)).toEqual(before);
     } finally {
       stdout.mockRestore();
       lock.exec("ROLLBACK");
       lock.close();
-      closeOpenClawStateDatabaseByPath(databasePath);
+      await closeOpenClawStateDatabaseByPathAsync(databasePath);
       fs.rmSync(rootDir, { recursive: true, force: true });
     }
   });
@@ -862,16 +951,6 @@ async function selectWorkshopCheckWithUnavailableSource(databasePath: string) {
     },
   ]);
   return check;
-}
-
-function snapshotSqliteFamily(databasePath: string): Array<{ path: string; sha256: string }> {
-  return ["", "-journal", "-shm", "-wal"]
-    .map((suffix) => `${databasePath}${suffix}`)
-    .filter((candidate) => fs.existsSync(candidate))
-    .map((candidate) => ({
-      path: candidate,
-      sha256: createHash("sha256").update(fs.readFileSync(candidate)).digest("hex"),
-    }));
 }
 
 function restoreEnv(values: typeof originalEnv): void {
