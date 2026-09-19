@@ -700,6 +700,7 @@ const enSettings = {
       openDebug: "Open Debug window…",
       systemAccess: "System access",
       grant: "Grant…",
+      checkPermission: "Check…",
       openSystemSettings: "Open System Settings…",
       openSettings: "Open Settings",
       permissionStatuses: {
@@ -707,6 +708,8 @@ const enSettings = {
         limited: "Limited",
         denied: "Denied",
         notDetermined: "Not determined",
+        notGranted: "Not granted",
+        unknown: "Status unknown",
         unavailable: "Unavailable",
       },
       permissions: {

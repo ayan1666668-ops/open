@@ -103,7 +103,7 @@ public enum DeviceSettingsPermission: String, CaseIterable, Encodable, Sendable 
 }
 
 public enum DeviceSettingsPermissionStatus: String, Encodable, Sendable {
-    case granted, denied, notDetermined, unavailable, limited
+    case granted, denied, notDetermined, notGranted, unknown, unavailable, limited
 }
 
 public enum DeviceSettingsAppearance: String, Encodable, Sendable {

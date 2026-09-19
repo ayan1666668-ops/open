@@ -19,6 +19,13 @@ when you return to the app after changing a grant in System Settings, focus the
 Dashboard, or complete a permission request. Open Dashboard windows do not start
 background permission polling.
 
+Screen Recording and Accessibility show **Not granted** until access is confirmed;
+macOS's binary checks do not distinguish a first request from a denial. Click
+**Grant** to request access before looking for OpenClaw in System Settings.
+Automation can show **Status unknown** when Terminal is not running; **Check**
+starts the native authorization flow. Permissions with a confirmed denial offer
+**Open System Settings** instead.
+
 Enabling camera access, Computer Control, Keep computer awake, the Peekaboo bridge, browser cookie
 sync, or continuous Voice Wake listening requires a native confirmation with
 **Cancel** selected by default. Increasing location access (from Off to While

@@ -202,12 +202,14 @@ struct DeviceSettingsBridgeTests {
             #expect(try String(decoding: JSONEncoder().encode(mapped), as: UTF8.self) == "\"\(wire)\"")
         }
         #expect(DeviceSettingsPermissionStatus(.granted) == .granted)
-        #expect(DeviceSettingsPermissionStatus(.notGranted) == .denied)
-        #expect(DeviceSettingsPermissionStatus(.unknown) == .unavailable)
+        #expect(DeviceSettingsPermissionStatus(.notGranted).rawValue == "notGranted")
+        #expect(DeviceSettingsPermissionStatus(.unknown).rawValue == "unknown")
         #expect(DeviceSettingsPermissionStatus(nil) == .unavailable)
-        let statuses: [DeviceSettingsPermissionStatus] = [.granted, .denied, .notDetermined, .unavailable, .limited]
+        let statuses: [DeviceSettingsPermissionStatus] = [
+            .granted, .denied, .notDetermined, .notGranted, .unknown, .unavailable, .limited,
+        ]
         let data = try JSONEncoder().encode(statuses)
         #expect(try JSONSerialization.jsonObject(with: data) as? [String] ==
-            ["granted", "denied", "notDetermined", "unavailable", "limited"])
+            ["granted", "denied", "notDetermined", "notGranted", "unknown", "unavailable", "limited"])
     }
 }

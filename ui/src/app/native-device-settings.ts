@@ -78,7 +78,15 @@ const nativeDeviceSettingsSnapshotSchema = z.object({
       .array(
         z.object({
           id: permissionIdSchema,
-          status: z.enum(["granted", "denied", "notDetermined", "unavailable", "limited"]),
+          status: z.enum([
+            "granted",
+            "denied",
+            "notDetermined",
+            "notGranted",
+            "unknown",
+            "unavailable",
+            "limited",
+          ]),
         }),
       )
       .refine((entries) => new Set(entries.map((entry) => entry.id)).size === entries.length),

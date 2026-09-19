@@ -633,6 +633,33 @@ describe("native device settings pages", () => {
     }
   });
 
+  it.each([
+    ["screenRecording", "Screen Recording", "notGranted", "Not granted", "Grant…"],
+    ["accessibility", "Accessibility", "notGranted", "Not granted", "Grant…"],
+    ["automation", "Automation (Terminal)", "unknown", "Status unknown", "Check…"],
+  ] as const)(
+    "requests %s access without assuming a prior denial",
+    async (id, title, status, label, action) => {
+      const snapshot = createNativeDeviceSettingsSnapshot();
+      snapshot.permissions.entries = [{ id, status }];
+      const native = createCapability(snapshot);
+      const page = await mount("openclaw-device-permissions-page", native.capability);
+      const permission = row(page, title);
+      expect(permission.textContent).toContain(label);
+      const button = permission.querySelector<HTMLButtonElement>("button");
+      expect(button?.textContent?.trim()).toBe(action);
+      expect(native.capability.requestPermission).not.toHaveBeenCalled();
+      button!.click();
+      expect(native.capability.requestPermission).toHaveBeenCalledExactlyOnceWith(id);
+      expect(native.capability.openSystemSettings).not.toHaveBeenCalled();
+      snapshot.permissions.entries = [{ id, status: "granted" }];
+      native.publish(snapshot);
+      await page.updateComplete;
+      expect(permission.textContent).toContain("Granted");
+      expect(permission.querySelector("button")).toBeNull();
+    },
+  );
+
   it.each([false, undefined])(
     "keeps iOS permission order and system-owned precision read-only (editable: %s)",
     async (preciseEditable) => {

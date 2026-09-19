@@ -3,6 +3,7 @@ import { html, nothing } from "lit";
 import { titleForRoute } from "../../app-navigation.ts";
 import { applicationContext, type ApplicationContext } from "../../app/context.ts";
 import type { NativeDeviceSettingsSnapshot } from "../../app/native-device-settings.ts";
+import { icons } from "../../components/icons.ts";
 import {
   renderLearnMoreLink,
   renderSettingsEmpty,
@@ -50,8 +51,14 @@ class DevicePermissionsPage extends OpenClawLightDomElement {
             description: t(`configPage.deviceSettings.permissions.${id}.hint`),
             stackedOnNarrow: true,
             control: html`
-              ${renderSettingsStatus({ kind: status === "granted" ? "ok" : status === "denied" ? "danger" : "muted", label: t(`configPage.deviceSettings.permissionStatuses.${status}`) })}
-              ${status === "notDetermined" ? html`<button type="button" class="btn" @click=${() => capability?.requestPermission(id)}>${t("configPage.deviceSettings.grant")}</button>` : status === "denied" ? html`<button type="button" class="btn" @click=${() => capability?.openSystemSettings(id)}>${t("configPage.deviceSettings.openSystemSettings")}</button>` : nothing}
+              <div class="settings-permission-control">
+                ${renderSettingsStatus({
+                  kind: "muted",
+                  dot: false,
+                  label: html`${status === "granted" ? html`<span class="settings-permission-check" aria-hidden="true">${icons.check}</span>` : nothing}${t(`configPage.deviceSettings.permissionStatuses.${status}`)}`,
+                })}
+                ${status === "notDetermined" || status === "notGranted" || status === "unknown" ? html`<button type="button" class="btn" @click=${() => capability?.requestPermission(id)}>${t(status === "unknown" ? "configPage.deviceSettings.checkPermission" : "configPage.deviceSettings.grant")}</button>` : status === "denied" ? html`<button type="button" class="btn" @click=${() => capability?.openSystemSettings(id)}>${t("configPage.deviceSettings.openSystemSettings")}</button>` : nothing}
+              </div>
             `,
           }),
         ),
@@ -80,14 +87,16 @@ class DevicePermissionsPage extends OpenClawLightDomElement {
                   description: t("configPage.deviceSettings.preciseLocationReadOnlyHint"),
                   stackedOnNarrow: true,
                   control: html`
-                    ${renderSettingsStatus({ kind: permissions.location.precise ? "ok" : "muted", label: t(permissions.location.precise ? "configPage.deviceSettings.preciseLocationStatuses.enabled" : "configPage.deviceSettings.preciseLocationStatuses.disabled") })}
-                    <button
-                      type="button"
-                      class="btn"
-                      @click=${() => capability?.openSystemSettings("location")}
-                    >
-                      ${t("configPage.deviceSettings.openSettings")}
-                    </button>
+                    <div class="settings-permission-control">
+                      ${renderSettingsStatus({ kind: "muted", dot: false, label: t(permissions.location.precise ? "configPage.deviceSettings.preciseLocationStatuses.enabled" : "configPage.deviceSettings.preciseLocationStatuses.disabled") })}
+                      <button
+                        type="button"
+                        class="btn"
+                        @click=${() => capability?.openSystemSettings("location")}
+                      >
+                        ${t("configPage.deviceSettings.openSettings")}
+                      </button>
+                    </div>
                   `,
                 })
               : renderSettingsToggleRow({

@@ -26,8 +26,11 @@ extension DeviceSettingsPermissionStatus {
     init(_ status: CapabilityAuthorizationStatus?) {
         switch status {
         case .granted: self = .granted
-        case .notGranted: self = .denied
-        case .unknown, nil: self = .unavailable
+        // Binary macOS checks cannot distinguish a denial from an unrequested grant.
+        // Preserve requestable states so Settings does not skip the native TCC prompt.
+        case .notGranted: self = .notGranted
+        case .unknown: self = .unknown
+        case nil: self = .unavailable
         }
     }
 }

@@ -102,6 +102,14 @@ describe("native device settings wire contract", () => {
     { name: "empty", entries: [] },
     { name: "single", entries: [{ id: "camera", status: "granted" }] },
     {
+      name: "requestable macOS",
+      entries: [
+        { id: "screenRecording", status: "notGranted" },
+        { id: "accessibility", status: "notGranted" },
+        { id: "automation", status: "unknown" },
+      ],
+    },
+    {
       name: "reordered",
       entries: createNativeDeviceSettingsSnapshot().permissions.entries.toReversed(),
     },
