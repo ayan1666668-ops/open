@@ -2,7 +2,11 @@
 import { z } from "zod";
 import { isValidNonNegativeByteSizeString } from "./byte-size.js";
 import { AgentModelMapSchema, AgentModelPolicySchema } from "./zod-schema.agent-entry-base.js";
-import { AgentModelSchema, AgentToolModelSchema } from "./zod-schema.agent-model.js";
+import {
+  AgentModelSchema,
+  AgentToolModelSchema,
+  DecisionModelSchema,
+} from "./zod-schema.agent-model.js";
 
 const SilentReplyPolicySchema = z.union([z.literal("allow"), z.literal("disallow")]);
 
@@ -61,6 +65,7 @@ export const AgentDefaultsBaseSchema = z
     model: AgentModelSchema.optional(),
     modelSelectionScope: z.enum(["session", "agent", "global"]).optional(),
     utilityModel: z.string().optional(),
+    decisionModel: DecisionModelSchema.optional(),
     imageModel: AgentToolModelSchema.optional(),
     mediaModels: z
       .object({
@@ -174,12 +179,12 @@ export const AgentDefaultsBaseSchema = z
           })
           .strict()
           .optional(),
-        /** Optional typed-judgment semantic curation for safeguard compaction. */
+        /** Optional typed-decision semantic curation for safeguard compaction. */
         semanticCuration: z
           .object({
             /** Curation mode. Shadow observes only; apply may reduce built-in summarizer input. */
             mode: z.enum(["off", "shadow", "apply"]).optional(),
-            /** Per-judgment deadline in milliseconds. */
+            /** Per-decision deadline in milliseconds. */
             timeoutMs: z.number().int().positive().max(5000).optional(),
           })
           .strict()

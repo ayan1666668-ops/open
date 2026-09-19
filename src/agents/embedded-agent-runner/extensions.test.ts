@@ -74,6 +74,7 @@ describe("buildEmbeddedExtensionFactories", () => {
     });
     expect(factories).toContain(compactionSafeguardExtension);
     expect(getCompactionSafeguardRuntime(sessionManager)?.contextWindowTokens).toBe(128_000);
+    expect(getCompactionSafeguardRuntime(sessionManager)?.agentId).toBe("capped");
   });
 
   it("enables quality-guard retries by default in safeguard mode", () => {

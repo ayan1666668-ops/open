@@ -17,9 +17,9 @@ import {
   MAX_FILE_OPS_SECTION_CHARS,
 } from "../../../packages/agent-core/src/harness/compaction/utils.js";
 import { extractSections } from "../../auto-reply/reply/post-compaction-context.js";
+import { evaluateDecision } from "../../decisions/runtime.js";
 import { openRootFile } from "../../infra/boundary-file-read.js";
 import { formatErrorMessage } from "../../infra/errors.js";
-import { evaluateJudgment, recordJudgmentOutcome } from "../../judgments/runtime.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import {
   getCompactionProvider,
@@ -87,7 +87,7 @@ import {
 import {
   evaluateCompactionFidelity,
   evaluateCompactionShadowCuration,
-} from "./compaction-safeguard-semantic-judgments.js";
+} from "./compaction-safeguard-semantic-decisions.js";
 import {
   buildCompactionSemanticSnapshot,
   fingerprint,
@@ -730,6 +730,7 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
 
     const semanticMode = runtime?.semanticCurationMode ?? "off";
     const semanticTimeoutMs = runtime?.semanticCurationTimeoutMs;
+    const semanticAgentId = ctx.sessionManager.getSessionTarget()?.agentId ?? runtime?.agentId;
     const semanticSignal = signal ?? new AbortController().signal;
     const semanticSourceMessages = [...baseMessagesToSummarize, ...turnPrefixMessages];
     const semanticSnapshot =
@@ -762,13 +763,15 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
       try {
         const [shadow, fidelity] = await Promise.all([
           evaluateCompactionShadowCuration({
-            runtime: { evaluate: evaluateJudgment, recordOutcome: recordJudgmentOutcome },
+            runtime: { evaluate: evaluateDecision },
+            agentId: semanticAgentId,
             snapshot: semanticSnapshot,
             signal: semanticSignal,
             timeoutMs: semanticTimeoutMs,
           }),
           evaluateCompactionFidelity({
-            runtime: { evaluate: evaluateJudgment, recordOutcome: recordJudgmentOutcome },
+            runtime: { evaluate: evaluateDecision },
+            agentId: semanticAgentId,
             snapshot: semanticSnapshot,
             candidateSummary: summary,
             signal: semanticSignal,
@@ -1068,6 +1071,7 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
       const requiredAskContext = formatRequiredAskContext(latestUserAsk ?? "");
 
       const activeCuration = await prepareActiveCompactionCuration({
+        agentId: semanticAgentId,
         sessionManager: ctx.sessionManager,
         mode: semanticMode,
         sourceMessages: uncuratedSemanticSource,
@@ -1166,6 +1170,7 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
 
       const acceptSummary = async (summary: string) => {
         const resolution = await resolveCuratedCompactionCandidate({
+          agentId: semanticAgentId,
           sessionManager: ctx.sessionManager,
           snapshot: activeCuration.snapshot,
           uncuratedMessages: activeCuration.uncuratedMessages,
