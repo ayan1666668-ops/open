@@ -6,17 +6,9 @@ import {
   upsertSessionEntryCore,
 } from "../config/sessions/session-accessor.js";
 import * as activeTranscriptEvents from "../config/sessions/session-accessor.sqlite-active-events.js";
-import { waitForSessionTranscriptIndexReconcilesInStateDir } from "../config/sessions/session-transcript-reconcile.js";
 import * as redact from "../logging/redact.js";
-import {
-  closeOpenClawAgentDatabasesAsync,
-  closeOpenClawAgentDatabasesForTest,
-  openOpenClawAgentDatabase,
-} from "../state/openclaw-agent-db.js";
-import {
-  closeOpenClawStateDatabaseAsync,
-  closeOpenClawStateDatabaseForTest,
-} from "../state/openclaw-state-db.js";
+import { openOpenClawAgentDatabase } from "../state/openclaw-agent-db.js";
+import { cleanupSessionStateForTest } from "../test-utils/session-state-cleanup.js";
 import { defaultSessionCompanionContextReader } from "./session-companion-context.js";
 import { createSessionCompanion } from "./session-companion.js";
 import { notifyGatewaySessionReset } from "./session-reset-notifications.js";
@@ -27,12 +19,8 @@ afterEach(async () => {
   // Reconciliation and maintenance workers retain database leases; join their
   // owners before closing shared state or removing the fixture directories.
   for (const stateDir of tempDirs.dirs) {
-    await waitForSessionTranscriptIndexReconcilesInStateDir(stateDir);
+    await cleanupSessionStateForTest({ stateDir });
   }
-  await closeOpenClawAgentDatabasesAsync();
-  await closeOpenClawStateDatabaseAsync();
-  closeOpenClawAgentDatabasesForTest();
-  closeOpenClawStateDatabaseForTest();
   tempDirs.cleanup();
   vi.unstubAllEnvs();
 });

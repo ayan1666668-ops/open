@@ -37,8 +37,8 @@ import {
 } from "../hooks.js";
 import type { HookAgentCompletion, HookAgentDispatchResult } from "../hooks.types.js";
 import {
+  createScheduledGatewayRunner,
   fenceScheduledGatewayContextResolver,
-  runWithScheduledGatewayContext,
 } from "../scheduled-run-gateway-context.js";
 import { DEDUPE_MAX, DEDUPE_TTL_MS } from "../server-constants.js";
 import type { GatewayRequestContext } from "../server-methods/types.js";
@@ -224,6 +224,7 @@ export function createGatewayHookDispatcher(params: {
   } = params;
   const scheduledGatewayContextResolver =
     fenceScheduledGatewayContextResolver(resolveGatewayContext);
+  const runScheduledHook = createScheduledGatewayRunner(scheduledGatewayContextResolver);
   const enqueueHookAgentDispatch = createSessionKeyedHookDispatchQueue();
   let isolatedAgentModulePromise:
     | Promise<typeof import("../../cron/isolated-agent.js")>
@@ -503,12 +504,7 @@ export function createGatewayHookDispatcher(params: {
                 },
                 onExecutionStarted: admission.accept,
               });
-            const result = await runWithScheduledGatewayContext({
-              ...(scheduledGatewayContextResolver
-                ? { resolveGatewayContext: scheduledGatewayContextResolver }
-                : {}),
-              run: runHookIsolatedTurn,
-            });
+            const result = await runScheduledHook(runHookIsolatedTurn);
             if (admission.signal.aborted) {
               return;
             }

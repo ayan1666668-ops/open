@@ -1,7 +1,7 @@
 /**
  * Tests channel inbound context and dispatch helper behavior.
  */
-import { afterEach, describe, expect, expectTypeOf, it, vi } from "vitest";
+import { afterEach, describe, expect, expectTypeOf, it, onTestFinished, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import {
   configureChannelAdmissionEvidenceCollection,
@@ -9,8 +9,8 @@ import {
 } from "../channels/message-access/admission-evidence.js";
 import { recordInboundSession } from "../channels/session.js";
 import { loadSessionEntry, replaceSessionEntrySync } from "../config/sessions/session-accessor.js";
-import * as maintenance from "../config/sessions/session-accessor.sqlite-maintenance.js";
-import { resolveSqliteReadScope } from "../config/sessions/session-accessor.sqlite-scope.js";
+import { resolveSqliteTargetFromSessionStorePath } from "../config/sessions/session-sqlite-target.js";
+import { sessionChanges } from "../sessions/session-row-changes.js";
 import { createDeferredCore } from "../shared/deferred.js";
 import { closeOpenClawAgentDatabasesForTest } from "../state/openclaw-agent-db.js";
 import { closeOpenClawStateDatabaseForTest } from "../state/openclaw-state-db.js";
@@ -56,7 +56,6 @@ function createInboundParams(
 }
 
 describe("channel-inbound public helpers", () => {
-  afterEach(() => vi.restoreAllMocks());
   const tempDirs = useAutoCleanupTempDirTracker((cleanup) =>
     afterEach(() => {
       closeOpenClawAgentDatabasesForTest();
@@ -119,28 +118,20 @@ describe("channel-inbound public helpers", () => {
     );
     let staleEntryAtDispatch: ReturnType<typeof loadSessionEntry>;
     const { runChannelInboundEvent } = await import("openclaw/plugin-sdk/channel-inbound");
-    const scope = resolveSqliteReadScope({ storePath, sessionKey: activeSessionKey });
-    const finalize = maintenance.finalizeSessionEntryMaintenancePlansAfterWriterReleaseBestEffort;
-    const completed = createDeferredCore();
-    // Worker startup can outlast a polling window; join this store's real maintenance
-    // without changing dispatch order or substituting in-process maintenance.
-    vi.spyOn(
-      maintenance,
-      "finalizeSessionEntryMaintenancePlansAfterWriterReleaseBestEffort",
-    ).mockImplementation(async (...args) => {
-      try {
-        const result = await finalize(...args);
-        if (args[0].path === scope.path && result.archived === 1) {
-          completed.resolve();
+    const databasePath = resolveSqliteTargetFromSessionStorePath(storePath).path;
+    const maintenanceCommitted = createDeferredCore();
+    // Cold Worker startup can exceed a polling deadline; observe its committed row instead.
+    onTestFinished(
+      sessionChanges.subscribe((change) => {
+        if (
+          "sessionKey" in change &&
+          change.sessionKey === staleSessionKey &&
+          change.storePath === databasePath
+        ) {
+          maintenanceCommitted.resolve();
         }
-        return result;
-      } catch (error) {
-        if (args[0].path === scope.path) {
-          completed.reject(error);
-        }
-        throw error;
-      }
-    });
+      }),
+    );
 
     const result = await runChannelInboundEvent({
       channel: "test",
@@ -189,7 +180,7 @@ describe("channel-inbound public helpers", () => {
     expect(result.dispatched).toBe(true);
     expect(staleEntryAtDispatch).toMatchObject({ sessionId: "published-inbound-stale" });
     expect(staleEntryAtDispatch?.archivedAt).toBeUndefined();
-    await completed.promise;
+    await maintenanceCommitted.promise;
     expect(loadSessionEntry({ storePath, sessionKey: staleSessionKey })).toMatchObject({
       sessionId: "published-inbound-stale",
       updatedAt: 1,
