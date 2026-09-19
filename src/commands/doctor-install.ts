@@ -1,6 +1,7 @@
 /** Doctor warnings for source checkout installs with missing pnpm runtime state. */
 import fs from "node:fs";
 import path from "node:path";
+import { parseDocument } from "yaml";
 import { note } from "../../packages/terminal-core/src/note.js";
 
 /** Emits install warnings when a source checkout looks npm-installed or lacks source-run deps. */
@@ -44,7 +45,19 @@ export function noteSourceInstallIssues(root: string | null) {
 }
 
 const SELF_LINK_RECOVERY =
-  "Inspect the diff: git diff package.json pnpm-workspace.yaml. Manually revert only the self-referential link: lines, then reinstall: pnpm install. Never run pnpm link/npm link inside a deployment checkout.";
+  "Inspect the diff: git diff -- package.json pnpm-workspace.yaml pnpm-lock.yaml. Selectively restore the damaged dependency and override entries (including any missing override pins) and matching lockfile changes from a known-good revision, preserving unrelated edits in all three files. Then verify recovery: pnpm install --frozen-lockfile. Never run pnpm link/npm link inside a deployment checkout.";
+
+function isSelfLink(root: string, value: unknown): boolean {
+  if (typeof value !== "string" || !value.startsWith("link:")) {
+    return false;
+  }
+  const target = path.resolve(root, value.slice("link:".length));
+  try {
+    return fs.realpathSync(target) === fs.realpathSync(root);
+  } catch {
+    return target === path.resolve(root);
+  }
+}
 
 /** Detects self-referential `openclaw: link:` damage left by link commands run inside a source checkout. */
 function detectSelfLinkWarnings(root: string): string[] {
@@ -58,12 +71,12 @@ function detectSelfLinkWarnings(root: string): string[] {
         dependencies?: Record<string, string>;
         devDependencies?: Record<string, string>;
       };
-      const selfLink = [manifest.dependencies, manifest.devDependencies].some(
-        (deps) => typeof deps?.openclaw === "string" && deps.openclaw.startsWith("link:"),
+      const selfLink = [manifest.dependencies, manifest.devDependencies].some((deps) =>
+        isSelfLink(root, deps?.openclaw),
       );
       if (selfLink) {
         warnings.push(
-          `- package.json has a self-referential "openclaw": "link:" dependency, which breaks frozen pnpm installs (ERR_PNPM_LOCKFILE_CONFIG_MISMATCH). ${SELF_LINK_RECOVERY}`,
+          `- package.json has a self-referential "openclaw": "link:" dependency, which can break frozen pnpm installs. If the link is unintended: ${SELF_LINK_RECOVERY}`,
         );
       }
     } catch {
@@ -72,17 +85,16 @@ function detectSelfLinkWarnings(root: string): string[] {
   }
 
   const workspacePath = path.join(root, "pnpm-workspace.yaml");
-  if (fs.existsSync(workspacePath)) {
-    const workspaceYaml = fs.readFileSync(workspacePath, "utf8");
-    // Only flag self-referential links inside the overrides: section, not any
-    // indented openclaw: mapping elsewhere in the workspace file.
-    const overridesMatch = workspaceYaml.match(/^overrides:\s*\n((?:^[ \t]+.*\n?)*)/m);
-    const overridesBody = overridesMatch?.[1];
-    if (overridesBody && /^[ \t]+openclaw:\s*['"]?link:/m.test(overridesBody)) {
+  try {
+    const workspace = parseDocument(fs.readFileSync(workspacePath, "utf8"));
+    const selfLink = workspace.errors.length === 0 && workspace.toJS()?.overrides?.openclaw;
+    if (isSelfLink(root, selfLink)) {
       warnings.push(
-        `- pnpm-workspace.yaml contains a self-referential "openclaw: link:" entry, which breaks frozen pnpm installs (ERR_PNPM_LOCKFILE_CONFIG_MISMATCH). ${SELF_LINK_RECOVERY}`,
+        `- pnpm-workspace.yaml contains a self-referential "openclaw: link:" entry, which can break frozen pnpm installs. If the link is unintended: ${SELF_LINK_RECOVERY}`,
       );
     }
+  } catch {
+    // A malformed or unreadable workspace file must not abort the remaining Doctor checks.
   }
 
   return warnings;
