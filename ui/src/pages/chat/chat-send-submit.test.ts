@@ -323,7 +323,7 @@ describe("handleSendChat immediate local commands", () => {
   });
 
   it.each(["/export-session", "/export"])(
-    "rejects an output path for %s without losing the draft",
+    "preserves a rejected %s path draft and clears the error after correction",
     async (command) => {
       const draft = `${command} reports/conversation.html`;
       const attachment = createStagedAttachment("export-path-att");
@@ -346,6 +346,15 @@ describe("handleSendChat immediate local commands", () => {
       expect(host.chatAttachments).toEqual([attachment]);
       expect(getChatAttachmentDataUrl(attachment)).toBe(attachmentDataUrl);
       expect(host.chatQueue).toEqual([]);
+
+      host.chatMessage = command;
+      await handleSendChat(host);
+
+      expect(exportCurrentChat).toHaveBeenCalledOnce();
+      expect(host.chatError).toBeNull();
+      expect(host.lastError).toBeNull();
+      expect(host.chatMessage).toBe("");
+      expect(host.chatAttachments).toEqual([attachment]);
     },
   );
 

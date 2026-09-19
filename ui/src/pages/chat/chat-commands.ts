@@ -412,6 +412,7 @@ export async function dispatchChatSlashCommand(
         setChatCommandError(host, t("chat.commandResults.exportPathUnsupported"));
         return "failed";
       }
+      setChatCommandError(host, null);
       if ((await host.exportCurrentChat?.()) === "empty") {
         injectCommandResult(host, t("chat.commandResults.emptyExport"));
         scheduleChatScroll(host, false, false, { contentChanged: true });
