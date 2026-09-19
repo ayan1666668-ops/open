@@ -5,10 +5,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { defaultRuntime } from "../../runtime.js";
 import { withTestDir } from "../../test-helpers/temp-dir.js";
 import {
-  createGlobalCommandRunner,
   ensureGitCheckout,
   parseTimeoutMsOrExit,
+  resolveGlobalManager,
   resolveUpdateRoot,
+  runUpdateStep,
+  UpdatePreMutationError,
 } from "./shared.js";
 
 const runCommandWithTimeout = vi.hoisted(() => vi.fn());
@@ -40,35 +42,6 @@ describe("update CLI shared helpers", () => {
     runCommandWithTimeout.mockResolvedValue(successfulCommandResult);
   });
 
-  it("forwards argv/options and maps exec result shape", async () => {
-    runCommandWithTimeout.mockResolvedValueOnce({
-      stdout: "out",
-      stderr: "err",
-      code: 17,
-      signal: null,
-      killed: false,
-      termination: "exit",
-    });
-    const runCommand = createGlobalCommandRunner();
-
-    const result = await runCommand(["npm", "root", "-g"], {
-      timeoutMs: 1200,
-      cwd: "/tmp/openclaw",
-      env: { OPENCLAW_TEST: "1" },
-    });
-
-    expect(runCommandWithTimeout).toHaveBeenCalledWith(["npm", "root", "-g"], {
-      timeoutMs: 1200,
-      cwd: "/tmp/openclaw",
-      env: { OPENCLAW_TEST: "1" },
-    });
-    expect(result).toEqual({
-      stdout: "out",
-      stderr: "err",
-      code: 17,
-    });
-  });
-
   it("requires timeout values to be complete positive integer seconds", () => {
     const error = vi.spyOn(defaultRuntime, "error").mockImplementation(() => undefined);
     const exit = vi.spyOn(defaultRuntime, "exit").mockImplementation(() => undefined as never);
@@ -91,6 +64,32 @@ describe("update CLI shared helpers", () => {
       error.mockRestore();
       exit.mockRestore();
     }
+  });
+
+  it("keeps failed command diagnostics in both progress and the final result", async () => {
+    runCommandWithTimeout.mockResolvedValueOnce({
+      ...successfulCommandResult,
+      code: 1,
+      stdout: `${"x".repeat(10_000)}\nBuild type error`,
+      stderr: "Command failed",
+    });
+    const onStepComplete = vi.fn();
+    const result = await runUpdateStep({
+      name: "build",
+      argv: ["pnpm", "build"],
+      timeoutMs: 1200,
+      progress: { onStepComplete },
+    });
+
+    expect(result.stdoutTail).toContain("Build type error");
+    expect(result.stdoutTail?.length).toBeLessThanOrEqual(8001); // includes the truncation marker
+    expect(onStepComplete).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stdoutTail: result.stdoutTail,
+        stderrTail: "Command failed",
+        exitCode: 1,
+      }),
+    );
   });
 
   it("parses complete positive integer timeout values as milliseconds", () => {
@@ -135,6 +134,102 @@ describe("update CLI shared helpers", () => {
       });
     },
   );
+
+  it("refuses a package root without a proven manager owner", async () => {
+    runCommandWithTimeout.mockResolvedValue({
+      ...successfulCommandResult,
+      code: 1,
+      stderr: "not owned",
+    });
+
+    const owner = resolveGlobalManager({
+      root: "/shared/lib/node_modules/openclaw",
+      installKind: "package",
+      timeoutMs: 1_000,
+    });
+    await expect(owner).rejects.toBeInstanceOf(UpdatePreMutationError);
+    await expect(owner).rejects.toMatchObject({
+      name: "UpdatePreMutationError",
+      reason: expect.stringMatching(/^(unmanaged-package-install|container-image-install)$/),
+      failureFacts: [
+        {
+          check: "installation-inspection",
+          code: "installation-unclassified",
+          message: expect.stringMatching(/Installation ownership[\s\S]*retry openclaw update/),
+        },
+      ],
+    });
+    for (const detail of [
+      "Root: /shared/lib/node_modules/openclaw",
+      "Git metadata: absent or unreadable",
+      "node_modules layout: package under node_modules",
+      "local node_modules absent or unreadable",
+      "package.json name: missing or unreadable",
+      "Service unit target: not inspected",
+      "Inspected package-manager owners:",
+      "npm root -g",
+      "pnpm root -g",
+      "prefix -g",
+      "No package changes or Gateway restart were attempted.",
+    ]) {
+      await expect(owner).rejects.toMatchObject({ message: expect.stringContaining(detail) });
+    }
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "guides Homebrew-managed installations to use brew upgrade",
+    async () => {
+      await expect(
+        resolveGlobalManager({
+          root: "/opt/homebrew/Cellar/openclaw-cli/2026.9.2/libexec/lib/node_modules/openclaw",
+          installKind: "package",
+          timeoutMs: 1_000,
+        }),
+      ).rejects.toMatchObject({
+        name: "UpdatePreMutationError",
+        reason: "unmanaged-package-install",
+        message:
+          "This OpenClaw installation is managed by Homebrew. To update OpenClaw, run:\n\n  brew upgrade openclaw-cli\n\nThen restart the gateway:\n\n  openclaw gateway restart",
+      });
+    },
+  );
+
+  it("does not treat global npm packages under HOMEBREW_PREFIX as Homebrew formula installs", async () => {
+    const originalPrefix = process.env.HOMEBREW_PREFIX;
+    process.env.HOMEBREW_PREFIX = "/opt/homebrew-custom";
+    runCommandWithTimeout.mockResolvedValue({
+      ...successfulCommandResult,
+      code: 1,
+      stderr: "not owned",
+    });
+
+    try {
+      const owner = resolveGlobalManager({
+        root: "/opt/homebrew-custom/lib/node_modules/openclaw",
+        installKind: "package",
+        timeoutMs: 1_000,
+      });
+      await expect(owner).rejects.toBeInstanceOf(UpdatePreMutationError);
+      await expect(owner).rejects.toMatchObject({
+        name: "UpdatePreMutationError",
+        message: expect.stringContaining("Root: /opt/homebrew-custom/lib/node_modules/openclaw"),
+        failureFacts: [
+          expect.objectContaining({
+            check: "installation-inspection",
+            code: "installation-unclassified",
+          }),
+        ],
+      });
+      await expect(owner).rejects.toMatchObject({
+        message: expect.stringContaining("No package changes or Gateway restart were attempted."),
+      });
+      await expect(owner).rejects.not.toMatchObject({
+        message: expect.stringContaining("managed by Homebrew"),
+      });
+    } finally {
+      process.env.HOMEBREW_PREFIX = originalPrefix;
+    }
+  });
 
   it("publishes a successful fresh clone only after the clone completes", async () => {
     await withTestDir({ prefix: "openclaw-update-clone-success-" }, async (base) => {

@@ -1,8 +1,7 @@
 /**
  * Tests timeout behavior for gateway HTTP hook request handling.
  */
-import { EventEmitter } from "node:events";
-import type { ServerResponse } from "node:http";
+import { createServer } from "node:http";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import type { HookMappingResolved } from "./hooks-mapping.js";
 import { createHooksConfig } from "./hooks-test-helpers.js";
@@ -41,36 +40,40 @@ describe("createHooksRequestHandler timeout status mapping", () => {
 
   test("returns 408 for request body timeout", async () => {
     readJsonBodyMock.mockResolvedValue({ ok: false, error: "request body timeout" });
-    const dispatchWakeHook = vi.fn();
-    const dispatchAgentHook = vi.fn(() => ({ ok: true as const, runId: "run-1" }));
+    const dispatchWakeHook = vi.fn(() => ({ eventOutcome: "queued" as const }));
+    const dispatchAgentHook = vi.fn(() => ({
+      ok: true as const,
+      runId: "run-1",
+      completion: Promise.resolve({ status: "ok" as const, replyDisposition: "empty" as const }),
+    }));
     const handler = createHooksHandler({ dispatchWakeHook, dispatchAgentHook });
-    const req = createHookRequest() as ReturnType<typeof createHookRequest> & {
-      destroyed: boolean;
-      destroy: ReturnType<typeof vi.fn>;
-    };
-    req.destroyed = false;
-    req.destroy = vi.fn(() => {
-      req.destroyed = true;
-      return req;
+    const tasks: Promise<boolean>[] = [];
+    const server = createServer((req, res) => {
+      tasks.push(handler(req, res));
     });
-    const res = new EventEmitter() as ServerResponse;
-    res.statusCode = 200;
-    const setHeader = vi.fn();
-    res.setHeader = setHeader;
-    const end = vi.fn();
-    res.end = end;
-
-    const handled = await handler(req, res);
-
-    expect(handled).toBe(true);
-    expect(res.statusCode).toBe(408);
-    expect(end).toHaveBeenCalledWith(JSON.stringify({ ok: false, error: "request body timeout" }));
-    expect(setHeader).toHaveBeenCalledWith("Connection", "close");
-    expect(req.destroy).not.toHaveBeenCalled();
-    res.emit("finish");
-    expect(req.destroy).not.toHaveBeenCalled();
-    res.emit("close");
-    expect(req.destroy).toHaveBeenCalledOnce();
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    const address = server.address();
+    if (!address || typeof address === "string") {
+      throw new Error("missing listener");
+    }
+    try {
+      const response = await fetch(`http://127.0.0.1:${address.port}/hooks/wake`, {
+        method: "POST",
+        headers: { Authorization: "Bearer hook-secret" },
+        body: "{}",
+      });
+      expect(response.status).toBe(408);
+      expect(response.headers.get("connection")).toBe("close");
+      expect(await response.json()).toEqual({ ok: false, error: "request body timeout" });
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => {
+        server.close(() => resolve());
+      });
+      expect(await Promise.all(tasks)).toEqual([true]);
+    }
     expect(dispatchWakeHook).not.toHaveBeenCalled();
     expect(dispatchAgentHook).not.toHaveBeenCalled();
   });
@@ -123,7 +126,7 @@ describe("createHooksRequestHandler timeout status mapping", () => {
       const handled = handler(req, res);
       await vi.waitFor(() => expect(dispatchSignal).toBeDefined());
       if (disconnect === "request abort") {
-        req.emit("aborted");
+        req.destroy();
       } else {
         res.emit("close");
       }
@@ -156,7 +159,14 @@ describe("createHooksRequestHandler timeout status mapping", () => {
           };
         }
         executionCount += 1;
-        return { ok: true as const, runId: "run-retry" };
+        return {
+          ok: true as const,
+          runId: "run-retry",
+          completion: Promise.resolve({
+            status: "ok" as const,
+            replyDisposition: "empty" as const,
+          }),
+        };
       },
     );
     const handler = createHooksHandler({ dispatchAgentHook });
@@ -166,7 +176,7 @@ describe("createHooksRequestHandler timeout status mapping", () => {
 
     const firstHandled = handler(firstReq, firstRes);
     await vi.waitFor(() => expect(dispatchAgentHook).toHaveBeenCalledTimes(1));
-    firstReq.emit("aborted");
+    firstReq.destroy();
     await expect(firstHandled).resolves.toBe(true);
     expect(executionCount).toBe(0);
 
@@ -217,7 +227,11 @@ describe("createHooksRequestHandler timeout status mapping", () => {
           error: "first request disconnected",
         };
       })
-      .mockResolvedValueOnce({ ok: true as const, runId: "run-retry" });
+      .mockResolvedValueOnce({
+        ok: true as const,
+        runId: "run-retry",
+        completion: Promise.resolve({ status: "ok" as const, replyDisposition: "empty" as const }),
+      });
     const hooksConfig = {
       ...createHooksConfig(),
       mappings: testCase.mappings as HookMappingResolved[],
@@ -230,7 +244,7 @@ describe("createHooksRequestHandler timeout status mapping", () => {
 
     try {
       await vi.waitFor(() => expect(dispatchAgentHook).toHaveBeenCalledTimes(1));
-      firstReq.emit("aborted");
+      firstReq.destroy();
       await firstAbortObserved;
 
       const retryReq = createHookRequest({ url: testCase.path, headers });
@@ -243,6 +257,10 @@ describe("createHooksRequestHandler timeout status mapping", () => {
       releaseFirst();
       await firstHandled;
     }
+    const replayReq = createHookRequest({ url: testCase.path, headers });
+    const { res: replayRes, end: replayEnd } = createResponse();
+    await expect(handler(replayReq, replayRes)).resolves.toBe(true);
+    expect(replayEnd).toHaveBeenCalledWith(JSON.stringify({ ok: true, runId: "run-retry" }));
     expect(dispatchAgentHook).toHaveBeenCalledTimes(2);
   });
 

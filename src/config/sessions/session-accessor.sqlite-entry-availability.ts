@@ -8,12 +8,9 @@ import {
   type OpenClawAgentDatabase,
 } from "../../state/openclaw-agent-db.js";
 import type { ExactSessionEntry, SessionAccessScope } from "./session-accessor.sqlite-contract.js";
+import { prepareSqliteSessionEntryRowDecoder } from "./session-accessor.sqlite-entry-read.js";
+import { readExactSessionEntryRowValidated } from "./session-accessor.sqlite-entry-store.js";
 import {
-  parseReadableSqliteSessionEntryRow,
-  readExactSessionEntryRowValidated,
-} from "./session-accessor.sqlite-entry-store.js";
-import {
-  cloneSessionEntry,
   getSessionKysely,
   resolveSqliteReadScope,
   resolveSqliteScope,
@@ -87,15 +84,17 @@ export function loadExactSessionEntryReadOnlyResult(
     found: true,
     value: {
       sessionKey,
-      entry: scope.clone === false ? result.value.entry : cloneSessionEntry(result.value.entry),
+      entry: result.value.entry,
     },
   };
 }
 
 type SessionIdentityEvidenceProbe = {
   agentId: string;
+  env?: NodeJS.ProcessEnv;
   sessionId: string;
-  sessionKey: string;
+  /** Omit for identity-only repair: no exact key may override ambiguous physical ownership. */
+  sessionKey?: string;
   storePath: string;
 };
 
@@ -104,7 +103,7 @@ const SESSION_IDENTITY_EVIDENCE_QUERY_CHUNK_SIZE = 400;
 type SessionIdentityEvidenceItem = {
   index: number;
   sessionId: string;
-  sessionKey: string;
+  sessionKey?: string;
 };
 
 type SessionIdentityEvidenceRow = {
@@ -141,18 +140,33 @@ function readSessionIdentityEvidenceRows(
       }
     }
   };
-  readChunks([...new Set(items.map((item) => item.sessionKey))], "session_key");
-  readChunks([...new Set(items.map((item) => item.sessionId))], "current_session_id");
+  readChunks(
+    [...new Set(items.flatMap((item) => (item.sessionKey ? [item.sessionKey] : [])))],
+    "session_key",
+  );
+  // Matching headers only avoid redundant reads; the full validator below still owns
+  // validity. Other probes may require the same identity and replace this snapshot.
+  const fallbackIds = items.flatMap((item) => {
+    const exactRow = item.sessionKey ? rowsByKey.get(item.sessionKey) : undefined;
+    return exactRow?.entry_valid === 1 && exactRow.current_session_id === item.sessionId
+      ? []
+      : [item.sessionId];
+  });
+  readChunks([...new Set(fallbackIds)], "current_session_id");
 
   const rowsBySessionId = new Map<string, SessionIdentityEvidenceRow[]>();
   const readableKeys = new Set<string>();
+  const decodeRow = prepareSqliteSessionEntryRowDecoder(
+    database,
+    [...rowsByKey.values()].filter((row) => row.entry_valid === 1),
+  );
   for (const row of rowsByKey.values()) {
     const rows = rowsBySessionId.get(row.current_session_id) ?? [];
     rows.push(row);
     rowsBySessionId.set(row.current_session_id, rows);
     if (row.entry_valid === 1) {
       try {
-        if (parseReadableSqliteSessionEntryRow(database, row)) {
+        if (decodeRow(row)) {
           readableKeys.add(row.session_key);
         }
       } catch {
@@ -161,7 +175,7 @@ function readSessionIdentityEvidenceRows(
     }
   }
   return items.map((item): SessionIdentityEvidenceResult => {
-    const exactRow = rowsByKey.get(item.sessionKey);
+    const exactRow = item.sessionKey ? rowsByKey.get(item.sessionKey) : undefined;
     if (exactRow && exactRow.entry_valid !== -1 && !readableKeys.has(exactRow.session_key)) {
       return { status: "unknown", reason: "row-invalid" };
     }
@@ -170,7 +184,7 @@ function readSessionIdentityEvidenceRows(
       readableKeys.has(exactRow.session_key) &&
       exactRow.current_session_id === item.sessionId
     ) {
-      return { status: "current", sessionKey: item.sessionKey };
+      return { status: "current", sessionKey: exactRow.session_key };
     }
     const fallbackRows = rowsBySessionId.get(item.sessionId) ?? [];
     if (fallbackRows.length !== 1) {
@@ -213,7 +227,7 @@ export function readSessionIdentityEvidenceBatch(
       group.items.push({
         index,
         sessionId: probe.sessionId,
-        sessionKey: resolved.sessionKey ?? "",
+        sessionKey: resolved.sessionKey,
       });
       groups.set(databasePath, group);
     } catch {

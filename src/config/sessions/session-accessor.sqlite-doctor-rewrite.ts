@@ -11,12 +11,14 @@ import {
   publishSessionEntryCacheInvalidation,
   trackSessionEntryCacheWrite,
 } from "./session-accessor.sqlite-entry-cache.js";
+import { invalidateSessionEntryMaintenanceAgeFact } from "./session-accessor.sqlite-maintenance-age.js";
 import {
   getSessionKysely,
   resolveSqliteScope,
   toDatabaseOptions,
 } from "./session-accessor.sqlite-scope.js";
 import { parseSqliteSessionEntryRecord } from "./session-entry-json.js";
+import { stripRuntimeOnlySessionSkillsFields } from "./store-entry-shape.js";
 import type { SessionEntry } from "./types.js";
 
 const DOCTOR_SESSION_REWRITE_BATCH_SIZE = 64;
@@ -54,14 +56,19 @@ export function rewriteDoctorSessionEntries(params: {
           if (!entry) {
             continue;
           }
-          const nextEntry = params.transform(entry, sessionKey);
-          const entryJson = JSON.stringify(nextEntry);
-          if (
-            entryJson === row.entry_json ||
-            !parseSqliteSessionEntryRecord({ ...row, entry_json: entryJson })
-          ) {
+          const transformedEntry = params.transform(entry, sessionKey);
+          const transformedJson = JSON.stringify(transformedEntry);
+          // Incognito repair scans unrelated rows; only its changed entries may be rewritten.
+          if (transformedJson === row.entry_json) {
             continue;
           }
+          const nextEntry = stripRuntimeOnlySessionSkillsFields(transformedEntry);
+          const entryJson =
+            nextEntry === transformedEntry ? transformedJson : JSON.stringify(nextEntry);
+          if (!parseSqliteSessionEntryRecord({ ...row, entry_json: entryJson })) {
+            continue;
+          }
+          invalidateSessionEntryMaintenanceAgeFact(database.db);
           const writeGeneration = trackSessionEntryCacheWrite(database, () => {
             executeSqliteQuerySync(
               database.db,
@@ -92,7 +99,7 @@ export function rewriteDoctorSessionEntries(params: {
           });
           publishSessionEntryCacheInvalidation(
             database,
-            { ...row, entry_json: entryJson },
+            { sessionKey, entry: nextEntry },
             writeGeneration,
           );
           batchRewritten += 1;

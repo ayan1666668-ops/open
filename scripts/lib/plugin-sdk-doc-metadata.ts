@@ -90,6 +90,9 @@ export const pluginSdkDocMetadata = {
   "session-store-runtime": {
     category: "runtime",
   },
+  "conversation-binding-inspection-runtime": {
+    category: "runtime",
+  },
   "agent-scope-runtime": {
     category: "runtime",
   },
@@ -97,6 +100,9 @@ export const pluginSdkDocMetadata = {
     category: "runtime",
   },
   "agent-harness-runtime": {
+    category: "runtime",
+  },
+  "agent-workspace-runtime": {
     category: "runtime",
   },
   "speech-settings": {

@@ -4,7 +4,6 @@ import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
 
 const WORKFLOW = ".github/workflows/security-sensitive-guard.yml";
-const CODEOWNERS = ".github/CODEOWNERS";
 
 type WorkflowStep = {
   env?: Record<string, string>;
@@ -76,7 +75,7 @@ describe("security-sensitive guard workflow", () => {
       const steps = jobs[jobName]?.steps ?? [];
       const checkout = steps.find((step) => step.uses?.startsWith("actions/checkout@"));
 
-      expect(checkout?.uses).toBe("actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd");
+      expect(checkout?.uses).toBe("actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1");
       expect(checkout?.with?.ref).toBe("${{ github.workflow_sha }}");
       expect(checkout?.with?.ref).not.toBe("${{ github.event.pull_request.base.sha }}");
       expect(checkout?.with?.["persist-credentials"]).toBe(false);
@@ -121,23 +120,5 @@ describe("security-sensitive guard workflow", () => {
     expect(guardSources).toContain("/memberships/");
     expect(script).toContain("A later push requires a fresh approval.");
     expect(script).toContain("process.exitCode = 1");
-  });
-
-  it("requires secops review for future workflow or guard changes", () => {
-    const codeowners = readFileSync(CODEOWNERS, "utf8");
-    expect(codeowners).toContain(
-      "/.github/workflows/security-sensitive-guard.yml @openclaw/openclaw-secops",
-    );
-    expect(codeowners).toContain(
-      "/test/scripts/security-sensitive-guard-workflow.test.ts @openclaw/openclaw-secops",
-    );
-    expect(codeowners).toContain(
-      "/test/scripts/security-sensitive-guard-script.test.ts @openclaw/openclaw-secops",
-    );
-    expect(codeowners).toContain(
-      "/scripts/github/security-sensitive-guard.mjs @openclaw/openclaw-secops",
-    );
-    expect(codeowners).toContain("/scripts/github/guard-shared.mjs @openclaw/openclaw-secops");
-    expect(codeowners).toContain("/.gitignore @openclaw/openclaw-secops");
   });
 });

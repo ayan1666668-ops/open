@@ -1,8 +1,11 @@
 // Gateway credential secret-input resolver.
 // Resolves SecretRefs before applying Gateway credential precedence rules.
-import { cloneConfigWithResolutionFacts } from "../config/resolution-facts.js";
+import {
+  cloneConfigWithResolutionFacts,
+  resolveConfigSecretRef,
+} from "../config/resolution-facts.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
-import { resolveSecretInputRef } from "../config/types.secrets.js";
+import { isSecretResolutionError } from "../secrets/resolve-errors.js";
 import { materializeSecretInput } from "../secrets/resolve-secret-input-string.js";
 import {
   GatewaySecretRefUnavailableError,
@@ -52,12 +55,21 @@ async function resolveGatewaySecretInputString(params: {
   path: string;
   env: NodeJS.ProcessEnv;
 }): Promise<string | undefined> {
+  const ref = resolveConfigSecretRef({
+    config: params.config,
+    path: params.path,
+    value: params.value,
+    defaults: params.config.secrets?.defaults,
+  });
   const value = await materializeSecretInput({
     config: params.config,
-    value: params.value,
+    value: ref ?? params.value,
     env: params.env,
     normalize: trimToUndefined,
-    onResolveRefError: () => {
+    onResolveRefError: (error) => {
+      if (isSecretResolutionError(error) && error.code === "SECRET_REF_REDACTED_VALUE") {
+        throw error;
+      }
       throw new GatewaySecretRefUnavailableError(params.path);
     },
   });
@@ -72,10 +84,12 @@ function hasConfiguredGatewaySecretRef(
   path: SupportedGatewaySecretInputPath,
 ): boolean {
   return Boolean(
-    resolveSecretInputRef({
+    resolveConfigSecretRef({
+      config,
+      path,
       value: readGatewaySecretInputValue(config, path),
       defaults: config.secrets?.defaults,
-    }).ref,
+    }),
   );
 }
 
@@ -241,7 +255,10 @@ async function resolvePreferredGatewaySecretInputs(params: {
         path,
         value: resolvedValue,
       });
-    } catch {
+    } catch (error) {
+      if (isSecretResolutionError(error) && error.code === "SECRET_REF_REDACTED_VALUE") {
+        throw error;
+      }
       // Keep scanning candidate paths so unresolved higher-priority refs do not
       // prevent valid fallback refs from being considered.
       continue;

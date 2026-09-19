@@ -234,7 +234,7 @@ describe("runQaCharacterEval", () => {
     const judgeParams = requireRunJudgeParams(runJudge);
     expect(judgeParams.judgeModel).toBe("openai/gpt-5.6-luna");
     expect(judgeParams.judgeThinkingDefault).toBe("xhigh");
-    expect(judgeParams.judgeFastMode).toBe(false);
+    expect(judgeParams.judgeFastMode).toBe(true);
     expect(judgeParams.timeoutMs).toBe(300_000);
     expect(result.judgments).toHaveLength(1);
     expect(result.judgments[0]?.rankings.map((ranking) => ranking.model)).toEqual([
@@ -256,6 +256,66 @@ describe("runQaCharacterEval", () => {
     expect(report).toContain("Duration:");
     expect(report).not.toContain("Duration ms:");
     expect(report).not.toContain("Judge Raw Reply");
+  });
+
+  it("isolates artifacts for model refs with colliding readable slugs", async () => {
+    const firstModel = "ollama/qwen3.5:9b";
+    const secondModel = "ollama/qwen3.5/9b";
+    const models = [firstModel, secondModel];
+    let releaseSecondRun: () => void = () => {};
+    let releaseFirstRun: () => void = () => {};
+    const firstRunWritten = new Promise<void>((resolve) => {
+      releaseSecondRun = resolve;
+    });
+    const secondRunWritten = new Promise<void>((resolve) => {
+      releaseFirstRun = resolve;
+    });
+    const runSuite = vi.fn(async (params: CharacterRunSuiteParams) => {
+      const markerPath = path.join(params.outputDir, "model-marker.txt");
+      await fs.mkdir(params.outputDir, { recursive: true });
+      if (params.primaryModel === secondModel) {
+        await firstRunWritten;
+      }
+      await fs.writeFile(markerPath, `${params.primaryModel}\n`, "utf8");
+      const result = await makeReplySuiteResult(params);
+      if (params.primaryModel === firstModel) {
+        releaseSecondRun();
+        await secondRunWritten;
+      } else {
+        releaseFirstRun();
+      }
+      return result;
+    });
+
+    const result = await runQaCharacterEval({
+      repoRoot: tempRoot,
+      outputDir: path.join(tempRoot, "character"),
+      models,
+      candidateConcurrency: 2,
+      judgeModels: ["openai/gpt-5.6-luna"],
+      runSuite,
+      runJudge: makeRunJudge([
+        { model: firstModel, rank: 1, score: 8, summary: "first" },
+        { model: secondModel, rank: 2, score: 7, summary: "second" },
+      ]),
+    });
+
+    expect(runSuite).toHaveBeenCalledTimes(2);
+    expect.soft(new Set(result.runs.map((run) => run.outputDir)).size).toBe(models.length);
+    expect
+      .soft(
+        new Set(result.runs.flatMap((run) => ("summaryPath" in run ? [run.summaryPath] : []))).size,
+      )
+      .toBe(models.length);
+    await expect
+      .soft(
+        Promise.all(
+          result.runs.map((run) =>
+            fs.readFile(path.join(run.outputDir, "model-marker.txt"), "utf8"),
+          ),
+        ),
+      )
+      .resolves.toEqual(models.map((model) => `${model}\n`));
   });
 
   it("creates a unique default output directory under repo artifacts", async () => {
@@ -456,7 +516,7 @@ describe("runQaCharacterEval", () => {
     ]);
     expect(runJudge).toHaveBeenCalledTimes(2);
     expect(runJudge.mock.calls.map(([params]) => params.judgeModel)).toEqual([
-      "openai/gpt-5.6-sol",
+      "openai/gpt-5.6-luna",
       "anthropic/claude-opus-4-8",
     ]);
     expect(runJudge.mock.calls.map(([params]) => params.judgeThinkingDefault)).toEqual([

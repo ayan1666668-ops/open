@@ -1,3 +1,7 @@
+import type { HumanMention } from "@openclaw/gateway-protocol";
+
+export type MarkdownHumanMentionToken = { marker: string; profileId: string; label: string };
+
 type MarkdownCodeBlockChrome = "copy" | "none";
 type MarkdownCodeBlockInteraction = "interactive" | "static";
 type MarkdownTableInteractions = "enabled" | "none";
@@ -8,15 +12,21 @@ export type MarkdownRenderOptions = {
   codeBlockChrome?: MarkdownCodeBlockChrome;
   codeBlockInteraction?: MarkdownCodeBlockInteraction;
   fileLinks?: boolean;
+  githubRepo?: { owner: string; repo: string } | null;
+  humanMentions?: readonly HumanMention[];
   interactiveImages?: boolean;
   linkFavicons?: boolean;
   progressBars?: boolean;
   mode?: MarkdownRenderMode;
+  remoteImages?: boolean;
   sessionLinks?: boolean;
   tableInteractions?: MarkdownTableInteractions;
 };
 
-export type MarkdownRenderEnv = Required<MarkdownRenderOptions>;
+export type MarkdownRenderEnv = Required<MarkdownRenderOptions> & {
+  streamingOpenFence?: boolean;
+  humanMentionTokens?: readonly MarkdownHumanMentionToken[];
+};
 
 export function normalizeMarkdownRenderOptions(
   options: MarkdownRenderOptions = {},
@@ -26,10 +36,13 @@ export function normalizeMarkdownRenderOptions(
     codeBlockChrome: options.codeBlockChrome ?? "copy",
     codeBlockInteraction: options.codeBlockInteraction ?? "static",
     fileLinks: options.fileLinks ?? false,
+    githubRepo: options.githubRepo ?? null,
+    humanMentions: options.humanMentions ?? [],
     interactiveImages: options.interactiveImages ?? false,
     linkFavicons: options.linkFavicons ?? false,
     progressBars: options.progressBars ?? false,
     mode: options.mode ?? "message",
+    remoteImages: options.remoteImages ?? options.mode === "document",
     sessionLinks: options.sessionLinks ?? false,
     tableInteractions: options.tableInteractions ?? "none",
   };

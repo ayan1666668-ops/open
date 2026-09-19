@@ -1,15 +1,23 @@
 export type SidebarSlotId =
   | "browser"
-  | "chat"
   | "companion"
+  | "conversation"
+  | "dashboard"
   | "desktop"
   | "detail"
   | "discussion"
+  | "portal"
   | "tasks"
   | "terminal"
-  | "workspace";
-export type SidebarPanel = { id: string; slot: SidebarSlotId };
-export type SidebarDock = "bottom" | "right";
+  | "workspace"
+  | `plugin:${string}/${string}`;
+export type SidebarPanel = {
+  id: string;
+  slot: SidebarSlotId;
+  environmentId?: string;
+  portalId?: string;
+};
+export type SidebarDock = "bottom" | "left" | "right";
 export type SidebarColumn = {
   id: string;
   side: "right";
@@ -20,8 +28,12 @@ export type SidebarColumn = {
 };
 export type SidebarLayout = {
   columns: SidebarColumn[];
+  mainPanelId?: string;
   dock?: SidebarDock;
-  /** The panel may stay open as a type picker after its last tab closes. */
   open?: boolean;
   expanded?: boolean;
+  /** null inherits the shared default; absence preserves a legacy saved layout verbatim. */
+  dashboardPresentationOverride?: "split" | "expanded" | null;
+  /** Focus the active side panel without swapping its saved main/side placement. */
+  expandedSide?: boolean;
 };

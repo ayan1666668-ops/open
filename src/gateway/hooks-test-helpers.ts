@@ -1,7 +1,7 @@
 // Gateway hook test fixtures.
 // Builds resolved hook config and IncomingMessage-like requests for tests.
-import { EventEmitter } from "node:events";
-import type { IncomingMessage } from "node:http";
+import { IncomingMessage } from "node:http";
+import { Socket } from "node:net";
 import type { HooksConfigResolved } from "./hooks.js";
 
 /** Creates the default resolved hook config used by gateway hook tests. */
@@ -10,6 +10,7 @@ export function createHooksConfig(): HooksConfigResolved {
     basePath: "/hooks",
     token: "hook-secret",
     maxBodyBytes: 1024,
+    maxBodyBytesByPath: new Map(),
     mappings: [],
     agentPolicy: {
       defaultAgentId: "main",
@@ -41,10 +42,11 @@ export function createGatewayRequest(params: {
   if (params.authorization) {
     headers.authorization = params.authorization;
   }
-  return Object.assign(new EventEmitter(), {
+  const socket = new Socket();
+  Object.defineProperty(socket, "remoteAddress", { value: params.remoteAddress ?? "127.0.0.1" });
+  return Object.assign(new IncomingMessage(socket), {
     method: params.method ?? "GET",
     url: params.path,
     headers,
-    socket: { remoteAddress: params.remoteAddress ?? "127.0.0.1" },
-  }) as IncomingMessage;
+  });
 }
