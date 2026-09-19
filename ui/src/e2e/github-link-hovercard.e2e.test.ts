@@ -267,6 +267,7 @@ describeControlUiE2e("GitHub link hover cards", () => {
           SESSION_PULL_REQUESTS_SUBSCRIBE_METHOD,
           "projects.list",
           "forge.preview",
+          "forge.detail",
         ],
         deferredMethods: late ? ["projects.list"] : [],
         historyMessages: [
@@ -408,6 +409,7 @@ describeControlUiE2e("GitHub link hover cards", () => {
         ...defaultControlUiFeatureMethods,
         SESSION_PULL_REQUESTS_SUBSCRIBE_METHOD,
         "forge.preview",
+        "forge.detail",
       ],
       historyMessages: [
         {
