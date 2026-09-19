@@ -181,6 +181,7 @@ if (process.argv[2] === 'doctor' && process.argv.includes('--lint')) {
 }
 event('complete');\n`,
           );
+          // oxlint-disable-next-line typescript/unbound-method -- Capture before spying; every call supplies the lifecycle instance via .call.
           const budget = UpdateFinalizationLifecycle.prototype.budget;
           vi.spyOn(UpdateFinalizationLifecycle.prototype, "budget").mockImplementation(
             function (this: UpdateFinalizationLifecycle, phase) {
