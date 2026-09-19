@@ -488,7 +488,10 @@ export async function executeDispatch(state: PrepareDispatchExecutionReadyState)
         ? { text: GENERIC_EXTERNAL_RUN_FAILURE_TEXT, isError: true }
         : undefined;
     }
-    return buildTerminalAgentRunFailureReplyPayload();
+    return buildTerminalAgentRunFailureReplyPayload({
+      replyExpectation: state.replyOperationRunState.replyCompletion?.expectation ?? "required",
+      visibleReplyDelivered: true,
+    });
   });
   try {
     if (isDispatchOperationAborted()) {

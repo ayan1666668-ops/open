@@ -147,6 +147,7 @@ export async function executeFollowupTurn(params: {
       resolveVerboseProgressVisibility: () => progressAllowed() && shouldEmitVerboseToolResult(),
     });
   let progressChain: Promise<void> = Promise.resolve();
+  let visibleReplyDelivered = false;
   let pendingProgressTaskFailure: unknown;
   const pendingWorkTasks = new Set<Promise<void>>();
   const enqueueProgress = (deliver: () => Promise<void> | void): Promise<void> => {
@@ -168,6 +169,7 @@ export async function executeFollowupTurn(params: {
     let result: boolean | void = false;
     await enqueueProgress(async () => {
       result = await deliver();
+      visibleReplyDelivered ||= result !== false;
       completed = true;
     });
     return completed ? result : false;
@@ -389,6 +391,10 @@ export async function executeFollowupTurn(params: {
           sessionCtx,
           replyOperation: turn.operation,
           opts: progressOpts,
+          resolveVisibleReplyDelivery: async () => {
+            await drainPendingWork();
+            return visibleReplyDelivered;
+          },
           typingSignals,
           blockReplyPipeline: null,
           blockStreamingEnabled: false,
@@ -430,12 +436,15 @@ export async function executeFollowupTurn(params: {
           storePath: turn.session.kind === "session" ? turn.session.storePath : undefined,
           resolvedVerboseLevel: currentVerboseLevel() ?? "off",
           toolProgressDetail: defaults.toolProgressDetail,
-          onCompactionNoticePayload: (payload) =>
-            enqueueProgress(() =>
-              progressAllowed()
-                ? params.onCompactionNoticePayload(payload, { runId: turn.runId })
-                : undefined,
-            ),
+          onCompactionNoticePayload: async (payload) => {
+            await enqueueProgressResult(async () => {
+              if (!progressAllowed()) {
+                return false;
+              }
+              await params.onCompactionNoticePayload(payload, { runId: turn.runId });
+              return true;
+            });
+          },
         });
       const recorder = turn.queued.userTurnTranscriptRecorder;
       // Queued execution outlives its ingress scope. Re-enter the exact source
@@ -457,6 +466,8 @@ export async function executeFollowupTurn(params: {
           kind: "rejected",
           payload: buildTerminalAgentRunFailureReplyPayload({
             isHeartbeat,
+            replyExpectation: terminalReplyExpectation,
+            visibleReplyDelivered,
           }),
         },
       };

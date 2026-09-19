@@ -9,6 +9,7 @@ import {
   type ReplyCompletion,
   type ReplyDeliveryObserver,
   type ReplyDeliveryState,
+  type ReplyExpectation,
 } from "../../agents/reply-completion.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import {
@@ -358,6 +359,7 @@ export async function handleReplyAgentRunError(
   context: {
     resolveVisibleReplyDelivery: () => Promise<boolean>;
     isHeartbeat: boolean;
+    replyExpectation: ReplyExpectation;
     isRestartRecoveryArmed: () => boolean;
     replyOperation: ReplyOperation;
     resolvedVerboseLevel: VerboseLevel;
@@ -368,6 +370,7 @@ export async function handleReplyAgentRunError(
   const {
     resolveVisibleReplyDelivery,
     isHeartbeat,
+    replyExpectation,
     isRestartRecoveryArmed,
     replyOperation,
     resolvedVerboseLevel,
@@ -425,7 +428,9 @@ export async function handleReplyAgentRunError(
   const visibleReplyDelivered = await resolveVisibleReplyDelivery();
   if (!isHeartbeat && visibleReplyDelivered && !replyOperation.abortSignal.aborted) {
     replyOperation.fail("run_failed", error);
-    return returnWithQueuedFollowupDrain(buildTerminalAgentRunFailureReplyPayload());
+    return returnWithQueuedFollowupDrain(
+      buildTerminalAgentRunFailureReplyPayload({ replyExpectation, visibleReplyDelivered }),
+    );
   }
   replyOperation.fail("run_failed", error);
   // Keep the followup queue moving even when an unexpected exception escapes

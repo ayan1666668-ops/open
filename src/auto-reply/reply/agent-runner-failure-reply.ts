@@ -39,7 +39,7 @@ import {
 import { isAgentHarnessPreflightError } from "../../agents/harness/errors.js";
 import { isProviderAuthError } from "../../agents/model-auth-runtime-shared.js";
 import { buildProviderAuthRecoveryHint } from "../../agents/provider-auth-recovery-hint.js";
-import type { ReplyCompletion } from "../../agents/reply-completion.js";
+import type { ReplyCompletion, ReplyExpectation } from "../../agents/reply-completion.js";
 import { formatErrorMessage } from "../../infra/errors.js";
 import { extractErrorHttpStatus } from "../../shared/assistant-error-format.js";
 import { buildProviderLoginRecovery } from "../provider-login-recovery.js";
@@ -413,14 +413,33 @@ export function renderPostCompactionModelFailurePayload(payload: ReplyPayload): 
     : payload;
 }
 
-export function buildTerminalAgentRunFailureReplyPayload(
-  params: { isHeartbeat?: boolean } = {},
-): ReplyPayload {
-  const text = params.isHeartbeat
-    ? HEARTBEAT_EXTERNAL_RUN_FAILURE_TEXT
-    : GENERIC_EXTERNAL_RUN_FAILURE_TEXT;
+/** Optional silence hides generic boilerplate, not guidance or the outcome of visible work. */
+export function resolveAgentRunFailureText(params: {
+  text: string;
+  replyExpectation: ReplyExpectation;
+  isGenericRunnerFailure: boolean;
+  visibleReplyDelivered: boolean;
+}): string {
+  return params.replyExpectation === "optional" &&
+    params.isGenericRunnerFailure &&
+    !params.visibleReplyDelivered
+    ? SILENT_REPLY_TOKEN
+    : params.text;
+}
+
+export function buildTerminalAgentRunFailureReplyPayload(params: {
+  isHeartbeat?: boolean;
+  replyExpectation: ReplyExpectation;
+  visibleReplyDelivered: boolean;
+}): ReplyPayload {
   return markAgentRunFailureReplyPayload({
-    text,
+    text: resolveAgentRunFailureText({
+      ...params,
+      text: params.isHeartbeat
+        ? HEARTBEAT_EXTERNAL_RUN_FAILURE_TEXT
+        : GENERIC_EXTERNAL_RUN_FAILURE_TEXT,
+      isGenericRunnerFailure: !params.isHeartbeat,
+    }),
   });
 }
 

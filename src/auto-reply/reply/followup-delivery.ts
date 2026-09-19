@@ -41,6 +41,7 @@ import { enqueueFollowupRun, resolveQueueSettings, type FollowupRun } from "./qu
 import type { ReplyDispatchKind } from "./reply-dispatcher.types.js";
 import { isRoutableChannel, routeReply } from "./route-reply.js";
 import {
+  isSyntheticSourceReplyTurn,
   resolveSourceReplyExpectation,
   resolveSourceReplyVisibilityPolicy,
 } from "./source-reply-delivery-mode.js";
@@ -123,7 +124,17 @@ export async function resolveFollowupDeliveryDecision(params: {
       },
       cfg: turn.config,
     });
-  const isInteractive = terminalReplyExpectation === "required";
+  const isInteractive =
+    terminalReplyExpectation === "required" ||
+    (!isSyntheticSourceReplyTurn({ inputProvenance: turn.queued.run.inputProvenance }) &&
+      !isInternalMessageChannel(
+        turn.queued.originatingChannel ?? turn.queued.run.messageProvider,
+      ) &&
+      Boolean(
+        turn.queued.originatingTo?.trim() ||
+        opts?.onBlockReply ||
+        turn.queued.queuedFollowupReplyDisposition?.kind === "deliver",
+      ));
   const deliveryContext = {
     cfg: turn.config,
     messageProvider: turn.queued.run.messageProvider,
@@ -280,7 +291,10 @@ export async function resolveFollowupDeliveryDecision(params: {
     ? undefined
     : buildWaitingStatusPayload(waitingStatusParams);
   const fallbackPayload = accounting.terminalFailurePayload
-    ? isInteractive && completion.outcome === "missing"
+    ? isInteractive &&
+      completion.outcome !== "delivered" &&
+      completion.outcome !== "pending" &&
+      completion.outcome !== "blocked"
       ? sourcePolicy.sourceReplyDeliveryMode === "message_tool_only"
         ? markReplyPayloadForSourceSuppressionDelivery(accounting.terminalFailurePayload)
         : accounting.terminalFailurePayload

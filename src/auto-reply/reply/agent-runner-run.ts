@@ -114,15 +114,16 @@ export async function runReplyAgent(
   const activeRunQueueMode = effectiveResetTriggered ? "interrupt" : resolvedQueue.mode;
 
   const isHeartbeat = opts?.isHeartbeat === true;
-  followupRun.run.terminalReplyExpectation ??= resolveSourceReplyExpectation({
-    ctx: {
-      ...sessionCtx,
-      InboundEventKind: followupRun.currentInboundEventKind ?? sessionCtx.InboundEventKind,
-      InputProvenance: followupRun.run.inputProvenance ?? sessionCtx.InputProvenance,
-    },
-    cfg: followupRun.run.config,
-    isHeartbeat,
-  });
+  const replyExpectation = (followupRun.run.terminalReplyExpectation ??=
+    resolveSourceReplyExpectation({
+      ctx: {
+        ...sessionCtx,
+        InboundEventKind: followupRun.currentInboundEventKind ?? sessionCtx.InboundEventKind,
+        InputProvenance: followupRun.run.inputProvenance ?? sessionCtx.InputProvenance,
+      },
+      cfg: followupRun.run.config,
+      isHeartbeat,
+    }));
   let didDeliverVisiblePartialReply = false;
   const onPartialReply = opts?.onPartialReply;
   const runOpts = onPartialReply
@@ -506,7 +507,7 @@ export async function runReplyAgent(
         `failed to flush streamed reply blocks before surfacing run failure: ${String(flushError)}`,
       );
     }
-    return didDeliverVisiblePartialReply || blockReplyPipeline?.didStreamTerminalReply?.() === true;
+    return didDeliverVisiblePartialReply || blockReplyPipeline?.didStream() === true;
   };
   const replySessionKey = sessionKey ?? followupRun.run.sessionKey;
   const replyRouteThreadId = resolveRoutedDeliveryThreadId({
@@ -676,6 +677,7 @@ export async function runReplyAgent(
     return await handleReplyAgentRunError(error, {
       resolveVisibleReplyDelivery,
       isHeartbeat,
+      replyExpectation,
       isRestartRecoveryArmed,
       replyOperation,
       resolvedVerboseLevel,

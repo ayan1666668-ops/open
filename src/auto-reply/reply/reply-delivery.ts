@@ -8,7 +8,7 @@ import {
 } from "../reply-payload.js";
 import { SILENT_REPLY_TOKEN } from "../tokens.js";
 import type { BlockReplyContext, ReplyPayload, ReplyThreadingPolicy } from "../types.js";
-import { deliverBlockReply } from "./block-reply-delivery.js";
+import { deliverBlockReply, hasBlockReplyDeliveryCustody } from "./block-reply-delivery.js";
 import type { BlockReplyPipeline } from "./block-reply-pipeline.js";
 import { parseReplyDirectives } from "./reply-directives.js";
 import { resolveReplyDispatchErrorOutcome } from "./reply-dispatch-outcome.js";
@@ -22,6 +22,21 @@ export type DirectBlockDelivery = Awaited<ReturnType<typeof deliverBlockReply>> 
   /** Captured at settlement; later source-completeness changes do not rewrite this fact. */
   terminalDeliveryConfirmed?: true;
 };
+
+/** Visible or uncertain output needs a failure outcome, even if it was not a final answer. */
+export async function resolveReplyFailureVisibility(
+  resolveVisibleReplyDelivery: (() => Promise<boolean>) | undefined,
+  directBlockDeliveries: readonly DirectBlockDelivery[],
+): Promise<boolean> {
+  return (
+    (await resolveVisibleReplyDelivery?.()) === true ||
+    directBlockDeliveries.some(
+      (delivery) =>
+        hasOutboundReplyContent(delivery.payload, { trimText: true }) &&
+        (delivery.outcome === "delivered" || hasBlockReplyDeliveryCustody(delivery)),
+    )
+  );
+}
 
 /** Parses inline reply directives into payload fields and silent-reply state. */
 export function normalizeReplyPayloadDirectives(params: {

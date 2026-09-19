@@ -46,6 +46,7 @@ import { createUserTurnTranscriptRecorder } from "../../sessions/user-turn-trans
 import { normalizeSessionDeliveryState } from "../../utils/delivery-context.shared.js";
 import type { TemplateContext } from "../templating.js";
 import { createReplyAgentRestartRecoveryController } from "./agent-runner-execute.js";
+import { registerImmediateFailurePolicyCases } from "./agent-runner.runreplyagent.failure-policy.cases.js";
 import { registerRequiredReplyCompletionCases } from "./agent-runner.runreplyagent.required-reply.cases.js";
 import {
   mockAcceptedWaitingStatusRun,
@@ -2277,35 +2278,6 @@ describe("runReplyAgent heartbeat followup guard", () => {
     },
   );
 
-  it.each([true, undefined, false])(
-    "reports provider failure after a group partial with visibility %s",
-    async (callbackResult) => {
-      const onPartialReply = vi.fn(async () => callbackResult);
-      state.runEmbeddedAgentMock.mockImplementationOnce(async (params: AgentRunParams) => {
-        await params.onPartialReply?.({ text: "partial answer" });
-        throw new Error("model stream failed");
-      });
-      const { run } = createMinimalRun({
-        blockStreamingEnabled: false,
-        opts: { onPartialReply, preserveProgressCallbackStartOrder: true },
-        sessionCtx: {
-          ChatType: "group",
-          SessionKey: "agent:test:telegram:group:-100123",
-        },
-      });
-
-      const result = await run();
-      const payload = Array.isArray(result) ? result[0] : result;
-
-      expect(payload).toMatchObject({
-        text: GENERIC_EXTERNAL_RUN_FAILURE_TEXT,
-        isError: true,
-      });
-      expect(onPartialReply).toHaveBeenCalledOnce();
-      expect(state.runEmbeddedAgentMock).toHaveBeenCalledOnce();
-    },
-  );
-
   it.each([
     ["accepted answer", { text: "answer block" }],
     ["in-flight answer", { text: "answer block" }],
@@ -2314,7 +2286,8 @@ describe("runReplyAgent heartbeat followup guard", () => {
     ["reasoning", { text: "internal reasoning", isReasoning: true }],
     ["commentary", { text: "working on it", isCommentary: true }],
     ["rejected answer", { text: "answer block" }],
-  ])("settles provider failure after %s block delivery", async (label, payload) => {
+  ])("settles optional provider failure after %s block delivery", async (label, payload) => {
+    const runState: ReplyOperationRunState = {};
     const replyOperation =
       label === "aborted answer"
         ? createReplyOperation({
@@ -2351,18 +2324,29 @@ describe("runReplyAgent heartbeat followup guard", () => {
     const { run } = createMinimalRun({
       replyOperation,
       blockStreamingEnabled: true,
-      opts: { onBlockReply, reasoningPayloadsEnabled: true, commentaryPayloadsEnabled: true },
+      opts: {
+        onBlockReply,
+        reasoningPayloadsEnabled: true,
+        commentaryPayloadsEnabled: true,
+        [REPLY_OPERATION_RUN_STATE]: runState,
+      },
       sessionCtx: { ChatType: "group" },
+      runOverrides: { terminalReplyExpectation: "optional" },
     });
 
     const result = await run();
     await blockFlush;
     const reply = Array.isArray(result) ? result[0] : result;
 
-    expect(reply).toMatchObject({
-      text: label === "aborted answer" ? "NO_REPLY" : GENERIC_EXTERNAL_RUN_FAILURE_TEXT,
-      ...(label === "aborted answer" ? {} : { isError: true }),
-    });
+    if (label === "aborted answer" || label === "rejected answer") {
+      expect(reply?.text).toBe("NO_REPLY");
+    } else {
+      expect(reply).toMatchObject({ isError: true, text: expect.any(String) });
+      expect(reply?.text).not.toBe("NO_REPLY");
+    }
+    if (label !== "aborted answer") {
+      expect(resolveReplyOperationAgentTurn(runState)).toBe("failed");
+    }
   });
 
   it("rethrows after a delivered partial without visible content", async () => {
@@ -4855,6 +4839,8 @@ describe("runReplyAgent typing (heartbeat)", () => {
       await helper;
     }
   });
+
+  registerImmediateFailurePolicyCases({ createMinimalRun, state });
 
   registerWaitingStatusCases({
     createMinimalRun,

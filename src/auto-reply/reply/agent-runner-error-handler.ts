@@ -16,6 +16,7 @@ import {
 } from "../../agents/failover/user-copy.js";
 import { isAgentHarnessPreflightError } from "../../agents/harness/errors.js";
 import { LiveSessionModelSwitchError } from "../../agents/live-model-switch-error.js";
+import { resolveReplyExpectation } from "../../agents/reply-completion.js";
 import { formatErrorMessage } from "../../infra/errors.js";
 import { CommandLaneClearedError, GatewayDrainingError } from "../../process/command-queue.js";
 import { defaultRuntime } from "../../runtime.js";
@@ -29,6 +30,7 @@ import {
   isNonDirectConversationContext,
   isVerboseFailureDetailEnabled,
   markAgentRunFailureReplyPayload,
+  resolveAgentRunFailureText,
   resolveReplyFailureSummary,
   resolveReplyFailoverFacts,
 } from "./agent-runner-failure-reply.js";
@@ -56,6 +58,7 @@ export async function handleAgentExecutionError(params: {
   liveModelSwitchRetries: number;
   shouldSurfaceToControlUi: boolean;
   timing: AgentTurnTimingTracker;
+  resolveVisibleReplyDelivery: () => Promise<boolean>;
   modelPatch: { fail: (error: unknown) => Promise<void> };
 }): Promise<ErrorAction> {
   const turn = params.turn;
@@ -85,11 +88,22 @@ export async function handleAgentExecutionError(params: {
     return terminal;
   };
   const settleFailure = async (
-    payload: ReplyPayload,
+    payload: ReplyPayload & { text: string },
+    isGenericRunnerFailure = false,
   ): Promise<Extract<AgentTurnInternalResult, { kind: "final" }>> => {
     takePendingLifecycleTerminal().emit("error", err);
     turn.replyOperation?.fail("run_failed", err);
     await params.modelPatch.fail(err);
+    const replyExpectation = resolveReplyExpectation(turn.followupRun.run);
+    payload.text = resolveAgentRunFailureText({
+      text: payload.text,
+      replyExpectation,
+      isGenericRunnerFailure,
+      visibleReplyDelivered:
+        replyExpectation === "optional" && isGenericRunnerFailure
+          ? await params.resolveVisibleReplyDelivery()
+          : false,
+    });
     return {
       kind: "final",
       payload: markAgentRunFailureReplyPayload(payload),
@@ -166,7 +180,7 @@ export async function handleAgentExecutionError(params: {
     const text = params.shouldSurfaceToControlUi
       ? renderControlUiAgentFailureCopy(message)
       : externalReply.text;
-    return await settleFailure({ text });
+    return await settleFailure({ text }, externalReply.isGenericRunnerFailure);
   }
   const failoverFacts = resolveReplyFailoverFacts(err, message);
   const failureSummary = resolveReplyFailureSummary({
@@ -268,10 +282,15 @@ export async function handleAgentExecutionError(params: {
           : turn.isHeartbeat
             ? HEARTBEAT_EXTERNAL_RUN_FAILURE_TEXT
             : GENERIC_EXTERNAL_RUN_FAILURE_TEXT)));
-  return await settleFailure({
-    text: fallbackText,
-    ...(externalRunFailureReply?.presentation
-      ? { presentation: externalRunFailureReply.presentation }
-      : {}),
-  });
+  return await settleFailure(
+    {
+      text: fallbackText,
+      ...(externalRunFailureReply?.presentation
+        ? { presentation: externalRunFailureReply.presentation }
+        : {}),
+    },
+    !failureSummary &&
+      !isContextOverflow &&
+      (externalRunFailureCandidate?.isGenericRunnerFailure ?? !turn.isHeartbeat),
+  );
 }
