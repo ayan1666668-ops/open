@@ -1,5 +1,9 @@
 import { resolveSendableOutboundReplyParts } from "openclaw/plugin-sdk/reply-payload";
-import { copyReplyPayloadMetadata, type ReplyPayload } from "../../auto-reply/reply-payload.js";
+import {
+  copyReplyPayloadMetadata,
+  getReplyPayloadMetadata,
+  type ReplyPayload,
+} from "../../auto-reply/reply-payload.js";
 import { normalizeMediaReferenceForComparison } from "../../media/media-reference-comparison.js";
 import { parseInlineDirectives, sanitizeReplyDirectiveId } from "../../utils/directive-tags.js";
 import { sanitizeAssistantDisplayText } from "./chat-assistant-content.js";
@@ -134,6 +138,37 @@ function replyDisplayText(payload: ReplyPayload): string {
   return sanitizeAssistantDisplayText(payload.text) ?? "";
 }
 
+function haveCompatibleReplyOwners(left: ReplyPayload, right: ReplyPayload): boolean {
+  const leftMetadata = getReplyPayloadMetadata(left);
+  const rightMetadata = getReplyPayloadMetadata(right);
+  const leftAuthority = leftMetadata?.sessionWriterDeliveryAuthority;
+  const rightAuthority = rightMetadata?.sessionWriterDeliveryAuthority;
+  if (
+    leftAuthority &&
+    rightAuthority &&
+    (leftAuthority.agentId !== rightAuthority.agentId ||
+      leftAuthority.expectedLifecycleRevision !== rightAuthority.expectedLifecycleRevision ||
+      leftAuthority.expectedSessionId !== rightAuthority.expectedSessionId ||
+      leftAuthority.expectedWriterRunId !== rightAuthority.expectedWriterRunId ||
+      leftAuthority.sessionKey !== rightAuthority.sessionKey ||
+      leftAuthority.storePath !== rightAuthority.storePath)
+  ) {
+    return false;
+  }
+  const leftMirror = leftMetadata?.sourceReplyTranscriptMirror;
+  const rightMirror = rightMetadata?.sourceReplyTranscriptMirror;
+  return !(
+    leftMirror &&
+    rightMirror &&
+    (leftMirror.agentId !== rightMirror.agentId ||
+      leftMirror.expectedSessionId !== rightMirror.expectedSessionId ||
+      leftMirror.idempotencyKey !== rightMirror.idempotencyKey ||
+      leftMirror.sessionKey !== rightMirror.sessionKey ||
+      leftMirror.transcriptOwner !== rightMirror.transcriptOwner ||
+      leftMirror.transcriptWriteBlocked !== rightMirror.transcriptWriteBlocked)
+  );
+}
+
 /** Fold command block replies into the final payload list without duplicating text or media. */
 export function selectChatSendFinalReplyPayloads(params: {
   deliveredReplies: readonly DeliveredReply[];
@@ -173,19 +208,24 @@ export function selectChatSendFinalReplyPayloads(params: {
         const finalDisplayText = replyDisplayText(entry.payload);
         const matchingMediaBlockEntry =
           finalMediaUrls.length > 0
-            ? commandBlockPayloadEntriesForDelivery.find((candidate) =>
-                mediaSetsMatch(replyMediaDedupeKeys(candidate.payload), finalMediaKeys),
+            ? commandBlockPayloadEntriesForDelivery.find(
+                (candidate) =>
+                  haveCompatibleReplyOwners(candidate.payload, entry.payload) &&
+                  mediaSetsMatch(replyMediaDedupeKeys(candidate.payload), finalMediaKeys),
               )
             : undefined;
         const matchingTextBlockEntry = finalDisplayText
           ? commandBlockPayloadEntriesForDelivery.find(
-              (candidate) => replyDisplayText(candidate.payload) === finalDisplayText,
+              (candidate) =>
+                haveCompatibleReplyOwners(candidate.payload, entry.payload) &&
+                replyDisplayText(candidate.payload) === finalDisplayText,
             )
           : undefined;
         const matchingMediaAndTextBlockEntry =
           finalMediaUrls.length > 0 && finalDisplayText
             ? commandBlockPayloadEntriesForDelivery.find(
                 (candidate) =>
+                  haveCompatibleReplyOwners(candidate.payload, entry.payload) &&
                   replyDisplayText(candidate.payload) === finalDisplayText &&
                   mediaSetsMatch(replyMediaDedupeKeys(candidate.payload), finalMediaKeys),
               )
