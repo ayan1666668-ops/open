@@ -42,9 +42,7 @@ describe("Codex image response diagnostics", () => {
     },
     {
       name: "completed explanation supersedes stale streamed refusal",
-      streamed: [
-        { type: "message", content: [{ type: "refusal", refusal: "Stale refusal" }] },
-      ],
+      streamed: [{ type: "message", content: [{ type: "refusal", refusal: "Stale refusal" }] }],
       output: [
         {
           type: "message",

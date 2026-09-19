@@ -467,7 +467,6 @@ function inferImageUploadFileName(params: {
   return `image-${params.index + 1}.${ext}`;
 }
 
-
 function createOpenAIImageGenerationProviderBase(params: {
   id: "openai";
   label: string;

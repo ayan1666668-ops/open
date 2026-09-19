@@ -142,11 +142,11 @@ function extractCodexImageDiagnostic(
   for (const output of [completed ?? [], streamed]) {
     let providerText: string | undefined;
     for (const entry of output) {
-      const parts = entry.type === "message" ? entry.content ?? [] : [entry];
+      const parts = entry.type === "message" ? (entry.content ?? []) : [entry];
       for (const part of parts) {
         const raw =
           part.type === "refusal"
-            ? part.refusal ?? part.text
+            ? (part.refusal ?? part.text)
             : part.type === "output_text"
               ? part.text
               : undefined;
