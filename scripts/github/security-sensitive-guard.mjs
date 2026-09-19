@@ -50,7 +50,7 @@ function renderComment({ changes, pullRequest, approval }) {
       );
     } else {
       lines.push(
-        "A human with repository `maintain` or `admin` access must post a new comment containing `/allow-security-sensitive-change` after this notice names the current revision. SecOps approval is not required for this tier.",
+        "A GitHub user account with repository `maintain` or `admin` access must post a new comment containing `/allow-security-sensitive-change` after this notice names the current revision. SecOps approval is not required for this tier.",
         "Use only the command, or include `/allow-dependencies-change` on a separate line if both guards need approval. A normal GitHub Approve review does not satisfy this check.",
       );
     }
@@ -66,12 +66,15 @@ function renderComment({ changes, pullRequest, approval }) {
   return lines.join("\n");
 }
 
-async function main() {
-  const guard = await openGuard({
-    context: "openclaw/security-sensitive-review",
-    commentMarker: marker,
-    approvalCommand: "/allow-security-sensitive-change",
-  });
+export async function reviewSecuritySensitiveChanges(prepared) {
+  const guard = await openGuard(
+    {
+      context: "openclaw/security-sensitive-review",
+      commentMarker: marker,
+      approvalCommand: "/allow-security-sensitive-change",
+    },
+    prepared,
+  );
   if (!guard) {
     return;
   }
@@ -132,7 +135,7 @@ async function main() {
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  main().catch(
+  reviewSecuritySensitiveChanges().catch(
     /** @param {unknown} error */ (error) => {
       console.error(error instanceof Error ? error.message : String(error));
       process.exitCode = 1;

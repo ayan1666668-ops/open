@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
-import { createGitHubApi } from "./guard-shared.mjs";
+import { createGitHubApi, publishGuardStatus } from "./guard-shared.mjs";
+import { securityReviewRollout } from "./security-review-rollout.mjs";
 
 const requestMarker = "<!-- openclaw:approval-request ";
 const approvalCommands = new Set([
@@ -14,23 +15,22 @@ function pullRequestNumber(event) {
   if (event.issue?.pull_request && event.comment) {
     return event.issue.number;
   }
-  if (/^[1-9][0-9]*$/u.test(event.inputs?.pr_number ?? "")) {
-    return Number(event.inputs.pr_number);
-  }
   return null;
 }
 
 function snapshot(pr) {
+  // Approval binds to the PR head and target branch. Unrelated pushes to the
+  // target move base.sha without a PR event, so they must not strand this check.
   return JSON.stringify([
     pr.number,
     pr.state,
+    pr.created_at,
     pr.draft,
     pr.user?.id,
     pr.user?.login,
     pr.user?.type,
     pr.base?.repo?.id,
     pr.base?.ref,
-    pr.base?.sha,
     pr.head?.repo?.id,
     pr.head?.ref,
     pr.head?.sha,
@@ -42,33 +42,27 @@ function snapshot(pr) {
 export async function assertGuardUnchanged(guard) {
   const current = await guard.api.request(guard.pullPath);
   if (snapshot(current) !== snapshot(guard.pullRequest)) {
-    throw new Error("The pull request changed during security review. Rerun the guard.");
+    throw new Error(
+      "The pull request changed during security review; the next automatic event will evaluate it.",
+    );
   }
   return current;
 }
 
-async function publishStatus(guard, state, description) {
-  await guard.api.request(
-    `/repos/${guard.owner}/${guard.repo}/statuses/${guard.pullRequest.head.sha}`,
-    {
-      method: "POST",
-      body: JSON.stringify({
-        context: guard.context,
-        state,
-        description,
-        target_url: guard.runUrl,
-      }),
-    },
-  );
-}
-
-export async function openGuard({ context, commentMarker, approvalCommand }) {
+export async function readGuardReview() {
   const { GITHUB_TOKEN, GITHUB_EVENT_PATH, GITHUB_REPOSITORY, GITHUB_RUN_ID } = process.env;
   if (!GITHUB_TOKEN || !GITHUB_EVENT_PATH || !GITHUB_REPOSITORY) {
     throw new Error("GITHUB_TOKEN, GITHUB_EVENT_PATH, and GITHUB_REPOSITORY are required.");
   }
   const event = JSON.parse(await readFile(GITHUB_EVENT_PATH, "utf8"));
-  const number = pullRequestNumber(event);
+  // Only the trusted workflow resolver supplies this value, including CI completion events.
+  const selected = process.env.OPENCLAW_SECURITY_REVIEW_PR_NUMBER;
+  const number =
+    selected === undefined
+      ? pullRequestNumber(event)
+      : /^[1-9][0-9]*$/u.test(selected)
+        ? Number(selected)
+        : null;
   if (!Number.isSafeInteger(number) || number <= 0) {
     throw new Error("No valid pull request in the guard event.");
   }
@@ -76,10 +70,16 @@ export async function openGuard({ context, commentMarker, approvalCommand }) {
   const api = createGitHubApi(GITHUB_TOKEN, { userAgent: "openclaw-security-review" });
   const pullPath = `/repos/${owner}/${repo}/pulls/${number}`;
   const pullRequest = await api.request(pullPath);
+  const expectedHead = process.env.OPENCLAW_SECURITY_REVIEW_HEAD_SHA;
+  if (expectedHead !== undefined && expectedHead !== pullRequest.head?.sha) {
+    throw new Error(
+      "The PR head changed after scheduling; its next automatic event will evaluate it.",
+    );
+  }
   if (pullRequest.state !== "open" || pullRequest.draft) {
     return null;
   }
-  const guard = {
+  return {
     api,
     owner,
     repo,
@@ -87,22 +87,39 @@ export async function openGuard({ context, commentMarker, approvalCommand }) {
     pullRequest,
     pullPath,
     issuePath: `/repos/${owner}/${repo}/issues/${number}`,
-    context,
-    commentMarker,
-    approvalCommand,
     runUrl: `https://github.com/${owner}/${repo}/actions/runs/${GITHUB_RUN_ID}`,
   };
-  // Replace any previous green result before reading files or authority. A failed
-  // API request must leave the current revision waiting, never implicitly approved.
-  await publishStatus(guard, "pending", "Checking sensitive changes and maintainer review");
-  const files = await api.paginate(`${pullPath}/files`);
-  if (files.length !== pullRequest.changed_files) {
+}
+
+export async function openGuard({ context, commentMarker, approvalCommand }, prepared) {
+  const review = prepared ?? (await readGuardReview());
+  if (!review) {
+    return null;
+  }
+  const guard = { ...review, context, commentMarker, approvalCommand };
+  let rollout;
+  try {
+    rollout = review.rollout ?? (await securityReviewRollout(review));
+  } catch (error) {
+    await publishGuardStatus(guard, "failure", "Security review policy could not be evaluated");
+    throw error;
+  }
+  if (rollout.mode !== "enforced") {
+    console.log(`Security review: ${rollout.mode}.`);
+    return null;
+  }
+  // Invalidate previous approval before any fallible file or authority reads.
+  await publishGuardStatus(guard, "failure", "Security review has not completed");
+  review.files ??= await guard.api.paginate(`${guard.pullPath}/files`);
+  if (review.files.length !== guard.pullRequest.changed_files) {
     throw new Error(
       "GitHub did not return the complete changed-file list. Split the PR and retry.",
     );
   }
   await assertGuardUnchanged(guard);
-  return { ...guard, files };
+  guard.files = review.files;
+  review.guards?.push(guard);
+  return guard;
 }
 
 async function maintainerRole(guard, user) {
@@ -204,10 +221,11 @@ export async function findMaintainerApproval(guard) {
 }
 
 export async function finishGuard(guard, { description, requiresApproval = false }) {
+  guard.requiresApproval = requiresApproval;
   const approval = requiresApproval ? await findMaintainerApproval(guard) : null;
   await assertGuardUnchanged(guard);
   const allowed = !requiresApproval || approval !== null;
-  await publishStatus(
+  await publishGuardStatus(
     guard,
     allowed ? "success" : "failure",
     allowed ? description : "A maintainer must approve the current PR revision",

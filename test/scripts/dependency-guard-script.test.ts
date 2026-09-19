@@ -26,6 +26,7 @@ import { useAutoCleanupTempDirTracker } from "../helpers/temp-dir.js";
 
 const headSha = "a".repeat(40);
 const staleSha = "b".repeat(40);
+const rolloutSha = "c".repeat(40);
 const { isDependencyFile, isDependencyManifest, isPackageLockfile } = loadSecurityReviewPolicy();
 
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
@@ -35,6 +36,7 @@ const pullRequest = {
   number: 7,
   state: "open",
   draft: false,
+  created_at: "2026-01-01T00:00:00Z",
   changed_files: 1,
   user: { id: 1, login: "contributor", type: "User" },
   base: { ref: "main", sha: staleSha, repo: { id: 1, full_name: "openclaw/openclaw" } },
@@ -71,6 +73,15 @@ function runDependencyGuard(routes: Record<string, unknown> = {}, mode = "enforc
       logPath,
       routes: {
         [`GET ${pullPath}`]: pullRequest,
+        [`GET /repos/openclaw/openclaw/commits/${headSha}/statuses`]: [],
+        "GET /repos/openclaw/openclaw/pulls/152415": {
+          number: 152415,
+          state: "closed",
+          merged: true,
+          merged_at: "2025-12-01T00:00:00Z",
+          merge_commit_sha: rolloutSha,
+          base: { ref: "main", repo: { full_name: "openclaw/openclaw" } },
+        },
         [`GET ${pullPath}/files`]: [{ filename: "pnpm-workspace.yaml" }],
         [`GET ${issuePath}/comments`]: [],
         [`GET ${issuePath}/labels`]: [],
@@ -130,8 +141,25 @@ describe("dependency guard script", () => {
       "GET /repos/openclaw/openclaw/collaborators/contributor/permission": { role_name: role },
     });
     expect(result.status, result.stderr).toBe(0);
-    expect(result.statuses.map((call) => call.body?.state)).toEqual(["pending", "success"]);
+    expect(result.statuses.map((call) => call.body?.state)).toEqual(["failure", "success"]);
     expect(result.stdout).toContain("informational");
+  });
+
+  it("does not transfer command approval to a duplicate PR with the same head", () => {
+    const result = runDependencyGuard({
+      [`GET ${issuePath}/comments`]: [approvalNotice, approval],
+      [`GET /repos/openclaw/openclaw/commits/${headSha}/statuses`]: [
+        {
+          context: "openclaw/ci-gate",
+          description: "PR #8: Security review has not completed",
+          creator: { login: "github-actions[bot]", type: "Bot" },
+        },
+      ],
+      "GET /repos/openclaw/openclaw/pulls/8": { ...pullRequest, number: 8 },
+    });
+    expect(result.status).toBe(1);
+    expect(result.statuses.map((call) => call.body?.state)).not.toContain("success");
+    expect(result.statuses.at(-1)?.body?.state).toBe("failure");
   });
 
   it.each([
@@ -182,7 +210,7 @@ describe("dependency guard script", () => {
     });
     expect(result.status, result.stderr).toBe(allowed ? 0 : 1);
     expect(result.statuses.map((call) => call.body?.state)).toEqual([
-      "pending",
+      "failure",
       allowed ? "success" : "failure",
     ]);
     expect(result.stdout).toContain(
@@ -307,8 +335,30 @@ describe("dependency guard script", () => {
         },
       });
     }
-    expect(result.statuses.map((call) => call.body?.state)).toEqual(["pending"]);
+    expect(result.statuses.map((call) => call.body?.state)).toEqual(["failure"]);
   });
+
+  it.each(["detect", "autoscrub", "enforce"])(
+    "does not approve or autoscrub a grandfathered lockfile PR in %s mode",
+    (mode) => {
+      const result = runDependencyGuard(
+        {
+          [`GET ${pullPath}`]: { ...pullRequest, created_at: "2025-11-01T00:00:00Z" },
+          [`GET ${pullPath}/files`]: [{ filename: "pnpm-lock.yaml" }],
+          [`GET /repos/openclaw/openclaw/compare/${rolloutSha}...${headSha}`]: {
+            base_commit: { sha: rolloutSha },
+            merge_base_commit: { sha: staleSha },
+            status: "diverged",
+          },
+        },
+        mode,
+      );
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain("grandfathered");
+      expect(result.statuses).toEqual([]);
+      expect(result.calls.every((call) => call.method === "GET")).toBe(true);
+    },
+  );
 
   it("detects dependency guard file surfaces", () => {
     expect(isDependencyFile("pnpm-lock.yaml")).toBe(true);

@@ -523,18 +523,23 @@ async function setOutput(name, value) {
   await appendFile(outputPath, `${name}=${value}\n`);
 }
 
-async function main() {
-  const guard = await openGuard({
-    context: "openclaw/dependency-review",
-    commentMarker: dependencyGraphGuardMarker,
-    approvalCommand: dependencyApprovalCommand,
-  });
+export async function reviewDependencyChanges(
+  prepared,
+  mode = process.env.OPENCLAW_DEPENDENCY_GUARD_MODE ?? "enforce",
+) {
+  const guard = await openGuard(
+    {
+      context: "openclaw/dependency-review",
+      commentMarker: dependencyGraphGuardMarker,
+      approvalCommand: dependencyApprovalCommand,
+    },
+    prepared,
+  );
   if (!guard) {
     return;
   }
   const { api, owner, repo, pullRequest, issuePath, files } = guard;
   const { isDependencyFile, isDependencyManifest, isPackageLockfile } = loadSecurityReviewPolicy();
-  const mode = process.env.OPENCLAW_DEPENDENCY_GUARD_MODE ?? "enforce";
   if (!["detect", "autoscrub", "enforce"].includes(mode)) {
     throw new Error(`Unknown dependency guard mode: ${mode}`);
   }
@@ -727,7 +732,7 @@ async function main() {
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  main().catch(
+  reviewDependencyChanges().catch(
     /** @param {unknown} error */ (error) => {
       console.error(error instanceof Error ? error.message : error);
       process.exitCode = 1;

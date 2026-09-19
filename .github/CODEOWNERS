@@ -14,10 +14,12 @@
 /.github/zizmor.yml @openclaw/openclaw-secops
 
 # Security-review classification, authorization, publication, and trusted API reads.
-/.github/workflows/dependency-guard.yml @openclaw/openclaw-secops
-/.github/workflows/security-sensitive-guard.yml @openclaw/openclaw-secops
+/.github/workflows/security-review.yml @openclaw/openclaw-secops
 /scripts/github/dependency-guard.mjs @openclaw/openclaw-secops
 /scripts/github/security-sensitive-guard.mjs @openclaw/openclaw-secops
+/scripts/github/security-review.mjs @openclaw/openclaw-secops
+/scripts/github/security-review-event.mjs @openclaw/openclaw-secops
+/scripts/github/security-review-rollout.mjs @openclaw/openclaw-secops
 /.github/security-review-policy.yml @openclaw/openclaw-secops
 /.github/actions/setup-security-review/ @openclaw/openclaw-secops
 /scripts/github/security-review-policy.mjs @openclaw/openclaw-secops

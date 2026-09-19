@@ -145,11 +145,19 @@ All four scans use `scripts/install-periphery.sh` to install the checksum-pinned
 Security review separates product changes that maintainers can approve from the
 small set of security policy and enforcement files that require SecOps approval.
 
-| Change                                     | Human author with `maintain` or `admin` access   | Other authors, including bots                                                     |
-| ------------------------------------------ | ------------------------------------------------ | --------------------------------------------------------------------------------- |
-| Sensitive product code                     | Informational notice; no extra security approval | `/allow-security-sensitive-change` from a human with `maintain` or `admin` access |
-| Dependency changes requiring review        | Same maintainer exemption                        | `/allow-dependencies-change` from a human with either role                        |
-| SecOps-owned files in `.github/CODEOWNERS` | Independent SecOps code-owner approval           | Independent SecOps code-owner approval                                            |
+| Change                                     | User account with `maintain` or `admin` access   | Other authors                                                                    |
+| ------------------------------------------ | ------------------------------------------------ | -------------------------------------------------------------------------------- |
+| Sensitive product code                     | Informational notice; no extra security approval | `/allow-security-sensitive-change` from a user with `maintain` or `admin` access |
+| Dependency changes requiring review        | Same maintainer exemption                        | `/allow-dependencies-change` from a user with either role                        |
+| SecOps-owned files in `.github/CODEOWNERS` | Independent SecOps code-owner approval           | Independent SecOps code-owner approval                                           |
+
+The **Security Review** workflow runs both guards from trusted repository code.
+It publishes a commit status named `openclaw/ci-gate` that requires both the
+applicable approvals and a successful native CI gate from the latest CI run for
+the current PR head. The existing CI job retains its check with the same name.
+GitHub requires both the check and the commit status when both share a required
+context. Missing approval or incomplete CI fails the review status; CI completion
+automatically evaluates it again. Approval comments do not rerun the test suite.
 
 The **Security Sensitive Guard** publishes `openclaw/security-sensitive-review`.
 Its inventory in `.github/security-review-policy.yml` covers Gateway
@@ -174,18 +182,20 @@ Product exclusions never exempt dependency changes. The first matching product
 category supplies the notice's guidance; matches are not CODEOWNERS rules.
 
 The JavaScript loader handles validation and matching; it contains no path
-inventory. Invalid policy fails the guard with the head left pending. Both the
-YAML inventory and its loader require SecOps code-owner approval. Guard workflows
-load them from the trusted checkout and install only the locked parser/matcher
+inventory. Invalid policy fails security review. Both the
+YAML inventory and its loader require SecOps code-owner approval. The workflow
+loads them from the trusted checkout and installs only the locked parser/matcher
 runtime through `.github/actions/setup-security-review`, with lifecycle scripts
 and dependency caches disabled. That action's manifest and npm lock mirror the
 root dependency pins and `pnpm-lock.yaml`; update them together when those pins
 change. Approval decisions and dependency graph analysis remain in JavaScript.
 
-Both guards use current repository permissions. Only human users with `maintain`
-or `admin` access can grant command approval or receive the author exemption.
+Both guards use current repository permissions. Only GitHub user accounts with
+`maintain` or `admin` access can grant command approval or receive the author exemption.
 `write` access and organization membership are insufficient. A maintainer pushing
 to an external contributor's branch does not transfer the author exemption.
+Automation using a GitHub user account qualifies under the same role check;
+GitHub App bot identities do not qualify.
 
 For other authors, wait for the applicable guard notice to show the current PR
 commit, then post the command on its own line in a new PR comment:
@@ -207,11 +217,17 @@ comment. Editing an older comment does not grant fresh approval. Deleting an
 approval comment or removing its command revokes that approval; current roles
 are checked again whenever the guard runs.
 
+GitHub commit statuses apply to a commit rather than one PR. Before publishing
+success, security review verifies that the head belongs to only the current open
+PR targeting that base branch. Duplicate heads block approval so one PR cannot
+reuse another PR's author exemption or command. Close the duplicate PR or push a
+distinct commit; security review evaluates the affected PRs automatically.
+
 Each guard updates one PR comment with affected files, review guidance, the
 current revision, and the remaining action. The sensitive-change label remains
 after approval so reviewers can still identify the affected responsibility.
-Trusted `issue_comment` workflows reevaluate command comments and comment edits
-or deletions without a manual rerun. Ordinary new comments do not start guard
+Trusted `issue_comment` events reevaluate command comments and comment edits
+or deletions automatically. Ordinary new comments do not start guard
 jobs. Evaluation uses trusted repository code and GitHub metadata without
 executing contributor code or comment text.
 
@@ -227,47 +243,39 @@ security boundary against hostile repository writers: another workflow with a
 write token can publish the same status context. Binding the required context to
 the GitHub Actions app identifies the publisher app, not the specific workflow.
 This is an accepted tradeoff to avoid a separate credential-bearing publisher.
-Native CODEOWNERS review enforcement remains independent of these statuses.
+The existing maintainer CI bypass also permits bypassing missing command approvals.
+Native CODEOWNERS review enforcement remains independent of these statuses and
+that CI bypass.
 
 Results apply to the PR head evaluated by the workflow. New PR heads, base-branch
-retargeting, and command comment events reevaluate automatically; unrelated
-pushes to `main` do not. When changing the sensitive-path inventory, review policy, or
-maintainer permissions, refresh affected open PRs before merging them. From the
-default branch, run both workflows with the PR number:
-
-```bash
-gh workflow run security-sensitive-guard.yml --ref main -f pr_number=123
-gh workflow run dependency-guard.yml --ref main -f pr_number=123
-```
-
-Wait for the newly dispatched runs to finish and verify their status on the
-current PR head. Dispatch reevaluates current files, permissions, and command
-comments; it grants no approval and cannot initiate dependency autoscrub. Use this refresh
-instead of rerunning an old workflow revision after a policy change. This policy
-does not impose a new requirement to update every PR after every `main` push.
+retargeting, command comment events, and CI completion reevaluate automatically;
+unrelated pushes to `main` do not. Sensitive-path policy and permission changes
+take effect on the next automatic evaluation. Guard execution does not require
+manual dispatches or manual reruns.
 
 ### Enable enforcement after deployment
 
-Merging workflow files does not enable GitHub merge protection. After these
-workflows and the reviewed CODEOWNERS inventory are on the default branch:
+Merging workflow files does not enable GitHub merge protection. After the
+workflow and the reviewed CODEOWNERS inventory are on the default branch:
 
-1. Verify both review checks appear on a PR's current head, including after a
-   command approval and a subsequent push.
-2. Require `openclaw/security-sensitive-review` and `openclaw/dependency-review`
-   alongside the existing CI checks, bound to the GitHub Actions app.
-3. Enable **Require review from Code Owners** and **Dismiss stale pull request
+1. Keep `openclaw/ci-gate` required and bound to the GitHub Actions app. Preserve
+   the existing maintainer bypass and leave **Require branches to be up to date**
+   disabled. The two review statuses remain visible without separate required-check entries.
+2. Verify the native CI check and security review commit status on a PR's current
+   head, including after command approval, a subsequent push, and CI completion.
+   Confirm approval updates do not start another test run.
+3. In a separate ruleset with no bypass actors, enable **Require a pull request**,
+   **Require review from Code Owners**, and **Dismiss stale pull request
    approvals when new commits are pushed**. Verify that `openclaw-secops` is
    eligible for code ownership and that its approval is required for the hard
    inventory. Keep the general required approval count at zero if ordinary
    unowned changes should retain their existing review policy; code-owner review
    is a separate requirement. Existing release-manager entries also become required.
-4. Apply the review requirements to maintainers and admins with no routine admin
-   bypass. Keep any separately authorized emergency procedure attributable; a
-   CI bypass does not by itself authorize skipping SecOps review.
+4. Verify that the CI bypass cannot skip the separate code-owner review rule.
+   Requiring a PR also restricts direct pushes to the protected branch.
 
-Do not require the new status names before the default-branch workflows can
-publish them. Verify the live GitHub settings and the maintainer, external
-contributor, bot, and SecOps-owned-path cases before declaring enforcement active.
+Verify the live GitHub settings and the maintainer, external contributor,
+automation account, and SecOps-owned-path cases before declaring enforcement active.
 
 ## Fail-fast order
 
@@ -285,8 +293,15 @@ contributor branch after unrelated `main` changes. The reusable result does not
 replace the separate strict, App-owned test-merge check against current `main`.
 A later pending or failed rerun does not erase an earlier successful result for
 that unchanged head during the freshness window.
+Reusing a CI check does not replace the current security review commit status.
 
-The default-branch ruleset requires the GitHub Actions-owned `openclaw/ci-gate` check. Repository maintainers and admins have an audited break-glass bypass intended only for signed direct fast-forward landings; the organization ruleset still blocks deletion and non-fast-forward updates. Normal pull-request merges should continue to use the gate rather than bypass failed CI. The separate strict App-owned test-merge check still binds the head to current `main`.
+The default-branch ruleset requires the GitHub Actions-owned `openclaw/ci-gate`
+context. Repository maintainers and admins retain their CI bypass, including
+for missing command approvals. Normal pull-request merges use the gate. The
+separate code-owner ruleset requires a PR and the applicable owner approval even
+when CI is bypassed; organization rules still block deletion and non-fast-forward
+updates. The separate strict App-owned test-merge check still binds the head to
+current `main`.
 
 GitHub may mark superseded pull-request jobs as `cancelled` when a newer head lands. Treat that as CI noise unless the newest run for the same PR is also failing. Canonical `main` runs are not canceled after admission; each of the two parity slots replaces only its older pending run with the newest tip. Matrix jobs use `fail-fast: false`, and `build-artifacts` reports embedded channel, core-support-boundary, and gateway-watch failures directly instead of queuing tiny verifier jobs. The canonical-main CI concurrency key is versioned (`CI-v8-*`) so GitHub-side zombies in the old group cannot block the two-slot pipeline; runnable PR groups remain on `CI-v7-*`, while passive draft runs use `CI-draft-v1-*`. Manual full-suite runs use `CI-manual-v1-*` and do not cancel in-progress runs. The plugin-list startup-memory guard keeps a 400 MiB ceiling on self-hosted Blacksmith Linux and allows 425 MiB on GitHub-hosted Linux, whose RSS baseline is higher for the same built CLI. The startup-memory check finishes alone before other built-artifact checks start on every runner, so concurrent verifiers do not perturb the RSS measurement.
 

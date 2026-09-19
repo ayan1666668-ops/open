@@ -4,6 +4,7 @@ import { parseDocument } from "yaml";
 
 const policyPath = new URL("../../.github/security-review-policy.yml", import.meta.url);
 /** @type {{
+ *   rolloutPullRequest: number | undefined,
  *   isDependencyManifest: (filename: string) => boolean,
  *   isPackageLockfile: (filename: string) => boolean,
  *   isDependencyFile: (filename: string) => boolean,
@@ -59,8 +60,8 @@ function paths(value, location, nocase = false) {
   return (filename) => patterns.some((pattern) => pattern.match(filename));
 }
 
-// Load only after openGuard has made the head pending. Invalid policy must not
-// leave a previous success in place. The trusted checkout is immutable per run.
+// The trusted checkout is immutable per run. Callers must fail the current
+// revision if this policy cannot be loaded.
 export function loadSecurityReviewPolicy() {
   if (cachedPolicy) {
     return cachedPolicy;
@@ -74,7 +75,16 @@ export function loadSecurityReviewPolicy() {
     "exclude",
     "categories",
     "dependencies",
+    "rollout",
   ]);
+  let rolloutPullRequest;
+  if (policy.rollout !== undefined) {
+    const rollout = mapping(policy.rollout, "rollout", ["pull-request"]);
+    if (!Number.isSafeInteger(rollout["pull-request"]) || rollout["pull-request"] <= 0) {
+      invalid("rollout.pull-request must be a positive safe integer");
+    }
+    rolloutPullRequest = rollout["pull-request"];
+  }
   const excluded = Object.entries(mapping(policy.exclude, "exclude")).map(([name, value]) => {
     const rule = mapping(value, `exclude.${name}`, ["paths", "case-insensitive"]);
     if (rule["case-insensitive"] !== undefined && typeof rule["case-insensitive"] !== "boolean") {
@@ -103,6 +113,7 @@ export function loadSecurityReviewPolicy() {
   const isPackageLockfile = paths(dependencies.lockfiles, "dependencies.lockfiles");
   const isOtherDependencyFile = paths(dependencies.other, "dependencies.other");
   cachedPolicy = {
+    rolloutPullRequest,
     isDependencyManifest,
     isPackageLockfile,
     isDependencyFile: (filename) => isPackageLockfile(filename) || isOtherDependencyFile(filename),

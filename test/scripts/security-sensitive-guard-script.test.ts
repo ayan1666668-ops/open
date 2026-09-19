@@ -17,6 +17,15 @@ const headSha = "a".repeat(40);
 const author = { id: 1, login: "contributor", type: "User" };
 const approver = { id: 2, login: "maintainer", type: "User" };
 const pullPath = "/repos/openclaw/openclaw/pulls/7";
+const rolloutSha = "c".repeat(40);
+const rollout = {
+  number: 152415,
+  state: "closed",
+  merged: true,
+  merged_at: "2025-12-01T00:00:00Z",
+  merge_commit_sha: rolloutSha,
+  base: { ref: "main", repo: { full_name: "openclaw/openclaw" } },
+};
 const marker = "<!-- openclaw:security-sensitive-guard -->";
 const requestedAt = "2026-01-01T00:00:00Z";
 const notice = {
@@ -50,6 +59,7 @@ type Options = {
   event?: object;
   routes?: Record<string, unknown>;
   changedFiles?: number;
+  createdAt?: string;
   policy?: string;
   script?: "security-sensitive-guard" | "dependency-guard";
 };
@@ -64,6 +74,7 @@ function runGuard(options: Options = {}) {
     number: 7,
     state: "open",
     draft: false,
+    created_at: options.createdAt ?? "2026-01-01T00:00:00Z",
     user: { ...author, type: options.authorType ?? "User" },
     changed_files: options.changedFiles ?? files.length,
     head: { sha: headSha, ref: "change", repo: { id: 2 } },
@@ -71,6 +82,8 @@ function runGuard(options: Options = {}) {
   };
   const routes = {
     [`GET ${pullPath}`]: pr,
+    [`GET /repos/openclaw/openclaw/commits/${headSha}/statuses`]: [],
+    "GET /repos/openclaw/openclaw/pulls/152415": rollout,
     [`GET ${pullPath}/files`]: files,
     [`GET ${pullPath}/reviews`]: options.reviews ?? [],
     "GET /repos/openclaw/openclaw/issues/7/comments": options.comments ?? [notice],
@@ -95,6 +108,7 @@ function runGuard(options: Options = {}) {
       "scripts/github/security-sensitive-guard.mjs",
       "scripts/github/dependency-guard.mjs",
       "scripts/github/security-review-policy.mjs",
+      "scripts/github/security-review-rollout.mjs",
       "scripts/github/guard-review.mjs",
       "scripts/github/guard-shared.mjs",
       "scripts/lib/bounded-response.mjs",
@@ -153,8 +167,37 @@ describe("security-sensitive guard entry point", () => {
   it.each(["maintain", "admin"])("allows a %s author without extra approval", (authorRole) => {
     const result = runGuard({ authorRole });
     expect(result.status, result.stderr).toBe(0);
-    expect(result.statuses).toEqual(["pending", "success"]);
+    expect(result.statuses).toEqual(["failure", "success"]);
     expect(result.comment).toContain("Informational");
+  });
+
+  it("does not transfer a maintainer author's exemption to a duplicate PR with the same head", () => {
+    const duplicatePullRequest = {
+      number: 8,
+      state: "open",
+      draft: false,
+      created_at: "2026-01-01T00:00:00Z",
+      user: author,
+      changed_files: 1,
+      head: { sha: headSha, ref: "duplicate", repo: { id: 2 } },
+      base: { sha: "b".repeat(40), ref: "main", repo: { id: 1 } },
+    };
+    const result = runGuard({
+      authorRole: "maintain",
+      routes: {
+        [`GET /repos/openclaw/openclaw/commits/${headSha}/statuses`]: [
+          {
+            context: "openclaw/ci-gate",
+            description: "PR #8: Security review has not completed",
+            creator: { login: "github-actions[bot]", type: "Bot" },
+          },
+        ],
+        "GET /repos/openclaw/openclaw/pulls/8": duplicatePullRequest,
+      },
+    });
+    expect(result.status).toBe(1);
+    expect(result.statuses).not.toContain("success");
+    expect(result.statuses.at(-1)).toBe("failure");
   });
 
   it.each([
@@ -255,7 +298,7 @@ describe("security-sensitive guard entry point", () => {
   ])("requires a fresh command for $name", ({ options }) => {
     const result = runGuard(options);
     expect(result.status).toBe(1);
-    expect(result.statuses).toEqual(["pending", "failure"]);
+    expect(result.statuses).toEqual(["failure", "failure"]);
     expect(result.stderr).toContain("A maintainer must approve");
     expect(
       result.requests.some((request) => request.body?.labels?.includes("security-review-required")),
@@ -267,7 +310,7 @@ describe("security-sensitive guard entry point", () => {
     (approverRole) => {
       const result = runGuard({ comments: [notice, approval], approverRole, event: commentEvent });
       expect(result.status, result.stderr).toBe(0);
-      expect(result.statuses).toEqual(["pending", "success"]);
+      expect(result.statuses).toEqual(["failure", "success"]);
       expect(result.comment).toContain("@maintainer approved");
       expect(
         result.requests
@@ -288,7 +331,7 @@ describe("security-sensitive guard entry point", () => {
     "uses the %s comment event only as a PR locator and rereads live command authority",
     (action) => {
       const result = runGuard({ event: { ...commentEvent, action } });
-      expect(result.statuses).toEqual(["pending", "failure"]);
+      expect(result.statuses).toEqual(["failure", "failure"]);
     },
   );
 
@@ -301,7 +344,7 @@ describe("security-sensitive guard entry point", () => {
       body: `${marker}\n<!-- openclaw:approval-request ${JSON.stringify({ ...oldRecord, requestedAt })} -->`,
     };
     const result = runGuard({ comments: [oldNotice, approval], event: commentEvent });
-    expect(result.statuses).toEqual(["pending", "failure"]);
+    expect(result.statuses).toEqual(["failure", "failure"]);
     expect(result.comment).toContain(JSON.stringify({ head: headSha, base: "main" }));
     expect(result.comment).not.toContain('"requestedAt"');
   });
@@ -321,26 +364,15 @@ describe("security-sensitive guard entry point", () => {
     };
     const refreshed = runGuard({
       comments: [approvedNotice, approval],
-      event: { inputs: { pr_number: "7" } },
+      event: commentEvent,
     });
     expect(refreshed.status, refreshed.stderr).toBe(0);
     const revoked = runGuard({
       comments: [approvedNotice],
       event: { ...commentEvent, action: "deleted" },
     });
-    expect(revoked.statuses).toEqual(["pending", "failure"]);
+    expect(revoked.statuses).toEqual(["failure", "failure"]);
   });
-
-  it.each([
-    { comments: [notice], expected: "failure" },
-    { comments: [notice, approval], expected: "success" },
-  ])(
-    "refreshes policy from a dispatch without granting approval: $expected",
-    ({ comments, expected }) => {
-      const result = runGuard({ event: { inputs: { pr_number: "7" } }, comments });
-      expect(result.statuses).toEqual(["pending", expected]);
-    },
-  );
 
   it("ignores issue comments outside a PR", () => {
     const result = runGuard({ event: { ...commentEvent, issue: { number: 7 } } });
@@ -348,8 +380,8 @@ describe("security-sensitive guard entry point", () => {
     expect(result.requests).toEqual([]);
   });
 
-  it("rejects invalid dispatch PR numbers before making requests", () => {
-    const result = runGuard({ event: { inputs: { pr_number: "7/../../issues" } } });
+  it("rejects manual input-only events before making requests", () => {
+    const result = runGuard({ event: { inputs: { pr_number: "7" } } });
     expect(result.status).toBe(1);
     expect(result.requests).toEqual([]);
   });
@@ -361,14 +393,14 @@ describe("security-sensitive guard entry point", () => {
       },
     });
     expect(result.status).toBe(1);
-    expect(result.statuses).toEqual(["pending"]);
+    expect(result.statuses).toEqual(["failure"]);
   });
 
   it("refuses incomplete changed-file lists", () => {
     const result = runGuard({ changedFiles: 3001 });
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("complete changed-file list");
-    expect(result.statuses).toEqual(["pending"]);
+    expect(result.statuses).toEqual(["failure"]);
   });
 
   it("refuses success if the PR changes after approval is read", () => {
@@ -376,6 +408,7 @@ describe("security-sensitive guard entry point", () => {
       number: 7,
       state: "open",
       draft: false,
+      created_at: "2026-01-01T00:00:00Z",
       user: author,
       changed_files: 1,
       head: { sha: headSha, ref: "change", repo: { id: 2 } },
@@ -391,7 +424,7 @@ describe("security-sensitive guard entry point", () => {
     });
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("pull request changed");
-    expect(result.statuses).toEqual(["pending"]);
+    expect(result.statuses).toEqual(["failure"]);
   });
 
   it("leaves hard-tier approval to CODEOWNERS and ignores ordinary changes", () => {
@@ -400,9 +433,68 @@ describe("security-sensitive guard entry point", () => {
       files: [{ filename: "SECURITY.md" }, { filename: "src/utils.ts" }],
     });
     expect(result.status, result.stderr).toBe(0);
-    expect(result.statuses).toEqual(["pending", "success"]);
+    expect(result.statuses).toEqual(["failure", "success"]);
     expect(result.comment).toBeUndefined();
   });
+
+  describe.each(["security-sensitive-guard", "dependency-guard"] as const)(
+    "%s rollout enforcement",
+    (script) => {
+      const files = [
+        { filename: script === "dependency-guard" ? "pnpm-workspace.yaml" : "src/gateway/auth.ts" },
+      ];
+
+      it("does not publish approval or mutate an older PR that has not incorporated the rollout", () => {
+        const result = runGuard({
+          script,
+          files,
+          createdAt: "2025-11-01T00:00:00Z",
+          routes: {
+            [`GET /repos/openclaw/openclaw/compare/${rolloutSha}...${headSha}`]: {
+              base_commit: { sha: rolloutSha },
+              merge_base_commit: { sha: "b".repeat(40) },
+              status: "diverged",
+            },
+          },
+        });
+        expect(result.status, result.stderr).toBe(0);
+        expect(result.stdout).toContain("grandfathered");
+        expect(result.statuses).toEqual([]);
+        expect(result.requests.every((request) => request.method === "GET")).toBe(true);
+      });
+
+      it("requires approval after an older PR incorporates the rollout", () => {
+        const result = runGuard({
+          script,
+          files,
+          createdAt: "2025-11-01T00:00:00Z",
+          routes: {
+            [`GET /repos/openclaw/openclaw/compare/${rolloutSha}...${headSha}`]: {
+              base_commit: { sha: rolloutSha },
+              merge_base_commit: { sha: rolloutSha },
+              status: "ahead",
+            },
+          },
+        });
+        expect(result.status).toBe(1);
+        expect(result.statuses.at(-1)).toBe("failure");
+        expect(result.comment).toContain("/allow-");
+      });
+
+      it.each([
+        { name: "unavailable", response: { httpError: 403 } },
+        { name: "malformed", response: { ...rollout, merge_commit_sha: "main" } },
+      ])("invalidates a previous approval when rollout metadata is $name", ({ response }) => {
+        const result = runGuard({
+          script,
+          files,
+          routes: { "GET /repos/openclaw/openclaw/pulls/152415": response },
+        });
+        expect(result.status).toBe(1);
+        expect(result.statuses).toEqual(["failure"]);
+      });
+    },
+  );
 
   describe("trusted YAML policy", () => {
     const policy = `
@@ -425,7 +517,7 @@ dependencies:
       "$script reads changed classification from YAML beside its checkout",
       ({ script, filename }) => {
         const result = runGuard({ script, policy, files: [{ filename }] });
-        expect(result.statuses).toEqual(["pending", "failure"]);
+        expect(result.statuses).toEqual(["failure", "failure"]);
         expect(result.comment).toContain("custom/");
       },
     );
@@ -436,7 +528,7 @@ dependencies:
         for (const invalidPolicy of ["categories: [", policy.replace("paths:", "pathz:")]) {
           const result = runGuard({ script, policy: invalidPolicy });
           expect(result.status).toBe(1);
-          expect(result.statuses).toEqual(["pending"]);
+          expect(result.statuses).toEqual(["failure"]);
           expect(result.stderr).toContain("Invalid security-review-policy.yml");
         }
       },

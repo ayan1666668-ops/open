@@ -109,9 +109,9 @@ must declare their own development dependencies rather than rely on hoisting.
 
 Changes to authentication, credentials, secret handling, sandboxing, or execution
 permissions receive a security-review notice with the affected files and review
-guidance. A human PR author with repository `maintain` or `admin` access needs no
-additional security approval. Other authors, including bots, need a command
-comment from a human with either role:
+guidance. A PR author with a GitHub user account and repository `maintain` or
+`admin` access needs no additional security approval. Other authors need a
+command comment from a user with either role:
 
 - `/allow-security-sensitive-change` for sensitive product changes.
 - `/allow-dependencies-change` for dependency changes that require approval.
@@ -125,6 +125,14 @@ not grant fresh approval. Deleting the comment or removing a command revokes tha
 command's approval. Normal GitHub **Approve** reviews and labels do not satisfy
 these command requirements.
 
+PR updates, approval comment events, and CI completion run security review
+automatically. Approval comments update the review result without rerunning the
+test suite. Missing approval fails the check. Automation using a GitHub user
+account follows the same role checks; GitHub App bot identities do not qualify.
+Open PRs targeting the same branch must have distinct head commits. GitHub shares
+commit statuses across PRs, so duplicate heads block security approval. Close the
+duplicate PR or push a distinct commit; security review evaluates automatically.
+
 The human-readable [security review policy](.github/security-review-policy.yml)
 lists sensitive product categories, review guidance, exclusions, and dependency
 paths. Changes to that inventory require SecOps approval.
@@ -134,6 +142,8 @@ Security policy, CodeQL, and the security-review enforcement files listed in
 `@openclaw/openclaw-secops` approval, including on maintainer-authored PRs. A
 maintainer approval of product code does not replace that code-owner requirement.
 Normal project review and release-owner requirements still apply.
+The existing maintainer CI bypass can override a missing command approval, but
+does not bypass the separate code-owner review requirement.
 
 See [security review checks](https://docs.openclaw.ai/ci/pipeline#security-review-checks)
 for check behavior and enforcement setup.

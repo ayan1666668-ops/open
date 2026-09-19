@@ -8,6 +8,92 @@ export const GITHUB_API_REQUEST_TIMEOUT_MS = 30_000;
 const githubApiRetryStatuses = new Set([502, 503, 504]);
 const githubApiRetryDelaysMs = [1_000, 2_000, 4_000];
 
+// Commit statuses are the publisher's durable record of which PRs it evaluated.
+// GitHub's commit-to-PR association index is incomplete across fork repositories.
+export async function readSecurityReviewHistory(api, owner, repo, head) {
+  const contexts = new Set([
+    "openclaw/ci-gate",
+    "openclaw/security-sensitive-review",
+    "openclaw/dependency-review",
+  ]);
+  const statuses = await api.paginate(`/repos/${owner}/${repo}/commits/${head}/statuses`);
+  const numbers = new Set();
+  const counts = new Map();
+  for (const status of statuses) {
+    const context = typeof status.context === "string" ? status.context.toLowerCase() : "";
+    if (!contexts.has(context)) {
+      continue;
+    }
+    counts.set(context, (counts.get(context) ?? 0) + 1);
+    if (status.creator?.login !== "github-actions[bot]" || status.creator?.type !== "Bot") {
+      continue;
+    }
+    const recorded = /^PR #([1-9][0-9]*): /u.exec(status.description ?? "");
+    if (recorded && Number.isSafeInteger(Number(recorded[1]))) {
+      numbers.add(Number(recorded[1]));
+    }
+  }
+  return { pullRequestNumbers: [...numbers].toSorted((left, right) => left - right), counts };
+}
+
+export async function publishGuardStatus(guard, state, description) {
+  if (state === "success") {
+    // GitHub statuses belong to commits, while author and comment authority
+    // belong to PRs. Never lend one PR's approval to another PR with that head.
+    const history = await readSecurityReviewHistory(
+      guard.api,
+      guard.owner,
+      guard.repo,
+      guard.pullRequest.head.sha,
+    );
+    // GitHub refuses writes after 1,000 statuses per commit/context. Stop
+    // successes early so exhaustion cannot leave a permanently green result.
+    if ((history.counts.get(guard.context) ?? 0) >= 900) {
+      await publishGuardStatus(
+        guard,
+        "failure",
+        "Review status capacity is nearly exhausted; push a new commit",
+      );
+      throw new Error("Review status capacity is nearly exhausted; push a new commit.");
+    }
+    if (!history.pullRequestNumbers.includes(guard.pullRequest.number)) {
+      throw new Error("The current PR's security review status was not recorded.");
+    }
+    for (const number of history.pullRequestNumbers) {
+      if (number === guard.pullRequest.number) {
+        continue;
+      }
+      const other = await guard.api.request(`/repos/${guard.owner}/${guard.repo}/pulls/${number}`);
+      if (
+        other.state === "open" &&
+        other.base?.ref === guard.pullRequest.base.ref &&
+        other.head?.sha === guard.pullRequest.head.sha
+      ) {
+        await publishGuardStatus(
+          guard,
+          "failure",
+          "Multiple PRs use this head; close duplicates or push a distinct commit",
+        );
+        throw new Error(
+          "Multiple open PRs use the same head. Close duplicate PRs or push a distinct commit; security review updates automatically.",
+        );
+      }
+    }
+  }
+  await guard.api.request(
+    `/repos/${guard.owner}/${guard.repo}/statuses/${guard.pullRequest.head.sha}`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        context: guard.context,
+        state,
+        description: `PR #${guard.pullRequest.number}: ${description}`,
+        target_url: guard.runUrl,
+      }),
+    },
+  );
+}
+
 export function sanitizeGuardDisplayValue(value) {
   return String(value)
     .replace(/[\p{Cc}]/gu, "?")

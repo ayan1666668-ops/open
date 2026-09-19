@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { runInNewContext } from "node:vm";
 import ignore from "ignore";
@@ -9,7 +9,10 @@ import { pnpmLockfileDocuments } from "../../scripts/lib/pnpm-lockfile-documents
 import { useAutoCleanupTempDirTracker } from "../helpers/temp-dir.js";
 
 type WorkflowStep = {
+  "continue-on-error"?: boolean;
   env?: Record<string, string>;
+  if?: string;
+  id?: string;
   run?: string;
   shell?: string;
   uses?: string;
@@ -18,12 +21,19 @@ type WorkflowStep = {
 
 type Workflow = {
   name: string;
-  on: Record<string, { types?: string[]; inputs?: Record<string, unknown> }>;
+  on: Record<string, { types?: string[]; workflows?: string[]; inputs?: Record<string, unknown> }>;
   permissions: Record<string, string>;
   concurrency?: { group: string; "cancel-in-progress": boolean };
   jobs: Record<
     string,
-    { if?: string; permissions?: Record<string, string>; steps: WorkflowStep[] }
+    {
+      if?: string;
+      permissions?: Record<string, string>;
+      env?: Record<string, string>;
+      concurrency?: { group: string; "cancel-in-progress": boolean };
+      strategy?: { "fail-fast": boolean; matrix: string };
+      steps: WorkflowStep[];
+    }
   >;
 };
 
@@ -34,6 +44,7 @@ function readWorkflow(name: string): Workflow {
 const reviewPermissions = {
   contents: "read",
   "pull-requests": "read",
+  actions: "read",
   issues: "write",
   statuses: "write",
 };
@@ -44,144 +55,159 @@ const runtimeAction = parse(readFileSync(`${runtimeActionPath}/action.yml`, "utf
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 
 describe("security review workflow trust boundaries", () => {
-  it.each(["security-sensitive-guard", "dependency-guard"])(
-    "%s executes trusted scripts with only metadata write permissions",
-    (name) => {
-      const workflow = readWorkflow(name);
-      expect(workflow.permissions).toEqual(reviewPermissions);
-      expect(Object.keys(workflow.jobs).length).toBeGreaterThan(0);
-      for (const job of Object.values(workflow.jobs)) {
-        expect(job.permissions ?? workflow.permissions).toEqual(reviewPermissions);
-        const checkouts = job.steps.filter((step) => step.uses?.startsWith("actions/checkout@"));
-        expect(checkouts).toHaveLength(1);
-        expect(checkouts[0]?.with).toMatchObject({
-          ref: "${{ github.workflow_sha }}",
-          "persist-credentials": false,
-        });
-        const bootstrapSteps = job.steps.filter((step) => step.uses === `./${runtimeActionPath}`);
-        expect(bootstrapSteps).toHaveLength(1);
-        const bootstrapIndex = job.steps.indexOf(bootstrapSteps[0]!);
-        expect(bootstrapIndex).toBeGreaterThan(job.steps.indexOf(checkouts[0]!));
-        expect(bootstrapSteps[0]?.env).toBeUndefined();
-        expect(bootstrapSteps[0]?.with).toBeUndefined();
-        for (const step of job.steps) {
-          if (step.uses && step.uses !== `./${runtimeActionPath}`) {
-            // An unreviewed local action or artifact download could execute PR code
-            // with the status/comment token, even if checkout itself remains safe.
-            expect(step.uses).toMatch(
-              name === "dependency-guard"
-                ? /^actions\/(?:checkout|create-github-app-token)@[a-f0-9]{40}$/u
-                : /^actions\/checkout@[a-f0-9]{40}$/u,
-            );
-          }
-          if (step.uses?.startsWith("actions/create-github-app-token@") || step.run) {
-            expect(job.steps.indexOf(step)).toBeGreaterThan(bootstrapIndex);
-          }
-          if (step.run) {
-            expect(step.run).toBe(`node scripts/github/${name}.mjs`);
-            expect(step.env?.GITHUB_TOKEN).toBe("${{ github.token }}");
-          }
-        }
-        expect(job.steps.some((step) => step.run)).toBe(true);
-      }
-    },
-  );
-
-  it.each(["security-sensitive-guard", "dependency-guard"])(
-    "%s reevaluates pushes and comment changes without canceling active work",
-    (name) => {
-      const workflow = readWorkflow(name);
-      expect(workflow.on.pull_request_target?.types).toEqual(
-        expect.arrayContaining(["opened", "reopened", "synchronize", "ready_for_review", "edited"]),
-      );
-      expect(workflow.on.issue_comment?.types).toEqual(["created", "edited", "deleted"]);
-      expect(workflow.on.workflow_run).toBeUndefined();
-      expect(workflow.on.pull_request_review).toBeUndefined();
-      expect(workflow.on.workflow_dispatch?.inputs?.pr_number).toMatchObject({
-        required: true,
-        type: "string",
+  it("executes trusted scripts and limits comment writes to the serialized review job", () => {
+    const workflow = readWorkflow("security-review");
+    expect(workflow.permissions).toEqual({
+      contents: "read",
+      "pull-requests": "read",
+      actions: "read",
+      statuses: "write",
+    });
+    expect(workflow.jobs.review?.permissions).toEqual(reviewPermissions);
+    expect(workflow.concurrency).toBeUndefined();
+    expect(workflow.jobs.review?.concurrency).toEqual({
+      group: "security-review-${{ matrix.head }}",
+      "cancel-in-progress": false,
+    });
+    expect(workflow.jobs.review?.strategy).toEqual({
+      "fail-fast": false,
+      matrix: "${{ fromJSON(needs.resolve.outputs.matrix) }}",
+    });
+    expect(workflow.jobs.review?.env).toEqual({
+      OPENCLAW_SECURITY_REVIEW_PR_NUMBER: "${{ matrix.pr }}",
+      OPENCLAW_SECURITY_REVIEW_HEAD_SHA: "${{ matrix.head }}",
+    });
+    for (const [name, job] of Object.entries(workflow.jobs)) {
+      const checkouts = job.steps.filter((step) => step.uses?.startsWith("actions/checkout@"));
+      expect(checkouts).toHaveLength(1);
+      expect(checkouts[0]?.with).toMatchObject({
+        ref: "${{ github.workflow_sha }}",
+        "persist-credentials": false,
       });
-      expect(workflow.concurrency?.["cancel-in-progress"]).toBe(false);
-    },
-  );
-
-  it.each([
-    ["security-sensitive-guard", "/allow-security-sensitive-change"],
-    ["dependency-guard", "/allow-dependencies-change"],
-  ])("%s keeps ignored runs out of the pending PR evaluation group", (name, command) => {
-    const workflow = readWorkflow(name);
-    const condition = workflow.jobs[name]!.if!;
-    const events = [
-      { eventName: "pull_request_target", action: "synchronize", allowed: true },
-      {
-        eventName: "pull_request_target",
-        action: "edited",
-        draft: true,
-        allowed: name !== "dependency-guard",
-      },
-      { action: "created", body: command, allowed: true },
-      {
-        action: "created",
-        body: "/allow-security-sensitive-change\n/allow-dependencies-change",
-        allowed: true,
-      },
-      {
-        action: "created",
-        body:
-          command === "/allow-dependencies-change"
-            ? "/allow-security-sensitive-change"
-            : "/allow-dependencies-change",
-        allowed: false,
-      },
-      { action: "created", body: "Thanks for the update", allowed: false },
-      { action: "edited", body: "Command removed", allowed: true },
-      { action: "deleted", body: command, allowed: true },
-      { action: "created", body: command, isPullRequest: false, allowed: false },
-      { action: "edited", body: command, isPullRequest: false, allowed: false },
-      { action: "deleted", body: command, isPullRequest: false, allowed: false },
-      { eventName: "workflow_dispatch", ref: "refs/heads/main", allowed: true },
-      { eventName: "workflow_dispatch", ref: "refs/heads/feature", allowed: false },
-    ];
-    for (const event of events) {
-      for (const runId of [201, 202]) {
-        const eventName = event.eventName ?? "issue_comment";
-        const context = {
-          github: {
-            event_name: eventName,
-            run_id: runId,
-            ref: event.ref ?? "refs/heads/main",
-            event: {
-              action: event.action,
-              comment: { body: event.body ?? "" },
-              issue: {
-                number: eventName === "issue_comment" ? 123 : undefined,
-                pull_request: event.isPullRequest === false ? null : {},
-              },
-              pull_request: {
-                number: eventName === "pull_request_target" ? 123 : undefined,
-                draft: event.draft,
-              },
-              repository: { default_branch: "main" },
-            },
-          },
-          inputs: { pr_number: eventName === "workflow_dispatch" ? "123" : undefined },
-          always: () => true,
-          contains: (value: string, search: string) =>
-            value.toLowerCase().includes(search.toLowerCase()),
-          format: (pattern: string, value: string | number) =>
-            pattern.replace("{0}", String(value)),
-        };
-        const result = runInNewContext(condition.replace(/^\$\{\{|\}\}$/gu, ""), context);
-        expect(Boolean(result), JSON.stringify(event)).toBe(event.allowed);
-        const group = workflow.concurrency!.group.replace(
-          /\$\{\{(.*?)\}\}/gsu,
-          (_, expression: string) => String(runInNewContext(expression, context)),
-        );
-        expect(group, JSON.stringify(event)).toBe(
-          event.allowed ? `${name}-123` : `${name}-ignored-${runId}`,
-        );
+      const runtime = job.steps.filter((step) => step.uses === `./${runtimeActionPath}`);
+      expect(runtime).toHaveLength(name === "review" ? 1 : 0);
+      for (const step of job.steps) {
+        if (step.uses && step.uses !== `./${runtimeActionPath}`) {
+          expect(step.uses).toMatch(
+            /^actions\/(?:checkout|create-github-app-token)@[a-f0-9]{40}$/u,
+          );
+        }
+        if (step.run) {
+          expect(step.run).toBe(
+            `node scripts/github/security-review${name === "resolve" ? "-event" : ""}.mjs`,
+          );
+          expect(step.env?.GITHUB_TOKEN).toBe("${{ github.token }}");
+        }
       }
     }
+    expect(existsSync(".github/workflows/security-sensitive-guard.yml")).toBe(false);
+    expect(existsSync(".github/workflows/dependency-guard.yml")).toBe(false);
+  });
+
+  it("uses automatic PR, command, revocation, and CI completion events only", () => {
+    const workflow = readWorkflow("security-review");
+    expect(Object.keys(workflow.on).toSorted()).toEqual([
+      "issue_comment",
+      "pull_request_target",
+      "workflow_run",
+    ]);
+    expect(workflow.on.pull_request_target?.types).toEqual(
+      expect.arrayContaining([
+        "opened",
+        "reopened",
+        "synchronize",
+        "ready_for_review",
+        "edited",
+        "closed",
+      ]),
+    );
+    expect(workflow.on.issue_comment?.types).toEqual(["created", "edited", "deleted"]);
+    expect(workflow.on.workflow_run).toEqual({ workflows: ["CI"], types: ["completed"] });
+    const condition = workflow.jobs.resolve!.if!.replace(/^\$\{\{|\}\}$/gu, "");
+    for (const event of [
+      { eventName: "pull_request_target", allowed: true },
+      { eventName: "workflow_run", sourceEvent: "pull_request", allowed: true },
+      { eventName: "workflow_run", sourceEvent: "push", allowed: false },
+      { eventName: "workflow_run", sourceEvent: "workflow_dispatch", allowed: true },
+      { action: "created", body: "/allow-security-sensitive-change", allowed: true },
+      { action: "created", body: "/allow-dependencies-change", allowed: true },
+      { action: "created", body: "Thanks", allowed: false },
+      { action: "edited", body: "Command removed", allowed: true },
+      { action: "deleted", body: "/allow-dependencies-change", allowed: true },
+      { action: "created", body: "/allow-dependencies-change", issue: true, allowed: false },
+      { action: "edited", issue: true, allowed: false },
+    ]) {
+      const result = runInNewContext(condition, {
+        github: {
+          event_name: event.eventName ?? "issue_comment",
+          event: {
+            action: event.action,
+            comment: { body: event.body ?? "" },
+            issue: { pull_request: event.issue ? null : {} },
+            workflow_run: { event: event.sourceEvent },
+          },
+        },
+        contains: (value: string, search: string) =>
+          value.toLowerCase().includes(search.toLowerCase()),
+      });
+      expect(Boolean(result), JSON.stringify(event)).toBe(event.allowed);
+    }
+  });
+
+  it("limits autoscrub writes to PR events and always enforces after failures", () => {
+    const steps = readWorkflow("security-review").jobs.review!.steps;
+    const commands = steps.filter((step) => step.run);
+    expect(commands.map((step) => step.env?.OPENCLAW_SECURITY_REVIEW_MODE)).toEqual([
+      "detect",
+      "autoscrub",
+      "enforce",
+    ]);
+    expect(commands[0]?.if).toBe(
+      "github.event_name == 'pull_request_target' && github.event.action != 'closed' && matrix.pr == github.event.pull_request.number",
+    );
+    for (const [eventName, action, target, allowed] of [
+      ["pull_request_target", "synchronize", 42, true],
+      ["pull_request_target", "synchronize", 43, false],
+      ["pull_request_target", "closed", 42, false],
+      ["issue_comment", "created", 42, false],
+    ] as const) {
+      expect(
+        Boolean(
+          runInNewContext(commands[0]!.if!, {
+            github: { event_name: eventName, event: { action, pull_request: { number: 42 } } },
+            matrix: { pr: target },
+          }),
+        ),
+      ).toBe(allowed);
+    }
+    expect(commands[1]?.if).toBe(
+      "github.event_name == 'pull_request_target' && github.event.action != 'closed' && matrix.pr == github.event.pull_request.number && steps.detect.outputs.autoscrub == 'true'",
+    );
+    expect(commands[2]?.if).toBe("always()");
+    const tokenSteps = steps.filter((step) =>
+      step.uses?.startsWith("actions/create-github-app-token@"),
+    );
+    expect(tokenSteps.map((step) => step.with?.["app-id"])).toEqual(["2729701", "2971289"]);
+    for (const step of tokenSteps) {
+      expect(step["continue-on-error"]).toBe(true);
+      expect(step.if).toContain("github.event_name == 'pull_request_target'");
+      expect(step.if).toContain("github.event.action != 'closed'");
+      expect(step.if).toContain("matrix.pr == github.event.pull_request.number");
+      expect(step.if).toContain("steps.detect.outputs.autoscrub == 'true'");
+      expect(step.with).toMatchObject({
+        owner: "${{ steps.detect.outputs.autoscrub-owner }}",
+        repositories: "${{ steps.detect.outputs.autoscrub-repository }}",
+        "permission-contents": "write",
+      });
+      expect(Object.keys(step.with!).filter((key) => key.startsWith("permission-"))).toEqual([
+        "permission-contents",
+      ]);
+    }
+    expect(tokenSteps[1]?.if).toContain("steps.app-token.outcome == 'failure'");
+    expect(commands[1]?.env?.OPENCLAW_DEPENDENCY_GUARD_AUTOSCRUB_TOKEN).toBe(
+      "${{ steps.app-token.outputs.token || steps.app-token-fallback.outputs.token }}",
+    );
+    expect(commands[2]?.env).not.toHaveProperty("OPENCLAW_DEPENDENCY_GUARD_AUTOSCRUB_TOKEN");
   });
 
   it("uses an explicit Node runtime without shared dependency caches or bootstrap credentials", () => {
@@ -339,13 +365,15 @@ describe("security review ownership", () => {
     ".github/codeql/codeql-core-auth-secrets-critical-security.yml",
     ".github/codeql/openclaw-boundary/queries/managed-proxy-runtime-mutation.ql",
     ".github/workflows/codeql-macos-critical-security.yml",
-    ".github/workflows/security-sensitive-guard.yml",
-    ".github/workflows/dependency-guard.yml",
+    ".github/workflows/security-review.yml",
     ".github/security-review-policy.yml",
     ".github/actions/setup-security-review/action.yml",
     ".github/actions/setup-security-review/package.json",
     ".github/actions/setup-security-review/package-lock.json",
     "scripts/github/security-review-policy.mjs",
+    "scripts/github/security-review-event.mjs",
+    "scripts/github/security-review.mjs",
+    "scripts/github/security-review-rollout.mjs",
     "scripts/github/guard-review.mjs",
     "scripts/github/guard-shared.mjs",
     "scripts/lib/bounded-response.mjs",
