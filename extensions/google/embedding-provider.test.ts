@@ -1,4 +1,5 @@
 // Google tests cover embedding provider plugin behavior.
+import { createServer } from "node:http";
 import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
 import { withTimeout } from "openclaw/plugin-sdk/time-runtime";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -740,6 +741,75 @@ describe("Gemini embedding provider", () => {
       );
     },
   );
+
+  it("splits an oversized batch over a real HTTP server that enforces the 100-request cap", async () => {
+    // The mocked-fetch cases above prove the provider *slices*; they cannot
+    // prove the slicing is what keeps a real endpoint from rejecting the call,
+    // because a stub accepts any body. This server enforces the documented
+    // batchEmbedContents limit the way the API does -- 400 INVALID_ARGUMENT on
+    // >100 requests -- so the request has to survive a real socket, a real
+    // JSON body and a real rejection path.
+    const seenBatchSizes: number[] = [];
+    let rejected = 0;
+    const server = createServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on("data", (chunk: Buffer) => chunks.push(chunk));
+      req.on("end", () => {
+        const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as {
+          requests?: unknown[];
+        };
+        const size = body.requests?.length ?? 0;
+        seenBatchSizes.push(size);
+        if (size > 100) {
+          rejected += 1;
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(
+            JSON.stringify({
+              error: {
+                code: 400,
+                status: "INVALID_ARGUMENT",
+                message: `Batch size ${size} exceeds maximum allowed batch size 100.`,
+              },
+            }),
+          );
+          return;
+        }
+        const offset = seenBatchSizes.slice(0, -1).reduce((total, previous) => total + previous, 0);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(orderedBatchEmbeddings(offset, size)));
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (typeof address === "string" || address === null) {
+      throw new Error("expected a TCP address");
+    }
+    try {
+      const { provider } = await createGeminiEmbeddingProvider({
+        config: {} as never,
+        provider: "gemini",
+        remote: {
+          apiKey: "test-key",
+          baseUrl: `http://127.0.0.1:${address.port}/v1beta`,
+        },
+        model: "gemini-embedding-001",
+        fallback: "none",
+      });
+      const inputs = Array.from({ length: 250 }, (_, index) => `document-${index}`);
+
+      const embeddings = await provider.embedBatch(inputs, { inputType: "document" });
+
+      // The server would have answered 400 to any oversized request; it never had to.
+      expect(rejected).toBe(0);
+      expect(seenBatchSizes).toEqual([100, 100, 50]);
+      expect(embeddings).toHaveLength(250);
+      expect(embeddings).toEqual(Array.from({ length: 250 }, (_, index) => axisVector(256, index)));
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      );
+    }
+  });
 
   it("stops Gemini document batching after a sub-batch fails", async () => {
     let callCount = 0;
