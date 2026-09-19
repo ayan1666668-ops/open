@@ -27,17 +27,15 @@ import {
 } from "../../state/openclaw-schema-versions.js";
 import { formatCliCommand } from "../command-format.js";
 import {
-  checkTargetDatabaseSchemasForContexts,
-  formatSchemaRefusalLines,
-  hasSchemaRefusal,
-} from "./schema-preflight.js";
-import {
   normalizeTag,
   readPackageVersion,
   resolveGitInstallDir,
   UpdatePreMutationError,
 } from "./shared.js";
-import { inspectUpdateDatabaseContexts } from "./update-command-database-context.js";
+import {
+  inspectUpdateDatabaseContexts,
+  revalidateUpdateDatabaseContexts,
+} from "./update-command-database-context.js";
 import { createUpdateCommandExecutionGuards } from "./update-command-execution-guards.js";
 import type { MutableUpdateExecutionParams } from "./update-command-execution.types.js";
 import {
@@ -52,7 +50,6 @@ import {
 import {
   captureOwnedManagedUpdateContext,
   readUpdateCandidateSource,
-  revalidateUpdateDatabaseContext,
   type OwnedManagedUpdateContext,
 } from "./update-command-managed-context.js";
 import { observeOriginalManagedServiceRuntime } from "./update-command-original-service.js";
@@ -132,21 +129,20 @@ export async function executeMutableUpdate(
   let gitContextPrepared = false;
   let admittedTargetSchemaVersions = params.packageTargetSchemaVersions;
   const recheckSchemas = async (versions: OpenClawSchemaVersions | undefined) => {
-    if (!admission) {
-      throw new UpdatePreMutationError(
-        "database-schema-preflight",
-        "Database admission was not inspected.",
-      );
-    }
-    await inspectContexts([...admission.services.keys()], admission.services);
-    admission.contexts = await Promise.all(admission.contexts.map(revalidateUpdateDatabaseContext));
-    const schemas = await checkTargetDatabaseSchemasForContexts(versions, admission.contexts);
-    if (hasSchemaRefusal(schemas)) {
-      throw new UpdatePreMutationError(
-        "database-schema-preflight",
-        formatSchemaRefusalLines(schemas).join("\n"),
-      );
-    }
+    admission = await revalidateUpdateDatabaseContexts(
+      {
+        updateInstallKind: params.updateInstallKind === "git" ? "git" : "package",
+        shouldRestart: params.shouldRestart,
+        jsonMode: Boolean(opts.json),
+        timeoutMs: updateStepTimeoutMs,
+        invocationCwd: params.invocationCwd,
+        managedServiceRootRedirect: params.managedServiceRootRedirect,
+        managedServiceRoot: params.managedServiceRoot,
+        legacyConfigPlan: params.legacyConfigPlan,
+      },
+      admission,
+      versions,
+    );
     admittedTargetSchemaVersions = versions;
   };
   const preflightPlugins = async (targetVersion: string | null) => {
