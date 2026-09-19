@@ -65,6 +65,11 @@ import {
   wrapUntrustedInstructionBlock,
 } from "./compaction-safeguard-quality.js";
 import {
+  prepareActiveCompactionCuration,
+  prepareCompactionSummaryInput,
+  resolveCuratedCompactionCandidate,
+} from "./compaction-safeguard-active-curation.js";
+import {
   buildPreservedTurnsSection,
   buildSplitTurnContextSection,
   type CompactionLoss,
@@ -1067,87 +1072,52 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
       );
       const requiredAskContext = formatRequiredAskContext(latestUserAsk ?? "");
 
-      let activeSemanticSnapshot:
-        | ReturnType<typeof buildCompactionSemanticSnapshot>
-        | undefined;
-      let uncuratedMessagesForSemanticFallback: AgentMessage[] | undefined;
-      if (semanticMode === "apply") {
-        const { preservedMessages: protectedRecentMessages } = splitPreservedRecentTurns({
-          messages: uncuratedSemanticSource,
+      let activeCuration = {
+        messages: uncuratedSemanticSource,
+      } as Awaited<ReturnType<typeof prepareActiveCompactionCuration>>;
+      try {
+        activeCuration = await prepareActiveCompactionCuration({
+          sessionManager: ctx.sessionManager,
+          mode: semanticMode,
+          sourceMessages: uncuratedSemanticSource,
           recentTurnsPreserve,
-        });
-        const snapshot = buildCompactionSemanticSnapshot({
-          messages: uncuratedSemanticSource,
-          protectedMessages: new Set(protectedRecentMessages),
           identifiers,
           latestUnresolvedUserRequest,
           latestUserAsk,
+          signal: semanticSignal,
+          timeoutMs: semanticTimeoutMs,
         });
-        try {
-          const selection = await evaluateCompactionShadowCuration({
-            runtime: { evaluate: evaluateJudgment },
-            snapshot,
-            signal: semanticSignal,
-            timeoutMs: semanticTimeoutMs,
-          });
-          const projected = projectCompactionSemanticSelection({
-            messages: uncuratedSemanticSource,
-            snapshot,
-            selection,
-          });
-          if (projected && projected.length < uncuratedSemanticSource.length) {
-            activeSemanticSnapshot = snapshot;
-            uncuratedMessagesForSemanticFallback = uncuratedSemanticSource;
-            messagesToSummarize = projected;
-            if (selection.status === "ok") {
-              log.info(
-                "Compaction semantic curation applied: " +
-                  `sourceMessages=${uncuratedSemanticSource.length} selectedMessages=${projected.length} ` +
-                  `sourceChars=${selection.originalChars} selectedChars=${selection.selectedChars} ` +
-                  `reduction=${(selection.reductionRatio * 100).toFixed(1)}% provider=${selection.provenance.providerId}`,
-              );
-            }
-          } else if (selection.status !== "ok") {
-            log.info(
-              `Compaction semantic curation skipped: status=${selection.status} reason=${selection.reason}`,
-            );
-          } else if (!selection.complete) {
-            log.info("Compaction semantic curation skipped: selection was incomplete or uncertain.");
-          }
-        } catch (err) {
-          if (semanticSignal.aborted) {
-            semanticSignal.throwIfAborted();
-          }
-          log.warn(
-            `Compaction semantic curation unavailable; using uncurated input: ${formatErrorMessage(err)}`,
+        if (activeCuration.applied) {
+          log.info(
+            "Compaction semantic curation applied: " +
+              `sourceMessages=${activeCuration.applied.sourceMessages} ` +
+              `selectedMessages=${activeCuration.applied.selectedMessages} ` +
+              `sourceChars=${activeCuration.applied.originalChars} ` +
+              `selectedChars=${activeCuration.applied.selectedChars} ` +
+              `reduction=${(activeCuration.applied.reductionRatio * 100).toFixed(1)}% ` +
+              `provider=${activeCuration.applied.providerId}`,
           );
+        } else if (semanticMode === "apply" && activeCuration.skippedReason) {
+          log.info(`Compaction semantic curation skipped: ${activeCuration.skippedReason}`);
         }
+      } catch (err) {
+        if (semanticSignal.aborted) {
+          semanticSignal.throwIfAborted();
+        }
+        log.warn(
+          `Compaction semantic curation unavailable; using uncurated input: ${formatErrorMessage(err)}`,
+        );
       }
+      messagesToSummarize = activeCuration.messages;
 
-      const prepareSummaryInput = (sourceMessages: AgentMessage[]) => {
-        const {
-          summarizableMessages: summaryTargetMessages,
-          preservedMessages: preservedRecentMessages,
-        } = splitPreservedRecentTurns({
-          messages: sourceMessages,
-          recentTurnsPreserve,
-        });
-        const preservedTurnsSection = buildPreservedTurnsSection(preservedRecentMessages);
-        const latestPreparedAsk = extractLatestUserAsk(sourceMessages);
-        const includePreservedContext =
-          !latestUnresolvedUserRequest &&
-          qualityGuardEnabled &&
-          latestPreparedAsk === latestUserAsk &&
-          Boolean(latestPreparedAsk) &&
-          (summaryTargetMessages.length > 0 ||
-            !preservedTurnsSection.text.includes(requiredAskContext));
-        return {
-          messages: includePreservedContext ? sourceMessages : summaryTargetMessages,
-          preservedTurnsSection,
-        };
-      };
-
-      const preparedSummaryInput = prepareSummaryInput(messagesToSummarize);
+      const preparedSummaryInput = prepareCompactionSummaryInput({
+        sourceMessages: messagesToSummarize,
+        recentTurnsPreserve,
+        qualityGuardEnabled,
+        latestUnresolvedUserRequest,
+        latestUserAsk,
+        requiredAskContext,
+      });
       messagesToSummarize = preparedSummaryInput.messages;
       const preservedTurnsSectionLocal = preparedSummaryInput.preservedTurnsSection;
       // Feed dropped-messages summary as previousSummary so the main summarization
@@ -1263,71 +1233,18 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
         });
       };
 
-      const semanticCandidateIsSafe = async (summary: string): Promise<boolean> => {
-        if (!activeSemanticSnapshot) {
-          return true;
-        }
-        semanticSignal.throwIfAborted();
-        const currentSemanticMode =
-          getCompactionSafeguardRuntime(ctx.sessionManager)?.semanticCurationMode ?? "off";
-        if (
-          currentSemanticMode !== "apply" ||
-          !uncuratedMessagesForSemanticFallback ||
-          fingerprintCompactionMessages(uncuratedMessagesForSemanticFallback) !==
-            activeSemanticSnapshot.sourceFingerprint
-        ) {
-          log.warn("Compaction semantic curation result became stale before acceptance.");
-          return false;
-        }
-        try {
-          const fidelity = await evaluateCompactionFidelity({
-            runtime: { evaluate: evaluateJudgment },
-            snapshot: activeSemanticSnapshot,
-            candidateSummary: summary,
-            signal: semanticSignal,
-            timeoutMs: semanticTimeoutMs,
-          });
-          if (fidelity.status !== "ok") {
-            log.warn(
-              `Compaction semantic fidelity unavailable after curation: status=${fidelity.status} reason=${fidelity.reason}`,
-            );
-            return false;
-          }
-          if (
-            fidelity.sourceFingerprint !== activeSemanticSnapshot.sourceFingerprint ||
-            fidelity.candidateFingerprint !== fingerprint(summary)
-          ) {
-            log.warn("Compaction semantic fidelity result did not match the active candidate.");
-            return false;
-          }
-          const unsafe = fidelity.assessments.filter(
-            (assessment) => assessment.classification !== "preserved",
-          );
-          if (unsafe.length > 0) {
-            log.warn(
-              "Compaction semantic fidelity rejected curated candidate: " +
-                `nonPreserved=${unsafe.length} total=${fidelity.assessments.length} ` +
-                `provider=${fidelity.provenance.providerId}`,
-            );
-            return false;
-          }
-          return fidelity.assessments.length > 0;
-        } catch (err) {
-          if (semanticSignal.aborted) {
-            semanticSignal.throwIfAborted();
-          }
-          log.warn(
-            `Compaction semantic fidelity failed after curation: ${formatErrorMessage(err)}`,
-          );
-          return false;
-        }
-      };
-
       const buildUncuratedSemanticFallback = async (): Promise<string | null> => {
-        if (!uncuratedMessagesForSemanticFallback) {
+        if (!activeCuration.uncuratedMessages) {
           return null;
         }
-        const fallbackInput = prepareSummaryInput(uncuratedMessagesForSemanticFallback);
+        const fallbackInput = prepareCompactionSummaryInput({
+          sourceMessages: activeCuration.uncuratedMessages,
+          recentTurnsPreserve,
+          qualityGuardEnabled,
+          latestUnresolvedUserRequest,
+          latestUserAsk,
+          requiredAskContext,
+        });
         try {
           const candidate = await summarizePreparedInput({
             sourceMessages: fallbackInput.messages,
@@ -1356,19 +1273,30 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
       };
 
       const acceptSummary = async (summary: string) => {
-        if (!(await semanticCandidateIsSafe(summary))) {
-          const fallback = await buildUncuratedSemanticFallback();
-          if (fallback) {
-            return compactionResult(fallback);
-          }
+        const resolution = await resolveCuratedCompactionCandidate({
+          sessionManager: ctx.sessionManager,
+          snapshot: activeCuration.snapshot,
+          uncuratedMessages: activeCuration.uncuratedMessages,
+          summary,
+          signal: semanticSignal,
+          timeoutMs: semanticTimeoutMs,
+          buildUncuratedFallback: buildUncuratedSemanticFallback,
+        });
+        if (resolution.status === "rejected") {
+          log.warn(`Compaction semantic curation rejected candidate: ${resolution.reason}`);
           setCompactionSafeguardCancellation(
             ctx.sessionManager,
             "Compaction semantic curation could not preserve required source meaning.",
           );
           return { cancel: true as const };
         }
-        await observeSemanticSummary(summary);
-        return compactionResult(summary);
+        if (resolution.usedFallback) {
+          log.warn(
+            `Compaction semantic curation fell back to uncurated input: ${resolution.reason}`,
+          );
+        }
+        await observeSemanticSummary(resolution.summary);
+        return compactionResult(resolution.summary);
       };
 
       let correctiveInstructions = "";
