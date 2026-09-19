@@ -45,6 +45,7 @@ vi.mock("../agents/github-tool-identity.js", async (importOriginal) => {
     ...actual,
     matchesPreparedGitHubPublicationIdentity: mocks.matchesIdentity,
     prepareGitHubPublicationIdentity: mocks.prepareIdentity,
+    prepareGitHubPublicationOptionsIdentity: mocks.prepareIdentity,
   };
 });
 
@@ -399,9 +400,6 @@ export function installGitHubPublicationTestHarness(): void {
         }
         if (command === "git rev-parse HEAD^") {
           return commandResult(`${OLD_HEAD}\n`);
-        }
-        if (command === `git reflog show --format=%H --end-of-options refs/heads/${BRANCH}`) {
-          return commandResult(`${NEW_HEAD}\n${OLD_HEAD}\n`);
         }
         if (command.startsWith("git commit-tree ")) {
           return commandResult(`${NEW_HEAD}\n`);

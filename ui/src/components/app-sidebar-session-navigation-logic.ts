@@ -8,7 +8,6 @@ import type { RouteId } from "../app-route-paths.ts";
 import type { ApplicationContext } from "../app/context.ts";
 import { listSelectableAgents } from "../lib/agents/display.ts";
 import {
-  isCronSessionKey,
   resolveChannelSessionInfo,
   resolveSessionDisplayName,
   resolveSessionWorkContext,
@@ -20,7 +19,6 @@ import { collectKnownSessionGroups } from "../lib/sessions/grouping.ts";
 import {
   compareSessionRowsByUpdatedAt,
   filterVisibleSessionRows,
-  isSystemCreatedSessionRow,
   resolveSessionNavigation,
   sessionMatchesVisibleSessionScope,
 } from "../lib/sessions/index.ts";
@@ -44,6 +42,7 @@ import type { ControlUiRegistration } from "../plugins/control-ui-capability.ts"
 import { sidebarPluginTabs } from "./app-sidebar-nav-menus.ts";
 import {
   SIDEBAR_SESSION_NO_ATTENTION,
+  summarizeSidebarSessionAttention,
   type SidebarRecentSession,
   type SidebarSessionSortMode,
   type SidebarSessionStatusFilter,
@@ -59,13 +58,17 @@ export function resolveSidebarHomeAttention(
   sessionKey: string,
   row: GatewaySessionRow | null,
 ) {
-  const known = attention
-    .knownSessionAttention()
-    .find((entry) => areUiSessionKeysEquivalent(entry.sessionKey, sessionKey));
-  return (
-    known?.attention ??
-    (row ? attention.resolveSessionAttention(row) : SIDEBAR_SESSION_NO_ATTENTION)
+  const known = summarizeSidebarSessionAttention(
+    attention
+      .knownSessionAttention()
+      .filter((entry) => areUiSessionKeysEquivalent(entry.sessionKey, sessionKey))
+      .map((entry) => entry.attention),
   );
+  return known.kind !== "none"
+    ? known
+    : row
+      ? attention.resolveSessionAttention(row)
+      : SIDEBAR_SESSION_NO_ATTENTION;
 }
 
 type SidebarSessionSortOptions = {
@@ -219,8 +222,7 @@ export function buildSidebarSessionNavigationState(input: {
       expandedParticipants: row.expandedParticipants,
       participantCount: row.participantCount,
       archivedBy: row.archivedBy,
-      // The sidebar's zone structure already says what forked from what;
-      // a "Subagent:" prefix on named threads is noise (other surfaces keep it).
+      // Parent attention attributes subagent failures with the worker's own label.
       label: resolveSessionDisplayName(row.key, row, { includeSubagentPrefix: false }),
       userLabel: row.label,
       renameValue: resolveSessionRenameValue(row),
@@ -247,10 +249,12 @@ export function buildSidebarSessionNavigationState(input: {
       channel: channelInfo.channel,
       channelSession: channelInfo.channelSession,
       workSession:
-        Boolean(row.worktree || row.execNode) ||
+        Boolean(row.worktree || row.repository || row.execNode) ||
         context?.sessions.isPreparedWorkSession(row.key) === true,
       acpSession: isAcpSessionKey(row.key),
       worktreeId: row.worktree?.id,
+      // A cwd or a prepared session does not prove repository identity.
+      workspaceKind: row.worktree ? "worktree" : row.repository ? "checkout" : undefined,
       execNode: row.execNode,
       placementState: row.placement?.state,
       placementProviderId:
@@ -274,6 +278,7 @@ export function buildSidebarSessionNavigationState(input: {
       outboxAttentionCount: input.outboxAttentionCountForSessionKey(row.key),
       hasComposerDraft: input.hasSessionDraft(row.key),
       unread: row.archived !== true && row.unread === true,
+      hiddenFromInvolvingMe: row.hiddenFromInvolvingMe,
       lastMessagePreview: normalizeOptionalString(row.lastMessagePreview),
       lastReadAt: row.lastReadAt,
       attention: row.archived === true ? SIDEBAR_SESSION_NO_ATTENTION : input.resolveAttention(row),
@@ -288,7 +293,10 @@ export function buildSidebarSessionNavigationState(input: {
       endedAt: row.endedAt,
       runtimeMs: row.runtimeMs,
       runtimeSampledAt,
-      childSessionKeys: row.archived === true ? [] : (row.childSessions ?? []),
+      childSessionKeys:
+        row.archived === true
+          ? []
+          : (row.childSessions ?? []).filter((key) => !isSubagentSessionKey(key)),
       children: [],
       isChild,
       loadingChildren: input.loadingChildSessionKeys.has(row.key),
@@ -469,32 +477,6 @@ export function collectSidebarSessionRowsByKey(input: {
     rowsByKey.set(row.key, row);
   }
   return rowsByKey;
-}
-
-/**
- * Promote the hidden main session's children to top-level threads, with the
- * same visibility rules as ordinary roots so archived, cron, or
- * system-created children cannot sneak in and pagination stays deterministic.
- */
-export function collectPromotedMainChildRows(input: {
-  rows: readonly GatewaySessionRow[];
-  mainSessionKeys: ReadonlySet<string>;
-  scopedRootKeys: ReadonlySet<string>;
-  showCron: boolean;
-  showSystem: boolean;
-}): GatewaySessionRow[] {
-  return input.rows.filter((row) => {
-    const parentKey = resolveUiSessionNavigationParentKey(row);
-    return (
-      parentKey != null &&
-      input.mainSessionKeys.has(parentKey) &&
-      !input.scopedRootKeys.has(row.key) &&
-      !isSubagentSessionKey(row.key) &&
-      !row.archived &&
-      (input.showCron || !isCronSessionKey(row.key)) &&
-      (input.showSystem || !isSystemCreatedSessionRow(row))
-    );
-  });
 }
 
 export function collectCategorizedChildRootRows(input: {

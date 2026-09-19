@@ -6,6 +6,7 @@ import { createDeferred } from "../../../../test/helpers/promise.js";
 import {
   clearConfigCache,
   clearRuntimeConfigSnapshot,
+  getRuntimeConfig,
   type OpenClawConfig,
 } from "../../../config/config.js";
 import {
@@ -30,6 +31,7 @@ import {
   claimAgentRunDelegatedAuthority,
   releaseAgentRunDelegatedAuthority,
 } from "../../../infra/agent-run-registry.js";
+import { withTimeout } from "../../../infra/fs-safe.js";
 import {
   bindGatewayContextResolver,
   withPluginRuntimeGatewayRequestScope,
@@ -61,6 +63,7 @@ import {
   getPreparedModelRuntimeMocks,
   resetPreparedModelRuntimeHarness,
 } from "../../prepared-model-runtime.test-harness.js";
+import { ModelRegistry } from "../../sessions/model-registry.js";
 import { createAgentsWaitTool } from "../../tools/agents-wait-tool.js";
 import {
   createAdmittedGatewayToolCallerIdentity,
@@ -86,16 +89,25 @@ import {
 } from "../swarm/swarm-scheduler.js";
 import { cleanupProvisionalSession } from "./subagent-spawn-cleanup.js";
 import { callSubagentGateway } from "./subagent-spawn-gateway.js";
+import { registerNativeCancellationCases } from "./subagent-spawn.cancellation.test-support.js";
 
 const runEmbeddedAgent = vi.hoisted(() => vi.fn());
 
-vi.mock("../../embedded-agent.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../../embedded-agent.js")>()),
-  runEmbeddedAgent,
-}));
+vi.mock("../../embedded-agent.js", async () => {
+  const { abortEmbeddedAgentRun, isEmbeddedAgentRunActive, waitForEmbeddedAgentRunEnd } =
+    await import("../../embedded-agent-runner/runs.js");
+  return {
+    abortEmbeddedAgentRun,
+    isEmbeddedAgentRunActive,
+    runEmbeddedAgent,
+    waitForEmbeddedAgentRunEnd,
+  };
+});
 
 const parentSessionKey = "agent:main:subagent:production-boundary-parent";
 const parentRunId = "production-boundary-parent";
+// Two loaded exact-head CI runs reached this cold model boundary in 28–37 seconds.
+const COLD_MODEL_ENTRY_TIMEOUT_MS = 60_000;
 let state: OpenClawTestState;
 let stateDir = "";
 let runtimeConfig: OpenClawConfig;
@@ -114,6 +126,7 @@ async function writeTestConfig() {
       entries: { main: { workspace: stateDir } },
     },
     models: {
+      mode: "replace",
       providers: {
         custom: {
           api: "openai-completions",
@@ -145,6 +158,9 @@ beforeEach(async () => {
   stateDir = state.stateDir;
   runtimeConfig = await writeTestConfig();
   const preparedRuntime = getPreparedModelRuntimeMocks();
+  preparedRuntime.modelRegistry.fork.mockImplementation((authStorage) =>
+    ModelRegistry.inMemory(authStorage),
+  );
   const model = {
     api: "openai-completions" as const,
     baseUrl: "https://example.invalid/v1",
@@ -193,7 +209,7 @@ afterEach(async ({ task }) => {
 });
 
 async function createBoundParent() {
-  const cfg = runtimeConfig;
+  const cfg = getRuntimeConfig();
   const storePath = await writeSubagentSessionEntry({
     stateDir,
     agentId: "main",
@@ -306,12 +322,14 @@ function createBoundWorker(bound: Awaited<ReturnType<typeof createBoundParent>>)
 function createBoundSpawnInvocation(
   bound: Awaited<ReturnType<typeof createBoundParent>>,
   collector?: { collect: true; groupId: string; context: "isolated" },
+  requesterModel?: { provider: string; model: string },
 ) {
   const source = createSessionsSpawnTool({
     config: bound.cfg,
     agentSessionKey: parentSessionKey,
     requesterRunId: parentRunId,
     requesterTurnRunId: parentRunId,
+    requesterModel,
   });
   let tool = source;
   if (collector) {
@@ -432,9 +450,19 @@ function readBoundExecutionState(
 async function waitForEmbeddedRun(
   bound: Awaited<ReturnType<typeof createBoundParent>>,
   childRunId: string,
+  started?: Promise<void>,
 ) {
   try {
-    await vi.waitFor(() => expect(runEmbeddedAgent).toHaveBeenCalledOnce(), { timeout: 15_000 });
+    if (started) {
+      await withTimeout(started, COLD_MODEL_ENTRY_TIMEOUT_MS, {
+        message: "embedded execution entry timed out",
+      });
+      expect(runEmbeddedAgent).toHaveBeenCalledOnce();
+    } else {
+      await vi.waitFor(() => expect(runEmbeddedAgent).toHaveBeenCalledOnce(), {
+        timeout: 15_000,
+      });
+    }
   } catch (cause) {
     // Only report owner facts; terminal messages can contain workspace paths or private input.
     throw new Error(
@@ -499,7 +527,32 @@ function throwBoundFailures(failures: unknown[]) {
 }
 
 describe("recursive spawn production boundary", () => {
-  it("authorizes and admits an upgraded descendant before model execution", async () => {
+  registerNativeCancellationCases({
+    createBoundParent,
+    createBoundGateway,
+    closeBoundGateway,
+    throwBoundFailures,
+    parentSessionKey,
+    parentRunId,
+    assertNoModelExecution: () => expect(runEmbeddedAgent).not.toHaveBeenCalled(),
+  });
+
+  it.each([
+    {
+      name: "configured child model",
+      configuredChildModel: true,
+      storedParentModel: "test-model",
+      requesterModel: { provider: "custom", model: "test-model" },
+    },
+    { name: "parent session model", configuredChildModel: false, storedParentModel: "child-model" },
+    {
+      name: "active parent turn model",
+      configuredChildModel: false,
+      storedParentModel: "test-model",
+      requesterModel: { provider: "custom", model: "child-model" },
+    },
+  ])("admits a descendant using the $name", async (scenario) => {
+    const { configuredChildModel, storedParentModel, requesterModel } = scenario;
     const customProvider = expectDefined(
       runtimeConfig.models?.providers?.custom,
       "custom provider fixture",
@@ -512,7 +565,7 @@ describe("recursive spawn production boundary", () => {
         ...runtimeConfig.agents,
         defaults: {
           ...runtimeConfig.agents?.defaults,
-          subagents: { model: "custom/child-model" },
+          ...(configuredChildModel ? { subagents: { model: "custom/child-model" } } : {}),
           modelPolicy: { allow: ["custom/manual-only"] },
         },
       },
@@ -540,14 +593,26 @@ describe("recursive spawn production boundary", () => {
     clearConfigCache();
     clearRuntimeConfigSnapshot();
     const bound = await createBoundParent();
+    await upsertSessionEntryCore(
+      { storePath: bound.storePath, sessionKey: parentSessionKey },
+      {
+        providerOverride: "custom",
+        modelOverride: storedParentModel,
+        modelOverrideSource: "user",
+      },
+    );
     const { context, runtime, identities, readAgentRuntimeExecutionLineage } =
       await createBoundGateway(bound);
     const modelRun = createDeferred<EmbeddedAgentRunResult>();
-    runEmbeddedAgent.mockReturnValueOnce(modelRun.promise);
+    const modelRunStarted = createDeferred();
+    runEmbeddedAgent.mockImplementationOnce(() => {
+      modelRunStarted.resolve();
+      return modelRun.promise;
+    });
     let childRunId: string | undefined;
     const failures: unknown[] = [];
     try {
-      const result = await createBoundSpawnInvocation(bound)();
+      const result = await createBoundSpawnInvocation(bound, undefined, requesterModel)();
       expect(result.details, JSON.stringify(result)).toMatchObject({
         status: "accepted",
         childSessionKey: expect.any(String),
@@ -555,7 +620,7 @@ describe("recursive spawn production boundary", () => {
       });
       const details = result.details as { childSessionKey: string; runId: string };
       childRunId = details.runId;
-      await waitForEmbeddedRun(bound, details.runId);
+      await waitForEmbeddedRun(bound, details.runId, modelRunStarted.promise);
       const embeddedRun = runEmbeddedAgent.mock.calls[0]?.[0];
       expect(embeddedRun).toMatchObject({
         runId: details.runId,
