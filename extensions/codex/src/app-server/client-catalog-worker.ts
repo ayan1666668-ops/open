@@ -1,4 +1,5 @@
 import type { WorkerTaskPool } from "openclaw/plugin-sdk/process-runtime";
+import type { CodexCatalogPreviewCache } from "../session-catalog-native-projection.js";
 import {
   projectCodexCatalogMessage,
   type CodexCatalogDecodeInput,
@@ -43,7 +44,10 @@ export class CodexCatalogWorker {
     line: Buffer,
     route: CodexCatalogDecodeRoute,
     attempts: ReadonlyMap<number | string, CodexRequestAttempt>,
-    projections: Pick<WeakMap<CodexRequestAttempt, { remainingRows?: number }>, "get">,
+    projections: Pick<
+      WeakMap<CodexRequestAttempt, { preview?: CodexCatalogPreviewCache; remainingRows?: number }>,
+      "get"
+    >,
   ) {
     if (this.closed) {
       return undefined;
@@ -60,11 +64,18 @@ export class CodexCatalogWorker {
         // Incomplete or malformed frames retain the worker's recovery state.
       }
       if (parsed !== undefined) {
+        // Cache callbacks observe closure and cancellation before asynchronous delivery.
+        await Promise.resolve();
+        if (this.closed) {
+          return undefined;
+        }
         const attempt = attempts.get(route.id);
-        return projectCodexCatalogMessage(parsed, {
-          route,
-          remainingRows: attempt ? projections.get(attempt)?.remainingRows : 0,
-        });
+        const projection = attempt ? projections.get(attempt) : undefined;
+        return projectCodexCatalogMessage(
+          parsed,
+          { route, remainingRows: attempt ? projection?.remainingRows : 0 },
+          projection?.preview,
+        );
       }
     }
     if (!this.pool) {

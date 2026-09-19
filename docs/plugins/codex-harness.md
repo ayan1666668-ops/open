@@ -141,7 +141,7 @@ For remote app-servers without local filesystem access, the saved snapshot is
 available immediately and a background native walk reconciles changes made while
 the Gateway was stopped or its app-server connection was unavailable. The full
 15-minute safety walk reconciles remote membership and metadata.
-Unchanged display rows reuse their bounded resident previews after worker projection.
+Unchanged display rows reuse their bounded resident previews before delivery.
 Unchanged rows are not rewritten to SQLite.
 
 Native starts, metadata refreshes, renames, archives, deletions, and changed file

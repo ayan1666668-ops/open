@@ -2,6 +2,7 @@ import { sanitizeTerminalText } from "openclaw/plugin-sdk/text-chunking";
 import {
   projectCodexCatalogNativeResponse,
   projectCodexCatalogNativeThread,
+  type CodexCatalogPreviewCache,
 } from "../session-catalog-native-projection.js";
 import { redactCodexAppServerLinePreview } from "./client-line-preview.js";
 import { CodexAppServerMessageDecoder } from "./client-message-decoder.js";
@@ -49,6 +50,7 @@ export function createCodexCatalogDecoder() {
 export function projectCodexCatalogMessage(
   parsed: unknown,
   input: Omit<CodexCatalogDecodeInput, "bytes">,
+  cachedPreview?: CodexCatalogPreviewCache,
 ): CodexCatalogDecodeResult {
   const result: CodexCatalogDecodeResult = { pending: false, failures: [] };
   if (!isJsonObject(parsed)) {
@@ -78,18 +80,20 @@ export function projectCodexCatalogMessage(
       message.result = projectCodexCatalogNativeResponse(
         raw,
         sanitizeTerminalText,
-        undefined,
+        cachedPreview,
         remainingRows,
       );
-      result.previewStates = Array.isArray(raw.data)
-        ? raw.data
-            .slice(0, Array.isArray(message.result.data) ? message.result.data.length : 0)
-            .map((row) =>
-              isJsonObject(row) && typeof row.preview === "string"
-                ? Boolean(row.preview)
-                : undefined,
-            )
-        : [];
+      if (!cachedPreview) {
+        result.previewStates = Array.isArray(raw.data)
+          ? raw.data
+              .slice(0, Array.isArray(message.result.data) ? message.result.data.length : 0)
+              .map((row) =>
+                isJsonObject(row) && typeof row.preview === "string"
+                  ? Boolean(row.preview)
+                  : undefined,
+              )
+          : [];
+      }
     } else {
       const thread = message.result.thread;
       const projected = projectCodexCatalogNativeThread(thread, sanitizeTerminalText);
