@@ -1169,9 +1169,19 @@ describe("compaction-safeguard runtime registry", () => {
       expected: { quality: true, semantic: true, curation: false },
     },
     {
+      label: "empty object",
+      qualityGuard: { semanticJudgments: {} },
+      expected: { quality: true, semantic: false, curation: false },
+    },
+    {
       label: "object disabled",
       qualityGuard: { semanticJudgments: { enabled: false } },
       expected: { quality: true, semantic: false, curation: false },
+    },
+    {
+      label: "object disabled but curation requested",
+      qualityGuard: { semanticJudgments: { enabled: false, curateInput: true } },
+      expected: { quality: true, semantic: true, curation: true },
     },
     {
       label: "object enabled",
