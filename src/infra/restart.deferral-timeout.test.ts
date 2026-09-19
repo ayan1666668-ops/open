@@ -1,14 +1,19 @@
 // Tests restart deferral timeout behavior and fallback cleanup.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createDeferred } from "../../test/helpers/promise.js";
 import {
+  getActiveGatewayRootWorkCount,
   isGatewayWorkAdmissionClosed,
   resetGatewayWorkAdmission,
   tryBeginGatewayRootWorkAdmission,
+  tryBeginGatewaySuspendAdmission,
 } from "../process/gateway-work-admission.js";
 import {
   consumeGatewaySigusr1RestartIntent,
   deferGatewayRestartUntilIdle,
   resetGatewayRestartStateForInProcessRestart,
+  scheduleGatewaySigusr1Restart,
+  setPreRestartDeferralCheck,
 } from "./restart.js";
 
 type RestartDeferralHooks = NonNullable<
@@ -27,6 +32,7 @@ describe("deferGatewayRestartUntilIdle timeout", () => {
   });
 
   afterEach(() => {
+    setPreRestartDeferralCheck(() => 0);
     vi.useRealTimers();
     vi.restoreAllMocks();
     resetGatewayRestartStateForInProcessRestart();
@@ -166,10 +172,7 @@ describe("deferGatewayRestartUntilIdle timeout", () => {
   });
 
   it("reopens admission when a blocked preparation is cancelled", async () => {
-    let releasePreparation: (() => void) | undefined;
-    const preparation = new Promise<void>((resolve) => {
-      releasePreparation = resolve;
-    });
+    const { promise: preparation, resolve: releasePreparation } = createDeferred();
     const emitRestart = vi.fn(() => ({ status: "emitted" as const }));
     const handle = deferGatewayRestartUntilIdle({
       getPendingCount: () => 0,
@@ -214,9 +217,6 @@ describe("deferGatewayRestartUntilIdle timeout", () => {
     expect(hooks.onTimeout).not.toHaveBeenCalled();
   });
 
-  // A failed inspection leaves active work UNKNOWN, not absent. These three cases pin the
-  // boundary: never restart on the failure itself, keep retrying, and still escalate through
-  // the bounded deferral budget so a permanently broken probe cannot hang restarts forever.
   it("defers instead of restarting when the initial pending inspection throws", async () => {
     let emissions = 0;
     const countEmission = () => {
@@ -280,7 +280,6 @@ describe("deferGatewayRestartUntilIdle timeout", () => {
       expect(hooks.onCheckError).toHaveBeenCalledOnce();
       expect(emissions).toBe(0);
 
-      // The poll must have survived the exception for this zero to be observed at all.
       await vi.advanceTimersByTimeAsync(10);
       expect(emissions).toBe(1);
       expect(hooks.onReady).toHaveBeenCalledOnce();
@@ -297,7 +296,6 @@ describe("deferGatewayRestartUntilIdle timeout", () => {
     process.on("SIGUSR1", countEmission);
     try {
       const hooks: RestartDeferralHooks = { onCheckError: vi.fn(), onReady: vi.fn() };
-      // initial throw -> poll reads 0 -> the final admission read throws -> later reads are 0.
       const counts: Array<number | "throw"> = ["throw", 0, "throw"];
       let call = 0;
 
@@ -317,7 +315,6 @@ describe("deferGatewayRestartUntilIdle timeout", () => {
       await vi.advanceTimersByTimeAsync(10);
       expect(emissions).toBe(0);
 
-      // Recovery still has to go through a clean admission read before emitting.
       await vi.advanceTimersByTimeAsync(10);
       expect(emissions).toBe(1);
     } finally {
@@ -325,14 +322,11 @@ describe("deferGatewayRestartUntilIdle timeout", () => {
     }
   });
 
-  // A rejected emission is not evidence of idleness either. The old path stopped the
-  // poll and re-emitted with no idle check, so the deferral died after one blind retry.
   it("keeps deferring when the emission itself rejects", async () => {
     const hooks: RestartDeferralHooks = { onCheckError: vi.fn(), onReady: vi.fn() };
     let emitAttempts = 0;
 
     deferGatewayRestartUntilIdle({
-      // Idle from the start, so every poll reaches emission; emission is what fails.
       getPendingCount: () => 0,
       pollMs: 10,
       hooks,
@@ -349,8 +343,6 @@ describe("deferGatewayRestartUntilIdle timeout", () => {
     expect(afterFirst).toBeGreaterThan(0);
     expect(hooks.onCheckError).toHaveBeenCalled();
 
-    // The poll must still be live, so later intervals keep retrying the emission
-    // rather than the deferral going silent after one unchecked re-emit.
     await vi.advanceTimersByTimeAsync(50);
     expect(emitAttempts).toBeGreaterThan(afterFirst);
     expect(hooks.onReady).not.toHaveBeenCalled();
@@ -378,24 +370,16 @@ describe("deferGatewayRestartUntilIdle timeout", () => {
     });
   });
 
-  // A beforeEmit hook still pending at maxWaitMs left attemptingEmission set forever, so
-  // the timeout branch's own forced attemptEmission call was a silent no-op (guarded by
-  // that still-true flag) and the bounded restart deadline was defeated indefinitely.
   it("supersedes a stuck preparation at the deadline with a fresh one, not a bypassed one", async () => {
     const hooks: RestartDeferralHooks = { onTimeout: vi.fn() };
     const emitRestart = vi.fn(() => ({ status: "emitted" as const }));
     let beforeEmitCalls = 0;
-    // First call never settles (the stuck preparation); a fresh attempt started after
-    // superseding it succeeds. beforeEmit must still run for the forced attempt — the
-    // fix must not treat a caller's safety preflight as having already completed.
     const beforeEmit = vi.fn(() => {
       beforeEmitCalls += 1;
       return beforeEmitCalls === 1 ? new Promise<void>(() => {}) : Promise.resolve();
     });
 
     deferGatewayRestartUntilIdle({
-      // Idle from the start so the idle-triggered attempt fires at construction and its
-      // beforeEmit starts preparing (and hangs) well before the deadline below.
       getPendingCount: () => 0,
       maxWaitMs: 100,
       pollMs: 10,
@@ -407,21 +391,14 @@ describe("deferGatewayRestartUntilIdle timeout", () => {
     await vi.advanceTimersByTimeAsync(100);
 
     expect(hooks.onTimeout).toHaveBeenCalledOnce();
-    // The forced retry must call beforeEmit again (fresh preparation), not skip it.
     expect(beforeEmitCalls).toBeGreaterThan(1);
     expect(emitRestart).toHaveBeenCalledOnce();
   });
 
-  // ClawSweeper #118053: the takeover above used to be gated on the once-only onTimeout
-  // notification, so it superseded the stuck idle attempt exactly once. If the FORCED
-  // attempt it started then hung too, no later tick could replace it and the deferral
-  // wedged permanently — the same defect, moved one attempt along.
   it("supersedes a forced preparation that also hangs after the deadline", async () => {
     const hooks: RestartDeferralHooks = { onTimeout: vi.fn() };
     const emitRestart = vi.fn(() => ({ status: "emitted" as const }));
     let beforeEmitCalls = 0;
-    // Both the idle-triggered attempt AND the first forced attempt hang; only the third
-    // preparation settles. A once-only takeover never reaches it.
     const beforeEmit = vi.fn(() => {
       beforeEmitCalls += 1;
       return beforeEmitCalls <= 2 ? new Promise<void>(() => {}) : Promise.resolve();
@@ -436,23 +413,13 @@ describe("deferGatewayRestartUntilIdle timeout", () => {
       emitHooks: { beforeEmit, emitRestart },
     });
 
-    // Each takeover waits a full preparation budget (maxWaitMs here), so the second
-    // supersession lands at ~200ms.
     await vi.advanceTimersByTimeAsync(250);
 
     expect(hooks.onTimeout).toHaveBeenCalledOnce();
-    // Three real preparations: idle (hung), first forced (hung), second forced (settles).
-    // Each runs its own beforeEmit, so no caller preflight is skipped by the takeover.
     expect(beforeEmitCalls).toBeGreaterThanOrEqual(3);
     expect(emitRestart).toHaveBeenCalledOnce();
   });
 
-  // codex review: an earlier draft bounded the takeover to one POLL INTERVAL, which is a
-  // cadence, not a preparation deadline — a beforeEmit that legitimately runs longer than
-  // one interval (a config reload awaiting prepareRuntimeConfig exceeds the 500ms
-  // production poll easily) would be superseded on every tick, thrashing fresh
-  // preparations forever and never emitting. That traded a wedge for a livelock. The
-  // budget is the deferral's own, so a slow preparation spanning many polls still lands.
   it("does not supersede a slow forced preparation that spans several poll intervals", async () => {
     const hooks: RestartDeferralHooks = { onTimeout: vi.fn() };
     const emitRestart = vi.fn(() => ({ status: "emitted" as const }));
@@ -460,7 +427,6 @@ describe("deferGatewayRestartUntilIdle timeout", () => {
     let releaseForced: (() => void) | undefined;
     const beforeEmit = vi.fn(() => {
       beforeEmitCalls += 1;
-      // Idle attempt hangs forever; the forced attempt settles only when released below.
       return beforeEmitCalls === 1
         ? new Promise<void>(() => {})
         : new Promise<void>((resolve) => {
@@ -477,13 +443,9 @@ describe("deferGatewayRestartUntilIdle timeout", () => {
       emitHooks: { beforeEmit, emitRestart },
     });
 
-    // Deadline tick supersedes the hung idle attempt and starts the forced one.
     await vi.advanceTimersByTimeAsync(100);
     expect(beforeEmitCalls).toBe(2);
 
-    // Five further poll intervals elapse while the forced preparation is still running.
-    // Under the rejected poll-interval bound this would have restarted it five times;
-    // within its real budget it must be left completely alone.
     await vi.advanceTimersByTimeAsync(50);
     expect(beforeEmitCalls).toBe(2);
 
@@ -492,8 +454,6 @@ describe("deferGatewayRestartUntilIdle timeout", () => {
     expect(emitRestart).toHaveBeenCalledOnce();
   });
 
-  // If the forced attempt's own emission rejects, the deferral must not go silent forever:
-  // the old path stopped the poll before the forced attempt ran, so nothing retried it.
   it("keeps retrying the forced restart when its emission rejects after the deadline", async () => {
     const hooks: RestartDeferralHooks = { onTimeout: vi.fn() };
     let emitAttempts = 0;
@@ -520,16 +480,11 @@ describe("deferGatewayRestartUntilIdle timeout", () => {
     expect(emitAttempts).toBeGreaterThanOrEqual(3);
   });
 
-  // The idle branch (current <= 0) used to return before the maxWaitMs check below it.
-  // A probe that keeps reporting idle while emission keeps failing hit that early return
-  // on every single tick, so the bounded budget below it was never reached and the
-  // deferral polled "idle" forever instead of escalating.
   it("still escalates through maxWaitMs when idle emission keeps failing", async () => {
     const hooks: RestartDeferralHooks = { onCheckError: vi.fn(), onTimeout: vi.fn() };
     let emitAttempts = 0;
 
     deferGatewayRestartUntilIdle({
-      // Idle from the start so every poll takes the idle branch, never the unknown-count one.
       getPendingCount: () => 0,
       pollMs: 10,
       maxWaitMs: 100,
@@ -545,9 +500,55 @@ describe("deferGatewayRestartUntilIdle timeout", () => {
 
     await vi.advanceTimersByTimeAsync(100);
 
-    // Repeated idle retries happened (the single-failed-probe-is-idle policy still holds)...
     expect(emitAttempts).toBeGreaterThan(1);
-    // ...but the bounded budget still fired instead of looping the idle retry forever.
     expect(hooks.onTimeout).toHaveBeenCalledOnce();
+  });
+  it.each([false, true])(
+    "keeps resumed admission under current deferral ownership (timeout=%s)",
+    async (timeout) => {
+      const suspension = tryBeginGatewaySuspendAdmission(() => {});
+      expect(suspension?.commit()).toBe(true);
+      const preparation = createDeferred();
+      const beforeEmit = vi.fn(async () => await preparation.promise);
+      const emitRestart = vi.fn(() => ({ status: "emitted" as const }));
+      const handle = deferGatewayRestartUntilIdle({
+        getPendingCount: () => 0,
+        pollMs: 10,
+        maxWaitMs: 100,
+        emitHooks: { beforeEmit, emitRestart },
+      });
+      try {
+        await vi.advanceTimersByTimeAsync(timeout ? 150 : 0);
+        if (!timeout) {
+          handle.cancel();
+        }
+        expect(suspension?.release()).toBe(true);
+        await vi.advanceTimersByTimeAsync(0);
+        expect(beforeEmit).toHaveBeenCalledTimes(timeout ? 1 : 0);
+        handle.cancel();
+        expect(isGatewayWorkAdmissionClosed()).toBe(false);
+        preparation.resolve();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(emitRestart).not.toHaveBeenCalled();
+        expect(getActiveGatewayRootWorkCount()).toBe(0);
+      } finally {
+        handle.cancel();
+        suspension?.release();
+        preparation.resolve();
+        await vi.advanceTimersByTimeAsync(0);
+      }
+    },
+  );
+  it("defers a scheduled restart after probe failure until its configured budget expires", async () => {
+    const emit = vi.spyOn(process, "emit");
+    setPreRestartDeferralCheck(() => {
+      throw new Error("pending-work store unavailable");
+    });
+    scheduleGatewaySigusr1Restart({ delayMs: 0 });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(emit).not.toHaveBeenCalledWith("SIGUSR1");
+    await vi.advanceTimersByTimeAsync(300_000);
+    expect(emit.mock.calls.filter(([event]) => event === "SIGUSR1")).toHaveLength(1);
+    expect(consumeGatewaySigusr1RestartIntent()).toEqual({ force: true });
   });
 });

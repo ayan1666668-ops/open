@@ -1,8 +1,9 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import * as restartModule from "../infra/restart.js";
+import { resetGatewayWorkAdmission } from "../process/gateway-work-admission.js";
 import type { GatewayReloadPlan } from "./config-reload.js";
-import { nextGatewayReloadGeneration } from "./server-reload-contracts.js";
+import { nextGatewayReloadGeneration } from "./server-reload-generation.js";
 import { createGatewayRestartCoordinator } from "./server-reload-restart.js";
 
 const zeroActiveCounts = {
@@ -24,14 +25,20 @@ const restartPlan = {
   restartGmailWatcher: false,
   restartCron: false,
   restartHeartbeat: false,
-  restartHealthMonitor: false,
   reloadPlugins: false,
   restartChannels: new Set(),
   disposeMcpRuntimes: false,
   noopPaths: [],
 } satisfies GatewayReloadPlan;
 
+beforeEach(() => {
+  restartModule.resetGatewayRestartStateForInProcessRestart();
+  resetGatewayWorkAdmission();
+});
+
 afterEach(() => {
+  restartModule.resetGatewayRestartStateForInProcessRestart();
+  resetGatewayWorkAdmission();
   vi.useRealTimers();
 });
 
@@ -81,15 +88,10 @@ describe("gateway restart readiness preflight", () => {
     }
   });
 
-  // ClawSweeper #118053: the timeout deliberately leaves the deferral polling so a forced
-  // emission that rejects is retried, but onTimeout also nulled `restartDeferral` — so the
-  // live poll was owned by nobody and neither supersession nor shutdown could reach cancel().
-  // A direct probe confirms cancel() is load-bearing: on a timed-out deferral whose emission
-  // keeps throwing, cancel() takes it from ~8 retries/window to 0.
   it("keeps the timed-out deferral cancellable so a later request can supersede it", async () => {
     const cancel = vi.fn();
     const deferSpy = vi.spyOn(restartModule, "deferGatewayRestartUntilIdle");
-    let capturedHooks: { onTimeout?: (pending: number, elapsedMs: number) => void } | undefined;
+    let capturedHooks: Parameters<typeof restartModule.deferGatewayRestartUntilIdle>[0]["hooks"];
     deferSpy.mockImplementation(
       (opts: Parameters<typeof restartModule.deferGatewayRestartUntilIdle>[0]) => {
         capturedHooks = opts.hooks;
@@ -114,12 +116,8 @@ describe("gateway restart readiness preflight", () => {
       });
       expect(deferSpy).toHaveBeenCalledOnce();
 
-      // The deadline passes. The deferral is NOT finished — it keeps polling to retry a
-      // rejected forced emission — so the coordinator must retain its handle.
       capturedHooks?.onTimeout?.(1, 300_000);
 
-      // A later config change supersedes the timed-out request. If onTimeout dropped the
-      // handle, this cancel never reaches the still-live poll.
       coordinator.requestGatewayRestart(restartPlan, {} as OpenClawConfig, {
         prepareRuntimeConfig: async () => ({}) as OpenClawConfig,
       });
@@ -130,4 +128,47 @@ describe("gateway restart readiness preflight", () => {
       coordinator.stopRestartRetries();
     }
   });
+  it.each(["check error", "timeout"])(
+    "cancels live retries after %s when the coordinator stops",
+    async (failure) => {
+      vi.useFakeTimers();
+      let failedProbe = false;
+      const getActiveCounts = vi.fn(() => {
+        if (failedProbe) {
+          throw new Error("pending-work store unavailable");
+        }
+        return { ...zeroActiveCounts, totalActive: 1, activeTasks: 1 };
+      });
+      const requestRecoveryRestart = vi.fn(() => {
+        throw new Error("restart emission rejected");
+      });
+      const coordinator = createGatewayRestartCoordinator({
+        params: { logReload: { info: vi.fn(), warn: vi.fn() }, requestRecoveryRestart },
+        myGeneration: nextGatewayReloadGeneration(),
+        restartRecoveryAvailable: true,
+        getActiveCounts,
+        formatActiveDetails: () => ["1 active task"],
+        formatDeferredWorkStatus: () => "1 active task",
+        formatTaskBlockers: () => null,
+      });
+      try {
+        coordinator.requestGatewayRestart(restartPlan, {} as OpenClawConfig);
+        failedProbe = failure === "check error";
+        await vi.advanceTimersByTimeAsync(failedProbe ? 500 : 300_000);
+        if (failedProbe) {
+          expect(requestRecoveryRestart).not.toHaveBeenCalled();
+        } else {
+          expect(requestRecoveryRestart).toHaveBeenCalledOnce();
+        }
+        coordinator.stopRestartRetries();
+        const reads = getActiveCounts.mock.calls.length;
+        const emissions = requestRecoveryRestart.mock.calls.length;
+        await vi.advanceTimersByTimeAsync(2_000);
+        expect(getActiveCounts).toHaveBeenCalledTimes(reads);
+        expect(requestRecoveryRestart).toHaveBeenCalledTimes(emissions);
+      } finally {
+        coordinator.stopRestartRetries();
+      }
+    },
+  );
 });

@@ -6,6 +6,7 @@ import { SILENT_REPLY_TOKEN } from "../../auto-reply/tokens.js";
 import type { CliDeps } from "../../cli/outbound-send-deps.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { createLazyImportLoader } from "../../shared/lazy-promise.js";
+import type { SkillSnapshot } from "../../skills/types.js";
 import type {
   CronAgentExecutionPhaseUpdate,
   CronAgentExecutionStarted,
@@ -29,6 +30,11 @@ export type RunCronAgentTurnParams = {
   sessionKey: string;
   agentId?: string;
   lane?: string;
+  executionIdentity?: import("../service/state.js").CronExecutionIdentityAdmission;
+  /** Host-only root for system-owned turns; never persisted in cron state. */
+  executionRoot?: string;
+  /** Explicit instruction set for a host-owned turn, including an empty review context. */
+  skillsSnapshot?: SkillSnapshot;
 };
 
 export function resolveCronAgentTurnMessage(input: RunCronAgentTurnParams): string {
@@ -51,9 +57,6 @@ const cronExternalContentRuntimeLoader = createLazyImportLoader(
 const cronAuthProfileRuntimeLoader = createLazyImportLoader(
   () => import("./run-auth-profile.runtime.js"),
 );
-const cronModelPreflightRuntimeLoader = createLazyImportLoader(
-  () => import("./model-preflight.runtime.js"),
-);
 export async function loadSessionAccessorRuntime() {
   return await sessionAccessorRuntimeLoader.load();
 }
@@ -64,10 +67,6 @@ export async function loadCronExternalContentRuntime() {
 
 async function loadCronAuthProfileRuntime() {
   return await cronAuthProfileRuntimeLoader.load();
-}
-
-export async function loadCronModelPreflightRuntime() {
-  return await cronModelPreflightRuntimeLoader.load();
 }
 
 function hasConfiguredAuthProfiles(cfg: OpenClawConfig): boolean {
@@ -87,6 +86,7 @@ export async function resolveCronAuthSelection(params: {
   cfg: OpenClawConfig;
   provider: string;
   modelId: string;
+  configuredProfileId?: string;
   harnessRuntime: Parameters<
     CronAuthProfileRuntime["resolveSessionAuthSelection"]
   >[0]["harnessRuntime"];
@@ -108,6 +108,7 @@ export async function resolveCronAuthSelection(params: {
     cfg: params.cfg,
     provider: params.provider,
     modelId: params.modelId,
+    ...(params.configuredProfileId ? { configuredProfileId: params.configuredProfileId } : {}),
     harnessRuntime: params.harnessRuntime,
     agentDir: params.agentDir,
     sessionEntry: params.cronSession.sessionEntry,
