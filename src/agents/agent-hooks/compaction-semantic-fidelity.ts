@@ -103,6 +103,7 @@ function extractUserText(message: AgentMessage): string {
 export function prepareCompactionSemanticFidelityEvidence(params: {
   sourceMessages: AgentMessage[];
   retainedContext: string;
+  additionalSourceItems?: Array<{ id: string; text: string }>;
 }) {
   const retainedContext = truncateUtf16Safe(
     params.retainedContext,
@@ -117,6 +118,21 @@ export function prepareCompactionSemanticFidelityEvidence(params: {
   let verbatimPreserved = 0;
   let truncatedSourceItems = 0;
   const sourceItems: Array<{ id: string; text: string; truncated: boolean }> = [];
+
+  for (const item of params.additionalSourceItems ?? []) {
+    if (!item.text) {
+      continue;
+    }
+    if (retainedContext.includes(item.text)) {
+      verbatimPreserved += 1;
+      continue;
+    }
+    sourceItems.push({
+      id: item.id,
+      text: item.text,
+      truncated: false,
+    });
+  }
 
   for (const text of recentUserTexts) {
     if (retainedContext.includes(text)) {
@@ -133,7 +149,9 @@ export function prepareCompactionSemanticFidelityEvidence(params: {
       text: bounded,
       truncated,
     });
-    if (sourceItems.length >= MAX_SOURCE_ITEMS) {
+    if (
+      sourceItems.filter((item) => item.id.startsWith("recent-user-")).length >= MAX_SOURCE_ITEMS
+    ) {
       break;
     }
   }
@@ -171,6 +189,7 @@ export async function observeCompactionSemanticFidelity(
   params: {
     sourceMessages: AgentMessage[];
     retainedContext: string;
+    additionalSourceItems?: Array<{ id: string; text: string }>;
     signal: AbortSignal;
   },
   evaluate: EvaluateJudgment = evaluateJudgment,
