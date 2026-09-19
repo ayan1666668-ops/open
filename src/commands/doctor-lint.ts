@@ -375,14 +375,29 @@ async function executeDoctorLint(
     ...(opts.onlyIds && opts.onlyIds.length > 0 ? { onlyIds: opts.onlyIds } : {}),
   };
   const result = await runDoctorLintChecks(ctx, runOpts);
-  const visible = result.findings.filter((finding) => healthFindingMeetsSeverity(finding, sevMin));
-  const warnings = result.findings.filter(
+  const advisoryChecks = new Set(
+    coreChecks
+      .filter(
+        (check) =>
+          check.updateWork?.kind === "inspection" || check.updateWork?.kind === "standalone",
+      )
+      .map((check) => check.id),
+  );
+  const findings = isUpdateDoctorLintPass(stateView.sourceEnv)
+    ? result.findings.map((finding) =>
+        finding.severity === "error" && advisoryChecks.has(finding.checkId)
+          ? { ...finding, severity: "warning" as const }
+          : finding,
+      )
+    : result.findings;
+  const visible = findings.filter((finding) => healthFindingMeetsSeverity(finding, sevMin));
+  const warnings = findings.filter(
     (finding) =>
       !healthFindingMeetsSeverity(finding, sevMin) &&
       (finding.errorCode === "OPENCLAW_STATE_LEASE_ABORTED" ||
         (isUpdateDoctorLintPass(stateView.sourceEnv) && finding.severity === "warning")),
   );
-  const exitCode = exitCodeFromFindings(result.findings, sevMin);
+  const exitCode = exitCodeFromFindings(findings, sevMin);
   return {
     exitCode,
     findings: visible,
