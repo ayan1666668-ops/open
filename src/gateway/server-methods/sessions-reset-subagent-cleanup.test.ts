@@ -47,6 +47,7 @@ import {
   closeOpenClawStateDatabaseForTest,
   openOpenClawStateDatabase,
 } from "../../state/openclaw-state-db.js";
+import { prepareTaskRegistryRead } from "../../tasks/task-registry-read.js";
 import { resetTaskRegistryForTests } from "../../tasks/task-registry.test-support.js";
 import { findTaskByRunIdForStatus } from "../../tasks/task-status-access.js";
 import { captureEnv, setTestEnvValue } from "../../test-utils/env.js";
@@ -145,6 +146,8 @@ function registerCollector(id: string, childSessionKey = key, agentId = "main") 
 }
 
 afterEach(async () => {
+  // Join accepted lifecycle-event writes before the residual-roots cleanup guard.
+  await prepareTaskRegistryRead();
   vi.restoreAllMocks();
   restoreRegisteredAgentHarnesses(harnesses);
   await cleanupSubagentRegistryPersistenceTest({
