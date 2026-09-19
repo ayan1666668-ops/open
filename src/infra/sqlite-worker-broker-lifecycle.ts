@@ -1,4 +1,5 @@
 import { createDeferredCore } from "../shared/deferred.js";
+import { createSqliteLifecycleAggregateError } from "./sqlite-coordinator.js";
 import { releaseSqliteWorkerActorCoordinators } from "./sqlite-worker-broker-admission.js";
 import type { Actor, EnqueueOptions, Slot, StoreClient } from "./sqlite-worker-broker.types.js";
 
@@ -29,10 +30,11 @@ export function createSqliteWorkerLifecycle({
     try {
       await retireEmpty(slot);
     } catch (cleanupError) {
-      // oxlint-disable-next-line preserve-caught-error -- AggregateError.errors retains cleanupError; cause remains the original admission rejection.
-      throw new AggregateError([error, cleanupError], "SQLite slot admission and cleanup failed", {
-        cause: error,
-      });
+      throw createSqliteLifecycleAggregateError(
+        [error, cleanupError],
+        "SQLite slot admission and cleanup failed",
+        error,
+      );
     }
     throw error;
   }

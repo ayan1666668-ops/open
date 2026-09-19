@@ -67,7 +67,7 @@ function createSharedStateWorkerOwner() {
   };
   const stores = new Set<Entry>();
   const activeEntries = new Set<Entry>();
-  const retiring = new Map<Entry, { pending?: Promise<void> }>();
+  const retiring = new Map<Entry, { pending?: Promise<void>; actorSettlement?: Promise<void> }>();
   type ActorRetirement = {
     identity: DatabasePathIdentity;
     entries: Set<Entry>;
@@ -104,15 +104,26 @@ function createSharedStateWorkerOwner() {
     if (attempt.pending) {
       return attempt.pending;
     }
-    const pending = entry.store
-      ? entry.store.close()
-      : entry.opening.then(
-          (store) => store?.close(),
-          () =>
-            entry.context.maintenanceScope
-              ? entry.cleanup?.close()
-              : closeUnclaimedSharedStateSqliteWorkers(entry.context.admission.databasePath),
-        );
+    if (entry.actor && retiringActors.has(entry.actor)) {
+      return retireActor(entry.actor, entry.context.admission.identity);
+    }
+    const pending = (
+      entry.store
+        ? entry.store.close()
+        : entry.opening.then(
+            (store) => store?.close(),
+            () =>
+              entry.context.maintenanceScope
+                ? entry.cleanup?.close()
+                : closeUnclaimedSharedStateSqliteWorkers(entry.context.admission.databasePath),
+          )
+    ).catch(async (error: unknown) => {
+      if (!attempt.actorSettlement) {
+        throw error;
+      }
+      // Adoption transfers cleanup settlement, not the operation's original failure.
+      await attempt.actorSettlement;
+    });
     attempt.pending = pending;
     const settled = () => {
       attempt.pending = undefined;
@@ -237,6 +248,16 @@ function createSharedStateWorkerOwner() {
       scheduleIdleRetirement(entry);
     };
   };
+  const retainActorSettlement = (attempt: ActorRetirement, pending: Promise<void>) => {
+    for (const entry of attempt.entries) {
+      const closing = retiring.get(entry);
+      if (closing) {
+        // Keep this join after the completed actor leaves the registry.
+        closing.actorSettlement = pending;
+      }
+    }
+    return pending;
+  };
   const retireActor = (actor: object, identity: DatabasePathIdentity): Promise<void> => {
     let attempt = retiringActors.get(actor);
     if (!attempt) {
@@ -251,11 +272,9 @@ function createSharedStateWorkerOwner() {
       }
     }
     if (attempt.pending) {
-      return attempt.pending;
+      return retainActorSettlement(attempt, attempt.pending);
     }
     const current = attempt;
-    const pending = retireSqliteWorkerActor(actor);
-    current.pending = pending;
     const complete = () => {
       for (const entry of current.entries) {
         clearIdleRetirement(entry);
@@ -264,30 +283,27 @@ function createSharedStateWorkerOwner() {
       }
       retiringActors.delete(actor);
     };
-    void pending.then(complete, () => {
+    const pending = retireSqliteWorkerActor(actor).then(complete, (error: unknown) => {
       current.pending = undefined;
-      // A failed operation can reject close after its exact actor custody has completed.
+      // Broker settlement has joined all client references and native cleanup.
+      // Keep its old operation failure from rejecting a completed custody join.
       if (
         current.entries.size > 0 &&
         [...current.entries].every((entry) => entry.cleanup?.pending === false)
       ) {
         complete();
+        return;
       }
+      throw error;
     });
-    return pending;
+    current.pending = pending;
+    return retainActorSettlement(current, pending);
   };
-  const joinActorRetirement = async (actor: object, attempt: ActorRetirement): Promise<void> => {
+  const joinActorRetirement = async (attempt: ActorRetirement): Promise<void> => {
     if (!attempt.pending) {
       throw new Error("Shared-state actor cleanup is pending; close the database before reopening");
     }
-    try {
-      await attempt.pending;
-    } catch (error) {
-      // Completed custody can retain the old operation's failure in its close result.
-      if (retiringActors.get(actor) === attempt) {
-        throw error;
-      }
-    }
+    await attempt.pending;
   };
   async function close(identity?: DatabasePathIdentity): Promise<void> {
     for (const entry of stores.values()) {
@@ -350,9 +366,9 @@ function createSharedStateWorkerOwner() {
             assertAdmission();
           }
         }
-        for (const [actor, attempt] of retiringActors) {
+        for (const attempt of retiringActors.values()) {
           if (attempt.identity.key === admission.identity.key) {
-            await joinActorRetirement(actor, attempt);
+            await joinActorRetirement(attempt);
             assertAdmission();
           }
         }
@@ -475,6 +491,9 @@ function createSharedStateWorkerOwner() {
           ? this.open(context, false, assertCurrent)
           : undefined;
       }
+      if (!stores.has(entry)) {
+        return this.open(context, existingOnly, assertCurrent);
+      }
       entry.store = store;
       clearIdleRetirement(entry);
       const actor = entry.actor;
@@ -482,12 +501,11 @@ function createSharedStateWorkerOwner() {
       if (actor && actorRetirement) {
         actorRetirement.entries.add(entry);
         forget(entry);
-        await joinActorRetirement(actor, actorRetirement);
+        await joinActorRetirement(actorRetirement);
         return this.open(context, existingOnly, assertCurrent);
       }
       if (!isSqliteWorkerStoreAvailable(store) && !hasActiveActorOperations(entry)) {
-        forget(entry);
-        await store.close();
+        await (actor ? retireActor(actor, admission.identity) : retire(entry));
         return this.open(context, existingOnly, assertCurrent);
       }
       try {

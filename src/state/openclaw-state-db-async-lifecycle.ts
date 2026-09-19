@@ -223,6 +223,10 @@ export function createOpenClawDatabaseMaintenanceScope(
               "shared-handles",
             ] as const) {
               while ([...resources.values()].some((resource) => resource.phase === phase)) {
+                // Earlier cleanup can start tracked work using resources in this batch.
+                while (pending.size) {
+                  await Promise.allSettled(pending);
+                }
                 const batch = [...resources].filter(([, resource]) => resource.phase === phase);
                 const results = await Promise.allSettled(
                   batch.map(async ([key, resource]) => {
