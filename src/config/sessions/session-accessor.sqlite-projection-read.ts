@@ -106,8 +106,13 @@ export function selectMessageRows(
         "in",
         selection.positions.length <= 500
           ? selection.positions
-          : /* kysely-allow-raw: larger sparse reset tails need one binding to stay below SQLite's variable limit. */
-            sql<number>`(SELECT value FROM json_each(${JSON.stringify(selection.positions)}))`,
+          : getActiveTranscriptKysely(database)
+              .selectFrom((eb) =>
+                eb
+                  .fn<{ value: number }>("json_each", [eb.val(JSON.stringify(selection.positions))])
+                  .as("requested"),
+              )
+              .select("requested.value"),
       )
     : query
         .where("active.message_position", ">=", selection.start)
