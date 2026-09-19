@@ -184,6 +184,54 @@ host.
   </Accordion>
 </AccordionGroup>
 
+## Managed provider auth login flow
+
+Use `openclaw/plugin-sdk/provider-auth-managed-login-runtime` when a native host already owns the login UI and must reconnect one existing managed OAuth profile. The runtime export includes `MANAGED_MODELS_AUTH_LOGIN_FLOW_CAPABILITY`; callers should compare it before starting user-visible work so older hosts fail before side effects. This capability value is supported-version metadata only, not an authentication token or authorization proof; the native caller still owns profile custody, current-owner checks, and lifecycle authorization.
+
+Managed login is intentionally narrower than interactive `models auth login`. The caller must pass an explicit provider, method, agent, profile ID, config, isolated env, and managed state directory. The flow requests exactly one OAuth profile for that provider, persists it into the managed state directory, and returns only metadata such as provider, method, auth-refresh outcome, default model, profile ID, provider, and credential mode. It does not return token material, apply provider config patches, update defaults, promote profile order, auto-enable plugins, or run model-access completion prompts.
+
+The supplied config does not cause an ambient config read, and configured `agentDir` overrides do not redirect managed credential storage outside `stateDir`. Without an explicit `refreshAfterLogin` callback, the flow does not contact a Gateway and returns the unconfirmed `gateway-unreachable` refresh outcome. The caller starts or refreshes its own Gateway after the profile commit.
+
+```typescript
+import {
+  MANAGED_MODELS_AUTH_LOGIN_ACCOUNT_MISMATCH_CODE,
+  MANAGED_MODELS_AUTH_LOGIN_FLOW_CAPABILITY,
+  runManagedModelsAuthLoginFlow,
+  type ModelsAuthLoginManagedOptions,
+} from "openclaw/plugin-sdk/provider-auth-managed-login-runtime";
+
+if (MANAGED_MODELS_AUTH_LOGIN_FLOW_CAPABILITY !== "openclaw.models.auth.managed.v1") {
+  throw new Error("Host does not support managed provider auth login.");
+}
+
+const managed: ModelsAuthLoginManagedOptions = {
+  capability: MANAGED_MODELS_AUTH_LOGIN_FLOW_CAPABILITY,
+  profileId,
+  stateDir,
+  beforePersist: async () => {
+    await claimNativeProfileOwner();
+  },
+  assertCurrent: () => {
+    assertNativeProfileOwner();
+  },
+};
+
+await runManagedModelsAuthLoginFlow({
+  provider,
+  method,
+  agent,
+  config,
+  runtime,
+  prompter,
+  env,
+  signal,
+  openUrl,
+  managed,
+});
+```
+
+`beforePersist` runs after the provider returns the OAuth profile and before protected material is staged. `assertCurrent` is passed through the provider run and the persistence write boundary so native hosts can abort if profile ownership changes during the browser consent flow. The persistence guard also rechecks the supplied `signal` after handoff and lock waits, immediately before credential replacement; a cancelled attempt cannot commit even if its owner remains current. Providers that can verify account identity should implement `matchesPersonalAccount`; managed reconnects use it before persistence and again at the write boundary. Same-account failures use `MANAGED_MODELS_AUTH_LOGIN_ACCOUNT_MISMATCH_CODE` (`"account_mismatch"`).
+
 ## Prepared completion SDK compatibility
 
 Prefer `api.runtime.llm.complete` for new plugin code. Existing callers of

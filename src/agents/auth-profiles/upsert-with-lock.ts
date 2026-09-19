@@ -136,7 +136,7 @@ function supersedesOAuthRefreshGenerationObservedAtAdmission(params: {
 
 type PersistAuthProfileBatchParams = {
   /** Revalidate the calling operation after lock acquisition, at the write boundary. */
-  beforeWrite?: () => void;
+  beforeWrite?: (current: AuthProfileCredential | undefined, profileId?: string) => void;
   profiles: readonly {
     profileId: string;
     credential: AuthProfileCredential;
@@ -196,7 +196,6 @@ export async function persistAuthProfileBatch(
       const preparedOwner = runAuthProfileWriteTransaction(
         params.agentDir,
         (database, owner) => {
-          params.beforeWrite?.();
           storeWasAbsent =
             inspectPersistedAuthProfileStoreRaw(params.agentDir, database).status === "missing";
           stateWasAbsent =
@@ -226,7 +225,9 @@ export async function persistAuthProfileBatch(
                 `Refused to restore fenced OAuth refresh generation for profile "${profileId}".`,
               );
             }
-            previousProfiles.set(profileId, next.profiles[profileId]);
+            const currentProfile = next.profiles[profileId];
+            params.beforeWrite?.(currentProfile, profileId);
+            previousProfiles.set(profileId, currentProfile);
             next.profiles[profileId] = entry.credential;
             const existingStats = next.usageStats?.[profileId];
             if (params.resetFailureState && existingStats) {

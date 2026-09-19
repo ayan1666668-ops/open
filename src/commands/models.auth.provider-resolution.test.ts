@@ -10,8 +10,11 @@ import {
   loadAuthProfileStoreWithoutExternalProfiles,
   saveAuthProfileStore,
 } from "../agents/auth-profiles/store-runtime.js";
+import { findPersistedAuthProfileCredential } from "../agents/auth-profiles/store.js";
+import { persistAuthProfileBatch } from "../agents/auth-profiles/upsert-with-lock.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { summarizeMigrationItems } from "../plugin-sdk/migration.js";
+import { runManagedModelsAuthLoginFlow } from "../plugin-sdk/provider-auth-managed-login-runtime.js";
 import * as migrationRuntime from "../plugins/migration-provider-runtime.js";
 import { getPluginLoaderCacheState } from "../plugins/registry-lifecycle.js";
 import { resetPluginRuntimeStateForTest } from "../plugins/runtime.js";
@@ -19,7 +22,12 @@ import type { MigrationItem, MigrationPlan, ProviderPlugin } from "../plugins/ty
 import { createOpenClawTestState } from "../test-utils/openclaw-test-state.js";
 import { getFreePort } from "../test-utils/ports.js";
 import { tryImportProviderCredential } from "./models/auth-credential-import.js";
-import { resolveRequestedLoginProviderOrThrow, runModelsAuthLoginFlowCore } from "./models/auth.js";
+import {
+  MANAGED_MODELS_AUTH_LOGIN_ACCOUNT_MISMATCH_CODE,
+  MANAGED_MODELS_AUTH_LOGIN_FLOW_CAPABILITY,
+  resolveRequestedLoginProviderOrThrow,
+  runModelsAuthLoginFlowCore,
+} from "./models/auth.js";
 
 function makeProvider(params: { id: string; label?: string; aliases?: string[] }): ProviderPlugin {
   return {
@@ -29,6 +37,304 @@ function makeProvider(params: { id: string; label?: string; aliases?: string[] }
     auth: [],
   };
 }
+
+describe("managed provider auth login", () => {
+  async function withManagedProofState(params: {
+    label: string;
+    incomingCredential: {
+      type: "oauth";
+      provider: string;
+      access: string;
+      refresh: string;
+      expires: number;
+      accountId?: string;
+      userId?: string;
+    };
+    nativeCredential: {
+      type: "oauth";
+      provider: string;
+      access: string;
+      refresh: string;
+      expires: number;
+      accountId?: string;
+      userId?: string;
+    };
+    beforePersist?: (state: {
+      nativeAgentDir: string;
+      nativeStateDir: string;
+      profileId: string;
+    }) => Promise<void>;
+    assertCurrent?: () => void;
+    signal?: AbortSignal;
+  }) {
+    const state = await createOpenClawTestState({
+      label: params.label,
+      env: {
+        OPENCLAW_DISABLE_BUNDLED_PLUGINS: "1",
+        OPENCLAW_BUNDLED_PLUGINS_DIR: undefined,
+        OPENCLAW_OAUTH_DIR: undefined,
+        OPENCLAW_GATEWAY_URL: undefined,
+        OPENCLAW_GATEWAY_PORT: undefined,
+        OPENCLAW_GATEWAY_TOKEN: undefined,
+        OPENCLAW_GATEWAY_PASSWORD: undefined,
+      },
+    });
+    try {
+      getPluginLoaderCacheState().clear();
+      resetPluginRuntimeStateForTest();
+      const provider = params.incomingCredential.provider;
+      const profileId = `${provider}:managed`;
+      const nativeStateDir = state.path("native-state");
+      const nativeAgentDir = path.join(nativeStateDir, "agents", "main", "agent");
+      const configuredStateDir = state.path("configured-state");
+      const configuredAgentDir = path.join(configuredStateDir, "agents", "main", "agent");
+      const ambientCredential = {
+        ...params.incomingCredential,
+        access: "ambient-access-token",
+        refresh: "ambient-refresh-token",
+      };
+      const configuredAgentCredential = {
+        ...params.incomingCredential,
+        access: "configured-agent-access-token",
+        refresh: "configured-agent-refresh-token",
+        accountId: "acct-configured-agent",
+        userId: "user-configured-agent",
+      };
+      const pluginDir = path.join(state.workspaceDir, ".openclaw", "extensions", provider);
+      await fs.mkdir(pluginDir, { recursive: true, mode: 0o755 });
+      await fs.writeFile(
+        path.join(pluginDir, "openclaw.plugin.json"),
+        JSON.stringify({
+          id: provider,
+          providers: [provider],
+          configSchema: { type: "object", additionalProperties: false, properties: {} },
+        }),
+      );
+      await fs.writeFile(
+        path.join(pluginDir, "index.cjs"),
+        `module.exports = {
+          id: ${JSON.stringify(provider)},
+          register(api) {
+            api.registerProvider({
+              id: ${JSON.stringify(provider)},
+              label: "Managed proof",
+              auth: [{
+                id: "oauth",
+                label: "Managed OAuth",
+                kind: "oauth",
+                matchesPersonalAccount(incoming, current) {
+                  if (!incoming || !current || incoming.type !== "oauth" || current.type !== "oauth") return false;
+                  return Boolean(incoming.userId && current.userId && incoming.userId === current.userId);
+                },
+                async run({ env }) {
+                  if (env.OPENCLAW_STATE_DIR !== ${JSON.stringify(nativeStateDir)}) {
+                    throw new Error("Managed provider run did not receive the isolated native state env");
+                  }
+                  return { profiles: [{ profileId: "ignored", credential: ${JSON.stringify(params.incomingCredential)} }] };
+                }
+              }]
+            });
+          }
+        };`,
+      );
+      const config: OpenClawConfig = {
+        agents: {
+          entries: {
+            main: { agentDir: configuredAgentDir, workspace: state.workspaceDir },
+          },
+        },
+        plugins: { allow: [provider], entries: { [provider]: { enabled: true } } },
+      };
+      await state.writeConfig(config);
+      saveAuthProfileStore(
+        { version: 1, profiles: { [profileId]: ambientCredential } },
+        state.agentDir(),
+        { filterExternalAuthProfiles: false, syncExternalCli: false },
+      );
+      await persistAuthProfileBatch({
+        agentDir: nativeAgentDir,
+        stateDir: nativeStateDir,
+        profiles: [{ profileId, credential: params.nativeCredential }],
+        allowOAuthGenerationReplacement: true,
+      });
+      await persistAuthProfileBatch({
+        agentDir: configuredAgentDir,
+        stateDir: configuredStateDir,
+        profiles: [{ profileId, credential: configuredAgentCredential }],
+        allowOAuthGenerationReplacement: true,
+      });
+
+      const run = runManagedModelsAuthLoginFlow({
+        provider,
+        method: "oauth",
+        agent: "main",
+        config,
+        runtime: { log: vi.fn(), error: vi.fn(), exit: vi.fn() },
+        prompter: createWizardPrompter({}),
+        env: { ...state.env, OPENCLAW_STATE_DIR: state.stateDir },
+        signal: params.signal,
+        managed: {
+          capability: MANAGED_MODELS_AUTH_LOGIN_FLOW_CAPABILITY,
+          profileId,
+          stateDir: nativeStateDir,
+          beforePersist: async () => {
+            await params.beforePersist?.({ nativeAgentDir, nativeStateDir, profileId });
+          },
+          assertCurrent: params.assertCurrent ?? (() => {}),
+        },
+      });
+      const readNative = () =>
+        findPersistedAuthProfileCredential({
+          agentDir: nativeAgentDir,
+          profileId,
+          stateDir: nativeStateDir,
+        });
+      const readConfigured = () =>
+        findPersistedAuthProfileCredential({
+          agentDir: configuredAgentDir,
+          profileId,
+          stateDir: configuredStateDir,
+        });
+      const readAmbient = () =>
+        findPersistedAuthProfileCredential({
+          agentDir: state.agentDir(),
+          profileId,
+          stateDir: state.stateDir,
+        });
+      return {
+        run,
+        incomingCredential: params.incomingCredential,
+        nativeCredential: params.nativeCredential,
+        configuredAgentCredential,
+        ambientCredential,
+        readNative,
+        readConfigured,
+        readAmbient,
+        cleanup: async () => {
+          getPluginLoaderCacheState().clear();
+          resetPluginRuntimeStateForTest();
+          clearRuntimeAuthProfileStoreSnapshots();
+          clearAuthProfileMigrationDiagnostics();
+          await state.cleanup();
+        },
+      };
+    } catch (error) {
+      getPluginLoaderCacheState().clear();
+      resetPluginRuntimeStateForTest();
+      clearRuntimeAuthProfileStoreSnapshots();
+      clearAuthProfileMigrationDiagnostics();
+      await state.cleanup();
+      throw error;
+    }
+  }
+
+  it("uses isolated native state and preserves authority at the final managed SQLite write", async () => {
+    const provider = "managed-proof";
+    const incomingCredential = {
+      type: "oauth" as const,
+      provider,
+      access: "incoming-access-token",
+      refresh: "incoming-refresh-token",
+      expires: Date.now() + 60_000,
+      accountId: "acct-incoming",
+      userId: "user-incoming",
+    };
+    const originalNativeCredential = {
+      ...incomingCredential,
+      access: "native-original-access-token",
+      refresh: "native-original-refresh-token",
+    };
+
+    const allowed = await withManagedProofState({
+      label: "managed-auth-login-allowed",
+      incomingCredential,
+      nativeCredential: originalNativeCredential,
+    });
+    try {
+      await allowed.run;
+      expect(allowed.readNative()).toEqual(incomingCredential);
+      expect(allowed.readConfigured()).toEqual(allowed.configuredAgentCredential);
+      expect(allowed.readAmbient()).toEqual(allowed.ambientCredential);
+    } finally {
+      await allowed.cleanup();
+    }
+
+    const cancelledController = new AbortController();
+    const cancellation = new Error("Managed login cancelled before persistence");
+    const cancelled = await withManagedProofState({
+      label: "managed-auth-login-cancelled",
+      incomingCredential,
+      nativeCredential: originalNativeCredential,
+      signal: cancelledController.signal,
+      beforePersist: async () => {
+        cancelledController.abort(cancellation);
+      },
+    });
+    try {
+      await expect(cancelled.run).rejects.toBe(cancellation);
+      expect(cancelled.readNative()).toEqual(originalNativeCredential);
+      expect(cancelled.readConfigured()).toEqual(cancelled.configuredAgentCredential);
+      expect(cancelled.readAmbient()).toEqual(cancelled.ambientCredential);
+    } finally {
+      await cancelled.cleanup();
+    }
+
+    let revoked = false;
+    const revocation = new Error("Managed login owner was revoked");
+    const revokedOwner = await withManagedProofState({
+      label: "managed-auth-login-revoked",
+      incomingCredential,
+      nativeCredential: originalNativeCredential,
+      beforePersist: async () => {
+        revoked = true;
+      },
+      assertCurrent: () => {
+        if (revoked) {
+          throw revocation;
+        }
+      },
+    });
+    try {
+      await expect(revokedOwner.run).rejects.toBe(revocation);
+      expect(revokedOwner.readNative()).toEqual(originalNativeCredential);
+      expect(revokedOwner.readConfigured()).toEqual(revokedOwner.configuredAgentCredential);
+      expect(revokedOwner.readAmbient()).toEqual(revokedOwner.ambientCredential);
+    } finally {
+      await revokedOwner.cleanup();
+    }
+
+    const interveningNativeCredential = {
+      ...incomingCredential,
+      access: "native-intervening-access-token",
+      refresh: "native-intervening-refresh-token",
+      accountId: "acct-intervening",
+      userId: "user-intervening",
+    };
+    const mismatched = await withManagedProofState({
+      label: "managed-auth-login-mismatch",
+      incomingCredential,
+      nativeCredential: originalNativeCredential,
+      beforePersist: async ({ nativeAgentDir, nativeStateDir, profileId }) => {
+        await persistAuthProfileBatch({
+          agentDir: nativeAgentDir,
+          stateDir: nativeStateDir,
+          profiles: [{ profileId, credential: interveningNativeCredential }],
+          allowOAuthGenerationReplacement: true,
+        });
+      },
+    });
+    try {
+      await expect(mismatched.run).rejects.toMatchObject({
+        code: MANAGED_MODELS_AUTH_LOGIN_ACCOUNT_MISMATCH_CODE,
+      });
+      expect(mismatched.readNative()).toEqual(interveningNativeCredential);
+      expect(mismatched.readConfigured()).toEqual(mismatched.configuredAgentCredential);
+      expect(mismatched.readAmbient()).toEqual(mismatched.ambientCredential);
+    } finally {
+      await mismatched.cleanup();
+    }
+  });
+});
 
 describe("selected credential import", () => {
   const method: ProviderPlugin["auth"][number] = {

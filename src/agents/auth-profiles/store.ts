@@ -126,26 +126,8 @@ import {
 } from "./sqlite.js";
 import { loadPersistedAuthProfileState } from "./state.js";
 import { prepareAuthProfileStoreMutation } from "./store-mutation.js";
-import type {
-  AuthProfileCredentialSource,
-  AuthProfileStore,
-  RuntimeAuthProfileStore,
-} from "./types.js";
-
-function withCredentialSources(
-  store: AuthProfileStore,
-  databasePath: string,
-): RuntimeAuthProfileStore {
-  return {
-    ...store,
-    runtimeCredentialSources: Object.fromEntries(
-      Object.entries(store.profiles).map(([profileId, credential]) => [
-        profileId,
-        { databasePath, provider: credential.provider },
-      ]),
-    ),
-  };
-}
+import { resolvePersistedLoadOptions, withCredentialSources } from "./store-read-helpers.js";
+import type { AuthProfileCredentialSource, AuthProfileStore } from "./types.js";
 
 type SaveAuthProfileStoreOptions = {
   filterExternalAuthProfiles?: boolean;
@@ -288,17 +270,6 @@ const testing = {
 if (process.env.VITEST || process.env.NODE_ENV === "test") {
   (globalThis as Record<PropertyKey, unknown>)[Symbol.for("openclaw.authProfileStoreTestApi")] =
     testing;
-}
-
-function resolvePersistedLoadOptions(
-  options: Pick<LoadAuthProfileStoreOptions, "allowKeychainPrompt" | "database"> | undefined,
-): { allowKeychainPrompt?: boolean; database?: AuthProfileDatabase } {
-  return {
-    ...(options?.allowKeychainPrompt !== undefined
-      ? { allowKeychainPrompt: options.allowKeychainPrompt }
-      : {}),
-    ...(options?.database ? { database: options.database } : {}),
-  };
 }
 
 function loadPersistedAuthProfileStores(
@@ -537,6 +508,7 @@ export function isSharedMainAuthProfileAgentDir(agentDir?: string): boolean {
 export function findPersistedAuthProfileCredential(params: {
   agentDir?: string;
   profileId: string;
+  stateDir?: string;
 }): AuthProfileStore["profiles"][string] | undefined {
   if (isEnvOnlyAuthProfileRuntime()) {
     return undefined;
@@ -546,9 +518,24 @@ export function findPersistedAuthProfileCredential(params: {
       ? undefined
       : readUserModelAuthProfile(params.profileId)?.credential;
   }
-  const agentDir = resolveRuntimeAuthProfileAgentDir(params.agentDir);
-  const requestedStore = loadPersistedAuthProfileStore(agentDir);
+  const stateDirEnv = params.stateDir
+    ? { ...process.env, OPENCLAW_STATE_DIR: params.stateDir, OPENCLAW_AGENT_DIR: undefined }
+    : undefined;
+  const agentDir = stateDirEnv
+    ? params.agentDir
+    : resolveRuntimeAuthProfileAgentDir(params.agentDir);
+  const requestedStore = agentDir
+    ? loadPersistedAuthProfileStore(agentDir)
+    : stateDirEnv
+      ? loadPersistedSharedAuthProfileStore(stateDirEnv)
+      : loadPersistedAuthProfileStore(undefined);
   const requestedProfile = requestedStore?.profiles[params.profileId];
+  if (stateDirEnv) {
+    return (
+      requestedProfile ??
+      loadPersistedSharedAuthProfileStore(stateDirEnv)?.profiles[params.profileId]
+    );
+  }
   const scopedSharedStore = getScopedSharedAuthStore();
   if (scopedSharedStore) {
     return requestedProfile ?? scopedSharedStore.profiles[params.profileId];

@@ -7,11 +7,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../../config/config.js";
 import type { ConfigWriteOptions } from "../../config/io.js";
 import type { ProviderPlugin } from "../../plugins/types.js";
-import type { RuntimeEnv } from "../../runtime.js";
 import { ProviderAuthConfigApplyError } from "../../shared/provider-auth-result.js";
+import { createProvider, createRuntime } from "./auth.test-helpers.js";
 
 type AuthRunCall = {
   agentDir?: string;
+  assertCurrent?: () => void;
+  env?: NodeJS.ProcessEnv;
   signal?: AbortSignal;
   workspaceDir?: string;
 };
@@ -25,6 +27,9 @@ type ResolvePluginProvidersCall = {
 
 type PersistProviderAuthCall = {
   agentDir?: string;
+  beforeWrite?: (current?: unknown, profileId?: string) => void;
+  env?: NodeJS.ProcessEnv;
+  stateDir?: string;
   profiles?: Array<{
     profileId?: string;
     credential?: {
@@ -94,6 +99,14 @@ vi.mock("../../agents/auth-profiles/profiles.js", () => ({
   upsertAuthProfileWithLock: mocks.upsertAuthProfileWithLock,
   upsertAuthProfileWithLockOrThrow: mocks.upsertAuthProfileWithLock,
 }));
+
+vi.mock("../../agents/auth-profiles.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../agents/auth-profiles.js")>();
+  return {
+    ...actual,
+    removeProviderAuthProfilesWithLock: mocks.removeProviderAuthProfilesWithLock,
+  };
+});
 
 vi.mock("../../plugins/provider-auth-persistence.js", () => ({
   persistProviderAuthProfilesAfterLogin: mocks.persistProviderAuthProfilesAfterLogin,
@@ -321,14 +334,6 @@ const {
   runModelsAuthLoginFlowCore,
 } = await import("./auth.js");
 
-function createRuntime(): RuntimeEnv {
-  return {
-    log: vi.fn(),
-    error: vi.fn(),
-    exit: vi.fn(),
-  };
-}
-
 function withInteractiveStdin() {
   const stdin = process.stdin as NodeJS.ReadStream & { isTTY?: boolean };
   const hadOwnIsTTY = Object.hasOwn(stdin, "isTTY");
@@ -372,26 +377,6 @@ function withPipedStdin(input: string) {
       Reflect.deleteProperty(stdin, Symbol.asyncIterator);
     }
     restoreInteractive();
-  };
-}
-
-function createProvider(params: {
-  id: string;
-  label?: string;
-  auth?: ProviderPlugin["auth"];
-  run: NonNullable<ProviderPlugin["auth"]>[number]["run"];
-}): ProviderPlugin {
-  return {
-    id: params.id,
-    label: params.label ?? params.id,
-    auth: params.auth ?? [
-      {
-        id: "oauth",
-        label: "OAuth",
-        kind: "oauth",
-        run: params.run,
-      },
-    ],
   };
 }
 
