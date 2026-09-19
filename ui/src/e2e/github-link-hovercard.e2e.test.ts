@@ -21,6 +21,7 @@ import {
 import { TEST_LINK_READER } from "../test-helpers/link-reader.ts";
 import { waitForWatchedSessionKey } from "./chat-github-publication.test-support.ts";
 import {
+  expectModifiedNavigation,
   pullPreviewResponse,
   PULL_HREF,
   PULL_COMMENT_HREF,
@@ -61,35 +62,6 @@ async function closeContexts(): Promise<void> {
 
 async function expectText(locator: Locator, text: string): Promise<void> {
   await expect.poll(() => locator.textContent()).toContain(text);
-}
-
-// Headless Chromium suppresses modifier-opened windows even for plain anchors.
-// Observe the browser handoff after application handlers, then suppress navigation.
-async function expectModifiedNavigation(page: Page, activate: () => Promise<void>, href: string) {
-  await page.evaluate(() => {
-    window.addEventListener(
-      "click",
-      (event) => {
-        const anchor = event
-          .composedPath()
-          .find((target): target is HTMLAnchorElement => target instanceof HTMLAnchorElement);
-        document.body.setAttribute(
-          "data-native-navigation",
-          JSON.stringify({
-            href: anchor?.href,
-            shift: event.shiftKey,
-            prevented: event.defaultPrevented,
-          }),
-        );
-        event.preventDefault();
-      },
-      { once: true },
-    );
-  });
-  await activate();
-  expect(
-    JSON.parse((await page.locator("body").getAttribute("data-native-navigation")) ?? "null"),
-  ).toEqual({ href, shift: true, prevented: false });
 }
 
 async function captureArtifact(target: Page | Locator, name: string): Promise<void> {
