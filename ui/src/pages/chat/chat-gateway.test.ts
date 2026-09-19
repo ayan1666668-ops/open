@@ -908,6 +908,13 @@ describe("handleChatGatewayEvent", () => {
       expected: "CDE",
     },
     {
+      name: "projects a cumulative snapshot when hidden scaffolding changes its raw prefix",
+      previous: "Visible",
+      delta: " reply",
+      snapshot: "<think>hidden</think>Visible reply",
+      expected: "Visible reply",
+    },
+    {
       name: "replaces the stream when gateway deltaText marks a replacement",
       previous: "Alpha beta",
       delta: "Alpha",
