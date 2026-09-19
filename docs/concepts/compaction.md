@@ -50,7 +50,10 @@ existing deterministic compaction behavior, `false` remains an explicit opt-out,
 the boolean `true` form continues to mean semantic fidelity checking without input
 curation. The object form is additive and is only needed when curation or explicit
 subfeature control is desired. Existing configurations are not rewritten during
-materialization or reload.
+materialization or reload. Within the object form, `curateInput: true` necessarily
+enables the semantic fidelity check even when `enabled: false` is also present,
+because curated output is never allowed to bypass its post-summary safety check. To
+disable all semantic behavior, use `semanticJudgments: false` or leave curation off.
 
 The same setting also accepts an object form for bounded summarizer-input curation:
 
