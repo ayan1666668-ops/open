@@ -562,6 +562,18 @@ class ChatController internal constructor(
   private val presentedSessions = MutableStateFlow<List<ChatSessionEntry>>(emptyList())
   val sessions: StateFlow<List<ChatSessionEntry>> = presentedSessions.asStateFlow()
 
+  // Notification display metadata is separate from the selected agent's session list.
+  // Bound it to the active gateway and the same small window as the existing session cache.
+  private val notificationSessions = linkedMapOf<ChatComposerOwner, ChatSessionEntry>()
+  private var notificationSessionsGatewayId: String? = null
+
+  internal fun notificationSession(owner: ChatComposerOwner): ChatSessionEntry? =
+    synchronized(gatewayScopeApplyLock) {
+      val gatewayId = currentCacheScope()?.gatewayId ?: return@synchronized null
+      if (!owner.routingVerified || owner.gatewayStableId != gatewayId || notificationSessionsGatewayId != gatewayId) return@synchronized null
+      notificationSessions[owner]
+    }
+
   private fun projectLocalSessionTitles(
     entries: List<ChatSessionEntry>,
     binding: MainSessionBinding?,
@@ -579,6 +591,20 @@ class ChatController internal constructor(
       _sessions.value = entries
       val binding = currentCacheScope()?.let { desiredMainSessions[it.gatewayId] }
       presentedSessions.value = projectLocalSessionTitles(entries, binding)
+      val gatewayId = currentCacheScope()?.gatewayId
+      if (notificationSessionsGatewayId != gatewayId) {
+        notificationSessions.clear()
+        notificationSessionsGatewayId = gatewayId
+      }
+      if (gatewayId != null) {
+        for (entry in presentedSessions.value.take(MAX_CACHED_SESSIONS).asReversed()) {
+          val agentId = entry.ownerAgentId ?: resolveAgentIdFromMainSessionKey(entry.key) ?: continue
+          val owner = ChatComposerOwner(gatewayId, agentId, entry.key)
+          notificationSessions.remove(owner)
+          notificationSessions[owner] = entry
+        }
+        while (notificationSessions.size > MAX_CACHED_SESSIONS) notificationSessions.remove(notificationSessions.keys.first())
+      }
     }
   }
 
@@ -1083,6 +1109,8 @@ class ChatController internal constructor(
       clearProgressCard()
       clearSubagentActivities()
       clearLiveHistoryMarker()
+      notificationSessions.clear()
+      notificationSessionsGatewayId = null
       publishSessions(emptyList())
       publishRunPresentation()
       clearQuestions()
@@ -8340,6 +8368,7 @@ class ChatController internal constructor(
     cacheScope: ChatCacheScope?,
   ) {
     synchronized(gatewayScopeApplyLock) {
+      notificationSessions.remove(ChatComposerOwner(cacheScope?.gatewayId, ownerAgentId, sessionKey))
       val owner = ChatAgentSessionSelectionOwner(cacheScope?.gatewayId, ownerAgentId)
       if (lastSelectedChatSessionByOwner[owner]?.key == sessionKey) lastSelectedChatSessionByOwner.remove(owner)
     }

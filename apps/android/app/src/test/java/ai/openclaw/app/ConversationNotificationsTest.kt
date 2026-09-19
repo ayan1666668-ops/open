@@ -509,11 +509,13 @@ class ConversationNotificationsTest {
     try {
       ReflectionHelpers.setField(runtime, "connectedEndpoint", GatewayEndpoint.manual("127.0.0.1", 18789))
       val chat = ReflectionHelpers.getField<ChatController>(runtime, "chat")
-      chat.prepareMainSessionKey("agent:main:visible")
+      chat.prepareAndSelectMainSessionKey("agent:reviewer:background")
       ChatController::class.java.getDeclaredMethod("publishSessions", List::class.java).apply { isAccessible = true }.invoke(
         chat,
-        listOf(ChatSessionEntry(key = "agent:reviewer:background", updatedAtMs = null, label = "Troubleshooting")),
+        listOf(ChatSessionEntry(key = "agent:reviewer:background", updatedAtMs = null, label = "Troubleshooting", ownerAgentId = "reviewer")),
       )
+      chat.prepareAndSelectMainSessionKey("agent:main:visible")
+      assertTrue(chat.sessions.value.none { it.ownerAgentId == "reviewer" })
       ReflectionHelpers.getField<MutableStateFlow<List<GatewayAgentSummary>>>(runtime, "_gatewayAgents").value =
         listOf(GatewayAgentSummary(id = "reviewer", name = "Review agent", emoji = null))
       runtime.setChatScreenActive(true)

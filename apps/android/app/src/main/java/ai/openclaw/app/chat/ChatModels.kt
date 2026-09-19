@@ -636,3 +636,8 @@ data class OutgoingAttachment(
   val base64: String,
   val durationMs: Long? = null,
 )
+
+// Gateway projects sessions_send user inputs as assistant rows; they still start a new turn.
+internal fun ChatMessage.isForwardedBoundary(): Boolean =
+  role.trim().equals("assistant", ignoreCase = true) &&
+    provenance?.kind == "inter_session" && provenance.sourceTool == "sessions_send"

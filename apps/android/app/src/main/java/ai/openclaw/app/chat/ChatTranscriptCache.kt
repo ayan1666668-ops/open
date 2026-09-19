@@ -371,7 +371,7 @@ class RoomChatTranscriptCache internal constructor(
         turnBoundary = payload.turnBoundary,
         phase = payload.phase,
         isError = payload.isError,
-      )
+      ).let { message -> if (message.isForwardedBoundary()) message.copy(replyMetrics = null) else message }
     }
   }
 
@@ -480,7 +480,7 @@ class RoomChatTranscriptCache internal constructor(
               usage = message.usage,
               cost = message.cost,
               isSyntheticDisplay = message.isSyntheticDisplay,
-              replyMetrics = message.replyMetrics,
+              replyMetrics = message.replyMetrics.takeUnless { message.isForwardedBoundary() },
               runId = message.runId,
               steerTargetRunId = message.steerTargetRunId,
               turnBoundary = message.turnBoundary,

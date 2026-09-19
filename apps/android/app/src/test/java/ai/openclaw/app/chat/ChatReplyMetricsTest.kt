@@ -89,6 +89,7 @@ class ChatReplyMetricsTest {
     val rejected =
       listOf(
         final.copy(isError = true),
+        final.copy(provenance = ChatMessageProvenance("inter_session", "sessions_send")),
         final.copy(isSyntheticDisplay = true),
         final.copy(provider = "openclaw", model = "delivery-mirror"),
         final.copy(phase = "commentary"),

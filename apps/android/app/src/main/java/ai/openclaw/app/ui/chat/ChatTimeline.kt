@@ -9,6 +9,7 @@ import ai.openclaw.app.chat.ChatQuestionPrompt
 import ai.openclaw.app.chat.ChatSubagentActivity
 import ai.openclaw.app.chat.ChatToolActivity
 import ai.openclaw.app.chat.OUTBOX_OWNER_CHANGED_ERROR
+import ai.openclaw.app.chat.isForwardedBoundary
 import ai.openclaw.app.i18n.nativeString
 import ai.openclaw.app.resolveAgentIdFromMainSessionKey
 
@@ -241,11 +242,6 @@ internal fun PreparedChatHistory.buildTimeline(
       ),
   )
 }
-
-// Gateway projects sessions_send user inputs as assistant rows; they still start a new turn.
-internal fun ChatMessage.isForwardedBoundary(): Boolean =
-  role.trim().equals("assistant", ignoreCase = true) &&
-    provenance?.kind == "inter_session" && provenance.sourceTool == "sessions_send"
 
 /** Build transcript rows in source order so hidden turn boundaries fence tool groups. */
 private fun buildTranscriptTimeline(messages: List<ChatMessage>): List<ChatTimelineItem> {

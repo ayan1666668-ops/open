@@ -35,7 +35,7 @@ internal fun ChatHistory.withReplyMetrics(previous: List<ChatMessage>): ChatHist
 }
 
 private fun ChatMessage.isReplyMetricsAnswer(): Boolean =
-  role == "assistant" && !isSyntheticDisplay && !isError && !isTranscriptOnlyOpenClawAssistant() &&
+  role == "assistant" && !isForwardedBoundary() && !isSyntheticDisplay && !isError && !isTranscriptOnlyOpenClawAssistant() &&
     (phase == null || phase == "final_answer") &&
     content.none { it.toolActivity != null || it.type in setOf("toolCall", "tool_call", "tool_use", "toolResult", "tool_result") } &&
     content.any { it.type == "text" && !it.text.isNullOrBlank() }

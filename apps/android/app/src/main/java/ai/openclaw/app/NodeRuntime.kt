@@ -3987,7 +3987,7 @@ class NodeRuntime private constructor(
     val isReplyVisible = _isForeground.value && chatScreenActive && chat.isCurrentComposerOwner(owner)
     if (!shouldPostConversationReplyNotification(owner, runId, isReplyVisible)) return
     val agent = gatewayAgents.value.firstOrNull { it.id == owner.agentId }
-    val session = chatSessions.value.firstOrNull { it.key == owner.sessionKey }
+    val session = chat.notificationSession(owner)
     val sessionTitle =
       session?.let {
         ai.openclaw.app.ui

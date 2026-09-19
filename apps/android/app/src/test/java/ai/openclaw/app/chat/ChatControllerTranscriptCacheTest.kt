@@ -193,6 +193,106 @@ class ChatControllerTranscriptCacheTest {
     }
 
   @Test
+  fun forwardedSteeringThenSilentCompletionNeverGetsMetricsOnRefreshOrCacheReload() =
+    runTest {
+      val cache = FakeTranscriptCache()
+      val controller =
+        createCachedController(cache) { method, _ ->
+          if (method == "chat.history") {
+            // Gateway omits the successful NO_REPLY output, leaving the forwarded input last.
+            """{"sessionId":"transcript-one",
+          "sessionInfo":{"key":"main","status":"done","startedAt":100,"endedAt":200,"runtimeMs":100,"outputTokens":42},
+          "messages":[{"role":"assistant","content":"Forwarded steering input","timestamp":190,
+          "provenance":{"kind":"inter_session","sourceTool":"sessions_send"},"__openclaw":{"id":"steer-input"}}]}"""
+          } else {
+            emptyChatGatewayResponse(method)
+          }
+        }
+      controller.loadCurrent("main")
+      advanceUntilIdle()
+      controller.handleGatewayEvent("chat", chatTerminalPayload("main", "silent-run", seq = 2))
+      advanceUntilIdle()
+      controller.refresh()
+      advanceUntilIdle()
+      assertTrue(
+        controller.messages.value
+          .single()
+          .isForwardedBoundary(),
+      )
+      assertEquals(
+        null,
+        controller.messages.value
+          .single()
+          .replyMetrics,
+      )
+      assertTrue(cache.savedTranscripts.isNotEmpty())
+      assertTrue(cache.savedTranscripts.all { saved -> saved.messages.all { it.replyMetrics == null } })
+      // This fixture records writes separately; reopen the exact persisted payload.
+      val saved = cache.savedTranscripts.last()
+      cache.transcripts[TranscriptKey(saved.gatewayId, saved.agentId, saved.sessionKey)] = saved.messages
+      val offline = createCachedController(cache) { _, _ -> error("offline") }
+      offline.loadCurrent("main")
+      advanceUntilIdle()
+      assertTrue(
+        offline.messages.value
+          .single()
+          .isForwardedBoundary(),
+      )
+      assertEquals(
+        null,
+        offline.messages.value
+          .single()
+          .replyMetrics,
+      )
+    }
+
+  @Test
+  fun notificationMetadataSurvivesAgentSelectionWithoutLeakingIntoItsListOrAnotherGateway() =
+    runTest {
+      val cache = FakeTranscriptCache()
+      var currentScope = gatewayScope
+      val controller =
+        createCachedController(cache, cacheScope = { currentScope }) { method, params ->
+          when (method) {
+            "sessions.list" -> {
+              if (params.orEmpty().contains("\"agentId\":\"reviewer\"")) {
+                """{"sessions":[{"key":"agent:reviewer:background","label":"Troubleshooting"}]}"""
+              } else {
+                """{"sessions":[{"key":"agent:main:visible","label":"Other conversation"}]}"""
+              }
+            }
+
+            "chat.history" -> {
+              """{"sessionId":"test-transcript","messages":[]}"""
+            }
+
+            else -> {
+              emptyChatGatewayResponse(method)
+            }
+          }
+        }
+      controller.load("agent:reviewer:background")
+      advanceUntilIdle()
+      controller.refreshSessions()
+      advanceUntilIdle()
+      val owner = ChatComposerOwner("gateway-a", "reviewer", "agent:reviewer:background")
+      assertEquals("Troubleshooting", controller.notificationSession(owner)?.label)
+      controller.switchSession("agent:main:visible")
+      advanceUntilIdle()
+      controller.refreshSessions()
+      advanceUntilIdle()
+      assertTrue(controller.sessions.value.isNotEmpty())
+      assertTrue(controller.sessions.value.all { it.ownerAgentId == "main" })
+      assertEquals("Troubleshooting", controller.notificationSession(owner)?.label)
+      assertEquals(null, controller.notificationSession(owner.copy(agentId = "main")))
+      assertEquals(null, controller.notificationSession(owner.copy(gatewayStableId = "gateway-b")))
+      currentScope = ChatCacheScope("gateway-b", connectionGeneration = 2)
+      controller.onGatewayScopeChanging()
+      assertEquals(null, controller.notificationSession(owner))
+      assertEquals(null, controller.notificationSession(owner.copy(gatewayStableId = "gateway-b")))
+    }
+
+  @Test
   fun offlineColdOpenShowsCachedTranscriptAndSessionsAndQueuesSend() =
     runTest {
       for (mainSessionKey in listOf("main", "agent:main:node-offline")) {

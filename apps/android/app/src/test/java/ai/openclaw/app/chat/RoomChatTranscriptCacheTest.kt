@@ -101,6 +101,21 @@ class RoomChatTranscriptCacheTest {
       assertTrue(loadTranscript(gatewayId = "gateway-b").isEmpty())
     }
 
+  @Test
+  fun forwardedInputCannotRetainMetricsInTheOfflineCache() =
+    runTest {
+      val forwarded =
+        message("forwarded", role = "assistant", timestampMs = 190L).copy(
+          entryId = "steer-input",
+          provenance = ChatMessageProvenance("inter_session", "sessions_send"),
+          replyMetrics = ChatReplyMetrics("transcript-one", "steer-input", 200L, 100L, 42L),
+        )
+      saveTranscript(listOf(forwarded))
+      val cached = loadTranscript().single()
+      assertTrue(cached.isForwardedBoundary())
+      assertEquals(null, cached.replyMetrics)
+    }
+
   @After
   fun tearDown() {
     database.close()
