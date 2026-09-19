@@ -19,6 +19,70 @@ function activeFilesystemWatchers() {
 }
 
 describe("memory watchers on the real filesystem", () => {
+  it.each(["directory", "file"] as const)(
+    "indexes a configured extra %s created after startup",
+    async (kind) => {
+      const state = await createOpenClawTestState({ label: "memory-watch-missing-extra" });
+      let manager: MemoryIndexManager | null = null;
+      let index: DatabaseSync | undefined;
+      try {
+        await configureMemoryCoreDreamingStateForTests(state.env);
+        await fs.mkdir(path.join(state.workspaceDir, "memory"));
+        await fs.writeFile(path.join(state.workspaceDir, "MEMORY.md"), "Evergreen sentinel.");
+        const extraDir = state.path("extra-notes");
+        const extraFile = path.join(extraDir, "new.md");
+        if (kind === "file") {
+          await fs.mkdir(extraDir);
+        }
+        manager = await MemoryIndexManager.get({
+          cfg: {
+            plugins: { enabled: false },
+            agents: { entries: { main: { workspace: state.workspaceDir } } },
+            memory: {
+              search: {
+                provider: "none",
+                extraPaths: [kind === "directory" ? extraDir : extraFile],
+                store: { vector: { enabled: false } },
+              },
+            },
+          },
+          agentId: "main",
+        });
+        if (!manager) {
+          throw new Error("memory manager unavailable");
+        }
+        await manager.sync({ reason: "test-initial-index" });
+        const indexPath = manager.status().dbPath;
+        if (!indexPath) {
+          throw new Error("memory index path unavailable");
+        }
+        index = new DatabaseSync(indexPath, { readOnly: true });
+        const indexedText = index.prepare(
+          `SELECT text FROM ${MEMORY_INDEX_CHUNKS_TABLE} WHERE path = ?`,
+        );
+        const memoryPath = path.relative(state.workspaceDir, extraFile).replaceAll("\\", "/");
+        expect(indexedText.all(memoryPath)).toEqual([]);
+
+        await fs.mkdir(extraDir, { recursive: true });
+        await fs.writeFile(extraFile, "Heliotrope sentinel.");
+        // Read committed rows directly: a search can trigger synchronization itself.
+        await expect
+          .poll(() => indexedText.all(memoryPath), { timeout: 15_000 })
+          .toEqual([{ text: "Heliotrope sentinel." }]);
+        await fs.writeFile(extraFile, "Cobalt sentinel.");
+        await expect
+          .poll(() => indexedText.all(memoryPath), { timeout: 15_000 })
+          .toEqual([{ text: "Cobalt sentinel." }]);
+      } finally {
+        index?.close();
+        await manager?.close();
+        resetMemoryCoreDreamingStateForTests();
+        await state.cleanup();
+      }
+    },
+    60_000,
+  );
+
   it.each(["replacement", "removal"] as const)(
     "keeps search fresh after root %s and releases watchers on close",
     async (operation) => {
