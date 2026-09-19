@@ -28,10 +28,13 @@ async function captureNpmLinkedGitRecovery(
   return async () => {
     const currentIdentity = await fs.stat(root, { bigint: true });
     const current = await readCurrentGitUpdateRecovery(root, timeoutMs);
+    const verifiedIdentity = await fs.stat(root, { bigint: true });
     if (
       (await fs.realpath(target)) !== root ||
       currentIdentity.dev !== identity.dev ||
       currentIdentity.ino !== identity.ino ||
+      verifiedIdentity.dev !== identity.dev ||
+      verifiedIdentity.ino !== identity.ino ||
       !current.serviceRestartSafe ||
       current.buildId !== recovery.buildId ||
       current.version !== recovery.version
@@ -129,7 +132,7 @@ export async function verifyNpmRootRecovery(
         : !fromBackup && (await reader.exists(root))
     ) {
       throw new Error(
-        `Package rollback verification failed: retained package ${previousRoot?.kind === "link" ? "link" : "tree"} changed`,
+        `Package rollback verification failed: ${fromBackup ? "retained" : "restored"} package ${previousRoot?.kind === "link" ? "link" : "tree"} changed at ${root}. Inspect this ${fromBackup ? "backup" : "installation"} and resolve the changes before retrying recovery.`,
       );
     }
     for (const shim of shims) {
