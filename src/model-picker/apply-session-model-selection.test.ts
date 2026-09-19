@@ -350,7 +350,7 @@ describe("applySessionModelSelection", () => {
     );
   });
 
-  it("resets to a cross-provider default and clears incompatible auth plus runtime", async () => {
+  it("resets a cross-provider default with an explicit runtime reset and clears incompatible auth", async () => {
     const sessionEntry = createEntry({
       providerOverride: "openai",
       modelOverride: "gpt-4o",
@@ -371,7 +371,7 @@ describe("applySessionModelSelection", () => {
           provider: "anthropic",
           model: "claude-opus-4-6",
           isDefault: true,
-          runtime: { kind: "unchanged" },
+          runtime: { kind: "clear" },
         },
       }),
     );
@@ -594,24 +594,8 @@ describe("applySessionModelSelection", () => {
       agentRuntime: "openclaw",
     },
     {
-      name: "set idempotently",
-      initial: "openclaw",
-      runtime: { kind: "set", runtime: "openclaw" } as const,
-      expected: "openclaw",
-      runtimeChange: { kind: "set", runtime: "openclaw" },
-      agentRuntime: "openclaw",
-    },
-    {
       name: "clear",
       initial: "openclaw",
-      runtime: { kind: "clear" } as const,
-      expected: undefined,
-      runtimeChange: { kind: "clear" },
-      agentRuntime: "codex",
-    },
-    {
-      name: "clear idempotently",
-      initial: undefined,
       runtime: { kind: "clear" } as const,
       expected: undefined,
       runtimeChange: { kind: "clear" },

@@ -1804,6 +1804,24 @@ describe("gateway sessions patch", () => {
     expect(entry.thinkingLevel).toBe("ultra");
   });
 
+  test("rejects a model incompatible with the selected runtime without changing the session", async () => {
+    const store = mainStoreEntry({
+      providerOverride: "openai",
+      modelOverride: OPENAI_GPT_ID,
+      agentRuntimeOverride: "codex",
+    });
+    const initial = structuredClone(store);
+    expectPatchError(
+      await runPatch({
+        store,
+        patch: { key: MAIN_SESSION_KEY, model: ANTHROPIC_OPUS_MODEL },
+        loadGatewayModelCatalog: loadCatalog(ANTHROPIC_OPUS_MODEL),
+      }),
+      'Runtime "codex" is not supported',
+    );
+    expect(store).toEqual(initial);
+  });
+
   test("clearing a runtime pin remaps thinking through configured routing and invalidates derived context", async () => {
     const entry = expectPatchOk(
       await runPatch({
