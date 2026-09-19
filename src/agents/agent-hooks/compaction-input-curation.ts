@@ -41,6 +41,7 @@ type CurationCandidate = {
 };
 
 function textForMessage(message: AgentMessage): string {
+  // SAFETY: every AgentMessage variant may carry content, but the SDK union does not expose it uniformly.
   const content = (message as { content?: unknown }).content;
   if (typeof content === "string") {
     return content.trim();
@@ -66,6 +67,7 @@ function collectLaterContext(messages: AgentMessage[], startIndex: number): stri
 function collectCandidates(messages: AgentMessage[]): CurationCandidate[] {
   const candidates: CurationCandidate[] = [];
   for (const [index, message] of messages.entries()) {
+    // SAFETY: role="toolResult" messages use the tool-result shape, whose legacy isError field is optional.
     if (message.role !== "toolResult" || (message as { isError?: boolean }).isError) {
       continue;
     }
@@ -73,10 +75,10 @@ function collectCandidates(messages: AgentMessage[]): CurationCandidate[] {
     if (output.length < MIN_TOOL_RESULT_CHARS || output.length > MAX_RESULT_CHARS) {
       continue;
     }
+    // SAFETY: role="toolResult" narrows to a tool result; older SDK declarations do not expose toolName uniformly.
+    const toolMessage = message as { toolName?: unknown };
     const toolName =
-      typeof (message as { toolName?: unknown }).toolName === "string"
-        ? (message as { toolName: string }).toolName || "tool"
-        : "tool";
+      typeof toolMessage.toolName === "string" ? toolMessage.toolName || "tool" : "tool";
     candidates.push({
       id: `tool-result-${candidates.length + 1}`,
       index,
@@ -102,6 +104,7 @@ function shouldOmit(answer: DecisionAnswer | undefined): boolean {
 }
 
 function replaceToolResultContent(message: AgentMessage, toolName: string): AgentMessage {
+  // SAFETY: spreading an existing tool-result message and replacing only its text content preserves its variant.
   return {
     ...message,
     content: [
@@ -110,7 +113,7 @@ function replaceToolResultContent(message: AgentMessage, toolName: string): Agen
         text: `[Large ${toolName} result omitted from compaction summarizer input after typed relevance judgment. Original transcript is unchanged.]`,
       },
     ],
-  } as AgentMessage;
+  } as AgentMessage; // SAFETY: replacing only content preserves the existing tool-result variant.
 }
 
 export async function curateCompactionSummarizerInput(

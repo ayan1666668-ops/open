@@ -7,7 +7,9 @@ import {
 
 function readSessionBranch(sessionManager: unknown): CoreSessionTreeEntry[] {
   try {
+    // SAFETY: session managers are capability-checked before the optional branch accessor is invoked.
     const entries: unknown = (sessionManager as { getBranch?: () => unknown })?.getBranch?.();
+    // SAFETY: getBranch returning an array is the session-manager contract; each element is projected defensively below.
     return Array.isArray(entries) ? (entries as CoreSessionTreeEntry[]) : [];
   } catch {
     return [];
@@ -16,6 +18,7 @@ function readSessionBranch(sessionManager: unknown): CoreSessionTreeEntry[] {
 
 function projectBranchEntries(entries: CoreSessionTreeEntry[]): AgentMessage[] {
   try {
+    // SAFETY: buildSessionContext guarantees its messages are runtime AgentMessage values.
     return buildCoreSessionContext(entries).messages as AgentMessage[];
   } catch {
     return [];

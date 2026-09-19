@@ -28,6 +28,7 @@ export async function resolveModelAuth(
 > {
   let requestAuth: ResolvedRequestAuth;
   try {
+    // SAFETY: the runtime model registry supports this optional compatibility method when present.
     const modelRegistry = ctx.modelRegistry as ModelRegistryWithRequestAuthLookup;
     if (typeof modelRegistry.getApiKeyAndHeaders !== "function") {
       throw new Error("model registry auth lookup unavailable");
@@ -63,6 +64,7 @@ export function buildCompactionSummaryHeaders(params: {
   if (params.model.provider !== "github-copilot") {
     return params.headers;
   }
+  // SAFETY: Copilot header inspection reads the same message content fields shared by both SDK projections.
   const messages = params.messages as unknown as Parameters<
     typeof buildCopilotDynamicHeaders
   >[0]["messages"];

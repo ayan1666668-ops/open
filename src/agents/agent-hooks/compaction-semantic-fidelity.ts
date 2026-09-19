@@ -90,6 +90,7 @@ function extractUserText(message: AgentMessage): string {
   if (message.role !== "user") {
     return "";
   }
+  // SAFETY: role="user" messages carry content, though the SDK union does not expose it uniformly.
   const content = (message as { content?: unknown }).content;
   if (typeof content === "string") {
     return content.trim();
@@ -168,7 +169,7 @@ function relationFromAnswer(
   return ["preserved", "missing", "contradicted", "inactive_or_completed", "uncertain"].includes(
     answer.choice,
   )
-    ? (answer.choice as CompactionSemanticRelation)
+    ? (answer.choice as CompactionSemanticRelation) // SAFETY: membership above narrows to the closed relation set.
     : undefined;
 }
 

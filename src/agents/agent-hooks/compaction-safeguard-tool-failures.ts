@@ -17,6 +17,7 @@ function formatToolFailureMeta(details: unknown): string | undefined {
   if (!details || typeof details !== "object") {
     return undefined;
   }
+  // SAFETY: the object guard permits keyed reads while every value remains unknown and revalidated.
   const record = details as Record<string, unknown>;
   return (
     [
@@ -38,6 +39,7 @@ export function collectToolFailures(messages: AgentMessage[]): ToolFailure[] {
     if (message.role !== "toolResult" || !message.isError) {
       continue;
     }
+    // SAFETY: role="toolResult" establishes the tool-result variant; optional legacy fields remain unknown.
     const toolResult = message as {
       toolCallId?: unknown;
       toolName?: unknown;
