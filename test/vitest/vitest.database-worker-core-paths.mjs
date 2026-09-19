@@ -124,6 +124,7 @@ export const databaseWorkerCoreTestFiles = [
   "src/plugins/status.runtime-inspection.test.ts",
 
   "src/plugins/plugin-metadata-state-worker.test.ts",
+  "src/plugins/public-artifact-environment.test.ts",
   "src/plugins/official-external-plugin-catalog-snapshot-store.worker.test.ts",
   "src/plugins/official-external-plugin-catalog.test.ts",
   "src/infra/device-pairing.test.ts",
@@ -180,6 +181,7 @@ export const databaseWorkerCoreTestFiles = [
   "src/state/openclaw-state-db-read-admission.test.ts",
   "src/state/openclaw-state-maintenance-resources.test.ts",
   "src/tasks/task-registry.test.ts",
+  "src/tasks/task-registry.notifications.test.ts",
   "test/cron-message-read.integration.test.ts",
   "test/imessage-reply-alias.integration.test.ts",
   "test/matrix-channel-read-authority.integration.test.ts",
