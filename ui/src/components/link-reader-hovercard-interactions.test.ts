@@ -21,6 +21,9 @@ function createLink(href: string, label = "Item") {
 function issuePreviewResponse(overrides: Record<string, unknown> = {}) {
   return {
     ...testLinkPreview(),
+    ...(typeof overrides.number === "number"
+      ? { url: "https://github.com/openclaw/openclaw/issues/" + overrides.number }
+      : {}),
     ...overrides,
     ...(typeof overrides.comments !== "number"
       ? {}

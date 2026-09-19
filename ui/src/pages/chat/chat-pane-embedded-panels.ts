@@ -11,6 +11,7 @@ import { EMPTY_LINK_READERS } from "../../components/link-reader-target.ts";
 import { renderPanelLoadingSkeleton } from "../../components/panel-loading-skeleton.ts";
 import { t } from "../../i18n/index.ts";
 import { registerBackgroundTasksEnglish } from "../../i18n/locales/en-background-tasks.ts";
+import { canCallGatewayMethod } from "../../lib/gateway-methods.ts";
 import { formatKeyboardShortcutCombo } from "../../lib/keyboard-shortcut-catalog.ts";
 import type { ControlUiRegistration } from "../../plugins/control-ui-capability.ts";
 import { renderPluginContribution } from "../../plugins/control-ui-view.ts";
@@ -58,6 +59,7 @@ type SidebarPanelDefinitionParams = {
   desktopAvailable: boolean;
   desktopSource: string | null;
   desktopFocusHref: string;
+  portalPresented?: boolean;
   onDesktopFocusTargetChange: (
     target: Extract<ControlUiFocusBuildTarget, { kind: "desktop" }>,
   ) => void;
@@ -131,14 +133,30 @@ export function sidebarPanelDefinitions(
     slot,
     label: t(`chat.sidePanel.${textKey}`),
     icon,
-    available: Boolean(panelContext && SIDEBAR_PANEL_SHORTCUTS[slot]?.available(panelContext)),
+    available: Boolean(
+      panelContext &&
+      (slot === "portal"
+        ? state &&
+          canCallGatewayMethod(
+            {
+              hello: state.hello,
+              client: state.client,
+              phase: state.connected ? "connected" : "stopped",
+            },
+            "portal.list",
+            "operator.write",
+          )
+        : SIDEBAR_PANEL_SHORTCUTS[slot]?.available(panelContext)),
+    ),
     content,
     loading: renderPanelLoadingSkeleton(
       textKey === "conversation" || textKey === "companion"
         ? "chat"
-        : textKey === "dashboard"
-          ? "board"
-          : textKey,
+        : textKey === "portal"
+          ? "browser"
+          : textKey === "dashboard"
+            ? "board"
+            : textKey,
       t(textKey === "desktop" ? "desktop.connecting" : "common.loading"),
     ),
     empty: { description: t(`chat.sidePanel.${textKey}Empty`) },
@@ -222,6 +240,14 @@ export function sidebarPanelDefinitions(
         .onStateChange=${params.discussion.onStateChange}
       ></openclaw-session-discussion>`
     : null;
+  const portal = state
+    ? html`<openclaw-portals-page
+        embedded
+        .presented=${params?.portalPresented ?? false}
+        .requestedPortalId=${state.sidebarLayout.columns.flatMap((column) => column.panels).find((panel) => panel.slot === "portal")?.portalId ?? null}
+        .requestedEnvironmentId=${state.sidebarLayout.columns.flatMap((column) => column.panels).find((panel) => panel.slot === "portal")?.environmentId ?? null}
+      ></openclaw-portals-page>`
+    : null;
   const workspace = state ? getSessionWorkspace(state) : null;
   // The region owns mounting and visibility. Hidden Review tabs must keep the
   // same cached diff loader so their live content and selection survive.
@@ -291,6 +317,7 @@ export function sidebarPanelDefinitions(
       loading: renderPanelLoadingSkeleton("files", t("linkReader.loadingPreview")),
       empty: { description: t("linkReader.urlPlaceholder") },
     },
+    definePanel("portal", "portal", icons.globe, portal),
     definePanel("workspace", "files", icons.fileText, workspaceContent),
     definePanel(
       "companion",

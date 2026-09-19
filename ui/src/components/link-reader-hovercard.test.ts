@@ -169,6 +169,13 @@ describe("openclaw-link-reader-hovercard-provider", () => {
     expect(card()).toBeNull();
   });
 
+  it("accepts a preview for the requested document with a different anchor", async () => {
+    const { anchor, provider } = createLink(href + "#comment-1");
+    connect(provider, vi.fn().mockResolvedValue(preview(href)));
+    await hover(anchor);
+    expect(card()?.textContent).toContain("Keep previews compact");
+  });
+
   it("keeps failed previews invisible and briefly caches failures", async () => {
     const { anchor, provider } = createLink();
     const request = connect(provider, vi.fn().mockRejectedValue(new Error("Not Found")));
@@ -183,15 +190,17 @@ describe("openclaw-link-reader-hovercard-provider", () => {
     expect(request).toHaveBeenCalledTimes(2);
   });
 
-  it.each([null, { title: "Wrong reader", url: "https://other.example/item/1" }])(
-    "rejects invalid preview data without mounting an empty popup: %j",
-    async (value) => {
-      const { anchor, provider } = createLink();
-      connect(provider, vi.fn().mockResolvedValue(value));
-      await hover(anchor);
-      expect(card()).toBeNull();
-    },
-  );
+  it.each([
+    null,
+    { title: "Wrong reader", url: "https://other.example/item/1" },
+    { title: "Wrong item", url: href.replace("99816", "99817") },
+    { title: "Wrong query", url: href + "?resource=other" },
+  ])("rejects invalid preview data without mounting an empty popup: %j", async (value) => {
+    const { anchor, provider } = createLink();
+    connect(provider, vi.fn().mockResolvedValue(value));
+    await hover(anchor);
+    expect(card()).toBeNull();
+  });
 
   it("preserves existing descriptions when leaving before opening and on route removal", async () => {
     const { anchor, provider } = createLink();

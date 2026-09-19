@@ -19,6 +19,7 @@ import {
   LINK_READER_HOVERCARD_OPEN_DELAY_MS,
   resolveLinkReaderTarget,
   linkReaderTargetKey,
+  linkReaderResponseMatchesTarget,
   EMPTY_LINK_READERS,
   type LinkReaderTarget,
 } from "./link-reader-target.ts";
@@ -111,7 +112,7 @@ function parsePreviewResponse(
     !isRecord(value) ||
     !title ||
     typeof value.url !== "string" ||
-    !resolveLinkReaderTarget(value.url, [target.reader])
+    !linkReaderResponseMatchesTarget(target, value.url)
   ) {
     throw new Error("Invalid link preview response");
   }

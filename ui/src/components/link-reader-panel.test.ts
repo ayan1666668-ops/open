@@ -110,6 +110,47 @@ describe("Plugin link reader panel", () => {
     vi.unstubAllGlobals();
   });
 
+  it("accepts the same document identity when only the requested anchor differs", async () => {
+    const panel = await mount(vi.fn().mockResolvedValue(item(1)));
+    open(panel, itemUrl(1) + "#comment-4");
+    await expectTitle(panel, "Item 1");
+  });
+
+  it("uses only the detail contract when an agent is selected", async () => {
+    const request = vi.fn(async (_method: string, params?: unknown) => {
+      if (Object.keys(params as object).some((key) => key !== "url" && key !== "refresh")) {
+        throw new Error("Unexpected detail parameter");
+      }
+      return requestedItem(params);
+    });
+    const panel = await mount(request);
+    panel.agentId = "selected-agent";
+    open(panel);
+    await expectTitle(panel, "Item 1");
+    expect(request).toHaveBeenCalledWith(
+      "forge.item",
+      { url: itemUrl(1) },
+      { signal: expect.any(AbortSignal) },
+    );
+  });
+
+  it.each([itemUrl(2), itemUrl(1) + "?resource=other"])(
+    "rejects a document for another target: %s",
+    async (url) => {
+      const request = vi
+        .fn()
+        .mockResolvedValueOnce({ ...item(2), url })
+        .mockResolvedValueOnce(item(1));
+      const panel = await mount(request);
+      open(panel);
+      await waitForFast(() => expect(panel.renderRoot.querySelector(".lr-retry")).not.toBeNull());
+      expect(panel.renderRoot.querySelector("h1")).toBeNull();
+      panel.renderRoot.querySelector<HTMLButtonElement>(".lr-retry")?.click();
+      await expectTitle(panel, "Item 1");
+      expect(request).toHaveBeenCalledTimes(2);
+    },
+  );
+
   it("receives embedded intents only from its owner and never writes standalone geometry", async () => {
     const request = vi.fn(async (_method: string, params?: unknown) => requestedItem(params));
     const first = await mount(request, {

@@ -1,7 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../test/helpers/promise.js";
 import { SecretSurfaceUnavailableError } from "../secrets/runtime-degraded-state.js";
-import { gitHubPublicApi } from "./github-public-api.js";
+import {
+  CONTROL_UI_GITHUB_CREDENTIAL_UNAVAILABLE_MESSAGE,
+  gitHubPublicApi,
+} from "./github-public-api.js";
 
 describe("Control UI GitHub failures", () => {
   afterEach(() => vi.restoreAllMocks());
@@ -441,7 +444,7 @@ describe("Control UI GitHub failures", () => {
       reason: "secret-store-diagnostic",
     });
     expect(gitHubPublicApi.formatControlUiGitHubPreviewError(unavailable)).toEqual({
-      message: gitHubPublicApi.CONTROL_UI_GITHUB_CREDENTIAL_UNAVAILABLE_MESSAGE,
+      message: CONTROL_UI_GITHUB_CREDENTIAL_UNAVAILABLE_MESSAGE,
       retryable: false,
     });
     const display = gitHubPublicApi.formatControlUiGitHubPreviewError(

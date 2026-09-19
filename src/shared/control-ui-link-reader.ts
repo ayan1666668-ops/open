@@ -27,6 +27,7 @@ export type ControlUiLinkReaderPreviewParams = {
 export type ControlUiLinkReaderDetailParams = { url: string; refresh?: boolean };
 
 export type ControlUiLinkReaderPreview = {
+  /** Echo the validated requested URL; query parameters remain part of the resource identity. */
   url: string;
   title: string;
   subtitle?: string;

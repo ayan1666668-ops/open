@@ -10,6 +10,9 @@ import {
   SecretSurfaceUnavailableError,
 } from "../secrets/runtime-degraded-state.js";
 
+export const CONTROL_UI_GITHUB_CREDENTIAL_UNAVAILABLE_MESSAGE =
+  "The configured Control UI GitHub credential is unavailable. Resolve gateway.controlUi.github.token and retry.";
+
 export interface ControlUiGitHubError extends Error {
   readonly statusCode: number;
   readonly upstreamStatus: number;
@@ -34,7 +37,6 @@ type ControlUiGitHubPreviewTarget = {
 
 /** Host consumers depend on this public read contract, not the plugin's source graph. */
 type GitHubPublicApi = {
-  CONTROL_UI_GITHUB_CREDENTIAL_UNAVAILABLE_MESSAGE: string;
   GITHUB_API_ORIGIN: string;
   GITHUB_REQUEST_TIMEOUT_MS: number;
   ControlUiGitHubError: new (
@@ -147,7 +149,7 @@ export const gitHubPublicApi = createLazyFacadeObjectValue<GitHubPublicApi>(() =
     resolveGitHubApiCredentialScope: resolveScope,
     formatControlUiGitHubPreviewError(error) {
       return isTrustedSecretSurfaceUnavailableError(error)
-        ? { message: library.CONTROL_UI_GITHUB_CREDENTIAL_UNAVAILABLE_MESSAGE, retryable: false }
+        ? { message: CONTROL_UI_GITHUB_CREDENTIAL_UNAVAILABLE_MESSAGE, retryable: false }
         : library.formatControlUiGitHubPreviewError(error);
     },
     loadControlUiGitHubPreview(target, identity, fetchImpl, refresh) {

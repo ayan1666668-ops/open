@@ -6,7 +6,10 @@ import {
   rememberSessionPanelToggle,
   type SessionPanelToggleSlot,
 } from "../../components/session-panel-toggle-buffer.ts";
-import { ChatPaneSessionPanelToggleController } from "./chat-pane-session-panel-toggle.ts";
+import {
+  ChatPaneSessionPanelToggleController,
+  type PendingSessionPanelToggle,
+} from "./chat-pane-session-panel-toggle.ts";
 import {
   createGatewayBrowserClientFixture,
   createInitializationContext,
@@ -49,7 +52,7 @@ function fixture() {
     linkReaders: [reader],
     updateComplete: Promise.resolve(),
   };
-  const pending = new Map<SessionPanelToggleSlot, Event>();
+  const pending = new Map<SessionPanelToggleSlot, PendingSessionPanelToggle>();
   const requestUpdate = vi.fn();
   const updateSidebarLayout = vi.fn((layout: ChatPageHost["sidebarLayout"]) => {
     state.sidebarLayout = layout;
@@ -81,6 +84,76 @@ function fixture() {
 afterEach(() => vi.restoreAllMocks());
 
 describe("session link-reader intent delivery", () => {
+  it("delivers every buffered reader intent in order after the lazy commit", async () => {
+    const f = fixture();
+    const first = f.event();
+    const second = f.event("https://forge.example/items/2");
+    rememberSessionPanelToggle("link-reader", first);
+    rememberSessionPanelToggle("link-reader", second);
+    f.controller.flush();
+    f.definitions.resolve(HTMLElement);
+    f.commit.resolve(true);
+    await vi.waitFor(() => expect(f.deliverPanelEvent).toHaveBeenCalledTimes(2));
+    expect(f.deliverPanelEvent.mock.calls.map((call) => call[1])).toEqual([first, second]);
+    expect(f.pending.size).toBe(0);
+  });
+
+  it("delivers rapid direct reader opens in order instead of replacing the first", async () => {
+    const f = fixture();
+    const first = f.event();
+    const second = f.event("https://forge.example/items/2");
+    f.controller.handle("link-reader", "openclaw-link-reader-panel", first);
+    f.controller.handle("link-reader", "openclaw-link-reader-panel", second);
+    f.definitions.resolve(HTMLElement);
+    f.commit.resolve(true);
+    await vi.waitFor(() => expect(f.deliverPanelEvent).toHaveBeenCalledTimes(2));
+    expect(f.deliverPanelEvent.mock.calls.map((call) => call[1])).toEqual([first, second]);
+  });
+
+  it("does not append a new session intent to a retired pending batch", async () => {
+    const f = fixture();
+    const old = f.event();
+    f.controller.handle("link-reader", "openclaw-link-reader-panel", old);
+    f.state.sessionKey = "session-b";
+    const current = f.event("https://forge.example/items/2");
+    f.controller.handle("link-reader", "openclaw-link-reader-panel", current);
+    f.definitions.resolve(HTMLElement);
+    f.commit.resolve(true);
+    await vi.waitFor(() => expect(f.deliverPanelEvent).toHaveBeenCalledTimes(1));
+    expect(f.deliverPanelEvent).toHaveBeenCalledWith("link-reader", current);
+    expect(f.pending.size).toBe(0);
+  });
+
+  it.each([false, true])(
+    "a direct close cancels the complete pending batch (definitions ready=%s)",
+    async (ready) => {
+      const f = fixture();
+      f.controller.handle("link-reader", "openclaw-link-reader-panel", f.event());
+      f.controller.handle(
+        "link-reader",
+        "openclaw-link-reader-panel",
+        f.event("https://forge.example/items/2"),
+      );
+      if (ready) {
+        f.definitions.resolve(HTMLElement);
+        await Promise.resolve();
+        await Promise.resolve();
+      }
+      f.controller.handle(
+        "link-reader",
+        "openclaw-link-reader-panel",
+        new CustomEvent(LINK_READER_PANEL_TOGGLE_EVENT, { detail: { open: false } }),
+      );
+      expect(f.pending.size).toBe(0);
+      f.definitions.resolve(HTMLElement);
+      f.commit.resolve(true);
+      await f.commit.promise;
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(f.deliverPanelEvent).not.toHaveBeenCalled();
+    },
+  );
+
   it("keeps unsupported URLs unaccepted and leaves the layout alone", () => {
     const f = fixture();
     const event = f.event("https://example.com/ordinary-link");

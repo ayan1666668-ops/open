@@ -1,7 +1,6 @@
 // Public GitHub transport and preview data for core-owned project/session and
 // compatibility integrations. Importing this barrel never activates the plugin.
 export {
-  CONTROL_UI_GITHUB_CREDENTIAL_UNAVAILABLE_MESSAGE,
   ControlUiGitHubError,
   discardResponse,
   fetchGitHubApi,

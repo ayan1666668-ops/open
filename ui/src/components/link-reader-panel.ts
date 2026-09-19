@@ -4,6 +4,7 @@ import { property, state } from "lit/decorators.js";
 import { repeat } from "lit/directives/repeat.js";
 import type {
   ControlUiLinkReaderDocument,
+  ControlUiLinkReaderDetailParams,
   ControlUiLinkReaderDescriptor,
 } from "../../../src/shared/control-ui-link-reader.js";
 import type { GatewayBrowserClient } from "../api/gateway.ts";
@@ -24,6 +25,7 @@ import {
 import { linkReaderPanelStyles } from "./link-reader-panel.styles.ts";
 import {
   resolveLinkReaderTarget,
+  linkReaderResponseMatchesTarget,
   linkReaderTargetKey as targetKey,
   EMPTY_LINK_READERS,
   type LinkReaderTarget,
@@ -502,8 +504,10 @@ class OpenClawLinkReaderPanel extends OpenClawLitElement implements PanelHostedT
       this.activeTab === tab &&
       this.target?.href === target.href &&
       this.readers.includes(target.reader);
-    const params = { url: target.href, ...(this.agentId ? { agentId: this.agentId } : {}) };
-    const requestParams = this.refreshRequested ? { ...params, refresh: true } : params;
+    const requestParams: ControlUiLinkReaderDetailParams = {
+      url: target.href,
+      ...(this.refreshRequested ? { refresh: true } : {}),
+    };
     this.refreshRequested = false;
     this.requestUpdate();
     try {
@@ -513,6 +517,9 @@ class OpenClawLinkReaderPanel extends OpenClawLitElement implements PanelHostedT
         { signal: request.signal },
       );
       if (isCurrent()) {
+        if (!detail || !linkReaderResponseMatchesTarget(target, detail.url)) {
+          throw new Error("Link document does not match the requested target");
+        }
         tab.view = { status: "ready", detail };
         this.requestUpdate();
       }

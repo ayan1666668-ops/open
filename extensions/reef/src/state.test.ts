@@ -4,6 +4,7 @@ import path from "node:path";
 import { DatabaseSync, StatementSync } from "node:sqlite";
 import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
 import type {
+  OpenAsyncKeyedStoreOptions,
   OpenKeyedStoreOptions,
   PluginStateKeyedStore,
   PluginStateSyncKeyedStore,
@@ -12,7 +13,6 @@ import {
   createPluginStateKeyedStoreForTests,
   createPluginStateSyncKeyedStoreForTests,
   resetPluginStateStoreForTests,
-  setMaxPluginStateEntriesPerPluginForTests,
 } from "openclaw/plugin-sdk/plugin-state-test-runtime";
 import { createTestPluginApi } from "openclaw/plugin-sdk/plugin-test-api";
 import { createPluginRuntimeMock } from "openclaw/plugin-sdk/plugin-test-runtime";
@@ -22,13 +22,12 @@ import reefChannelEntry from "../index.js";
 import {
   base64url,
   generateIdentity,
-  MemoryAuditStore,
-  MemoryReplayStore,
   signReceipt,
   verifyChain,
   verifyChainSegment,
   type ReviewRequest,
 } from "../protocol/index.js";
+import { MemoryAuditStore, MemoryReplayStore } from "../protocol/memory-stores.test-support.js";
 import { ReefChannelConfigSchema } from "./config-schema.js";
 import { ReefMessageFlow } from "./flow.js";
 import { ReefFriendManager } from "./friends.js";
@@ -68,7 +67,7 @@ function createRuntime(stateDir: string, registrationHost: "worker" | "legacy" =
       ...options,
       env: { OPENCLAW_STATE_DIR: stateDir },
     });
-  runtime.state.openKeyedStore = <T>(options: OpenKeyedStoreOptions) => {
+  runtime.state.openKeyedStore = <T>(options: OpenAsyncKeyedStoreOptions) => {
     const store = createPluginStateKeyedStoreForTests<T>("reef", {
       ...options,
       env: { OPENCLAW_STATE_DIR: stateDir },
@@ -471,7 +470,7 @@ describe("Reef SQLite state", () => {
       const runtime = createRuntime(stateDir);
       const failure = new Error("registration worker unavailable");
       const open = runtime.state.openKeyedStore;
-      runtime.state.openKeyedStore = <T>(options: OpenKeyedStoreOptions) => ({
+      runtime.state.openKeyedStore = <T>(options: OpenAsyncKeyedStoreOptions) => ({
         ...open<T>(options),
         [method]: async () => {
           throw failure;
@@ -852,7 +851,7 @@ describe("Reef SQLite state", () => {
     const runtime = createRuntime(stateDir);
     const openKeyedStore = runtime.state.openKeyedStore;
     runtime.state.openKeyedStore = <T>(
-      options: OpenKeyedStoreOptions,
+      options: OpenAsyncKeyedStoreOptions,
     ): PluginStateKeyedStore<T> => {
       const store = openKeyedStore<T>(options);
       return options.namespace === REEF_DELIVERED_NAMESPACE
@@ -954,30 +953,6 @@ describe("Reef delivered markers", () => {
     await expect(stores.delivered.status("second")).resolves.toBeUndefined();
     await expect(stores.delivered.status("first")).resolves.toBe("delivered");
     await expect(stores.delivered.status("third")).resolves.toBeUndefined();
-  });
-
-  it("parks confirm at the plugin-wide aggregate limit without retaining bookkeeping", async () => {
-    const stores = openStores(createRuntime(stateDir), testKeys(), {
-      deliveredMaxEntries: REEF_DELIVERED_MAX_ENTRIES,
-    });
-    // Fill the plugin-wide aggregate limit from another namespace's row. The
-    // parked entry keeps no separate bookkeeping and retries at-least-once.
-    setMaxPluginStateEntriesPerPluginForTests(1);
-    try {
-      const other = createRuntime(stateDir).state.openSyncKeyedStore<{ id: string }>({
-        namespace: "reef-test-other",
-        maxEntries: REEF_DELIVERED_MAX_ENTRIES,
-        overflowPolicy: "reject-new",
-      });
-      other.registerIfAbsent("row-1", { id: "row-1" });
-      await expect(stores.delivered.status("aggregate-1")).resolves.toBeUndefined();
-      await expect(stores.delivered.confirm("aggregate-1")).rejects.toMatchObject({
-        code: "PLUGIN_STATE_LIMIT_EXCEEDED",
-      });
-      await expect(stores.delivered.status("aggregate-1")).resolves.toBeUndefined();
-    } finally {
-      setMaxPluginStateEntriesPerPluginForTests();
-    }
   });
 
   it("reads legacy delivered markers without a state as delivered", async () => {

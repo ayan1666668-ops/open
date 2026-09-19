@@ -34,4 +34,5 @@ export const SIDEBAR_PANEL_SHORTCUTS = {
   detail: panel("detail", combos.reviewPanel),
   conversation: undefined,
   "link-reader": undefined,
+  portal: undefined,
 };

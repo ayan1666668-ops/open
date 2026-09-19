@@ -49,3 +49,10 @@ export function linkReaderTargetKey(target: LinkReaderTarget): string {
   url.hash = "";
   return target.reader.pluginId + ":" + target.reader.id + ":" + url.href;
 }
+
+/** Response identity includes the reader and query; an anchor only selects within that document. */
+export function linkReaderResponseMatchesTarget(target: LinkReaderTarget, value: unknown): boolean {
+  const returned =
+    typeof value === "string" ? resolveLinkReaderTarget(value, [target.reader]) : null;
+  return returned !== null && linkReaderTargetKey(returned) === linkReaderTargetKey(target);
+}

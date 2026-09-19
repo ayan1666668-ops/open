@@ -160,8 +160,7 @@ const defaultPublicDeprecatedExportsByEntrypointBudget = Object.freeze({
   // +1: shared ingress retention defaults projected through the deprecated message barrel.
   // +1: WhatsApp ack-policy bridge counted via channel-message's wildcard re-export.
   // Rendering helpers also flow through this shipped wildcard compatibility barrel.
-  // +1: approved complete-preamble helper inherited through the shipped barrel (#151456).
-  "channel-message": 137,
+  "channel-message": 136,
   // +2: Slack progress-draft render bridge (function + mode type).
   "channel-outbound": 2,
   // +2: WhatsApp ack-policy bridge (function + mode type).
@@ -205,8 +204,9 @@ export function readPluginSdkSurfaceBudgets(env: NodeJS.ProcessEnv = process.env
       // +3: typed feature contracts, backend registration, and native Control UI hosting.
       // +1: public provider-owned asynchronous embedding batch contract.
       // +1: runtime-neutral WebSocket client/server adapter for bundled and external plugins.
+      // +1: approved host-owned workspace access runtime entrypoint.
       // +1: passive docked link-reader contracts.
-      155,
+      156,
       env,
     ),
     publicExports: readPluginSdkSurfaceBudgetEnv(
@@ -380,8 +380,9 @@ export function readPluginSdkSurfaceBudgets(env: NodeJS.ProcessEnv = process.env
       // +1: approved shared native-command argument-menu applicability predicate.
       // +4: shared activity projectors and complete-preamble admission, including the shipped barrel.
       // -1: keep complete-preamble admission off the deprecated compatibility facade.
+      // +4: approved workspace access exports; later stack exports belong to their consumers.
       // +6: passive link-reader descriptor, metadata, document, preview, and request types.
-      4491,
+      4495,
       env,
     ),
     publicFunctionExports: readPluginSdkSurfaceBudgetEnv(
@@ -523,7 +524,8 @@ export function readPluginSdkSurfaceBudgets(env: NodeJS.ProcessEnv = process.env
       // +1: approved shared native-command argument-menu applicability predicate.
       // +4: shared activity projectors and complete-preamble admission, including the shipped barrel.
       // -1: keep complete-preamble admission off the deprecated compatibility facade.
-      2649,
+      // +3: approved workspace access callables; later stack exports belong to their consumers.
+      2652,
       env,
     ),
     publicDeprecatedExports: readPluginSdkSurfaceBudgetEnv(

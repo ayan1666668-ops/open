@@ -170,6 +170,51 @@ describe("GitHub plugin ownership and RPC migration", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it.each(["github.preview", "github.detail"])(
+    "keeps the validated requested URL as %s response identity",
+    async (method) => {
+      const url =
+        "https://github.com/octocat/identity-" + ++sequence + "/pull/1/files?view=split#diff-one";
+      vi.mocked(dispatchGatewayMethod).mockResolvedValueOnce({
+        ok: true,
+        payload: preview({ repo: new URL(url).pathname.split("/")[2] }),
+      });
+      vi.stubGlobal(
+        "fetch",
+        vi
+          .fn<typeof fetch>()
+          .mockResolvedValueOnce(response({ private: false }))
+          .mockResolvedValueOnce(response(issue())),
+      );
+      const respond = await request(method, { url });
+      expect(respond).toHaveBeenCalledWith(
+        true,
+        expect.objectContaining({ url }),
+        undefined,
+        undefined,
+      );
+    },
+  );
+
+  it.each([{ number: 2 }, { repo: "another-repo" }, { owner: "another-owner" }])(
+    "rejects a well-formed host preview for another resource: %j",
+    async (different) => {
+      vi.mocked(dispatchGatewayMethod).mockResolvedValueOnce({
+        ok: true,
+        payload: preview(different),
+      });
+      const respond = await request("github.preview", {
+        url: "https://github.com/octocat/repo/pull/1",
+      });
+      expect(respond).toHaveBeenCalledWith(
+        false,
+        undefined,
+        expect.objectContaining({ code: "UNAVAILABLE" }),
+        undefined,
+      );
+    },
+  );
+
   it("serves generic public detail, preserves files-page expansion, and redacts upstream failures", async () => {
     vi.stubEnv("GH_TOKEN", "unused-ambient-token");
     const fetchMock = vi

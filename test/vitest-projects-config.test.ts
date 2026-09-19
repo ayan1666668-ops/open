@@ -77,6 +77,7 @@ import { createUnitFastVitestConfig } from "./vitest/vitest.unit-fast.config.ts"
 
 const patternFiles = createPatternFileHelper("openclaw-vitest-projects-config-");
 const scopedGatewayMethodsIsolatedTestFiles = [
+  "server-methods/chat-metadata-runtime.cache.test.ts",
   "server-methods/tasks.access.test.ts",
   "server-methods/tasks.test.ts",
   "server-methods/agent.task-runtime.test.ts",
@@ -88,6 +89,7 @@ const scopedGatewayMethodsIsolatedTestFiles = [
   "server-methods/sessions.send-yield-resume.test.ts",
   "server-methods/system-agent-nested-inference.integration.test.ts",
   "server-methods/system-agent-setup-control-ui.test.ts",
+  "server-methods/transcripts.test.ts",
   "server-methods/users-preferences.test.ts",
   "server-methods/usage.test.ts",
   "server-methods/usage.sessions-usage.test.ts",

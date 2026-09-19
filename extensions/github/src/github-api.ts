@@ -12,8 +12,6 @@ import {
 export { isRecord } from "openclaw/plugin-sdk/string-coerce-runtime";
 
 export const GITHUB_API_ORIGIN = "https://api.github.com";
-export const CONTROL_UI_GITHUB_CREDENTIAL_UNAVAILABLE_MESSAGE =
-  "The configured Control UI GitHub credential is unavailable. Resolve gateway.controlUi.github.token and retry.";
 const GITHUB_JSON_MAX_BYTES = 256 * 1024;
 export const GITHUB_REQUEST_TIMEOUT_MS = 8_000;
 const GITHUB_API_VERSION = "2022-11-28";

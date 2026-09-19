@@ -7,7 +7,7 @@ import {
 import { loadGitHubDetail } from "./detail.js";
 import { ControlUiGitHubError, formatControlUiGitHubPreviewError } from "./github-api.js";
 import { isControlUiGitHubPreview } from "./preview-contract.js";
-import { parseGitHubLinkParams } from "./targets.js";
+import { githubTargetUrl, parseGitHubLinkParams } from "./targets.js";
 import { githubPreviewView } from "./view-model.js";
 
 type ReaderMethod = "github.preview" | "github.detail";
@@ -38,14 +38,30 @@ async function handleGitHubRequest(
         respond(false, result.payload, result.error, result.meta);
         return;
       }
-      if (!isControlUiGitHubPreview(result.payload)) {
+      if (
+        !isControlUiGitHubPreview(result.payload) ||
+        githubTargetUrl(result.payload).toLowerCase() !==
+          githubTargetUrl(parsed.target).toLowerCase()
+      ) {
         throw new ControlUiGitHubError(502, "GitHub preview returned an invalid response");
       }
-      respond(true, githubPreviewView(result.payload), undefined, result.meta);
+      respond(
+        true,
+        { ...githubPreviewView(result.payload), url: parsed.url },
+        undefined,
+        result.meta,
+      );
     } else {
       // Documents never use ambient or selected credentials, including refreshes.
       const document = await loadGitHubDetail(parsed.target, undefined, parsed.refresh);
-      respond(true, { ...document, filesExpanded: parsed.filesExpanded }, undefined);
+      if (document.url.toLowerCase() !== githubTargetUrl(parsed.target).toLowerCase()) {
+        throw new ControlUiGitHubError(502, "GitHub document returned a different resource");
+      }
+      respond(
+        true,
+        { ...document, url: parsed.url, filesExpanded: parsed.filesExpanded },
+        undefined,
+      );
     }
   } catch (error) {
     const { message, ...details } = formatControlUiGitHubPreviewError(error);
