@@ -74,7 +74,10 @@ export async function processResponsesStream<TApi extends Api>(
   type TextOutputSlot = Extract<ResponsesOutputSlot, { type: "text" }>;
   const streamingToolCalls = createResponsesToolCallTracker<StreamingToolCallState>();
   const outputSlots = createResponsesOutputSlotTracker<ResponsesOutputSlot>();
-  const outputs = createResponsesOutputTracker();
+  const outputs = createResponsesOutputTracker({
+    output,
+    canRetryIdentityConflict: options?.canRetryIdentityConflict,
+  });
   let terminalResponse: CompletedResponse | null | undefined;
   let incompleteToolCall: CompletedToolCall | undefined;
   let lastTextBlock: TextBlockReference | null = null;
@@ -131,18 +134,6 @@ export async function processResponsesStream<TApi extends Api>(
       return slot;
     }
     return undefined;
-  };
-  const resolveOutputItemSlot = (
-    event: object,
-    item: ResponseOutputItem | ResponsesStreamOutputMessage,
-  ): ResponsesOutputSlot | undefined => {
-    if (item.type === "reasoning") {
-      return outputSlots.resolve(event, "thinking");
-    }
-    if (item.type === "message") {
-      return outputSlots.resolve(event, "text");
-    }
-    return readResponsesOutputIndex(event) === undefined ? undefined : outputSlots.get(event);
   };
   const materializeDeferredTextSlot = (
     slot: Extract<ResponsesOutputSlot, { type: "text" }>,
@@ -318,6 +309,7 @@ export async function processResponsesStream<TApi extends Api>(
   );
   try {
     for await (const event of guardedStream) {
+      outputs.observeEvent(event);
       // Bookkeeping-only SSE events (in_progress, *.done echoes) are still
       // provider progress; keep the idle watchdog alive without exposing them,
       // matching the completions and anthropic transports.
@@ -522,7 +514,7 @@ export async function processResponsesStream<TApi extends Api>(
           lastTextBlock = null;
         }
 
-        const existingOutputSlot = resolveOutputItemSlot(event, item);
+        const existingOutputSlot = outputSlots.resolveOutputItem(event, item);
         materializeDeferredTextSlots(existingOutputSlot);
         const outputSlot = existingOutputSlot ?? createOutputSlot(event, item);
         compactionTracker.completed(item, blocks.length);

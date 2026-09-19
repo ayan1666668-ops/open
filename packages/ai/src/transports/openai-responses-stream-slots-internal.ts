@@ -1,9 +1,14 @@
 import type { ResponseReasoningItem } from "openai/resources/responses/responses.js";
-import type { TextContent } from "../types.js";
+import type { AssistantMessage, TextContent } from "../types.js";
+import {
+  isResponsesProviderTool,
+  ResponsesOutputIdentityError,
+} from "./openai-responses-stream-errors.js";
 import type {
   ResponsesThinkingBlock,
   TextBlockReference,
 } from "./openai-responses-stream-terminal-internal.js";
+import type { OpenAIResponsesStreamEvent } from "./openai-responses-stream-types-internal.js";
 
 export type ResponsesStreamOutputSlot<TMessage, TToolCall> =
   | {
@@ -45,8 +50,13 @@ type ResponsesOutputState = {
 
 export type ResponsesOutputTracker = ReturnType<typeof createResponsesOutputTracker>;
 
-export function createResponsesOutputTracker() {
+export function createResponsesOutputTracker(params: {
+  output: Pick<AssistantMessage, "content">;
+  canRetryIdentityConflict?: () => boolean;
+}) {
   const outputs = new Map<string | number, ResponsesOutputState>();
+  let currentEventType = "unknown";
+  let providerToolObserved = false;
   const identity = (item: ResponsesOutputIdentityItem): string | undefined => {
     if ((item.type === "reasoning" || item.type === "message") && item.id) {
       return `${item.type}:${item.id}`;
@@ -71,11 +81,35 @@ export function createResponsesOutputTracker() {
       output.type !== item.type ||
       (output.callId && item.call_id && output.callId !== item.call_id)
     ) {
-      throw new Error("Responses stream changed output item identity");
+      throw new ResponsesOutputIdentityError({
+        outputIndex,
+        expectedType: output.type,
+        actualType: item.type,
+        completed: output.completed,
+        completedToolCall: [...outputs.values()].some(
+          (candidate) => candidate.type === "function_call" && candidate.completed,
+        ),
+        eventType: currentEventType,
+        retrySafe:
+          params.canRetryIdentityConflict?.() === true &&
+          !providerToolObserved &&
+          !params.output.content.some((block) => block.type === "text" && block.text.length > 0),
+      });
     }
     return output;
   };
   return {
+    observeEvent(event: OpenAIResponsesStreamEvent): void {
+      currentEventType = event.type;
+      if (
+        event.type === "response.output_item.added" ||
+        event.type === "response.output_item.done"
+      ) {
+        providerToolObserved ||= isResponsesProviderTool(event.item);
+      } else if (event.type === "response.completed" || event.type === "response.incomplete") {
+        providerToolObserved ||= (event.response.output ?? []).some(isResponsesProviderTool);
+      }
+    },
     get,
     set(
       item: ResponsesOutputIdentityItem,
@@ -160,6 +194,15 @@ export function createResponsesOutputSlotTracker<TSlot extends { type: string }>
     get(event: object): TSlot | undefined {
       const outputIndex = readResponsesOutputIndex(event);
       return outputIndex === undefined ? unindexed : indexed.get(outputIndex);
+    },
+    resolveOutputItem(event: object, item: { type: string }): TSlot | undefined {
+      if (item.type === "reasoning") {
+        return this.resolve(event, "thinking");
+      }
+      if (item.type === "message") {
+        return this.resolve(event, "text");
+      }
+      return readResponsesOutputIndex(event) === undefined ? undefined : this.get(event);
     },
     values(): TSlot[] {
       return [...new Set([...indexed.values(), ...(unindexed ? [unindexed] : [])])];

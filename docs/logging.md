@@ -243,6 +243,15 @@ bounded, redacted error details for classification, including when a large
 partial response cannot fit in the transcript. Unrecognized errors still use
 generic chat copy; inspect the Gateway logs and stored error for diagnosis.
 
+Responses output-identity conflicts record the event type, output position,
+expected and observed item types, and whether a tool call completed, without
+recording item IDs or response content. OpenClaw uses the existing bounded session
+retry policy when the failing response produced no visible text or completed tool
+calls and its request enabled only client-executed function tools. Continuation
+keeps earlier tool results, so those completed actions are not replayed. Conflicts
+after output or with provider-hosted tools remain terminal; inspect earlier
+results before continuing. The identity checks stay enforced on every attempt.
+
 A worker message-size failure is separate from a model context-window limit.
 Retry with a smaller response or continue on the Gateway. If the worker cannot
 preserve the model's continuation data, stop or reclaim it before retrying on

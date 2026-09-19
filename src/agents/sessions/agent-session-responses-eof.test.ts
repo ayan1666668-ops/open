@@ -29,9 +29,18 @@ it.each([
   { failure: "unknown", recover: false },
   { failure: "completed", recover: false },
   { failure: "max_output_tokens", recover: false, retryEnabled: false },
+  { failure: "identity_type", recover: true },
+  { failure: "identity_call", recover: true },
+  { failure: "identity_call", recover: false, retryEnabled: false },
+  { failure: "identity_call", recover: false, repeatFailure: true },
+  { failure: "identity_call", recover: false, beforeConflict: "text" },
+  { failure: "identity_call", recover: true, beforeConflict: "empty-text" },
+  { failure: "identity_call", recover: false, beforeConflict: "function" },
+  { failure: "identity_call", recover: false, beforeConflict: "provider" },
+  { failure: "identity_call", recover: false, unprovenRequest: true },
 ])(
-  "handles Responses $failure after settled tools (recovery: $recover)",
-  async ({ failure, recover, retryEnabled }) => {
+  "handles Responses $failure after settled tools (recovery: $recover, repeated: $repeatFailure, output: $beforeConflict)",
+  async ({ failure, recover, retryEnabled, repeatFailure, beforeConflict, unprovenRequest }) => {
     const execute = vi.fn(async () => ({
       content: [{ type: "text" as const, text: "saved result" }],
       details: {},
@@ -49,7 +58,7 @@ it.each([
           ),
         );
       }
-      if (requests.length === 2) {
+      if (requests.length === 2 || (repeatFailure && requests.length > 2)) {
         const stream = createAssistantMessageEventStream();
         const output = createAssistant(model, []);
         const events = (async function* () {
@@ -71,6 +80,60 @@ it.each([
             item_id: "fc_unfinished",
             delta: '{"value":',
           };
+          if (failure === "identity_type" || failure === "identity_call") {
+            if (beforeConflict) {
+              const item =
+                beforeConflict === "text" || beforeConflict === "empty-text"
+                  ? {
+                      type: "message",
+                      id: "msg_partial",
+                      content: [
+                        {
+                          type: "output_text",
+                          text: beforeConflict === "text" ? "Partial answer" : "",
+                        },
+                      ],
+                    }
+                  : beforeConflict === "function"
+                    ? {
+                        type: "function_call",
+                        id: "fc_completed",
+                        call_id: "completed",
+                        name: "record",
+                        arguments: "{}",
+                        status: "completed",
+                      }
+                    : { type: "mcp_call", id: "mcp_completed", status: "completed" };
+              if (beforeConflict === "function") {
+                yield { type: "response.output_item.added", output_index: 1, item };
+              }
+              yield {
+                type: "response.output_item.done",
+                output_index: 1,
+                item,
+              };
+            }
+            yield {
+              type: "response.completed",
+              response: {
+                id: "resp_conflicting",
+                status: "completed",
+                output: [
+                  failure === "identity_type"
+                    ? { type: "message", id: "msg_conflicting", content: [] }
+                    : {
+                        type: "function_call",
+                        id: "fc_unfinished",
+                        call_id: "different_call",
+                        name: "record",
+                        arguments: "{}",
+                        status: "completed",
+                      },
+                ],
+              },
+            };
+            return;
+          }
           if (failure !== "eof") {
             yield {
               type: failure === "completed" ? "response.completed" : "response.incomplete",
@@ -102,6 +165,7 @@ it.each([
             },
           },
           model,
+          unprovenRequest ? undefined : { canRetryIdentityConflict: () => true },
         ).catch((error: unknown) => failTransportStream({ stream, output, error }));
         return stream;
       }
@@ -109,7 +173,7 @@ it.each([
         createAssistant(model, [{ type: "text", text: "Recovered using saved result." }]),
       );
     });
-    const { session } = await createTestSession({
+    const { session, sessionManager } = await createTestSession({
       settingsManager: SettingsManager.inMemory({
         compaction: { enabled: false },
         retry: { enabled: retryEnabled ?? true, maxRetries: 1, baseDelayMs: 1 },
@@ -128,12 +192,41 @@ it.each([
     await session.prompt("Record once and report the result.");
 
     expect(transportEvents).toContain("toolcall_start");
-    expect(transportEvents).not.toContain("toolcall_end");
+    expect(transportEvents.includes("toolcall_end")).toBe(beforeConflict === "function");
     expect(execute).toHaveBeenCalledOnce();
     expect(session.getLastAssistantText()).toBe(
-      recover ? "Recovered using saved result." : undefined,
+      recover
+        ? "Recovered using saved result."
+        : beforeConflict === "text"
+          ? "Partial answer"
+          : undefined,
     );
-    expect(requests).toHaveLength(recover ? 3 : 2);
+    expect(requests).toHaveLength(recover || repeatFailure ? 3 : 2);
+    if (failure === "identity_type" || failure === "identity_call") {
+      const recorded = sessionManager
+        .getBranch()
+        .findLast(
+          (entry) =>
+            entry.type === "message" &&
+            entry.message.role === "assistant" &&
+            entry.message.stopReason === "error",
+        );
+      expect(recorded).toMatchObject({
+        message: { errorCode: "responses_output_identity_conflict" },
+      });
+      if (recorded?.type !== "message" || recorded.message.role !== "assistant") {
+        throw new Error("Missing recorded identity conflict");
+      }
+      expect(JSON.parse(recorded.message.errorBody ?? "{}")).toMatchObject({
+        eventType: "response.completed",
+        outputIndex: 0,
+        expectedType: "function_call",
+        actualType: failure === "identity_type" ? "message" : "function_call",
+        mismatch: failure === "identity_type" ? "type" : "call_id",
+        completedToolCall: beforeConflict === "function",
+        retrySafe: (!beforeConflict || beforeConflict === "empty-text") && !unprovenRequest,
+      });
+    }
     if (!recover) {
       return;
     }
