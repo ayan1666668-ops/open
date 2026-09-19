@@ -633,6 +633,19 @@ describe("native device settings pages", () => {
     }
   });
 
+  it("shows an App Translocation health warning on the permissions page", async () => {
+    const snapshot = createNativeDeviceSettingsSnapshot();
+    snapshot.app.runningUnderAppTranslocation = true;
+    const { capability } = createCapability(snapshot);
+    const page = await mount("openclaw-device-permissions-page", capability);
+    const warning = page.querySelector(".callout.warning");
+    expect(warning?.textContent).toContain("Running under App Translocation");
+    expect(warning?.textContent).toContain("com.apple.quarantine");
+    expect(warning?.querySelector("a")?.getAttribute("href")).toContain(
+      "/platforms/mac/permissions",
+    );
+  });
+
   it.each([false, undefined])(
     "keeps iOS permission order and system-owned precision read-only (editable: %s)",
     async (preciseEditable) => {

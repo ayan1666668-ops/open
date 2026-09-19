@@ -41,7 +41,16 @@ class DevicePermissionsPage extends OpenClawLightDomElement {
     const { permissions } = snapshot;
     const preciseEditable =
       permissions.location.preciseEditable ?? snapshot.device.platform === "macos";
+    const translocationWarning =
+      snapshot.app?.runningUnderAppTranslocation === true
+        ? html`<div class="callout warning" role="status">
+            <strong>${t("configPage.deviceSettings.appTranslocationWarningTitle")}</strong>
+            <p>${t("configPage.deviceSettings.appTranslocationWarning")}</p>
+            ${renderLearnMoreLink("https://docs.openclaw.ai/platforms/mac/permissions")}
+          </div>`
+        : nothing;
     return html`
+      ${translocationWarning}
       ${renderSettingsSection(
         { title: t("configPage.deviceSettings.systemAccess") },
         permissions.entries.map(({ id, status }) =>
