@@ -2,8 +2,6 @@
 import { formatErrorMessage, toErrorObject } from "openclaw/plugin-sdk/error-runtime";
 import {
   createSubsystemLogger,
-  resolveAgentWorkspaceDir,
-  resolveMemorySearchConfig,
   resolveUserPath,
   type OpenClawConfig,
   type ResolvedMemorySearchConfig,
@@ -17,18 +15,21 @@ import {
   type MemorySessionSyncTarget,
   type MemorySyncParams,
 } from "openclaw/plugin-sdk/memory-core-host-engine-storage";
-import { normalizeAgentId } from "openclaw/plugin-sdk/routing";
 import { createPluginRuntimeStore } from "openclaw/plugin-sdk/runtime-store";
 import { withOpenClawAgentDatabaseWrite } from "openclaw/plugin-sdk/sqlite-runtime";
 import { runInMemoryBackgroundContext } from "./background-context.js";
 import type { MemoryCoreAcquireLocalService } from "./embedding-local-service.js";
 import type { EmbeddingProvider, EmbeddingProviderRequest } from "./embeddings.js";
 import { getMemoryManagerLifecycle } from "./lifecycle.js";
+import {
+  acquireMemoryManagerWithSearchRecovery,
+  type MemoryManagerGetParams,
+} from "./manager-acquisition.js";
 import { MemoryIndexDatabase } from "./manager-database-context.js";
 import { memoryDatabaseTableExists } from "./manager-db-kernel.js";
+import { assertMemorySearchFtsSchema } from "./manager-db.js";
 import {
   resolveEffectiveMemorySearchSettings,
-  resolveMemoryEmbeddingProviderRequirement,
   type MemoryEmbeddingBootstrapDebug,
   type MemoryEmbeddingProviderRequirement,
 } from "./manager-provider-lifecycle.js";
@@ -38,11 +39,8 @@ import {
   type MemoryProviderLifecycleState,
 } from "./manager-provider-state.js";
 import {
-  isTransientMemoryIndexManagerPurpose,
   MemoryManagerRegistry,
   type MemoryManagerProviderFactory,
-  normalizeMemoryIndexManagerPurpose,
-  resolveMemoryIndexManagerCacheKey,
   type MemoryIndexManagerPurpose,
 } from "./manager-registry.js";
 import { waitForMemoryReindexLock } from "./manager-reindex-lock.js";
@@ -116,100 +114,82 @@ export class MemoryIndexManager extends MemorySearchOrchestration implements Mem
   private queuedSessionSync: Promise<void> | null = null;
   protected indexIdentityState: MemoryIndexIdentityState;
 
-  static async get(params: {
-    cfg: OpenClawConfig;
-    agentId: string;
-    purpose?: MemoryIndexManagerPurpose;
-    inspectSources?: boolean;
-    acquireLocalService?: MemoryCoreAcquireLocalService;
-    maintenanceSource?: MemoryIndexManager;
-  }): Promise<MemoryIndexManager | null> {
+  static async get(
+    params: MemoryManagerGetParams<MemoryIndexManager>,
+  ): Promise<MemoryIndexManager | null> {
     const source = params.maintenanceSource;
-    const cfg = source?.cfg ?? params.cfg;
-    const agentId = source?.agentId ?? normalizeAgentId(params.agentId);
-    const purpose = normalizeMemoryIndexManagerPurpose(params.purpose);
     const managerRegistry = source?.managerRegistry ?? getMemoryIndexManagerRegistry();
-    return await managerRegistry.acquire(
-      { agentId, purpose },
-      {
-        prepare: () => {
-          const settings = source?.settings ?? resolveMemorySearchConfig(cfg, agentId);
-          if (!settings) {
-            return null;
-          }
-          const workspaceDir = source?.workspaceDir ?? resolveAgentWorkspaceDir(cfg, agentId);
-          const providerRequirement =
-            source?.providerRequirement ??
-            resolveMemoryEmbeddingProviderRequirement({
-              cfg,
-              agentId,
-              settings,
-            });
-          const key = resolveMemoryIndexManagerCacheKey({
-            agentId,
-            workspaceDir,
-            settings,
-            providerRequirement,
-            purpose,
-            acquireLocalService: params.acquireLocalService,
-          });
-          const databaseOptions = MemoryIndexDatabase.captureWriteOptions(
-            agentId,
-            settings.store.databasePath,
-            source?.publishedDatabase,
-          );
-          return {
-            key,
-            create: async () => {
-              let manager: MemoryIndexManager | undefined;
-              try {
-                const create = () => {
-                  manager = new MemoryIndexManager({
-                    managerRegistry,
-                    cacheKey: key,
-                    cfg,
-                    agentId,
-                    workspaceDir,
-                    settings,
-                    providerRequirement,
-                    purpose,
-                    acquireLocalService: params.acquireLocalService,
-                    maintenanceSource: source,
-                    databaseOptions,
-                  });
-                  managerRegistry.track(manager, key);
-                  return manager;
-                };
-                manager =
-                  purpose === "status"
-                    ? create()
-                    : await withOpenClawAgentDatabaseWrite(
-                        databaseOptions,
-                        create,
-                        source?.publishedDatabase.db,
-                      );
-                if (params.inspectSources) {
-                  await manager.inspectDiagnosticSourceState();
-                }
-                return manager;
-              } catch (error) {
-                try {
-                  await manager?.close();
-                } catch (cleanupError) {
-                  throw new AggregateError(
-                    [error, cleanupError],
-                    "Memory manager preparation cleanup failed",
-                    { cause: cleanupError },
-                  );
-                }
-                throw error;
-              }
-            },
-            reuse: (manager) => !manager.closing && !manager.closed && manager.db.isOpen,
-          };
+    return await acquireMemoryManagerWithSearchRecovery({
+      ...params,
+      registry: managerRegistry,
+      ...(source && {
+        source: {
+          manager: source,
+          cfg: source.cfg,
+          agentId: source.agentId,
+          workspaceDir: source.workspaceDir,
+          settings: source.settings,
+          providerRequirement: source.providerRequirement,
         },
+      }),
+      prepareCreate: (acquisition) =>
+        MemoryIndexDatabase.captureWriteOptions(
+          acquisition.agentId,
+          acquisition.settings.store.databasePath,
+          acquisition.maintenanceSource?.publishedDatabase,
+        ),
+      create: async (acquisition, databaseOptions) => {
+        const { key: cacheKey, ...resolved } = acquisition;
+        let manager: MemoryIndexManager | undefined;
+        try {
+          const create = () => {
+            manager = new MemoryIndexManager({
+              ...resolved,
+              managerRegistry,
+              cacheKey,
+              acquireLocalService: params.acquireLocalService,
+              databaseOptions,
+            });
+            managerRegistry.track(manager, cacheKey);
+            return manager;
+          };
+          manager =
+            acquisition.purpose === "status" || acquisition.purpose === "search"
+              ? create()
+              : await withOpenClawAgentDatabaseWrite(
+                  databaseOptions,
+                  create,
+                  acquisition.maintenanceSource?.publishedDatabase.readOnly
+                    ? undefined
+                    : acquisition.maintenanceSource?.publishedDatabase.db,
+                );
+          if (acquisition.purpose === "search") {
+            await manager.prepareSearchReader();
+          }
+          if (params.inspectSources) {
+            await manager.inspectDiagnosticSourceState();
+          }
+          return manager;
+        } catch (err) {
+          try {
+            await manager?.close();
+          } catch (cleanupError) {
+            if (manager) {
+              managerRegistry.retainForCleanup(manager, acquisition);
+            }
+            throw new Error(
+              `Memory manager initialization failed: ${formatErrorMessage(err)}; cleanup also failed`,
+              { cause: cleanupError },
+            );
+          }
+          throw err;
+        }
       },
-    );
+      reuse: async (manager, purpose) =>
+        purpose === "search"
+          ? typeof manager.revalidateForReuse === "function" && (await manager.revalidateForReuse())
+          : !manager.closing && !manager.closed && manager.db.isOpen,
+    });
   }
 
   private constructor(params: {
@@ -223,13 +203,15 @@ export class MemoryIndexManager extends MemorySearchOrchestration implements Mem
     purpose: MemoryIndexManagerPurpose;
     acquireLocalService?: MemoryCoreAcquireLocalService;
     maintenanceSource?: MemoryIndexManager;
+    writerPrepared?: boolean;
     databaseOptions: Parameters<typeof withOpenClawAgentDatabaseWrite>[0] & { path: string };
   }) {
     super(params.maintenanceSource?.automaticRebuildNotice);
     this.managerRegistry = params.managerRegistry;
     const source = params.maintenanceSource;
+    this.searchReaderWriterPrepared =
+      params.purpose === "search" && (params.writerPrepared === true || source !== undefined);
     const effectiveSettings = resolveEffectiveMemorySearchSettings(params.settings);
-    const dbPath = params.databaseOptions.path;
     this.cacheKey = params.cacheKey;
     this.acquireLocalService = params.acquireLocalService;
     this.purpose = params.purpose;
@@ -238,7 +220,7 @@ export class MemoryIndexManager extends MemorySearchOrchestration implements Mem
     this.workspaceDir = params.workspaceDir;
     this.settings = {
       ...effectiveSettings,
-      store: { ...effectiveSettings.store, databasePath: dbPath },
+      store: { ...effectiveSettings.store, databasePath: params.databaseOptions.path },
     };
     this.providerRequirement = params.providerRequirement;
     this.requestedProvider = effectiveSettings.provider;
@@ -246,7 +228,7 @@ export class MemoryIndexManager extends MemorySearchOrchestration implements Mem
     for (const memorySource of effectiveSettings.sources) {
       this.sources.add(memorySource);
     }
-    const readOnly = this.purpose === "status";
+    const readOnly = this.purpose === "status" || this.purpose === "search";
     if (source && (!source.publishedDatabase.db.isOpen || this.purpose !== "maintenance")) {
       throw new Error("Memory maintenance source connection is unavailable");
     }
@@ -254,8 +236,10 @@ export class MemoryIndexManager extends MemorySearchOrchestration implements Mem
       agentId: this.agentId,
       writeOptions: params.databaseOptions,
       readOnly,
+      requirePublished: this.purpose === "search",
       allowExtension: effectiveSettings.store.vector.enabled,
-      maintenanceSource: source?.publishedDatabase,
+      // A reader delegates its captured write authority, never its query-only connection.
+      maintenanceSource: source?.publishedDatabase.readOnly ? undefined : source?.publishedDatabase,
     });
     try {
       this.providerKey = this.computeProviderKey();
@@ -267,6 +251,14 @@ export class MemoryIndexManager extends MemorySearchOrchestration implements Mem
       if (source && (!this.fts.enabled || source.publishedDatabase.fts.available)) {
         // The creator already initialized this exact connection and effective schema.
         Object.assign(this.fts, source.publishedDatabase.fts);
+      } else if (this.purpose === "search") {
+        if (this.fts.enabled) {
+          assertMemorySearchFtsSchema({
+            db: this.db,
+            tokenizer: this.settings.store.fts.tokenizer,
+          });
+        }
+        this.fts.available = this.fts.enabled;
       } else if (this.purpose === "status") {
         this.fts.available =
           this.fts.enabled && memoryDatabaseTableExists(this.db, "main", MEMORY_INDEX_FTS_TABLE);
@@ -286,20 +278,11 @@ export class MemoryIndexManager extends MemorySearchOrchestration implements Mem
       this.indexIdentityDirty =
         this.indexIdentityState.status === "mismatched" ||
         (this.indexIdentityState.status === "missing" && this.sources.has("memory"));
-      const transient = isTransientMemoryIndexManagerPurpose(this.purpose);
-      const invalidatedSources = new Set(
-        (
-          this.db
-            .prepare("SELECT DISTINCT source FROM memory_index_sources WHERE hash = ''")
-            .all() as Array<{ source?: unknown }>
-        ).flatMap((row) =>
-          row.source === "memory" || row.source === "sessions" ? [row.source] : [],
-        ),
-      );
+      const invalidatedSources = this.readInvalidatedSources();
       this.memorySourceProvenanceRepairPending =
         this.sources.has("memory") && invalidatedSources.has("memory");
       this.dirty =
-        (this.sources.has("memory") && (!transient || !meta)) ||
+        (this.sources.has("memory") && (this.purpose === "default" || !meta)) ||
         this.memorySourceProvenanceRepairPending;
       if (this.sources.has("sessions") && invalidatedSources.has("sessions")) {
         // Migration cannot map a durable session source path back to one live
@@ -309,7 +292,7 @@ export class MemoryIndexManager extends MemorySearchOrchestration implements Mem
         this.sessionsFullRetryDirty = true;
       }
       this.batch = this.resolveBatchConfig();
-      if (!transient) {
+      if (this.purpose === "default") {
         runInMemoryBackgroundContext(() => {
           this.ensureWatcher();
           this.ensureSessionListener();
@@ -324,8 +307,8 @@ export class MemoryIndexManager extends MemorySearchOrchestration implements Mem
   }
 
   async sync(params?: MemorySyncParams): Promise<void> {
-    if (this.purpose === "status") {
-      throw new Error("Memory status managers are read-only");
+    if (this.purpose === "status" || this.purpose === "search") {
+      throw new Error("Read-only memory managers cannot sync or mutate the index");
     }
     if (this.closing || this.closed) {
       return;
@@ -342,7 +325,27 @@ export class MemoryIndexManager extends MemorySearchOrchestration implements Mem
         // call through the queue even while idle so it adopts that retained work.
         return await this.enqueueTargetedSessionSync(params);
       }
-      return await this.syncAdmitted(params);
+      return await this.syncAdmitted(
+        params,
+        params?.reason === "search" ? { allowEmbeddingBootstrapFallback: true } : undefined,
+      );
+    });
+  }
+
+  protected async acquireSearchRefreshWriter() {
+    return await MemoryIndexManager.get({
+      cfg: this.cfg,
+      agentId: this.agentId,
+      purpose: "maintenance",
+      acquireLocalService: this.acquireLocalService,
+      maintenanceSource: this,
+    });
+  }
+
+  protected retainSearchRefreshWriter(writer: MemoryIndexManager): void {
+    this.managerRegistry.retainForCleanup(writer, {
+      agentId: this.agentId,
+      purpose: "maintenance",
     });
   }
 
@@ -374,6 +377,9 @@ export class MemoryIndexManager extends MemorySearchOrchestration implements Mem
       queuedSessionOwner?: boolean;
     },
   ): Promise<void> {
+    if (this.purpose === "search") {
+      throw new Error("Read-only memory search managers cannot sync or mutate the index");
+    }
     if (this.syncing) {
       if (hasTargetedSessionSyncParams(params)) {
         if (options?.queuedSessionOwner) {
@@ -535,7 +541,15 @@ export class MemoryIndexManager extends MemorySearchOrchestration implements Mem
   }
 
   private publishedStatus(): MemoryProviderStatus {
-    if (this.embeddingBootstrapFailure) {
+    const publishedMeta = this.readMeta();
+    const keywordOnly =
+      this.embeddingBootstrapFailure !== undefined ||
+      this.searchReaderKeywordOnly ||
+      (this.providerRequirement.mode === "optional" &&
+        publishedMeta?.provider === "none" &&
+        publishedMeta.model === "fts-only" &&
+        this.refreshKeywordFallbackIndexIdentity().status === "valid");
+    if (keywordOnly) {
       this.refreshKeywordFallbackIndexIdentity();
     } else {
       this.refreshIndexIdentityDirty({
@@ -554,10 +568,10 @@ export class MemoryIndexManager extends MemorySearchOrchestration implements Mem
 
     // Status projects the effective keyword-only search mode while degraded.
     // Sync generations still snapshot this.provider so recovery can rebuild vectors.
-    const statusProvider = this.embeddingBootstrapFailure ? null : this.provider;
+    const statusProvider = keywordOnly ? null : this.provider;
     const providerInfo = resolveStatusProviderInfo({
       provider: statusProvider,
-      providerInitialized: this.embeddingBootstrapFailure ? true : this.providerInitialized,
+      providerInitialized: keywordOnly ? true : this.providerInitialized,
       requestedProvider: this.requestedProvider,
       configuredModel: this.settings.model || undefined,
     });
@@ -684,37 +698,17 @@ export class MemoryIndexManager extends MemorySearchOrchestration implements Mem
     this.closed = true;
     const pendingProviderInit = this.providerInitPromise;
     const pendingFallbackInit = this.getPendingFallbackProviderInitialization();
-    if (this.watchTimer) {
-      clearTimeout(this.watchTimer);
-      this.watchTimer = null;
-    }
-    if (this.sessionWatchTimer) {
-      clearTimeout(this.sessionWatchTimer);
-      this.sessionWatchTimer = null;
-    }
-    if (this.intervalTimer) {
-      clearInterval(this.intervalTimer);
-      this.intervalTimer = null;
-    }
-    if (this.memoryWatchPressureStartupTimer) {
-      clearTimeout(this.memoryWatchPressureStartupTimer);
-      this.memoryWatchPressureStartupTimer = null;
-    }
+    this.clearSyncSubscriptions();
     if (this.watcher) {
       await this.watcher.close();
       this.watcher = null;
     }
     this.closeNativeMemoryWatchPairs();
-    if (this.sessionUnsubscribe) {
-      this.sessionUnsubscribe();
-      this.sessionUnsubscribe = null;
-    }
     const reportPendingWorkError = (err: unknown) => {
       log.warn(`memory close: pending manager work failed: ${formatErrorMessage(err)}`);
     };
     await pendingProviderInit?.catch(reportPendingWorkError);
     await pendingFallbackInit?.catch(reportPendingWorkError);
-    // Initialization may attach sync work; observe its promise only after it settles.
     await this.syncing?.catch(reportPendingWorkError);
     try {
       await this.retryFailedClose();

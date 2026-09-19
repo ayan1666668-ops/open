@@ -172,6 +172,26 @@ describe("memory manager state owner capture", () => {
     }
   });
 
+  it("keeps reader refresh admission on its captured state owner after cwd changes", async () => {
+    if (!memoryRuntime.getReusableMemorySearchManager) {
+      throw new Error("Expected reusable reader runtime capability");
+    }
+    const acquired = await memoryRuntime.getReusableMemorySearchManager({
+      cfg: config,
+      agentId: "main",
+    });
+    const reader = acquired.manager;
+    if (!reader) {
+      throw new Error(acquired.error ?? "Expected a retained reader");
+    }
+    await fs.writeFile(path.join(workspace, "MEMORY.md"), "Changed after admission was revoked.");
+    refuse(originalEnv);
+    cwd.mockReturnValue(path.join(root, "other"));
+    await expect(reader.search("changed", { minScore: 0 })).rejects.toThrow(
+      "fixture state owner refuses this agent",
+    );
+  });
+
   it("rechecks retained writes against their original state owner after cwd changes", async () => {
     const acquired = await getMemorySearchManager({ cfg: config, agentId: "main", purpose: "cli" });
     const manager = acquired.manager;

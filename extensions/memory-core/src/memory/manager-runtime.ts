@@ -10,7 +10,7 @@ export async function closeAllMemoryIndexManagers(): Promise<void> {
 
 export async function closeMemoryIndexManagersForAgent(params: { agentId: string }): Promise<void> {
   const registry = getMemoryIndexManagerRegistry();
-  for (const purpose of ["default", "maintenance"] as const) {
+  for (const purpose of ["default", "maintenance", "search"] as const) {
     await registry.closeForAgent({ ...params, purpose });
   }
 }

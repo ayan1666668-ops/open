@@ -12,6 +12,7 @@ import {
   ensureMemoryIndexSchema,
   loadSqliteVecExtension,
   MEMORY_INDEX_VECTOR_TABLE,
+  MEMORY_INDEX_FTS_TABLE,
   type MemorySessionSyncTarget,
   type MemorySource,
   type MemorySyncParams,
@@ -161,6 +162,59 @@ export abstract class MemoryManagerSyncBase extends MemoryManagerDatabaseContext
     deferIndex?: boolean;
     prefixIndexItems?: MemoryIndexWorkItem[];
   }): Promise<MemorySourceSyncPlan>;
+
+  protected readInvalidatedSources(): Set<MemorySource> {
+    const rows = this.db
+      .prepare("SELECT DISTINCT source FROM memory_index_sources WHERE hash = ''")
+      // SAFETY: Projected SQLite source values are narrowed below to known sources.
+      .all() as Array<{ source?: unknown }>;
+    return new Set(
+      rows.flatMap((row) =>
+        row.source === "memory" || row.source === "sessions" ? [row.source] : [],
+      ),
+    );
+  }
+
+  protected hasIndexedContent(): boolean {
+    if (this.hasIndexedChunks()) {
+      return true;
+    }
+    if (!this.fts.enabled || !this.fts.available) {
+      return false;
+    }
+    const ftsRow = this.db
+      .prepare(`SELECT 1 as found FROM ${MEMORY_INDEX_FTS_TABLE} LIMIT 1`)
+      // SAFETY: This literal SELECT returns one numeric found column or no row.
+      .get() as
+      | {
+          found?: number;
+        }
+      | undefined;
+    return ftsRow?.found === 1;
+  }
+
+  protected clearSyncSubscriptions(): void {
+    if (this.sessionUnsubscribe) {
+      this.sessionUnsubscribe();
+      this.sessionUnsubscribe = null;
+    }
+    if (this.watchTimer) {
+      clearTimeout(this.watchTimer);
+      this.watchTimer = null;
+    }
+    if (this.sessionWatchTimer) {
+      clearTimeout(this.sessionWatchTimer);
+      this.sessionWatchTimer = null;
+    }
+    if (this.intervalTimer) {
+      clearInterval(this.intervalTimer);
+      this.intervalTimer = null;
+    }
+    if (this.memoryWatchPressureStartupTimer) {
+      clearTimeout(this.memoryWatchPressureStartupTimer);
+      this.memoryWatchPressureStartupTimer = null;
+    }
+  }
 
   protected async withManagerOperation<T>(run: () => Promise<T>): Promise<T> {
     if (this.closing || this.closed) {
@@ -477,6 +531,17 @@ export abstract class MemoryManagerSyncBase extends MemoryManagerDatabaseContext
       this.database.vectorReady = null;
       log.warn(`sqlite-vec unavailable: ${message}`);
       return false;
+    }
+    if (ready && this.database.readOnly) {
+      // Published readers never enter writer admission, even when the writer
+      // just repaired vector debt. Missing/different dimensions use stored vectors.
+      const persistedDimensions = this.readMeta()?.vectorDims;
+      this.vector.dims = persistedDimensions;
+      return (
+        !this.hasVectorRebuildMarker() &&
+        (dimensions === undefined || persistedDimensions === dimensions) &&
+        memoryTableExists(this.db, VECTOR_TABLE)
+      );
     }
     if (ready && typeof dimensions === "number" && dimensions > 0) {
       // Another process may have published a vectorless index while this

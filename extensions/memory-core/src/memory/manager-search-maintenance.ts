@@ -65,3 +65,29 @@ export async function runMemorySearchMaintenance<DirtyGeneration>(params: {
   }
   return incompleteReason;
 }
+
+/** Await writer publication and retirement before a retained reader queries. */
+export async function runMemorySearchRefresh<T extends { close(): Promise<void> }>(params: {
+  signal?: AbortSignal;
+  acquireManager: () => Promise<T | null>;
+  refresh: (manager: T) => Promise<void>;
+  retainForCleanup: (manager: T) => void;
+}): Promise<void> {
+  params.signal?.throwIfAborted();
+  // Registry acquisition declines during teardown instead of waiting on this reader.
+  const manager = await params.acquireManager();
+  if (!manager) {
+    throw new Error("Memory search refresh unavailable during teardown");
+  }
+  try {
+    params.signal?.throwIfAborted();
+    await params.refresh(manager);
+    params.signal?.throwIfAborted();
+  } finally {
+    // Cancellation cannot release accepted native work or failed cleanup custody.
+    await manager.close().catch((error: unknown) => {
+      params.retainForCleanup(manager);
+      throw error;
+    });
+  }
+}

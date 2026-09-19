@@ -61,12 +61,14 @@ export class MemoryIndexDatabase {
     readOnly: boolean;
     allowExtension: boolean;
     maintenanceSource?: MemoryIndexDatabase;
+    requirePublished?: boolean;
   }): MemoryIndexDatabase {
     const connection = params.readOnly
       ? openMemoryDatabaseReadOnlyAtPath(
           params.writeOptions.path,
           params.allowExtension,
           params.agentId,
+          params.requirePublished,
         )
       : borrowOpenClawAgentDatabase(params.writeOptions);
     if (params.maintenanceSource && connection.db !== params.maintenanceSource.db) {
