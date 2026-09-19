@@ -148,7 +148,9 @@ require_clawhub_dispatch_available() {
         if cancel_superseded_clawhub_child "$workflow" "$run_id" "$title"; then
           continue
         fi
-      elif [[ "$branch" != "$workflow_ref" ]]; then
+      elif [[ "$title" == "${workflow} ["*"] parent="* || "$branch" != "$workflow_ref" ]]; then
+        # Different releases can share tooling (including bootstrap main).
+        # The same-ref guard is only needed for unidentified legacy children.
         continue
       fi
       endpoint="repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/pending_deployments"

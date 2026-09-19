@@ -22,6 +22,7 @@ function fixture({
   parentConclusion = "failure",
   childStatus = "waiting",
   titleTag = releaseTag,
+  sameToolingRef = false,
   actor = "github-actions[bot]",
   cancellationFails = false,
   publisherRunning = false,
@@ -37,7 +38,7 @@ function fixture({
     repository: { full_name: repository },
     head_repository: { full_name: repository },
     actor: { login: actor },
-    head_branch: "release-publish/bbbbbbbbbbbb-123",
+    head_branch: sameToolingRef ? workflowRef : "release-publish/bbbbbbbbbbbb-123",
     head_sha: "b".repeat(40),
     display_title: `${workflow} [${titleTag}] parent=80/1`,
     status: childStatus,
@@ -171,13 +172,16 @@ describe("ClawHub child lifecycle", () => {
     }
   });
 
-  it("leaves another tag's waiting child alone", () => {
-    const result = fixture({ titleTag: "v2026.9.4" }).run(
-      'dispatch_workflow_at_ref "$WORKFLOW_REF" "$PARENT_WORKFLOW_SHA" "$WORKFLOW" -f release_tag="$RELEASE_TAG"',
-    );
-    expect(result.status, result.stderr).toBe(0);
-    expect(result.calls.some((args) => args[1] === "cancel")).toBe(false);
-  });
+  it.each([false, true])(
+    "leaves another tag's waiting child alone (same tooling: %s)",
+    (sameToolingRef) => {
+      const result = fixture({ titleTag: "v2026.9.4", sameToolingRef }).run(
+        'dispatch_workflow_at_ref "$WORKFLOW_REF" "$PARENT_WORKFLOW_SHA" "$WORKFLOW" -f release_tag="$RELEASE_TAG"',
+      );
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.calls.some((args) => args[1] === "cancel")).toBe(false);
+    },
+  );
 
   it("cleans up immediately recorded children after a later dispatch step fails", () => {
     const f = fixture({ titleTag: "v2026.9.4" });
