@@ -163,8 +163,6 @@ async function sendOutboundText(
     replyInThread,
     onDeliveryResult,
     signal,
-    onPlatformSendDispatch,
-    assertDirectAdapterHandoff,
     formatting,
   } = params;
   const commentResult = await sendCommentThreadReply({
@@ -291,14 +289,6 @@ async function sendOutboundText(
         replyToMessageId: preserveThread ? replyToMessageId : nextReplyToMessageId(),
         replyInThread: preserveThread ? true : i === 0 ? replyInThread : undefined,
       };
-      // Core refreshes the durable timing and fences custody before every text unit it cuts
-      // and sends itself; it runs that pair once around an adapter that takes the fanout
-      // over, so each message this loop adds has to ask again or a handoff that was current
-      // for the first one keeps emitting after custody changed. The fence stays synchronous
-      // and immediately precedes the transport call, because an awaited step in between
-      // leaves a microtask gap where custody can change after the check.
-      await onPlatformSendDispatch?.();
-      assertDirectAdapterHandoff?.();
       const result = useCard
         ? await sendStructuredCardFeishu({ ...sendParams, header: params.header })
         : await sendMessageFeishu({ ...sendParams, preparedPostText: true });
@@ -799,10 +789,6 @@ export const feishuOutbound: ChannelOutboundAdapter = withFeishuOutboundSendCont
           },
           send: async ({ mediaUrl }) => {
             const { replyToMessageId, replyInThread } = nextReplyMode();
-            // Media and the card are separate physical messages behind the one handoff core
-            // made around this call, so each of them asks again before it goes out.
-            await ctx.onPlatformSendDispatch?.();
-            ctx.assertDirectAdapterHandoff?.();
             return await sendMediaFeishu({
               cfg: ctx.cfg,
               to: ctx.to,
@@ -820,8 +806,6 @@ export const feishuOutbound: ChannelOutboundAdapter = withFeishuOutboundSendCont
           },
           finalize: async () => {
             const { replyToMessageId, replyInThread } = nextReplyMode();
-            await ctx.onPlatformSendDispatch?.();
-            ctx.assertDirectAdapterHandoff?.();
             return await sendCardFeishu({
               cfg: ctx.cfg,
               to: ctx.to,
@@ -851,7 +835,6 @@ export const feishuOutbound: ChannelOutboundAdapter = withFeishuOutboundSendCont
       const { cfg, to, text, mediaUrl, audioAsVoice, accountId, replyToId, threadId } = ctx;
       const { mediaAccess, mediaLocalRoots, mediaReadFile, onDeliveryResult, signal } = ctx;
       const { replyToIdSource, replyToMode, propagateMediaUploadFailure = false } = ctx;
-      const { onPlatformSendDispatch, assertDirectAdapterHandoff } = ctx;
       const { normalizedReplyToId } = resolveFeishuReplyMode({
         replyToId,
         threadId,
@@ -924,18 +907,10 @@ export const feishuOutbound: ChannelOutboundAdapter = withFeishuOutboundSendCont
 
       const results: FeishuReplyDeliverySource[] = captionResult ? [captionResult] : [];
       let mediaResult: Awaited<ReturnType<typeof sendMediaFeishu>>;
-      // The caption above is its own physical send, so the attachment asks again. This sits
-      // ahead of the upload's own catch on purpose: a rejected handoff is not an upload
-      // failure, and the fallback text there would be one more message the turn no longer
-      // owns. The caption that already reached the reader keeps its receipt, the way the
-      // chunk loop reports the messages it accepted before a later one was refused.
+      // The caption above is its own physical send, so the attachment asks the cancellation
+      // question again, ahead of the upload's own catch: an abort is not an upload failure,
+      // and the fallback text there would be one more message the turn no longer owns.
       signal?.throwIfAborted();
-      try {
-        await onPlatformSendDispatch?.();
-        assertDirectAdapterHandoff?.();
-      } catch (error) {
-        throw partialFeishuSendError(error, results);
-      }
       const mediaReplyMode = nextReplyMode();
       try {
         mediaResult = await sendMediaFeishu({

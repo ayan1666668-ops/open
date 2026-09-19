@@ -3,22 +3,18 @@ import type { FeishuSendTextContext } from "./outbound-send-result.js";
 
 /**
  * What every sender behind one delivery forwards to each message it sends itself: the
- * reply-target policy, the delivery reporting, the cancellation signal, the custody handoff
- * core would have run per message, and the per-delivery formatting that sizes the cut.
+ * reply-target policy, the delivery reporting, the cancellation signal, and the
+ * per-delivery formatting that sizes the cut.
  *
- * One owner because the chat, comment, media and fallback senders all forward it and a
- * subset silently dropped at one of them is invisible: the message still goes out, only
- * uncancelled, unfenced, or cut to the wrong size.
+ * Send authority is not in here: the ambient send scope established once around the
+ * adapter call owns it, and the client revalidates it per request. One owner because the
+ * chat, comment, media and fallback senders all forward these and a subset silently
+ * dropped at one of them is invisible: the message still goes out, only uncancelled or
+ * cut to the wrong size.
  */
 export type FeishuOutboundDeliveryOptions = Pick<
   FeishuSendTextContext,
-  | "replyToIdSource"
-  | "replyToMode"
-  | "onDeliveryResult"
-  | "signal"
-  | "onPlatformSendDispatch"
-  | "assertDirectAdapterHandoff"
-  | "formatting"
+  "replyToIdSource" | "replyToMode" | "onDeliveryResult" | "signal" | "formatting"
 >;
 
 /** Narrows a send context to the fields above, so a sender forwards them whole. */
@@ -30,8 +26,6 @@ export function feishuOutboundDeliveryOptions(
     replyToMode: ctx.replyToMode,
     onDeliveryResult: ctx.onDeliveryResult,
     signal: ctx.signal,
-    onPlatformSendDispatch: ctx.onPlatformSendDispatch,
-    assertDirectAdapterHandoff: ctx.assertDirectAdapterHandoff,
     formatting: ctx.formatting,
   };
 }

@@ -1,319 +1,575 @@
-// Feishu tests cover the custody handoff each physical message of an outbound fanout owes.
+// Feishu tests cover send authority across every physical message one delivery fans out.
+import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { isChannelPartialDeliveryError } from "openclaw/plugin-sdk/channel-inbound";
-import { PlatformMessageNotDispatchedError } from "openclaw/plugin-sdk/error-runtime";
+import { sendDurableMessageBatch } from "openclaw/plugin-sdk/channel-outbound";
 import {
-  createEmptyPluginRegistry,
+  createPluginRuntimeMock,
   createTestRegistry,
+  resetGlobalHookRunner,
   resetPluginRuntimeStateForTest,
   setActivePluginRegistry,
-} from "openclaw/plugin-sdk/plugin-test-runtime";
+} from "openclaw/plugin-sdk/channel-test-helpers";
+import { drainPendingDeliveries } from "openclaw/plugin-sdk/delivery-queue-runtime";
+import { collectErrorGraphCandidates } from "openclaw/plugin-sdk/error-runtime";
+import { withStateDirEnv } from "openclaw/plugin-sdk/test-env";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ClawdbotConfig } from "../runtime-api.js";
-import type { FeishuClientCredentials } from "./client.js";
-
-const sendMediaFeishuMock = vi.hoisted(() => vi.fn());
-const sendCardFeishuMock = vi.hoisted(() => vi.fn());
-const sendMessageFeishuMock = vi.hoisted(() => vi.fn());
-const sendStructuredCardFeishuMock = vi.hoisted(() => vi.fn());
-const createFeishuClientMock = vi.hoisted(() =>
-  vi.fn((_account: FeishuClientCredentials) => ({ request: vi.fn() })),
-);
-const deliverCommentThreadTextMock = vi.hoisted(() => vi.fn());
-const cleanupAmbientCommentTypingReactionMock = vi.hoisted(() => vi.fn(async () => false));
-
-vi.mock("./media.js", () => ({
-  sendMediaFeishu: sendMediaFeishuMock,
-  sendStickerFeishu: vi.fn(),
-  shouldSuppressFeishuTextForVoiceMedia: () => false,
-}));
-
-vi.mock("./send.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("./send.js")>()),
-  editMessageFeishu: vi.fn(),
-  getMessageFeishu: vi.fn(),
-  sendCardFeishu: sendCardFeishuMock,
-  sendMessageFeishu: sendMessageFeishuMock,
-  sendStructuredCardFeishu: sendStructuredCardFeishuMock,
-}));
-
-vi.mock("./client.js", () => ({
-  createFeishuClient: createFeishuClientMock,
-}));
-
-vi.mock("./drive.js", () => ({
-  deliverCommentThreadText: deliverCommentThreadTextMock,
-}));
-
-vi.mock("./comment-reaction.js", () => ({
-  cleanupAmbientCommentTypingReaction: cleanupAmbientCommentTypingReactionMock,
-}));
-
 import { feishuPlugin } from "./channel.js";
-import { feishuOutbound } from "./outbound.js";
+import { resetFeishuProxyAgentForTest } from "./client.js";
+import {
+  AUTH_PATH,
+  COMMENT_PATH,
+  FILE_PATH,
+  MESSAGE_PATH,
+  TARGET,
+  withFeishuTransport,
+} from "./outbound.send-authority.test-fixtures.js";
+import { setFeishuRuntime } from "./runtime.js";
 
-afterAll(() => {
-  vi.doUnmock("./media.js");
-  vi.doUnmock("./send.js");
-  vi.doUnmock("./client.js");
-  vi.doUnmock("./drive.js");
-  vi.doUnmock("./comment-reaction.js");
-  vi.resetModules();
-});
+const { resolveProxy } = vi.hoisted(() => ({
+  resolveProxy: vi.fn<() => Promise<undefined>>(),
+}));
 
-const CUSTODY_LOST = "Feishu outbound custody changed before this message.";
+vi.mock("openclaw/plugin-sdk/extension-shared", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("openclaw/plugin-sdk/extension-shared")>()),
+  resolveAmbientNodeProxyAgent: resolveProxy,
+}));
 
-type HandoffStep = "refresh" | "fence" | "send";
+const COMMENT_TARGET = "comment:docx:doc_fixture:comment_fixture";
+const COMMENT_QUERY_PATH = `${COMMENT_PATH}/batch_query`;
+const COMMENT_REPLY_PATH = `${COMMENT_PATH}/comment_fixture/replies`;
+const MEDIA_URL = "https://media.example/note.txt";
 
-// Records the order core requires around every recipient-visible send: refresh the durable
-// timing, fence custody synchronously, then call the transport with nothing awaited in
-// between. A microtask queued by the fence has not run yet while the transport call still
-// sits in the fence's own synchronous stack, so `drainedAtSend` reads false only while that
-// gap stays closed.
-function handoffRecorder() {
-  const steps: HandoffStep[] = [];
-  const drainedAtSend: boolean[] = [];
-  let fenceMicrotaskDrained = false;
-  let fenceCalls = 0;
-  let failFenceCall: number | undefined;
+const completionRetention = {
+  idPrefix: "feishu-handoff-",
+  maxAgeMs: 60_000,
+  maxEntries: 10,
+} as const;
+
+// Three messages at the 4000-character cut, so the fanout has to survive the authority
+// question twice more after the one core asked around the whole adapter call.
+const LONG_REPLY = Array.from(
+  { length: 300 },
+  (_entry, index) => `Line ${index} of a long outbound reply.`,
+).join("\n");
+const LONG_REPLY_MESSAGES = 3;
+
+/** The registered formatted entry: what core routes an uncut reply through. */
+function registeredFormattedSend() {
+  const send = feishuPlugin.outbound?.sendFormattedText;
+  if (!send) {
+    throw new Error("Expected the registered Feishu formatted text sender");
+  }
+  return send;
+}
+
+function registeredPayloadSend() {
+  const send = feishuPlugin.outbound?.sendPayload;
+  if (!send) {
+    throw new Error("Expected the registered Feishu payload sender");
+  }
+  return send;
+}
+
+function registeredMediaSend() {
+  const send = feishuPlugin.message?.send?.media;
+  if (!send) {
+    throw new Error("Expected the registered Feishu media sender");
+  }
+  return send;
+}
+
+/** A writer whose authority is revoked in place, the way a replaced turn revokes one. */
+function createSender() {
+  let current = true;
   return {
-    steps,
-    drainedAtSend,
-    failFenceAt: (call: number) => {
-      failFenceCall = call;
+    assertDirectAdapterHandoff: () => {
+      if (!current) {
+        throw new Error("Sender retired");
+      }
     },
-    counts: () => ({
-      refresh: steps.filter((step) => step === "refresh").length,
-      fence: steps.filter((step) => step === "fence").length,
-      send: steps.filter((step) => step === "send").length,
-    }),
-    hooks: {
-      onPlatformSendDispatch: async () => {
-        steps.push("refresh");
-      },
-      assertDirectAdapterHandoff: () => {
-        fenceCalls += 1;
-        steps.push("fence");
-        fenceMicrotaskDrained = false;
-        queueMicrotask(() => {
-          fenceMicrotaskDrained = true;
-        });
-        if (fenceCalls === failFenceCall) {
-          // The shape core throws when the writer that owns this answer is revoked or
-          // replaced: a permanent no-dispatch rejection for the message that was about to go.
-          throw new PlatformMessageNotDispatchedError(CUSTODY_LOST, {
-            cause: undefined,
-            retryable: false,
-          });
-        }
-      },
-    },
-    recordSend: <T>(result: T): T => {
-      steps.push("send");
-      drainedAtSend.push(fenceMicrotaskDrained);
-      return result;
+    onPlatformSendDispatch: vi.fn(async () => {}),
+    retire: () => {
+      current = false;
     },
   };
 }
 
-describe("feishu outbound custody handoff", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    sendMessageFeishuMock.mockResolvedValue({ messageId: "text_msg" });
-    sendStructuredCardFeishuMock.mockResolvedValue({ messageId: "card_msg" });
-    sendMediaFeishuMock.mockResolvedValue({ messageId: "media_msg" });
-    sendCardFeishuMock.mockResolvedValue({ messageId: "card_msg", chatId: "chat_1" });
-    deliverCommentThreadTextMock.mockResolvedValue({
-      delivery_mode: "reply_comment",
-      reply_id: "reply_1",
-    });
-    setActivePluginRegistry(
-      createTestRegistry([{ pluginId: "feishu", source: "test", plugin: feishuPlugin }]),
-    );
+/**
+ * Retirement keyed on the first message the reader actually received, not on a count of
+ * authority checks: a check core adds or drops elsewhere cannot then move where this
+ * revocation lands.
+ */
+function retireAfterFirstDelivery(sender: { retire: () => void }) {
+  const delivered: string[] = [];
+  return {
+    delivered,
+    onDeliveryResult: (result: { messageId?: string }) => {
+      delivered.push(result.messageId ?? "");
+      if (delivered.length === 1) {
+        sender.retire();
+      }
+    },
+  };
+}
+
+function errorCauses(error: unknown) {
+  return collectErrorGraphCandidates(error, (current) => [current.cause]);
+}
+
+/** A refused message is permanently not dispatched, never a retryable send failure. */
+function expectNotDispatched(error: unknown) {
+  expect(errorCauses(error)).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        code: "OPENCLAW_PLATFORM_MESSAGE_NOT_DISPATCHED",
+        retryable: false,
+      }),
+    ]),
+  );
+}
+
+/** The rich-post text of one recorded message request, as the reader received it. */
+function postText(request: { body: string }): string {
+  const envelope = JSON.parse(request.body) as { content?: string };
+  const post = JSON.parse(envelope.content ?? "{}") as {
+    zh_cn?: { content?: { tag?: string; text?: string }[][] };
+  };
+  return (post.zh_cn?.content ?? [])
+    .flat()
+    .map((element) => element.text ?? "")
+    .join("");
+}
+
+function messageTexts(requests: readonly { path: string; body: string }[]): string[] {
+  return requests.filter((request) => request.path === MESSAGE_PATH).map(postText);
+}
+
+/**
+ * Every transmitted message split back into authored lines, in send order. The rich-post
+ * envelope carries a whole chunk in one element run, so the line breaks live inside the
+ * text rather than in the element structure.
+ */
+function messageLines(requests: readonly { path: string; body: string }[]): string[] {
+  return messageTexts(requests).flatMap((text) => text.split("\n"));
+}
+
+/** The text of one recorded document-comment reply, as the thread received it. */
+function commentReplyText(request: { body: string }): string {
+  const envelope = JSON.parse(request.body) as {
+    content?: { elements?: { text_run?: { text?: string } }[] };
+  };
+  return (envelope.content?.elements ?? []).map((element) => element.text_run?.text ?? "").join("");
+}
+
+function partialDelivery(outcome: unknown) {
+  return isChannelPartialDeliveryError(outcome) ? outcome.deliveryResult : undefined;
+}
+
+function readDeliveryQueueRow(stateDir: string, id: string) {
+  const database = new DatabaseSync(path.join(stateDir, "state", "openclaw.sqlite"), {
+    readOnly: true,
   });
-
-  afterEach(() => {
-    resetPluginRuntimeStateForTest();
-    setActivePluginRegistry(createEmptyPluginRegistry());
-  });
-
-  // Three chunks at the 4000 default, so the loop has to ask twice more after the check
-  // core made around the whole adapter call.
-  const longText = Array.from(
-    { length: 300 },
-    (_entry, index) => `Line ${index} of a long outbound reply.`,
-  ).join("\n");
-
-  function errorMessage(outcome: unknown): string {
-    return outcome instanceof Error ? outcome.message : String(outcome);
+  try {
+    return database
+      .prepare(
+        `SELECT status, recovery_state, platform_send_started_at
+           FROM delivery_queue_entries
+          WHERE queue_name = 'outbound-prepared-v1' AND id = ?`,
+      )
+      .get(id) as
+      | { status: string; recovery_state: string | null; platform_send_started_at: number | null }
+      | undefined;
+  } finally {
+    database.close();
   }
+}
 
-  function partialDelivery(outcome: unknown) {
-    return isChannelPartialDeliveryError(outcome) ? outcome.deliveryResult : undefined;
-  }
+function registerFeishuPlugin() {
+  setActivePluginRegistry(
+    createTestRegistry([{ pluginId: "feishu", plugin: feishuPlugin, source: "test" }]),
+  );
+  resetGlobalHookRunner();
+}
 
-  it("refreshes and fences custody before every formatted chunk", async () => {
-    const run = handoffRecorder();
-    sendMessageFeishuMock.mockImplementation(async () => run.recordSend({ messageId: "text_msg" }));
-    // The case only means anything while the text needs more than one message.
-    expect(longText.length).toBeGreaterThan(8000);
+function stubLoadedMedia() {
+  setFeishuRuntime(
+    createPluginRuntimeMock({
+      media: {
+        loadWebMedia: async () => ({
+          buffer: Buffer.from("attachment"),
+          fileName: "note.txt",
+          contentType: "text/plain",
+          kind: undefined,
+        }),
+      },
+    }),
+  );
+}
 
-    await feishuOutbound.sendFormattedText?.({
-      cfg: {} as ClawdbotConfig,
-      to: "chat_1",
-      text: longText,
-      accountId: "main",
-      ...run.hooks,
-    } as never);
+beforeEach(() => {
+  vi.stubEnv("OPENCLAW_PROXY_ACTIVE", "0");
+  resolveProxy.mockResolvedValue(undefined);
+  resetFeishuProxyAgentForTest();
+  registerFeishuPlugin();
+});
 
-    expect(run.counts()).toEqual({ refresh: 3, fence: 3, send: 3 });
-    expect(run.steps.join(" ")).toBe("refresh fence send refresh fence send refresh fence send");
-    // Every send still sits in the synchronous stack of the fence that cleared it.
-    expect(run.drainedAtSend).toEqual([false, false, false]);
-  });
+afterEach(() => {
+  resetGlobalHookRunner();
+  resetPluginRuntimeStateForTest();
+  resetFeishuProxyAgentForTest();
+  resolveProxy.mockReset();
+  vi.unstubAllEnvs();
+  vi.restoreAllMocks();
+});
 
-  it("stops the formatted fanout once custody is lost after an earlier chunk", async () => {
-    const run = handoffRecorder();
-    run.failFenceAt(2);
-    sendMessageFeishuMock.mockImplementation(async () => run.recordSend({ messageId: "text_msg" }));
-    const delivered: string[] = [];
+afterAll(() => {
+  vi.doUnmock("openclaw/plugin-sdk/extension-shared");
+  vi.resetModules();
+});
 
-    const outcome = await feishuOutbound
-      .sendFormattedText?.({
-        cfg: {} as ClawdbotConfig,
-        to: "chat_1",
-        text: longText,
-        accountId: "main",
-        onDeliveryResult: (result: { messageId?: string }) => {
-          delivered.push(result.messageId ?? "");
+describe("Feishu outbound fanout authority over the Lark transport", () => {
+  it("delivers every message of a formatted reply while its sender stays current", async () => {
+    await withFeishuTransport(async (fixture) => {
+      const sender = createSender();
+      const delivered: string[] = [];
+      // Distinct ids per message, so a receipt that kept only one of them is visible.
+      let accepted = 0;
+      fixture.respond(async (request, response) => {
+        if (request.path !== MESSAGE_PATH) {
+          return false;
+        }
+        accepted += 1;
+        response.writeHead(200, { "content-type": "application/json" }).end(
+          JSON.stringify({
+            code: 0,
+            data: { message_id: `om_accepted_${String(accepted)}`, chat_id: TARGET },
+          }),
+        );
+        return true;
+      });
+      const [result] = await registeredFormattedSend()({
+        ...sender,
+        cfg: fixture.cfg,
+        to: TARGET,
+        text: LONG_REPLY,
+        onDeliveryResult: (progress: { messageId?: string }) => {
+          delivered.push(progress.messageId ?? "");
         },
-        ...run.hooks,
-      } as never)
-      .catch((error: unknown) => error);
+      } as never);
 
-    expect(run.counts()).toEqual({ refresh: 2, fence: 2, send: 1 });
-    expect(errorMessage(outcome)).toContain(CUSTODY_LOST);
-    expect(delivered).toEqual(["text_msg"]);
+      const expectedIds = Array.from(
+        { length: LONG_REPLY_MESSAGES },
+        (_entry, index) => `om_accepted_${String(index + 1)}`,
+      );
+      expect(fixture.requests.map((request) => request.path)).toEqual([
+        AUTH_PATH,
+        ...Array.from({ length: LONG_REPLY_MESSAGES }, () => MESSAGE_PATH),
+      ]);
+      const texts = messageTexts(fixture.requests);
+      // Every authored line, once each and in order. Containment alone would pass a fanout
+      // that duplicated or reordered a chunk. Trailing hard-break markers belong to the
+      // formatter and are asserted elsewhere, so they are trimmed off here.
+      expect(messageLines(fixture.requests).map((line) => line.trimEnd())).toEqual(
+        LONG_REPLY.split("\n"),
+      );
+      expect(texts.every((text) => text.length <= 4000)).toBe(true);
+      expect(delivered).toEqual(expectedIds);
+      expect(result?.receipt?.platformMessageIds).toEqual(expectedIds);
+      expect(sender.onPlatformSendDispatch).toHaveBeenCalledTimes(LONG_REPLY_MESSAGES);
+    });
   });
 
-  // Losing custody mid-fanout must not lose the receipts of the messages that already
+  it("stops the formatted fanout once its sender retires after the first message", async () => {
+    await withFeishuTransport(async ({ cfg, requests }) => {
+      const sender = createSender();
+      const { onDeliveryResult, delivered } = retireAfterFirstDelivery(sender);
+      const outcome = await registeredFormattedSend()({
+        ...sender,
+        cfg,
+        to: TARGET,
+        text: LONG_REPLY,
+        onDeliveryResult,
+      } as never).catch((cause: unknown) => cause);
+
+      expectNotDispatched(outcome);
+      // One message, and nothing after it: no later chunk, upload, card or comment.
+      expect(requests.map((request) => request.path)).toEqual([AUTH_PATH, MESSAGE_PATH]);
+      expect(delivered).toEqual(["om_accepted"]);
+      // The refused message never reached the refresh, so it never claimed dispatch timing.
+      expect(sender.onPlatformSendDispatch).toHaveBeenCalledOnce();
+    });
+  });
+
+  // Losing authority mid-fanout must not lose the receipts of the messages that already
   // reached the reader: the turn would then record the whole answer as undelivered and a
   // retry would repeat the text the reader is looking at.
-  it("reports the chunk the reader received when custody is lost mid-fanout", async () => {
-    const run = handoffRecorder();
-    run.failFenceAt(2);
-    let sendIndex = 0;
-    sendMessageFeishuMock.mockImplementation(async () => {
-      sendIndex += 1;
-      return run.recordSend({ messageId: `text_msg_${sendIndex}` });
+  it("reports the message the reader received when its sender retires mid-fanout", async () => {
+    await withFeishuTransport(async ({ cfg, requests }) => {
+      const sender = createSender();
+      const { onDeliveryResult } = retireAfterFirstDelivery(sender);
+      const outcome = await registeredFormattedSend()({
+        ...sender,
+        cfg,
+        to: TARGET,
+        text: LONG_REPLY,
+        onDeliveryResult,
+      } as never).catch((cause: unknown) => cause);
+
+      const accepted = messageTexts(requests);
+      expect(accepted).toHaveLength(1);
+      const delivery = partialDelivery(outcome);
+      // A rejection that threw the accepted receipts away reports none of them.
+      expect(delivery?.messageIds).toEqual(["om_accepted"]);
+      expect(delivery?.receipt?.platformMessageIds).toEqual(["om_accepted"]);
+      // The evidence the delivery layer reads to tell a refused message apart from an
+      // answer that partly reached the reader. A raw no-dispatch rejection carries none.
+      expect(delivery?.visibleReplySent).toBe(true);
+      // The accepted prefix is exactly the text of the one message that went out, not the
+      // authored answer and not the suffix the reader never saw.
+      expect(delivery?.content).toBe(accepted[0]);
+      expect(LONG_REPLY.length).toBeGreaterThan(delivery?.content?.length ?? 0);
     });
-
-    const outcome = await feishuOutbound
-      .sendFormattedText?.({
-        cfg: {} as ClawdbotConfig,
-        to: "chat_1",
-        text: longText,
-        accountId: "main",
-        ...run.hooks,
-      } as never)
-      .catch((error: unknown) => error);
-
-    const sentTexts = sendMessageFeishuMock.mock.calls.map((call) => String(call[0]?.text ?? ""));
-    expect(sentTexts).toHaveLength(1);
-    const delivery = partialDelivery(outcome);
-    // A rejection that threw the accepted receipts away reports none of them.
-    expect(delivery?.messageIds ?? []).toHaveLength(1);
-    expect(delivery?.visibleReplySent).toBe(true);
-    expect(delivery?.messageIds).toEqual(["text_msg_1"]);
-    expect(delivery?.receipt?.platformMessageIds).toEqual(["text_msg_1"]);
-    // Two numbers rather than two walls of prose when this regresses.
-    expect(delivery?.content?.length ?? 0).toBe(sentTexts[0]?.length);
-    expect(delivery?.content).toBe(sentTexts[0]);
-    // The evidence the delivery layer reads to tell a refused message apart from an answer
-    // that partly reached the reader. A raw no-dispatch rejection carries none of it.
-    expect(delivery?.visibleReplySent).toBe(true);
   });
 
-  it("stops the comment thread fanout once custody is lost after an earlier reply", async () => {
-    const run = handoffRecorder();
-    run.failFenceAt(2);
-    deliverCommentThreadTextMock.mockImplementation(async () =>
-      run.recordSend({ delivery_mode: "reply_comment", reply_id: "reply_1" }),
-    );
+  it("stops a document-comment fanout once its sender retires after the first reply", async () => {
+    await withFeishuTransport(async ({ cfg, requests }) => {
+      const sender = createSender();
+      const { onDeliveryResult, delivered } = retireAfterFirstDelivery(sender);
+      const outcome = await registeredFormattedSend()({
+        ...sender,
+        cfg,
+        to: COMMENT_TARGET,
+        text: LONG_REPLY,
+        onDeliveryResult,
+      } as never).catch((cause: unknown) => cause);
 
-    const outcome = await feishuOutbound
-      .sendFormattedText?.({
-        cfg: {} as ClawdbotConfig,
-        to: "comment:docx:doc_token_1:comment_1",
-        text: longText,
-        accountId: "main",
-        ...run.hooks,
-      } as never)
-      .catch((error: unknown) => error);
-
-    expect(run.counts()).toEqual({ refresh: 2, fence: 2, send: 1 });
-    expect(run.drainedAtSend).toEqual([false]);
-    expect(errorMessage(outcome)).toContain(CUSTODY_LOST);
+      expectNotDispatched(outcome);
+      expect(requests.map((request) => request.path)).toEqual([
+        AUTH_PATH,
+        COMMENT_QUERY_PATH,
+        COMMENT_REPLY_PATH,
+      ]);
+      expect(delivered).toEqual(["reply_accepted"]);
+      const delivery = partialDelivery(outcome);
+      expect(delivery?.messageIds).toEqual(["reply_accepted"]);
+      expect(delivery?.visibleReplySent).toBe(true);
+      expect(delivery?.receipt?.platformMessageIds).toEqual(["reply_accepted"]);
+      // Exactly the reply the thread received. Asserting only that it is shorter than the
+      // authored answer would also accept an arbitrary wrong string.
+      const acceptedReply = requests.find((request) => request.path === COMMENT_REPLY_PATH);
+      expect(acceptedReply).toBeDefined();
+      expect(delivery?.content).toEqual(
+        acceptedReply ? commentReplyText(acceptedReply) : undefined,
+      );
+      expect(LONG_REPLY.length).toBeGreaterThan(delivery?.content?.length ?? 0);
+    });
   });
 
-  // A presentation payload with attachments is several platform messages behind the single
-  // handoff core made around this call: each upload, then the card that finalizes it.
-  it("fences custody before every message a payload fans out", async () => {
-    const run = handoffRecorder();
-    run.failFenceAt(2);
-    sendMediaFeishuMock.mockImplementation(async () =>
-      run.recordSend({ messageId: "media_msg", chatId: "chat_1" }),
-    );
-    sendCardFeishuMock.mockImplementation(async () =>
-      run.recordSend({ messageId: "card_msg", chatId: "chat_1" }),
-    );
-
-    const outcome = await feishuOutbound
-      .sendPayload?.({
-        cfg: {} as ClawdbotConfig,
-        to: "chat_1",
-        text: "Two charts.",
-        accountId: "main",
+  // A presentation payload with an attachment is several platform messages behind the one
+  // authority check core made around this call: the upload and its message, then the card.
+  it("stops a payload card once its sender retires after the media message", async () => {
+    await withFeishuTransport(async ({ cfg, requests }) => {
+      stubLoadedMedia();
+      const sender = createSender();
+      const { onDeliveryResult, delivered } = retireAfterFirstDelivery(sender);
+      const outcome = await registeredPayloadSend()({
+        ...sender,
+        cfg,
+        to: TARGET,
+        text: "One chart.",
+        onDeliveryResult,
         payload: {
-          text: "Two charts.",
-          mediaUrls: ["https://example.test/a.png", "https://example.test/b.png"],
-          presentation: {
-            blocks: [{ type: "text", text: "Two charts." }],
-          },
+          text: "One chart.",
+          mediaUrls: [MEDIA_URL],
+          presentation: { blocks: [{ type: "text", text: "One chart." }] },
         },
-        ...run.hooks,
-      } as never)
-      .catch((error: unknown) => error);
+      } as never).catch((cause: unknown) => cause);
 
-    expect(run.counts()).toEqual({ refresh: 2, fence: 2, send: 1 });
-    expect(sendCardFeishuMock).not.toHaveBeenCalled();
-    expect(errorMessage(outcome)).toContain(CUSTODY_LOST);
+      expectNotDispatched(outcome);
+      // The upload and its message went out; the finalizing card never did.
+      expect(requests.map((request) => request.path)).toEqual([AUTH_PATH, FILE_PATH, MESSAGE_PATH]);
+      expect(delivered).toEqual(["om_accepted"]);
+    });
   });
 
-  it("fences custody before the attachment, and keeps the caption receipt", async () => {
-    const run = handoffRecorder();
-    run.failFenceAt(2);
-    sendMessageFeishuMock.mockImplementation(async () => run.recordSend({ messageId: "text_msg" }));
-    sendMediaFeishuMock.mockImplementation(async () => run.recordSend({ messageId: "media_msg" }));
-
-    const outcome = await feishuOutbound
-      .sendMedia?.({
-        cfg: {} as ClawdbotConfig,
-        to: "chat_1",
+  it("stops the attachment once its sender retires on the caption, keeping the receipt", async () => {
+    await withFeishuTransport(async ({ cfg, requests }) => {
+      stubLoadedMedia();
+      const sender = createSender();
+      const { onDeliveryResult, delivered } = retireAfterFirstDelivery(sender);
+      const outcome = await registeredMediaSend()({
+        ...sender,
+        cfg,
+        to: TARGET,
         text: "Here is the chart.",
-        mediaUrl: "https://example.test/chart.png",
-        accountId: "main",
-        ...run.hooks,
-      } as never)
-      .catch((error: unknown) => error);
+        mediaUrl: MEDIA_URL,
+        onDeliveryResult,
+      } as never).catch((cause: unknown) => cause);
 
-    expect(run.counts()).toEqual({ refresh: 2, fence: 2, send: 1 });
-    expect(sendMediaFeishuMock).not.toHaveBeenCalled();
-    // The refused attachment is not an upload failure, so no fallback text follows it, and
-    // the caption the reader already has keeps its receipt.
-    const delivery = partialDelivery(outcome);
-    expect(delivery?.messageIds ?? []).toHaveLength(1);
-    expect(delivery?.messageIds).toEqual(["text_msg"]);
-    expect(delivery?.visibleReplySent).toBe(true);
-    expect(errorMessage(outcome)).toContain(CUSTODY_LOST);
+      expectNotDispatched(outcome);
+      // The caption reached the reader; the attachment never started its upload, and the
+      // refusal never degraded into one more fallback message the turn no longer owns.
+      expect(requests.map((request) => request.path)).toEqual([AUTH_PATH, MESSAGE_PATH]);
+      expect(delivered).toEqual(["om_accepted"]);
+      const delivery = partialDelivery(outcome);
+      expect(delivery?.messageIds).toEqual(["om_accepted"]);
+      expect(delivery?.visibleReplySent).toBe(true);
+      expect(messageTexts(requests)).toEqual([expect.stringContaining("Here is the chart.")]);
+    });
+  });
+
+  // A formatted reply this channel cuts itself is several platform messages behind one
+  // durable attempt, so an accepted prefix has to land on the queue as a send that partly
+  // happened: the remaining messages are not sent, and what the reader already has is not
+  // replayable.
+  it("records an accepted prefix as a partial durable send that never replays", async () => {
+    const deliveryIntentId = "feishu-handoff-durable-partial";
+    await withStateDirEnv("openclaw-feishu-handoff-partial-", async ({ stateDir }) => {
+      await withFeishuTransport(async ({ cfg, requests }) => {
+        registerFeishuPlugin();
+        const sender = createSender();
+        const { onDeliveryResult, delivered } = retireAfterFirstDelivery(sender);
+        const outcome = await sendDurableMessageBatch({
+          cfg,
+          channel: "feishu",
+          to: TARGET,
+          accountId: "default",
+          durability: "required",
+          deliveryIntentId,
+          completionRetention,
+          maxRetries: 2,
+          assertDirectAdapterHandoff: sender.assertDirectAdapterHandoff,
+          onDeliveryResult,
+          payloads: [{ text: LONG_REPLY }],
+        });
+
+        const visibleRequests = () =>
+          requests.filter((request) => request.path.startsWith(MESSAGE_PATH));
+        expect(visibleRequests()).toHaveLength(1);
+        expect(delivered).toEqual(["om_accepted"]);
+        expect(outcome.status).toBe("partial_failed");
+        if (outcome.status === "partial_failed") {
+          expect(outcome.receipt.platformMessageIds).toEqual(["om_accepted"]);
+        }
+        // An accepted prefix is not a wholly unsent send: it stays pending and ambiguous
+        // rather than being flattened to failed while the recovery decision is open.
+        expect(readDeliveryQueueRow(stateDir, deliveryIntentId)).toMatchObject({
+          status: "pending",
+          recovery_state: "unknown_after_send",
+        });
+
+        await drainPendingDeliveries({
+          drainKey: "feishu:default",
+          logLabel: "Feishu fanout authority recovery",
+          cfg,
+          stateDir,
+          log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+          selectEntry: (entry) => ({ match: entry.channel === "feishu", bypassBackoff: true }),
+        });
+
+        // Nothing replays what the reader already has, and the drain settles the entry.
+        expect(visibleRequests()).toHaveLength(1);
+        expect(readDeliveryQueueRow(stateDir, deliveryIntentId)?.status).toBe("failed");
+      });
+    });
+  });
+
+  // Dispatch has begun once the request is on the wire. A response lost after that point
+  // cannot prove the message was never delivered, so the entry records the ambiguity and
+  // nothing replays it.
+  it("does not replay a Feishu message whose response is lost after dispatch", async () => {
+    const deliveryIntentId = "feishu-handoff-lost-response";
+    await withStateDirEnv("openclaw-feishu-handoff-ambiguous-", async ({ stateDir }) => {
+      await withFeishuTransport(async (fixture) => {
+        registerFeishuPlugin();
+        fixture.respond(async (request, response) => {
+          if (request.path === MESSAGE_PATH) {
+            // A real request that started and then lost its response.
+            response.destroy();
+            return true;
+          }
+          return false;
+        });
+        const outcome = await sendDurableMessageBatch({
+          cfg: fixture.cfg,
+          channel: "feishu",
+          to: TARGET,
+          accountId: "default",
+          durability: "required",
+          deliveryIntentId,
+          completionRetention,
+          maxRetries: 2,
+          payloads: [{ text: "Do not replay an ambiguous provider call." }],
+        });
+
+        const visibleRequests = () =>
+          fixture.requests.filter((request) => request.path.startsWith(MESSAGE_PATH));
+        expect(outcome.status).toBe("failed");
+        expect(visibleRequests()).toHaveLength(1);
+        // The client refreshes the durable timing immediately before the request reaches
+        // the HTTP adapter, so a lost response is recorded as the ambiguous outcome it is.
+        const row = readDeliveryQueueRow(stateDir, deliveryIntentId);
+        expect(row).toMatchObject({ status: "pending", recovery_state: "unknown_after_send" });
+        expect(row?.platform_send_started_at).toEqual(expect.any(Number));
+
+        await drainPendingDeliveries({
+          drainKey: "feishu:default",
+          logLabel: "Feishu ambiguous provider recovery",
+          cfg: fixture.cfg,
+          stateDir,
+          log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+          selectEntry: (entry) => ({ match: entry.channel === "feishu", bypassBackoff: true }),
+        });
+
+        // A request count alone would also pass if the drain skipped the entry, so assert
+        // the entry itself reached a terminal state that refuses to replay.
+        expect(visibleRequests()).toHaveLength(1);
+        expect(readDeliveryQueueRow(stateDir, deliveryIntentId)?.status).toBe("failed");
+      });
+    });
+  });
+
+  // The ambient send scope this adapter establishes around every text sender it advertises
+  // is what covers the window between core's own check and the request reaching the wire.
+  // Removing the `sendFormattedText` wrapper leaves this entry with no scope for the
+  // client's authority checks to find, and each case below then delivers the message.
+  it.each([
+    { stage: "token preparation", waitPath: AUTH_PATH },
+    { stage: "the request interceptor", waitPath: MESSAGE_PATH },
+  ])("stops a formatted entry retired during $stage", async ({ waitPath }) => {
+    await withFeishuTransport(async (fixture) => {
+      const sender = createSender();
+      const started = fixture.gate();
+      const release = fixture.gate();
+      const wait = async () => {
+        started.resolve();
+        await release.promise;
+      };
+      if (waitPath === MESSAGE_PATH) {
+        fixture.intercept(MESSAGE_PATH, wait);
+      } else {
+        fixture.respond(async (request) => {
+          if (request.path === AUTH_PATH) {
+            await wait();
+          }
+          return false;
+        });
+      }
+      const outcome = fixture.track(
+        registeredFormattedSend()({
+          ...sender,
+          cfg: fixture.cfg,
+          to: TARGET,
+          text: "A formatted entry must not outlive its sender.",
+        } as never).catch((cause: unknown) => cause),
+      );
+      await started.promise;
+      sender.retire();
+      release.resolve();
+
+      expectNotDispatched(await outcome);
+      expect(fixture.requests.map((request) => request.path)).toEqual([AUTH_PATH]);
+    });
   });
 });

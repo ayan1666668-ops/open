@@ -82,12 +82,6 @@ export async function sendCommentThreadReply(
       // abort stays an abort instead of arriving as a delivery failure.
       params.signal?.throwIfAborted();
       try {
-        // Core refreshes the durable timing and fences custody before every text unit it
-        // sends itself and once around an adapter that fans out for it, so every reply here
-        // asks again. The fence stays synchronous and immediately precedes the request, the
-        // way the post path asks it.
-        await params.onPlatformSendDispatch?.();
-        params.assertDirectAdapterHandoff?.();
         const result = await deliverCommentThreadText(client, {
           file_token: target.fileToken,
           file_type: target.fileType,
