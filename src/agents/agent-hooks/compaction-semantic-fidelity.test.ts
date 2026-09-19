@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { JudgmentOutcome } from "../../judgments/types.js";
 import type { AgentMessage } from "../runtime/index.js";
 import {
+  isCompactionSemanticRepairFinding,
   observeCompactionSemanticFidelity,
   prepareCompactionSemanticFidelityEvidence,
 } from "./compaction-semantic-fidelity.js";
@@ -82,11 +83,53 @@ describe("compaction semantic fidelity", () => {
       findings: [
         {
           relation: "contradicted",
+          sourceText: "Use staging only. Production is not authorized.",
+          sourceTruncated: false,
           confidence: 0.88,
           probabilities: { contradicted: 0.9 },
         },
       ],
     });
+  });
+
+
+  it("only qualifies strong missing or contradicted findings with complete source evidence", () => {
+    expect(
+      isCompactionSemanticRepairFinding({
+        id: "one",
+        relation: "missing",
+        sourceText: "Keep production untouched.",
+        sourceTruncated: false,
+        probabilities: { missing: 0.84 },
+      }),
+    ).toBe(true);
+    expect(
+      isCompactionSemanticRepairFinding({
+        id: "two",
+        relation: "contradicted",
+        sourceText: "Keep production untouched.",
+        sourceTruncated: false,
+        probabilities: { contradicted: 0.79 },
+      }),
+    ).toBe(false);
+    expect(
+      isCompactionSemanticRepairFinding({
+        id: "three",
+        relation: "missing",
+        sourceText: "Keep production untouched.",
+        sourceTruncated: true,
+        probabilities: { missing: 0.99 },
+      }),
+    ).toBe(false);
+    expect(
+      isCompactionSemanticRepairFinding({
+        id: "four",
+        relation: "uncertain",
+        sourceText: "Keep production untouched.",
+        sourceTruncated: false,
+        probabilities: { uncertain: 0.99 },
+      }),
+    ).toBe(false);
   });
 
   it("returns provider unavailability without inventing a semantic result", async () => {
