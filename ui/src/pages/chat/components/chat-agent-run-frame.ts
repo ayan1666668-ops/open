@@ -48,7 +48,9 @@ export function renderAgentRunFrame(frame: AgentRunFrameRenderItem, opts: AgentR
     kind: "group",
     role: "assistant",
     senderLabel: firstAssistant?.senderLabel,
-    replyToSender: firstAssistant?.replyToSender,
+    replyToSender:
+      firstAssistant?.replyToSender ??
+      frame.parts.find((part) => part.kind === "stream-run")?.replyToSender,
     messages: representative?.messages ?? [],
     visibleContent: representative?.visibleContent ?? "none",
     timestamp: Math.min(...groups.map((group) => group.timestamp), ...streamStarts, Date.now()),

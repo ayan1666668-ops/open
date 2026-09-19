@@ -189,6 +189,7 @@ export type ChatItem =
       text: string;
       startedAt: number;
       isStreaming: boolean;
+      replyToSender?: SenderIdentity;
       runId?: string;
       boundaryId?: string;
     }

@@ -151,21 +151,12 @@ suite.define(() => {
           expect(new Set(after.keys).size).toBe(after.keys.length);
           expect(after.keys[1]).toBe(before.frameKey);
           expect(after.samples.length).toBeGreaterThan(samplesBeforeEvent);
-          // Appending below the reader may move toward the end, never overshoot
-          // and snap back as two rows exchange the same cached measurement.
+          // A peer append cannot acquire follow intent, including at the old end.
           for (let index = 1; index < after.samples.length; index += 1) {
             expect(after.samples[index]).toBeGreaterThanOrEqual(after.samples[index - 1]! - 1);
           }
           expect(Math.min(...after.samples)).toBeGreaterThanOrEqual(before.top - 1);
-          if (mode === "reading") {
-            expect(Math.abs(after.top - before.top)).toBeLessThanOrEqual(1);
-          } else {
-            expect(
-              await thread.evaluate(
-                (element) => element.scrollHeight - element.clientHeight - element.scrollTop,
-              ),
-            ).toBeLessThanOrEqual(8);
-          }
+          expect(Math.abs(after.top - before.top)).toBeLessThanOrEqual(1);
         },
       );
     },
@@ -557,21 +548,15 @@ suite.define(() => {
           expect(await readerGateway.getRequests("chat.send")).toHaveLength(0);
           for (const point of checkpoints) {
             expect(new Set(point.keys).size, point.stage).toBe(point.keys.length);
-            if (mode === "following") {
-              expect(point.distance, point.stage).toBeLessThanOrEqual(8);
-            } else {
-              expect(
-                Math.abs((point.anchor ?? Number.POSITIVE_INFINITY) - before.anchorTop),
-                point.stage,
-              ).toBeLessThanOrEqual(1);
-            }
+            expect(
+              Math.abs((point.anchor ?? Number.POSITIVE_INFINITY) - before.anchorTop),
+              point.stage,
+            ).toBeLessThanOrEqual(1);
           }
-          if (mode !== "following") {
-            for (const sample of samples) {
-              expect(
-                Math.abs((sample.anchor ?? Number.POSITIVE_INFINITY) - before.anchorTop),
-              ).toBeLessThanOrEqual(1);
-            }
+          for (const sample of samples) {
+            expect(
+              Math.abs((sample.anchor ?? Number.POSITIVE_INFINITY) - before.anchorTop),
+            ).toBeLessThanOrEqual(1);
           }
         });
       });

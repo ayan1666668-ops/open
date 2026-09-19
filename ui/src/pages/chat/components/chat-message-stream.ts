@@ -16,6 +16,7 @@ import {
 } from "./chat-message-markdown.ts";
 import { renderChatTimestamp } from "./chat-message-timestamp.ts";
 import { renderChatQuestionSummary } from "./chat-question-card.ts";
+import { renderChatReplyAttribution } from "./chat-reply-attribution.ts";
 import type { SidebarContent } from "./chat-sidebar.ts";
 import { shouldToggleSelectableDisclosure, syncToolDisclosureOverflow } from "./chat-tool-cards.ts";
 import { renderToolOutcomeSummary } from "./chat-tool-outcome-summary.ts";
@@ -139,7 +140,10 @@ export function renderStreamGroup(parts: StreamGroupPart[], opts: StreamGroupOpt
   return html`
     <div class=${groupClass} data-chat-row-key=${parts[0]?.key ?? nothing}>
       ${avatar}
-      <div class="chat-group-messages">${renderStreamGroupParts(parts, opts, "standalone")}</div>
+      <div class="chat-group-messages">
+        ${renderChatReplyAttribution(parts.find((part) => part.kind === "stream")?.replyToSender)}
+        ${renderStreamGroupParts(parts, opts, "standalone")}
+      </div>
       ${
         footerStartedAt !== null && !active
           ? html`

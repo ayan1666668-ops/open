@@ -728,7 +728,7 @@ describe("chat transcript controller", () => {
     { distance: 0, followEnabled: false },
     { distance: 8, followEnabled: false },
   ])(
-    "follows appended typing only when permitted near the real end ($distance, $followEnabled)",
+    "does not follow another person’s typing ($distance, $followEnabled)",
     async ({ distance, followEnabled }) => {
       const rows = numberedContentRows(12);
       const { container, renderRows, transcript } = await mountTestTranscript(
@@ -762,19 +762,15 @@ describe("chat transcript controller", () => {
           ...rows,
           { kind: "content", key: "presence:typing", content: html`<div>Typing</div>` },
         ]);
-        if (followEnabled && distance <= 8) {
-          expect(scrollTo).toHaveBeenCalledWith({ top: total + 84 - 600, behavior: "auto" });
-        } else {
-          expect(scrollTo).not.toHaveBeenCalled();
-          expect(container.scrollTop).toBe(readerOffset);
-        }
+        expect(scrollTo).not.toHaveBeenCalled();
+        expect(container.scrollTop).toBe(readerOffset);
       } finally {
         transcript.hostDisconnected();
       }
     },
   );
 
-  it("cancels typing follow before later geometry can retarget the reader", async () => {
+  it("does not introduce a typing command while native reader movement is pending", async () => {
     const flushFrames = stubAnimationFrames();
     const rows = numberedContentRows(12);
     const { container, renderRows, transcript } = await mountTestTranscript(
@@ -801,12 +797,9 @@ describe("chat transcript controller", () => {
         ...rows,
         { kind: "content", key: "presence:typing", content: html`<div>Typing</div>` },
       ]);
-      expect(scrollTo).toHaveBeenCalled();
-      scrollTo.mockClear();
+      expect(scrollTo).not.toHaveBeenCalled();
       container.dispatchEvent(new WheelEvent("wheel", { deltaY: -100 }));
-      expect
-        .soft(scrollTo)
-        .toHaveBeenCalledExactlyOnceWith({ top: readerOffset, behavior: "instant" });
+      expect(scrollTo).not.toHaveBeenCalled();
       container.scrollTop -= 100;
       container.dispatchEvent(new Event("scroll"));
       scrollTo.mockClear();

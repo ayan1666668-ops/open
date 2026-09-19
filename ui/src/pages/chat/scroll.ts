@@ -270,7 +270,14 @@ export function handleChatScrollTakeover(host: ChatScrollHost, towardEnd = false
 }
 
 /** Reader-controlled UI can take over even when the transcript is at its end. */
-export function lockChatScroll(host: ChatScrollHost): void {
+export function lockChatScroll(
+  host: ChatScrollHost,
+  source: "reader" | "remote-input" = "reader",
+): void {
+  // A remote receipt is not a reader gesture and cannot cancel a queued local send/latest.
+  if (source === "remote-input" && pendingChatScrolls.get(host)?.manual) {
+    return;
+  }
   const changed = !host.chatFollowLocked || host.chatUserNearBottom;
   cancelChatScroll(host);
   host.chatHasAutoScrolled = true;

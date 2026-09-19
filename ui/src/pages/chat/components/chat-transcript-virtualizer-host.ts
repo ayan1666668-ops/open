@@ -11,11 +11,7 @@ import {
 import { McpAppUnmountGate } from "../../../components/mcp-app-unmount.ts";
 import { resolveScrollBehavior } from "../../../lib/scroll-behavior.ts";
 import type { AssistantMessageExpansionState } from "../chat-message-recovery.ts";
-import {
-  CHAT_TRANSCRIPT_END_THRESHOLD_PX,
-  type ChatSessionScrollPosition,
-  type ChatScrollToEndOptions,
-} from "../scroll.ts";
+import type { ChatSessionScrollPosition, ChatScrollToEndOptions } from "../scroll.ts";
 import { SIDEBAR_GEOMETRY_COMMIT_EVENT } from "../sidebar-layout.ts";
 import { ChatMessageEntryAnimations } from "./chat-message-entry.ts";
 import { ChatMessageReveal } from "./chat-message-reveal.ts";
@@ -297,7 +293,16 @@ export class ChatSessionVirtualizerHost implements ReactiveControllerHost, ChatT
           instance,
           callback,
         ),
-      measureElement: measureTranscriptRow,
+      measureElement: (element, entry, instance) => {
+        const size = measureTranscriptRow(element, entry, instance);
+        if (
+          element.dataset.virtualRowKey === "presence:typing" &&
+          instance.itemSizeCache.get("presence:typing") !== size
+        ) {
+          this.endAnchor.clear();
+        }
+        return size;
+      },
       rangeExtractor: (range) =>
         this.prependAnchor.extractRange(range, this.rowIndexesByKey, this.focusedRowKey),
       // Virtual distance omits real padding, pinning readers ~80px up past scroll.ts's follow-lock.
@@ -740,11 +745,10 @@ export class ChatSessionVirtualizerHost implements ReactiveControllerHost, ChatT
     const virtualizer = this.virtualizerController.getVirtualizer();
     const typingAdded =
       !this.rowIndexesByKey.has("presence:typing") && nextKeys.includes("presence:typing");
-    const followTyping =
-      typingAdded &&
-      this.canAutoFollow() &&
-      !this.offsetState.pendingScrollOffset &&
-      virtualizer.isAtEnd(CHAT_TRANSCRIPT_END_THRESHOLD_PX);
+    // Remote typing is presence, not a local request to move the viewport.
+    if (typingAdded) {
+      this.endAnchor.clear();
+    }
     this.rowKeys = Object.freeze(nextKeys);
     const rowIndexesByKey = new Map(this.rowKeys.map((key, index) => [key, index]));
     this.rowIndexesByKey = rowIndexesByKey;
@@ -766,11 +770,6 @@ export class ChatSessionVirtualizerHost implements ReactiveControllerHost, ChatT
         this.prependAnchor.extractRange(range, rowIndexesByKey, this.focusedRowKey),
       scrollMargin: resolveTranscriptScrollMargin(this.scrollElement, this.headerHeight),
     });
-    if (followTyping) {
-      this.cancelScroll();
-      this.offsetState.scrollCommand = { behavior: "auto", target: "index" };
-      virtualizer.scrollToIndex(nextKeys.indexOf("presence:typing"), { align: "end" });
-    }
   }
 
   private reconcileImplicitEndAnchor(): void {
