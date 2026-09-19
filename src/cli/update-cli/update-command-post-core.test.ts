@@ -129,8 +129,7 @@ await fs.writeFile(process.env.OPENCLAW_UPDATE_POST_CORE_RESULT_PATH, ${JSON.str
         "update",
         "--json",
         "--yes",
-        "--timeout",
-        cooperative ? "5" : "3600",
+        ...(cooperative ? [] : ["--timeout", "3600"]),
       ]);
       expect(aliveAtReturn).toBe(false);
       expect(settledAtReturn).toBe(cooperative ? "settled" : undefined);
