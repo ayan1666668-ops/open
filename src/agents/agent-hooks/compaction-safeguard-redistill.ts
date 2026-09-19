@@ -14,19 +14,17 @@ export function prependPreviousSummaryForRedistill(params: {
   if (!previousSummary) {
     return params.messages;
   }
-  return [
-    {
-      role: "user",
-      content: [
-        {
-          type: "text",
-          text: `<previous-compaction-summary>\n${PREVIOUS_SUMMARY_REDISTILL_PREFIX}\n\n${previousSummary}\n</previous-compaction-summary>`,
-        },
-      ],
-      timestamp: 0,
-    } as AgentMessage,
-    ...params.messages,
-  ];
+  const previousSummaryMessage: AgentMessage = {
+    role: "user",
+    content: [
+      {
+        type: "text",
+        text: `<previous-compaction-summary>\n${PREVIOUS_SUMMARY_REDISTILL_PREFIX}\n\n${previousSummary}\n</previous-compaction-summary>`,
+      },
+    ],
+    timestamp: 0,
+  };
+  return [previousSummaryMessage, ...params.messages];
 }
 
 export function nestMarkdownHeadings(text: string): string {

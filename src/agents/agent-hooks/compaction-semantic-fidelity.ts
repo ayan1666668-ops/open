@@ -18,6 +18,14 @@ type CompactionSemanticRelation =
   | "inactive_or_completed"
   | "uncertain";
 
+const COMPACTION_SEMANTIC_RELATIONS: readonly CompactionSemanticRelation[] = [
+  "preserved",
+  "missing",
+  "contradicted",
+  "inactive_or_completed",
+  "uncertain",
+];
+
 export type CompactionSemanticFinding = {
   id: string;
   relation: CompactionSemanticRelation;
@@ -90,7 +98,7 @@ function extractUserText(message: AgentMessage): string {
   if (message.role !== "user") {
     return "";
   }
-  const content = (message as { content?: unknown }).content;
+  const content = message.content;
   if (typeof content === "string") {
     return content.trim();
   }
@@ -147,11 +155,7 @@ function relationFromAnswer(
   if (answer?.type !== "choice") {
     return undefined;
   }
-  return ["preserved", "missing", "contradicted", "inactive_or_completed", "uncertain"].includes(
-    answer.choice,
-  )
-    ? (answer.choice as CompactionSemanticRelation)
-    : undefined;
+  return COMPACTION_SEMANTIC_RELATIONS.find((relation) => relation === answer.choice);
 }
 
 export async function observeCompactionSemanticFidelity(
