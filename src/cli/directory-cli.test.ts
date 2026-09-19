@@ -141,20 +141,24 @@ describe("registerDirectoryCli", () => {
     });
 
     it.each(["", " \t\n "])(
-      "rejects blank channel %j instead of inferring the single configured channel",
+      "rejects blank channel %j before command startup instead of inferring the configured channel",
       async (channel) => {
         // Auto-enable changes make inference persist config, so a late guard would be visible.
         mocks.applyPluginAutoEnable.mockReturnValue({
           config: { channels: { whatsapp: {} }, plugins: { allow: ["whatsapp"] } },
           changes: ["whatsapp"],
         });
-        const program = new Command().name("openclaw");
+        const startup = vi.fn(() => {
+          throw new Error("Command startup reached");
+        });
+        const program = new Command().name("openclaw").hook("preAction", startup);
         registerDirectoryCli(program);
 
         await expect(
           program.parseAsync([...args, "--channel", channel, "--json"], { from: "user" }),
         ).rejects.toThrow("--channel must not be blank");
 
+        expect(startup).not.toHaveBeenCalled();
         expect(mocks.readConfigFileSnapshot).not.toHaveBeenCalled();
         expect(mocks.applyPluginAutoEnable).not.toHaveBeenCalled();
         expect(mocks.resolveInstallableChannelPlugin).not.toHaveBeenCalled();
@@ -165,16 +169,21 @@ describe("registerDirectoryCli", () => {
       },
     );
 
-    it("reports the blank account before the blank channel", async () => {
-      const program = new Command().name("openclaw");
+    it.each([
+      ["--channel", ["--channel", "", "--account", " "]],
+      ["--account", ["--account", "", "--channel", " "]],
+    ])("reports the first blank selector %s at parse time", async (flag, selectors) => {
+      const startup = vi.fn(() => {
+        throw new Error("Command startup reached");
+      });
+      const program = new Command().name("openclaw").hook("preAction", startup);
       registerDirectoryCli(program);
 
       await expect(
-        program.parseAsync([...args, "--channel", "", "--account", " ", "--json"], {
-          from: "user",
-        }),
-      ).rejects.toThrow("--account must not be blank");
+        program.parseAsync([...args, ...selectors, "--json"], { from: "user" }),
+      ).rejects.toThrow(`${flag} must not be blank`);
 
+      expect(startup).not.toHaveBeenCalled();
       expect(mocks.readConfigFileSnapshot).not.toHaveBeenCalled();
     });
   });

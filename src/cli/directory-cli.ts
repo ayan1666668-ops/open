@@ -16,6 +16,7 @@ import { nullChannelDirectorySelf } from "../channels/plugins/directory-adapters
 import { resolveChannelDefaultAccountId } from "../channels/plugins/helpers.js";
 import { resolveInstallableChannelPlugin } from "../commands/channel-setup/channel-plugin-resolution.js";
 import { parseAccountSelector } from "../commands/channels/account-selector.js";
+import { parseChannelSelector } from "../commands/channels/channel-selector.js";
 import { requireValidConfigForWrite } from "../commands/config-validation.js";
 import { getRuntimeConfig } from "../config/config.js";
 import { applyPluginAutoEnable } from "../config/plugin-auto-enable.js";
@@ -106,16 +107,15 @@ export function registerDirectoryCli(program: Command) {
 
   const withChannel = (cmd: Command) =>
     cmd
-      .option("--channel <name>", "Channel (auto when only one is configured)")
+      .option(
+        "--channel <name>",
+        "Channel (auto when only one is configured)",
+        parseChannelSelector,
+      )
       .option("--account <id>", "Account id (accountId)", parseAccountSelector)
       .option("--json", "Output JSON", false);
 
   const resolve = async (opts: { channel?: string; account?: string }) => {
-    // Only omission infers the channel. A blank value from an unset shell variable must not
-    // redirect a directory lookup to a channel the caller never named.
-    if (opts.channel !== undefined && !opts.channel.trim()) {
-      throw new Error("--channel must not be blank");
-    }
     const writeSnapshot = await requireValidConfigForWrite(defaultRuntime);
     if (!writeSnapshot) {
       return null;
