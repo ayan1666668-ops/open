@@ -37,6 +37,7 @@ const mocks = vi.hoisted(() => ({
   resolveService: vi.fn<() => GatewayService>(),
   coordinatorRuntimeDir: "",
   stops: 0,
+  restarts: 0,
 }));
 
 vi.mock("../daemon/service.js", async (importOriginal) => ({
@@ -91,6 +92,7 @@ const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 beforeEach(() => {
   mockSystemAccountHome();
   mocks.stops = 0;
+  mocks.restarts = 0;
 });
 afterEach(() => {
   closeOpenClawStateDatabaseForTest();
@@ -109,6 +111,7 @@ type StoppedUnitState =
   | "lifecycle-contended"
   | "gateway-lifecycle-contended"
   | "gateway-lifecycle-draining"
+  | "competing-during-drain"
   | "legacy-gateway-lifecycle-contended";
 type Continuation =
   | "own"
@@ -308,7 +311,8 @@ async function runDoctorFinishForStoppedUnit(
           );
           if (
             scenario === "gateway-lifecycle-contended" ||
-            scenario === "gateway-lifecycle-draining"
+            scenario === "gateway-lifecycle-draining" ||
+            scenario === "competing-during-drain"
           ) {
             const startedAt = getFileLockProcessStartTime(process.pid);
             if (startedAt === null) {
@@ -407,6 +411,7 @@ async function runDoctorFinishForStoppedUnit(
         },
       };
       const restart = vi.fn(async () => {
+        mocks.restarts += 1;
         if (scenario === "restart-failed") {
           throw new Error("service manager rejected restart");
         }
@@ -421,7 +426,9 @@ async function runDoctorFinishForStoppedUnit(
           readCommand: async (_env, opts) => {
             await releaseDuringInspection?.();
             if (++commandReads === 2) {
-              activateCompetingUpdate?.();
+              if (scenario !== "competing-during-drain") {
+                activateCompetingUpdate?.();
+              }
               if (continuation === "lost-before-stop" && runId) {
                 createUpdateRun({ trigger: "cli", origin: { driver: readUpdateRunDriver() } });
               }
@@ -497,10 +504,18 @@ async function runDoctorFinishForStoppedUnit(
             ) {
               otherOwner?.release();
               otherOwner = undefined;
-            } else if (scenario === "gateway-lifecycle-draining") {
+            } else if (
+              scenario === "gateway-lifecycle-draining" ||
+              scenario === "competing-during-drain"
+            ) {
               const draining = otherOwner;
               otherOwner = undefined;
-              setTimeout(() => draining?.release(), 50);
+              setTimeout(() => {
+                if (scenario === "competing-during-drain") {
+                  activateCompetingUpdate?.();
+                }
+                draining?.release();
+              }, 50);
             }
           }),
           restart,
@@ -518,6 +533,7 @@ async function runDoctorFinishForStoppedUnit(
         scenario === "lifecycle-contended" ||
         scenario === "gateway-lifecycle-contended" ||
         scenario === "gateway-lifecycle-draining" ||
+        scenario === "competing-during-drain" ||
         scenario === "legacy-gateway-lifecycle-contended"
           ? acquireGatewayLifecycleCoordinator({
               databasePath,
@@ -681,6 +697,14 @@ it("waits for the supervised Gateway to release lifecycle after stop", async () 
   expect(result.finishError).toBeUndefined();
   expect(mocks.stops).toBe(1);
   expect(result.restartCalls).toBe(1);
+});
+
+it("rechecks update admission after lifecycle drain and restores the stopped Gateway", async () => {
+  await expect(
+    runDoctorFinishForStoppedUnit("competing-during-drain", undefined, "conflict-on-recheck"),
+  ).rejects.toThrow("is still in progress");
+  expect(mocks.stops).toBe(1);
+  expect(mocks.restarts).toBe(1);
 });
 
 it("admits a published legacy Gateway by its verified native process lock", async () => {

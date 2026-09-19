@@ -68,10 +68,10 @@ vi.mock("node:child_process", async () => {
   return mockNodeBuiltinModule(
     () => vi.importActual<typeof import("node:child_process")>("node:child_process"),
     {
-      spawnSync: (file: string, args: string[]) => {
+      spawnSync: ((file: string, args: string[] = []) => {
         const result = executeLaunchctlMock(file, args);
         return { ...result, status: result.code, error: undefined };
-      },
+      }) as unknown as typeof import("node:child_process").spawnSync,
     },
   );
 });
