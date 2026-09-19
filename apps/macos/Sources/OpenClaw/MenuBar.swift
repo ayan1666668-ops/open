@@ -442,10 +442,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         !onboardingSeen
     }
 
+    /// A configured Gateway connection (matching the "existing installation" signal used for
+    /// node identity provisioning above) proves setup already happened, even if the
+    /// onboarding-seen preference itself was lost — e.g. across an in-place app update.
+    static func shouldSkipFirstRunOnboarding(connectionMode: AppState.ConnectionMode) -> Bool {
+        connectionMode != .unconfigured
+    }
+
     private func scheduleFirstRunOnboardingIfNeeded() async {
         let connectionMode = AppStateStore.shared.connectionMode
-        let onboardingSeen = AppStateStore.shared.onboardingSeen
-        if connectionMode != .unconfigured, onboardingSeen {
+        if Self.shouldSkipFirstRunOnboarding(connectionMode: connectionMode) {
             OnboardingController.markComplete()
             return
         }
