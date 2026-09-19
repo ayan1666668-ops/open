@@ -1268,7 +1268,14 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
         (summaryTargetMessages.length > 0 ||
           !preservedTurnsSectionLocal.text.includes(requiredAskContext));
       messagesToSummarize = includePreservedContext ? messagesToSummarize : summaryTargetMessages;
-      if (runtime?.semanticJudgmentCurationEnabled) {
+      const uncuratedMessagesToSummarize = messagesToSummarize;
+      let omittedCurationEvidence: Array<{ id: string; text: string }> = [];
+      let curationApplied = false;
+      if (
+        qualityGuardEnabled &&
+        qualityGuardMaxRetries > 0 &&
+        runtime?.semanticJudgmentCurationEnabled
+      ) {
         if (!signal) {
           log.debug(
             "Compaction safeguard: input curation skipped; reason=no-cancellation-signal",
@@ -1280,6 +1287,11 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
             signal,
           });
           messagesToSummarize = curation.messages;
+          omittedCurationEvidence = curation.omittedEvidence.map((item) => ({
+            id: `curated-${item.id}`,
+            text: `Tool result (${item.toolName}):\n${item.text}`,
+          }));
+          curationApplied = curation.omitted > 0;
           if (curation.status === "ok") {
             log.info(
               "Compaction safeguard: judgment-assisted input curation completed; " +
@@ -1293,6 +1305,10 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
             );
           }
         }
+      } else if (runtime?.semanticJudgmentCurationEnabled) {
+        log.debug(
+          "Compaction safeguard: input curation skipped; reason=quality-guard-or-retry-budget-disabled",
+        );
       }
       const allMessages = [...messagesToSummarize, ...turnPrefixMessages];
 
@@ -1304,7 +1320,7 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
         contextWindow: contextWindowTokens,
         signal,
       });
-      const maxChunkTokens = Math.max(
+      let maxChunkTokens = Math.max(
         1,
         Math.floor(contextWindowTokens * adaptiveRatio) - SUMMARIZATION_OVERHEAD_TOKENS,
       );
@@ -1443,6 +1459,7 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
               const observation = await observeCompactionSemanticFidelity({
                 sourceMessages: semanticSourceMessages,
                 retainedContext: finalized.summary,
+                additionalSourceItems: omittedCurationEvidence,
                 signal,
               });
               if (observation.status === "ok") {
@@ -1456,6 +1473,9 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
                 const repairFindings = observation.findings.filter(
                   isCompactionSemanticRepairFinding,
                 );
+                const curationLossFindings = repairFindings.filter((finding) =>
+                  finding.id.startsWith("curated-tool-result-"),
+                );
                 log.info(
                   "Compaction safeguard: semantic fidelity observation completed; " +
                     `checked=${observation.checked} verbatimPreserved=${observation.verbatimPreserved} ` +
@@ -1463,6 +1483,30 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
                     `provider=${observation.providerId} model=${observation.model}`,
                 );
                 if (repairFindings.length > 0) {
+                  if (
+                    curationApplied &&
+                    curationLossFindings.length > 0 &&
+                    canRegenerate &&
+                    attempt < totalAttempts - 1
+                  ) {
+                    messagesToSummarize = uncuratedMessagesToSummarize;
+                    omittedCurationEvidence = [];
+                    curationApplied = false;
+                    const retryMessages = [...messagesToSummarize, ...turnPrefixMessages];
+                    const retryAdaptiveRatio = await computeAdaptiveChunkRatioWithWorker({
+                      messages: retryMessages,
+                      contextWindow: contextWindowTokens,
+                      signal,
+                    });
+                    maxChunkTokens = Math.max(
+                      1,
+                      Math.floor(contextWindowTokens * retryAdaptiveRatio) -
+                        SUMMARIZATION_OVERHEAD_TOKENS,
+                    );
+                    correctiveInstructions =
+                      "Regenerate from the original uncurated input. The curated attempt lost tool-derived context required for continuity.";
+                    continue;
+                  }
                   if (canRegenerate && attempt < totalAttempts - 1) {
                     const repairEvidence = buildCompactionSemanticRepairEvidence(repairFindings);
                     const semanticFeedback = wrapUntrustedInstructionBlock(
