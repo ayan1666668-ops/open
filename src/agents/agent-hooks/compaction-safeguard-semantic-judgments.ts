@@ -2,6 +2,7 @@ import type {
   JudgmentAnswer,
   JudgmentRuntimeV1,
 } from "../../judgments/types.js";
+import { fingerprint } from "./compaction-safeguard-semantic.js";
 import type {
   CompactionFidelityResult,
   CompactionSemanticSnapshot,
