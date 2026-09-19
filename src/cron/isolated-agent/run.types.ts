@@ -4,15 +4,10 @@ import type { AgentLifecycleTerminalBackstop } from "../../auto-reply/reply/agen
 import type { NormalizeReplySkipReason } from "../../auto-reply/reply/normalize-reply-skip-reason.js";
 import type { ThinkLevel } from "../../auto-reply/thinking.js";
 import type { AgentDefaultsConfig } from "../../config/types.agent-defaults.js";
-import type { OpenClawConfig } from "../../config/types.openclaw.js";
-import type { SourceDeliveryPlan } from "../../infra/outbound/source-delivery-plan.js";
-import type { InputProvenance } from "../../sessions/input-provenance.js";
-import type { SkillSnapshot } from "../../skills/types.js";
 /** Execution and result contracts for isolated cron agent runs. */
 import type {
   CronAgentExecutionPhaseUpdate,
   CronJob,
-  CronStoredJob,
   CronDeliveryTrace,
   CronResolvedDeliveryState,
   CronNextCheckProposal,
@@ -20,12 +15,9 @@ import type {
   CronRunTelemetry,
 } from "../types.js";
 import type { runCliAgent } from "./run-execution.runtime.js";
-import type {
-  CronLiveSelection,
-  MutableCronSession,
-  PersistCronSessionEntry,
-  CronRunContinuationSession,
-} from "./run-session-state.js";
+import type { RunCronAgentTurnParams } from "./run-prepare-runtime.js";
+import type { PreparedCronRunContext } from "./run-prepare.js";
+import type { CronRunContinuationSession } from "./run-session-state.js";
 
 /** Pre-run disposition returned when isolated cron work never enters an agent runner. */
 export type CronAgentAdmissionDisposition = "session-conflict" | "rejected";
@@ -85,64 +77,54 @@ export type CronExecutionResult = CronCompletedPromptRun & {
 };
 
 /** Inputs owned by one isolated cron execution. */
-export type CronRunExecutionParams = {
-  runId: string;
-  cfg: OpenClawConfig;
-  cfgWithAgentDefaults: OpenClawConfig;
-  job: CronStoredJob;
-  agentId: string;
-  agentDir: string;
-  agentSessionKey: string;
-  runSessionKey: string;
-  usesDetachedRunSession?: boolean;
-  workspaceDir: string;
-  executionRoot?: string;
-  lane?: string;
-  agentVerboseDefault: AgentDefaultsConfig["verboseDefault"];
-  immutableThinkLevel: ThinkLevel | undefined;
-  thinkingCatalog?: ModelCatalogEntry[];
-  loadThinkingCatalog: (
-    provider: string,
-    model: string,
-    agentRuntime: string,
-  ) => Promise<ModelCatalogEntry[]>;
-  timeoutMs: number;
-  /** Set when the cron payload's `timeoutSeconds` was explicitly configured. */
-  runTimeoutOverrideMs?: number;
-  suppressExecNotifyOnExit: boolean;
-  resolvedDelivery: {
-    channel?: string;
-    accountId?: string;
-    to?: string;
-    threadId?: string | number;
-    ok?: boolean;
+export type CronRunExecutionParams = Pick<
+  PreparedCronRunContext,
+  | "cfgWithAgentDefaults"
+  | "agentId"
+  | "agentDir"
+  | "agentSessionKey"
+  | "runSessionKey"
+  | "usesDetachedRunSession"
+  | "workspaceDir"
+  | "executionRoot"
+  | "timeoutMs"
+  | "runTimeoutOverrideMs"
+  | "suppressExecNotifyOnExit"
+  | "resolvedDelivery"
+  | "deliveryRequested"
+  | "sourceDelivery"
+  | "skillsSnapshot"
+  | "agentPayload"
+  | "useSubagentFallbacks"
+  | "inheritDefaultFallbacksForAgentStringModel"
+  | "modelFallbacksOverride"
+  | "liveSelection"
+  | "cronSession"
+  | "commandBody"
+  | "inputProvenance"
+  | "persistSessionEntry"
+> &
+  Pick<RunCronAgentTurnParams, "cfg" | "job" | "lane" | "onLaneWait" | "executionIdentity"> & {
+    runId: string;
+    agentVerboseDefault: AgentDefaultsConfig["verboseDefault"];
+    immutableThinkLevel: ThinkLevel | undefined;
+    thinkingCatalog?: ModelCatalogEntry[];
+    loadThinkingCatalog: (
+      provider: string,
+      model: string,
+      agentRuntime: string,
+    ) => Promise<ModelCatalogEntry[]>;
+    persistRunContinuationSession?: CronRunContinuationSession["sync"];
+    setRunContinuationCliExecutionProvider?: (provider?: string) => Promise<void>;
+    abortSignal?: AbortSignal;
+    abortReason: () => string;
+    isAborted: () => boolean;
+    lifecycle: Omit<AgentLifecycleTerminalBackstop, "emit">;
+    onExecutionStarted?: (info?: CronRunnerStartedInfo) => void;
+    onExecutionPhase?: (
+      info: Pick<CronAgentExecutionPhaseUpdate, "phase"> &
+        Partial<Omit<CronAgentExecutionPhaseUpdate, "jobId" | "phase">>,
+    ) => void;
+    onPromptCompleted?: (runs: readonly CronCompletedPromptRun[]) => void;
+    runStartedAt?: number;
   };
-  resolvedDeliveryOk: boolean;
-  deliveryRequested?: boolean;
-  sourceDelivery: SourceDeliveryPlan;
-  skillsSnapshot: SkillSnapshot;
-  agentPayload: AgentTurnPayload;
-  useSubagentFallbacks: boolean;
-  inheritDefaultFallbacksForAgentStringModel?: boolean;
-  modelFallbacksOverride?: string[];
-  liveSelection: CronLiveSelection;
-  cronSession: MutableCronSession;
-  commandBody: string;
-  inputProvenance?: InputProvenance;
-  persistSessionEntry: PersistCronSessionEntry;
-  persistRunContinuationSession?: CronRunContinuationSession["sync"];
-  setRunContinuationCliExecutionProvider?: (provider?: string) => Promise<void>;
-  abortSignal?: AbortSignal;
-  abortReason: () => string;
-  isAborted: () => boolean;
-  lifecycle: Omit<AgentLifecycleTerminalBackstop, "emit">;
-  onExecutionStarted?: (info?: CronRunnerStartedInfo) => void;
-  onExecutionPhase?: (
-    info: Pick<CronAgentExecutionPhaseUpdate, "phase"> &
-      Partial<Omit<CronAgentExecutionPhaseUpdate, "jobId" | "phase">>,
-  ) => void;
-  onLaneWait?: (info?: { waiting?: boolean }) => void;
-  onPromptCompleted?: (runs: readonly CronCompletedPromptRun[]) => void;
-  executionIdentity?: import("../service/state.js").CronExecutionIdentityAdmission;
-  runStartedAt?: number;
-};
