@@ -194,7 +194,7 @@ suite.define(() => {
             await thread.evaluate((element) => element.scrollTop),
             "a history prepend must not write the scroll offset during an active touch",
           ).toBe(heldOffset + (momentum ? 20 : 0));
-          await thread.evaluate((element, momentum) => {
+          await thread.evaluate((element, withMomentum) => {
             const move = () => {
               (window as AnchorWindow).prependFrames.readerDelta += 10;
               element.scrollTop += 10;
@@ -202,7 +202,7 @@ suite.define(() => {
             };
             // Keep the last contact movement, release, and initial momentum in
             // one browser task; RPC latency must not turn this fling into an idle touch.
-            if (momentum) {
+            if (withMomentum) {
               move();
             }
             element.dispatchEvent(
@@ -211,7 +211,7 @@ suite.define(() => {
                 bubbles: true,
               }),
             );
-            if (momentum) {
+            if (withMomentum) {
               move();
             }
             // Deliberately omit scrollend: the offset observer must release history.
