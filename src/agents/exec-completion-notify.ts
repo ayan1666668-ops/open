@@ -8,6 +8,11 @@
  * event and the heartbeat wake remain the fallback for a fully idle session.
  * The owner lives beside the exec runtime so \`bash-tools.exec-runtime.ts\`
  * stays within its line-cap budget.
+ *
+ * The steering copy carries the same agent owner and occurrence key
+ * (\`exec:<sessionId>\`) as the durable system event so the two representations
+ * share one identity: another agent sharing a literal session key cannot lease
+ * this output, and acknowledging either path retires the other.
  */
 import {
   resolveEventSessionKeyForPolicy,
@@ -29,6 +34,10 @@ export function steerExecCompletionToRequester(params: {
   const eventRouting = session.eventRouting ?? {};
   enqueueExecSteeringCompletion({
     requesterSessionKey: resolveEventSessionKeyForPolicy(sessionKey, eventRouting),
+    ...(session.agentId ? { ownerAgentId: session.agentId } : {}),
+    // Shared occurrence identity with the durable system event enqueued in
+    // bash-tools.exec-runtime.ts (contextKey `exec:<sessionId>`).
+    occurrenceKey: `exec:${session.id}`,
     execId: session.id.slice(0, 8),
     status,
     exitLabel: renderExecExitLabel(session),

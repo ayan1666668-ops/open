@@ -294,6 +294,30 @@ export function drainSystemEvents(sessionKey: string): string[] {
   return drainSystemEventsWith(sessionKey, (event) => event.text);
 }
 
+/**
+ * Removes every pending event for one context key under a session queue.
+ *
+ * Used to retire a durable completion event once its shared steering copy has
+ * been delivered, so a later heartbeat cannot re-deliver the same occurrence.
+ * Returns the number of events removed.
+ */
+export function removeSystemEventsByContextKey(sessionKey: string, contextKey: string): number {
+  const entry = getSessionQueue(sessionKey);
+  if (!entry || entry.queue.length === 0) {
+    return 0;
+  }
+  const key = requireSessionKey(sessionKey);
+  const normalized = normalizeContextKey(contextKey);
+  if (normalized === null) {
+    return 0;
+  }
+  const matching = entry.queue.filter((event) => (event.contextKey ?? null) === normalized);
+  if (matching.length === 0) {
+    return 0;
+  }
+  return consumeSelectedSystemEventEntries(key, matching).length;
+}
+
 export function peekSystemEventEntries(sessionKey: string): SystemEvent[] {
   return getSessionQueue(sessionKey)?.queue.map(cloneSystemEvent) ?? [];
 }

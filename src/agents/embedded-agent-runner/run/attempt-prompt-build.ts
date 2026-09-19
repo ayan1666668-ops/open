@@ -94,6 +94,7 @@ type EmbeddedAttemptSteeringLease = {
 type EmbeddedAttemptExecSteeringLease = {
   leaseId: string;
   itemIds: string[];
+  isCurrent: () => boolean;
 };
 
 type EmbeddedAttemptPromptAssembly = {
@@ -348,12 +349,28 @@ export async function prepareEmbeddedAttemptPromptAssembly(input: {
     const execLeaseId = `${attempt.runId}:exec-steering`;
     const leasedExec = leasePendingExecSteeringItems({
       requesterSessionKey: attempt.sessionKey,
+      // Qualify the lease with the run's agent owner so a foreign agent sharing
+      // a literal session key (e.g. `global`) resolves a distinct queue key and
+      // cannot lease this agent's completions.
+      ownerAgentId: input.sessionAgentId,
       leaseId: execLeaseId,
     });
     if (leasedExec) {
-      leasedExecSteering = { leaseId: execLeaseId, itemIds: leasedExec.itemIds };
+      leasedExecSteering = {
+        leaseId: execLeaseId,
+        itemIds: leasedExec.itemIds,
+        isCurrent: leasedExec.isCurrent,
+      };
       // Transfer cleanup ownership before any prompt mutation can throw.
       input.setLeasedExecSteering(leasedExecSteering);
+      if (!leasedExec.isCurrent()) {
+        // A concurrent heartbeat or terminal poll acknowledged this occurrence
+        // between lease and injection; refuse the stale copy before it can reach
+        // a provider request.
+        throw new Error(
+          "The queued exec completion lost authority before requester prompt injection.",
+        );
+      }
       effectivePrompt = prependExecSteeringPrompt({
         steeringPrompt: leasedExec.prompt,
         prompt: effectivePrompt,

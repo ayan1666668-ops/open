@@ -10,8 +10,26 @@
  * prepends them to the turn, so a busy session picks them up on its next turn
  * regardless of lane contention. The durable system event and idle heartbeat
  * wake remain the fallback for a fully idle session with no upcoming turn.
+ *
+ * Ownership and single-delivery guarantees:
+ * - Every queued completion is stored under the same agent-qualified queue key
+ *   that the durable system event uses (`resolveSystemEventQueueKey`). A second
+ *   agent sharing a literal session key such as `global` resolves to a distinct
+ *   queue key and can never lease another agent's output. Leasing also asserts
+ *   the stored owner before returning a batch.
+ * - Every completion carries the durable system event's occurrence key
+ *   (`exec:<sessionId>`). Acknowledging a steered turn retires the matching
+ *   durable event, and acknowledging the durable event (heartbeat or terminal
+ *   poll) invalidates the steering copy, so one completion is delivered exactly
+ *   once across steering, heartbeat, and poll. A lease exposes `isCurrent()` so
+ *   an already-leased copy whose occurrence was retired elsewhere is rejected
+ *   before provider I/O.
+ * - Entries bind to their requester session key so a conversation reset can
+ *   retire pending and leased results before the next turn leases stale output.
  */
 import { truncateUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
+import { resolveSystemEventQueueKey } from "../infra/system-event-ownership.js";
+import { removeSystemEventsByContextKey } from "../infra/system-events.js";
 import { resolveGlobalSingleton } from "../shared/global-singleton.js";
 import { sanitizeForPromptLiteral, wrapPromptDataBlock } from "./sanitize-for-prompt.js";
 
@@ -31,8 +49,19 @@ const MERGED_EXEC_STEERING_PROMPT_HEADER = [
 type ExecSteeringQueueItem = {
   /** Unique id for this queued completion; used for ack/idempotency. */
   itemId: string;
-  /** Session that launched the exec and should receive the completion. */
-  requesterSessionKey: string;
+  /**
+   * Agent-qualified queue key for the requester session. Matches the durable
+   * system event's queue key so a foreign agent sharing a literal session key
+   * (e.g. `global`) resolves to a distinct key and cannot lease this item.
+   */
+  queueKey: string;
+  /** Agent that owns this completion; asserted before a lease is returned. */
+  ownerAgentId?: string;
+  /**
+   * Shared occurrence key (`exec:<sessionId>`) identifying this exact
+   * completion across the steering queue and the durable system event.
+   */
+  occurrenceKey: string;
   /** Short exec id shown to the operator (process session id prefix). */
   execId: string;
   /** "completed" | "failed" outcome label. */
@@ -62,11 +91,19 @@ type StoredItem = {
 type LeasedExecSteeringBatch = {
   itemIds: string[];
   prompt: string;
+  /**
+   * True while every leased item is still live. A concurrent heartbeat or
+   * terminal poll that acknowledges an item's occurrence invalidates it, so the
+   * embedded run must re-check this before provider dispatch.
+   */
+  isCurrent: () => boolean;
 };
 
 type ExecSteeringRuntime = {
   enqueueExecSteeringCompletion: (input: {
     requesterSessionKey: string;
+    ownerAgentId?: string;
+    occurrenceKey: string;
     execId: string;
     status: string;
     exitLabel: string;
@@ -75,6 +112,7 @@ type ExecSteeringRuntime = {
   }) => string | undefined;
   leasePendingExecSteeringItems: (params: {
     requesterSessionKey: string;
+    ownerAgentId?: string;
     leaseId: string;
     now?: number;
   }) => LeasedExecSteeringBatch | undefined;
@@ -83,7 +121,25 @@ type ExecSteeringRuntime = {
     itemIds: readonly string[];
     leaseId: string;
   }) => number;
-  hasPendingExecSteeringItems: (requesterSessionKey: string) => boolean;
+  hasPendingExecSteeringItems: (params: {
+    requesterSessionKey: string;
+    ownerAgentId?: string;
+  }) => boolean;
+  /**
+   * Invalidates any queued or leased completion carrying an occurrence key,
+   * called when the durable system event for that occurrence is acknowledged by
+   * a heartbeat or terminal poll. Returns the number of entries removed.
+   */
+  invalidateExecSteeringByOccurrence: (occurrenceKey: string) => number;
+  /**
+   * Retires every pending and leased completion for the given requester session
+   * keys, called on conversation reset so stale output cannot reach the next
+   * turn. Returns the number of entries removed.
+   */
+  retireExecSteeringForSessionKeys: (params: {
+    requesterSessionKeys: ReadonlyArray<string | undefined>;
+    ownerAgentId?: string;
+  }) => number;
   resetExecSteeringQueueForTest: () => void;
 };
 
@@ -128,28 +184,53 @@ function buildExecSteeringSection(item: ExecSteeringQueueItem, index: number): s
   ].join("\n");
 }
 
+/**
+ * Resolves the agent-qualified queue key for a requester session, matching the
+ * durable system event's ownership so both representations share one identity.
+ *
+ * Refuses (returns undefined) when the key cannot be qualified, which happens
+ * when a session key's embedded owner contradicts the supplied agent. Dropping
+ * the completion is deliberate: falling back to the unqualified literal key
+ * would restore exactly the shared identity this queue exists to avoid, and a
+ * later lease without an explicit owner would then hand it to whichever agent
+ * shares that literal key.
+ */
+function resolveQueueKey(requesterSessionKey: string, ownerAgentId?: string): string | undefined {
+  const trimmed = requesterSessionKey.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  try {
+    return resolveSystemEventQueueKey(trimmed, ownerAgentId);
+  } catch {
+    return undefined;
+  }
+}
+
 function createExecSteeringRuntime(): ExecSteeringRuntime {
-  // requesterSessionKey -> ordered map of itemId -> stored item.
+  // queueKey (agent-qualified) -> ordered map of itemId -> stored item.
   const queues = new Map<string, Map<string, StoredItem>>();
   let sequence = 0;
 
-  function normalizeSessionKey(value: string): string {
-    return value.trim();
-  }
-
   function enqueueExecSteeringCompletion(input: {
     requesterSessionKey: string;
+    ownerAgentId?: string;
+    occurrenceKey: string;
     execId: string;
     status: string;
     exitLabel: string;
     text: string;
     endedAt?: number;
   }): string | undefined {
-    const requesterSessionKey = normalizeSessionKey(input.requesterSessionKey);
-    if (!requesterSessionKey) {
+    const queueKey = resolveQueueKey(input.requesterSessionKey, input.ownerAgentId);
+    if (!queueKey) {
       return undefined;
     }
-    const queue = queues.get(requesterSessionKey) ?? new Map<string, StoredItem>();
+    const occurrenceKey = input.occurrenceKey.trim();
+    if (!occurrenceKey) {
+      return undefined;
+    }
+    const queue = queues.get(queueKey) ?? new Map<string, StoredItem>();
     // Bound memory: drop the oldest fully-pending item if a session floods.
     if (queue.size >= MAX_EXEC_STEERING_ITEMS_PER_SESSION) {
       for (const [key, stored] of queue) {
@@ -160,10 +241,12 @@ function createExecSteeringRuntime(): ExecSteeringRuntime {
       }
     }
     sequence += 1;
-    const itemId = `exec-steer:${requesterSessionKey}:${sequence}`;
+    const itemId = `exec-steer:${queueKey}:${sequence}`;
     const item: ExecSteeringQueueItem = {
       itemId,
-      requesterSessionKey,
+      queueKey,
+      ...(input.ownerAgentId ? { ownerAgentId: input.ownerAgentId } : {}),
+      occurrenceKey,
       execId: input.execId,
       status: input.status,
       exitLabel: input.exitLabel,
@@ -175,12 +258,12 @@ function createExecSteeringRuntime(): ExecSteeringRuntime {
       sequence,
     };
     queue.set(itemId, { item, lease: { status: "pending" } });
-    queues.set(requesterSessionKey, queue);
+    queues.set(queueKey, queue);
     return itemId;
   }
 
-  function listPending(requesterSessionKey: string, now: number): StoredItem[] {
-    const queue = queues.get(requesterSessionKey);
+  function listPending(queueKey: string, now: number): StoredItem[] {
+    const queue = queues.get(queueKey);
     if (!queue) {
       return [];
     }
@@ -193,22 +276,48 @@ function createExecSteeringRuntime(): ExecSteeringRuntime {
     return pending.toSorted(sortStoredItems);
   }
 
-  function hasPendingExecSteeringItems(requesterSessionKey: string): boolean {
-    const key = normalizeSessionKey(requesterSessionKey);
-    return listPending(key, Date.now()).length > 0;
+  function hasPendingExecSteeringItems(params: {
+    requesterSessionKey: string;
+    ownerAgentId?: string;
+  }): boolean {
+    const queueKey = resolveQueueKey(params.requesterSessionKey, params.ownerAgentId);
+    if (!queueKey) {
+      return false;
+    }
+    return listPending(queueKey, Date.now()).length > 0;
+  }
+
+  function findStored(itemId: string): { queueKey: string; stored: StoredItem } | undefined {
+    for (const [queueKey, queue] of queues) {
+      const stored = queue.get(itemId);
+      if (stored) {
+        return { queueKey, stored };
+      }
+    }
+    return undefined;
   }
 
   function leasePendingExecSteeringItems(params: {
     requesterSessionKey: string;
+    ownerAgentId?: string;
     leaseId: string;
     now?: number;
   }): LeasedExecSteeringBatch | undefined {
-    const requesterSessionKey = normalizeSessionKey(params.requesterSessionKey);
-    if (!requesterSessionKey) {
+    const queueKey = resolveQueueKey(params.requesterSessionKey, params.ownerAgentId);
+    if (!queueKey) {
       return undefined;
     }
     const now = params.now ?? Date.now();
-    const pending = listPending(requesterSessionKey, now);
+    const pending = listPending(queueKey, now).filter((stored) => {
+      // Defense in depth: even within one queue key, never hand a caller an
+      // item stored under a different owner. The agent-qualified key already
+      // separates owners, but an explicit owner mismatch must still be refused
+      // before the completion can reach a provider request.
+      if (params.ownerAgentId && stored.item.ownerAgentId) {
+        return stored.item.ownerAgentId === params.ownerAgentId;
+      }
+      return true;
+    });
     if (pending.length === 0) {
       return undefined;
     }
@@ -240,9 +349,18 @@ function createExecSteeringRuntime(): ExecSteeringRuntime {
       stored.lease.leaseId = params.leaseId;
       stored.lease.leasedAt = now;
     }
+    const leasedItemIds = selected.map((stored) => stored.item.itemId);
     return {
-      itemIds: selected.map((stored) => stored.item.itemId),
+      itemIds: leasedItemIds,
       prompt: [MERGED_EXEC_STEERING_PROMPT_HEADER, ...sections].join("\n\n"),
+      isCurrent: () =>
+        leasedItemIds.every((itemId) => {
+          const found = findStored(itemId);
+          return (
+            found?.stored.lease.status === "in_progress" &&
+            found.stored.lease.leaseId === params.leaseId
+          );
+        }),
     };
   }
 
@@ -261,6 +379,10 @@ function createExecSteeringRuntime(): ExecSteeringRuntime {
         ) {
           // Delivered items are removed so a later ack cannot re-deliver them.
           queue.delete(itemId);
+          // Retire the durable system event that shares this occurrence so a
+          // later heartbeat or terminal poll cannot re-deliver it. Delivered
+          // exactly once across steering, heartbeat, and poll.
+          removeSystemEventsByContextKey(stored.item.queueKey, stored.item.occurrenceKey);
           updated += 1;
           break;
         }
@@ -299,6 +421,51 @@ function createExecSteeringRuntime(): ExecSteeringRuntime {
     return updated;
   }
 
+  function invalidateExecSteeringByOccurrence(occurrenceKey: string): number {
+    const key = occurrenceKey.trim();
+    if (!key) {
+      return 0;
+    }
+    let removed = 0;
+    for (const [queueKey, queue] of queues) {
+      for (const [itemId, stored] of queue) {
+        if (stored.item.occurrenceKey === key) {
+          queue.delete(itemId);
+          removed += 1;
+        }
+      }
+      if (queue.size === 0) {
+        queues.delete(queueKey);
+      }
+    }
+    return removed;
+  }
+
+  function retireExecSteeringForSessionKeys(params: {
+    requesterSessionKeys: ReadonlyArray<string | undefined>;
+    ownerAgentId?: string;
+  }): number {
+    let removed = 0;
+    const targetKeys = new Set<string>();
+    for (const sessionKey of params.requesterSessionKeys) {
+      if (!sessionKey) {
+        continue;
+      }
+      const queueKey = resolveQueueKey(sessionKey, params.ownerAgentId);
+      if (queueKey) {
+        targetKeys.add(queueKey);
+      }
+    }
+    for (const queueKey of targetKeys) {
+      const queue = queues.get(queueKey);
+      if (queue) {
+        removed += queue.size;
+        queues.delete(queueKey);
+      }
+    }
+    return removed;
+  }
+
   function resetExecSteeringQueueForTest(): void {
     queues.clear();
     sequence = 0;
@@ -310,6 +477,8 @@ function createExecSteeringRuntime(): ExecSteeringRuntime {
     ackLeasedExecSteeringItems,
     releaseLeasedExecSteeringItems,
     hasPendingExecSteeringItems,
+    invalidateExecSteeringByOccurrence,
+    retireExecSteeringForSessionKeys,
     resetExecSteeringQueueForTest,
   };
 }
@@ -322,6 +491,8 @@ export const {
   ackLeasedExecSteeringItems,
   releaseLeasedExecSteeringItems,
   hasPendingExecSteeringItems,
+  invalidateExecSteeringByOccurrence,
+  retireExecSteeringForSessionKeys,
   resetExecSteeringQueueForTest,
 } = resolveGlobalSingleton(Symbol.for("openclaw.execSteeringQueue"), createExecSteeringRuntime);
 

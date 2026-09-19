@@ -67,6 +67,7 @@ type SteeringLease = {
 type ExecSteeringLease = {
   leaseId: string;
   itemIds: readonly string[];
+  isCurrent: () => boolean;
 };
 
 type TrajectoryRecorder = ReturnType<typeof createTrajectoryRuntimeRecorder>;
@@ -108,10 +109,18 @@ export async function submitEmbeddedAttemptPrompt(input: {
 }): Promise<void> {
   const { activeSession, attempt } = input;
   let pendingSteering = input.leasedSteering;
+  let pendingExecSteering = input.leasedExecSteering;
   const assertSteeringCurrent = () => {
     if (pendingSteering && !pendingSteering.isCurrent()) {
       throw new Error(
         "The queued child results lost authority before requester prompt submission.",
+      );
+    }
+    if (pendingExecSteering && !pendingExecSteering.isCurrent()) {
+      // A concurrent heartbeat or terminal poll acknowledged this occurrence;
+      // reject the stale exec completion before it reaches a provider request.
+      throw new Error(
+        "The queued exec completion lost authority before requester prompt submission.",
       );
     }
   };
@@ -132,6 +141,7 @@ export async function submitEmbeddedAttemptPrompt(input: {
       // Pre-prompt compaction has not consumed the deferred answer.
       if (captureCurrentPromptForModel) {
         pendingSteering = undefined;
+        pendingExecSteering = undefined;
       }
       return stream;
     };
