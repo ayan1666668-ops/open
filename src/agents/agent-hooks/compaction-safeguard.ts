@@ -56,7 +56,10 @@ import {
   readWorkspaceBootstrapFile,
 } from "../workspace-bootstrap-read.js";
 import { resolveCompactionInstructions } from "./compaction-instructions.js";
-import { observeCompactionSemanticFidelity } from "./compaction-semantic-fidelity.js";
+import {
+  isCompactionSemanticRepairFinding,
+  observeCompactionSemanticFidelity,
+} from "./compaction-semantic-fidelity.js";
 import {
   appendSummarySection,
   auditSummaryQuality,
@@ -1402,43 +1405,65 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
                 "Compaction safeguard: semantic fidelity observation skipped; reason=no-cancellation-signal",
               );
             } else {
-              try {
-                const observation = await observeCompactionSemanticFidelity({
-                  sourceMessages: semanticSourceMessages,
-                  retainedContext: finalized.summary,
-                  signal,
-                });
-                if (observation.status === "ok") {
-                  const relationCounts = observation.findings.reduce<Record<string, number>>(
-                    (counts, finding) => {
-                      counts[finding.relation] = (counts[finding.relation] ?? 0) + 1;
-                      return counts;
-                    },
-                    {},
-                  );
-                  log.info(
-                    "Compaction safeguard: semantic fidelity observation completed; " +
-                      `checked=${observation.checked} verbatimPreserved=${observation.verbatimPreserved} ` +
-                      `relations=${JSON.stringify(relationCounts)} provider=${observation.providerId} model=${observation.model}`,
-                  );
-                } else if (observation.status === "unavailable") {
-                  log.debug(
-                    "Compaction safeguard: semantic fidelity observation unavailable; " +
-                      `reason=${observation.reason} checked=${observation.checked}`,
-                  );
-                } else {
-                  log.debug(
-                    "Compaction safeguard: semantic fidelity observation skipped; reason=no-candidates " +
-                      `verbatimPreserved=${observation.verbatimPreserved}`,
+              const observation = await observeCompactionSemanticFidelity({
+                sourceMessages: semanticSourceMessages,
+                retainedContext: finalized.summary,
+                signal,
+              });
+              if (observation.status === "ok") {
+                const relationCounts = observation.findings.reduce<Record<string, number>>(
+                  (counts, finding) => {
+                    counts[finding.relation] = (counts[finding.relation] ?? 0) + 1;
+                    return counts;
+                  },
+                  {},
+                );
+                const repairFindings = observation.findings.filter(
+                  isCompactionSemanticRepairFinding,
+                );
+                log.info(
+                  "Compaction safeguard: semantic fidelity observation completed; " +
+                    `checked=${observation.checked} verbatimPreserved=${observation.verbatimPreserved} ` +
+                    `relations=${JSON.stringify(relationCounts)} repairFindings=${repairFindings.length} ` +
+                    `provider=${observation.providerId} model=${observation.model}`,
+                );
+                if (repairFindings.length > 0) {
+                  if (canRegenerate && attempt < totalAttempts - 1) {
+                    const repairEvidence = repairFindings
+                      .map(
+                        (finding) =>
+                          `- ${finding.relation}: ${finding.sourceText}`,
+                      )
+                      .join("\n");
+                    const semanticFeedback = wrapUntrustedInstructionBlock(
+                      "Semantic fidelity feedback",
+                      repairEvidence,
+                    );
+                    const budgetInstruction =
+                      `Keep the complete summary body within ${finalized.bodyBudget} UTF-16 code units so the finalized artifact remains valid after required suffixes.`;
+                    correctiveInstructions = [
+                      "Preserve the active meaning of the source requirements below. Do not mark them complete or superseded unless the retained conversation supports that conclusion.",
+                      budgetInstruction,
+                      semanticFeedback,
+                    ]
+                      .filter(Boolean)
+                      .join("\n\n");
+                    continue;
+                  }
+                  log.warn(
+                    "Compaction safeguard: semantic fidelity findings remain after the available corrective retry budget; " +
+                      `findingCount=${repairFindings.length}`,
                   );
                 }
-              } catch (error) {
-                if (signal.aborted) {
-                  signal.throwIfAborted();
-                }
-                log.warn(
-                  "Compaction safeguard: semantic fidelity observation failed; preserving existing compaction result. " +
-                    `error=${formatErrorMessage(error)}`,
+              } else if (observation.status === "unavailable") {
+                log.debug(
+                  "Compaction safeguard: semantic fidelity observation unavailable; " +
+                    `reason=${observation.reason} checked=${observation.checked}`,
+                );
+              } else {
+                log.debug(
+                  "Compaction safeguard: semantic fidelity observation skipped; reason=no-candidates " +
+                    `verbatimPreserved=${observation.verbatimPreserved}`,
                 );
               }
             }
