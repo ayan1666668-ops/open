@@ -3,9 +3,12 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
+import * as processExec from "../../process/exec.js";
+import { createDeferredCore } from "../../shared/deferred.js";
 import { closeOpenClawStateDatabaseByPath } from "../../state/openclaw-state-db-cache.js";
 import { openOpenClawStateDatabase } from "../../state/openclaw-state-db.js";
 import { createSessionRepositoryWorkspaceStore } from "../../state/session-repository-workspaces.js";
+import * as publicationSnapshot from "../github-repository-publication-snapshot.js";
 import {
   forkSessionRepositoryWorkspace,
   readSessionRepositoryArtifacts,
@@ -13,8 +16,10 @@ import {
   stageSessionRepositoryCheckpoint,
   withSessionRepositoryCheckpoint,
 } from "./session-repository-checkpoints.js";
+import * as workspaceManifestWorker from "./workspace-manifest-worker.js";
 import { serializeWorkerWorkspaceManifest } from "./workspace-manifest.js";
 import { readActualWorkspaceManifest } from "./workspace-reconcile-core.js";
+import * as workspaceResultGit from "./workspace-result-git.js";
 import { requireWorkspaceResultGit } from "./workspace-result-git.js";
 import {
   hasWorkerWorkspaceResultRef,
@@ -99,6 +104,245 @@ async function publicationFixture(root: string, content = "working tree\n") {
   await fs.writeFile(path.join(publicationStagingRoot, "snapshot.json"), metadata);
   return { sha, input: { publicationStagingRoot, publicationDigest: hash(metadata) } };
 }
+
+it.each([false, true])(
+  "fences Git initialization after checkpoint directory creation (revoked=%s)",
+  async (revoke) => {
+    const { store, workspace, stage } = await fixture();
+    const artifact = store.artifactPath(workspace.workspaceId);
+    const entered = createDeferredCore();
+    const release = createDeferredCore();
+    const mkdir = fs.mkdir.bind(fs);
+    let current = true;
+    let held = false;
+    vi.spyOn(fs, "mkdir").mockImplementation(async (...args) => {
+      const result = await mkdir(...args);
+      if (!held && String(args[0]) === artifact) {
+        held = true;
+        entered.resolve();
+        await release.promise;
+      }
+      return result;
+    });
+    const pending = stage("directory-authority", {
+      assertCurrent: () => {
+        if (!current) {
+          throw new Error("checkpoint authority closed");
+        }
+      },
+    }).then(
+      (value) => ({ ok: true as const, value }),
+      (error: unknown) => ({ ok: false as const, error }),
+    );
+    await entered.promise;
+    current = !revoke;
+    release.resolve();
+    const outcome = await pending;
+    expect(outcome.ok).toBe(!revoke);
+    if (revoke) {
+      await expect(fs.stat(path.join(artifact, "HEAD"))).rejects.toMatchObject({ code: "ENOENT" });
+    } else {
+      await expect(fs.stat(path.join(artifact, "HEAD"))).resolves.toBeDefined();
+    }
+    if (outcome.ok) {
+      await outcome.value.discard();
+    }
+  },
+);
+
+it("does not dispatch fast-import after a queued checkpoint stage loses authority", async () => {
+  const { store, workspace, stage } = await fixture();
+  const artifact = store.artifactPath(workspace.workspaceId);
+  const entered = createDeferredCore();
+  const release = createDeferredCore();
+  const mutate = workspaceResultGit.withWorkspaceResultRefMutation;
+  let current = true;
+  let held = false;
+  vi.spyOn(workspaceResultGit, "withWorkspaceResultRefMutation").mockImplementation(
+    async (root, operation) => {
+      if (!held && root === artifact) {
+        held = true;
+        entered.resolve();
+        await release.promise;
+      }
+      return await mutate(root, operation);
+    },
+  );
+  const buffered = vi.spyOn(processExec, "runCommandBuffered");
+  const pending = stage("queue-authority", {
+    assertCurrent: () => {
+      if (!current) {
+        throw new Error("checkpoint authority closed");
+      }
+    },
+  }).catch((error: unknown) => error);
+  await entered.promise;
+  current = false;
+  release.resolve();
+  expect(await pending).toBeInstanceOf(Error);
+  expect(buffered.mock.calls.filter(([argv]) => argv.includes("fast-import"))).toHaveLength(0);
+  expect(store.get(workspace.workspaceId)?.checkpointRef).toBeNull();
+});
+
+it.each([
+  { boundary: "preparation", closure: "none" },
+  { boundary: "preparation", closure: "authority" },
+  { boundary: "preparation", closure: "revision" },
+  { boundary: "import", closure: "none" },
+  { boundary: "import", closure: "authority" },
+  { boundary: "import", closure: "revision" },
+])(
+  "fences checkpoint staging after $boundary with $closure closure and cleans candidates",
+  async ({ boundary, closure }) => {
+    const { remote, store, workspace, stage } = await fixture();
+    await fs.writeFile(path.join(remote, "edit.txt"), "worker-prepared result\n");
+    const entered = createDeferredCore();
+    const release = createDeferredCore();
+    const prepare = workspaceManifestWorker.prepareWorkspaceStageInput;
+    const runBuffered = processExec.runCommandBuffered;
+    let current = true;
+    const pause = async () => {
+      entered.resolve();
+      await release.promise;
+    };
+    vi.spyOn(workspaceManifestWorker, "prepareWorkspaceStageInput").mockImplementation(
+      async (...args) => {
+        const input = await prepare(...args);
+        if (boundary === "preparation") {
+          await pause();
+        }
+        return input;
+      },
+    );
+    const buffered = vi
+      .spyOn(processExec, "runCommandBuffered")
+      .mockImplementation(async (...args) => {
+        const result = await runBuffered(...args);
+        if (boundary === "import" && args[0].includes("fast-import")) {
+          await pause();
+        }
+        return result;
+      });
+    const pending = stage("worker-preparation-authority", {
+      assertCurrent: () => {
+        if (!current) {
+          throw new Error("checkpoint authority closed");
+        }
+      },
+    }).then(
+      (value) => ({ ok: true as const, value }),
+      (error: unknown) => ({ ok: false as const, error }),
+    );
+    await entered.promise;
+    try {
+      current = closure !== "authority";
+      if (closure === "revision") {
+        store.bindBase({
+          workspaceId: workspace.workspaceId,
+          expectedRevision: workspace.revision,
+          baseCommit,
+          assertCurrent,
+        });
+      }
+    } finally {
+      release.resolve();
+    }
+    const outcome = await pending;
+    expect(outcome.ok).toBe(closure === "none");
+    if (!outcome.ok) {
+      expect(outcome.error).toMatchObject({
+        message:
+          closure === "authority"
+            ? "checkpoint authority closed"
+            : "Repository workspace revision changed",
+      });
+    }
+    expect(buffered.mock.calls.filter(([argv]) => argv.includes("fast-import"))).toHaveLength(
+      boundary === "import" || closure === "none" ? 1 : 0,
+    );
+    expect(store.get(workspace.workspaceId)?.checkpointRef).toBeNull();
+    if (outcome.ok) {
+      await outcome.value.discard();
+    }
+    expect(
+      await requireWorkspaceResultGit(store.artifactPath(workspace.workspaceId), [
+        "for-each-ref",
+        "--format=%(refname)",
+        "refs/openclaw/worker-result-candidates/",
+      ]),
+    ).toBe("");
+  },
+);
+
+it.each(["metadata", "blob"] as const)(
+  "stops publication writes after authority closes during the %s read",
+  async (boundary) => {
+    const { root, remote, store, workspace, stage } = await fixture();
+    await fs.writeFile(path.join(remote, "edit.txt"), "working tree\n");
+    const { input } = await publicationFixture(root);
+    const entered = createDeferredCore();
+    const release = createDeferredCore();
+    let current = true;
+    const pause = async () => {
+      entered.resolve();
+      await release.promise;
+    };
+    const metadata = publicationSnapshot.readGitHubRepositoryPublicationMetadata;
+    const blob = publicationSnapshot.readGitHubRepositoryPublicationBlob;
+    vi.spyOn(publicationSnapshot, "readGitHubRepositoryPublicationMetadata").mockImplementation(
+      async (...args) => {
+        const result = await metadata(...args);
+        if (boundary === "metadata") {
+          await pause();
+        }
+        return result;
+      },
+    );
+    vi.spyOn(publicationSnapshot, "readGitHubRepositoryPublicationBlob").mockImplementation(
+      async (...args) => {
+        const result = await blob(...args);
+        if (boundary === "blob") {
+          await pause();
+        }
+        return result;
+      },
+    );
+    const temporary = vi.spyOn(fs, "mkdtemp");
+    const writes = vi.spyOn(fs, "writeFile");
+    const buffered = vi.spyOn(processExec, "runCommandBuffered");
+    const pending = stage("publication-authority", {
+      ...input,
+      assertCurrent: () => {
+        if (!current) {
+          throw new Error("checkpoint authority closed");
+        }
+      },
+    }).catch((error: unknown) => error);
+    await entered.promise;
+    const written = writes.mock.calls.length;
+    const created = temporary.mock.calls.length;
+    current = false;
+    release.resolve();
+    expect(await pending).toMatchObject({ message: "checkpoint authority closed" });
+    expect(writes).toHaveBeenCalledTimes(written);
+    expect(temporary).toHaveBeenCalledTimes(created);
+    // Only raw recovery was imported; revoked authority cannot stage a companion.
+    expect(buffered.mock.calls.filter(([argv]) => argv.includes("fast-import"))).toHaveLength(1);
+    expect(store.get(workspace.workspaceId)?.checkpointRef).toBeNull();
+    expect(
+      await requireWorkspaceResultGit(store.artifactPath(workspace.workspaceId), [
+        "for-each-ref",
+        "--format=%(refname)",
+        "refs/openclaw/worker-result-candidates/",
+      ]),
+    ).toBe("");
+    for (const result of temporary.mock.results) {
+      if (result.type === "return") {
+        await expect(fs.stat(await result.value)).rejects.toMatchObject({ code: "ENOENT" });
+      }
+    }
+  },
+);
 
 it("retains cumulative multi-turn files, deletions and executable modes in a bare artifact repo", async () => {
   const { remote, store, workspace, stage } = await fixture();
