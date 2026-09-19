@@ -3694,6 +3694,146 @@ describe("compaction-safeguard recent-turn preservation", () => {
     expect(mockCurateCompactionSummarizerInput).not.toHaveBeenCalled();
   });
 
+  it("retries from original input when omitted tool evidence is missing from the retained summary", async () => {
+    mockSummarizeInStages.mockReset();
+    const userAsk = "Fix the parser tests.";
+    const materialFact = "MATERIAL_RESULT: parser failure is caused by TOKEN_X.";
+    const toolOutput = `${"routine test output\n".repeat(220)}${materialFact}`;
+    const firstSummary = [
+      "## Decisions",
+      "Continue debugging.",
+      "## Open TODOs",
+      "Fix the parser tests.",
+      "## Constraints/Rules",
+      "None.",
+      "## Pending user asks",
+      userAsk,
+      "## Exact identifiers",
+      "None.",
+    ].join("\n");
+    const recoveredSummary = [
+      "## Decisions",
+      materialFact,
+      "## Open TODOs",
+      "Fix the parser tests.",
+      "## Constraints/Rules",
+      "Preserve the parser failure cause.",
+      "## Pending user asks",
+      userAsk,
+      "## Exact identifiers",
+      "TOKEN_X",
+    ].join("\n");
+    mockSummarizeInStages
+      .mockResolvedValueOnce(summaryResult(firstSummary))
+      .mockResolvedValueOnce(summaryResult(recoveredSummary));
+    mockEvaluateJudgment
+      .mockResolvedValueOnce({
+        status: "ok",
+        result: {
+          model: "fixture",
+          answers: {
+            "tool-result-1": {
+              type: "choice",
+              choice: "redundant",
+              probabilities: {
+                essential: 0.01,
+                relevant: 0.02,
+                redundant: 0.93,
+                transient: 0.01,
+                uncertain: 0.03,
+              },
+            },
+          },
+        },
+        provenance: {
+          providerId: "fixture",
+          rubricVersion: "1",
+          runtimeGeneration: "curation",
+        },
+      } satisfies JudgmentOutcome)
+      .mockResolvedValueOnce({
+        status: "ok",
+        result: {
+          model: "fixture",
+          answers: {
+            "curated-tool-result-1": {
+              type: "choice",
+              choice: "missing",
+              probabilities: {
+                preserved: 0.01,
+                missing: 0.94,
+                contradicted: 0.01,
+                inactive_or_completed: 0.01,
+                uncertain: 0.03,
+              },
+            },
+          },
+        },
+        provenance: {
+          providerId: "fixture",
+          rubricVersion: "1",
+          runtimeGeneration: "fidelity",
+        },
+      } satisfies JudgmentOutcome);
+
+    const sessionManager = stubSessionManager();
+    setCompactionSafeguardRuntime(sessionManager, {
+      model: createAnthropicModelFixture(),
+      recentTurnsPreserve: 0,
+      qualityGuardEnabled: true,
+      qualityGuardMaxRetries: 1,
+      semanticJudgmentsEnabled: true,
+      semanticJudgmentCurationEnabled: true,
+    });
+    const event = {
+      preparation: {
+        messagesToSummarize: [
+          { role: "user", content: userAsk, timestamp: 1 },
+          castAgentMessage({
+            role: "assistant",
+            content: [{ type: "toolCall", id: "call-1", name: "exec", arguments: {} }],
+            timestamp: 2,
+          }),
+          {
+            role: "toolResult",
+            toolCallId: "call-1",
+            toolName: "exec",
+            content: [{ type: "text", text: toolOutput }],
+            timestamp: 3,
+          },
+          castAgentMessage({ role: "assistant", content: "Tests completed.", timestamp: 4 }),
+        ] as AgentMessage[],
+        turnPrefixMessages: [] as AgentMessage[],
+        firstKeptEntryId: "entry-1",
+        tokensBefore: 1_500,
+        fileOps: { read: [], edited: [], written: [] },
+        settings: { reserveTokens: 4_000 },
+        previousSummary: undefined,
+        isSplitTurn: false,
+      },
+      customInstructions: "",
+      signal: new AbortController().signal,
+    };
+
+    const { result } = await runCompactionScenario({
+      sessionManager,
+      event,
+      apiKey: "test-key",
+    });
+
+    expect(result.cancel).not.toBe(true);
+    expect(mockEvaluateJudgment).toHaveBeenCalledTimes(2);
+    expect(mockSummarizeInStages).toHaveBeenCalledTimes(2);
+    const curatedCall = requireRecord(mockCallArg(mockSummarizeInStages, 0));
+    expect(JSON.stringify(curatedCall.messages)).toContain(
+      "omitted from compaction summarizer input",
+    );
+    expect(JSON.stringify(curatedCall.messages)).not.toContain(materialFact);
+    const uncuratedCall = requireRecord(mockCallArg(mockSummarizeInStages, 1));
+    expect(JSON.stringify(uncuratedCall.messages)).toContain(materialFact);
+    expect(expectCompactionResult(result).summary).toContain(materialFact);
+  });
+
   it("retries when generated summary misses headings even if preserved turns contain them", async () => {
     mockSummarizeInStages.mockReset();
     const preservedUserText = [
