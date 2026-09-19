@@ -12,6 +12,7 @@ import { formatErrorMessage } from "../../infra/errors.js";
 import { readGatewayOwnerLease } from "../../infra/gateway-owner-lease.js";
 import { recordUpdateRunPhase } from "../../infra/update-run-ledger.js";
 import type { UpdateRunResult } from "../../infra/update-runner.js";
+import { hasCommandProcessCleanupError } from "../../process/exec-result.js";
 import { defaultRuntime } from "../../runtime.js";
 import { CLI_NAME } from "../cli-name.js";
 import { formatCliCommand } from "../command-format.js";
@@ -459,6 +460,9 @@ export async function maybeRestartService(params: {
             recordUpdateGatewayHealth(params.opts.run, health, activation.gatewayPort);
           }
         } catch (err) {
+          if (hasCommandProcessCleanupError(err)) {
+            throw err;
+          }
           assertCurrent();
           if (
             err instanceof UpdateCommandRecoveryPendingError ||
@@ -574,7 +578,10 @@ export async function maybeRestartService(params: {
         recordPhase("restarting");
         const restart = await runUpdatedInstallGatewayCommand(activation, "restart").catch(
           (error: unknown) => {
-            if (!(error instanceof GatewayRestartHealthError)) {
+            if (
+              hasCommandProcessCleanupError(error) ||
+              !(error instanceof GatewayRestartHealthError)
+            ) {
               throw error;
             }
             // Activation succeeded; the update verifier owns the longer readiness budget.
@@ -641,6 +648,9 @@ export async function maybeRestartService(params: {
         defaultRuntime.log("");
       }
     } catch (err) {
+      if (hasCommandProcessCleanupError(err)) {
+        throw err;
+      }
       assertCurrent();
       if (
         err instanceof UpdateServiceLoadBoundaryError ||

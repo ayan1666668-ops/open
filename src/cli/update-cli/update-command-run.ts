@@ -554,19 +554,6 @@ export function completeUpdateCommandRun(
     };
   }
   const recordOptions = { env: run.env, redactPaths: result.root ? [result.root] : [] };
-  const active = getUpdateRun(run.runId, recordOptions);
-  if (active) {
-    recordUpdateRunPhase(
-      run.runId,
-      active.phase,
-      { before: result.before, after: result.after },
-      recordOptions,
-    );
-    recordUpdateRunDiagnostics(run.runId, result, defaultRuntime.error, recordOptions);
-  }
-  for (const step of result.steps.flatMap(updateRunStepsFromResultStep)) {
-    recordUpdateRunStep(run.runId, step, recordOptions);
-  }
   // Both finalization and outer CLI unwind come here. A verified restored generation
   // stays with its helper until native recovery finishes; neither caller may close it early.
   const helperRecoveryPending =
@@ -579,10 +566,8 @@ export function completeUpdateCommandRun(
     run.gatewayRestartRequired === true &&
     result.status === "ok" &&
     !completion.rolledBack;
-  if (gatewayRestartPending) {
-    recordUpdateRunPhase(run.runId, "restarting", {}, recordOptions);
-  } else if (!helperRecoveryPending) {
-    finishUpdateRun(
+  if (!gatewayRestartPending && !helperRecoveryPending) {
+    const finished = finishUpdateRun(
       run.runId,
       {
         status: completion.rolledBack
@@ -592,12 +577,50 @@ export function completeUpdateCommandRun(
             : result.status === "error"
               ? "failed"
               : "skipped",
+        diagnostics: result,
+        before: result.before,
         reason: result.reason,
         after: result.after,
         downtimeMs: completion.downtimeMs,
       },
       recordOptions,
     );
+    if (result.verification) {
+      result.recovery = finished.verification.recovery ?? undefined;
+    }
+  } else {
+    const active = getUpdateRun(run.runId, recordOptions);
+    if (active) {
+      recordUpdateRunPhase(
+        run.runId,
+        gatewayRestartPending ? "restarting" : active.phase,
+        { before: result.before, after: result.after },
+        recordOptions,
+      );
+      recordUpdateRunDiagnostics(
+        run.runId,
+        {
+          ...result,
+          ...(result.verification
+            ? {
+                observation: {
+                  verification: result.verification,
+                  steps: result.steps
+                    .filter((step) => step.name === "gateway recovery verification")
+                    .flatMap(updateRunStepsFromResultStep),
+                },
+              }
+            : {}),
+        },
+        defaultRuntime.error,
+        recordOptions,
+      );
+    }
+    for (const step of result.steps
+      .filter((entry) => !result.verification || entry.name !== "gateway recovery verification")
+      .flatMap(updateRunStepsFromResultStep)) {
+      recordUpdateRunStep(run.runId, step, recordOptions);
+    }
   }
   return { ...result, runId: run.runId };
 }
