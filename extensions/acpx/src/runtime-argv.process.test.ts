@@ -64,7 +64,7 @@ it.each([
 ])(
   "preserves ACP argv through real processes and reconnect (leased=$wrapped, command=$form)",
   async ({ wrapped, form }) => {
-    // Only fixture labels and peer lifecycle: never log commands, paths, or environment.
+    // Only synthetic fixture labels, relative paths and peer lifecycle; no contents or environment.
     // A timeout alone cannot distinguish ACP work from fixture cleanup.
     const phase = (name: string) => {
       console.error(`[acpx-argv-process leased=${wrapped} command=${form}] ${name}`);
@@ -106,8 +106,36 @@ it.each([
       const cleanup = state.cleanup;
       state.cleanup = async () => {
         phase("state:cleanup-entered");
-        await cleanup();
-        phase("state:cleanup-complete");
+        const reportRemaining = async () => {
+          const pending = [state.root];
+          let count = 0;
+          while (pending.length > 0 && count < 64) {
+            const directory = pending.shift()!;
+            const entries = await fs.readdir(directory, { withFileTypes: true }).catch(() => []);
+            for (const entry of entries) {
+              if (count++ >= 64) {
+                break;
+              }
+              const filename = path.join(directory, entry.name);
+              const relative = path.relative(state.root, filename);
+              phase(`remaining:${entry.isDirectory() ? "directory" : "file"}:${relative}`);
+              if (entry.isDirectory() && relative.split(path.sep).length < 8) {
+                pending.push(filename);
+              }
+            }
+          }
+        };
+        // One read-only snapshot, not a retry or a change to the cleanup timeout.
+        const timer = setTimeout(() => {
+          void reportRemaining().catch(() => phase("remaining:unavailable"));
+        }, 1_000);
+        timer.unref();
+        try {
+          await cleanup();
+          phase("state:cleanup-complete");
+        } finally {
+          clearTimeout(timer);
+        }
       };
       phase("fixture:setup");
       vi.stubEnv("OPENCLAW_ACPX_TEST_PROCESS_TRACE", "1");
