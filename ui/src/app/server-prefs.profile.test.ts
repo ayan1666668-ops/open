@@ -51,8 +51,17 @@ describe("profile-bound appearance preferences", () => {
       "ui.accent": "#abcdef",
     };
     const request = vi.fn(async (method: string, params?: unknown) => {
-      if (method === "users.prefs.set") {
-        const patch = (params as { entries: Record<string, unknown> }).entries;
+      if (method === "users.prefs.set" || method === "themes.set") {
+        const theme = params as { id: string; appearance: Record<string, unknown> };
+        const patch =
+          method === "themes.set"
+            ? {
+                "ui.theme": theme.id,
+                ...Object.fromEntries(
+                  Object.entries(theme.appearance).map(([key, value]) => [`ui.${key}`, value]),
+                ),
+              }
+            : (params as { entries: Record<string, unknown> }).entries;
         for (const [key, value] of Object.entries(patch)) {
           if (value === null) {
             delete entries[key];

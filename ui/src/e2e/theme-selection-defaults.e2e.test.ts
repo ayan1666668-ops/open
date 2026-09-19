@@ -79,14 +79,10 @@ suite.define(() => {
           chat: expect.stringContaining("Lora"),
         });
         await expect
-          .poll(async () => (await gateway.getRequests("users.prefs.set")).map((r) => r.params))
+          .poll(async () => (await gateway.getRequests("themes.set")).map((r) => r.params))
           .toContainEqual({
-            entries: {
-              "ui.theme": "absolutely",
-              "ui.accent": "theme",
-              "ui.fontUi": null,
-              "ui.fontChat": null,
-            },
+            id: "absolutely",
+            appearance: { accent: "theme", fontUi: null, fontChat: null },
           });
         expect(await gateway.getRequests("config.patch")).toEqual([]);
         await expect.poll(mirror).toMatchObject({
