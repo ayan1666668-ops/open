@@ -58,6 +58,7 @@ extension DashboardGatewayHealthTests {
             window.webkit.messageHandlers.openclawGateways.postMessage({
               type: 'connection-state-changed', health: 'ok', id: 'profile:second'
             });
+            true;
             """)
             try await self.waitUntil { self.health(target, in: manager) == .error }
             #expect(self.health(.profile("second"), in: manager) == .unknown)
@@ -179,6 +180,7 @@ extension DashboardGatewayHealthTests {
             window.webkit.messageHandlers.openclawGateways.postMessage({
               type: 'connection-state-changed', health: 'ok'
             });
+            true;
             """)
             _ = try await controller.webView.evaluateJavaScript("document.readyState")
             #expect(controller.gatewayHealth == nil)
