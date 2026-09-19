@@ -117,6 +117,9 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  // Close watchers opened by skills.status before removing the watched fixture.
+  const { closeSkillsWatchers } = await import("../runtime/refresh.js");
+  await closeSkillsWatchers();
   resetGlobalHookRunner();
   vi.mocked(loadWorkspaceSkills).mockReset();
   vi.mocked(hasBinary).mockReset();
