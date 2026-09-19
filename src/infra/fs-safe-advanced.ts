@@ -3,6 +3,7 @@ import "./fs-safe-defaults.js";
 
 // Advanced fs-safe helpers for symlink, hardlink, and sibling-temp protections.
 export {
+  assertDirectoryIdentitySync,
   assertNoSymlinkParents,
   assertNoSymlinkParentsSync,
   buildRandomTempFilePath,
