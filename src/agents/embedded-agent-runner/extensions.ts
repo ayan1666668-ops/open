@@ -135,6 +135,13 @@ export function buildEmbeddedExtensionFactories(params: {
   if (resolveEffectiveCompactionMode(params.cfg) === "safeguard") {
     const compactionCfg = params.cfg?.agents?.defaults?.compaction;
     const qualityGuardCfg = compactionCfg?.qualityGuard;
+    const semanticJudgmentsCfg = qualityGuardCfg?.semanticJudgments;
+    const semanticJudgmentCurationEnabled =
+      typeof semanticJudgmentsCfg === "object" && semanticJudgmentsCfg?.curateInput === true;
+    const semanticJudgmentsEnabled =
+      semanticJudgmentsCfg === true ||
+      (typeof semanticJudgmentsCfg === "object" &&
+        (semanticJudgmentsCfg.enabled === true || semanticJudgmentCurationEnabled));
     // Prepared runs carry the canonical policy budget; fallback resolution is
     // only for callers that do not own a prepared attempt.
     const contextWindowTokens =
@@ -152,7 +159,8 @@ export function buildEmbeddedExtensionFactories(params: {
       identifierPolicy: compactionCfg?.identifierPolicy,
       qualityGuardEnabled: qualityGuardCfg?.enabled ?? true,
       qualityGuardMaxRetries: qualityGuardCfg?.maxRetries,
-      semanticJudgmentsEnabled: qualityGuardCfg?.semanticJudgments === true,
+      semanticJudgmentsEnabled,
+      semanticJudgmentCurationEnabled,
       model: params.model,
       recentTurnsPreserve: compactionCfg?.recentTurnsPreserve,
       workspaceDir: params.workspaceDir,
