@@ -4001,7 +4001,10 @@ describe("compaction-safeguard recent-turn preservation", () => {
 
     expect(result).not.toEqual({ cancel: true });
     expect(mockSummarizeInStages).toHaveBeenCalledTimes(2);
-    expect(expectCompactionResult(result).summary).toBe(acceptedSummary);
+    const firstFinalizedSummary = requireRecord(
+      mockCallArg(mockAuditSummaryQuality, 0),
+    ).summary;
+    expect(expectCompactionResult(result).summary).toBe(firstFinalizedSummary);
     expect(consumeCompactionSafeguardCancellation(sessionManager)).toBeNull();
     expect(compactionLogger.warn.mock.calls.flat().join("\n")).toContain(
       "preserving the last deterministic-valid summary",
@@ -4070,7 +4073,10 @@ describe("compaction-safeguard recent-turn preservation", () => {
 
     expect(result).not.toEqual({ cancel: true });
     expect(mockSummarizeInStages).toHaveBeenCalledTimes(2);
-    expect(expectCompactionResult(result).summary).toBe(acceptedSummary);
+    const firstFinalizedSummary = requireRecord(
+      mockCallArg(mockAuditSummaryQuality, 0),
+    ).summary;
+    expect(expectCompactionResult(result).summary).toBe(firstFinalizedSummary);
     expect(compactionLogger.warn.mock.calls.flat().join("\n")).toContain(
       "semantic corrective retry did not produce a deterministic-valid replacement",
     );
