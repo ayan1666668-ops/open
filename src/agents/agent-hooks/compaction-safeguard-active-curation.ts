@@ -3,6 +3,7 @@ import type { AgentMessage } from "../runtime/index.js";
 import {
   buildPreservedTurnsSection,
   type ContextSection,
+  extractLatestUserAsk,
   splitPreservedRecentTurns,
 } from "./compaction-safeguard-context.js";
 import { getCompactionSafeguardRuntime } from "./compaction-safeguard-runtime.js";
@@ -118,20 +119,7 @@ export function prepareCompactionSummaryInput(params: {
     recentTurnsPreserve: params.recentTurnsPreserve,
   });
   const preservedTurnsSection = buildPreservedTurnsSection(preservedMessages);
-  const latestPreparedAsk = params.sourceMessages
-    .toReversed()
-    .find((message) => message.role === "user");
-  const latestPreparedAskText =
-    latestPreparedAsk && Array.isArray((latestPreparedAsk as { content?: unknown }).content)
-      ? ((latestPreparedAsk as { content?: unknown[] }).content ?? [])
-          .flatMap((block) =>
-            block && typeof block === "object" && typeof (block as { text?: unknown }).text === "string"
-              ? [String((block as { text: string }).text).trim()]
-              : [],
-          )
-          .filter(Boolean)
-          .join("\n")
-      : "";
+  const latestPreparedAskText = extractLatestUserAsk(params.sourceMessages) ?? "";
   const includePreservedContext =
     !params.latestUnresolvedUserRequest &&
     params.qualityGuardEnabled &&
