@@ -226,6 +226,7 @@ describe("listGatewayMethods", () => {
       "mcp.authLogin",
       ...sessionEnvironmentMethods.map(([method]) => method),
       "sessions.setInvolvement",
+      "transcripts.summarize",
       "controlUi.linkPreview",
     ];
     expect(listGatewayMethods().slice(-expectedSuffix.length)).toEqual(expectedSuffix);
@@ -273,6 +274,7 @@ describe("listGatewayMethods", () => {
       "mcp.authLogin",
       ...sessionEnvironmentMethods.map(([method]) => method),
       "sessions.setInvolvement",
+      "transcripts.summarize",
       "controlUi.linkPreview",
     ]);
   });
@@ -449,6 +451,7 @@ describe("listGatewayMethods", () => {
       "mcp.authLogin",
       ...sessionEnvironmentMethods.map(([method]) => method),
       "sessions.setInvolvement",
+      "transcripts.summarize",
       "controlUi.linkPreview",
     ];
     expect(coreMethods.slice(-expectedCoreSuffix.length)).toEqual(expectedCoreSuffix);
