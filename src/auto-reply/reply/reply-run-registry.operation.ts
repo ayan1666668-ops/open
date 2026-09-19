@@ -369,10 +369,15 @@ export function createReplyOperation(params: {
       }
     },
     bindToolAuthorityRoute(route) {
+      // Displacement (a successor now owns the session-key slot) and
+      // supersession do not revoke this operation's own admission-time
+      // authority: the displaced run may still bind its concrete route so an
+      // already-computed reply can be delivered instead of being dropped.
+      // Every other terminal result (completed, failed, user abort, restart)
+      // keeps rejecting late route binds.
       if (
-        result ||
         !toolAuthoritySnapshot ||
-        replyRunState.activeRunsByKey.get(currentSessionKey) !== operation
+        (result && !(result.kind === "aborted" && result.code === "aborted_for_supersession"))
       ) {
         throw new Error("Reply operation has no active tool authority snapshot");
       }

@@ -267,6 +267,45 @@ describe("reply run registry", () => {
     operation.complete();
   });
 
+  it("lets a displaced reply operation keep binding its own tool authority route", () => {
+    const run = createQueueTestRun({ prompt: "displaced authority" });
+    const operationA = createTestReplyOperation({ sessionId: "session-displaced-a" });
+    operationA.bindToolAuthoritySnapshot(prepareReplyToolAuthority(run));
+    const route = { provider: "openai", model: "gpt-primary" };
+    const fingerprint = resolveFollowupRunToolAuthorityFingerprint(run, route);
+
+    // A visible turn displaces the queued run (reply-turn-admission supersede path).
+    expect(operationA.supersede()).toBe(true);
+    expect(operationA.result).toEqual({ kind: "aborted", code: "aborted_for_supersession" });
+
+    // The displacing run now owns the session-key slot.
+    const operationB = createTestReplyOperation({ sessionId: "session-displaced-b" });
+    expect(replyRunRegistry.get("agent:main:main")).toBe(operationB);
+
+    // The displaced run keeps its own admission-time authority so its
+    // already-computed reply can still be delivered.
+    expect(operationA.bindToolAuthorityRoute(route)).toBe(fingerprint);
+    expect(operationA.toolAuthorityFingerprint).toBe(fingerprint);
+    operationB.complete();
+  });
+
+  it("lets a superseded run with committed output keep binding its route", () => {
+    const run = createQueueTestRun({ prompt: "committed displaced authority" });
+    const operation = createTestReplyOperation({ sessionId: "session-displaced-frozen" });
+    operation.bindToolAuthoritySnapshot(prepareReplyToolAuthority(run));
+    const route = { provider: "anthropic", model: "claude-fallback" };
+    const fingerprint = resolveFollowupRunToolAuthorityFingerprint(run, route);
+
+    // The backend produced its answer; finalization froze the abort window,
+    // then a newer session writer superseded the run before delivery settled.
+    operation.freezeAbort();
+    expect(operation.supersede()).toBe(true);
+    expect(operation.result).toEqual({ kind: "aborted", code: "aborted_for_supersession" });
+
+    expect(operation.bindToolAuthorityRoute(route)).toBe(fingerprint);
+    operation.complete();
+  });
+
   afterEach(() => {
     testing.resetReplyRunRegistry();
     resetCommandQueueStateForTest();
