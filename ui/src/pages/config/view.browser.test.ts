@@ -7,7 +7,7 @@ import type { SelectPicker } from "../../components/select-picker.ts";
 import { warmJson5 } from "../../lib/json5-runtime.ts";
 import { updatePickers, choosePickerValue } from "../../test-helpers/select-picker.ts";
 import { renderBrowserLinkPreferencesRow } from "./browser-link-preferences.ts";
-import { createConfigViewTestProps as baseProps } from "./view.test-support.ts";
+import { baseProps, renderConfigView } from "./config-view.test-support.ts";
 import { createConfigViewState, renderConfig, type ConfigProps } from "./view.ts";
 
 describe("config view", () => {
@@ -174,27 +174,6 @@ describe("config view", () => {
     return Array.from(container.querySelectorAll("button")).find(
       (btn) => btn.textContent?.trim() === text,
     );
-  }
-
-  function renderConfigView(overrides: Partial<ConfigProps> = {}): {
-    container: HTMLElement;
-    props: ConfigProps;
-  } {
-    const container = document.createElement("div");
-    const props = {
-      ...baseProps(),
-      ...overrides,
-    };
-    const rerender = () =>
-      render(
-        renderConfig({
-          ...props,
-          onViewStateChange: rerender,
-        }),
-        container,
-      );
-    rerender();
-    return { container, props };
   }
 
   function normalizedText(container: HTMLElement): string {

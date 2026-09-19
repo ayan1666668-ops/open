@@ -6,7 +6,7 @@ import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import { afterEach, beforeEach, expect, vi } from "vitest";
 import { insertRegistryWorktree } from "../agents/worktrees/registry.js";
 import { clearRuntimeConfigSnapshot, setRuntimeConfigSnapshot } from "../config/config.js";
-import { patchSessionEntryCore } from "../config/sessions/session-accessor.js";
+import { upsertSessionEntryCore } from "../config/sessions/session-accessor.js";
 import { insertGitHubPublicationSessionLifecycle } from "../state/github-publication-session-lifecycles.js";
 import {
   closeOpenClawAgentDatabasesAsync,
@@ -195,22 +195,15 @@ export let commandCalls: Array<{ argv: string[]; input?: string }>;
 export async function persistPublicationTestSession(sessionKey = SESSION_KEY) {
   setRuntimeConfigSnapshot({
     agents: { list: [{ id: "main", default: true, workspace: path.join(root, "workspace") }] },
-    session: { store: path.join(root, "sessions.json") },
+    // Publication fixtures exercise lifecycle writes without unrelated maintenance workers.
+    session: { maintenance: { mode: "warn" } },
   });
   const { loadGatewaySessionEntryReadOnly } =
     await vi.importActual<typeof import("./session-utils.js")>("./session-utils.js");
   const original = mocks.loadSession.getMockImplementation()!;
-  const entry = {
-    ...original(sessionKey).entry,
-    updatedAt: Date.now(),
-    lifecycleRevision: randomUUID(),
-  };
-  // Fixture seeding must not start an unrelated maintenance Worker that competes
-  // with publication's zero-wait shared-state lease acquisition.
-  await patchSessionEntryCore(
-    { agentId: "main", sessionKey, storePath: path.join(root, "sessions.json") },
-    () => entry,
-    { fallbackEntry: entry, skipMaintenance: true },
+  await upsertSessionEntryCore(
+    { agentId: "main", sessionKey },
+    { ...original(sessionKey).entry, updatedAt: Date.now(), lifecycleRevision: randomUUID() },
   );
   mocks.loadSession.mockImplementation(
     (key: string, options: Parameters<typeof loadGatewaySessionEntryReadOnly>[1]) =>
@@ -218,6 +211,7 @@ export async function persistPublicationTestSession(sessionKey = SESSION_KEY) {
   );
   const read = () => loadGatewaySessionEntryReadOnly(sessionKey, { agentId: "main" }).entry!;
   return {
+    storePath: loadGatewaySessionEntryReadOnly(sessionKey, { agentId: "main" }).storePath,
     read,
     async reset(placements: WorkerSessionPlacementStore) {
       const before = read();
@@ -437,6 +431,19 @@ export function installGitHubPublicationTestHarness(): void {
         }
         return commandResult();
       });
+    // The publication transport is synthetic, but source-policy selection reads
+    // canonical session custody. Seed that same trusted, non-sandboxed owner
+    // instead of bypassing the new config-policy boundary in these tests.
+    setRuntimeConfigSnapshot({
+      agents: { list: [{ id: "main", default: true, workspace: "/repo/worktree" }] },
+    });
+    await upsertSessionEntryCore(
+      { agentId: "main", sessionKey: SESSION_KEY },
+      { ...mocks.loadSession(SESSION_KEY).entry, updatedAt: Date.now() },
+    );
+    // Custody remains persisted for policy reads; release its writer lease so
+    // receipt-only tests can observe a genuinely cold shared database.
+    await closeOpenClawAgentDatabasesAsync();
   });
 
   afterEach(async () => {

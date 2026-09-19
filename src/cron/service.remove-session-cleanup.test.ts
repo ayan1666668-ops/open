@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { expectDefined } from "@openclaw/normalization-core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../test/helpers/promise.js";
 import {
@@ -16,7 +17,7 @@ import { listOpenClawAgentDatabasesForTest } from "../state/openclaw-agent-db.te
 import { clearCronJobActive, markCronJobActive } from "./active-jobs.js";
 import { CronService } from "./service.js";
 import { setupCronServiceSuite } from "./service.test-harness.js";
-import { getPendingCronSessionCleanup } from "./service/locked.js";
+import { hasPendingCronSessionCleanupForAgent } from "./service/locked.js";
 
 const gatewayTestState = vi.hoisted(() => ({
   callGateway: vi.fn(),
@@ -334,14 +335,23 @@ describe("CronService.remove session cleanup", () => {
       { agentId: "main", storePath: sessionStorePath, sessionKey },
       { sessionId: "late-session", updatedAt: Date.now() },
     );
-    const cleanup = getPendingCronSessionCleanup(storePath, job.id);
+    const cleanup = createDeferred<unknown>();
+    const deleteSession = expectDefined(
+      gatewayTestState.callGateway.getMockImplementation(),
+      "Gateway session deletion handler",
+    );
+    gatewayTestState.callGateway.mockImplementationOnce((...args) => {
+      const pending = deleteSession(...args);
+      cleanup.resolve(pending);
+      return pending;
+    });
     clearCronJobActive(job.id, marker);
 
-    // The row can disappear before cleanup releases its filesystem ownership.
-    // Join the recorded operation before the fixture closes databases and removes its directory.
-    expect(cleanup).toBeDefined();
-    await cleanup;
-    expect(loadExactSessionEntry({ storePath: sessionStorePath, sessionKey })).toBeUndefined();
+    await cleanup.promise;
+    await vi.waitFor(() => {
+      expect(hasPendingCronSessionCleanupForAgent("main")).toBe(false);
+      expect(loadExactSessionEntry({ storePath: sessionStorePath, sessionKey })).toBeUndefined();
+    });
   });
 
   it("preserves the session of a replacement job with the same id", async () => {

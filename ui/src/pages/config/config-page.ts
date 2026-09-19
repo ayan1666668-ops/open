@@ -866,17 +866,11 @@ export class ConfigPage extends OpenClawLightDomElement {
     context?: Parameters<typeof startThemeTransition>[0]["context"],
   ) {
     const preference = this.currentSyncedPref("themeMode");
-    const reset = preference.overridden && mode === preference.resetValue;
-    const currentTheme = resolveTheme(this.settings.theme, this.settings.themeMode);
-    startThemeTransition({
-      currentTheme,
-      nextTheme: resolveTheme(this.settings.theme, mode),
-      context,
-      applyTheme: () =>
-        reset
-          ? this.resetSyncedAppearancePref("themeMode")
-          : this.applySettings({ themeMode: mode }),
-    });
+    if (preference.overridden && mode === preference.resetValue) {
+      this.resetSyncedAppearancePref("themeMode");
+    } else {
+      this.context.theme.setMode(mode, context?.element);
+    }
   }
 
   private selectMicrophone(deviceId: string) {
@@ -1108,6 +1102,8 @@ export class ConfigPage extends OpenClawLightDomElement {
         ? localePref.resetValue
         : undefined,
       onLocaleChange: (locale) => this.setLocale(locale),
+      themeCatalog: this.pageId === "appearance" ? this.context.theme.catalog : undefined,
+      onRetryThemeCatalog: () => this.context.theme.retryCatalog?.(),
       setTheme: (theme, transitionContext) => this.setTheme(theme, transitionContext),
       setThemeMode: (mode, transitionContext) => this.setThemeMode(mode, transitionContext),
       setAccent: (accent) =>
