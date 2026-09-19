@@ -17,9 +17,15 @@ import {
 } from "../../../process/gateway-work-admission.js";
 import { withOpenClawTestState } from "../../../test-utils/openclaw-test-state.js";
 import { createSubagentRunRecord } from "../../subagent-test-fixtures.test-helpers.js";
+import { resolveSubagentAttachmentDir } from "../subagent-attachment-paths.js";
 import { reconcileDurableSubagentKillIntent } from "./subagent-registry-sweep-kill.js";
 import { retireSupersededSubagentRun } from "./subagent-registry-sweeper-retire.js";
-import { createSubagentRegistrySweeper } from "./subagent-registry-sweeper.js";
+import {
+  createSubagentSweeperRun as run,
+  createSubagentSweeperChildLookup as childRuns,
+  createArchivedSubagentSweeperRun as archivedRun,
+  createSubagentSweeperHarness as createHarness,
+} from "./subagent-registry-sweeper.test-support.js";
 import type { SubagentRunRecord } from "./subagent-registry.types.js";
 import { loadSubagentSessionEntry } from "./subagent-session-reconciliation.js";
 
@@ -67,125 +73,6 @@ vi.mock("./subagent-session-reconciliation.js", async (importOriginal) => {
     loadSubagentSessionEntry: vi.fn(() => killSessionEntry.current),
   };
 });
-
-function run(): SubagentRunRecord {
-  return createSubagentRunRecord({
-    runId: "interrupted-run",
-    childSessionKey: "agent:main:subagent:interrupted",
-    requesterSessionKey: "agent:main:main",
-    requesterDisplayKey: "main",
-    task: "recover after restart",
-    cleanup: "keep",
-    createdAt: Date.now() - 60_000,
-    startedAt: Date.now() - 55_000,
-  });
-}
-
-const childRuns = (runs: Map<string, SubagentRunRecord>) => (childSessionKey: string) =>
-  [...runs.values()].filter((entry) => entry.childSessionKey === childSessionKey);
-
-function archivedRun(overrides: Partial<SubagentRunRecord> = {}): SubagentRunRecord {
-  return {
-    ...run(),
-    cleanup: "delete",
-    archiveAtMs: Date.now() - 1,
-    execution: { status: "terminal", endedAt: Date.now() - 10_000, outcome: { status: "ok" } },
-    ...overrides,
-  };
-}
-
-function createHarness(runtime: { current?: GatewayRecoveryRuntime }, entry = run()) {
-  const runs = new Map([[entry.runId, entry]]);
-  const finalizeInterruptedSubagentRun = vi.fn(
-    async (_params: {
-      runId: string;
-      expectedEntry?: SubagentRunRecord;
-      error: string;
-      endedAt?: number;
-    }) => 0,
-  );
-  const completeSubagentRunWithRecovery = vi.fn();
-  const completeCleanupBookkeeping = vi.fn();
-  const emitSubagentEndedHookForRun = vi.fn();
-  const notifyContextEngineSubagentEnded = vi.fn();
-  const callGateway = vi.fn();
-  const resumeRequesterSettleWake = vi.fn();
-  const warn = vi.fn();
-  const sweeper = createSubagentRegistrySweeper({
-    runs,
-    resumedRuns: new Set(),
-    persist: vi.fn(),
-    clearPendingLifecycleError: vi.fn(),
-    clearPendingLifecycleTimeout: vi.fn(),
-    sweepPendingLifecycle: vi.fn(),
-    completeSubagentRunWithRecovery,
-    getGatewayRecoveryRuntime: () => runtime.current,
-    abandonSubagentRestartRecoveryLaunch: vi.fn(() => true),
-    clearAcceptedSubagentRestartRecovery: vi.fn(() => true),
-    clearPendingSubagentRecoveryNotice: vi.fn(() => true),
-    resumeSettledSubagentRestartRecovery: vi.fn(() => true),
-    replaceSubagentRunAfterSteer: vi.fn(() => true),
-    markSubagentRestartRecoveryLaunchAttempted: vi.fn((params) => ({
-      sessionId: "session-id",
-      sessionMarker: params.sessionMarker,
-      idempotencyKey: params.idempotencyKey,
-      lifecycleGeneration: params.lifecycleGeneration,
-      phase: "attempted" as const,
-    })),
-    markSubagentRestartRecoveryLaunchAccepted: vi.fn((params) => ({
-      sessionId: "session-id",
-      sessionMarker: params.sessionMarker,
-      idempotencyKey: params.idempotencyKey,
-      phase: "accepted" as const,
-    })),
-    markSubagentRestartRecoveryLaunchConsumed: vi.fn((params) => ({
-      sessionId: "session-id",
-      sessionMarker: params.sessionMarker,
-      idempotencyKey: params.idempotencyKey,
-      phase: "consumed" as const,
-    })),
-    reserveSubagentRestartRecoveryLaunch: vi.fn(
-      (params: { idempotencyKey: string }) => params.idempotencyKey,
-    ),
-    resetSubagentRestartRecoveryLaunchAttempt: vi.fn(() => true),
-    finalizeInterruptedSubagentRun,
-    resumeRequesterSettleWake,
-    startSubagentAnnounceCleanupFlow: vi.fn(() => true),
-    completeCleanupBookkeeping,
-    discardTerminalDelivery: vi.fn(),
-    shouldEmitEndedHookForRun: vi.fn(() => false),
-    emitSubagentEndedHookForRun,
-    callGateway,
-    cleanupCollectorLaunchResources: vi.fn(async () => true),
-    runContextEngineSubagentEnded: vi.fn(),
-    notifyContextEngineSubagentEnded,
-    retireSupersededRun: vi.fn(),
-    getRunsForChildSession: childRuns(runs),
-    getRunsForCollectorGroup: (requesterSessionKey, groupId) =>
-      [...runs].filter(
-        ([, candidate]) =>
-          candidate.collect &&
-          candidate.groupId === groupId &&
-          (candidate.swarmRequesterSessionKey ?? candidate.requesterSessionKey) ===
-            requesterSessionKey,
-      ),
-    warn,
-  });
-  onTestFinished(() => sweeper.reset());
-  return {
-    entry,
-    runs,
-    callGateway,
-    completeCleanupBookkeeping,
-    completeSubagentRunWithRecovery,
-    emitSubagentEndedHookForRun,
-    finalizeInterruptedSubagentRun,
-    notifyContextEngineSubagentEnded,
-    resumeRequesterSettleWake,
-    sweeper,
-    warn,
-  };
-}
 
 describe("subagent registry recovery scheduling", () => {
   beforeEach(() => {
@@ -844,16 +731,18 @@ describe("subagent registry recovery scheduling", () => {
     // stale delivery, but nothing here may retire child-owned resources.
     const runtime = { current: {} as GatewayRecoveryRuntime };
     const { entry, completeCleanupBookkeeping, sweeper } = createHarness(runtime);
-    const attachmentsRootDir = fsSync.mkdtempSync(
-      path.join(os.tmpdir(), "openclaw-suspended-expiry-"),
-    );
-    const attachmentsDir = path.join(attachmentsRootDir, entry.runId);
+    const attachmentId = "9b1e4c2a-7d3f-4a2e-8b5c-6f0d1a2b3c4d";
+    const stateDir = fsSync.mkdtempSync(path.join(os.tmpdir(), "openclaw-suspended-expiry-"));
+    const attachmentsDir = resolveSubagentAttachmentDir("main", entry.childSessionKey, attachmentId, {
+      ...process.env,
+      OPENCLAW_STATE_DIR: stateDir,
+    });
     fsSync.mkdirSync(attachmentsDir, { recursive: true });
     const artifactPath = path.join(attachmentsDir, "child-output.txt");
     fsSync.writeFileSync(artifactPath, "written by a child that may still be running");
+    vi.stubEnv("OPENCLAW_STATE_DIR", stateDir);
     entry.cleanup = "delete";
-    entry.attachmentsRootDir = attachmentsRootDir;
-    entry.attachmentsDir = attachmentsDir;
+    entry.attachmentId = attachmentId;
     entry.expectsCompletionMessage = true;
     entry.execution = {
       status: "terminal",
@@ -903,7 +792,8 @@ describe("subagent registry recovery scheduling", () => {
       );
       expect(fsSync.existsSync(attachmentsDir)).toBe(false);
     } finally {
-      fsSync.rmSync(attachmentsRootDir, { recursive: true, force: true });
+      vi.unstubAllEnvs();
+      fsSync.rmSync(stateDir, { recursive: true, force: true });
     }
   });
 

@@ -645,6 +645,8 @@ export function adoptPausedSubagentRunForFollowUp(params: {
   childSessionKey: string;
   runId: string;
   task: string;
+  /** Exact paused owner captured by explicit task-resume admission. */
+  expected?: SubagentRunRecord;
   gatewayContextResolver?: GatewayContextResolver;
 }): boolean {
   const childSessionKey = params.childSessionKey.trim();
@@ -660,7 +662,7 @@ export function adoptPausedSubagentRunForFollowUp(params: {
     childSessionKey,
     (entry) => entry.pauseReason === "sessions_yield",
   );
-  if (!paused) {
+  if (!paused || (params.expected && paused !== params.expected)) {
     return false;
   }
   return subagentRunManager.replaceSubagentRunAfterSteer({
