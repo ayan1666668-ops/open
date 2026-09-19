@@ -2,7 +2,10 @@ import fs from "node:fs";
 import { expectDefined } from "@openclaw/normalization-core";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { resolveSessionAgentId } from "../../agents/agent-scope.js";
-import type { GatewayStoredSessionTargets } from "../../config/sessions/combined-store-gateway.js";
+import type {
+  GatewayStoredSessionTarget,
+  GatewayStoredSessionTargets,
+} from "../../config/sessions/combined-store-gateway.js";
 import { parseSqliteSessionFileMarker } from "../../config/sessions/legacy-sqlite-marker.js";
 import {
   resolveSessionFilePathCore,
@@ -80,6 +83,8 @@ export type UsageSessionSelection = UsageSessionSummaryTarget & {
   sessionFamilyKey?: string;
   currentSessionId?: string;
   includedSessionIds?: string[];
+  contextTarget?: { storeTarget: GatewayStoredSessionTarget["storeTarget"]; storedKey: string };
+  contextWeight?: SessionEntry["systemPromptReport"];
 };
 
 function usageSessionIdentity(agentId: string, sessionId: string): string {
@@ -383,32 +388,54 @@ export async function selectUsageSessions(params: {
   // Sort by most recent first
   mergedEntries.sort((a, b) => b.updatedAt - a.updatedAt);
 
-  // Context availability is visible even when the report itself was not requested.
-  // Read only the emitted rows from their captured physical stores.
-  for (const [index, selected] of mergedEntries.entries()) {
+  // Only response rows need context reports; totals still include every selected instance.
+  for (const [index, row] of mergedEntries.entries()) {
     if (index >= params.limit) {
       break;
     }
-    if (!selected.storeEntry) {
+    const target = targetsBySessionKey.get(row.key);
+    if (!target) {
       continue;
     }
-    const target = expectDefined(targetsBySessionKey.get(selected.key), "usage context owner");
-    const [loaded] = loadExactSessionEntryCandidates({
-      readSource: { agentId: target.storeTarget.agentId, path: target.storeTarget.storePath },
-      readOnly: true,
-      sessionKeys: [target.storeKey ?? selected.key],
-      projection: "full",
-    });
-    if (
-      loaded?.entry.sessionId === selected.sessionId &&
-      (!visibilityFilter || visibilityFilter(selected.key, loaded.entry))
-    ) {
-      selected.storeEntry = {
-        ...selected.storeEntry,
-        systemPromptReport: loaded.entry.systemPromptReport,
-      };
-    }
+    row.contextTarget = { storeTarget: target.storeTarget, storedKey: target.storeKey ?? row.key };
   }
 
   return mergedEntries;
+}
+
+export function loadUsageSessionContext(
+  selected: UsageSessionSelection[],
+  visibilityFilter?: (key: string, entry: SessionEntry) => boolean,
+): void {
+  const contextRows = new Map<
+    GatewayStoredSessionTarget["storeTarget"],
+    Array<{ row: UsageSessionSelection; storedKey: string }>
+  >();
+  for (const row of selected) {
+    const target = row.contextTarget;
+    if (target) {
+      const rows = contextRows.get(target.storeTarget) ?? [];
+      rows.push({ row, storedKey: target.storedKey });
+      contextRows.set(target.storeTarget, rows);
+    }
+  }
+  for (const [target, rows] of contextRows) {
+    const entries = new Map(
+      loadExactSessionEntryCandidates({
+        readOnly: true,
+        readSource: { agentId: target.agentId, path: target.storePath },
+        sessionKeys: rows.map(({ storedKey }) => storedKey),
+      }).map(({ sessionKey, entry }) => [sessionKey, entry]),
+    );
+    for (const { row, storedKey } of rows) {
+      const entry = entries.get(storedKey);
+      // Summary loading can yield across a reset or sharing change; never expose its successor's report.
+      if (
+        entry?.sessionId === row.sessionId &&
+        (!visibilityFilter || visibilityFilter(row.key, entry))
+      ) {
+        row.contextWeight = entry.systemPromptReport;
+      }
+    }
+  }
 }

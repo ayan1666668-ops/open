@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { expectDefined } from "@openclaw/normalization-core";
 import { expect, it, vi } from "vitest";
+import { trackSqliteStatementExecutions } from "../../../test/helpers/sqlite-statement-execution-counter.js";
 import { SessionManager } from "../../agents/sessions/session-manager.js";
 import { getRuntimeConfig } from "../../config/config.js";
 import { encodeSessionArchiveContent } from "../../config/sessions/archive-compression.js";
@@ -10,14 +11,19 @@ import {
   listSessionTranscriptInstances,
   loadSessionEntryReadOnly,
   persistSessionTranscriptTurn,
+  replaceSessionEntrySync,
   upsertSessionEntryCore,
 } from "../../config/sessions/session-accessor.js";
 import type { SessionSystemPromptReport } from "../../config/sessions/types.js";
 import { discoverAllSessions, loadSessionCostSummary } from "../../infra/session-cost-usage.js";
 import type { AssistantMessage } from "../../llm/types.js";
 import type { SessionsUsageResult } from "../../shared/usage-types.js";
+import { openOpenClawAgentDatabase } from "../../state/openclaw-agent-db.js";
 import { SYSTEM_AGENT_ID } from "../../system-agent/agent-id.js";
-import { createOpenClawTestState } from "../../test-utils/openclaw-test-state.js";
+import {
+  createOpenClawTestState,
+  withOpenClawTestState,
+} from "../../test-utils/openclaw-test-state.js";
 import { createDirectChatContext } from "../server-chat.agent-events.test-helpers.js";
 import type { RespondFn } from "./types.js";
 import { usageHandlers } from "./usage.js";
@@ -121,6 +127,13 @@ it("hydrates context metadata only for emitted usage rows while aggregating ever
       { selected: [newest, secondNewest], includeContextWeight: false },
     ]) {
       const respond = vi.fn<RespondFn>();
+      const reads = ["main", "opus"].map((agentId) =>
+        trackSqliteStatementExecutions(
+          openOpenClawAgentDatabase({ agentId }).db,
+          ["entries"],
+          (sql) => (/from\s+"session_nodes"/i.test(sql) ? "entries" : null),
+        ),
+      );
       const parse = vi.spyOn(JSON, "parse");
       let parsedPrompts: string[];
       try {
@@ -145,8 +158,14 @@ it("hydrates context metadata only for emitted usage rows while aggregating ever
             parse.mock.calls.some(([json]) => json.includes(fixture.promptMarker)),
           )
           .map((fixture) => fixture.promptMarker);
+        expect(reads.reduce((bytes, read) => bytes + read.textBytes.entries, 0)).toBeLessThan(
+          65_536 * scenario.selected.length * 4,
+        );
       } finally {
         parse.mockRestore();
+        for (const read of reads) {
+          read.restore();
+        }
       }
       expect(respond).toHaveBeenCalledOnce();
       const [ok, payload] = expectDefined(respond.mock.calls[0], "usage response");
@@ -181,6 +200,63 @@ it("hydrates context metadata only for emitted usage rows while aggregating ever
   } finally {
     await state.cleanup();
   }
+});
+
+it("reads selected reports from the physical owner of shared-store sentinels and qualified rows", async () => {
+  await withOpenClawTestState({ label: "usage-shared-context" }, async (state) => {
+    const storePath = state.statePath("shared.sqlite");
+    await state.writeConfig({
+      agents: {
+        ownership: "explicit",
+        entries: { main: {}, ops: {}, worker: {} },
+        defaults: { sessionStore: { agentId: "ops" } },
+      },
+      session: { store: storePath },
+      plugins: { enabled: false },
+    });
+    const config = getRuntimeConfig();
+    openOpenClawAgentDatabase({ agentId: "main", path: storePath });
+    for (const [agentId, key] of [
+      ["ops", "global"],
+      ["worker", "agent:worker:usage"],
+    ] as const) {
+      const contextWeight = {
+        source: "run" as const,
+        generatedAt: agentId === "ops" ? 10 : 20,
+        systemPrompt: { chars: 100, projectContextChars: 40, nonProjectContextChars: 60 },
+        injectedWorkspaceFiles: [],
+        skills: { promptChars: 0, entries: [] },
+        tools: { listChars: 0, schemaChars: 0, entries: [] },
+      };
+      replaceSessionEntrySync(
+        { agentId, sessionKey: key, storePath },
+        { sessionId: `${agentId}-usage`, updatedAt: 1, systemPromptReport: contextWeight },
+      );
+      const target = loadCombinedSessionStoreForGatewayCore(config, {
+        agentId,
+      }).targetsBySessionKey.get(key);
+      expect(target?.agentId).toBe(agentId);
+      expect(target?.storeTarget).toEqual({ agentId: "main", storePath });
+      const respond = vi.fn<RespondFn>();
+      await expectDefined(
+        usageHandlers["sessions.usage"],
+        "usage handler",
+      )({
+        req: { type: "req", id: agentId, method: "sessions.usage" },
+        params: { range: "all", key, agentId, includeContextWeight: true },
+        respond,
+        client: null,
+        isWebchatConnect: () => false,
+        context: createDirectChatContext({ getRuntimeConfig: () => config }),
+      });
+      expect(respond).toHaveBeenCalledOnce();
+      const [ok, payload] = expectDefined(respond.mock.calls[0], "shared usage response");
+      expect(ok).toBe(true);
+      expect(payload).toMatchObject({
+        sessions: [{ key, agentId, hasContextWeight: true, contextWeight }],
+      });
+    }
+  });
 });
 
 it.each([
