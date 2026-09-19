@@ -4,6 +4,7 @@ import { request as httpRequest, type IncomingMessage, type ServerResponse } fro
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { createDeferred } from "../../test/helpers/promise.js";
 import { resolveMainSessionKeyFromConfig } from "../config/sessions.js";
+import type { RunCronAgentTurnParams } from "../cron/isolated-agent/run-prepare-runtime.js";
 import { drainSystemEvents } from "../infra/system-events.js";
 import {
   cronIsolatedRun,
@@ -245,6 +246,7 @@ describe("gateway hook request lifetime", () => {
       enabled: true,
       token: HOOK_TOKEN,
       presets: ["gmail"],
+      defaultSessionKey: "hook:gmail:ingress",
       allowRequestSessionKey: true,
       allowedSessionKeyPrefixes: ["hook:gmail:"],
     };
@@ -254,15 +256,17 @@ describe("gateway hook request lifetime", () => {
       const startupSignals: AbortSignal[] = [];
       let executions = 0;
       cronIsolatedRun.mockClear();
-      cronIsolatedRun.mockImplementation(
-        async (params: { abortSignal: AbortSignal; onExecutionStarted?: () => void }) => {
-          startupSignals.push(params.abortSignal);
-          await releaseAdmission.promise;
-          params.onExecutionStarted?.();
-          executions += 1;
-          return { status: "ok", summary: "background complete" };
-        },
-      );
+      cronIsolatedRun.mockImplementation(async (input: unknown) => {
+        const params = input as RunCronAgentTurnParams;
+        if (!params.abortSignal) {
+          throw new Error("expected hook startup abort signal");
+        }
+        startupSignals.push(params.abortSignal);
+        await releaseAdmission.promise;
+        params.onExecutionStarted?.();
+        executions += 1;
+        return { status: "ok", summary: "background complete" };
+      });
       const body = {
         messages: ["first", "second"].map((id) => ({
           id,
