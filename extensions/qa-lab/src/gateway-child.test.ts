@@ -1084,8 +1084,11 @@ describe("buildQaRuntimeEnv", () => {
     const tempParent = await tempDirs.makeTempDir("qa-gateway-env-scrub-");
     qaTempPathState.preferredTmpDir = tempParent;
     const observedEnvPath = path.join(tempParent, "observed-env.json");
+    // Packaged startup first invokes auth bootstrap; consume its stdin before
+    // exiting so that phase cannot race the parent's credential write.
     const captureScript = [
       'const fs = require("node:fs");',
+      'if (process.argv[1] === "models") { process.stdin.resume(); } else {',
       "const env = {",
       "SAFE_VALUE: process.env.SAFE_VALUE,",
       "OPENCLAW_LIVE_SETUP_TOKEN_VALUE: process.env.OPENCLAW_LIVE_SETUP_TOKEN_VALUE,",
@@ -1098,6 +1101,7 @@ describe("buildQaRuntimeEnv", () => {
       "OPENCLAW_DEV_SOURCE_ROOT: process.env.OPENCLAW_DEV_SOURCE_ROOT,",
       "};",
       `fs.writeFileSync(${JSON.stringify(observedEnvPath)}, JSON.stringify(env));`,
+      "}",
     ].join("\n");
 
     const owner = ownGateway();
@@ -1145,7 +1149,9 @@ describe("buildQaRuntimeEnv", () => {
       runnerPath,
       [
         'import fs from "node:fs";',
+        'if (process.argv[2] === "models") { process.stdin.resume(); } else {',
         `fs.writeFileSync(${JSON.stringify(observedEnvPath)}, process.env.OPENCLAW_DEV_SOURCE_ROOT ?? "");`,
+        "}",
       ].join("\n"),
       "utf8",
     );
