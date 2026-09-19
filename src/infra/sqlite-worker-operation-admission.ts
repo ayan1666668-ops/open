@@ -240,7 +240,7 @@ export function deferSqliteWorkerCommitReceipt(database: DatabaseSync, facts: un
   if (
     !deferSqlitePostCommitPublication(database, () => {
       scope.owner.committed = { facts: captured };
-      scope.owner.port.postMessage({ kind: "native-commit", committed: scope.owner.committed });
+      scope.owner.port.postMessage({ kind: "native-commit", committed: scope.owner.committed }, []);
     })
   ) {
     throw new Error("SQLite worker receipt requires a transaction publication owner");

@@ -170,17 +170,23 @@ it.each(["malformed", "after settlement"] as const)(
   (receipt) => {
     const admission = createSqliteWorkerOperationAdmission((_request, grant) => grant());
     try {
-      admission.port.postMessage({ kind: "native-commit", committed: { facts: { value: 1 } } });
+      admission.port.postMessage({ kind: "native-commit", committed: { facts: { value: 1 } } }, []);
       if (receipt === "after settlement") {
-        admission.port.postMessage({
-          kind: "native-settlement",
-          settlement: { kind: "completed", committed: { facts: { value: 1 } } },
-        });
+        admission.port.postMessage(
+          {
+            kind: "native-settlement",
+            settlement: { kind: "completed", committed: { facts: { value: 1 } } },
+          },
+          [],
+        );
       }
-      admission.port.postMessage({
-        kind: "native-commit",
-        committed: receipt === "malformed" ? null : { facts: { value: 2 } },
-      });
+      admission.port.postMessage(
+        {
+          kind: "native-commit",
+          committed: receipt === "malformed" ? null : { facts: { value: 2 } },
+        },
+        [],
+      );
       admission.finish();
       expect(admission.committed).toEqual({ facts: { value: 1 } });
       expect(admission.failure).toMatchObject({
