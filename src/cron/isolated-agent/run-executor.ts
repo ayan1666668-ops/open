@@ -68,6 +68,7 @@ import {
   resolveFastModeState,
   runCliAgent,
 } from "./run-execution.runtime.js";
+import type { CronRunExecutionParams } from "./run-execution.types.js";
 import { resolveCronFallbacksOverride } from "./run-fallback-policy.js";
 import {
   setCronSessionAgentHarnessId,
@@ -79,7 +80,6 @@ import type {
   AgentTurnPayload,
   CronCompletedPromptRun,
   CronExecutionResult,
-  CronRunExecutionParams,
   CronRunnerStartedInfo,
 } from "./run.types.js";
 import { isLikelyInterimCronMessage } from "./subagent-followup-hints.js";
