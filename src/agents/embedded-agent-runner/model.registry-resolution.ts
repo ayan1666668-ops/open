@@ -3,11 +3,15 @@ import type { ModelRegistry as CoreModelRegistry } from "../../llm/model-registr
 import type { Model } from "../../llm/types.js";
 import type { PluginMetadataSnapshotOwnerMaps } from "../../plugins/plugin-metadata-snapshot.types.js";
 import type { ProviderRuntimeModel } from "../../plugins/provider-runtime-model.types.js";
-import { loadAuthProfileStoreForRuntimeAsync, resolveAuthProfileOrder } from "../auth-profiles.js";
+import {
+  loadAuthProfileStoreForRuntimeAsync,
+  resolveAuthProfileOrder,
+  waitForActiveOAuthRefreshes,
+} from "../auth-profiles.js";
 import { externalCliDiscoveryForProviderAuth } from "../auth-profiles/external-cli-discovery.js";
 import { AuthProfileRuntimeReadStaleError } from "../auth-profiles/runtime-persisted-rows.js";
 import { createSelectedAuthProfileUnavailableError } from "../auth-profiles/selection-error.js";
-import type { AuthProfileCredential, AuthProfileStore } from "../auth-profiles/types.js";
+import type { AuthProfileCredential } from "../auth-profiles/types.js";
 import { resolveAgentHarnessPolicy } from "../harness/policy.js";
 import { normalizeStaticProviderModelId } from "../model-ref-shared.js";
 import { normalizeProviderId } from "../model-selection.js";
@@ -195,31 +199,31 @@ export async function resolveDynamicModelAuthProfile(params: {
       preferredProfile: params.preferredProfile,
     }),
   };
-  const readStore = async (remainingTransitions: number): Promise<AuthProfileStore> => {
-    try {
-      return await loadAuthProfileStoreForRuntimeAsync(agentDir, readOptions);
-    } catch (error) {
-      if (!(error instanceof AuthProfileRuntimeReadStaleError) || remainingTransitions === 0) {
-        throw error;
-      }
-      // One OAuth refresh publishes both its claim and settlement. Each can invalidate a
-      // read; recapture only after cleanup, with the same agent and explicit account pin.
-      return readStore(remainingTransitions - 1);
+  const readStore = () => loadAuthProfileStoreForRuntimeAsync(agentDir, readOptions);
+  const providers = listOpenAIAuthProfileProvidersForAgentRuntime({
+    provider: params.provider,
+    config: params.cfg,
+  });
+  const store = await readStore().catch(async (error: unknown) => {
+    if (!(error instanceof AuthProfileRuntimeReadStaleError)) {
+      throw error;
     }
-  };
-  const store = await readStore(2);
+    // A refresh publishes its claim and settlement separately; join that owner before recapturing.
+    await Promise.all(
+      providers.map((provider) => waitForActiveOAuthRefreshes(provider, explicitProfileId)),
+    );
+    return readStore();
+  });
   const profileId =
     explicitProfileId ??
-    listOpenAIAuthProfileProvidersForAgentRuntime({
-      provider: params.provider,
-      config: params.cfg,
-    }).flatMap((provider) =>
+    providers.flatMap((provider) =>
       resolveAuthProfileOrder({
         cfg: params.cfg,
         store,
         provider,
         preferredProfile: params.preferredProfile,
         forModel: params.modelId,
+        includePendingOAuthRefresh: true,
       }),
     )[0];
   if (!profileId) {
