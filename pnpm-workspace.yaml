@@ -1,3 +1,4 @@
+# Demo only: verify dependency review for an external contributor. Do not merge.
 packages:
   - .
   - ui
