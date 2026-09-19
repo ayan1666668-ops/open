@@ -334,7 +334,7 @@ describe("IMAP sender admission", () => {
 
   it("retries a real DKIM key-lookup timeout that DMARC resolves to fail", async () => {
     const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
-    const privateKeyPem = privateKey.export({ type: "pkcs8", format: "pem" }).toString();
+    const privateKeyPem = privateKey.export({ type: "pkcs8", format: "pem" });
     const unsigned = Buffer.from(
       [
         "From: trusted@example.com",
