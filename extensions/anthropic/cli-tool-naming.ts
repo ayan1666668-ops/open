@@ -9,7 +9,7 @@
  */
 import { OPENCLAW_MCP_TOOL_PREFIX } from "./cli-constants.js";
 
-export const CLAUDE_CLI_TOOL_NAMING_HEADING = "## OpenClaw tool names in Claude Code";
+const CLAUDE_CLI_TOOL_NAMING_HEADING = "## OpenClaw tool names in Claude Code";
 
 const CLAUDE_CLI_TOOL_NAMING_SECTION = [
   CLAUDE_CLI_TOOL_NAMING_HEADING,

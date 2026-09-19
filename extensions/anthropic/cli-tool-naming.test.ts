@@ -1,9 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { buildAnthropicCliBackend } from "./cli-backend.js";
-import {
-  appendClaudeCliToolNamingGuidance,
-  CLAUDE_CLI_TOOL_NAMING_HEADING,
-} from "./cli-tool-naming.js";
+import { appendClaudeCliToolNamingGuidance } from "./cli-tool-naming.js";
+
+const CLAUDE_CLI_TOOL_NAMING_HEADING = "## OpenClaw tool names in Claude Code";
 
 const TOOLING_PROMPT = [
   "## Tooling",
