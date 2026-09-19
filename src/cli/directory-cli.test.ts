@@ -123,7 +123,7 @@ describe("registerDirectoryCli", () => {
     ["peers", ["directory", "peers", "list"]],
     ["groups", ["directory", "groups", "list"]],
     ["members", ["directory", "groups", "members", "--group-id", "group-1"]],
-  ])("%s account input", (_leaf, args) => {
+  ])("%s selector input", (_leaf, args) => {
     it.each(["", " \t\n "])("rejects blank %j before command startup", async (account) => {
       const startup = vi.fn(() => {
         throw new Error("Command startup reached");
@@ -138,6 +138,44 @@ describe("registerDirectoryCli", () => {
       ).rejects.toThrow("--account must not be blank");
 
       expect(startup).not.toHaveBeenCalled();
+    });
+
+    it.each(["", " \t\n "])(
+      "rejects blank channel %j instead of inferring the single configured channel",
+      async (channel) => {
+        // Auto-enable changes make inference persist config, so a late guard would be visible.
+        mocks.applyPluginAutoEnable.mockReturnValue({
+          config: { channels: { whatsapp: {} }, plugins: { allow: ["whatsapp"] } },
+          changes: ["whatsapp"],
+        });
+        const program = new Command().name("openclaw");
+        registerDirectoryCli(program);
+
+        await expect(
+          program.parseAsync([...args, "--channel", channel, "--json"], { from: "user" }),
+        ).rejects.toThrow("--channel must not be blank");
+
+        expect(mocks.readConfigFileSnapshot).not.toHaveBeenCalled();
+        expect(mocks.applyPluginAutoEnable).not.toHaveBeenCalled();
+        expect(mocks.resolveInstallableChannelPlugin).not.toHaveBeenCalled();
+        expect(mocks.resolveMessageChannelSelection).not.toHaveBeenCalled();
+        expect(mocks.replaceConfigFile).not.toHaveBeenCalled();
+        expect(mocks.resolveCommandSecretRefsViaGateway).not.toHaveBeenCalled();
+        expect(runtimeState.defaultRuntime.writeJson).not.toHaveBeenCalled();
+      },
+    );
+
+    it("reports the blank account before the blank channel", async () => {
+      const program = new Command().name("openclaw");
+      registerDirectoryCli(program);
+
+      await expect(
+        program.parseAsync([...args, "--channel", "", "--account", " ", "--json"], {
+          from: "user",
+        }),
+      ).rejects.toThrow("--account must not be blank");
+
+      expect(mocks.readConfigFileSnapshot).not.toHaveBeenCalled();
     });
   });
 

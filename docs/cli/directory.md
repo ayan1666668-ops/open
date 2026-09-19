@@ -19,6 +19,10 @@ Results are meant to be pasted into other commands, especially `openclaw message
 - `--json`: output JSON
 - `--limit <n>`: positive integer cap for peers/groups/members listings
 
+Only omitting `--channel` auto-selects the single configured channel. Explicitly empty and
+whitespace-only channel values fail with `--channel must not be blank` before plugin setup or
+lookup, so an unset shell variable cannot list a directory you did not name.
+
 Omit `--account` to select the channel default. Explicitly empty and whitespace-only account
 values fail with `--account must not be blank` before account setup or lookup.
 

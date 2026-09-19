@@ -111,6 +111,11 @@ export function registerDirectoryCli(program: Command) {
       .option("--json", "Output JSON", false);
 
   const resolve = async (opts: { channel?: string; account?: string }) => {
+    // Only omission infers the channel. A blank value from an unset shell variable must not
+    // redirect a directory lookup to a channel the caller never named.
+    if (opts.channel !== undefined && !opts.channel.trim()) {
+      throw new Error("--channel must not be blank");
+    }
     const writeSnapshot = await requireValidConfigForWrite(defaultRuntime);
     if (!writeSnapshot) {
       return null;
