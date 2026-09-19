@@ -246,11 +246,7 @@ export {
   HEARTBEAT_RESPONSE_TOOL_NAME,
   normalizeHeartbeatToolResponse,
 } from "../auto-reply/heartbeat-tool-response.js";
-export {
-  isMessagingTool,
-  isMessagingToolSendAction,
-  isPluginNativeMessagingTool,
-} from "../agents/embedded-agent-messaging.js";
+export { isMessagingTool, isMessagingToolSendAction } from "../agents/embedded-agent-messaging.js";
 export {
   projectPluginMessageDeliveryFact,
   readEmbeddedMessageDeliveryFact,

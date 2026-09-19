@@ -106,8 +106,16 @@ For messaging tools, read the original result's `details.messageDelivery` with
 `readEmbeddedMessageDeliveryFact` from `openclaw/plugin-sdk/agent-harness-runtime`.
 Only settled delivery counts as a sent message; successful dry runs and suppressed
 sends must not suppress a later reply. Preserve partial delivery evidence when a
-tool also reports an error. Channel tool results without a delivery fact use
-`isPluginNativeMessagingTool` and `isDeliveredMessagingToolResult`.
+tool also reports an error. Messaging tool results without a delivery fact use
+`isDeliveredMessagingToolResult`, which owns tool eligibility and receipt interpretation.
+For core conversation tools, it reads the original Gateway result's `details.status`:
+`sent` confirms delivery, as do `replied` and `timeout` for `conversations_turn`.
+A peer-reply timeout or correlation error does not undo the channel send or change
+the tool's error status. `queued`, `suppressed`, and `unknown` do not confirm delivery,
+even when they include a prepared message ID. Session coordination results are not
+external delivery receipts.
+Use `requirePluginDeliveryId: true` when legacy plugin results need a concrete
+message ID; authoritative core conversation statuses do not require one.
 `projectPluginMessageDeliveryFact` reads legacy result envelopes into the shared
 delivery shape, retaining partial-delivery status for attachment handling.
 For legacy message sends, an error takes precedence over a message ID unless

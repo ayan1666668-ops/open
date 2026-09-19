@@ -79,6 +79,32 @@ describe("messaging delivery action classification", () => {
 });
 
 describe("isDeliveredMessagingToolResult", () => {
+  it.each(["sessions_send", "conversations_list", "exec"])(
+    "does not infer external delivery for %s from plugin-shaped success",
+    (toolName) => {
+      expect(
+        isDeliveredMessagingToolResult({
+          toolName,
+          args: { action: "send" },
+          result: { details: { status: "sent", messageId: "operation-1" } },
+        }),
+      ).toBe(false);
+    },
+  );
+
+  it.each(["queued", "suppressed", "unknown"])(
+    "keeps a core %s receipt authoritative over plugin-shaped hook evidence",
+    (status) => {
+      expect(
+        isDeliveredMessagingToolResult({
+          toolName: "conversations_send",
+          result: { details: { status, messageId: "prepared-id" } },
+          hookResult: { details: { status: "sent", messageId: "hook-id" } },
+        }),
+      ).toBe(false);
+    },
+  );
+
   it.each([
     ["sent status", { deliveryStatus: "sent" }, true],
     ["gateway id", { result: { messageId: "msg-1" } }, true],

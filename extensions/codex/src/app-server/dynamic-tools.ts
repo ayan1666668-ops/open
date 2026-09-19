@@ -30,7 +30,6 @@ import {
   isToolWrappedWithBeforeToolCallHook,
   isToolResultError,
   isMessagingTool,
-  isPluginNativeMessagingTool,
   normalizeHeartbeatToolResponse,
   projectPluginMessageDeliveryFact,
   resolveToolExecutionErrorKind,
@@ -538,8 +537,7 @@ export function createCodexDynamicToolBridge(params: {
           (messageDelivery
             ? messageDelivery.status === "settled" &&
               (!rawIsError || messageDelivery.partialDelivery)
-            : isPluginNativeMessagingTool(toolName) &&
-              isDeliveredMessagingToolResult({
+            : isDeliveredMessagingToolResult({
                 toolName,
                 args: executedArgs,
                 result: rawResult,

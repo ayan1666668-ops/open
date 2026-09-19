@@ -384,8 +384,8 @@ export function readPluginSdkSurfaceBudgets(env: NodeJS.ProcessEnv = process.env
       // +6: passive link-reader descriptor, metadata, document, preview, and request types.
       // +1: shared workspace bootstrap file policy.
       // +2: typed workspace unavailability and its structural classifier.
-      // +7: shared delivery facts, source-reply detection, argument sanitization, and media comparison.
-      4505,
+      // +6: shared delivery facts, source-reply detection, argument sanitization, and media comparison.
+      4504,
       env,
     ),
     publicFunctionExports: readPluginSdkSurfaceBudgetEnv(
@@ -530,8 +530,8 @@ export function readPluginSdkSurfaceBudgets(env: NodeJS.ProcessEnv = process.env
       // +3: approved workspace access callables; later stack exports belong to their consumers.
       // +1: shared workspace bootstrap file policy.
       // +1: workspace unavailability classifier.
-      // +7: shared delivery facts, source-reply detection, argument sanitization, and media comparison.
-      2661,
+      // +6: shared delivery facts, source-reply detection, argument sanitization, and media comparison.
+      2660,
       env,
     ),
     publicDeprecatedExports: readPluginSdkSurfaceBudgetEnv(
