@@ -132,6 +132,61 @@ describe("compaction semantic fidelity", () => {
     ).toBe(false);
   });
 
+  it("checks omitted tool evidence alongside user requirements", async () => {
+    const outcome: JudgmentOutcome = {
+      status: "ok",
+      result: {
+        model: "fixture",
+        answers: {
+          "curated-tool-result-1": {
+            type: "choice",
+            choice: "missing",
+            probabilities: {
+              preserved: 0.01,
+              missing: 0.94,
+              contradicted: 0.01,
+              inactive_or_completed: 0.01,
+              uncertain: 0.03,
+            },
+          },
+        },
+      },
+      provenance: {
+        providerId: "fixture",
+        rubricVersion: "1",
+        runtimeGeneration: "generation",
+      },
+    };
+    const evaluate = vi.fn(async () => outcome);
+
+    const result = await observeCompactionSemanticFidelity(
+      {
+        sourceMessages: [],
+        retainedContext: "The build completed.",
+        additionalSourceItems: [
+          {
+            id: "curated-tool-result-1",
+            text: "Tool result (exec):\nCritical artifact path: /tmp/report.json",
+          },
+        ],
+        signal: new AbortController().signal,
+      },
+      evaluate,
+    );
+
+    expect(result).toMatchObject({
+      status: "ok",
+      findings: [
+        {
+          id: "curated-tool-result-1",
+          relation: "missing",
+          sourceTruncated: false,
+        },
+      ],
+    });
+    expect(evaluate).toHaveBeenCalledTimes(1);
+  });
+
   it("returns provider unavailability without inventing a semantic result", async () => {
     const evaluate = vi.fn(async () => ({
       status: "unavailable",
