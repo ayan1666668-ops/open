@@ -367,7 +367,6 @@ Camera commands (foreground only; permission-gated): `camera.snap` (jpg), `camer
   not recover speech from the failed dictation attempt or send anything
   automatically.
 - To start continuous **Talk**, long-press the microphone and choose **Start Talk**.
-  If dictation is unavailable, tapping the microphone also opens **Voice options**.
   Dictation, voice-note recording, and Talk are mutually exclusive microphone paths.
 - Talk Mode promotes the existing foreground service from `connectedDevice` to `connectedDevice|microphone` before capture starts, then demotes it when Talk Mode stops. The node service declares `FOREGROUND_SERVICE_CONNECTED_DEVICE` with `CHANGE_NETWORK_STATE`; Android 14+ also requires the `FOREGROUND_SERVICE_MICROPHONE` declaration, the `RECORD_AUDIO` runtime grant, and the microphone service type at runtime.
 - By default, Android Talk uses native speech recognition, Gateway chat, and `talk.speak` through the configured gateway Talk provider. It inherits the session's thinking setting. Local system TTS is used only when `talk.speak` is unavailable.
