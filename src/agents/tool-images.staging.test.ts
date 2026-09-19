@@ -10,6 +10,7 @@ import type { ImageContent } from "../llm/types.js";
 import { resolveInboundMediaOwnership } from "../media/inbound-media-ownership.js";
 import { withTestDir } from "../test-helpers/temp-dir.js";
 import { captureEnv, setTestEnvValue } from "../test-utils/env.js";
+import type { AgentToolResult } from "./runtime/index.js";
 import { sanitizeToolResultImages } from "./tool-images.js";
 
 // 64x64 opaque PNG: valid, small, and far under the resize thresholds, so the
@@ -128,12 +129,16 @@ describe("inline image staging", () => {
   ])("keeps an inspection-only result private with %s", async (_name, details) => {
     await withMediaStore(async (stateDir) => {
       const block = imageBlock();
-      // Absent details are omitted rather than passed as undefined, because the staging
-      // helper's default argument is the presentable decision.
-      const staged = (await sanitizeToolResultImages(
-        details === undefined ? { content: [block] } : { content: [block], details },
-        "image:native",
-      ).then((result) => result.content[0])) as ImageContent;
+      // A result without a presentation decision omits details entirely; the staging
+      // helper's default argument supplies the presentable decision, so an absent
+      // `details` and `details: undefined` resolve identically to inspection-only.
+      const result: AgentToolResult<unknown> =
+        details === undefined
+          ? { content: [block], details: undefined }
+          : { content: [block], details };
+      const staged = (await sanitizeToolResultImages(result, "image:native").then(
+        (sanitized) => sanitized.content[0],
+      )) as ImageContent;
 
       expect(staged.url).toBeUndefined();
       expect(staged.data).toBe(PNG_BASE64);
