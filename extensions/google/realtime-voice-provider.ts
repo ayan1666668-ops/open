@@ -419,19 +419,25 @@ function buildBrowserInitialSetup(model: string) {
   };
 }
 
-// Google Live PCM16 output uses standard voice/audio sample rates
-// (8–48 kHz). Out-of-range MIME `rate` values (e.g., `rate=1` → ~24000x
-// OOM in resamplePcm, `rate=999999999` → silent drop) collapse to 24 kHz.
+// Google Live output audio is always raw 16-bit PCM at 24 kHz (see
+// https://ai.google.dev/gemini-api/docs/live-api#technical-specifications and
+// https://ai.google.dev/gemini-api/docs/live-api/capabilities#audio_formats,
+// "Audio output always uses a sample rate of 24kHz."). The `rate=` MIME
+// parameter is a client-to-model input convention (audio/pcm;rate=16000), not
+// a model-output contract, so only the documented output rate is accepted.
+// Any other `rate` value (e.g., `rate=1` → ~24000x OOM in resamplePcm,
+// `rate=8000` → 3x upsample of a 24 kHz payload) collapses to the documented
+// output rate so input/output rates match and allocation and playback timing
+// stay correct.
 const GOOGLE_REALTIME_PCM_OUTPUT_SAMPLE_RATE_HZ = 24_000;
-const GOOGLE_REALTIME_PCM_INPUT_RATE_MIN_HZ = 8_000;
-const GOOGLE_REALTIME_PCM_INPUT_RATE_MAX_HZ = 48_000;
+const GOOGLE_REALTIME_PCM_OUTPUT_RATES_HZ: ReadonlySet<number> = new Set([
+  GOOGLE_REALTIME_PCM_OUTPUT_SAMPLE_RATE_HZ,
+]);
 
 function parsePcmSampleRate(mimeType: string | undefined): number {
   const match = mimeType?.match(/(?:^|[;,\s])rate=(\d+)/i);
   const parsed = match ? Number.parseInt(match[1] ?? "", 10) : Number.NaN;
-  return Number.isFinite(parsed) &&
-    parsed >= GOOGLE_REALTIME_PCM_INPUT_RATE_MIN_HZ &&
-    parsed <= GOOGLE_REALTIME_PCM_INPUT_RATE_MAX_HZ
+  return Number.isFinite(parsed) && GOOGLE_REALTIME_PCM_OUTPUT_RATES_HZ.has(parsed)
     ? parsed
     : GOOGLE_REALTIME_PCM_OUTPUT_SAMPLE_RATE_HZ;
 }

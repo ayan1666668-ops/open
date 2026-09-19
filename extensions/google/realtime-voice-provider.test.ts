@@ -1820,12 +1820,12 @@ describe("buildGoogleRealtimeVoiceProvider", () => {
       },
     });
 
-    // Out-of-range values collapse to the declared 24 kHz provider output
-    // rate, so input and output sample rates match and resamplePcm returns
-    // the buffer unchanged instead of allocating inputSamples * (24000 /
-    // rate) samples (gigabyte-scale OOM for rate=1, sixfold expansion for
-    // rate=4000). Legitimate non-24 kHz rates (8/16/48 kHz) are preserved
-    // and covered by a separate test below.
+    // Non-24 kHz values (the 8/16/48 kHz input-side rates, rate=1, rate=4000,
+    // etc.) collapse to the declared 24 kHz provider output rate, so input and
+    // output sample rates match and resamplePcm returns the buffer unchanged
+    // instead of allocating inputSamples * (24000 / rate) samples
+    // (gigabyte-scale OOM for rate=1). Only the documented 24000 Hz output
+    // rate is preserved (covered by the test below).
     expect(onAudio).toHaveBeenCalledTimes(1);
     expect(requireFirstAudio(onAudio)).toEqual(pcm24k);
   });
@@ -1835,7 +1835,7 @@ describe("buildGoogleRealtimeVoiceProvider", () => {
     ["16 kHz wideband", "audio/pcm;rate=16000"],
     ["48 kHz full band", "audio/pcm;rate=48000"],
   ])(
-    "preserves legitimate %s MIME rate on PCM16 output instead of coercing to 24 kHz",
+    "normalizes undocumented %s input-side MIME rate to 24 kHz on PCM16 output",
     async (_label, mimeType) => {
       const provider = buildGoogleRealtimeVoiceProvider();
       const onAudio = vi.fn();
@@ -1845,28 +1845,66 @@ describe("buildGoogleRealtimeVoiceProvider", () => {
         onAudio,
         onClearAudio: vi.fn(),
       });
-      // 480 bytes = 240 samples @ 24 kHz. A legitimate non-24 kHz in-range
-      // rate reaches the resampler and produces a different sample count
-      // (upsample for 8/16 kHz, downsample for 48 kHz) instead of the 24 kHz
-      // passthrough. The prior coerce-to-24 kHz fix returned the input
-      // unchanged (480 bytes) for all three rates.
-      const pcm = Buffer.alloc(480);
+      // Google Live output audio is always raw 16-bit PCM at 24 kHz (see
+      // https://ai.google.dev/gemini-api/docs/live-api/capabilities#audio_formats,
+      // "Audio output always uses a sample rate of 24kHz."). The `rate=` MIME
+      // parameter is an input (client-to-model) convention — Google's docs use
+      // audio/pcm;rate=16000 for input audio — so 8/16/48 kHz are not
+      // documented model-output rates and must collapse to 24 kHz. A 24 kHz
+      // payload tagged rate=8000 would otherwise be upsampled 3x (1440 bytes)
+      // with wrong playback timing; collapsing it keeps input and output rates
+      // matched (480-byte passthrough).
+      const pcm24k = Buffer.alloc(480);
 
       await bridge.connect();
       lastConnectParams().callbacks.onmessage({
         setupComplete: { sessionId: "session-1" },
         serverContent: {
           modelTurn: {
-            parts: [{ inlineData: { mimeType, data: pcm.toString("base64") } }],
+            parts: [{ inlineData: { mimeType, data: pcm24k.toString("base64") } }],
           },
         },
       });
 
       expect(onAudio).toHaveBeenCalledTimes(1);
-      const output = requireFirstAudio(onAudio);
-      // Output length differs from the 480-byte passthrough, proving the
-      // legitimate rate reached the resampler instead of being coerced to 24 kHz.
-      expect(output.length).not.toBe(pcm.length);
+      expect(requireFirstAudio(onAudio)).toEqual(pcm24k);
+    },
+  );
+
+  it.each([
+    ["PCM16 24 kHz output", REALTIME_VOICE_AUDIO_FORMAT_PCM16_24KHZ, 480],
+    ["G711 ULAW 8 kHz output", REALTIME_VOICE_AUDIO_FORMAT_G711_ULAW_8KHZ, 80],
+  ])(
+    "preserves the documented 24000 Hz MIME rate on %s",
+    async (_label, audioFormat, expectedLength) => {
+      const provider = buildGoogleRealtimeVoiceProvider();
+      const onAudio = vi.fn();
+      const bridge = provider.createBridge({
+        providerConfig: { apiKey: "gemini-key" },
+        audioFormat,
+        onAudio,
+        onClearAudio: vi.fn(),
+      });
+      // The accepted exact set is {24000} — the only rate Google Live
+      // documents for model output. It must reach the converter (resamplePcm
+      // passthrough for PCM16, convertPcmToMulaw8k downsample for G711)
+      // instead of being collapsed to a different rate.
+      const pcm24k = Buffer.alloc(480); // 20ms @ 24 kHz
+
+      await bridge.connect();
+      lastConnectParams().callbacks.onmessage({
+        setupComplete: { sessionId: "session-1" },
+        serverContent: {
+          modelTurn: {
+            parts: [
+              { inlineData: { mimeType: "audio/pcm;rate=24000", data: pcm24k.toString("base64") } },
+            ],
+          },
+        },
+      });
+
+      expect(onAudio).toHaveBeenCalledTimes(1);
+      expect(requireFirstAudio(onAudio).length).toBe(expectedLength);
     },
   );
 
@@ -1916,6 +1954,11 @@ describe("buildGoogleRealtimeVoiceProvider", () => {
       "audio/pcm;rate=-1",
       "audio/pcm;rate=999999999",
       "audio/pcm;rate=wideband",
+      // Previously-accepted in-range rates collapse to 24 kHz under the
+      // documented-output-rate allow-list, so they must stay allocation-bounded.
+      "audio/pcm;rate=8000",
+      "audio/pcm;rate=16000",
+      "audio/pcm;rate=48000",
       "audio/pcm",
       "",
     ];
