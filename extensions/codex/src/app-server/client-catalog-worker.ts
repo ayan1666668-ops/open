@@ -1,11 +1,14 @@
 import type { WorkerTaskPool } from "openclaw/plugin-sdk/process-runtime";
-import type {
-  CodexCatalogDecodeInput,
-  CodexCatalogDecodeResult,
+import {
+  projectCodexCatalogMessage,
+  type CodexCatalogDecodeInput,
+  type CodexCatalogDecodeResult,
 } from "./client-catalog-response.js";
 import type { CodexCatalogDecodeRoute } from "./client-message-frames.js";
 import { isJsonObject } from "./protocol.js";
 import type { CodexRequestAttempt } from "./request-attempt.js";
+
+const INLINE_CATALOG_MAX_BYTES = 64 * 1024;
 
 /** Late responses retain their decode route after cancellation removes the waiter. */
 export function codexCatalogRequestId(
@@ -29,7 +32,12 @@ export function codexCatalogRequestId(
 /** Each physical client owns one decoder, including incomplete-line recovery state. */
 export class CodexCatalogWorker {
   private pool: WorkerTaskPool<CodexCatalogDecodeInput, CodexCatalogDecodeResult> | undefined;
+  private continuationRoute: CodexCatalogDecodeRoute | undefined;
   private closed = false;
+
+  get continuation(): CodexCatalogDecodeRoute | undefined {
+    return this.continuationRoute;
+  }
 
   async decode(
     line: Buffer,
@@ -37,6 +45,28 @@ export class CodexCatalogWorker {
     attempts: ReadonlyMap<number | string, CodexRequestAttempt>,
     projections: Pick<WeakMap<CodexRequestAttempt, { remainingRows?: number }>, "get">,
   ) {
+    if (this.closed) {
+      return undefined;
+    }
+    if (
+      !this.continuationRoute &&
+      route !== "unresolved" &&
+      line.byteLength <= INLINE_CATALOG_MAX_BYTES
+    ) {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(line.toString("utf8"));
+      } catch {
+        // Incomplete or malformed frames retain the worker's recovery state.
+      }
+      if (parsed !== undefined) {
+        const attempt = attempts.get(route.id);
+        return projectCodexCatalogMessage(parsed, {
+          route,
+          remainingRows: attempt ? projections.get(attempt)?.remainingRows : 0,
+        });
+      }
+    }
     if (!this.pool) {
       const { resolveRuntimeWorkerUrl, WorkerTaskPool } =
         await import("openclaw/plugin-sdk/process-runtime");
@@ -79,17 +109,23 @@ export class CodexCatalogWorker {
       line.buffer instanceof ArrayBuffer
         ? new Uint8Array(line.buffer)
         : Uint8Array.from(line);
-    return this.pool.run(
+    const decoded = await this.pool.run(
       { bytes, route, remainingRows, catalogRows },
       {
         inputBytes: bytes.byteLength,
         transferList: (input) => [input.bytes.buffer],
       },
     );
+    if (this.closed) {
+      return undefined;
+    }
+    this.continuationRoute = decoded.pending ? route : undefined;
+    return decoded;
   }
 
   close(error: Error): Promise<void> {
     this.closed = true;
+    this.continuationRoute = undefined;
     return this.pool?.close(error) ?? Promise.resolve();
   }
 }
