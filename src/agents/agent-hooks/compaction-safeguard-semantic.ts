@@ -13,6 +13,7 @@ export type CompactionSemanticProtectionReason =
   | "obligation-source"
   | "exact-identifier"
   | "unpaired-tool-result"
+  | "unsupported-content"
   | "oversized-segment";
 
 export type CompactionSemanticSegment = {
@@ -116,6 +117,22 @@ export function fingerprint(value: unknown): string {
   return createHash("sha256").update(stringifyForFingerprint(value)).digest("hex");
 }
 
+function hasUnsupportedContent(content: unknown): boolean {
+  if (content == null || typeof content === "string") {
+    return false;
+  }
+  if (!Array.isArray(content)) {
+    return true;
+  }
+  return content.some((block) => {
+    if (!block || typeof block !== "object") {
+      return true;
+    }
+    const type = (block as { type?: unknown }).type;
+    return type !== "text" && type !== "toolCall" && type !== "toolUse" && type !== "functionCall";
+  });
+}
+
 function renderContent(content: unknown): string {
   if (typeof content === "string") {
     return content;
@@ -154,6 +171,7 @@ function renderMessage(message: AgentMessage): {
   text: string;
   originalChars: number;
   truncated: boolean;
+  unsupported: boolean;
 } {
   const role = typeof message.role === "string" ? message.role : "unknown";
   const toolName =
@@ -161,17 +179,20 @@ function renderMessage(message: AgentMessage): {
     typeof (message as { toolName?: unknown }).toolName === "string"
       ? String((message as { toolName?: unknown }).toolName)
       : "";
-  const content = renderContent((message as { content?: unknown }).content).trim();
+  const rawContent = (message as { content?: unknown }).content;
+  const unsupported = hasUnsupportedContent(rawContent);
+  const content = renderContent(rawContent).trim();
   const rendered = [toolName ? `${role}(${toolName})` : role, content]
     .filter(Boolean)
     .join(": ");
   if (rendered.length <= MAX_SEGMENT_TEXT_CHARS) {
-    return { text: rendered, originalChars: rendered.length, truncated: false };
+    return { text: rendered, originalChars: rendered.length, truncated: false, unsupported };
   }
   return {
     text: rendered.slice(0, MAX_SEGMENT_TEXT_CHARS),
     originalChars: rendered.length,
     truncated: true,
+    unsupported,
   };
 }
 
@@ -226,6 +247,9 @@ function buildSegments(params: {
     }
     if (members.some((message) => message.role === "toolResult") && !frame) {
       protectionReasons.add("unpaired-tool-result");
+    }
+    if (rendered.some((item) => item.unsupported)) {
+      protectionReasons.add("unsupported-content");
     }
     if (rendered.some((item) => item.truncated)) {
       protectionReasons.add("oversized-segment");
@@ -288,6 +312,21 @@ function buildObligations(params: {
   return obligations;
 }
 
+export function fingerprintCompactionMessages(messages: readonly AgentMessage[]): string {
+  return fingerprint(
+    messages.map((message) => ({
+      role: message.role,
+      timestamp: (message as { timestamp?: unknown }).timestamp,
+      content: (message as { content?: unknown }).content,
+      toolCallId: (message as { toolCallId?: unknown }).toolCallId,
+      toolUseId: (message as { toolUseId?: unknown }).toolUseId,
+      toolName: (message as { toolName?: unknown }).toolName,
+      isError: (message as { isError?: unknown }).isError,
+      details: (message as { details?: unknown }).details,
+    })),
+  );
+}
+
 export function buildCompactionSemanticSnapshot(params: {
   messages: AgentMessage[];
   protectedMessages?: ReadonlySet<AgentMessage>;
@@ -326,16 +365,14 @@ export function buildCompactionSemanticSnapshot(params: {
 
   const complete =
     obligations.every((obligation) => obligation.complete && Boolean(obligation.sourceSegmentId)) &&
-    segments.every((segment) => !segment.protectionReasons.includes("oversized-segment"));
+    segments.every(
+      (segment) =>
+        !segment.protectionReasons.includes("unsupported-content") &&
+        !segment.protectionReasons.includes("oversized-segment"),
+    );
 
   return {
-    sourceFingerprint: fingerprint(
-      params.messages.map((message) => ({
-        role: message.role,
-        timestamp: (message as { timestamp?: unknown }).timestamp,
-        content: (message as { content?: unknown }).content,
-      })),
-    ),
+    sourceFingerprint: fingerprintCompactionMessages(params.messages),
     segments,
     obligations,
     originalChars: segments.reduce((total, segment) => total + segment.originalChars, 0),
