@@ -8,7 +8,11 @@ import { stripInternalRuntimeScaffolding } from "./protocol-scaffolding.js";
 export { stripInternalRuntimeScaffolding };
 
 // A tag name ends at whitespace, `/`, or `>`; `<user@example.com>` is prose, not markup.
-const HTML_TAG_RE = /<\/?[a-z][a-z0-9_.:-]*(?=[\s/>])[^>]*>/gi;
+// A `/` after the name may consume through `>` (`<users/id>`, `<https://…>`).
+// Whitespace after the name only admits `=` attributes or `/>`, so
+// `attempts<max and backoffMs>0` stays prose instead of one unbounded tag.
+const HTML_TAG_RE =
+  /<\/?[a-z][a-z0-9_.:-]*(?:\/[^>]*|(?:\s+[^\s>/=][^\s>=]*=(?:"[^"]*"|'[^']*'|[^\s>]+))+)?\s*\/?>/gi;
 const LABELED_ANGLE_LINK_RE =
   /<(?:https?:\/\/|mailto:)[^<>\s|]+\|([^<>\r\n|]*[^<>\s|][^<>\r\n|]*)>/gi;
 const MAY_CONTAIN_MARKDOWN_CODE_RE = /[`~]|\t| {4}/;

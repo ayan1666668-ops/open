@@ -309,6 +309,20 @@ describe("sanitizeForPlainText", () => {
     expect(sanitizeForPlainText("a < b && c > d")).toBe("a < b && c > d");
   });
 
+  it.each([
+    [
+      "Guard the retry loop: only retry while attempts<max and backoffMs>0, otherwise give up.",
+      "Guard the retry loop: only retry while attempts<max and backoffMs>0, otherwise give up.",
+    ],
+    [
+      "Set the threshold so that latency<budget. Then verify the p99 stays flat, confirm the alert fires, and only after that raise concurrency>4.",
+      "Set the threshold so that latency<budget. Then verify the p99 stays flat, confirm the alert fires, and only after that raise concurrency>4.",
+    ],
+    ["Use timeout<300 and n>0 for the probe.", "Use timeout<300 and n>0 for the probe."],
+  ])("preserves unspaced comparison prose in %s", (input, expected) => {
+    expect(sanitizeForPlainText(input)).toBe(expected);
+  });
+
   // --- mixed content ------------------------------------------------------
 
   it("handles mixed HTML content", () => {
