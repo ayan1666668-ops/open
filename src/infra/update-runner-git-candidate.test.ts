@@ -151,6 +151,32 @@ describe("Git candidate activation", () => {
     ).toEqual([]);
   }
 
+  it.each([undefined, 5_000])(
+    "separates work deadlines from observation budgets: %s",
+    async (timeoutMs) => {
+      await advanceRemote();
+      const commands: Array<{ argv: string[]; timeoutMs: number | undefined }> = [];
+      const execute = runCommand;
+      runCommand = (argv, options) => {
+        commands.push({ argv, timeoutMs: options.timeoutMs });
+        return execute(argv, options);
+      };
+      expect((await update({ timeoutMs })).status).toBe("ok");
+      for (const work of ["install", "build", "doctor", "fetch", "checkout"]) {
+        const command = commands.find(({ argv }) => argv.includes(work));
+        expect(command, work).toBeDefined();
+        expect(command?.timeoutMs, work).toBe(timeoutMs);
+      }
+      for (const probe of ["--version", "rev-parse", "status"]) {
+        const command = commands.find(({ argv }) => argv.includes(probe));
+        expect(command, probe).toBeDefined();
+        expect(command?.timeoutMs, probe).toBe(5_000);
+      }
+      expect(commands.find(({ argv }) => argv.includes("remove"))?.timeoutMs).toBe(5_000);
+      await expectNoRuntimeStagingPaths();
+    },
+  );
+
   it.each([
     ["success", undefined],
     ["config-refused", "repair-requires-config-change"],
@@ -792,20 +818,39 @@ describe("Git candidate activation", () => {
   );
 
   it.each([
-    { layout: "node_modules/.pnpm", restoreSource: true, restoreRuntime: true },
-    { layout: "node_modules/.pnpm", restoreSource: false, restoreRuntime: true },
-    { layout: "node_modules/.pnpm", restoreSource: "throw", restoreRuntime: true },
-    { layout: "../store", restoreSource: true, restoreRuntime: true },
-    { layout: "node_modules/.pnpm", restoreSource: true, restoreRuntime: false },
+    {
+      layout: "node_modules/.pnpm",
+      restoreSource: true,
+      restoreRuntime: true,
+      timeoutMs: undefined,
+    },
+    { layout: "node_modules/.pnpm", restoreSource: false, restoreRuntime: true, timeoutMs: 5_000 },
+    {
+      layout: "node_modules/.pnpm",
+      restoreSource: "throw",
+      restoreRuntime: true,
+      timeoutMs: undefined,
+    },
+    { layout: "../store", restoreSource: true, restoreRuntime: true, timeoutMs: undefined },
+    {
+      layout: "node_modules/.pnpm",
+      restoreSource: true,
+      restoreRuntime: false,
+      timeoutMs: undefined,
+    },
   ] as const)(
     "verifies $layout runtime recovery after activation failure (source restored: $restoreSource, runtime restored: $restoreRuntime)",
-    async ({ layout, restoreSource, restoreRuntime }) => {
+    async ({ layout, restoreSource, restoreRuntime, timeoutMs }) => {
       virtualStoreLayout = layout;
       await writeRuntime(root, beforeSha, path.join(directory, "shared-store"), layout);
       const candidateSha = await advanceRemote();
       const command = runCommand;
       let resetFaultInjected = false;
+      const recoveryTimeouts: Array<number | undefined> = [];
       runCommand = async (argv, options) => {
+        if (faultInjected && argv[0] === "git" && argv[2] === root) {
+          recoveryTimeouts.push(options.timeoutMs);
+        }
         if (
           restoreSource !== true &&
           argv[0] === "git" &&
@@ -850,7 +895,7 @@ describe("Git candidate activation", () => {
           throw new Error("diagnostic storage unavailable");
         }
       });
-      const execution = update({ progress: { onRollbackOutcome } });
+      const execution = update({ timeoutMs, progress: { onRollbackOutcome } });
       if (restoreSource === "throw") {
         await expect(execution).rejects.toThrow("rollback command unavailable");
         expect(resetFaultInjected).toBe(true);
@@ -861,6 +906,8 @@ describe("Git candidate activation", () => {
         return;
       }
       const result = await execution;
+      expect(recoveryTimeouts.length).toBeGreaterThan(0);
+      expect(recoveryTimeouts.every((deadline) => deadline === 5_000)).toBe(true);
       expect(onRollbackOutcome).toHaveBeenLastCalledWith(
         expect.objectContaining({
           status: restoreSource && restoreRuntime ? "succeeded" : "failed",
