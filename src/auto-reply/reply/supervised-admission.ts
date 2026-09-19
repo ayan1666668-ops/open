@@ -5,7 +5,7 @@ import { maybeAdmitSupervisedRootTask } from "../../tasks/supervised-task.admiss
 import { bindSupervisedRootSource } from "../../tasks/supervised-task.root-source.js";
 import type { RuntimeMsgContext } from "../templating.js";
 import type { InternalGetReplyOptions } from "./get-reply.types.js";
-import { admitFollowupRunLifecycle, completeFollowupRunLifecycle } from "./queue/types.js";
+import { admitFollowupRunLifecycle, completeFollowupRunLifecycle } from "./queue/lifecycle.js";
 import { resolveReplyOperationRunState } from "./reply-operation-run-state.js";
 import { readChannelSourceTurnId } from "./source-turn-id.js";
 

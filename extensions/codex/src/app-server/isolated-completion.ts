@@ -4,8 +4,13 @@ import {
   type CodexAppServerPreparedAuth,
 } from "./auth-bridge.js";
 import { runBoundedCodexAppServerTurn, type CodexBoundedTurnOptions } from "./bounded-turn.js";
-import { readCodexPluginConfig, resolveCodexAppServerHomeScope } from "./config.js";
+import {
+  readCodexPluginConfig,
+  resolveCodexAppServerHomeScope,
+  resolveCodexAppServerRuntimeOptions,
+} from "./config.js";
 import { createAttributedCodexAssistantMessage } from "./event-projector-assistant-message.js";
+import { isCodexAppServerProxyLaunch } from "./launch-args.js";
 import { assertCodexPassiveTurnItems } from "./protocol-validators.js";
 
 type CodexIsolatedCompletionParams = Parameters<
@@ -76,6 +81,13 @@ export async function runCodexIsolatedCompletion(
   options: CodexBoundedTurnOptions,
 ): Promise<AgentHarnessIsolatedCompletionResult> {
   params.assertCurrent?.();
+  const pluginConfig = readCodexPluginConfig(options.pluginConfig);
+  const homeScope = resolveCodexAppServerHomeScope({ appServer: pluginConfig.appServer });
+  const { start } = resolveCodexAppServerRuntimeOptions({ pluginConfig: options.pluginConfig });
+  const privateStdio =
+    start.transport === "stdio" &&
+    homeScope === "agent" &&
+    !isCodexAppServerProxyLaunch(start.args);
   const authSelection = await resolveNativeAuthorization(params, options);
   params.assertCurrent?.();
   const result = await runBoundedCodexAppServerTurn({
@@ -86,6 +98,7 @@ export async function runCodexIsolatedCompletion(
     },
     ...authSelection,
     timeoutMs: params.timeoutMs,
+    thinkLevel: params.thinkLevel,
     signal: params.abortSignal,
     assertCurrent: params.assertCurrent,
     agentDir: params.agentDir,
@@ -94,12 +107,17 @@ export async function runCodexIsolatedCompletion(
     developerInstructions: params.systemPrompt,
     input: [{ type: "text", text: params.prompt, text_elements: [] }],
     requiredModalities: ["text"],
-    isolation: "configured-transport",
+    // A required owned local process reuses the operator's existing host
+    // connection; private-stdio would instead spawn a fresh isolated one.
+    isolation: privateStdio && !params.ownedLocalProcessRequired ? "private-stdio" : "configured-transport",
     ownedLocalProcessRequired: params.ownedLocalProcessRequired,
     requireNoExternalCapabilities: true,
+    allowEmptyText: params.outputTextPolicy === "strict-visible",
   });
   params.assertCurrent?.();
-  assertCodexPassiveTurnItems(result.items, params.prompt, "isolated completion");
+  assertCodexPassiveTurnItems(result.items, params.prompt, "isolated completion", {
+    allowManagedHookPrompts: result.managedHooksEnabled,
+  });
   return {
     assistant: createAttributedCodexAssistantMessage(
       {

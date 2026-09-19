@@ -86,6 +86,48 @@ describe("runCodexIsolatedCompletion", () => {
     });
   });
 
+  it("uses the selected native authorization on a private ring-zero turn", async () => {
+    const params = { ...createParams(), assertCurrent: vi.fn() };
+
+    await expect(runCodexIsolatedCompletion(params, {})).resolves.toEqual({
+      assistant: expect.objectContaining({
+        role: "assistant",
+        api: "openai-chatgpt-responses",
+        provider: "openai",
+        model: "gpt-5.4",
+        content: [{ type: "text", text: "Garden Planning" }],
+        usage: expect.objectContaining({
+          input: 7,
+          output: 3,
+          cacheRead: 2,
+          totalTokens: 10,
+        }),
+      }),
+    });
+    expect(mocks.resolveAuthHandoff).toHaveBeenCalledWith(
+      expect.objectContaining({
+        authRequirement: "subscription",
+        authProfileId: "openai:test",
+        authProfileStore,
+        agentDir: "/tmp/agent",
+        homeScope: "agent",
+      }),
+    );
+    expect(mocks.runBoundedTurn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: { mode: "required", id: "gpt-5.4" },
+        profile: "openai:test",
+        authRequirement: "subscription",
+        isolation: "private-stdio",
+        assertCurrent: params.assertCurrent,
+        requireNoExternalCapabilities: true,
+        developerInstructions: "Name the conversation.",
+        input: [{ type: "text", text: "Help me plan a garden.", text_elements: [] }],
+      }),
+    );
+    expect(mocks.runBoundedTurn.mock.calls[0]?.[0]).not.toHaveProperty("modelProvider");
+  });
+
   it("uses native authorization on a ring-zero configured-transport turn", async () => {
     const params = {
       ...createParams(),
@@ -114,6 +156,7 @@ describe("runCodexIsolatedCompletion", () => {
         authProfileId: "openai:test",
         authProfileStore,
         agentDir: "/tmp/agent",
+        homeScope: "agent",
       }),
     );
     expect(mocks.runBoundedTurn).toHaveBeenCalledWith(
@@ -183,10 +226,59 @@ describe("runCodexIsolatedCompletion", () => {
     expect(mocks.runBoundedTurn).not.toHaveBeenCalled();
   });
 
-  it("rejects any native or tool item outside the passive response surface", async () => {
+  it("accepts a policy-directed continuation only from attested managed hooks", async () => {
     mocks.runBoundedTurn.mockResolvedValue({
       text: "Garden Planning",
       model: "gpt-5.4",
+      managedHooksEnabled: true,
+      items: [
+        {
+          id: "prompt",
+          type: "userMessage",
+          content: [{ type: "text", text: createParams().prompt }],
+        },
+        { id: "draft", type: "agentMessage", text: "An earlier draft." },
+        {
+          id: "hook",
+          type: "hookPrompt",
+          fragments: [{ text: "Revise the answer.", hookRunId: "managed-stop-1" }],
+        },
+        { id: "answer", type: "agentMessage", text: "Garden Planning" },
+      ],
+    });
+
+    await expect(runCodexIsolatedCompletion(createParams(), {})).resolves.toMatchObject({
+      assistant: { content: [{ type: "text", text: "Garden Planning" }] },
+    });
+  });
+
+  it.each([undefined, false])(
+    "rejects hook continuations without active managed attestation (%s)",
+    async (managedHooksEnabled) => {
+      mocks.runBoundedTurn.mockResolvedValue({
+        text: "Garden Planning",
+        model: "gpt-5.4",
+        managedHooksEnabled,
+        items: [
+          {
+            id: "hook",
+            type: "hookPrompt",
+            fragments: [{ text: "Revise the answer.", hookRunId: "hook-1" }],
+          },
+        ],
+      });
+
+      await expect(runCodexIsolatedCompletion(createParams(), {})).rejects.toThrow(
+        "unexpected native item: hookPrompt",
+      );
+    },
+  );
+
+  it("rejects native tools even when managed hooks were attested", async () => {
+    mocks.runBoundedTurn.mockResolvedValue({
+      text: "Garden Planning",
+      model: "gpt-5.4",
+      managedHooksEnabled: true,
       items: [{ id: "tool", type: "commandExecution" }],
     });
 

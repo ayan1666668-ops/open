@@ -2,6 +2,8 @@ import type { DatabaseSync } from "node:sqlite";
 import type { SqliteWalMaintenance } from "../infra/sqlite-wal.js";
 import type { DatabasePathIdentity } from "../infra/sqlite-worker-identity.js";
 
+export type OpenClawStateSchemaReadAdmission = (database: DatabaseSync) => (() => void) | undefined;
+
 // v19 fences workers that ignore physical attempt resource custody.
 // v18 prevents older supervised workers from ignoring accepted workflow contracts.
 // v17 records one-use prepared worker capacity and node workspace ownership.
