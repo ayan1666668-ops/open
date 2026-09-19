@@ -45,6 +45,13 @@ not add a second retry loop or independently authorize a transcript write. If
 the judgment provider is unavailable, normal compaction behavior is preserved.
 Caller cancellation remains terminal.
 
+The configuration is backward-compatible: omitting `semanticJudgments` keeps the
+existing deterministic compaction behavior, `false` remains an explicit opt-out, and
+the boolean `true` form continues to mean semantic fidelity checking without input
+curation. The object form is additive and is only needed when curation or explicit
+subfeature control is desired. Existing configurations are not rewritten during
+materialization or reload.
+
 The same setting also accepts an object form for bounded summarizer-input curation:
 
 ```json
