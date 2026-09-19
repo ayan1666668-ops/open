@@ -66,7 +66,7 @@ export interface SidebarMenusControllerHost
   readonly sessionOwnerFilterId: string | null;
   readonly sessionInvolvingMeFilterActive: boolean;
   readonly sessionOwnerOptions: readonly SessionOwnerOption[];
-  readonly sessionOwnershipVisible: boolean;
+  readonly sessionOwnershipVisibility: { filters: boolean; avatars: boolean };
   readSessionMutationAccess(request: {
     method: string;
     params?: unknown;
