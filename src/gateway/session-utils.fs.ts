@@ -63,7 +63,7 @@ export async function readLatestSessionUsageFromTranscriptFileAsync(
         // through so the chars estimate only counts the live window after the
         // latest boundary, not the full retained archive.
         if (record.type === "compaction" || record.type === "reset") {
-          messages.push({ type: record.type });
+          usageAccumulator.add({ type: record.type });
           continue;
         }
         if (
