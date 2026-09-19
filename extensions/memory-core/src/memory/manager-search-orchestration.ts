@@ -203,11 +203,26 @@ export abstract class MemorySearchOrchestration extends MemoryKeywordRetrieval {
           });
         }
       }
-      const indexIdentity = embeddingBootstrapKeywordOnly
-        ? this.refreshKeywordFallbackIndexIdentity()
-        : this.refreshIndexIdentityDirty({
-            providerKeyKnown: this.providerInitialized,
-          });
+      // A runtime-degraded provider (e.g. managed llama.cpp idle-stop/respawn
+      // racing a search) has no live embedding provider, so feeding `null` into
+      // the identity guard would synthesize expectedModel "fts-only" and never
+      // match a healthy vector-built index — misreporting a transient hiccup as
+      // a stale index with rebuild advice. Validate the index against its own
+      // recorded identity instead; keyword fallback proceeds per the documented
+      // contract while the provider recovers. Fresh managers whose embeddings are
+      // unavailable from the start (`fts-only` lifecycle) must keep failing
+      // closed: they must not serve stale rows and must keep reporting the
+      // mismatch, so only the runtime-degraded shape qualifies here.
+      const degradedProviderUnavailable =
+        !embeddingBootstrapKeywordOnly &&
+        !this.provider &&
+        this.providerLifecycle.mode === "degraded";
+      const indexIdentity =
+        embeddingBootstrapKeywordOnly || degradedProviderUnavailable
+          ? this.refreshKeywordFallbackIndexIdentity()
+          : this.refreshIndexIdentityDirty({
+              providerKeyKnown: this.providerInitialized,
+            });
       const shouldRepairIdentity =
         hasIndexedContent &&
         (indexIdentity.status === "missing" ||
@@ -229,7 +244,7 @@ export abstract class MemorySearchOrchestration extends MemoryKeywordRetrieval {
         });
       }
       let repairedIndexIdentity = shouldRepairIdentity
-        ? embeddingBootstrapKeywordOnly
+        ? embeddingBootstrapKeywordOnly || degradedProviderUnavailable
           ? this.refreshKeywordFallbackIndexIdentity()
           : this.refreshIndexIdentityDirty({
               providerKeyKnown: this.providerInitialized,
@@ -272,7 +287,7 @@ export abstract class MemorySearchOrchestration extends MemoryKeywordRetrieval {
           this.settings.store.databasePath,
           opts?.signal,
         );
-        if (embeddingBootstrapKeywordOnly) {
+        if (embeddingBootstrapKeywordOnly || degradedProviderUnavailable) {
           break;
         }
         const leasedIdentity = this.refreshIndexIdentityDirty({
