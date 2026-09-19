@@ -1,14 +1,17 @@
-// Memory Core plugin module implements manager reindex state behavior.
 import {
   hashText,
   MEMORY_CHUNKING_VERSION,
   normalizeExtraMemoryPathEntries,
   type MemoryExtraPath,
-  type MemoryIndexIdentityState,
+  type MemoryIndexIdentityState as HostMemoryIndexIdentityState,
   type MemorySource,
 } from "openclaw/plugin-sdk/memory-core-host-engine-storage";
 
-export type { MemoryIndexIdentityState } from "openclaw/plugin-sdk/memory-core-host-engine-storage";
+export type MemoryIndexIdentityState =
+  | Exclude<HostMemoryIndexIdentityState, { status: "mismatched"; owner: "openclaw" }>
+  | (Extract<HostMemoryIndexIdentityState, { status: "mismatched"; owner: "openclaw" }> & {
+      versionOrder: "older" | "newer";
+    });
 
 export type MemoryIndexMeta = {
   model: string;
@@ -99,8 +102,9 @@ function configuredMetaSourcesDiffer(params: {
 function openClawIndexMismatch(
   code: "provenance_version" | "chunking_version",
   reason: string,
+  versionOrder: "older" | "newer",
 ): MemoryIndexIdentityState {
-  return { status: "mismatched", reason, code, owner: "openclaw" };
+  return { status: "mismatched", reason, code, owner: "openclaw", versionOrder };
 }
 
 function configuredIndexMismatch(
@@ -200,25 +204,12 @@ function resolveConfigurationIndexIdentityState(
   ) {
     return configuredIndexMismatch("provider_settings", "index provider settings changed");
   }
-  if (
-    configuredMetaSourcesDiffer({
-      meta,
-      configuredSources: params.configuredSources,
-    })
-  ) {
-    return configuredIndexMismatch("sources", "index sources changed");
-  }
-  if (meta.scopeHash !== params.configuredScopeHash) {
-    return configuredIndexMismatch("scope", "index scope changed");
-  }
-  if (meta.chunkTokens !== params.chunkTokens || meta.chunkOverlap !== params.chunkOverlap) {
-    return configuredIndexMismatch("chunking", "index chunking changed");
+  const contentIdentity = resolveContentScopeIdentityState(params);
+  if (contentIdentity.status !== "valid") {
+    return contentIdentity;
   }
   if (params.vectorReady && params.hasIndexedChunks !== false && !meta.vectorDims) {
     return configuredIndexMismatch("vector_dims", "index vector dimensions are missing");
-  }
-  if ((meta.ftsTokenizer ?? "unicode61") !== params.ftsTokenizer) {
-    return configuredIndexMismatch("fts_tokenizer", "index FTS tokenizer changed");
   }
   return { status: "valid" };
 }
@@ -266,21 +257,35 @@ export function resolveMemoryIndexIdentityState(
       owner: "openclaw",
     };
   }
-  if (meta.provenanceVersion !== MEMORY_INDEX_PROVENANCE_VERSION) {
-    return openClawIndexMismatch("provenance_version", "index provenance classifier changed");
+  // A newer dimension wins over an older one: a rollback cannot rewrite that index.
+  if (
+    (meta.provenanceVersion ?? 0) > MEMORY_INDEX_PROVENANCE_VERSION ||
+    (meta.chunkingVersion ?? 0) > MEMORY_CHUNKING_VERSION
+  ) {
+    return openClawIndexMismatch(
+      (meta.provenanceVersion ?? 0) > MEMORY_INDEX_PROVENANCE_VERSION
+        ? "provenance_version"
+        : "chunking_version",
+      "the index was written by a newer OpenClaw version; upgrade OpenClaw or reindex explicitly",
+      "newer",
+    );
   }
-  if (meta.chunkingVersion !== MEMORY_CHUNKING_VERSION) {
-    // The version diagnostic normally shadows the configuration checks, so run
-    // the content-scope constraints explicitly: stored keyword rows may stay
-    // readable during a pending upgrade only when the indexed corpus still
-    // matches the configured sources and scope. A narrowed scope must keep
-    // failing closed even while the version diagnostic shadows it. Embedding
-    // identity (model/provider/settings/vector dims) does not block this
-    // keyword-only fallback: those constraints gate vector retrieval, which the
-    // fallback never touches, and a provider that just failed its rebuild would
-    // otherwise keep keyword results locked out forever.
+  if ((meta.provenanceVersion ?? 0) < MEMORY_INDEX_PROVENANCE_VERSION) {
+    return openClawIndexMismatch(
+      "provenance_version",
+      "index provenance classifier changed",
+      "older",
+    );
+  }
+  if ((meta.chunkingVersion ?? 0) < MEMORY_CHUNKING_VERSION) {
+    // Only an older chunker may use the last published lexical corpus. Embedding
+    // identities do not authorize lexical reads; source/scope identity does.
     return {
-      ...openClawIndexMismatch("chunking_version", "index chunking implementation changed"),
+      ...openClawIndexMismatch(
+        "chunking_version",
+        "index chunking implementation changed",
+        "older",
+      ),
       ...(resolveContentScopeIdentityState(params).status === "valid"
         ? { chunkingVersionOnly: true }
         : {}),

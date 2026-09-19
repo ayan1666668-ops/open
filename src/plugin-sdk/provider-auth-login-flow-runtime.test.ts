@@ -47,8 +47,8 @@ describe("provider channel login runtime", () => {
 
   it("authorizes private cancellation and leaves other conversations active", async () => {
     const flows = createProviderLoginFlowRegistry();
-    const first = reserveProviderLoginFlow({ flows, flowKey: "first" });
-    const other = reserveProviderLoginFlow({ flows, flowKey: "other" });
+    const first = reserveProviderLoginFlow({ flows, flowKey: "first", providerLabel: "Acme" });
+    const other = reserveProviderLoginFlow({ flows, flowKey: "other", providerLabel: "Other" });
     const params = {
       commandText: "/login cancel",
       commandAuthorized: true,
@@ -56,12 +56,13 @@ describe("provider channel login runtime", () => {
       isPrivateChat: true,
       config: { commands: { ownerAllowFrom: ["owner"] } },
       agentId: "main",
+      refreshAuth: async () => {},
       cancelLogin: () => cancelProviderLoginFlow({ flows, flowKey: "first" }),
     };
     await prepareProviderChannelLogin({ ...params, senderIsOwner: false });
     await prepareProviderChannelLogin({ ...params, commandAuthorized: false });
     await prepareProviderChannelLogin({ ...params, isPrivateChat: false });
-    expect(flows.size).toBe(2);
+    expect(flows.logins.size).toBe(2);
     expect(await prepareProviderChannelLogin(params)).toMatchObject({
       status: "reply",
       reply: { text: "Provider login cancelled for this chat." },

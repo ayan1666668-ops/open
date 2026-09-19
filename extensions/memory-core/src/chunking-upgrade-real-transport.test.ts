@@ -309,8 +309,11 @@ describe("memory chunking upgrade fallback over a real embedding transport", () 
         corpus: "memory",
       });
       expect(result.details).toMatchObject({
+        results: [],
+        disabled: true,
         unavailable: true,
-        error: expect.stringContaining("chunking"),
+        error: expect.stringContaining("HTTP 401"),
+        warning: expect.stringContaining("Rebuilding may call the configured embedding provider"),
       });
     } finally {
       await closeAllMemorySearchManagers();
@@ -339,8 +342,11 @@ describe("memory chunking upgrade fallback over a real embedding transport", () 
         corpus: "memory",
       });
       expect(result.details).toMatchObject({
+        results: [],
+        disabled: true,
         unavailable: true,
-        error: expect.stringContaining("chunking"),
+        error: expect.stringContaining("HTTP 401"),
+        warning: expect.stringContaining("Rebuilding may call the configured embedding provider"),
       });
     } finally {
       await closeAllMemorySearchManagers();

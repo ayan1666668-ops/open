@@ -1,4 +1,3 @@
-// Line plugin module implements monitor behavior.
 import { resolveHumanDelayConfig } from "openclaw/plugin-sdk/agent-runtime";
 import type { ChannelAccountSnapshot } from "openclaw/plugin-sdk/channel-contract";
 import { hasFinalInboundReplyDispatch } from "openclaw/plugin-sdk/channel-inbound";
@@ -6,7 +5,6 @@ import { resolveChannelStreamingBlockEnabled } from "openclaw/plugin-sdk/channel
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import { formatErrorMessage } from "openclaw/plugin-sdk/error-runtime";
 import { channelReadyPatch, channelStoppedPatch } from "openclaw/plugin-sdk/gateway-runtime";
-import { chunkMarkdownText } from "openclaw/plugin-sdk/reply-runtime";
 import {
   danger,
   logVerbose,
@@ -15,8 +13,6 @@ import {
 } from "openclaw/plugin-sdk/runtime-env";
 import {
   canonicalizeWebhookRouteKey,
-  normalizePluginHttpPath,
-  normalizeWebhookPath,
   registerWebhookTargetWithPluginRoute,
   resolveSingleWebhookTarget,
 } from "openclaw/plugin-sdk/webhook-ingress";
@@ -27,19 +23,10 @@ import {
 import { resolveDefaultLineAccountId, resolveLineAccount } from "./accounts.js";
 import { deliverLineAutoReply } from "./auto-reply-delivery.js";
 import { createLineBot } from "./bot.js";
-import { processLineMessage } from "./markdown-to-line.js";
 import { resolveLineDurableReplyOptions } from "./monitor-durable.js";
-import { buildLineMediaMessage } from "./outbound-media.js";
 import { prepareLineReplyPayload } from "./rich-messages.js";
 import { getLineRuntime } from "./runtime.js";
-import {
-  createFlexMessage,
-  createLocationMessage,
-  pushMessagesLine,
-  replyMessageLine,
-  showLoadingAnimation,
-} from "./send.js";
-import { buildTemplateMessageFromPayload } from "./template-messages.js";
+import { showLoadingAnimation } from "./send.js";
 import type { LineChannelData, ResolvedLineAccount } from "./types.js";
 import {
   createLineNodeWebhookHandler,
@@ -47,7 +34,11 @@ import {
   rejectLineWebhookRequest,
 } from "./webhook-node.js";
 import { LineWebhookTerminalDeliveryError } from "./webhook-spool.js";
-import { parseLineWebhookBody, validateLineSignature } from "./webhook-utils.js";
+import {
+  parseLineWebhookBody,
+  resolveLineWebhookPath,
+  validateLineSignature,
+} from "./webhook-utils.js";
 
 interface MonitorLineProviderOptions {
   channelAccessToken: string;
@@ -252,7 +243,7 @@ export async function monitorLineProvider(
               delivery: {
                 // Core renders presentations inside the outbound send pipeline only,
                 // so this path resolves them before either branch reads channelData.
-                preparePayload: prepareLineReplyPayload,
+                preparePayload: (payload) => prepareLineReplyPayload(payload, ctxPayload.From),
                 durable: (payload, info) =>
                   resolveLineDurableReplyOptions({
                     payload,
@@ -280,20 +271,10 @@ export async function monitorLineProvider(
                     accountId: ctx.accountId,
                     cfg: turnConfig,
                     textLimit,
-                    deps: {
-                      buildTemplateMessageFromPayload,
-                      processLineMessage,
-                      chunkMarkdownText,
-                      replyMessageLine,
-                      pushMessagesLine,
-                      createFlexMessage,
-                      buildMediaMessage: buildLineMediaMessage,
-                      createLocationMessage,
-                      onReplyError: (replyErr) => {
-                        logVerbose(
-                          `line: reply token failed, falling back to push: ${String(replyErr)}`,
-                        );
-                      },
+                    onReplyError: (replyErr) => {
+                      logVerbose(
+                        `line: reply token failed, falling back to push: ${String(replyErr)}`,
+                      );
                     },
                   });
                   replyTokenUsed = deliveryResult.replyTokenUsed;
@@ -334,9 +315,7 @@ export async function monitorLineProvider(
     },
   });
 
-  const normalizedPath = normalizeWebhookPath(
-    normalizePluginHttpPath(webhookPath, "/line/webhook") ?? "/line/webhook",
-  );
+  const normalizedPath = resolveLineWebhookPath(webhookPath);
   const webhookRouteKey = canonicalizeWebhookRouteKey(normalizedPath);
   const createScopedLineWebhookHandler = (target: LineWebhookTarget) =>
     createLineNodeWebhookHandler({

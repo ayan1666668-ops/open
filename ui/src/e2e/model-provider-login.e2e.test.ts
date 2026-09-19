@@ -1,3 +1,4 @@
+import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { Locator } from "playwright";
@@ -28,7 +29,10 @@ async function captureProviderProof(fileName: string, content: Locator): Promise
 }
 
 suite.define(() => {
-  it("connects provider credentials without changing the selected model", async () => {
+  it.each([
+    { value: "all", label: "Show all Example models" },
+    { value: "keep", label: "Keep current restrictions" },
+  ])("keeps the default after $value model access", async (modelAccess) => {
     await suite.withPage(
       {
         colorScheme: "dark",
@@ -90,16 +94,19 @@ suite.define(() => {
         await page.goto(`${suite.server.baseUrl}settings/model-providers`);
         const primary = page.locator(".model-providers__defaults openclaw-select-picker").first();
         await expect.poll(() => modelPickerValue(primary)).toBe("example/existing");
-        await captureProviderProof("login-models-before.png", primary);
+        await captureProviderProof(`login-models-before-${modelAccess.value}.png`, primary);
         await page.locator("[data-models-connect]").click();
-        const picker = page.locator("[data-models-login-choice]");
-        await picker.waitFor();
         expect(await gateway.getRequests("models.authLogin")).toHaveLength(0);
-        await captureProviderProof("login-before-choice.png", picker);
-        await picker.selectOption("example-device");
-        await page.locator("[data-models-login-start]").click();
+        await page.locator('[data-models-login-provider="example"]').click();
+        const signIn = page.getByRole("button", { name: "Example device sign-in", exact: true });
+        await signIn.waitFor();
+        expect(await gateway.getRequests("models.authLogin")).toHaveLength(0);
+        await captureProviderProof(`login-before-choice-${modelAccess.value}.png`, signIn);
+        await signIn.click();
         const login = await gateway.waitForRequest("models.authLogin");
-        expect(login.params).toEqual({
+        const loginParams = login.params;
+        assert(loginParams && typeof loginParams === "object" && "sessionId" in loginParams);
+        expect(loginParams).toEqual({
           sessionId: expect.any(String),
           authChoice: "example-device",
           agentId: "main",
@@ -107,9 +114,14 @@ suite.define(() => {
         const dialog = page.locator("openclaw-modal-dialog");
         await dialog.getByText("TEST-1234", { exact: true }).waitFor();
         expect(
-          await dialog.getByRole("link", { name: "Open sign-in page" }).getAttribute("href"),
+          await dialog
+            .getByRole("link", { name: "Open sign-in", exact: true })
+            .getAttribute("href"),
         ).toBe("https://example.invalid/device");
-        await captureProviderProof("login-device-code.png", dialog.getByText("TEST-1234"));
+        await captureProviderProof(
+          `login-device-code-${modelAccess.value}.png`,
+          dialog.getByText("TEST-1234"),
+        );
         const authReads = (await gateway.getRequests("models.authStatus")).length;
         await gateway.setMethodResponse("models.authStatus", {
           ts: now,
@@ -130,8 +142,40 @@ suite.define(() => {
             },
           ],
         });
-        await gateway.setMethodResponse("wizard.next", { done: true, status: "done" });
+        await gateway.setMethodResponse("wizard.next", {
+          done: false,
+          status: "running",
+          step: {
+            id: "model-access",
+            type: "select",
+            message: "Credentials saved. Your current model restrictions may hide Example models.",
+            initialValue: "keep",
+            options: [
+              { value: "all", label: "Show all Example models" },
+              { value: "keep", label: "Keep current restrictions" },
+            ],
+          },
+        });
         await dialog.getByRole("button", { name: "Continue", exact: true }).click();
+        const keep = dialog.getByRole("button", { name: "Keep current restrictions", exact: true });
+        await keep.waitFor();
+        expect(await keep.isEnabled()).toBe(true);
+        expect((await gateway.getRequests("wizard.next")).at(-1)?.params).toEqual({
+          sessionId: loginParams.sessionId,
+          answer: { stepId: "device" },
+        });
+        await captureProviderProof(`login-model-access-${modelAccess.value}.png`, dialog);
+        await gateway.setMethodResponse("wizard.next", { done: true, status: "done" });
+        await dialog.getByRole("button", { name: modelAccess.label, exact: true }).click();
+        await expect
+          .poll(async () => {
+            const requests = await gateway.getRequests("wizard.next");
+            return requests.at(-1)?.params;
+          })
+          .toEqual({
+            sessionId: loginParams.sessionId,
+            answer: { stepId: "model-access", value: modelAccess.value },
+          });
         const saved = page.getByRole("status").filter({ hasText: "Provider credentials saved." });
         await saved.waitFor();
         await page.getByText("signed-in@example.invalid", { exact: true }).waitFor();
@@ -142,7 +186,118 @@ suite.define(() => {
         expect(new URL(page.url()).pathname).toBe("/settings/model-providers");
         expect(await gateway.getRequests("config.patch")).toHaveLength(0);
         expect(await gateway.getRequests("openclaw.setup.activate.start")).toHaveLength(0);
-        await captureProviderProof("login-after-saved.png", saved);
+        await captureProviderProof(`login-after-saved-${modelAccess.value}.png`, saved);
+      },
+    );
+  });
+  it("starts browser sign-in from two direct choices and opens a detached tab", async () => {
+    await suite.withPage(
+      {
+        locale: "en-US",
+        reducedMotion: "reduce",
+        serviceWorkers: "block",
+        viewport: { width: 1280, height: 900 },
+      },
+      async ({ page, context }) => {
+        const signInUrl = "https://provider.example/sign-in";
+        await context.route("https://provider.example/**", (route) =>
+          route.fulfill({
+            contentType: "text/html",
+            body: "<title>Provider sign-in</title>Provider sign-in",
+          }),
+        );
+        const gateway = await installMockGateway(page, {
+          featureMethods: [
+            "config.get",
+            "config.patch",
+            "models.authStatus",
+            "models.authLogin",
+            "wizard.next",
+            "wizard.cancel",
+          ],
+          methodResponses: {
+            "models.authStatus": {
+              ts: 1,
+              providers: [],
+              providerCapabilities: [
+                {
+                  provider: "example",
+                  apiKeySupported: false,
+                  quickApiKeySetup: false,
+                  loginOptions: [
+                    {
+                      id: "example-device",
+                      brandId: "example",
+                      label: "Device pairing",
+                      kind: "device-code",
+                      featured: true,
+                    },
+                    {
+                      id: "example-browser",
+                      brandId: "example",
+                      label: "Browser sign-in",
+                      kind: "oauth",
+                      featured: false,
+                    },
+                  ],
+                },
+              ],
+            },
+            "models.authLogin": { done: false, status: "running" },
+            "wizard.next": {
+              sequence: [
+                {
+                  done: false,
+                  status: "running",
+                  step: {
+                    id: "instructions",
+                    type: "note",
+                    executor: "client",
+                    message: "Remote environment",
+                    externalUrl: signInUrl,
+                  },
+                },
+                {
+                  done: false,
+                  status: "running",
+                  step: {
+                    id: "browser",
+                    type: "progress",
+                    executor: "gateway",
+                    externalUrl: signInUrl,
+                    message: "Complete sign-in",
+                  },
+                },
+                { done: true, status: "done" },
+              ],
+            },
+          },
+        });
+        await page.goto(suite.server.baseUrl + "settings/model-providers");
+        await page.locator("[data-models-connect]").click();
+        await page.locator('[data-models-login-provider="example"]').click();
+        const dialog = page.locator(".model-setup-wizard");
+        await page.getByRole("button", { name: "Device pairing", exact: true }).waitFor();
+        expect(await dialog.locator("select").count()).toBe(0);
+        await captureProviderProof("login-browser-choices.png", dialog);
+        await gateway.deferNext("wizard.next", { answer: { stepId: "instructions" } });
+        const popupReady = page.waitForEvent("popup");
+        await page.getByRole("button", { name: "Browser sign-in", exact: true }).click();
+        const popup = await popupReady;
+        await gateway.waitForRequest("wizard.next", {
+          match: { answer: { stepId: "instructions" } },
+        });
+        await gateway.deferNext("wizard.next");
+        await gateway.resolveDeferred("wizard.next");
+        await page.getByRole("link", { name: "Open sign-in", exact: true }).waitFor();
+        await expect.poll(() => popup.url()).toBe(signInUrl);
+        expect(await popup.evaluate(() => window.opener)).toBeNull();
+        await page.getByRole("button", { name: "Copy link", exact: true }).waitFor();
+        expect(await dialog.textContent()).not.toContain(signInUrl);
+        await captureProviderProof("login-browser-waiting.png", dialog);
+        await gateway.resolveDeferred("wizard.next");
+        await expect.poll(() => page.locator("openclaw-modal-dialog").count()).toBe(0);
+        await popup.close();
       },
     );
   });
