@@ -57,6 +57,7 @@ import {
 } from "../workspace-bootstrap-read.js";
 import { resolveCompactionInstructions } from "./compaction-instructions.js";
 import {
+  buildCompactionSemanticRepairEvidence,
   isCompactionSemanticRepairFinding,
   observeCompactionSemanticFidelity,
 } from "./compaction-semantic-fidelity.js";
@@ -1285,6 +1286,7 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
       const effectivePreviousSummary = droppedSummary ?? previousSummary;
 
       let correctiveInstructions = "";
+      let semanticFallbackSummary: string | undefined;
       const totalAttempts = qualityGuardEnabled ? qualityGuardMaxRetries + 1 : 1;
 
       for (let attempt = 0; attempt < totalAttempts; attempt += 1) {
@@ -1331,6 +1333,12 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
             signal.throwIfAborted();
           }
           if (attempt > 0) {
+            if (semanticFallbackSummary) {
+              log.warn(
+                "Compaction safeguard: semantic corrective generation failed; preserving the last deterministic-valid summary.",
+              );
+              return compactionResult(semanticFallbackSummary);
+            }
             log.warn(
               "Compaction safeguard: corrective generation failed; " +
                 `reasonCode=corrective_generation_failed attempt=${attempt + 1}`,
@@ -1429,18 +1437,14 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
                 );
                 if (repairFindings.length > 0) {
                   if (canRegenerate && attempt < totalAttempts - 1) {
-                    const repairEvidence = repairFindings
-                      .map(
-                        (finding) =>
-                          `- ${finding.relation}: ${finding.sourceText}`,
-                      )
-                      .join("\n");
+                    const repairEvidence = buildCompactionSemanticRepairEvidence(repairFindings);
                     const semanticFeedback = wrapUntrustedInstructionBlock(
                       "Semantic fidelity feedback",
                       repairEvidence,
                     );
                     const budgetInstruction =
                       `Keep the complete summary body within ${finalized.bodyBudget} UTF-16 code units so the finalized artifact remains valid after required suffixes.`;
+                    semanticFallbackSummary = finalized.summary;
                     correctiveInstructions = [
                       "Preserve the active meaning of the source requirements below. Do not mark them complete or superseded unless the retained conversation supports that conclusion.",
                       budgetInstruction,
@@ -1471,6 +1475,12 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
           return compactionResult(finalized.summary);
         }
         if (!canRegenerate || attempt >= totalAttempts - 1) {
+          if (semanticFallbackSummary) {
+            log.warn(
+              "Compaction safeguard: semantic corrective retry did not produce a deterministic-valid replacement; preserving the prior accepted summary.",
+            );
+            return compactionResult(semanticFallbackSummary);
+          }
           const reasonCodes = [
             ...new Set(quality.reasons.map((reason) => reason.split(":", 1)[0])),
           ];
