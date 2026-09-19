@@ -238,6 +238,65 @@ describe("source update build output transaction", () => {
     expect(backups()).toEqual([]);
   });
 
+  it("leaves live output untouched and retains a complete backup when staging fails between roots", async () => {
+    const staged = ["dist", "dist-runtime"];
+    for (const output of staged) {
+      writeOutput(output, `old:${output}`);
+    }
+    const events: string[] = [];
+    // Backup creation copies each live root before the build runs; fail only
+    // the restore-phase staging copy (the second dist-runtime copy overall).
+    const realCpSync = fs.cpSync.bind(fs);
+    let runtimeCopies = 0;
+    const cpSpy = vi.spyOn(fs, "cpSync").mockImplementation(((
+      ...args: Parameters<typeof fs.cpSync>
+    ) => {
+      if (String(args[0]).includes("dist-runtime")) {
+        runtimeCopies += 1;
+        if (runtimeCopies === 2) {
+          throw new Error("injected staging failure between root 1 and root 2");
+        }
+      }
+      return realCpSync(...args);
+    }) as typeof fs.cpSync);
+    try {
+      await expect(
+        runTransaction("stop", "restart", {
+          root: workdir,
+          lifecycle: async (command) => {
+            events.push(command);
+            return 0;
+          },
+          build: async () => {
+            events.push("build");
+            for (const output of staged) {
+              writeOutput(output, `partial:${output}`);
+            }
+            return { exitCode: 17 };
+          },
+        }),
+      ).rejects.toThrow("could not be fully restored");
+    } finally {
+      cpSpy.mockRestore();
+    }
+    // No restart on unrestored output, and live roots were never destructively
+    // touched: still a single (failed) generation, never one-old/one-missing.
+    expect(events).toEqual(["stop", "build"]);
+    for (const output of staged) {
+      expect(readOutput(output)).toBe(`partial:${output}`);
+    }
+    // The retained backup is the complete previous generation.
+    expect(backups()).toHaveLength(1);
+    for (const output of staged) {
+      expect(fs.readFileSync(path.join(workdir, backups()[0]!, output, "marker"), "utf8")).toBe(
+        `old:${output}`,
+      );
+    }
+    expect(
+      fs.readdirSync(workdir).filter((name) => name.startsWith(".update-restore-staging.")),
+    ).toEqual([]);
+  });
+
   it("restores output and reports a non-Error build rejection as an Error", async () => {
     writeOutput("dist", "old");
     const events: string[] = [];

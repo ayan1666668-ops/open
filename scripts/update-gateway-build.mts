@@ -62,6 +62,14 @@ export async function runUpdateGatewayBuild(
     let failed: unknown;
     let exitCode = 1;
     try {
+      for (const name of fs.readdirSync(root)) {
+        // Staging directories are never authoritative; the backup below is the
+        // recovery source. Drop leftovers from a previously killed restore so
+        // they cannot accumulate at the checkout root.
+        if (name.startsWith(".update-restore-staging.")) {
+          fs.rmSync(path.join(root, name), { recursive: true, force: true });
+        }
+      }
       backup = fs.mkdtempSync(path.join(root, ".update-build-backup."));
       for (const output of roots) {
         const source = path.join(root, output);
@@ -92,7 +100,13 @@ export async function runUpdateGatewayBuild(
       }
       if (buildStarted && backup) {
         log("restoring previous build output");
+        // Stage the previous generation outside the live roots before touching
+        // them: a staging failure leaves live output untouched and the backup
+        // complete. The backup is never consumed; it is deleted only after a
+        // fully successful restore.
+        let staging;
         try {
+          staging = fs.mkdtempSync(path.join(root, ".update-restore-staging."));
           // Validate the whole replacement set before restoring any root.
           for (const output of roots) {
             // Build children have joined; do not follow a replaced root/parent.
@@ -102,16 +116,43 @@ export async function runUpdateGatewayBuild(
               assertRealOutputRoot(current);
             }
           }
+          // Phase 1: materialize the previous generation in staging. No live
+          // root is modified here.
           for (const output of roots) {
-            const destination = path.join(root, output);
-            fs.rmSync(destination, { recursive: true, force: true });
             const previous = path.join(backup, output);
             if (fs.existsSync(previous)) {
-              fs.mkdirSync(path.dirname(destination), { recursive: true });
-              fs.renameSync(previous, destination);
+              const stagedPath = path.join(staging, output);
+              fs.mkdirSync(path.dirname(stagedPath), { recursive: true });
+              fs.cpSync(previous, stagedPath, {
+                recursive: true,
+                dereference: false,
+                verbatimSymlinks: true,
+                preserveTimestamps: true,
+              });
             }
           }
+          // Phase 2: commit staged roots over live output. Newly created build
+          // output (no backup entry) is removed; everything else becomes the
+          // previous generation.
+          for (const output of roots) {
+            const stagedPath = path.join(staging, output);
+            const destination = path.join(root, output);
+            fs.rmSync(destination, { recursive: true, force: true });
+            if (fs.existsSync(stagedPath)) {
+              fs.mkdirSync(path.dirname(destination), { recursive: true });
+              fs.renameSync(stagedPath, destination);
+            }
+          }
+          fs.rmSync(staging, { recursive: true, force: true });
         } catch (error) {
+          if (staging) {
+            try {
+              fs.rmSync(staging, { recursive: true, force: true });
+            } catch {
+              // Staging cleanup is best-effort; the complete backup below remains
+              // the recovery source.
+            }
+          }
           throw new Error(`Previous output could not be fully restored; retained ${backup}`, {
             cause: error,
           });
