@@ -84,6 +84,8 @@ time, and the caller's signal as its cause. Below the selected threshold, this d
 appears in JSON `warnings` and human output without failing lint. It means the inspection
 was not performed. Cancellation after acquisition and other inspection failures remain errors.
 
+During updates, optional inspections and policy advisories are warnings, including intentional open DM policies. Required configuration, state, and startup checks remain blocking. The saved report retains every finding with an individually bounded reason; update history keeps severity counts, deciding errors, and an explicit omission count when its diagnostic bound is reached.
+
 A configured Codex plugin that is missing or whose advertised health API cannot be
 verified produces an availability warning under `core/doctor/codex-session-routes`,
 with the plugin name and repair command. Untrusted installations are not imported
