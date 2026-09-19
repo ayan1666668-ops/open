@@ -13,6 +13,11 @@ const MAX_SEGMENTS_PER_JUDGMENT = 64;
 const DEFAULT_SEMANTIC_TIMEOUT_MS = 750;
 const MAX_SEMANTIC_TIMEOUT_MS = 5_000;
 
+type CompactionJudgmentRuntime = Pick<
+  JudgmentRuntimeV1,
+  "evaluate" | "recordOutcome"
+>;
+
 function clampTimeoutMs(value: unknown): number {
   if (typeof value !== "number" || !Number.isFinite(value)) {
     return DEFAULT_SEMANTIC_TIMEOUT_MS;
@@ -48,16 +53,18 @@ function asChoiceAnswer(answer: JudgmentAnswer | undefined):
 }
 
 export async function evaluateCompactionShadowCuration(params: {
-  runtime: Pick<JudgmentRuntimeV1, "evaluate">;
+  runtime: CompactionJudgmentRuntime;
   snapshot: CompactionSemanticSnapshot;
   signal: AbortSignal;
   timeoutMs?: number;
 }): Promise<CompactionShadowCurationResult> {
   const eligible = params.snapshot.segments.filter((segment) => !segment.protected);
   if (eligible.length === 0) {
+    await params.runtime.recordOutcome("no-change");
     return allRetainedResult(params.snapshot, "skipped", "no-discretionary-segments");
   }
   if (params.snapshot.obligations.length === 0) {
+    await params.runtime.recordOutcome("no-change");
     return allRetainedResult(params.snapshot, "skipped", "no-source-backed-obligations");
   }
 
@@ -103,6 +110,7 @@ export async function evaluateCompactionShadowCuration(params: {
   );
 
   if (outcome.status !== "ok") {
+    await params.runtime.recordOutcome("fallback");
     return allRetainedResult(params.snapshot, "unavailable", outcome.reason);
   }
 
@@ -134,6 +142,7 @@ export async function evaluateCompactionShadowCuration(params: {
       ? Math.max(0, 1 - selectedChars / params.snapshot.originalChars)
       : 0;
 
+  await params.runtime.recordOutcome(excluded.size > 0 ? "accepted" : "no-change");
   return {
     status: "ok",
     sourceFingerprint: params.snapshot.sourceFingerprint,
@@ -155,7 +164,7 @@ export async function evaluateCompactionShadowCuration(params: {
 }
 
 export async function evaluateCompactionFidelity(params: {
-  runtime: Pick<JudgmentRuntimeV1, "evaluate">;
+  runtime: CompactionJudgmentRuntime;
   snapshot: CompactionSemanticSnapshot;
   candidateSummary: string;
   signal: AbortSignal;
@@ -163,6 +172,7 @@ export async function evaluateCompactionFidelity(params: {
 }): Promise<CompactionFidelityResult> {
   const candidateFingerprint = fingerprint(params.candidateSummary);
   if (params.snapshot.obligations.length === 0) {
+    await params.runtime.recordOutcome("no-change");
     return {
       status: "skipped",
       sourceFingerprint: params.snapshot.sourceFingerprint,
@@ -213,6 +223,7 @@ export async function evaluateCompactionFidelity(params: {
     },
   );
   if (outcome.status !== "ok") {
+    await params.runtime.recordOutcome("fallback");
     return {
       status: "unavailable",
       sourceFingerprint: params.snapshot.sourceFingerprint,
@@ -235,6 +246,11 @@ export async function evaluateCompactionFidelity(params: {
     };
   });
 
+  await params.runtime.recordOutcome(
+    assessments.every((assessment) => assessment.classification === "preserved")
+      ? "no-change"
+      : "accepted",
+  );
   return {
     status: "ok",
     sourceFingerprint: params.snapshot.sourceFingerprint,
