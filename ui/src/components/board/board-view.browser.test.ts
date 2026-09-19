@@ -171,7 +171,7 @@ describe.skipIf(!hasBrowserLayout)("openclaw-board-view browser layout", () => {
       };
       if (action === "move") {
         const { page } = await import("vitest/browser");
-        await page.elementLocator(cell.querySelector(".board-widget")!).hover();
+        cell.querySelector<HTMLElement>(".board-widget")!.focus();
         await page.elementLocator(cell.querySelector(".board-widget__menu-trigger")!).click();
         await page
           .elementLocator(cell.querySelector('wa-dropdown-item[value="move:ops"]')!)
