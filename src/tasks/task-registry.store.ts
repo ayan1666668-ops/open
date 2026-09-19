@@ -143,6 +143,15 @@ export function getTaskRegistryObservers(): TaskRegistryObservers | null {
   return configuredTaskRegistryObservers;
 }
 
+/** Subscribe at the publication owner; readers recheck current task authority. */
+export function onTaskRegistryChange(
+  listener: (event?: TaskRegistryObserverEvent) => void,
+): () => void {
+  const listeners = getTaskRegistryProcessState().changeListeners;
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+}
+
 export function configureTaskRegistryRuntime(params: {
   store?: TaskRegistryStore;
   observers?: TaskRegistryObservers | null;

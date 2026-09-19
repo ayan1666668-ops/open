@@ -28,12 +28,12 @@ import {
   withTaskRegistryMutation,
   claimTaskRegistryListenerStart,
   getTasksByRunScope,
-  onTaskRegistryChange,
   ensureTaskRegistryReady,
   setTaskRegistryListenerStarter,
   setTaskRegistryListenerStop,
 } from "./task-registry-state.js";
 import { clearTaskProgressBatches } from "./task-registry.process-state.js";
+import { onTaskRegistryChange } from "./task-registry.store.js";
 import { isTerminalTaskStatus, type TaskRecord } from "./task-registry.types.js";
 import { getTaskRunOwner } from "./task-run-owner.js";
 

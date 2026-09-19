@@ -431,7 +431,7 @@ describe("adopted requester progress", () => {
   });
 
   it.each(["no card", "adoption refused"] as const)(
-    "coalesces opt-in notifications without creating a retained receipt after %s",
+    "coalesces state-only notifications without creating a retained receipt after %s",
     async (state) => {
       const first = child("First");
       const second = child("Second");
@@ -460,7 +460,8 @@ describe("adopted requester progress", () => {
       });
       expect(notifications[0]!.content).toContain("First");
       expect(notifications[0]!.content).toContain("Second");
-      expect(notifications[0]!.content).toContain("public-notes-2.txt");
+      expect(notifications[0]!.content).toContain("running");
+      expect(notifications[0]!.content).not.toContain("public-notes");
       expect(notifications[0]!.content).not.toContain("private-");
       expect(getTaskById(first.task.taskId)).toMatchObject({
         status: "running",
@@ -495,8 +496,8 @@ describe("adopted requester progress", () => {
     await vi.advanceTimersByTimeAsync(15_000);
     expect(notifications).toHaveLength(1);
     expect(notifications[0]!.content).toContain("Active");
-    expect(notifications[0]!.content).toContain("public-notes-2.txt");
-    expect(notifications[0]!.content).not.toMatch(/Finished|public-notes-1|succeeded/);
+    expect(notifications[0]!.content).toContain("running");
+    expect(notifications[0]!.content).not.toMatch(/Finished|public-notes|succeeded/);
     expect(getTaskById(second.task.taskId)).toMatchObject({
       status: "running",
       deliveryStatus: "pending",
@@ -566,7 +567,8 @@ describe("adopted requester progress", () => {
     expect(notifications).toHaveLength(1);
     await vi.advanceTimersByTimeAsync(15_000);
     expect(notifications).toHaveLength(2);
-    expect(notifications[1]!.content).toContain("public-notes-2.txt");
+    expect(notifications[1]!.content).toContain("Second");
+    expect(notifications[1]!.content).not.toContain("public-notes");
     expect(receipts.size).toBe(0);
   });
 

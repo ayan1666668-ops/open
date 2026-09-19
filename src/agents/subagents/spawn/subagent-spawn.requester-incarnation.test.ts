@@ -34,17 +34,41 @@ import { spawnSubagentDirect } from "./subagent-spawn.js";
 import { testing as spawnTesting } from "./subagent-spawn.test-support.js";
 
 const fixture = installSpawnAuthorityFixture();
-const requesterSessionKey = "agent:main:completion-owner";
 const backendId = "requester-incarnation-fixture";
 
 it.each([
-  { backend: "native", originalSessionId: "original-requester" },
-  { backend: "visible", originalSessionId: "original-requester" },
-  { backend: "acp", originalSessionId: "original-requester" },
-  { backend: "native", originalSessionId: undefined },
+  { backend: "native", originalSessionId: "original-requester", globalRequester: false },
+  { backend: "visible", originalSessionId: "original-requester", globalRequester: false },
+  { backend: "acp", originalSessionId: "original-requester", globalRequester: false },
+  { backend: "native", originalSessionId: undefined, globalRequester: false },
+  { backend: "visible", originalSessionId: "original-requester", globalRequester: true },
 ] as const)(
-  "keeps the birth requester window through async $backend launch (original=$originalSessionId)",
-  async ({ backend, originalSessionId }) => {
+  "keeps the birth requester window through async $backend launch (original=$originalSessionId, global=$globalRequester)",
+  async ({ backend, originalSessionId, globalRequester }) => {
+    const requesterSessionKey = globalRequester ? "global" : "agent:main:completion-owner";
+    if (globalRequester) {
+      const cfg = getRuntimeConfig();
+      await writeFile(
+        path.join(fixture.stateDir, "openclaw.json"),
+        JSON.stringify({
+          ...cfg,
+          session: { ...cfg.session, scope: "global" },
+          agents: {
+            ...cfg.agents,
+            ownership: "explicit",
+            entries: { main: { subagents: { allowAgents: ["worker"] } }, worker: {} },
+          },
+        }),
+      );
+      clearConfigCache();
+      clearRuntimeConfigSnapshot();
+      await writeSubagentSessionEntry({
+        stateDir: fixture.stateDir,
+        agentId: "worker",
+        sessionKey: "global",
+        defaultSessionId: "foreign-child-owner",
+      });
+    }
     await writeSubagentSessionEntry({
       stateDir: fixture.stateDir,
       agentId: "main",
@@ -110,6 +134,7 @@ it.each([
     const ctx = {
       agentSessionKey: fixture.parentSessionKey,
       completionOwnerKey: requesterSessionKey,
+      ...(globalRequester ? { requesterAgentIdOverride: "main" } : {}),
     };
     try {
       const pending =
@@ -119,6 +144,7 @@ it.each([
             ? spawnAcpDirect({ task: "window-bound work", agentId: "main", mode: "run" }, ctx)
             : maybeSpawnVisibleSession({
                 raw: { visible: true },
+                ...(globalRequester ? { agentId: "worker" } : {}),
                 task: "window-bound work",
                 label: "",
                 runtime: "subagent",
@@ -131,10 +157,11 @@ it.each([
                     if (method !== "sessions.create") {
                       throw new Error(`Unexpected visible spawn RPC ${method}`);
                     }
-                    const childSessionKey = "agent:main:dashboard:window-child";
+                    const childAgentId = globalRequester ? "worker" : "main";
+                    const childSessionKey = `agent:${childAgentId}:dashboard:window-child`;
                     await writeSubagentSessionEntry({
                       stateDir: fixture.stateDir,
-                      agentId: "main",
+                      agentId: childAgentId,
                       sessionKey: childSessionKey,
                       defaultSessionId: "visible-child-session",
                     });
@@ -168,9 +195,9 @@ it.each([
         expectsCompletionMessage: true,
       });
       expect(restored?.completionRequesterSessionId).toBe(originalSessionId);
-      expect(loadSessionEntryReadOnly({ sessionKey: requesterSessionKey })?.sessionId).toBe(
-        "replacement-requester",
-      );
+      expect(
+        loadSessionEntryReadOnly({ sessionKey: requesterSessionKey, agentId: "main" })?.sessionId,
+      ).toBe("replacement-requester");
     } finally {
       if (backend === "acp") {
         await disposeAcpSessionManagerInstance(getAcpSessionManager(), "test-cleanup");

@@ -258,6 +258,7 @@ export async function maybeSpawnVisibleSession(params: {
   const requesterTarget = resolveGatewaySessionStoreTarget({
     cfg,
     key: ownership.completionRequesterSessionKey,
+    agentId: params.options?.requesterAgentIdOverride,
   });
   const completionRequesterSessionId = loadSessionEntryReadOnly({
     storePath: requesterTarget.storePath,

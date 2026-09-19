@@ -19,7 +19,6 @@ import { getRuntimeConfig } from "../config/config.js";
 import { resolveChannelAccountKey } from "../routing/account-lookup.js";
 import type { DeliveryContext } from "../utils/delivery-context.types.js";
 import { getTaskExecutionObservation } from "./task-execution-observation.js";
-import { shouldAutoDeliverTaskStateChange } from "./task-executor-policy.js";
 import { getTaskPreparedActivity } from "./task-registry-activity.js";
 import type { TaskProgressItem, TaskProgressPlan } from "./task-registry.process-state.js";
 import type { TaskRecord } from "./task-registry.types.js";
@@ -138,6 +137,9 @@ export async function prepareProgressContent(
                     : "failed",
             }
           : {}),
+      ...(!initialSnapshot && observation.state === "running" && observation.currentTool
+        ? { summary: observation.currentTool.name }
+        : {}),
       ...(observation.state === "unknown" ? { summary: "Current activity unavailable" } : {}),
       ...(observation.state === "waiting" || observation.state === "queued"
         ? { summary: observation.state }
@@ -145,10 +147,7 @@ export async function prepareProgressContent(
     };
     const terminalItem = observation.state === "finished" ? taskItem : undefined;
     const items: AgentActivityItem[] = terminalItem ? [] : [taskItem];
-    const prepared =
-      initialSnapshot || shouldAutoDeliverTaskStateChange(task)
-        ? getTaskPreparedActivity(task.taskId)
-        : undefined;
+    const prepared = initialSnapshot ? getTaskPreparedActivity(task.taskId) : undefined;
     for (const item of prepared?.values() ?? []) {
       items.push(
         prepareItem({

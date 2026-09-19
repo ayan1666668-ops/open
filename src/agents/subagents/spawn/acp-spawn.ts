@@ -296,6 +296,7 @@ export async function spawnAcpDirect(
   const requesterTarget = resolveGatewaySessionStoreTarget({
     cfg,
     key: ownership.completionRequesterSessionKey,
+    agentId: ctx.requesterAgentIdOverride,
   });
   const completionRequesterSessionId = loadSessionEntryReadOnly({
     storePath: requesterTarget.storePath,

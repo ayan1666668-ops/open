@@ -179,7 +179,7 @@ function enqueueYieldedTaskProgress(task: TaskRecord, runId: string, prepared?: 
     childSessionKey: progress.entry.childSessionKey,
     progressOrigin: progress.entry.progressOrigin,
   });
-  if (prepared) {
+  if (prepared && progress.operationId) {
     const itemKey = JSON.stringify([task.taskId, progress.generation, prepared.itemId]);
     batch.pendingItems.delete(itemKey);
     batch.pendingItems.set(itemKey, {
@@ -579,11 +579,7 @@ async function runProgressPublication(key: string, batch: TaskProgressBatch): Pr
           task?.ownerKey === batch.requesterSessionKey &&
           task.notifyPolicy !== "silent" &&
           backing?.runtime === "subagent" &&
-          backing.generation === source.generation &&
-          (batch.operationId ||
-            fresh.rows.some(
-              (row) => row.task.taskId === source.taskId && row.entry.runId === source.runId,
-            ))
+          backing.generation === source.generation
         );
       });
       const capturedPlan = batch.pendingPlan;

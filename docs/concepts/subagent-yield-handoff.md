@@ -116,6 +116,9 @@ excluded. Channel commentary, tool-detail, and quiet-mode settings still apply.
 Without a usable card, the shared reply pipeline provides its normal waiting
 acknowledgment when the turn would otherwise be silent. It does not create a
 second detached progress card.
+Tasks explicitly set to `state_changes` still receive brief state notifications
+through the same core batching owner. Without an adopted card, those notices do
+not include command arguments or commentary.
 
 Core coalesces prepared child activity over 15 seconds and edits the captured
 channel, account, recipient, and thread. Updates show named child activity and

@@ -130,6 +130,7 @@ export function resolveSubagentSpawnRequest(
   const target = resolveGatewaySessionStoreTarget({
     cfg,
     key: ownership.completionRequesterSessionKey,
+    agentId: ctx.requesterAgentIdOverride,
   });
   const completionRequesterSessionId = loadSessionEntry({
     storePath: target.storePath,
