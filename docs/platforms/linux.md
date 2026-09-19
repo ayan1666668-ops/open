@@ -382,6 +382,14 @@ Canvas bridge or its A2UI push commands.
 
 ## Gateway service (systemd)
 
+On Linux hosts without a supported service manager, run the Gateway in the
+foreground or through your own supervisor, such as rc.d. `openclaw gateway status
+--deep` reports **no supported service manager detected** and identifies a
+remaining service unit as stale. That recorded unit does not select the status
+probe's configuration or port. Updates continue with a service warning; restart
+your manually launched Gateway after the update. An unavailable user session bus
+on a systemd host remains a separate service-access diagnostic.
+
 Install with one of:
 
 ```bash
@@ -465,6 +473,10 @@ Covered child process surfaces:
 - MCP stdio server children
 - Managed local model and embedding service children
 - OpenClaw-launched browser/Chrome processes (via the plugin SDK process runtime)
+
+Sandbox backend transports keep their prepared environment and inherited OOM
+score instead of receiving this wrapper. Workload resource policy belongs to
+the sandbox backend; ordinary host commands and PTYs retain the child-first bias.
 
 The wrapper is Linux-only and skipped when `/bin/sh` is unavailable, or when
 the child env sets `OPENCLAW_CHILD_OOM_SCORE_ADJ` to `0`, `false`, `no`, or
