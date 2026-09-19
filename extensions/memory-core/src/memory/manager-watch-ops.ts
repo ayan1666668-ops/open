@@ -139,8 +139,11 @@ export abstract class MemoryManagerWatchOps extends MemoryManagerWatchResources 
         ) {
           fileWatchPaths.add(entry.path);
         }
-      } catch {
-        continue;
+      } catch (err) {
+        if (isFileMissingError(err)) {
+          // Chokidar can observe creation through the nearest existing parent.
+          fileWatchPaths.add(entry.path);
+        }
       }
     }
     const markDirty = (watchPath?: string, stats?: MemoryWatchEventStats) => {
