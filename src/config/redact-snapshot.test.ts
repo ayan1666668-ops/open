@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import { redactSnapshotTestHints as mainSchemaHints } from "../../test/helpers/config/redact-snapshot-test-hints.js";
 import type { ConfigUiHints } from "../shared/config-ui-hints-types.js";
 import { materializeRuntimeConfig } from "./materialize.js";
-import { REDACTED_SENTINEL, redactConfigSnapshot } from "./redact-snapshot.js";
+import { REDACTED_SENTINEL, redactConfigObject, redactConfigSnapshot } from "./redact-snapshot.js";
 import {
   makeSnapshot,
   restoreRedactedValues,
@@ -1537,6 +1537,30 @@ describe("redactConfigSnapshot", () => {
       "https://alice:secret@chrome.prod.example.com",
     );
     expect(restored.browser.profiles.local.cdpUrl).toBe("ws://localhost:9222");
+  });
+
+  it("does not throw RangeError on pathologically nested objects", () => {
+    const depth = 4000;
+    const secret = "synthetic-deep-nested-token-abcdefghij";
+    let value: unknown = { token: secret };
+    for (let i = 0; i < depth; i += 1) {
+      value = { x: value };
+    }
+
+    expect(() => redactConfigObject(value)).not.toThrow();
+    const redacted = redactConfigObject(value);
+
+    let cursor: unknown = redacted;
+    for (let i = 0; i < depth; i += 1) {
+      cursor = (cursor as { x: unknown }).x;
+    }
+    expect((cursor as { token: string }).token).toBe(REDACTED_SENTINEL);
+
+    let originalCursor: unknown = value;
+    for (let i = 0; i < depth; i += 1) {
+      originalCursor = (originalCursor as { x: unknown }).x;
+    }
+    expect((originalCursor as { token: string }).token).toBe(secret);
   });
 });
 /* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */
