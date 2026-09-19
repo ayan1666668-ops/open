@@ -419,33 +419,14 @@ vi.mock("node:child_process", async () => {
 });
 
 vi.mock("../process/exec.js", async (importOriginal) => {
-  const { createUpdateCommandTransportFixture } =
+  const { createUpdateCommandTransportFixture, createUpdateUtf8CommandTransportFixture } =
     await import("./update-cli/update-command-transport.test-support.js");
   const actual = await importOriginal<typeof import("../process/exec.js")>();
-  const { spawnSync: spawnMetadata } =
-    await vi.importActual<typeof import("node:child_process")>("node:child_process");
   return {
     // The real snapshot worker has separate WAL/source-inode boundary coverage.
     // Retain real rehearsal config projection and drift checks in this CLI fixture.
     runCommandBuffered: async (argv: string[], options: { input: string; timeoutMs?: number }) => {
       const input: unknown = JSON.parse(options.input);
-      if (isRecord(input) && input.mode === undefined && Array.isArray(input.files)) {
-        // Keep budget metadata real; only snapshot mutation is simulated below.
-        const metadata = spawnMetadata(
-          expectDefined(argv[0], "metadata executable"),
-          argv.slice(1),
-          {
-            input: options.input,
-            timeout: options.timeoutMs,
-            cwd: commandTransport.hostCwd,
-            env: commandTransport.hostEnv,
-          },
-        );
-        if (metadata.error) {
-          throw metadata.error;
-        }
-        return { code: metadata.status, stdout: metadata.stdout, stderr: metadata.stderr };
-      }
       const mode = isRecord(input) ? input.mode : undefined;
       if (mode !== "inventory" && mode !== "snapshot") {
         throw new Error("Unexpected update state worker mode");
@@ -463,7 +444,12 @@ vi.mock("../process/exec.js", async (importOriginal) => {
       };
     },
     runCommandWithTimeout: await createUpdateCommandTransportFixture(commandTransport),
-    runUtf8CommandWithTimeout: vi.fn(actual.runUtf8CommandWithTimeout),
+    runUtf8CommandWithTimeout: vi.fn(
+      await createUpdateUtf8CommandTransportFixture(
+        commandTransport,
+        actual.runUtf8CommandWithTimeout,
+      ),
+    ),
     runExec: vi.fn(async () => ({
       stdout: new Date(Date.now() - 1000).toString(),
       stderr: "",
@@ -726,7 +712,7 @@ const runPostCorePluginConvergenceSpy = vi.spyOn(
 );
 const { registerUpdateCli } = await import("./update-cli.js");
 const { updateCommand } = await import("./update-cli/update-command.js");
-const { invokeUpdateCli, devTargetRefusalCases } =
+const { invokeUpdateCli, devTargetRefusalCases, expectGitMetadataPreview } =
   await import("./update-cli-invocation.test-support.js");
 
 const { updateFinalizeCommand } = await import("./update-cli/update-command-finalize.js");
@@ -4013,9 +3999,18 @@ describe("update-cli", () => {
   ])(
     "finalizes downgrade to $targetVersion with target writer=$fresh",
     async ({ targetVersion, fresh }) => {
-      vi.mocked(runUtf8CommandWithTimeout).mockRejectedValue(
-        new Error("Older target does not contain the migration-continuation worker"),
+      const runWorker = expectDefined(
+        vi.mocked(runUtf8CommandWithTimeout).getMockImplementation(),
+        "worker transport is initialized",
       );
+      vi.mocked(runUtf8CommandWithTimeout).mockImplementation((argv, options) => {
+        if (argv.includes("--check")) {
+          return Promise.reject(
+            new Error("Older target does not contain the migration-continuation worker"),
+          );
+        }
+        return runWorker(argv, options);
+      });
       candidateValidation.mockImplementation(async (options) =>
         reportCandidateSteps(options, {
           status: "ok",
@@ -6140,12 +6135,7 @@ describe("update-cli", () => {
 
   it("preserves best-effort preview when target metadata is unavailable", async () => {
     await updateCommand({ dryRun: true, json: true });
-    expect(lastWriteJsonCall()).toMatchObject({
-      dryRun: true,
-      notes: expect.arrayContaining([
-        expect.stringContaining("Could not preview Git target schema support"),
-      ]),
-    });
+    expectGitMetadataPreview(lastWriteJsonCall());
     expectNoSideEffects(
       runGatewayUpdate,
       serviceStop,
@@ -6314,7 +6304,11 @@ describe("update-cli", () => {
 
     expectNoSideEffects(databasePreflightMocks.preflightOpenClawDatabaseSchemas, serviceStop);
     expect(packageInstallCommandCall()?.[0]).toBeUndefined();
-    expect(getLogOutput()).toContain("could not inspect exact package target openclaw@9999.0.0");
+    expect(getLogOutput()).toContain("The registry package metadata could not be read.");
+    expect(getLogOutput()).toContain("retry openclaw update --tag <published-version>");
+    expect(getLogOutput()).toContain(
+      "Could not inspect exact package target openclaw@9999.0.0: registry timeout.",
+    );
     expect(defaultRuntime.exit).not.toHaveBeenCalled();
   });
 
@@ -9800,6 +9794,10 @@ describe("update-cli", () => {
       setTty(true);
       setStdoutTty(true);
       const root = await mockPackageInstallAtCaseDir("openclaw-update-native-preparation");
+      if (command === "doctor") {
+        vi.mocked(resolveUpdateInstallKind).mockResolvedValue("git");
+        vi.mocked(resolveUpdateInstallIdentity).mockResolvedValue({ installKind: "git" });
+      }
       mockRunningManagedGateway([
         process.execPath,
         path.join(root, "dist", "entry.js"),
@@ -9874,30 +9872,24 @@ describe("update-cli", () => {
         expect(taskEnabled).toBe(false);
         expect(process.listenerCount("SIGINT")).toBe(originalSignalListeners);
       });
-      let reportedError: unknown;
       // This fixture owns a native service; neither a relocated home nor the
       // host's external-repair policy should opt Doctor out of exercising it.
-      await withEnvAsync(
+      const reportedError = await withEnvAsync(
         { OPENCLAW_HOME: undefined, OPENCLAW_SERVICE_REPAIR_POLICY: undefined },
         async () => {
-          try {
-            if (command === "doctor") {
-              const { maybeOfferUpdateBeforeDoctor } = await import("../commands/doctor-update.js");
-              await maybeOfferUpdateBeforeDoctor({
-                runtime: defaultRuntime,
-                options: {},
-                root,
-                confirm: async () => true,
-                outro: vi.fn(),
-              });
-            } else {
-              await updateCommand({});
-            }
-          } catch (error) {
-            reportedError = error;
+          if (command === "doctor") {
+            const { maybeOfferUpdateBeforeDoctor } = await import("../commands/doctor-update.js");
+            await maybeOfferUpdateBeforeDoctor({
+              options: {},
+              root,
+              confirm: async () => true,
+              outro: vi.fn(),
+            });
+          } else {
+            await updateCommand({});
           }
         },
-      );
+      ).catch((error: unknown) => error);
 
       expect(
         nativeCommands.map((argv) => argv.at(-1)),
@@ -12349,6 +12341,7 @@ describe("update-cli", () => {
     await expect(updateCommand({ channel: "beta", yes: true })).rejects.toEqual(new ExitError(1));
 
     expectNoSideEffects(replaceConfigFile, runCommandWithTimeout);
+    expect(getLogOutput()).toContain("Update mode: package");
     expect(defaultRuntime.exit).not.toHaveBeenCalled();
   });
 
