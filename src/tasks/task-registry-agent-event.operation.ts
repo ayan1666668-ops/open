@@ -41,7 +41,7 @@ export type TaskAgentEventInput = {
 
 /** Reduce accepted events to durable fields; tool arguments and streamed prose never enter the queue. */
 export function captureTaskAgentEventChange(
-  task: TaskRecord,
+  task: Pick<TaskRecord, "runtime">,
   event: AgentEventPayload,
   projectTerminal: boolean,
 ): TaskAgentEventChange | undefined {

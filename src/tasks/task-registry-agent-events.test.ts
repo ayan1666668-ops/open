@@ -475,6 +475,9 @@ describe("task agent event persistence", () => {
             const receipt = await mutate(context, input, assertCurrent, (owner) => {
               nativeOwner = owner;
               onGranted({
+                get committed() {
+                  return owner.committed;
+                },
                 get settlement(): SqliteWorkerNativeSettlementOwner["settlement"] {
                   const outcome = owner.settlement;
                   return failureKind === "unknown settlement" && outcome

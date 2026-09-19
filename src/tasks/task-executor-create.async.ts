@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import { isSqliteWorkerError } from "../infra/sqlite-worker-contract.js";
+import type { SqliteWorkerNativeSettlementOwner } from "../infra/sqlite-worker-operation-settlement.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { captureOpenClawStateWorkerContext } from "../state/openclaw-state-worker-context.js";
 import type { OpenClawStateWorkerContext } from "../state/openclaw-state-worker-context.types.js";
@@ -16,6 +17,7 @@ import {
 import type { InitialTaskFlowLinkResult } from "./task-initial-flow.kernel.js";
 import { isOneTaskFlowEligible } from "./task-initial-flow.rules.js";
 import { clearTaskActivity, flushTaskActivity } from "./task-registry-activity.js";
+import { readTaskCreationEventTarget } from "./task-registry-agent-event-target.js";
 import type { TaskCreateResult } from "./task-registry-create.kernel.js";
 import {
   maybeDeliverTaskStateChangeUpdate,
@@ -96,11 +98,18 @@ async function createTaskRun(
     childSessionKey: input.params.childSessionKey?.trim(),
   };
   let committed: TaskCreateResult | undefined;
+  let creationOwner: SqliteWorkerNativeSettlementOwner | undefined;
   let flowHookEntered = false;
   const created = await runTaskRegistryWorkerMutation(
     {
       scope,
       admission: context.admission,
+      readEventTarget: () =>
+        readTaskCreationEventTarget(
+          creationOwner?.committed?.facts,
+          "tasks.createRecord",
+          input.taskId,
+        ),
       taskRowsWritten: () => committed?.persisted ?? false,
       publicationRecords: () =>
         new Map<string, TaskRecord>(
@@ -124,6 +133,9 @@ async function createTaskRun(
         context,
         { type: "tasks.createRecord", input },
         assertCreationCurrent,
+        (owner) => {
+          creationOwner = owner;
+        },
       );
       committed = result;
       return result;

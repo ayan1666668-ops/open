@@ -46,6 +46,7 @@ export function createSqliteWorkerOperationAdmission(
   const cleanupFailures: unknown[] = [];
   let closed = false;
   let failure: unknown;
+  let committed: SqliteWorkerNativeSettlementOwner["committed"];
   let settlement: SqliteWorkerNativeSettlement | undefined;
   const waiting = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT));
   const refuse = (decision: Int32Array, error: unknown) => {
@@ -57,6 +58,17 @@ export function createSqliteWorkerOperationAdmission(
     }
   };
   const receive = (message: unknown) => {
+    if (isRecord(message) && message.kind === "native-commit") {
+      if (!isRecord(message.committed) || settlement) {
+        failure ??= new SqliteWorkerError(
+          "SQLite worker commit receipt is invalid",
+          "outcome-unknown",
+        );
+        return;
+      }
+      committed = { facts: message.committed.facts };
+      return;
+    }
     if (isRecord(message) && message.kind === "native-settlement") {
       const value = message.settlement;
       if (
@@ -71,9 +83,12 @@ export function createSqliteWorkerOperationAdmission(
         );
         return;
       }
+      if (isRecord(value.committed)) {
+        committed = { facts: value.committed.facts };
+      }
       settlement = {
         kind: value.kind,
-        ...(isRecord(value.committed) ? { committed: { facts: value.committed.facts } } : {}),
+        ...(committed ? { committed } : {}),
       };
       return;
     }
@@ -133,6 +148,11 @@ export function createSqliteWorkerOperationAdmission(
     },
     get cleanupFailures() {
       return cleanupFailures;
+    },
+    get committed() {
+      // Event callbacks can precede delivery of already queued commit facts.
+      service();
+      return committed;
     },
     get settlement() {
       return settlement;
@@ -220,6 +240,7 @@ export function deferSqliteWorkerCommitReceipt(database: DatabaseSync, facts: un
   if (
     !deferSqlitePostCommitPublication(database, () => {
       scope.owner.committed = { facts: captured };
+      scope.owner.port.postMessage({ kind: "native-commit", committed: scope.owner.committed });
     })
   ) {
     throw new Error("SQLite worker receipt requires a transaction publication owner");

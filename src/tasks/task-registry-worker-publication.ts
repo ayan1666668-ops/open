@@ -1,6 +1,7 @@
 import { isDeepStrictEqual } from "node:util";
 import { createDeferredCore } from "../shared/deferred.js";
 import type { OpenClawStateDatabaseReadAdmission } from "../state/openclaw-state-db-async-lifecycle.js";
+import type { TaskAgentEventTarget } from "./task-registry-agent-event-target.js";
 import {
   cloneTaskDeliveryState,
   cloneTaskRecord,
@@ -24,6 +25,7 @@ export type TaskRegistryWorkerMutationContext = {
   scope: TaskRegistryMutationScope;
   admission: OpenClawStateDatabaseReadAdmission;
   publicationRecords: () => ReadonlyMap<string, TaskRecord>;
+  readEventTarget?: () => TaskAgentEventTarget | undefined;
   /** Only a producer whose write contract preserves task routing, access, and detail. */
   readIdentity?: "preserved";
   taskRowsWritten?: () => boolean;
@@ -308,6 +310,7 @@ export function claimTaskRegistryPublication(
 
 export function createPendingTaskRegistryMutation(
   scope: TaskRegistryMutationScope,
+  readEventTarget?: () => TaskAgentEventTarget | undefined,
 ): PendingTaskRegistryMutation {
   const pending: PendingTaskRegistryMutation = {
     scope,
@@ -333,6 +336,19 @@ export function createPendingTaskRegistryMutation(
   }
   for (const taskId of baselineIds) {
     inheritPublicationBaseline(pending, taskId);
+  }
+  if (readEventTarget) {
+    const { tasks } = getTaskRegistryProcessState();
+    const residentTargets = new Map(
+      [...taskIdsInScope(scope)].map((taskId) => [taskId, tasks.get(taskId)]),
+    );
+    pending.readEventTarget = () => {
+      const target = readEventTarget();
+      // A committed creation may fill an unchanged projection, never replace a newer one.
+      return target && tasks.get(target.taskId) === residentTargets.get(target.taskId)
+        ? target
+        : undefined;
+    };
   }
   return pending;
 }

@@ -48,6 +48,7 @@ export type TaskRegistryStore = TaskExecutionRestoreStore & {
     context: OpenClawStateWorkerContext,
     command: { type: Key; input: TaskInitialWorkerOperations[Key]["input"] },
     assertCurrent: () => void,
+    onGranted?: (owner: SqliteWorkerNativeSettlementOwner) => void,
   ): Promise<TaskInitialWorkerOperations[Key]["output"]>;
   syncLiveTaskFlowAsync(
     context: OpenClawStateWorkerContext,
@@ -89,9 +90,9 @@ const defaultTaskRegistryStore: TaskRegistryStore = {
     );
   },
   settleAgentEventWrites: settleTaskRegistrySqliteWrites,
-  async runInitialMutationAsync(context, command, assertCurrent) {
+  async runInitialMutationAsync(context, command, assertCurrent, onGranted) {
     const { runTaskRegistryWorkerOperation } = await import("./task-registry-worker-operation.js");
-    return runTaskRegistryWorkerOperation(context, command, assertCurrent);
+    return runTaskRegistryWorkerOperation(context, command, assertCurrent, onGranted);
   },
   async syncLiveTaskFlowAsync(context, params, authority) {
     const { syncLiveTaskFlowWithWorker } = await import("./task-registry-live-flow-sync.js");

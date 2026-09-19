@@ -18,11 +18,12 @@ import {
 } from "../state/openclaw-state-db-cache.js";
 import { captureOpenClawStateWorkerContext } from "../state/openclaw-state-worker-context.js";
 import type { OpenClawStateWorkerContext } from "../state/openclaw-state-worker-context.types.js";
-import { hasAuthoritativeTaskBacking, readTaskBackingInstance } from "./task-backing-authority.js";
+import { hasAuthoritativeTaskBacking } from "./task-backing-authority.js";
 import { finishTaskMutation, retainTaskMutationFlowEffects } from "./task-executor-create.async.js";
 import { getTaskFlowRegistryStore } from "./task-flow-registry.store.js";
 import { clearTaskActivity, flushTaskActivity } from "./task-registry-activity.js";
 import { recoverTaskAgentEventPublication } from "./task-registry-agent-event-commit.js";
+import type { TaskAgentEventTarget } from "./task-registry-agent-event-target.js";
 import {
   captureTaskAgentEventChange,
   captureTaskAgentEventLineage,
@@ -39,7 +40,11 @@ import {
   maybeDeliverTaskTerminalUpdate,
 } from "./task-registry-delivery.js";
 import { updateTaskWithPublication } from "./task-registry-mutation.js";
-import { captureTaskPersistenceReceipt, isEquivalentTaskRecord } from "./task-registry-records.js";
+import {
+  captureTaskPersistenceReceipt,
+  matchesTaskPersistenceReceipt,
+  isEquivalentTaskRecord,
+} from "./task-registry-records.js";
 import {
   runTaskRegistryWorkerMutation,
   invalidateTaskRegistryProjection,
@@ -560,7 +565,10 @@ function sameSource(left: EventSource, right: EventSource): boolean {
 }
 
 /** At most one active batch and four ordered pending batches per live task identity. */
-export function enqueueTaskAgentEvent(initialTask: TaskRecord, event: AgentEventPayload): boolean {
+export function enqueueTaskAgentEvent(
+  initialTask: TaskAgentEventTarget,
+  event: AgentEventPayload,
+): boolean {
   let task = initialTask;
   const runId = event.runId;
   const subagent = subagentRuns.get(runId);
@@ -594,7 +602,8 @@ export function enqueueTaskAgentEvent(initialTask: TaskRecord, event: AgentEvent
       entry.lineageResident === resident &&
       entry.committedTarget &&
       entry.committedTarget.createdAt !== entry.input.expectedTask.createdAt &&
-      matchesTaskAgentEventTarget(task, entry.input),
+      matchesTaskPersistenceReceipt(task, entry.input.expectedTask) &&
+      isDeepStrictEqual(task.backing, entry.input.backing),
   );
   if (committed?.committedTarget) {
     // Only this receipt's unchanged resident view may borrow its normalized timestamp.
@@ -602,10 +611,8 @@ export function enqueueTaskAgentEvent(initialTask: TaskRecord, event: AgentEvent
   }
   const matches = (entry: PendingEvent) =>
     sameSource(source, entry.source) &&
-    matchesTaskAgentEventTarget(
-      task,
-      entry.committedTarget ? { ...entry.input, expectedTask: entry.committedTarget } : entry.input,
-    );
+    matchesTaskPersistenceReceipt(task, entry.committedTarget ?? entry.input.expectedTask) &&
+    isDeepStrictEqual(task.backing, entry.input.backing);
   for (const entry of entries ?? []) {
     if (entry !== active && entry.phase.kind === "waiting" && !matches(entry)) {
       const error = new Error("Queued task event identity was replaced before admission");
@@ -631,7 +638,7 @@ export function enqueueTaskAgentEvent(initialTask: TaskRecord, event: AgentEvent
   if (!needsPersistence) {
     return true;
   }
-  const backing = readTaskBackingInstance(task.detail);
+  const backing = task.backing;
   const change = captureTaskAgentEventChange(
     task,
     event,

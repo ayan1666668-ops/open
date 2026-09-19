@@ -10,6 +10,7 @@ export type SqliteWorkerNativeSettlement =
   | { kind: "unknown"; committed?: { facts: unknown } };
 
 export type SqliteWorkerNativeSettlementOwner = {
+  readonly committed: { facts: unknown } | undefined;
   readonly settlement: SqliteWorkerNativeSettlement | undefined;
   waitForSettlement(
     deadlineMs: number,

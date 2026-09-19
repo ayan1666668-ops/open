@@ -7,6 +7,7 @@ import type { SubagentRunRecord } from "../agents/subagents/registry/subagent-re
 import type { GetReplyOptions } from "../auto-reply/get-reply-options.types.js";
 import type { OpenClawStateDatabaseReadAdmission } from "../state/openclaw-state-db-async-lifecycle.js";
 import type { DeliveryContext } from "../utils/delivery-context.types.js";
+import type { TaskAgentEventTarget } from "./task-registry-agent-event-target.js";
 import {
   getTaskRelatedSessionIndexKeys,
   filterTasksByRunScope,
@@ -22,6 +23,7 @@ import type { TaskDeliveryState, TaskRecord, TaskRuntime } from "./task-registry
 
 export type PendingTaskRegistryMutation = {
   scope: TaskRegistryMutationScope;
+  readEventTarget?: () => TaskAgentEventTarget | undefined;
   readIdentity?: "preserved";
   published: Map<string, Omit<TaskRecord, "detail"> | undefined>;
   publication?: {

@@ -673,7 +673,19 @@ export async function runTaskRegistryWorkerMutation<T>(
   const { scope, admission } = context;
   const store = getTaskRegistryStore();
   admission.assertCurrent();
-  const pending = createPendingTaskRegistryMutation(scope);
+  const readEventTarget = context.readEventTarget;
+  const pending = createPendingTaskRegistryMutation(
+    scope,
+    readEventTarget
+      ? () => {
+          admission.assertCurrent();
+          if (getTaskRegistryStore() !== store || !isCurrentTaskRegistryDatabase(admission)) {
+            return undefined;
+          }
+          return readEventTarget();
+        }
+      : undefined,
+  );
   pending.readIdentity = context.readIdentity;
   const recovery = context.recoverPublication
     ? createTaskRegistryPublicationRecovery(pending, context.recoverPublication)

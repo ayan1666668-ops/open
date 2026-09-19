@@ -120,10 +120,10 @@ function taskRunScopeKey(
   ].join("\u0000");
 }
 
-export function filterTasksByRunScope(
-  records: TaskRecord[],
+export function filterTasksByRunScope<T extends TaskRunScope>(
+  records: T[],
   params: { runtime?: TaskRuntime; sessionKey?: string },
-): TaskRecord[] {
+): T[] {
   const matches = records.filter((task) => !params.runtime || task.runtime === params.runtime);
   const sessionKey = normalizeOptionalString(params.sessionKey);
   if (sessionKey) {
@@ -158,7 +158,9 @@ export function sameTaskRunScope(left: TaskRunScope, right: TaskRunScope): boole
   );
 }
 
-export function captureTaskPersistenceReceipt(task: TaskRecord): TaskPersistenceReceipt {
+export function captureTaskPersistenceReceipt(
+  task: Pick<TaskRecord, keyof TaskPersistenceReceipt>,
+): TaskPersistenceReceipt {
   if (!task.runId) {
     throw new Error("Task persistence selection requires a run identity");
   }
@@ -175,7 +177,7 @@ export function captureTaskPersistenceReceipt(task: TaskRecord): TaskPersistence
 }
 
 export function matchesTaskPersistenceReceipt(
-  task: TaskRecord,
+  task: Pick<TaskRecord, keyof TaskPersistenceReceipt>,
   receipt: TaskPersistenceReceipt,
 ): boolean {
   return (

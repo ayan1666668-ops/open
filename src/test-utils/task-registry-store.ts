@@ -18,6 +18,7 @@ import type {
   TaskFlowRegistryStoreSnapshot,
 } from "../tasks/task-flow-registry.store.types.js";
 import type { TaskInitialWorkerOperations } from "../tasks/task-initial-worker.types.js";
+import { captureTaskCreationEventTarget } from "../tasks/task-registry-agent-event-target.js";
 import {
   captureTaskAgentEventLineage,
   prepareTaskAgentEventUpdate,
@@ -115,10 +116,14 @@ export function createInMemoryTaskRegistryStore(
         kind: "completed" as const,
         committed: { facts: captureTaskAgentEventLineage(receipt) },
       };
-      onGranted({ settlement, waitForSettlement: () => settlement });
+      onGranted({
+        committed: settlement.committed,
+        settlement,
+        waitForSettlement: () => settlement,
+      });
       return receipt;
     },
-    async runInitialMutationAsync(context, command, assertCurrent) {
+    async runInitialMutationAsync(context, command, assertCurrent, onGranted) {
       const unsupported = (): never => {
         throw new Error("Initial flow mutations require the isolated worker fixture.");
       };
@@ -158,7 +163,24 @@ export function createInMemoryTaskRegistryStore(
             upsertTask: (task, deliveryState) =>
               this.upsertTaskWithDeliveryState({ task, deliveryState }),
             deferCommit: (publish) => publish(),
-            onCommitted() {},
+            onCommitted: (commit) => {
+              const taskId =
+                commit.kind === "task" ? commit.result.task.taskId : commit.task.taskId;
+              const task = this.loadSnapshot().tasks.get(taskId);
+              if (task?.runId) {
+                const settlement = {
+                  kind: "completed" as const,
+                  committed: {
+                    facts: captureTaskCreationEventTarget(task, "tasks.createRecord", input.taskId),
+                  },
+                };
+                onGranted?.({
+                  committed: settlement.committed,
+                  settlement,
+                  waitForSettlement: () => settlement,
+                });
+              }
+            },
           }),
         "flows.createForTask": unsupported,
         "tasks.settleUnstarted": (input) => {

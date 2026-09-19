@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import { subagentRuns } from "../agents/subagents/registry/subagent-registry-memory.js";
 import { onSubagentRegistryPersisted } from "../agents/subagents/registry/subagent-registry-state.js";
 import {
@@ -8,6 +9,10 @@ import {
 import { onSessionIdentityMutation } from "../sessions/session-lifecycle-events.js";
 import { hasResidentTaskBacking, readTaskBackingInstance } from "./task-backing-authority.js";
 import { recordTaskActivityEvent } from "./task-registry-activity.js";
+import {
+  captureTaskAgentEventTarget,
+  type TaskAgentEventTarget,
+} from "./task-registry-agent-event-target.js";
 import { enqueueTaskAgentEvent, taskAgentEventMutations } from "./task-registry-agent-events.js";
 import {
   claimTaskRegistryListenerStart,
@@ -19,7 +24,7 @@ import {
   retireTaskProgressForSession,
   scheduleYieldedSubagentTaskProgress,
 } from "./task-registry-progress.js";
-import { filterTasksByRunScope } from "./task-registry-records.js";
+import { filterTasksByRunScope, matchesTaskPersistenceReceipt } from "./task-registry-records.js";
 import { getTasksByRunScope, tasks } from "./task-registry-state.js";
 import {
   clearTaskProgressBatches,
@@ -28,11 +33,13 @@ import {
 import { onTaskRegistryChange } from "./task-registry.store.js";
 import { isTerminalTaskStatus, type TaskRecord } from "./task-registry.types.js";
 
-function selectEventTasks(evt: AgentEventPayload): TaskRecord[] {
-  const scopedTasks = getTasksByRunScope({ runId: evt.runId, sessionKey: evt.sessionKey });
+type TaskEventSelection = TaskAgentEventTarget & { record?: TaskRecord };
+
+function selectEventTargets(evt: AgentEventPayload): TaskEventSelection[] {
+  const candidates = getTasksByRunScope({ runId: evt.runId, sessionKey: evt.sessionKey });
   const canonicalRunId = subagentRuns.get(evt.runId)?.taskRunId;
   if (canonicalRunId && canonicalRunId !== evt.runId) {
-    scopedTasks.push(
+    candidates.push(
       ...getTasksByRunScope({
         runId: canonicalRunId,
         runtime: "subagent",
@@ -40,31 +47,55 @@ function selectEventTasks(evt: AgentEventPayload): TaskRecord[] {
       }).filter((task) => readTaskBackingInstance(task.detail)?.runtime === "subagent"),
     );
   }
-  // A committed rebind can precede its projection. Retain that mutation's fixed task id.
+  const selected = new Map<string, TaskEventSelection>(
+    candidates.map((record) => [record.taskId, { ...captureTaskAgentEventTarget(record), record }]),
+  );
   for (const pending of getTaskRegistryProcessState().projection.pending) {
-    if (
-      pending.scope.runId !== evt.runId ||
-      scopedTasks.some((task) => task.taskId === pending.scope.taskId)
-    ) {
+    const physicalRun = pending.scope.runId === evt.runId;
+    if (!physicalRun && (!canonicalRunId || pending.scope.runId !== canonicalRunId)) {
       continue;
     }
+    if (pending.readEventTarget) {
+      const committed = pending.readEventTarget();
+      if (
+        !committed ||
+        (!physicalRun &&
+          (committed.runtime !== "subagent" || committed.backing?.runtime !== "subagent")) ||
+        !filterTasksByRunScope([committed], { sessionKey: evt.sessionKey }).length
+      ) {
+        continue;
+      }
+      const record = tasks.get(committed.taskId);
+      selected.set(committed.taskId, {
+        ...committed,
+        ...(record &&
+        matchesTaskPersistenceReceipt(record, committed) &&
+        isDeepStrictEqual(readTaskBackingInstance(record.detail), committed.backing)
+          ? { record }
+          : {}),
+      });
+      continue;
+    }
+    if (!physicalRun) {
+      continue;
+    }
+    // Existing rebinds can precede projection, but never invent a newly created row.
     const current = tasks.get(pending.scope.taskId);
-    if (current) {
-      scopedTasks.push(
-        ...filterTasksByRunScope(
-          [
-            {
-              ...current,
-              runId: pending.scope.runId,
-              childSessionKey: pending.scope.childSessionKey ?? current.childSessionKey,
-            },
-          ],
-          { sessionKey: evt.sessionKey },
-        ),
-      );
+    if (current && !selected.has(current.taskId)) {
+      const rebound = {
+        ...current,
+        runId: pending.scope.runId,
+        childSessionKey: pending.scope.childSessionKey ?? current.childSessionKey,
+      };
+      if (filterTasksByRunScope([rebound], { sessionKey: evt.sessionKey }).length) {
+        selected.set(current.taskId, {
+          ...captureTaskAgentEventTarget(rebound),
+          record: rebound,
+        });
+      }
     }
   }
-  return scopedTasks;
+  return [...selected.values()];
 }
 
 function ensureListener() {
@@ -75,12 +106,12 @@ function ensureListener() {
     if (event.stream === "lifecycle" && event.data.phase === "start") {
       reconcileTaskProgressBatches();
     }
-    for (const task of selectEventTasks(event)) {
-      const backing = readTaskBackingInstance(task.detail);
+    for (const task of selectEventTargets(event)) {
+      const backing = task.backing;
       const subagent = subagentRuns.get(event.runId);
       if (
         isTerminalTaskStatus(task.status) ||
-        !hasResidentTaskBacking(task) ||
+        (task.record && !hasResidentTaskBacking(task.record)) ||
         (task.runtime === "subagent" &&
           backing?.runtime === "subagent" &&
           (subagent?.generation !== backing.generation ||
@@ -88,9 +119,9 @@ function ensureListener() {
       ) {
         continue;
       }
-      if (enqueueTaskAgentEvent(task, event)) {
-        const prepared = recordTaskActivityEvent(task, event);
-        scheduleYieldedSubagentTaskProgress(task, event, prepared);
+      if (enqueueTaskAgentEvent(task, event) && task.record) {
+        const prepared = recordTaskActivityEvent(task.record, event);
+        scheduleYieldedSubagentTaskProgress(task.record, event, prepared);
       }
     }
   });

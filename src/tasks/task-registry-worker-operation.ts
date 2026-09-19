@@ -8,8 +8,11 @@ import type { OpenClawStateWorkerContext } from "../state/openclaw-state-worker-
 import { runOpenClawStateWorkerOperation } from "../state/openclaw-state-worker-store.js";
 import type { TaskInitialWorkerOperations } from "./task-initial-worker.types.js";
 import type { TaskAgentEventWorkerOperations } from "./task-registry-agent-event.operation.js";
+import type { TaskRegistryWorkerOperations } from "./task-registry.worker-contract.js";
 
-type Operations = TaskInitialWorkerOperations & TaskAgentEventWorkerOperations;
+type Operations = TaskInitialWorkerOperations &
+  TaskAgentEventWorkerOperations &
+  Pick<TaskRegistryWorkerOperations, "flows.runTask">;
 
 /** Keep the original mutation owner until every admitted native transaction settles. */
 export async function runTaskRegistryWorkerOperation<Key extends keyof Operations>(
