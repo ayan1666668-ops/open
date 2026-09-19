@@ -3,7 +3,7 @@ import type { IMessagePayload } from "./monitor/types.js";
 import { setCachedIMessagePrivateApiStatus } from "./private-api-status.js";
 
 export const DEFAULT_SENDER = "+15550001111";
-export const ANCHOR_REPAIR_GUID = "11111111-1111-4111-8111-111111111111";
+const ANCHOR_REPAIR_GUID = "11111111-1111-4111-8111-111111111111";
 
 export function setAvailablePrivateApiMethods(rpcMethods: string[]): void {
   setCachedIMessagePrivateApiStatus("imsg", {
