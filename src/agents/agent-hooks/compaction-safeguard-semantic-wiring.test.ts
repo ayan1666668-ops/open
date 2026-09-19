@@ -46,6 +46,7 @@ beforeEach(() => {
   compactionLogger.warn.mockClear();
 });
 afterEach(() => {
+  vi.restoreAllMocks();
   testing.setSummarizeInStagesForTest();
   resetPluginRuntimeStateForTest();
 });
@@ -412,12 +413,20 @@ describe("active curation through the registered compaction hook", () => {
     installDecisionFixture();
     const originalEvaluate = decisionRuntime.evaluateDecision;
     const evaluate = vi.spyOn(decisionRuntime, "evaluateDecision");
-    if (stage === "fidelity") {
-      evaluate.mockImplementationOnce(originalEvaluate);
-    }
-    evaluate.mockRejectedValueOnce(new Error("Judgment consumer authority closed."));
     mockSummarizeInStages.mockReset();
     mockSummarizeInStages.mockResolvedValue(validSummary);
+    evaluate.mockImplementation((batch, options) => {
+      const failSelection =
+        stage === "selection" && options.purpose === "compaction-shadow-curation";
+      const failFidelity =
+        stage === "fidelity" &&
+        options.purpose === "compaction-fidelity" &&
+        mockSummarizeInStages.mock.calls.length > 0;
+      if (failSelection || failFidelity) {
+        throw new Error("Decision consumer authority closed.");
+      }
+      return originalEvaluate(batch, options);
+    });
     const { result } = await runCompactionScenario(activeScenario());
     expect(result).toEqual({ cancel: true });
     expect(mockSummarizeInStages).toHaveBeenCalledTimes(stage === "fidelity" ? 1 : 0);

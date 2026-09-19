@@ -1,4 +1,4 @@
-import { evaluateJudgment, recordJudgmentOutcome } from "../../judgments/runtime.js";
+import { evaluateDecision } from "../../decisions/runtime.js";
 import type { AgentMessage } from "../runtime/index.js";
 import {
   buildPreservedTurnsSection,
@@ -10,7 +10,7 @@ import { getCompactionSafeguardRuntime } from "./compaction-safeguard-runtime.js
 import {
   evaluateCompactionFidelity,
   evaluateCompactionShadowCuration,
-} from "./compaction-safeguard-semantic-judgments.js";
+} from "./compaction-safeguard-semantic-decisions.js";
 import {
   buildCompactionSemanticSnapshot,
   fingerprint,
@@ -36,6 +36,7 @@ export type ActiveCompactionCuration = {
 
 export async function prepareActiveCompactionCuration(params: {
   sessionManager: unknown;
+  agentId?: string;
   mode: "off" | "shadow" | "apply";
   sourceMessages: AgentMessage[];
   recentTurnsPreserve: number;
@@ -60,7 +61,8 @@ export async function prepareActiveCompactionCuration(params: {
     latestUserAsk: params.latestUserAsk,
   });
   const selection = await evaluateCompactionShadowCuration({
-    runtime: { evaluate: evaluateJudgment, recordOutcome: recordJudgmentOutcome },
+    runtime: { evaluate: evaluateDecision },
+    agentId: params.agentId,
     snapshot,
     signal: params.signal,
     timeoutMs: params.timeoutMs,
@@ -140,6 +142,7 @@ export type CuratedCandidateResolution =
 
 export async function resolveCuratedCompactionCandidate(params: {
   sessionManager: unknown;
+  agentId?: string;
   snapshot?: CompactionSemanticSnapshot;
   uncuratedMessages?: AgentMessage[];
   summary: string;
@@ -170,7 +173,8 @@ export async function resolveCuratedCompactionCandidate(params: {
 
   let reason: string;
   const fidelity = await evaluateCompactionFidelity({
-    runtime: { evaluate: evaluateJudgment, recordOutcome: recordJudgmentOutcome },
+    runtime: { evaluate: evaluateDecision },
+    agentId: params.agentId,
     snapshot: params.snapshot,
     candidateSummary: params.summary,
     signal: params.signal,

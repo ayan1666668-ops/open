@@ -1081,6 +1081,7 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
 
       const activeCuration = await prepareActiveCompactionCuration({
         sessionManager: ctx.sessionManager,
+        agentId: semanticAgentId,
         mode: semanticMode,
         sourceMessages: uncuratedSemanticSource,
         recentTurnsPreserve,
@@ -1179,6 +1180,7 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
       const acceptSummary = async (summary: string) => {
         const resolution = await resolveCuratedCompactionCandidate({
           sessionManager: ctx.sessionManager,
+          agentId: semanticAgentId,
           snapshot: activeCuration.snapshot,
           uncuratedMessages: activeCuration.uncuratedMessages,
           summary,
