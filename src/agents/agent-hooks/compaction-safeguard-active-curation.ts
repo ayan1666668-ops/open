@@ -1,4 +1,4 @@
-import { evaluateJudgment } from "../../judgments/runtime.js";
+import { evaluateJudgment, recordJudgmentOutcome } from "../../judgments/runtime.js";
 import type { AgentMessage } from "../runtime/index.js";
 import {
   buildPreservedTurnsSection,
@@ -60,7 +60,7 @@ export async function prepareActiveCompactionCuration(params: {
     latestUserAsk: params.latestUserAsk,
   });
   const selection = await evaluateCompactionShadowCuration({
-    runtime: { evaluate: evaluateJudgment },
+    runtime: { evaluate: evaluateJudgment, recordOutcome: recordJudgmentOutcome },
     snapshot,
     signal: params.signal,
     timeoutMs: params.timeoutMs,
@@ -147,10 +147,10 @@ export async function resolveCuratedCompactionCandidate(params: {
   timeoutMs?: number;
   buildUncuratedFallback: () => Promise<string | null>;
 }): Promise<CuratedCandidateResolution> {
+  params.signal.throwIfAborted();
   if (!params.snapshot) {
     return { status: "accepted", summary: params.summary, usedFallback: false };
   }
-  params.signal.throwIfAborted();
   if (
     (getCompactionSafeguardRuntime(params.sessionManager)?.semanticCurationMode ?? "off") !==
       "apply" ||
@@ -159,38 +159,41 @@ export async function resolveCuratedCompactionCandidate(params: {
   ) {
     const fallback = await params.buildUncuratedFallback();
     return fallback
-      ? { status: "accepted", summary: fallback, usedFallback: true, reason: "stale-source-or-mode" }
+      ? {
+          status: "accepted",
+          summary: fallback,
+          usedFallback: true,
+          reason: "stale-source-or-mode",
+        }
       : { status: "rejected", reason: "stale-source-or-mode" };
   }
 
-  let reason = "semantic-fidelity-rejected";
-  try {
-    const fidelity = await evaluateCompactionFidelity({
-      runtime: { evaluate: evaluateJudgment },
-      snapshot: params.snapshot,
-      candidateSummary: params.summary,
-      signal: params.signal,
-      timeoutMs: params.timeoutMs,
-    });
-    params.signal.throwIfAborted();
-    if (fidelity.status !== "ok") {
-      reason = `fidelity-${fidelity.status}:${fidelity.reason}`;
-    } else if (
-      fidelity.sourceFingerprint !== params.snapshot.sourceFingerprint ||
-      fidelity.candidateFingerprint !== fingerprint(params.summary)
-    ) {
-      reason = "fidelity-stale";
-    } else if (
-      fidelity.assessments.length > 0 &&
-      fidelity.assessments.every((assessment) => assessment.classification === "preserved")
-    ) {
-      return { status: "accepted", summary: params.summary, usedFallback: false };
-    } else {
-      reason = "fidelity-non-preserved";
-    }
-  } catch (error) {
-    params.signal.throwIfAborted();
-    reason = error instanceof Error ? `fidelity-error:${error.message}` : "fidelity-error";
+  let reason: string;
+  const fidelity = await evaluateCompactionFidelity({
+    runtime: { evaluate: evaluateJudgment, recordOutcome: recordJudgmentOutcome },
+    snapshot: params.snapshot,
+    candidateSummary: params.summary,
+    signal: params.signal,
+    timeoutMs: params.timeoutMs,
+  });
+  params.signal.throwIfAborted();
+  if (fidelity.status !== "ok") {
+    reason = `fidelity-${fidelity.status}:${fidelity.reason}`;
+  } else if (
+    (getCompactionSafeguardRuntime(params.sessionManager)?.semanticCurationMode ?? "off") !==
+      "apply" ||
+    fingerprintCompactionMessages(params.uncuratedMessages) !== params.snapshot.sourceFingerprint ||
+    fidelity.sourceFingerprint !== params.snapshot.sourceFingerprint ||
+    fidelity.candidateFingerprint !== fingerprint(params.summary)
+  ) {
+    reason = "fidelity-stale";
+  } else if (
+    fidelity.assessments.length > 0 &&
+    fidelity.assessments.every((assessment) => assessment.classification === "preserved")
+  ) {
+    return { status: "accepted", summary: params.summary, usedFallback: false };
+  } else {
+    reason = "fidelity-non-preserved";
   }
 
   const fallback = await params.buildUncuratedFallback();

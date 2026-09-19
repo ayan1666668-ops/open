@@ -7,7 +7,6 @@ import { classifyToolUseResultPairing } from "../../../packages/agent-core/src/h
 import type { AgentMessage } from "../runtime/index.js";
 import { repairToolUseResultPairing } from "../session-transcript-repair.js";
 import { extractToolCallsFromAssistant, extractToolResultId } from "../tool-call-id.js";
-import { nestRequiredSummaryHeadings } from "./compaction-safeguard-quality.js";
 
 export const SPLIT_TURN_SECTION_HEADING = "**Turn Context (split turn):**";
 export const MAX_SPLIT_TURN_CONTEXT_CHARS = Math.floor(MAX_COMPACTION_SUMMARY_CHARS / 2);
@@ -17,8 +16,7 @@ const MAX_RECENT_TURN_TEXT_CHARS = 600;
 const SPLIT_TURN_TRUNCATED_MARKER = "[Earlier split-turn messages truncated]\n";
 const PRESERVED_TURNS_TRUNCATED_MARKER = "[Earlier preserved messages truncated]\n";
 const MAX_REQUIRED_ASK_CONTEXT_CHARS = 2_000;
-const REQUIRED_ASK_CONTEXT_TRUNCATED_MARKER =
-  "\n[... split-turn ask context truncated ...]\n";
+const REQUIRED_ASK_CONTEXT_TRUNCATED_MARKER = "\n[... split-turn ask context truncated ...]\n";
 
 export type CompactionLoss =
   | "summary-tail"
@@ -34,6 +32,7 @@ export type ContextSection = {
 };
 
 export function extractMessageText(message: AgentMessage): string {
+  // SAFETY: Read only an optional unknown field across built-in and custom message roles.
   const content = (message as { content?: unknown }).content;
   if (typeof content === "string") {
     return content.trim();
@@ -42,6 +41,7 @@ export function extractMessageText(message: AgentMessage): string {
     ? content
         .flatMap((block) => {
           const text =
+            // SAFETY: The object check above permits reading optional fields as unknown.
             block && typeof block === "object" ? (block as { text?: unknown }).text : undefined;
           return typeof text === "string" && text.trim() ? [text.trim()] : [];
         })
@@ -61,6 +61,7 @@ function formatNonTextPlaceholder(content: unknown): string | null {
     if (!block || typeof block !== "object") {
       continue;
     }
+    // SAFETY: The object check above permits reading optional fields as unknown.
     const typeRaw = (block as { type?: unknown }).type;
     const type = typeof typeRaw === "string" && typeRaw.trim().length > 0 ? typeRaw : "unknown";
     if (type === "text") {
@@ -84,7 +85,8 @@ export function splitPreservedRecentTurns(params: {
     Math.max(
       0,
       Math.floor(
-        typeof params.recentTurnsPreserve === "number" && Number.isFinite(params.recentTurnsPreserve)
+        typeof params.recentTurnsPreserve === "number" &&
+          Number.isFinite(params.recentTurnsPreserve)
           ? params.recentTurnsPreserve
           : 0,
       ),
@@ -157,6 +159,7 @@ function formatContextMessage(message: AgentMessage): string | null {
   } else if (message.role === "user") {
     roleLabel = "User";
   } else if (message.role === "toolResult") {
+    // SAFETY: Read only an optional unknown field across built-in and custom message roles.
     const toolName = (message as { toolName?: unknown }).toolName;
     const safeToolName = typeof toolName === "string" && toolName.trim() ? toolName : "tool";
     roleLabel = `Tool result (${safeToolName})`;
@@ -165,6 +168,7 @@ function formatContextMessage(message: AgentMessage): string | null {
   }
   const rendered = [
     extractMessageText(message),
+    // SAFETY: Read only an optional unknown field across built-in and custom message roles.
     formatNonTextPlaceholder((message as { content?: unknown }).content),
   ]
     .filter(Boolean)
@@ -278,13 +282,10 @@ export function buildSplitTurnContextSection(
   });
 }
 
-export function formatGeneratedSplitTurnSection(
-  summary: string,
-  onTruncated?: () => void,
-): string {
+export function formatGeneratedSplitTurnSection(summary: string, onTruncated?: () => void): string {
   const heading = `${SPLIT_TURN_SECTION_HEADING}\n\n`;
   const summaryBudget = MAX_SPLIT_TURN_CONTEXT_CHARS - heading.length;
-  const nestedSummary = nestRequiredSummaryHeadings(summary);
+  const nestedSummary = summary.replace(/^##(?=[ \t]+\S)/gmu, "###");
   const cappedSummary = capCompactionSummary(nestedSummary, summaryBudget);
   if (cappedSummary.length < nestedSummary.length) {
     onTruncated?.();

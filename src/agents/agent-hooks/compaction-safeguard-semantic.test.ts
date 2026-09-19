@@ -7,6 +7,7 @@ import {
 } from "./compaction-safeguard-semantic-judgments.js";
 import {
   buildCompactionSemanticSnapshot,
+  fingerprintCompactionMessages,
   projectCompactionSemanticSelection,
 } from "./compaction-safeguard-semantic.js";
 
@@ -14,12 +15,10 @@ function message(value: unknown): AgentMessage {
   return value as AgentMessage;
 }
 
-function runtimeWithChoices(
-  choices: Record<string, string>,
-): JudgmentRuntimeV1 {
+function runtimeWithChoices(choices: Record<string, string>): JudgmentRuntimeV1 {
   return {
     recordOutcome: vi.fn(async () => {}),
-    evaluate: vi.fn(async (batch, options) => {
+    evaluate: vi.fn<JudgmentRuntimeV1["evaluate"]>(async (batch, options) => {
       options.signal.throwIfAborted();
       const answers = Object.fromEntries(
         Object.entries(batch.questions).map(([id, question]) => {
@@ -28,6 +27,9 @@ function runtimeWithChoices(
           }
           const labels = Object.keys(question.criteria);
           const selected = choices[id] ?? labels[0];
+          if (selected === undefined) {
+            throw new Error("expected nonempty choice criteria");
+          }
           return [
             id,
             {
@@ -117,7 +119,6 @@ describe("compaction semantic snapshot", () => {
     expect(snapshot.segments[0]?.protectionReasons).toContain("unsupported-content");
     expect(snapshot.complete).toBe(false);
   });
-
 });
 
 describe("compaction semantic judgments", () => {
@@ -195,6 +196,59 @@ describe("compaction semantic judgments", () => {
     ).toBeNull();
   });
 
+  it("retains an older user constraint outside the tracked obligations", async () => {
+    const olderConstraint = message({ role: "user", content: "Keep all existing behavior." });
+    const latestAsk = "Finish the report.";
+    const messages = [
+      olderConstraint,
+      message({ role: "assistant", content: "Unrelated old discussion." }),
+      message({ role: "user", content: latestAsk }),
+    ];
+    const snapshot = buildCompactionSemanticSnapshot({ messages, latestUserAsk: latestAsk });
+    const runtime = runtimeWithChoices(
+      Object.fromEntries(snapshot.segments.map((segment) => [segment.id, "drop"])),
+    );
+    const result = await evaluateCompactionShadowCuration({
+      runtime,
+      snapshot,
+      signal: new AbortController().signal,
+    });
+
+    expect(result.selectedSegmentIds).toEqual(["segment-0", "segment-2"]);
+    expect(result.evaluatedSegmentIds).toEqual(["segment-1"]);
+    expect(snapshot.segments[0]?.protectionReasons).toContain("user-authored");
+  });
+
+  it.each(["preserved", "missing", "contradicted"])(
+    "does not report %s for incomplete or unanchored obligations",
+    async (choice) => {
+      const oversizedAsk = "Continue with the full request. ".repeat(250);
+      const snapshot = buildCompactionSemanticSnapshot({
+        messages: [message({ role: "user", content: oversizedAsk })],
+        latestUnresolvedUserRequest: oversizedAsk,
+        latestUserAsk: "An ask absent from the source.",
+      });
+      const runtime = runtimeWithChoices(
+        Object.fromEntries(snapshot.obligations.map((obligation) => [obligation.id, choice])),
+      );
+      const result = await evaluateCompactionFidelity({
+        runtime,
+        snapshot,
+        candidateSummary: "Only the visible prefix is retained.",
+        signal: new AbortController().signal,
+      });
+
+      expect(result.status).toBe("ok");
+      if (result.status !== "ok") {
+        throw new Error("Expected fidelity assessments");
+      }
+      expect(result.assessments.map((assessment) => assessment.classification)).toEqual([
+        "uncertain",
+        "uncertain",
+      ]);
+    },
+  );
+
   it("produces a conservative shadow selection without mutating source", async () => {
     const user = message({
       role: "user",
@@ -237,37 +291,25 @@ describe("compaction semantic judgments", () => {
     expect(snapshot.segments).toHaveLength(3);
   });
 
-  it("refuses to project a selection onto a different source revision", async () => {
+  it("changes the source fingerprint when judgment-relevant source changes", () => {
     const user = message({
       role: "user",
       content: [{ type: "text", text: "Deploy production." }],
     });
-    const fact = message({
+    const releaseA = message({
       role: "assistant",
       content: [{ type: "text", text: "Production uses release A." }],
     });
-    const snapshot = buildCompactionSemanticSnapshot({
-      messages: [user, fact],
-      latestUserAsk: "Deploy production.",
-    });
-    const discretionary = snapshot.segments.filter((segment) => !segment.protected);
-    const selection = await evaluateCompactionShadowCuration({
-      runtime: runtimeWithChoices({ [discretionary[0]!.id]: "keep" }),
-      snapshot,
-      signal: new AbortController().signal,
-    });
-    const changedFact = message({
+    const releaseB = message({
       role: "assistant",
       content: [{ type: "text", text: "Production uses release B." }],
     });
+    const snapshot = buildCompactionSemanticSnapshot({
+      messages: [user, releaseA],
+      latestUserAsk: "Deploy production.",
+    });
 
-    expect(
-      projectCompactionSemanticSelection({
-        messages: [user, changedFact],
-        snapshot,
-        selection,
-      }),
-    ).toBeNull();
+    expect(fingerprintCompactionMessages([user, releaseB])).not.toBe(snapshot.sourceFingerprint);
   });
 
   it("classifies finalized context against source-backed obligations", async () => {

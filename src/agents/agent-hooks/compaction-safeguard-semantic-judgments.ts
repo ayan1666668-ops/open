@@ -1,7 +1,4 @@
-import type {
-  JudgmentAnswer,
-  JudgmentRuntimeV1,
-} from "../../judgments/types.js";
+import type { JudgmentAnswer, JudgmentRuntimeV1 } from "../../judgments/types.js";
 import { fingerprint } from "./compaction-safeguard-semantic.js";
 import type {
   CompactionFidelityResult,
@@ -12,6 +9,8 @@ import type {
 const MAX_SEGMENTS_PER_JUDGMENT = 64;
 const DEFAULT_SEMANTIC_TIMEOUT_MS = 750;
 const MAX_SEMANTIC_TIMEOUT_MS = 5_000;
+
+type CompactionJudgmentRuntime = Pick<JudgmentRuntimeV1, "evaluate" | "recordOutcome">;
 
 function clampTimeoutMs(value: unknown): number {
   if (typeof value !== "number" || !Number.isFinite(value)) {
@@ -41,23 +40,25 @@ function allRetainedResult(
   };
 }
 
-function asChoiceAnswer(answer: JudgmentAnswer | undefined):
-  | Extract<JudgmentAnswer, { type: "choice" }>
-  | undefined {
+function asChoiceAnswer(
+  answer: JudgmentAnswer | undefined,
+): Extract<JudgmentAnswer, { type: "choice" }> | undefined {
   return answer?.type === "choice" ? answer : undefined;
 }
 
 export async function evaluateCompactionShadowCuration(params: {
-  runtime: Pick<JudgmentRuntimeV1, "evaluate">;
+  runtime: CompactionJudgmentRuntime;
   snapshot: CompactionSemanticSnapshot;
   signal: AbortSignal;
   timeoutMs?: number;
 }): Promise<CompactionShadowCurationResult> {
   const eligible = params.snapshot.segments.filter((segment) => !segment.protected);
   if (eligible.length === 0) {
+    await params.runtime.recordOutcome("no-change");
     return allRetainedResult(params.snapshot, "skipped", "no-discretionary-segments");
   }
   if (params.snapshot.obligations.length === 0) {
+    await params.runtime.recordOutcome("no-change");
     return allRetainedResult(params.snapshot, "skipped", "no-source-backed-obligations");
   }
 
@@ -71,7 +72,8 @@ export async function evaluateCompactionShadowCuration(params: {
         criteria: {
           keep: "Keep this segment because it may materially affect an active obligation or unresolved work.",
           drop: "This segment is not needed to preserve the meaning or execution of the active obligations and unresolved work.",
-          uncertain: "The supplied evidence is insufficient to safely decide whether this segment can be omitted.",
+          uncertain:
+            "The supplied evidence is insufficient to safely decide whether this segment can be omitted.",
         },
       },
     ]),
@@ -103,6 +105,7 @@ export async function evaluateCompactionShadowCuration(params: {
   );
 
   if (outcome.status !== "ok") {
+    await params.runtime.recordOutcome("fallback");
     return allRetainedResult(params.snapshot, "unavailable", outcome.reason);
   }
 
@@ -134,6 +137,7 @@ export async function evaluateCompactionShadowCuration(params: {
       ? Math.max(0, 1 - selectedChars / params.snapshot.originalChars)
       : 0;
 
+  await params.runtime.recordOutcome(excluded.size > 0 ? "accepted" : "no-change");
   return {
     status: "ok",
     sourceFingerprint: params.snapshot.sourceFingerprint,
@@ -155,7 +159,7 @@ export async function evaluateCompactionShadowCuration(params: {
 }
 
 export async function evaluateCompactionFidelity(params: {
-  runtime: Pick<JudgmentRuntimeV1, "evaluate">;
+  runtime: CompactionJudgmentRuntime;
   snapshot: CompactionSemanticSnapshot;
   candidateSummary: string;
   signal: AbortSignal;
@@ -163,6 +167,7 @@ export async function evaluateCompactionFidelity(params: {
 }): Promise<CompactionFidelityResult> {
   const candidateFingerprint = fingerprint(params.candidateSummary);
   if (params.snapshot.obligations.length === 0) {
+    await params.runtime.recordOutcome("no-change");
     return {
       status: "skipped",
       sourceFingerprint: params.snapshot.sourceFingerprint,
@@ -181,8 +186,7 @@ export async function evaluateCompactionFidelity(params: {
             "The retained context preserves this obligation's meaning, scope, and unresolved state.",
           missing:
             "The retained context omits material information required to continue this obligation correctly.",
-          contradicted:
-            "The retained context conflicts with the source-backed obligation.",
+          contradicted: "The retained context conflicts with the source-backed obligation.",
           uncertain:
             "The supplied source and retained context do not support a reliable classification.",
         },
@@ -213,6 +217,7 @@ export async function evaluateCompactionFidelity(params: {
     },
   );
   if (outcome.status !== "ok") {
+    await params.runtime.recordOutcome("fallback");
     return {
       status: "unavailable",
       sourceFingerprint: params.snapshot.sourceFingerprint,
@@ -221,20 +226,29 @@ export async function evaluateCompactionFidelity(params: {
     };
   }
 
-  const assessments = params.snapshot.obligations.map((obligation) => {
-    const answer = asChoiceAnswer(outcome.result.answers[obligation.id]);
-    return {
-      obligationId: obligation.id,
-      classification:
-        answer?.choice === "preserved" ||
-        answer?.choice === "missing" ||
-        answer?.choice === "contradicted"
-          ? answer.choice
-          : ("uncertain" as const),
-      probabilities: answer?.probabilities ?? {},
-    };
-  });
+  const assessments: Extract<CompactionFidelityResult, { status: "ok" }>["assessments"] =
+    params.snapshot.obligations.map((obligation) => {
+      const answer =
+        obligation.complete && obligation.sourceSegmentId
+          ? asChoiceAnswer(outcome.result.answers[obligation.id])
+          : undefined;
+      return {
+        obligationId: obligation.id,
+        classification:
+          answer?.choice === "preserved" ||
+          answer?.choice === "missing" ||
+          answer?.choice === "contradicted"
+            ? answer.choice
+            : ("uncertain" as const),
+        probabilities: answer?.probabilities ?? {},
+      };
+    });
 
+  await params.runtime.recordOutcome(
+    assessments.every((assessment) => assessment.classification === "preserved")
+      ? "no-change"
+      : "accepted",
+  );
   return {
     status: "ok",
     sourceFingerprint: params.snapshot.sourceFingerprint,
