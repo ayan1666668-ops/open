@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { setImmediate } from "node:timers/promises";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -28,6 +29,7 @@ import {
 import { inspectOwnedNodeWorkerTree } from "./node-worker-tree-control.js";
 
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
+const fileLockModule = createRequire(import.meta.url).resolve("@openclaw/fs-safe/file-lock");
 afterEach(() => closeOpenClawStateDatabaseForTest());
 
 describe("node worker environment stop after failed initialization", () => {
@@ -36,7 +38,7 @@ describe("node worker environment stop after failed initialization", () => {
     async () => {
       const capacities: Array<{ total: number; available: number }> = [];
       const root = tempDirs.make("node-worker-stop-initialization-");
-      const fixture = createNodeWorkerContainerFixture(root, {
+      const fixture = createNodeWorkerContainerFixture(root, fileLockModule, {
         capacity: 3,
         onCapacityChanged: (capacity) => capacities.push(capacity),
       });

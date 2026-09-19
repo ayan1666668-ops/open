@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
-import { createRequire } from "node:module";
 import path from "node:path";
 import { createNodeWorkerSupervisor } from "./node-worker-supervisor.js";
 import { writeNodeWorkerFixture } from "./node-worker-supervisor.test-support.js";
@@ -8,8 +7,6 @@ import { writeNodeWorkerFixture } from "./node-worker-supervisor.test-support.js
 export const hostLabel = "openclaw.node-worker.host";
 export const gatewayLabel = "openclaw.node-worker.gateway";
 export const launchLabel = "openclaw.node-worker.launch";
-
-const fileLockModule = createRequire(import.meta.url).resolve("@openclaw/fs-safe/file-lock");
 
 type FakeContainer = {
   id: string;
@@ -320,6 +317,7 @@ if (command === "version") {
 
 export function createNodeWorkerContainerFixture(
   root: string,
+  fileLockModule: string,
   options: {
     image?: string;
     env?: NodeJS.ProcessEnv;

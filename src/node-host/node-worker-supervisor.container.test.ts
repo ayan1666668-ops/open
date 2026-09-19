@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
@@ -37,14 +38,19 @@ const endpoint: WorkerConnectionEndpoint = {
   url: "wss://gateway.example/__openclaw__/worker",
 };
 const DAEMON_TIMER_SCALE = 5;
+const fileLockModule = createRequire(import.meta.url).resolve("@openclaw/fs-safe/file-lock");
 
 afterEach(() => {
   vi.restoreAllMocks();
   closeOpenClawStateDatabaseForTest();
 });
 
-function containerFixture(options: Parameters<typeof createNodeWorkerContainerFixture>[1] = {}) {
-  return createNodeWorkerContainerFixture(tempDirs.make("node-worker-container-"), options);
+function containerFixture(options: Parameters<typeof createNodeWorkerContainerFixture>[2] = {}) {
+  return createNodeWorkerContainerFixture(
+    tempDirs.make("node-worker-container-"),
+    fileLockModule,
+    options,
+  );
 }
 
 function delayDaemonRevalidation(fixture: ReturnType<typeof containerFixture>, delayMs: number) {
