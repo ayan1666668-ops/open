@@ -3871,6 +3871,232 @@ describe("compaction-safeguard recent-turn preservation", () => {
     expect(expectCompactionResult(result).summary).toContain(materialFact);
   });
 
+  it("reserves the final retry for original input after curated deterministic quality failure", async () => {
+    mockSummarizeInStages.mockReset();
+    const userAsk = "Fix the parser tests.";
+    const materialFact = "MATERIAL_RESULT: parser failure is caused by TOKEN_X.";
+    const toolOutput = `${"routine test output\n".repeat(220)}${materialFact}`;
+    const recoveredSummary = [
+      "## Decisions",
+      materialFact,
+      "## Open TODOs",
+      userAsk,
+      "## Constraints/Rules",
+      "Preserve the parser failure cause.",
+      "## Pending user asks",
+      userAsk,
+      "## Exact identifiers",
+      "TOKEN_X",
+    ].join("\n");
+    mockSummarizeInStages
+      .mockResolvedValueOnce(summaryResult("invalid curated summary"))
+      .mockResolvedValueOnce(summaryResult(recoveredSummary));
+    mockEvaluateJudgment.mockResolvedValueOnce({
+      status: "ok",
+      result: {
+        model: "fixture",
+        answers: {
+          "tool-result-1": {
+            type: "choice",
+            choice: "redundant",
+            probabilities: {
+              essential: 0.01,
+              relevant: 0.02,
+              redundant: 0.93,
+              transient: 0.01,
+              uncertain: 0.03,
+            },
+          },
+        },
+      },
+      provenance: {
+        providerId: "fixture",
+        rubricVersion: "1",
+        runtimeGeneration: "curation",
+      },
+    } satisfies JudgmentOutcome);
+
+    const sessionManager = stubSessionManager();
+    setCompactionSafeguardRuntime(sessionManager, {
+      model: createAnthropicModelFixture(),
+      recentTurnsPreserve: 0,
+      qualityGuardEnabled: true,
+      qualityGuardMaxRetries: 1,
+      semanticJudgmentsEnabled: true,
+      semanticJudgmentCurationEnabled: true,
+    });
+    const event = {
+      preparation: {
+        messagesToSummarize: [
+          { role: "user", content: userAsk, timestamp: 1 },
+          castAgentMessage({
+            role: "assistant",
+            content: [{ type: "toolCall", id: "call-1", name: "exec", arguments: {} }],
+            timestamp: 2,
+          }),
+          {
+            role: "toolResult",
+            toolCallId: "call-1",
+            toolName: "exec",
+            content: [{ type: "text", text: toolOutput }],
+            timestamp: 3,
+          },
+          castAgentMessage({ role: "assistant", content: "Tests completed.", timestamp: 4 }),
+        ] as AgentMessage[],
+        turnPrefixMessages: [] as AgentMessage[],
+        firstKeptEntryId: "entry-1",
+        tokensBefore: 1_500,
+        fileOps: { read: [], edited: [], written: [] },
+        settings: { reserveTokens: 4_000 },
+        previousSummary: undefined,
+        isSplitTurn: false,
+      },
+      customInstructions: "",
+      signal: new AbortController().signal,
+    };
+
+    const { result } = await runCompactionScenario({
+      sessionManager,
+      event,
+      apiKey: "test-key",
+    });
+
+    expect(result.cancel).not.toBe(true);
+    expect(mockEvaluateJudgment).toHaveBeenCalledTimes(1);
+    expect(mockSummarizeInStages).toHaveBeenCalledTimes(2);
+    const firstCall = requireRecord(mockCallArg(mockSummarizeInStages, 0));
+    expect(JSON.stringify(firstCall.messages)).toContain(
+      "omitted from compaction summarizer input",
+    );
+    expect(JSON.stringify(firstCall.messages)).not.toContain(materialFact);
+    const secondCall = requireRecord(mockCallArg(mockSummarizeInStages, 1));
+    expect(JSON.stringify(secondCall.messages)).toContain(materialFact);
+    expect(secondCall.customInstructions).toContain(
+      "final available corrective attempt is reserved for full source evidence",
+    );
+    expect(expectCompactionResult(result).summary).toContain(materialFact);
+  });
+
+  it("restores original input when post-curation semantic fidelity is unavailable", async () => {
+    mockSummarizeInStages.mockReset();
+    const userAsk = "Fix the parser tests.";
+    const materialFact = "MATERIAL_RESULT: parser failure is caused by TOKEN_X.";
+    const toolOutput = `${"routine test output\n".repeat(220)}${materialFact}`;
+    const curatedSummary = [
+      "## Decisions",
+      "Continue debugging.",
+      "## Open TODOs",
+      userAsk,
+      "## Constraints/Rules",
+      "None.",
+      "## Pending user asks",
+      userAsk,
+      "## Exact identifiers",
+      "None.",
+    ].join("\n");
+    const recoveredSummary = [
+      "## Decisions",
+      materialFact,
+      "## Open TODOs",
+      userAsk,
+      "## Constraints/Rules",
+      "Preserve the parser failure cause.",
+      "## Pending user asks",
+      userAsk,
+      "## Exact identifiers",
+      "TOKEN_X",
+    ].join("\n");
+    mockSummarizeInStages
+      .mockResolvedValueOnce(summaryResult(curatedSummary))
+      .mockResolvedValueOnce(summaryResult(recoveredSummary));
+    mockEvaluateJudgment
+      .mockResolvedValueOnce({
+        status: "ok",
+        result: {
+          model: "fixture",
+          answers: {
+            "tool-result-1": {
+              type: "choice",
+              choice: "redundant",
+              probabilities: {
+                essential: 0.01,
+                relevant: 0.02,
+                redundant: 0.93,
+                transient: 0.01,
+                uncertain: 0.03,
+              },
+            },
+          },
+        },
+        provenance: {
+          providerId: "fixture",
+          rubricVersion: "1",
+          runtimeGeneration: "curation",
+        },
+      } satisfies JudgmentOutcome)
+      .mockResolvedValueOnce({
+        status: "unavailable",
+        reason: "circuit-open",
+      } satisfies JudgmentOutcome);
+
+    const sessionManager = stubSessionManager();
+    setCompactionSafeguardRuntime(sessionManager, {
+      model: createAnthropicModelFixture(),
+      recentTurnsPreserve: 0,
+      qualityGuardEnabled: true,
+      qualityGuardMaxRetries: 1,
+      semanticJudgmentsEnabled: true,
+      semanticJudgmentCurationEnabled: true,
+    });
+    const event = {
+      preparation: {
+        messagesToSummarize: [
+          { role: "user", content: userAsk, timestamp: 1 },
+          castAgentMessage({
+            role: "assistant",
+            content: [{ type: "toolCall", id: "call-1", name: "exec", arguments: {} }],
+            timestamp: 2,
+          }),
+          {
+            role: "toolResult",
+            toolCallId: "call-1",
+            toolName: "exec",
+            content: [{ type: "text", text: toolOutput }],
+            timestamp: 3,
+          },
+          castAgentMessage({ role: "assistant", content: "Tests completed.", timestamp: 4 }),
+        ] as AgentMessage[],
+        turnPrefixMessages: [] as AgentMessage[],
+        firstKeptEntryId: "entry-1",
+        tokensBefore: 1_500,
+        fileOps: { read: [], edited: [], written: [] },
+        settings: { reserveTokens: 4_000 },
+        previousSummary: undefined,
+        isSplitTurn: false,
+      },
+      customInstructions: "",
+      signal: new AbortController().signal,
+    };
+
+    const { result } = await runCompactionScenario({
+      sessionManager,
+      event,
+      apiKey: "test-key",
+    });
+
+    expect(result.cancel).not.toBe(true);
+    expect(mockEvaluateJudgment).toHaveBeenCalledTimes(2);
+    expect(mockSummarizeInStages).toHaveBeenCalledTimes(2);
+    const firstCall = requireRecord(mockCallArg(mockSummarizeInStages, 0));
+    expect(JSON.stringify(firstCall.messages)).not.toContain(materialFact);
+    const secondCall = requireRecord(mockCallArg(mockSummarizeInStages, 1));
+    expect(JSON.stringify(secondCall.messages)).toContain(materialFact);
+    expect(secondCall.customInstructions).toContain(
+      "post-curation semantic fidelity check was unavailable",
+    );
+    expect(expectCompactionResult(result).summary).toContain(materialFact);
+  });
+
   it("retries when generated summary misses headings even if preserved turns contain them", async () => {
     mockSummarizeInStages.mockReset();
     const preservedUserText = [
