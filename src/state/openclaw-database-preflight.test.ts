@@ -19,7 +19,10 @@ import {
   preflightOpenClawStateDatabasePath,
   preflightOpenClawDatabaseSchemas,
 } from "./openclaw-database-preflight.js";
-import { snapshotPreflightSourceManifest } from "./openclaw-database-preflight.test-support.js";
+import {
+  snapshotPreflightSourceManifest,
+  snapshotSourceFamily,
+} from "./openclaw-database-preflight.test-support.js";
 import { repairAuditEventsSchema } from "./openclaw-state-db-audit-migration.js";
 import { OPENCLAW_STATE_SCHEMA_VERSION } from "./openclaw-state-db-contract.js";
 import { OpenClawStateDatabaseSchemaMigrationRequiredError } from "./openclaw-state-db-schema-migration-required.js";
@@ -669,7 +672,7 @@ describe("OpenClaw database schema preflight", () => {
     });
     await expect(
       assertOpenClawDatabasesReady({ env, operation: "gateway-restart" }),
-    ).rejects.toThrow(/Gateway refused restart.*column definitions differ for worktrees/u);
+    ).rejects.toThrow(/Gateway refused restart.*column definitions differ for worktrees/su);
   });
 
   it.each(["default", "configured"])(
@@ -710,7 +713,7 @@ describe("OpenClaw database schema preflight", () => {
       legacyWriter.close();
       const legacy = snapshotSourceFamily(agent.path);
       await expect(assertOpenClawDatabasesReady(options)).rejects.toThrow(
-        /Doctor.*database readiness.*schema version 17/,
+        /Doctor.*database readiness.*schema version 17/s,
       );
       expect(snapshotSourceFamily(agent.path)).toEqual(legacy);
       expect(fs.existsSync(statePath)).toBe(false);
@@ -874,7 +877,7 @@ describe("OpenClaw database schema preflight", () => {
 
     await expect(
       assertOpenClawDatabasesReady({ env, operation: "gateway-restart" }),
-    ).rejects.toThrow(/Gateway refused restart.*belongs to agent main; requested agent ops/);
+    ).rejects.toThrow(/Gateway refused restart.*belongs to agent main; requested agent ops/s);
     const result = await preflightOpenClawDatabaseSchemas({
       env,
       supportedVersions,

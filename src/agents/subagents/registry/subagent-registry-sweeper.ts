@@ -24,8 +24,7 @@ import {
   discardSuspendedPendingFinalDelivery,
   isSuspendedPendingFinalDelivery,
   resolveSuspendedDeliveryExpiryMs,
-  SUBAGENT_SUSPENDED_DELIVERY_HARD_CAP,
-  SUBAGENT_SUSPENDED_DELIVERY_WARNING_COUNT,
+  warnSuspendedDeliveryPressure,
 } from "./subagent-registry-suspended-delivery.js";
 import {
   reconcileDurableSubagentKillIntent,
@@ -94,6 +93,7 @@ export function createSubagentRegistrySweeper(params: {
   let scheduled: { timer: NodeJS.Timeout; at: number } | undefined;
   let sweepInProgress = false;
   let rerunRequested = false;
+  let lastWarnedSuspendedCount: number | undefined;
 
   function start() {
     if (intervalStarted) {
@@ -287,17 +287,6 @@ export function createSubagentRegistrySweeper(params: {
         );
       }
       recovery.prune();
-      const suspendedEntries = runEntries.filter(([, entry]) =>
-        isSuspendedPendingFinalDelivery(entry),
-      );
-      if (suspendedEntries.length >= SUBAGENT_SUSPENDED_DELIVERY_WARNING_COUNT) {
-        params.warn("subagent suspended delivery backlog exceeded pressure cap", {
-          suspendedCount: suspendedEntries.length,
-          softCap: SUBAGENT_SUSPENDED_DELIVERY_WARNING_COUNT,
-          hardCap: SUBAGENT_SUSPENDED_DELIVERY_HARD_CAP,
-          admissionBlocked: suspendedEntries.length >= SUBAGENT_SUSPENDED_DELIVERY_HARD_CAP,
-        });
-      }
       for (const [runId, entry] of runEntries) {
         if (runs.get(runId) !== entry) {
           continue;
@@ -671,6 +660,12 @@ export function createSubagentRegistrySweeper(params: {
       }
     } finally {
       sweepInProgress = false;
+      // Count retained delivery after expiry, even when unrelated sweep work fails.
+      lastWarnedSuspendedCount = warnSuspendedDeliveryPressure(
+        runs.values(),
+        lastWarnedSuspendedCount,
+        params.warn,
+      );
     }
   }
 
@@ -684,6 +679,7 @@ export function createSubagentRegistrySweeper(params: {
       stop();
       recovery.reset();
       sweepInProgress = false;
+      lastWarnedSuspendedCount = undefined;
     },
   };
 }
