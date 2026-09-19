@@ -1521,13 +1521,25 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
                     const budgetInstruction =
                       `Keep the complete summary body within ${finalized.bodyBudget} UTF-16 code units so the finalized artifact remains valid after required suffixes.`;
                     semanticFallbackSummary = finalized.summary;
-                    correctiveInstructions = [
+                    const semanticRepairInstructions = [
                       "Preserve the active meaning of the source requirements below. Do not mark them complete or superseded unless the retained conversation supports that conclusion.",
                       budgetInstruction,
                       semanticFeedback,
                     ]
                       .filter(Boolean)
                       .join("\n\n");
+                    if (curationApplied && attempt >= totalAttempts - 2) {
+                      await restoreUncuratedInput(
+                        [
+                          "Regenerate from the original uncurated input. The final available corrective attempt is reserved for full source evidence.",
+                          semanticRepairInstructions,
+                        ]
+                          .filter(Boolean)
+                          .join("\n\n"),
+                      );
+                    } else {
+                      correctiveInstructions = semanticRepairInstructions;
+                    }
                     continue;
                   }
                   log.warn(
