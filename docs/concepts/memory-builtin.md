@@ -27,11 +27,30 @@ Native sqlite-vec queries run in a separate, read-only process so a slow query
 does not block the Gateway event loop. Cancelling a search terminates its query
 process; OpenClaw does not retry that native query on the Gateway thread.
 
-If semantic retrieval reaches the 15-second tool deadline after keyword matches
+If semantic retrieval reaches the 30-second tool deadline after keyword matches
 from memory files are ready, `memory_search` returns those matches with a
 partial-result warning. Session transcript hits require fresh visibility checks
 and are excluded from timeout recovery. A partial response does not put the
-entire memory corpus into the timeout cooldown.
+entire memory corpus into the timeout cooldown. When the agent provides no final
+reply, the fallback warning states the timeout duration and whether partial
+results are available.
+
+## When to use
+
+The builtin engine is the right choice for most users:
+
+- Works out of the box with no extra dependencies.
+- Handles keyword and vector search well.
+- Supports all embedding providers.
+- Hybrid search combines the best of both retrieval approaches.
+
+The builtin engine can index directories outside the workspace with
+`memory.search.extraPaths`. It uses bounded lexical query expansion to improve
+conversational recall, but it does not provide a learned or model-based relevance
+reranking stage. Its MMR pass is deterministic and local.
+
+Consider [Honcho](/concepts/memory-honcho) if you want cross-session memory
+with automatic user modeling.
 
 ## Getting started
 
@@ -209,23 +228,6 @@ relevance reranker. To replace QMD's in-process, zero-key GGUF embeddings,
 install the [llama.cpp provider](/plugins/llama-cpp) and set
 `memory.search.provider: "local"`; without an embedding provider, builtin uses
 BM25 keyword search only.
-
-## When to use
-
-The builtin engine is the right choice for most users:
-
-- Works out of the box with no extra dependencies.
-- Handles keyword and vector search well.
-- Supports all embedding providers.
-- Hybrid search combines the best of both retrieval approaches.
-
-The builtin engine can index directories outside the workspace with
-`memory.search.extraPaths`. It uses bounded lexical query expansion to improve
-conversational recall, but it does not provide a learned or model-based relevance
-reranking stage. Its MMR pass is deterministic and local.
-
-Consider [Honcho](/concepts/memory-honcho) if you want cross-session memory
-with automatic user modeling.
 
 ## Troubleshooting
 

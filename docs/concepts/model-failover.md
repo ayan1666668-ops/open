@@ -50,12 +50,73 @@ policy. OpenClaw does not retry them with thinking disabled.
 
 Fallback execution is turn-local. The reply runner persists only fallback notice state so `/status` and transition notices can distinguish the selected model from the model that answered. It does not persist the fallback as the next turn's model selection.
 
+Sessions placed on an OpenClaw cloud worker keep the OpenClaw runtime when
+automatic model selection advances to a fallback. The configured provider,
+model, and auth-profile fallback rules still apply. Explicit session or
+configured runtime choices remain strict: an incompatible runtime reports a
+placement error and requires a compatible destination before retrying.
+
 When configured fallback stops because the agent run reaches a final timeout or
 the idle-timeout cost-runaway breaker returns a terminal error, the
 `model-fallback/decision` logger records `model_fallback_chain_stopped` with
 reason `agent_run_terminal_timeout` or `idle_timeout_circuit_breaker`. These are
 terminal stops, not provider failures or requests to try another model. The
 existing run deadline and cost limits still apply.
+
+## Automatic cyber-policy escalation
+
+The embedded OpenClaw runtime retries one replay-safe OpenAI cyber-policy refusal on Daybreak
+Blue. This includes normal embedded turns using the ChatGPT-authenticated OpenAI Responses
+transport, not only Codex plugin sessions. That transport projects OpenAI's structured cyber-policy
+error into the refusal metadata used by this policy, from every terminal path it can arrive on: a
+non-OK HTTP body, a streamed `error` event, and a `response.failed` event. Generic refusal text
+without a structured cyber category remains terminal.
+
+This policy route is turn-local: it does not change the selected session model and it does not send
+ordinary provider failures to Daybreak. Codex-backed sessions keep their separate plugin-owned
+policy described in [Codex harness runtime behavior](/plugins/codex-harness/runtime-behavior#automatic-daybreak-escalation).
+
+The default target is `openai/gpt-daybreak-blue-latest`. The retry runs only when all of these are
+true:
+
+- the selected embedded attempt reports `provider_refusal` with provider `openai` and category
+  `cyber`;
+- the attempt's replay metadata proves that no tool or delivery side effect would be repeated;
+- the target differs from the model that was refused;
+- the selection is not strict; and
+- the feature is enabled.
+
+A strict selection stays strict. A locked model selection reaches the runner as an explicit empty
+fallback list, and this policy honors that the same way ordinary fallback does: the refusal remains
+terminal until the operator unlocks the selection.
+
+If the Daybreak attempt fails without committing work, OpenClaw preserves the original provider
+refusal instead of trying unrelated configured fallbacks. If the retry already executed a tool or
+delivered output before failing, its own result is kept instead, because its replay verdict,
+delivery evidence, and terminal receipt describe what actually ran. If the retry throws anything
+other than an ordinary failover-class error, that exception propagates unchanged: a recorded
+terminal stop prohibits replay, and an unclassified throw is how the fallback runner reports an
+attempt that already committed work. An authorization failure cools down that target for the
+current session before another cyber refusal probes it again.
+
+```json5
+{
+  agents: {
+    defaults: {
+      embeddedAgent: {
+        cyberFailover: {
+          mode: "auto", // or "off"
+          model: "openai/gpt-daybreak-blue-latest",
+          cooloffMs: 600000,
+        },
+      },
+    },
+  },
+}
+```
+
+General model fallback ordering is unchanged. A non-cyber refusal, a Codex/native-harness result,
+or any replay-unsafe attempt remains terminal under the existing refusal policy.
 
 ## Selection source policy
 
@@ -74,40 +135,6 @@ and keep inheriting the shared primary. Setting `fallbacks: []` explicitly disab
 fallbacks without pinning that primary. In **Settings → Agents → Overview**, editing
 fallback chips preserves primary inheritance. Removing every chip saves an empty
 chain instead of restoring the shared fallbacks.
-
-Outside group and channel conversations, OpenClaw sends a visible notice when a turn moves onto fallback. It sends another notice when a later turn succeeds on the selected primary. Group and channel conversations keep the same fallback state and lifecycle events without posting these notices. Persisted notice state prevents repeated notices when consecutive turns use the same selected/active pair, while model selection itself remains unchanged.
-
-## Auth failure skip cache
-
-By default, every new turn keeps the existing fallback retry behavior. OpenClaw retries each configured fallback candidate again. This includes non-primary candidates that recently failed with `auth` or `auth_permanent`.
-
-Opt in to suppress repeat auth failures with:
-
-```bash
-OPENCLAW_FALLBACK_SKIP_TTL_MS=60000
-```
-
-When enabled, OpenClaw records an in-memory, session-scoped skip marker for a non-primary fallback candidate after an auth-class failure. The key includes the session, provider, model, and selected automatic or explicit profile ID. Switching profiles does not inherit another profile's failure marker. Primary candidates are never skipped, so an explicit user model selection still surfaces the real auth error. The cache is process-local and clears on Gateway restart.
-
-The value is a TTL in milliseconds. `0` or unset disables the cache. Positive values are clamped between 1 second and 10 minutes.
-
-## User-visible fallback notices
-
-Outside group and channel conversations, OpenClaw sends a status notice in the same reply surface when a session moves onto an auto-selected fallback:
-
-```text
-↪️ Model Fallback: <fallback> (selected <primary>; <reason>)
-```
-
-When a later probe succeeds and the session returns to the selected primary, OpenClaw sends:
-
-```text
-↪️ Model Fallback cleared: <primary> (was <fallback>)
-```
-
-These notices are operational messages, not assistant content. They deliver once per state change outside group and channel conversations, including side-effect-only turns when feasible, but repeated turn-local fallback transitions do not repeat them. Group and channel conversations suppress the visible notices while retaining the same fallback state and lifecycle events. Delivery bypasses normal source-reply suppression, does not consume the first assistant reply slot for threaded channels, and is excluded from text-to-speech.
-
-When a fallback answers, the Control UI shows the successful answer once and removes empty failed-attempt placeholders from that same run. The raw transcript retains the failed attempts for troubleshooting. Failed turns and attempts that produced partial visible output remain visible.
 
 ## Auth storage (keys + OAuth)
 
@@ -213,6 +240,8 @@ CLI-backed runtimes settle profile health only after their resume, fork, and fre
 
     OpenAI-compatible **provider-completed** stop/finish reasons such as `Unhandled stop reason: error`, `stop reason: error`, `reason: error`, and `Provider finish_reason: error` are classified as **`server_error`** (HTTP-like status 500), not timeout. They remain failover-worthy for model or auth-profile rotation, but diagnostics keep the provider finish-reason text instead of rewriting the user copy to "LLM request timed out." Transport-shaped finish reasons such as `Provider finish_reason: abort`, `network_error`, and `malformed_response` stay in the timeout/failover bucket (status 408).
 
+    HTTP status mapping uses **`server_error`** for otherwise-unclassified non-timing `5xx` failures, including `502` and `503`. HTTP `529` retains **`overloaded`**. The timing statuses retain **`timeout`**: request timeout `408`, gateway timeouts `504`, `522`, and `524`, and nginx client-abort `499`. More-specific provider errors and context classifications keep their existing precedence.
+
     Generic server text can also land in that timeout bucket when the source matches a known transient pattern. For example, the bare model runtime stream-wrapper message `An unknown error occurred` is treated as failover-worthy for every provider. The shared model runtime emits it when provider streams end with `stopReason: "aborted"` or `stopReason: "error"` without specific details. JSON `api_error` payloads with transient server text such as `internal server error`, `unknown error, 520`, `upstream error`, or `backend error` are also treated as failover-worthy timeouts.
 
     OpenRouter-specific generic upstream text such as bare `Provider returned error` is treated as timeout only when the provider context is actually OpenRouter. Generic internal fallback text such as `LLM request failed with an unknown error.` stays conservative and does not trigger failover by itself.
@@ -253,6 +282,20 @@ State is stored in the per-agent SQLite auth state under `usageStats`:
 }
 ```
 
+## Auth failure skip cache
+
+By default, every new turn keeps the existing fallback retry behavior. OpenClaw retries each configured fallback candidate again. This includes non-primary candidates that recently failed with `auth` or `auth_permanent`.
+
+Opt in to suppress repeat auth failures with:
+
+```bash
+OPENCLAW_FALLBACK_SKIP_TTL_MS=60000
+```
+
+When enabled, OpenClaw records an in-memory, session-scoped skip marker for a non-primary fallback candidate after an auth-class failure. The key includes the session, provider, model, and selected automatic or explicit profile ID. Switching profiles does not inherit another profile's failure marker. Primary candidates are never skipped, so an explicit user model selection still surfaces the real auth error. The cache is process-local and clears on Gateway restart.
+
+The value is a TTL in milliseconds. `0` or unset disables the cache. Positive values are clamped between 1 second and 10 minutes.
+
 ## Billing disables
 
 Billing/credit failures (for example "insufficient credits" / "credit balance too low") are treated as failover-worthy. OpenClaw marks the credential as **disabled** for ten minutes initially and rotates to the next eligible profile/provider.
@@ -288,13 +331,15 @@ If all profiles for a provider fail, OpenClaw moves to the next model in `agents
 
 Provider-busy signals such as `ModelNotReadyException` land in the overloaded bucket and follow the same one-rotation-then-fallback policy as rate limits.
 
-The failover controller owns OpenClaw's transient recovery budget. Rate limits receive up to **10 total attempts** before auth-profile rotation or model fallback. Jittered exponential waits cap at 30 seconds, while provider `retry-after` and `retry-after-ms` hints remain minimum waits even beyond that cap. Other transient failures retain eight retries and a 90-second retry window. Once that budget or window is exhausted, recovery proceeds to eligible auth-profile rotation, configured model fallback, or a visible error. Continuations preserve the transcript instead of replaying the original user request. Recovery and any fallback winner remain turn-local.
+The failover controller owns OpenClaw's transient recovery budget. Rate limits receive up to **10 total attempts** before auth-profile rotation or model fallback. Jittered exponential waits cap at 30 seconds, while provider `retry-after` and `retry-after-ms` hints remain minimum waits even beyond that cap. Other transient failures retain eight retries and a 90-second window for consecutive outages. A completed successful model response clears that window without resetting the total retry count; partial output and tool activity alone do not. Once that budget or window is exhausted, recovery proceeds to eligible auth-profile rotation, configured model fallback, or a visible error. Continuations preserve the transcript instead of replaying the original user request. Recovery and any fallback winner remain turn-local.
 
 The embedded runtime's existing session setting `retry.provider.maxRetries` overrides its recovery retry budget. `0` disables retries, and rate limits remain capped at 10 total attempts. It is not an `openclaw.json` key and does not change a native harness's internal request retries. Native harnesses may finish their own request retries before OpenClaw starts continuation recovery. The reply runner does not add another whole-turn replay loop. See [Retry policy](/concepts/retry) for pacing and exclusions.
 
 While waiting, the Control UI shows one transient **Retrying… n/10** indicator for rate limits. Retried failures do not become persisted assistant messages. Terminal failure retains one error. History hides recovered empty or reasoning-only errors without rewriting stored transcripts.
 
-Visible failure messages preserve the provider's HTTP status independently of retry classification. A provider HTTP 500 remains a server error in the final reply, even when recovery groups it with timeout-shaped failures. Raw provider response details stay out of that reply.
+Visible failure messages preserve the provider's HTTP status independently of retry classification. A provider HTTP 500 remains a server error in the final reply, and recovery classifies it as `server_error` rather than grouping it with timeout-shaped failures. Raw provider response details stay out of that reply.
+
+Gateway transcript-validation failures are local format errors. They do not rotate or cool down healthy credentials, and both assistant errors and thrown run failures identify the rejected session transcript entry with recovery guidance. Genuine provider-session expiry keeps its existing credential-health behavior.
 
 Provider overloads and HTTP 5xx failures use transient recovery guidance. A message saying only that a model is "not available" does not establish that it was retired or that your configuration needs to change. Configuration guidance requires a missing-model response or an explicit account/model restriction. Codex turn errors retain their overload and HTTP-status information even after Codex stops retrying the turn.
 
@@ -376,6 +421,28 @@ Live model switching follows these rules:
 - A live switch can select a model outside the active fallback chain. OpenClaw then returns the original switch to the agent, reply, or isolated-cron retry owner. The selected model can complete the same turn.
 
 The active run carries its chosen candidate directly. Live reconciliation changes that candidate only for an explicit pending user switch, so no temporary fallback override or rollback is needed.
+
+When a recorded fallback notice belongs to a different selected model, status and session lists skip its optional transcript lookup. That stale-notice path no longer surfaces transcript-only errors or starts projection reconciliation. Matching notices use a read-only transcript lookup that neither creates storage nor starts projection reconciliation. If optional storage or projections are unavailable, the lookup omits transcript-derived details. Unexpected read errors still propagate.
+
+## User-visible fallback notices
+
+Outside group and channel conversations, OpenClaw sends a status notice in the same reply surface when a session moves onto an auto-selected fallback:
+
+```text
+↪️ Model Fallback: <fallback> (selected <primary>; <reason>)
+```
+
+When a later probe succeeds and the session returns to the selected primary, OpenClaw sends:
+
+```text
+↪️ Model Fallback cleared: <primary> (was <fallback>)
+```
+
+These notices are operational messages, not assistant content. They deliver once per state change outside group and channel conversations, including side-effect-only turns when feasible, but repeated turn-local fallback transitions do not repeat them. Group and channel conversations suppress the visible notices while retaining the same fallback state and lifecycle events. Delivery bypasses normal source-reply suppression, does not consume the first assistant reply slot for threaded channels, and is excluded from text-to-speech.
+
+Persisted notice state prevents repeated notices when consecutive turns use the same selected/active pair, while model selection itself remains unchanged.
+
+When a fallback answers, the Control UI shows the successful answer once and removes empty failed-attempt placeholders from that same run. The raw transcript retains the failed attempts for troubleshooting. Failed turns and attempts that produced partial visible output remain visible.
 
 ## Observability and failure summaries
 
