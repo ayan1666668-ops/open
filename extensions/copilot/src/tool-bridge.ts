@@ -656,10 +656,8 @@ function toToolStartArgs(args: unknown): Record<string, unknown> {
 }
 
 function createFailureResult(message: string, error: unknown): ToolResultObject {
-  // ToolResultObject.error is typed as `string | undefined` in the SDK contract
-  // (see `node_modules/@github/copilot-sdk/dist/types.d.ts`). Returning an
-  // Error object would produce a non-serializable JSON-RPC payload, so we
-  // surface the message string instead.
+  // Copilot's ToolResultObject.error accepts a string (SDK dist/types.d.ts).
+  // Serialize the message explicitly; Error.message is not enumerable.
   return {
     error: toCopilotToolError(error).message,
     resultType: "failure",

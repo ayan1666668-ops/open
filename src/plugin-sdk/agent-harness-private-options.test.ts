@@ -26,18 +26,20 @@ type HostTestAttempt = Parameters<typeof createAgentHarnessHostCapabilitiesForTe
 
 describe("agent harness private options", () => {
   it("keeps Side chat controls out of every public attempt and tool-surface input", () => {
+    type PublicInputs = {
+      attempt: AgentHarnessAttemptParams;
+      attemptV2: AgentHarnessAttemptParamsV2;
+      embedded: EmbeddedRunAttemptParams;
+      embeddedV2: EmbeddedRunAttemptParamsV2;
+      toolSurface: AgentHarnessToolSurfaceRuntimeParams;
+      codingTools: CodingToolsOptions;
+      hostTools: HostToolsOptions;
+      hostTest: HostTestAttempt;
+    };
     expectTypeOf<
-      Extract<
-        | keyof AgentHarnessAttemptParams
-        | keyof AgentHarnessAttemptParamsV2
-        | keyof EmbeddedRunAttemptParams
-        | keyof EmbeddedRunAttemptParamsV2
-        | keyof AgentHarnessToolSurfaceRuntimeParams
-        | keyof CodingToolsOptions
-        | keyof HostToolsOptions
-        | keyof HostTestAttempt,
-        PrivateControls
-      >
+      {
+        [I in keyof PublicInputs]: Extract<keyof PublicInputs[I], PrivateControls>;
+      }[keyof PublicInputs]
     >().toEqualTypeOf<never>();
     expectTypeOf<AgentHarnessToolSurfaceRuntimeParams>().not.toHaveProperty(
       "forceCodeModeControls",
