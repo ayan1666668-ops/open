@@ -27,13 +27,11 @@ describe("Control UI GitHub credential", () => {
     "keeps the packaged host read library available independently of plugin activation: %j",
     async (plugins) => {
       setRuntimeConfigSnapshot({ plugins });
-      const fetchMock = vi
-        .fn<typeof fetch>()
-        .mockResolvedValue(
-          new Response(JSON.stringify({ id: 1 }), {
-            headers: { "content-type": "application/json" },
-          }),
-        );
+      const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+        new Response(JSON.stringify({ id: 1 }), {
+          headers: { "content-type": "application/json" },
+        }),
+      );
       expect(gitHubPublicApi.resolveGitHubApiCredentialScope({}).token).toBeUndefined();
       await expect(
         gitHubPublicApi.fetchGitHubJson("https://api.github.com/user", fetchMock),
