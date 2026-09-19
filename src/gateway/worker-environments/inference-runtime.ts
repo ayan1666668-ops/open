@@ -13,7 +13,6 @@ import { wrapStreamFnWithDiagnosticModelCallEvents } from "../../agents/embedded
 import { resolveEmbeddedAgentStream } from "../../agents/embedded-agent-runner/stream-resolution.js";
 import { mapThinkingLevel } from "../../agents/embedded-agent-runner/utils.js";
 import { resolveAgentHarnessPolicy } from "../../agents/harness/policy.js";
-import type { ModelCatalogEntry } from "../../agents/model-catalog.types.js";
 import { splitTrailingAuthProfile } from "../../agents/model-ref-profile.js";
 import {
   buildModelAliasIndex,
@@ -249,6 +248,7 @@ function emitWorkerInferenceUsage(params: WorkerInferenceUsageParams): void {
 async function resolveApprovedModel(params: {
   target: ResolvedWorkerSessionTarget;
   request: WorkerInferenceStartParams;
+  signal: AbortSignal;
   runtimeSnapshot: PreparedModelRuntimeSnapshot;
 }): Promise<
   | {
@@ -261,8 +261,7 @@ async function resolveApprovedModel(params: {
     }
   | undefined
 > {
-  const { target, request, runtimeSnapshot } = params;
-  const rawRef = `${request.modelRef.provider}/${request.modelRef.model}`;
+  const { target, request, signal, runtimeSnapshot } = params;
   return await withPluginRuntimeGenerationScope(runtimeSnapshot, async () => {
     const lifecycleConfig = runtimeSnapshot.config;
     const agentDir = runtimeSnapshot.agentDir;
@@ -285,7 +284,7 @@ async function resolveApprovedModel(params: {
     const resolved = resolveModelRefFromString({
       cfg: lifecycleConfig,
       agentId: target.agentId,
-      raw: rawRef,
+      raw: `${request.modelRef.provider}/${request.modelRef.model}`,
       defaultProvider: defaultModel.provider,
       aliasIndex,
       manifestPlugins: manifestSnapshot,
@@ -297,10 +296,9 @@ async function resolveApprovedModel(params: {
     ) {
       return undefined;
     }
-    const catalog = runtimeSnapshot.modelCatalog.entries;
     const policy = createModelVisibilityPolicy({
       cfg: lifecycleConfig,
-      catalog,
+      catalog: runtimeSnapshot.modelCatalog.entries,
       defaultProvider: defaultModel.provider,
       defaultModel,
       agentId: target.agentId,
@@ -314,7 +312,7 @@ async function resolveApprovedModel(params: {
     // Retained refs stay approved during cold discovery.
     const known =
       policy.allowedCatalog.some(
-        (entry: ModelCatalogEntry) => resolvedKey === resolveModelCatalogIdentityKey(entry),
+        (entry) => resolvedKey === resolveModelCatalogIdentityKey(entry),
       ) || policy.retainedKeys.has(resolvedKey);
     if (!known || !policy.allows(resolved.ref)) {
       return undefined;
@@ -382,6 +380,7 @@ async function resolveApprovedModel(params: {
       ...(selectedProfileId ? { bindAuthOwner: true } : {}),
       allowMissingApiKeyModes: ["aws-sdk"],
       allowBundledStaticCatalogFallback: true,
+      signal,
       preparedModelRuntime: runtimeSnapshot,
       workspaceDir,
       ...(agentRuntimeId ? { agentRuntimeId } : {}),
@@ -429,6 +428,7 @@ export const executeWorkerInference: WorkerInferenceExecutor = async (params) =>
   const approved = await resolveApprovedModel({
     target,
     request,
+    signal,
     runtimeSnapshot: runtimeLease.snapshot,
   });
   if (!approved) {

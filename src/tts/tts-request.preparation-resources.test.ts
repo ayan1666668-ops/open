@@ -123,12 +123,18 @@ module.exports = { id: ${JSON.stringify(id)}, register(api) {
       tailResume.resolve();
       await Promise.allSettled(tails);
       await host.close();
-      for (const { database } of connections) {
-        if (database.isOpen) {
-          database.close();
+      clearPluginMetadataLifecycleCaches();
+      try {
+        const cleanup = await waitForPluginCacheRetirement();
+        expect(cleanup.failures).toEqual([]);
+      } finally {
+        for (const { database } of connections) {
+          if (database.isOpen) {
+            database.close();
+          }
         }
+        Reflect.deleteProperty(globalThis, key);
       }
-      Reflect.deleteProperty(globalThis, key);
     },
   };
 }
@@ -376,28 +382,21 @@ describe("async speech preparation resources", () => {
       try {
         await fixture.withEnvironment(async () => {
           useNoBundledPlugins();
-          try {
-            const registry =
-              mode === "active" ? loadPluginRegistryHandle({ config: fixture.cfg }) : undefined;
-            for (let index = 0; index < 4; index++) {
-              const result = await withPluginRuntimeRegistryScope(registry, fixture.prepare);
-              expect(result.directives.hasDirective).toBe(true);
-            }
-            expect(fixture.state.connections.length).toBe(1);
-            await fixture.host.close();
-            expect(fixture.state.connections[0]?.database.isOpen).toBe(true);
-            expect(fixture.state.connections[0]?.disposals).toBe(0);
-          } finally {
-            clearPluginMetadataLifecycleCaches();
-            const cleanup = await waitForPluginCacheRetirement();
-            expect(cleanup.failures).toEqual([]);
+          const registry =
+            mode === "active" ? loadPluginRegistryHandle({ config: fixture.cfg }) : undefined;
+          for (let index = 0; index < 4; index++) {
+            const result = await withPluginRuntimeRegistryScope(registry, fixture.prepare);
+            expect(result.directives.hasDirective).toBe(true);
           }
-          expect(fixture.state.connections[0]?.database.isOpen).toBe(false);
-          expect(fixture.state.connections[0]?.cleanups).toBe(1);
+          expect(fixture.state.connections.length).toBe(1);
+          await fixture.host.close();
+          expect(fixture.state.connections[0]?.database.isOpen).toBe(true);
+          expect(fixture.state.connections[0]?.disposals).toBe(0);
         });
       } finally {
         await fixture.cleanup();
       }
+      expect(fixture.state.connections[0]?.cleanups).toBe(1);
     },
   );
 
