@@ -25,6 +25,8 @@ export type SidebarColumn = {
   activePanelId: string;
   height: number;
   width: number;
+  /** New columns choose their browser width once the pane can be measured. */
+  browserWidthPending?: true;
 };
 export type SidebarLayout = {
   columns: SidebarColumn[];

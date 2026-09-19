@@ -663,6 +663,12 @@ export abstract class ChatPaneLifecycle extends ChatPaneSessionCreation {
     const board = this.resolveBoardView();
     this.syncRetainedBoardSession(board);
     this.sessionPanelToggles.flush();
+    if (this.state) {
+      const layout = this.initializeBrowserSidebarLayout(this.state.sidebarLayout);
+      if (layout !== this.state.sidebarLayout) {
+        this.state.updateSidebarLayout(layout, { geometryOnly: true });
+      }
+    }
     this.setConversationVisible(
       Boolean(
         this.state &&
