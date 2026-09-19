@@ -134,6 +134,7 @@ export function prepareCompactionSemanticFidelityEvidence(params: {
     });
   }
 
+  let recentUserCount = 0;
   for (const text of recentUserTexts) {
     if (retainedContext.includes(text)) {
       verbatimPreserved += 1;
@@ -144,14 +145,13 @@ export function prepareCompactionSemanticFidelityEvidence(params: {
     if (truncated) {
       truncatedSourceItems += 1;
     }
+    recentUserCount += 1;
     sourceItems.push({
-      id: `recent-user-${sourceItems.length + 1}`,
+      id: `recent-user-${recentUserCount}`,
       text: bounded,
       truncated,
     });
-    if (
-      sourceItems.filter((item) => item.id.startsWith("recent-user-")).length >= MAX_SOURCE_ITEMS
-    ) {
+    if (recentUserCount >= MAX_SOURCE_ITEMS) {
       break;
     }
   }
