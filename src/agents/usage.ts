@@ -4,6 +4,7 @@
  * output, cache, reasoning, and total token accounting fields.
  */
 import { asFiniteNumber } from "@openclaw/normalization-core/number-coercion";
+import { asOptionalRecord } from "@openclaw/normalization-core/record-coerce";
 import type { Usage } from "../llm/types.js";
 
 export type ContextUsage = NonNullable<Usage["contextUsage"]>;
@@ -143,13 +144,25 @@ export function hasBillableUsage(usage?: NormalizedUsage | null): usage is Norma
   return usage?.cost !== undefined || hasNonzeroUsage(usage);
 }
 
+/** Adapter-default zeros are not price evidence; billed totals and cost components are. */
+export function hasRecordedUsageCost(value: unknown): boolean {
+  const cost = asOptionalRecord(value);
+  const total = asFiniteNumber(cost?.total);
+  return (
+    total !== undefined &&
+    total >= 0 &&
+    (total > 0 ||
+      cost?.totalOrigin === "provider-billed" ||
+      (asFiniteNumber(cost?.input) ?? 0) !== 0 ||
+      (asFiniteNumber(cost?.output) ?? 0) !== 0 ||
+      (asFiniteNumber(cost?.cacheRead) ?? 0) !== 0 ||
+      (asFiniteNumber(cost?.cacheWrite) ?? 0) !== 0)
+  );
+}
+
 /** Empty transport snapshots synthesize $0; only a billed zero is an observed model cost. */
 export function hasObservedModelUsage(usage?: NormalizedUsage | null): usage is NormalizedUsage {
-  return (
-    (usage?.cost !== undefined &&
-      (usage.cost.total > 0 || usage.cost.totalOrigin === "provider-billed")) ||
-    hasNonzeroUsage(usage)
-  );
+  return hasRecordedUsageCost(usage?.cost) || hasNonzeroUsage(usage);
 }
 
 const normalizeTokenCount = (value: unknown): number | undefined => {

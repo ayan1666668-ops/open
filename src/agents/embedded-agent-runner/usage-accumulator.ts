@@ -15,7 +15,7 @@ export type UsageAccumulator = {
   reasoningTokens: number;
   total: number;
   /** Undefined means unobserved; any missing call price makes the complete sum unavailable. */
-  cost: { total: number } | "unavailable" | undefined;
+  cost: NormalizedUsage["cost"] | "unavailable";
   /**
    * Completed assistant round trips across every model attempt of the run.
    * Kept beside token totals so retried attempts stay counted like their usage.
@@ -70,7 +70,13 @@ export const mergeUsageIntoAccumulator = (
   target.total += callTotal;
   target.cost =
     target.cost !== "unavailable" && usage.cost
-      ? { total: (target.cost?.total ?? 0) + usage.cost.total }
+      ? {
+          total: (target.cost?.total ?? 0) + usage.cost.total,
+          ...(usage.cost.totalOrigin === "provider-billed" &&
+          (!target.cost || target.cost.totalOrigin === "provider-billed")
+            ? { totalOrigin: "provider-billed" as const }
+            : {}),
+        }
       : "unavailable";
 };
 

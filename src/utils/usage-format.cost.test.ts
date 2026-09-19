@@ -68,6 +68,26 @@ describe("usage cost estimation", () => {
     },
   );
 
+  it.each([
+    { name: "adapter zero", cost: { total: 0 }, expected: undefined },
+    {
+      name: "billed zero",
+      cost: { total: 0, totalOrigin: "provider-billed" as const },
+      expected: 0,
+    },
+    { name: "recorded positive estimate", cost: { total: 0.25 }, expected: 0.25 },
+  ])("reports unpriced aggregate usage only with cost evidence: $name", ({ cost, expected }) => {
+    expect(
+      estimateAggregateUsageCost({
+        usage: { input: 1_000, output: 500, cost },
+        provider: "unpriced-fixture",
+        model: "unpriced",
+        config: {},
+        allowPluginNormalization: false,
+      }),
+    ).toBe(expected);
+  });
+
   it("estimates cost with single-tier tiered pricing (equivalent to flat)", () => {
     const tiers: PricingTier[] = [
       { input: 1, output: 2, cacheRead: 0.5, cacheWrite: 0, range: [0, 1_000_000] },
