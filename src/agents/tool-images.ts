@@ -423,10 +423,12 @@ function resolveToolMediaPresentation(details: unknown): "inspection-only" | "co
   if (!details || typeof details !== "object" || Array.isArray(details)) {
     return "inspection-only";
   }
+  // SAFETY: details is confirmed a non-null, non-array object by the guard immediately above.
   const media = (details as { media?: unknown }).media;
   if (!media || typeof media !== "object" || Array.isArray(media)) {
     return "inspection-only";
   }
+  // SAFETY: media is confirmed a non-null, non-array object by the guard immediately above.
   return (media as { present?: unknown }).present === true ? "conversation" : "inspection-only";
 }
 

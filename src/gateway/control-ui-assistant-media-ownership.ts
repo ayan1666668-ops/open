@@ -59,6 +59,7 @@ function classifyAssistantMediaError(err: unknown): AssistantMediaAvailability {
     }
   }
   if (err instanceof Error && "code" in err) {
+    // SAFETY: guarded by the "code" in err check above; the value is read as unknown and narrowed below.
     const errorCode = (err as { code?: unknown }).code;
     switch (typeof errorCode === "string" ? errorCode : "") {
       case "unsupported-media-type":

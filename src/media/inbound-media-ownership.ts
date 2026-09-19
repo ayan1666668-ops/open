@@ -70,10 +70,12 @@ async function readOwnershipIndex(): Promise<OwnershipIndex> {
       return {};
     }
     const index: OwnershipIndex = {};
+    // SAFETY: parsed is confirmed a non-null, non-array object immediately above.
     for (const [id, value] of Object.entries(parsed as Record<string, unknown>)) {
       if (!isSafeInboundMediaId(id) || !value || typeof value !== "object") {
         continue;
       }
+      // SAFETY: value is confirmed a non-null object by the guard on the loop entry above.
       const record = value as Record<string, unknown>;
       if (typeof record.stagedAt !== "number" || !Number.isFinite(record.stagedAt)) {
         continue;
@@ -231,6 +233,7 @@ function collectInboundMediaIdsFromValue(value: unknown, found: Set<string>, dep
   if (!value || typeof value !== "object") {
     return;
   }
+  // SAFETY: value is confirmed a non-null, non-array object by the guard immediately above.
   for (const entry of Object.values(value as Record<string, unknown>)) {
     collectInboundMediaIdsFromValue(entry, found, depth + 1);
   }
