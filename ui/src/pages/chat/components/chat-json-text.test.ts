@@ -2,6 +2,8 @@
 
 import { html, nothing, render } from "lit";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { readMarkdownCodeBlockCopyText } from "../../../components/markdown-code-blocks.ts";
+import { toSanitizedMarkdownHtml } from "../../../components/markdown.ts";
 import { TOOL_OUTPUT_PREVIEW_CHARS } from "../../../lib/chat/tool-output.ts";
 import "./chat-tool-output.ts";
 import { renderGroupedMessage } from "./chat-message-bubble.ts";
@@ -63,52 +65,102 @@ describe.each(["user", "assistant", "toolResult"])("%s JSON message text", (role
     return container;
   }
 
-  it.each(jsonSources)("preserves $name in the expanded JSON disclosure", ({ text }) => {
+  it.each([
+    ...jsonSources,
+    {
+      name: "CRLF and literal Unicode separators",
+      text: '{\r\n  "text": "before\u2028between\u2029after"\r\n}',
+    },
+  ])("preserves $name in literal code and copy", ({ text }) => {
     const container = renderMessage(text);
-    const disclosure = container.querySelector<HTMLDetailsElement>(".chat-json-collapse");
-    expect(disclosure).not.toBeNull();
-    disclosure!.querySelector<HTMLElement>("summary")!.click();
-    expect(disclosure!.open).toBe(true);
-    expect(disclosure!.querySelector("code")?.textContent).toBe(text);
-    expect(disclosure!.querySelector("strong")).toBeNull();
+    expect(container.querySelector(".chat-text pre code")?.textContent).toBe(text);
+    expect(container.querySelector(".chat-text strong")).toBeNull();
+    const copy = container.querySelector<HTMLElement>(".code-block-copy");
+    if (role === "user") {
+      expect(copy).toBeNull();
+      expect(container.querySelector(".code-block-wrapper")).toBeNull();
+    } else {
+      expect(copy).not.toBeNull();
+      expect(readMarkdownCodeBlockCopyText(copy!)).toBe(text);
+    }
+    if (role === "assistant") {
+      expect(container.querySelectorAll(".code-block-json-tree")).toHaveLength(1);
+      expect(container.querySelector('[data-json-mode="tree"]')?.getAttribute("aria-pressed")).toBe(
+        "true",
+      );
+      expect(container.querySelector('[data-json-mode="raw"]')?.getAttribute("aria-pressed")).toBe(
+        "false",
+      );
+      expect(container.querySelector(".code-block-viewport pre code")?.textContent).toBe(text);
+    } else {
+      expect(
+        container.querySelector(
+          ".code-block-json-tree, .code-block-json-mode, .code-block-wrap, .code-block-expand",
+        ),
+      ).toBeNull();
+    }
+    if (role === "toolResult") {
+      expect(container.querySelector(".chat-tool-msg-body .chat-text pre code")?.textContent).toBe(
+        text,
+      );
+      expect(container.querySelector(".chat-tool-msg-body details")).toBeNull();
+    }
   });
 
   it.each([19_999, 20_000, 20_001])(
-    "retains the JSON disclosure boundary at %i characters",
+    "retains the auto-JSON rendering boundary at %i characters",
     (size) => {
       const text = '{"text":"' + "x".repeat(size - 11) + '"}';
       expect(text).toHaveLength(size);
       const container = renderMessage(text);
-      const disclosure = container.querySelector<HTMLDetailsElement>(".chat-json-collapse");
       if (size <= 20_000) {
-        expect(disclosure).not.toBeNull();
-        disclosure!.querySelector<HTMLElement>("summary")!.click();
-        expect(disclosure!.open).toBe(true);
-        expect(disclosure!.querySelector("code")?.textContent).toBe(text);
+        expect(container.querySelector(".chat-text pre code")?.textContent).toBe(text);
+        expect(container.querySelectorAll(".code-block-json-tree")).toHaveLength(
+          role === "assistant" ? 1 : 0,
+        );
       } else {
-        expect(disclosure).toBeNull();
-        expect(container.textContent).toContain(text);
+        expect(container.querySelector(".code-block-json-tree")).toBeNull();
+        expect(container.querySelector(".chat-text pre code")?.textContent).toBe(text);
       }
     },
   );
 
-  it("keeps explicitly fenced JSON literal without another disclosure", () => {
+  it("keeps explicitly fenced JSON literal in one shared code block", () => {
     const text = '{"id":9007199254740993,"text":"**stars**"}';
     const fenced = "```json\n" + text + "\n```";
     const container = renderMessage(fenced);
-    expect(container.querySelector(".chat-json-collapse")).toBeNull();
+    expect(container.querySelectorAll("pre code")).toHaveLength(1);
+    expect(container.querySelectorAll(".code-block-json-tree")).toHaveLength(
+      role === "assistant" ? 1 : 0,
+    );
     // Tool cards show raw output; authored message Markdown consumes its fence.
-    expect(container.querySelector("pre code")?.textContent?.trimEnd()).toBe(
-      role === "toolResult" ? fenced : text,
+    expect(container.querySelector("pre code")?.textContent).toBe(
+      role === "toolResult" ? fenced : text + "\n",
     );
     expect(container.querySelector("pre strong")).toBeNull();
   });
 
   if (role === "assistant") {
-    it("does not auto-disclose a streaming JSON message", () => {
+    it("keeps duplicate member order and original lexemes in the message tree", () => {
+      const text = String.raw`{"2":1.00,"1":1E+03,"state":9007199254740993,"state":1e400,"nested":{"zero":-0,"escaped":"\u0061"}}`;
+      const container = renderMessage(text);
+      const tree = container.querySelector(".code-block-json-tree")!;
+      expect(
+        Array.from(tree.querySelectorAll(".code-block-json-key"), (key) => key.textContent),
+      ).toEqual(['"2"', '"1"', '"state"', '"state"', '"nested"', '"zero"', '"escaped"']);
+      expect(
+        Array.from(
+          tree.querySelectorAll(".code-block-json-value--literal"),
+          (value) => value.textContent,
+        ),
+      ).toEqual(["1.00", "1E+03", "9007199254740993", "1e400", "-0"]);
+      expect(tree.querySelector(".code-block-json-value--string")?.textContent).toBe('"\\u0061"');
+    });
+
+    it("does not turn an unfenced streaming JSON message into a tree", () => {
       const text = "[9007199254740993,1e400,-0]";
       const container = renderMessage(text, true);
-      expect(container.querySelector(".chat-json-collapse")).toBeNull();
+      expect(container.querySelector(".code-block-json-tree, .code-block-json-mode")).toBeNull();
       expect(container.textContent).toContain(text);
     });
   }
@@ -116,7 +168,7 @@ describe.each(["user", "assistant", "toolResult"])("%s JSON message text", (role
   it("keeps invalid JSON as ordinary message output", () => {
     const text = '{"count": }';
     const container = renderMessage(text);
-    expect(container.querySelector(".chat-json-collapse")).toBeNull();
+    expect(container.querySelector(".code-block-json-tree, .code-block-json-mode")).toBeNull();
     expect(container.textContent).toContain(text);
   });
 });

@@ -3,9 +3,15 @@ import { AsyncDirective, directive } from "lit/async-directive.js";
 import { guard } from "lit/directives/guard.js";
 import { keyed } from "lit/directives/keyed.js";
 import { ref } from "lit/directives/ref.js";
+import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import { icons } from "../../../components/icons.ts";
+import type { MarkdownJson } from "../../../components/markdown-json.ts";
 import type { MarkdownRenderOptions } from "../../../components/markdown-render-options.ts";
-import { toSanitizedMarkdownHtml, toStreamingMarkdownParts } from "../../../components/markdown.ts";
+import {
+  toSanitizedJsonHtml,
+  toSanitizedMarkdownHtml,
+  toStreamingMarkdownParts,
+} from "../../../components/markdown.ts";
 import { t } from "../../../i18n/index.ts";
 import { registerChatMessageMetadataEnglish } from "../../../i18n/locales/en-chat-message-metadata.ts";
 import { detectTextDirection } from "../../../lib/text-direction.ts";
@@ -20,59 +26,8 @@ type DuplicateSuffix = {
   label: string;
 };
 
-// Bound synchronous parsing so large JSON messages cannot freeze the render loop.
-const MAX_JSON_AUTOPARSE_CHARS = 20_000;
-
-export function detectJson(text: string): { parsed: unknown; text: string } | null {
-  const trimmed = text.trim();
-
-  if (trimmed.length > MAX_JSON_AUTOPARSE_CHARS) {
-    return null;
-  }
-
-  if (
-    (trimmed.startsWith("{") && trimmed.endsWith("}")) ||
-    (trimmed.startsWith("[") && trimmed.endsWith("]"))
-  ) {
-    try {
-      const parsed = JSON.parse(trimmed);
-      // Parsing is only for the summary; reserialization loses numeric precision and duplicate keys.
-      return { parsed, text: trimmed };
-    } catch {
-      return null;
-    }
-  }
-  return null;
-}
-
-function jsonSummaryLabel(parsed: unknown): string {
-  if (Array.isArray(parsed)) {
-    return t(
-      parsed.length === 1 ? "chat.codeBlock.jsonArrayItem" : "chat.codeBlock.jsonArrayItems",
-      { count: String(parsed.length) },
-    );
-  }
-  if (parsed && typeof parsed === "object") {
-    const keys = Object.keys(parsed);
-    if (keys.length <= 4) {
-      return `{ ${keys.join(", ")} }`;
-    }
-    return t("chat.codeBlock.jsonObjectKeys", { count: String(keys.length) });
-  }
-  return t("chat.codeBlock.jsonBadge");
-}
-
-export function renderMessageJson(
-  result: NonNullable<ReturnType<typeof detectJson>>,
-  open = false,
-) {
-  return html`<details class="chat-json-collapse" ?open=${open}>
-    <summary class="chat-json-summary">
-      <span class="chat-json-badge">${t("chat.codeBlock.jsonBadge")}</span>
-      <span class="chat-json-label">${jsonSummaryLabel(result.parsed)}</span>
-    </summary>
-    <pre class="chat-json-content"><code>${result.text}</code></pre>
-  </details>`;
+export function renderMessageJson(json: MarkdownJson, options: MarkdownRenderOptions) {
+  return html`<div class="chat-text">${unsafeHTML(toSanitizedJsonHtml(json, options))}</div>`;
 }
 
 // Character length owns normal disclosure; this high line cap only bounds newline-heavy prompts.

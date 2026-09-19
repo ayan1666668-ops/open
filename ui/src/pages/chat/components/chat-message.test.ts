@@ -3367,18 +3367,41 @@ describe("grouped chat rendering", () => {
     expect(markdownRenderMock).not.toHaveBeenCalled();
   });
 
-  it.each(["user", "assistant"])("preserves a %s JSON disclosure across rerenders", (role) => {
+  it("preserves the user JSON code DOM across rerenders without controls", () => {
     const container = document.createElement("div");
-    const message = { role, content: '{"ok":true}', timestamp: 1 };
-    renderGroupedMessage(container, message, role, { autoExpandToolCalls: true });
-    const disclosure = expectElement(container, ".chat-json-collapse", HTMLDetailsElement);
-    expect(disclosure.open).toBe(false);
-    disclosure.open = true;
+    const message = { role: "user", content: '{"ok":true}', timestamp: 1 };
+    renderGroupedMessage(container, message, "user", { autoExpandToolCalls: true });
+    const code = expectElement(container, ".chat-text pre code", HTMLElement);
+    expect(code.textContent).toBe(message.content);
+    expect(container.querySelector(".chat-text button, .chat-text details")).toBeNull();
 
-    renderGroupedMessage(container, message, role, { autoExpandToolCalls: false });
+    renderGroupedMessage(container, message, "user", { autoExpandToolCalls: false });
 
-    expect(container.querySelector(".chat-json-collapse")).toBe(disclosure);
-    expect(disclosure.open).toBe(true);
+    expect(container.querySelector(".chat-text pre code")).toBe(code);
+    expect(container.querySelector(".code-block-wrapper")).toBeNull();
+  });
+
+  it("preserves native assistant JSON tree disclosure state across rerenders", () => {
+    const container = document.createElement("div");
+    const message = { role: "assistant", content: '{"nested":{"ok":true}}', timestamp: 1 };
+    renderGroupedMessage(container, message, "assistant", { autoExpandToolCalls: true });
+    const tree = expectElement(container, ".code-block-json-tree", HTMLElement);
+    const root = expectElement(tree, ":scope > details", HTMLDetailsElement);
+    const nested = expectElement(root, ".code-block-json-children details", HTMLDetailsElement);
+    const code = expectElement(container, ".code-block-viewport pre code", HTMLElement);
+    expect(root.open).toBe(true);
+    expect(nested.open).toBe(true);
+    expectElement(nested, ":scope > summary", HTMLElement).click();
+    expect(nested.open).toBe(false);
+
+    renderGroupedMessage(container, message, "assistant", { autoExpandToolCalls: false });
+
+    expect(container.querySelector(".code-block-json-tree")).toBe(tree);
+    expect(tree.querySelector(":scope > details")).toBe(root);
+    expect(root.querySelector(".code-block-json-children details")).toBe(nested);
+    expect(nested.open).toBe(false);
+    expect(container.querySelector(".code-block-viewport pre code")).toBe(code);
+    expect(code.textContent).toBe(message.content);
   });
 
   it("omits normalized duplicate names from standalone tool results", () => {
@@ -3598,9 +3621,12 @@ describe("grouped chat rendering", () => {
     expect(summary.querySelector(".chat-tool-msg-summary__label")?.textContent).toBe("Tool output");
     // The failure stays recorded: the expanded body closes with the outcome.
     expect(container.querySelector(".chat-tool-card__outcome")?.textContent).toBe("failed");
+    expect(container.querySelector(".chat-tool-msg-body .chat-text pre code")?.textContent).toBe(
+      '{\n  "status": "error"\n}',
+    );
     expect(
-      JSON.parse(container.querySelector(".chat-json-content code")?.textContent ?? "{}"),
-    ).toEqual({ status: "error" });
+      container.querySelector(".chat-tool-msg-body details, .code-block-json-mode"),
+    ).toBeNull();
     container.remove();
   });
 
@@ -3711,11 +3737,9 @@ describe("grouped chat rendering", () => {
       ["mode:", "session"],
       ["thread:", "true"],
     ]);
-    expect(
-      JSON.parse(container.querySelector(".chat-json-content code")?.textContent ?? "{}"),
-    ).toEqual({
-      status: "error",
-    });
+    expect(container.querySelector(".chat-tool-msg-body .chat-text pre code")?.textContent).toBe(
+      '{\n  "status": "error"\n}',
+    );
 
     // Collapsing the call card must not hide the matching tool output message.
     renderMessageGroups(container, groups, {
@@ -3724,11 +3748,9 @@ describe("grouped chat rendering", () => {
     });
 
     expect(container.querySelector(".chat-tool-kv")).toBeNull();
-    expect(
-      JSON.parse(container.querySelector(".chat-json-content code")?.textContent ?? "{}"),
-    ).toEqual({
-      status: "error",
-    });
+    expect(container.querySelector(".chat-tool-msg-body .chat-text pre code")?.textContent).toBe(
+      '{\n  "status": "error"\n}',
+    );
   });
 
   it("renders assistant MEDIA attachments and reply preview", async () => {
