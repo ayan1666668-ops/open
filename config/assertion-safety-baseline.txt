@@ -1778,7 +1778,7 @@ src/agents/lazy-process-tool.ts	2
 src/agents/live-auth-keys.ts	2
 src/agents/live-cache-regression-policy.ts	2
 src/agents/main-session-recovery/main-session-recovery-store.ts	3
-src/agents/main-session-recovery/main-session-restart-recovery-checkpoint.ts	8
+src/agents/main-session-recovery/main-session-restart-recovery-checkpoint.ts	7
 src/agents/main-session-recovery/main-session-restart-recovery-failure.ts	1
 src/agents/main-session-recovery/main-session-restart-recovery-resume-policy.ts	39
 src/agents/mcp-app-model-context.ts	1
