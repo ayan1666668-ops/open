@@ -19,7 +19,7 @@ At a glance:
 | Failed auth (token/password/device) | 10 failures / 60s, 5 min lockout | IP + credential scope            | `gateway.auth.rateLimit` |
 | Browser-origin WS auth failures     | same, loopback **not** exempt    | IP, or page origin from loopback | `gateway.auth.rateLimit` |
 | Webhook (`/hooks`) auth failures    | 20 failures / 60s, 60s lockout   | IP                               | no                       |
-| Control-plane write RPCs            | 30 requests / 60s per method     | method + device + IP             | no                       |
+| Control-plane write RPCs            | 30 requests / 60s per method     | method + device + IP (see below) | no                       |
 | ACP session creation                | 120 sessions / 10s               | translator instance              | internal                 |
 | Gateway restart cycles              | 30s cooldown between restarts    | process                          | no                       |
 
@@ -107,7 +107,7 @@ Configure the proxy address narrowly in `gateway.trustedProxies` and have the
 proxy overwrite or safely rebuild forwarding headers. OpenClaw then restores
 validated per-client attribution and rate-limit buckets. See [Trusted Proxy
 Auth](/gateway/trusted-proxy-auth) and the [Gateway security
-guide](/gateway/security#reverse-proxy-configuration).
+guide](/gateway/security/network-exposure#reverse-proxy-configuration).
 
 A headerless TCP forwarder provides no request-level provenance and is
 indistinguishable from a process connecting directly over loopback. This
@@ -121,12 +121,15 @@ Tailscale's rewritten source address selects a normal non-exempt, resettable
 per-client bucket. Serve tokenless identity auth additionally requires a
 matching WhoIs result; Funnel requires its marker and password authentication.
 
-An externally preserved Funnel route that still targets the ordinary Gateway
-listener cannot establish this request provenance. OpenClaw leaves that route
-unchanged and logs migration guidance. Plugin-authenticated webhook routes
-remain available under the rule above; Gateway-authenticated routes reject the
-unattributable ingress. Use `gateway.tailscale.mode: "funnel"` so OpenClaw can
-point the full Gateway route at its dedicated ingress.
+An externally managed Serve or Funnel route targeting the ordinary Gateway
+listener can establish generic proxy attribution only when its immediate source
+is explicitly configured in `gateway.trustedProxies` and it supplies a valid
+non-loopback forwarded client address. OpenClaw then uses that client address
+for rate limits and applies normal gateway auth; Tailscale headers do not grant
+managed-ingress or tokenless-auth semantics. Without that trust configuration,
+Gateway-authenticated routes reject the unattributable ingress. Prefer
+`gateway.tailscale.mode: "serve"` or `"funnel"` when OpenClaw should own the
+route and its dedicated listener.
 
 ### Webhooks
 
@@ -144,6 +147,11 @@ Write-side admin RPCs (`config.apply`, `config.patch`, `plugins.install`,
 `gateway.restart.request`, ...) are additionally rate-limited **after**
 authorization: 30 requests per 60 seconds, per method, per
 `deviceId+clientIp`.
+
+WebSocket clients supply both parts of that key. Admin HTTP controllers carry no
+device id, so their bucket is the resolved client IP alone, and controllers
+behind one proxy share a budget. See [External apps](/gateway/external-apps) for
+the controller-side view.
 
 This is not a security boundary — callers already hold `operator.admin` — it
 is a backstop that bounds runaway client or agent loops hammering expensive

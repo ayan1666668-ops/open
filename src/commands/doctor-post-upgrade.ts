@@ -4,58 +4,31 @@ import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
+import { hasErrnoCode } from "../infra/errno.js";
 import { formatConsoleDiagnosticLine } from "../logging/json-console-line.js";
-import { hasOptionalMissingPluginManifestFile } from "../plugins/installed-plugin-index-manifest.js";
+import { resolveInstalledPluginIndexInstallOwner } from "../plugins/installed-plugin-index-install-owner.js";
+import { isOptionalPluginManifestFile } from "../plugins/installed-plugin-index-manifest.js";
 import { readPersistedInstalledPluginIndex } from "../plugins/installed-plugin-index-store.js";
+import type { InstalledPluginIndexRecord } from "../plugins/installed-plugin-index-types.js";
 import { resolvePackageExtensionEntries, type PackageManifest } from "../plugins/manifest.js";
 import { validatePackageExtensionEntriesForInstall } from "../plugins/package-entry-resolution.js";
+import {
+  detectPluginVersionDrift,
+  resolvePluginVersionDriftTargets,
+  resolvePluginVersionDriftUpdateCommand,
+} from "../plugins/plugin-version-drift.js";
+import { VERSION } from "../version.js";
 import {
   POST_UPGRADE_PROBE_CODES,
   type PostUpgradeFinding,
   type PostUpgradeReport,
 } from "./doctor-post-upgrade.types.js";
 
-type InstalledPluginRecord = {
-  pluginId: string;
-  rootDir: string;
-  enabled: boolean;
-  origin?: string;
-  packageJson?: { path: string };
-  manifestPath?: string;
-  manifestHash?: string;
-  format?: string;
-  bundleFormat?: string;
-};
-
-type InstallsJson = { plugins: InstalledPluginRecord[] };
-
 function buildReport(findings: PostUpgradeFinding[]): PostUpgradeReport {
   return { probesRun: [...POST_UPGRADE_PROBE_CODES], findings };
 }
 
-function isInstallsJson(value: unknown): value is InstallsJson {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    Array.isArray((value as { plugins?: unknown }).plugins) &&
-    (value as { plugins: unknown[] }).plugins.every(isInstalledPluginRecord)
-  );
-}
-
-function isOptionalString(value: unknown): value is string | undefined {
-  return value === undefined || typeof value === "string";
-}
-
-function isPackageJsonRef(value: unknown): value is InstalledPluginRecord["packageJson"] {
-  return (
-    value === undefined ||
-    (typeof value === "object" &&
-      value !== null &&
-      typeof (value as { path?: unknown }).path === "string")
-  );
-}
-
-function isSourceCheckoutPluginRecord(record: InstalledPluginRecord): boolean {
+function isSourceCheckoutPluginRecord(record: InstalledPluginIndexRecord): boolean {
   if (record.origin === "workspace" || record.origin === "config") {
     return true;
   }
@@ -82,47 +55,6 @@ function isBundledSourceCheckoutPluginRoot(pluginRootDir: string): boolean {
   }
 }
 
-function isInstalledPluginRecord(value: unknown): value is InstalledPluginRecord {
-  if (typeof value !== "object" || value === null) {
-    return false;
-  }
-  const record = value as InstalledPluginRecord;
-  return (
-    typeof record.pluginId === "string" &&
-    typeof record.rootDir === "string" &&
-    typeof record.enabled === "boolean" &&
-    isOptionalString(record.origin) &&
-    isPackageJsonRef(record.packageJson) &&
-    isOptionalString(record.manifestPath) &&
-    isOptionalString(record.manifestHash) &&
-    isOptionalString(record.format) &&
-    isOptionalString(record.bundleFormat)
-  );
-}
-
-async function readInstallsJson(installsPath: string): Promise<InstallsJson | null> {
-  try {
-    const installsRaw = await fs.readFile(installsPath, "utf-8");
-    const installs = JSON.parse(installsRaw) as unknown;
-    return isInstallsJson(installs) ? installs : null;
-  } catch {
-    return null;
-  }
-}
-
-async function readInstalledPluginIndex(params: {
-  installsPath?: string;
-  stateDir?: string;
-}): Promise<InstallsJson | null> {
-  if (params.installsPath) {
-    return await readInstallsJson(params.installsPath);
-  }
-  const index = await readPersistedInstalledPluginIndex(
-    params.stateDir ? { stateDir: params.stateDir } : {},
-  );
-  return index && isInstallsJson(index) ? { plugins: [...index.plugins] } : null;
-}
-
 async function readInstalledPackageJson(
   rootDir: string,
   packageJsonRelPath: string,
@@ -137,7 +69,7 @@ async function readInstalledPackageJson(
 }
 
 async function resolvePackageJsonRelPath(
-  record: InstalledPluginRecord,
+  record: InstalledPluginIndexRecord,
 ): Promise<string | undefined> {
   if (record.packageJson) {
     return record.packageJson.path;
@@ -152,11 +84,10 @@ async function resolvePackageJsonRelPath(
 
 /** Runs post-upgrade plugin probes and returns structured findings for the caller to render. */
 export async function runPostUpgradeProbes(params: {
-  installsPath?: string;
   stateDir?: string;
 }): Promise<PostUpgradeReport> {
   const findings: PostUpgradeFinding[] = [];
-  const installs = await readInstalledPluginIndex(params);
+  const installs = await readPersistedInstalledPluginIndex(params);
   if (!installs) {
     findings.push({
       level: "error",
@@ -167,10 +98,31 @@ export async function runPostUpgradeProbes(params: {
     return buildReport(findings);
   }
 
-  for (const record of installs.plugins) {
-    if (!record.enabled) {
-      continue;
-    }
+  const enabledPlugins = installs.plugins.filter((record) => record.enabled);
+  const installRecords = Object.fromEntries(
+    Object.entries(installs.installRecords).filter(([id]) =>
+      enabledPlugins.some(
+        (record) =>
+          record.pluginId === id || resolveInstalledPluginIndexInstallOwner(record) === id,
+      ),
+    ),
+  );
+  // Post-upgrade validates the newly installed CLI even while the old Gateway
+  // is still running; the persisted index owns the selected plugins' enablement.
+  const drift = await resolvePluginVersionDriftTargets(
+    detectPluginVersionDrift({ gatewayVersion: VERSION, installRecords }),
+  );
+  for (const entry of drift.drifts) {
+    const updateCommand = resolvePluginVersionDriftUpdateCommand(entry);
+    findings.push({
+      level: "warn",
+      code: "plugin.version_drift",
+      plugin: entry.pluginId,
+      message: `Plugin ${entry.pluginId} is ${entry.installedVersion}, but OpenClaw is ${VERSION}. ${updateCommand ? `Run \`${updateCommand}\`, then restart the Gateway.` : "No confirmed repair target is available; check registry availability and rerun this command."}`,
+    });
+  }
+
+  for (const record of enabledPlugins) {
     const pkgRelPath = await resolvePackageJsonRelPath(record);
     if (pkgRelPath) {
       let pkg: PackageManifest;
@@ -224,21 +176,14 @@ export async function runPostUpgradeProbes(params: {
       }
     }
 
-    if (record.manifestPath && record.manifestHash) {
+    if (record.manifestPath) {
       let currentHash: string;
       try {
         const raw = await fs.readFile(record.manifestPath);
         currentHash = crypto.createHash("sha256").update(raw).digest("hex");
       } catch (err) {
-        if (
-          record.format === "bundle" &&
-          record.bundleFormat === "claude" &&
-          hasOptionalMissingPluginManifestFile({
-            format: record.format,
-            bundleFormat: record.bundleFormat,
-            manifestPath: record.manifestPath,
-          })
-        ) {
+        // Doctor checks current disk state; cached existence can predate a file transition.
+        if (hasErrnoCode(err, "ENOENT") && isOptionalPluginManifestFile(record)) {
           continue;
         }
         const reason = err instanceof Error ? err.message : String(err);
@@ -250,7 +195,7 @@ export async function runPostUpgradeProbes(params: {
         });
         continue;
       }
-      if (currentHash !== record.manifestHash) {
+      if (record.manifestHash && currentHash !== record.manifestHash) {
         findings.push({
           level: "warn",
           code: "plugin.manifest_drift",

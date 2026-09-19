@@ -39,8 +39,16 @@ The keepalive options reduce idle tunnel drops during onboarding.
 
 ## Install OpenClaw
 
-Inside the Box, use the following command on npm 12 or npm 11.16+. On npm 11.12
-and earlier, omit `--allow-scripts=openclaw`; upgrade npm 11.13–11.15 first.
+Check the Box's runtime versions first, because the install command depends on
+the npm version:
+
+```bash
+node -v
+npm -v
+```
+
+Inside the Box, use the following command on npm 12 or npm 11.16+. On npm 11.15
+and earlier, omit `--allow-scripts=openclaw`.
 
 ```bash
 sudo npm install -g openclaw --allow-scripts=openclaw
@@ -95,6 +103,13 @@ ssh -F /dev/null -o ControlMaster=no -o ServerAliveInterval=15 -o ServerAliveCou
 
 This bypasses stale local `~/.ssh/config` settings and keeps the tunnel active
 through idle network periods.
+
+## Next steps
+
+- Set up messaging channels: [Channels](/channels)
+- Configure the Gateway: [Gateway configuration](/gateway/configuration)
+- Keep OpenClaw up to date: [Updating](/install/updating)
+- Compare hosting options: [Linux server](/vps)
 
 ## Related
 
