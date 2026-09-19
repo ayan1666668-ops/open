@@ -1097,8 +1097,8 @@ extension DashboardWindowController {
             // The web connection can change independently of the native picker.
             // Its health must never be attributed to this window's saved Gateway.
             let health: DashboardGatewayHealth? = if let report = value as? [String: Any],
-                                                    let expectedURL = self.auth.gatewayUrl,
-                                                    report["gatewayUrl"] as? String == expectedURL
+                                                     let expectedURL = self.auth.gatewayUrl,
+                                                     report["gatewayUrl"] as? String == expectedURL
             {
                 (report["health"] as? String).flatMap(DashboardGatewayHealth.init(rawValue:))
             } else {
