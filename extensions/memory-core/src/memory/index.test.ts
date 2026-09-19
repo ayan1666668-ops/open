@@ -1567,12 +1567,15 @@ describe("memory index", () => {
       trigger: "IDLE TRIGGER TARGET 729",
     };
     const sessionKey = (sessionId: string) => `agent:main:proof:${sessionId}`;
+    // Only the explicit sync calls may contend with this test's SQLite lock.
+    // Runtime listeners would enqueue unrelated work when the transcripts are seeded.
     const manager = await getFreshManager(
       createCfg({
         provider: "none",
         sources: ["sessions"],
         sessionMemory: true,
       }),
+      "cli",
     );
     let lock: DatabaseSync | null = null;
     try {
