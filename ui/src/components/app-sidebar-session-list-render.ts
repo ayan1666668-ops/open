@@ -296,7 +296,7 @@ export function renderSessionSection(params: {
                 }
                 ${
                   personOwner &&
-                  host.sessionOwnershipVisible &&
+                  host.sessionOwnershipVisibility.filters &&
                   host.sessionOwnerOptions.some((owner) => owner.id === personOwner.id)
                     ? html`<button
                         type="button"
@@ -598,7 +598,7 @@ function renderSessionListBody(params: {
           section.id === "ungrouped" &&
           section.totalRowCount === 0 &&
           !params.nativeSessionsHaveMore &&
-          !host.sessionOwnershipVisible &&
+          !host.sessionOwnershipVisibility.filters &&
           host.sessionsStatusFilter === "active" &&
           host.sessionOrganizer.draggingSessionKey === null
         ) {
