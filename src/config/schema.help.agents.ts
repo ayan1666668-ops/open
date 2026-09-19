@@ -153,7 +153,7 @@ export const AGENT_FIELD_HELP: Record<string, string> = {
   "agents.defaults.compaction.qualityGuard.maxRetries":
     "Maximum number of regeneration retries after a failed safeguard summary quality audit. Use small values to bound extra latency and token cost.",
   "agents.defaults.compaction.semanticCuration":
-    "Optional typed-judgment semantic observation for safeguard compaction. Shadow mode measures a conservative relevance-selected view without changing summarizer input.",
+    "Optional typed-judgment semantic observation for safeguard compaction. Use shadow mode to measure a conservative relevance-selected view without changing summarizer input.",
   "agents.defaults.compaction.semanticCuration.mode":
     'Semantic curation observation mode: "off" disables judgment calls and "shadow" measures a projected curated input while preserving existing compaction behavior.',
   "agents.defaults.compaction.semanticCuration.timeoutMs":
