@@ -31,19 +31,22 @@ vi.mock("../plugins/hook-runner-global.js", () => ({
 
 vi.mock("../secrets/egress-proxy/registry.js", () => ({
   isSecretEgressProxyActive: () => mocks.egressActive,
-  registerSecretEgressProxyRun: (_run: unknown, bindings: unknown) => {
+  registerSecretEgressProxyProcess: (bindings: unknown) => {
     mocks.proxyBindings.push(bindings);
     return {
-      HTTPS_PROXY: mocks.proxyUrl,
-      HTTP_PROXY: mocks.proxyUrl,
-      https_proxy: mocks.proxyUrl,
-      http_proxy: mocks.proxyUrl,
-      NODE_USE_ENV_PROXY: "1",
-      NODE_EXTRA_CA_CERTS: "/state/secret-egress/root-ca.pem",
-      SSL_CERT_FILE: "/state/secret-egress/root-ca.pem",
-      CURL_CA_BUNDLE: "/state/secret-egress/root-ca.pem",
-      REQUESTS_CA_BUNDLE: "/state/secret-egress/root-ca.pem",
-      GIT_SSL_CAINFO: "/state/secret-egress/root-ca.pem",
+      revoke: () => {},
+      env: {
+        HTTPS_PROXY: mocks.proxyUrl,
+        HTTP_PROXY: mocks.proxyUrl,
+        https_proxy: mocks.proxyUrl,
+        http_proxy: mocks.proxyUrl,
+        NODE_USE_ENV_PROXY: "1",
+        NODE_EXTRA_CA_CERTS: "/state/secret-egress/root-ca.pem",
+        SSL_CERT_FILE: "/state/secret-egress/root-ca.pem",
+        CURL_CA_BUNDLE: "/state/secret-egress/root-ca.pem",
+        REQUESTS_CA_BUNDLE: "/state/secret-egress/root-ca.pem",
+        GIT_SSL_CAINFO: "/state/secret-egress/root-ca.pem",
+      },
     };
   },
 }));
@@ -194,7 +197,7 @@ async function captureStoreExecEnvironment(params: {
   });
   await tool.execute(params.callId, { command: "echo ok", yieldMs: 120_000 });
   if (params.host === "gateway") {
-    return mocks.gatewayParams.at(-1)?.env ?? {};
+    return mocks.spawnInputs.at(-1)?.env ?? {};
   }
   if (params.host === "node") {
     return mocks.nodeHostParams.at(-1)?.env ?? {};
@@ -513,6 +516,14 @@ describe("exec store environment", () => {
           },
         ],
         async () => {
+          const baseline =
+            host === "gateway"
+              ? undefined
+              : await captureStoreExecEnvironment({
+                  host,
+                  callId: `call-egress-baseline-${host}`,
+                  config: { secrets: { egressProxy: { enabled: false } } },
+                });
           mocks.egressActive = true;
           const env = await captureStoreExecEnvironment({
             host,
@@ -542,10 +553,8 @@ describe("exec store environment", () => {
 
           expect(env).not.toHaveProperty("AWS_REGION");
           expect(env).not.toHaveProperty("SERVICE_API_KEY");
-          expect(JSON.stringify(env)).not.toContain("oc-sent-v2.");
-          for (const [key, value] of Object.entries(EGRESS_ENV)) {
-            expect(env[key]).not.toBe(value);
-          }
+          // Remote hosts retain inherited routing; enabled mode must add nothing.
+          expect(env).toEqual(baseline);
           expect(mocks.proxyBindings).toEqual([]);
         },
       );

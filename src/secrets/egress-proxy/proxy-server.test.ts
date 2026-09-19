@@ -44,7 +44,6 @@ let auditEvents: SecretEgressProxyAuditEvent[];
 let originRequests: OriginRequest[];
 let originPort: number;
 let proxy: SecretEgressProxyHandle;
-let run: Readonly<{ instanceId: string; runId: string }>;
 let proxyEnv: Record<string, string>;
 
 function registerSentinel(params: {
@@ -53,13 +52,13 @@ function registerSentinel(params: {
   name?: string;
   targetProxy?: SecretEgressProxyHandle;
 }): Record<string, string> {
-  return (params.targetProxy ?? proxy).registerRun(run, [
+  return (params.targetProxy ?? proxy).registerProcess([
     {
       name: params.name ?? "SERVICE_API_KEY",
       sentinel: params.sentinel,
       allowedHosts: params.allowedHosts,
     },
-  ]);
+  ]).env;
 }
 
 function copyInitialCa(sourceDir: string, targetDir: string): void {
@@ -342,8 +341,7 @@ beforeEach(async () => {
       });
     }),
   );
-  run = Object.freeze({ instanceId: "instance-1", runId: "run-1" });
-  proxyEnv = proxy.registerRun(run);
+  proxyEnv = proxy.registerProcess().env;
   if (!seed) {
     // Capture after cold setup succeeds, before a case can mutate its files.
     const dir = seedDirs.make("openclaw-egress-proxy-seed-");
@@ -552,7 +550,7 @@ describe("secret egress proxy", () => {
     },
   );
 
-  it("routes every HTTP proxy alias through registered Gateway runs", () => {
+  it("routes every HTTP proxy alias through registered Gateway processes", () => {
     expect(proxyEnv).toMatchObject({
       HTTPS_PROXY: proxyEnv.HTTP_PROXY,
       https_proxy: proxyEnv.HTTP_PROXY,
@@ -602,12 +600,13 @@ describe("secret egress proxy", () => {
     },
   );
 
-  it("refuses a real lowercase client after run revocation", async () => {
+  it("refuses a real lowercase client after process revocation", async () => {
+    const grant = proxy.registerProcess();
     const env = {
-      https_proxy: proxyEnv.https_proxy ?? "",
+      https_proxy: grant.env.https_proxy ?? "",
       CURL_CA_BUNDLE: proxyEnv.CURL_CA_BUNDLE ?? "",
     };
-    proxy.revokeRun(run);
+    grant.revoke();
 
     const result = await curlThroughEnvironment(env);
 
@@ -624,7 +623,7 @@ describe("secret egress proxy", () => {
       onAudit: (event) => auditEvents.push(event),
     });
     proxies.push(restrictedProxy);
-    const restrictedEnv = restrictedProxy.registerRun(run);
+    const restrictedEnv = restrictedProxy.registerProcess().env;
 
     const result = await curlThroughEnvironment({
       https_proxy: restrictedEnv.https_proxy ?? "",
@@ -717,7 +716,7 @@ describe("secret egress proxy", () => {
     await expect(
       requestThroughTunnel({
         caPath: allowedProxy.caCertPath,
-        proxyEnv: allowedProxy.registerRun(run),
+        proxyEnv: allowedProxy.registerProcess().env,
       }),
     ).resolves.toMatchObject({ body: "ok", status: 200 });
 
@@ -735,7 +734,7 @@ describe("secret egress proxy", () => {
       onAudit: (event) => refusedEvents.push(event),
     });
     proxies.push(restrictedProxy);
-    const restrictedEnv = restrictedProxy.registerRun(run);
+    const restrictedEnv = restrictedProxy.registerProcess().env;
     const auth = basicProxyAuth(registeredPassword(restrictedEnv));
 
     const refused = await rawConnect({ auth, proxyOrigin: restrictedProxy.proxyOrigin });
@@ -928,7 +927,7 @@ describe("secret egress proxy", () => {
     });
     proxies.push(bypassProxy);
     tempDirs.push(path.dirname(bypassProxy.caCertPath));
-    const bypassEnv = bypassProxy.registerRun(run);
+    const bypassEnv = bypassProxy.registerProcess().env;
     const sentinel = mintSecretSentinel("bypass-secret", { label: "egress-bypass" });
 
     await expect(
@@ -949,10 +948,14 @@ describe("secret egress proxy", () => {
     ]);
   });
 
-  it("revokes Basic authorization with the exact owning run and keeps audits payload-free", async () => {
+  it("revokes only the owning process's Basic authorization and keeps audits payload-free", async () => {
     const secret = "audit-secret-value";
     const sentinel = mintSecretSentinel(secret, { label: "egress-audit" });
-    proxyEnv = registerSentinel({ sentinel, allowedHosts: ["localhost"] });
+    const grant = proxy.registerProcess([
+      { name: "SERVICE_API_KEY", sentinel, allowedHosts: ["localhost"] },
+    ]);
+    proxyEnv = grant.env;
+    const sibling = proxy.registerProcess();
     await requestThroughTunnel({ headers: { "X-Secret": sentinel } });
     await expect(
       forwardedRequest(basicProxyAuth(registeredPassword(proxyEnv)), "http"),
@@ -961,12 +964,16 @@ describe("secret egress proxy", () => {
       expect.objectContaining({ kind: "refused", reason: "non-https-request" }),
     );
 
-    proxy.revokeRun(run);
+    grant.revoke();
     const refused = await rawConnect({
       auth: basicProxyAuth(registeredPassword(proxyEnv)),
     });
     expect(refused.response).toContain("407 Proxy Authentication Required");
     refused.socket.destroy();
+    await expect(forwardedRequest(basicProxyAuth(registeredPassword(proxyEnv)))).resolves.toBe(407);
+    await expect(forwardedRequest(basicProxyAuth(registeredPassword(sibling.env)))).resolves.toBe(
+      200,
+    );
 
     const auditText = JSON.stringify(auditEvents);
     expect(auditText).not.toContain(secret);

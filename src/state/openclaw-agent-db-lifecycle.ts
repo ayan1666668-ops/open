@@ -2,6 +2,7 @@ import path from "node:path";
 import { performance } from "node:perf_hooks";
 import type { DatabaseSync } from "node:sqlite";
 import { isMainThread, threadId } from "node:worker_threads";
+import { disposeNodeSqliteDependents } from "../infra/kysely-sync-cache-state.js";
 import { openNodeSqliteDatabase } from "../infra/node-sqlite.js";
 import { isPathInside } from "../infra/path-guards.js";
 import { setSqliteBusyTimeout } from "../infra/sqlite-busy-timeout.js";
@@ -183,6 +184,7 @@ export function closeCachedOpenClawAgentDatabase(
 ): void {
   // Eviction must stay cheap: PASSIVE skips waiting on concurrent readers,
   // whose drained TRUNCATE checkpoints blocked the event loop for seconds.
+  disposeNodeSqliteDependents(database.db);
   database.walMaintenance.close(options.eviction ? { checkpointMode: "PASSIVE" } : undefined);
   if (database.db.isOpen) {
     database.db.close();
@@ -315,6 +317,7 @@ export function settleOpenClawAgentDatabaseWorkerClose(
   const database = cache.databases.get(resolvedPath);
   if (database) {
     try {
+      disposeNodeSqliteDependents(database.db);
       database.walMaintenance.close();
     } catch (error) {
       errors.push(error instanceof Error ? error : new Error(String(error)));
@@ -380,6 +383,12 @@ export function closeOpenClawAgentDatabases(rootPath?: string): void {
 
 /** Drain native opens before a lifecycle owner releases shared state or removes its root. */
 export async function closeOpenClawAgentDatabasesAsync(rootPath?: string): Promise<void> {
+  // Retained resources may drain slowly; revoke native admission before yielding to them.
+  for (const owner of cache.activePending) {
+    if (rootPath === undefined || isPathInside(rootPath, owner.path)) {
+      revokePendingAgentDatabaseOpen(owner.path);
+    }
+  }
   await drainAgentDatabaseResources({ rootPath }, async () => {
     while (true) {
       const pending = [...cache.activePending].filter(

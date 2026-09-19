@@ -1,5 +1,5 @@
 import fs from "node:fs";
-import { createServer, type Server } from "node:http";
+import { createServer, request as httpRequest, type Server } from "node:http";
 import { createServer as createHttpsServer } from "node:https";
 import path from "node:path";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -190,6 +190,51 @@ describe.skipIf(process.platform === "win32")("exec secret egress final spawn", 
     );
     const output = await execute(`'${process.execPath}' '${script}'`);
     expect(JSON.parse(output.slice(output.indexOf("{")))).toEqual({ absent: true, lower: true });
+  });
+
+  it.each([0, 7])("revokes the final child's process grant on exit %s", async (exitCode) => {
+    const grantPath = path.join(root, "child-grant");
+    const script = path.join(root, "capture-grant.cjs");
+    fs.writeFileSync(
+      script,
+      `require('node:fs').writeFileSync(${JSON.stringify(grantPath)}, process.env.https_proxy, {mode: 0o600}); process.exit(${exitCode});`,
+    );
+    const result = await tool().execute("capture-grant", {
+      command: `'${process.execPath}' '${script}'`,
+      yieldMs: 10_000,
+    });
+    expect(result.details).toMatchObject({ status: "completed", exitCode });
+    const url = new URL(fs.readFileSync(grantPath, "utf8"));
+    const status = await new Promise<number | undefined>((resolve, reject) => {
+      const request = httpRequest(
+        {
+          hostname: url.hostname,
+          port: url.port,
+          path: target,
+          agent: false,
+          headers: {
+            "Proxy-Authorization": `Basic ${Buffer.from(`${url.username}:${url.password}`).toString("base64")}`,
+          },
+        },
+        (response) => {
+          response.resume();
+          response.once("end", () => resolve(response.statusCode));
+        },
+      );
+      request.once("error", reject);
+      request.end();
+    });
+    expect(status).toBe(407);
+    expect(substituted).toEqual([]);
+    expect(decoyHits).toBe(0);
+  });
+
+  it("removes its CA and exit cleanup listener on stop", async () => {
+    const caDir = path.dirname(proxy!.caCertPath);
+    const exitListeners = process.listenerCount("exit");
+    await proxy!.stop();
+    expect(fs.existsSync(caDir)).toBe(false);
+    expect(process.listenerCount("exit")).toBe(exitListeners - 1);
   });
 
   it("enforces exec denial before any request", async () => {

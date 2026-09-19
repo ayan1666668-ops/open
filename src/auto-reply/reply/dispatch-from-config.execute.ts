@@ -8,7 +8,12 @@ import { settleProgressVisibilityCallbackResult } from "../../channels/progress-
 import { normalizeAgentPlanSteps } from "../../channels/streaming.js";
 import { logVerbose } from "../../globals.js";
 import { formatErrorMessage } from "../../infra/errors.js";
-import { isCommandReplyForDelivery, readAskUserQuestionId } from "../reply-payload.js";
+import { registerReplyDispatcherSettledTask } from "../dispatch-dispatcher.js";
+import {
+  getReplyPayloadMetadata,
+  isCommandReplyForDelivery,
+  readAskUserQuestionId,
+} from "../reply-payload.js";
 import { buildTerminalAgentRunFailureReplyPayload } from "./agent-runner-failure-reply.js";
 import { takeCommandSessionMetadataChanges } from "./command-session-metadata.js";
 import { runWithDispatchAbortSignal } from "./dispatch-from-config.abort.js";
@@ -80,7 +85,7 @@ export async function executeDispatch(state: PrepareDispatchExecutionReadyState)
     await settlement?.settle(false);
   };
   let didDeliverVisiblePartialReply = false;
-  const onBlockReply = createDispatchBlockReplyHandler(state);
+  const { onBlockReply, flush: flushBlockTtsText } = createDispatchBlockReplyHandler(state);
   const flushDeferredFinalText = async () => {
     const delivered = await flushDispatchDeferredFinalText({
       deferFinalTtsText,
@@ -90,13 +95,32 @@ export async function executeDispatch(state: PrepareDispatchExecutionReadyState)
     didDeliverVisiblePartialReply ||= delivered;
     return delivered;
   };
+  const forwardToolProgress = async (forward: () => unknown) => {
+    if (isDispatchOperationAborted()) {
+      return;
+    }
+    markProgress();
+    await waitForPendingDirectBlockReplyDelivery(getDispatchAbortOperation()?.abortSignal);
+    if (isDispatchOperationAborted()) {
+      return;
+    }
+    markInboundDedupeReplayUnsafe();
+    if (
+      shouldForwardProgressCallback({
+        forwardWhenSourceDeliverySuppressed: true,
+        requiresToolSummaryVisibility: true,
+      })
+    ) {
+      await forward();
+    }
+  };
   const replyResult = await runWithDispatchLifecycleAdmission(
     async () =>
       await runWithDispatchAbortSignal(
         getDispatchAbortSignal(),
         () =>
-          state.traceReplyPhase("reply.run_reply_resolver", () =>
-            replyResolver(
+          state.traceReplyPhase("reply.run_reply_resolver", async () => {
+            const result = await replyResolver(
               ctx,
               {
                 ...state.getReplyOptions(),
@@ -105,6 +129,7 @@ export async function executeDispatch(state: PrepareDispatchExecutionReadyState)
                 sessionPromptSourceReplyDeliveryMode: state.sessionStableSourceReplyDeliveryMode,
                 ...state.sourceReplyDeliveryRuntimeOptions,
                 ...({
+                  mediaNormalizationOwner: state.isInternalWebchatTurn ? "gateway" : undefined,
                   onDeliberateSilentTerminalReply: () => {
                     deliberateSilentTerminalReply = true;
                   },
@@ -138,31 +163,30 @@ export async function executeDispatch(state: PrepareDispatchExecutionReadyState)
                 onAssistantMessageStart: wrapProgressCallback(
                   params.replyOptions?.onAssistantMessageStart,
                 ),
-                onQueuedFollowupSettled: params.replyOptions?.onQueuedFollowupSettled
-                  ? async () => {
-                      // Retained block callbacks only enqueue; cleanup must join their
-                      // delivery even when this dispatch has already returned.
-                      try {
-                        await waitForPendingDirectBlockReplyDelivery();
-                        if (
-                          dispatcher.getFailedCounts().block > 0 &&
-                          state.turnLedger.canAttemptFallback()
-                        ) {
-                          await dispatcher.waitForIdle();
-                        }
-                      } catch (error) {
-                        try {
-                          await params.replyOptions?.onQueuedFollowupSettled?.();
-                        } catch (cleanupError) {
-                          logVerbose(
-                            `dispatch-from-config: queued cleanup failed; preserving delivery error: ${formatErrorMessage(cleanupError)}`,
-                          );
-                        }
-                        throw error;
-                      }
-                      await params.replyOptions?.onQueuedFollowupSettled?.();
+                onQueuedFollowupSettled: async () => {
+                  // Retained block callbacks only enqueue; cleanup must join their
+                  // delivery even when this dispatch has already returned.
+                  try {
+                    await flushBlockTtsText();
+                    await waitForPendingDirectBlockReplyDelivery();
+                    if (
+                      dispatcher.getFailedCounts().block > 0 &&
+                      state.turnLedger.canAttemptFallback()
+                    ) {
+                      await dispatcher.waitForIdle();
                     }
-                  : undefined,
+                  } catch (error) {
+                    try {
+                      await params.replyOptions?.onQueuedFollowupSettled?.();
+                    } catch (cleanupError) {
+                      logVerbose(
+                        `dispatch-from-config: queued cleanup failed; preserving delivery error: ${formatErrorMessage(cleanupError)}`,
+                      );
+                    }
+                    throw error;
+                  }
+                  await params.replyOptions?.onQueuedFollowupSettled?.();
+                },
                 onBlockReplyQueued: wrapProgressCallback(params.replyOptions?.onBlockReplyQueued),
                 onToolStart: wrapProgressCallback(params.replyOptions?.onToolStart, {
                   allowWhenToolSummariesHidden:
@@ -408,56 +432,41 @@ export async function executeDispatch(state: PrepareDispatchExecutionReadyState)
                     steps,
                   });
                 },
-                onApprovalEvent: async (payload) => {
-                  if (isDispatchOperationAborted()) {
-                    return;
-                  }
-                  markProgress();
-                  await waitForPendingDirectBlockReplyDelivery(
-                    getDispatchAbortOperation()?.abortSignal,
-                  );
-                  if (isDispatchOperationAborted()) {
-                    return;
-                  }
-                  markInboundDedupeReplayUnsafe();
-                  if (
-                    shouldForwardProgressCallback({
-                      forwardWhenSourceDeliverySuppressed: true,
-                      requiresToolSummaryVisibility: true,
-                    })
-                  ) {
-                    await state.onApprovalEventFromReplyOptions?.(payload);
-                  }
-                },
-                onPatchSummary: async (payload) => {
-                  if (isDispatchOperationAborted()) {
-                    return;
-                  }
-                  markProgress();
-                  await waitForPendingDirectBlockReplyDelivery(
-                    getDispatchAbortOperation()?.abortSignal,
-                  );
-                  if (isDispatchOperationAborted()) {
-                    return;
-                  }
-                  markInboundDedupeReplayUnsafe();
-                  if (
-                    shouldForwardProgressCallback({
-                      forwardWhenSourceDeliverySuppressed: true,
-                      requiresToolSummaryVisibility: true,
-                    })
-                  ) {
-                    await state.onPatchSummaryFromReplyOptions?.(payload);
-                  }
-                },
+                onApprovalEvent: (payload) =>
+                  forwardToolProgress(() => state.onApprovalEventFromReplyOptions?.(payload)),
+                onPatchSummary: (payload) =>
+                  forwardToolProgress(() => state.onPatchSummaryFromReplyOptions?.(payload)),
                 onBlockReply,
               },
               state.preparedReplyDispatchRuntime && !params.configOverride
                 ? undefined
                 : replyConfig,
-            ),
-          ),
+            );
+            // Register before finalization can fail. Queue admission is not
+            // delivery: adapters may adopt until the dispatcher drains.
+            for (const reply of Array.isArray(result) ? result : result ? [result] : []) {
+              const continuation = getReplyPayloadMetadata(reply)?.progressContinuation;
+              if (continuation) {
+                if (isDispatchOperationAborted()) {
+                  // The resolver may finish after its caller's abort race settled.
+                  continuation.close();
+                } else {
+                  registerReplyDispatcherSettledTask(dispatcher, continuation.close);
+                }
+              }
+            }
+            return result;
+          }),
         trackDispatchLifecycleWork,
+      ).then(
+        async (result) => {
+          await flushBlockTtsText();
+          return result;
+        },
+        async (error: unknown) => {
+          await flushBlockTtsText();
+          throw error;
+        },
       ),
   ).catch(async (error: unknown) => {
     await releasePendingContinuation();

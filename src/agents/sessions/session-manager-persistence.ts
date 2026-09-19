@@ -38,6 +38,7 @@ type PersistRecordResult =
   | undefined
   | {
       anchor?: TranscriptEntryAnchor;
+      lifecycleRevision?: string;
       appended: boolean;
       adoptedMessageId?: string;
       effectiveParentId: string | null;
@@ -540,27 +541,27 @@ export class SessionManagerPersistence extends SessionManagerCore {
       return undefined;
     }
     if (entry.type !== "message") {
-      let effectiveParentId = entry.parentId;
       const loadedVersion = this.transcriptVersion;
       const outcome = appendTranscriptEventSnapshotSync(scope, entry, {
         ...(options?.appendIntent === "active-branch"
           ? { appendIntent: options.appendIntent }
           : {}),
         ...(expectedMutationAt !== undefined ? { expectedMutationAt } : {}),
-        captureEffectiveParentIdInTransaction: (parentId) => {
-          effectiveParentId = parentId;
-        },
       });
-      this.transcriptVersion = requireTranscriptEventAppendSnapshot(
+      const committed = requireTranscriptEventAppendSnapshot(
         outcome,
         `Session transcript entry was not persisted: ${entry.id}`,
-      ).after;
+      );
+      const effectiveParentId =
+        committed.result.effectiveParentId !== undefined
+          ? committed.result.effectiveParentId
+          : entry.parentId;
+      this.transcriptVersion = committed.after;
       this.transcriptMutationAt = this.transcriptVersion.updatedAt;
-      const before = outcome.ok ? outcome.value.before : undefined;
       const reloadAfterAppend =
         loadedVersion !== undefined &&
-        before !== undefined &&
-        (before.generation !== loadedVersion.generation || before.rawSeq !== loadedVersion.rawSeq);
+        (committed.before.generation !== loadedVersion.generation ||
+          committed.before.rawSeq !== loadedVersion.rawSeq);
       return effectiveParentId === entry.parentId && !reloadAfterAppend
         ? undefined
         : {
@@ -639,6 +640,7 @@ export class SessionManagerPersistence extends SessionManagerCore {
         outcome.value.before.rawSeq !== loadedVersion.rawSeq);
     return {
       ...(result.anchor ? { anchor: result.anchor } : {}),
+      lifecycleRevision: outcome.value.lifecycleRevision,
       appended: result.appended,
       effectiveParentId: result.effectiveParentId,
       ...(reloadAfterAppend ? { reloadAfterAppend: true } : {}),
