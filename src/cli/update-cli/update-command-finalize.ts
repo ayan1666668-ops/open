@@ -356,6 +356,7 @@ async function updateFinalizeCommandInternal(
                 json: opts.json,
                 acceptCapabilities: opts.acceptCapabilities,
                 timeoutMs: lifecycle.budget("plugins"),
+                workTimeoutMs: timeoutMs ?? null,
                 pluginInstallRecords,
                 assertCurrent: phase.assertCurrent,
                 runtime: createNonExitingRuntime(),
