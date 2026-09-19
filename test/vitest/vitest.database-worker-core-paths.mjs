@@ -34,6 +34,7 @@ export const databaseWorkerCoreTestFiles = [
   "src/transcripts/store.test.ts",
   "test/transcripts-tool.discord-lifecycle.integration.test.ts",
   "test/transcripts-tool.discord-provider.integration.test.ts",
+  "test/twitch-message-tool-delivery.test.ts",
   "test/helpers/gateway-status-acquisition.test.ts",
   "src/agents/tools/message-tool.internal-source-reply.integration.test.ts",
   "src/agents/command/delivery.custody.integration.test.ts",
