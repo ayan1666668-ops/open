@@ -97,6 +97,13 @@ describe("compaction input curation", () => {
     expect(result.status).toBe("ok");
     expect(result.omitted).toBe(1);
     expect(result.curatedChars).toBeLessThan(result.originalChars);
+    expect(result.omittedEvidence).toEqual([
+      {
+        id: "tool-result-1",
+        toolName: "exec",
+        text: output,
+      },
+    ]);
     expect(result.messages).not.toBe(original);
     expect(result.messages[0]).toMatchObject({
       role: "toolResult",
@@ -104,6 +111,27 @@ describe("compaction input curation", () => {
     });
     expect(JSON.stringify(result.messages[0])).toContain("omitted from compaction summarizer input");
     expect(JSON.stringify(original[0])).toContain(output.slice(0, 100));
+  });
+
+  it("keeps oversized tool results when the judgment cannot inspect the whole output", async () => {
+    const output = `${"routine\n".repeat(1_200)}MATERIAL_RESULT_AT_TAIL`;
+    const evaluate = vi.fn();
+    const messages = [toolResult(output)];
+
+    const result = await curateCompactionSummarizerInput(
+      {
+        messages,
+        signal: new AbortController().signal,
+      },
+      evaluate,
+    );
+
+    expect(output.length).toBeGreaterThan(8_000);
+    expect(result.status).toBe("no-candidates");
+    expect(result.omitted).toBe(0);
+    expect(result.messages).toBe(messages);
+    expect(JSON.stringify(result.messages[0])).toContain("MATERIAL_RESULT_AT_TAIL");
+    expect(evaluate).not.toHaveBeenCalled();
   });
 
   it("keeps uncertain and low-probability results", async () => {
