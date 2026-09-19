@@ -1,4 +1,11 @@
-import type { InternalAuditRunInspectResult } from "./execution-decision-receipts.js";
+import type {
+  AuditRunInspectResult,
+  DecisionReceiptV1,
+} from "../../packages/gateway-protocol/src/index.js";
+
+export type InternalAuditRunInspectResult = AuditRunInspectResult & {
+  decisions: DecisionReceiptV1[];
+};
 
 export type ExecutionIdentityInspectionParams =
   | {

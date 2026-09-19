@@ -21,9 +21,9 @@ import type {
 import {
   ExecutionDecisionCursorError,
   isExecutionDecisionCursor,
-  type InternalAuditRunInspectResult,
 } from "../../audit/execution-decision-receipts.js";
 import { inspectExecutionIdentityRun } from "../../audit/execution-identity-context.js";
+import type { InternalAuditRunInspectResult } from "../../audit/execution-identity-inspection.types.js";
 import type { GatewayRequestHandlers } from "./types.js";
 import { assertValidParams } from "./validation.js";
 

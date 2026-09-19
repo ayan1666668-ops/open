@@ -24,7 +24,6 @@ import { hasExecutionDecisionFactsForRunInDatabase } from "./execution-decision-
 import {
   ExecutionDecisionCursorError,
   presentExecutionDecisionReceiptsInDatabase,
-  type InternalAuditRunInspectResult,
 } from "./execution-decision-receipts.js";
 import {
   parseExecutionIdentityAdmissionEnvelope,
@@ -39,6 +38,7 @@ import {
 import type {
   ExecutionIdentityInspectionParams,
   ExecutionIdentityInspectionQuery,
+  InternalAuditRunInspectResult,
 } from "./execution-identity-inspection.types.js";
 
 type ExecutionIdentityDatabase = Pick<

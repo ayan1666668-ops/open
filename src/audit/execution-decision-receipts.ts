@@ -1,7 +1,6 @@
 /** Bounded receipt projection across admission, owner-native, and generic decision facts. */
 import type { DatabaseSync } from "node:sqlite";
 import type {
-  AuditRunInspectResult,
   DecisionReceiptDisplayV1,
   DecisionReceiptV1,
   ExecutionIdentityContextV1,
@@ -15,6 +14,7 @@ import {
   pageExecutionDecisionFactsForContextInDatabase,
   summarizeExecutionDecisionFactsForContextInDatabase,
 } from "./execution-decision-facts.js";
+import type { InternalAuditRunInspectResult } from "./execution-identity-inspection.types.js";
 import {
   pageOwnerLifecycleReceiptsInDatabase,
   summarizeOwnerLifecycleReceiptsInDatabase,
@@ -25,10 +25,6 @@ import {
   pageMessageDeliveryReceiptsForRunInDatabase,
   summarizeMessageDeliveryReceiptsForRunInDatabase,
 } from "./message-delivery-receipts.js";
-
-export type InternalAuditRunInspectResult = AuditRunInspectResult & {
-  decisions: DecisionReceiptV1[];
-};
 
 type ProvenancedDecisionReceipt = {
   receipt: DecisionReceiptV1;
