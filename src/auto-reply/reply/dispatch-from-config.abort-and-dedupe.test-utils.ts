@@ -1,6 +1,5 @@
 // Imported by a dispatch-from-config entrypoint to keep its mocked suite in one Vitest module graph.
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { resolveReplyCompletion } from "../../agents/reply-completion.js";
 import { readAgentRunTerminalOutcome } from "../../channels/turn/agent-run-terminal-outcome.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import { racePromiseWithAbortSignal } from "../../infra/abort-signal.js";
@@ -46,7 +45,6 @@ import {
   describe0BeforeEach0,
 } from "./dispatch-from-config.test-harness.js";
 import { withDispatchProcessedOutcomeSink } from "./dispatch-processed-outcome.js";
-import { resolveReplyOperationRunState } from "./reply-operation-run-state.js";
 import { buildTestCtx } from "./test-ctx.js";
 
 const FAST_ABORT_SESSION_MODEL = Object.freeze({
@@ -411,60 +409,6 @@ describe("dispatchReplyFromConfig", () => {
       "https://example.com/tts-preview.opus",
     );
     expect(dispatcher.sendFinalReply).toHaveBeenCalledWith({ text: "done" });
-  });
-
-  it("delivers deterministic exec approval tool payloads for native commands with progress suppression", async () => {
-    setNoAbort();
-    const cfg = emptyConfig;
-    const dispatcher = createDispatcher();
-    const ctx = buildTestCtx({
-      Provider: "telegram",
-      CommandSource: "native",
-    });
-
-    const replyResolver = async (
-      _ctx: MsgContext,
-      opts?: GetReplyOptions,
-      _cfg?: OpenClawConfig,
-    ) => {
-      await opts?.onToolResult?.({
-        text: "Approval required.\n\n```txt\n/approve 117ba06d allow-once\n```",
-        channelData: {
-          execApproval: {
-            approvalId: "117ba06d-1111-2222-3333-444444444444",
-            approvalSlug: "117ba06d",
-            allowedDecisions: ["allow-once", "allow-always", "deny"],
-          },
-        },
-      });
-      const runState = resolveReplyOperationRunState(opts);
-      if (!runState) {
-        throw new Error("expected reply operation run state");
-      }
-      runState.replyCompletion = resolveReplyCompletion(
-        runState.replyCompletion?.expectation ?? "required",
-        "blocked",
-      );
-      return { text: "NO_REPLY" } satisfies ReplyPayload;
-    };
-
-    await dispatchReplyFromConfig({
-      ctx,
-      cfg,
-      dispatcher,
-      replyResolver,
-      replyOptions: { suppressDefaultToolProgressMessages: true },
-    });
-
-    expect(dispatcher.sendToolResult).toHaveBeenCalledTimes(1);
-    expect(firstToolResultPayload(dispatcher)?.channelData).toStrictEqual({
-      execApproval: {
-        approvalId: "117ba06d-1111-2222-3333-444444444444",
-        approvalSlug: "117ba06d",
-        allowedDecisions: ["allow-once", "allow-always", "deny"],
-      },
-    });
-    expect(dispatcher.sendFinalReply).not.toHaveBeenCalled();
   });
 
   it("fast-aborts without calling the reply resolver", async () => {

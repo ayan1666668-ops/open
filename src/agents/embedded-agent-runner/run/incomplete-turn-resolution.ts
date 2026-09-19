@@ -113,10 +113,14 @@ export function resolveIncompleteTurnPayloadText(params: {
     return null;
   }
 
+  // Failed or incomplete model steps still need a warning when their lifecycle
+  // snapshot contains unfinished work; only a normal stop can leave that work pending.
   if (
-    params.attempt.itemLifecycle.activeCount > 0 ||
-    params.attempt.itemLifecycle.completedCount < params.attempt.itemLifecycle.startedCount ||
-    hasAsyncActivity(params.attempt.toolMetas)
+    hasAsyncActivity(params.attempt.toolMetas) ||
+    (!params.aborted &&
+      assistant?.stopReason === "stop" &&
+      (params.attempt.itemLifecycle.activeCount > 0 ||
+        params.attempt.itemLifecycle.completedCount < params.attempt.itemLifecycle.startedCount))
   ) {
     return null;
   }

@@ -7,13 +7,16 @@ import {
   withAgentQuestionAnswerAuthority,
 } from "../../agents/harness/host-private-capabilities.js";
 import { clearAgentHarnesses } from "../../agents/harness/registry.js";
+import { resolveReplyCompletion } from "../../agents/reply-completion.js";
+import type { OpenClawConfig } from "../../config/config.js";
 import { EmbeddedQuestionBroker } from "../../infra/embedded-question-broker.js";
 import type { MsgContext } from "../templating.js";
-import type { GetReplyOptions } from "../types.js";
+import type { GetReplyOptions, ReplyPayload } from "../types.js";
 import { runReplyQuestionInput } from "./agent-runner-question-input.js";
 import {
   createDispatcher,
   diagnosticMocks,
+  emptyConfig,
   sessionStoreMocks,
 } from "./dispatch-from-config.shared.test-harness.js";
 import {
@@ -22,6 +25,7 @@ import {
   describe0BeforeEach0,
   dispatchReplyFromConfig,
   globalBeforeAll0,
+  firstToolResultPayload,
   replyRunRegistry,
   setNoAbort,
 } from "./dispatch-from-config.test-harness.js";
@@ -41,6 +45,55 @@ afterEach(() => {
   replyRunTesting.resetReplyRunRegistry();
   resetInboundDedupe();
   clearAgentHarnesses();
+});
+it("delivers deterministic exec approval tool payloads for native commands with progress suppression", async () => {
+  setNoAbort();
+  const cfg = emptyConfig;
+  const dispatcher = createDispatcher();
+  const ctx = buildTestCtx({
+    Provider: "telegram",
+    CommandSource: "native",
+  });
+
+  const replyResolver = async (_ctx: MsgContext, opts?: GetReplyOptions, _cfg?: OpenClawConfig) => {
+    await opts?.onToolResult?.({
+      text: "Approval required.\n\n```txt\n/approve 117ba06d allow-once\n```",
+      channelData: {
+        execApproval: {
+          approvalId: "117ba06d-1111-2222-3333-444444444444",
+          approvalSlug: "117ba06d",
+          allowedDecisions: ["allow-once", "allow-always", "deny"],
+        },
+      },
+    });
+    const runState = resolveReplyOperationRunState(opts);
+    if (!runState) {
+      throw new Error("expected reply operation run state");
+    }
+    runState.replyCompletion = resolveReplyCompletion(
+      runState.replyCompletion?.expectation ?? "required",
+      "blocked",
+    );
+    return { text: "NO_REPLY" } satisfies ReplyPayload;
+  };
+
+  await dispatchReplyFromConfig({
+    ctx,
+    cfg,
+    dispatcher,
+    replyResolver,
+    replyOptions: { suppressDefaultToolProgressMessages: true },
+  });
+
+  expect(dispatcher.sendToolResult).toHaveBeenCalledTimes(1);
+  expect(firstToolResultPayload(dispatcher)?.channelData).toStrictEqual({
+    execApproval: {
+      approvalId: "117ba06d-1111-2222-3333-444444444444",
+      approvalSlug: "117ba06d",
+      allowedDecisions: ["allow-once", "allow-always", "deny"],
+    },
+  });
+  expect(dispatcher.sendFinalReply).not.toHaveBeenCalled();
 });
 
 function createQuestionDispatch(name: string) {
