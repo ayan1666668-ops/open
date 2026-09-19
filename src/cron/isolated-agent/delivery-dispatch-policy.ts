@@ -274,10 +274,13 @@ export async function waitForCompletedDirectCronDelivery(params: {
   id: string;
   signal?: AbortSignal;
 }): Promise<boolean> {
-  // SQLite producer leases fence cross-process sends for at most 30 seconds.
-  // Poll through the full lease window: 121 checks at 250ms spacing reach the
-  // 30s boundary, so a send that completes exactly when its lease expires is
-  // still observed instead of being abandoned one check early.
+  // This waiter owns a 30s polling budget tied to the platform-send staleness
+  // check below. 121 checks at 250ms spacing run that budget to its boundary,
+  // so a concurrent send that completes in the final 250ms is still observed
+  // instead of being abandoned one check early. The underlying SQLite producer
+  // lease is 60s renewable (PLATFORM_SEND_OWNER_LEASE_MS); this loop corrects
+  // the polling off-by-one inside the 30s budget and does not extend coverage
+  // to the 60s producer_claimed lease.
   for (let attempt = 0; attempt < 121; attempt += 1) {
     const status = getDeliveryQueueEntryStatus(OUTBOUND_DELIVERY_QUEUE_NAME, params.id);
     if (status === "completed") {
