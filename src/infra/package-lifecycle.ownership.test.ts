@@ -34,7 +34,7 @@ function ownerPayload() {
   };
 }
 
-function isExclusiveCreate(flags: string | number): boolean {
+function isExclusiveCreate(flags: string | number | undefined): boolean {
   return (
     flags === "wx" ||
     (typeof flags === "number" &&
@@ -49,7 +49,14 @@ describe("package lifecycle ownership", () => {
       "refuses %s after cooperative disposal between observation and admission",
       async (state) => {
         const { packageRoot, pending, lock } = await fixture();
-        const originalIdentity = (await fs.stat(packageRoot)).ino;
+        const originalIdentity = await fs.stat(packageRoot, { bigint: true });
+        // Allocate while the original exists: deletion may immediately recycle its inode.
+        const replacementRoot = tempDirs.make("openclaw-lifecycle-replacement-");
+        const replacementIdentity = await fs.stat(replacementRoot, { bigint: true });
+        expect([replacementIdentity.dev, replacementIdentity.ino]).not.toEqual([
+          originalIdentity.dev,
+          originalIdentity.ino,
+        ]);
         const access = fs.access;
         let replaced = false;
         vi.stubEnv("FS_SAFE_NATIVE_MODE", "off");
@@ -61,9 +68,14 @@ describe("package lifecycle ownership", () => {
               packageRoots: [packageRoot],
               discard: () => fs.rm(packageRoot, { recursive: true, force: true }),
             });
+            await expect(fs.lstat(packageRoot)).rejects.toMatchObject({ code: "ENOENT" });
             if (state !== "absent") {
-              await fs.mkdir(packageRoot);
-              expect((await fs.stat(packageRoot)).ino).not.toBe(originalIdentity);
+              await fs.rename(replacementRoot, packageRoot);
+              const installedIdentity = await fs.stat(packageRoot, { bigint: true });
+              expect([installedIdentity.dev, installedIdentity.ino]).toEqual([
+                replacementIdentity.dev,
+                replacementIdentity.ino,
+              ]);
               if (state === "replacement-pending") {
                 await fs.writeFile(pending, "replacement pending\n");
               }
