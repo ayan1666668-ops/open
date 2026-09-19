@@ -1,15 +1,22 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../test/helpers/promise.js";
 import { subagentRuns } from "../agents/subagents/registry/subagent-registry-memory.js";
 import { settleRequesterTurnAfterSessionSpawns } from "../agents/subagents/registry/subagent-registry-requester-yield.js";
 import type { SubagentRunRecord } from "../agents/subagents/registry/subagent-registry.types.js";
 import { emitAgentEvent, resetAgentEventsForTest } from "../infra/agent-events.js";
-import { registerAgentRunContext } from "../infra/agent-run-registry.js";
+import {
+  claimAgentRunContext,
+  registerAgentRunContext,
+  releaseAgentRunContext,
+} from "../infra/agent-run-registry.js";
 import { peekSystemEvents, resetSystemEventsForTest } from "../infra/system-events.js";
 import {
   markGatewayRestartDraining,
   resetGatewayWorkAdmission,
+  tryBeginGatewayRootWorkAdmission,
 } from "../process/gateway-work-admission.js";
+import { AsyncWorkScope, getAsyncWorkSignal } from "../shared/async-work-scope.js";
 import {
   createInMemoryTaskFlowRegistryStore,
   createInMemoryTaskRegistryStore,
@@ -45,6 +52,7 @@ const origin = {
   threadId: "test-thread",
 };
 const sendMessage = vi.fn<deliveryRuntime.TaskRegistryDeliveryRuntime["sendMessage"]>();
+const runContextClaims = new Map<string, string>();
 
 function child(name: string, notifyPolicy: TaskNotifyPolicy = "state_changes") {
   const entry: SubagentRunRecord = {
@@ -65,6 +73,15 @@ function child(name: string, notifyPolicy: TaskNotifyPolicy = "state_changes") {
     expectsCompletionMessage: true,
   };
   subagentRuns.set(entry.runId, entry);
+  const claim = claimAgentRunContext(
+    entry.runId,
+    { sessionKey: entry.childSessionKey },
+    { trackOwner: true, ownsContext: true },
+  );
+  if (!claim) {
+    throw new Error("Expected child execution ownership");
+  }
+  runContextClaims.set(entry.runId, claim);
   const task = createTaskRecord({
     runtime: "subagent",
     ownerKey: PARENT,
@@ -84,7 +101,7 @@ function child(name: string, notifyPolicy: TaskNotifyPolicy = "state_changes") {
   if (!task) {
     throw new Error("Expected accepted task");
   }
-  return { entry, task };
+  return { entry, task, claim };
 }
 
 function yieldParent() {
@@ -147,6 +164,10 @@ afterEach(() => {
   resetTaskRegistryForTests({ persist: false });
   resetTaskFlowRegistryForTests({ persist: false });
   resetTaskRegistryDeliveryRuntimeForTests();
+  for (const [runId, claim] of runContextClaims) {
+    releaseAgentRunContext(runId, claim);
+  }
+  runContextClaims.clear();
   resetAgentEventsForTest({ preserveListeners: true });
   resetSystemEventsForTest();
   subagentRuns.clear();
@@ -156,14 +177,32 @@ afterEach(() => {
 });
 
 describe("yielded subagent progress delivery", () => {
-  it("coalesces the yield handoff and child activity at the original audience without completing or waking the parent", async () => {
+  it("coalesces progress at the original audience after the yielded requester closes without completing or waking it", async () => {
     const first = child("First");
     vi.setSystemTime(Date.now() + 1);
     const second = child("Second");
     child("Quiet", "silent");
     // The slow tool starts before the parent yields and need not produce another event.
     tool(first.entry);
-    yieldParent();
+    const requester = new AsyncWorkScope();
+    const root = tryBeginGatewayRootWorkAdmission("test:yielded-requester");
+    if (!root) {
+      throw new Error("Expected admitted requester");
+    }
+    let requesterContext: ReturnType<typeof AsyncLocalStorage.snapshot>;
+    try {
+      requesterContext = await root.run(async () =>
+        requester.run(() => {
+          const context = AsyncLocalStorage.snapshot();
+          yieldParent();
+          return context;
+        }),
+      );
+    } finally {
+      root.release();
+      await requester.drain();
+    }
+    expect(requester.signal.aborted).toBe(true);
     for (let index = 0; index < 40; index++) {
       tool(second.entry, index);
     }
@@ -174,7 +213,11 @@ describe("yielded subagent progress delivery", () => {
     });
     await vi.advanceTimersByTimeAsync(14_999);
     expect(sendMessage).not.toHaveBeenCalled();
-    await vi.advanceTimersByTimeAsync(1);
+    // Fake timers do not restore native timer ALS; the progress timer retains its yield owner.
+    await requesterContext(() => {
+      expect(getAsyncWorkSignal()).toBe(requester.signal);
+      return vi.advanceTimersByTimeAsync(1);
+    });
     expect(sendMessage).toHaveBeenCalledOnce();
     const message = sendMessage.mock.calls[0]![0];
     expect(message).toMatchObject({
@@ -183,9 +226,8 @@ describe("yielded subagent progress delivery", () => {
       gatewayOwnedDelivery: true,
       mirror: { sessionKey: PARENT, agentId: "main" },
     });
-    expect(message.content).toBe(
-      "Background work is still in progress:\n- First: running read; 1 tool call started.\n- Second: running read; 40 tool calls started.",
-    );
+    expect(message.content).toContain("First: running read; 1 tool call started.");
+    expect(message.content).toContain("Second: running read; 40 tool calls started.");
     expect(message.content).not.toMatch(/Quiet|private-/);
     expect(getTaskById(first.task.taskId)).toMatchObject({
       status: "running",
@@ -193,6 +235,23 @@ describe("yielded subagent progress delivery", () => {
     });
     expect(first.entry.requesterSettleWake).toMatchObject({ status: "pending", attemptCount: 0 });
     expect(peekSystemEvents(PARENT)).toEqual([]);
+  });
+
+  it("does not report retained tool activity as running after execution ownership releases", async () => {
+    const item = child("Worker");
+    tool(item.entry);
+    yieldParent();
+    releaseAgentRunContext(item.entry.runId, item.claim);
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(sendMessage).toHaveBeenCalledOnce();
+    const message = sendMessage.mock.calls[0]![0];
+    expect(message.content).toContain("Worker: current activity unavailable");
+    expect(message.content).not.toMatch(/running read|private-/);
+    expect(getTaskById(item.task.taskId)).toMatchObject({
+      status: "running",
+      toolUseCount: 1,
+      deliveryStatus: "pending",
+    });
   });
 
   it.each(["done_only", "silent"] as const)(

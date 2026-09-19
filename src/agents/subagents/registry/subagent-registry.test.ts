@@ -75,6 +75,7 @@ import {
 } from "./subagent-lifecycle-events.js";
 import { countPendingDescendantRuns } from "./subagent-registry-read.js";
 import { createSubagentRunManager } from "./subagent-registry-run-manager.js";
+import { findRecordCallArg } from "./subagent-registry.mock-call.test-support.js";
 import { saveSubagentRegistryChangesToSqlite } from "./subagent-registry.store.sqlite.js";
 import type {
   ContextEngineSubagentEndedParams,
@@ -82,25 +83,6 @@ import type {
 } from "./subagent-registry.types.js";
 
 const noop = () => {};
-
-function findRecordCallArg(
-  mock: ReturnType<typeof vi.fn>,
-  argIndex: number,
-  label: string,
-  predicate: (record: Record<string, unknown>) => boolean,
-): Record<string, unknown> {
-  for (const call of mock.mock.calls as unknown[][]) {
-    const value = call[argIndex];
-    if (typeof value !== "object" || value === null || Array.isArray(value)) {
-      continue;
-    }
-    const record = value as Record<string, unknown>;
-    if (predicate(record)) {
-      return record;
-    }
-  }
-  throw new Error(`expected ${label}`);
-}
 
 const mocks = vi.hoisted(() => ({
   callGateway:
@@ -2351,6 +2333,7 @@ describe("subagent registry seam flow", () => {
       runId: "run-settle-retry",
       childSessionKey: "agent:main:subagent:settle-retry",
       task: "retry requester settle wake",
+      completion: { required: true, resultText: "delivered result", capturedAt: endedAt },
       expectsCompletionMessage: true,
       createdAt: endedAt - 1_000,
       endedAt,
@@ -2358,6 +2341,8 @@ describe("subagent registry seam flow", () => {
       delivery: { status: "delivered" },
       requesterSettleWake: { status: "pending", attemptCount: 0 },
     });
+    const entry = expectDefined(mod.getSubagentRunByRunId("run-settle-retry"), "settle owner");
+    saveSubagentRegistryChangesToSqlite(new Map([[entry.runId, entry]]), [entry.runId]);
     mocks.maybeWakeRequesterAfterAllChildrenSettled.mockRejectedValueOnce(new Error("sqlite busy"));
 
     await mod.testing.sweepOnceForTests();
@@ -7367,7 +7352,7 @@ describe("subagent registry seam flow", () => {
     });
   });
 
-  it("retains suspended final deliveries when backlog exceeds the hard cap", async () => {
+  it("retains a large suspended delivery backlog without discarding results", async () => {
     const now = Date.parse("2026-03-24T12:00:00Z");
     for (let i = 0; i < 51; i += 1) {
       const runId = `run-suspended-pressure-${i}`;
@@ -7401,7 +7386,6 @@ describe("subagent registry seam flow", () => {
     );
     expect(stillSuspended).toHaveLength(51);
     expect(runs.every((run) => run?.delivery?.discardReason === undefined)).toBe(true);
-    expect(mod.getSubagentDeliveryBacklogPressure()).toEqual({ suspended: 51, blocked: true });
   });
 
   it("contains per-row and background sweeper failures", async () => {

@@ -1,15 +1,20 @@
+import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { testing } from "../agents/cli-backends.test-support.js";
 import { cliBackendLog } from "../agents/cli-runner/log.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type {
   CliBackendExecuteContext,
   CliBackendPrepareExecutionContext,
 } from "../plugins/cli-backend.types.js";
+import { resolveRuntimeCliBackends } from "../plugins/cli-backends.runtime.js";
 import { setTestEnvValue } from "../test-utils/env.js";
 import { createOpenClawTestState } from "../test-utils/openclaw-test-state.js";
+import * as agentJobs from "./agent-turn/agent-job.js";
+import type { GatewayClient } from "./client.js";
 import * as gatewayFixture from "./test-helpers.e2e.js";
 
 const FREEZE_CONTROLLER = String.raw`const { execFileSync } = require("node:child_process");
@@ -80,6 +85,8 @@ type WatchdogCase = {
   outputFirst: boolean;
   resume: boolean;
 };
+
+type WatchdogCompletion = { status: string; endedAt: number; error?: string };
 
 const cases: WatchdogCase[] = [
   {
@@ -159,6 +166,8 @@ async function runWatchdogCase(testCase: WatchdogCase, signal: AbortSignal) {
   let orderedOutputAt: number | undefined;
   let restoreClock: (() => void) | undefined;
   let observedCredit = false;
+  const waitForAgentJob =
+    testCase.behavior === "cancel" ? vi.spyOn(agentJobs, "waitForAgentJob") : undefined;
   const info = cliBackendLog.info.bind(cliBackendLog);
   const log = vi.spyOn(cliBackendLog, "info").mockImplementation((...args) => {
     info(...args);
@@ -167,9 +176,6 @@ async function runWatchdogCase(testCase: WatchdogCase, signal: AbortSignal) {
       observedCredit = true;
     }
   });
-  const { spawn } = await import("node:child_process");
-  const { resolveRuntimeCliBackends } = await import("../plugins/cli-backends.runtime.js");
-  const { testing } = await import("../agents/cli-backends.test-support.js");
 
   const state = await createOpenClawTestState({
     label: "cli-freeze",
@@ -184,7 +190,7 @@ async function runWatchdogCase(testCase: WatchdogCase, signal: AbortSignal) {
       CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR: undefined,
       OPENCLAW_TEST_MINIMAL_GATEWAY: undefined,
       OPENCLAW_DISABLE_BUNDLED_PLUGINS: undefined,
-      OPENCLAW_BUNDLED_PLUGINS_DIR: path.join(process.cwd(), "extensions"),
+      OPENCLAW_BUNDLED_PLUGINS_DIR: path.join(process.cwd(), "dist/extensions"),
       OPENCLAW_TEST_TRUST_BUNDLED_PLUGINS_DIR: "1",
       OPENCLAW_SKIP_CHANNELS: "1",
       OPENCLAW_SKIP_GMAIL_WATCHER: "1",
@@ -198,6 +204,7 @@ async function runWatchdogCase(testCase: WatchdogCase, signal: AbortSignal) {
   });
   const proof = state.path("proof");
   let gateway: Awaited<ReturnType<typeof gatewayFixture.startGatewayWithClient>> | undefined;
+  let pendingCompletion: Promise<WatchdogCompletion> | undefined;
   try {
     await fs.mkdir(proof);
     await fs.writeFile(path.join(proof, "freeze-tree.cjs"), FREEZE_CONTROLLER);
@@ -377,7 +384,27 @@ createInterface({ input: process.stdin }).on("line", (line) => {
       await fs.readFile(path.join(nativeRoot, "ready.json"), "utf8"),
     );
     expect(ready.turns).toBe(testCase.resume ? 2 : 1);
+    const waitForCompletion = (client: GatewayClient) =>
+      client.request<WatchdogCompletion>(
+        "agent.wait",
+        {
+          runId: accepted.runId,
+          timeoutMs: 50_000,
+        },
+        { timeoutMs: 55_000 },
+      );
     if (testCase.behavior === "cancel") {
+      pendingCompletion = waitForCompletion(gateway.client);
+      void pendingCompletion.catch(() => {});
+      await expect
+        .poll(
+          () =>
+            waitForAgentJob?.mock.calls.some(
+              ([params]) => params.runId === accepted.runId && params.source === "chat",
+            ),
+          { timeout: 5_000 },
+        )
+        .toBe(true);
       const cancelled = await gateway.client.request("chat.abort", {
         sessionKey,
         runId: accepted.runId,
@@ -421,18 +448,7 @@ createInterface({ input: process.stdin }).on("line", (line) => {
         scopes: ["operator.admin", "operator.read", "operator.write"],
       });
     }
-    const completed = await gateway.client.request<{
-      status: string;
-      endedAt: number;
-      error?: string;
-    }>(
-      "agent.wait",
-      {
-        runId: accepted.runId,
-        timeoutMs: 50_000,
-      },
-      { timeoutMs: 55_000 },
-    );
+    const completed = await (pendingCompletion ?? waitForCompletion(gateway.client));
     const history = await gateway.client.request("chat.history", { sessionKey });
     await fs.writeFile(
       path.join(proof, "gateway-result.json"),
@@ -476,6 +492,7 @@ createInterface({ input: process.stdin }).on("line", (line) => {
   } finally {
     restoreClock?.();
     log.mockRestore();
+    waitForAgentJob?.mockRestore();
     try {
       const evidenceRoot = process.env.OPENCLAW_CLI_WATCHDOG_PROOF_DIR;
       if (evidenceRoot) {
@@ -485,6 +502,7 @@ createInterface({ input: process.stdin }).on("line", (line) => {
     } finally {
       testing.resetDepsForTest();
       gateway?.client.stop();
+      await pendingCompletion?.catch(() => {});
       try {
         await gateway?.server.close({ reason: "freeze proof complete" });
       } finally {
