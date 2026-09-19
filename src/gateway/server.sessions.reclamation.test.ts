@@ -2,6 +2,7 @@ import fs from "node:fs";
 import { performance } from "node:perf_hooks";
 import { expect, test } from "vitest";
 import { resolveSqliteTargetFromSessionStorePath } from "../config/sessions/session-sqlite-target.js";
+import { listSessionsNeedingTranscriptIndexReconcile } from "../config/sessions/session-transcript-index.js";
 import { openOpenClawAgentDatabase } from "../state/openclaw-agent-db.js";
 import { rpcReq, writeSessionStore } from "./test-helpers.js";
 import {
@@ -44,6 +45,8 @@ function seedTranscriptState(storePath: string): void {
   const insertEvent = database.db.prepare(
     "INSERT INTO transcript_events (session_id, seq, event_json, created_at) VALUES (?, ?, ?, ?)",
   );
+  // The fixture is already projected; NULL eligibility would schedule an
+  // unrelated background index rebuild during the deletion measurement.
   const insertActive = database.db.prepare(
     `INSERT INTO session_transcript_active_events
        (session_id, active_position, event_seq, message_position, context_eligible)
@@ -142,6 +145,7 @@ function seedTranscriptState(storePath: string): void {
     database.db.exec("ROLLBACK");
     throw error;
   }
+  expect(listSessionsNeedingTranscriptIndexReconcile(database.db)).toEqual([]);
 }
 
 test("sessions.delete keeps the Gateway responsive while reclaiming a large session", async () => {
