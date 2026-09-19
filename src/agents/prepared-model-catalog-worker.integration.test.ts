@@ -790,9 +790,14 @@ describe("prepared model catalog worker boundary", () => {
     expect(loggedOut?.authStore.profiles[EXTERNAL_AUTH_PROFILE_ID]).toBeUndefined();
   });
 
-  it.each([false, true])(
-    "auth-refresh worker request refreshes native login/logout through the declared owner (nativeOwner=%s)",
-    async (nativeOwner) => {
+  it.each([
+    [false, undefined],
+    [true, undefined],
+    [true, "agent"],
+    [true, "user"],
+  ] as const)(
+    "auth-refresh worker request scopes native login/logout to explicit sharing (nativeOwner=%s, homeScope=%s)",
+    async (nativeOwner, homeScope) => {
       // A developer's ambient OpenAI key would count as usable openai auth and
       // mark the route available before the staged Codex login exists.
       vi.stubEnv("OPENAI_API_KEY", undefined);
@@ -804,7 +809,10 @@ describe("prepared model catalog worker boundary", () => {
       const fixture = await createStaticSnapshot(
         0,
         { CODEX_HOME: codexHome },
-        { codexNativeOwner: nativeOwner },
+        {
+          codexNativeOwner: nativeOwner,
+          ...(homeScope ? { codexNativeHomeScope: homeScope } : {}),
+        },
       );
       const nativeCli = createRequire(
         new URL("../../extensions/codex/package.json", import.meta.url),
@@ -840,7 +848,7 @@ describe("prepared model catalog worker boundary", () => {
       const nativeCredential = fs.readFileSync(path.join(codexHome, "auth.json"));
 
       expect((await refreshAuth()).codex).toEqual(
-        nativeOwner ? { source: "native", mode: "api_key" } : undefined,
+        nativeOwner && homeScope === "user" ? { source: "native", mode: "api_key" } : undefined,
       );
       expect(fs.readFileSync(path.join(codexHome, "auth.json"))).toEqual(nativeCredential);
       nativeCommand(["logout"]);
