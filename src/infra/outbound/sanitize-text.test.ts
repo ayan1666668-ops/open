@@ -329,6 +329,9 @@ describe("sanitizeForPlainText", () => {
     ["boolean-only", "<input disabled/>todo", "todo"],
     ["boolean-first", '<input checked type="checkbox"/>done', "done"],
     ["interleaved", '<input checked type="checkbox" disabled/>done', "done"],
+    ["autofocus-after-value", '<input type="text" autofocus/>ready', "ready"],
+    ["controls-after-value", '<video src="clip.mp4" controls/>play', "play"],
+    ["autoplay-after-value", '<audio src="clip.mp3" autoplay/>now', "now"],
   ])("strips remaining tags that use boolean attributes (%s)", (_name, input, expected) => {
     expect(sanitizeForPlainText(input)).toBe(expected);
   });
