@@ -16,6 +16,7 @@ import {
   isShortTermMemoryPath,
   isShortTermSessionCorpusPath,
   normalizeWeights,
+  resolveRecallDayEndMs,
   toFiniteNonNegativeInt,
   toFinitePositive,
   toFiniteScore,
@@ -51,14 +52,14 @@ function calculateConsolidationComponent(recallDays: string[]): number {
   return clampScore(0.55 * spacing + 0.45 * span);
 }
 
-// Resolve the newest valid recall-day timestamp (start-of-day, matching
-// calculateConsolidationComponent's day-parsing convention) for use as a
-// recency fallback when lastRecalledAt is malformed. Returns NaN when no
-// recall day parses to a finite value.
+// Resolve the newest valid recall-day timestamp at the shared freshness
+// owner's end-of-day boundary (isDayWithinLookback in dreaming-phases.ts
+// accepts a recall day through 23:59:59.999Z) for use as a recency fallback
+// when lastRecalledAt is malformed. Returns NaN when no recall day parses.
 function resolveNewestRecallDayMs(recallDays: readonly string[]): number {
   let newest = Number.NaN;
   for (const day of recallDays) {
-    const parsed = Date.parse(`${day}T00:00:00.000Z`);
+    const parsed = resolveRecallDayEndMs(day);
     if (Number.isFinite(parsed) && (Number.isNaN(newest) || parsed > newest)) {
       newest = parsed;
     }

@@ -260,7 +260,11 @@ export async function repairShortTermPromotionArtifacts(params: {
       const nextEntries = Object.fromEntries(
         Object.entries(normalized.entries).map(([key, entry]) => {
           const conceptTags = deriveConceptTags({ path: entry.path, snippet: entry.snippet });
-          const fallbackDay = normalizeIsoDay(entry.lastRecalledAt) ?? nowIso.slice(0, 10);
+          // Recall-day evidence must come from a real timestamp. A malformed
+          // lastRecalledAt must not manufacture the current day: ranking
+          // resolves the newest valid recall source, so a synthetic today would
+          // restore ageDays 0 and maximum recency for the corrupted entry.
+          const fallbackDay = normalizeIsoDay(entry.lastRecalledAt);
           return [
             key,
             {
@@ -274,7 +278,13 @@ export async function repairShortTermPromotionArtifacts(params: {
                 Math.floor((entry as { groundedCount?: number }).groundedCount ?? 0),
               ),
               queryHashes: (entry.queryHashes ?? []).slice(-MAX_QUERY_HASHES),
-              recallDays: mergeRecentDistinct(entry.recallDays ?? [], fallbackDay, MAX_RECALL_DAYS),
+              // mergeRecentDistinct skips a falsy next value, so a malformed
+              // lastRecalledAt (fallbackDay null) leaves recallDays unchanged.
+              recallDays: mergeRecentDistinct(
+                entry.recallDays ?? [],
+                fallbackDay ?? "",
+                MAX_RECALL_DAYS,
+              ),
               conceptTags: conceptTags.length > 0 ? conceptTags : (entry.conceptTags ?? []),
             } satisfies ShortTermRecallEntry,
           ];

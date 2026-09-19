@@ -9,6 +9,7 @@ import { createPluginStateKeyedStoreForTests } from "openclaw/plugin-sdk/plugin-
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { deriveConceptTags } from "./concept-vocabulary.js";
 import { isPromotionOriginBlocked } from "./dreaming-consolidation-candidates.js";
+import { filterRecallEntriesWithinLookback } from "./dreaming-phases.js";
 
 vi.mock("openclaw/plugin-sdk/memory-host-events", () => ({
   appendMemoryHostEvent: vi.fn(async () => {}),
@@ -1198,8 +1199,13 @@ describe("short-term promotion", () => {
 
       expect(slowerDecay).toHaveLength(1);
       expect(fasterDecay).toHaveLength(1);
-      expect(slowerDecay[0]?.components.recency).toBeCloseTo(0.5, 3);
-      expect(fasterDecay[0]?.components.recency).toBeCloseTo(0.25, 3);
+      // The 2026-04-01 recall day is resolved at the shared freshness owner's
+      // end-of-day boundary (23:59:59.999Z), newer than the same day's
+      // lastRecalledAt (10:00Z), so ageDays ≈ 13.4167 instead of a full 14.0.
+      // A slower half life (14d) keeps recency ≈ 0.5147 while a faster one
+      // (7d) drops it to ≈ 0.2649; the ordering still holds.
+      expect(slowerDecay[0]?.components.recency).toBeCloseTo(0.514651, 4);
+      expect(fasterDecay[0]?.components.recency).toBeCloseTo(0.264866, 4);
       const slowerResult = expectDefined(slowerDecay[0], "slower decay result");
       const fasterResult = expectDefined(fasterDecay[0], "faster decay result");
       expect(slowerResult.score).toBeGreaterThan(fasterResult.score);
@@ -3786,15 +3792,18 @@ describe("short-term promotion", () => {
         // (recallDays fallback resolves to 04-02, one day older).
         expect(valid?.components.recency).toBeGreaterThan(malformed?.components.recency ?? 0);
         expect(valid?.score).toBeGreaterThan(malformed?.score ?? 0);
-        // ageDays reflects the effective recall timestamp: 1 for valid
-        // (04-03 -> 04-04), 2 for malformed (recallDays 04-02 -> 04-04),
-        // preserving the numeric candidate-age contract.
-        expect(valid?.ageDays).toBe(1);
-        expect(malformed?.ageDays).toBe(2);
+        // ageDays reflects the effective recall timestamp resolved at the
+        // shared freshness owner's end-of-day boundary (isDayWithinLookback
+        // accepts a recall day through 23:59:59.999Z): ≈0 for valid (04-03
+        // recall day ends 04-03T23:59:59.999Z, ~1ms before the 04-04 nowMs),
+        // ≈1 for malformed (recallDays 04-02 -> 04-04), preserving the
+        // numeric candidate-age contract.
+        expect(valid?.ageDays).toBeCloseTo(0, 5);
+        expect(malformed?.ageDays).toBeCloseTo(1, 5);
         // Verify the candidate is JSON-serializable with a numeric ageDays.
         // oxlint-disable-next-line unicorn/prefer-structured-clone -- JSON round-trip verifies the candidate survives JSON transport (NaN/Infinity become null).
         const serialized = JSON.parse(JSON.stringify(malformed));
-        expect(serialized.ageDays).toBe(2);
+        expect(serialized.ageDays).toBeCloseTo(1, 5);
       });
     });
 
@@ -3937,11 +3946,234 @@ describe("short-term promotion", () => {
         expect(freshDay).toBeDefined();
         expect(staleOnly).toBeDefined();
         // The stale-ts-fresh-day entry should use the newer recallDays
-        // timestamp (2026-04-03, ageDays=1) rather than the stale
+        // timestamp (2026-04-03 end-of-day, ageDays≈0) rather than the stale
         // lastRecalledAt (2026-04-01, ageDays=3).
-        expect(freshDay?.ageDays).toBeCloseTo(1, 5);
+        expect(freshDay?.ageDays).toBeCloseTo(0, 5);
         expect(staleOnly?.ageDays).toBeCloseTo(3, 5);
         expect(freshDay?.components.recency).toBeGreaterThan(staleOnly?.components.recency ?? 0);
+      });
+    });
+
+    it("does not manufacture today as a recall day when repairing a malformed lastRecalledAt", async () => {
+      vi.useFakeTimers({ now: new Date("2026-04-05T12:00:00.000Z") });
+      try {
+        await withTempWorkspace(async (workspaceDir) => {
+          await writeDailyMemoryNote(workspaceDir, "2026-04-05", ["Corrupt timestamp note."]);
+          await writeDailyMemoryNote(workspaceDir, "2026-04-03", ["Valid control note."]);
+          await testing.writeRawRecallStore(workspaceDir, {
+            version: 1,
+            updatedAt: "2026-04-05T12:00:00.000Z",
+            entries: {
+              corrupt: {
+                key: "corrupt",
+                path: "memory/2026-04-05.md",
+                startLine: 1,
+                endLine: 1,
+                source: "memory",
+                snippet: "Corrupt timestamp note.",
+                recallCount: 2,
+                dailyCount: 0,
+                groundedCount: 0,
+                totalScore: 1.8,
+                maxScore: 0.9,
+                firstRecalledAt: "not-a-valid-date",
+                lastRecalledAt: "not-a-valid-date",
+                queryHashes: ["a", "b"],
+                recallDays: [],
+                conceptTags: [],
+              },
+              control: {
+                key: "control",
+                path: "memory/2026-04-03.md",
+                startLine: 1,
+                endLine: 1,
+                source: "memory",
+                snippet: "Valid control note.",
+                recallCount: 2,
+                dailyCount: 0,
+                groundedCount: 0,
+                totalScore: 1.8,
+                maxScore: 0.9,
+                firstRecalledAt: "2026-04-03T00:00:00.000Z",
+                lastRecalledAt: "2026-04-03T00:00:00.000Z",
+                queryHashes: ["a", "b"],
+                conceptTags: [],
+              },
+            },
+          });
+
+          // Production flow: repair runs first (dreaming.ts repairs artifacts
+          // before ranking), then ranking.
+          const repair = await repairShortTermPromotionArtifacts({ workspaceDir });
+          expect(repair.rewroteStore).toBe(true);
+
+          const repaired = await testing.readRecallStore(workspaceDir, "2026-04-05T12:00:00.000Z");
+          // The corrupted entry must not gain the repair day (2026-04-05) as a
+          // recall day: recallDays stay empty so ranking cannot resolve a
+          // synthetic today back to ageDays 0 / maximum recency.
+          expect(repaired.entries.corrupt?.recallDays).toEqual([]);
+          // A valid lastRecalledAt still contributes its real recall day.
+          expect(repaired.entries.control?.recallDays).toEqual(["2026-04-03"]);
+
+          const ranked = await rankShortTermPromotionCandidates({
+            workspaceDir,
+            minScore: 0,
+            minRecallCount: 0,
+            minUniqueQueries: 0,
+            nowMs: Date.parse("2026-04-07T00:00:00.000Z"),
+          });
+          const corrupt = ranked.find((entry) => entry.key === "corrupt");
+          const control = ranked.find((entry) => entry.key === "control");
+          expect(corrupt).toBeDefined();
+          expect(control).toBeDefined();
+          // With no valid recall source the corrupted entry gets zero recency
+          // instead of the maximum a synthetic today would manufacture.
+          expect(corrupt?.ageDays).toBe(0);
+          expect(corrupt?.components.recency).toBe(0);
+          expect(control?.components.recency).toBeGreaterThan(0);
+          expect(control?.components.recency).toBeGreaterThan(corrupt?.components.recency ?? 0);
+        });
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("preserves real recall-day evidence when repairing a malformed lastRecalledAt", async () => {
+      vi.useFakeTimers({ now: new Date("2026-04-05T12:00:00.000Z") });
+      try {
+        await withTempWorkspace(async (workspaceDir) => {
+          await writeDailyMemoryNote(workspaceDir, "2026-04-02", ["Malformed-but-dated note."]);
+          await testing.writeRawRecallStore(workspaceDir, {
+            version: 1,
+            updatedAt: "2026-04-05T12:00:00.000Z",
+            entries: {
+              corrupt: {
+                key: "corrupt",
+                path: "memory/2026-04-02.md",
+                startLine: 1,
+                endLine: 1,
+                source: "memory",
+                snippet: "Malformed-but-dated note.",
+                recallCount: 2,
+                dailyCount: 0,
+                groundedCount: 0,
+                totalScore: 1.8,
+                maxScore: 0.9,
+                firstRecalledAt: "not-a-valid-date",
+                lastRecalledAt: "not-a-valid-date",
+                queryHashes: ["a", "b"],
+                // Real recall-day evidence that must survive repair unchanged.
+                recallDays: ["2026-04-02"],
+                conceptTags: [],
+              },
+            },
+          });
+
+          await repairShortTermPromotionArtifacts({ workspaceDir });
+          const repaired = await testing.readRecallStore(workspaceDir, "2026-04-05T12:00:00.000Z");
+          // The real 2026-04-02 recall day survives repair; today (2026-04-05)
+          // is not appended on top of it.
+          expect(repaired.entries.corrupt?.recallDays).toEqual(["2026-04-02"]);
+
+          const ranked = await rankShortTermPromotionCandidates({
+            workspaceDir,
+            minScore: 0,
+            minRecallCount: 0,
+            minUniqueQueries: 0,
+            nowMs: Date.parse("2026-04-07T00:00:00.000Z"),
+          });
+          const corrupt = ranked.find((entry) => entry.key === "corrupt");
+          expect(corrupt).toBeDefined();
+          // Recency is recovered from the real recall day (non-zero) rather
+          // than zeroed, but stays below the maximum a synthetic today would
+          // produce.
+          expect(corrupt?.components.recency).toBeGreaterThan(0);
+          expect(corrupt?.components.recency).toBeLessThan(1);
+        });
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("keeps a recall day ranked through the owner's end-of-day boundary at a partial-day cutoff", async () => {
+      await withTempWorkspace(async (workspaceDir) => {
+        await writeDailyMemoryNote(workspaceDir, "2026-04-12", ["Boundary recall note."]);
+        await writeDailyMemoryNote(workspaceDir, "2026-04-10", ["Stale note."]);
+        await testing.writeRawRecallStore(workspaceDir, {
+          version: 1,
+          updatedAt: "2026-04-15T12:00:00.000Z",
+          entries: {
+            boundary: {
+              key: "boundary",
+              path: "memory/2026-04-12.md",
+              startLine: 1,
+              endLine: 1,
+              source: "memory",
+              snippet: "Boundary recall note.",
+              recallCount: 2,
+              dailyCount: 0,
+              groundedCount: 0,
+              totalScore: 1.8,
+              maxScore: 0.9,
+              firstRecalledAt: "not-a-valid-date",
+              lastRecalledAt: "not-a-valid-date",
+              queryHashes: ["a", "b"],
+              // 2026-04-12 sits at a 3-day partial cutoff from
+              // 2026-04-15T12:00Z (2026-04-12T12:00Z). The shared freshness
+              // owner accepts a recall day through 23:59:59.999Z, so ranking
+              // must resolve it the same way instead of a start-of-day parse
+              // that would drop it.
+              recallDays: ["2026-04-12"],
+              conceptTags: [],
+            },
+            stale: {
+              key: "stale",
+              path: "memory/2026-04-10.md",
+              startLine: 1,
+              endLine: 1,
+              source: "memory",
+              snippet: "Stale note.",
+              recallCount: 2,
+              dailyCount: 0,
+              groundedCount: 0,
+              totalScore: 1.8,
+              maxScore: 0.9,
+              firstRecalledAt: "2026-04-10T00:00:00.000Z",
+              lastRecalledAt: "2026-04-10T00:00:00.000Z",
+              queryHashes: ["a", "b"],
+              recallDays: ["2026-04-10"],
+              conceptTags: [],
+            },
+          },
+        });
+
+        const nowMs = Date.parse("2026-04-15T12:00:00.000Z");
+        const ranked = await rankShortTermPromotionCandidates({
+          workspaceDir,
+          minScore: 0,
+          minRecallCount: 0,
+          minUniqueQueries: 0,
+          nowMs,
+          maxAgeDays: 3,
+        });
+        const boundary = ranked.find((entry) => entry.key === "boundary");
+        const stale = ranked.find((entry) => entry.key === "stale");
+        // End-of-day resolution gives boundary ageDays ≈ 2.5 (≤ 3) so it is
+        // ranked; stale (ageDays ≈ 4.5) is still filtered out.
+        expect(boundary).toBeDefined();
+        expect(boundary?.ageDays).toBeCloseTo(2.5, 5);
+        expect(stale).toBeUndefined();
+
+        // Owner consistency: the shared freshness filter keeps the same
+        // boundary entry fresh and drops the stale one at the same cutoff.
+        const store = await testing.readRecallStore(workspaceDir, "2026-04-15T12:00:00.000Z");
+        const fresh = filterRecallEntriesWithinLookback({
+          entries: Object.values(store.entries),
+          nowMs,
+          lookbackDays: 3,
+        });
+        expect(fresh.map((entry) => entry.key)).toContain("boundary");
+        expect(fresh.map((entry) => entry.key)).not.toContain("stale");
       });
     });
   });

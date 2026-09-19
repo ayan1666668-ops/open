@@ -54,6 +54,7 @@ import {
   type SessionIngestionSource,
   type SessionIngestionState,
 } from "./session-ingestion.js";
+import { resolveRecallDayEndMs } from "./short-term-promotion-utils.js";
 import {
   filterLiveShortTermRecallEntries,
   filterFreshLightDreamingEntries,
@@ -112,7 +113,7 @@ function calculateLookbackCutoffMs(nowMs: number, lookbackDays: number): number 
 }
 
 function isDayWithinLookback(day: string, cutoffMs: number): boolean {
-  const dayMs = Date.parse(`${day}T23:59:59.999Z`);
+  const dayMs = resolveRecallDayEndMs(day);
   return Number.isFinite(dayMs) && dayMs >= cutoffMs;
 }
 

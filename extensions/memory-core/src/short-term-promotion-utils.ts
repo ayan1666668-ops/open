@@ -266,6 +266,13 @@ export function normalizeIsoDay(isoLike: string): string | null {
   return match?.[1] ?? null;
 }
 
+// End-of-day instant for a recall day, matching the shared freshness owner
+// (isDayWithinLookback in dreaming-phases.ts) which accepts a recall day as
+// fresh through 23:59:59.999Z. Returns NaN when the day does not parse.
+export function resolveRecallDayEndMs(day: string): number {
+  return Date.parse(`${day}T23:59:59.999Z`);
+}
+
 function normalizeDistinctStrings(values: unknown[], limit: number): string[] {
   const seen = new Set<string>();
   const normalized: string[] = [];
