@@ -112,7 +112,7 @@ function stringifyForFingerprint(value: unknown): string {
   }
 }
 
-function fingerprint(value: unknown): string {
+export function fingerprint(value: unknown): string {
   return createHash("sha256").update(stringifyForFingerprint(value)).digest("hex");
 }
 
