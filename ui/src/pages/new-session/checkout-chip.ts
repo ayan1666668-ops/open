@@ -1,21 +1,31 @@
 import { html, nothing } from "lit";
 import { icons } from "../../components/icons.ts";
 import { t } from "../../i18n/index.ts";
+import { registerNewSessionSetupEnglish } from "../../i18n/locales/en-new-session-setup.ts";
 import { renderSessionMenuItem } from "./cloud-target.ts";
 import type { DraftBranches } from "./discovery.ts";
+
+registerNewSessionSetupEnglish();
 
 type CheckoutChipState = Readonly<{
   label: string;
 }>;
 
 export function resolveCheckoutChip(params: {
-  destination: "local" | "remote";
+  destination: "local" | "remote" | "cloud";
   worktree: boolean;
   worktreeAvailable: boolean;
   headBranch?: string;
   baseRef: string;
   repository?: boolean;
 }): CheckoutChipState | null {
+  if (params.destination === "cloud") {
+    return {
+      label: params.baseRef
+        ? t("newSession.checkoutCloudFrom", { branch: params.baseRef })
+        : t("newSession.checkoutCloud"),
+    };
+  }
   if (params.repository) {
     return {
       label: params.baseRef

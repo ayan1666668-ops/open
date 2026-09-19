@@ -12,6 +12,8 @@
 
 import { createRequireRecord } from "openclaw/plugin-sdk/test-fixtures";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { hasDescendantRunAwaitingSettleFromRuns } from "../../agents/subagents/registry/subagent-registry-queries.js";
+import type { SubagentRunRecord } from "../../agents/subagents/registry/subagent-registry.types.js";
 import { SILENT_REPLY_TOKEN } from "../../auto-reply/tokens.js";
 import type { ChannelMessagingAdapter } from "../../channels/plugins/types.public.js";
 import * as deliveryQueueSqlite from "../../infra/delivery-queue-sqlite.js";
@@ -27,7 +29,7 @@ const directCronCompletionRetention = {
 const {
   appendAssistantMessageToSessionTranscriptMock,
   commitBackgroundResultToSessionMock,
-  countActiveDescendantRunsMock,
+  hasDescendantRunAwaitingSettleMock,
   deliverOutboundPayloadsMock,
   ensureOutboundSessionEntryMock,
   loadCronSessionEntryLatestMock,
@@ -44,7 +46,7 @@ const {
     ok: true,
     messageId: "current-completion-message",
   }),
-  countActiveDescendantRunsMock: vi.fn().mockReturnValue(0),
+  hasDescendantRunAwaitingSettleMock: vi.fn().mockReturnValue(false),
   deliverOutboundPayloadsMock: vi.fn().mockResolvedValue([{ ok: true }]),
   ensureOutboundSessionEntryMock: vi.fn().mockResolvedValue(undefined),
   loadCronSessionEntryLatestMock: vi.fn(),
@@ -103,7 +105,7 @@ vi.mock("../../config/sessions/main-session.js", () => ({
 }));
 
 vi.mock("../../agents/subagents/registry/subagent-registry-read.js", () => ({
-  countActiveDescendantRuns: countActiveDescendantRunsMock,
+  hasDescendantRunAwaitingSettle: hasDescendantRunAwaitingSettleMock,
   getLatestLiveSubagentRunByChildSessionKey: () => null,
 }));
 
@@ -112,7 +114,8 @@ vi.mock("../../agents/agent-bundle-mcp-tools.js", () => ({
 }));
 
 vi.mock("./delivery-subagent-registry.runtime.js", () => ({
-  countActiveDescendantRuns: countActiveDescendantRunsMock,
+  hasDescendantRunAwaitingSettle: hasDescendantRunAwaitingSettleMock,
+  getLatestLiveSubagentRunByChildSessionKey: () => null,
 }));
 
 vi.mock("../../infra/outbound/deliver.js", () => ({
@@ -189,7 +192,7 @@ vi.mock("./subagent-followup.runtime.js", () => ({
 
 import { retireSessionMcpRuntime } from "../../agents/agent-bundle-mcp-tools.js";
 // Import after mocks
-import { countActiveDescendantRuns } from "../../agents/subagents/registry/subagent-registry-read.js";
+import { hasDescendantRunAwaitingSettle } from "../../agents/subagents/registry/subagent-registry-read.js";
 import { appendAssistantMessageToSessionTranscript } from "../../config/sessions/transcript.runtime.js";
 import { callGateway } from "../../gateway/call.js";
 import { PlatformMessageNotDispatchedError } from "../../infra/outbound/deliver-types.js";
@@ -211,7 +214,6 @@ import {
   queueCronMessageToolDeliveryAwareness,
 } from "./delivery-dispatch.js";
 import type { DeliveryTargetResolution } from "./delivery-target.js";
-import type { RunCronAgentTurnResult } from "./run.types.js";
 import { expectsSubagentFollowup, isLikelyInterimCronMessage } from "./subagent-followup-hints.js";
 import {
   readDescendantSubagentFallbackReply,
@@ -239,16 +241,6 @@ function makeResolvedDelivery(
     mode: "explicit",
     ...overrides,
   };
-}
-
-function makeWithRunSession() {
-  return (
-    result: Omit<RunCronAgentTurnResult, "sessionId" | "sessionKey">,
-  ): RunCronAgentTurnResult => ({
-    ...result,
-    sessionId: "test-session-id",
-    sessionKey: "test-session-key",
-  });
 }
 
 function makeBaseParams(overrides: {
@@ -285,14 +277,14 @@ function makeBaseParams(overrides: {
       payload: { kind: "agentTurn", message: "hello" },
     } as never,
     agentId: "main",
-    agentSessionKey: "agent:main",
+    agentSessionKey: "agent:main:cron:test-job",
     sourceSessionKey:
       overrides.sessionTarget === "current" ? "agent:main:webchat:direct:owner" : undefined,
     sourceSessionGeneration:
       overrides.sessionTarget === "current"
         ? { sessionId: "source-session-id", lifecycleRevision: "source-lifecycle-revision" }
         : undefined,
-    runSessionKey: overrides.runSessionKey ?? "agent:main",
+    runSessionKey: overrides.runSessionKey ?? "agent:main:cron:test-job",
     sessionId: "test-session-id",
     lifecycleRevision: "test-lifecycle-revision",
     sessionUpdatedAt: 1_000,
@@ -321,7 +313,11 @@ function makeBaseParams(overrides: {
     abortSignal: undefined,
     isAborted: () => false,
     abortReason: () => "aborted",
-    withRunSession: makeWithRunSession(),
+    withRunSession: (result) => ({
+      ...result,
+      sessionId: "test-session-id",
+      sessionKey: "test-session-key",
+    }),
   };
 }
 
@@ -373,7 +369,7 @@ describe("dispatchCronDelivery — double-announce guard", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.spyOn(deliveryQueueSqlite, "getDeliveryQueueEntryStatus").mockReturnValue(undefined);
-    vi.mocked(countActiveDescendantRuns).mockReturnValue(0);
+    vi.mocked(hasDescendantRunAwaitingSettle).mockReturnValue(false);
     vi.mocked(expectsSubagentFollowup).mockReturnValue(false);
     vi.mocked(isLikelyInterimCronMessage).mockReturnValue(false);
     vi.mocked(readDescendantSubagentFallbackReply).mockResolvedValue(undefined);
@@ -411,26 +407,48 @@ describe("dispatchCronDelivery — double-announce guard", () => {
     vi.unstubAllEnvs();
   });
 
-  it("early return (active subagent) sets deliveryAttempted=true so timer skips enqueueSystemEvent", async () => {
-    // countActiveDescendantRuns returns >0 → enters wait block; still >0 after wait → early return
-    vi.mocked(countActiveDescendantRuns).mockReturnValue(2);
-    vi.mocked(waitForDescendantSubagentSummary).mockResolvedValue(undefined);
-    vi.mocked(readDescendantSubagentFallbackReply).mockResolvedValue(undefined);
+  it.each(["running", "yielded", "queued delivery"])(
+    "suppresses incomplete descendant output while %s settlement is pending",
+    async (phase) => {
+      const params = makeBaseParams({ synthesizedText: "on it" });
+      const descendant: SubagentRunRecord = {
+        runId: "descendant-run",
+        childSessionKey: "agent:main:subagent:descendant",
+        requesterSessionKey: params.runSessionKey,
+        requesterDisplayKey: params.runSessionKey,
+        task: "Reconcile findings",
+        cleanup: "keep",
+        createdAt: params.runStartedAt,
+        execution:
+          phase === "running"
+            ? { status: "running" }
+            : { status: "terminal", endedAt: params.runStartedAt + 1 },
+        ...(phase === "yielded" ? { pauseReason: "sessions_yield" as const } : {}),
+        ...(phase === "queued delivery"
+          ? { delivery: { status: "in_progress" as const, disposition: "session_queued" as const } }
+          : {}),
+      };
+      vi.mocked(hasDescendantRunAwaitingSettle).mockImplementation((sessionKey) =>
+        hasDescendantRunAwaitingSettleFromRuns(
+          new Map([[descendant.runId, descendant]]),
+          sessionKey,
+        ),
+      );
+      vi.mocked(waitForDescendantSubagentSummary).mockResolvedValue("Incomplete child finding");
 
-    const params = makeBaseParams({ synthesizedText: "on it" });
-    const state = await dispatchCronDelivery(params);
+      const state = await dispatchCronDelivery(params);
 
-    // deliveryAttempted must be true so timer does NOT fire enqueueSystemEvent
-    expect(state.deliveryAttempted).toBe(true);
-    expect(waitForDescendantSubagentSummary).toHaveBeenCalledTimes(1);
-
-    // No announce should have been attempted (subagents still running)
-    expect(deliverOutboundPayloads).not.toHaveBeenCalled();
-    expect(state.deliveryError).toBe("cron descendants are still active without a final reply");
-  });
+      // Attempted prevents the timer's system-event fallback from double-announcing.
+      expect(state.deliveryAttempted).toBe(true);
+      expect(waitForDescendantSubagentSummary).toHaveBeenCalledTimes(1);
+      expect(readDescendantSubagentFallbackReply).not.toHaveBeenCalled();
+      expect(deliverOutboundPayloads).not.toHaveBeenCalled();
+      expect(state.deliveryError).toBe("cron descendants are still active without a final reply");
+    },
+  );
 
   it("bestEffort delivery skips active subagent wait and sends the cron reply", async () => {
-    vi.mocked(countActiveDescendantRuns).mockReturnValue(2);
+    vi.mocked(hasDescendantRunAwaitingSettle).mockReturnValue(true);
     vi.mocked(waitForDescendantSubagentSummary).mockResolvedValue(undefined);
     vi.mocked(readDescendantSubagentFallbackReply).mockResolvedValue(undefined);
 
@@ -1113,6 +1131,7 @@ describe("dispatchCronDelivery — double-announce guard", () => {
 
     await queueCronMessageToolDeliveryAwareness({
       ...makeBaseParams({ runStartedAt: 1_000 }),
+      agentSessionKey: "agent:main:main",
       resolvedDelivery: makeResolvedDelivery(),
       sourceDeliveryOutcome: {
         visibleDeliveries: [
@@ -1136,7 +1155,7 @@ describe("dispatchCronDelivery — double-announce guard", () => {
     expect(enqueueSystemEvent).toHaveBeenCalledExactlyOnceWith(
       "A scheduled automation delivered this message to this channel:\nMain-scoped cron update.",
       {
-        sessionKey: "agent:main",
+        sessionKey: "agent:main:main",
         contextKey: "cron-direct-delivery:v1:cron:test-job:1000:telegram::123456:",
       },
     );
@@ -1370,7 +1389,7 @@ describe("dispatchCronDelivery — double-announce guard", () => {
   });
 
   it("bestEffort delivery skips expected subagent follow-up waits", async () => {
-    vi.mocked(countActiveDescendantRuns).mockReturnValue(0);
+    vi.mocked(hasDescendantRunAwaitingSettle).mockReturnValue(false);
     vi.mocked(expectsSubagentFollowup).mockReturnValue(true);
     vi.mocked(waitForDescendantSubagentSummary).mockResolvedValue(undefined);
 
@@ -1389,7 +1408,7 @@ describe("dispatchCronDelivery — double-announce guard", () => {
   });
 
   it("bestEffort delivery still suppresses stale interim text while descendants run", async () => {
-    vi.mocked(countActiveDescendantRuns).mockReturnValue(2);
+    vi.mocked(hasDescendantRunAwaitingSettle).mockReturnValue(true);
     vi.mocked(isLikelyInterimCronMessage).mockReturnValue(true);
     vi.mocked(readDescendantSubagentFallbackReply).mockResolvedValue(undefined);
     vi.mocked(waitForDescendantSubagentSummary).mockResolvedValue(undefined);
@@ -1407,10 +1426,10 @@ describe("dispatchCronDelivery — double-announce guard", () => {
   });
 
   it("early return (stale interim suppression) sets deliveryAttempted=true so timer skips enqueueSystemEvent", async () => {
-    // First countActiveDescendantRuns call returns >0 (had descendants), second returns 0
-    vi.mocked(countActiveDescendantRuns)
-      .mockReturnValueOnce(2) // initial check → hadDescendants=true, enters wait block
-      .mockReturnValueOnce(0); // second check after wait → activeSubagentRuns=0
+    // Settlement is pending initially, then complete after the wait
+    vi.mocked(hasDescendantRunAwaitingSettle)
+      .mockReturnValueOnce(true) // initial check → hadDescendants=true, enters wait block
+      .mockReturnValueOnce(false); // second check after wait → settlement complete
     vi.mocked(waitForDescendantSubagentSummary).mockResolvedValue(undefined);
     vi.mocked(readDescendantSubagentFallbackReply).mockResolvedValue(undefined);
     // synthesizedText matches initialSynthesizedText & isLikelyInterimCronMessage → stale interim
@@ -1428,7 +1447,7 @@ describe("dispatchCronDelivery — double-announce guard", () => {
   });
 
   it("consolidates descendant output into the final direct delivery", async () => {
-    vi.mocked(countActiveDescendantRuns).mockReturnValue(0);
+    vi.mocked(hasDescendantRunAwaitingSettle).mockReturnValue(false);
     vi.mocked(isLikelyInterimCronMessage).mockReturnValue(true);
     vi.mocked(readDescendantSubagentFallbackReply).mockResolvedValue(
       "Detailed child result, everything finished successfully.",
@@ -1484,9 +1503,11 @@ describe("dispatchCronDelivery — double-announce guard", () => {
     async ({ activeDescendants, deliveryBestEffort, threadId }) => {
       const childReply = "Completed child result visible to the user.";
       if (activeDescendants) {
-        vi.mocked(countActiveDescendantRuns).mockReturnValueOnce(1).mockReturnValueOnce(0);
+        vi.mocked(hasDescendantRunAwaitingSettle)
+          .mockReturnValueOnce(true)
+          .mockReturnValueOnce(false);
       } else {
-        vi.mocked(countActiveDescendantRuns).mockReturnValue(0);
+        vi.mocked(hasDescendantRunAwaitingSettle).mockReturnValue(false);
       }
       vi.mocked(waitForDescendantSubagentSummary).mockResolvedValue(undefined);
       vi.mocked(readDescendantSubagentFallbackReply).mockResolvedValue(childReply);
@@ -1523,7 +1544,7 @@ describe("dispatchCronDelivery — double-announce guard", () => {
 
   it("preserves a substantive parent synthesis after an accepted child has completed", async () => {
     const parentReply = "Combined parent summary already includes every child result.";
-    vi.mocked(countActiveDescendantRuns).mockReturnValue(0);
+    vi.mocked(hasDescendantRunAwaitingSettle).mockReturnValue(false);
 
     const state = await dispatchCronDelivery(
       makeBaseParams({ spawnOnlyHandoff: false, synthesizedText: parentReply }),
@@ -1536,7 +1557,7 @@ describe("dispatchCronDelivery — double-announce guard", () => {
 
   it("immediately delivers a substantive threaded parent while its accepted child runs", async () => {
     const parentReply = "Parent summary is ready for the existing thread.";
-    vi.mocked(countActiveDescendantRuns).mockReturnValue(1);
+    vi.mocked(hasDescendantRunAwaitingSettle).mockReturnValue(true);
     const params = makeBaseParams({ spawnOnlyHandoff: false, synthesizedText: parentReply });
     params.resolvedDelivery = makeResolvedDelivery({ threadId: "42" });
 
@@ -1560,7 +1581,7 @@ describe("dispatchCronDelivery — double-announce guard", () => {
       error: "cron child-session handoff completed without a final assistant payload",
     },
   ])("fails an accepted spawn-only handoff when $name", async ({ activeDescendants, error }) => {
-    vi.mocked(countActiveDescendantRuns).mockReturnValue(activeDescendants);
+    vi.mocked(hasDescendantRunAwaitingSettle).mockReturnValue(activeDescendants > 0);
     const params = makeBaseParams({ spawnOnlyHandoff: true, synthesizedText: "" });
     params.synthesizedText = undefined;
     params.deliveryPayloads = [];
@@ -1580,12 +1601,13 @@ describe("dispatchCronDelivery — double-announce guard", () => {
 
   it("preserves abort precedence when an accepted child handoff is interrupted", async () => {
     const abortReason = "scheduled run aborted while waiting for its child";
-    vi.mocked(countActiveDescendantRuns).mockReturnValue(1);
+    vi.mocked(hasDescendantRunAwaitingSettle).mockReturnValueOnce(true).mockReturnValue(false);
     const params = makeBaseParams({ spawnOnlyHandoff: true, synthesizedText: "" });
     params.synthesizedText = undefined;
     params.deliveryPayloads = [];
     params.summary = undefined;
     params.outputText = undefined;
+    params.abortSignal = AbortSignal.abort(new Error(abortReason));
     params.isAborted = () => true;
     params.abortReason = () => abortReason;
 
@@ -1593,6 +1615,7 @@ describe("dispatchCronDelivery — double-announce guard", () => {
 
     expect(waitForDescendantSubagentSummary).toHaveBeenCalledTimes(1);
     expectResultFields(state.result, { status: "error", error: abortReason });
+    expect(readDescendantSubagentFallbackReply).not.toHaveBeenCalled();
     expect(deliverOutboundPayloads).not.toHaveBeenCalled();
   });
 
@@ -1615,7 +1638,7 @@ describe("dispatchCronDelivery — double-announce guard", () => {
     const runStartedAt = 1_000;
     const agentSessionKey = "agent:main:cron:daily-monitor";
     const runSessionKey = "agent:main:cron:daily-monitor:run:test-session-id";
-    vi.mocked(countActiveDescendantRuns).mockReturnValue(0);
+    vi.mocked(hasDescendantRunAwaitingSettle).mockReturnValue(false);
     vi.mocked(isLikelyInterimCronMessage).mockReturnValue(true);
     vi.mocked(readDescendantSubagentFallbackReply).mockImplementation(async (params) =>
       params.sessionKey === runSessionKey
@@ -1632,8 +1655,8 @@ describe("dispatchCronDelivery — double-announce guard", () => {
 
     const state = await dispatchCronDelivery(params);
 
-    expect(countActiveDescendantRuns).toHaveBeenCalledWith(runSessionKey);
-    expect(countActiveDescendantRuns).not.toHaveBeenCalledWith(agentSessionKey);
+    expect(hasDescendantRunAwaitingSettle).toHaveBeenCalledWith(runSessionKey);
+    expect(hasDescendantRunAwaitingSettle).not.toHaveBeenCalledWith(agentSessionKey);
     expect(readDescendantSubagentFallbackReply).toHaveBeenCalledWith({
       sessionKey: runSessionKey,
       runStartedAt,
@@ -1810,7 +1833,7 @@ describe("dispatchCronDelivery — double-announce guard", () => {
     expect(enqueueSystemEvent).toHaveBeenCalledWith(
       "A scheduled automation delivered this message to this channel:\nMorning briefing complete.",
       {
-        sessionKey: "agent:main",
+        sessionKey: "agent:main:cron:test-job",
         contextKey: "cron-direct-delivery:v1:cron:test-job:1000:telegram::123456:",
       },
     );
@@ -1981,7 +2004,7 @@ describe("dispatchCronDelivery — double-announce guard", () => {
       sessionKey: "agent:main:work",
     });
     expect(ensureOutboundSessionEntry).toHaveBeenCalledWith({
-      sourceSessionKey: "agent:main",
+      sourceSessionKey: "agent:main:cron:test-job",
       cfg: params.cfgWithAgentDefaults,
       channel: "telegram",
       accountId: undefined,
@@ -2022,7 +2045,7 @@ describe("dispatchCronDelivery — double-announce guard", () => {
       sessionKey: "agent:main:work:thread:42",
     });
     expect(ensureOutboundSessionEntry).toHaveBeenCalledWith({
-      sourceSessionKey: "agent:main",
+      sourceSessionKey: "agent:main:cron:test-job",
       cfg: params.cfgWithAgentDefaults,
       channel: "telegram",
       accountId: undefined,
@@ -2105,6 +2128,7 @@ describe("dispatchCronDelivery — double-announce guard", () => {
       synthesizedText: "Session-bound cron update.",
       sessionTarget: "session:agent:main:main:thread:9999",
     });
+    params.agentSessionKey = "agent:main:main:thread:9999";
     const state = await dispatchCronDelivery(params);
 
     expect(state.result).toBeUndefined();
@@ -2114,7 +2138,7 @@ describe("dispatchCronDelivery — double-announce guard", () => {
     expect(enqueueSystemEvent).toHaveBeenCalledExactlyOnceWith(
       "A scheduled automation delivered this message to this channel:\nSession-bound cron update.",
       {
-        sessionKey: "agent:main",
+        sessionKey: "agent:main:main:thread:9999",
         contextKey: expect.stringMatching(
           /^cron-direct-delivery:v1:cron:test-job:\d+:telegram::123456:$/,
         ),
@@ -2734,7 +2758,7 @@ describe("dispatchCronDelivery — double-announce guard", () => {
     // onDeliveryResult.
     expect(ensureOutboundSessionEntry).toHaveBeenCalledTimes(1);
     expect(ensureOutboundSessionEntry).toHaveBeenCalledWith({
-      sourceSessionKey: "agent:main",
+      sourceSessionKey: "agent:main:cron:test-job",
       cfg: expect.anything(),
       channel: "telegram",
       route: expect.objectContaining({ to: "telegram:123456", from: "telegram:123456" }),
@@ -3158,7 +3182,7 @@ describe("dispatchCronDelivery — double-announce guard", () => {
     // conversation. Matches the partial-failure safety net in gateway send.ts.
     expect(ensureOutboundSessionEntry).toHaveBeenCalledTimes(1);
     expect(ensureOutboundSessionEntry).toHaveBeenCalledWith({
-      sourceSessionKey: "agent:main",
+      sourceSessionKey: "agent:main:cron:test-job",
       cfg: expect.anything(),
       channel: "telegram",
       route: expect.objectContaining({ to: "telegram:123456", from: "telegram:123456" }),
@@ -3200,7 +3224,7 @@ describe("dispatchCronDelivery — double-announce guard", () => {
     // partial-failure safety net in gateway server-methods/send.ts.
     expect(ensureOutboundSessionEntry).toHaveBeenCalledTimes(1);
     expect(ensureOutboundSessionEntry).toHaveBeenCalledWith({
-      sourceSessionKey: "agent:main",
+      sourceSessionKey: "agent:main:cron:test-job",
       cfg: expect.anything(),
       channel: "telegram",
       route: expect.objectContaining({ to: "telegram:123456", from: "telegram:123456" }),
@@ -3261,7 +3285,7 @@ describe("dispatchCronDelivery — double-announce guard", () => {
     // Once-only: the throw-path safety net must not double-commit.
     expect(ensureOutboundSessionEntry).toHaveBeenCalledTimes(1);
     expect(ensureOutboundSessionEntry).toHaveBeenCalledWith({
-      sourceSessionKey: "agent:main",
+      sourceSessionKey: "agent:main:cron:test-job",
       cfg: expect.anything(),
       channel: "telegram",
       route: expect.objectContaining({ to: "telegram:123456", from: "telegram:123456" }),
@@ -3802,11 +3826,11 @@ describe("dispatchCronDelivery — double-announce guard", () => {
       agentId: "main",
       accountId: undefined,
       target: "+15551234567",
-      currentSessionKey: "agent:main",
+      currentSessionKey: "agent:main:cron:test-job",
       threadId: undefined,
     });
     expect(ensureOutboundSessionEntry).toHaveBeenCalledWith({
-      sourceSessionKey: "agent:main",
+      sourceSessionKey: "agent:main:cron:test-job",
       cfg: params.cfgWithAgentDefaults,
       channel: "whatsapp",
       accountId: undefined,
