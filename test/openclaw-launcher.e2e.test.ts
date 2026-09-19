@@ -347,7 +347,7 @@ describe("openclaw launcher", () => {
       });
     });
 
-    it.each(["n\n", "\n", "", "maybe\n", "\u0003"])(
+    it.each(["n\n", "\n", "", "maybe\n", "^C", "\u0003"])(
       "does not install after decline or cancellation: %j",
       async (input) => {
         const fixture = await prepareRecovery();
