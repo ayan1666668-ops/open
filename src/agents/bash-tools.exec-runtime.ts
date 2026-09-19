@@ -962,6 +962,7 @@ export async function runExecProcess({
         mode: "child",
         argv: spawnSpec.argv,
         stdinMode: spawnSpec.stdinMode,
+        exactEnv: opts.sandbox ? true : undefined,
       });
     }
   } catch (error) {
