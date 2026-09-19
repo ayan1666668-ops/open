@@ -76,6 +76,43 @@ describe("Codex image response diagnostics", () => {
       },
     ]);
     await expect(result).rejects.toThrow(/Rejected request/);
-    await expect(result).rejects.not.toThrow(/[\u0000\u202e]|private-details|beyond-limit|x{257}/);
+    await expect(result).rejects.not.toThrow(/private-details|beyond-limit|x{257}/);
+    await expect(result).rejects.not.toThrow("\u0000");
+    await expect(result).rejects.not.toThrow("\u202e");
+  });
+
+  it("rejects malformed consumed event fields before image extraction", async () => {
+    await expect(
+      readEvents([
+        { type: "response.completed", response: { output: { result: "not-an-array" } } },
+      ]),
+    ).rejects.toThrow(/malformed stream event/);
+  });
+
+  it("accepts nullable optional wire fields without losing completed image bytes", async () => {
+    const image = Buffer.from("completed image");
+    const result = await readEvents([
+      {
+        type: "response.completed",
+        response: {
+          error: null,
+          incomplete_details: null,
+          output: [
+            {
+              type: "image_generation_call",
+              result: image.toString("base64"),
+              status: null,
+              revised_prompt: null,
+              content: null,
+            },
+          ],
+          usage: { total_tokens: 1 },
+        },
+      },
+    ]);
+    expect(result.images).toEqual([
+      { buffer: image, mimeType: "image/png", fileName: "image-1.png" },
+    ]);
+    expect(result.metadata).toMatchObject({ usage: { total_tokens: 1 } });
   });
 });

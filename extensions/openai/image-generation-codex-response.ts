@@ -2,6 +2,7 @@ import { canonicalizeBase64 } from "openclaw/plugin-sdk/blob-runtime";
 import type { ImageGenerationResult } from "openclaw/plugin-sdk/image-generation";
 import { sanitizeTerminalText } from "openclaw/plugin-sdk/text-chunking";
 import { truncateUtf16Safe } from "openclaw/plugin-sdk/text-utility-runtime";
+import { z } from "zod";
 
 const MAX_CODEX_IMAGE_SSE_BYTES = 64 * 1024 * 1024;
 const MAX_CODEX_IMAGE_SSE_EVENTS = 512;
@@ -10,43 +11,38 @@ const OPENAI_MAX_IMAGE_RESULTS = 4;
 const STANDARD_BASE64_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 const DIAGNOSTIC_MAX_CHARS = 256;
 
-type OpenAICodexImageGenerationContent = {
-  type?: string;
-  text?: string;
-  refusal?: string;
-};
-
-type OpenAICodexImageGenerationItem = {
-  type?: string;
-  result?: string | null;
-  revised_prompt?: string;
-  status?: "in_progress" | "completed" | "generating" | "failed";
-  text?: string;
-  refusal?: string;
-  content?: OpenAICodexImageGenerationContent[];
-};
-
-type OpenAICodexImageGenerationEvent = {
-  type?: string;
-  item?: OpenAICodexImageGenerationItem;
-  response?: {
-    error?: {
-      code?: string;
-      message?: string;
-    };
-    incomplete_details?: {
-      reason?: string;
-    };
-    output?: OpenAICodexImageGenerationItem[];
-    usage?: unknown;
-    tool_usage?: unknown;
-  };
-  error?: {
-    code?: string;
-    message?: string;
-  };
-  message?: string;
-};
+const contentSchema = z.object({
+  type: z.string().nullish(),
+  text: z.string().nullish(),
+  refusal: z.string().nullish(),
+});
+const itemSchema = contentSchema.extend({
+  result: z.string().nullish(),
+  revised_prompt: z.string().nullish(),
+  status: z.string().nullish(),
+  content: z.array(contentSchema).nullish(),
+});
+const errorSchema = z.object({
+  code: z.string().nullish(),
+  message: z.string().nullish(),
+});
+const eventSchema = z.object({
+  type: z.string().nullish(),
+  item: itemSchema.nullish(),
+  response: z
+    .object({
+      error: errorSchema.nullish(),
+      incomplete_details: z.object({ reason: z.string().nullish() }).nullish(),
+      output: z.array(itemSchema).nullish(),
+      usage: z.unknown().optional(),
+      tool_usage: z.unknown().optional(),
+    })
+    .nullish(),
+  error: errorSchema.nullish(),
+  message: z.string().nullish(),
+});
+type OpenAICodexImageGenerationItem = z.infer<typeof itemSchema>;
+type OpenAICodexImageGenerationEvent = z.infer<typeof eventSchema>;
 
 async function readResponseBodyText(response: Response): Promise<string> {
   if (!response.body) {
@@ -96,15 +92,19 @@ function parseCodexImageGenerationEvents(body: string): OpenAICodexImageGenerati
     if (!data || data === "[DONE]") {
       continue;
     }
-    let event: OpenAICodexImageGenerationEvent;
+    let decoded: unknown;
     try {
-      event = JSON.parse(data) as OpenAICodexImageGenerationEvent;
+      decoded = JSON.parse(data);
     } catch {
       // Ignore non-JSON SSE payloads from intermediaries; failed HTTP statuses
       // are handled before this parser runs.
       continue;
     }
-    events.push(event);
+    const event = eventSchema.safeParse(decoded);
+    if (!event.success) {
+      throw new Error("OpenAI Codex image generation returned a malformed stream event");
+    }
+    events.push(event.data);
     if (events.length > MAX_CODEX_IMAGE_SSE_EVENTS) {
       throw new Error("OpenAI Codex image generation response exceeded event limit");
     }
@@ -135,7 +135,7 @@ function decodeCodexImagePayload(payload: string): Buffer {
 }
 
 function extractCodexImageDiagnostic(
-  completed: OpenAICodexImageGenerationItem[] | undefined,
+  completed: OpenAICodexImageGenerationItem[] | null | undefined,
   streamed: OpenAICodexImageGenerationItem[],
 ): string | undefined {
   // Final diagnostic content wins; done events recover text omitted at completion.
