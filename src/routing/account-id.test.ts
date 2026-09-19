@@ -9,8 +9,10 @@ import {
 describe("account id normalization", () => {
   const reservedAccountIdCases = [
     { name: "rejects __proto__ pollution keys", input: "__proto__" },
+    { name: "rejects __PROTO__ pollution keys", input: "__PROTO__" },
     { name: "rejects constructor pollution keys", input: "constructor" },
     { name: "rejects prototype pollution keys", input: "prototype" },
+    { name: "rejects PROTOTYPE pollution keys", input: "PROTOTYPE" },
   ] as const;
 
   function expectNormalizedAccountIdCase(params: {
@@ -41,19 +43,19 @@ describe("account id normalization", () => {
       expected: "prod-us-east",
     },
     {
-      name: "strips a leading underscore like a leading dash",
+      name: "keeps a leading underscore account identity",
       input: "_prod_us",
-      expected: "prod_us",
+      expected: "_prod_us",
     },
     {
-      name: "collapses a lone underscore to the default account",
+      name: "keeps a lone underscore account id",
       input: "_",
-      expected: DEFAULT_ACCOUNT_ID,
+      expected: "_",
     },
     {
-      name: "strips leading delimiters in either order",
+      name: "keeps leading delimiters in either order",
       input: "_-prod_us",
-      expected: "prod_us",
+      expected: "_-prod_us",
     },
     ...reservedAccountIdCases.map(({ name, input }) => ({
       name,
@@ -69,14 +71,14 @@ describe("account id normalization", () => {
     { name: "keeps blank optional values unset", input: "   ", expected: undefined },
     { name: "keeps invalid optional values unset", input: " !!! ", expected: undefined },
     {
-      name: "keeps lone-underscore optional values unset",
+      name: "keeps a lone underscore optional account id",
       input: "_",
-      expected: undefined,
+      expected: "_",
     },
     {
-      name: "strips leading underscores from optional ids",
+      name: "keeps a leading underscore optional account identity",
       input: "_prod_us",
-      expected: "prod_us",
+      expected: "_prod_us",
     },
     ...reservedAccountIdCases.map(({ name, input }) => ({
       name: name.replace(" pollution keys", " optional values"),
