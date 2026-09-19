@@ -30,6 +30,48 @@ export abstract class MemoryManagerWatchResources extends MemoryManagerSyncBase 
   protected readonly nativeMemoryWatchPairs: NativeMemoryWatchPair[] = [];
   private readonly memoryWatchPressureWarning: MemoryWatchPressureWarningState = { shown: false };
   protected memoryWatchCapacityDegraded = false;
+  // Set when a watcher died and no replacement covers its paths. Unlike capacity
+  // exhaustion this is recoverable, so the owner rebuilds coverage on demand.
+  protected memoryWatchLost = false;
+
+  // Cheap liveness probe for the memory watch resources. It does no I/O unless a
+  // native pair is parked without a main watcher, which only happens while the
+  // parent watch waits for a replaced root to reappear.
+  protected isMemoryWatchLost(): boolean {
+    if (this.memoryWatchLost || this.watcher?.closed === true) {
+      return true;
+    }
+    for (const pair of this.nativeMemoryWatchPairs) {
+      if (pair.main !== null) {
+        continue;
+      }
+      // A root that exists again while the pair still has no main watcher means
+      // the parent event never arrived and nothing observes the directory.
+      try {
+        if (fsSync.statSync(pair.dir, { throwIfNoEntry: false })?.isDirectory()) {
+          return true;
+        }
+      } catch {
+        // An unreadable root cannot be watched either way; leave it to the parent.
+      }
+    }
+    return false;
+  }
+
+  // Drop every memory watch handle so ensureWatcher can rebuild coverage.
+  protected closeMemoryWatchHandles(): void {
+    this.closeNativeMemoryWatchPairs();
+    const watcher = this.watcher;
+    if (!watcher) {
+      return;
+    }
+    this.watcher = null;
+    void watcher.close().catch((error: unknown) => {
+      log.warn(`memory watcher close failed: ${String(error)}`);
+    });
+    // Chokidar removes error listeners before pending filesystem operations settle.
+    watcher.on("error", () => {});
+  }
 
   protected scheduleMemoryWatchPressureStartupCheck(): void {
     if (

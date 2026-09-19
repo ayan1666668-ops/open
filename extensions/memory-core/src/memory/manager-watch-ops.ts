@@ -14,6 +14,7 @@ import {
 } from "openclaw/plugin-sdk/memory-core-host-engine-storage";
 import { resolveTimerTimeoutMs } from "openclaw/plugin-sdk/number-runtime";
 import { normalizeLowercaseStringOrEmpty } from "openclaw/plugin-sdk/string-coerce-runtime";
+import { runInMemoryBackgroundContext } from "./background-context.js";
 import {
   type LinuxMemoryDirectoryWatcher,
   MemoryManagerWatchResources,
@@ -631,6 +632,9 @@ export abstract class MemoryManagerWatchOps extends MemoryManagerWatchResources 
     try {
       this.attachMemoryChokidarPaths(dir, markDirty);
     } catch (err) {
+      // Nothing observes `dir` any more. Let the next search or interval tick
+      // rebuild coverage instead of leaving the loss as a terminal state.
+      this.memoryWatchLost = true;
       log.warn(`failed to attach chokidar fallback for ${dir}: ${String(err)}`);
     }
   }
@@ -665,10 +669,50 @@ export abstract class MemoryManagerWatchOps extends MemoryManagerWatchResources 
       // File watcher errors must not crash the gateway; manual search still works.
       const message = err instanceof Error ? err.message : String(err);
       log.warn(`memory watcher error: ${message}`);
+      // Chokidar keeps running after a path-level error, but the path it reported
+      // is no longer covered. Force one reconcile to close that gap, as the
+      // native handlers already do.
+      markDirty();
     });
     watcher.once("ready", () => {
       this.warnIfMemoryWatchPressure(countChokidarWatchedEntries(watcher), "paths");
     });
+  }
+
+  // A lost watcher leaves `dirty` with no producer, so every later sync trusts a
+  // stale clean flag and skips the memory source. Rebuild coverage and force one
+  // reconcile before the caller's dirty gate decides whether memory needs work.
+  // Loss is repaired here rather than inside the watcher error callbacks so a
+  // persistent path error cannot rebuild the watcher in a tight loop.
+  protected reconcileLostMemoryWatch(): boolean {
+    if (
+      this.closing ||
+      this.closed ||
+      this.memoryWatchCapacityDegraded ||
+      !this.sources.has("memory") ||
+      !this.settings.sync.watch ||
+      !this.isMemoryWatchLost()
+    ) {
+      return false;
+    }
+    this.memoryWatchLost = false;
+    this.closeMemoryWatchHandles();
+    this.dirty = true;
+    log.warn("memory watcher lost; reconciling memory files and re-arming the watcher");
+    // Search reaches this boundary inside the requesting turn. Replacement
+    // watchers and their debounce timers outlive that turn, so re-arm through
+    // the same background boundary startup uses instead of the caller's context.
+    runInMemoryBackgroundContext(() => {
+      try {
+        this.ensureWatcher();
+      } catch (err) {
+        // Search and the interval tick must stay usable when the rebuild fails;
+        // keep the loss recorded so the next boundary retries.
+        this.memoryWatchLost = true;
+        log.warn(`memory watcher re-arm failed: ${String(err)}`);
+      }
+    });
+    return true;
   }
 
   protected ensureIntervalSync() {
@@ -681,6 +725,7 @@ export abstract class MemoryManagerWatchOps extends MemoryManagerWatchResources 
       return;
     }
     this.intervalTimer = setInterval(() => {
+      this.reconcileLostMemoryWatch();
       runDetachedMemorySync(() => this.sync({ reason: "interval" }), "interval");
     }, ms);
   }
