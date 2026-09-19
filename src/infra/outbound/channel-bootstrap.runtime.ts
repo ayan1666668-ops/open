@@ -80,7 +80,7 @@ function resolveSendCapableRegistry(
   registry: PluginRegistry | null | undefined,
   channel: string,
 ): PluginRegistry | undefined {
-  const entry = registry?.channels?.find((entry) => entry?.plugin?.id === channel);
+  const entry = registry?.channels?.find((candidate) => candidate?.plugin?.id === channel);
   return registry && (entry?.plugin?.outbound?.sendText ?? entry?.plugin?.message?.send?.text)
     ? registry
     : undefined;
