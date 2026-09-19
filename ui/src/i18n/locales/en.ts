@@ -4,6 +4,8 @@ import type { TranslationMap } from "../lib/types.ts";
 import * as agentEn from "./en-agents.ts";
 
 export const en: TranslationMap & {
+  linkReader: TranslationMap;
+  agentTools: TranslationMap;
   board: TranslationMap & { widget: TranslationMap };
   browser: TranslationMap & { errors: TranslationMap };
   chat: TranslationMap & {
@@ -270,7 +272,6 @@ export const en: TranslationMap & {
       invalidSandboxUrl: "MCP App sandbox URL is invalid",
     },
   },
-  githubPreview: {},
   sessionHovercard: {
     ariaLabel: "Session information",
     agentNotepad: "Agent Notepad",
@@ -305,7 +306,6 @@ export const en: TranslationMap & {
   sessionProgressCard: {
     title: "Progress",
     composerTitle: "Task progress",
-    gestureHint: "Drag or scroll up on the header to open; move down to close. Click to toggle.",
     shortCount: "{completed} of {total}",
     noteLabel: "Progress note",
     dismiss: "Dismiss progress card",
@@ -675,6 +675,8 @@ export const en: TranslationMap & {
         "The update was not applied because gateway restarts are disabled. Enable restarts in config, then retry.",
       restartUnavailable:
         "This global install cannot be safely replaced while restarts are disabled and no supervisor is present.",
+      externalSupervisorUpdateRequired:
+        "This Gateway is managed by an external supervisor. Use your server or deployment's update workflow to update OpenClaw and restart the Gateway. The Control UI and `openclaw update` cannot update this installation. No package changes or Gateway restart were attempted.",
       restartUnhealthy:
         "The replacement process never became healthy. The previous process stayed up so you can recover.",
       restartRevisionMismatch:
@@ -965,8 +967,14 @@ export const en: TranslationMap & {
     cloudProfileRuntimeUnsupported:
       "The {runtime} runtime cannot use this cloud worker. Choose a compatible cloud worker or run locally.",
     deviceRuntimeUnsupported: "This runtime does not support paired devices",
-    placementStartFailed: "The session was created, but runner startup failed: {error}",
+    placementStartFailed: "The session was created, but startup needs attention: {error}",
+    placementStillStarting:
+      "Worker setup is still in progress. Retry to check the existing worker; your message has not been sent.",
+    placementCompletionUnconfirmed:
+      "Could not confirm whether worker setup finished. Retry to check again; your message has not been sent.",
     placementReloadBlocked: "Recovery needs a reload. Unsaved starts will be lost.",
+    placementCancelled:
+      "Session setup was interrupted and the temporary session was cleaned up. Your prompt is kept here.",
     discardUnsavedAndReload: "Discard unsaved starts and reload",
     yourDevices: "Your devices",
     autoDeviceSub: "Least-busy device",
@@ -1047,6 +1055,8 @@ export const en: TranslationMap & {
     owners: "Owners",
     allOwners: "All owners",
     involvingMe: "Involving me",
+    hideFromInvolvingMe: "Hide from Involving me",
+    showInInvolvingMe: "Show in Involving me",
     specificOwner: "Specific owner",
     specificOwnerAvailable: "Specific owner: {count} available",
     specificOwnerSelected: "Specific owner: {name}",
@@ -1120,6 +1130,10 @@ export const en: TranslationMap & {
     messageNeedsAttention: "{count} message needs attention",
     messagesNeedAttention: "{count} messages need attention",
     unsentDraft: "Unsent draft",
+    workspaceKinds: {
+      worktree: "Worktree",
+      checkout: "Checkout",
+    },
     noSessions: "No sessions found.",
     noActiveSessions: "No active sessions.",
     noArchivedSessions: "No archived sessions.",
@@ -1954,81 +1968,6 @@ export const en: TranslationMap & {
     openControlUi: "Open Control UI",
   },
   agentTools: {
-    githubVerify: "Verify",
-    githubConnection: "Gateway connection",
-    githubDisconnected: "Disconnected",
-    githubAccessRequired: "Access required",
-    githubReadRequired: "GitHub identity status requires operator.read access.",
-    githubAdminRequired:
-      "Connecting, replacing, or removing a GitHub identity requires operator.admin access.",
-    githubEffectiveAuthor: "Effective Git Author",
-    githubEffectiveCredential: "Effective credential",
-    githubEffectiveAccessExpiry: "Effective access expiry",
-    githubEffectiveRefresh: "Effective refresh token",
-    githubEffectiveScopes: "Effective OAuth scopes",
-    githubNoAccount: "No verified account",
-    githubAuthorUnset: "Not set",
-    githubErrorTitle: "Error",
-    githubStateVerified: "Verified",
-    githubStateUnverified: "Not verified",
-    githubStateRateLimited: "Rate limited",
-    githubStateUnavailable: "No credentials",
-    githubStateConfiguredUnavailable: "Configured, but unavailable",
-    githubAuthorization: "GitHub authorization",
-    githubStarting: "Requesting code…",
-    githubCancelling: "Requesting cancellation…",
-    githubFinishing: "Authorization is already finishing…",
-    githubCancelFailed: "Cancellation could not be confirmed",
-    githubCancelFailedHint:
-      "Authorization is still active. Wait for it to finish or try cancellation again.",
-    githubRetryCancel: "Try cancel again",
-    githubCodeReady: "Code ready",
-    githubWaiting: "Waiting for approval…",
-    githubSlowDown: "GitHub asked us to wait longer…",
-    githubNetworkRetry: "Connection interrupted; retry scheduled",
-    githubAuthorizationHint: "Open GitHub yourself, then enter the one-time code shown here.",
-    githubDeviceCode: "One-time code",
-    githubDeviceCodeHint: "This code authorizes only the selected identity scope.",
-    githubExpires: "Code expires",
-    githubOpen: "Open github.com/login/device",
-    githubCopyCode: "Copy code",
-    githubAuthorizationFailed: "GitHub authorization failed",
-    githubExpired: "The one-time code expired. Connect again to request a new code.",
-    githubDenied: "GitHub authorization was denied. Connect again when you are ready.",
-    githubIncorrectCode: "GitHub rejected this device code. Connect again to request a new code.",
-    githubConnect: "Connect GitHub",
-    githubConnectHint: "Authorize GitHub without pasting a long-lived credential into the browser.",
-    githubPatFallback: "Personal access token",
-    githubPatFallbackHint: "Use a fine-grained PAT only when browser authorization is unsuitable.",
-    githubUsePat: "Use a PAT instead",
-    githubToken: "Fine-grained PAT",
-    githubTokenDesc:
-      "Stored in a private managed GitHub CLI profile; only the setup handoff is removed.",
-    githubTokenToggle: "Toggle token visibility",
-    githubPasteToken: "Paste a fine-grained personal access token first.",
-    githubAuthorName: "Author Name",
-    githubAuthorEmail: "Author Email",
-    githubConfigure: "Save Identity",
-    githubConfiguredHere: "Configured here",
-    githubInheritedHere: "Inherited",
-    githubKindNative: "Native GitHub CLI",
-    githubKindPat: "Managed personal access token",
-    githubKindOAuth: "Managed GitHub authorization",
-    githubRefreshAvailable: "Available",
-    githubRefreshExpired: "Expired — reconnect required",
-    githubRefreshUnavailable: "Unavailable — reconnect required",
-    githubRefreshRefreshing: "Refreshing…",
-    githubRefreshFailed: "Refresh failed — retrying",
-    githubUseSystemNewRuns: "Use system for new runs",
-    githubUseNativeNewRuns: "Use native for new runs",
-    githubUseSystemConfirmTitle: "Use the system GitHub identity for new runs?",
-    githubUseNativeConfirmTitle: "Use the native GitHub identity for new runs?",
-    githubUseSystemConfirmMessage:
-      "New runs for this agent will use the System identity. Active runs keep their current identity until they exit or restart. Revoke the GitHub authorization or PAT separately on GitHub if needed.",
-    githubUseNativeConfirmMessage:
-      "New runs without an agent override will use the native GitHub identity. Active runs keep their current identity until they exit or restart. Revoke the GitHub authorization or PAT separately on GitHub if needed.",
-    githubAgentMutationHint: "Authorization and removal below apply to This Agent for new runs.",
-    githubSystemMutationHint: "Authorization and removal below apply to System for new runs.",
     connectedSource: "Connected: {id}",
     connected: "Connected",
     channelSource: "Channel: {id}",
@@ -2388,6 +2327,7 @@ export const en: TranslationMap & {
   cloudWorkersPage: {},
   portalsPage: {},
   modelSetup: {
+    discovery: {},
     missingAuth: "No provider credential is configured for this model. Set it up in Model Setup.",
     commandHint: "Try /models or /help.",
     heading: "Connect a verified AI model",
@@ -2625,6 +2565,12 @@ export const en: TranslationMap & {
     },
   },
   mcpServers: {
+    signIn: "Sign in",
+    authenticationSaved: "Authentication saved",
+    signInFailed: "Sign-in did not finish. Check the connector settings and try again.",
+    signInExpired: "This sign-in session ended. Close the dialog and sign in again.",
+    profileSignIn: "Sign in through the linked account in Models.",
+    requesterSignIn: "Each person signs in through this connector in chat.",
     add: "Add server",
     adding: "Adding…",
     nameLabel: "Name",
@@ -2740,6 +2686,7 @@ export const en: TranslationMap & {
       active: "{running} running · {queued} queued · {failed} failed or stopped",
       finished: "{done} completed · {failed} failed or stopped",
       completed: "{done} completed",
+      failedOrStopped: "Failed or stopped",
       childOutcome: "Child runs finished. Check the conversation for the final response.",
       childOutcomeProcessing: "Child runs finished. The parent is processing their results.",
       details: "Child details",
@@ -3215,6 +3162,9 @@ export const en: TranslationMap & {
     actionsUnavailable: "Actions are unavailable while the Gateway reconnects.",
     settingsChangesUnavailable:
       "Changes to settings are disabled while the Gateway is reconnecting.",
+    sessionMoveRefreshFailed: "The session move was saved, but refreshing the list failed: {error}",
+    sessionMoveUncertain:
+      "The session move could not be confirmed. Refresh and check its group before retrying. {error}",
     sessionOperationCompletedPreviousConnection:
       "The session operation completed on the previous connection. Check the current session list before continuing.",
     sessionOperationCompletedPreviousConnectionWithRefreshError:
@@ -3388,14 +3338,19 @@ export const en: TranslationMap & {
     noResults: "No results",
     searchingSessions: "Searching sessions…",
     searchingCommands: "Searching commands…",
+    clearSearch: "Clear search",
+    escapeKey: "esc",
+    filterLabel: "Filter search results",
+    filters: { all: "All", sessions: "Sessions", messages: "Messages" },
     searchFailed: "Chat search failed — check the gateway logs and retry",
     modelSearchFailed: "Model search unavailable. Change your search to retry.",
     searchPartial: "Transcript search unavailable — showing chat titles and metadata",
-    searchIncomplete: "Transcript matches may be incomplete — indexing or search limits apply",
+    searchIndexing: "Indexing older messages — search again shortly.",
     categories: {
       search: "Search",
       navigation: "Navigation",
       skills: "Skills",
+      messages: "In messages",
     },
     items: {
       apps: "Apps",
@@ -3564,12 +3519,13 @@ export const en: TranslationMap & {
     },
     mentions: {
       menu: "Mention a person",
-      empty: "No eligible people found.",
+      empty: "No people found",
       truncated: "Keep typing to find more people.",
       online: "Online",
       offline: "Offline",
       unavailable: "Could not load people. Try again.",
       limit: "You can mention up to 10 people per message.",
+      selectedLabel: "Will notify",
       selected: "Will notify: {names}",
       remove: "Remove mention",
       restoreFailed:
@@ -3865,6 +3821,10 @@ export const en: TranslationMap & {
       startSession: "Start in a new session",
       startOptions: "Choose where to start the task",
       startWorktree: "Start in a new worktree",
+      chooseRepository: "Choose repository",
+      repositoryFolder: "Repository folder",
+      chooseRepositoryHelp:
+        "Choose a Git repository with a commit. Your task will start in a new worktree; its instructions are preserved.",
       startCurrentSession: "Start in this session",
       copyPrompt: "Copy prompt",
       copyPromptFailed: "Couldn't copy the prompt to the clipboard",
@@ -3875,6 +3835,8 @@ export const en: TranslationMap & {
       next: "Next suggested task",
       starting: "Starting…",
       dismiss: "Dismiss {title}",
+      started: "Task started",
+      startUnconfirmed: "Couldn't confirm the task started. Retry checks the same task.",
       adminRequired: "Administrator access is required to start suggested tasks.",
     },
     pullRequests: {
@@ -3903,8 +3865,6 @@ export const en: TranslationMap & {
       checksFailed: "Failed",
       checksRunning: "Running",
       checksSkipped: "Skipped",
-      showMore: "Show {count} more",
-      showLess: "Show less",
       rateLimited:
         "GitHub API rate limit reached. Pull request status may be out of date until the limit resets.",
       unavailable:
@@ -4261,6 +4221,9 @@ export const en: TranslationMap & {
       disconnected: "Not connected. Try again after reconnecting.",
     },
     imageLightbox: {
+      previous: "Previous image",
+      next: "Next image",
+      position: "{current} / {total}",
       label: "Image preview: {title}",
       open: "Open image {title}",
       openOriginal: "Open in new tab",
@@ -4416,6 +4379,9 @@ export const en: TranslationMap & {
       expandPanel: "Expand {panel}",
       restore: "Restore split",
       useViewAsDefault: "Use current view as default",
+      currentViewIsDefault: "This is the default view",
+      defaultViewDescription:
+        "Used when anyone opens this dashboard. Personal layout choices still apply.",
       savingDefault: "Saving default…",
       defaultSaved: "Dashboard default saved for future opens.",
       defaultSaveFailed:
@@ -4444,6 +4410,8 @@ export const en: TranslationMap & {
       tasksEmpty: "Follow active and recently completed background tasks.",
       desktop: "Desktop",
       desktopEmpty: "Connect to an available remote desktop.",
+      portal: "Portal",
+      portalEmpty: "Preview a web application running for this task.",
       discussion: "Discussion",
       discussionEmpty: "Open the shared discussion for this session.",
       dashboard: "Dashboard",
@@ -4516,6 +4484,8 @@ export const en: TranslationMap & {
       browserAnnotationUndoUnavailable:
         "Undo is unavailable because the browser annotation limit has been reached.",
       preparingAttachments: "Preparing attachments…",
+      preparingAttachmentCount: "Preparing {count} attachment",
+      preparingAttachmentsCount: "Preparing {count} attachments",
       removeAttachment: "Remove attachment",
       removeNamedAttachment: "Remove {name}",
       removeBrowserAnnotation: "Remove browser annotation: {name}",
@@ -4668,6 +4638,7 @@ export const en: TranslationMap & {
       readFailed: "Could not attach: {names}{more}",
       tooLarge: "Too large to send: {names}{more}",
       showInTextField: "Show in text field",
+      pastedText: "Pasted text",
       outsideAllowedFolders: "Outside allowed folders",
       unavailable: "Unavailable",
       failureDeliveryFailed: "Delivery failed. Try sending this file again.",
@@ -4734,6 +4705,8 @@ export const en: TranslationMap & {
       skippedCount: "{count} skipped",
       running: "Running",
       completed: "Completed",
+      blocked: "Blocked",
+      outcomeUnknown: "Outcome unknown",
       exitCode: "Exit code {code}",
       failureCount: "{count} failed",
       noOutputFailed: "No output — tool failed.",
@@ -5296,5 +5269,11 @@ export const en: TranslationMap & {
       agentMessageRequiredShort: "Agent message required.",
       nameRequiredShort: "Name required.",
     },
+  },
+
+  linkReader: {
+    loadingPreview: "Loading preview…",
+    title: "Link reader",
+    urlPlaceholder: "Supported link URL",
   },
 };
