@@ -1854,6 +1854,7 @@ jobs:
           CHILD_OPENCLAW_NPM_ALREADY_PUBLISHED: ${{ steps.children.outputs.openclaw_npm_already_published }}
           CHILD_OPENCLAW_NPM_EXPECTED_WORKFLOW_REF: ${{ steps.children.outputs.openclaw_npm_expected_workflow_ref }}
           CHILD_OPENCLAW_NPM_EXPECTED_WORKFLOW_SHA: ${{ steps.children.outputs.openclaw_npm_expected_workflow_sha }}
+          CHILD_OPENCLAW_NPM_RUN_ATTEMPT: ${{ steps.children.outputs.openclaw_npm_resume_run_attempt }}
           CHILD_OPENCLAW_NPM_RUN_ID: ${{ steps.core_start.outputs.openclaw_npm_run_id || steps.children.outputs.openclaw_npm_resume_run_id }}
           CORE_START_OUTCOME: ${{ steps.core_start.outcome }}
           CLAWHUB_AUTHORIZATION_OUTCOME: ${{ steps.clawhub_authorization.outcome }}
@@ -1868,6 +1869,7 @@ jobs:
           openclaw_npm_already_published="${CHILD_OPENCLAW_NPM_ALREADY_PUBLISHED}"
           openclaw_npm_expected_workflow_ref="${CHILD_OPENCLAW_NPM_EXPECTED_WORKFLOW_REF}"
           openclaw_npm_expected_workflow_sha="${CHILD_OPENCLAW_NPM_EXPECTED_WORKFLOW_SHA}"
+          openclaw_npm_run_attempt="${CHILD_OPENCLAW_NPM_RUN_ATTEMPT}"
           openclaw_npm_run_id="${CHILD_OPENCLAW_NPM_RUN_ID}"
           plugin_clawhub_bootstrap_completed="false"
           resolve_clawhub_release_plan
