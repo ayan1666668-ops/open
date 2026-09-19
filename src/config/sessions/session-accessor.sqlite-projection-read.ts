@@ -5,6 +5,7 @@ import {
   getNodeSqliteKysely,
   prepareSqliteQueryIterator,
   prepareSqliteQuerySync,
+  prepareSqliteQueryTakeFirstSync,
 } from "../../infra/kysely-sync.js";
 import { runSqliteDeferredTransactionSync } from "../../infra/sqlite-transaction.js";
 import type { DB as OpenClawAgentKyselyDatabase } from "../../state/openclaw-agent-db.generated.js";
@@ -100,7 +101,14 @@ export function selectMessageRows(
     .where("active.message_position", "is not", null)
     .orderBy("active.message_position", "asc");
   return "positions" in selection
-    ? query.where("active.message_position", "in", selection.positions)
+    ? query.where(
+        "active.message_position",
+        "in",
+        selection.positions.length <= 500
+          ? selection.positions
+          : /* kysely-allow-raw: larger sparse reset tails need one binding to stay below SQLite's variable limit. */
+            sql<number>`(SELECT value FROM json_each(${JSON.stringify(selection.positions)}))`,
+      )
     : query
         .where("active.message_position", ">=", selection.start)
         .where("active.message_position", "<", selection.endExclusive);
@@ -140,6 +148,24 @@ function createMessageRangeReaders(database: CurrentTranscriptProjection["databa
       ),
     );
   return {
+    latest: prepareSqliteQueryTakeFirstSync<
+      MessageRangeParameters,
+      Parameters<typeof parseActiveTranscriptMessageRow>[0]
+    >(database.db, (parameter) =>
+      selectMessagePayload(
+        selectMessageRows(
+          database,
+          parameter((params) => params.sessionId),
+          {
+            start: parameter((params) => params.start),
+            endExclusive: parameter((params) => params.endExclusive),
+          },
+        ),
+      )
+        .clearOrderBy()
+        .orderBy("active.message_position", "desc")
+        .limit(1),
+    ),
     messages: prepareSqliteQueryIterator<
       MessageRangeParameters,
       Parameters<typeof parseActiveTranscriptMessageRow>[0]

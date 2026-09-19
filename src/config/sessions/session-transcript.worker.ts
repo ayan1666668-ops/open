@@ -156,7 +156,9 @@ serveWorkerTasks(
           ok: true,
           ...(await withHistoryDatabase(
             request.database,
-            () => loadSessionEntryReadOnlyInScope(request.scope) !== undefined,
+            () =>
+              loadSessionEntryReadOnlyInScope({ ...request.scope, projection: "list" }) !==
+              undefined,
           )),
         };
       }
