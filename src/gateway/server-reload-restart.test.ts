@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import * as restartModule from "../infra/restart.js";
+import * as commandQueue from "../process/command-queue.js";
 import { resetGatewayWorkAdmission } from "../process/gateway-work-admission.js";
 import type { GatewayReloadPlan } from "./config-reload.js";
+import { createGatewayActiveWorkTracker } from "./server-reload-active-work.js";
 import { nextGatewayReloadGeneration } from "./server-reload-generation.js";
 import { createGatewayRestartCoordinator } from "./server-reload-restart.js";
 
@@ -128,6 +130,46 @@ describe("gateway restart readiness preflight", () => {
       coordinator.stopRestartRetries();
     }
   });
+  it("forces the restart at the deadline when production timeout diagnostics cannot inspect work", async () => {
+    vi.useFakeTimers();
+    const queueSize = vi.spyOn(commandQueue, "getTotalQueueSize").mockReturnValue(1);
+    const requestRecoveryRestart = vi.fn(() => ({ status: "emitted" as const }));
+    const logReload = { info: vi.fn(), warn: vi.fn() };
+    const myGeneration = nextGatewayReloadGeneration();
+    const tracker = createGatewayActiveWorkTracker({ params: { logReload }, myGeneration });
+    const coordinator = createGatewayRestartCoordinator({
+      params: { logReload, requestRecoveryRestart },
+      myGeneration,
+      restartRecoveryAvailable: true,
+      ...tracker,
+    });
+    try {
+      expect(coordinator.requestGatewayRestart(restartPlan, {} as OpenClawConfig).status).toBe(
+        "accepted",
+      );
+      queueSize.mockImplementation(() => {
+        throw new Error("pending-work store unavailable");
+      });
+      await vi.advanceTimersByTimeAsync(299_500);
+      expect(requestRecoveryRestart).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(500);
+
+      expect(requestRecoveryRestart).toHaveBeenCalledExactlyOnceWith(
+        "config reload: gateway.port",
+        { force: true, reason: "config reload forced restart" },
+      );
+      expect(logReload.warn).toHaveBeenCalledWith(
+        expect.stringContaining(
+          "pending work unknown (Error: pending-work store unavailable); forcing restart",
+        ),
+      );
+    } finally {
+      coordinator.stopRestartRetries();
+      queueSize.mockRestore();
+    }
+  });
+
   it.each(["check error", "timeout"])(
     "cancels live retries after %s when the coordinator stops",
     async (failure) => {
