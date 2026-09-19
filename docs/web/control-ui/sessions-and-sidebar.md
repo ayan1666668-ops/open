@@ -260,11 +260,13 @@ Choose **Icon & color** from a session menu and select a color swatch to add a n
 
 The command palette can start an independent task without leaving your current
 conversation or settings page. Search sessions, settings, and commands as usual,
-or write a prompt in the same field. Multiline text or a prompt of 160 or more
+or write a prompt in the same field. Multiline text or a prompt of 60 or more
 characters pauses palette searches and gently hides the search tabs, results, and
-hints. The input stays anchored in place. Clearing the prompt or shortening it
-back to a single-line search restores the usual palette. Session-creation errors
-and recovery actions remain visible in either mode.
+hints. The input stays anchored in place. Search returns when the text is
+single-line and shortened to 50 characters or fewer, or cleared. Between 51 and
+59 characters, the palette keeps its current mode to avoid flickering while you
+edit. Counts exclude leading and trailing whitespace. Session-creation errors and
+recovery actions remain visible in either mode.
 
 - **Enter** opens or runs the selected result. With no result, Enter does not send.
 - **Shift+Enter** adds a line. The field grows downward to three lines, then scrolls

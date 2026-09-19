@@ -281,8 +281,7 @@ suite.define(() => {
           const inputTop = (await input.boundingBox())!.y;
           const initialHeight = (await search.boundingBox())!.height;
           const requestCount = (await gateway.getRequests("sessions.search")).length;
-          const prompt =
-            "Review the session sidebar and make the expanded state the default. Keep collapsed groups available for people who prefer them, but avoid making everyone reopen the same groups each time.";
+          const prompt = "Help me plan the next steps for this small project this week";
           const samples = await input.evaluateHandle((element: HTMLTextAreaElement, value) => {
             const frames: Array<{
               x: number;
@@ -360,6 +359,24 @@ suite.define(() => {
               (request) => isRecord(request.params) && request.params.search === prompt,
             ),
           ).toBe(false);
+          await input.fill(prompt.slice(0, 55));
+          await page.waitForTimeout(100);
+          expect(await search.evaluate((element: HTMLElement) => element.inert)).toBe(true);
+          expect(await gateway.getRequests("sessions.search")).toHaveLength(requestCount);
+          await input.fill(prompt.slice(0, 50));
+          await expect.poll(() => input.getAttribute("aria-controls")).toBe("cmd-palette-listbox");
+          await expect
+            .poll(async () => (await gateway.getRequests("sessions.search")).length)
+            .toBe(requestCount + 1);
+          expect((await gateway.getRequests("sessions.search")).at(-1)?.params).toMatchObject({
+            query: prompt.slice(0, 50),
+          });
+          await input.fill(prompt.slice(0, 59));
+          expect(await search.evaluate((element: HTMLElement) => element.inert)).toBe(false);
+          await input.fill(prompt);
+          await expect
+            .poll(() => search.evaluate((element: HTMLElement) => element.inert))
+            .toBe(true);
           await input.fill("");
           await expect
             .poll(() => search.evaluate((element: HTMLElement) => element.inert))
@@ -367,7 +384,7 @@ suite.define(() => {
           await palette.getByRole("option", { name: "New session", exact: true }).waitFor();
           await input.fill("appearance");
           await palette.getByRole("option", { name: /^Appearance audit/ }).waitFor();
-          expect(await gateway.getRequests("sessions.search")).toHaveLength(requestCount + 1);
+          expect(await gateway.getRequests("sessions.search")).toHaveLength(requestCount + 2);
           expect((await palette.locator(".cmd-palette").boundingBox())!.y).toBe(original.y);
         },
       );

@@ -34,8 +34,8 @@ type PaletteItem = CommandPaletteItem;
 
 const SESSION_SEARCH_DEBOUNCE_MS = 50;
 const SESSION_SEARCH_MIN_CHARS = 2;
-// Deliberate line breaks or paragraph-length input belong to the draft, not search.
-const PROMPT_MIN_CHARS = 160;
+const PROMPT_ENTER_CHARS = 60;
+const PROMPT_EXIT_CHARS = 50;
 const SESSION_SEARCH_SCOPE = {
   includeGlobal: false,
   includeUnknown: false,
@@ -66,7 +66,14 @@ export class CommandPalette extends OpenClawLightDomContentsElement {
     {
       onClose: () => this.closePalette(),
       onMessageChange: (query) => {
-        if (!query.trim()) {
+        const text = query.trim();
+        const length = Array.from(text).length;
+        // Separate entry/exit thresholds keep edits near the boundary from
+        // repeatedly collapsing and reopening search. Draft resets pass here too.
+        this.promptMode =
+          text.includes("\n") ||
+          (this.promptMode ? length > PROMPT_EXIT_CHARS : length >= PROMPT_ENTER_CHARS);
+        if (!text) {
           this.filter = "all";
         }
         this.activeId = null;
@@ -79,10 +86,7 @@ export class CommandPalette extends OpenClawLightDomContentsElement {
     return this.draft.message;
   }
 
-  private get promptMode(): boolean {
-    const query = this.query.trim();
-    return query.includes("\n") || Array.from(query).length >= PROMPT_MIN_CHARS;
-  }
+  @state() private promptMode = false;
   @state() private activeId: string | null = null;
   @state() private sessionItems: readonly PaletteItem[] = [];
   @state() private catalogItems: readonly PaletteItem[] = [];

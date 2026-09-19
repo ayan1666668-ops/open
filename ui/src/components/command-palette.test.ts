@@ -291,8 +291,8 @@ describe("CommandPalette search", () => {
   );
 
   it.each([
-    { name: "160 characters", prompt: "x".repeat(160) },
-    { name: "160 Unicode code points", prompt: "🦞".repeat(160) },
+    { name: "60 characters", prompt: "x".repeat(60) },
+    { name: "60 Unicode code points", prompt: "🦞".repeat(60) },
     {
       name: "a long single-line request",
       prompt:
@@ -333,8 +333,8 @@ describe("CommandPalette search", () => {
   });
 
   it.each([
-    { name: "159 Unicode code points", query: "🦞".repeat(159) },
-    { name: "159 trimmed characters", query: ` ${"x".repeat(159)} ` },
+    { name: "59 Unicode code points", query: "🦞".repeat(59) },
+    { name: "59 trimmed characters", query: ` ${"x".repeat(59)} ` },
     { name: "surrounding blank lines", query: "\n plugins \n" },
     { name: "a short natural-language query", query: "find my deployment plan" },
   ])("continues searching for $name", async ({ query }) => {
@@ -357,6 +357,59 @@ describe("CommandPalette search", () => {
       "cmd-palette-listbox",
     );
   });
+
+  it.each(["x", "🦞"])(
+    "keeps the current mode between 50 and 60 code points (%s)",
+    async (character) => {
+      const { gateway } = createGateway(true, { methods: ["sessions.search"] });
+      const list = vi.fn(async () => null);
+      const { palette } = await mountPalette(createContext(gateway, list));
+      await enterQuery(palette, character.repeat(59));
+      await vi.advanceTimersByTimeAsync(50);
+      expect(list).toHaveBeenCalledOnce();
+      const input = palette.querySelector<HTMLTextAreaElement>(".cmd-palette__input")!;
+      for (const length of [60, 59, 51, 55, 60]) {
+        input.value = " " + character.repeat(length) + " ";
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        await vi.advanceTimersByTimeAsync(50);
+        await palette.updateComplete;
+        expectPalettePromptMode(palette);
+        expect(list).toHaveBeenCalledOnce();
+      }
+      input.value = " " + character.repeat(50) + " ";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      await vi.advanceTimersByTimeAsync(50);
+      await palette.updateComplete;
+      expect(input.getAttribute("aria-controls")).toBe("cmd-palette-listbox");
+      expect(list).toHaveBeenLastCalledWith(
+        expect.objectContaining({ search: character.repeat(50) }),
+      );
+      input.value = character.repeat(59);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      await vi.advanceTimersByTimeAsync(50);
+      await palette.updateComplete;
+      expect(input.getAttribute("aria-controls")).toBe("cmd-palette-listbox");
+      expect(list).toHaveBeenCalledTimes(3);
+      input.value = character.repeat(60);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      await palette.updateComplete;
+      expectPalettePromptMode(palette);
+      input.value = "";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      await palette.updateComplete;
+      expect(input.getAttribute("aria-controls")).toBe("cmd-palette-listbox");
+      palette.togglePalette();
+      await palette.updateComplete;
+      await enterQuery(palette, character.repeat(55));
+      await vi.advanceTimersByTimeAsync(50);
+      await palette.updateComplete;
+      expect(input.isConnected).toBe(false);
+      expect(palette.querySelector(".cmd-palette__input")?.getAttribute("aria-controls")).toBe(
+        "cmd-palette-listbox",
+      );
+      expect(list).toHaveBeenCalledTimes(4);
+    },
+  );
 
   it("waits for two characters before searching sessions", async () => {
     const { gateway } = createGateway(true, { methods: ["sessions.search"] });
