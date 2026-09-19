@@ -1,5 +1,5 @@
 import { resolveSendableOutboundReplyParts } from "openclaw/plugin-sdk/reply-payload";
-import type { ReplyPayload } from "../../auto-reply/reply-payload.js";
+import { copyReplyPayloadMetadata, type ReplyPayload } from "../../auto-reply/reply-payload.js";
 import { normalizeMediaReferenceForComparison } from "../../media/media-reference-comparison.js";
 import { parseInlineDirectives, sanitizeReplyDirectiveId } from "../../utils/directive-tags.js";
 import { sanitizeAssistantDisplayText } from "./chat-assistant-content.js";
@@ -25,11 +25,11 @@ function replyMediaDedupeKeys(payload: ReplyPayload): string[] {
 
 function canonicalizeReplyMedia(payload: ReplyPayload): ReplyPayload {
   const mediaUrls = replyMediaUrls(payload);
-  return {
+  return copyReplyPayloadMetadata(payload, {
     ...payload,
     mediaUrl: undefined,
     mediaUrls: mediaUrls.length > 0 ? mediaUrls : undefined,
-  };
+  });
 }
 
 function mergeDefinedReplySemantics(target: ReplyPayload, source: ReplyPayload): ReplyPayload {
@@ -37,7 +37,7 @@ function mergeDefinedReplySemantics(target: ReplyPayload, source: ReplyPayload):
   const sourceReplyToId =
     sanitizeReplyDirectiveId(source.replyToId) ??
     sanitizeReplyDirectiveId(sourceInlineDirectives?.replyToExplicitId);
-  return {
+  const merged = {
     ...target,
     ...(source.trustedLocalMedia === true || target.trustedLocalMedia === true
       ? { trustedLocalMedia: true }
@@ -65,11 +65,12 @@ function mergeDefinedReplySemantics(target: ReplyPayload, source: ReplyPayload):
     ...(source.isError === true || target.isError === true ? { isError: true } : {}),
     ...(source.channelData !== undefined ? { channelData: source.channelData } : {}),
   };
+  return copyReplyPayloadMetadata(source, copyReplyPayloadMetadata(target, merged));
 }
 
 function mergeMediaReplySemantics(target: ReplyPayload, source: ReplyPayload): ReplyPayload {
   const sourceInlineDirectives = parseReplyInlineDirectives(source);
-  return {
+  const merged = {
     ...target,
     ...(source.trustedLocalMedia === true || target.trustedLocalMedia === true
       ? { trustedLocalMedia: true }
@@ -83,6 +84,7 @@ function mergeMediaReplySemantics(target: ReplyPayload, source: ReplyPayload): R
       ? { audioAsVoice: true }
       : {}),
   };
+  return copyReplyPayloadMetadata(source, copyReplyPayloadMetadata(target, merged));
 }
 
 function hasMergeableReplySemantics(payload: ReplyPayload): boolean {
@@ -157,7 +159,10 @@ export function selectChatSendFinalReplyPayloads(params: {
   if (sensitiveMediaDedupeKeys.size > 0) {
     for (const entry of commandBlockPayloadEntriesForDelivery) {
       if (replyMediaDedupeKeys(entry.payload).some((key) => sensitiveMediaDedupeKeys.has(key))) {
-        entry.payload = { ...entry.payload, sensitiveMedia: true };
+        entry.payload = copyReplyPayloadMetadata(entry.payload, {
+          ...entry.payload,
+          sensitiveMedia: true,
+        });
       }
     }
   }
@@ -215,11 +220,11 @@ export function selectChatSendFinalReplyPayloads(params: {
         return [
           {
             ...entry,
-            payload: {
+            payload: copyReplyPayloadMetadata(entry.payload, {
               ...entry.payload,
               mediaUrl: undefined,
               mediaUrls: remainingFinalMediaUrls.length > 0 ? remainingFinalMediaUrls : undefined,
-            },
+            }),
           },
         ];
       })
