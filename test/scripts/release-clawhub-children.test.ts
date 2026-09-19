@@ -23,11 +23,14 @@ function fixture({
   childStatus = "waiting",
   titleTag = releaseTag,
   sameToolingRef = false,
+  validation = false,
+  legacyTitle = false,
   actor = "github-actions[bot]",
   cancellationFails = false,
   publisherRunning = false,
 } = {}) {
   const root = mkdtempSync(join(tmpdir(), "release-clawhub-children-"));
+  const currentWorkflowRef = workflow === "plugin-clawhub-new.yml" ? "main" : workflowRef;
   roots.push(root);
   mkdirSync(join(root, "bin"));
   const child = {
@@ -38,9 +41,11 @@ function fixture({
     repository: { full_name: repository },
     head_repository: { full_name: repository },
     actor: { login: actor },
-    head_branch: sameToolingRef ? workflowRef : "release-publish/bbbbbbbbbbbb-123",
+    head_branch: sameToolingRef ? currentWorkflowRef : "release-publish/bbbbbbbbbbbb-123",
     head_sha: "b".repeat(40),
-    display_title: `${workflow} [${titleTag}] parent=80/1`,
+    display_title: legacyTitle
+      ? "Plugin ClawHub New"
+      : `${workflow} [${titleTag}] ${validation ? "validation" : "publish"} parent=80/1`,
     status: childStatus,
     conclusion: null,
     html_url: `https://github.com/${repository}/actions/runs/91`,
@@ -115,7 +120,7 @@ if (args[0] === 'run' && args[1] === 'list') {
           GITHUB_RUN_ATTEMPT: "1",
           GITHUB_ENV: join(root, "env"),
           GITHUB_STEP_SUMMARY: join(root, "summary"),
-          WORKFLOW_REF: workflowRef,
+          WORKFLOW_REF: currentWorkflowRef,
           WORKFLOW: workflow,
           PARENT_WORKFLOW_SHA: workflowSha,
           RELEASE_TAG: releaseTag,
@@ -172,16 +177,49 @@ describe("ClawHub child lifecycle", () => {
     }
   });
 
-  it.each([false, true])(
-    "leaves another tag's waiting child alone (same tooling: %s)",
-    (sameToolingRef) => {
-      const result = fixture({ titleTag: "v2026.9.4", sameToolingRef }).run(
+  it.each([
+    ["plugin-clawhub-release.yml", false],
+    ["plugin-clawhub-release.yml", true],
+    ["plugin-clawhub-new.yml", false],
+    ["plugin-clawhub-new.yml", true],
+  ] as const)(
+    "leaves another tag's waiting %s alone (same tooling: %s)",
+    (workflow, sameToolingRef) => {
+      const result = fixture({ workflow, titleTag: "v2026.9.4", sameToolingRef }).run(
         'dispatch_workflow_at_ref "$WORKFLOW_REF" "$PARENT_WORKFLOW_SHA" "$WORKFLOW" -f release_tag="$RELEASE_TAG"',
       );
       expect(result.status, result.stderr).toBe(0);
       expect(result.calls.some((args) => args[1] === "cancel")).toBe(false);
     },
   );
+
+  it.each(["plugin-clawhub-release.yml", "plugin-clawhub-new.yml"])(
+    "leaves same-tag validation on the same tooling ref independent in %s",
+    (workflow) => {
+      const result = fixture({
+        workflow,
+        sameToolingRef: true,
+        validation: true,
+        childStatus: "in_progress",
+      }).run(
+        'dispatch_workflow_at_ref "$WORKFLOW_REF" "$PARENT_WORKFLOW_SHA" "$WORKFLOW" -f release_tag="$RELEASE_TAG"',
+      );
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.calls.some((args) => args[1] === "cancel")).toBe(false);
+    },
+  );
+
+  it("preserves bootstrap's existing independent slots for unidentified main runs", () => {
+    const result = fixture({
+      workflow: "plugin-clawhub-new.yml",
+      sameToolingRef: true,
+      legacyTitle: true,
+    }).run(
+      'dispatch_workflow_at_ref "$WORKFLOW_REF" "$PARENT_WORKFLOW_SHA" "$WORKFLOW" -f release_tag="$RELEASE_TAG"',
+    );
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.calls.some((args) => args[1] === "cancel")).toBe(false);
+  });
 
   it("cleans up immediately recorded children after a later dispatch step fails", () => {
     const f = fixture({ titleTag: "v2026.9.4" });

@@ -86,7 +86,7 @@ cleanup_clawhub_children() {
 cancel_superseded_clawhub_child() {
   local workflow="$1" run_id="$2" title="$3"
   local parent_tuple parent_run_id parent_attempt run_json pending_json jobs_json parent_json deadline
-  parent_tuple="${title#"${workflow} [${RELEASE_TAG:-}] parent="}"
+  parent_tuple="${title#"${workflow} [${RELEASE_TAG:-}] publish parent="}"
   [[ "$parent_tuple" =~ ^([1-9][0-9]*)/([1-9][0-9]*)$ ]] || return 1
   parent_run_id="${BASH_REMATCH[1]}"
   parent_attempt="${BASH_REMATCH[2]}"
@@ -144,13 +144,14 @@ require_clawhub_dispatch_available() {
       run_url="$(jq -r '.url' <<< "$run")"
       title="$(jq -r '.displayTitle // ""' <<< "$run")"
       branch="$(jq -r '.headBranch // ""' <<< "$run")"
-      if [[ -n "${RELEASE_TAG:-}" && "$title" == "${workflow} [${RELEASE_TAG}] parent="* ]]; then
+      if [[ -n "${RELEASE_TAG:-}" && "$title" == "${workflow} [${RELEASE_TAG}] publish parent="* ]]; then
         if cancel_superseded_clawhub_child "$workflow" "$run_id" "$title"; then
           continue
         fi
-      elif [[ "$title" == "${workflow} ["*"] parent="* || "$branch" != "$workflow_ref" ]]; then
-        # Different releases can share tooling (including bootstrap main).
-        # The same-ref guard is only needed for unidentified legacy children.
+      elif [[ "$title" == "${workflow} ["*"] publish parent="* || "$title" == "${workflow} ["*"] validation parent="* || "$branch" != "$workflow_ref" || "$workflow" == plugin-clawhub-new.yml ]]; then
+        # Validation and different targets have independent concurrency slots.
+        # Preserve the normal publisher's legacy same-ref guard only; bootstrap
+        # main can also host unidentified validation runs from older tooling.
         continue
       fi
       endpoint="repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/pending_deployments"
