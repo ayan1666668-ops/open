@@ -473,7 +473,7 @@ function runFixtureCommand(binary: string, args: string[]): string {
   let stdout = "";
   let stderr = "";
   let status = 0;
-  const exit = Symbol("fixture exit");
+  const exit = new Error("fixture exit");
   const fixtureProcess = {
     argv: [process.execPath, binary, ...args],
     env: process.env,
