@@ -401,11 +401,7 @@ export function projectCompactionSemanticSelection(params: {
     return null;
   }
   const selected = new Set(params.selection.selectedSegmentIds);
-  if (
-    params.snapshot.segments.some(
-      (segment) => segment.protected && !selected.has(segment.id),
-    )
-  ) {
+  if (params.snapshot.segments.some((segment) => segment.protected && !selected.has(segment.id))) {
     return null;
   }
   const sourceIndexes = new Set<number>();

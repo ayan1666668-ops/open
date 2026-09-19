@@ -2,22 +2,20 @@ import { computeAdaptiveChunkRatioWithWorker } from "../compaction-planning-work
 import { SUMMARIZATION_OVERHEAD_TOKENS } from "../compaction.js";
 import type { AgentMessage } from "../runtime/index.js";
 import {
+  type CompactionLoss,
+  type ContextSection,
+  formatGeneratedSplitTurnSection,
+} from "./compaction-safeguard-context.js";
+import {
   appendSummarySection,
   auditSummaryQuality,
   buildStructuredFallbackSummary,
   wrapUntrustedInstructionBlock,
 } from "./compaction-safeguard-quality.js";
-import {
-  type CompactionLoss,
-  type ContextSection,
-  formatGeneratedSplitTurnSection,
-} from "./compaction-safeguard-context.js";
 
 type IdentifierPolicy = "strict" | "off" | "custom";
 
-type SummaryPrompt =
-  | { kind: "custom"; instructions: string }
-  | { kind: "turn-prefix" };
+type SummaryPrompt = { kind: "custom"; instructions: string } | { kind: "turn-prefix" };
 
 type SummaryQualityRetention = {
   auditSummary?: string;
@@ -36,13 +34,13 @@ type FinalizedCompactionSummary = {
   qualityRetentionInfeasible: boolean;
 };
 
-export type PreparedCompactionSummary = {
+type PreparedCompactionSummary = {
   finalized: FinalizedCompactionSummary;
   historySummary: string;
   splitTurnSummary: string;
 };
 
-export type PreparedSummaryAudit = ReturnType<typeof auditSummaryQuality>;
+type PreparedSummaryAudit = ReturnType<typeof auditSummaryQuality>;
 
 type PreparedSummaryInput = {
   messages: AgentMessage[];
@@ -137,16 +135,12 @@ export function createCompactionSummaryAttemptRuntime(params: {
       historySummary,
       splitTurnSection ? `\n\n${splitTurnSection}` : "",
     );
-    const structuralSummary = params.qualityGuardEnabled
-      ? historySummary
-      : unbudgetedSummary;
+    const structuralSummary = params.qualityGuardEnabled ? historySummary : unbudgetedSummary;
     const finalized = await params.finalizeSummaryText(
       structuralSummary,
       {
         generatedSplitTurnSection:
-          params.qualityGuardEnabled && splitTurnSection
-            ? `\n\n${splitTurnSection}`
-            : undefined,
+          params.qualityGuardEnabled && splitTurnSection ? `\n\n${splitTurnSection}` : undefined,
         preservedTurnsSection: input.preservedTurnsSection,
       },
       producerLosses,
@@ -156,8 +150,7 @@ export function createCompactionSummaryAttemptRuntime(params: {
             identifiers: params.identifiers,
             latestAsk: params.latestUserAsk,
             latestAskInRetainedTurn: params.splitUserAsk !== null,
-            latestUnresolvedUserRequest:
-              params.latestUnresolvedUserRequest ?? undefined,
+            latestUnresolvedUserRequest: params.latestUnresolvedUserRequest ?? undefined,
             requiredAskContext: params.requiredAskContext,
             identifierPolicy: params.identifierPolicy,
           }
@@ -166,9 +159,7 @@ export function createCompactionSummaryAttemptRuntime(params: {
     return { finalized, historySummary, splitTurnSummary };
   };
 
-  const auditPreparedSummary = (
-    candidate: PreparedCompactionSummary,
-  ): PreparedSummaryAudit => {
+  const auditPreparedSummary = (candidate: PreparedCompactionSummary): PreparedSummaryAudit => {
     if (!params.qualityGuardEnabled) {
       return { ok: true, reasons: [] };
     }
@@ -182,8 +173,7 @@ export function createCompactionSummaryAttemptRuntime(params: {
       identifiers: params.identifiers,
       latestAsk: params.latestUserAsk,
       latestUnresolvedUserRequest: params.latestUnresolvedUserRequest ?? undefined,
-      retainedTurnSummary:
-        params.splitUserAsk !== null ? candidate.splitTurnSummary : undefined,
+      retainedTurnSummary: params.splitUserAsk !== null ? candidate.splitTurnSummary : undefined,
       identifierPolicy: params.identifierPolicy,
     });
   };
@@ -209,17 +199,16 @@ export function createCompactionSummaryAttemptRuntime(params: {
   const buildUncuratedFallback = async (input: {
     sourceMessages: AgentMessage[];
     prepareInput: (messages: AgentMessage[]) => PreparedSummaryInput;
-  }): Promise<
-    | { status: "ok"; summary: string }
-    | { status: "failed"; reason: string }
-  > => {
+  }): Promise<{ status: "ok"; summary: string } | { status: "failed"; reason: string }> => {
     try {
+      params.signal?.throwIfAborted();
       const prepared = input.prepareInput(input.sourceMessages);
       const candidate = await summarizePreparedInput({
         sourceMessages: prepared.messages,
         preservedTurnsSection: prepared.preservedTurnsSection,
         correctiveInstructions: "",
       });
+      params.signal?.throwIfAborted();
       const audit = auditPreparedSummary(candidate);
       return audit.ok
         ? { status: "ok", summary: candidate.finalized.summary }

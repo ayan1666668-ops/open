@@ -2,6 +2,7 @@ import type { AgentMessage } from "openclaw/plugin-sdk/agent-core";
 import type { ExtensionAPI, ExtensionContext } from "openclaw/plugin-sdk/agent-sessions";
 import type { Model } from "openclaw/plugin-sdk/llm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import * as decisionRuntime from "../../decisions/runtime.js";
 import type { CompactionProvider } from "../../plugins/compaction-provider.js";
 import {
   resetPluginRuntimeStateForTest,
@@ -343,4 +344,169 @@ describe("compaction semantic observer wiring", () => {
       );
     },
   );
+});
+
+const validSummary = [
+  "## Decisions",
+  "No decisions.",
+  "## Open TODOs",
+  "Finish the report.",
+  "## Constraints/Rules",
+  "Keep all existing behavior.",
+  "## Pending user asks",
+  "Finish the report.",
+  "## Exact identifiers",
+  "None.",
+].join("\n");
+
+function activeScenario() {
+  const sessionManager = stubSessionManager();
+  setCompactionSafeguardRuntime(sessionManager, {
+    model: createAnthropicModelFixture(),
+    semanticCurationMode: "apply",
+    recentTurnsPreserve: 0,
+    qualityGuardEnabled: true,
+    qualityGuardMaxRetries: 0,
+  });
+  const base = createCompactionEvent({
+    messageText: "Keep all existing behavior.",
+    tokensBefore: 100,
+  });
+  base.preparation.messagesToSummarize.push(
+    castAgentMessage(timestampedTextAssistant("Unrelated old discussion.", 2)),
+    { role: "user", content: "Finish the report.", timestamp: 3 },
+  );
+  const event = {
+    ...base,
+    preparation: { ...base.preparation, settings: { reserveTokens: 4000 } },
+  };
+  return { sessionManager, event, apiKey: "test-key" };
+}
+
+describe("active curation through the registered compaction hook", () => {
+  it.each(["off", "shadow", "apply"] as const)(
+    "rejects late cancellation in %s mode",
+    async (mode) => {
+      installDecisionFixture();
+      const scenario = activeScenario();
+      scenario.event.preparation.messagesToSummarize.splice(1, 1);
+      setCompactionSafeguardRuntime(scenario.sessionManager, {
+        model: createAnthropicModelFixture(),
+        semanticCurationMode: mode,
+        recentTurnsPreserve: 0,
+      });
+      const controller = new AbortController();
+      scenario.event.signal = controller.signal;
+      const reason = new Error("Compaction owner cancelled");
+      mockSummarizeInStages.mockReset();
+      mockSummarizeInStages.mockImplementationOnce(async () => {
+        controller.abort(reason);
+        return validSummary;
+      });
+      await expect(runCompactionScenario(scenario)).rejects.toBe(reason);
+      expect(mockSummarizeInStages).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each(["selection", "fidelity"])("does not recover after a hard %s error", async (stage) => {
+    installDecisionFixture();
+    const originalEvaluate = decisionRuntime.evaluateDecision;
+    const evaluate = vi.spyOn(decisionRuntime, "evaluateDecision");
+    if (stage === "fidelity") {
+      evaluate.mockImplementationOnce(originalEvaluate);
+    }
+    evaluate.mockRejectedValueOnce(new Error("Judgment consumer authority closed."));
+    mockSummarizeInStages.mockReset();
+    mockSummarizeInStages.mockResolvedValue(validSummary);
+    const { result } = await runCompactionScenario(activeScenario());
+    expect(result).toEqual({ cancel: true });
+    expect(mockSummarizeInStages).toHaveBeenCalledTimes(stage === "fidelity" ? 1 : 0);
+  });
+
+  it("protects older user instructions while applying a reduced summarizer input", async () => {
+    installDecisionFixture();
+    const scenario = activeScenario();
+    const original = structuredClone(scenario.event.preparation.messagesToSummarize);
+    mockSummarizeInStages.mockReset();
+    mockSummarizeInStages.mockResolvedValue(validSummary);
+    const { result } = await runCompactionScenario(scenario);
+    expect(result.cancel).not.toBe(true);
+    expect(result.compaction?.summary).toContain("Keep all existing behavior.");
+    expect(mockSummarizeInStages).toHaveBeenCalledTimes(1);
+    expect(mockSummarizeInStages.mock.calls[0]?.[0].messages).toEqual([original[0], original[2]]);
+    expect(scenario.event.preparation.messagesToSummarize).toEqual(original);
+  });
+
+  it.each(["generation", "audit", "fidelity"])(
+    "tries exactly one audited original-source recovery after %s failure",
+    async (failure) => {
+      installDecisionFixture(failure === "fidelity" ? "missing" : "preserved");
+      const scenario = activeScenario();
+      mockSummarizeInStages.mockReset();
+      if (failure === "generation") {
+        mockSummarizeInStages.mockRejectedValueOnce(new Error("Curated generation failed"));
+      } else {
+        mockSummarizeInStages.mockResolvedValueOnce(
+          failure === "audit" ? "Invalid summary" : validSummary,
+        );
+      }
+      mockSummarizeInStages.mockResolvedValueOnce(validSummary);
+      const { result } = await runCompactionScenario(scenario);
+      expect(result.cancel).not.toBe(true);
+      expect(result.compaction?.summary).toContain("Keep all existing behavior.");
+      expect(mockSummarizeInStages).toHaveBeenCalledTimes(2);
+      expect(mockSummarizeInStages.mock.calls[1]?.[0].messages).toEqual(
+        scenario.event.preparation.messagesToSummarize,
+      );
+    },
+  );
+
+  it("cancels when the single original-source recovery also fails its audit", async () => {
+    installDecisionFixture();
+    const scenario = activeScenario();
+    mockSummarizeInStages.mockReset();
+    mockSummarizeInStages.mockResolvedValue("Invalid summary");
+    const { result } = await runCompactionScenario(scenario);
+    expect(result).toEqual({ cancel: true });
+    expect(mockSummarizeInStages).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not start recovery after caller cancellation", async () => {
+    installDecisionFixture();
+    const scenario = activeScenario();
+    const controller = new AbortController();
+    scenario.event.signal = controller.signal;
+    const reason = new Error("Compaction owner cancelled");
+    mockSummarizeInStages.mockReset();
+    mockSummarizeInStages.mockImplementationOnce(async () => {
+      controller.abort(reason);
+      throw new Error("Transport ended");
+    });
+    await expect(runCompactionScenario(scenario)).rejects.toBe(reason);
+    expect(mockSummarizeInStages).toHaveBeenCalledTimes(1);
+  });
+
+  it("rechecks mode after awaited fidelity before accepting a curated candidate", async () => {
+    const scenario = activeScenario();
+    installDecisionFixture("preserved", (batch) => {
+      if (
+        Object.values(batch.questions).some(
+          (question) => question.type === "choice" && "preserved" in question.criteria,
+        )
+      ) {
+        setCompactionSafeguardRuntime(scenario.sessionManager, {
+          model: createAnthropicModelFixture(),
+          semanticCurationMode: "off",
+        });
+      }
+    });
+    mockSummarizeInStages.mockReset();
+    mockSummarizeInStages.mockResolvedValue(validSummary);
+    const { result } = await runCompactionScenario(scenario);
+    expect(result.cancel).not.toBe(true);
+    expect(mockSummarizeInStages).toHaveBeenCalledTimes(2);
+    expect(mockSummarizeInStages.mock.calls[1]?.[0].messages).toEqual(
+      scenario.event.preparation.messagesToSummarize,
+    );
+  });
 });
