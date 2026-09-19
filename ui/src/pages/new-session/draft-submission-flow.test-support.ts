@@ -10,6 +10,7 @@ import type { NewSessionRouteData } from "./location.ts";
 import { TestReactiveControllerHost } from "./reactive-controller-host.test-support.ts";
 
 type FixtureOptions = {
+  gateway?: ApplicationContext["gateway"];
   takePreparedTitle?: () => string | undefined;
   phase?: "connected" | "connecting";
   agents?: unknown[];
@@ -18,10 +19,14 @@ type FixtureOptions = {
   selfUser?: { id: string };
   data?: NewSessionRouteData;
   request?: (method: string, params?: unknown) => Promise<unknown>;
+  modelCatalog?: (params?: unknown) => Promise<unknown>;
 };
 
 export function createDraftFixture(options: FixtureOptions = {}) {
   const request = vi.fn((method: string, params?: unknown) => {
+    if (method === "models.list") {
+      return options.modelCatalog ? options.modelCatalog(params) : Promise.resolve({ models: [] });
+    }
     if (options.request) {
       return options.request(method, params);
     }
@@ -30,7 +35,9 @@ export function createDraftFixture(options: FixtureOptions = {}) {
   const client = { recoveryScope: "principal-a", recoveryScopeReady: true, request };
   const phase = options.phase ?? "connected";
   const context = {
-    gateway: {
+    gateway: options.gateway ?? {
+      subscribe: () => () => undefined,
+      subscribeEvents: () => () => undefined,
       connection: { gatewayUrl: "ws://gateway.example" },
       snapshot: {
         phase,
@@ -75,6 +82,8 @@ export function createDraftFixture(options: FixtureOptions = {}) {
     chatSubmissions: createChatSubmissions(),
     agentSelection: { state: { selectedId: "main" }, set: vi.fn() },
     config: { current: { cliAgentsEnabled: true, terminalEnabled: true } },
+    basePath: "",
+    replace: vi.fn(),
     navigateAndWait: vi.fn(async () => undefined),
     preload: vi.fn(async () => undefined),
   } as unknown as ApplicationContext;
@@ -110,7 +119,8 @@ export function createDraftFixture(options: FixtureOptions = {}) {
       onPendingPlacementReset: () => flow?.releasePendingPlacementOwner(),
       onRecoveryReady: (gatewayUrl, recoveryScope) =>
         flow?.restorePendingPlacementRecovery(gatewayUrl, recoveryScope),
-      onAdoptAgentDefaults: () => place?.adoptAgentDefaults(),
+      onAdoptAgentDefaults: () =>
+        place?.adoptAgentDefaults({ preserveSelectedAgent: true, preserveSelectedFolder: true }),
     },
   );
   const browser = new DraftPlaceBrowser(
@@ -142,7 +152,7 @@ export function createDraftFixture(options: FixtureOptions = {}) {
     {
       requestUpdate: vi.fn(),
       onError: (error) => flow?.setError(error),
-      onClearError: (error) => flow?.clearErrorIf(error),
+      onClearError: (error) => flow?.clearError(error),
     },
   );
   const requestUpdate = vi.fn();
