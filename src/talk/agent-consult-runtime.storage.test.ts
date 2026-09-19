@@ -1,6 +1,7 @@
-import { afterEach, assert, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readSessionMessageIdentity } from "../../packages/gateway-client/src/session-projection-message-identity.js";
 import type { RunEmbeddedAgentParams } from "../agents/embedded-agent-runner/run/params.js";
+import { resolveAgentRunSessionTarget } from "../agents/run-session-target.js";
 import { guardSessionManager } from "../agents/session-tool-result-guard-wrapper.js";
 import { SessionManager } from "../agents/sessions/index.js";
 import { makeAgentAssistantMessage } from "../agents/test-helpers/agent-message-fixtures.js";
@@ -38,17 +39,20 @@ describe("voice consult concrete store ownership", () => {
     const runIds: string[] = [];
     const secret = "123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
     const runEmbeddedAgent = vi.fn(async (params: RunEmbeddedAgentParams) => {
-      assert(params.sessionTarget);
+      const target = await resolveAgentRunSessionTarget({
+        ...params,
+        missingSessionKey: "resolve-existing",
+      });
       expect(params.runId).toBe(runIds.at(-1));
       expect(params.runId.startsWith(runIdPrefix)).toBe(true);
-      const manager = SessionManager.open(params.sessionTarget, state.workspaceDir);
+      const manager = SessionManager.open(target, state.workspaceDir);
       guardSessionManager(manager, {
         config: cfg,
         agentId: params.agentId,
         sessionKey: params.sessionKey,
         runId: params.runId,
       }).appendMessage(makeAgentAssistantMessage({ content: [{ type: "text", text: secret }] }));
-      const persisted = SessionManager.open(params.sessionTarget, state.workspaceDir)
+      const persisted = SessionManager.open(target, state.workspaceDir)
         .getEntries()
         .filter((entry) => entry.type === "message");
       expect(persisted.map((entry) => readSessionMessageIdentity(entry.message)?.runId)).toEqual(
