@@ -71,21 +71,27 @@ export async function createDiskSwap(sourceRoot, base) {
     for (const match of code.matchAll(
       /(?:import|export)\s*\{([^}]+)\}\s*from\s*["']([^"']+)["']/gs,
     )) {
-      if (!external.has(match[2])) external.set(match[2], new Set());
+      if (!external.has(match[2])) {
+        external.set(match[2], new Set());
+      }
       match[1]
         .split(",")
         .map((s) => s.trim().split(/\s+as\s+/)[0])
         .filter(Boolean)
-        .forEach((name) => external.get(match[2]).add(name));
+        .forEach((exportName) => external.get(match[2]).add(exportName));
     }
     for (const match of code.matchAll(/import\s+(\w+)\s+from\s*["']([^"']+)["']/g)) {
-      if (!external.has(match[2])) external.set(match[2], new Set());
+      if (!external.has(match[2])) {
+        external.set(match[2], new Set());
+      }
       external.get(match[2]).add("default");
     }
   }
   const stubs = new Map();
   for (const [specifier, namesSet] of external) {
-    if (modules.has(path.basename(specifier))) continue;
+    if (modules.has(path.basename(specifier))) {
+      continue;
+    }
     const names = [...namesSet];
     const builtin = specifier.startsWith("node:") ? await import(specifier) : undefined;
     stubs.set(
@@ -93,7 +99,7 @@ export async function createDiskSwap(sourceRoot, base) {
       new vm.SyntheticModule(
         names,
         function () {
-          for (const name of names)
+          for (const name of names) {
             this.setExport(
               name,
               builtin
@@ -106,6 +112,7 @@ export async function createDiskSwap(sourceRoot, base) {
                       throw new Error(message);
                     },
             );
+          }
         },
         { context, identifier: specifier },
       ),

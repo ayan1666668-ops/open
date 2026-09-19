@@ -15,6 +15,16 @@ const sourceRoot = path.resolve(
   process.env.RESTART_SOURCE_ROOT ??
     path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../.."),
 );
+// Load canonical source helpers without requiring a compiled workspace package.
+const normalizationRoot = process.env.RESTART_DEPENDENCY_ROOT ?? sourceRoot;
+const { normalizeOptionalString } = await import(
+  pathToFileURL(path.join(normalizationRoot, "packages/normalization-core/src/string-coerce.ts"))
+    .href
+);
+const { collectNestedErrorCandidates } = await import(
+  pathToFileURL(path.join(normalizationRoot, "packages/normalization-core/src/error-coercion.ts"))
+    .href
+);
 const main = process.env.RESTART_VARIANT !== "pr";
 const root = "/fixture/openclaw"; // Identifier only; never accessed.
 const result = () => ({
@@ -129,8 +139,7 @@ async function fixture({
   };
   const values = {
     theme: new Proxy({}, { get: () => (value) => value }),
-    normalizeOptionalString: (value) =>
-      typeof value === "string" && value.trim() ? value.trim() : undefined,
+    normalizeOptionalString,
     resolveServiceRefreshEnv: (env) => env,
     resolveGatewayServiceManagementBlockMessageForUpdate: () => undefined,
     isPackageManagerUpdateMode: (mode) => ["npm", "pnpm", "bun"].includes(mode),
@@ -157,7 +166,9 @@ async function fixture({
       assert.equal(command, "restart");
       assert.equal(preserve, main ? undefined : true);
       activation.assertCurrent?.();
-      if (commandError) throw commandError;
+      if (commandError) {
+        throw commandError;
+      }
       return "accepted";
     },
     async verifyUpdatedGateway(params) {
@@ -166,10 +177,18 @@ async function fixture({
       assert.equal(params.expectedVersion, "2026.9.4");
       assert.equal(params.requireRunningService, true);
       params.assertCurrent?.();
-      if (mutateExecutor) run.executorFence = { assertCurrent() {} };
-      if (verifyOnDisk) await verifyOnDisk();
-      if (error) throw error; // The rejection reaches the real outer catch, not child stdout.
-      if (verification.ok) params.onVerified?.(Date.now());
+      if (mutateExecutor) {
+        run.executorFence = { assertCurrent() {} };
+      }
+      if (verifyOnDisk) {
+        await verifyOnDisk();
+      }
+      if (error) {
+        throw error;
+      } // The rejection reaches the real outer catch, not child stdout.
+      if (verification.ok) {
+        params.onVerified?.(Date.now());
+      }
       return verification;
     },
     withOwnedManagedUpdateEnv: async (_env, action) => action(),
@@ -199,7 +218,7 @@ async function fixture({
     assertUpdateCommandPackageFinalization: async () => {},
     normalizeControlPlaneUpdateResult: (value) => value,
     isUpdateGatewayReadinessPending: (value) => value.reason === "gateway-readiness-pending",
-    collectNestedErrorCandidates: (error) => (error === undefined ? [] : [error]),
+    collectNestedErrorCandidates,
     resolveOpenClawStateSqlitePath: () => "/fixture/state.sqlite",
     assertUpdateRecoveryAdmission: async () => {},
     readGatewayOwnerLease: async () => undefined,
@@ -242,19 +261,25 @@ async function fixture({
       imports.set(match[2], [...new Set([...(imports.get(match[2]) ?? []), ...names])]);
     }
     // The historical classifier uses builtin path/url imports only.
-    for (const match of code.matchAll(/import\s+(\w+)\s+from\s*["']([^"']+)["']/g))
+    for (const match of code.matchAll(/import\s+(\w+)\s+from\s*["']([^"']+)["']/g)) {
       imports.set(match[2], ["default"]);
+    }
     requests.set(mod.identifier, imports);
   }
   const external = new Map();
-  for (const imports of requests.values())
+  for (const imports of requests.values()) {
     for (const [specifier, names] of imports) {
-      if (!external.has(specifier)) external.set(specifier, new Set());
+      if (!external.has(specifier)) {
+        external.set(specifier, new Set());
+      }
       names.forEach((name) => external.get(specifier).add(name));
     }
+  }
   const stubs = new Map();
   for (const [specifier, namesSet] of external) {
-    if (modules.has(path.basename(specifier))) continue;
+    if (modules.has(path.basename(specifier))) {
+      continue;
+    }
     const names = [...namesSet];
     const builtin = specifier.startsWith("node:") ? await import(specifier) : undefined;
     stubs.set(
@@ -267,7 +292,7 @@ async function fixture({
               ? builtin[name]
               : Object.hasOwn(values, name)
                 ? values[name]
-                : (...args) => {
+                : () => {
                     const message = "Unexpected dependency call: " + specifier + ":" + name;
                     unexpected.push(message);
                     throw new Error(message);
@@ -301,6 +326,7 @@ async function fixture({
   };
 }
 
+/** @type {Array<[string, () => Error]>} */
 const thrownCases = [
   [
     "in-root ENOENT JS chunk",
@@ -502,7 +528,9 @@ for (const failure of ["ERR_MODULE_NOT_FOUND", "ENOENT", "verified-result-contro
       const backupExists = await fs.stat(disk.transaction.backupRoot).then(
         () => true,
         (error) => {
-          if (error.code === "ENOENT") return false;
+          if (error.code === "ENOENT") {
+            return false;
+          }
           throw error;
         },
       );
