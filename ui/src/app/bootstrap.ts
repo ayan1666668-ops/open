@@ -572,55 +572,16 @@ export function bootstrapApplication(): ApplicationRuntime {
         // wait for setup's decision before fetching the Chat workspace graph.
         steps.unshift(() => warmApplicationRouteModule(router, applicationLocation, basePath));
       }
-      // Only the native host needs bridge parsers. Initialize before routing,
-      // and fence the import so a stopped application cannot install listeners.
-      // SAFETY: WebKit adds this optional host field; its callable handler is checked below.
-      const nativeWindow = window as Window & {
-        webkit?: {
-          messageHandlers?: {
-            openclawGateways?: { postMessage?: unknown };
-            openclawDeviceSettings?: { postMessage?: unknown };
-            openclawNotifications?: { postMessage?: unknown };
-          };
-        };
-      };
-      if (
-        typeof nativeWindow.webkit?.messageHandlers?.openclawGateways?.postMessage === "function"
-      ) {
+      // Native bridge parsers and listeners stay out of browser startup.
+      // SAFETY: WebKit supplies the optional handler map; the native initializer checks each callable.
+      const nativeWindow = window as Window & { webkit?: { messageHandlers?: unknown } };
+      if (nativeWindow.webkit?.messageHandlers) {
         steps.unshift(async () => {
-          const { startNativeGatewayHealthReporting } =
-            await import("./native-gateways.runtime.ts");
-          if (!startupLifecycle.signal.aborted) {
-            return startNativeGatewayHealthReporting(gateway);
-          }
-          return undefined;
-        });
-      }
-      if (
-        typeof nativeWindow.webkit?.messageHandlers?.openclawNotifications?.postMessage ===
-        "function"
-      ) {
-        steps.unshift(async () => {
-          const { createNativeNotificationsCapability } = await import("./native-notifications.ts");
-          if (!startupLifecycle.signal.aborted) {
-            nativeNotifications = createNativeNotificationsCapability();
-            return () => nativeNotifications?.dispose();
-          }
-          return undefined;
-        });
-      }
-      if (
-        typeof nativeWindow.webkit?.messageHandlers?.openclawDeviceSettings?.postMessage ===
-        "function"
-      ) {
-        steps.unshift(async () => {
-          const { createNativeDeviceSettingsCapability } =
-            await import("./native-device-settings.ts");
-          if (!startupLifecycle.signal.aborted) {
-            nativeDeviceSettings = createNativeDeviceSettingsCapability();
-            return () => nativeDeviceSettings?.dispose();
-          }
-          return undefined;
+          const { startNativeCapabilities } = await import("./native-startup.runtime.ts");
+          return startNativeCapabilities(gateway, startupLifecycle, (capabilities) => {
+            nativeDeviceSettings = capabilities.deviceSettings;
+            nativeNotifications = capabilities.notifications;
+          });
         });
       }
       // Resolve first-run setup before routing: the default Chat route owns the

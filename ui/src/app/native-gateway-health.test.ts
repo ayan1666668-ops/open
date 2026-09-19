@@ -5,7 +5,7 @@ import {
   createGatewayStoreTestStore,
   GATEWAY_STORE_TEST_HELLO,
 } from "./gateway-store.test-support.ts";
-import { startNativeGatewayHealthReporting } from "./native-gateways.runtime.ts";
+import { startNativeGatewayHealthReporting } from "./native-gateway-health.runtime.ts";
 
 const HEALTH = "__OPENCLAW_NATIVE_GATEWAY_HEALTH__";
 const EVENT = "openclaw:native-gateway-health-changed";
@@ -31,6 +31,25 @@ function connectedStore() {
 }
 
 describe("native dashboard connection health", () => {
+  it("keeps terminal first-connect failures red until intentionally stopped", () => {
+    const { gateway, current } = createGatewayStoreTestStore();
+    cleanups.push(() => gateway.stop());
+    cleanups.push(startNativeGatewayHealthReporting(gateway));
+    gateway.start();
+    current().opts.onClose?.({ code: 4008, reason: "connect failed", willRetry: false });
+    expect(gateway.snapshot.phase).toBe("stopped");
+    expect(gateway.snapshot.lastError).toContain("4008");
+    expect(Reflect.get(window, HEALTH)).toEqual({
+      gatewayUrl: gateway.connection.gatewayUrl,
+      health: "error",
+    });
+    gateway.stop();
+    expect(Reflect.get(window, HEALTH)).toEqual({
+      gatewayUrl: gateway.connection.gatewayUrl,
+      health: "unknown",
+    });
+  });
+
   it("publishes the real connection, deduplicates unrelated updates, and follows loss and recovery", () => {
     const { gateway, current } = connectedStore();
     const events = vi.fn();
