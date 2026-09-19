@@ -28,10 +28,13 @@ async function captureNpmLinkedGitRecovery(
   return async () => {
     const currentIdentity = await fs.stat(root, { bigint: true });
     const current = await readCurrentGitUpdateRecovery(root, timeoutMs);
+    const verifiedIdentity = await fs.stat(root, { bigint: true });
     if (
       (await fs.realpath(target)) !== root ||
       currentIdentity.dev !== identity.dev ||
       currentIdentity.ino !== identity.ino ||
+      verifiedIdentity.dev !== identity.dev ||
+      verifiedIdentity.ino !== identity.ino ||
       !current.serviceRestartSafe ||
       current.buildId !== recovery.buildId ||
       current.version !== recovery.version
