@@ -63,18 +63,18 @@ import {
   buildStructuredFallbackSummary,
   createSummaryQualityRetentionPlan,
   extractOpaqueIdentifiers,
-  nestRequiredSummaryHeadings,
   wrapUntrustedInstructionBlock,
 } from "./compaction-safeguard-quality.js";
+import {
+  nestMarkdownHeadings,
+  normalizeLegacySplitTurnSummary,
+  prependPreviousSummaryForRedistill,
+} from "./compaction-safeguard-redistill.js";
 import {
   getCompactionSafeguardRuntime,
   setCompactionSafeguardCancellation,
 } from "./compaction-safeguard-runtime.js";
-import {
-  buildCompactionSemanticRepairEvidence,
-  isCompactionSemanticRepairFinding,
-  observeCompactionSemanticFidelity,
-} from "./compaction-semantic-fidelity.js";
+import { evaluateCompactionSemanticRepair } from "./compaction-safeguard-semantic-repair.js";
 
 const log = createSubsystemLogger("compaction-safeguard");
 
@@ -96,9 +96,6 @@ const MAX_QUALITY_GUARD_MAX_RETRIES = 3;
 const MAX_RECENT_TURN_TEXT_CHARS = 600;
 const MAX_REQUIRED_ASK_CONTEXT_CHARS = 2_000;
 const REQUIRED_ASK_CONTEXT_TRUNCATED_MARKER = "\n[... split-turn ask context truncated ...]\n";
-const PREVIOUS_SUMMARY_REDISTILL_PREFIX =
-  "Previous compaction summary to re-distill with the current conversation. " +
-  "Prune stale, duplicate, or superseded details instead of preserving it verbatim.";
 const compactionSafeguardDeps = {
   summarizeInStages,
 };
@@ -108,44 +105,6 @@ type CompactionLoss =
   | "split-turn-head"
   | "split-turn-tail"
   | "preserved-turn-head";
-
-function prependPreviousSummaryForRedistill(params: {
-  messages: AgentMessage[];
-  previousSummary?: string;
-}): AgentMessage[] {
-  const previousSummary = params.previousSummary?.trim();
-  if (!previousSummary) {
-    return params.messages;
-  }
-  return [
-    {
-      role: "user",
-      content: [
-        {
-          type: "text",
-          text: `<previous-compaction-summary>\n${PREVIOUS_SUMMARY_REDISTILL_PREFIX}\n\n${previousSummary}\n</previous-compaction-summary>`,
-        },
-      ],
-      timestamp: 0,
-    } as AgentMessage,
-    ...params.messages,
-  ];
-}
-
-function nestMarkdownHeadings(text: string): string {
-  return text.replace(/^##(?=[ \t]+\S)/gmu, "###");
-}
-
-function normalizeLegacySplitTurnSummary(summary: string | undefined): string | undefined {
-  const splitTurnStart = summary?.indexOf(SPLIT_TURN_SECTION_HEADING) ?? -1;
-  if (!summary || splitTurnStart < 0) {
-    return summary;
-  }
-  const splitTurnContentStart = splitTurnStart + SPLIT_TURN_SECTION_HEADING.length;
-  // Shipped safeguard summaries nested a second complete summary after this owned boundary.
-  // Demote its headings only in the next model input; the persisted old boundary stays untouched.
-  return `${summary.slice(0, splitTurnContentStart)}${nestRequiredSummaryHeadings(summary.slice(splitTurnContentStart))}`;
-}
 
 /**
  * Messages the model currently sees: the last reset/compaction boundary's kept
@@ -1408,68 +1367,20 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
         });
         if (quality.ok) {
           if (runtime?.semanticDecisionsEnabled) {
-            if (!signal) {
-              log.debug(
-                "Compaction safeguard: semantic fidelity observation skipped; reason=no-cancellation-signal",
-              );
-            } else {
-              const observation = await observeCompactionSemanticFidelity({
-                sourceMessages: semanticSourceMessages,
-                retainedContext: finalized.summary,
-                agentId: ctx.sessionManager.getSessionTarget?.()?.agentId ?? runtime.agentId,
-                signal,
-              });
-              if (observation.status === "ok") {
-                const relationCounts = observation.findings.reduce<Record<string, number>>(
-                  (counts, finding) => {
-                    counts[finding.relation] = (counts[finding.relation] ?? 0) + 1;
-                    return counts;
-                  },
-                  {},
-                );
-                const repairFindings = observation.findings.filter(
-                  isCompactionSemanticRepairFinding,
-                );
-                log.info(
-                  "Compaction safeguard: semantic fidelity observation completed; " +
-                    `checked=${observation.checked} verbatimPreserved=${observation.verbatimPreserved} ` +
-                    `relations=${JSON.stringify(relationCounts)} repairFindings=${repairFindings.length} ` +
-                    `provider=${observation.providerId} model=${observation.model}`,
-                );
-                if (repairFindings.length > 0) {
-                  if (canRegenerate && attempt < totalAttempts - 1) {
-                    const repairEvidence = buildCompactionSemanticRepairEvidence(repairFindings);
-                    const semanticFeedback = wrapUntrustedInstructionBlock(
-                      "Semantic fidelity feedback",
-                      repairEvidence,
-                    );
-                    const budgetInstruction = `Keep the complete summary body within ${finalized.bodyBudget} UTF-16 code units so the finalized artifact remains valid after required suffixes.`;
-                    semanticFallbackSummary = finalized.summary;
-                    correctiveInstructions = [
-                      "Preserve the active meaning of the source requirements below. Do not mark them complete or superseded unless the retained conversation supports that conclusion.",
-                      budgetInstruction,
-                      semanticFeedback,
-                    ]
-                      .filter(Boolean)
-                      .join("\n\n");
-                    continue;
-                  }
-                  log.warn(
-                    "Compaction safeguard: semantic fidelity findings remain after the available corrective retry budget; " +
-                      `findingCount=${repairFindings.length}`,
-                  );
-                }
-              } else if (observation.status === "unavailable") {
-                log.debug(
-                  "Compaction safeguard: semantic fidelity observation unavailable; " +
-                    `reason=${observation.reason} checked=${observation.checked}`,
-                );
-              } else {
-                log.debug(
-                  "Compaction safeguard: semantic fidelity observation skipped; reason=no-candidates " +
-                    `verbatimPreserved=${observation.verbatimPreserved}`,
-                );
-              }
+            const semantic = await evaluateCompactionSemanticRepair({
+              sourceMessages: semanticSourceMessages,
+              retainedContext: finalized.summary,
+              bodyBudget: finalized.bodyBudget,
+              agentId: ctx.sessionManager.getSessionTarget?.()?.agentId ?? runtime.agentId,
+              signal,
+              canRegenerate,
+              hasRetry: attempt < totalAttempts - 1,
+              logger: log,
+            });
+            if (semantic.action === "retry") {
+              semanticFallbackSummary = semantic.fallbackSummary;
+              correctiveInstructions = semantic.correctiveInstructions;
+              continue;
             }
           }
           return compactionResult(finalized.summary);

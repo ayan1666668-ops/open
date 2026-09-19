@@ -11,7 +11,7 @@ const RUBRIC_VERSION = "1";
 const PURPOSE = "compaction.semantic-fidelity";
 const TIMEOUT_MS = 1_000;
 
-export type CompactionSemanticRelation =
+type CompactionSemanticRelation =
   | "preserved"
   | "missing"
   | "contradicted"
@@ -27,7 +27,7 @@ export type CompactionSemanticFinding = {
   confidence?: number;
 };
 
-export const COMPACTION_SEMANTIC_REPAIR_MIN_PROBABILITY = 0.8;
+const COMPACTION_SEMANTIC_REPAIR_MIN_PROBABILITY = 0.8;
 
 const MAX_SEMANTIC_REPAIR_EVIDENCE_CHARS = 3_000;
 
@@ -97,7 +97,7 @@ function extractUserText(message: AgentMessage): string {
   return collectTextContentBlocks(content).join("\n").trim();
 }
 
-export function prepareCompactionSemanticFidelityEvidence(params: {
+function prepareCompactionSemanticFidelityEvidence(params: {
   sourceMessages: AgentMessage[];
   retainedContext: string;
 }) {

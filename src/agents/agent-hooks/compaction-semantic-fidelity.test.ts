@@ -4,7 +4,6 @@ import type { AgentMessage } from "../runtime/index.js";
 import {
   isCompactionSemanticRepairFinding,
   observeCompactionSemanticFidelity,
-  prepareCompactionSemanticFidelityEvidence,
 } from "./compaction-semantic-fidelity.js";
 
 function user(text: string): AgentMessage {
@@ -12,15 +11,23 @@ function user(text: string): AgentMessage {
 }
 
 describe("compaction semantic fidelity", () => {
-  it("skips user content already preserved verbatim", () => {
-    const evidence = prepareCompactionSemanticFidelityEvidence({
-      sourceMessages: [user("Keep production untouched."), user("Deploy staging.")],
-      retainedContext: "Deploy staging.",
-    });
+  it("skips user content already preserved verbatim", async () => {
+    const evaluate = vi.fn(
+      async () => ({ status: "unavailable", reason: "not-configured" }) satisfies DecisionOutcome,
+    );
+    const result = await observeCompactionSemanticFidelity(
+      {
+        sourceMessages: [user("Keep production untouched."), user("Deploy staging.")],
+        retainedContext: "Deploy staging.",
+        signal: new AbortController().signal,
+      },
+      evaluate,
+    );
 
-    expect(evidence.coverage.verbatimPreserved).toBe(1);
-    expect(evidence.sourceItems).toHaveLength(1);
-    expect(evidence.sourceItems[0]?.text).toBe("Keep production untouched.");
+    expect(result.verbatimPreserved).toBe(1);
+    expect(evaluate.mock.calls[0]?.[0].state).toMatchObject({
+      sourceItems: [{ text: "Keep production untouched." }],
+    });
   });
 
   it("returns no-candidates without calling the decision runtime", async () => {
