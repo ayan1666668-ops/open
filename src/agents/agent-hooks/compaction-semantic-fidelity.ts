@@ -21,9 +21,28 @@ export type CompactionSemanticRelation =
 export type CompactionSemanticFinding = {
   id: string;
   relation: CompactionSemanticRelation;
+  sourceText: string;
+  sourceTruncated: boolean;
   probabilities: Readonly<Record<string, number>>;
   confidence?: number;
 };
+
+export const COMPACTION_SEMANTIC_REPAIR_MIN_PROBABILITY = 0.8;
+
+export function isCompactionSemanticRepairFinding(
+  finding: CompactionSemanticFinding,
+): boolean {
+  if (finding.sourceTruncated) {
+    return false;
+  }
+  if (finding.relation !== "missing" && finding.relation !== "contradicted") {
+    return false;
+  }
+  return (
+    (finding.probabilities[finding.relation] ?? 0) >=
+    COMPACTION_SEMANTIC_REPAIR_MIN_PROBABILITY
+  );
+}
 
 export type CompactionSemanticObservation = {
   checked: number;
@@ -211,6 +230,8 @@ export async function observeCompactionSemanticFidelity(
     findings.push({
       id: item.id,
       relation,
+      sourceText: item.text,
+      sourceTruncated: item.truncated,
       probabilities: answer.probabilities,
       ...(answer.confidence !== undefined ? { confidence: answer.confidence } : {}),
     });
