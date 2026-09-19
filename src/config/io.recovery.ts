@@ -11,6 +11,10 @@ import { resolveIsConfigReadOnly } from "./paths.js";
 import type { ConfigFileSnapshot } from "./types.js";
 import { validateConfigObjectWithPlugins } from "./validation.js";
 
+/** Prefix repair found a valid suffix but could not keep a forensic copy. */
+export const PREFIX_RECOVERY_PRESERVATION_REFUSED = "refused" as const;
+export type PrefixRecoveryResult = boolean | typeof PREFIX_RECOVERY_PRESERVATION_REFUSED;
+
 function findJsonRootSuffix(
   raw: string,
   json5: { parse: (value: string) => unknown },
@@ -37,7 +41,7 @@ async function persistPrefixedConfigRecovery(params: {
   context: ConfigIoContext;
   originalRaw: string;
   recoveredRaw: string;
-}): Promise<boolean> {
+}): Promise<PrefixRecoveryResult> {
   const { context } = params;
   const observedAt = new Date().toISOString();
   const clobberedPath = await persistBoundedClobberedConfigSnapshot({
@@ -50,7 +54,7 @@ async function persistPrefixedConfigRecovery(params: {
     context.deps.logger.warn(
       `Config prefix recovery skipped: could not write the .clobbered.* copy of the current config: ${context.configPath} (non-JSON prefix)`,
     );
-    return false;
+    return PREFIX_RECOVERY_PRESERVATION_REFUSED;
   }
   // Recovery must publish by rename; a copy fallback can truncate the live config.
   await replaceFileAtomic({
@@ -70,7 +74,7 @@ async function persistPrefixedConfigRecovery(params: {
 export async function recoverConfigFromJsonRootSuffixWithContext(
   context: ConfigIoContext,
   snapshot: ConfigFileSnapshot,
-): Promise<boolean> {
+): Promise<PrefixRecoveryResult> {
   if (resolveIsConfigReadOnly(context.deps.env)) {
     return false;
   }

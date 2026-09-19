@@ -8,6 +8,7 @@ import {
   closeOpenClawStateDatabaseForTest,
 } from "../state/openclaw-state-db.js";
 import { createConfigIO } from "./io.factory.js";
+import { PREFIX_RECOVERY_PRESERVATION_REFUSED } from "./io.recovery.js";
 
 const tempDirs = useAutoCleanupTempDirTracker((cleanup) =>
   afterEach(async () => {
@@ -49,7 +50,9 @@ describe("prefixed config recovery", () => {
 
     const snapshot = await io.readConfigFileSnapshot();
     expect(snapshot.valid).toBe(false);
-    await expect(io.recoverConfigFromJsonRootSuffix(snapshot)).resolves.toBe(false);
+    await expect(io.recoverConfigFromJsonRootSuffix(snapshot)).resolves.toBe(
+      PREFIX_RECOVERY_PRESERVATION_REFUSED,
+    );
     await expect(fsp.readFile(configPath, "utf-8")).resolves.toBe(pollutedRaw);
     const lockedEntries = await fsp.readdir(path.dirname(configPath));
     expect(lockedEntries.filter((name) => name.includes(".clobbered."))).toHaveLength(0);
