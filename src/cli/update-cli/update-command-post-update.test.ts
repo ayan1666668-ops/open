@@ -14,7 +14,6 @@ import { defaultRuntime } from "../../runtime.js";
 import { closeOpenClawStateDatabaseForTest } from "../../state/openclaw-state-db.js";
 import {
   createManagedServiceIdentityFixture,
-  expectUpdateFailure,
   registerServiceInstallationConvergenceTests,
   finishSuccessfulPackageSwitch,
   managedServiceState,

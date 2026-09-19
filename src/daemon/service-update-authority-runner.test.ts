@@ -276,27 +276,48 @@ it("retains bound native dispatch while compensating revoked nested custody", as
   expect(commands).toEqual(["publish", "restore"]);
 });
 
-it("preserves cleanup uncertainty through nested custody without compensation", async () => {
-  const restore = vi.fn(async () => true);
-  const failure = new CommandProcessCleanupError();
-  const work = withGatewayServiceUpdateAuthority(
-    () => undefined,
-    () =>
-      withGatewayServiceUpdateAuthority(
-        () => undefined,
-        () => withGatewayServiceInstallationRecovery(() => execFileUtf8("publish", []), restore),
-        {
-          updateOwned: false,
-          assertRecoveryCurrent: () => undefined,
-          nativeCommand: getGatewayServiceUpdateNativeCommand(),
+it.each(["thrown", "returned"] as const)(
+  "preserves %s cleanup uncertainty after nested custody loss without compensation",
+  async (kind) => {
+    const commands: string[] = [];
+    let current = true;
+    const restore = vi.fn(async () => {
+      await execFileUtf8("restore", []);
+      return true;
+    });
+    const failure = new CommandProcessCleanupError();
+    const work = withGatewayServiceUpdateAuthority(
+      () => undefined,
+      () =>
+        withGatewayServiceUpdateAuthority(
+          () => {
+            if (!current) {
+              throw new Error("nested custody revoked");
+            }
+          },
+          () => withGatewayServiceInstallationRecovery(() => execFileUtf8("publish", []), restore),
+          {
+            updateOwned: false,
+            assertRecoveryCurrent: () => undefined,
+            nativeCommand: getGatewayServiceUpdateNativeCommand(),
+          },
+        ),
+      {
+        nativeCommand: async (argv) => {
+          commands.push(argv[0]!);
+          if (argv[0] === "publish") {
+            current = false;
+            if (kind === "thrown") {
+              throw failure;
+            }
+            return { ...result, cleanup: "uncertain" };
+          }
+          return result;
         },
-      ),
-    {
-      nativeCommand: async () => {
-        throw failure;
       },
-    },
-  );
-  await expect(work).rejects.toSatisfy(hasCommandProcessCleanupError);
-  expect(restore).not.toHaveBeenCalled();
-});
+    );
+    await expect(work).rejects.toSatisfy(hasCommandProcessCleanupError);
+    expect(restore).not.toHaveBeenCalled();
+    expect(commands).toEqual(["publish"]);
+  },
+);

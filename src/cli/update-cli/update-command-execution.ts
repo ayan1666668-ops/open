@@ -61,7 +61,6 @@ import {
   preparePackageDoctorContext,
   type PackageInstallUpdateParams,
 } from "./update-command-package.js";
-import { verifyPreviousGatewayForUpdate } from "./update-command-readiness.js";
 import { assertUpdateCommandRecovery } from "./update-command-recovery.js";
 import { runUpdateCommandRepair } from "./update-command-repair.js";
 import {
@@ -79,7 +78,7 @@ import {
   UpdateCommandAbort,
   type PreManagedServiceStop,
 } from "./update-command-service.js";
-import { recordPreviousGatewayVerification } from "./update-command-verification.js";
+import { verifyPreviousManagedGatewayForUpdate } from "./update-command-verification.js";
 
 export async function executeMutableUpdate(
   params: MutableUpdateExecutionParams,
@@ -218,6 +217,7 @@ export async function executeMutableUpdate(
       for (const mutationRoot of new Set(
         params.managedServiceRoot ? [params.managedServiceRoot] : mutationRoots,
       )) {
+        const serviceIdentity = preManagedServiceStop?.serviceIdentity;
         preManagedServiceStop = await maybeStopManagedServiceBeforeMutableUpdate({
           updateInstallKind: params.updateInstallKind,
           root: mutationRoot,
@@ -230,7 +230,7 @@ export async function executeMutableUpdate(
           updateRun: opts.run,
           recovery: opts.recovery,
           onStopped: (state) => {
-            preManagedServiceStop = state;
+            preManagedServiceStop = { ...state, ...(serviceIdentity ? { serviceIdentity } : {}) };
           },
           handoffFromGateway: (state) =>
             handoffUpdateFromGateway({
@@ -251,6 +251,9 @@ export async function executeMutableUpdate(
               stopProgress: params.stop,
             }),
         });
+        if (serviceIdentity) {
+          preManagedServiceStop.serviceIdentity = serviceIdentity;
+        }
         if (preManagedServiceStop.windowsTaskAutoStartRecovery) {
           params.recoveryState.windowsTaskAutoStartRecovery =
             preManagedServiceStop.windowsTaskAutoStartRecovery;
@@ -513,8 +516,13 @@ export async function executeMutableUpdate(
     }
     const config = snapshot.config;
     await recheckSchemas(admittedTargetSchemaVersions);
+    const originalServiceVerdict = preManagedServiceStop?.serviceUpdateVerdict;
+    const previousRoot =
+      originalServiceVerdict?.kind === "owned" && originalServiceVerdict.requiresInstallRootRefresh
+        ? originalServiceVerdict.root
+        : params.root;
     previousSchemaVersions = parsePackageOpenClawSchemaVersions(
-      await tryReadJson<unknown>(path.join(params.root, "package.json")),
+      await tryReadJson<unknown>(path.join(previousRoot, "package.json")),
     );
     schemaVersions = candidateSchemaVersions
       ? await readUpdateStateSchemaVersions({
@@ -528,18 +536,19 @@ export async function executeMutableUpdate(
       preManagedServiceStop?.running &&
       preManagedServiceStop.serviceUpdateVerdict?.kind === "owned"
     ) {
-      previousVerified = await verifyPreviousGatewayForUpdate({
-        root: params.root,
+      await verifyPreviousManagedGatewayForUpdate({
+        root: previousRoot,
         config,
         env,
         opts,
         timeoutMs: params.timeoutMs,
         observedStartupMs: observedGatewayStartupMs,
         assertCurrent: assertExecutionCurrent,
+        service: preManagedServiceStop,
+        onVerification: (verified) => {
+          previousVerified = verified;
+        },
       });
-      // Recovery retains the observed verdict even if its receipt cannot be written.
-      assertExecutionCurrent();
-      recordPreviousGatewayVerification(opts.run, previousVerified);
     }
     // A separate serving runtime needs complete compensation evidence before
     // its stop. --no-restart neither needs nor acquires restart authority.

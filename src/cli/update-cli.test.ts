@@ -12952,28 +12952,7 @@ describe("update-cli", () => {
       const { updatedRoot, updatedEntrypoint } = setupNpmUpdatedRootRefresh();
       serviceLoaded.mockResolvedValue(true);
       primeServiceCommand(["node", updatedEntrypoint, "gateway", "run"]);
-      mockGatewayInstallFailure(updatedEntrypoint);
-      if (json) {
-        vi.mocked(runCommandWithTimeout).mockImplementation(async (argv) => {
-          const failed = argv[1] === updatedEntrypoint && argv[3] === "install";
-          return commandResult({
-            stdout: failed
-              ? JSON.stringify(
-                  {
-                    action: "install",
-                    ok: false,
-                    error: "Gateway install blocked: newer configuration",
-                    hints: ["Use the intended binary."],
-                  },
-                  null,
-                  2,
-                )
-              : "",
-            stderr: failed ? "runtime warning" : "",
-            code: failed ? 1 : 0,
-          });
-        });
-      }
+      mockGatewayInstallFailure(updatedEntrypoint, json ? "runtime warning" : undefined);
       mockGatewayHealth("2026.4.24", "updated-gateway");
 
       await updateCommand({ yes: true, json });
@@ -12990,7 +12969,9 @@ describe("update-cli", () => {
       expect(runRestartScript).not.toHaveBeenCalled();
       expect(defaultRuntime.exit).not.toHaveBeenCalledWith(1);
       if (json) {
-        expect(getErrorOutput()).toContain("Gateway install blocked: newer configuration");
+        expect(getErrorOutput()).toContain(
+          "SERVICE_DEFINITION_UNKNOWN: Service definition refresh failed; the previous definition was restored: Error: launchctl bootstrap failed",
+        );
       } else {
         expect(getLogOutput()).toContain("Gateway: restarted and verified.");
       }

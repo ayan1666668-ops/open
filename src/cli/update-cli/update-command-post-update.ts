@@ -106,7 +106,11 @@ export async function finishUpdate(
       true,
       stopped
         ? createWindowsTaskAutoStartGuard({
-            root: result.root ?? params.root,
+            root:
+              result.recovery?.packageRollbackVerified &&
+              stopped.serviceUpdateVerdict?.kind === "owned"
+                ? stopped.serviceUpdateVerdict.root
+                : (result.root ?? params.root),
             before: stopped,
             timeoutMs: params.updateStepTimeoutMs,
           })
@@ -246,7 +250,7 @@ export async function finishUpdate(
       triageAllowed = false;
       return { result, recoverService: false };
     }
-    if (result.status === "error" && !rolledBack && repair) {
+    if (result.status === "error" && !rolledBack && repair && !definitionRecovery.unverified) {
       postVerificationRepairAttempted = true;
       const previousRestored = result.recovery?.packageRollbackVerified === true;
       result = await repair(result);
@@ -652,7 +656,11 @@ export async function finishUpdate(
       const requiresInstallRootRefresh =
         restartContext.serviceUpdateVerdict?.kind === "owned" &&
         restartContext.serviceUpdateVerdict.requiresInstallRootRefresh;
-      if (resultWithPostUpdate.postUpdate?.plugins?.changed || params.serviceRuntimeRefreshRequired || requiresInstallRootRefresh) {
+      if (
+        resultWithPostUpdate.postUpdate?.plugins?.changed ||
+        params.serviceRuntimeRefreshRequired ||
+        requiresInstallRootRefresh
+      ) {
         // Installation-only repair keeps the old Gateway serving; the native
         // installer owns replacement and rollback with its actual running state.
         // Convergence awaited package managers and plugin hooks. Revalidate the

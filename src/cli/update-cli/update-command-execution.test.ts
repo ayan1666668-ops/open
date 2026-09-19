@@ -35,7 +35,10 @@ import { registerExecutionTimeoutTests } from "./update-command-execution-timeou
 import { executeMutableUpdate } from "./update-command-execution.js";
 import { withUpdateCommandExecutor } from "./update-command-executor.js";
 import * as readiness from "./update-command-readiness.js";
-import { gatewayServiceCommandUsesRoot } from "./update-command-service-plan.js";
+import {
+  gatewayServiceCommandUsesRoot,
+  inspectManagedGatewayServiceBeforeUpdate,
+} from "./update-command-service-plan.js";
 
 const { executionParams, inspectOrStopService, mocks, schemaContext, successfulUpdate } =
   await import("./update-command-execution.test-support.js");
@@ -135,14 +138,28 @@ describe("mutable update execution", () => {
 
   it.each([
     ["measured startup", undefined, true, undefined],
+    ...(process.platform === "win32"
+      ? []
+      : [["different service installation", undefined, true, undefined] as const]),
     ["explicit allowance", 450_000, true, undefined],
     ["explicit deadline", 30_000, false, undefined],
     ["terminal version mismatch", undefined, false, "version"],
     ["replaced executor", undefined, false, "executor"],
   ] as const)(
     "preserves previous Gateway verification through slow readiness (%s)",
-    async (_allowance, timeoutMs, verified, failure) =>
+    async (allowance, timeoutMs, verified, failure) =>
       withTestDir({ prefix: "previous-gateway-readiness-" }, async (root) => {
+        const installationDrift = allowance === "different service installation";
+        const cliRoot = installationDrift ? path.join(root, "cli-install") : root;
+        const serviceRoot = installationDrift ? path.join(root, "service-install") : root;
+        if (installationDrift) {
+          await fs.mkdir(cliRoot);
+          await fs.mkdir(serviceRoot);
+          await fs.writeFile(
+            path.join(cliRoot, "package.json"),
+            JSON.stringify({ name: "openclaw", version: "2.0.0" }),
+          );
+        }
         const readyAtMs = 400_000;
         let elapsedMs = 0;
         const epochMs = Date.now();
@@ -169,12 +186,18 @@ describe("mutable update execution", () => {
           throw new Error("Missing synthetic Gateway listener");
         }
         try {
-          await fs.mkdir(path.join(root, "dist"));
+          await fs.mkdir(path.join(serviceRoot, "dist"));
           await fs.writeFile(
-            path.join(root, "package.json"),
-            JSON.stringify({ name: "openclaw", version: "1.0.0" }),
+            path.join(serviceRoot, "package.json"),
+            JSON.stringify({
+              name: "openclaw",
+              version: "1.0.0",
+              ...(installationDrift
+                ? { openclaw: { schemaVersions: { state: 15, agent: 19 } } }
+                : {}),
+            }),
           );
-          await fs.writeFile(path.join(root, "dist", "index.js"), "");
+          await fs.writeFile(path.join(serviceRoot, "dist", "index.js"), "");
           const context = schemaContext("default");
           const config = { gateway: { mode: "local" as const, port: address.port } };
           const configSnapshot = {
@@ -195,6 +218,15 @@ describe("mutable update execution", () => {
             configSnapshot,
             pluginInstallRecords: {},
           });
+          if (installationDrift) {
+            mocks.captureSchemaContext.mockResolvedValue({
+              ...context,
+              env: managedEnv,
+              readEnv: managedEnv,
+              config,
+              configSnapshot,
+            });
+          }
           vi.spyOn(configFile, "readConfigFileSnapshot").mockResolvedValue(configSnapshot);
           vi.spyOn(restartProbe, "resolveGatewayRestartProbeContext").mockResolvedValue({
             config,
@@ -210,9 +242,24 @@ describe("mutable update execution", () => {
             systemd: { managerUid: 1000 },
           });
           vi.spyOn(service, "readCommand").mockResolvedValue({
-            programArguments: [process.execPath, path.join(root, "dist", "index.js"), "gateway"],
+            programArguments: [
+              process.execPath,
+              path.join(serviceRoot, "dist", "index.js"),
+              "gateway",
+            ],
           });
-          expect(await gatewayServiceCommandUsesRoot({ root, env: managedEnv })).toBe(true);
+          expect(await gatewayServiceCommandUsesRoot({ root: serviceRoot, env: managedEnv })).toBe(
+            true,
+          );
+          const originalVerdict = installationDrift
+            ? await inspectManagedGatewayServiceBeforeUpdate({
+                root: serviceRoot,
+                state: await gatewayService.readGatewayServiceState(service, { env: managedEnv }),
+              })
+            : undefined;
+          if (installationDrift) {
+            expect(originalVerdict?.kind).toBe("owned");
+          }
           vi.spyOn(portInspection, "inspectPortUsage").mockImplementation(async (port) => ({
             port,
             status: "busy",
@@ -229,7 +276,7 @@ describe("mutable update execution", () => {
           );
           mocks.nativeSupport.mockImplementation(async (candidate) => {
             candidate.executor.assertCurrent();
-            expect(candidate.root).toBe(root);
+            expect(candidate.root).toBe(cliRoot);
             return true;
           });
           mocks.validateCanary.mockResolvedValue({
@@ -255,7 +302,18 @@ describe("mutable update execution", () => {
             if (stopped.serviceUpdateVerdict?.kind === "owned") {
               stopped.serviceUpdateVerdict = { ...stopped.serviceUpdateVerdict, root };
             }
-            return stopped;
+            return originalVerdict?.kind === "owned"
+              ? {
+                  ...stopped,
+                  servicePort: address.port,
+                  serviceEnv: managedEnv,
+                  serviceNodeRunner: process.execPath,
+                  serviceUpdateVerdict: {
+                    ...originalVerdict,
+                    refreshDefinition: true,
+                  },
+                }
+              : stopped;
           });
           mocks.runPackageUpdate.mockImplementation(
             async (
@@ -263,14 +321,15 @@ describe("mutable update execution", () => {
                 typeof import("./update-command-package.js").runPackageInstallUpdate
               >[0],
             ) => {
-              await params.validateCandidate(root);
+              await params.validateCandidate(cliRoot);
               await params.beforeActivate();
               return successfulUpdate;
             },
           );
           const params = {
             ...executionParams("package"),
-            root,
+            root: cliRoot,
+            ...(installationDrift ? { managedServiceRoot: serviceRoot } : {}),
             timeoutMs,
             updateStepTimeoutMs: timeoutMs ?? 20 * 60_000,
           };
@@ -286,7 +345,11 @@ describe("mutable update execution", () => {
           params.opts.run = { runId, env: managedEnv };
           const execution = await withUpdateCommandExecutor(runId, async (executor) => {
             mocks.prepareMutableUpdate.mockImplementation(async (_env, _timeout, admitExecutor) => {
-              admitExecutor(await executor.enter(root));
+              admitExecutor(
+                await executor.enter(cliRoot, {
+                  serviceRoot: installationDrift ? serviceRoot : undefined,
+                }),
+              );
             });
             return executeMutableUpdate(params);
           });
@@ -302,9 +365,18 @@ describe("mutable update execution", () => {
             "ok",
           );
           expect(
-            execution?.previousVerified,
+            installationDrift
+              ? execution?.originalManagedServiceRuntime?.verified
+              : execution?.previousVerified,
             JSON.stringify({ readyObservedAtMs, stoppedAtMs }),
           ).toBe(verified);
+          if (installationDrift) {
+            expect(execution?.originalManagedServiceRuntime).toMatchObject({
+              root: serviceRoot,
+              version: "1.0.0",
+              verified: true,
+            });
+          }
           if (verified) {
             expect(readyObservedAtMs).toBeGreaterThanOrEqual(readyAtMs);
             expect(stoppedAtMs).toBeGreaterThanOrEqual(readyObservedAtMs!);

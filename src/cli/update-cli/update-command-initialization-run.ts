@@ -15,6 +15,7 @@ import {
   withUpdateInitializationCleanup,
   type InitializedUpdate,
 } from "./update-command-initialization.js";
+import { preparePackageUpdateRuntime } from "./update-command-node-runtime.js";
 import {
   assertUpdatePackageActivationAdmission,
   type prepareUpdateCommand,
@@ -26,7 +27,6 @@ import {
   withUpdateInProgressEnv,
 } from "./update-command-service-env.js";
 import type { UpdateCommandRecoveryState } from "./update-command-service-maintenance.js";
-import { preparePackageUpdateRuntime } from "./update-command-node-runtime.js";
 import { resolveFreshUpdateMetadata, resolveUpdateCommandTarget } from "./update-command-target.js";
 import {
   reportUnreportedUpdateAdmissionOutcome,
@@ -181,7 +181,10 @@ export async function initializeAndRunUpdate(
               if (schemas.state >= OPENCLAW_STATE_SCHEMA_VERSION) {
                 return await runInitialized(initialization);
               }
-              const fence = await executor.enter(target.root, { preflight: true, serviceRoot: target.managedServiceRoot });
+              const fence = await executor.enter(target.root, {
+                preflight: true,
+                serviceRoot: target.managedServiceRoot,
+              });
               const assertCurrent = () => {
                 fence.assertCurrent();
                 assertUpdatePackageActivationAdmission(target.root, packageAdmission);

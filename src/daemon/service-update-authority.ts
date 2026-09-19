@@ -1,6 +1,9 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { resolveTimerTimeoutMs } from "@openclaw/normalization-core/number-coercion";
-import { hasCommandProcessCleanupError } from "../process/exec-result.js";
+import {
+  CommandProcessCleanupError,
+  hasCommandProcessCleanupError,
+} from "../process/exec-result.js";
 import type { CommandOptions, SpawnResult } from "../process/exec.js";
 import { ABSOLUTE_DEADLINE_EXPIRED, awaitWithinDeadline } from "../utils/absolute-deadline.js";
 
@@ -140,6 +143,10 @@ export async function withGatewayServiceUpdateAuthority<T>(
             }
             started = true;
             const result = await nativeCommand(command, { ...selected, timeoutMs: remaining });
+            // Custody loss must not hide an unsettled writer and permit compensation.
+            if (result.cleanup === "uncertain") {
+              throw new CommandProcessCleanupError();
+            }
             assertCurrent();
             assertSubmittedScope();
             return result;

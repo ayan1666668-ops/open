@@ -1,4 +1,3 @@
-import { resolveManagedServiceNodeRunner } from "../../daemon/service-layout.js";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
@@ -6,6 +5,7 @@ import {
   readDaemonRuntimePin,
   readDaemonRuntimePinForInstall,
 } from "../../daemon/runtime-pin-state.js";
+import { resolveManagedServiceNodeRunner } from "../../daemon/service-layout.js";
 import { resolveServiceEntrypoint } from "../../daemon/service-layout.js";
 import { fingerprintGatewayServiceDefinition } from "../../daemon/service-rebind.js";
 import type { GatewayServiceCommandConfig } from "../../daemon/service-types.js";
@@ -34,9 +34,7 @@ import type {
   PreManagedServiceStop,
 } from "./update-command-service-context-types.js";
 import { revalidateManagedGatewayServiceAfterUpdate } from "./update-command-service-maintenance.js";
-import {
-  assertGatewayServiceManagementAllowedForUpdate,
-} from "./update-command-service-plan.js";
+import { assertGatewayServiceManagementAllowedForUpdate } from "./update-command-service-plan.js";
 
 async function nodeIdentity(nodeRunner: string): Promise<string> {
   const real = await fs.realpath(nodeRunner);

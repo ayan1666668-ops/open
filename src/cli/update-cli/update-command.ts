@@ -120,7 +120,9 @@ async function runAdmittedUpdate(
         preflight: true,
         serviceRoot: initialization.target.managedServiceRoot,
       });
-      assertUpdatePackageActivationAdmission(initialization.target.root, { serviceRoot: initialization.target.managedServiceRoot });
+      assertUpdatePackageActivationAdmission(initialization.target.root, {
+        serviceRoot: initialization.target.managedServiceRoot,
+      });
     }
     const presentation = createUpdateProgress(!opts.json, run);
     disposePresentation = presentation.dispose;
