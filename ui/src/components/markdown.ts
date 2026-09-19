@@ -10,12 +10,12 @@ import { parseGitHubLinkTarget } from "./github-link-target.ts";
 import { createAssistantTranscriptPlainTextFallback } from "./markdown-assistant-transcript.ts";
 import { renderMarkdownCodeBlock } from "./markdown-code-blocks.ts";
 import { isHostLocalMarkdownFileHref } from "./markdown-file-links.ts";
-import { resetMarkdownMathBudget } from "./markdown-math.ts";
 import { markdownGitHubAliasSignature } from "./markdown-github-repositories.ts";
 import {
   prepareMarkdownHumanMentions,
   restoreMarkdownHumanMentions,
 } from "./markdown-human-mentions.ts";
+import { resetMarkdownMathBudget } from "./markdown-math.ts";
 import { createMarkdownParser } from "./markdown-parser.ts";
 import { stripProgressCardRawContentBlocks } from "./markdown-raw-content.ts";
 import {

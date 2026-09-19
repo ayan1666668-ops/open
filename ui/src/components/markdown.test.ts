@@ -307,13 +307,12 @@ describe("toSanitizedMarkdownHtml", () => {
       expect(fragment.querySelector("math")).not.toBeNull();
     });
 
-    it.each([
-      "```tex\n$x^2$\n\\[y\\]\n```",
-      "    $x^2$\n\n    \\(y\\)",
-      "\\$x^2\\$",
-    ])("does not interpret code or escaped delimiters: %j", (source) => {
-      expect(htmlFragment(toSanitizedMarkdownHtml(source)).querySelector(".katex")).toBeNull();
-    });
+    it.each(["```tex\n$x^2$\n\\[y\\]\n```", "    $x^2$\n\n    \\(y\\)", "\\$x^2\\$"])(
+      "does not interpret code or escaped delimiters: %j",
+      (source) => {
+        expect(htmlFragment(toSanitizedMarkdownHtml(source)).querySelector(".katex")).toBeNull();
+      },
+    );
 
     it("renders inline and display math with KaTeX", () => {
       const fragment = htmlFragment(
