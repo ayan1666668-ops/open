@@ -56,6 +56,7 @@ import {
   readWorkspaceBootstrapFile,
 } from "../workspace-bootstrap-read.js";
 import { resolveCompactionInstructions } from "./compaction-instructions.js";
+import { observeCompactionSemanticFidelity } from "./compaction-semantic-fidelity.js";
 import {
   appendSummarySection,
   auditSummaryQuality,
@@ -1005,6 +1006,7 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
     const qualityGuardEnabled = runtime?.qualityGuardEnabled ?? false;
     const providerId = runtime?.provider;
     const turnPrefixMessages = baseTurnPrefixMessages;
+    const semanticSourceMessages = [...baseMessagesToSummarize, ...turnPrefixMessages];
     const recentTurnsPreserve = resolveRecentTurnsPreserve(runtime?.recentTurnsPreserve);
     const structuredInstructions = buildCompactionStructureInstructions(
       customInstructions,
@@ -1394,6 +1396,53 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
           identifierPolicy,
         });
         if (quality.ok) {
+          if (runtime?.semanticJudgmentsEnabled) {
+            if (!signal) {
+              log.debug(
+                "Compaction safeguard: semantic fidelity observation skipped; reason=no-cancellation-signal",
+              );
+            } else {
+              try {
+                const observation = await observeCompactionSemanticFidelity({
+                  sourceMessages: semanticSourceMessages,
+                  retainedContext: finalized.summary,
+                  signal,
+                });
+                if (observation.status === "ok") {
+                  const relationCounts = observation.findings.reduce<Record<string, number>>(
+                    (counts, finding) => {
+                      counts[finding.relation] = (counts[finding.relation] ?? 0) + 1;
+                      return counts;
+                    },
+                    {},
+                  );
+                  log.info(
+                    "Compaction safeguard: semantic fidelity observation completed; " +
+                      `checked=${observation.checked} verbatimPreserved=${observation.verbatimPreserved} ` +
+                      `relations=${JSON.stringify(relationCounts)} provider=${observation.providerId} model=${observation.model}`,
+                  );
+                } else if (observation.status === "unavailable") {
+                  log.debug(
+                    "Compaction safeguard: semantic fidelity observation unavailable; " +
+                      `reason=${observation.reason} checked=${observation.checked}`,
+                  );
+                } else {
+                  log.debug(
+                    "Compaction safeguard: semantic fidelity observation skipped; reason=no-candidates " +
+                      `verbatimPreserved=${observation.verbatimPreserved}`,
+                  );
+                }
+              } catch (error) {
+                if (signal.aborted) {
+                  signal.throwIfAborted();
+                }
+                log.warn(
+                  "Compaction safeguard: semantic fidelity observation failed; preserving existing compaction result. " +
+                    `error=${formatErrorMessage(error)}`,
+                );
+              }
+            }
+          }
           return compactionResult(finalized.summary);
         }
         if (!canRegenerate || attempt >= totalAttempts - 1) {
