@@ -3,7 +3,7 @@
 // Node >=24: node --experimental-vm-modules --test this-file.mjs
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
-import { stripTypeScriptTypes } from "node:module";
+import { createRequire, stripTypeScriptTypes } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -17,6 +17,7 @@ const sourceRoot = path.resolve(
 );
 // Load canonical source helpers without requiring a compiled workspace package.
 const normalizationRoot = process.env.RESTART_DEPENDENCY_ROOT ?? sourceRoot;
+const { z } = createRequire(path.join(normalizationRoot, "package.json"))("zod");
 const { normalizeOptionalString } = await import(
   pathToFileURL(path.join(normalizationRoot, "packages/normalization-core/src/string-coerce.ts"))
     .href
@@ -37,19 +38,20 @@ const result = () => ({
   durationMs: 0,
 });
 class GatewayRestartHealthError extends Error {}
-class UpdateServiceLoadBoundaryError extends Error {}
 class UpdateCommandRecoveryPendingError extends Error {}
 class UpdateActivationTimeoutError extends Error {}
 
 async function fixture({
   error,
   commandError,
+  serviceLoadBoundaryFailure = false,
   verification = { ok: true },
   mutateExecutor = false,
   packageTransaction,
   verifyOnDisk,
   installRoot = root,
 } = {}) {
+  let commandFailure = commandError;
   const events = [],
     messages = [],
     completion = [],
@@ -150,7 +152,7 @@ async function fixture({
     formatErrorMessage: String,
     formatCliCommand: (value) => value,
     GatewayRestartHealthError,
-    UpdateServiceLoadBoundaryError,
+    z,
     UpdateCommandRecoveryPendingError,
     UpdateActivationTimeoutError,
     GatewayServiceUpdateOwnershipError: class extends Error {},
@@ -166,8 +168,8 @@ async function fixture({
       assert.equal(command, "restart");
       assert.equal(preserve, main ? undefined : true);
       activation.assertCurrent?.();
-      if (commandError) {
-        throw commandError;
+      if (commandFailure) {
+        throw commandFailure;
       }
       return "accepted";
     },
@@ -235,7 +237,14 @@ async function fixture({
     "update-command-post-update",
     "update-command-result",
     ...(main
-      ? ["update-command-terminal", "update-command-terminal-publication"]
+      ? [
+          "update-command-terminal",
+          "update-command-terminal-publication",
+          "update-command-post-update-maintenance",
+          // Keep pending-load retention policy and Error identity production-owned.
+          "update-command-service-load",
+          "../../daemon/service-stage",
+        ]
       : ["update-restart-module-error"]),
   ];
   const modules = new Map(),
@@ -249,7 +258,7 @@ async function fixture({
       sourceUrl: filename,
     });
     const mod = new vm.SourceTextModule(code, { context, identifier: filename });
-    modules.set(name + ".js", mod);
+    modules.set(path.basename(name) + ".js", mod);
     const imports = new Map();
     for (const match of code.matchAll(
       /(?:import|export)\s*\{([^}]+)\}\s*from\s*["']([^"']+)["']/gs,
@@ -295,7 +304,7 @@ async function fixture({
                 : () => {
                     const message = "Unexpected dependency call: " + specifier + ":" + name;
                     unexpected.push(message);
-                    throw new Error(message);
+                    throw new Error(unexpected.join("\n"));
                   };
             this.setExport(name, value);
           }
@@ -307,7 +316,14 @@ async function fixture({
   const entry = modules.get("update-command-post-update.js");
   await entry.link((specifier) => modules.get(path.basename(specifier)) ?? stubs.get(specifier));
   await entry.evaluate();
+  if (serviceLoadBoundaryFailure) {
+    const { UpdateServiceLoadBoundaryError } = modules.get(
+      "update-command-service-load.js",
+    ).namespace;
+    commandFailure = new UpdateServiceLoadBoundaryError("fixture service load boundary");
+  }
   return {
+    commandError: commandFailure,
     direct: (params) =>
       modules
         .get("update-command-service.js")
@@ -425,9 +441,8 @@ void test("accepted restart without healthy successor cannot authorize retiremen
 });
 if (main) {
   void test("current-main service-load boundary error propagates unchanged", async () => {
-    const error = new UpdateServiceLoadBoundaryError("fixture service load boundary");
-    const f = await fixture({ commandError: error });
-    await assert.rejects(f.direct(), (actual) => actual === error);
+    const f = await fixture({ serviceLoadBoundaryFailure: true });
+    await assert.rejects(f.direct(), (actual) => actual === f.commandError);
     assert.equal(f.counts().verifyCalls, 0);
     assert.equal(f.counts().commandCalls, 1);
     assert.deepEqual(f.unexpected, []);
