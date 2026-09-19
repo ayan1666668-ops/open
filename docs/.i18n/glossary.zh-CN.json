@@ -4858,5 +4858,9 @@
   {
     "source": "FAQ: providers, hardware, and hosting",
     "target": "常见问题：服务商、硬件与托管"
+  },
+  {
+    "source": "Enterprise deployment controls",
+    "target": "企业部署控制"
   }
 ]

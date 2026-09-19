@@ -147,6 +147,7 @@ openclaw --profile rescue browser status
 
 ## Related
 
+- [Enterprise deployment controls](/gateway/enterprise-deployment)
 - [Gateway runbook](/gateway)
 - [Gateway lock](/gateway/gateway-lock)
 - [Configuration](/gateway/configuration)
