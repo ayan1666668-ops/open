@@ -89,7 +89,10 @@ describe("worker environment service", () => {
       await workerService.reconcileOnce();
       expect(maintainProviders).toHaveBeenCalledOnce();
       await expect(
-        workerService.create({ profileId: "development", idempotencyKey: "during-maintenance" }),
+        workerService.createWithRequest({
+          profileId: "development",
+          idempotencyKey: "during-maintenance",
+        }),
       ).resolves.toMatchObject({ state: "ready" });
       stopping = workerService.stop().then(() => {
         stopped = true;
@@ -249,7 +252,7 @@ describe("worker environment service", () => {
       providerCallTimeoutMs: 5,
       tunnelManager,
     });
-    const creation = workerService.create({
+    const creation = workerService.createWithRequest({
       profileId: "development",
       idempotencyKey: "request-stop-provider-timeout",
     });
@@ -411,14 +414,14 @@ describe("worker environment service", () => {
     });
     const provision = vi.fn(support.createProvider().provision);
     const workerService = support.createService(support.createProvider({ provision }));
-    const first = workerService.create({
+    const first = workerService.createWithRequest({
       profileId: "development",
       idempotencyKey: "request-queued-before-stop",
     });
     await support.waitForFast(() =>
       expect(support.testState.bootstrapWorker).toHaveBeenCalledTimes(1),
     );
-    const queued = workerService.create({
+    const queued = workerService.createWithRequest({
       profileId: "development",
       idempotencyKey: "request-queued-before-stop",
     });
@@ -443,7 +446,7 @@ describe("worker environment service", () => {
     });
     const destroy = vi.fn(async () => {});
     const workerService = support.createService(support.createProvider({ destroy }));
-    const creation = workerService.create({
+    const creation = workerService.createWithRequest({
       profileId: "development",
       idempotencyKey: "request-destroy-before-stop",
     });
@@ -478,7 +481,7 @@ describe("worker environment service", () => {
       return support.BOOTSTRAP_RECEIPT;
     });
     const workerService = support.createService(support.createProvider());
-    const creation = workerService.create({
+    const creation = workerService.createWithRequest({
       profileId: "development",
       idempotencyKey: "request-stop-after-reconcile-failure",
     });
@@ -527,7 +530,10 @@ describe("worker environment service", () => {
     await stopping;
     expect(stopped).toBe(true);
     await expect(
-      workerService.create({ profileId: "development", idempotencyKey: "request-after-stop" }),
+      workerService.createWithRequest({
+        profileId: "development",
+        idempotencyKey: "request-after-stop",
+      }),
     ).rejects.toMatchObject({
       code: "invalid_state",
     } satisfies Partial<WorkerEnvironmentServiceError>);

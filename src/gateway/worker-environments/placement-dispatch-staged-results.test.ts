@@ -252,7 +252,7 @@ describe("staged worker placement result recovery", () => {
         tunnelManager: tunnels,
         placementStore: createWorkerSessionPlacementGate(placementStore),
       });
-      const ready = await environments.create({
+      const ready = await environments.createWithRequest({
         profileId: "development",
         idempotencyKey: "session-dispatch:session-1:1",
         executionMode: "remote-exec",

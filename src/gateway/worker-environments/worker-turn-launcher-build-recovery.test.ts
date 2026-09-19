@@ -152,7 +152,7 @@ function createBuildRecoveryHarness(
     attachSession: vi.fn(async () => {
       throw new Error("unexpected worker session attachment");
     }),
-    create: vi.fn(async () => {
+    createWithRequest: vi.fn(async () => {
       throw new Error("unexpected worker environment creation");
     }),
     reconcileOnce: async () => retire(),

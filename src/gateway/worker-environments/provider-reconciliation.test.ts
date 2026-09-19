@@ -114,7 +114,7 @@ describe("worker environment service", () => {
         }),
         { ensureNodeWorkerBundle: async () => structuredClone(support.BOOTSTRAP_RECEIPT) },
       );
-      const environment = await workerService.create({
+      const environment = await workerService.createWithRequest({
         profileId: "development",
         idempotencyKey: `request-${lease.leaseId}`,
       });
@@ -143,7 +143,7 @@ describe("worker environment service", () => {
       destroy,
     });
     const workerService = support.createService(provider);
-    const environment = await workerService.create({
+    const environment = await workerService.createWithRequest({
       profileId: "development",
       idempotencyKey: "request-unadvertised-persisted-ssh",
       executionMode: "remote-exec",
@@ -183,7 +183,7 @@ describe("worker environment service", () => {
       const workerService = support.createService(provider, {
         ensureNodeWorkerBundle: async () => structuredClone(support.BOOTSTRAP_RECEIPT),
       });
-      const environment = await workerService.create({
+      const environment = await workerService.createWithRequest({
         profileId: "development",
         idempotencyKey: "request-unadvertised-persisted-node",
         executionMode: "remote-exec",
@@ -224,7 +224,7 @@ describe("worker environment service", () => {
         }),
         { ensureNodeWorkerBundle: async () => structuredClone(support.BOOTSTRAP_RECEIPT) },
       );
-      const environment = await initial.create({
+      const environment = await initial.createWithRequest({
         profileId: "development",
         idempotencyKey: "request-persisted-multimode-node",
         executionMode: "remote-exec",
@@ -505,7 +505,7 @@ describe("worker environment service", () => {
 
     const result = await support
       .createService(provider)
-      .create({ profileId: "development", idempotencyKey: "request-npm" });
+      .createWithRequest({ profileId: "development", idempotencyKey: "request-npm" });
 
     expect(result).toMatchObject({
       state: "ready",

@@ -131,7 +131,7 @@ describe("worker provider project preparation ownership", () => {
         ensureNodeWorkerBundle: async () => structuredClone(support.BOOTSTRAP_RECEIPT),
         registerPreparedWorkspace,
       });
-      const creation = service.create({
+      const creation = service.createWithRequest({
         profileId: "development",
         idempotencyKey: "prepared-host",
         executionMode: "worker-turn",
@@ -208,7 +208,7 @@ describe("worker provider project preparation ownership", () => {
     };
     for (let attempt = 0; attempt < 2; attempt += 1) {
       await expect(
-        service.create({
+        service.createWithRequest({
           profileId: profile.profileId,
           inheritedProfile: {
             providerId: profile.providerId,
@@ -281,7 +281,7 @@ describe("worker provider project preparation ownership", () => {
         },
       );
       await expect(
-        service.create({
+        service.createWithRequest({
           profileId: "development",
           idempotencyKey: change,
           executionMode: "worker-turn",
@@ -323,7 +323,7 @@ describe("worker provider project preparation ownership", () => {
     }));
     const service = createService(provision);
     const creation = service
-      .create({
+      .createWithRequest({
         profileId: "development",
         idempotencyKey: "cancelled-project-snapshot",
         projectPath: git.root,
@@ -371,7 +371,7 @@ describe("worker provider project preparation ownership", () => {
       return { leaseId: "unexpected-transfer-lease", ssh: support.SSH_ENDPOINT };
     });
     const creation = service
-      .create({
+      .createWithRequest({
         profileId: "development",
         idempotencyKey: "cancelled-project-transfer",
         projectPath: git.root,
@@ -446,7 +446,7 @@ describe("worker provider project preparation ownership", () => {
         selectedClass === machineClass;
       const first = createService(provision, undefined, supportsProjectPreparation);
       await expect(
-        first.create({
+        first.createWithRequest({
           profileId: "development",
           idempotencyKey: "project-replay",
           machineClass,
@@ -467,7 +467,7 @@ describe("worker provider project preparation ownership", () => {
 
       const restarted = createService(provision, undefined, supportsProjectPreparation);
       await expect(
-        restarted.create({
+        restarted.createWithRequest({
           profileId: "development",
           idempotencyKey: "project-replay",
           machineClass,
@@ -493,7 +493,7 @@ describe("worker provider project preparation ownership", () => {
       ssh: support.SSH_ENDPOINT,
     }));
     const service = createService(provision);
-    await service.create({
+    await service.createWithRequest({
       profileId: "development",
       idempotencyKey: "same-request",
       projectPath: first.root,
@@ -501,7 +501,7 @@ describe("worker provider project preparation ownership", () => {
     const snapshot = support.testState.store.list()[0]?.profileSnapshot;
 
     await expect(
-      service.create({
+      service.createWithRequest({
         profileId: "development",
         idempotencyKey: "same-request",
         projectPath: second.root,
@@ -524,7 +524,7 @@ describe("worker provider project preparation ownership", () => {
         projects.push(options?.project);
         return { leaseId: `lease-${operationId}`, ssh: support.SSH_ENDPOINT };
       });
-      const original = await service.create({
+      const original = await service.createWithRequest({
         profileId: "development",
         idempotencyKey: "original",
         projectPath: first.root,
@@ -538,7 +538,7 @@ describe("worker provider project preparation ownership", () => {
         providerId: originalRecord.providerId,
         profileSnapshot: originalRecord.profileSnapshot,
       };
-      const next = await service.create({
+      const next = await service.createWithRequest({
         profileId: inherited.profileId,
         inheritedProfile: {
           providerId: inherited.providerId,
@@ -563,7 +563,7 @@ describe("worker provider project preparation ownership", () => {
         expect(projects[1]).toBeUndefined();
       }
       await expect(
-        service.create({
+        service.createWithRequest({
           profileId: inherited.profileId,
           inheritedProfile: {
             providerId: inherited.providerId,
@@ -598,7 +598,7 @@ describe("worker provider project preparation ownership", () => {
         outcome === "timeout" ? 20 : undefined,
       );
       try {
-        const creation = service.create({
+        const creation = service.createWithRequest({
           profileId: "development",
           idempotencyKey: "closure",
           projectPath: git.root,

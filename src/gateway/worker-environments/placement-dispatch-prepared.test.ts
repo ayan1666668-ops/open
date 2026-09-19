@@ -210,7 +210,7 @@ function preparedHarness(
     return { ...(await ordinaryBind(request)), ...options.boundWorkspace };
   });
   if (!reserve) {
-    vi.mocked(harness.environments.create).mockResolvedValue(projected);
+    vi.mocked(harness.environments.createWithRequest).mockResolvedValue(projected);
   }
   const node: NodeWorkerSupervisorNodeProof = {
     nodeId: "prepared-node",
@@ -330,7 +330,7 @@ describe("prepared worker dispatch", () => {
         environmentId: ready.environmentId,
         executionMode,
       });
-      expect(harness.environments.create).not.toHaveBeenCalled();
+      expect(harness.environments.createWithRequest).not.toHaveBeenCalled();
       expect(store.get(ready.environmentId)?.preparation?.consumedAtMs).toBe(1_000);
       expect(store.getCredential(ready.environmentId)).toMatchObject({
         sessionId: request.sessionId,
@@ -353,7 +353,7 @@ describe("prepared worker dispatch", () => {
     const active = await harness.service.dispatch(request);
 
     expect(active.environmentId).toBe(ready.environmentId);
-    expect(harness.environments.create).toHaveBeenCalledWith({
+    expect(harness.environments.createWithRequest).toHaveBeenCalledWith({
       profileId: request.profileId,
       idempotencyKey: expect.any(String),
       executionMode: request.executionMode,
@@ -390,7 +390,7 @@ describe("prepared worker dispatch", () => {
 
       expect(active.environmentId).toBe(harness.ready.environmentId);
       expect(active.environmentId).not.toBe(ready.environmentId);
-      expect(harness.environments.create).toHaveBeenCalledOnce();
+      expect(harness.environments.createWithRequest).toHaveBeenCalledOnce();
       expect(store.get(ready.environmentId)?.preparation?.consumedAtMs).toBeNull();
       expect(harness.environments.bindPreparedWorkspace).not.toHaveBeenCalled();
     },
@@ -412,7 +412,7 @@ describe("prepared worker dispatch", () => {
       const active = await harness.service.dispatch(request);
 
       expect(active.environmentId).toBe(harness.ready.environmentId);
-      expect(harness.environments.create).toHaveBeenCalledOnce();
+      expect(harness.environments.createWithRequest).toHaveBeenCalledOnce();
       expect(store.get(ready.environmentId)?.preparation?.consumedAtMs).toBeNull();
       expect(store.getCredential(ready.environmentId)?.sessionId).toBeNull();
       expect(harness.environments.bindPreparedWorkspace).not.toHaveBeenCalled();
@@ -447,7 +447,7 @@ describe("prepared worker dispatch", () => {
         const active = await dispatch;
 
         expect(active.environmentId).toBe(harness.ready.environmentId);
-        expect(harness.environments.create).toHaveBeenCalledOnce();
+        expect(harness.environments.createWithRequest).toHaveBeenCalledOnce();
         expect(store.get(ready.environmentId)?.preparation?.consumedAtMs).toBeNull();
         expect(store.getCredential(ready.environmentId)?.sessionId).toBeNull();
         expect(harness.environments.bindPreparedWorkspace).not.toHaveBeenCalled();
@@ -489,7 +489,7 @@ describe("prepared worker dispatch", () => {
     const active = await harness.service.dispatch(request);
 
     expect(active.environmentId).toBe(harness.ready.environmentId);
-    expect(harness.environments.create).toHaveBeenCalledOnce();
+    expect(harness.environments.createWithRequest).toHaveBeenCalledOnce();
     expect(store.get(ready.environmentId)?.preparation?.consumedAtMs).toBeNull();
     expect(harness.environments.bindPreparedWorkspace).not.toHaveBeenCalled();
   });
@@ -525,7 +525,7 @@ describe("prepared worker dispatch", () => {
 
     expect(store.get(ready.environmentId)?.preparation?.consumedAtMs).toBeNull();
     expect(harness.environments.attachSession).not.toHaveBeenCalled();
-    expect(harness.environments.create).not.toHaveBeenCalled();
+    expect(harness.environments.createWithRequest).not.toHaveBeenCalled();
   });
 
   it("cannot recycle a consumed environment after live attachment rollback", async () => {
@@ -692,7 +692,7 @@ describe("prepared worker dispatch", () => {
         remoteWorkspaceDir: boundWorkspace.workspaceDir,
         workspaceBaseManifestRef: current.manifestRef,
       });
-      expect(harness.environments.create).not.toHaveBeenCalled();
+      expect(harness.environments.createWithRequest).not.toHaveBeenCalled();
       expect(store.get(ready.environmentId)?.preparation?.consumedAtMs).toBe(1_000);
       expect(harness.log.indexOf("workspace:bind-prepared")).toBeLessThan(
         harness.log.indexOf("sync"),

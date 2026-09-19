@@ -49,7 +49,7 @@ describe("worker environment service provision replay", () => {
     };
     const first = support.createService(provider, { prepareNodeEnrollment: enrollment });
     await expect(
-      first.create({ profileId: "development", idempotencyKey: "preflight-replay" }),
+      first.createWithRequest({ profileId: "development", idempotencyKey: "preflight-replay" }),
     ).rejects.toMatchObject({
       code: "provider_failure",
     });
@@ -113,7 +113,7 @@ describe("worker environment service provision replay", () => {
     const first = support.createService(provider());
 
     await expect(
-      first.create({
+      first.createWithRequest({
         profileId: "development",
         idempotencyKey: "request-restart-replay",
         machineClass: "large",
@@ -249,7 +249,7 @@ describe("worker environment service provision replay", () => {
     });
 
     await expect(
-      first.create({
+      first.createWithRequest({
         profileId: "development",
         idempotencyKey,
         executionMode: REQUEST.executionMode,
@@ -475,7 +475,10 @@ describe("worker environment service provision replay", () => {
       const workerService = support.createService(provider);
 
       const failure = await workerService
-        .create({ profileId: "development", idempotencyKey: "request-provision-cleanup" })
+        .createWithRequest({
+          profileId: "development",
+          idempotencyKey: "request-provision-cleanup",
+        })
         .catch((error: unknown) => error);
       expect(failure).toMatchObject({
         code: "provider_failure",
@@ -558,7 +561,7 @@ describe("worker environment service provision replay", () => {
     );
 
     await expect(
-      workerService.create({
+      workerService.createWithRequest({
         profileId: "development",
         idempotencyKey: "request-provider-timeout-override",
       }),
@@ -585,7 +588,7 @@ describe("worker environment service provision replay", () => {
     );
 
     await expect(
-      workerService.create({
+      workerService.createWithRequest({
         profileId: "development",
         idempotencyKey: `request-invalid-provider-timeout-${String(timeoutMs)}`,
       }),
@@ -638,7 +641,7 @@ describe("worker environment service provision replay", () => {
       resolveProvisionTimeoutMs: () => 20,
     });
     const workerService = support.createService(provider);
-    const creation = workerService.create({
+    const creation = workerService.createWithRequest({
       profileId: "development",
       idempotencyKey: "request-provider-timeout-race",
     });
@@ -711,7 +714,10 @@ describe("worker environment service provision replay", () => {
     const workerService = support.createService(provider);
 
     await expect(
-      workerService.create({ profileId: "development", idempotencyKey: "request-lost-provision" }),
+      workerService.createWithRequest({
+        profileId: "development",
+        idempotencyKey: "request-lost-provision",
+      }),
     ).rejects.toMatchObject({
       code: "provider_failure",
     } satisfies Partial<WorkerEnvironmentServiceError>);
@@ -816,7 +822,10 @@ describe("worker environment service provision replay", () => {
     );
 
     await expect(
-      workerService.create({ profileId: "development", idempotencyKey: "request-malformed" }),
+      workerService.createWithRequest({
+        profileId: "development",
+        idempotencyKey: "request-malformed",
+      }),
     ).rejects.toMatchObject({
       code: "provider_failure",
       message: expect.stringContaining(error),

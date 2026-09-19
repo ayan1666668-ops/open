@@ -109,7 +109,7 @@ describe("Crabbox runtime preflight cleanup", () => {
         prepareNodeEnrollment: vi.fn(),
       });
       await expect(
-        service.create({ profileId: "development", idempotencyKey: "fresh-preflight" }),
+        service.createWithRequest({ profileId: "development", idempotencyKey: "fresh-preflight" }),
       ).rejects.toMatchObject({
         code: "provider_failure",
       });
@@ -306,7 +306,7 @@ describe("Crabbox runtime preflight cleanup", () => {
     };
     let service = support.createService(await makeProvider(), { prepareNodeEnrollment });
     await expect(
-      service.create({
+      service.createWithRequest({
         profileId: "development",
         idempotencyKey: "runtime-replay",
         executionMode: "worker-turn",
@@ -401,7 +401,10 @@ describe("Crabbox runtime preflight cleanup", () => {
       const provider = await registerProvider();
       const service = support.createService(provider, { prepareNodeEnrollment: vi.fn() });
       await expect(
-        service.create({ profileId: "development", idempotencyKey: "invalid-immutable" }),
+        service.createWithRequest({
+          profileId: "development",
+          idempotencyKey: "invalid-immutable",
+        }),
       ).rejects.toMatchObject({
         code: "invalid_profile",
         message: expect.stringContaining(message),

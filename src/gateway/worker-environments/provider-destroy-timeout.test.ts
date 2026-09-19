@@ -33,7 +33,7 @@ describe("worker provider teardown deadlines", () => {
       const operation = (
         entrance === "destroy"
           ? service.destroy("slow-destroy")
-          : service.create({
+          : service.createWithRequest({
               profileId: "development",
               idempotencyKey: "failed-bootstrap-slow-destroy",
             })
@@ -98,7 +98,7 @@ describe("worker provider teardown deadlines", () => {
         });
       } else {
         await expect(
-          service.create({
+          service.createWithRequest({
             profileId: "development",
             idempotencyKey: "override-bootstrap-cleanup",
           }),

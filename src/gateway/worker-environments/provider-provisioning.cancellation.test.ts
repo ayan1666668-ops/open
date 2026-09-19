@@ -168,7 +168,7 @@ describe("worker provisioning cancellation ownership", () => {
         },
       );
       const creation = service
-        .create({
+        .createWithRequest({
           profileId: "development",
           idempotencyKey: `runtime-stop-${phase}`,
           executionMode: "worker-turn",
@@ -242,7 +242,7 @@ describe("worker provisioning cancellation ownership", () => {
       });
       const service = support.createService(provider);
       const creation = service
-        .create({
+        .createWithRequest({
           profileId: "development",
           idempotencyKey: "cancelled-provision",
           signal: controller.signal,
@@ -329,7 +329,7 @@ describe("worker provisioning cancellation ownership", () => {
       );
       let settled = false;
       const creation = service
-        .create({
+        .createWithRequest({
           profileId: "development",
           idempotencyKey: `${phase}-bundle-stop`,
           executionMode: "worker-turn",
@@ -421,7 +421,7 @@ describe("worker provisioning cancellation ownership", () => {
       },
     );
     const creation = service
-      .create({
+      .createWithRequest({
         profileId: "development",
         idempotencyKey: "runtime-before-enrollment",
         executionMode: "worker-turn",
@@ -475,7 +475,7 @@ describe("worker provisioning cancellation ownership", () => {
       const service = support.createService(support.createProvider({ provision }));
       let creationSettled = false;
       const creation = service
-        .create({
+        .createWithRequest({
           profileId: "development",
           idempotencyKey: "cancelled-preparation",
           signal: controller.signal,
@@ -543,7 +543,7 @@ describe("worker provisioning cancellation ownership", () => {
     );
     let settled = false;
     const creation = service
-      .create({
+      .createWithRequest({
         profileId: "development",
         idempotencyKey: "node-preflight-stop",
         executionMode: "worker-turn",
@@ -606,14 +606,17 @@ describe("worker provisioning cancellation ownership", () => {
         }),
       );
       await expect(
-        service.create({ profileId: "development", idempotencyKey: "replay-preparation-stop" }),
+        service.createWithRequest({
+          profileId: "development",
+          idempotencyKey: "replay-preparation-stop",
+        }),
       ).rejects.toMatchObject({
         code: "provider_failure",
       });
       replay = true;
       let settled = false;
       const creation = service
-        .create({
+        .createWithRequest({
           profileId: "development",
           idempotencyKey: "replay-preparation-stop",
           signal: controller.signal,
@@ -677,7 +680,7 @@ describe("worker provisioning cancellation ownership", () => {
     });
     const service = support.createService(provider, { providerCallTimeoutMs: 20 });
     const creation = service
-      .create({
+      .createWithRequest({
         profileId: "development",
         idempotencyKey: "timeout-cancel",
         signal: controller.signal,
@@ -735,7 +738,7 @@ describe("worker provisioning cancellation ownership", () => {
     );
     let settled = false;
     const creation = service
-      .create({
+      .createWithRequest({
         profileId: "development",
         idempotencyKey: "node-install-stop",
         executionMode: "worker-turn",
@@ -807,7 +810,7 @@ describe("worker provisioning cancellation ownership", () => {
       { prepareNodeEnrollment: async () => enrollment, closeNodeEnrollment },
     );
     const creation = service
-      .create({
+      .createWithRequest({
         profileId: "development",
         idempotencyKey: "enrollment-cancel",
         executionMode: "worker-turn",

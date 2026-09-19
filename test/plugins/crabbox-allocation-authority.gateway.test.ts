@@ -182,7 +182,7 @@ describe("Crabbox allocation through Gateway ownership", () => {
       });
       try {
         if (allocation === "fork") {
-          const seed = await service.create({
+          const seed = await service.createWithRequest({
             profileId: "development",
             idempotencyKey: "checkpoint-source",
           });

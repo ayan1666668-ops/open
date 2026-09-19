@@ -35,7 +35,7 @@ describe("worker environment service", () => {
     );
 
     await expect(
-      workerService.create({
+      workerService.createWithRequest({
         profileId: "development",
         idempotencyKey: "request-device-install-failure",
       }),
@@ -79,7 +79,10 @@ describe("worker environment service", () => {
     );
 
     await expect(
-      workerService.create({ profileId: "development", idempotencyKey: "request-device-cleanup" }),
+      workerService.createWithRequest({
+        profileId: "development",
+        idempotencyKey: "request-device-cleanup",
+      }),
     ).rejects.toMatchObject({
       code: "bootstrap_failure",
       message: "Worker node bootstrap failed; teardown is pending: bundle transfer unavailable",
@@ -109,7 +112,7 @@ describe("worker environment service", () => {
     });
     const creation = support
       .createService(support.createProvider())
-      .create({ profileId: "development", idempotencyKey: "request-bootstrap" });
+      .createWithRequest({ profileId: "development", idempotencyKey: "request-bootstrap" });
 
     await support.waitForFast(() =>
       expect(support.testState.store.list()[0]).toMatchObject({
@@ -133,7 +136,7 @@ describe("worker environment service", () => {
     const workerService = support.createService(support.createProvider({ provision }));
 
     await expect(
-      workerService.create({
+      workerService.createWithRequest({
         profileId: "development",
         idempotencyKey: "request-preparation-failure",
       }),
@@ -171,7 +174,7 @@ describe("worker environment service", () => {
     const workerService = support.createService(support.createProvider({ destroy }));
 
     await expect(
-      workerService.create({
+      workerService.createWithRequest({
         profileId: "development",
         idempotencyKey: "request-receipt-write-failure",
       }),
@@ -204,7 +207,7 @@ describe("worker environment service", () => {
     const destroy = vi.fn(async () => {});
     const workerService = support.createService(support.createProvider({ destroy }));
 
-    const creation = workerService.create({
+    const creation = workerService.createWithRequest({
       profileId: "development",
       idempotencyKey: "request-bootstrap-failure",
     });
@@ -319,7 +322,7 @@ describe("worker environment service", () => {
     );
 
     await expect(
-      workerService.create({
+      workerService.createWithRequest({
         profileId: "development",
         idempotencyKey: "request-bootstrap-cleanup",
       }),
@@ -370,7 +373,7 @@ describe("worker environment service", () => {
       },
     });
 
-    const creation = workerService.create({
+    const creation = workerService.createWithRequest({
       profileId: "development",
       idempotencyKey: "request-identity-timeout",
     });
@@ -416,7 +419,7 @@ describe("worker environment service", () => {
     });
 
     await expect(
-      workerService.create({
+      workerService.createWithRequest({
         profileId: "development",
         idempotencyKey: "request-bootstrap-timeout",
       }),
@@ -443,7 +446,7 @@ describe("worker environment service", () => {
     });
     const workerService = support.createService(support.createProvider());
 
-    const creation = workerService.create({
+    const creation = workerService.createWithRequest({
       profileId: "development",
       idempotencyKey: "request-large-bundle-bootstrap",
     });

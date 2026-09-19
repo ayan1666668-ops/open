@@ -69,7 +69,7 @@ describe("worker allocation cleanup", () => {
         });
       let service = createService();
       const creation = service
-        .create({ profileId: "development", idempotencyKey: "confirmed-node-cleanup" })
+        .createWithRequest({ profileId: "development", idempotencyKey: "confirmed-node-cleanup" })
         .catch((error: unknown) => error);
       try {
         await Promise.race([
@@ -131,7 +131,10 @@ describe("worker allocation cleanup", () => {
       const provider = support.createProvider({ provision, destroy });
       let service = support.createService(provider);
       await expect(
-        service.create({ profileId: "development", idempotencyKey: "confirmed-cleanup" }),
+        service.createWithRequest({
+          profileId: "development",
+          idempotencyKey: "confirmed-cleanup",
+        }),
       ).rejects.toMatchObject({
         code: "provider_failure",
         message: expect.stringContaining(
@@ -201,7 +204,7 @@ describe("worker allocation cleanup", () => {
     });
     const service = support.createService(provider);
     await expect(
-      service.create({ profileId: "development", idempotencyKey: "invalid-allocation" }),
+      service.createWithRequest({ profileId: "development", idempotencyKey: "invalid-allocation" }),
     ).rejects.toMatchObject({
       code: "provider_failure",
     });
@@ -249,7 +252,10 @@ describe("worker allocation cleanup", () => {
       };
       let service = support.createService(provider);
       await expect(
-        service.create({ profileId: "development", idempotencyKey: "preflight-cleanup" }),
+        service.createWithRequest({
+          profileId: "development",
+          idempotencyKey: "preflight-cleanup",
+        }),
       ).rejects.toMatchObject({
         code: "provider_failure",
       });
@@ -327,7 +333,7 @@ describe("worker allocation cleanup", () => {
       const provider = support.createProvider({ provision, resolveAllocation, destroy });
       const first = support.createService(provider);
       await expect(
-        first.create({ profileId: "development", idempotencyKey: "lost-allocation" }),
+        first.createWithRequest({ profileId: "development", idempotencyKey: "lost-allocation" }),
       ).rejects.toMatchObject({
         code: "provider_failure",
       });
@@ -397,7 +403,7 @@ describe("worker allocation cleanup", () => {
         }),
       );
       await expect(
-        service.create({ profileId: "development", idempotencyKey: "owner-race" }),
+        service.createWithRequest({ profileId: "development", idempotencyKey: "owner-race" }),
       ).rejects.toMatchObject({
         code: "provider_failure",
       });
@@ -455,7 +461,7 @@ describe("worker allocation cleanup", () => {
       },
     );
     await expect(
-      service.create({ profileId: "development", idempotencyKey: "resolution-timeout" }),
+      service.createWithRequest({ profileId: "development", idempotencyKey: "resolution-timeout" }),
     ).rejects.toMatchObject({
       code: "provider_failure",
     });

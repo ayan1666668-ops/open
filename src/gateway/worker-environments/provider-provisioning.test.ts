@@ -46,7 +46,7 @@ describe("worker environment service", () => {
     );
     const service = support.createService(support.createProvider({ provision, prepareProvision }));
     await expect(
-      service.create({
+      service.createWithRequest({
         profileId: "development",
         idempotencyKey: "prepared-request",
         machineClass: "large",
@@ -78,7 +78,7 @@ describe("worker environment service", () => {
         closure === "timeout" ? { providerCallTimeoutMs: 25 } : {},
       );
       const creation = service
-        .create({
+        .createWithRequest({
           profileId: "development",
           idempotencyKey: "closed-preparation",
           signal: controller.signal,
@@ -124,10 +124,13 @@ describe("worker environment service", () => {
       { providerCallTimeoutMs: 25 },
     );
     await expect(
-      service.create({ profileId: "development", idempotencyKey: "replayed-preparation" }),
+      service.createWithRequest({
+        profileId: "development",
+        idempotencyKey: "replayed-preparation",
+      }),
     ).rejects.toThrow("response lost after allocation");
     const replay = service
-      .create({ profileId: "development", idempotencyKey: "replayed-preparation" })
+      .createWithRequest({ profileId: "development", idempotencyKey: "replayed-preparation" })
       .catch((error: unknown) => error);
     await entered.promise;
     await replay;
@@ -175,7 +178,7 @@ describe("worker environment service", () => {
 
     const workerService = support.createService(provider);
     const create = (machineClass = "beast", os: string | undefined = "os-a") =>
-      workerService.create({
+      workerService.createWithRequest({
         profileId: "development",
         idempotencyKey: "request-1",
         machineClass,
@@ -219,7 +222,7 @@ describe("worker environment service", () => {
       ["beast", undefined],
     ]) {
       await expect(
-        workerService.create({
+        workerService.createWithRequest({
           profileId: "development",
           idempotencyKey: "request-1",
           machineClass,
@@ -236,14 +239,14 @@ describe("worker environment service", () => {
     const workerService = support.createService(provider);
 
     await expect(
-      workerService.create({
+      workerService.createWithRequest({
         profileId: "development",
         idempotencyKey: "mode-configured",
         executionMode: "remote-exec",
       }),
     ).rejects.toMatchObject({ code: "invalid_profile" });
     await expect(
-      workerService.create({
+      workerService.createWithRequest({
         profileId: "development",
         inheritedProfile: {
           providerId: provider.id,
@@ -257,7 +260,10 @@ describe("worker environment service", () => {
     expect(support.testState.store.list()).toEqual([]);
 
     await expect(
-      workerService.create({ profileId: "development", idempotencyKey: "lifecycle-only" }),
+      workerService.createWithRequest({
+        profileId: "development",
+        idempotencyKey: "lifecycle-only",
+      }),
     ).resolves.toMatchObject({
       state: "ready",
     });
@@ -282,7 +288,7 @@ describe("worker environment service", () => {
       { ensureNodeWorkerBundle: async () => structuredClone(support.BOOTSTRAP_RECEIPT) },
     );
 
-    const environment = await workerService.create({
+    const environment = await workerService.createWithRequest({
       profileId: "development",
       idempotencyKey: "request-direct-default-node",
     });
@@ -340,7 +346,7 @@ describe("worker environment service", () => {
       const idempotencyKey = `transport-${mode}-${transport}-${inherited ? "inherited" : "profile"}`;
 
       const result = inherited
-        ? await workerService.create({
+        ? await workerService.createWithRequest({
             profileId: "development",
             inheritedProfile: {
               providerId: provider.id,
@@ -349,7 +355,7 @@ describe("worker environment service", () => {
             idempotencyKey,
             executionMode: mode,
           })
-        : await workerService.create({
+        : await workerService.createWithRequest({
             profileId: "development",
             idempotencyKey,
             executionMode: mode,
@@ -381,7 +387,7 @@ describe("worker environment service", () => {
     const workerService = support.createService(provider);
 
     await expect(
-      workerService.create({
+      workerService.createWithRequest({
         profileId: "development",
         idempotencyKey: "transport-worker-turn-ssh",
         executionMode: "worker-turn",
@@ -417,20 +423,20 @@ describe("worker environment service", () => {
       { ensureNodeWorkerBundle: async () => structuredClone(support.BOOTSTRAP_RECEIPT) },
     );
 
-    const original = await workerService.create({
+    const original = await workerService.createWithRequest({
       profileId: "development",
       idempotencyKey: "request-stable-operation-mode",
       executionMode: "worker-turn",
     });
     await expect(
-      workerService.create({
+      workerService.createWithRequest({
         profileId: "development",
         idempotencyKey: "request-stable-operation-mode",
         executionMode: "worker-turn",
       }),
     ).resolves.toMatchObject({ environmentId: original.environmentId });
     await expect(
-      workerService.create({
+      workerService.createWithRequest({
         profileId: "development",
         idempotencyKey: "request-stable-operation-mode",
         executionMode: "remote-exec",
@@ -599,7 +605,7 @@ describe("worker environment service", () => {
     service.subscribeMachineShapeChanged(() => {
       throw new Error("observer unavailable");
     });
-    const environment = await service.create({
+    const environment = await service.createWithRequest({
       profileId: "development",
       idempotencyKey: "catalog-failure",
     });
@@ -710,7 +716,7 @@ describe("worker environment service", () => {
         generateWorkerCredential: () => `nested-worker-credential-${(credential += 1)}`,
       },
     );
-    const parent = await workerService.create({
+    const parent = await workerService.createWithRequest({
       profileId: "development",
       idempotencyKey: "parent-profile-snapshot",
       os: "os-a",
@@ -723,7 +729,7 @@ describe("worker environment service", () => {
       providerId: parent.providerId,
       profileSnapshot: parent.profileSnapshot,
     };
-    const child = await workerService.create({
+    const child = await workerService.createWithRequest({
       profileId: inherited.profileId,
       inheritedProfile: {
         providerId: inherited.providerId,
@@ -740,7 +746,7 @@ describe("worker environment service", () => {
       profileSnapshot: parent.profileSnapshot,
     });
     await expect(
-      workerService.create({
+      workerService.createWithRequest({
         profileId: inherited.profileId,
         inheritedProfile: {
           providerId: inherited.providerId,
@@ -750,7 +756,7 @@ describe("worker environment service", () => {
       }),
     ).resolves.toMatchObject({ environmentId: child.environmentId });
     await expect(
-      workerService.create({
+      workerService.createWithRequest({
         profileId: inherited.profileId,
         inheritedProfile: {
           providerId: inherited.providerId,
@@ -788,7 +794,7 @@ describe("worker environment service", () => {
     const workerService = support.createService(support.createProvider({ provision }), {
       generateWorkerCredential: () => `inherited-worker-credential-${(credential += 1)}`,
     });
-    const parent = await workerService.create({
+    const parent = await workerService.createWithRequest({
       profileId: "development",
       idempotencyKey: "parent-inherited-profile",
     });
@@ -800,7 +806,7 @@ describe("worker environment service", () => {
     testCase.mutate();
 
     await expect(
-      workerService.create({
+      workerService.createWithRequest({
         profileId: inherited.profileId,
         inheritedProfile: {
           providerId: inherited.providerId,
@@ -813,7 +819,7 @@ describe("worker environment service", () => {
     expect(support.testState.store.list()).toHaveLength(1);
 
     await expect(
-      workerService.create({
+      workerService.createWithRequest({
         profileId: inherited.profileId,
         inheritedProfile: {
           providerId: inherited.providerId,
@@ -841,7 +847,7 @@ describe("worker environment service", () => {
     );
 
     await expect(
-      workerService.create({
+      workerService.createWithRequest({
         profileId: "device:device-1",
         inheritedProfile: {
           providerId: DEVICE_WORKER_PROVIDER_ID,
@@ -875,7 +881,7 @@ describe("worker environment service", () => {
         generateWorkerCredential: () => `named-device-credential-${(credential += 1)}`,
       },
     );
-    const parent = await workerService.create({
+    const parent = await workerService.createWithRequest({
       profileId: "development",
       idempotencyKey: "named-device-parent",
       executionMode: "worker-turn",
@@ -883,7 +889,7 @@ describe("worker environment service", () => {
     support.testState.config.cloudWorkers = { profiles: {} };
 
     await expect(
-      workerService.create({
+      workerService.createWithRequest({
         profileId: parent.profileId,
         inheritedProfile: {
           providerId: parent.providerId,
@@ -905,7 +911,7 @@ describe("worker environment service", () => {
     await expect(
       support
         .createService(support.createProvider({ provision }))
-        .create({ profileId: "development", idempotencyKey: "request-secret" }),
+        .createWithRequest({ profileId: "development", idempotencyKey: "request-secret" }),
     ).rejects.toMatchObject({ code: "invalid_profile" });
     expect(provision).not.toHaveBeenCalled();
     expect(support.testState.store.list()).toEqual([]);
@@ -922,7 +928,10 @@ describe("worker environment service", () => {
     const workerService = support.createService(provider);
 
     await expect(
-      workerService.create({ profileId: "development", idempotencyKey: "request-invalid" }),
+      workerService.createWithRequest({
+        profileId: "development",
+        idempotencyKey: "request-invalid",
+      }),
     ).rejects.toMatchObject({
       code: "invalid_profile",
       message: expect.stringContaining("region is required"),
@@ -944,7 +953,10 @@ describe("worker environment service", () => {
     const workerService = support.createService(support.createProvider());
 
     await expect(
-      workerService.create({ profileId: " development ", idempotencyKey: "request-spaced" }),
+      workerService.createWithRequest({
+        profileId: " development ",
+        idempotencyKey: "request-spaced",
+      }),
     ).rejects.toMatchObject({
       code: "invalid_profile",
     } satisfies Partial<WorkerEnvironmentServiceError>);

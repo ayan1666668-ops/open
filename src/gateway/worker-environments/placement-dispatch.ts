@@ -224,7 +224,7 @@ export function createWorkerPlacementDispatchService(options: WorkerPlacementDis
       reportPlacementTransition(onTransition, placement);
       const environment = prepared
         ? prepared.environment
-        : await environments.create({
+        : await environments.createWithRequest({
             profileId: request.profileId,
             idempotencyKey,
             machineClass: request.machineClass,

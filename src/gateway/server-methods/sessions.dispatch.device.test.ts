@@ -460,7 +460,7 @@ describe("sessions.dispatch device targets", () => {
           }
           return { available: true, node: nodes.find((node) => node.nodeId === deviceId) };
         });
-        vi.mocked(harness.environments.create).mockResolvedValue({
+        vi.mocked(harness.environments.createWithRequest).mockResolvedValue({
           ...harness.ready,
           providerId: "device",
           profileId: "device:second",
@@ -503,7 +503,7 @@ describe("sessions.dispatch device targets", () => {
           { autoDevice: true },
         );
 
-        const provisionCall = vi.mocked(harness.environments.create).mock.calls[0]?.[0];
+        const provisionCall = vi.mocked(harness.environments.createWithRequest).mock.calls[0]?.[0];
         expect(provisionCall?.idempotencyKey).toBe("session-dispatch:session-1:3");
         expect(harness.ready.environmentId).toBe(
           deriveEnvironmentIntent(provisionCall?.idempotencyKey ?? "missing").environmentId,
@@ -520,7 +520,7 @@ describe("sessions.dispatch device targets", () => {
         expect(harness.log).toEqual(
           expect.arrayContaining(["placement:requested", "placement:failed", "placement:active"]),
         );
-        expect(harness.environments.create).toHaveBeenCalledOnce();
+        expect(harness.environments.createWithRequest).toHaveBeenCalledOnce();
         expect(placements.get("session-1")).toMatchObject({ state: "active" });
       } finally {
         closeOpenClawStateDatabaseForTest();
@@ -557,7 +557,7 @@ describe("sessions.dispatch device targets", () => {
             [second, "second"],
           ] as const) {
             bindDeviceWorkerAvailability(harness.environments, availability);
-            vi.mocked(harness.environments.create).mockImplementation(async () => {
+            vi.mocked(harness.environments.createWithRequest).mockImplementation(async () => {
               if (deviceId === "first") {
                 firstAllocated = true;
               }
@@ -608,10 +608,10 @@ describe("sessions.dispatch device targets", () => {
             { autoDevice: true },
           );
 
-          expect(first.environments.create).toHaveBeenCalledOnce();
+          expect(first.environments.createWithRequest).toHaveBeenCalledOnce();
           expect(first.environments.attachSession).not.toHaveBeenCalled();
           expect(first.environments.destroy).toHaveBeenCalledOnce();
-          expect(second.environments.create).toHaveBeenCalledTimes(destroyFails ? 0 : 1);
+          expect(second.environments.createWithRequest).toHaveBeenCalledTimes(destroyFails ? 0 : 1);
           expect(respond).toHaveBeenCalledWith(
             !destroyFails,
             destroyFails
@@ -997,7 +997,7 @@ describe("sessions.dispatch device targets", () => {
 
         const placement = placements.get(dispatchTestSessionId);
         expect(placement).toBeUndefined();
-        expect(harness.environments.create).not.toHaveBeenCalled();
+        expect(harness.environments.createWithRequest).not.toHaveBeenCalled();
         expect(harness.environments.startTunnel).not.toHaveBeenCalled();
         expect(respond).toHaveBeenCalledWith(
           false,

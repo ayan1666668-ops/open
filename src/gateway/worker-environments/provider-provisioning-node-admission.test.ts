@@ -29,7 +29,7 @@ describe("worker environment node provisioning", () => {
       { ensureNodeWorkerBundle: async () => workerBuild, placementStore: placementGate },
     );
 
-    const result = await workerService.create({
+    const result = await workerService.createWithRequest({
       profileId: "development",
       idempotencyKey: "request-device",
     });

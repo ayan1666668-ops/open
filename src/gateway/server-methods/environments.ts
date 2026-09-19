@@ -322,7 +322,7 @@ export const environmentsHandlers: GatewayRequestHandlers = {
     }
     await respondWorkerMutation(
       respond,
-      () => service.create(params),
+      () => service.create(params.profileId, params.idempotencyKey),
       ["profile_not_found", "invalid_profile"],
       "worker environment creation failed",
     );

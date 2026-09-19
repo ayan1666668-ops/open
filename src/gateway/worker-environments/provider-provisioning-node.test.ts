@@ -72,7 +72,7 @@ describe("node worker provider provisioning", () => {
         },
       );
       try {
-        const environment = await workerService.create({
+        const environment = await workerService.createWithRequest({
           profileId: "development",
           idempotencyKey: "runtime-mode",
           executionMode,
@@ -154,7 +154,10 @@ describe("node worker provider provisioning", () => {
       );
       let creationSettled = false;
       const creation = workerService
-        .create({ profileId: "development", idempotencyKey: `bundle-overlap-${outcome}` })
+        .createWithRequest({
+          profileId: "development",
+          idempotencyKey: `bundle-overlap-${outcome}`,
+        })
         .then(
           (value) => ({ value }),
           (error: unknown) => ({ error }),
@@ -290,7 +293,7 @@ describe("node worker provider provisioning", () => {
       },
     );
 
-    const environment = await workerService.create({
+    const environment = await workerService.createWithRequest({
       profileId: "development",
       idempotencyKey: "request-cloud-node",
     });
@@ -352,7 +355,7 @@ describe("node worker provider provisioning", () => {
           ensureNodeWorkerBundle: async () => structuredClone(support.BOOTSTRAP_RECEIPT),
         },
       );
-      const creation = workerService.create({
+      const creation = workerService.createWithRequest({
         profileId: "development",
         idempotencyKey: `request-node-preparation-${outcome}`,
       });
@@ -464,7 +467,7 @@ describe("node worker provider provisioning", () => {
           providerCallTimeoutMs: 20,
         },
       );
-      const creation = workerService.create({
+      const creation = workerService.createWithRequest({
         profileId: "development",
         idempotencyKey: `request-node-closed-${outcome}`,
       });
@@ -583,7 +586,7 @@ describe("node worker provider provisioning", () => {
     );
 
     await expect(
-      workerService.create({
+      workerService.createWithRequest({
         profileId: "development",
         idempotencyKey: "request-node-destroy-replay",
       }),
@@ -673,7 +676,7 @@ describe("node worker provider provisioning", () => {
       },
     );
 
-    const environment = await workerService.create({
+    const environment = await workerService.createWithRequest({
       profileId: "development",
       idempotencyKey: "request-paired-device",
     });
@@ -709,7 +712,7 @@ describe("node worker provider provisioning", () => {
       { ensureNodeWorkerBundle: async () => workerBuild, placementStore: placementGate },
     );
 
-    const result = await workerService.create({
+    const result = await workerService.createWithRequest({
       profileId: "development",
       idempotencyKey: "request-device",
     });

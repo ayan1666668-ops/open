@@ -137,7 +137,7 @@ describe("dispatch Stop before provider allocation", () => {
       harness.markEnvironmentOwnerEpoch(active.activeOwnerEpoch);
 
       if (outcome === "published") {
-        vi.mocked(harness.environments.create).mockImplementation(async ({ signal }) => {
+        vi.mocked(harness.environments.createWithRequest).mockImplementation(async ({ signal }) => {
           destinationSignal = signal;
           entered.resolve();
           await release.promise;
@@ -246,7 +246,9 @@ describe("dispatch Stop before provider allocation", () => {
             expect(stopped).toBeInstanceOf(Error);
           }
         }
-        expect(harness.environments.create).toHaveBeenCalledTimes(outcome === "published" ? 1 : 0);
+        expect(harness.environments.createWithRequest).toHaveBeenCalledTimes(
+          outcome === "published" ? 1 : 0,
+        );
         expect(placements.listPendingWorkspaceResults()).toEqual([]);
       } finally {
         release.resolve();
@@ -354,7 +356,7 @@ describe("dispatch Stop before provider allocation", () => {
         entered.resolve();
         await release.promise;
       });
-      const create = vi.spyOn(environments, "create");
+      const create = vi.spyOn(environments, "createWithRequest");
       const runtime = createGatewayWorkerPlacementRuntime({
         placements,
         environments,
@@ -789,7 +791,7 @@ describe("dispatch Stop before provider allocation", () => {
         patch: { environmentId: intent.environmentId },
       });
       await expect(
-        environments.create({
+        environments.createWithRequest({
           profileId: "development",
           idempotencyKey: key,
           executionMode: REQUEST.executionMode,

@@ -77,7 +77,7 @@ describe("worker placement cancellation and reclaim authority", () => {
       expect(harness.log).not.toContain("activation");
       expect(harness.placements.current()?.state).toBe("failed");
       if (stage === "requested") {
-        expect(harness.environments.create).not.toHaveBeenCalled();
+        expect(harness.environments.createWithRequest).not.toHaveBeenCalled();
       } else {
         expect(harness.environments.destroy).toHaveBeenCalledOnce();
       }
@@ -200,7 +200,7 @@ describe("worker placement cancellation and reclaim authority", () => {
     const settled = createDeferredCore();
     const controller = new AbortController();
     let provisionSignal: AbortSignal | undefined;
-    vi.mocked(harness.environments.create).mockImplementation(async ({ signal }) => {
+    vi.mocked(harness.environments.createWithRequest).mockImplementation(async ({ signal }) => {
       provisionSignal = signal;
       entered.resolve();
       await settled.promise;
@@ -422,7 +422,7 @@ describe("worker placement dispatch authority", () => {
         const ready = { ...harness.ready, ...deviceIdentity };
         let current: ReturnType<typeof harness.environments.get> = ready;
         vi.mocked(harness.environments.get).mockImplementation(() => current);
-        vi.mocked(harness.environments.create).mockImplementation(async () => {
+        vi.mocked(harness.environments.createWithRequest).mockImplementation(async () => {
           harness.log.push("create");
           revokeAt("provisioning");
           return ready;

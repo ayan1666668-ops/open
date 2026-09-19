@@ -78,7 +78,7 @@ describe("node provisioning installer ownership", () => {
       const fixture = createHeldInstaller("discovery");
       const controller = new AbortController();
       const creation = fixture.service
-        .create({
+        .createWithRequest({
           profileId: "development",
           idempotencyKey: "held-discovery",
           executionMode: "worker-turn",
@@ -135,7 +135,7 @@ describe("node provisioning installer ownership", () => {
     const fixture = createHeldInstaller("installation");
     let settled = false;
     const creation = fixture.service
-      .create({
+      .createWithRequest({
         profileId: "development",
         idempotencyKey: "held-installation",
         executionMode: "worker-turn",
