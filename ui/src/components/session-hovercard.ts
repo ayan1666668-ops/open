@@ -453,6 +453,8 @@ function renderSessionContext(
   headsUp: ReturnType<typeof progressCardHeadsUp>,
 ) {
   const context = row?.workContext;
+  const directory = context?.kind === "project" ? context.cwd : context?.path;
+  const projectLocation = directory ?? context?.path;
   const placementIdentity =
     row?.placementProviderId && row.placementProfileId
       ? {
@@ -475,17 +477,35 @@ function renderSessionContext(
                 ? "sessionHovercard.projectLabel"
                 : "sessionHovercard.workspaceLabel",
             )}: ${context.name}`}
-            title=${`${t(
-              context.kind === "project"
-                ? "sessionHovercard.projectLabel"
-                : "sessionHovercard.workspaceLabel",
-            )}: ${context.path}`}
+            title=${
+              projectLocation
+                ? `${t(
+                    context.kind === "project"
+                      ? "sessionHovercard.projectLabel"
+                      : "sessionHovercard.workspaceLabel",
+                  )}: ${projectLocation}`
+                : nothing
+            }
           >
             <span class="session-hovercard__context-icon" aria-hidden="true">${icons.folder}</span>
-            <span
-              class="session-hovercard__context-value session-hovercard__context-text"
-              title=${context.path}
+            <span class="session-hovercard__context-value session-hovercard__context-text"
               >${context.name}</span
+            >
+          </div>`
+        : nothing
+    }
+    ${
+      context?.kind === "project" && context.branch
+        ? html`<div
+            class="session-hovercard__context-row"
+            aria-label=${`${t("sessionHovercard.branchLabel")}: ${context.branch}`}
+            title=${directory ?? nothing}
+          >
+            <span class="session-hovercard__context-icon" aria-hidden="true"
+              >${icons.gitBranch}</span
+            >
+            <span class="session-hovercard__context-value session-hovercard__context-text"
+              >${context.branch}</span
             >
           </div>`
         : nothing
