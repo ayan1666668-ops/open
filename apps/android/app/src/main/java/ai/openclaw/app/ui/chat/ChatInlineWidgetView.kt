@@ -8,6 +8,7 @@ import ai.openclaw.app.gateway.buildGatewayTlsConfig
 import ai.openclaw.app.gateway.normalizeGatewayTlsFingerprint
 import ai.openclaw.app.i18n.nativeString
 import ai.openclaw.app.ui.design.ClawTheme
+import ai.openclaw.app.ui.design.clawWindowContent
 import android.annotation.SuppressLint
 import android.os.Handler
 import android.os.Looper
@@ -235,18 +236,20 @@ internal fun ChatInlineWidget(
                 exportMenuExpanded = false
                 exportTarget = null
               },
-            ) {
-              DropdownMenuItem(
-                text = { Text(nativeString("Copy image")) },
-                leadingIcon = { Icon(Icons.Default.ContentCopy, contentDescription = null) },
-                onClick = { export(ChatWidgetExportDestination.Clipboard) },
-              )
-              DropdownMenuItem(
-                text = { Text(nativeString("Save image")) },
-                leadingIcon = { Icon(Icons.Default.Download, contentDescription = null) },
-                onClick = { export(ChatWidgetExportDestination.Downloads) },
-              )
-            }
+              content =
+                clawWindowContent {
+                  DropdownMenuItem(
+                    text = { Text(nativeString("Copy image")) },
+                    leadingIcon = { Icon(Icons.Default.ContentCopy, contentDescription = null) },
+                    onClick = { export(ChatWidgetExportDestination.Clipboard) },
+                  )
+                  DropdownMenuItem(
+                    text = { Text(nativeString("Save image")) },
+                    leadingIcon = { Icon(Icons.Default.Download, contentDescription = null) },
+                    onClick = { export(ChatWidgetExportDestination.Downloads) },
+                  )
+                },
+            )
           }
         }
       }

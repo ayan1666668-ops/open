@@ -147,7 +147,8 @@ internal fun SidebarAttentionIndicator(
   val interactions = remember { MutableInteractionSource() }
   val hovered by interactions.collectIsHoveredAsState()
   val focused by interactions.collectIsFocusedAsState()
-  val popupOffset = with(LocalDensity.current) { 32.dp.roundToPx() }
+  val density = LocalDensity.current
+  val popupOffset = with(density) { 32.dp.roundToPx() }
   // Background requests and summary updates do not replace the request being read.
   val identity = attention.disclosureIdentity
   var opened by remember(identity) { mutableStateOf(false) }
@@ -179,17 +180,19 @@ internal fun SidebarAttentionIndicator(
         opened = false
         dismissed = true
       }, properties = PopupProperties(focusable = opened)) {
-        Column(
-          Modifier
-            .widthIn(max = 280.dp)
-            .background(palette.elevated, RoundedCornerShape(10.dp))
-            .padding(12.dp)
-            .testTag("sidebar-attention-detail"),
-          verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-          Text(attention.status, color = palette.text, style = ClawTheme.type.caption.copy(fontWeight = FontWeight.SemiBold))
-          if (attention.first.preview.isNotBlank()) Text(attention.first.preview, color = palette.text, style = ClawTheme.type.caption)
-          attention.more?.let { Text(it, color = palette.muted, style = ClawTheme.type.caption) }
+        CompositionLocalProvider(LocalDensity provides density) {
+          Column(
+            Modifier
+              .widthIn(max = 280.dp)
+              .background(palette.elevated, RoundedCornerShape(10.dp))
+              .padding(12.dp)
+              .testTag("sidebar-attention-detail"),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+          ) {
+            Text(attention.status, color = palette.text, style = ClawTheme.type.caption.copy(fontWeight = FontWeight.SemiBold))
+            if (attention.first.preview.isNotBlank()) Text(attention.first.preview, color = palette.text, style = ClawTheme.type.caption)
+            attention.more?.let { Text(it, color = palette.muted, style = ClawTheme.type.caption) }
+          }
         }
       }
     }

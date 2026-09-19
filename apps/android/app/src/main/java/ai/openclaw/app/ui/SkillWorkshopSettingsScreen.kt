@@ -15,6 +15,7 @@ import ai.openclaw.app.ui.design.ClawStatus
 import ai.openclaw.app.ui.design.ClawStatusPill
 import ai.openclaw.app.ui.design.ClawTextField
 import ai.openclaw.app.ui.design.ClawTheme
+import ai.openclaw.app.ui.design.clawWindowContent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -384,27 +385,32 @@ private fun SkillWorkshopAgentMenu(
       modifier = Modifier.fillMaxWidth(),
       enabled = selectableAgents.isNotEmpty(),
     )
-    DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-      DropdownMenuItem(
-        text = { Text(nativeString("Default agent")) },
-        onClick = {
-          expanded = false
-          onAgentChange("")
-        },
-      )
-      selectableAgents
-        .filter { agent -> agent.id.trim().isNotEmpty() && agent.id != defaultAgentId }
-        .sortedBy { it.name ?: it.id }
-        .forEach { agent ->
+    DropdownMenu(
+      expanded = expanded,
+      onDismissRequest = { expanded = false },
+      content =
+        clawWindowContent {
           DropdownMenuItem(
-            text = { Text(agent.name?.takeIf { it.isNotBlank() } ?: agent.id) },
+            text = { Text(nativeString("Default agent")) },
             onClick = {
               expanded = false
-              onAgentChange(agent.id)
+              onAgentChange("")
             },
           )
-        }
-    }
+          selectableAgents
+            .filter { agent -> agent.id.trim().isNotEmpty() && agent.id != defaultAgentId }
+            .sortedBy { it.name ?: it.id }
+            .forEach { agent ->
+              DropdownMenuItem(
+                text = { Text(agent.name?.takeIf { it.isNotBlank() } ?: agent.id) },
+                onClick = {
+                  expanded = false
+                  onAgentChange(agent.id)
+                },
+              )
+            }
+        },
+    )
   }
 }
 

@@ -3,6 +3,7 @@ package ai.openclaw.app.ui
 import ai.openclaw.app.MainViewModel
 import ai.openclaw.app.accessibility.AccessibilityComponentController
 import ai.openclaw.app.i18n.nativeString
+import ai.openclaw.app.ui.design.ClawAlertDialog
 import android.content.Context
 import android.content.Intent
 import android.provider.Settings
@@ -10,7 +11,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ScreenShare
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -69,11 +69,11 @@ internal fun FlavorPhoneCapabilitiesSettings(viewModel: MainViewModel) {
 }
 
 @Composable
-private fun AccessibilityControlDisclosureDialog(
+internal fun AccessibilityControlDisclosureDialog(
   onDismiss: () -> Unit,
   onAgree: () -> Unit,
 ) {
-  AlertDialog(
+  ClawAlertDialog(
     onDismissRequest = onDismiss,
     title = { Text(nativeString("Allow control of other apps?")) },
     text = {

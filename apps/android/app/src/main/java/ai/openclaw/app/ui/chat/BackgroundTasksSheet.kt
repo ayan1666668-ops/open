@@ -7,6 +7,7 @@ import ai.openclaw.app.i18n.nativeString
 import ai.openclaw.app.ui.design.ClawStatus
 import ai.openclaw.app.ui.design.ClawStatusPill
 import ai.openclaw.app.ui.design.ClawTheme
+import ai.openclaw.app.ui.design.clawWindowContent
 import ai.openclaw.app.ui.foldAwareSheet
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -144,33 +145,35 @@ internal fun BackgroundTasksSheet(
     sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
     containerColor = ClawTheme.colors.surface,
     contentColor = ClawTheme.colors.text,
-  ) {
-    if (selectedTask != null) {
-      BackgroundTaskDetail(
-        task = selectedTask!!,
-        loading = detailLoading,
-        error = detailError,
-        onBack = {
-          if (admit()) {
-            // Retire the detail result before cancellation or deferred Compose removal.
-            reads.detailToken = null
-            reads.detailJob?.cancel()
-            selectedTask = null
-            detailLoading = false
-            detailError = null
-          }
-        },
-      )
-    } else {
-      BackgroundTaskList(
-        tasks = tasks,
-        loading = loading,
-        error = listError,
-        onRefresh = { if (admit()) loadTasks() },
-        onSelect = ::selectTask,
-      )
-    }
-  }
+    content =
+      clawWindowContent {
+        if (selectedTask != null) {
+          BackgroundTaskDetail(
+            task = selectedTask!!,
+            loading = detailLoading,
+            error = detailError,
+            onBack = {
+              if (admit()) {
+                // Retire the detail result before cancellation or deferred Compose removal.
+                reads.detailToken = null
+                reads.detailJob?.cancel()
+                selectedTask = null
+                detailLoading = false
+                detailError = null
+              }
+            },
+          )
+        } else {
+          BackgroundTaskList(
+            tasks = tasks,
+            loading = loading,
+            error = listError,
+            onRefresh = { if (admit()) loadTasks() },
+            onSelect = ::selectTask,
+          )
+        }
+      },
+  )
 }
 
 @Composable

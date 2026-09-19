@@ -76,6 +76,7 @@ import ai.openclaw.app.ui.design.ClawStatusPill
 import ai.openclaw.app.ui.design.ClawTheme
 import ai.openclaw.app.ui.design.ProviderBrandIcon
 import ai.openclaw.app.ui.design.agentAvatarSource
+import ai.openclaw.app.ui.design.clawWindowContent
 import ai.openclaw.app.ui.design.sessionColor
 import ai.openclaw.app.ui.foldAwareSheet
 import ai.openclaw.app.ui.gatewayDiagnosticsEndpoint
@@ -3667,7 +3668,7 @@ private fun ChatEffortSliderTrack(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ChatEffortSheet(
+internal fun ChatEffortSheet(
   opening: ChatModelPickerSession,
   options: List<ChatThinkingLevelOption>,
   selectedId: String,
@@ -3686,54 +3687,56 @@ private fun ChatEffortSheet(
     sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
     containerColor = ClawTheme.colors.surface,
     contentColor = ClawTheme.colors.text,
-  ) {
-    Column(
-      modifier =
-        Modifier
-          .fillMaxWidth()
-          .heightIn(max = 560.dp)
-          .verticalScroll(rememberScrollState())
-          .padding(bottom = 24.dp),
-    ) {
-      if (thinkingOptions.isNotEmpty()) {
-        ChatEffortSliderControl(
-          options = thinkingOptions,
-          selectedId = selectedId,
-          enabled = thinkingLevelEnabled,
-          onSelect = onSelect,
-        )
-      }
-      if (thinkingOptions.isNotEmpty()) {
-        HorizontalDivider(color = ClawTheme.colors.border, modifier = Modifier.padding(top = 14.dp))
-      }
-      Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 14.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-      ) {
-        Icon(Icons.Default.Bolt, contentDescription = null, tint = ClawTheme.colors.primary, modifier = Modifier.size(20.dp))
-        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-          Text(nativeString("Fast mode"), style = ClawTheme.type.body.copy(fontWeight = FontWeight.Medium))
-          Text(
-            nativeString("Faster responses, higher usage of limits."),
-            style = ClawTheme.type.caption,
-            color = ClawTheme.colors.textMuted,
-          )
+    content =
+      clawWindowContent {
+        Column(
+          modifier =
+            Modifier
+              .fillMaxWidth()
+              .heightIn(max = 560.dp)
+              .verticalScroll(rememberScrollState())
+              .padding(bottom = 24.dp),
+        ) {
+          if (thinkingOptions.isNotEmpty()) {
+            ChatEffortSliderControl(
+              options = thinkingOptions,
+              selectedId = selectedId,
+              enabled = thinkingLevelEnabled,
+              onSelect = onSelect,
+            )
+          }
+          if (thinkingOptions.isNotEmpty()) {
+            HorizontalDivider(color = ClawTheme.colors.border, modifier = Modifier.padding(top = 14.dp))
+          }
+          Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+          ) {
+            Icon(Icons.Default.Bolt, contentDescription = null, tint = ClawTheme.colors.primary, modifier = Modifier.size(20.dp))
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+              Text(nativeString("Fast mode"), style = ClawTheme.type.body.copy(fontWeight = FontWeight.Medium))
+              Text(
+                nativeString("Faster responses, higher usage of limits."),
+                style = ClawTheme.type.caption,
+                color = ClawTheme.colors.textMuted,
+              )
+            }
+            Switch(
+              checked = fastMode,
+              onCheckedChange = onFastModeChange,
+              enabled = fastModeEnabled,
+              modifier = Modifier.semantics { contentDescription = nativeString("Fast mode") },
+            )
+          }
         }
-        Switch(
-          checked = fastMode,
-          onCheckedChange = onFastModeChange,
-          enabled = fastModeEnabled,
-          modifier = Modifier.semantics { contentDescription = nativeString("Fast mode") },
-        )
-      }
-    }
-  }
+      },
+  )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun BranchSwitcherSheet(
+internal fun BranchSwitcherSheet(
   opening: ChatModelPickerSession,
   branches: List<SessionBranch>,
   selectionEnabled: Boolean,
@@ -3746,58 +3749,60 @@ private fun BranchSwitcherSheet(
     sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
     containerColor = ClawTheme.colors.surface,
     contentColor = ClawTheme.colors.text,
-  ) {
-    LazyColumn(
-      modifier = Modifier.fillMaxWidth().heightIn(max = 560.dp),
-      contentPadding = PaddingValues(bottom = 24.dp),
-    ) {
-      item {
-        Text(
-          text = nativeString("Switch branch"),
-          modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
-          style = ClawTheme.type.title,
-          color = ClawTheme.colors.text,
-        )
-        HorizontalDivider(color = ClawTheme.colors.border, thickness = 1.dp)
-      }
-      itemsIndexed(branches, key = { _, branch -> branch.leafEntryId }) { _, branch ->
-        Surface(
-          onClick = { if (!branch.active) onSelect(branch.leafEntryId) },
-          enabled = selectionEnabled && !branch.active,
-          color = if (branch.active) ClawTheme.colors.surfacePressed else Color.Transparent,
-          contentColor = ClawTheme.colors.text,
+    content =
+      clawWindowContent {
+        LazyColumn(
+          modifier = Modifier.fillMaxWidth().heightIn(max = 560.dp),
+          contentPadding = PaddingValues(bottom = 24.dp),
         ) {
-          Row(
-            modifier = Modifier.fillMaxWidth().heightIn(min = ClawTheme.spacing.touchTarget).padding(horizontal = 20.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-          ) {
-            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-              Text(
-                text = branch.headline.trim().takeIf(String::isNotEmpty) ?: nativeString("Untitled branch"),
-                style = ClawTheme.type.body,
-                color = ClawTheme.colors.text,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-              )
-              Text(
-                text = branchMetadataText(branch),
-                style = ClawTheme.type.caption,
-                color = ClawTheme.colors.textMuted,
-              )
-            }
-            if (branch.active) {
-              Icon(
-                imageVector = Icons.Default.Check,
-                contentDescription = nativeString("Current branch"),
-                tint = ClawTheme.colors.primary,
-              )
+          item {
+            Text(
+              text = nativeString("Switch branch"),
+              modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
+              style = ClawTheme.type.title,
+              color = ClawTheme.colors.text,
+            )
+            HorizontalDivider(color = ClawTheme.colors.border, thickness = 1.dp)
+          }
+          itemsIndexed(branches, key = { _, branch -> branch.leafEntryId }) { _, branch ->
+            Surface(
+              onClick = { if (!branch.active) onSelect(branch.leafEntryId) },
+              enabled = selectionEnabled && !branch.active,
+              color = if (branch.active) ClawTheme.colors.surfacePressed else Color.Transparent,
+              contentColor = ClawTheme.colors.text,
+            ) {
+              Row(
+                modifier = Modifier.fillMaxWidth().heightIn(min = ClawTheme.spacing.touchTarget).padding(horizontal = 20.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+              ) {
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                  Text(
+                    text = branch.headline.trim().takeIf(String::isNotEmpty) ?: nativeString("Untitled branch"),
+                    style = ClawTheme.type.body,
+                    color = ClawTheme.colors.text,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                  )
+                  Text(
+                    text = branchMetadataText(branch),
+                    style = ClawTheme.type.caption,
+                    color = ClawTheme.colors.textMuted,
+                  )
+                }
+                if (branch.active) {
+                  Icon(
+                    imageVector = Icons.Default.Check,
+                    contentDescription = nativeString("Current branch"),
+                    tint = ClawTheme.colors.primary,
+                  )
+                }
+              }
             }
           }
         }
-      }
-    }
-  }
+      },
+  )
 }
 
 internal fun branchMessageCountText(count: Int): String = nativeString("Messages: \$count", count)
@@ -3813,7 +3818,7 @@ internal fun branchMetadataText(branch: SessionBranch): String {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ChatModelPickerSheet(
+internal fun ChatModelPickerSheet(
   opening: ChatModelPickerSession,
   admit: () -> Boolean,
   admitPermissions: () -> Boolean,
@@ -3852,191 +3857,193 @@ private fun ChatModelPickerSheet(
         shouldDismissOnBackPress = false,
         shouldDismissOnClickOutside = true,
       ),
-  ) {
-    // Material captures its Back callback's enabled state when the dialog is created.
-    // Own both pages here so recreation cannot leave the model page without Back.
-    BackHandler {
-      if (admit()) {
-        if (showPermissionPicker) showPermissionPicker = false else onDismiss()
-      }
-    }
-    // Keep the outer sheet unconstrained: Material anchors use the full window height.
-    // Cap only its scrollable content against the actual inset-adjusted available bounds.
-    BoxWithConstraints {
-      Box(Modifier.heightIn(max = maxHeight * 0.5f)) {
-        if (showPermissionPicker) {
-          ChatPermissionPicker(
-            selectedMode = permissionMode,
-            canSelectFull = canSelectFullPermission,
-            onBack = { if (admit()) showPermissionPicker = false },
-            onSelect = { mode ->
-              if (onPermissionModeChange(mode)) showPermissionPicker = false
-            },
-          )
-        } else {
-          LazyColumn(
-            modifier = Modifier.fillMaxWidth(),
-            contentPadding = PaddingValues(bottom = 24.dp),
-          ) {
-            item {
-              Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(text = selectedModelLabel, style = ClawTheme.type.label, color = ClawTheme.colors.text)
-                if (modelSelectionLocked) {
-                  Text(text = nativeString("Model selection is locked for this session."), style = ClawTheme.type.caption, color = ClawTheme.colors.textMuted)
-                }
-                chatContextSummary(contextUsage)?.let { summary ->
-                  val (pressureLabel, contextColor) =
-                    when {
-                      summary.percent >= 90 -> nativeString("Critical") to ClawTheme.colors.danger
-                      summary.percent >= 75 -> nativeString("Warning") to ClawTheme.colors.warning
-                      else -> null to ClawTheme.colors.primary
+    content =
+      clawWindowContent {
+        // Material captures its Back callback's enabled state when the dialog is created.
+        // Own both pages here so recreation cannot leave the model page without Back.
+        BackHandler {
+          if (admit()) {
+            if (showPermissionPicker) showPermissionPicker = false else onDismiss()
+          }
+        }
+        // Keep the outer sheet unconstrained: Material anchors use the full window height.
+        // Cap only its scrollable content against the actual inset-adjusted available bounds.
+        BoxWithConstraints {
+          Box(Modifier.heightIn(max = maxHeight * 0.5f)) {
+            if (showPermissionPicker) {
+              ChatPermissionPicker(
+                selectedMode = permissionMode,
+                canSelectFull = canSelectFullPermission,
+                onBack = { if (admit()) showPermissionPicker = false },
+                onSelect = { mode ->
+                  if (onPermissionModeChange(mode)) showPermissionPicker = false
+                },
+              )
+            } else {
+              LazyColumn(
+                modifier = Modifier.fillMaxWidth(),
+                contentPadding = PaddingValues(bottom = 24.dp),
+              ) {
+                item {
+                  Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(text = selectedModelLabel, style = ClawTheme.type.label, color = ClawTheme.colors.text)
+                    if (modelSelectionLocked) {
+                      Text(text = nativeString("Model selection is locked for this session."), style = ClawTheme.type.caption, color = ClawTheme.colors.textMuted)
                     }
-                  FlowRow(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(2.dp),
-                  ) {
-                    Text(text = nativeString("Context window"), style = ClawTheme.type.caption, color = ClawTheme.colors.textMuted)
-                    Text(text = summary.detail, style = ClawTheme.type.caption.copy(fontWeight = FontWeight.SemiBold), color = ClawTheme.colors.text)
-                    pressureLabel?.let { Text(text = it, style = ClawTheme.type.caption, color = contextColor) }
-                  }
-                  LinearProgressIndicator(
-                    progress = { summary.fraction },
-                    modifier = Modifier.fillMaxWidth().height(4.dp),
-                    color = contextColor,
-                    trackColor = ClawTheme.colors.surfacePressed,
-                  )
-                }
-                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                  Text(text = nativeString("Latest run"), style = ClawTheme.type.caption, color = ClawTheme.colors.textMuted)
-                  TextButton(
-                    onClick = { if (admit()) showUsageDetails = !showUsageDetails },
-                    modifier = Modifier.semantics { stateDescription = if (showUsageDetails) nativeString("Expanded") else nativeString("Collapsed") },
-                  ) {
-                    Text(nativeString("Details"))
-                    Icon(if (showUsageDetails) Icons.Default.KeyboardArrowUp else Icons.Default.ArrowDropDown, contentDescription = null)
-                  }
-                }
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                  ChatContextStat(label = nativeString("Non-cached input"), value = formatContextUsageTokens(contextUsage.inputTokens), modifier = Modifier.weight(1f))
-                  ChatContextStat(label = nativeString("Output"), value = formatContextUsageTokens(contextUsage.outputTokens), modifier = Modifier.weight(1f))
-                  ChatContextStat(label = nativeString("Est. cost"), value = formatContextEstimatedCost(contextUsage.estimatedCostUsd), modifier = Modifier.weight(1f))
-                }
-                if (showUsageDetails) {
-                  Text(text = nativeString("Non-cached input excludes cache reads."), style = ClawTheme.type.caption, color = ClawTheme.colors.textSubtle)
-                }
-                val latestCallUsage = latestChatMessageUsage(messages)
-                val latestCallCostStats = latestChatMessageCost(messages)?.let(::availableChatCostStats).orEmpty()
-                if (showUsageDetails && (latestCallUsage != null || latestCallCostStats.isNotEmpty())) {
-                  Text(text = nativeString("Latest model call"), style = ClawTheme.type.caption, color = ClawTheme.colors.textMuted)
-                  latestCallUsage?.let { usage ->
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                      ChatContextStat(label = nativeString("Non-cached input"), value = formatContextUsageTokens(usage.input), modifier = Modifier.weight(1f))
-                      ChatContextStat(label = nativeString("Output"), value = formatContextUsageTokens(usage.output), modifier = Modifier.weight(1f))
-                      ChatContextStat(label = nativeString("Cache read"), value = formatContextUsageTokens(usage.cacheRead), modifier = Modifier.weight(1f))
-                    }
-                  }
-                  latestCallCostStats.chunked(2).forEach { row ->
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                      row.forEach { (label, value) ->
-                        ChatContextStat(label = label, value = formatContextEstimatedCost(value), modifier = Modifier.weight(1f))
+                    chatContextSummary(contextUsage)?.let { summary ->
+                      val (pressureLabel, contextColor) =
+                        when {
+                          summary.percent >= 90 -> nativeString("Critical") to ClawTheme.colors.danger
+                          summary.percent >= 75 -> nativeString("Warning") to ClawTheme.colors.warning
+                          else -> null to ClawTheme.colors.primary
+                        }
+                      FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                      ) {
+                        Text(text = nativeString("Context window"), style = ClawTheme.type.caption, color = ClawTheme.colors.textMuted)
+                        Text(text = summary.detail, style = ClawTheme.type.caption.copy(fontWeight = FontWeight.SemiBold), color = ClawTheme.colors.text)
+                        pressureLabel?.let { Text(text = it, style = ClawTheme.type.caption, color = contextColor) }
                       }
-                      if (row.size == 1) Box(modifier = Modifier.weight(1f))
+                      LinearProgressIndicator(
+                        progress = { summary.fraction },
+                        modifier = Modifier.fillMaxWidth().height(4.dp),
+                        color = contextColor,
+                        trackColor = ClawTheme.colors.surfacePressed,
+                      )
+                    }
+                    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                      Text(text = nativeString("Latest run"), style = ClawTheme.type.caption, color = ClawTheme.colors.textMuted)
+                      TextButton(
+                        onClick = { if (admit()) showUsageDetails = !showUsageDetails },
+                        modifier = Modifier.semantics { stateDescription = if (showUsageDetails) nativeString("Expanded") else nativeString("Collapsed") },
+                      ) {
+                        Text(nativeString("Details"))
+                        Icon(if (showUsageDetails) Icons.Default.KeyboardArrowUp else Icons.Default.ArrowDropDown, contentDescription = null)
+                      }
+                    }
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                      ChatContextStat(label = nativeString("Non-cached input"), value = formatContextUsageTokens(contextUsage.inputTokens), modifier = Modifier.weight(1f))
+                      ChatContextStat(label = nativeString("Output"), value = formatContextUsageTokens(contextUsage.outputTokens), modifier = Modifier.weight(1f))
+                      ChatContextStat(label = nativeString("Est. cost"), value = formatContextEstimatedCost(contextUsage.estimatedCostUsd), modifier = Modifier.weight(1f))
+                    }
+                    if (showUsageDetails) {
+                      Text(text = nativeString("Non-cached input excludes cache reads."), style = ClawTheme.type.caption, color = ClawTheme.colors.textSubtle)
+                    }
+                    val latestCallUsage = latestChatMessageUsage(messages)
+                    val latestCallCostStats = latestChatMessageCost(messages)?.let(::availableChatCostStats).orEmpty()
+                    if (showUsageDetails && (latestCallUsage != null || latestCallCostStats.isNotEmpty())) {
+                      Text(text = nativeString("Latest model call"), style = ClawTheme.type.caption, color = ClawTheme.colors.textMuted)
+                      latestCallUsage?.let { usage ->
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                          ChatContextStat(label = nativeString("Non-cached input"), value = formatContextUsageTokens(usage.input), modifier = Modifier.weight(1f))
+                          ChatContextStat(label = nativeString("Output"), value = formatContextUsageTokens(usage.output), modifier = Modifier.weight(1f))
+                          ChatContextStat(label = nativeString("Cache read"), value = formatContextUsageTokens(usage.cacheRead), modifier = Modifier.weight(1f))
+                        }
+                      }
+                      latestCallCostStats.chunked(2).forEach { row ->
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                          row.forEach { (label, value) ->
+                            ChatContextStat(label = label, value = formatContextEstimatedCost(value), modifier = Modifier.weight(1f))
+                          }
+                          if (row.size == 1) Box(modifier = Modifier.weight(1f))
+                        }
+                      }
                     }
                   }
                 }
-              }
-            }
-            item {
-              Row(
-                modifier = Modifier.fillMaxWidth().heightIn(min = ClawTheme.spacing.touchTarget),
-                verticalAlignment = Alignment.CenterVertically,
-              ) {
-                Surface(
-                  onClick = { if (admitPermissions()) showPermissionPicker = true },
-                  enabled = permissionPickerEnabled,
-                  modifier = Modifier.weight(1f).heightIn(min = ClawTheme.spacing.touchTarget),
-                  color = Color.Transparent,
-                ) {
-                  Row(modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    ChatPermissionIcon(mode = permissionMode, contentDescription = null, modifier = Modifier.size(20.dp))
-                    Text(nativeString("Permissions"), style = ClawTheme.type.body, modifier = Modifier.weight(1f))
-                    Icon(Icons.Default.ArrowDropDown, contentDescription = null, modifier = Modifier.size(18.dp))
+                item {
+                  Row(
+                    modifier = Modifier.fillMaxWidth().heightIn(min = ClawTheme.spacing.touchTarget),
+                    verticalAlignment = Alignment.CenterVertically,
+                  ) {
+                    Surface(
+                      onClick = { if (admitPermissions()) showPermissionPicker = true },
+                      enabled = permissionPickerEnabled,
+                      modifier = Modifier.weight(1f).heightIn(min = ClawTheme.spacing.touchTarget),
+                      color = Color.Transparent,
+                    ) {
+                      Row(modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        ChatPermissionIcon(mode = permissionMode, contentDescription = null, modifier = Modifier.size(20.dp))
+                        Text(nativeString("Permissions"), style = ClawTheme.type.body, modifier = Modifier.weight(1f))
+                        Icon(Icons.Default.ArrowDropDown, contentDescription = null, modifier = Modifier.size(18.dp))
+                      }
+                    }
+                    Text(
+                      text = if (permissionModePending) nativeString("Applying permissions…") else chatPermissionModeLabel(permissionMode),
+                      style = ClawTheme.type.caption,
+                      color = ClawTheme.colors.textMuted,
+                      modifier = Modifier.padding(end = 20.dp),
+                    )
+                  }
+                  permissionUnavailableReason?.let { reason ->
+                    Text(reason, style = ClawTheme.type.caption, color = ClawTheme.colors.textMuted, modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp))
                   }
                 }
-                Text(
-                  text = if (permissionModePending) nativeString("Applying permissions…") else chatPermissionModeLabel(permissionMode),
-                  style = ClawTheme.type.caption,
-                  color = ClawTheme.colors.textMuted,
-                  modifier = Modifier.padding(end = 20.dp),
-                )
-              }
-              permissionUnavailableReason?.let { reason ->
-                Text(reason, style = ClawTheme.type.caption, color = ClawTheme.colors.textMuted, modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp))
-              }
-            }
-            if (onSignIn != null) {
-              item {
-                TextButton(modifier = Modifier.padding(horizontal = 12.dp), onClick = { if (admit()) onSignIn() }) {
-                  Text(nativeString("Sign in"))
+                if (onSignIn != null) {
+                  item {
+                    TextButton(modifier = Modifier.padding(horizontal = 12.dp), onClick = { if (admit()) onSignIn() }) {
+                      Text(nativeString("Sign in"))
+                    }
+                  }
                 }
-              }
-            }
-            if (modelSelectionLocked) return@LazyColumn
-            item {
-              HorizontalDivider(color = ClawTheme.colors.border)
-            }
-            item {
-              Surface(
-                onClick = { onSelect(null) },
-                modifier = Modifier.fillMaxWidth().heightIn(min = ClawTheme.spacing.touchTarget),
-                color = Color.Transparent,
-                contentColor = ClawTheme.colors.text,
-              ) {
-                Text(
-                  text = nativeString("Default model"),
-                  modifier = Modifier.padding(horizontal = 20.dp, vertical = 14.dp),
-                  style = ClawTheme.type.body,
-                )
-              }
-            }
-            item {
-              HorizontalDivider(color = ClawTheme.colors.border, thickness = 1.dp)
-            }
-            listOf(
-              nativeString("Pinned") to sections.pinned,
-              nativeString("Recent") to sections.recent,
-              nativeString("Models") to sections.remaining,
-            ).forEach { (title, models) ->
-              if (models.isNotEmpty()) {
-                item(key = "section-$title") {
-                  Text(
-                    text = title,
-                    modifier = Modifier.padding(start = 20.dp, top = 16.dp, end = 20.dp, bottom = 6.dp),
-                    style = ClawTheme.type.caption,
-                    color = ClawTheme.colors.textMuted,
-                  )
+                if (modelSelectionLocked) return@LazyColumn
+                item {
+                  HorizontalDivider(color = ClawTheme.colors.border)
                 }
-                itemsIndexed(
-                  items = models,
-                  key = { _, model -> model.providerQualifiedRef() },
-                ) { _, model ->
-                  val ref = model.providerQualifiedRef()
-                  ChatModelPickerRow(
-                    model = model,
-                    pinned = ref in favorites,
-                    onSelect = { onSelect(ref) },
-                    onOpenProviders = { onOpenProviders(ref) },
-                    onToggleFavorite = { onToggleFavorite(ref) },
-                  )
+                item {
+                  Surface(
+                    onClick = { onSelect(null) },
+                    modifier = Modifier.fillMaxWidth().heightIn(min = ClawTheme.spacing.touchTarget),
+                    color = Color.Transparent,
+                    contentColor = ClawTheme.colors.text,
+                  ) {
+                    Text(
+                      text = nativeString("Default model"),
+                      modifier = Modifier.padding(horizontal = 20.dp, vertical = 14.dp),
+                      style = ClawTheme.type.body,
+                    )
+                  }
+                }
+                item {
+                  HorizontalDivider(color = ClawTheme.colors.border, thickness = 1.dp)
+                }
+                listOf(
+                  nativeString("Pinned") to sections.pinned,
+                  nativeString("Recent") to sections.recent,
+                  nativeString("Models") to sections.remaining,
+                ).forEach { (title, models) ->
+                  if (models.isNotEmpty()) {
+                    item(key = "section-$title") {
+                      Text(
+                        text = title,
+                        modifier = Modifier.padding(start = 20.dp, top = 16.dp, end = 20.dp, bottom = 6.dp),
+                        style = ClawTheme.type.caption,
+                        color = ClawTheme.colors.textMuted,
+                      )
+                    }
+                    itemsIndexed(
+                      items = models,
+                      key = { _, model -> model.providerQualifiedRef() },
+                    ) { _, model ->
+                      val ref = model.providerQualifiedRef()
+                      ChatModelPickerRow(
+                        model = model,
+                        pinned = ref in favorites,
+                        onSelect = { onSelect(ref) },
+                        onOpenProviders = { onOpenProviders(ref) },
+                        onToggleFavorite = { onToggleFavorite(ref) },
+                      )
+                    }
+                  }
                 }
               }
             }
           }
         }
-      }
-    }
-  }
+      },
+  )
 }
 
 @Composable

@@ -6,6 +6,7 @@ import ai.openclaw.app.i18n.nativeString
 import ai.openclaw.app.ui.design.ClawAlertDialog
 import ai.openclaw.app.ui.design.ClawIconButton
 import ai.openclaw.app.ui.design.ClawTheme
+import ai.openclaw.app.ui.design.clawWindowContent
 import android.app.Activity
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -96,46 +97,48 @@ internal fun ChatMessageActionHost(
     DropdownMenu(
       expanded = menuExpanded,
       onDismissRequest = { menuExpanded = false },
-    ) {
-      if (text.isNotBlank()) {
-        onToggleListen?.let { toggleListen ->
-          MessageActionItem(label = if (listenActive) nativeString("Stop") else nativeString("Listen")) {
-            toggleListen()
-            menuExpanded = false
+      content =
+        clawWindowContent {
+          if (text.isNotBlank()) {
+            onToggleListen?.let { toggleListen ->
+              MessageActionItem(label = if (listenActive) nativeString("Stop") else nativeString("Listen")) {
+                toggleListen()
+                menuExpanded = false
+              }
+            }
+            MessageActionItem(label = nativeString("Copy")) {
+              copyChatText(context, text)
+              menuExpanded = false
+            }
+            MessageActionItem(label = nativeString("Select text")) {
+              menuExpanded = false
+              selectText = true
+            }
+            MessageActionItem(label = nativeString("Share")) {
+              shareChatMessage(context, text)
+              menuExpanded = false
+            }
+            MessageActionItem(label = nativeString("Reply")) {
+              onReply(quoteChatMessage(text))
+              menuExpanded = false
+            }
           }
-        }
-        MessageActionItem(label = nativeString("Copy")) {
-          copyChatText(context, text)
-          menuExpanded = false
-        }
-        MessageActionItem(label = nativeString("Select text")) {
-          menuExpanded = false
-          selectText = true
-        }
-        MessageActionItem(label = nativeString("Share")) {
-          shareChatMessage(context, text)
-          menuExpanded = false
-        }
-        MessageActionItem(label = nativeString("Reply")) {
-          onReply(quoteChatMessage(text))
-          menuExpanded = false
-        }
-      }
-      if (showSessionActions) {
-        onRewind?.let { rewind ->
-          MessageActionItem(label = nativeString("Rewind to here")) {
-            rewind()
-            menuExpanded = false
+          if (showSessionActions) {
+            onRewind?.let { rewind ->
+              MessageActionItem(label = nativeString("Rewind to here")) {
+                rewind()
+                menuExpanded = false
+              }
+            }
+            onFork?.let { fork ->
+              MessageActionItem(label = nativeString("Fork from here")) {
+                fork()
+                menuExpanded = false
+              }
+            }
           }
-        }
-        onFork?.let { fork ->
-          MessageActionItem(label = nativeString("Fork from here")) {
-            fork()
-            menuExpanded = false
-          }
-        }
-      }
-    }
+        },
+    )
   }
 
   if (selectText) {

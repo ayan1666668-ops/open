@@ -5,6 +5,7 @@ import ai.openclaw.app.selectableAgents
 import ai.openclaw.app.ui.design.ClawAgentAvatar
 import ai.openclaw.app.ui.design.ClawTheme
 import ai.openclaw.app.ui.design.agentAvatarSource
+import ai.openclaw.app.ui.design.clawWindowContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -108,29 +109,31 @@ internal fun AgentPicker(
       expanded = expanded,
       onDismissRequest = { expanded = false },
       containerColor = ClawTheme.colors.surfaceRaised,
-    ) {
-      state.agents.forEach { agent ->
-        DropdownMenuItem(
-          text = {
-            Text(
-              text = agentPickerName(agent),
-              maxLines = 1,
-              overflow = TextOverflow.Ellipsis,
+      content =
+        clawWindowContent {
+          state.agents.forEach { agent ->
+            DropdownMenuItem(
+              text = {
+                Text(
+                  text = agentPickerName(agent),
+                  maxLines = 1,
+                  overflow = TextOverflow.Ellipsis,
+                )
+              },
+              leadingIcon = { AgentPickerAvatar(agent = agent, size = 24) },
+              trailingIcon = {
+                if (agent.id == selectedAgentId) {
+                  Icon(imageVector = Icons.Default.Check, contentDescription = null)
+                }
+              },
+              onClick = {
+                expanded = false
+                onSelectAgent(agent.id)
+              },
             )
-          },
-          leadingIcon = { AgentPickerAvatar(agent = agent, size = 24) },
-          trailingIcon = {
-            if (agent.id == selectedAgentId) {
-              Icon(imageVector = Icons.Default.Check, contentDescription = null)
-            }
-          },
-          onClick = {
-            expanded = false
-            onSelectAgent(agent.id)
-          },
-        )
-      }
-    }
+          }
+        },
+    )
   }
 }
 

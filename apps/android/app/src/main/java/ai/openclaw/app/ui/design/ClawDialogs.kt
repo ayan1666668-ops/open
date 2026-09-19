@@ -1,5 +1,6 @@
 package ai.openclaw.app.ui.design
 
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.material3.AlertDialogDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -67,3 +68,10 @@ private fun preserveDialogDensity(
   density: Density,
   content: (@Composable () -> Unit)?,
 ): (@Composable () -> Unit)? = content?.let { { CompositionLocalProvider(LocalDensity provides density, content = it) } }
+
+/** Capture at the call site, before a sheet or popup creates its native composition root. */
+@Composable
+internal fun clawWindowContent(content: @Composable ColumnScope.() -> Unit): @Composable ColumnScope.() -> Unit {
+  val density = LocalDensity.current
+  return { CompositionLocalProvider(LocalDensity provides density) { content() } }
+}
