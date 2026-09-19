@@ -37,6 +37,7 @@ import {
 } from "../../tool-fs-policy.js";
 import { toolPolicyRestrictsTools } from "../../tool-policy.js";
 import { isAgentToolRestartSafe } from "../../tool-replay-safety.js";
+import { TOOL_SEARCH_CONTROL_TOOL_NAMES } from "../../tool-search-types.js";
 import type { ToolSearchCatalogToolExecutor } from "../../tool-search.js";
 import type { ComputerContextEpoch } from "../../tools/computer-tool.js";
 import type {
@@ -53,7 +54,6 @@ import {
   resolveEmbeddedAttemptToolConstructionPlan,
 } from "./attempt-tool-construction-plan.js";
 import { buildEmbeddedAttemptToolRunContext } from "./attempt-tool-run-context.js";
-import { TOOL_SEARCH_CONTROL_ALLOWLIST_NAMES } from "./attempt-tool-search-run-plan.js";
 import type { EmbeddedRunAttemptParams } from "./types.js";
 
 type OpenClawCodingToolsOptions = NonNullable<
@@ -140,7 +140,7 @@ export async function prepareEmbeddedAttemptToolBase(params: {
   const effectiveToolsAllow = mergeForcedEmbeddedAttemptToolsAllow(
     toolsAllowWithForcedRuntimeTools,
     {
-      forceToolNames: toolSearchControlsEnabledForRun ? TOOL_SEARCH_CONTROL_ALLOWLIST_NAMES : [],
+      forceToolNames: toolSearchControlsEnabledForRun ? [...TOOL_SEARCH_CONTROL_TOOL_NAMES] : [],
     },
   );
   const shouldConstructTools =

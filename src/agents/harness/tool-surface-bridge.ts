@@ -15,30 +15,17 @@ import {
 } from "../local-model-lean.js";
 import type { ScheduledToolPolicyContext } from "../scheduled-tool-policy.js";
 import { filterRuntimeCompatibleTools } from "../tool-schema-projection.js";
+import { TOOL_SEARCH_CONTROL_TOOL_NAMES } from "../tool-search-types.js";
 import {
   clearToolSearchCatalog,
   createToolSearchCatalogRef,
-  TOOL_CALL_RAW_TOOL_NAME,
-  TOOL_DESCRIBE_RAW_TOOL_NAME,
-  TOOL_SEARCH_CODE_MODE_TOOL_NAME,
-  TOOL_SEARCH_RAW_TOOL_NAME,
   type ToolSearchCatalogToolExecutor,
 } from "../tool-search.js";
 import { applyAgentToolSurfaceCatalog, resolveAgentToolSurfacePlan } from "../tool-surface-plan.js";
 import type { AnyAgentTool } from "../tools/common.js";
 import { createAgentHarnessPromptToolPolicy } from "./prompt-tool-policy.js";
 
-const TOOL_SEARCH_CONTROL_ALLOWLIST_NAMES = [
-  TOOL_SEARCH_CODE_MODE_TOOL_NAME,
-  TOOL_SEARCH_RAW_TOOL_NAME,
-  TOOL_DESCRIBE_RAW_TOOL_NAME,
-  TOOL_CALL_RAW_TOOL_NAME,
-];
 const CODE_MODE_CONTROL_ALLOWLIST_NAMES = [CODE_MODE_EXEC_TOOL_NAME, CODE_MODE_WAIT_TOOL_NAME];
-
-export type AgentHarnessToolSurfaceRuntime = ReturnType<
-  typeof createAgentHarnessToolSurfaceRuntimeCore
->;
 
 type PreparedToolSurface = Pick<
   Parameters<typeof createCodeModeTools>[0],
@@ -98,7 +85,7 @@ export function createAgentHarnessToolSurfaceRuntimeCore(params: {
     toolSearchControlsEnabled || codeModeControlsEnabled ? createToolSearchCatalogRef() : undefined;
   const runtimeToolAllowlist = mergeForcedEmbeddedAttemptToolsAllow(params.runtimeToolAllowlist, {
     forceToolNames: [
-      ...(toolSearchControlsEnabled ? TOOL_SEARCH_CONTROL_ALLOWLIST_NAMES : []),
+      ...(toolSearchControlsEnabled ? TOOL_SEARCH_CONTROL_TOOL_NAMES : []),
       ...(codeModeControlsEnabled ? CODE_MODE_CONTROL_ALLOWLIST_NAMES : []),
     ],
   });
@@ -164,8 +151,6 @@ export function createAgentHarnessToolSurfaceRuntimeCore(params: {
         })
       : [];
     const compacted = applyAgentToolSurfaceCatalog({
-      // `codeModeTools` is empty unless code-mode controls are on, so this stays
-      // exactly `effectiveTools` for the tool-search branches.
       tools: [...codeModeTools, ...effectiveTools],
       config: params.config,
       toolSearchRuntimeConfig,

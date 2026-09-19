@@ -667,15 +667,6 @@ function createFailureResult(message: string, error: unknown): ToolResultObject 
   };
 }
 
-/**
- * Mirrors PI's `shouldForceMessageTool` semantics: a message tool is
- * forced when the caller asked for it explicitly or when the source
- * reply delivery mode is `message_tool_only`, but never when
- * `disableMessageTool` is set (the suppress flag always wins). Compare
- * `src/agents/pi-embedded-runner/run/attempt.ts:1361-1366` and the
- * codex equivalent at
- * `extensions/codex/src/app-server/run-attempt.ts:4253-4258`.
- */
 export function shouldForceCopilotMessageTool(params: CopilotToolAttemptParams): boolean {
   if (params.disableMessageTool === true) {
     return false;
