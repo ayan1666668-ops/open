@@ -11,6 +11,7 @@ import type { MemoryCoreRuntimeHost } from "./src/memory/runtime-host.js";
 
 const closeMemorySearchManagerMock = vi.hoisted(() => vi.fn(async () => {}));
 const getMemorySearchManagerMock = vi.hoisted(() => vi.fn(async () => null));
+const getReusableMemorySearchManagerMock = vi.hoisted(() => vi.fn(async () => null));
 const authorizeSearchHitsMock = vi.hoisted(() => vi.fn(async ({ hits }) => hits));
 const createMemoryRuntimeMock = vi.hoisted(() =>
   vi.fn((_host: MemoryCoreRuntimeHost = {}) => ({
@@ -18,6 +19,7 @@ const createMemoryRuntimeMock = vi.hoisted(() =>
     closeAllMemorySearchManagers: vi.fn(async () => {}),
     closeMemorySearchManager: closeMemorySearchManagerMock,
     getMemorySearchManager: getMemorySearchManagerMock,
+    getReusableMemorySearchManager: getReusableMemorySearchManagerMock,
   })),
 );
 
@@ -27,6 +29,7 @@ vi.mock("./src/runtime-provider.js", () => ({
     closeAllMemorySearchManagers: vi.fn(async () => {}),
     closeMemorySearchManager: closeMemorySearchManagerMock,
     getMemorySearchManager: getMemorySearchManagerMock,
+    getReusableMemorySearchManager: getReusableMemorySearchManagerMock,
   },
 }));
 
@@ -420,6 +423,35 @@ describe("memory-core plugin runtime registration", () => {
     await runtime.closeMemorySearchManager?.({ cfg, agentId: "main" });
 
     expect(closeMemorySearchManagerMock).toHaveBeenCalledWith({ cfg, agentId: "main" });
+  });
+
+  it("forwards reusable acquisition through the registered host-bound runtime", async () => {
+    const runtime = registerMemoryCoreRuntime();
+    const cfg = {} as OpenClawConfig;
+
+    if (!runtime.getReusableMemorySearchManager) {
+      throw new Error("expected registered reusable search acquisition");
+    }
+    await Promise.all([
+      runtime.getReusableMemorySearchManager({ cfg, agentId: "main" }),
+      runtime.getReusableMemorySearchManager({ cfg, agentId: "secondary" }),
+    ]);
+
+    expect(getReusableMemorySearchManagerMock).toHaveBeenCalledTimes(2);
+    expect(getReusableMemorySearchManagerMock).toHaveBeenNthCalledWith(1, {
+      cfg,
+      agentId: "main",
+    });
+    expect(getReusableMemorySearchManagerMock).toHaveBeenNthCalledWith(2, {
+      cfg,
+      agentId: "secondary",
+    });
+    expect(getMemorySearchManagerMock).not.toHaveBeenCalled();
+    expect(createMemoryRuntimeMock).toHaveBeenCalledTimes(2);
+    expect(createMemoryRuntimeMock).toHaveBeenCalledWith({
+      acquireLocalService: expect.any(Function),
+      openKeyedStore: expect.any(Function),
+    });
   });
 
   it("binds the host local-service hook to the registered memory runtime", async () => {
