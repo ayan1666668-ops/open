@@ -13,6 +13,7 @@ import {
   bindGatewayContextResolver,
   getGatewayContextResolver,
 } from "../../../plugins/runtime/gateway-request-scope.js";
+import { runWithGatewayDetachedWorkContinuation } from "../../../process/gateway-work-admission.js";
 import { prepareCanonicalTaskActivation } from "../../../tasks/task-backing-authority-write.js";
 import { createSubagentTaskBackingDetail } from "../../../tasks/task-backing-authority.js";
 import { removeInternalSessionEffectsSession } from "../../internal-session-effects.js";
@@ -42,6 +43,13 @@ import {
 } from "./subagent-session-metrics.js";
 
 const log = createSubsystemLogger("agents/subagent-registry");
+
+type SubagentRestartRecoveryLaunchIdentity = {
+  runId: string;
+  expected: SubagentRunRecord;
+  sessionMarker: string;
+  idempotencyKey: string;
+};
 
 export class SubagentRecoveryManager extends SubagentWaitManager {
   private readonly unpersistedAcceptances = new WeakMap<
@@ -296,7 +304,9 @@ export class SubagentRecoveryManager extends SubagentWaitManager {
       return (
         session?.sessionId === acceptedReceipt.sessionId &&
         (acceptedReceipt.sessionLifecycleRevision === undefined ||
-          session.lifecycleRevision === acceptedReceipt.sessionLifecycleRevision)
+          session.lifecycleRevision === acceptedReceipt.sessionLifecycleRevision) &&
+        (acceptedReceipt.sessionLifecycleRunId === undefined ||
+          session.lifecycleRunId === acceptedReceipt.sessionLifecycleRunId)
       );
     };
     try {
@@ -356,7 +366,19 @@ export class SubagentRecoveryManager extends SubagentWaitManager {
         source.execution.transcriptTarget &&
         source.execution.transcriptTarget !== replaceParams.transcriptTarget
       ) {
-        void removeInternalSessionEffectsSession(source.execution.transcriptTarget);
+        const retiredTarget = source.execution.transcriptTarget;
+        // The committed replacement owns cleanup beyond its caller's lifetime,
+        // including when restart closes admission before this tail settles.
+        void runWithGatewayDetachedWorkContinuation(
+          () => removeInternalSessionEffectsSession(retiredTarget),
+          "subagents:replacement-cleanup",
+        ).catch((error: unknown) => {
+          log.warn("failed to remove replaced subagent internal session effects", {
+            previousRunId,
+            nextRunId,
+            error,
+          });
+        });
       }
     }
     this.options.ensureListener();
@@ -374,6 +396,7 @@ export class SubagentRecoveryManager extends SubagentWaitManager {
     sessionId: string;
     sessionMarker: string;
     sessionLifecycleRevision?: string;
+    sessionLifecycleRunId?: string;
     idempotencyKey: string;
   }): string | undefined => {
     const runId = reserveParams.runId.trim();
@@ -396,7 +419,10 @@ export class SubagentRecoveryManager extends SubagentWaitManager {
     }
     const existing = entry.execution.restartRecovery;
     if (existing?.sessionMarker === sessionMarker && existing.idempotencyKey.trim().length > 0) {
-      return existing.idempotencyKey;
+      return existing.sessionLifecycleRunId === undefined ||
+        existing.sessionLifecycleRunId === reserveParams.sessionLifecycleRunId
+        ? existing.idempotencyKey
+        : undefined;
     }
     const previousLease = existing;
     const previousCollectorLaunch = {
@@ -407,6 +433,7 @@ export class SubagentRecoveryManager extends SubagentWaitManager {
       sessionId,
       sessionMarker,
       sessionLifecycleRevision: reserveParams.sessionLifecycleRevision,
+      sessionLifecycleRunId: reserveParams.sessionLifecycleRunId,
       idempotencyKey,
       phase: "reserved",
     };
@@ -427,13 +454,9 @@ export class SubagentRecoveryManager extends SubagentWaitManager {
     return idempotencyKey;
   };
 
-  readonly markSubagentRestartRecoveryLaunchAttempted = (markParams: {
-    runId: string;
-    expected: SubagentRunRecord;
-    sessionMarker: string;
-    idempotencyKey: string;
-    lifecycleGeneration: string;
-  }): SubagentRestartRecoveryReceipt | undefined => {
+  readonly markSubagentRestartRecoveryLaunchAttempted = (
+    markParams: SubagentRestartRecoveryLaunchIdentity & { lifecycleGeneration: string },
+  ): SubagentRestartRecoveryReceipt | undefined => {
     const runId = markParams.runId.trim();
     const entry = this.options.runs.get(runId);
     const receipt = entry?.execution.restartRecovery;
@@ -470,12 +493,9 @@ export class SubagentRecoveryManager extends SubagentWaitManager {
     return attempted;
   };
 
-  readonly abandonSubagentRestartRecoveryLaunch = (abandonParams: {
-    runId: string;
-    expected: SubagentRunRecord;
-    sessionMarker: string;
-    idempotencyKey: string;
-  }): boolean => {
+  readonly abandonSubagentRestartRecoveryLaunch = (
+    abandonParams: SubagentRestartRecoveryLaunchIdentity,
+  ): boolean => {
     const runId = abandonParams.runId.trim();
     const entry = this.options.runs.get(runId);
     const receipt = entry?.execution.restartRecovery;
@@ -499,20 +519,15 @@ export class SubagentRecoveryManager extends SubagentWaitManager {
     return true;
   };
 
-  readonly markSubagentRestartRecoveryLaunchConsumed = (markParams: {
-    runId: string;
-    expected: SubagentRunRecord;
-    sessionMarker: string;
-    idempotencyKey: string;
-  }): SubagentRestartRecoveryReceipt | undefined => {
-    const runId = markParams.runId.trim();
+  private resolveActiveRestartRecoveryLaunch(params: SubagentRestartRecoveryLaunchIdentity) {
+    const runId = params.runId.trim();
     const entry = this.options.runs.get(runId);
     const receipt = entry?.execution.restartRecovery;
     if (
       !runId ||
-      entry !== markParams.expected ||
-      receipt?.sessionMarker !== markParams.sessionMarker ||
-      receipt.idempotencyKey !== markParams.idempotencyKey ||
+      entry !== params.expected ||
+      receipt?.sessionMarker !== params.sessionMarker ||
+      receipt.idempotencyKey !== params.idempotencyKey ||
       typeof entry.execution.endedAt === "number" ||
       entry.killReconciliation !== undefined ||
       entry.killIntent !== undefined ||
@@ -520,6 +535,17 @@ export class SubagentRecoveryManager extends SubagentWaitManager {
     ) {
       return undefined;
     }
+    return { runId, entry, receipt };
+  }
+
+  readonly markSubagentRestartRecoveryLaunchConsumed = (
+    markParams: SubagentRestartRecoveryLaunchIdentity,
+  ): SubagentRestartRecoveryReceipt | undefined => {
+    const active = this.resolveActiveRestartRecoveryLaunch(markParams);
+    if (!active) {
+      return undefined;
+    }
+    const { runId, entry, receipt } = active;
     if (receipt.phase !== "attempted") {
       return receipt;
     }
@@ -531,27 +557,14 @@ export class SubagentRecoveryManager extends SubagentWaitManager {
     return consumed;
   };
 
-  readonly markSubagentRestartRecoveryLaunchAccepted = (markParams: {
-    runId: string;
-    expected: SubagentRunRecord;
-    sessionMarker: string;
-    idempotencyKey: string;
-  }): SubagentRestartRecoveryReceipt | undefined => {
-    const runId = markParams.runId.trim();
-    const entry = this.options.runs.get(runId);
-    const receipt = entry?.execution.restartRecovery;
-    if (
-      !runId ||
-      entry !== markParams.expected ||
-      receipt?.sessionMarker !== markParams.sessionMarker ||
-      receipt.idempotencyKey !== markParams.idempotencyKey ||
-      typeof entry.execution.endedAt === "number" ||
-      entry.killReconciliation !== undefined ||
-      entry.killIntent !== undefined ||
-      entry.suppressAnnounceReason === "steer-restart"
-    ) {
+  readonly markSubagentRestartRecoveryLaunchAccepted = (
+    markParams: SubagentRestartRecoveryLaunchIdentity,
+  ): SubagentRestartRecoveryReceipt | undefined => {
+    const active = this.resolveActiveRestartRecoveryLaunch(markParams);
+    if (!active) {
       return undefined;
     }
+    const { runId, entry, receipt } = active;
     if (receipt.phase !== "consumed") {
       return receipt;
     }
@@ -650,12 +663,9 @@ export class SubagentRecoveryManager extends SubagentWaitManager {
     return true;
   };
 
-  readonly resetSubagentRestartRecoveryLaunchAttempt = (resetParams: {
-    runId: string;
-    expected: SubagentRunRecord;
-    sessionMarker: string;
-    idempotencyKey: string;
-  }): boolean => {
+  readonly resetSubagentRestartRecoveryLaunchAttempt = (
+    resetParams: SubagentRestartRecoveryLaunchIdentity,
+  ): boolean => {
     const runId = resetParams.runId.trim();
     const entry = this.options.runs.get(runId);
     const receipt = entry?.execution.restartRecovery;
@@ -672,6 +682,7 @@ export class SubagentRecoveryManager extends SubagentWaitManager {
       sessionId: receipt.sessionId,
       sessionMarker: receipt.sessionMarker,
       sessionLifecycleRevision: receipt.sessionLifecycleRevision,
+      sessionLifecycleRunId: receipt.sessionLifecycleRunId,
       idempotencyKey: receipt.idempotencyKey,
       phase: "reserved" as const,
     };
