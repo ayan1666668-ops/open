@@ -30,11 +30,12 @@ import {
   getSubagentSessionRuntimeMs,
   getSubagentSessionStartedAt,
 } from "./subagent-registry-read.js";
+import type { SubagentRunReadRecord } from "./subagent-registry-read.types.js";
 import {
   getSubagentRunsSnapshotForSession,
   getSubagentSessionListRunsSnapshotForRead,
 } from "./subagent-registry-state.js";
-import type { SubagentRunReadRecord, SubagentRunRecord } from "./subagent-registry.types.js";
+import type { SubagentRunRecord } from "./subagent-registry.types.js";
 import {
   isRetainedUnendedSubagentRun,
   shouldKeepSubagentRunChildLink,
@@ -113,6 +114,37 @@ type BuiltSubagentList = {
   sharedCwdGroups: SubagentSharedCwdGroup[];
   text: string;
 };
+
+function loadSubagentSessionEntries(
+  cfg: OpenClawConfig,
+  runs: readonly SubagentRunRecord[],
+): Map<string, SessionEntry> {
+  const keysByStore = new Map<string, string[]>();
+  for (const run of runs) {
+    const storePath = resolveSessionStorePathCore(cfg.session?.store, {
+      agentId: parseAgentSessionKey(run.childSessionKey)?.agentId,
+    });
+    const keys = keysByStore.get(storePath);
+    if (keys) {
+      keys.push(run.childSessionKey);
+    } else {
+      keysByStore.set(storePath, [run.childSessionKey]);
+    }
+  }
+  const entries = new Map<string, SessionEntry>();
+  for (const [storePath, sessionKeys] of keysByStore) {
+    // The listing accessor validates the whole snapshot before selecting these rows.
+    for (const { sessionKey, entry } of listSessionEntriesReadOnly({
+      storePath,
+      sessionKeys,
+      clone: false,
+      projection: "list",
+    })) {
+      entries.set(sessionKey, entry);
+    }
+  }
+  return entries;
+}
 
 type SessionEntryResolution = {
   storePath: string;
@@ -431,6 +463,10 @@ export function buildSubagentList(params: {
     countPendingDescendantRuns: pendingDescendantCount,
     now,
   });
+  const sessionEntries = loadSubagentSessionEntries(params.cfg, [
+    ...runView.active,
+    ...runView.recent,
+  ]);
   // `runView.latest` is upstream's extraction of this function's former
   // `dedupedRuns`: same sort, same dedup by childSessionKey, same authority.
   const sharedCwdIndex = buildSharedCwdIndex({
@@ -441,11 +477,7 @@ export function buildSubagentList(params: {
   });
   let index = 1;
   const buildListEntry = (entry: SubagentRunRecord, runtimeMs: number) => {
-    const sessionEntry = resolveSessionEntryForKey({
-      cfg: params.cfg,
-      key: entry.childSessionKey,
-      cache,
-    }).entry;
+    const sessionEntry = sessionEntries.get(entry.childSessionKey);
     const totalTokens = resolveTotalTokens(sessionEntry);
     const usageText = formatTokenUsageDisplay(sessionEntry);
     const pendingDescendants = pendingDescendantCount(entry.childSessionKey);
