@@ -67,6 +67,7 @@ it("emits usage diagnostics for a deliberate silent reply", async () => {
         meta: {
           durationMs: 1,
           agentMeta: {
+            sessionId,
             provider: "openai",
             model: "gpt-5.6-luna",
             usage: { input: 1_200, output: 25, total: 1_225 },
