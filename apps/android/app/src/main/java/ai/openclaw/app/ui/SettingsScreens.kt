@@ -50,6 +50,7 @@ import ai.openclaw.app.photoReadPermissionsForRequest
 import ai.openclaw.app.reconcileRestoredAction
 import ai.openclaw.app.setAppLanguage
 import ai.openclaw.app.ui.design.ClawAgentAvatar
+import ai.openclaw.app.ui.design.ClawAlertDialog
 import ai.openclaw.app.ui.design.ClawIconBadge
 import ai.openclaw.app.ui.design.ClawListItem
 import ai.openclaw.app.ui.design.ClawListPanel
@@ -143,7 +144,6 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.QrCode2
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Storage
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -1569,7 +1569,7 @@ private fun PhoneCapabilitiesScreen(
       showBackgroundLocationExplanation = false
     }
 
-    AlertDialog(
+    ClawAlertDialog(
       onDismissRequest = ::cancelBackgroundLocationRequest,
       title = { Text(nativeString("Allow background location?")) },
       text = {
@@ -1605,7 +1605,7 @@ private fun InstalledAppsDisclosureDialog(
   onDismiss: () -> Unit,
   onAgree: () -> Unit,
 ) {
-  AlertDialog(
+  ClawAlertDialog(
     onDismissRequest = onDismiss,
     title = { Text(nativeString("Share installed app information?")) },
     text = {

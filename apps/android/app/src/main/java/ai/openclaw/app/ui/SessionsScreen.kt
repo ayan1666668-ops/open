@@ -4,6 +4,7 @@ import ai.openclaw.app.MainViewModel
 import ai.openclaw.app.chat.ChatSessionEntry
 import ai.openclaw.app.chat.isSessionRunActive
 import ai.openclaw.app.i18n.nativeString
+import ai.openclaw.app.ui.design.ClawAlertDialog
 import ai.openclaw.app.ui.design.ClawEmptyState
 import ai.openclaw.app.ui.design.ClawLoadingState
 import ai.openclaw.app.ui.design.ClawPlainIconButton
@@ -50,7 +51,6 @@ import androidx.compose.material.icons.outlined.AccessTime
 import androidx.compose.material.icons.outlined.Archive
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.MicNone
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
@@ -533,7 +533,7 @@ internal fun SessionsScreen(
   }
 
   deleteGroupName?.let { group ->
-    AlertDialog(
+    ClawAlertDialog(
       onDismissRequest = { deleteGroupName = null },
       containerColor = ClawTheme.colors.surfaceRaised,
       title = { Text(nativeString("Delete group?"), style = ClawTheme.type.section, color = ClawTheme.colors.text) },
@@ -557,7 +557,7 @@ internal fun SessionsScreen(
   }
 
   deleteSessionTarget?.let { session ->
-    AlertDialog(
+    ClawAlertDialog(
       onDismissRequest = { deleteSessionTarget = null },
       containerColor = ClawTheme.colors.surfaceRaised,
       title = { Text(nativeString("Delete thread?"), style = ClawTheme.type.section, color = ClawTheme.colors.text) },
@@ -928,7 +928,7 @@ private fun SessionTextDialog(
 ) {
   var value by rememberSaveable(stateKey) { mutableStateOf(initialValue) }
   val canConfirm = allowEmpty || value.isNotBlank()
-  AlertDialog(
+  ClawAlertDialog(
     onDismissRequest = onDismiss,
     containerColor = ClawTheme.colors.surfaceRaised,
     title = { Text(title, style = ClawTheme.type.section, color = ClawTheme.colors.text) },

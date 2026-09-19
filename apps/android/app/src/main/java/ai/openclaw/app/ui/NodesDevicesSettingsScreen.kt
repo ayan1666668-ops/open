@@ -12,6 +12,7 @@ import ai.openclaw.app.MainViewModel
 import ai.openclaw.app.canApproveGatewayDevicePairing
 import ai.openclaw.app.currentAppLanguage
 import ai.openclaw.app.i18n.nativeString
+import ai.openclaw.app.ui.design.ClawAlertDialog
 import ai.openclaw.app.ui.design.ClawListItem
 import ai.openclaw.app.ui.design.ClawPanel
 import ai.openclaw.app.ui.design.ClawSecondaryButton
@@ -31,7 +32,6 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Cloud
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -275,7 +275,7 @@ private fun DevicePairingConfirmationDialog(
       is DevicePairingConfirmation.Reject -> nativeString("Reject")
       is DevicePairingConfirmation.Remove -> nativeString("Remove")
     }
-  AlertDialog(
+  ClawAlertDialog(
     onDismissRequest = onDismiss,
     title = { Text(title) },
     text = {

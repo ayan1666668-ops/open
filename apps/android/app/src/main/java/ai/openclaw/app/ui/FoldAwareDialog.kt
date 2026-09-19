@@ -1,5 +1,6 @@
 package ai.openclaw.app.ui
 
+import ai.openclaw.app.ui.design.ClawDialog
 import ai.openclaw.app.ui.design.ClawTheme
 import androidx.activity.compose.LocalActivity
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -47,7 +48,6 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.round
-import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.SecureFlagPolicy
 
@@ -67,7 +67,7 @@ internal fun FoldAwareDialog(
   val dismiss by rememberUpdatedState(onDismissRequest)
   val outsideEnabled by rememberUpdatedState(dismissOnClickOutside)
 
-  Dialog(
+  ClawDialog(
     onDismissRequest = onDismissRequest,
     properties =
       DialogProperties(

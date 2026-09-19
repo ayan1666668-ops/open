@@ -3,6 +3,7 @@ package ai.openclaw.app.ui.chat
 import ai.openclaw.app.R
 import ai.openclaw.app.chat.ChatMessageContent
 import ai.openclaw.app.i18n.nativeString
+import ai.openclaw.app.ui.design.ClawAlertDialog
 import ai.openclaw.app.ui.design.ClawIconButton
 import ai.openclaw.app.ui.design.ClawTheme
 import android.app.Activity
@@ -25,7 +26,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.LastPage
 import androidx.compose.material.icons.automirrored.filled.NavigateBefore
 import androidx.compose.material.icons.automirrored.filled.NavigateNext
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Text
@@ -162,7 +162,7 @@ internal fun ChatTextReaderDialog(
   val pages = remember(text) { chatTextLayoutRanges(text) }
   var page by remember(text) { mutableIntStateOf(0) }
   val pageText = remember(text, page) { text.substring(pages[page]) }
-  AlertDialog(
+  ClawAlertDialog(
     onDismissRequest = onDismiss,
     title = { Text(title) },
     text = {

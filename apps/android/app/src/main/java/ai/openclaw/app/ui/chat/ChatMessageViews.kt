@@ -9,6 +9,7 @@ import ai.openclaw.app.chat.normalizeVisibleChatMessageRole
 import ai.openclaw.app.gateway.GatewayLoadedImage
 import ai.openclaw.app.i18n.nativeString
 import ai.openclaw.app.i18n.nativeStringResource
+import ai.openclaw.app.ui.design.ClawDialog
 import ai.openclaw.app.ui.design.ClawTheme
 import ai.openclaw.app.ui.image.RemoteImageResult
 import ai.openclaw.app.ui.image.safeRemoteImageStore
@@ -78,7 +79,6 @@ import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -527,7 +527,7 @@ private fun ChatImagePreview(
     var viewport by remember(stateKey) { mutableStateOf(IntSize.Zero) }
     var zoom by remember(stateKey) { mutableStateOf(ChatImageZoom()) }
     val imageSize = IntSize(image.width, image.height)
-    Dialog(
+    ClawDialog(
       onDismissRequest = { previewVisible = false },
       properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {

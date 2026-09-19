@@ -17,6 +17,7 @@ import ai.openclaw.app.i18n.verbatimText
 import ai.openclaw.app.locationModeAfterBackgroundSettings
 import ai.openclaw.app.node.DeviceNotificationListenerService
 import ai.openclaw.app.photoReadPermissionsForRequest
+import ai.openclaw.app.ui.design.ClawAlertDialog
 import ai.openclaw.app.ui.design.ClawDesignTheme
 import ai.openclaw.app.ui.design.ClawPrimaryButton
 import ai.openclaw.app.ui.design.ClawScaffold
@@ -101,7 +102,6 @@ import androidx.compose.material.icons.filled.QrCode2
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Sensors
 import androidx.compose.material.icons.filled.WifiTethering
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -2152,7 +2152,7 @@ private fun GatewayRecoveryDiagnosticDialog(
   onDismiss: () -> Unit,
   onCopy: () -> Unit,
 ) {
-  AlertDialog(
+  ClawAlertDialog(
     onDismissRequest = onDismiss,
     containerColor = ClawTheme.colors.surfaceRaised,
     title = { Text(nativeString("Connection details"), style = ClawTheme.type.section, color = ClawTheme.colors.text) },
@@ -2274,7 +2274,7 @@ private fun NodeApprovalScreen(
   }
 
   if (showWaitingDialog) {
-    AlertDialog(
+    ClawAlertDialog(
       onDismissRequest = { waitingDialogDismissed = true },
       title = { Text(text = nativeString("Still waiting for approval")) },
       text = {

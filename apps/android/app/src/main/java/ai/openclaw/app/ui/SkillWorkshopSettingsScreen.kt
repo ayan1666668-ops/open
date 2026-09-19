@@ -6,6 +6,7 @@ import ai.openclaw.app.GatewaySkillWorkshopSummary
 import ai.openclaw.app.MainViewModel
 import ai.openclaw.app.i18n.nativeString
 import ai.openclaw.app.selectableAgents
+import ai.openclaw.app.ui.design.ClawAlertDialog
 import ai.openclaw.app.ui.design.ClawPanel
 import ai.openclaw.app.ui.design.ClawPrimaryButton
 import ai.openclaw.app.ui.design.ClawSecondaryButton
@@ -23,7 +24,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
@@ -291,7 +291,7 @@ private fun SkillWorkshopActionConfirmDialog(
         nativeString("This will quarantine \"\$proposalTitle\" and refresh Skill Workshop state from the gateway.", action.title)
       }
     }
-  AlertDialog(
+  ClawAlertDialog(
     onDismissRequest = onDismiss,
     title = { Text(dialogTitle) },
     text = {

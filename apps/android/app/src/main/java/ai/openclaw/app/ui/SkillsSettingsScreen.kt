@@ -9,6 +9,7 @@ import ai.openclaw.app.MainViewModel
 import ai.openclaw.app.i18n.nativeString
 import ai.openclaw.app.isClawHubSkillInstalled
 import ai.openclaw.app.isClawHubSkillOperationActive
+import ai.openclaw.app.ui.design.ClawAlertDialog
 import ai.openclaw.app.ui.design.ClawIconButton
 import ai.openclaw.app.ui.design.ClawListItem
 import ai.openclaw.app.ui.design.ClawListPanel
@@ -43,7 +44,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -687,7 +687,7 @@ private fun ClawHubInstallReviewDialog(
   onDismiss: () -> Unit,
   onInstall: () -> Unit,
 ) {
-  AlertDialog(
+  ClawAlertDialog(
     onDismissRequest = onDismiss,
     title = { Text(text = nativeString("Review ClawHub skill")) },
     text = {
