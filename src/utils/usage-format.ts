@@ -393,8 +393,9 @@ export function estimateAggregateUsageCost(
     [usage.input, usage.output, usage.cacheRead, usage.cacheWrite].some(
       (value) => value !== undefined,
     );
-  if (!usage?.cost && !hasBillableBuckets) {
-    return undefined;
+  // Legacy run summaries can report billing without any token buckets.
+  if (!hasBillableBuckets) {
+    return usage?.cost?.total;
   }
   // Recorded totals own billing; discover fallback prices only for unpriced usage.
   const cost = params.cost ?? resolveModelCostConfig(params);

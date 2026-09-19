@@ -42,7 +42,7 @@ const preparedModel = {
     provider: "openai",
     id: "gpt-5.5",
     name: "gpt-5.5",
-    api: "openai",
+    api: "openai-completions",
     baseUrl: "https://fixture.invalid/v1",
     input: ["text"],
     reasoning: false,
