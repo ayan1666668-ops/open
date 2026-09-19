@@ -370,8 +370,9 @@ suite.define(() => {
         );
         expect(await card.locator(".session-hovercard__context-text").allTextContents()).toEqual([
           "openclaw",
+          "feature/session-hovercards",
         ]);
-        expect(await card.textContent()).not.toContain("feature/session-hovercards");
+        expect(await card.textContent()).not.toContain("/work/openclaw");
         await expect
           .poll(() => card.locator(".session-hovercard__created-age").textContent())
           .toBe("3mo");
@@ -753,8 +754,9 @@ suite.define(() => {
         expect(await card.locator(".session-hovercard__created-age").textContent()).toBe("2h");
         expect(await card.locator(".session-hovercard__context-text").allTextContents()).toEqual([
           "openclaw",
+          "catalog-hovercard",
         ]);
-        expect(await card.textContent()).not.toContain("catalog-hovercard");
+        expect(await card.textContent()).not.toContain("/work/openclaw");
 
         await row.getByRole("button", { name: "Open session menu" }).dispatchEvent("click");
         await expect.poll(() => card.count()).toBe(0);
