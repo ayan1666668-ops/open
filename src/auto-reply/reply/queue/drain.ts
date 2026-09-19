@@ -45,6 +45,11 @@ import {
 } from "../../../utils/queue-helpers.js";
 import { resolveReplyScreenToolTarget } from "../reply-tool-authority.js";
 import { isRoutableChannel } from "../route-reply.js";
+import {
+  admitFollowupRunLifecycle,
+  completeFollowupRunLifecycle,
+  retireFollowupRunCancellation,
+} from "./lifecycle.js";
 import { resolveQueueSettings } from "./settings-runtime.js";
 import {
   clearFollowupQueue,
@@ -53,11 +58,8 @@ import {
   trimSummaryElisionsToCap,
 } from "./state.js";
 import {
-  admitFollowupRunLifecycle,
-  completeFollowupRunLifecycle,
   isFollowupRunAborted,
   isFollowupRunDeferredError,
-  retireFollowupRunCancellation,
   type FollowupRun,
   type ResolveQueueSettingsParams,
 } from "./types.js";

@@ -11,13 +11,9 @@ import {
   scheduleFollowupDrain,
 } from "../queue.js";
 import { createQueueTestRun as createRun } from "../queue.test-helpers.js";
+import { admitFollowupRunLifecycle, completeFollowupRunLifecycle } from "./lifecycle.js";
 import { FOLLOWUP_QUEUES } from "./state.js";
-import {
-  admitFollowupRunLifecycle,
-  completeFollowupRunLifecycle,
-  type FollowupRun,
-  type QueueSettings,
-} from "./types.js";
+import { type FollowupRun, type QueueSettings } from "./types.js";
 
 const SETTINGS: QueueSettings = { mode: "followup", debounceMs: 0, cap: 50 };
 const CAP = 7;
