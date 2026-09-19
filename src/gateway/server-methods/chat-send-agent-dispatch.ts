@@ -11,6 +11,7 @@ import { dispatchInboundMessageWithProjectedDispatcher } from "../../auto-reply/
 import type { ReplyDispatchRun } from "../../auto-reply/get-reply-options.types.js";
 import { isReplyPayloadStatusNotice } from "../../auto-reply/reply-payload.js";
 import type { ReplyMessageInjectionAttempt } from "../../auto-reply/reply/reply-run-registry.js";
+import { isInternalSourceReplyChannel } from "../../auto-reply/reply/source-reply-delivery-mode.js";
 import { readAgentRunTerminalOutcome } from "../../channels/turn/agent-run-terminal-outcome.js";
 import type { PrepareAssistantTranscriptMessage } from "../../config/sessions/transcript-assistant-delivery.js";
 import { measureDiagnosticsTimelineSpan } from "../../infra/diagnostics-timeline.js";
@@ -186,7 +187,10 @@ export function startChatDispatch(params: StartChatDispatchParams): void {
     accountId,
     prepareAssistantTranscriptMessage: params.prepareAssistantTranscriptMessage,
     isAgentRunStarted: () => agentRunStarted,
-    isRunCurrent,
+    isRunCurrent: () =>
+      isRunCurrent() ||
+      (!activeRunAbort.controller.signal.aborted &&
+        context.chatQueuedTurns.get(clientRunId)?.controller === activeRunAbort.controller),
     abortSignal: activeRunAbort.controller.signal,
     onCommandBlock: isInternalTextSlashCommandTurn
       ? (text) =>
@@ -357,6 +361,9 @@ export function startChatDispatch(params: StartChatDispatchParams): void {
                 changes.forEach((change) => emitSessionsChanged(context, change)),
               replyOptions: {
                 prepareAssistantTranscriptMessage: replyDispatch.prepareAssistantTranscriptMessage,
+                ...(isInternalSourceReplyChannel(ctx)
+                  ? { resolveReplyDelivery: replyDispatch.resolveReplyDelivery }
+                  : {}),
                 ...(admission.admittedSessionSettings
                   ? { admittedSessionSettings: admission.admittedSessionSettings }
                   : {}),

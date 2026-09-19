@@ -219,7 +219,7 @@ export function createFollowupRunner(
         ...defaults.opts,
         commentaryPayloadsEnabled: execution.commentaryPayloadsEnabled,
       };
-      const decision = resolveFollowupDeliveryDecision({
+      const decision = await resolveFollowupDeliveryDecision({
         turn,
         execution: execution.execution,
         accounting,

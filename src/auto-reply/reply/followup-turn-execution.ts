@@ -18,6 +18,7 @@ import { drainPendingToolTasks } from "./pending-tool-task-drain.js";
 import { recordReplyOperationAgentTurn } from "./reply-operation-run-state.js";
 import { hasReplyOperationExecutionStarted } from "./reply-run-registry.js";
 import { prepareReplyToolAuthority } from "./reply-tool-authority.js";
+import { resolveSourceReplyExpectation } from "./source-reply-delivery-mode.js";
 import { createTypingSignaler, type TypingSignaler } from "./typing-mode.js";
 
 export type FollowupExecutionResult = {
@@ -78,6 +79,17 @@ export async function executeFollowupTurn(params: {
 }): Promise<FollowupExecutionResult> {
   const { turn, defaults } = params;
   const sourceOpts = defaults.opts;
+  const terminalReplyExpectation =
+    turn.queued.run.terminalReplyExpectation ??
+    resolveSourceReplyExpectation({
+      ctx: {
+        InboundEventKind: turn.queued.currentInboundEventKind,
+        InputProvenance: turn.queued.run.inputProvenance,
+      },
+      cfg: turn.config,
+    });
+  turn.queued.run.terminalReplyExpectation = terminalReplyExpectation;
+  const isHeartbeat = terminalReplyExpectation === "optional";
   const roomEvent = turn.queued.currentInboundEventKind === "room_event";
   const progressAllowed = () => turn.sendPolicy === "allow" && !roomEvent;
   const currentVerboseLevel = (): VerboseLevel => {
@@ -184,7 +196,7 @@ export async function executeFollowupTurn(params: {
   const baseTypingSignals = createTypingSignaler({
     typing: defaults.typing,
     mode: progressAllowed() ? defaults.typingMode : "never",
-    isHeartbeat: defaults.opts?.isHeartbeat === true,
+    isHeartbeat,
   });
   const typingSignals: TypingSignaler = {
     ...baseTypingSignals,
@@ -200,6 +212,7 @@ export async function executeFollowupTurn(params: {
   };
   const progressOpts: InternalGetReplyOptions = {
     ...sourceOpts,
+    isHeartbeat,
     // Queue callbacks are refreshed per session, but authority belongs to the
     // queued turn. Never let a later callback widen or narrow an older item.
     toolsAllow: turn.queued.toolsAllow,
@@ -408,7 +421,7 @@ export async function executeFollowupTurn(params: {
               onNewSession: () => undefined,
             });
           },
-          isHeartbeat: sourceOpts?.isHeartbeat === true,
+          isHeartbeat,
           sessionKey: turn.session.kind === "session" ? turn.session.key : undefined,
           runtimePolicySessionKey: turn.queued.run.runtimePolicySessionKey,
           getActiveSessionEntry: turn.session.current,
@@ -442,10 +455,7 @@ export async function executeFollowupTurn(params: {
         outcome: {
           kind: "rejected",
           payload: buildTerminalAgentRunFailureReplyPayload({
-            isHeartbeat: sourceOpts?.isHeartbeat,
-            visibleReplyDelivered: false,
-            sessionCtx,
-            cfg: turn.config,
+            isHeartbeat,
           }),
         },
       };

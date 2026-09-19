@@ -212,13 +212,14 @@ describe("dispatchReplyFromConfig terminal visible admission recovery", () => {
   });
 
   it.each([
-    { surface: "slack", origin: "slack", progress: false, chatType: "direct" },
-    { surface: "slack", origin: "slack", progress: true, chatType: "direct" },
-    { surface: "slack", origin: "slack", progress: true, chatType: "group" },
-    { surface: "slack", origin: "discord", progress: true, chatType: "direct" },
+    { surface: "slack", origin: "slack", progress: false, chatType: "direct", mentioned: false },
+    { surface: "slack", origin: "slack", progress: true, chatType: "direct", mentioned: false },
+    { surface: "slack", origin: "slack", progress: true, chatType: "group", mentioned: true },
+    { surface: "slack", origin: "slack", progress: false, chatType: "group", mentioned: false },
+    { surface: "slack", origin: "discord", progress: true, chatType: "direct", mentioned: false },
   ])(
-    "settles an adopted failure on $surface → $origin ($chatType, progress=$progress)",
-    async ({ surface, origin, progress, chatType }) => {
+    "settles an adopted failure on $surface → $origin ($chatType, progress=$progress, mentioned=$mentioned)",
+    async ({ surface, origin, progress, chatType, mentioned }) => {
       sessionStoreMocks.currentEntry = { verboseLevel: "on" };
       const resolverError = new Error("private synthetic failure detail");
       const delivered: Array<{ kind: string; payload: ReplyPayload }> = [];
@@ -261,7 +262,7 @@ describe("dispatchReplyFromConfig terminal visible admission recovery", () => {
         Surface: surface,
         OriginatingChannel: origin,
         ChatType: chatType,
-        WasMentioned: chatType === "group",
+        WasMentioned: mentioned,
       });
       const { result, processedOutcome } = await withDispatchProcessedOutcomeSink(() =>
         withReplyDispatcher({ dispatcher, run: () => dispatchReplyFromConfig(params) }),
@@ -325,7 +326,7 @@ describe("dispatchReplyFromConfig terminal visible admission recovery", () => {
     },
   );
 
-  it.each(["message_tool_only", "send-denied", "observed-delivery", "ambient"])(
+  it.each(["message_tool_only", "send-denied", "observed-delivery", "room-event"])(
     "does not add an adopted failure notice for %s",
     async (policy) => {
       const params = createVisibleDispatchParams(async (_ctx, options) => {
@@ -339,9 +340,8 @@ describe("dispatchReplyFromConfig terminal visible admission recovery", () => {
       if (policy === "send-denied") {
         sessionStoreMocks.currentEntry = { sendPolicy: "deny" };
       }
-      if (policy === "ambient") {
-        params.ctx.ChatType = "group";
-        params.ctx.WasMentioned = false;
+      if (policy === "room-event") {
+        params.ctx.InboundEventKind = "room_event";
       }
       const result = await dispatchReplyFromConfig({
         ...params,

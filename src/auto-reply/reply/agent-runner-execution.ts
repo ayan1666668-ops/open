@@ -62,7 +62,6 @@ import type {
 import {
   buildTerminalAgentRunFailureReplyPayload,
   markAgentRunFailureReplyPayload,
-  resolveExternalRunFailureTextForConversation,
 } from "./agent-runner-failure-reply.js";
 import {
   executeAgentFallbackCycle,
@@ -480,12 +479,7 @@ async function executeAgentTurnInternalLoop(
       if (formattedErrorCandidate) {
         runResult.payloads = [
           markAgentRunFailureReplyPayload({
-            text: resolveExternalRunFailureTextForConversation({
-              text: formattedErrorCandidate,
-              sessionCtx: params.sessionCtx,
-              isGenericRunnerFailure: false,
-              cfg: params.followupRun.run.config,
-            }),
+            text: formattedErrorCandidate,
             isError: true,
           }),
         ];
@@ -499,9 +493,6 @@ async function executeAgentTurnInternalLoop(
   const terminalFailurePayload = terminalRunFailed
     ? buildTerminalAgentRunFailureReplyPayload({
         isHeartbeat: params.isHeartbeat,
-        visibleReplyDelivered: (await params.resolveVisibleReplyDelivery?.()) === true,
-        sessionCtx: params.sessionCtx,
-        cfg: params.followupRun.run.config,
       })
     : undefined;
 

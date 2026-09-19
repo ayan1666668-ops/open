@@ -71,7 +71,6 @@ export async function executeDispatch(state: PrepareDispatchExecutionReadyState)
     params.configOverride ? undefined : state.preparedReplyDispatchRuntime,
     state.replyResolver,
   );
-  let deliberateSilentTerminalReply = false;
   let pendingContinuation = false;
   let pendingContinuationSettlement: PendingContinuationSettlement | undefined;
   const releasePendingContinuation = async () => {
@@ -125,9 +124,6 @@ export async function executeDispatch(state: PrepareDispatchExecutionReadyState)
                 ...state.sourceReplyDeliveryRuntimeOptions,
                 ...({
                   mediaNormalizationOwner: state.isInternalWebchatTurn ? "gateway" : undefined,
-                  onDeliberateSilentTerminalReply: () => {
-                    deliberateSilentTerminalReply = true;
-                  },
                   onPendingContinuation: (settlement) => {
                     pendingContinuation = true;
                     pendingContinuationSettlement ??= settlement;
@@ -466,17 +462,14 @@ export async function executeDispatch(state: PrepareDispatchExecutionReadyState)
       // Adoption retires ingress replay before the model starts. A progress ACK
       // cannot settle a later failure; use normal final delivery and its policy.
       return adopted &&
-        state.noVisibleReplyFallbackDirected &&
+        state.replyOperationRunState.replyCompletion?.expectation === "required" &&
+        state.replyOperationRunState.replyCompletion.outcome !== "blocked" &&
         !state.suppressDelivery &&
         !state.getObservedReplyDelivery()
         ? { text: GENERIC_EXTERNAL_RUN_FAILURE_TEXT, isError: true }
         : undefined;
     }
-    return buildTerminalAgentRunFailureReplyPayload({
-      visibleReplyDelivered: true,
-      sessionCtx: ctx,
-      cfg: replyConfig,
-    });
+    return buildTerminalAgentRunFailureReplyPayload();
   });
   try {
     if (isDispatchOperationAborted()) {
@@ -508,7 +501,6 @@ export async function executeDispatch(state: PrepareDispatchExecutionReadyState)
       return acpTailResult;
     }
     const nextState = extendPreparedDispatchState(state, {
-      deliberateSilentTerminalReply,
       pendingContinuation,
       pendingContinuationSettlement,
       replyResult,

@@ -15,7 +15,10 @@ import type { MessagingToolSend } from "../../embedded-agent-messaging.types.js"
 import { renderAuthProfileFailoverCopy } from "../../failover/user-copy.js";
 import { buildProviderAuthRecoveryHint } from "../../provider-auth-recovery-hint.js";
 import type { AgentMessage } from "../../runtime/index.js";
-import { hasCommittedMessagingToolDeliveryEvidence } from "../delivery-evidence.js";
+import {
+  hasCommittedMessagingToolDeliveryEvidence,
+  resolveSourceReplyDelivery,
+} from "../delivery-evidence.js";
 import type { EmbeddedRunLivenessState } from "../types.js";
 import {
   hasAsyncActivity,
@@ -24,7 +27,6 @@ import {
 } from "./attempt-terminal-evidence.js";
 import {
   classifyAssistantTurn,
-  hasExplicitSilentAssistantReply,
   isIncompleteTerminalAssistantTurn,
   joinAssistantTexts,
   type IncompleteTurnAttempt,
@@ -101,9 +103,8 @@ export function resolveIncompleteTurnPayloadText(params: {
   }
 
   if (
-    hasExplicitSilentAssistantReply(params.attempt) ||
     params.attempt.hasToolMediaBlockReply ||
-    hasCommittedMessagingToolDeliveryEvidence(params.attempt)
+    resolveSourceReplyDelivery(params.attempt) !== "missing"
   ) {
     return null;
   }
@@ -174,10 +175,6 @@ export function shouldRetryMissingAssistantTurn(params: {
     params.attempt.didSendDeterministicApprovalPrompt ||
     params.attempt.lastToolError
   ) {
-    return false;
-  }
-
-  if (hasExplicitSilentAssistantReply(params.attempt)) {
     return false;
   }
 

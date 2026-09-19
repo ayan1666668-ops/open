@@ -95,7 +95,7 @@ async function normalizeSentMediaUrlsForDedupe(params: {
 }
 
 function shouldKeepPayloadDuringSilentTurn(payload: ReplyPayload): boolean {
-  if (payload.isError) {
+  if (payload.isError || getReplyPayloadMetadata(payload)?.deliverDespiteSourceReplySuppression) {
     return true;
   }
   return payload.audioAsVoice === true && resolveSendableOutboundReplyParts(payload).hasMedia;
@@ -178,6 +178,7 @@ export async function buildReplyPayloads(params: {
   messagingToolSentTexts?: string[];
   messagingToolSentMediaUrls?: string[];
   messagingToolSentTargets?: MessagingToolSend[];
+  onDeliveredTerminalDuplicate?: () => void;
   originatingChannel?: OriginatingChannelType;
   originatingChatType?: string | null;
   originatingTo?: string;
@@ -307,6 +308,7 @@ export async function buildReplyPayloads(params: {
           accountId,
           sentMediaUrls: params.messagingToolSentMediaUrls,
           sentTexts: messagingToolSentTexts,
+          onDeliveredTerminalDuplicate: params.onDeliveredTerminalDuplicate,
           normalizeSentMediaUrls: (sentMediaUrls) =>
             normalizeSentMediaUrlsForDedupe({
               sentMediaUrls,

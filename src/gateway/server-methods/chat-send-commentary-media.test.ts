@@ -217,7 +217,7 @@ describe("webchat commentary media", () => {
           clientRunId: runId,
           sessionLoadOptions: { agentId: "main" },
         },
-        userTurnRecorder: { markBlocked: vi.fn() },
+        userTurnRecorder: { markBlocked: vi.fn(), getAdmissionReceipt: () => undefined },
       });
       const content = [
         {

@@ -20,6 +20,7 @@ import { withAgentQuestionAnswerAuthority } from "../harness/host-private-capabi
 import { runStructuredInput } from "../harness/structured-input-execution.js";
 import { compileStructuredInputQuestions } from "../harness/structured-input.js";
 import { resolveExecToolConfig } from "../lazy-exec-tool.js";
+import { resolveReplyExpectation } from "../reply-completion.js";
 import { recordAgentCleanupFailure } from "../run-cleanup-timeout.js";
 import { resolveToolLoopDetectionConfig } from "../tool-loop-detection-config.js";
 import { normalizeToolPolicyName } from "../tool-policy.js";
@@ -497,6 +498,7 @@ export async function executePluginOwnedProcess(params: {
         kind: "cli" as const,
         runId: run.runId,
         toolAuthorityFingerprint: run.toolAuthorityFingerprint,
+        terminalReplyExpectation: resolveReplyExpectation(run),
         cancel: () => {
           termination.reason = "manual-cancel";
           controller.abort(createCliAbortError());

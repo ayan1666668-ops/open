@@ -1,4 +1,5 @@
 /** Source-reply visibility and suppression policy for auto-reply delivery. */
+import type { ReplyExpectation } from "../../agents/reply-completion.js";
 import { normalizeChatType } from "../../channels/chat-type.js";
 import type { InboundEventKind } from "../../channels/inbound-event/kind.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
@@ -42,22 +43,6 @@ export function isExplicitSourceReplyCommand(
   cfg: OpenClawConfig,
 ): boolean {
   return isExplicitCommandTurnContext(ctx, cfg);
-}
-
-/**
- * Room events remain ambient despite stale mention/direct facts. Explicit commands stay directed
- * because their parsed command context is authoritative.
- */
-export function isDirectedSourceReplyTurn(
-  ctx: SourceReplyDeliveryModeContext,
-  cfg: OpenClawConfig,
-  isDirectChat: boolean,
-  inboundEventKind = ctx.InboundEventKind,
-): boolean {
-  return (
-    isExplicitSourceReplyCommand(ctx, cfg) ||
-    (inboundEventKind !== "room_event" && (isDirectChat || ctx.WasMentioned === true))
-  );
 }
 
 /** Returns true for text slash commands that lack authorization metadata. */
@@ -144,6 +129,26 @@ export function isSyntheticSourceReplyTurn(params: {
     params.inputProvenance?.kind === "inter_session" ||
     params.inputProvenance?.kind === "internal_system"
   );
+}
+
+/** Accepted user requests owe an answer; lifecycle and ambient inputs do not. */
+export function resolveSourceReplyExpectation(params: {
+  ctx: SourceReplyDeliveryModeContext;
+  cfg: OpenClawConfig;
+  isHeartbeat?: boolean;
+}): ReplyExpectation {
+  if (
+    isSyntheticSourceReplyTurn({
+      inputProvenance: params.ctx.InputProvenance,
+      isHeartbeat: params.isHeartbeat,
+    })
+  ) {
+    return "optional";
+  }
+  return params.ctx.InboundEventKind === "room_event" &&
+    !isExplicitSourceReplyCommand(params.ctx, params.cfg)
+    ? "optional"
+    : "required";
 }
 
 /** Full source-reply suppression decision consumed by run and hook code. */

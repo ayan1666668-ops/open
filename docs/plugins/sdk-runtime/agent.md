@@ -160,6 +160,10 @@ the provider's own awaited work.
 
     `runEmbeddedAgent(...)` is the neutral helper for starting a normal OpenClaw agent turn from plugin code. It uses the same provider/model resolution and agent-harness selection as channel-triggered replies.
 
+    The caller owns `terminalReplyExpectation`: `"required"` for a requested response, or `"optional"` for work that may finish silently. A model's `NO_REPLY` is empty output, not permission to waive a required response. Recovery after settled tools uses a tool-free finalization pass rather than repeating completed actions.
+
+    If your adapter delivers a final reply before the run returns, provide `resolveReplyDelivery(minimumAssistantMessageIndex?)`. Return `"delivered"` for a confirmed final to the current source, `"pending"` while its transport owns delivery or the outcome is uncertain, and `"missing"` when no final was delivered. Bind observations to this run and input; exclude earlier-input receipts when the supplied lower bound advances. Collecting a block, showing a preview, or writing an external channel's transcript is not a delivery receipt. Observation failures retain pending custody instead of authorizing another reply.
+
     The optional `githubPublicationAvailable` input shipped in 2026.9.4 is deprecated and ignored. Remove it from plugin calls: the host checks the current session and Gateway for every attempt. The SDK accepts the old input until the next Plugin SDK major; it does not grant or disable publication tools.
 
     `resolveCliBackendDispatchEligibility({ provider, model, agentId, authProfileId, config, agentDir, workspaceDir })` shares the embedded runner's CLI-backend dispatch decision (route, the backend's declared `subscriptionAuthDispatch` capability, stored credential mode — honoring an explicitly pinned `authProfileId`) with callers that opt embedded runs into `cliBackendDispatch: "subscription-auth"`. It returns `{ provider }` when the run would execute through the CLI backend and `undefined` when it stays on the direct passthrough, so callers can budget timeouts for the run that will actually execute.

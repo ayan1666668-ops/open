@@ -29,7 +29,6 @@ import {
   isNonDirectConversationContext,
   isVerboseFailureDetailEnabled,
   markAgentRunFailureReplyPayload,
-  resolveExternalRunFailureTextForConversation,
   resolveReplyFailureSummary,
   resolveReplyFailoverFacts,
 } from "./agent-runner-failure-reply.js";
@@ -124,7 +123,6 @@ export async function handleAgentExecutionError(params: {
       params.state.pendingLifecycleTerminal = undefined;
       return { kind: "retry", liveModelSwitchError: err };
     }
-    const visibleReplyDelivered = await turn.resolveVisibleReplyDelivery?.();
     defaultRuntime.error(
       `Live model switch failed after ${MAX_LIVE_SWITCH_RETRIES} retries ` +
         `(${sanitizeForLog(err.provider)}/${sanitizeForLog(err.model)}). The requested model may be unavailable.`,
@@ -143,13 +141,7 @@ export async function handleAgentExecutionError(params: {
     return {
       kind: "final",
       payload: markAgentRunFailureReplyPayload({
-        text: resolveExternalRunFailureTextForConversation({
-          text: switchErrorText,
-          visibleReplyDelivered,
-          sessionCtx: turn.sessionCtx,
-          isGenericRunnerFailure: !params.shouldSurfaceToControlUi,
-          cfg: turn.followupRun.run.config,
-        }),
+        text: switchErrorText,
       }),
     };
   }
@@ -171,15 +163,9 @@ export async function handleAgentExecutionError(params: {
         isHeartbeat: turn.isHeartbeat,
       },
     );
-    const text = resolveExternalRunFailureTextForConversation({
-      text: params.shouldSurfaceToControlUi
-        ? renderControlUiAgentFailureCopy(message)
-        : externalReply.text,
-      visibleReplyDelivered: await turn.resolveVisibleReplyDelivery?.(),
-      sessionCtx: turn.sessionCtx,
-      isGenericRunnerFailure: externalReply.isGenericRunnerFailure,
-      cfg: turn.followupRun.run.config,
-    });
+    const text = params.shouldSurfaceToControlUi
+      ? renderControlUiAgentFailureCopy(message)
+      : externalReply.text;
     return await settleFailure({ text });
   }
   const failoverFacts = resolveReplyFailoverFacts(err, message);
@@ -282,15 +268,8 @@ export async function handleAgentExecutionError(params: {
           : turn.isHeartbeat
             ? HEARTBEAT_EXTERNAL_RUN_FAILURE_TEXT
             : GENERIC_EXTERNAL_RUN_FAILURE_TEXT)));
-  const userVisibleFallbackText = resolveExternalRunFailureTextForConversation({
-    text: fallbackText,
-    visibleReplyDelivered: await turn.resolveVisibleReplyDelivery?.(),
-    sessionCtx: turn.sessionCtx,
-    isGenericRunnerFailure: externalRunFailureReply?.isGenericRunnerFailure ?? false,
-    cfg: turn.followupRun.run.config,
-  });
   return await settleFailure({
-    text: userVisibleFallbackText,
+    text: fallbackText,
     ...(externalRunFailureReply?.presentation
       ? { presentation: externalRunFailureReply.presentation }
       : {}),

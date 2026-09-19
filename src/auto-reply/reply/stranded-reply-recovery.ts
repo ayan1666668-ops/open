@@ -95,6 +95,7 @@ function buildStrandedReplyRetryFollowupRun(
     summaryLine: STRANDED_REPLY_RETRY_MARKER,
     strandedReplyRetry: true,
     disableCollectBatching: true,
+    toolsAllow: base.toolsAllow?.filter((name) => name === "message") ?? ["message"],
     transcriptPrompt: undefined,
     userTurnTranscriptRecorder: undefined,
     currentInboundContext: undefined,
