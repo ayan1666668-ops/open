@@ -111,6 +111,45 @@ type AssertTriggerCodesCoverHeadless = [CodeModeFailureCode | "tool_budget_excee
 const assertTriggerCodesCoverHeadless: AssertTriggerCodesCoverHeadless = true;
 void assertTriggerCodesCoverHeadless;
 
+// A gate script that names a global the guest never received is an authoring or
+// capability error, but QuickJS reports it as a bare `ReferenceError` that the
+// caller then labels `internal_error`, sending operators to the evaluator instead
+// of the job. Name the missing global, the cap that decides it, and the recovery
+// command. A name the gate did install keeps its original classification: that
+// shape means the guest scope itself broke.
+const UNDEFINED_GATE_GLOBAL = /\bReferenceError: ([A-Za-z_$][A-Za-z0-9_$]*) is not defined\b/u;
+const MAX_REPORTED_CAP_TOOLS = 8;
+
+function formatCronCapTools(toolsAllow: readonly string[] | undefined): string {
+  const names = toolsAllow ?? [];
+  if (names.length === 0) {
+    return "none";
+  }
+  const shown = names.slice(0, MAX_REPORTED_CAP_TOOLS).join(", ");
+  return names.length > MAX_REPORTED_CAP_TOOLS
+    ? `${shown}, +${names.length - MAX_REPORTED_CAP_TOOLS} more`
+    : shown;
+}
+
+function gateScriptFailure(params: {
+  error: string;
+  code: CronTriggerFailureCode;
+  jobId: string;
+  scope: string;
+  toolsAllow: readonly string[] | undefined;
+  tools: readonly AnyAgentTool[];
+}): Extract<CronTriggerEvaluationResult, { kind: "error" }> {
+  const missing =
+    params.code === "internal_error" ? UNDEFINED_GATE_GLOBAL.exec(params.error)?.[1] : undefined;
+  if (!missing || params.tools.some((tool) => tool.name === missing)) {
+    return scriptFailure(params.error, params.code);
+  }
+  return scriptFailure(
+    `${params.scope} referenced \`${missing}\`, which this gate does not expose: a gate script sees only the tools granted by the job's toolsAllow cap (${formatCronCapTools(params.toolsAllow)}) plus the persisted state as \`trigger.state\` and the current stream batch as \`trigger.streamBatch\`. Grant it and reauthorize with: openclaw automations edit ${params.jobId} --tools <tool,...>. Original failure: ${params.error}`,
+    "invalid_input",
+  );
+}
+
 type PreparedTriggerRuntime = {
   createTools: (admitted: AdmittedRunContext, signal: AbortSignal) => AnyAgentTool[];
   context: HookContext & { config: OpenClawConfig; agentId: string; sessionKey: string };
@@ -363,6 +402,7 @@ function createCronCodeModeRunner(deps: CronTriggerEvaluatorDeps) {
       wallClockMs: number;
       maxToolCalls: number;
       label: string;
+      scope: string;
       onExecutionStarted?: () => void;
     },
   ): Promise<
@@ -376,6 +416,9 @@ function createCronCodeModeRunner(deps: CronTriggerEvaluatorDeps) {
     );
     const catalogRef = createToolSearchCatalogRef();
     let admission: PreparedAgentRunAdmission | undefined;
+    // Declared outside the try so a reference error raised before the guest
+    // starts still reports against the tool set the gate would have exposed.
+    let tools: AnyAgentTool[] = [];
     try {
       const request = {
         runtimeConfig: resolveCronActiveRuntimeConfig(deps.config),
@@ -391,7 +434,6 @@ function createCronCodeModeRunner(deps: CronTriggerEvaluatorDeps) {
       };
       const runId = `cron-trigger:${params.job.id}:${crypto.randomUUID()}`;
       let runtime: CachedTriggerRuntime | undefined;
-      let tools: AnyAgentTool[];
       let admitted: AdmittedRunContext | undefined;
       let assertAdmitted: ReturnType<typeof resolveAdmittedRunActiveAssertion>;
       let caller: ReturnType<typeof createAdmittedGatewayToolCallerIdentity>;
@@ -526,20 +568,32 @@ function createCronCodeModeRunner(deps: CronTriggerEvaluatorDeps) {
           signal: evaluationScope.signal,
         });
         if (result.status === "failed") {
-          return scriptFailure(result.error, result.code);
+          return gateScriptFailure({
+            error: result.error,
+            code: result.code,
+            jobId: params.job.id,
+            scope: params.scope,
+            toolsAllow: params.job.payload.toolsAllow,
+            tools,
+          });
         }
         assertActive();
         return { kind: "completed" as const, result };
       });
     } catch (error) {
-      return scriptFailure(
-        formatErrorMessageWithCode(error),
-        error instanceof CodeModeHeadlessTimeoutError
-          ? "timeout"
-          : error instanceof CodeModeHeadlessAbortError
-            ? "aborted"
-            : "internal_error",
-      );
+      return gateScriptFailure({
+        error: formatErrorMessageWithCode(error),
+        code:
+          error instanceof CodeModeHeadlessTimeoutError
+            ? "timeout"
+            : error instanceof CodeModeHeadlessAbortError
+              ? "aborted"
+              : "internal_error",
+        jobId: params.job.id,
+        scope: params.scope,
+        toolsAllow: params.job.payload.toolsAllow,
+        tools,
+      });
     } finally {
       admission?.close();
       clearToolSearchCatalog({ catalogRef });
@@ -562,6 +616,7 @@ export function createCronScriptRuntime(deps: CronTriggerEvaluatorDeps) {
           wallClockMs: HEADLESS_TRIGGER_WALL_CLOCK_MS,
           maxToolCalls: HEADLESS_TRIGGER_TOOL_BUDGET,
           label: "cron trigger evaluation",
+          scope: "cron trigger script",
         });
         return outcome.kind === "completed" ? parseTriggerResult(outcome.result) : outcome;
       } finally {
@@ -590,6 +645,7 @@ export function createCronScriptRuntime(deps: CronTriggerEvaluatorDeps) {
         wallClockMs: timeoutSeconds * 1000,
         maxToolCalls: toolBudget,
         label: "cron script payload",
+        scope: "cron script payload",
         onExecutionStarted: params.executionIdentity?.onExecutionStarted,
       });
       return outcome.kind === "completed" ? parseScriptPayloadResult(outcome.result) : outcome;

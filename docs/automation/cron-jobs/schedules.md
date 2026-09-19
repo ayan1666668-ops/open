@@ -121,6 +121,16 @@ Author watchers around **actionable state**, not only success: a watcher that go
 Condition-trigger scripts and `script` payloads run unattended by default with the owning agent's **full tool policy, including `exec`**. Stream schedules also keep operator-authored commands running unattended. Treat these surfaces as unattended code execution with that agent's permissions. Operators who need a hard stop can set `cron.triggers.enabled: false`; remove it or set it to `true` to re-enable them.
 </Warning>
 
+### What a gate script can reach
+
+A gate script and a `script` payload run against the job's **persisted `toolsAllow` cap**, not the owning agent's live surface: the cap is captured when the job is created or edited, and changing the agent's tool policy afterwards does not widen it. The guest scope exposes the granted tools under their canonical names, plus the persisted state as `trigger.state` (`trigger.streamBatch` for stream schedules). Three shapes follow from that and are worth knowing before you debug the evaluator:
+
+- `ReferenceError: <tool> is not defined` — the cap does not grant that tool. `openclaw doctor` reports caps that still carry the retired `gateway_exec` alias and tells you to reauthorize; it never widens a cap on its own, so a script that needs `exec` needs a job whose cap grants `exec`: `openclaw automations edit <id> --tools <tool,...>`.
+- `ReferenceError: state is not defined` — the state is `trigger.state`, never a bare `state`. The current batch is likewise only available as `trigger.streamBatch`.
+- `message` is appended to `systemEvent` text and `agentTurn` messages only; a `command` or `script` payload ignores it.
+
+Both `ReferenceError` shapes are reported as the classified `invalid_input` failure code, with the missing name, the job's cap, and the recovery command in the error text, so read the automation's run history before assuming the evaluator itself broke.
+
 Create a watcher from a local script file (`-` reads the script from stdin). The CLI preserves leading and trailing spaces in file paths; quote the path as one shell argument:
 
 ```bash
