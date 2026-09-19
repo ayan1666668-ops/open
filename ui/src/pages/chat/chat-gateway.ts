@@ -85,6 +85,15 @@ function resolveDeltaChatStreamText(
       return `${currentStream}${deltaText}`;
     }
 
+    // The cumulative prefix can match even when the newly appended delta
+    // introduces hidden scaffolding. Project the small delta before taking
+    // the shortcut so the canonical sanitizer remains authoritative for that
+    // case without rescanning the growing snapshot.
+    if (extractText({ role: "assistant", content: deltaText }) !== deltaText) {
+      const snapshot = extractText(payload.message);
+      return typeof snapshot === "string" ? snapshot : `${currentStream}${deltaText}`;
+    }
+
     // Gateway append deltas carry a cumulative assistant snapshot. Normal
     // visible text needs no projection work: compare that raw snapshot with
     // the already-visible prefix first, and reserve the full sanitizer for

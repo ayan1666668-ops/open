@@ -915,6 +915,13 @@ describe("handleChatGatewayEvent", () => {
       expected: "Visible reply",
     },
     {
+      name: "projects newly appended hidden scaffolding before appending",
+      previous: "Visible",
+      delta: "<think>hidden</think> reply",
+      snapshot: "Visible<think>hidden</think> reply",
+      expected: "Visible reply",
+    },
+    {
       name: "replaces the stream when gateway deltaText marks a replacement",
       previous: "Alpha beta",
       delta: "Alpha",
