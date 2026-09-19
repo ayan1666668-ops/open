@@ -197,7 +197,7 @@ export function renderWorkGroupSummary(
           <span class="chat-activity-group__label">${label}</span>
         </span>
         ${
-          cards.length && duration
+          (activity.length || cards.length) && duration
             ? html`<span
                 class="chat-activity-group__duration"
                 aria-label=${t("chat.workRun.workedFor", { duration })}

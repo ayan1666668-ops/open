@@ -109,6 +109,9 @@ it.each([
     const summary = container.querySelector(".chat-activity-group__summary");
     expect(summary?.textContent).toContain("1 read");
     expect(summary?.textContent?.match(/1 failed/gu)).toHaveLength(1);
+    if (kind === "work") {
+      expect(summary?.textContent).toContain("1s");
+    }
   }
 });
 
