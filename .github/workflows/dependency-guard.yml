@@ -1,21 +1,31 @@
 name: Dependency Guard
 
 on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: PR number to reevaluate with the policy on the selected branch (use main)
+        required: true
+        type: string
   pull_request_target: # zizmor: ignore[dangerous-triggers] checks trusted base script only; never checks out PR head
-    types: [opened, reopened, synchronize, ready_for_review]
+    types: [opened, reopened, synchronize, ready_for_review, edited]
+  workflow_run: # zizmor: ignore[dangerous-triggers] reads live PR metadata only; no signal artifacts or code
+    workflows: [Security review events]
+    types: [completed]
 
 permissions:
   contents: read
-  pull-requests: write
+  pull-requests: read
   issues: write
+  statuses: write
 
 concurrency:
-  group: dependency-guard-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
+  group: dependency-guard-${{ github.event.pull_request.number && format('PR {0}', github.event.pull_request.number) || github.event.workflow_run.display_title || format('PR {0}', inputs.pr_number) }}
+  cancel-in-progress: false
 
 jobs:
   dependency-guard-detect:
-    if: ${{ !github.event.pull_request.draft }}
+    if: ${{ github.event_name == 'pull_request_target' && !github.event.pull_request.draft }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
@@ -26,7 +36,7 @@ jobs:
       - name: Check out trusted base workflow scripts
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: ${{ github.workflow_sha }}
           persist-credentials: false
 
       - name: Detect dependency changes
@@ -34,8 +44,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           OPENCLAW_DEPENDENCY_GUARD_MODE: detect
-          OPENCLAW_SECURITY_APPROVERS: vincentkoc,steipete,joshavant
-          OPENCLAW_SECURITY_TEAM_SLUG: openclaw-secops
         run: node scripts/github/dependency-guard.mjs
 
   dependency-guard-autoscrub:
@@ -46,12 +54,13 @@ jobs:
     permissions:
       contents: read
       issues: write
+      statuses: write
       pull-requests: read
     steps:
       - name: Check out trusted base workflow scripts
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: ${{ github.workflow_sha }}
           persist-credentials: false
 
       - name: Create autoscrub app token
@@ -82,12 +91,10 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           OPENCLAW_DEPENDENCY_GUARD_AUTOSCRUB_TOKEN: ${{ steps.app-token.outputs.token || steps.app-token-fallback.outputs.token }}
           OPENCLAW_DEPENDENCY_GUARD_MODE: autoscrub
-          OPENCLAW_SECURITY_APPROVERS: vincentkoc,steipete,joshavant
-          OPENCLAW_SECURITY_TEAM_SLUG: openclaw-secops
         run: node scripts/github/dependency-guard.mjs
 
   dependency-guard:
-    if: ${{ !github.event.pull_request.draft && always() }}
+    if: ${{ always() && !github.event.pull_request.draft && (github.event_name != 'workflow_dispatch' || github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) }}
     needs:
       - dependency-guard-detect
       - dependency-guard-autoscrub
@@ -97,13 +104,11 @@ jobs:
       - name: Check out trusted base workflow scripts
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: ${{ github.workflow_sha }}
           persist-credentials: false
 
       - name: Enforce dependency guard
         env:
           GITHUB_TOKEN: ${{ github.token }}
           OPENCLAW_DEPENDENCY_GUARD_MODE: enforce
-          OPENCLAW_SECURITY_APPROVERS: vincentkoc,steipete,joshavant
-          OPENCLAW_SECURITY_TEAM_SLUG: openclaw-secops
         run: node scripts/github/dependency-guard.mjs

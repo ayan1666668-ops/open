@@ -4,6 +4,7 @@ title: "CI pipeline jobs"
 read_when:
   - You need to know which CI job owns a check
   - You want the order jobs run in and what blocks what
+  - You need to satisfy or configure security-sensitive pull request review
 ---
 
 OpenClaw CI runs on pushes to `main` that change a path outside `**/*.md` and
@@ -138,6 +139,97 @@ Standalone Periphery workflows enforce zero dead-code findings for the iOS and m
 All four scans use `scripts/install-periphery.sh` to install the checksum-pinned Periphery 3.8.0 OSS release, including its adjacent `libIndexStore.dylib`, in a dedicated runner-temporary directory. The installer rejects download, checksum, and version failures without falling back to Homebrew. Installer changes select all three native workflows.
 
 [Upstream archived the OSS project](https://github.com/peripheryapp/periphery/commit/56a0eb6fb97b785c8fbc1044ccbc7b5d9f06ebec). The pin is a maintainer-owned bridge for the workflows' Xcode 26.6 toolchain, not a claim of ongoing upstream support. Native CI maintainers must revalidate both app scans and both shared consumers before changing Xcode, the pinned release, or the analyzer; retain the zero-findings policy and exact-USR intersection rather than adding a baseline or a weaker fallback.
+
+## Security review checks
+
+Security review separates product changes that maintainers can approve from the
+small set of security policy and enforcement files that require SecOps approval.
+
+| Change                                     | Human author with `maintain` or `admin` access   | Other authors, including bots                                                              |
+| ------------------------------------------ | ------------------------------------------------ | ------------------------------------------------------------------------------------------ |
+| Sensitive product code                     | Informational notice; no extra security approval | Normal GitHub approval by a human with `maintain` or `admin` access on the current PR head |
+| Dependency changes requiring review        | Same maintainer exemption                        | Same maintainer approval                                                                   |
+| SecOps-owned files in `.github/CODEOWNERS` | Independent SecOps code-owner approval           | Independent SecOps code-owner approval                                                     |
+
+The **Security Sensitive Guard** publishes `openclaw/security-sensitive-review`.
+Its inventory in `scripts/github/security-sensitive-policy.mjs` covers Gateway
+authentication, pairing and permissions; credentials, secrets and redaction;
+sandbox and execution policies; product security checks; and `.gitignore`.
+Ordinary documentation, tests, and test support do not trigger this inventory.
+Renames inspect both the old and new paths so moving a sensitive file does not
+remove its review requirement.
+
+The **Dependency Guard** publishes `openclaw/dependency-review` and retains its
+dependency classification and lockfile autoscrub behavior. Dependency removals
+that already qualify as informational remain informational.
+
+Both guards use current repository permissions. `write` access, organization
+membership, an approval comment, and a label do not grant maintainer authority.
+The PR author exemption applies only to human authors; a maintainer pushing to an
+external contributor's branch does not transfer that exemption. A qualifying
+review must approve the current head; a new head or dismissed approval requires
+reevaluation. **Security review events** forwards review changes to the trusted
+guard workflows so approving a PR does not require a manual rerun.
+
+The guard updates one PR comment with affected files, review guidance, and the
+remaining action. The sensitive-change label remains after approval so reviewers
+can still identify the affected responsibility. Comments and labels display the
+decision; they are not approval evidence. Evaluation uses trusted repository code
+and GitHub metadata without executing contributor code.
+
+The hard tier lives only in `.github/CODEOWNERS`: security policy, ownership,
+CodeQL, selected scanning configuration, and the security-review enforcement
+closure. Keep SecOps as the sole owner on those entries. GitHub accepts any owner
+on a matching line, and later matching patterns replace earlier ownership. The
+release-manager entries retain their separate approval responsibility. This
+inventory does not make every general CI or scanner change SecOps-owned.
+
+The soft tier protects the review flow for fork contributors. It is not a
+security boundary against hostile repository writers: another workflow with a
+write token can publish the same status context. Binding the required context to
+the GitHub Actions app identifies the publisher app, not the specific workflow.
+This is an accepted tradeoff to avoid a separate credential-bearing publisher.
+Native CODEOWNERS review enforcement remains independent of these statuses.
+
+Results apply to the PR head evaluated by the workflow. New PR heads, base-branch
+retargeting, and review events reevaluate automatically; unrelated pushes to
+`main` do not. When changing the sensitive-path inventory, review policy, or
+maintainer permissions, refresh affected open PRs before merging them. From the
+default branch, run both workflows with the PR number:
+
+```bash
+gh workflow run security-sensitive-guard.yml --ref main -f pr_number=123
+gh workflow run dependency-guard.yml --ref main -f pr_number=123
+```
+
+Wait for the newly dispatched runs to finish and verify their status on the
+current PR head. Dispatch reevaluates current files, permissions, and reviews;
+it grants no approval and cannot initiate dependency autoscrub. Use this refresh
+instead of rerunning an old workflow revision after a policy change. This policy
+does not impose a new requirement to update every PR after every `main` push.
+
+### Enable enforcement after deployment
+
+Merging workflow files does not enable GitHub merge protection. After these
+workflows and the reviewed CODEOWNERS inventory are on the default branch:
+
+1. Verify both review checks appear on a PR's current head, including after an
+   approval and a subsequent push.
+2. Require `openclaw/security-sensitive-review` and `openclaw/dependency-review`
+   alongside the existing CI checks, bound to the GitHub Actions app.
+3. Enable **Require review from Code Owners** and **Dismiss stale pull request
+   approvals when new commits are pushed**. Verify that `openclaw-secops` is
+   eligible for code ownership and that its approval is required for the hard
+   inventory. Keep the general required approval count at zero if ordinary
+   unowned changes should retain their existing review policy; code-owner review
+   is a separate requirement. Existing release-manager entries also become required.
+4. Apply the review requirements to maintainers and admins with no routine admin
+   bypass. Keep any separately authorized emergency procedure attributable; a
+   CI bypass does not by itself authorize skipping SecOps review.
+
+Do not require the new status names before the default-branch workflows can
+publish them. Verify the live GitHub settings and the maintainer, external
+contributor, bot, and SecOps-owned-path cases before declaring enforcement active.
 
 ## Fail-fast order
 

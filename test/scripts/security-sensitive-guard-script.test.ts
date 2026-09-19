@@ -1,244 +1,307 @@
-// Security Sensitive Guard Script tests cover sensitive file guard behavior.
-import { describe, expect, it } from "vitest";
-import { sanitizeGuardDisplayValue } from "../../scripts/github/guard-shared.mjs";
-import {
-  allowSecuritySensitiveCommand,
-  collectSecuritySensitiveChanges,
-  findSecuritySensitiveOverrideCommand,
-  findSecuritySensitiveOverrideCommandAsync,
-  findTrustedSecuritySensitiveGuardActor,
-  isSecuritySensitiveFile,
-  isSecuritySensitiveGuardAuthorizedForHead,
-  isSecuritySensitiveGuardMarkerComment,
-  isSecuritySensitiveGuardTrustedForHead,
-  markdownCode,
-  renderAuthorizedSecuritySensitiveComment,
-  renderBlockedSecuritySensitiveComment,
-  renderClearedSecuritySensitiveGuardComment,
-  renderSecuritySensitiveAwarenessComment,
-  renderTrustedSecuritySensitiveComment,
-  securitySensitiveFileDefinition,
-  securitySensitiveFileDefinitions,
-  securitySensitiveGuardCommentAuthors,
-  securitySensitiveGuardCommentHeadSha,
-  securitySensitiveGuardMarker,
-  securitySensitiveGuardTrustedActorCandidates,
-  securitySensitiveOverrideExpectedSha,
-} from "../../scripts/github/security-sensitive-guard.mjs";
+import { spawnSync } from "node:child_process";
+import { readFileSync, writeFileSync } from "node:fs";
+import path from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import { collectSecuritySensitiveChanges } from "../../scripts/github/security-sensitive-policy.mjs";
+import { useAutoCleanupTempDirTracker } from "../helpers/temp-dir.js";
 
+const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 const headSha = "a".repeat(40);
-const staleSha = "b".repeat(40);
+const author = { id: 1, login: "contributor", type: "User" };
+const reviewer = { id: 2, login: "maintainer", type: "User" };
+const pullPath = "/repos/openclaw/openclaw/pulls/7";
+const approval = { id: 1, user: reviewer, state: "APPROVED", commit_id: headSha };
 
-describe("security-sensitive guard script", () => {
-  it("detects only registered security-sensitive file surfaces", () => {
-    expect(securitySensitiveFileDefinitions()).toEqual([
-      {
-        path: ".gitignore",
-        reason:
-          "Controls ignored secret and local files, including common `.env` files, before they can be accidentally committed.",
+type Options = {
+  authorRole?: string;
+  reviewerRole?: string;
+  authorType?: string;
+  reviews?: object[];
+  files?: object[];
+  comments?: object[];
+  event?: object;
+  routes?: Record<string, unknown>;
+  changedFiles?: number;
+};
+
+function runGuard(options: Options = {}) {
+  const root = tempDirs.make("security-sensitive-guard-");
+  const eventPath = path.join(root, "event.json");
+  const logPath = path.join(root, "requests.jsonl");
+  const fixturePath = path.join(root, "fixture.json");
+  const files = options.files ?? [{ filename: "src/gateway/auth.ts", status: "modified" }];
+  const pr = {
+    number: 7,
+    state: "open",
+    draft: false,
+    user: { ...author, type: options.authorType ?? "User" },
+    changed_files: options.changedFiles ?? files.length,
+    head: { sha: headSha, ref: "change", repo: { id: 2 } },
+    base: { sha: "b".repeat(40), ref: "main", repo: { id: 1 } },
+  };
+  const routes = {
+    [`GET ${pullPath}`]: pr,
+    [`GET ${pullPath}/files`]: files,
+    [`GET ${pullPath}/reviews`]: options.reviews ?? [],
+    "GET /repos/openclaw/openclaw/issues/7/comments": options.comments ?? [],
+    "GET /repos/openclaw/openclaw/issues/7/labels": [],
+    "GET /repos/openclaw/openclaw/collaborators/contributor/permission": {
+      role_name: options.authorRole ?? "read",
+    },
+    "GET /repos/openclaw/openclaw/collaborators/maintainer/permission": {
+      role_name: options.reviewerRole ?? "maintain",
+    },
+    ...options.routes,
+  };
+  writeFileSync(eventPath, JSON.stringify(options.event ?? { pull_request: pr }));
+  writeFileSync(fixturePath, JSON.stringify({ routes, logPath }));
+  writeFileSync(logPath, "");
+  const result = spawnSync(
+    process.execPath,
+    [
+      "--import",
+      path.resolve("test/fixtures/github-guard-fetch.mjs"),
+      "scripts/github/security-sensitive-guard.mjs",
+    ],
+    {
+      encoding: "utf8",
+      env: {
+        PATH: process.env.PATH,
+        GITHUB_TOKEN: "fixture-token",
+        GITHUB_EVENT_PATH: eventPath,
+        GITHUB_REPOSITORY: "openclaw/openclaw",
+        GITHUB_RUN_ID: "123",
+        OPENCLAW_GUARD_TEST_FIXTURE: fixturePath,
       },
-    ]);
-    expect(isSecuritySensitiveFile(".gitignore")).toBe(true);
-    expect(isSecuritySensitiveFile("docs/.gitignore")).toBe(false);
-    expect(isSecuritySensitiveFile("package.json")).toBe(false);
-    expect(securitySensitiveFileDefinition(".gitignore")?.reason).toContain(".env");
-  });
-
-  it("detects renames away from registered security-sensitive file surfaces", () => {
-    expect(
-      collectSecuritySensitiveChanges([
-        {
-          filename: ".gitignore.disabled",
-          previous_filename: ".gitignore",
-          status: "renamed",
+    },
+  );
+  const requests = readFileSync(logPath, "utf8")
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map(
+      (line) =>
+        JSON.parse(line) as {
+          method: string;
+          path: string;
+          body?: { state?: string; context?: string; body?: string; labels?: string[] };
         },
-      ]),
-    ).toEqual([securitySensitiveFileDefinition(".gitignore")]);
-  });
-
-  it("accepts only security-member override commands for the current head sha", () => {
-    const comments = [
-      {
-        body: "/allow-security-sensitive-change not enough",
-        created_at: "2026-05-28T20:00:00Z",
-        user: { login: "not-security" },
-      },
-      {
-        body: "/allow-security-sensitive-change stale approval",
-        created_at: "2026-05-28T20:01:00Z",
-        user: { login: "security-user" },
-      },
-      {
-        body: "/allow-security-sensitive-change reviewed .gitignore",
-        created_at: "2026-05-28T20:03:00Z",
-        html_url: "https://example.test/comment",
-        user: { login: "security-user" },
-      },
-    ];
-
-    const override = findSecuritySensitiveOverrideCommand({
-      comments,
-      expectedSha: headSha,
-      isSecurityMember: (login) => login === "security-user",
-      newerThan: "2026-05-28T20:02:00Z",
-    });
-
-    expect(override).toEqual({
-      login: "security-user",
-      reason: "reviewed .gitignore",
-      sha: headSha,
-      url: "https://example.test/comment",
-    });
-  });
-
-  it("rejects stale or non-security override commands", async () => {
-    const comments = [
-      {
-        body: "/allow-security-sensitive-change stale approval",
-        created_at: "2026-05-28T20:00:00Z",
-        user: { login: "security-user" },
-      },
-      {
-        body: "/allow-security-sensitive-change not enough",
-        created_at: "2026-05-28T20:02:00Z",
-        user: { login: "not-security" },
-      },
-    ];
-
-    await expect(
-      findSecuritySensitiveOverrideCommandAsync({
-        comments,
-        expectedSha: headSha,
-        isSecurityMember: async (login) => login === "security-user",
-        newerThan: "2026-05-28T20:01:00Z",
-      }),
-    ).resolves.toBeNull();
-  });
-
-  it("binds override commands to the head sha in the blocked guard comment", () => {
-    const blockedComment = {
-      body: renderBlockedSecuritySensitiveComment({
-        changes: [securitySensitiveFileDefinition(".gitignore")],
-        headSha,
-      }),
-    };
-    const staleBlockedComment = {
-      body: renderBlockedSecuritySensitiveComment({
-        changes: [securitySensitiveFileDefinition(".gitignore")],
-        headSha: staleSha,
-      }),
-    };
-
-    expect(securitySensitiveGuardCommentHeadSha(blockedComment)).toBe(headSha);
-    expect(securitySensitiveOverrideExpectedSha(blockedComment, headSha)).toBe(headSha);
-    expect(securitySensitiveOverrideExpectedSha(staleBlockedComment, headSha)).toBeNull();
-  });
-
-  it("preserves same-head authorization across reruns", () => {
-    const authorizedComment = {
-      body: renderAuthorizedSecuritySensitiveComment({
-        login: "security-user",
-        reason: null,
-        sha: headSha,
-      }),
-    };
-
-    expect(securitySensitiveGuardCommentHeadSha(authorizedComment)).toBe(headSha);
-    expect(isSecuritySensitiveGuardAuthorizedForHead(authorizedComment, headSha)).toBe(true);
-    expect(isSecuritySensitiveGuardAuthorizedForHead(authorizedComment, staleSha)).toBe(false);
-    expect(securitySensitiveOverrideExpectedSha(authorizedComment, headSha)).toBeNull();
-  });
-
-  it("recognizes trusted security-sensitive guard actors automatically", async () => {
-    const sameActorCandidates = securitySensitiveGuardTrustedActorCandidates({
-      pullRequest: { user: { login: "repo-admin" } },
-      event: { pull_request: { head: { sha: headSha } }, sender: { login: "repo-admin" } },
-      currentHeadSha: headSha,
-    });
-    const staleAuthorCandidate = securitySensitiveGuardTrustedActorCandidates({
-      pullRequest: { user: { login: "repo-admin" } },
-      event: { pull_request: { head: { sha: staleSha } }, sender: { login: "repo-admin" } },
-      currentHeadSha: headSha,
-    });
-
-    expect(sameActorCandidates).toEqual([{ login: "repo-admin", source: "pull request author" }]);
-    expect(staleAuthorCandidate).toEqual([]);
-
-    await expect(
-      findTrustedSecuritySensitiveGuardActor({
-        candidates: sameActorCandidates,
-        isSecuritySensitiveApprover: async (login) =>
-          login === "repo-admin" ? "repository admin" : null,
-      }),
-    ).resolves.toEqual({
-      login: "repo-admin",
-      reason: "pull request author; repository admin",
-    });
-  });
-
-  it("trusts only configured security-sensitive guard marker comment authors", () => {
-    const trustedAuthors = securitySensitiveGuardCommentAuthors(
-      "github-actions[bot], openclaw-security-guard[bot]",
     );
-    expect(securitySensitiveGuardCommentAuthors(undefined)).toEqual(
-      new Set(["github-actions[bot]"]),
-    );
+  return {
+    ...result,
+    requests,
+    statuses: requests
+      .filter((request) => request.path.includes("/statuses/"))
+      .map((request) => request.body?.state),
+    comment: requests.find(
+      (request) => request.method === "POST" && request.path.endsWith("/comments"),
+    )?.body?.body,
+  };
+}
 
-    expect(
-      isSecuritySensitiveGuardMarkerComment(
-        {
-          body: securitySensitiveGuardMarker,
-          user: { login: "openclaw-security-guard[bot]" },
+describe("security-sensitive guard entry point", () => {
+  it.each(["maintain", "admin"])("allows a %s author without extra approval", (authorRole) => {
+    const result = runGuard({ authorRole });
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.statuses).toEqual(["pending", "success"]);
+    expect(result.comment).toContain("Informational");
+  });
+
+  it.each([
+    { name: "an external author", options: {} },
+    { name: "write access", options: { authorRole: "write" } },
+    { name: "an admin bot", options: { authorRole: "admin", authorType: "Bot" } },
+    { name: "a stale review", options: { reviews: [{ ...approval, commit_id: "c".repeat(40) }] } },
+    { name: "a write-only reviewer", options: { reviews: [approval], reviewerRole: "write" } },
+    {
+      name: "a bot reviewer",
+      options: { reviews: [{ ...approval, user: { ...reviewer, type: "Bot" } }] },
+    },
+    { name: "a dismissed review", options: { reviews: [{ ...approval, state: "DISMISSED" }] } },
+    {
+      name: "a later request for changes",
+      options: { reviews: [approval, { ...approval, id: 2, state: "CHANGES_REQUESTED" }] },
+    },
+    {
+      name: "a removed maintainer",
+      options: {
+        reviews: [approval],
+        routes: {
+          "GET /repos/openclaw/openclaw/collaborators/maintainer/permission": { httpError: 404 },
         },
-        trustedAuthors,
-      ),
+      },
+    },
+    {
+      name: "an old authorized bot comment",
+      options: {
+        comments: [
+          {
+            id: 4,
+            user: { login: "github-actions[bot]" },
+            body: `<!-- openclaw:security-sensitive-guard -->\n### Security-sensitive change authorized\nApproved SHA: \`${headSha}\``,
+          },
+        ],
+      },
+    },
+  ])("requires review for $name", ({ options }) => {
+    const result = runGuard(options);
+    expect(result.status).toBe(1);
+    expect(result.statuses).toEqual(["pending", "failure"]);
+    expect(result.stderr).toContain("A maintainer must approve");
+    expect(
+      result.requests.some((request) => request.body?.labels?.includes("security-review-required")),
     ).toBe(true);
-    expect(
-      isSecuritySensitiveGuardMarkerComment(
-        {
-          body: securitySensitiveGuardMarker,
-          user: { login: "contributor" },
+  });
+
+  it.each(["maintain", "admin"])(
+    "accepts normal current-head approval by a %s reviewer",
+    (reviewerRole) => {
+      const result = runGuard({ reviews: [approval], reviewerRole });
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.statuses).toEqual(["pending", "success"]);
+      expect(result.comment).toContain("@maintainer approved");
+      expect(
+        result.requests
+          .filter((request) => request.path.includes("/statuses/"))
+          .every((request) => request.path.endsWith(headSha)),
+      ).toBe(true);
+    },
+  );
+
+  it("does not treat a later review comment as a revoked approval", () => {
+    const result = runGuard({ reviews: [approval, { ...approval, id: 2, state: "COMMENTED" }] });
+    expect(result.status, result.stderr).toBe(0);
+  });
+
+  it("reevaluates fork reviews using the signal only as a PR locator", () => {
+    const result = runGuard({
+      event: {
+        workflow_run: {
+          name: "Security review events",
+          event: "pull_request_review",
+          display_title: "PR 7",
+          pull_requests: [],
         },
-        trustedAuthors,
-      ),
-    ).toBe(false);
+      },
+      reviews: [approval],
+    });
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.statuses.at(-1)).toBe("success");
   });
 
-  it("renders deterministic awareness, blocked, trusted, authorized, and cleared comments", () => {
-    const changes = [securitySensitiveFileDefinition(".gitignore")!];
-    const awarenessBody = renderSecuritySensitiveAwarenessComment(changes);
-    const blockedBody = renderBlockedSecuritySensitiveComment({ changes, headSha });
-    const trustedBody = renderTrustedSecuritySensitiveComment({
-      actor: { login: "repo-admin", reason: "pull request author; repository admin" },
-      changes,
-      headSha,
+  it("does not grant approval from signal metadata", () => {
+    const result = runGuard({
+      event: {
+        workflow_run: {
+          name: "Security review events",
+          event: "pull_request_review",
+          display_title: "PR 7",
+          conclusion: "success",
+          actor: reviewer,
+        },
+      },
     });
-    const authorizedBody = renderAuthorizedSecuritySensitiveComment({
-      login: "security-user",
-      reason: "reviewed .gitignore",
-      sha: headSha,
-    });
-    const clearedBody = renderClearedSecuritySensitiveGuardComment({ headSha });
-
-    expect(awarenessBody).toContain(securitySensitiveGuardMarker);
-    expect(awarenessBody).toContain("Security-sensitive file changes detected");
-    expect(awarenessBody).toContain("`.gitignore`");
-    expect(awarenessBody).toContain(".env");
-    expect(blockedBody).toContain("Security-sensitive changes are blocked");
-    expect(blockedBody).toContain(allowSecuritySensitiveCommand);
-    expect(blockedBody).toContain(`current head SHA (\`${headSha}\`)`);
-    expect(trustedBody).toContain("Security-sensitive changes noted");
-    expect(trustedBody).toContain("@repo-admin");
-    expect(isSecuritySensitiveGuardTrustedForHead({ body: trustedBody }, headSha)).toBe(true);
-    expect(authorizedBody).toContain("Security-sensitive change authorized");
-    expect(authorizedBody).toContain("`reviewed .gitignore`");
-    expect(clearedBody).toContain("Security-sensitive guard cleared");
-    expect(clearedBody).toContain("requires a fresh `/allow-security-sensitive-change` comment");
+    expect(result.statuses).toEqual(["pending", "failure"]);
   });
 
-  it("sanitizes display values and markdown code", () => {
-    expect(sanitizeGuardDisplayValue("abc\u0000def")).toBe("abc?def");
-    expect(sanitizeGuardDisplayValue("x".repeat(300))).toHaveLength(240);
-    expect(markdownCode("`quoted`")).toBe("`\\`quoted\\``");
+  it.each([
+    { reviews: [], expected: "failure" },
+    { reviews: [approval], expected: "success" },
+  ])(
+    "refreshes policy from a dispatch without granting approval: $expected",
+    ({ reviews, expected }) => {
+      const result = runGuard({ event: { inputs: { pr_number: "7" } }, reviews });
+      expect(result.statuses).toEqual(["pending", expected]);
+    },
+  );
+
+  it("rejects invalid dispatch PR numbers before making requests", () => {
+    const result = runGuard({ event: { inputs: { pr_number: "7/../../issues" } } });
+    expect(result.status).toBe(1);
+    expect(result.requests).toEqual([]);
+  });
+
+  it("fails closed when role verification is unavailable", () => {
+    const result = runGuard({
+      routes: {
+        "GET /repos/openclaw/openclaw/collaborators/contributor/permission": { httpError: 403 },
+      },
+    });
+    expect(result.status).toBe(1);
+    expect(result.statuses).toEqual(["pending"]);
+  });
+
+  it("refuses incomplete changed-file lists", () => {
+    const result = runGuard({ changedFiles: 3001 });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("complete changed-file list");
+    expect(result.statuses).toEqual(["pending"]);
+  });
+
+  it("refuses success if the PR changes after approval is read", () => {
+    const pr = {
+      number: 7,
+      state: "open",
+      draft: false,
+      user: author,
+      changed_files: 1,
+      head: { sha: headSha, ref: "change", repo: { id: 2 } },
+      base: { sha: "b".repeat(40), ref: "main", repo: { id: 1 } },
+    };
+    const result = runGuard({
+      reviews: [approval],
+      routes: {
+        [`GET ${pullPath}`]: {
+          responses: [pr, pr, { ...pr, head: { ...pr.head, sha: "c".repeat(40) } }],
+        },
+      },
+    });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("pull request changed");
+    expect(result.statuses).toEqual(["pending"]);
+  });
+
+  it("leaves hard-tier approval to CODEOWNERS and ignores ordinary changes", () => {
+    const result = runGuard({ files: [{ filename: "SECURITY.md" }, { filename: "src/utils.ts" }] });
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.statuses).toEqual(["pending", "success"]);
+    expect(result.comment).toBeUndefined();
+  });
+});
+
+describe("sensitive change classification", () => {
+  it.each([
+    "src/gateway/auth.ts",
+    "src/gateway/operator-scopes.ts",
+    "src/gateway/origin-check.ts",
+    "src/gateway/server/ws-origin-policy.ts",
+    "src/gateway/methods/core-method-policy.ts",
+    "src/gateway/session-method-policy.ts",
+    "src/shared/operator-scope-compat.ts",
+    "src/shared/device-bootstrap-profile.ts",
+    "src/shared/gateway-method-policy.ts",
+    "src/shared/session-method-scopes.ts",
+    "src/infra/device-bootstrap.ts",
+    "src/agents/agent-tools.policy.ts",
+    "src/gateway/server/ws-connection/message-handler.ts",
+    "src/secrets/resolve.ts",
+    "src/agents/auth-profiles/store.ts",
+    "src/agents/sandbox/docker.ts",
+    "src/infra/exec-approvals.ts",
+    ".gitignore",
+  ])("explains the security responsibility of %s", (filename) => {
+    const changes = collectSecuritySensitiveChanges([{ filename }]);
+    expect(changes).toHaveLength(1);
+    expect(changes[0]).toMatchObject({ path: filename, reason: expect.any(String) });
+    expect(changes[0]?.reason.length).toBeGreaterThan(40);
+  });
+
+  it("detects moving an owned file into an unclassified path without flagging tests or docs", () => {
+    const changes = collectSecuritySensitiveChanges([
+      { filename: "src/renamed.ts", previous_filename: "src/gateway/auth.ts" },
+      { filename: "src/gateway/auth.test.ts" },
+      { filename: "docs/gateway/authentication.md" },
+    ]);
+    expect(changes.map((change) => change.path)).toEqual(["src/gateway/auth.ts"]);
   });
 });

@@ -105,6 +105,25 @@ must declare their own development dependencies rather than rely on hoisting.
 - **Include screenshots** — one showing the problem/before, one showing the fix/after (for UI or visual changes)
 - Use American English spelling and grammar in code, comments, docs, and UI strings
 
+## Security-sensitive changes
+
+Changes to authentication, credentials, secret handling, sandboxing, or execution
+permissions receive a security-review notice with the affected files and review
+guidance. A human PR author with repository `maintain` or `admin` access needs no
+additional security approval. Other authors, including bots, need a normal GitHub
+**Approve** review from a human with either role on the current PR head. A later
+push requires a fresh approval. Dependency changes use the same authority.
+
+Security policy, CodeQL, and the security-review enforcement files listed in
+[CODEOWNERS](.github/CODEOWNERS) require an independent
+`@openclaw/openclaw-secops` approval, including on maintainer-authored PRs. A
+maintainer approval of product code does not replace that code-owner requirement.
+Normal project review and release-owner requirements still apply.
+
+Use the review action rather than an approval comment or label. See
+[security review checks](https://docs.openclaw.ai/ci/pipeline#security-review-checks)
+for check behavior and enforcement setup.
+
 ## Local commit hook
 
 The normal `pnpm install` setup enables the repository's pre-commit formatting hook

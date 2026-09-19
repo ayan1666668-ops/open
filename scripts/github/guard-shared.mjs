@@ -27,56 +27,6 @@ export function normalizeGuardLoginSet(value, fallback = "") {
   );
 }
 
-export function guardTrustedActorCandidates({ pullRequest, event, currentHeadSha }) {
-  const eventHeadSha = event?.pull_request?.head?.sha;
-  const eventAfterSha = event?.after;
-  const eventMatchesCurrentHead =
-    Boolean(currentHeadSha) &&
-    (eventHeadSha === currentHeadSha || eventAfterSha === currentHeadSha);
-  if (!eventMatchesCurrentHead) {
-    return [];
-  }
-  const candidates = [];
-  const seen = new Set();
-  for (const [source, login] of [["pull request author", pullRequest?.user?.login]]) {
-    if (typeof login !== "string" || login.length === 0) {
-      continue;
-    }
-    const normalizedLogin = login.toLowerCase();
-    if (seen.has(normalizedLogin)) {
-      continue;
-    }
-    seen.add(normalizedLogin);
-    candidates.push({ login, source });
-  }
-  return candidates;
-}
-
-export function isCommentNewerThan(comment, newerThan) {
-  if (!newerThan) {
-    return false;
-  }
-  const commentTime = Date.parse(comment.created_at ?? "");
-  const barrierTime = Date.parse(newerThan);
-  return Number.isFinite(commentTime) && Number.isFinite(barrierTime) && commentTime > barrierTime;
-}
-
-export function guardCommentHeadSha(comment) {
-  const body = comment?.body ?? "";
-  const patterns = [
-    /Approved SHA:\s+`([a-f0-9]{40})`/iu,
-    /current head SHA\s+\(`([a-f0-9]{40})`\)/iu,
-    /Current SHA:\s+`([a-f0-9]{40})`/iu,
-  ];
-  for (const pattern of patterns) {
-    const match = body.match(pattern);
-    if (match?.[1]) {
-      return match[1];
-    }
-  }
-  return null;
-}
-
 export function createIssueMutationHelpers({
   api,
   issuePath,
@@ -146,63 +96,6 @@ export function createIssueMutationHelpers({
       .catch(ignoreUnavailableWritePermission("comment creation"));
   };
   return { removeLabelIfPresent, addLabelIfMissing, deleteCommentIfPresent, upsertComment };
-}
-
-export function createGuardApproverChecks({
-  api,
-  owner,
-  repo,
-  securityTeamSlug,
-  explicitSecurityApprovers,
-  warn = console.warn,
-}) {
-  const membershipCache = new Map();
-  const repositoryRoleCache = new Map();
-  const isSecurityMember = async (login) => {
-    const normalizedLogin = login.toLowerCase();
-    if (explicitSecurityApprovers.has(normalizedLogin)) {
-      return true;
-    }
-    if (membershipCache.has(normalizedLogin)) {
-      return membershipCache.get(normalizedLogin);
-    }
-    try {
-      const membership = await api.request(
-        `/orgs/${owner}/teams/${securityTeamSlug}/memberships/${encodeURIComponent(login)}`,
-      );
-      const allowed = membership?.state === "active";
-      membershipCache.set(normalizedLogin, allowed);
-      return allowed;
-    } catch (error) {
-      if (error?.status !== 404) {
-        warn(`Could not verify ${login} against ${securityTeamSlug}: ${error.message}`);
-      }
-      membershipCache.set(normalizedLogin, false);
-      return false;
-    }
-  };
-  const getRepositoryRoleName = async (login) => {
-    const normalizedLogin = login.toLowerCase();
-    if (repositoryRoleCache.has(normalizedLogin)) {
-      return repositoryRoleCache.get(normalizedLogin);
-    }
-    try {
-      const result = await api.request(
-        `/repos/${owner}/${repo}/collaborators/${encodeURIComponent(login)}/permission`,
-      );
-      const roleName = typeof result?.role_name === "string" ? result.role_name : null;
-      repositoryRoleCache.set(normalizedLogin, roleName);
-      return roleName;
-    } catch (error) {
-      if (error?.status !== 404) {
-        warn(`Could not verify repository permission for ${login}: ${error.message}`);
-      }
-      repositoryRoleCache.set(normalizedLogin, null);
-      return null;
-    }
-  };
-  const isRepositoryAdmin = async (login) => (await getRepositoryRoleName(login)) === "admin";
-  return { getRepositoryRoleName, isSecurityMember, isRepositoryAdmin };
 }
 
 function githubErrorBodyTooLarge(maxBytes) {
