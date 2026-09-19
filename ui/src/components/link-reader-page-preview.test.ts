@@ -1,4 +1,5 @@
 /* @vitest-environment jsdom */
+import { render } from "lit";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../../test/helpers/promise.js";
 import type { GatewayBrowserClient } from "../api/gateway.ts";
@@ -16,6 +17,7 @@ function linkHovercardUrl(anchor: HTMLAnchorElement) {
 }
 import { prefetchLinkReader } from "./link-reader-hovercard-registration.ts";
 import { installTitleTooltips } from "./tooltip-title.ts";
+import { renderWizardStepControls } from "./wizard-step-controls.ts";
 
 if (!customElements.get(LINK_HOVERCARD_TAG)) {
   customElements.define(LINK_HOVERCARD_TAG, LinkHovercardProvider);
@@ -88,6 +90,37 @@ afterEach(() => {
 });
 
 describe("generic link hovercards", () => {
+  it("leaves the real wizard sign-in action external without fetching its authorization URL", async () => {
+    const view = fixture();
+    const authorizationUrl = "https://provider.example/authorize?state=synthetic-state";
+    render(
+      renderWizardStepControls({
+        step: {
+          id: "sign-in",
+          type: "progress",
+          executor: "gateway",
+          externalUrl: authorizationUrl,
+        },
+        value: undefined,
+        busy: false,
+        inputId: "sign-in",
+        onValueChange: () => {},
+        onAnswer: () => {},
+      }),
+      view.pane,
+    );
+    const signIn = view.pane.querySelector<HTMLAnchorElement>(".wizard-step__external-link")!;
+    await hover(signIn);
+    signIn.focus();
+    signIn.dispatchEvent(new FocusEvent("focusin", { bubbles: true, composed: true }));
+    await vi.advanceTimersByTimeAsync(1);
+    expect(view.request).not.toHaveBeenCalled();
+    expect(card()).toBeNull();
+    expect(signIn.href).toBe(authorizationUrl);
+    expect(signIn.target).toBe("_blank");
+    await hover(view.anchor);
+    expect(card()?.textContent).toContain("Field guide");
+  });
   it("does not prefetch ordinary links or consume a detail-only plugin claim", async () => {
     const view = fixture();
     await prefetchLinkReader(view.anchor, new AbortController().signal);
