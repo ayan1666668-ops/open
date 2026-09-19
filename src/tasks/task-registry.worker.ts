@@ -40,6 +40,7 @@ import {
   findTaskRecordByRunIdForViewInDatabase,
   listTaskRecordsForFlowReadInDatabase,
   listTaskRecordsForOwnerReadInDatabase,
+  listTaskRecordsByOwnerKeyInDatabase,
   readTaskViewRecordInDatabase,
   readTaskRegistryMutationSnapshotInDatabase,
   readTaskRegistrySnapshot,
@@ -194,6 +195,8 @@ export function executeTaskRegistryCommand(
         return findTaskRecordByRunIdForViewInDatabase(db, command.input.runId);
       case "tasks.list":
         return listTaskRecordsForOwnerReadInDatabase(db, command.input.ownerKey);
+      case "tasks.ownerRecords":
+        return listTaskRecordsByOwnerKeyInDatabase(db, command.input.ownerKey);
       case "tasks.resolve": {
         const { ownerKey, token } = command.input;
         return {

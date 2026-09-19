@@ -79,6 +79,7 @@ export type TaskRegistryWorkerOperations = TaskInitialWorkerOperations &
     "tasks.get": { input: { taskId: string }; output: TaskRecord | undefined };
     "tasks.findByRunId": { input: { runId: string }; output: TaskRecord | undefined };
     "tasks.list": { input: { ownerKey: string }; output: TaskRecord[] };
+    "tasks.ownerRecords": { input: { ownerKey: string }; output: TaskRecord[] };
     "tasks.resolve": {
       input: { ownerKey: string; token: string };
       output: TaskLookupRecords;
@@ -124,6 +125,7 @@ export function isTaskRegistryWorkerCommand(command: {
     case "tasks.get":
     case "tasks.findByRunId":
     case "tasks.list":
+    case "tasks.ownerRecords":
     case "tasks.resolve":
     case "flows.list":
     case "flows.views":

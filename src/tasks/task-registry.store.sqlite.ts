@@ -17,7 +17,6 @@ import {
 import {
   bindTaskRunExecutionInDatabase,
   deleteTaskRowsWithDeliveryState,
-  listTaskRecordsByOwnerKeyInDatabase,
   listTaskRecordsByRuntimeSourceIdInDatabase,
   readTaskRegistrySnapshot,
   readTaskRegistryMutationSnapshotInDatabase,
@@ -95,17 +94,6 @@ export function loadTaskRegistryStateFromSqliteReadOnlyResult(): TaskRegistryRea
       snapshot: { tasks: new Map(), deliveryStates: new Map() },
     }
   );
-}
-
-export async function listTaskRegistryRecordsByOwnerKeyFromSqlite(
-  ownerKey: string,
-): Promise<TaskRecord[]> {
-  const key = ownerKey.trim();
-  if (!key) {
-    return [];
-  }
-  const { db } = openTaskRegistryDatabase();
-  return listTaskRecordsByOwnerKeyInDatabase(db, key);
 }
 
 /** Reads task rows for one runtime/source without restoring the process registry snapshot. */

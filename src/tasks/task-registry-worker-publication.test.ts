@@ -504,7 +504,7 @@ describe("worker publication during canonical reads", () => {
             .mockImplementation((_db, publication) => {
               publication.stage();
               expect(authoritativeTasks.get(task.taskId)?.task).toBe("Committed");
-              publication.rollback();
+              publication.rollback(new Error("Synthetic projection rollback"));
               expect(authoritativeTasks.get(task.taskId)?.task).toBe("Original");
               return true;
             });

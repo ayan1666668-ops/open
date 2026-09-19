@@ -2,8 +2,10 @@ import type { Result } from "@openclaw/normalization-core/result";
 // Tracks task process state transitions used to reconcile running work.
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import type { TaskSummary } from "../../packages/gateway-protocol/src/schema/tasks.js";
+import type { OpenClawStateDatabaseReadAdmission } from "../state/openclaw-state-db-async-lifecycle.js";
 import {
   getTaskRelatedSessionIndexKeys,
+  filterTasksByRunScope,
   cloneTaskRecordForObserver,
   isEquivalentTaskRecord,
   listTasksFromIndex,
@@ -12,10 +14,11 @@ import type {
   TaskRegistryMutationScope,
   TaskRegistryObserverEvent,
 } from "./task-registry.store.types.js";
-import type { TaskDeliveryState, TaskRecord } from "./task-registry.types.js";
+import type { TaskDeliveryState, TaskRecord, TaskRuntime } from "./task-registry.types.js";
 
 export type PendingTaskRegistryMutation = {
   scope: TaskRegistryMutationScope;
+  readIdentity?: "preserved";
   published: Map<string, Omit<TaskRecord, "detail"> | undefined>;
   publication?: {
     records: Map<string, TaskRecord>;
@@ -69,6 +72,7 @@ export type TaskProgressBatch = {
 export type TaskRegistryEventMutations = {
   prepare: () => { consume: () => void; release: () => void } | undefined;
   pending: () => boolean;
+  captureReadFence: (admission: OpenClawStateDatabaseReadAdmission) => Promise<void>;
 };
 
 /** Process-local indexes backing task lookup, owner access, and pending delivery scans. */
@@ -141,6 +145,24 @@ export function clearTaskProgressBatches(): void {
 }
 
 const indexState = getTaskRegistryProcessState();
+
+export function getTasksByRunId(runId: string): TaskRecord[] {
+  const ids = indexState.taskIdsByRunId.get(runId.trim());
+  if (!ids || ids.size === 0) {
+    return [];
+  }
+  return [...ids]
+    .map((taskId) => indexState.tasks.get(taskId))
+    .filter((task): task is TaskRecord => Boolean(task));
+}
+
+export function getTasksByRunScope(params: {
+  runId: string;
+  runtime?: TaskRuntime;
+  sessionKey?: string;
+}): TaskRecord[] {
+  return filterTasksByRunScope(getTasksByRunId(params.runId), params);
+}
 
 export function addRunIdIndex(taskId: string, runId?: string) {
   const trimmed = runId?.trim();
@@ -267,6 +289,44 @@ export function matchesScope(task: TaskRecord, scope: TaskRegistryMutationScope)
     Boolean(scope.runId && task.runId?.trim() === scope.runId) ||
     Boolean(scope.childSessionKey && task.childSessionKey?.trim() === scope.childSessionKey)
   );
+}
+
+/** Restore transaction-local publication facts without replacing held witness objects. */
+export function captureTaskRegistryPublicationRollback(): () => void {
+  const captured = [...indexState.projection.pending].map((pending) => ({
+    pending,
+    published: new Map(pending.published),
+    witnesses: [pending.readWitness, pending.recoveryWitness].flatMap((witness) =>
+      witness
+        ? [{ witness, writtenTaskIds: new Set(witness.writtenTaskIds), replaced: witness.replaced }]
+        : [],
+    ),
+    publication: pending.publication && {
+      owner: pending.publication,
+      invalidated: new Set(pending.publication.invalidated),
+    },
+  }));
+  return () => {
+    for (const { pending, published, witnesses, publication } of captured) {
+      pending.published.clear();
+      for (const [taskId, task] of published) {
+        pending.published.set(taskId, task);
+      }
+      for (const { witness, writtenTaskIds, replaced } of witnesses) {
+        witness.writtenTaskIds.clear();
+        for (const taskId of writtenTaskIds) {
+          witness.writtenTaskIds.add(taskId);
+        }
+        witness.replaced = replaced;
+      }
+      if (publication) {
+        publication.owner.invalidated.clear();
+        for (const taskId of publication.invalidated) {
+          publication.owner.invalidated.add(taskId);
+        }
+      }
+    }
+  };
 }
 
 /** A committed projection write supersedes held reads even when its value returns to the original. */

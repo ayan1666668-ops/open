@@ -24,10 +24,13 @@ export type TaskRegistryWorkerMutationContext = {
   scope: TaskRegistryMutationScope;
   admission: OpenClawStateDatabaseReadAdmission;
   publicationRecords: () => ReadonlyMap<string, TaskRecord>;
+  /** Only a producer whose write contract preserves task routing, access, and detail. */
+  readIdentity?: "preserved";
   taskRowsWritten?: () => boolean;
   beforeObservers?: (assertCurrent: () => void) => Promise<void>;
   recoverPublication?: (snapshot: TaskRegistryStoreSnapshot) => TaskRecord | undefined;
   onPublished?: (task: TaskRecord) => void;
+  onPublicationError?: (error: unknown) => void;
   forcePublish?: () => TaskRecord | undefined;
 };
 

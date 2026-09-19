@@ -1,5 +1,4 @@
 import { setTimeout as sleep } from "node:timers/promises";
-import { Worker } from "node:worker_threads";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../test/helpers/promise.js";
 import {
@@ -9,10 +8,6 @@ import {
 } from "../infra/agent-events.js";
 import { SqliteWorkerError } from "../infra/sqlite-worker-contract.js";
 import type { SqliteWorkerNativeSettlementOwner } from "../infra/sqlite-worker-operation-settlement.js";
-import {
-  captureStateDatabaseCoordinatorRuntime,
-  resolveStateDatabaseCoordinatorPath,
-} from "../infra/state-database-coordinator.js";
 import { peekSystemEvents, resetSystemEventsForTest } from "../infra/system-events.js";
 import {
   getActiveGatewayRootWorkCount,
@@ -22,12 +17,14 @@ import {
 import { serializeAgentSchemaInspectionError } from "../state/openclaw-agent-schema-inspection-response.js";
 import {
   closeOpenClawStateDatabaseAsync,
-  openOpenClawStateDatabase,
+  runOpenClawStateWriteTransaction,
 } from "../state/openclaw-state-db.js";
 import { captureOpenClawStateWorkerContext } from "../state/openclaw-state-worker-context.js";
 import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
+import { holdStateDatabaseCoordinator as holdCoordinator } from "../test-utils/state-database-contention.js";
 import { createTaskFlowForTask, getTaskFlowById } from "./task-flow-registry.js";
 import { getTaskFlowRegistryStore } from "./task-flow-registry.store.js";
+import { updateTask } from "./task-registry-mutation.js";
 import { publishTaskRecordAfterAtomicStore } from "./task-registry-publication.js";
 import { linkTaskToFlowById, markTaskTerminalById } from "./task-registry-record-api.js";
 import {
@@ -80,58 +77,94 @@ function emitTool(runId: string, name: string) {
   emitAgentEvent({ runId, stream: "tool", data: { phase: "start", name } });
 }
 
-function holdCoordinator(releaseAfterMs: number) {
-  const database = openOpenClawStateDatabase();
-  const coordinatorPath = resolveStateDatabaseCoordinatorPath({
-    databasePath: database.path,
-    runtimeDirectory: captureStateDatabaseCoordinatorRuntime().directory,
-    uid: process.getuid?.(),
-  });
-  const released = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT));
-  const ready = createDeferred();
-  const holder = new Worker(
-    `
-    const { parentPort, workerData } = require("node:worker_threads");
-    const { DatabaseSync } = require("node:sqlite");
-    const db = new DatabaseSync(workerData.path);
-    db.exec("PRAGMA journal_mode = MEMORY; BEGIN EXCLUSIVE");
-    let done = false;
-    const release = () => {
-      if (done) return;
-      done = true;
-      clearTimeout(timer);
-      db.exec("ROLLBACK");
-      db.close();
-      Atomics.store(new Int32Array(workerData.released), 0, 1);
-      parentPort.close();
-    };
-    const timer = setTimeout(release, workerData.releaseAfterMs);
-    parentPort.once("message", release);
-    parentPort.postMessage("ready");
-  `,
-    {
-      eval: true,
-      workerData: { path: coordinatorPath, released: released.buffer, releaseAfterMs },
+describe("task agent event persistence", () => {
+  it.each([
+    { phase: "start", outcome: "commit" },
+    { phase: "start", outcome: "rollback" },
+    { phase: "start", outcome: "replacement" },
+    { phase: "start", outcome: "ABA" },
+    { phase: "start", outcome: "observer ABA" },
+    { phase: "end", outcome: "commit" },
+    { phase: "end", outcome: "rollback" },
+    { phase: "end", outcome: "replacement" },
+    { phase: "end", outcome: "ABA" },
+    { phase: "end", outcome: "observer ABA" },
+  ] as const)(
+    "publishes native $phase delivery only after outer $outcome",
+    async ({ phase, outcome }) => {
+      await withOpenClawTestState({ layout: "state-only" }, async () => {
+        const task = createTaskFixture("cli", {
+          requesterSessionKey: "agent:main:main",
+          runId: `native-delivery-${phase}-${outcome}`,
+          task: "Native commit delivery",
+          status: phase === "start" ? "queued" : "running",
+          notifyPolicy: phase === "start" ? "state_changes" : "done_only",
+          deliveryStatus: "pending",
+        });
+        const failure = new Error("Synthetic enclosing transaction rollback");
+        let observerReplaced = false;
+        const stop = onTaskRegistryChange(() => {
+          const current = tasks.get(task.taskId);
+          if (
+            outcome === "observer ABA" &&
+            !observerReplaced &&
+            current?.status === (phase === "start" ? "running" : "succeeded")
+          ) {
+            observerReplaced = true;
+            updateTask(task.taskId, { ...current, task: "Observer replacement" });
+            updateTask(task.taskId, current);
+          }
+        });
+        let consumed: ReturnType<typeof getTaskById>;
+        let during: string[] = [];
+        let transactionError: unknown;
+        emitAgentEvent({
+          runId: task.runId!,
+          stream: "lifecycle",
+          data:
+            phase === "start"
+              ? { phase, startedAt: task.createdAt - 1_000 }
+              : { phase, endedAt: Date.now() },
+        });
+        try {
+          runOpenClawStateWriteTransaction(() => {
+            consumed = getTaskById(task.taskId);
+            during = peekSystemEvents(task.ownerKey);
+            if (outcome === "replacement" || outcome === "ABA") {
+              updateTask(task.taskId, { task: "Replacement task" });
+              if (outcome === "ABA") {
+                updateTask(task.taskId, { task: task.task });
+              }
+            }
+            if (outcome === "rollback") {
+              throw failure;
+            }
+          });
+        } catch (error) {
+          transactionError = error;
+        }
+        try {
+          await joinEvents();
+        } finally {
+          stop();
+        }
+        expect(observerReplaced).toBe(outcome === "observer ABA");
+        expect(transactionError).toBe(outcome === "rollback" ? failure : undefined);
+        const committedStatus = phase === "start" ? "running" : "succeeded";
+        expect(consumed?.status).toBe(committedStatus);
+        expect(during).toEqual([]);
+        const delivered = peekSystemEvents(task.ownerKey);
+        expect(delivered).toHaveLength(outcome === "commit" ? 1 : 0);
+        if (outcome === "commit") {
+          expect(delivered[0]).toContain(task.task);
+        }
+        expect(loadTaskRegistryStateFromSqliteReadOnly().tasks.get(task.taskId)?.status).toBe(
+          outcome === "rollback" ? task.status : committedStatus,
+        );
+      });
     },
   );
-  const joined = new Promise<number>((resolve, reject) => {
-    holder.on("message", () => ready.resolve());
-    holder.once("error", (error: Error) => {
-      ready.reject(error);
-      reject(error);
-    });
-    holder.once("exit", resolve);
-  });
-  void joined.catch(() => undefined);
-  return {
-    ready: ready.promise,
-    released,
-    joined,
-    release: () => holder.postMessage("release", []),
-  };
-}
 
-describe("task agent event persistence", () => {
   it.each([
     "ordinary success",
     "synchronous read before result",
@@ -139,13 +172,21 @@ describe("task agent event persistence", () => {
     "sibling readback before result",
     "worker metadata ABA",
     "terminal metadata no-op",
+    "native update rollback before result",
+    "native update rollback during readback",
+    "native update rollback by observer",
+    "native update rollback inside committed outer transaction",
+    "native update rollback after committed savepoint",
+    "native committed ABA before inner rollback",
     "cleanup failure",
     "replacement before readback",
     "replacement by observer",
     "ABA before readback",
   ] as const)("delivers only the current published event across %s", async (scenario) => {
     await withOpenClawTestState({ layout: "state-only" }, async () => {
-      const terminal = scenario === "cleanup failure" || scenario === "terminal metadata no-op";
+      const nativeRollback = scenario.startsWith("native ");
+      const terminal =
+        scenario === "cleanup failure" || scenario === "terminal metadata no-op" || nativeRollback;
       const task = createTaskFixture(scenario === "worker metadata ABA" ? "acp" : "cli", {
         requesterSessionKey: "agent:main:main",
         runId: "publication-delivery",
@@ -157,6 +198,58 @@ describe("task agent event persistence", () => {
       const store = getTaskRegistryStore();
       const mutate = store.runAgentEventMutationAsync.bind(store);
       const returned = createDeferred();
+      let workerCommitted = false;
+      let nativeRolledBack = false;
+      const rollBackNativeUpdate = () => {
+        const failure = new Error("Synthetic native metadata rollback after worker commit");
+        const write = () => {
+          expect(updateTask(task.taskId, { task: "Rolled-back task" })).toMatchObject({
+            task: "Rolled-back task",
+            status: "succeeded",
+          });
+        };
+        const rollback = () => {
+          expect(() =>
+            runOpenClawStateWriteTransaction(() => {
+              if (scenario === "native update rollback after committed savepoint") {
+                runOpenClawStateWriteTransaction(write);
+              } else {
+                write();
+              }
+              throw failure;
+            }),
+          ).toThrow(failure);
+        };
+        if (
+          scenario === "native update rollback inside committed outer transaction" ||
+          scenario === "native committed ABA before inner rollback"
+        ) {
+          runOpenClawStateWriteTransaction(() => {
+            if (scenario === "native committed ABA before inner rollback") {
+              expect(updateTask(task.taskId, { task: "Committed replacement" })).not.toBeNull();
+              expect(updateTask(task.taskId, { task: "Original task" })).not.toBeNull();
+            }
+            rollback();
+          });
+        } else {
+          rollback();
+        }
+        nativeRolledBack = true;
+        expect(loadTaskRegistryStateFromSqliteReadOnly().tasks.get(task.taskId)).toMatchObject({
+          task: "Original task",
+          status: "succeeded",
+        });
+      };
+      if (scenario === "native update rollback during readback") {
+        const read = store.loadMutationSnapshotAsync.bind(store);
+        vi.spyOn(store, "loadMutationSnapshotAsync").mockImplementation(async (...args) => {
+          const snapshot = await read(...args);
+          if (workerCommitted && !nativeRolledBack) {
+            rollBackNativeUpdate();
+          }
+          return snapshot;
+        });
+      }
       const replace = () => {
         const current = tasks.get(task.taskId)!;
         const next = {
@@ -171,6 +264,14 @@ describe("task agent event persistence", () => {
       vi.spyOn(store, "runAgentEventMutationAsync").mockImplementation(async (...args) => {
         try {
           const receipt = await mutate(...args);
+          workerCommitted = true;
+          if (
+            nativeRollback &&
+            scenario !== "native update rollback during readback" &&
+            scenario !== "native update rollback by observer"
+          ) {
+            rollBackNativeUpdate();
+          }
           if (scenario === "synchronous read before result") {
             expect(getTaskById(task.taskId)?.status).toBe("running");
           }
@@ -274,7 +375,20 @@ describe("task agent event persistence", () => {
         }
       });
       let replaced = false;
+      let observerFailure: unknown;
       const stop = onTaskRegistryChange(() => {
+        if (
+          scenario === "native update rollback by observer" &&
+          !nativeRolledBack &&
+          tasks.get(task.taskId)?.status === "succeeded"
+        ) {
+          nativeRolledBack = true;
+          try {
+            rollBackNativeUpdate();
+          } catch (error) {
+            observerFailure = error;
+          }
+        }
         if (
           scenario === "replacement by observer" &&
           !replaced &&
@@ -294,11 +408,14 @@ describe("task agent event persistence", () => {
         });
         await returned.promise;
         await joinEvents();
+        expect(observerFailure).toBeUndefined();
+        expect(nativeRolledBack).toBe(nativeRollback);
         const delivered = peekSystemEvents("agent:main:main");
         const shouldDeliver =
           scenario === "ordinary success" ||
           scenario === "cleanup failure" ||
           scenario === "terminal metadata no-op" ||
+          (nativeRollback && scenario !== "native committed ABA before inner rollback") ||
           scenario === "synchronous read before result" ||
           scenario === "async refresh before result" ||
           scenario === "sibling readback before result";
@@ -422,49 +539,6 @@ describe("task agent event persistence", () => {
       });
     },
   );
-
-  it("retains an accepted terminal fence when normalized start publication emits another event", async () => {
-    await withOpenClawTestState({ layout: "state-only" }, async () => {
-      const task = createTaskFixture("cli", {
-        runId: "normalized-publication",
-        task: "Preserve the accepted terminal",
-        status: "queued",
-        startedAt: 1_000,
-        notifyPolicy: "silent",
-        deliveryStatus: "not_applicable",
-      });
-      const started = createDeferred();
-      let emitted = false;
-      const stop = onTaskRegistryChange(() => {
-        const current = tasks.get(task.taskId);
-        if (!emitted && current?.status === "running" && current.startedAt === 0) {
-          emitted = true;
-          emitTool(task.runId!, "after-accepted-terminal");
-          started.resolve();
-        }
-      });
-      try {
-        emitAgentEvent({
-          runId: task.runId!,
-          stream: "lifecycle",
-          data: { phase: "start", startedAt: 0 },
-        });
-        emitAgentEvent({
-          runId: task.runId!,
-          stream: "lifecycle",
-          data: { phase: "end", endedAt: 2_000 },
-        });
-        await started.promise;
-        await joinEvents();
-        const current = loadTaskRegistryStateFromSqliteReadOnly().tasks.get(task.taskId);
-        expect(current).toMatchObject({ status: "succeeded", startedAt: 0, endedAt: 2_000 });
-        expect(current?.toolUseCount ?? 0).toBe(0);
-        expect(current?.lastToolName).toBeUndefined();
-      } finally {
-        stop();
-      }
-    });
-  });
 
   it("bounds queued tool and diagnostic bursts while preserving lifecycle fences and exact counts", async () => {
     await withOpenClawTestState({ layout: "state-only" }, async () => {

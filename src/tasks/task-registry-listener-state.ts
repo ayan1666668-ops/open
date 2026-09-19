@@ -1,3 +1,4 @@
+import type { OpenClawStateDatabaseReadAdmission } from "../state/openclaw-state-db-async-lifecycle.js";
 import {
   clearTaskProgressBatches,
   getTaskRegistryProcessState,
@@ -19,6 +20,12 @@ export function withPendingTaskRegistryEvents<T>(refresh: () => void, operation:
 
 export function hasPendingTaskRegistryEvents(): boolean {
   return taskRegistryProcessState.listener?.events.pending() ?? false;
+}
+
+export function captureTaskRegistryReadFence(
+  admission: OpenClawStateDatabaseReadAdmission,
+): Promise<void> {
+  return taskRegistryProcessState.listener?.events.captureReadFence(admission) ?? Promise.resolve();
 }
 
 export function startTaskRegistryListener(): void {

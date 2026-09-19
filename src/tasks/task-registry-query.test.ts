@@ -713,4 +713,31 @@ describe("listFreshTasksForOwnerKey", () => {
     lookup.reject(new Error("owner lookup unavailable"));
     expect(await pending).toMatchObject([{ taskId: storedTask.taskId, notifyPolicy: "silent" }]);
   });
+
+  it.each(["resolved", "rejected"])(
+    "rejects a %s owner lookup after its registry is replaced",
+    async (outcome) => {
+      const storedTask = createStoredTask();
+      const entered = createDeferred();
+      const lookup = createDeferred<TaskRecord[]>();
+      configureTaskRegistryRuntime({
+        store: {
+          ...createInMemoryTaskRegistryStore(),
+          listTasksForOwnerKey: () => {
+            entered.resolve();
+            return lookup.promise;
+          },
+        },
+      });
+      const pending = listFreshTasksForOwnerKey(storedTask.ownerKey);
+      await entered.promise;
+      configureTaskRegistryRuntime({ store: createInMemoryTaskRegistryStore() });
+      if (outcome === "resolved") {
+        lookup.resolve([storedTask]);
+      } else {
+        lookup.reject(new Error("owner lookup unavailable"));
+      }
+      await expect(pending).rejects.toThrow("owner is no longer current");
+    },
+  );
 });
