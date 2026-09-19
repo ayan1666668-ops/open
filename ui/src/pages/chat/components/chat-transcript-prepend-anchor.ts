@@ -53,23 +53,23 @@ export class TranscriptPrependAnchor {
     this.firstMessageKey = this.messageKeys.keys().next().value;
   }
 
-  /** Measure estimated rows before restoring the retained message on the next commit. */
+  /** Keep the message fixed while newly mounted viewport rows replace their estimates. */
   update(
     element: HTMLDivElement | null,
     virtualizer: Virtualizer<HTMLDivElement, HTMLElement>,
-    measureRows: () => void,
+    measureRows: () => boolean,
   ): boolean {
     const anchor = this.pending;
     if (!anchor) {
       return false;
     }
-    if (!anchor.measured) {
-      measureRows();
-      anchor.measured = true;
-      return true;
+    const changed = measureRows();
+    const moved = restoreTranscriptPrependAnchor(anchor, element, virtualizer);
+    if (anchor.measured && !changed && !moved) {
+      this.pending = null;
     }
-    this.pending = null;
-    return restoreTranscriptPrependAnchor(anchor, element, virtualizer);
+    anchor.measured = true;
+    return true;
   }
 
   /** Carry the viewport target with native reader movement, not layout growth. */

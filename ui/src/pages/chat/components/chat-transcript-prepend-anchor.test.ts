@@ -38,7 +38,7 @@ function fixture() {
     virtualizer,
     instance: virtualizer as unknown as Virtualizer<HTMLDivElement, HTMLElement>,
     anchor: new TranscriptPrependAnchor(),
-    measureRows: vi.fn(),
+    measureRows: vi.fn(() => false),
   };
 }
 
@@ -62,12 +62,20 @@ describe("transcript prepend anchor", () => {
     expect(measureRows).toHaveBeenCalledOnce();
     expect(scroller.scrollTop).toBe(200);
     const committed = bubble.cloneNode() as HTMLElement;
-    committed.getBoundingClientRect = () => rect(390, 180);
+    let contentTop = 590;
+    committed.getBoundingClientRect = () => rect(contentTop - scroller.scrollTop, 180);
     bubble.replaceWith(committed);
     expect(anchor.update(scroller, instance, measureRows)).toBe(true);
     expect(scroller.scrollTop).toBe(500);
     expect(virtualizer.scrollOffset).toBe(200);
     expect(virtualizer.scrollToOffset).toHaveBeenCalledWith(500, { behavior: "instant" });
+    // The first correction can mount more rows above the reader on the next commit.
+    contentTop += 80;
+    measureRows.mockReturnValueOnce(true);
+    const corrected = anchor.update(scroller, instance, measureRows);
+    expect(scroller.scrollTop).toBe(580);
+    expect(corrected).toBe(true);
+    expect(anchor.update(scroller, instance, measureRows)).toBe(true);
     expect(anchor.update(scroller, instance, measureRows)).toBe(false);
   });
 
@@ -99,7 +107,7 @@ describe("transcript prepend anchor", () => {
         bubble.remove();
       }
       scroller.scrollTop = 200;
-      expect(anchor.update(scroller, instance, measureRows)).toBe(false);
+      expect(anchor.update(scroller, instance, measureRows)).toBe(true);
       expect(scroller.scrollTop).toBe(200);
       expect(anchor.update(scroller, instance, measureRows)).toBe(false);
     },
