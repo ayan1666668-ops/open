@@ -171,6 +171,8 @@ export const AgentDefaultsBaseSchema = z
             enabled: z.boolean().optional(),
             /** Maximum regeneration retries after a failed quality audit. Default: 1 when enabled. */
             maxRetries: z.number().int().nonnegative().optional(),
+            /** Observe semantic preservation with the configured typed judgment provider. Default: false. */
+            semanticJudgments: z.boolean().optional(),
           })
           .strict()
           .optional(),
