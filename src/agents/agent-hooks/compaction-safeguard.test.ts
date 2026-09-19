@@ -260,6 +260,38 @@ const createCompactionEvent = (params: { messageText: string; tokensBefore: numb
   signal: new AbortController().signal,
 });
 
+const createSemanticCompactionEvent = (params: {
+  sourceRequirement: string;
+  latestAsk: string;
+  tokensBefore: number;
+  signal?: AbortSignal;
+}) => ({
+  preparation: {
+    messagesToSummarize: [
+      { role: "user", content: params.sourceRequirement, timestamp: 1 },
+      castAgentMessage({
+        role: "assistant",
+        content: "Acknowledged standing requirement.",
+        timestamp: 2,
+      }),
+      { role: "user", content: params.latestAsk, timestamp: 3 },
+    ] as AgentMessage[],
+    turnPrefixMessages: [] as AgentMessage[],
+    firstKeptEntryId: "entry-1",
+    tokensBefore: params.tokensBefore,
+    fileOps: {
+      read: [],
+      edited: [],
+      written: [],
+    },
+    settings: { reserveTokens: 4_000 },
+    previousSummary: undefined,
+    isSplitTurn: false,
+  },
+  customInstructions: "",
+  signal: params.signal ?? new AbortController().signal,
+});
+
 const createCompactionContext = (params: {
   sessionManager: ExtensionContext["sessionManager"];
   getApiKeyAndHeadersMock?: ReturnType<typeof vi.fn>;
@@ -4306,7 +4338,7 @@ describe("compaction-safeguard recent-turn preservation", () => {
       "## Constraints/Rules",
       sourceRequirement,
       "## Pending user asks",
-      "Deploy to staging only.",
+      "Deploy after tests pass.",
       "## Exact identifiers",
       "None.",
     ].join("\n");
@@ -4346,11 +4378,12 @@ describe("compaction-safeguard recent-turn preservation", () => {
       qualityGuardMaxRetries: 1,
       semanticJudgmentsEnabled: true,
     });
-    const event = createCompactionEvent({ messageText: sourceRequirement, tokensBefore: 1_500 });
-    (event.preparation as { settings?: { reserveTokens: number }; isSplitTurn?: boolean }).settings = {
-      reserveTokens: 4_000,
-    };
-    (event.preparation as { isSplitTurn?: boolean }).isSplitTurn = false;
+    const latestAsk = "Deploy after tests pass.";
+    const event = createSemanticCompactionEvent({
+      sourceRequirement,
+      latestAsk,
+      tokensBefore: 1_500,
+    });
 
     const { result } = await runCompactionScenario({ sessionManager, event, apiKey: "test-key" });
 
@@ -4414,17 +4447,21 @@ describe("compaction-safeguard recent-turn preservation", () => {
       qualityGuardMaxRetries: 1,
       semanticJudgmentsEnabled: true,
     });
-    const event = createCompactionEvent({ messageText: sourceRequirement, tokensBefore: 1_500 });
-    (event.preparation as { settings?: { reserveTokens: number }; isSplitTurn?: boolean }).settings = {
-      reserveTokens: 4_000,
-    };
-    (event.preparation as { isSplitTurn?: boolean }).isSplitTurn = false;
+    const latestAsk = "Deploy after tests pass.";
+    const event = createSemanticCompactionEvent({
+      sourceRequirement,
+      latestAsk,
+      tokensBefore: 1_500,
+    });
 
     const { result } = await runCompactionScenario({ sessionManager, event, apiKey: "test-key" });
 
     expect(result).not.toEqual({ cancel: true });
     expect(mockSummarizeInStages).toHaveBeenCalledTimes(2);
-    expect(expectCompactionResult(result).summary).toBe(acceptedSummary);
+    const firstFinalizedSummary = requireRecord(
+      mockCallArg(mockAuditSummaryQuality, 0),
+    ).summary;
+    expect(expectCompactionResult(result).summary).toBe(firstFinalizedSummary);
     expect(consumeCompactionSafeguardCancellation(sessionManager)).toBeNull();
     expect(compactionLogger.warn.mock.calls.flat().join("\n")).toContain(
       "preserving the last deterministic-valid summary",
@@ -4482,17 +4519,21 @@ describe("compaction-safeguard recent-turn preservation", () => {
       qualityGuardMaxRetries: 1,
       semanticJudgmentsEnabled: true,
     });
-    const event = createCompactionEvent({ messageText: sourceRequirement, tokensBefore: 1_500 });
-    (event.preparation as { settings?: { reserveTokens: number }; isSplitTurn?: boolean }).settings = {
-      reserveTokens: 4_000,
-    };
-    (event.preparation as { isSplitTurn?: boolean }).isSplitTurn = false;
+    const latestAsk = "Deploy after tests pass.";
+    const event = createSemanticCompactionEvent({
+      sourceRequirement,
+      latestAsk,
+      tokensBefore: 1_500,
+    });
 
     const { result } = await runCompactionScenario({ sessionManager, event, apiKey: "test-key" });
 
     expect(result).not.toEqual({ cancel: true });
     expect(mockSummarizeInStages).toHaveBeenCalledTimes(2);
-    expect(expectCompactionResult(result).summary).toBe(acceptedSummary);
+    const firstFinalizedSummary = requireRecord(
+      mockCallArg(mockAuditSummaryQuality, 0),
+    ).summary;
+    expect(expectCompactionResult(result).summary).toBe(firstFinalizedSummary);
     expect(compactionLogger.warn.mock.calls.flat().join("\n")).toContain(
       "semantic corrective retry did not produce a deterministic-valid replacement",
     );
@@ -4537,12 +4578,13 @@ describe("compaction-safeguard recent-turn preservation", () => {
       qualityGuardMaxRetries: 1,
       semanticJudgmentsEnabled: true,
     });
-    const event = createCompactionEvent({ messageText: sourceRequirement, tokensBefore: 1_500 });
-    (event.preparation as { settings?: { reserveTokens: number }; isSplitTurn?: boolean }).settings = {
-      reserveTokens: 4_000,
-    };
-    (event.preparation as { isSplitTurn?: boolean }).isSplitTurn = false;
-    event.signal = controller.signal;
+    const latestAsk = "Deploy after tests pass.";
+    const event = createSemanticCompactionEvent({
+      sourceRequirement,
+      latestAsk,
+      tokensBefore: 1_500,
+      signal: controller.signal,
+    });
 
     const run = runCompactionScenario({ sessionManager, event, apiKey: "test-key" });
     await judgmentStarted;
