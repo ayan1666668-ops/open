@@ -23,7 +23,7 @@ type CompactionSafeguardRuntimeValue = {
   postCompactionSections?: string[];
   qualityGuardEnabled?: boolean;
   qualityGuardMaxRetries?: number;
-  /** Observation-only semantic fidelity checks through the shared judgment runtime. */
+  /** Semantic fidelity checks that can feed the existing bounded corrective retry. */
   semanticJudgmentsEnabled?: boolean;
   /**
    * Id of a registered compaction provider plugin.
