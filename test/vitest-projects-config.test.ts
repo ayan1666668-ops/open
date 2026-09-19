@@ -77,6 +77,7 @@ import { createUnitFastVitestConfig } from "./vitest/vitest.unit-fast.config.ts"
 
 const patternFiles = createPatternFileHelper("openclaw-vitest-projects-config-");
 const scopedGatewayMethodsIsolatedTestFiles = [
+  "server-methods/chat-metadata-runtime.cache.test.ts",
   "server-methods/tasks.access.test.ts",
   "server-methods/tasks.test.ts",
   "server-methods/agent.task-runtime.test.ts",
@@ -88,6 +89,7 @@ const scopedGatewayMethodsIsolatedTestFiles = [
   "server-methods/sessions.send-yield-resume.test.ts",
   "server-methods/system-agent-nested-inference.integration.test.ts",
   "server-methods/system-agent-setup-control-ui.test.ts",
+  "server-methods/transcripts.test.ts",
   "server-methods/users-preferences.test.ts",
   "server-methods/usage.test.ts",
   "server-methods/usage.sessions-usage.test.ts",
@@ -698,6 +700,7 @@ describe("projects vitest config", () => {
   it.each([
     "src/wizard/setup.inference-recovery.integration.test.ts",
     "src/plugins/loader.trust-diagnostics.test.ts",
+    "src/plugins/public-artifact-environment.test.ts",
     "src/agents/embedded-agent-runner/model.test.ts",
     "src/agents/embedded-agent-runner/model.forward-compat.test.ts",
     "src/agents/embedded-agent-runner/model.generation-scope.test.ts",
@@ -712,7 +715,7 @@ describe("projects vitest config", () => {
     const testConfig = requireTestConfig(createInfraVitestConfig({}));
     expect(buildVitestRunPlans([file]).map((plan) => plan.config)).toEqual([project]);
     expect(testConfig.include).toContain(file);
-    expect(testConfig.pool).toBe("forks");
+    expect(testConfig.pool).toBe(diagnosticForksPool);
     expect(rootVitestProjects).toContain(project);
     expect(fullSuiteVitestShards.flatMap((shard) => shard.projects ?? [])).toContain(project);
   });

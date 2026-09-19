@@ -1,10 +1,4 @@
-// Slack plugin module implements client options behavior.
-import {
-  WebAPIRateLimitedError,
-  type FetchFunction,
-  type RetryOptions,
-  type WebClientOptions,
-} from "@slack/web-api";
+import { WebAPIRateLimitedError, type RetryOptions, type WebClientOptions } from "@slack/web-api";
 import {
   createHttp1EnvHttpProxyAgent,
   captureChannelReadAuthority,
