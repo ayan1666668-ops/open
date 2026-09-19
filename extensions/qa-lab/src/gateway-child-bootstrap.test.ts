@@ -80,7 +80,17 @@ if (command === "descendant") {
       fs.writeSync(2, "plugin registry still pending apiKey=synthetic-stderr-secret\n::error::stderr diagnostic\nstderr ready\n");
       fs.writeSync(1, "diagnostic ".repeat(400) + "\nplugin scan still pending Authorization: Bearer synthetic-stdout-secret\n##[error]stdout diagnostic\nstdout ready\n");
     }
-    if (mode !== "running") {
+    if (mode === "progress") {
+      let phaseIndex = 0;
+      process.on("SIGUSR1", () => {
+        const phases = ["preflight", "doctor", "plugins", "completionCache"];
+        const step = "finalize:" + phases[Math.min(phaseIndex++, phases.length - 1)];
+        fs.writeSync(2, '[update finalize] ' + JSON.stringify({step, status: "in_progress"}) + "\n");
+        write("progress");
+      });
+      process.on("SIGUSR2", () => { process.stdout.write("repair-complete"); process.exit(0); });
+    }
+    if (mode !== "running" && mode !== "progress") {
       if (mode === "failure") fs.writeSync(2, "Authorization: Bearer " + input.trim() + "\ncontext retained\n" + "diagnostic ".repeat(400));
       process.stdout.write("fixture-output");
       process.exit(mode === "failure" ? 17 : 0);
@@ -436,6 +446,84 @@ describe.skipIf(process.platform === "win32")("packaged QA bootstrap lifetime", 
       await expect(lifetime.stop()).resolves.toEqual({ process: "confirmed-stopped", errors: [] });
     },
   );
+
+  it("allows progressing repair phases past the whole-command deadline and settles descendants", async () => {
+    const f = await fixture("repair", "progress");
+    const lifetime = new QaGatewayChildLifecycle();
+    cleanups.push(async () => {
+      await lifetime.stop();
+    });
+    const registration = vi.spyOn(lifetime, "register");
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    let settled = false;
+    const command = f
+      .track(
+        runQaGatewayCliCommand({
+          ...f.command,
+          lifetime,
+          args: ["update", "repair", "--json"],
+          cwd: f.root,
+          env: { HOME: f.root },
+        }),
+      )
+      .then((value) => {
+        settled = true;
+        return value;
+      });
+    await f.ready();
+    const child = registration.mock.calls[0]![0];
+    for (let phase = 1; phase <= 4; phase++) {
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(settled).toBe(false);
+      await bounded(
+        new Promise<void>((resolve) => {
+          child.stderr!.once("data", () => resolve());
+          child.kill("SIGUSR1");
+        }),
+      );
+      await vi.waitFor(() =>
+        expect(f.records().filter((entry) => entry.kind === "progress")).toHaveLength(phase),
+      );
+    }
+    child.kill("SIGUSR2");
+    expect(await bounded(command)).toBe("repair-complete");
+    f.assertStopped();
+  });
+
+  it("still times out a repair stalled after forward progress and settles its real tree", async () => {
+    const f = await fixture("repair", "progress");
+    const lifetime = new QaGatewayChildLifecycle();
+    cleanups.push(async () => {
+      await lifetime.stop();
+    });
+    const registration = vi.spyOn(lifetime, "register");
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const command = f.track(
+      runQaGatewayCliCommand({
+        ...f.command,
+        lifetime,
+        args: ["update", "repair"],
+        cwd: f.root,
+        env: { HOME: f.root },
+      }),
+    );
+    await f.ready();
+    const child = registration.mock.calls[0]![0];
+    await bounded(
+      new Promise<void>((resolve) => {
+        child.stderr!.once("data", () => resolve());
+        child.kill("SIGUSR1");
+      }),
+    );
+    await vi.waitFor(() =>
+      expect(f.records().filter((entry) => entry.kind === "progress")).toHaveLength(1),
+    );
+    await vi.advanceTimersByTimeAsync(120_000);
+    const error = await bounded(command);
+    expect(error).toBeInstanceOf(Error);
+    expect(String(error)).toContain("no update repair phase progress for 120000ms");
+    f.assertStopped();
+  });
 
   it.each(["timeout", "cancel", "stdout", "stderr", "stdin", "process"] as const)(
     "retains bounded redacted diagnostics after %s failure and settles the real CLI tree",
