@@ -30,7 +30,7 @@ type EngineEvent = {
   journal?: { state: string; container_json: string | null };
 };
 
-export const stdioWorkerSource = String.raw`
+const stdioWorkerSource = String.raw`
 import fs from "node:fs";
 import { createInterface } from "node:readline";
 let active;
@@ -80,7 +80,7 @@ lines.on("line", (line) => {
 lines.once("close", () => process.exit(0));
 `;
 
-export const fakeEngineSource = String.raw`
+const fakeEngineSource = String.raw`
 const { spawn } = require("node:child_process");
 const { createHash } = require("node:crypto");
 const { DatabaseSync } = require("node:sqlite");
