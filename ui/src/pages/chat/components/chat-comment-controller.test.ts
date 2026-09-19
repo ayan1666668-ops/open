@@ -45,6 +45,7 @@ async function mountComments(additional: ChatAttachment[] = []) {
   const props: ChatAttachmentControlsProps = {
     attachments,
     getAttachments: () => attachments,
+    gatewayScope: {},
     readSignal: signalOwner.signal,
     onAttachmentsChange: (next) => {
       attachments = next;
@@ -159,7 +160,7 @@ describe("comment actions outside the transcript", () => {
     expect(getChatAttachmentDataUrl(second)).not.toBeNull();
   });
 
-  it.each(["disabled", "hidden", "aborted", "session", "disconnected"] as const)(
+  it.each(["disabled", "hidden", "aborted", "session", "gateway", "disconnected"] as const)(
     "rejects Undo and releases its payload when the comment owner is %s",
     async (reason) => {
       const fixture = await mountComments();
@@ -175,6 +176,8 @@ describe("comment actions outside the transcript", () => {
         fixture.signalOwner.abort();
       } else if (reason === "session") {
         fixture.controller.sessionKey = "agent:main:other";
+      } else if (reason === "gateway") {
+        fixture.controller.props = { ...fixture.controller.props, gatewayScope: {} };
       } else {
         fixture.controller.remove();
       }

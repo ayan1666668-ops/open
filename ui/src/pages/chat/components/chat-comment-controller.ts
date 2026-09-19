@@ -183,6 +183,7 @@ class ChatCommentController extends OpenClawLightDomContentsElement {
     this.retireEditor();
     const signal = this.props.readSignal;
     const sessionKey = this.sessionKey;
+    const gatewayScope = this.props.gatewayScope;
     const removed = currentChatComments(this.props, sessionKey);
     if (removed.length === 0) {
       return;
@@ -212,7 +213,11 @@ class ChatCommentController extends OpenClawLightDomContentsElement {
         if (settled) {
           return;
         }
-        if (!this.canChange(signal) || this.sessionKey !== sessionKey) {
+        if (
+          !this.canChange(signal) ||
+          this.sessionKey !== sessionKey ||
+          this.props.gatewayScope !== gatewayScope
+        ) {
           finalize();
           return;
         }
@@ -227,7 +232,11 @@ class ChatCommentController extends OpenClawLightDomContentsElement {
         this.changeAttachments(latest, restored);
         this.focusFrame = requestAnimationFrame(() => {
           this.focusFrame = undefined;
-          if (this.canChange(signal) && this.sessionKey === sessionKey) {
+          if (
+            this.canChange(signal) &&
+            this.sessionKey === sessionKey &&
+            this.props.gatewayScope === gatewayScope
+          ) {
             focusWithoutTooltip(
               this.root?.querySelector<HTMLElement>(".chat-selection-annotations__trigger"),
             );
