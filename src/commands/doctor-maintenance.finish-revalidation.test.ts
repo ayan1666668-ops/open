@@ -699,12 +699,12 @@ it("waits for the supervised Gateway to release lifecycle after stop", async () 
   expect(result.restartCalls).toBe(1);
 });
 
-it("rechecks update admission after lifecycle drain and restores the stopped Gateway", async () => {
+it("rechecks update admission after lifecycle drain without restarting for a competing updater", async () => {
   await expect(
     runDoctorFinishForStoppedUnit("competing-during-drain", undefined, "conflict-on-recheck"),
   ).rejects.toThrow("is still in progress");
   expect(mocks.stops).toBe(1);
-  expect(mocks.restarts).toBe(1);
+  expect(mocks.restarts).toBe(0);
 });
 
 it("admits a published legacy Gateway by its verified native process lock", async () => {

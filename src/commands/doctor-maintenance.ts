@@ -185,11 +185,7 @@ export async function beginDoctorMaintenance(params: {
       }
     });
   };
-  const finish = async (
-    cfg: OpenClawConfig,
-    assertCustody?: () => void,
-    options?: { rollbackStoppedService?: boolean },
-  ) => {
+  const finish = async (cfg: OpenClawConfig, assertCustody?: () => void) => {
     await release(assertCustody);
     assertCustody?.();
     const before = stopped;
@@ -217,11 +213,7 @@ export async function beginDoctorMaintenance(params: {
         const assertMaintenanceCurrent = () => {
           assertCustody?.();
           assertCurrent();
-          // Rollback reverses Doctor's own stop after admission loss; a new
-          // update owner must not make Doctor leave the managed service down.
-          if (!options?.rollbackStoppedService) {
-            assertUpdateAdmissionCurrent?.();
-          }
+          assertUpdateAdmissionCurrent?.();
         };
         assertMaintenanceCurrent();
         const current = await settle(() =>
@@ -521,13 +513,7 @@ export async function beginDoctorMaintenance(params: {
       // Discovery has not run yet; restore a service parked before admission failed.
       if (stopped?.stopped) {
         const { readConfigFileSnapshot } = await import("../config/config.js");
-        await finish(
-          (await readConfigFileSnapshot({ skipPluginValidation: true })).config,
-          undefined,
-          {
-            rollbackStoppedService: true,
-          },
-        );
+        await finish((await readConfigFileSnapshot({ skipPluginValidation: true })).config);
       } else {
         await release();
       }
