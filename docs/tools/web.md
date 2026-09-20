@@ -277,7 +277,8 @@ keep the managed `web_search` tool for OpenAI models, or set
 `tools.web.search.enabled: false` to disable both managed search and native
 OpenAI search. The same route selection applies to ordinary tool calls,
 Tool Search, and Code Mode; hosted search does not leave a second managed
-`web_search` callable hidden in the catalog.
+`web_search` callable hidden in the catalog. If plugin policy disables or excludes
+the OpenAI provider plugin, the managed search route stays available.
 
 Managed provider failures return the selected provider's identity and a safe,
 actionable diagnostic. Authentication failures identify the HTTP status and

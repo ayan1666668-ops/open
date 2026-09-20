@@ -1,3 +1,4 @@
+import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.types.js";
 import { resolveProviderPolicySurface } from "../plugins/provider-public-artifacts.js";
 import { resolveCodexNativeSearchActivation } from "./codex-native-web-search-core.js";
 import {
@@ -16,6 +17,7 @@ export function resolveNativeWebSearchRoute(
     modelApi?: string;
     modelBaseUrl?: string;
     agentDir?: string;
+    pluginMetadataSnapshot?: Pick<PluginMetadataSnapshot, "manifestRegistry">;
   },
 ): NativeWebSearchRoute {
   if (params.webSearchEnabled === false || params.config?.tools?.web?.search?.enabled === false) {
@@ -28,7 +30,10 @@ export function resolveNativeWebSearchRoute(
   if (
     provider &&
     params.modelApi &&
-    resolveProviderPolicySurface(provider)?.resolveNativeWebSearch?.({
+    resolveProviderPolicySurface(provider, {
+      config: params.config,
+      manifestRegistry: params.pluginMetadataSnapshot?.manifestRegistry,
+    })?.resolveNativeWebSearch?.({
       config: params.config,
       provider,
       modelId: params.modelId,
