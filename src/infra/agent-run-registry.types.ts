@@ -75,6 +75,8 @@ export type ProjectedAgentRunState = "queued" | "running" | "capacity-wait";
 
 export type ProjectedAgentRunIndex = {
   modelsBySessionId: ReadonlyMap<string, AgentRunModel | null>;
+  /** Progress keys whose embedded agent matches the projected run owner. */
+  progressSessionKeys: ReadonlySet<string>;
   sessionKeys: ReadonlyMap<string, ProjectedAgentRunState>;
   sessionIds: ReadonlyMap<string, ProjectedAgentRunState>;
   ownerlessSessionKeys: ReadonlyMap<string, ProjectedAgentRunState>;

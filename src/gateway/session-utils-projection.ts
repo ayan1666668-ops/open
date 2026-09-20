@@ -12,7 +12,6 @@ import { resolveConcreteSessionStorePath } from "../config/sessions/paths.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import {
   buildProjectedAgentRunIndex,
-  resolveProjectedAgentRunProgressState,
   type ProjectedAgentRunIndex,
 } from "../infra/agent-run-registry.js";
 import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.types.js";
@@ -88,22 +87,8 @@ export function buildProjectedSubagentActivity(
   projectedAgentRuns: ProjectedAgentRunIndex,
 ): ReadonlySet<string> {
   const active = new Set<string>();
-  if (
-    projectedAgentRuns.sessionKeys.size === 0 &&
-    projectedAgentRuns.sessionIds.size === 0 &&
-    projectedAgentRuns.ownerlessSessionKeys.size === 0 &&
-    projectedAgentRuns.ownerlessSessionIds.size === 0
-  ) {
-    return active;
-  }
-  for (const [key, run] of subagentRuns.latestRunsByChildSessionKey) {
-    if (
-      resolveProjectedAgentRunProgressState({ sessionKeys: [key], index: projectedAgentRuns }) ===
-      undefined
-    ) {
-      continue;
-    }
-    let requester = run.requesterSessionKey;
+  for (const key of projectedAgentRuns.progressSessionKeys) {
+    let requester = subagentRuns.latestRunsByChildSessionKey.get(key)?.requesterSessionKey;
     while (requester && !active.has(requester)) {
       active.add(requester);
       requester =
