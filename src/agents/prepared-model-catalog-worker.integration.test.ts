@@ -163,8 +163,10 @@ describe("prepared model catalog worker boundary", () => {
       env: fixture.env,
     };
     let current = true;
+    const retirement = new AbortController();
     const supersede = () => {
       current = false;
+      retirement.abort();
     };
     retireAfterTest(supersede);
     const isCurrent = () => current;
@@ -174,6 +176,7 @@ describe("prepared model catalog worker boundary", () => {
           input,
           catalogOwner: preparePublishedModelCatalogOwnerIdentity(input),
           isGenerationCurrent: isCurrent,
+          retirementSignal: retirement.signal,
           isBuildCurrent: isCurrent,
         },
       ],
@@ -813,6 +816,8 @@ describe("prepared model catalog worker boundary", () => {
         0,
         { CODEX_HOME: codexHome },
         {
+          // Auth refresh is a passive read; activating the full harness is a separate contract.
+          readOnly: true,
           codexNativeOwner: nativeOwner,
           ...(homeScope ? { codexNativeHomeScope: homeScope } : {}),
         },
@@ -1040,6 +1045,7 @@ describe("prepared model catalog worker boundary", () => {
       } satisfies PreparedModelRuntimeAgentFacts,
       pluginMetadataSnapshot: fixture.pluginMetadataSnapshot,
       isCurrent: fixture.isCurrent,
+      retirementSignal: fixture.retirementSignal,
     });
     const { modelCatalog: catalog } = await worker.loadCatalog();
 

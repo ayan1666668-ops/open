@@ -32,7 +32,7 @@ export type BackupCoreDatabase = Readonly<
   {
     sourcePath: string;
     identity?: Stats;
-  } & ({ role: "global" } | { role: "agent"; agentId: string })
+  } & ({ role: "global" | "quarantine" } | { role: "agent"; agentId: string })
 >;
 
 type BackupResourcePolicy = Readonly<{
