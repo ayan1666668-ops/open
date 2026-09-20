@@ -4,6 +4,7 @@
 import path from "node:path";
 import type { BrowserContext, Page } from "playwright";
 import { beforeEach, afterEach, expect, it } from "vitest";
+import { waitForLayoutSettled } from "../pages/chat/chat-layout.browser.test-support.ts";
 import { createControlUiE2eArtifactDir } from "../test-helpers/control-ui-e2e-artifacts.ts";
 import {
   installMockGateway,
@@ -505,6 +506,12 @@ suite.define(() => {
       .toContain("shell--nav-collapsed");
     await expect.poll(() => newThread.isVisible()).toBe(true);
     await page.locator(".sidebar-attention--floating .sidebar-issues-button").waitFor();
+    await page.locator(".sidebar-attention--floating .sidebar-issues-button__count").waitFor();
+    await page.evaluate(() => document.fonts.ready);
+    await waitForLayoutSettled(
+      page,
+      ".macos-titlebar-controls, .sidebar-attention--floating, .chat-pane-cache__pane--visible .chat-pane__crumbs",
+    );
     const toolbarBox = await toolbar.boundingBox();
     const attention = page.locator(".sidebar-attention--floating");
     const attentionBox = await attention.boundingBox();

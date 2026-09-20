@@ -27,6 +27,13 @@ html.openclaw-native-macos openclaw-sidebar-attention.sidebar-attention--floatin
   top: 52px;
 }
 
+/* The borderless Inbox badge extends 1px beyond its 32px control. Keep the
+   existing 8px title clearance measured from the badge edge, not the button. */
+html.openclaw-native-web-chrome
+  .shell--nav-collapsed:has(openclaw-sidebar-attention.sidebar-attention--floating) {
+  --shell-attention-width: 41px;
+}
+
 /* Native titlebar actions stay borderless; only controls floating over page content need chrome. */
 html.openclaw-native-web-chrome openclaw-sidebar-attention.sidebar-attention--floating {
   --sidebar-issues-border: 0;
