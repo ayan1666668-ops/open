@@ -34,11 +34,12 @@ import { prepareAgentRequestRouting } from "./agent-request-routing.js";
 import { prepareAgentRunDispatch } from "./agent-run-admission-phase.js";
 import { startAgentRunExecution } from "./agent-run-execution-phase.js";
 import { persistAgentSessionPhase } from "./agent-session-persist.js";
+import type { RequesterSettleWakeReplay } from "./internal-facade.types.js";
 import type { AgentTurnIo, AgentTurnPrincipal } from "./types.js";
 
 type AgentTurnStartRequest = {
   privateCompletion?: true;
-  settleWakeReplay?: import("./internal-facade.types.js").RequesterSettleWakeReplay;
+  settleWakeReplay?: RequesterSettleWakeReplay;
   assertAdmissionCurrent?: () => void;
   hasCurrentClientAuthority?: () => boolean;
   preflight: AgentRequestPreflight;

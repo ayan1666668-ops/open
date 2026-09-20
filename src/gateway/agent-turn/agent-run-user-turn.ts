@@ -45,6 +45,7 @@ import {
   shouldSuppressAgentPromptPersistence,
   type RestoredCronContinuation,
 } from "./agent-handler-helpers.js";
+import type { RequesterSettleWakeReplay } from "./internal-facade.types.js";
 import type { AgentTurnContext, AgentTurnIo, AgentTurnPrincipal } from "./types.js";
 
 export type PreparedAgentRunUserTurn = {
@@ -132,7 +133,7 @@ export async function prepareAgentRunUserTurn(params: {
   assertCurrent: () => void;
   assertCompletionCurrent?: () => void;
   privateCompletion?: true;
-  settleWakeReplay?: import("./internal-facade.types.js").RequesterSettleWakeReplay;
+  settleWakeReplay?: RequesterSettleWakeReplay;
   abortSignal?: AbortSignal;
   getAbortStopReason?: () => string;
   deferTimeoutCompletion?: (settle: () => void) => boolean;

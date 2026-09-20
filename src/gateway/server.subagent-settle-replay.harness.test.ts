@@ -437,10 +437,12 @@ describe("public yielded settle replay with real Gateway admission", () => {
       expect(acceptedMessages).toHaveLength(2);
       const [first, replay] = acceptedMessages;
       expect(first!.runId).toBe(replay!.runId);
-      const stable = (message: Record<string, unknown>) => {
+      const stable = (message: (typeof acceptedMessages)[number]["message"]) => {
         const { timestamp: _timestamp, ...rest } = message;
-        const provenance = rest.provenance as Record<string, unknown>;
-        return { ...rest, provenance: { ...provenance, sourceSessionKey: "<batch-source>" } };
+        return {
+          ...rest,
+          provenance: { ...rest.provenance, sourceSessionKey: "<batch-source>" },
+        };
       };
       expect(stable(first!.message)).toEqual(stable(replay!.message));
       const originalSource = legacy ? sibling.childSessionKey : child.childSessionKey;
