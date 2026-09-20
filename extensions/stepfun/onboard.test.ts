@@ -93,6 +93,22 @@ describe.each([
     expect(upgraded.agents?.defaults?.model).toBe(priorRef);
   });
 
+  it("keeps an existing alias whose padding only the runtime normalizes", () => {
+    // Runtime alias keys are trimmed + lowercased, so " StepFun " and "StepFun"
+    // resolve to the same alias. The ownership guard must normalize the same way,
+    // otherwise the padded alias looks unowned and the new default steals lookup.
+    const priorRef = `${provider}/step-3.5-flash`;
+    const paddedAlias = ` ${alias} `;
+    const upgraded = apply({
+      agents: { defaults: { model: priorRef, models: { [priorRef]: { alias: paddedAlias } } } },
+    });
+    const models = upgraded.agents?.defaults?.models ?? {};
+
+    expect(models[priorRef]?.alias).toBe(paddedAlias);
+    expect(models[`${provider}/step-5-preview`]?.alias).toBeUndefined();
+    expect(upgraded.agents?.defaults?.model).toBe(priorRef);
+  });
+
   it("binds the alias to step-5-preview on a fresh install", () => {
     const fresh = apply({});
     expect(fresh.agents?.defaults?.models?.[`${provider}/step-5-preview`]?.alias).toBe(alias);
