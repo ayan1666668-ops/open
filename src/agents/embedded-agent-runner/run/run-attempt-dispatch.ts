@@ -267,7 +267,9 @@ export async function prepareAndDispatchEmbeddedRunAttempt(input: {
   const preparedExecApprovalContinuation = prepareExecApprovalContinuationForAttempt({
     prompt,
     transcriptPrompt: params.transcriptPrompt,
-    promptRange: params.execApprovalContinuationPromptRange,
+    promptRange: skipPreparedUserTurnMessage
+      ? undefined
+      : params.execApprovalContinuationPromptRange,
     transcriptPromptRange: params.execApprovalContinuationTranscriptPromptRange,
     contextTokenBudget: runtime.contextTokenBudget,
     modelContextWindow: effectiveModel.contextWindow,
