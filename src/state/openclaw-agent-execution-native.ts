@@ -33,6 +33,8 @@ import type { OpenClawStateWorkerContext } from "./openclaw-state-worker-context
 type Store = SqliteWorkerStore<AgentDatabaseOperations>;
 type Registration = ReturnType<typeof captureOpenClawAgentDatabaseRegistration>;
 
+let nativeOwnerDiagnosticCount = 0;
+
 async function settleAgentRegistration<T>(
   registration: Registration,
   operation: () => Promise<T>,
@@ -166,6 +168,43 @@ export function createAgentDatabaseNativeGeneration(
             received.sharedStatePath !== context.admission.databasePath ||
             received.sharedStateIdentity !== context.admission.identity.key
           ) {
+            if (nativeOwnerDiagnosticCount < 8) {
+              nativeOwnerDiagnosticCount += 1;
+              const identity = isRecord(facts.identity) ? facts.identity : undefined;
+              const receivedLease = isRecord(received) ? received : undefined;
+              console.error(
+                "HEARTBEAT_NATIVE_OWNER_PROBE",
+                JSON.stringify({
+                  identityRecord: Boolean(identity),
+                  identityEqual: isDeepStrictEqual(facts.identity, context.admission.identity),
+                  identityKeyEqual: identity?.key === context.admission.identity.key,
+                  identityPathEqual:
+                    identity?.canonicalPath === context.admission.identity.canonicalPath,
+                  identityPrototypeEqual:
+                    identity !== undefined &&
+                    Object.getPrototypeOf(identity) ===
+                      Object.getPrototypeOf(context.admission.identity),
+                  identityPropertiesEqual:
+                    identity !== undefined &&
+                    isDeepStrictEqual(
+                      Object.keys(identity).toSorted(),
+                      Object.keys(context.admission.identity).toSorted(),
+                    ),
+                  leaseRecord: Boolean(receivedLease),
+                  leaseIdEqual: receivedLease?.leaseId === input.leaseId,
+                  agentIdEqual: receivedLease?.agentId === input.agentId,
+                  agentPathEqual: receivedLease?.path === pathname,
+                  ownerPidEqual: receivedLease?.ownerPid === process.pid,
+                  ownerStartTimeValid:
+                    receivedLease?.ownerStartTime === null ||
+                    typeof receivedLease?.ownerStartTime === "number",
+                  sharedStatePathEqual:
+                    receivedLease?.sharedStatePath === context.admission.databasePath,
+                  sharedStateIdentityEqual:
+                    receivedLease?.sharedStateIdentity === context.admission.identity.key,
+                }),
+              );
+            }
             throw new Error("Agent worker lease differs from its captured native owner");
           }
           lease = {
