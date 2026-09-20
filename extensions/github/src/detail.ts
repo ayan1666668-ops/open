@@ -49,8 +49,6 @@ async function fetchDetailPage(url: string, fetchImpl: typeof fetch): Promise<Js
 
 function markdownBody(value: unknown, maxChars: number): { body: string; bodyTruncated: boolean } {
   const body = typeof value === "string" ? value : "";
-  // GitHub bodies are arbitrary user text; a raw slice can split a surrogate
-  // pair and leave a lone surrogate that renders as a replacement character.
   return { body: truncateUtf16Safe(body, maxChars), bodyTruncated: body.length > maxChars };
 }
 
@@ -182,9 +180,10 @@ function parseFiles(value: unknown): GitHubFile[] {
       throw new ControlUiGitHubError(502, "GitHub file was not an object");
     }
     const rawPatch = typeof file.patch === "string" ? file.patch : undefined;
-    const patch = rawPatch
-      ? truncateUtf16Safe(rawPatch, Math.min(PATCH_MAX_CHARS, remainingPatchChars))
-      : undefined;
+    const patch =
+      rawPatch === undefined
+        ? undefined
+        : truncateUtf16Safe(rawPatch, Math.min(PATCH_MAX_CHARS, remainingPatchChars));
     remainingPatchChars -= patch?.length ?? 0;
     return {
       path: requiredString(file, "filename"),
