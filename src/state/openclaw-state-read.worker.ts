@@ -1,6 +1,9 @@
 import { toStringifiedError } from "@openclaw/normalization-core/error-coercion";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
+import { ExecutionDecisionCursorError } from "../audit/execution-decision-receipts.js";
+import { inspectExecutionIdentityRunInDatabase } from "../audit/execution-identity-context.js";
 import { getFleetCellInDatabase, listFleetCellsInDatabase } from "../fleet/registry.kernel.js";
+import { runSqliteDeferredTransactionSync } from "../infra/sqlite-transaction.js";
 import { runWithSqliteWorkerStateContext } from "../infra/sqlite-worker-state-context.js";
 import { withStateDatabaseCoordinatorRuntimeDirectory } from "../infra/state-database-coordinator.js";
 import { serveWorkerTasks } from "../infra/worker-task-pool.js";
@@ -13,6 +16,7 @@ import type {
   OpenClawStateReadRequest,
 } from "./openclaw-state-read.types.js";
 import { encodeOpenClawStateWorkerError } from "./openclaw-state-worker-error.js";
+import { selectProfileDisplayEntries } from "./user-profiles-internal.js";
 
 function isReadRequest(input: unknown): input is OpenClawStateReadRequest {
   if (!isRecord(input) || !isRecord(input.context) || !isRecord(input.command)) {
@@ -24,6 +28,7 @@ function isReadRequest(input: unknown): input is OpenClawStateReadRequest {
     typeof input.location === "string" &&
     typeof input.checkFreshAdmission === "boolean" &&
     (input.expectedIdentity === undefined || typeof input.expectedIdentity === "string") &&
+    (input.snapshotRoot === undefined || typeof input.snapshotRoot === "string") &&
     (input.context.existingSchemaPath === undefined ||
       typeof input.context.existingSchemaPath === "string") &&
     isRecord(environment) &&
@@ -34,6 +39,13 @@ function isReadRequest(input: unknown): input is OpenClawStateReadRequest {
     typeof coordinatorRuntime.directory === "string" &&
     typeof coordinatorRuntime.keepAlive === "boolean" &&
     (input.command.type === "admit" ||
+      (input.command.type === "userProfiles.avatar.reconcile" &&
+        typeof input.command.profileId === "string") ||
+      (input.command.type === "audit.run.inspect" &&
+        isRecord(input.command.input) &&
+        typeof input.command.input.now === "number" &&
+        (typeof input.command.input.runId === "string" ||
+          typeof input.command.input.executionId === "string")) ||
       input.command.type === "fleet.list" ||
       input.command.type === "nodeHost.config" ||
       (input.command.type === "onboardingRecommendations.read" &&
@@ -71,12 +83,46 @@ serveWorkerTasks((input): OpenClawStateReadReply => {
                 record: readOnboardingRecommendationsInDatabase(db, command.configKey),
               };
             }
+            if (command.type === "audit.run.inspect") {
+              try {
+                return {
+                  ok: true,
+                  type: command.type,
+                  sourceAdmitted,
+                  result: {
+                    status: "inspected",
+                    inspection: inspectExecutionIdentityRunInDatabase(db, command.input),
+                  },
+                };
+              } catch (error) {
+                if (!(error instanceof ExecutionDecisionCursorError)) {
+                  throw error;
+                }
+                return {
+                  ok: true,
+                  type: command.type,
+                  sourceAdmitted,
+                  result: { status: "invalid-cursor", message: error.message },
+                };
+              }
+            }
             if (command.type === "nodeHost.config") {
               return {
                 ok: true,
                 type: command.type,
                 sourceAdmitted,
                 row: readConfigMachineStateRowInDatabase(db, command.type),
+              };
+            }
+            if (command.type === "userProfiles.avatar.reconcile") {
+              return {
+                ok: true,
+                type: command.type,
+                sourceAdmitted,
+                profile: runSqliteDeferredTransactionSync(
+                  db,
+                  () => selectProfileDisplayEntries(db, [command.profileId])[0]?.[1],
+                ),
               };
             }
             return command.type === "fleet.list"
@@ -97,6 +143,7 @@ serveWorkerTasks((input): OpenClawStateReadReply => {
           input.location,
           undefined,
           input.expectedIdentity,
+          input.snapshotRoot,
         );
       }),
     );
