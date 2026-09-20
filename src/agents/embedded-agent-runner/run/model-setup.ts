@@ -137,10 +137,12 @@ export async function resolveEmbeddedRunModelSetup(params: {
   // before emitting a notice so a stale attempt cannot speak for a new run.
   runParams.abortSignal?.throwIfAborted();
   params.assertCurrent();
+  // Effort-only decisions must preserve an already-resolved selected-model alias.
+  // Only a provider/model route change opts back into raw alias resolution.
+  const modelRouteChangedByHook =
+    hookSelection.provider !== params.provider || hookSelection.modelId !== params.modelId;
   const modelSelectionChangedByHook =
-    hookSelection.provider !== params.provider ||
-    hookSelection.modelId !== params.modelId ||
-    hookSelection.reasoningEffortOverride !== undefined;
+    modelRouteChangedByHook || hookSelection.reasoningEffortOverride !== undefined;
   const noticeDelivery = await deliverPreDispatchNotice({
     notice: hookSelection.preDispatchNotice,
     runId: `${runParams.sessionId}:${runParams.runId}`,
@@ -292,7 +294,7 @@ export async function resolveEmbeddedRunModelSetup(params: {
       ...(selectedRuntimeProvider !== provider ? { fallbackProvider: provider } : {}),
       modelId,
       agentDir: params.agentDir,
-      requestedRouteResolution: modelSelectionChangedByHook
+      requestedRouteResolution: modelRouteChangedByHook
         ? "raw"
         : runParams.requestedRouteResolution,
       config: runParams.config,
