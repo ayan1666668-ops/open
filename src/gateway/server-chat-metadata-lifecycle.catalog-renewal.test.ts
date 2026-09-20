@@ -215,7 +215,11 @@ describe("catalog renewal metadata broadcasts", () => {
           ["chat.metadata.changed", {}, { dropIfSlow: true }],
         ]);
         expect(harness.observedCatalogs).toHaveLength(1);
-        expect(harness.observedCatalogs[0].pendingProviders).toBeUndefined();
+        const observedCatalog = harness.observedCatalogs[0];
+        if (!observedCatalog) {
+          throw new Error("Expected the settled catalog notification");
+        }
+        expect(observedCatalog.pendingProviders).toBeUndefined();
         // The pending reply remains pending until the consumer receives the settlement signal.
         expect(pendingCatalog.pendingProviders).toEqual(["custom"]);
         const modelChanges = change === "identical" || change === "usage" ? 0 : 1;
@@ -223,7 +227,7 @@ describe("catalog renewal metadata broadcasts", () => {
         expect(buildProjection).toHaveBeenCalledTimes(modelChanges);
         if (change === "identical" || change === "usage") {
           expect(owner.readFullModelCatalog!()).toBe(original);
-          expect(harness.observedCatalogs[0].entries).toEqual(pendingCatalog.entries);
+          expect(observedCatalog.entries).toEqual(pendingCatalog.entries);
           expect(owner.isCurrent()).toBe(true);
           if (change === "usage") {
             expect(getPreparedModelFullCatalogAuth(original)?.authStore.lastGood).toEqual({
