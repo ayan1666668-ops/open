@@ -30,7 +30,7 @@ import {
   type PersistedUserTurnMessage,
 } from "../../../sessions/user-turn-transcript.js";
 import { extractTextFromChatContent } from "../../../shared/chat-content.js";
-import { resolveGlobalMap } from "../../../shared/global-singleton.js";
+import { resolveGlobalMap, resolveGlobalSingleton } from "../../../shared/global-singleton.js";
 import {
   buildCollectPrompt,
   beginQueueDrain,
