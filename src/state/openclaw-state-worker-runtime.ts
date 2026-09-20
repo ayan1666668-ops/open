@@ -18,6 +18,7 @@ import {
   readConfigHealthSnapshotInDatabase,
 } from "../config/io.health-state.kernel.js";
 import { loadMutableCronStoreInWorker } from "../cron/store/load.worker.js";
+import { proposeCronRunRecoveryInWorker } from "../cron/store/run-recovery.worker.js";
 import { executeCronStoreSaveCommand } from "../cron/store/save.worker.js";
 import {
   acquireFleetCellOperationInDatabase,
@@ -37,6 +38,7 @@ import { readDeferredPluginMigrations } from "../infra/deferred-plugin-migration
 import { countFailedDeliveryQueueEntriesInDatabase } from "../infra/delivery-queue-sqlite.kernel.js";
 import * as deviceAuth from "../infra/device-auth-store.kernel.js";
 import { executeDeliveryQueueAck } from "../infra/outbound/delivery-queue-ack.worker.js";
+import { executeDeliveryQueueEnqueue } from "../infra/outbound/delivery-queue-enqueue.worker.js";
 import { executePromotionCommand } from "../infra/promotions-feed.worker.js";
 import {
   readApnsRegistrationFromDatabase,
@@ -424,6 +426,9 @@ export function executeSharedStateCommand(
   if (command.type === "cron.loadMutable") {
     return loadMutableCronStoreInWorker(database, command.input.storeKey);
   }
+  if (command.type === "cron.proposeRunRecovery") {
+    return proposeCronRunRecoveryInWorker(database, command.input);
+  }
   if (command.type === "cron.save" || command.type === "cron.saveChanges") {
     return executeCronStoreSaveCommand(command, database);
   }
@@ -457,6 +462,9 @@ export function executeSharedStateCommand(
   }
   if (command.type === "skillUploads.commit") {
     return commitSkillUploadInDatabase(command.input, writeOptions);
+  }
+  if (command.type === "deliveryQueue.enqueue") {
+    return executeDeliveryQueueEnqueue(command.input, writeOptions);
   }
   if (
     command.type === "deviceAuth.store" ||

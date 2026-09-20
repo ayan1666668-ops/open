@@ -377,16 +377,18 @@ suite.define(() => {
           });
           await input.fill(prompt.slice(0, 59));
           expect(await search.evaluate((element: HTMLElement) => element.inert)).toBe(false);
-          // Search remains active at 59 characters; settle its debounce before
-          // the next edit so the request count does not depend on runner speed.
-          const boundarySearch = await gateway.waitForRequest("sessions.search", {
-            after: requestCount + 1,
+          await expect
+            .poll(async () => (await gateway.getRequests("sessions.search")).length)
+            .toBe(requestCount + 2);
+          expect((await gateway.getRequests("sessions.search")).at(-1)?.params).toMatchObject({
+            query: prompt.slice(0, 59),
           });
-          expect(boundarySearch.params).toMatchObject({ query: prompt.slice(0, 59) });
           await input.fill(prompt);
           await expect
             .poll(() => search.evaluate((element: HTMLElement) => element.inert))
             .toBe(true);
+          await page.waitForTimeout(100);
+          expect(await gateway.getRequests("sessions.search")).toHaveLength(requestCount + 2);
           await input.fill("");
           await expect
             .poll(() => search.evaluate((element: HTMLElement) => element.inert))
