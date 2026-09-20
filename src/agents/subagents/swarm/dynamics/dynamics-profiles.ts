@@ -64,10 +64,10 @@ function stableProfileInput(profile: DynamicsProfile): string {
 }
 
 export function resolveDynamicsProfile(id: string): ResolvedDynamicsProfile {
-  const profile = BUILTIN_PROFILES[id as BuiltinDynamicsProfileId];
-  if (!profile) {
-    throw new Error(`Unknown cognitive dynamics profile: ${id}`);
+  if (typeof id !== "string" || !Object.hasOwn(BUILTIN_PROFILES, id)) {
+    throw new Error("Unknown cognitive dynamics profile");
   }
+  const profile = BUILTIN_PROFILES[id as BuiltinDynamicsProfileId];
   const digestInput = stableProfileInput(profile);
   return {
     ...profile,
