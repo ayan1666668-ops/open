@@ -568,8 +568,6 @@ async function runVitestJsonReport(params: RunVitestParams) {
       // The JSON reporter can stay silent for the entire config. The profiler
       // owns the wall-clock timeout and process-group cleanup for this child.
       OPENCLAW_VITEST_NO_OUTPUT_TIMEOUT_MS: "0",
-      // The wrapper owns argv-only V8 flags; retain the caller's NODE_OPTIONS.
-      NODE_OPTIONS: (params.env?.NODE_OPTIONS ?? process.env.NODE_OPTIONS)?.trim(),
     },
     killGraceMs: params.killGraceMs,
     logPath: params.logPath,
