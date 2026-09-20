@@ -166,7 +166,7 @@ describe("mock gateway stateful config", () => {
       // Execute the generated init script the way the browser <script> tag does.
       execute(script);
 
-      const { request } = gatewayPage.connect();
+      const { request, send, frames } = gatewayPage.connect();
       await flushMockTimers();
 
       const initial = await request("get-1", "config.get", {});
@@ -240,14 +240,25 @@ describe("mock gateway stateful config", () => {
         throw new Error("Mock Gateway was not installed");
       }
       const replacement = { logging: { level: "error" } };
+      gateway.deferNext("config.patch");
+      send("pending-replacement", "config.patch", {
+        raw: JSON.stringify(replacement),
+        baseHash: "mock-config-hash-3",
+      });
+      await flushMockTimers();
       gateway.setMethodResponse("config.get", {
         raw: JSON.stringify(replacement),
         config: replacement,
         hash: "replacement-hash",
+        appliedConfigHash: "replacement-applied-hash",
         valid: true,
         issues: [],
       });
-      // Reload before any read can materialize the replacement fixture.
+      gateway.resolveDeferred("config.patch", { ok: true, hash: "replacement-hash" });
+      expect(frames.find((frame) => frame.id === "pending-replacement")).toMatchObject({
+        ok: true,
+      });
+      // Reload before any read can materialize the acknowledged replacement fixture.
       execute(script);
       const reconnected = gatewayPage.connect();
       await flushMockTimers();
@@ -255,65 +266,16 @@ describe("mock gateway stateful config", () => {
         raw: JSON.stringify(replacement),
         config: replacement,
         hash: "replacement-hash",
-        appliedConfigHash: "replacement-hash",
+        appliedConfigHash: "replacement-applied-hash",
       });
+      expect(
+        await reconnected.request("set-after-replacement", "config.set", {
+          raw: JSON.stringify(replacement),
+          baseHash: "replacement-hash",
+        }),
+      ).toMatchObject({ ok: true, hash: "mock-config-hash-4" });
     },
   );
-
-  it("persists an acknowledged snapshot across reload without another config read", async ({
-    gatewayPage,
-  }) => {
-    const { window, execute } = gatewayPage;
-    const script = createControlUiMockGatewayInitScript({
-      methodResponses: {
-        "config.get": {
-          raw: '{"logging":{"level":"info"}}',
-          config: { logging: { level: "info" } },
-          hash: "initial-config",
-        },
-      },
-    });
-    execute(script);
-    const { request, send, frames } = gatewayPage.connect();
-    await flushMockTimers();
-    await request("older-write", "config.set", {
-      raw: '{"logging":{"level":"debug"}}',
-      baseHash: "initial-config",
-    });
-    const gateway = (window as Window & { openclawControlUiE2eGateway?: ControlUiMockGateway })
-      .openclawControlUiE2eGateway;
-    if (!gateway) {
-      throw new Error("Mock Gateway was not installed");
-    }
-    const snapshot = {
-      raw: '{"logging":{"level":"warn"}}',
-      config: { logging: { level: "warn" } },
-      hash: "acknowledged-config",
-      appliedConfigHash: "applied-config",
-    };
-    gateway.deferNext("config.patch");
-    send("pending-write", "config.patch", {
-      raw: snapshot.raw,
-      baseHash: "mock-config-hash-1",
-    });
-    await flushMockTimers();
-    gateway.setMethodResponse("config.get", snapshot);
-    gateway.resolveDeferred("config.patch", { ok: true, hash: snapshot.hash });
-    expect(frames.find((frame) => frame.id === "pending-write")).toMatchObject({ ok: true });
-
-    execute(script);
-    const reloaded = gatewayPage.connect();
-    await flushMockTimers();
-    expect(await reloaded.request("first-read-after-reload", "config.get", {})).toMatchObject(
-      snapshot,
-    );
-    expect(
-      await reloaded.request("next-write", "config.set", {
-        raw: snapshot.raw,
-        baseHash: snapshot.hash,
-      }),
-    ).toMatchObject({ ok: true, hash: "mock-config-hash-2" });
-  });
 
   it("preserves explicit source projections for unchanged raw reads and apply", async ({
     gatewayPage,
