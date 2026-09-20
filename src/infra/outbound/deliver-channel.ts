@@ -18,6 +18,7 @@ import { createSubsystemLogger } from "../../logging/subsystem.js";
 import type { PluginRegistry } from "../../plugins/registry-types.js";
 import {
   getPluginRuntimeGatewayRequestScope,
+  withPluginRuntimeGatewayRequestScope,
   withPluginRuntimeRegistryScope,
 } from "../../plugins/runtime/gateway-request-scope.js";
 import { createLazyRuntimeModule } from "../../shared/lazy-runtime.js";
@@ -45,6 +46,25 @@ const loadChannelBootstrapRuntime = createLazyRuntimeModule(
 );
 const loadChannelPluginFromRegistry = createChannelRegistryLoader((entry) => entry.plugin);
 
+/** Keep the inbound transport owner without restoring the caller's earlier authority or hooks. */
+export function bindInboundChannelDelivery(channel: string): <T>(run: () => T) => T {
+  const registry = getPluginRuntimeGatewayRequestScope()?.pluginRegistry;
+  const plugin = registry?.channels.find((entry) => entry.plugin.id === channel)?.plugin;
+  if (!registry || !plugin) {
+    return (run) => run();
+  }
+  const inboundChannelDelivery = { channel, plugin, registry };
+  return (run) =>
+    withPluginRuntimeGatewayRequestScope(
+      {
+        isWebchatConnect: () => false,
+        ...getPluginRuntimeGatewayRequestScope(),
+        inboundChannelDelivery,
+      },
+      run,
+    );
+}
+
 export async function createChannelHandler(params: ChannelHandlerParams): Promise<ChannelHandler> {
   const { plugin, pluginRegistry } = await loadBootstrappedChannelPlugin(params);
   const handler = withPluginRuntimeRegistryScope(pluginRegistry, () =>
@@ -62,6 +82,10 @@ async function loadBootstrappedChannelPlugin(params: {
   agentId?: string;
   channel: string;
 }): Promise<{ plugin?: ChannelPlugin; pluginRegistry?: PluginRegistry }> {
+  const binding = getPluginRuntimeGatewayRequestScope()?.inboundChannelDelivery;
+  if (binding?.channel === params.channel) {
+    return { plugin: binding.plugin, pluginRegistry: binding.registry };
+  }
   const scopedRegistry = getPluginRuntimeGatewayRequestScope()?.pluginRegistry;
   const plugin = await loadChannelPluginFromRegistry(params.channel);
   if (plugin?.outbound || plugin?.message?.send?.text) {
