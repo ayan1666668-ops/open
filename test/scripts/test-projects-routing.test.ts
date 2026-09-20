@@ -509,6 +509,27 @@ describe("test-projects args", () => {
     ]);
   });
 
+  it("routes managed handoff scenarios through one infra project", () => {
+    const files = [
+      "lifecycle",
+      "native-lifecycle",
+      "recovery-systemd",
+      "recovery-launchd",
+      "terminal-result",
+      "triage",
+      "repair-validating",
+      "repair-verifying",
+    ].map((scenario) => `src/infra/update-managed-service-handoff-${scenario}.test.ts`);
+    expect(buildVitestRunPlans(files)).toEqual([
+      {
+        config: "test/vitest/vitest.infra.config.ts",
+        forwardedArgs: [],
+        includePatterns: files,
+        watchMode: false,
+      },
+    ]);
+  });
+
   it("keeps split test entries in their owner configs", () => {
     expect(buildVitestRunPlans(["src/agents/openai-transport-stream.base.test.ts"])).toEqual([
       {
@@ -1068,12 +1089,17 @@ describe("test-projects args", () => {
           "extensions/discord/src/channel-actions.contract.test.ts",
           "extensions/discord/src/channel.message-adapter.test.ts",
           "extensions/discord/src/channel.test.ts",
-          "extensions/discord/src/durable-delivery.test.ts",
           "extensions/discord/src/monitor/message-handler.bot-self-filter.test.ts",
           "extensions/discord/src/monitor/message-handler.queue.test.ts",
           "extensions/discord/src/monitor/provider.skill-dedupe.test.ts",
           "extensions/discord/src/monitor/provider.test.ts",
         ],
+        watchMode: false,
+      },
+      {
+        config: "test/vitest/vitest.extension-database-workers.config.ts",
+        forwardedArgs: [],
+        includePatterns: ["extensions/discord/src/durable-delivery.test.ts"],
         watchMode: false,
       },
     ]);
