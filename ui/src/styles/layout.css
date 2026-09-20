@@ -1267,7 +1267,7 @@ openclaw-settings-save-indicator:empty {
 
 /* Inset highlight surfaces without narrowing the header or agent roster. */
 .shell:not(.shell--mobile-nav) .sidebar-nav {
-  padding-inline: 6px;
+  margin-inline: 6px;
 }
 
 /* Keep the live session tree mounted while a route owns the lower region. */
