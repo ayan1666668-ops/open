@@ -1,12 +1,19 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { Selectable } from "kysely";
 import type {
+  SandboxBrowserRegistryEntry,
+  SandboxRegistryEntry,
+} from "../agents/sandbox/registry.types.js";
+import type { WorkspaceStateSnapshot } from "../agents/workspace-state-store.kernel.js";
+import type {
   ExecutionIdentityInspectionQuery,
   ExecutionIdentityInspectionOutcome,
 } from "../audit/execution-identity-inspection.types.js";
 import type { FleetCellRecord } from "../fleet/registry.types.js";
 import type { SqliteWorkerStateContext } from "../infra/sqlite-worker-state-context.js";
 import type { AsyncWorkScope } from "../shared/async-work-scope.js";
+import type { OnboardingRecommendationsRecord } from "./onboarding-recommendations.contract.js";
+import type { OpenClawAgentDatabaseRegistryReadResult } from "./openclaw-agent-db-contract.js";
 import type { ConfigMachineState } from "./openclaw-state-db.generated.js";
 import type { OpenClawStateWorkerContext } from "./openclaw-state-worker-context.types.js";
 import type { OpenClawStateWorkerErrorPayload } from "./openclaw-state-worker-error.js";
@@ -26,11 +33,18 @@ export type OpenClawStateReadAuthority = {
 };
 
 export type OpenClawStateReadCommand =
+  | { type: "agentDatabaseRegistry.read" }
+  | { type: "onboardingRecommendations.read"; configKey: string }
   | { type: "userProfiles.avatar.reconcile"; profileId: string }
   | { type: "audit.run.inspect"; input: ExecutionIdentityInspectionQuery }
   | { type: "fleet.list" }
   | { type: "fleet.get"; tenantId: string }
-  | { type: "nodeHost.config" };
+  | { type: "nodeHost.config" }
+  | { type: "workspace.snapshot"; workspaceDir: string }
+  | { type: "sandboxRegistry.list" }
+  | { type: "sandboxRegistry.get"; containerName: string }
+  | { type: "sandboxRegistry.runtimeIds"; backendId: string; scopeKey: string }
+  | { type: "sandboxRegistry.browsers" };
 export type OpenClawStateReadRequest = {
   context: SqliteWorkerStateContext;
   databasePath: string;
@@ -40,7 +54,19 @@ export type OpenClawStateReadRequest = {
   snapshotRoot?: string;
   command: OpenClawStateReadCommand | { type: "admit" };
 };
-export type OpenClawStateReadReply =
+export type OpenClawStateReadReply = (
+  | {
+      ok: true;
+      type: "agentDatabaseRegistry.read";
+      sourceAdmitted?: true;
+      result: OpenClawAgentDatabaseRegistryReadResult;
+    }
+  | {
+      ok: true;
+      type: "onboardingRecommendations.read";
+      sourceAdmitted: true;
+      record: OnboardingRecommendationsRecord | null;
+    }
   | {
       ok: true;
       type: "userProfiles.avatar.reconcile";
@@ -62,12 +88,36 @@ export type OpenClawStateReadReply =
       sourceAdmitted: true;
       row: Pick<Selectable<ConfigMachineState>, "value_json" | "updated_at_ms"> | undefined;
     }
+  | { ok: true; type: "workspace.snapshot"; sourceAdmitted: true; snapshot: WorkspaceStateSnapshot }
+  | {
+      ok: true;
+      type: "sandboxRegistry.list";
+      sourceAdmitted: true;
+      entries: SandboxRegistryEntry[];
+    }
+  | {
+      ok: true;
+      type: "sandboxRegistry.get";
+      sourceAdmitted: true;
+      entry: SandboxRegistryEntry | null;
+    }
+  | { ok: true; type: "sandboxRegistry.runtimeIds"; sourceAdmitted: true; runtimeIds: string[] }
+  | {
+      ok: true;
+      type: "sandboxRegistry.browsers";
+      sourceAdmitted: true;
+      entries: SandboxBrowserRegistryEntry[];
+    }
   | {
       ok: false;
       sourceAdmitted?: true;
       message: string;
       error: OpenClawStateWorkerErrorPayload | undefined;
-    };
+    }
+) & {
+  /** A best-effort admission read completed without confirmed native cleanup. */
+  nativeCleanupFailure?: { error: OpenClawStateWorkerErrorPayload | undefined };
+};
 
 export type OpenClawStateReadOutcome =
   | { value: Extract<OpenClawStateReadReply, { ok: true }> }
