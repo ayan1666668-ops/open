@@ -1079,6 +1079,8 @@ describe("config schema", () => {
           codeTimeoutMs: 5000,
           searchDefaultLimit: 4,
           maxSearchLimit: 12,
+          semanticRanking: "shadow",
+          semanticRankingTimeoutMs: 1200,
         },
       })?.toolSearch,
     ).toEqual({
@@ -1087,6 +1089,8 @@ describe("config schema", () => {
       codeTimeoutMs: 5000,
       searchDefaultLimit: 4,
       maxSearchLimit: 12,
+      semanticRanking: "shadow",
+      semanticRankingTimeoutMs: 1200,
     });
     expect(
       ToolsSchema.safeParse({

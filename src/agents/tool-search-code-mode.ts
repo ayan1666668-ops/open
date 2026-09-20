@@ -85,6 +85,7 @@ async function runCodeModeBridgeRequest(
       const optionsLocal = isRecord(values[1]) ? values[1] : undefined;
       return await runtime.search(query, {
         limit: typeof optionsLocal?.limit === "number" ? optionsLocal.limit : undefined,
+        signal: options?.signal,
       });
     }
     case "describe": {
