@@ -27,7 +27,7 @@ import {
   createDoctorLegacyConfigMigration,
   prepareDoctorConfigRecovery,
 } from "./doctor-config-preflight-legacy-config.js";
-import { measureDoctorConfigPreflightStep } from "./doctor-config-preflight-measure.js";
+import { createDoctorConfigPreflightMeasure } from "./doctor-config-preflight-measure.js";
 import {
   createDoctorRehearsalSnapshotPreparation,
   needsRefreshedPluginIndexPersistence,
@@ -79,7 +79,6 @@ const loadCronRepair = createLazyRuntimeModule(() => import("./doctor/cron/legac
 export async function runDoctorConfigPreflight(
   options: DoctorConfigPreflightOptions = {},
 ): Promise<DoctorConfigPreflightResult> {
-  options.signal?.throwIfAborted();
   return await withDoctorConfigPreflightWorkerScope(options, () =>
     runDoctorConfigPreflightOperation(options),
   );
@@ -101,8 +100,7 @@ async function runDoctorConfigPreflightOperation(
     });
   }
   await noteStaleUpdateRuns(options);
-  const measurePreflightStep = <T>(name: string, run: () => T | Promise<T>) =>
-    measureDoctorConfigPreflightStep(name, run, options.measure, undefined, options.signal);
+  const measurePreflightStep = createDoctorConfigPreflightMeasure(options);
   const migrationCheckpointRequired =
     gatewayStartupCheckpointRequired || options.requireStateMigrationCheckpoint === true;
   let migrationCheckpoint = migrationCheckpointRequired

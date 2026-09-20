@@ -1,11 +1,10 @@
 // Resolves ClawHub plugin catalog entries and install metadata.
-import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import {
   normalizeLowercaseStringOrEmpty,
   normalizeOptionalString,
 } from "@openclaw/normalization-core/string-coerce";
-import JSZip from "jszip";
+import type JSZip from "jszip";
 import { visibleWidth } from "../../packages/terminal-core/src/ansi.js";
 import { sanitizeTerminalText } from "../../packages/terminal-core/src/safe-text.js";
 import { formatTerminalLink } from "../../packages/terminal-core/src/terminal-link.js";
@@ -47,7 +46,15 @@ import { formatErrorMessage } from "../infra/errors.js";
 import type { TimedInstallModeOptions } from "../infra/install-mode-options.js";
 import { resolveCompatibilityHostVersion } from "../version.js";
 import type { RuntimeVersionEnv } from "../version.js";
-import { CLAWHUB_INSTALL_ERROR_CODE, type ClawHubInstallErrorCode } from "./clawhub-error-codes.js";
+import {
+  hashClawHubArchiveEntry,
+  readClawHubArchiveEntryBuffer,
+} from "./clawhub-archive-stream.js";
+import { CLAWHUB_INSTALL_ERROR_CODE } from "./clawhub-error-codes.js";
+import {
+  buildClawHubInstallFailure,
+  type ClawHubInstallFailure,
+} from "./clawhub-install-errors.js";
 import type { ClawHubPluginInstallRecordFields } from "./clawhub-install-records.js";
 import type { InstallSafetyOverrides } from "./install-security-scan.js";
 import { copyPluginInstallTransactionRequest } from "./install-transaction.js";
@@ -66,14 +73,6 @@ type PluginInstallLogger = {
   info?: (message: string) => void;
   warn?: (message: string) => void;
   terminalLinks?: boolean;
-};
-
-type ClawHubInstallFailure = {
-  ok: false;
-  error: string;
-  code?: ClawHubInstallErrorCode;
-  warning?: string;
-  version?: string;
 };
 
 type ClawHubRuntimeIdResolution =
@@ -125,21 +124,7 @@ type ClawHubArchiveFileVerificationResult =
     }
   | ClawHubInstallFailure;
 
-type JSZipObjectWithSize = JSZip.JSZipObject & {
-  // Internal JSZip field from loadAsync() metadata. Use it only as a best-effort
-  // size hint; the streaming byte checks below are the authoritative guard.
-  _data?: {
-    uncompressedSize?: number;
-  };
-};
-
 const CLAWHUB_GENERATED_ARCHIVE_METADATA_FILE = "_meta.json";
-
-type ClawHubArchiveEntryLimits = {
-  maxEntryBytes: number;
-  addArchiveBytes: (bytes: number) => boolean;
-  signal?: AbortSignal;
-};
 
 function normalizeClawHubClawPackInstallFields(
   clawpack: ClawHubPackageArtifactSummary | ClawHubPackageClawPackSummary | null | undefined,
@@ -339,21 +324,6 @@ function resolveTopLevelLegacyArchiveVerification(
 
 function formatClawHubSpecifier(params: { name: string; version?: string }): string {
   return `clawhub:${params.name}${params.version ? `@${params.version}` : ""}`;
-}
-
-function buildClawHubInstallFailure(
-  error: string,
-  code?: ClawHubInstallErrorCode,
-  warning?: string,
-  version?: string,
-): ClawHubInstallFailure {
-  return {
-    ok: false,
-    error,
-    ...(code ? { code } : {}),
-    ...(warning ? { warning } : {}),
-    ...(version ? { version } : {}),
-  };
 }
 
 function isClawHubInstallFailure(value: unknown): value is ClawHubInstallFailure {
@@ -666,140 +636,6 @@ function resolveClawHubArchiveVerification(
       files: normalizedFiles,
     },
   };
-}
-
-async function readLimitedClawHubArchiveEntry<T>(
-  entry: JSZip.JSZipObject,
-  limits: ClawHubArchiveEntryLimits,
-  handlers: {
-    onChunk: (buffer: Buffer) => void;
-    onEnd: () => T;
-  },
-): Promise<T | ClawHubInstallFailure> {
-  limits.signal?.throwIfAborted();
-  const hintedSize = (entry as JSZipObjectWithSize)["_data"]?.uncompressedSize;
-  if (
-    typeof hintedSize === "number" &&
-    Number.isFinite(hintedSize) &&
-    hintedSize > limits.maxEntryBytes
-  ) {
-    return buildClawHubInstallFailure(
-      `ClawHub archive fallback verification rejected "${entry.name}" because it exceeds the per-file size limit.`,
-      CLAWHUB_INSTALL_ERROR_CODE.ARCHIVE_INTEGRITY_MISMATCH,
-    );
-  }
-  let entryBytes = 0;
-  return await new Promise<T | ClawHubInstallFailure>((resolve, reject) => {
-    let settled = false;
-    const stream = entry.nodeStream("nodebuffer") as NodeJS.ReadableStream & {
-      destroy?: (error?: Error) => void;
-    };
-    const removeAbortListener = () => limits.signal?.removeEventListener("abort", onAbort);
-    const finish = (value: T | ClawHubInstallFailure) => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      removeAbortListener();
-      resolve(value);
-    };
-    const onAbort = () => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      removeAbortListener();
-      stream.destroy?.();
-      const reason = limits.signal?.reason;
-      reject(
-        reason instanceof Error
-          ? reason
-          : new Error("ClawHub archive verification aborted", { cause: reason }),
-      );
-    };
-    limits.signal?.addEventListener("abort", onAbort, { once: true });
-    if (limits.signal?.aborted) {
-      onAbort();
-      return;
-    }
-    stream.on("data", (chunk: Buffer | Uint8Array | string) => {
-      if (settled) {
-        return;
-      }
-      if (limits.signal?.aborted) {
-        onAbort();
-        return;
-      }
-      const buffer =
-        typeof chunk === "string" ? Buffer.from(chunk) : Buffer.from(chunk as Uint8Array);
-      entryBytes += buffer.byteLength;
-      if (entryBytes > limits.maxEntryBytes) {
-        stream.destroy?.();
-        finish(
-          buildClawHubInstallFailure(
-            `ClawHub archive fallback verification rejected "${entry.name}" because it exceeds the per-file size limit.`,
-            CLAWHUB_INSTALL_ERROR_CODE.ARCHIVE_INTEGRITY_MISMATCH,
-          ),
-        );
-        return;
-      }
-      if (!limits.addArchiveBytes(buffer.byteLength)) {
-        stream.destroy?.();
-        finish(
-          buildClawHubInstallFailure(
-            "ClawHub archive fallback verification exceeded the total extracted-size limit.",
-            CLAWHUB_INSTALL_ERROR_CODE.ARCHIVE_INTEGRITY_MISMATCH,
-          ),
-        );
-        return;
-      }
-      handlers.onChunk(buffer);
-    });
-    stream.once("end", () => {
-      finish(handlers.onEnd());
-    });
-    stream.once("error", (error: unknown) => {
-      if (settled) {
-        return;
-      }
-      finish(
-        buildClawHubInstallFailure(
-          error instanceof Error ? error.message : String(error),
-          CLAWHUB_INSTALL_ERROR_CODE.ARCHIVE_INTEGRITY_MISMATCH,
-        ),
-      );
-    });
-  });
-}
-
-async function readClawHubArchiveEntryBuffer(
-  entry: JSZip.JSZipObject,
-  limits: ClawHubArchiveEntryLimits,
-): Promise<Buffer | ClawHubInstallFailure> {
-  const chunks: Buffer[] = [];
-  return await readLimitedClawHubArchiveEntry(entry, limits, {
-    onChunk(buffer) {
-      chunks.push(buffer);
-    },
-    onEnd() {
-      return Buffer.concat(chunks);
-    },
-  });
-}
-
-async function hashClawHubArchiveEntry(
-  entry: JSZip.JSZipObject,
-  limits: ClawHubArchiveEntryLimits,
-): Promise<string | ClawHubInstallFailure> {
-  const digest = createHash("sha256");
-  return await readLimitedClawHubArchiveEntry(entry, limits, {
-    onChunk(buffer) {
-      digest.update(buffer);
-    },
-    onEnd() {
-      return digest.digest("hex");
-    },
-  });
 }
 
 function validateClawHubArchiveMetaJson(params: {

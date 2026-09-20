@@ -18,3 +18,11 @@ export async function measureDoctorConfigPreflightStep<T>(
     signal?.throwIfAborted();
   }
 }
+
+export function createDoctorConfigPreflightMeasure(options: {
+  measure?: ConfigSnapshotReadMeasure;
+  signal?: AbortSignal;
+}) {
+  return <T>(name: string, run: () => T | Promise<T>) =>
+    measureDoctorConfigPreflightStep(name, run, options.measure, undefined, options.signal);
+}

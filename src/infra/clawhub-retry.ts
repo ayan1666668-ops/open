@@ -1,5 +1,5 @@
 // Defines the bounded retry contract shared by ClawHub runtime and release reads.
-import { sleepWithAbort } from "./backoff.js";
+import { sleepWithAbort } from "../../packages/retry/src/index.js";
 import { parseRetryAfterHeaderSeconds } from "./retry-after.js";
 import { retryAsync } from "./retry.js";
 

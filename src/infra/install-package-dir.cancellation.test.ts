@@ -2,6 +2,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import * as rootLogger from "../logger.js";
 import { createSuiteTempRootTracker } from "../test-helpers/temp-dir.js";
 import { pathExists } from "./fs-safe.js";
 import { installPackageDir } from "./install-package-dir.js";
@@ -128,6 +129,57 @@ describe("installPackageDir startup cancellation", () => {
       }),
     ).rejects.toBe(reason);
     await expectMissingPath(targetDir);
+    await expect(
+      listMatchingDirs(installBaseDir, ".openclaw-install-stage-"),
+    ).resolves.toHaveLength(0);
+  });
+  it("reports a retained backup when startup cancellation cannot restore the original install", async () => {
+    await fixtureRootTracker.setup();
+    const fixtureRoot = await fixtureRootTracker.make("cancelled-failed-restore");
+    const { installBaseDir, sourceDir, targetDir } =
+      await createExistingInstallFixture(fixtureRoot);
+    const controller = new AbortController();
+    const reason = new Error("Gateway startup interrupted by SIGTERM");
+    const restoreError = new Error("restore rename denied");
+    const errors = vi.spyOn(rootLogger, "logError").mockImplementation(() => {});
+    // Doctor may buffer its optional installer logger, then discard the cancelled result.
+    const bufferedWarning = vi.fn();
+    const rename = fs.rename.bind(fs);
+    let backupDir = "";
+    vi.spyOn(fs, "rename").mockImplementation(async (...args: Parameters<typeof fs.rename>) => {
+      if (controller.signal.aborted) {
+        throw restoreError;
+      }
+      return await rename(...args);
+    });
+    await expect(
+      installPackageDir({
+        sourceDir,
+        targetDir,
+        mode: "update",
+        timeoutMs: 1_000,
+        copyErrorPrefix: "failed to copy plugin",
+        hasDeps: false,
+        depsLogMessage: "",
+        signal: controller.signal,
+        logger: { warn: bufferedWarning },
+        afterBackup: async (directory) => {
+          backupDir = directory;
+          controller.abort(reason);
+          return { ok: true };
+        },
+      }),
+    ).rejects.toBe(reason);
+    await expectMissingPath(targetDir);
+    expect(backupDir).not.toBe("");
+    await expect(fs.readFile(path.join(backupDir, "marker.txt"), "utf8")).resolves.toBe("old");
+    expect(errors).toHaveBeenCalledWith(
+      expect.stringContaining("could not restore existing install"),
+    );
+    expect(errors).toHaveBeenCalledWith(expect.stringContaining(restoreError.message));
+    expect(errors).toHaveBeenCalledWith(
+      expect.stringContaining(`backup recovery path: ${backupDir}`),
+    );
     await expect(
       listMatchingDirs(installBaseDir, ".openclaw-install-stage-"),
     ).resolves.toHaveLength(0);

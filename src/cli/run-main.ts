@@ -37,15 +37,14 @@ import { maybeRunCliInContainer, parseCliContainerArgs } from "./container-targe
 import { tryRunGatewayServiceUpdateCapabilityProbe } from "./daemon-cli/update-capability.js";
 import { shouldStartLocalOnboarding } from "./fresh-install-config.js";
 import {
-  installGatewayStartupSignalOwner,
+  installGatewayCliStartupSignalOwner,
   type GatewayStartupSignalOwner,
 } from "./gateway-cli/startup-signal.js";
 import {
-  consumeGatewayFastPathRootOptionToken,
-  consumeGatewayRunOptionToken,
   resolveGatewayCatalogCommandPath,
   resolveGatewayRunPreBootstrapOptions,
 } from "./gateway-run-argv.js";
+import { isGatewayRunFastPathArgv } from "./gateway-run-fast-path-argv.js";
 import {
   hasJsonOutputFlag,
   isJsonOutputModeActive,
@@ -72,16 +71,14 @@ import {
 } from "./run-main-policy.js";
 import { withCliCommandCleanup, type CliHarnessCleanup } from "./runtime-cleanup-scope.js";
 import { closeCliResources, runCliDisposer } from "./runtime-cleanup.js";
-import {
-  registerSignalExitBarrier,
-  registerSignalExitGate,
-  waitForSignalExitBarriers,
-} from "./signal-exit-barrier.js";
+import { registerSignalExitBarrier, waitForSignalExitBarriers } from "./signal-exit-barrier.js";
 import {
   configureGatewayStartupTraceConsoleFormatting,
   createGatewayDispatchStartupTrace,
 } from "./startup-trace.js";
 import { normalizeWindowsArgv } from "./windows-argv.js";
+
+export { isGatewayRunFastPathArgv } from "./gateway-run-fast-path-argv.js";
 
 export {
   rewriteUpdateFlagArgv,
@@ -113,53 +110,6 @@ const loadProgressModule = async () => await import("./progress.js");
 
 function isRemoteAgentDispatchInvocation(argv: string[], primary: string | null): boolean {
   return primary === "agent" && !argv.includes("--local");
-}
-
-export function isGatewayRunFastPathArgv(argv: string[]): boolean {
-  const invocation = resolveCliArgvInvocation(argv);
-  if (invocation.hasHelpOrVersion) {
-    return false;
-  }
-  const args = argv.slice(2);
-  let sawGateway = false;
-  let sawRun = false;
-
-  for (let index = 0; index < args.length; index += 1) {
-    const arg = args[index];
-    if (!arg || arg === "--") {
-      return false;
-    }
-    if (!sawGateway) {
-      const consumed = consumeGatewayFastPathRootOptionToken(args, index);
-      if (consumed > 0) {
-        index += consumed - 1;
-        continue;
-      }
-      if (arg !== "gateway") {
-        return false;
-      }
-      sawGateway = true;
-      continue;
-    }
-
-    const rootConsumed = consumeGatewayFastPathRootOptionToken(args, index);
-    if (rootConsumed > 0) {
-      index += rootConsumed - 1;
-      continue;
-    }
-    const consumed = consumeGatewayRunOptionToken(args, index);
-    if (consumed > 0) {
-      index += consumed - 1;
-      continue;
-    }
-    if (!sawRun && arg === "run") {
-      sawRun = true;
-      continue;
-    }
-    return false;
-  }
-
-  return sawGateway;
 }
 
 function isGatewayRunInvocationArgv(argv: string[]): boolean {
@@ -1325,16 +1275,7 @@ async function runCliWithPreparedOutputMode(
   let uninstallGatewayRunRuntimeHooks: (() => void) | null = null;
   let unhandledRejectionHandlerInstalled = false;
   const gatewayStartupSignalOwner = isGatewayRunInvocation
-    ? installGatewayStartupSignalOwner()
-    : null;
-  let settleGatewayRunCleanup: (() => void) | undefined;
-  const gatewayRunCleanupSettled = gatewayStartupSignalOwner
-    ? new Promise<void>((resolve) => {
-        settleGatewayRunCleanup = resolve;
-      })
-    : null;
-  const unregisterGatewayRunSignalExitGate = gatewayRunCleanupSettled
-    ? registerSignalExitGate(gatewayRunCleanupSettled)
+    ? installGatewayCliStartupSignalOwner()
     : null;
 
   try {
@@ -1791,8 +1732,7 @@ async function runCliWithPreparedOutputMode(
         pauseNonTtyStdinForCliExit();
       }
     } finally {
-      settleGatewayRunCleanup?.();
-      unregisterGatewayRunSignalExitGate?.();
+      gatewayStartupSignalOwner?.completeCleanup();
     }
   }
 }

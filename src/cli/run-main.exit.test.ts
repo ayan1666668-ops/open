@@ -22,6 +22,13 @@ import { captureEnv, withEnvAsync } from "../test-utils/env.js";
 import { ExpectedCliError } from "./failure-output.js";
 import { getGatewayRunRuntimeHooks } from "./gateway-cli/runtime-hooks.js";
 import type { RootHelpRenderOptions } from "./program/root-help.js";
+import {
+  registerGatewayStartupBootstrapTests,
+  registerGatewayStartupProxyExitTests,
+  type ConfigSnapshotStub,
+  type GatewayRunCommandHooks,
+  type CliExecutionBootstrapOptions,
+} from "./run-main.gateway-startup.test-support.js";
 import { getPendingCliDisposers } from "./runtime-cleanup.js";
 import { registerSignalExitBarrier, waitForSignalExitBarriers } from "./signal-exit-barrier.js";
 
@@ -32,17 +39,6 @@ type RunMainModule = typeof import("./run-main.js");
 
 let runCli: RunMainModule["runCli"];
 let shouldStartProxyForCli: RunMainModule["shouldStartProxyForCli"];
-
-type ConfigSnapshotStub = {
-  exists: boolean;
-  hash?: string;
-  issues?: Array<{ message: string; path: string }>;
-  legacyIssues?: Array<{ message: string; path: string }>;
-  path?: string;
-  raw?: string | null;
-  valid: boolean;
-  sourceConfig: Record<string, unknown>;
-};
 
 const tryRouteCliMock = vi.hoisted(() => vi.fn());
 const loadDotEnvMock = vi.hoisted(() => vi.fn());
@@ -158,12 +154,6 @@ const resolveControlUiLinksMock = vi.hoisted(() =>
   })),
 );
 const commanderParseAsyncMock = vi.hoisted(() => vi.fn(async () => {}));
-type GatewayRunCommandHooks = {
-  beforeRun?: (opts: { reset?: boolean }) => Promise<void>;
-};
-type CliExecutionBootstrapOptions = {
-  beforeStateMigrations?: (snapshot?: ConfigSnapshotStub) => Promise<boolean>;
-};
 const addGatewayRunCommandMock = vi.hoisted(() =>
   vi.fn<(command: unknown, hooks?: GatewayRunCommandHooks) => unknown>((command) => command),
 );
@@ -1009,72 +999,11 @@ describe("runCli exit behavior", () => {
     expect(parseOrder).toBeGreaterThan(captureOrder);
   });
 
-  it("configures the gateway foreground fast path with the standard CLI bootstrap", async () => {
-    await runCli(["node", "openclaw", "gateway", "--force"]);
-
-    expect(readConfigFileSnapshotMock.mock.calls).toEqual([
-      [{ isolateEnv: true, observe: false, pluginValidation: "core-only" }],
-    ]);
-    const hooks = addGatewayRunCommandMock.mock.calls[0]?.[1] as
-      | { beforeRun?: (opts: { reset?: boolean }) => Promise<void> }
-      | undefined;
-    await hooks?.beforeRun?.({});
-
-    expect(ensureCliExecutionBootstrapMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        beforeStateMigrations: expect.any(Function),
-        commandPath: ["gateway"],
-        loadPlugins: false,
-        signal: expect.any(AbortSignal),
-      }),
-    );
-    expect(readConfigFileSnapshotMock.mock.calls).toEqual([
-      [{ isolateEnv: true, observe: false, pluginValidation: "core-only" }],
-      [{ isolateEnv: true, observe: false, pluginValidation: "core-only" }],
-    ]);
-    const admissionOrder = readConfigFileSnapshotMock.mock.invocationCallOrder[1] ?? 0;
-    const bootstrapOrder = ensureCliExecutionBootstrapMock.mock.invocationCallOrder[0] ?? 0;
-    expect(admissionOrder).toBeGreaterThan(0);
-    expect(bootstrapOrder).toBeGreaterThan(admissionOrder);
-  });
-
-  it("stops suspicious config recovery when Gateway startup is interrupted", async () => {
-    const processOnSpy = vi.spyOn(process, "on");
-    const previousExitCode = process.exitCode;
-    const currentSnapshot = {
-      exists: true,
-      valid: true,
-      sourceConfig: { gateway: { mode: "local" } },
-    };
-    // Main plans suspicious-config recovery through prepareConfigRecovery after the guarded
-    // read instead of the recoverSuspicious callback, so fire the startup SIGTERM from the
-    // first guard read that runs after the startup signal owner registered its handler, and
-    // expect the bootstrap to refuse before plugin/bootstrap admission.
-    let interrupted = false;
-    readConfigFileSnapshotMock.mockImplementation(async () => {
-      if (!interrupted) {
-        const sigtermHandler = processOnSpy.mock.calls.find(([event]) => event === "SIGTERM")?.[1];
-        if (typeof sigtermHandler === "function") {
-          interrupted = true;
-          sigtermHandler();
-        }
-      }
-      return currentSnapshot;
-    });
-
-    try {
-      await runCli(["node", "openclaw", "gateway"]);
-      const hooks = addGatewayRunCommandMock.mock.calls[0]?.[1] as
-        | { beforeRun?: (opts: { force?: boolean }) => Promise<void> }
-        | undefined;
-      await hooks?.beforeRun?.({});
-
-      expect(interrupted).toBe(true);
-      expect(ensureCliExecutionBootstrapMock).not.toHaveBeenCalled();
-    } finally {
-      process.exitCode = previousExitCode;
-      processOnSpy.mockRestore();
-    }
+  registerGatewayStartupBootstrapTests({
+    runCli: (...args) => runCli(...args),
+    readConfigFileSnapshotMock,
+    addGatewayRunCommandMock,
+    ensureCliExecutionBootstrapMock,
   });
 
   it("defers config-drift exit to the migration owner before startup migrations", async () => {
@@ -3549,79 +3478,14 @@ describe("runCli exit behavior", () => {
     expect(getPendingCliDisposers()).not.toContain("managed-proxy");
   });
 
-  it("waits for Gateway startup cleanup before the managed proxy exits on SIGTERM", async () => {
-    const handle = makeProxyHandle();
-    startProxyMock.mockResolvedValueOnce(handle);
-    let rejectBootstrap: (reason?: unknown) => void = () => {};
-    ensureCliExecutionBootstrapMock.mockReturnValueOnce(
-      new Promise<void>((_resolve, reject) => {
-        rejectBootstrap = reject;
-      }),
-    );
-    commanderParseAsyncMock.mockImplementationOnce(async () => {
-      const hooks = addGatewayRunCommandMock.mock.calls[0]?.[1] as
-        | { beforeRun?: (opts: { force?: boolean }) => Promise<void> }
-        | undefined;
-      await hooks?.beforeRun?.({});
-    });
-
-    const processOnSpy = vi.spyOn(process, "on");
-    const processOnceSpy = vi.spyOn(process, "once");
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number | string) => {
-      void code;
-      return undefined as never;
-    }) as typeof process.exit);
-    const previousExitCode = process.exitCode;
-    const startupError = new Error("configured-plugin repair aborted");
-
-    try {
-      const runPromise = runCli(["node", "openclaw", "gateway", "run"]);
-      await vi.waitFor(
-        () => {
-          expect(startProxyMock).toHaveBeenCalledWith(undefined);
-          expect(ensureCliExecutionBootstrapMock).toHaveBeenCalledWith(
-            expect.objectContaining({ signal: expect.any(AbortSignal) }),
-          );
-          expect(processOnSpy.mock.calls.some(([event]) => event === "SIGTERM")).toBe(true);
-          expect(processOnceSpy.mock.calls.some(([event]) => event === "SIGTERM")).toBe(true);
-        },
-        { timeout: 5_000 },
-      );
-
-      const startupSigtermHandler = processOnSpy.mock.calls.find(
-        ([event]) => event === "SIGTERM",
-      )?.[1];
-      const proxySigtermHandler = processOnceSpy.mock.calls.find(
-        ([event]) => event === "SIGTERM",
-      )?.[1];
-      if (
-        typeof startupSigtermHandler !== "function" ||
-        typeof proxySigtermHandler !== "function"
-      ) {
-        throw new Error("Gateway SIGTERM handlers were not registered");
-      }
-      startupSigtermHandler();
-      proxySigtermHandler();
-
-      await new Promise<void>((resolve) => {
-        setTimeout(resolve, 0);
-      });
-      expect(exitSpy).not.toHaveBeenCalled();
-
-      rejectBootstrap(startupError);
-      await runPromise;
-      await vi.waitFor(() => {
-        expect(exitSpy).toHaveBeenCalledWith(143);
-      });
-      expect(stopProxyMock.mock.invocationCallOrder[0]).toBeLessThan(
-        exitSpy.mock.invocationCallOrder[0]!,
-      );
-    } finally {
-      process.exitCode = previousExitCode;
-      exitSpy.mockRestore();
-      processOnceSpy.mockRestore();
-      processOnSpy.mockRestore();
-    }
+  registerGatewayStartupProxyExitTests({
+    runCli: (...args) => runCli(...args),
+    makeProxyHandle,
+    startProxyMock,
+    stopProxyMock,
+    commanderParseAsyncMock,
+    addGatewayRunCommandMock,
+    ensureCliExecutionBootstrapMock,
   });
 
   it("synchronously kills the managed proxy during hard process exit", async () => {

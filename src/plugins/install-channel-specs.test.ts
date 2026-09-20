@@ -254,7 +254,9 @@ it("joins both metadata requests before propagating cancellation", async () => {
     // The sibling request keeps awaiting subprocess-tree termination after
     // the beta side raised; propagation must wait for it to settle so a
     // slower cleanup is not cut short by an early startup release.
-    await new Promise<void>((resolve) => setTimeout(resolve, 25));
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 25);
+    });
     siblingSettled = true;
     return { ok: false as const, error: "aborted" };
   });

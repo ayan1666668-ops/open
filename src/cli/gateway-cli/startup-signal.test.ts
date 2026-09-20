@@ -1,8 +1,8 @@
 // Process regression for Gateway startup signal ownership and lease cleanup.
-import { execFile, type ExecException } from "node:child_process";
+import { execFile } from "node:child_process";
 import path from "node:path";
 import process from "node:process";
-import { promisify } from "node:util";
+import { inspect, promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 
 const execFileAsync = promisify(execFile);
@@ -63,17 +63,8 @@ describe("gateway startup signal owner", () => {
         encoding: "utf8",
         timeout: 10_000,
       },
-    ).catch((error: ExecException) => {
-      throw new Error(
-        `Startup signal subprocess failed: ${JSON.stringify({
-          code: error.code,
-          signal: error.signal,
-          killed: error.killed,
-          stdout: error.stdout?.toString(),
-          stderr: error.stderr?.toString(),
-        })}`,
-        { cause: error },
-      );
+    ).catch((error: unknown) => {
+      throw new Error(`Startup signal subprocess failed: ${inspect(error)}`, { cause: error });
     });
     const output = `${result.stderr}\n${result.stdout}`;
     expect(output).toContain("__LEASE_ACQUIRED__");

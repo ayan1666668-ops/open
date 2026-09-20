@@ -1,6 +1,5 @@
 import { PLUGIN_CAPABILITY_CONSENT_REQUIRED } from "../../packages/gateway-protocol/src/capability-consent-error-details.js";
 import { formatCliCommand } from "../cli/command-format.js";
-import type { PluginInstallRecord } from "../config/types.plugins.js";
 import { resolveNpmSpecMetadata } from "../infra/install-source-utils.js";
 import { parseRegistryNpmSpec } from "../infra/npm-registry-spec.js";
 import {
@@ -13,7 +12,6 @@ import {
   resolveSourceCheckoutBundledPluginIds,
 } from "./bundled-sources.js";
 import { capturePluginCapabilityConsentHandlerErrors } from "./capability-consent.js";
-import { buildClawHubPluginInstallRecordFields } from "./clawhub-install-records.js";
 import { normalizePluginsConfig, resolveEffectiveEnableState } from "./config-state.js";
 import { formatSourceBundledPluginNotice } from "./dev-source-root.js";
 import {
@@ -26,7 +24,7 @@ import {
   withPluginInstallTransactions,
 } from "./install-transaction.js";
 import { PLUGIN_INSTALL_ERROR_CODE, resolvePluginInstallDir } from "./install.js";
-import { buildNpmResolutionInstallFields, recordPluginInstall } from "./installs.js";
+import { recordPluginInstall } from "./installs.js";
 import { ManagedPluginLifecycleError } from "./management-lifecycle-error.js";
 import type { PackageManifest } from "./manifest.js";
 import {
@@ -46,10 +44,6 @@ import {
   readClawHubTrustErrorCode,
   runPluginUpdateAttempt,
   shouldSkipClawHubTrustFailureForExistingInstall,
-  type ClawHubPluginUpdateSuccess,
-  type GitPluginUpdateSuccess,
-  type MarketplacePluginUpdateSuccess,
-  type NpmPluginUpdateSuccess,
 } from "./update-attempt.js";
 import { preparePluginUpdateCapabilityConsent } from "./update-capability-consent.js";
 import {
@@ -58,6 +52,7 @@ import {
   runPluginUpdateWithClawHubLease,
 } from "./update-claw-lifecycle.js";
 import {
+  buildPluginUpdateInstallRecord,
   hasRunnableInstalledNpmPayload,
   migratePluginConfigId,
   repairRegisteredOpenClawHostLink,
@@ -657,39 +652,13 @@ async function runInstalledPluginUpdate(
     }
 
     const nextVersion = result.version ?? (await readInstalledPackageVersion(result.targetDir));
-    let installRecord: PluginInstallRecord;
-    if (resultSource === "npm") {
-      const npmResult = result as NpmPluginUpdateSuccess;
-      installRecord = {
-        source: "npm",
-        spec: recordSpec,
-        ...buildNpmResolutionInstallFields(npmResult.npmResolution),
-      };
-    } else if (resultSource === "clawhub") {
-      const clawhubResult = result as ClawHubPluginUpdateSuccess;
-      installRecord = {
-        ...buildClawHubPluginInstallRecordFields(clawhubResult.clawhub),
-        spec: recordSpec ?? record.spec ?? `clawhub:${record.clawhubPackage!}`,
-      };
-    } else if (record.source === "git") {
-      const gitResult = result as GitPluginUpdateSuccess;
-      installRecord = {
-        source: "git",
-        spec: effectiveSpec ?? record.spec,
-        resolvedAt: gitResult.git.resolvedAt,
-        gitUrl: gitResult.git.url,
-        gitRef: gitResult.git.ref,
-        gitCommit: gitResult.git.commit,
-      };
-    } else {
-      const marketplaceResult = result as MarketplacePluginUpdateSuccess;
-      installRecord = {
-        source: "marketplace",
-        marketplaceName: marketplaceResult.marketplaceName ?? record.marketplaceName,
-        marketplaceSource: record.marketplaceSource,
-        marketplacePlugin: record.marketplacePlugin,
-      };
-    }
+    const installRecord = buildPluginUpdateInstallRecord({
+      result,
+      resultSource,
+      record,
+      effectiveSpec,
+      recordSpec,
+    });
     next = recordPluginInstall(
       next,
       capabilityConsent.acceptInstallRecord({

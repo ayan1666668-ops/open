@@ -6,6 +6,7 @@ import path from "node:path";
 import { assertDirectoryIdentitySync, readDirectoryIdentity } from "@openclaw/fs-safe/advanced";
 import type { MovePathPublicationReceipt } from "@openclaw/fs-safe/atomic";
 import { isRecord as isObjectRecord } from "@openclaw/normalization-core/record-coerce";
+import { logError } from "../logger.js";
 import { runCommandWithTimeout } from "../process/exec.js";
 import { hasErrnoCode } from "./errno.js";
 import { FsSafeError, pathExists } from "./fs-safe.js";
@@ -417,6 +418,10 @@ export async function installPackageDir<
   };
   const failOrRethrow = async (error: string, cause?: unknown) => {
     const failure = await fail(error, cause);
+    if (params.signal?.aborted && (published.backup || published.install)) {
+      // Cancellation can discard caller-buffered warnings; record recovery failures directly.
+      logError(`Plugin install recovery failed after cancellation: ${failure.error}`);
+    }
     params.signal?.throwIfAborted();
     return failure;
   };

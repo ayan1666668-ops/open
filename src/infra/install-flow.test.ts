@@ -168,29 +168,37 @@ describe("withExtractedArchiveRoot", () => {
   });
 
   it("does not hand an extracted archive to installers after cancellation", async () => {
-    const controller = new AbortController();
-    const reason = new Error("Gateway startup interrupted by SIGTERM");
-    vi.spyOn(installSource, "withInstallWorkspace").mockImplementation(
-      async (_prefix, fn) => await fn("/tmp/openclaw-install-flow"),
-    );
-    vi.spyOn(archive, "extractArchive").mockImplementation(async () => {
-      controller.abort(reason);
+    await withTestDir({ prefix: "openclaw-install-flow-" }, async (fixtureRoot) => {
+      const archivePath = path.join(fixtureRoot, "plugin.zip");
+      const zip = new JSZip();
+      zip.file("package/data.txt", "complete");
+      await fs.writeFile(archivePath, await zip.generateAsync({ type: "nodebuffer" }));
+      const controller = new AbortController();
+      const reason = new Error("Gateway startup interrupted by SIGTERM");
+      const originalOpen = fs.open;
+      const openSpy = vi.spyOn(fs, "open").mockImplementation(async (...args) => {
+        const handle = await originalOpen(...args);
+        if (String(args[0]).endsWith(`${path.sep}data.txt`)) {
+          controller.abort(reason);
+        }
+        return handle;
+      });
+      const onExtracted = vi.fn(async () => ({ ok: true as const }));
+      try {
+        await expect(
+          withExtractedArchiveRoot({
+            archivePath,
+            tempDirPrefix: "openclaw-plugin-",
+            timeoutMs: 1000,
+            signal: controller.signal,
+            onExtracted,
+          }),
+        ).rejects.toBe(reason);
+        expect(onExtracted).not.toHaveBeenCalled();
+      } finally {
+        openSpy.mockRestore();
+      }
     });
-    vi.spyOn(archive, "resolvePackedRootDir").mockResolvedValue(
-      "/tmp/openclaw-install-flow/extract/package",
-    );
-    const onExtracted = vi.fn(async () => ({ ok: true as const }));
-
-    await expect(
-      withExtractedArchiveRoot({
-        archivePath: "/tmp/plugin.tgz",
-        tempDirPrefix: "openclaw-plugin-",
-        timeoutMs: 1000,
-        signal: controller.signal,
-        onExtracted,
-      }),
-    ).rejects.toBe(reason);
-    expect(onExtracted).not.toHaveBeenCalled();
   });
 
   it("returns extract failure when extraction throws", async () => {

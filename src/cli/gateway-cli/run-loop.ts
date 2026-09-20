@@ -14,10 +14,7 @@ import {
 import type { GatewayHostLifecycle, GatewayStartupOperation } from "../../gateway/server-public.js";
 import { GatewayStartupCleanupError } from "../../gateway/server-shutdown.js";
 import type { startGatewayServer } from "../../gateway/server.js";
-import {
-  registerGatewayInstallationReplacementHandler,
-  type GatewayInstallationReplacement,
-} from "../../gateway/stale-install.js";
+import type { GatewayInstallationReplacement } from "../../gateway/stale-install.js";
 import { formatErrorMessage } from "../../infra/errors.js";
 import {
   GATEWAY_BOOT_REASON_MAX_UTF16_CODE_UNITS,
@@ -38,7 +35,6 @@ import {
 import { runWithProcessCleanupBudget } from "../../process/supervisor/cleanup-budget.js";
 import type { RuntimeEnv } from "../../runtime.js";
 import { createLazyImportLoader } from "../../shared/lazy-promise.js";
-import { sleep } from "../../utils/sleep.js";
 import { formatCliCommand } from "../command-format.js";
 import { createGatewayHostLifecycle } from "./host-lifecycle.js";
 import * as loopLogs from "./run-loop-log-flush.js";
@@ -50,7 +46,9 @@ import {
 } from "./run-loop-request.js";
 import { resolveGatewayShutdownBudget } from "./run-loop-shutdown-budget.js";
 import { formatDrainCounts, formatShutdownReason } from "./run-loop-shutdown-format.js";
+import { installGatewayRunSignalHandlers } from "./run-loop-signals.js";
 import {
+  acquireGatewayStartupLock,
   createGatewayStartupOperations,
   prepareGatewayRestartIteration,
 } from "./run-loop-startup.js";
@@ -164,12 +162,9 @@ export async function runGatewayLoop(params: {
   const getManagedUpdateOwner = () =>
     (pendingStartupRequest ?? activeRestartRequest)?.restartIntent?.successorOwner;
 
-  let releaseInstallationObserver: (() => void) | undefined;
+  let releaseRunSignalHandlers: (() => void) | undefined;
   const cleanupSignals = () => {
-    releaseInstallationObserver?.();
-    process.removeListener("SIGTERM", onSigterm);
-    process.removeListener("SIGINT", onSigint);
-    process.removeListener("SIGUSR2", onRestartSignal);
+    releaseRunSignalHandlers?.();
     processLifetime?.port1.close();
     processLifetime?.port2.close();
   };
@@ -1273,32 +1268,24 @@ export async function runGatewayLoop(params: {
 
   try {
     // Acquisition belongs to cleanup so cancellation cannot strand the lock.
-    lock = await acquireGatewayLock({
+    lock = await acquireGatewayStartupLock({
       port: params.lockPort,
-      ...(params.startupSignal
-        ? { sleep: async (ms: number) => await sleep(ms, params.startupSignal) }
-        : {}),
-      listenerMode: supervisorMode ? "supervised" : "foreground",
       supervisor,
-      ...(params.lifecycleLockDeadlineMs !== undefined
-        ? { lifecycleDeadlineMs: params.lifecycleLockDeadlineMs }
-        : {}),
+      lifecycleDeadlineMs: params.lifecycleLockDeadlineMs,
+      signal: params.startupSignal,
     });
     params.startupSignal?.throwIfAborted();
 
-    process.on("SIGTERM", onSigterm);
-    process.on("SIGINT", onSigint);
-    // SIGUSR1 belongs to Node's on-demand inspector; never register a listener for it.
-    process.on("SIGUSR2", onRestartSignal);
-    releaseInstallationObserver = registerGatewayInstallationReplacementHandler((fact) => {
-      installationReplacement = fact;
-      gatewayLog.warn(fact.message);
-      if (!supervisorMode) {
-        gatewayLog.error(
-          `The foreground Gateway must stop after its installation was replaced. Restart it with: ${formatCliCommand("openclaw gateway run")}`,
-        );
-      }
-      request("restart", "SIGUSR2", fact.reason);
+    releaseRunSignalHandlers = installGatewayRunSignalHandlers({
+      onSigterm,
+      onSigint,
+      onRestartSignal,
+      onInstallationReplacement: (fact) => {
+        installationReplacement = fact;
+      },
+      requestRestart: (reason) => request("restart", "SIGUSR2", reason),
+      supervised: Boolean(supervisorMode),
+      logger: gatewayLog,
     });
     // Install normal handlers before releasing preflight signal ownership.
     params.releaseStartupSignalOwner?.();

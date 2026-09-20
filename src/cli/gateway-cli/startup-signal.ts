@@ -1,4 +1,5 @@
 import process from "node:process";
+import { registerSignalExitGate } from "../signal-exit-barrier.js";
 
 export type GatewayStartupSignalOwner = {
   signal: AbortSignal;
@@ -42,6 +43,25 @@ export function installGatewayStartupSignalOwner(): GatewayStartupSignalOwner {
       }
       released = true;
       removeListeners();
+    },
+  };
+}
+
+/** Keep other CLI signal handlers from exiting before Gateway startup cleanup settles. */
+export function installGatewayCliStartupSignalOwner(): GatewayStartupSignalOwner & {
+  completeCleanup(): void;
+} {
+  const owner = installGatewayStartupSignalOwner();
+  let settleCleanup!: () => void;
+  const cleanupSettled = new Promise<void>((resolve) => {
+    settleCleanup = resolve;
+  });
+  const unregisterExitGate = registerSignalExitGate(cleanupSettled);
+  return {
+    ...owner,
+    completeCleanup() {
+      settleCleanup();
+      unregisterExitGate();
     },
   };
 }
