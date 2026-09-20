@@ -1,6 +1,8 @@
 // @vitest-environment node
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
+import { Value } from "typebox/value";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { SessionsGoalUpdateParamsSchema } from "../../../../packages/gateway-protocol/src/schema/sessions-goal.js";
 import { createDeferred } from "../../../../test/helpers/promise.js";
 import { GatewayRequestError } from "../../api/gateway.ts";
 import type { SessionsListResult, SessionGoal } from "../../api/types.ts";
@@ -49,6 +51,43 @@ function goalHost(requestHandlers: Record<string, unknown>) {
 }
 
 describe("Goal control requests", () => {
+  it("rejects an oversized edit without stranding recovery or blocking a corrected edit", async () => {
+    const host = goalHost({
+      "sessions.goal.update": (params: unknown) => {
+        if (!Value.Check(SessionsGoalUpdateParamsSchema, params)) {
+          throw new GatewayRequestError({ code: "INVALID_REQUEST", message: "Invalid goal edit" });
+        }
+        return {
+          status: "updated",
+          goalId: goal.id,
+          goal: {
+            ...goal,
+            objective: "objective" in params ? params.objective : goal.objective,
+            updatedAt: 3,
+          },
+        };
+      },
+    });
+    expect(
+      await mutateChatGoal(host, {
+        action: "edit",
+        goalId: goal.id,
+        objective: "x".repeat(16_001),
+      }),
+    ).toBe(false);
+    expect.soft(host.request).not.toHaveBeenCalled();
+    expect.soft(sessionStorage.length).toBe(0);
+    expect.soft(chatGoalRecovery(host)).toBeUndefined();
+    expect.soft(host.chatError).toBeTruthy();
+
+    const objective = "x".repeat(16_000);
+    expect(await mutateChatGoal(host, { action: "edit", goalId: goal.id, objective })).toBe(true);
+    expect(host.sessions.state.result?.sessions[0]?.goal?.objective).toBe(objective);
+    expect(host.chatError).toBeNull();
+    expect(sessionStorage.length).toBe(0);
+    expect(chatGoalRecovery(host)).toBeUndefined();
+  });
+
   it("edits literal objective text through the typed owner and leaves the chat draft alone", async () => {
     const objective = "  /goal clear\n  is literal text ";
     const host = goalHost({

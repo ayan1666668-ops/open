@@ -347,6 +347,12 @@ async function runGoalOperation(
             : { ...identity, action: action.action },
       pending: false,
     };
+    const schema =
+      action.action === "clear" ? SessionsGoalClearParamsSchema : SessionsGoalUpdateParamsSchema;
+    if (!Value.Check(schema, operation.params)) {
+      setChatError(host, t("chat.goals.invalidRequest"));
+      return false;
+    }
     try {
       // Persist before sending: a storage failure must not start an unrecoverable Resume.
       storage?.setItem(storageKey, JSON.stringify(operation.params));

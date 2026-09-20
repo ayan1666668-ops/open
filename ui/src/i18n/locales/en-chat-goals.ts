@@ -16,6 +16,7 @@ const enChatGoals = {
       busy: "Wait for this run to finish. Your draft is unchanged.",
       annotationUnsupported: "Send or remove browser annotations first. Your draft is unchanged.",
       actionPending: "Wait for the pending goal action.",
+      invalidRequest: "Goal update is invalid. Check the objective and try again.",
       outcomeUnknown: "Goal update not confirmed. Check its outcome before making another change.",
       recoveryTitle: "Goal update not confirmed",
       recoveryHint: "Check the saved request. If it already succeeded, it will not run again.",

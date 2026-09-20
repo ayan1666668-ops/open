@@ -8,6 +8,97 @@ import { createControlUiE2eSuite } from "./control-ui-e2e-suite.test-support.ts"
 const suite = createControlUiE2eSuite({ name: "Control UI goal recovery" });
 
 suite.define(() => {
+  it("lets an invalid Goal edit be corrected without reload or recovery", async () => {
+    const artifacts = createControlUiE2eArtifactDir("goal-invalid-edit");
+    await suite.withPage(
+      { viewport: { width: 1440, height: 900 }, colorScheme: "light" },
+      async ({ page }) => {
+        const now = Date.now();
+        const goal = {
+          schemaVersion: 1,
+          id: "goal-edit",
+          objective: "Verify the sample deployment",
+          status: "paused",
+          createdAt: now,
+          updatedAt: now,
+          tokenStart: 0,
+          tokensUsed: 0,
+          continuationTurns: 0,
+        };
+        const method = "sessions.goal.update";
+        const gateway = await installMockGateway(page, {
+          sessionKey: "agent:main:main",
+          heldMethods: [method],
+          methodResponses: {
+            "sessions.list": {
+              ts: now,
+              path: "",
+              count: 1,
+              defaults: { model: "test-model", modelProvider: "test", contextTokens: 128_000 },
+              sessions: [
+                {
+                  key: "agent:main:main",
+                  sessionId: "goal-edit-session",
+                  kind: "direct",
+                  updatedAt: now,
+                  goal,
+                },
+              ],
+            },
+          },
+        });
+        await page.goto(`${suite.server.baseUrl}chat/main`);
+        await page.getByRole("button", { name: "Edit goal", exact: true }).click();
+        const objective = page.locator(".agent-chat__composer-combobox textarea");
+        const save = page.getByRole("button", { name: "Save goal", exact: true });
+        const invalid = page.getByText(
+          "Goal update is invalid. Check the objective and try again.",
+          { exact: true },
+        );
+        await objective.fill("x".repeat(16_001));
+        await save.click();
+        await expect
+          .poll(
+            async () =>
+              (await gateway.getRequests(method)).length > 0 || (await invalid.isVisible()),
+          )
+          .toBe(true);
+        // Model the Gateway's ordinary schema refusal if invalid input escapes the UI.
+        if ((await gateway.getRequests(method)).length > 0) {
+          await gateway.rejectDeferred(method, {
+            code: "INVALID_REQUEST",
+            message: "Invalid goal edit",
+          });
+          await expect.poll(() => save.isEnabled()).toBe(true);
+        }
+        await page.screenshot({ path: path.join(artifacts, "invalid-edit.png") });
+        expect(await invalid.isVisible()).toBe(true);
+        expect(await gateway.getRequests(method)).toHaveLength(0);
+        expect(await page.getByRole("button", { name: "Check outcome", exact: true }).count()).toBe(
+          0,
+        );
+
+        const corrected = "Verify only the sample deployment";
+        await objective.fill(corrected);
+        await save.click();
+        const request = await gateway.waitForRequest(method);
+        expect(request.params).toMatchObject({ action: "edit", objective: corrected });
+        await gateway.resolveDeferred(method, {
+          status: "updated",
+          goalId: goal.id,
+          goal: { ...goal, objective: corrected, updatedAt: now + 1 },
+        });
+        await expect.poll(() => save.count()).toBe(0);
+        await expect
+          .poll(() => page.locator(".agent-chat__goal-objective").textContent())
+          .toBe(corrected);
+        expect(await gateway.getRequests(method)).toHaveLength(1);
+        expect(await invalid.count()).toBe(0);
+        await page.screenshot({ path: path.join(artifacts, "corrected-edit.png") });
+      },
+    );
+  });
+
   it.each([
     { action: "pause", legacyScope: false },
     { action: "clear", legacyScope: false },
