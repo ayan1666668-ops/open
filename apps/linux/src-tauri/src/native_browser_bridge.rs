@@ -443,6 +443,67 @@ mod tests {
     use super::*;
 
     #[test]
+    fn queued_document_action_rechecks_authority_before_entering_its_side_effect() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::{mpsc, Arc};
+        use std::time::Duration;
+
+        let bridge = Arc::new(NativeBrowserBridgeState::default());
+        {
+            let mut state = bridge.inner.lock().unwrap();
+            state.generation = 1;
+            state.document = Some(DashboardDocument {
+                url: Url::parse("https://gateway.example/openclaw/").unwrap(),
+                token: "original-document".into(),
+                generation: 1,
+                ready: true,
+            });
+        }
+        let captured_generation = bridge
+            .inner
+            .lock()
+            .unwrap()
+            .document
+            .as_ref()
+            .unwrap()
+            .generation;
+        let side_effects = Arc::new(AtomicUsize::new(0));
+        let (queued, pending) = mpsc::channel();
+        let (release, resume) = mpsc::channel();
+        let queued_bridge = Arc::clone(&bridge);
+        let queued_effects = Arc::clone(&side_effects);
+        let request = tauri::async_runtime::spawn_blocking(move || {
+            queued.send(()).unwrap();
+            resume.recv_timeout(Duration::from_secs(5)).unwrap();
+            queued_bridge.with_document_authority(captured_generation, || {
+                queued_effects.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            })
+        });
+        pending.recv_timeout(Duration::from_secs(5)).unwrap();
+        {
+            let mut state = bridge.inner.lock().unwrap();
+            state.generation = 2;
+            let document = state.document.as_mut().unwrap();
+            document.generation = 2;
+            document.token = "replacement-document".into();
+        }
+        release.send(()).unwrap();
+        assert_eq!(
+            tauri::async_runtime::block_on(request).unwrap(),
+            Err("The desktop settings document changed.".into())
+        );
+        assert_eq!(side_effects.load(Ordering::SeqCst), 0);
+        bridge
+            .with_document_authority(2, || {
+                side_effects.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(side_effects.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
     fn dashboard_authority_requires_exact_origin_and_path_boundary() {
         let dashboard = Url::parse("https://gateway.example/openclaw/").unwrap();
         for (candidate, expected) in [

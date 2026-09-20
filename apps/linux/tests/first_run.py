@@ -493,7 +493,7 @@ def main():
         passed = False
         try:
             try:
-                # Desktop sharing observes four complete app lifecycles, including native Quit.
+                # Desktop sharing observes five complete app lifecycles, including native Quit.
                 timeout = 240 if args.desktop_sharing else 120
                 code = worker.wait(timeout=timeout)
             except subprocess.TimeoutExpired as error:

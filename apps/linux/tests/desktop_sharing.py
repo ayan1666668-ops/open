@@ -27,13 +27,15 @@ border-radius:8px;background:#253b50;color:white}#state{color:#82e5b4}
 <p id="enabled">Sharing enabled: unknown</p><p id="state">Sharing state: starting</p>
 <button id="enable">Enable desktop sharing</button><button id="disable">Disable desktop sharing</button>
 <button id="unrelated">Check unrelated controls</button><p id="checks"></p><p id="failure"></p>
+<button id="retain-authority">Retain dashboard authority</button><button id="stale-write">Check stale sharing write</button>
 </main><script>
 const instance=crypto.randomUUID();let unsupported=null;let trustedClicks=0;
+let retainedAuthority=false;let staleWriteRejected=null;
 let reportTail=Promise.resolve();
 const snapshot=()=>window.__OPENCLAW_NATIVE_DEVICE_SETTINGS__;
 const post=message=>window.webkit.messageHandlers.openclawDeviceSettings.postMessage(message);
 async function report(error=null){
-  const body=JSON.stringify({instance,path:location.pathname,snapshot:snapshot(),unsupported,trustedClicks,error});
+  const body=JSON.stringify({instance,path:location.pathname,snapshot:snapshot(),unsupported,trustedClicks,retainedAuthority,staleWriteRejected,error});
   // The threaded fixture server must observe native snapshots in their original order.
   const request=reportTail.then(()=>fetch('/fixture/desktop-report',{
     method:'POST',headers:{'Content-Type':'application/json'},body}));
@@ -61,6 +63,28 @@ document.getElementById('unrelated').onclick=event=>action(event,async()=>{
   }
   document.getElementById('checks').textContent='Unrelated controls rejected: '+unsupported.every(item=>item.rejected);
 });
+document.getElementById('retain-authority').onclick=event=>action(event,async()=>{
+  const response=await fetch('/fixture/retained-document',{method:'POST',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({token:window.__OPENCLAW_NATIVE_BROWSER_TOKEN__})});
+  if(!response.ok)throw Error('Could not retain the synthetic dashboard authority');
+  retainedAuthority=true;
+});
+document.getElementById('stale-write').onclick=event=>action(event,async()=>{
+  const response=await fetch('/fixture/retained-document');
+  if(!response.ok)throw Error('The prior synthetic dashboard authority is unavailable');
+  const {token}=await response.json();
+  if(token===window.__OPENCLAW_NATIVE_BROWSER_TOKEN__)throw Error('Expected a replaced dashboard document');
+  staleWriteRejected=false;
+  try{
+    await window.__TAURI_INTERNALS__.invoke('native_device_settings_request',{
+      token,message:{type:'set',key:'capabilities.desktopSharingEnabled',value:true}});
+  }catch(error){
+    if(String(error)!=='This desktop settings document is no longer current.')throw Error('Expected a stale dashboard authority rejection');
+    staleWriteRejected=true;
+  }
+  if(!staleWriteRejected)throw Error('A superseded dashboard changed desktop sharing');
+  await post({type:'status'});
+});
 window.addEventListener('openclaw:native-device-settings-changed',render);
 (async()=>{try{await post({type:'status'});render();}catch(error){await report(String(error));}})();
 </script></body></html>"""
@@ -74,16 +98,34 @@ class DesktopHandler(FixtureHandler):
         elif self.path in ("/fixture/", "/secondary/"):
             name = "Primary Gateway" if self.path == "/fixture/" else "Replacement Gateway"
             self.reply(200, DASHBOARD.replace("__NAME__", name).encode(), "text/html; charset=utf-8")
+        elif self.path == "/fixture/retained-document":
+            with self.server.report_lock:
+                token = self.server.retained_document_token
+            if token:
+                self.reply(200, json.dumps({"token": token}).encode(), "application/json")
+            else:
+                self.reply(404)
         else:
             self.reply(404)
 
     def do_POST(self):
         length = int(self.headers.get("Content-Length", "0"))
-        if self.path != "/fixture/desktop-report" or not 0 < length < 16384:
+        if self.path not in ("/fixture/desktop-report", "/fixture/retained-document") or not 0 < length < 16384:
             self.reply(400)
             return
         body = self.rfile.read(length).decode()
-        if any(secret in body for secret in self.server.fixture_credentials):
+        if self.path == "/fixture/retained-document":
+            token = json.loads(body).get("token")
+            if not isinstance(token, str) or not 0 < len(token) <= 256:
+                self.reply(400)
+                return
+            # Authority is retained only in private fixture memory, never proof reports.
+            with self.server.report_lock:
+                self.server.retained_document_token = token
+            self.reply(200, b"{}", "application/json")
+            return
+        secrets = (*self.server.fixture_credentials, self.server.retained_document_token)
+        if any(secret and secret in body for secret in secrets):
             self.server.failure = "A native snapshot disclosed a fixture credential"
             self.reply(400)
             return
@@ -100,6 +142,7 @@ class DesktopSharingFixture(GatewaySwitchFixture):
         self.RequestHandlerClass = DesktopHandler
         self.report_lock = threading.Lock()
         self.latest = None
+        self.retained_document_token = None
         self.fixture_credentials = (PRIMARY_TOKEN, SECONDARY_PASSWORD,
                                     "synthetic-stale-token", "synthetic-stale-password",
                                     "synthetic-stale-edge-id", "synthetic-stale-edge-secret")
@@ -260,6 +303,9 @@ class DesktopSharingFixture(GatewaySwitchFixture):
         click("Enable desktop sharing")
         self.wait_snapshot(True, "running")
         second = self.wait_run(2, "/fixture/")
+        click("Retain dashboard authority")
+        self.chrome.until(lambda: self.report().get("retainedAuthority") is True,
+                          "the current dashboard authority to be retained privately")
         self.open_native_menu(app, "Connection Settings")
         wait("Connection Settings", "heading")
         fill("Gateway URL", f"ws://127.0.0.1:{self.server_port}/secondary/")
@@ -298,6 +344,20 @@ class DesktopSharingFixture(GatewaySwitchFixture):
         self.chrome.record("saved sharing choice stays editable after a CLI config failure", True)
         self.capture("after-preparation-failure-disabled")
         config_failure.unlink()
+        click("Check stale sharing write")
+        self.chrome.until(lambda: self.report().get("staleWriteRejected") is True,
+                          "the registered native settings handler to reject the old dashboard")
+        stale_rejected = self.wait_snapshot(False, "off")
+        if len(self.starts()) != 4:
+            raise RuntimeError("The stale dashboard request launched another desktop CLI")
+        self.included.write_text("{}")
+        quit_app()
+        app = restart("openclaw://dashboard")
+        self.wait_snapshot(False, "off", previous_instance=stale_rejected["instance"], gateway_path="/secondary/")
+        if len(self.starts()) != 4:
+            raise RuntimeError("The stale dashboard request changed the persisted opt-out")
+        self.chrome.record("stale dashboard IPC preserves the saved opt-out without launching a child", True)
+        self.included.write_text(json.dumps({"enabled": False}))
         click("Enable desktop sharing")
         self.wait_snapshot(True, "running")
         fifth = self.wait_run(5, "/secondary/")
@@ -325,8 +385,9 @@ class DesktopSharingFixture(GatewaySwitchFixture):
             log = Path("app.log")
             if log.exists():
                 contents = log.read_text(errors="replace")
-                for secret in self.fixture_credentials:
-                    contents = contents.replace(secret, "[redacted]")
+                for secret in (*self.fixture_credentials, self.retained_document_token):
+                    if secret:
+                        contents = contents.replace(secret, "[redacted]")
                 log.write_text(contents)
             if self.artifacts_dir:
                 (self.artifacts_dir / "gateway-switch-results.json").unlink(missing_ok=True)

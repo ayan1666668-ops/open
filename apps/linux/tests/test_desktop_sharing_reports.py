@@ -59,7 +59,8 @@ const snapshot = (revision, state) => ({
   assert.equal(requests.length, 2, 'a failed report must not poison later reports');
   assert.deepEqual(JSON.parse(requests[1].options.body), {
     instance: 'synthetic-dashboard', path: '/fixture/', snapshot: snapshot(8, 'off'),
-    unsupported: null, trustedClicks: 0, error: 'synthetic diagnostic',
+    unsupported: null, trustedClicks: 0, retainedAuthority: false, staleWriteRejected: null,
+    error: 'synthetic diagnostic',
   });
   assert.equal(secondSettled, false, 'each report must await its own HTTP acknowledgement');
   requests[1].resolve({ok: true});
