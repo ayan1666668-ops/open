@@ -178,7 +178,9 @@ try {
               expect(fs.existsSync(observed.stateDir)).toBe(true);
             } finally {
               clearTimeout(timer);
-              if (mode === "release") fs.writeFileSync(release, "release");
+              if (mode === "release") {
+                fs.writeFileSync(release, "release");
+              }
             }
           },
         }),

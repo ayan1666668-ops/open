@@ -131,7 +131,9 @@ export async function runUpdateDoctorLintProcess(
       );
     }
     if ((result.termination === "exit" && result.code === exitCode) || stoppedDisposal) {
-      await new Promise<void>((resolve) => drainProcessOutput(resolve));
+      await new Promise<void>((resolve) => {
+        drainProcessOutput(resolve);
+      });
       if (outputError || callerAborted || callerSignal?.aborted) {
         throw new Error("Doctor lint output delivery or its caller failed after checks completed.");
       }

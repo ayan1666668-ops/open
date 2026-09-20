@@ -102,7 +102,9 @@ export function launchCanary(params: {
     child.once("exit", (code) => {
       processExited = true;
       // A failed leader cannot become a successful timeout while inherited pipes stay open.
-      if (code !== 0) resolve(code ?? 1);
+      if (code !== 0) {
+        resolve(code ?? 1);
+      }
     });
     child.once("error", (error) => {
       captureStderr(error.message);
