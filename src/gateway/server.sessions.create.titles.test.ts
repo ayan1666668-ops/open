@@ -251,6 +251,67 @@ test("successful naming survives setup failure and is shared with discussion ope
   }
 });
 
+test.each(["generated", "failed", "no-initial-turn"] as const)(
+  "creates a worktree from a session title or two-word fallback (%s)",
+  async (naming) => {
+    const root = tempDirs.make("openclaw-session-worktree-naming-");
+    const workspace = await initializeRepository(root, "workspace");
+    testState.agentConfig = { workspace };
+    const { storePath } = await createSessionStoreDir();
+    const context = {
+      chatAbortControllers: new Map<string, ChatAbortControllerEntry>(),
+      dedupe: new Map(),
+    };
+    const prompt = "Can you use the canvas feature to show a video on my screen?";
+    titleMocks.generate.mockImplementation(async () => {
+      if (naming === "failed") {
+        throw new Error("naming unavailable");
+      }
+      return "Canvas video and device presence";
+    });
+    dispatchInboundMessageMock.mockResolvedValue({
+      queuedFinal: false,
+      counts: { block: 0, final: 0, tool: 0 },
+    });
+    let key: string | undefined;
+    try {
+      const created = await directSessionReq<{ key: string }>(
+        "sessions.create",
+        {
+          agentId: "main",
+          worktree: true,
+          ...(naming === "no-initial-turn" ? { titleSource: prompt } : { message: prompt }),
+        },
+        { ...controlUiClient, context },
+      );
+      expect(created.ok, JSON.stringify(created.error)).toBe(true);
+      key = created.payload!.key;
+      await settleWorkspaceRuns(context, storePath, key);
+      const branch = managedWorktrees.findLiveByOwner("session", key)?.branch;
+      if (naming === "generated") {
+        expect(branch).toBe("openclaw/canvas-video-and-device-presence");
+      } else {
+        expect(branch).toMatch(/^openclaw\/[a-z]+-[a-z]+$/);
+      }
+      const entry = loadSessionEntry({ agentId: "main", sessionKey: key, storePath });
+      expect(entry?.worktree?.branch).toBe(branch);
+      if (naming === "failed") {
+        expect(branch).toBe(`openclaw/${entry?.displayName}`);
+      }
+    } finally {
+      await settleWorkspaceRuns(context, storePath, key, true);
+      const owned = key ? managedWorktrees.findLiveByOwner("session", key) : undefined;
+      if (owned) {
+        await managedWorktrees.remove({
+          id: owned.id,
+          reason: "test-cleanup",
+          allowSnapshotLoss: true,
+        });
+      }
+    }
+  },
+);
+
 test("sessions.create rejects another plugin's session before naming or worktree preparation", async () => {
   const root = tempDirs.make("openclaw-session-protected-title-");
   const workspace = await initializeRepository(root, "workspace");
