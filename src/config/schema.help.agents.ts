@@ -81,6 +81,16 @@ export const AGENT_FIELD_HELP: Record<string, string> = {
     "Optional lower-cost model (provider/model or alias) for short internal tasks such as generated titles and progress narration. Unset derives the primary provider's declared small model when available (otherwise the primary model); set to an empty string to disable utility routing.",
   "agents.entries.*.utilityModel":
     "Optional per-agent utility model override for short internal tasks. Overrides agents.defaults.utilityModel.",
+  "agents.defaults.turnContextCuration":
+    "Optional observation of oversized per-turn context using the configured Decision model. Off by default; shadow leaves model input and the transcript unchanged.",
+  "agents.defaults.turnContextCuration.mode":
+    "off disables evaluation; shadow records potential selection without applying it.",
+  "agents.defaults.turnContextCuration.minEstimatedTokens":
+    "Minimum estimated context tokens before evaluation (default: 16000). Estimates are not measured model usage.",
+  "agents.defaults.turnContextCuration.recentMessages":
+    "Recent messages always retained, including their complete tool groups (default: 4; minimum: 2).",
+  "agents.defaults.turnContextCuration.timeoutMs":
+    "Decision request deadline in milliseconds (default: 750; maximum: 5000). Caller cancellation wins.",
   "agents.defaults.decisionModel":
     "Optional provider/model for typed choices, scores, and boolean probabilities. Unset or empty disables decision calls. Supporting plugins send bounded task evidence to this provider; chat and utility models are unchanged.",
   "agents.entries.*.decisionModel":
@@ -222,7 +232,7 @@ export const AGENT_FIELD_HELP: Record<string, string> = {
     "Allow /plugins chat command to list discovered plugins and toggle plugin enablement in config (default: false).",
   "commands.debug": "Allow /debug chat command for runtime-only overrides (default: false).",
   "commands.restart":
-    "Allow /restart, /update, and external SIGUSR1 restart requests (default: true).",
+    "Allow /restart, /update, and external SIGUSR2 restart requests (default: true).",
   "commands.ownerAllowFrom":
     "Explicit owner allowlist for owner-scoped commands. Use channel-native IDs (optionally prefixed like \"whatsapp:+15551234567\"). '*' is ignored.",
   "commands.allowFrom":

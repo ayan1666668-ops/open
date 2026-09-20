@@ -219,6 +219,15 @@ export async function prepareEmbeddedAttemptHistory(
         fallbackReason: attempt.fallbackReason,
         degradedReason: attempt.degradedReason,
         transcriptReadFence,
+        ...(attempt.hostCapabilities
+          ? {
+              semanticCuration: {
+                config: attempt.config?.agents?.defaults?.turnContextCuration,
+                signal: input.runAbortController.signal,
+                assertActive: () => attempt.hostCapabilities?.assertActive(),
+              },
+            }
+          : {}),
         ...(attempt.prompt !== undefined ? { prompt } : {}),
       });
       if (!assembled) {
@@ -247,6 +256,8 @@ export async function prepareEmbeddedAttemptHistory(
         );
       }
     } catch (error) {
+      input.runAbortController.signal.throwIfAborted();
+      attempt.hostCapabilities?.assertActive();
       log.warn(`context engine assemble failed, using pipeline messages: ${String(error)}`);
     }
   }

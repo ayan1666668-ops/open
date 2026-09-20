@@ -198,6 +198,11 @@ export async function prepareCodexAttemptPrompt(context: CodexAttemptContext) {
       runtimeContext: buildActiveContextEngineRuntimeContext(),
       transcriptReadFence: params.userTurnTranscriptRecorder?.getAdmissionReceipt(),
       prompt: params.prompt,
+      semanticCuration: {
+        config: params.config?.agents?.defaults?.turnContextCuration,
+        signal: connection.runAbortController.signal,
+        assertActive: assertProjectionCurrent,
+      },
     });
     if (!assembled) {
       throw new Error("context engine assemble returned no result");
