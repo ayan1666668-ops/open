@@ -82,6 +82,61 @@ describe("pre-dispatch notice delivery", () => {
     });
   });
 
+  it.each([
+    ["declines", false],
+    ["throws", true],
+  ] as const)(
+    "starts the fallback timeout after the durable renderer %s",
+    async (_outcome, throws) => {
+      vi.useFakeTimers();
+      try {
+        let resolveDurable: ((handled: boolean) => void) | undefined;
+        const onPreDispatchNotice = vi.fn(() =>
+          throws
+            ? Promise.reject(new Error("durable renderer unavailable"))
+            : new Promise<boolean>((resolve) => {
+                resolveDurable = resolve;
+              }),
+        );
+        const onBlockReply = vi.fn(() => new Promise<void>(() => {}));
+        let settled = false;
+        const pending = deliverPreDispatchNotice({
+          notice: { text: "fallback budget" },
+          runId: `notice-test-session:fallback-${_outcome}`,
+          onPreDispatchNotice,
+          onBlockReply,
+          callbackTimeoutMs: 25,
+        });
+        void pending.then(
+          () => {
+            settled = true;
+          },
+          () => {
+            settled = true;
+          },
+        );
+
+        expect(onPreDispatchNotice).toHaveBeenCalledOnce();
+        if (throws) {
+          await vi.advanceTimersByTimeAsync(0);
+        } else {
+          await vi.advanceTimersByTimeAsync(100);
+          expect(onBlockReply).not.toHaveBeenCalled();
+          resolveDurable?.(false);
+          await vi.advanceTimersByTimeAsync(0);
+        }
+        expect(onBlockReply).toHaveBeenCalledOnce();
+
+        await vi.advanceTimersByTimeAsync(24);
+        expect(settled).toBe(false);
+        await vi.advanceTimersByTimeAsync(1);
+        await expect(pending).resolves.toBe("failed");
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
   it("fails open after a bounded callback wait and deduplicates a late success", async () => {
     let resolveCallback: (() => void) | undefined;
     const onBlockReply = vi.fn(

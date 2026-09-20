@@ -90,6 +90,18 @@ export async function deliverPreDispatchNotice(params: {
   if (!claimNotice(params.runId, claimedAt)) {
     return "skipped";
   }
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let startFallbackTimeout: (() => void) | undefined;
+  const timeoutPromise = onBlockReply
+    ? new Promise<"timeout">((resolve) => {
+        startFallbackTimeout = () => {
+          timer = setTimeout(
+            () => resolve("timeout"),
+            params.callbackTimeoutMs ?? DEFAULT_CALLBACK_TIMEOUT_MS,
+          );
+        };
+      })
+    : undefined;
   let deliveryPromise: Promise<void>;
   try {
     deliveryPromise = (async () => {
@@ -102,6 +114,10 @@ export async function deliverPreDispatchNotice(params: {
         // The callback's owner logs the persistence failure with its target.
       }
       if (!handledByHost) {
+        // Keep the durable callback as an awaited ordering boundary. If it
+        // declines or fails, start a fresh bounded budget for transport-only
+        // fallback at the point where that fallback begins.
+        startFallbackTimeout?.();
         if (!onBlockReply) {
           throw new Error("pre-dispatch notice host renderer did not handle the notice");
         }
@@ -147,20 +163,7 @@ export async function deliverPreDispatchNotice(params: {
     },
   );
 
-  let timer: ReturnType<typeof setTimeout> | undefined;
   let removeAbortListener: (() => void) | undefined;
-  // A host-owned renderer is a durable ordering boundary: allowing its
-  // callback to time out would let model dispatch race a late transcript
-  // append. Its callback is local host work and remains cancellation-bound;
-  // the timeout is retained for transport-only block delivery.
-  const timeoutPromise = params.onPreDispatchNotice
-    ? undefined
-    : new Promise<"timeout">((resolve) => {
-        timer = setTimeout(
-          () => resolve("timeout"),
-          params.callbackTimeoutMs ?? DEFAULT_CALLBACK_TIMEOUT_MS,
-        );
-      });
   const abortPromise = signal
     ? new Promise<"aborted">((_, reject) => {
         const onAbort = () => reject(signal.reason ?? new Error("aborted"));
