@@ -55,7 +55,9 @@ describe("FaceTime runtime admission", () => {
         }
         const event = incomingCall(status);
         helperParams.onMessage({ ...event, data: { ...event.data, ...data } });
-        await new Promise<void>((resolve) => setImmediate(resolve));
+        await new Promise<void>((resolve) => {
+          setImmediate(resolve);
+        });
 
         expect((await runtime.status()).calls).toEqual([]);
         expect(mocks.startTalk).not.toHaveBeenCalled();
