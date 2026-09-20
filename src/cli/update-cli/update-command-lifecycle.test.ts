@@ -380,7 +380,7 @@ describe("update plugin lifecycle lease boundaries", () => {
         expect(body).toContain("Reason code: doctor-failed");
         expect(body).toContain("Update mode: package");
         expect(body).toContain("Update target: 2026.9.4");
-        expect(body).toContain("Failed phase finalize:doctor: exit 23");
+        expect(body).toContain("Failed phase finalize-doctor: exit 23");
         expect(body).toContain(`Failing check doctor (doctor-failed): ${message}`);
         expect(body).toContain(
           "Recovery outcome: package rollback not needed: no package mutation",
@@ -484,7 +484,12 @@ describe("update plugin lifecycle lease boundaries", () => {
       });
 
       if (needsTargetRuntime) {
-        expect(mocks.events).toEqual(["target-convergence:false"]);
+        expect(mocks.events).toEqual([
+          "lease-enter:false",
+          "runtime-completion:true",
+          "lease-exit:false",
+          "target-convergence:false",
+        ]);
         expect(updatePluginsAfterCoreUpdate).not.toHaveBeenCalled();
       } else {
         expect(continuePostCoreUpdateInFreshProcess).not.toHaveBeenCalled();
