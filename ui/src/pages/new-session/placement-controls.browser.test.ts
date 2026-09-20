@@ -173,8 +173,9 @@ it.each([
             chevron.getBoundingClientRect().right
           : chevron.getBoundingClientRect().left -
             Math.max(...labelBoxes.map((labelBox) => labelBox.right));
-      expect(labelGap).toBeGreaterThanOrEqual(8);
+      expect(labelGap).toBeGreaterThanOrEqual(width <= 560 ? 4 : 8);
       if (width <= 560) {
+        expect(labelGap).toBeLessThanOrEqual(4.5);
         const availableWidth = trigger.closest<HTMLElement>(
           ".new-session-page__select",
         )!.clientWidth;
@@ -186,6 +187,26 @@ it.each([
         ).some((label) => label.scrollWidth > label.clientWidth + 1);
         if (overflows) {
           expect(box.width).toBeCloseTo(availableWidth * 0.9, 0);
+        } else {
+          const textBoxes = Array.from(
+            trigger.querySelectorAll<HTMLElement>(
+              ".new-session-page__trigger-label, .new-session-page__trigger-summary",
+            ),
+            (label) => {
+              const range = document.createRange();
+              range.selectNodeContents(label);
+              return range.getBoundingClientRect();
+            },
+          );
+          const visibleGap =
+            direction === "rtl"
+              ? Math.min(...textBoxes.map((textBox) => textBox.left)) -
+                chevron.getBoundingClientRect().right
+              : chevron.getBoundingClientRect().left -
+                Math.max(...textBoxes.map((textBox) => textBox.right));
+          // The fade padding and chevron margin form one spacing budget.
+          expect(visibleGap).toBeGreaterThanOrEqual(4);
+          expect(visibleGap).toBeLessThanOrEqual(12.5);
         }
       }
       for (const label of trigger.querySelectorAll<HTMLElement>(

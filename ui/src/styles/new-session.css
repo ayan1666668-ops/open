@@ -1371,15 +1371,15 @@ wa-popover.new-session-page__where-popover::part(body) {
   .new-session-page__trigger-label,
   .new-session-page__trigger-summary {
     /* Padding keeps fitting text out of the fade; only overflow reaches the tail. */
-    padding-inline-end: 16px;
+    padding-inline-end: 8px;
     white-space: nowrap;
     text-overflow: clip;
-    mask-image: linear-gradient(to right, black calc(100% - 16px), transparent);
+    mask-image: linear-gradient(to right, black calc(100% - 8px), transparent);
   }
 
   .new-session-page__trigger-label:dir(rtl),
   .new-session-page__trigger-summary:dir(rtl) {
-    mask-image: linear-gradient(to left, black calc(100% - 16px), transparent);
+    mask-image: linear-gradient(to left, black calc(100% - 8px), transparent);
   }
 
   .new-session-page__trigger {
@@ -1442,7 +1442,7 @@ wa-popover.new-session-page__where-popover::part(body) {
 
   .new-session-page__trigger-chevron--mobile {
     display: inline-flex;
-    margin-inline-start: 12px;
+    margin-inline-start: 4px;
   }
 
   .new-session-page__trigger-chevron--mobile svg {
