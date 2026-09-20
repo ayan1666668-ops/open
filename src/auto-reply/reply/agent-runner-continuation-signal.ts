@@ -1,12 +1,13 @@
 import type { SessionEntry } from "../../config/sessions.js";
 import { emitContinuationDisabledSpan } from "../../infra/continuation-tracer.js";
 import { generateChainId } from "../../infra/secure-random.js";
-import { enqueueSystemEventRaw as enqueueSystemEvent } from "../../infra/system-events.js";
+import { enqueueSystemEvent } from "../../infra/system-events.js";
 import { defaultRuntime } from "../../runtime.js";
 import { resolveLiveContinuationRuntimeConfig } from "../continuation/config.js";
 import { stagePostCompactionDelegate } from "../continuation/delegate-store-post-compaction.js";
 import { enqueuePendingDelegate, pendingDelegateCount } from "../continuation/delegate-store.js";
 import type { ContinuationSignalExtraction } from "../continuation/signal.js";
+import { withContinuationOwner } from "../continuation/system-event-ownership.js";
 import { hasCrossSessionDelegateTargeting } from "../continuation/targeting-pure.js";
 import type { ChainState, ContinueWorkRequest } from "../continuation/types.js";
 import { emitBracketContinuationRejected } from "./agent-runner-continuation-diag.js";
@@ -101,7 +102,7 @@ export async function handleContinuationSignal(context: {
     const taskEcho = formatDelegateEchoForSystemEvent(effectiveContinuationSignal.task);
     enqueueSystemEvent(
       `[continuation:delegate-staged-post-compaction] Bracket delegate staged for post-compaction release: ${taskEcho}`,
-      { sessionKey, trusted: true },
+      withContinuationOwner({ sessionKey, trusted: true }, followupRun.run.agentId),
     );
   } else if (continuationRuntimeConfig.enabled && effectiveContinuationSignal && sessionKey) {
     const {
@@ -121,6 +122,7 @@ export async function handleContinuationSignal(context: {
       // chainId passes through as-is.
       emitBracketContinuationRejected({
         sessionKey,
+        ownerAgentId: followupRun.run.agentId,
         signal: effectiveContinuationSignal,
         defaultDelayMs,
         chainId: activeSessionEntry?.continuationChainId,
@@ -138,6 +140,7 @@ export async function handleContinuationSignal(context: {
       if (costCapTokens > 0 && accumulatedChainTokens > costCapTokens) {
         emitBracketContinuationRejected({
           sessionKey,
+          ownerAgentId: followupRun.run.agentId,
           signal: effectiveContinuationSignal,
           defaultDelayMs,
           chainId: activeSessionEntry?.continuationChainId,
@@ -179,7 +182,7 @@ export async function handleContinuationSignal(context: {
             enqueueSystemEvent(
               "[continuation] Delegate rejected: cross-session targeting is disabled by policy. " +
                 'Use the default return target, targetSessionKey set to this session, or fanoutMode="tree".',
-              { sessionKey, trusted: true },
+              withContinuationOwner({ sessionKey, trusted: true }, followupRun.run.agentId),
             );
             emitContinuationDisabledSpan({
               chainId: activeSessionEntry?.continuationChainId,
@@ -363,7 +366,7 @@ export async function handleContinuationSignal(context: {
               bracketTokensAccumulated = false;
               enqueueSystemEvent(
                 "[continuation] continue_work election(s) were not scheduled because chain state could not be persisted.",
-                { sessionKey, trusted: true },
+                withContinuationOwner({ sessionKey, trusted: true }, followupRun.run.agentId),
               );
               defaultRuntime.log(
                 `[continuation] Skipping continue_work scheduling after chain-state persistence failure for session ${sessionKey}: ${String(err)}`,
@@ -410,7 +413,7 @@ export async function handleContinuationSignal(context: {
                   );
                   enqueueSystemEvent(
                     "[continuation] continue_work chain-state rollback failed; the reserved budget remains fail-closed.",
-                    { sessionKey, trusted: true },
+                    withContinuationOwner({ sessionKey, trusted: true }, followupRun.run.agentId),
                   );
                   return false;
                 }
@@ -465,7 +468,7 @@ export async function handleContinuationSignal(context: {
                     );
                     enqueueSystemEvent(
                       "[continuation] continue_work scheduling failed; the reserved chain budget remains fail-closed.",
-                      { sessionKey, trusted: true },
+                      withContinuationOwner({ sessionKey, trusted: true }, followupRun.run.agentId),
                     );
                   }
                 }
@@ -509,7 +512,7 @@ export async function handleContinuationSignal(context: {
                   if (batchResult.cappedCount > 0 && workRequests.length > 1) {
                     enqueueSystemEvent(
                       `[continuation] ${batchResult.cappedCount} of ${workRequests.length} continue_work elections were not scheduled (chain/cost/pending cap).`,
-                      { sessionKey, trusted: true },
+                      withContinuationOwner({ sessionKey, trusted: true }, followupRun.run.agentId),
                     );
                   }
                 }
