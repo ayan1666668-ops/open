@@ -26,8 +26,24 @@ type DuplicateSuffix = {
   label: string;
 };
 
-export function renderMessageJson(json: MarkdownJson, options: MarkdownRenderOptions) {
-  return html`<div class="chat-text">${unsafeHTML(toSanitizedJsonHtml(json, options))}</div>`;
+type MessageTextOptions = {
+  role: string;
+  isStreaming: boolean;
+  isForwarded?: boolean;
+  isUserMessageExpanded?: (messageId: string) => boolean;
+  onToggleUserMessageExpanded?: (messageId: string) => void;
+  assistantMessageDisclosure?: AssistantMessageDisclosure;
+};
+
+export function renderMessageJson(
+  json: MarkdownJson,
+  messageKey: string,
+  opts: MessageTextOptions,
+  options: MarkdownRenderOptions,
+) {
+  const parts = [toSanitizedJsonHtml(json, options)];
+  const text = html`<div class="chat-text">${unsafeHTML(parts[0])}</div>`;
+  return renderMessageDisclosure(json.text, messageKey, opts, text, parts);
 }
 
 // Character length owns normal disclosure; this high line cap only bounds newline-heavy prompts.
@@ -227,14 +243,7 @@ function messageOverflowRef(expanded: boolean, forwarded: boolean) {
 export function renderMessageMarkdown(
   markdown: string,
   messageKey: string,
-  opts: {
-    role: string;
-    isStreaming: boolean;
-    isForwarded?: boolean;
-    isUserMessageExpanded?: (messageId: string) => boolean;
-    onToggleUserMessageExpanded?: (messageId: string) => void;
-    assistantMessageDisclosure?: AssistantMessageDisclosure;
-  },
+  opts: MessageTextOptions,
   markdownRenderOptions: MarkdownRenderOptions,
   duplicateSuffix?: DuplicateSuffix,
   media?: MarkdownMedia,
@@ -269,11 +278,21 @@ export function renderMessageMarkdown(
       </div>
     `;
   }
+  return renderMessageDisclosure(markdown, messageKey, opts, text, parts);
+}
+
+function renderMessageDisclosure(
+  source: string,
+  messageKey: string,
+  opts: MessageTextOptions,
+  text: ReturnType<typeof html>,
+  parts: readonly string[],
+) {
   if (
     !opts.onToggleUserMessageExpanded ||
     (opts.isForwarded
       ? opts.isStreaming
-      : opts.role !== "user" || !shouldCollapseUserMessage(markdown))
+      : opts.role !== "user" || !shouldCollapseUserMessage(source))
   ) {
     return text;
   }

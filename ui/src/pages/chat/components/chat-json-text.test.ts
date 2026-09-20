@@ -280,6 +280,48 @@ function renderJsonMessageGroup(
 }
 
 describe("JSON group DOM retention", () => {
+  it.each([
+    {
+      name: "character-heavy",
+      text: '{"id":9007199254740993,"prompt":"' + "x".repeat(1_300) + '"}',
+    },
+    {
+      name: "newline-heavy",
+      text: "[\n" + Array.from({ length: 45 }, () => "0").join(",\n") + "\n]",
+    },
+  ])("uses message disclosure for $name user JSON without JSON controls", ({ text }) => {
+    const container = createContainer();
+    const message = { role: "user", content: text, timestamp: 1 };
+    const onToggleUserMessageExpanded = vi.fn();
+    let expanded = false;
+    const rerender = () =>
+      renderJsonMessageGroup(container, message, "user", {
+        isUserMessageExpanded: () => expanded,
+        onToggleUserMessageExpanded,
+      });
+    rerender();
+    const disclosure = expectElement(container, ".chat-message-disclosure", HTMLElement);
+    const toggle = expectElement(disclosure, ".chat-message-disclosure__toggle", HTMLButtonElement);
+    const code = expectElement(disclosure, ".chat-text pre code", HTMLElement);
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(code.textContent).toBe(text);
+    expect(
+      container.querySelector(
+        ".code-block-json-tree, .code-block-json-mode, .code-block-copy, .code-block-wrap, .code-block-expand",
+      ),
+    ).toBeNull();
+    toggle.click();
+    expect(onToggleUserMessageExpanded).toHaveBeenCalledWith("user-message:user-message");
+    expanded = true;
+    rerender();
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(disclosure.classList.contains("is-expanded")).toBe(true);
+    expect(disclosure.querySelector("pre code")).toBe(code);
+    expanded = false;
+    rerender();
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(code.textContent).toBe(text);
+  });
   it("preserves the user JSON code DOM across rerenders without controls", () => {
     const container = createContainer();
     const message = { role: "user", content: '{"ok":true}', timestamp: 1 };

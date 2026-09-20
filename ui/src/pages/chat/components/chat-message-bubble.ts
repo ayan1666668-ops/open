@@ -464,7 +464,12 @@ export function renderGroupedMessage(
     asyncQuestions
       ? renderAsyncQuestionSummary(asyncQuestions, opts.asyncQuestions!)
       : jsonResult
-        ? renderMessageJson(jsonResult, markdownRenderOptions)
+        ? renderMessageJson(
+            jsonResult,
+            messageKey,
+            { ...opts, role: isStandaloneToolMessage ? "tool" : normalizedRole },
+            markdownRenderOptions,
+          )
         : bodyMarkdown
           ? renderMessageMarkdown(
               bodyMarkdown,

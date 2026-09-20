@@ -144,7 +144,12 @@ function renderNewSessionSubmission(
           ${renderAssistantAttachments(attachments, imageOptions, undefined, undefined, false)}
           ${
             json
-              ? renderMessageJson(json, { codeBlockChrome: "none" })
+              ? renderMessageJson(
+                  json,
+                  key,
+                  { role: "user", isStreaming: false },
+                  { codeBlockChrome: "none" },
+                )
               : markdown
                 ? renderMessageMarkdown(
                     markdown,

@@ -156,4 +156,85 @@ suite("Control UI JSON tree and source views", () => {
       }
     },
   );
+  it("bounds long user JSON with message disclosure and no JSON controls", async () => {
+    const context = await browser.newContext({
+      colorScheme: "dark",
+      locale: "en-US",
+      serviceWorkers: "block",
+      viewport: { width: 1280, height: 1000 },
+    });
+    try {
+      const page = await context.newPage();
+      const text = JSON.stringify(
+        {
+          example: "Long user JSON stays bounded",
+          rows: Array.from({ length: 45 }, (_, index) => ({
+            item: "Entry " + index,
+            enabled: true,
+          })),
+        },
+        null,
+        2,
+      );
+      const gateway = await installMockGateway(page, {
+        historyMessages: [
+          {
+            role: "user",
+            content: text,
+            timestamp: 1000,
+            __openclaw: { id: "long-json-user", seq: 1 },
+          },
+          {
+            role: "assistant",
+            content: "Ready to inspect the JSON.",
+            timestamp: 2000,
+            __openclaw: { id: "long-json-reply", seq: 2 },
+          },
+        ],
+      });
+      await page.goto(server.baseUrl + "chat");
+      await gateway.waitForRequest("chat.startup");
+      const bubble = page.locator('.chat-bubble[data-entry-id="long-json-user"]');
+      await bubble.waitFor({ state: "visible" });
+      await bubble.evaluate((element) => element.scrollIntoView({ block: "start" }));
+      expect(await bubble.locator("pre code").textContent()).toBe(text);
+      if (process.env.OPENCLAW_CAPTURE_UI_PROOF === "1") {
+        const proofDir = createControlUiE2eArtifactDir("chat-user-json-disclosure");
+        const stage = process.env.OPENCLAW_CODE_FENCE_PROOF_STAGE ?? "after";
+        await page
+          .locator("openclaw-chat-pane.chat-pane-cache__pane--active .chat-thread")
+          .screenshot({
+            animations: "disabled",
+            path: path.join(proofDir, stage + "-user-json.png"),
+          });
+      }
+      const toggle = bubble.locator(".chat-message-disclosure__toggle");
+      const content = bubble.locator(".chat-message-disclosure__content");
+      await expect.poll(() => toggle.isVisible()).toBe(true);
+      expect(await toggle.getAttribute("aria-expanded")).toBe("false");
+      await expect
+        .poll(() => content.evaluate((element) => element.scrollHeight > element.clientHeight + 1))
+        .toBe(true);
+      expect(
+        await bubble
+          .locator(
+            ".code-block-json-tree, .code-block-json-mode, .code-block-copy, .code-block-expand, .code-block-wrap",
+          )
+          .count(),
+      ).toBe(0);
+      await toggle.click();
+      await expect.poll(() => toggle.getAttribute("aria-expanded")).toBe("true");
+      await expect
+        .poll(() => content.evaluate((element) => element.scrollHeight <= element.clientHeight + 1))
+        .toBe(true);
+      expect(await bubble.locator("pre code").textContent()).toBe(text);
+      await toggle.click();
+      await expect.poll(() => toggle.getAttribute("aria-expanded")).toBe("false");
+      await expect
+        .poll(() => content.evaluate((element) => element.scrollHeight > element.clientHeight + 1))
+        .toBe(true);
+    } finally {
+      await context.close();
+    }
+  });
 });

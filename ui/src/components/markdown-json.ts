@@ -61,11 +61,12 @@ export function renderMarkdownJsonTree({ text, root }: MarkdownJson): string {
     escapeMarkdownHtml(text.slice(node.offset, node.offset + node.length));
   const renderNode = (node: Node, depth: number, prefix = "", suffix = ""): string => {
     const children = node.children ?? [];
-    if ((node.type !== "object" && node.type !== "array") || children.length === 0) {
-      const tone = node.type === "string" ? "string" : node.type === "null" ? "null" : "literal";
+    const type = node.type;
+    const array = type === "array";
+    if ((type !== "object" && !array) || children.length === 0) {
+      const tone = type === "string" || type === "null" ? type : "literal";
       return `${prefix}<span class="code-block-json-value--${tone}">${literal(node)}</span>${suffix}`;
     }
-    const array = node.type === "array";
     const opening = array ? "[" : "{";
     const closing = array ? "]" : "}";
     const summary = t(
@@ -78,8 +79,9 @@ export function renderMarkdownJsonTree({ text, root }: MarkdownJson): string {
     );
     const rows = children
       .map((child, index) => {
-        const key = child.type === "property" ? child.children?.[0] : undefined;
-        const value = child.type === "property" ? child.children?.[1] : child;
+        const property = child.type === "property";
+        const key = property ? child.children?.[0] : undefined;
+        const value = property ? child.children?.[1] : child;
         // Only an error-free AST reaches rendering; properties own a key and value.
         if (!value) {
           return "";
