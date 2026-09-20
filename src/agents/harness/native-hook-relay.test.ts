@@ -2288,6 +2288,8 @@ describe("native hook relay registry", () => {
         },
       });
 
+      // Cold locator startup must not consume this byte-limit fixture's caller deadline.
+      vi.spyOn(Date, "now").mockReturnValue(Date.now());
       await expect(
         invokeNativeHookRelayBridge({
           provider: "codex",
