@@ -436,8 +436,9 @@ When bundle MCP is enabled, OpenClaw:
 - loads enabled bundle-MCP servers for the current workspace and merges them with any existing backend MCP config or settings shape
 - rewrites the launch config using the backend-owned integration mode from the owning plugin.
 
-After configuration hot reloads, the bridge resolves tools from the current plugin
-runtime without restarting its listener. Retired plugin instances remain unavailable.
+After plugin replacement, new CLI turns resolve bridge tools against the current
+plugin generation without restarting the listener. Retired plugin instances remain
+unavailable, and each turn still needs its own active context grant.
 
 With the Gateway's MCP bridge, channel-origin CLI turns can use the `message`
 tool for permitted reads and same-conversation actions, including reactions. The
