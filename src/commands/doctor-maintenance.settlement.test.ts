@@ -48,7 +48,8 @@ vi.mock("../config/config.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../config/config.js")>()),
   readConfigFileSnapshot: async () => ({ config: {} }),
 }));
-vi.mock("./doctor-service-repair-policy.js", () => ({
+vi.mock("./doctor-service-repair-policy.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./doctor-service-repair-policy.js")>()),
   shouldManageGatewayService: async () => true,
   isServiceRepairExternallyManaged: () => false,
   resolveUpdateParentGatewayActivation: () => undefined,
@@ -168,7 +169,6 @@ beforeEach(() => {
     runtime: { status: "stopped" },
   });
   boundary.health.mockResolvedValue({ healthy: true });
-  boundary.revalidate.mockResolvedValue(stopped.serviceUpdateVerdict);
   boundary.native.mockImplementation(() => {
     throw new Error("Doctor settlement controls cannot start or inspect native processes");
   });

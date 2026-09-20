@@ -142,6 +142,7 @@ async function runInstallationCase(params: {
   initiallyStopped?: boolean;
   releaseStateBeforeFinish?: boolean;
   inspectionFailure?: "unavailable" | "lost-before-install";
+  restorationInspectionFailure?: "read-error" | "unknown-runtime";
   inspectionScenario?: "slow-admission" | "competing-update";
   invocationPort?: string;
   profile?: string;
@@ -238,6 +239,7 @@ async function runInstallationCase(params: {
           ...(params.profile ? { OPENCLAW_PROFILE: params.profile } : {}),
         },
       };
+      const originalCommand = structuredClone(command);
       let running = !initiallyStopped;
       let nativeInspectionReads = 0;
       let inspectionClock = 0;
@@ -248,12 +250,22 @@ async function runInstallationCase(params: {
       const service = createMockGatewayService({
         isAbsent: async () => false,
         isLoaded: async () => true,
-        readCommand: async () => command,
+        readCommand: async () => {
+          if (
+            params.restorationInspectionFailure === "read-error" &&
+            events.includes("repair-state")
+          ) {
+            throw new Error("Synthetic restoration command inspection failed");
+          }
+          return command;
+        },
         readRuntime: async (env, opts) => {
           nativeInspectionReads += 1;
           if (
             params.inspectionFailure === "unavailable" ||
-            (params.inspectionFailure === "lost-before-install" && nativeInspectionReads > 1)
+            (params.inspectionFailure === "lost-before-install" && nativeInspectionReads > 1) ||
+            (params.restorationInspectionFailure === "unknown-runtime" &&
+              events.includes("repair-state"))
           ) {
             return { status: "unknown" };
           }
@@ -292,6 +304,10 @@ async function runInstallationCase(params: {
         stop: async () => {
           events.push("stop");
           running = false;
+        },
+        start: async () => {
+          events.push("start");
+          running = true;
         },
         install: async (plan) => {
           expect(getOpenClawDatabaseMaintenanceScope()).toBeUndefined();
@@ -436,6 +452,19 @@ async function runInstallationCase(params: {
           return;
         }
         expect(finishError).toBeUndefined();
+        if (params.restorationInspectionFailure) {
+          expect(events).toEqual(["stop", "repair-state"]);
+          expect(running).toBe(false);
+          expect(command).toEqual(originalCommand);
+          expect(maintenance?.warnings).toEqual([expect.stringContaining("could not reconcile")]);
+          expect(maintenance?.warnings?.[0]).toContain("state compatibility is unverified");
+          expect(runtime.log).toHaveBeenCalledWith(maintenance?.warnings?.[0]);
+          expect(runtime.log).not.toHaveBeenCalledWith(
+            "Gateway restarted and verified after Doctor repair.",
+          );
+          expect(mocks.health).not.toHaveBeenCalled();
+          return;
+        }
         if (params.inspectionScenario === "slow-admission") {
           expect(installationInspectionElapsedMs.length).toBeGreaterThan(0);
           for (const elapsed of installationInspectionElapsedMs) {
@@ -500,6 +529,16 @@ it.each(["success", "install-failed", "already-stopped"] as const)(
       mode: "maintenance",
       installFails: scenario === "install-failed",
       initiallyStopped: scenario === "already-stopped",
+    }),
+);
+
+it.each(["read-error", "unknown-runtime"] as const)(
+  "keeps the old installation stopped after inconclusive restoration inspection (%s)",
+  async (restorationInspectionFailure) =>
+    runInstallationCase({
+      platform: "linux",
+      mode: "maintenance",
+      restorationInspectionFailure,
     }),
 );
 

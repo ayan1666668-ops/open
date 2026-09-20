@@ -139,6 +139,7 @@ export async function revalidateManagedGatewayServiceAfterUpdate(params: {
       state: params.state,
       root: verdict.root,
       retainedCommand: true,
+      allowIncompleteInspection: params.allowIncompleteInspection,
     });
     // A verified core install can replace its root before rewriting the launcher.
     // Pin the original command even when pnpm has removed its old package directory.
@@ -147,6 +148,7 @@ export async function revalidateManagedGatewayServiceAfterUpdate(params: {
         { ...before, serviceUpdateVerdict: { ...verdict, refreshDefinition: false } },
         params.state,
         retained,
+        params.allowIncompleteInspection,
       )
     ) {
       return { ...verdict, requiresInstallRootRefresh: true };

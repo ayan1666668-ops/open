@@ -2,14 +2,13 @@
 import path from "node:path";
 import { formatCliCommand } from "../cli/command-format.js";
 import type { PreManagedServiceStop } from "../cli/update-cli/update-command-service-maintenance.js";
-import { isDefaultInstallIdentity, resolveConfigPath, resolveStateDir } from "../config/paths.js";
+import { isDefaultInstallIdentity } from "../config/paths.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import {
   ServiceInspectionError,
   findServiceOwnershipRefusal,
 } from "../daemon/service-inspection-error.js";
 import { GatewayServiceAuthorityError } from "../daemon/service-update-authority.js";
-import { resolvePathViaExistingAncestorSync } from "../infra/boundary-path.js";
 import { formatErrorMessage } from "../infra/errors.js";
 import { assertLegacyGatewayStoppedForMaintenance } from "../infra/gateway-lock-legacy.js";
 import { readActiveGatewayLockIdentity } from "../infra/gateway-lock.js";
@@ -42,6 +41,7 @@ import {
 import type { DoctorOptions } from "./doctor-prompter.js";
 import { isDoctorUpdateRepairMode, resolveDoctorRepairMode } from "./doctor-repair-mode.js";
 import {
+  assertDoctorServiceSelection,
   isServiceRepairExternallyManaged,
   resolveUpdateParentGatewayActivation,
   shouldManageGatewayService,
@@ -50,21 +50,6 @@ import {
   recordUpdateDoctorRefusal,
   resolveUpdateDoctorGitRecovery,
 } from "./doctor-update-refusal.js";
-
-function assertDoctorServiceSelection(env: NodeJS.ProcessEnv, serviceEnv: NodeJS.ProcessEnv): void {
-  const selection = (candidate: NodeJS.ProcessEnv) => {
-    const stateDir = resolveStateDir(candidate);
-    return [stateDir, resolveConfigPath(candidate, stateDir)].map((value) =>
-      resolvePathViaExistingAncestorSync(value),
-    );
-  };
-  const before = selection(env);
-  if (selection(serviceEnv).some((value, index) => value !== before[index])) {
-    throw new Error(
-      "Doctor and the managed Gateway select different config or state directories. Run doctor with the Gateway's installation and profile; the service was left unchanged.",
-    );
-  }
-}
 
 function assertDoctorMaintenanceInspection(
   inspection: PreManagedServiceStop,
