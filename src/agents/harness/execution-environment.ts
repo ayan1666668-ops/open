@@ -39,7 +39,7 @@ type ExecutionRestriction = {
 };
 
 /** Selection and invocation share this decision; a native working directory is not containment. */
-export function resolveAgentHarnessExecutionRestriction(
+function resolveAgentHarnessExecutionRestriction(
   harness: Pick<AgentHarness, "id" | "label" | "executionEnvironment">,
   facts: ExecutionEnvironmentFacts,
 ): ExecutionRestriction | undefined {
