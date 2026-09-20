@@ -11,7 +11,11 @@ import textCss from "../../../styles/chat/text.css?inline";
 const containers: HTMLElement[] = [];
 const originalCopy = en.chat.pairingQrExpired;
 afterEach(() => {
-  en.chat.pairingQrExpired = originalCopy;
+  if (originalCopy === undefined) {
+    delete en.chat.pairingQrExpired;
+  } else {
+    en.chat.pairingQrExpired = originalCopy;
+  }
   for (const container of containers.splice(0)) {
     render(nothing, container);
     container.remove();
