@@ -796,6 +796,7 @@ export function createOpenClawCodingToolsInternal(
     ...(options?.trace ? { trace: options.trace } : {}),
     loopDetection: resolveToolLoopDetectionConfig({ cfg: options?.config, agentId }),
     onToolOutcome: options?.onToolOutcome,
+    semanticNoProgressObserver: options?.semanticNoProgressObserver,
     allocateToolOutcomeOrdinal: options?.allocateToolOutcomeOrdinal,
   };
   // NOTE: Keep canonical (lowercase) tool names here. Provider transports remap on the wire.

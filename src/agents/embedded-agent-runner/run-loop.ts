@@ -15,6 +15,7 @@ import {
   selectContextEngineForTranscriptHost,
 } from "../harness/context-engine-logical-turn.js";
 import { drainPendingContextEngineTurnsBeforeRun } from "../harness/context-engine-turn-attempt.js";
+import { createSemanticNoProgressObserver } from "../semantic-no-progress.js";
 import { resolveToolLoopDetectionConfig } from "../tool-loop-detection-config.js";
 import { normalizeUsage } from "../usage.js";
 import { log } from "./logger.js";
@@ -184,6 +185,23 @@ export async function runPreparedEmbeddedLoop(
   const postCompactionGuard = createPostCompactionLoopGuard({
     enabled: resolvedLoopDetectionConfig?.enabled !== false,
   });
+  const semanticNoProgressObserver =
+    resolvedLoopDetectionConfig?.enabled === true &&
+    resolvedLoopDetectionConfig.semanticNoProgress === "shadow" &&
+    Boolean(assertAdmittedActive)
+      ? createSemanticNoProgressObserver({
+          signal: input.laneController.abortSignal,
+          assertActive: () => {
+            input.laneController.abortSignal.throwIfAborted();
+            if (!assertAdmittedActive) {
+              throw new Error("embedded run requires an active admitted run");
+            }
+            assertAdmittedActive();
+          },
+          agentId: sessionAgentId,
+          goal: params.currentInboundContext?.text ?? params.prompt,
+        })
+      : undefined;
   let postCompactionAbortController: AbortController | undefined;
   let postCompactionAbortError: PostCompactionLoopPersistedError | undefined;
   // Presentation survives retry attempts, but a newer tool result must clear stale text.
@@ -370,6 +388,7 @@ export async function runPreparedEmbeddedLoop(
             bootstrapPromptWarningSignaturesSeen,
             resolveRuntimeFallbackReason,
             observeToolOutcome,
+            semanticNoProgressObserver,
             isTurnTainted: turnTaintState.isTainted,
             allocateToolOutcomeOrdinal: terminalToolPresentation.allocateOrdinal,
             getPostCompactionAbortError: () => postCompactionAbortError,
@@ -693,6 +712,7 @@ export async function runPreparedEmbeddedLoop(
       return terminalResolution.result;
     }
   } finally {
+    await semanticNoProgressObserver?.close();
     // Successful registration already cleared the marker; every earlier exit
     // must restore terminal suppression before asynchronous settlement begins.
     contextRecoveryState.restoreTimeoutRecoveryAbandonment();

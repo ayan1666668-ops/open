@@ -67,6 +67,7 @@ export async function prepareAndDispatchEmbeddedRunAttempt(input: {
   bootstrapPromptWarningSignaturesSeen: string[];
   resolveRuntimeFallbackReason: () => string | null;
   observeToolOutcome: ToolOutcomeObserver;
+  semanticNoProgressObserver?: EmbeddedRunAttemptParams["semanticNoProgressObserver"];
   isTurnTainted: () => boolean;
   allocateToolOutcomeOrdinal: NonNullable<EmbeddedRunAttemptParams["allocateToolOutcomeOrdinal"]>;
   getPostCompactionAbortError: () => Error | undefined;
@@ -569,6 +570,7 @@ export async function prepareAndDispatchEmbeddedRunAttempt(input: {
     agentId: workspaceResolution.agentId,
     thinkLevel: runtime.thinkLevel,
     onToolOutcome: input.observeToolOutcome,
+    semanticNoProgressObserver: input.semanticNoProgressObserver,
     isTurnTainted: input.isTurnTainted,
     allocateToolOutcomeOrdinal: input.allocateToolOutcomeOrdinal,
     onToolStreamBoundary: maybeAnnounceFastModeAutoOff,

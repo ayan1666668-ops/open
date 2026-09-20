@@ -344,6 +344,9 @@ export function createAgentHarnessHostCapabilities(params: {
     ...(skillsSnapshot ? { skillsSnapshot } : {}),
     ...(skillUsagePaths ? { skillUsagePaths } : {}),
     ...(attempt.onToolOutcome ? { onToolOutcome: attempt.onToolOutcome } : {}),
+    ...(attempt.semanticNoProgressObserver
+      ? { semanticNoProgressObserver: attempt.semanticNoProgressObserver }
+      : {}),
     ...(attempt.allocateToolOutcomeOrdinal
       ? { allocateToolOutcomeOrdinal: attempt.allocateToolOutcomeOrdinal }
       : {}),
