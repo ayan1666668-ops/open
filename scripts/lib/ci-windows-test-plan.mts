@@ -232,7 +232,7 @@ export function createWindowsTestShards(
       shards.every((shard) => Math.ceil(shard.predicted_seconds) < targetSeconds)
     ) {
       return shards.map((shard) => ({
-        ...shard,
+        check_name: shard.check_name,
         predicted_seconds: Math.ceil(shard.predicted_seconds),
         targets: shard.targets.toSorted(),
       }));
