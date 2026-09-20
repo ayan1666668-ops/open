@@ -7,6 +7,7 @@ import { normalizePluginsConfig } from "./config-state.js";
 import { shouldRejectHardlinkedPluginFiles } from "./hardlink-policy.js";
 import { passesManifestOwnerBasePolicy } from "./manifest-owner-policy.js";
 import { loadPluginManifestRegistryCore, type PluginManifestRecord } from "./manifest-registry.js";
+import { getCurrentPluginMetadataSnapshotRuntime } from "./plugin-metadata-snapshot.runtime.js";
 import { preparePluginModule } from "./plugin-module-loader-cache.js";
 import { getPluginSetupModuleLoader } from "./plugin-setup-module.js";
 import {
@@ -89,7 +90,12 @@ export function resolveProviderPolicySurface(
 ): ProviderPolicySurface | null {
   if (options.config?.plugins) {
     const registry =
-      options.manifestRegistry ?? loadPluginManifestRegistryCore({ config: options.config });
+      options.manifestRegistry ??
+      getCurrentPluginMetadataSnapshotRuntime({
+        config: options.config,
+        allowScopedSnapshot: true,
+      })?.manifestRegistry ??
+      loadPluginManifestRegistryCore({ config: options.config });
     const normalizedConfig = normalizePluginsConfig(options.config.plugins);
     for (const owner of listProviderPolicyOwners(providerId, registry)) {
       if (!passesManifestOwnerBasePolicy({ plugin: owner, normalizedConfig })) {
