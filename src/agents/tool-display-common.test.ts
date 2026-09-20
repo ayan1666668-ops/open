@@ -174,9 +174,13 @@ describe("coerceDisplayValue surrogate-safe truncation", () => {
 });
 
 describe("coerceDisplayValue deep array nesting", () => {
-  it("does not overflow the stack on a deeply nested array argument", () => {
+  it.each([
+    { depth: 64, expected: "x" },
+    { depth: 65, expected: undefined },
+    { depth: 5_000, expected: undefined },
+  ])("bounds the preview at depth $depth", ({ depth, expected }) => {
     let value: unknown = "x";
-    for (let i = 0; i < 5_000; i += 1) {
+    for (let i = 0; i < depth; i += 1) {
       value = [value];
     }
     const { detail } = resolveToolVerbAndDetailForArgs({
@@ -185,18 +189,21 @@ describe("coerceDisplayValue deep array nesting", () => {
       fallbackDetailKeys: ["note"],
       detailMode: "first",
     });
-    // Beyond the depth limit the nested array no longer contributes a display value.
-    expect(detail).toBeUndefined();
+    expect(detail).toBe(expected);
   });
 
-  it("keeps normal shallow array nesting visible", () => {
+  it("retains shallow siblings after an omitted deep value", () => {
+    let value: unknown = "x";
+    for (let i = 0; i < 5_000; i += 1) {
+      value = [value];
+    }
     const { detail } = resolveToolVerbAndDetailForArgs({
       toolKey: "custom_tool",
-      args: { note: [["a", "b"], "c"] },
+      args: { note: [value, "survivor"] },
       fallbackDetailKeys: ["note"],
       detailMode: "first",
     });
-    expect(detail).toBe("a, b, c");
+    expect(detail).toBe("survivor");
   });
 });
 
