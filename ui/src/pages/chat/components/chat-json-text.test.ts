@@ -8,6 +8,8 @@ import { TOOL_OUTPUT_PREVIEW_CHARS } from "../../../lib/chat/tool-output.ts";
 import "./chat-tool-output.ts";
 import { renderGroupedMessage } from "./chat-message-bubble.ts";
 import { prepareChatMessageRender } from "./chat-message-markdown.ts";
+import { createMessageGroup } from "./chat-message.test-support.ts";
+import { renderMessageGroup } from "./chat-message.ts";
 import type { SidebarContent } from "./chat-sidebar.ts";
 import { renderToolCard } from "./chat-tool-cards.ts";
 
@@ -240,5 +242,79 @@ describe("tool JSON details", () => {
     const text = '{"count": }';
     const panel = await openToolDetails(text);
     expect(panel.querySelector("pre code")?.textContent).toBe(text);
+  });
+});
+
+function expectElement<T extends Element>(
+  container: Element,
+  selector: string,
+  constructor: new () => T,
+): T {
+  const element = container.querySelector<T>(selector);
+  expect(element).toBeInstanceOf(constructor);
+  if (!(element instanceof constructor)) {
+    throw new Error(`Expected ${selector} to match ${constructor.name}`);
+  }
+  return element;
+}
+
+function renderJsonMessageGroup(
+  container: HTMLElement,
+  message: unknown,
+  role: string,
+  opts: Partial<Parameters<typeof renderMessageGroup>[1]>,
+) {
+  const group = createMessageGroup(message, role, {
+    key: role + "-group",
+    messages: [{ key: role + "-message", message }],
+  });
+  render(
+    renderMessageGroup(group, {
+      showReasoning: true,
+      showToolCalls: true,
+      assistantName: "OpenClaw",
+      assistantAvatar: null,
+      ...opts,
+    }),
+    container,
+  );
+}
+
+describe("JSON group DOM retention", () => {
+  it("preserves the user JSON code DOM across rerenders without controls", () => {
+    const container = createContainer();
+    const message = { role: "user", content: '{"ok":true}', timestamp: 1 };
+    renderJsonMessageGroup(container, message, "user", { autoExpandToolCalls: true });
+    const code = expectElement(container, ".chat-text pre code", HTMLElement);
+    expect(code.textContent).toBe(message.content);
+    expect(container.querySelector(".chat-text button, .chat-text details")).toBeNull();
+
+    renderJsonMessageGroup(container, message, "user", { autoExpandToolCalls: false });
+
+    expect(container.querySelector(".chat-text pre code")).toBe(code);
+    expect(container.querySelector(".code-block-wrapper")).toBeNull();
+  });
+
+  it("preserves native assistant JSON tree disclosure state across rerenders", () => {
+    const container = createContainer();
+    const message = { role: "assistant", content: '{"nested":{"ok":true}}', timestamp: 1 };
+    renderJsonMessageGroup(container, message, "assistant", { autoExpandToolCalls: true });
+    const tree = expectElement(container, ".code-block-json-tree", HTMLElement);
+    const root = expectElement(tree, ":scope > details", HTMLDetailsElement);
+    const nested = expectElement(root, ".code-block-json-children details", HTMLDetailsElement);
+    const code = expectElement(container, ".code-block-viewport pre code", HTMLElement);
+    expect(root.open).toBe(true);
+    expect(nested.open).toBe(true);
+    expectElement(nested, ":scope > summary", HTMLElement).click();
+    expect(nested.open).toBe(false);
+
+    renderJsonMessageGroup(container, message, "assistant", { autoExpandToolCalls: false });
+
+    expect(container.querySelector(".code-block-json-tree")).toBe(tree);
+    expect(tree.querySelector(":scope > details")).toBe(root);
+    expect(root.querySelector(".code-block-json-children details")).toBe(nested);
+    expect(nested.open).toBe(false);
+    expect(container.querySelector(".code-block-viewport pre code")).toBe(code);
+    expect(code.textContent).toBe(message.content);
   });
 });

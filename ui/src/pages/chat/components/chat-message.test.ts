@@ -3367,43 +3367,6 @@ describe("grouped chat rendering", () => {
     expect(markdownRenderMock).not.toHaveBeenCalled();
   });
 
-  it("preserves the user JSON code DOM across rerenders without controls", () => {
-    const container = document.createElement("div");
-    const message = { role: "user", content: '{"ok":true}', timestamp: 1 };
-    renderGroupedMessage(container, message, "user", { autoExpandToolCalls: true });
-    const code = expectElement(container, ".chat-text pre code", HTMLElement);
-    expect(code.textContent).toBe(message.content);
-    expect(container.querySelector(".chat-text button, .chat-text details")).toBeNull();
-
-    renderGroupedMessage(container, message, "user", { autoExpandToolCalls: false });
-
-    expect(container.querySelector(".chat-text pre code")).toBe(code);
-    expect(container.querySelector(".code-block-wrapper")).toBeNull();
-  });
-
-  it("preserves native assistant JSON tree disclosure state across rerenders", () => {
-    const container = document.createElement("div");
-    const message = { role: "assistant", content: '{"nested":{"ok":true}}', timestamp: 1 };
-    renderGroupedMessage(container, message, "assistant", { autoExpandToolCalls: true });
-    const tree = expectElement(container, ".code-block-json-tree", HTMLElement);
-    const root = expectElement(tree, ":scope > details", HTMLDetailsElement);
-    const nested = expectElement(root, ".code-block-json-children details", HTMLDetailsElement);
-    const code = expectElement(container, ".code-block-viewport pre code", HTMLElement);
-    expect(root.open).toBe(true);
-    expect(nested.open).toBe(true);
-    expectElement(nested, ":scope > summary", HTMLElement).click();
-    expect(nested.open).toBe(false);
-
-    renderGroupedMessage(container, message, "assistant", { autoExpandToolCalls: false });
-
-    expect(container.querySelector(".code-block-json-tree")).toBe(tree);
-    expect(tree.querySelector(":scope > details")).toBe(root);
-    expect(root.querySelector(".code-block-json-children details")).toBe(nested);
-    expect(nested.open).toBe(false);
-    expect(container.querySelector(".code-block-viewport pre code")).toBe(code);
-    expect(code.textContent).toBe(message.content);
-  });
-
   it("omits normalized duplicate names from standalone tool results", () => {
     const container = document.createElement("div");
     const message = createToolResultMessage("call-heartbeat", "heartbeat_respond", [
