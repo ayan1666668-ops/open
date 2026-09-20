@@ -64,7 +64,7 @@ describe("command palette input", () => {
     const prompt = "🦞".repeat(4_097) + "\nFinish the task";
     input.value = prompt;
     input.dispatchEvent(new Event("input", { bubbles: true }));
-    expect(inputProps.onValueChange).toHaveBeenCalledWith(prompt);
+    expect(inputProps.onValueChange).toHaveBeenCalledWith(prompt, expect.any(Event));
     expect(input.value).toBe(prompt);
   });
 
