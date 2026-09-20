@@ -21,6 +21,11 @@ import {
   trackCustomElementRegistry,
 } from "./jsdom-custom-elements.ts";
 import { repositoryTestApiPublications } from "./repository-test-api-publications.ts";
+import {
+  drainSqliteTestAgentOwner,
+  retireSqliteTestSingleton,
+  sqliteTestSingletonPublications,
+} from "./sqlite-test-lifecycle.ts";
 
 type EvaluatedModuleNode = ViteEvaluatedModuleNode & {
   mockedExports?: unknown;
@@ -103,13 +108,23 @@ function resetEvaluatedModules(modules: EvaluatedModules, executions: ModuleExec
     // Vitest's evaluator records each execution independently (including native ones),
     // using the unprefixed id for automocks. Module resets preserve those records.
     const key = repositoryTestApiPublications.get(node.file);
+    const sqliteKey = sqliteTestSingletonPublications.get(node.file);
     const executionId = node.id.startsWith("mock:") ? node.id.slice(5) : node.id;
     const execution = executions.get(executionId);
-    if (key && execution && !execution.external && !retiredExecutions.has(execution)) {
+    if (
+      (key || sqliteKey) &&
+      execution &&
+      !execution.external &&
+      !retiredExecutions.has(execution)
+    ) {
       retiredExecutions.add(execution);
-      const publication = Object.getOwnPropertyDescriptor(globalThis, key);
-      if (publication?.configurable && "value" in publication) {
+      const publication =
+        key === undefined ? undefined : Object.getOwnPropertyDescriptor(globalThis, key);
+      if (key && publication?.configurable && "value" in publication) {
         Reflect.deleteProperty(globalThis, key);
+      }
+      if (sqliteKey) {
+        retireSqliteTestSingleton(sqliteKey);
       }
     }
     // Mock metadata owns factories and cached exports after the registry resets.
@@ -472,6 +487,12 @@ export default class OpenClawNonIsolatedRunner extends TestRunner {
         typeof import("../src/state/openclaw-agent-db-lifecycle.js")
       >("../src/state/openclaw-agent-db-lifecycle.js");
       await closeOpenClawAgentDatabasesAsync();
+    }
+    if (!this.config.isolate) {
+      await drainSqliteTestAgentOwner(
+        (internals.workerState.evaluatedModules as EvaluatedModules).idToModuleMap.values(),
+        internals.workerState.moduleExecutionInfo,
+      );
     }
     // Lifecycle-owned singletons survive module resets; close them before the next file
     // can observe a previous file's sessions, caches, or registered resources.
