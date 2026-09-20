@@ -6,11 +6,7 @@
 import { redactIdentifier } from "@openclaw/normalization-core/node-crypto";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { logWarn } from "../logger.js";
-import {
-  classifySessionKeyShape,
-  normalizeAgentId,
-  parseAgentSessionKey,
-} from "../routing/session-key.js";
+import { classifySessionKeyShape, parseAgentSessionKey } from "../routing/session-key.js";
 import { resolveUserPath } from "../utils.js";
 import { hasAgentRosterProperty } from "./agent-scope-config.js";
 import {
@@ -63,15 +59,7 @@ function resolveRunAgentId(params: {
   agentIdSource: AgentIdSource;
 } {
   const rawSessionKey = params.sessionKey?.trim() ?? "";
-  const shape = classifySessionKeyShape(rawSessionKey);
-  if (shape === "malformed_agent") {
-    throw new Error("Malformed agent session key; refusing workspace resolution.");
-  }
-
-  const explicit =
-    typeof params.agentId === "string" && params.agentId.trim()
-      ? normalizeAgentId(params.agentId)
-      : undefined;
+  const explicit = params.agentId;
   const parsed = parseAgentSessionKey(rawSessionKey);
   const agentId = resolveSessionAgentId({
     sessionKey: rawSessionKey || undefined,

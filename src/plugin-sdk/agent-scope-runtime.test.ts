@@ -31,6 +31,14 @@ describe("agent-scope-runtime compatibility", () => {
   });
 
   it.each([
+    { agentId: "!!!", error: "Invalid explicit agent id" },
+    { sessionKey: "agent::broken", error: "Malformed agent session key" },
+  ])("does not replace invalid selectors with the system agent: %j", ({ error, ...selector }) => {
+    expect(() => resolveSessionAgentIds({ config, ...selector })).toThrow(error);
+    expect(() => resolveSessionAgentId({ config, ...selector })).toThrow(error);
+  });
+
+  it.each([
     {
       name: "explicit agent",
       params: { config, agentId: "main" },
