@@ -695,8 +695,12 @@ export async function recordLoopOutcome(args: {
       };
     }
     if (semanticObserver && args.ctx.loopDetection?.semanticNoProgress === "shadow" && record) {
+      // The detector is prospective: exclude this completed call and any
+      // later concurrent calls from its historical input, without mutating it.
+      const history = sessionState.toolCallHistory ?? [];
+      const recordIndex = history.indexOf(record);
       const loop = detectToolCallLoop(
-        sessionState,
+        { ...sessionState, toolCallHistory: history.slice(0, Math.max(0, recordIndex)) },
         record.toolName,
         args.toolParams,
         args.ctx.loopDetection,

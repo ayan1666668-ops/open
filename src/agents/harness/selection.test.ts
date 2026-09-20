@@ -127,6 +127,7 @@ const contextEngineTurnAttemptMocks = vi.hoisted(() => ({
 }));
 const builtInHarnesses = vi.hoisted(() => new WeakSet<object>());
 const privateHarnessParamCases = [
+  { field: "semanticNoProgressObserver", value: { close: () => undefined } },
   { field: "__openclawSourceReplyDeliveryRuntime", value: { currentMode: "automatic" } },
   { field: "compactionCountOwner", value: "caller" },
   { field: "onContextAccountingEvent", value: () => undefined },

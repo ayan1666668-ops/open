@@ -177,3 +177,5 @@ spend and lockups while preserving normal tool access.
     Full `tools.loopDetection` schema and merging semantics.
   </Card>
 </CardGroup>
+
+The semantic observer uses a cooperative 750 ms Decision budget, not a hard return deadline. Tool-result delivery and run close join started provider work before returning; a provider that ignores cancellation can therefore exceed this budget. Observer control state remains private to the run owner, not a plugin lifecycle contract.

@@ -8,13 +8,19 @@ import { recordLoopOutcome } from "./agent-tools.before-tool-call.diagnostics.js
 import { createSemanticNoProgressObserver } from "./semantic-no-progress.js";
 import { recordToolCall, recordToolCallOutcome } from "./tool-loop-detection.js";
 
+type TestDecisionRuntime = {
+  evaluate: (
+    ...args: Parameters<DecisionRuntimeV1["evaluate"]>
+  ) => ReturnType<DecisionRuntimeV1["evaluate"]>;
+};
+
 const evidence = {
   detector: "generic_repeat",
   level: "warning" as const,
   count: 10,
 };
 
-function outcome(verdict: string, probability = 0.9): DecisionRuntimeV1 {
+function outcome(verdict: string, probability = 0.9): TestDecisionRuntime {
   return {
     evaluate: vi.fn(async () => ({
       status: "ok" as const,
@@ -122,7 +128,7 @@ describe("semantic no-progress shadow observer", () => {
 
   it("allows one in-flight Decision and joins it on close", async () => {
     let resolveDecision: (() => void) | undefined;
-    const runtime: DecisionRuntimeV1 = {
+    const runtime: TestDecisionRuntime = {
       evaluate: vi.fn(
         () =>
           new Promise((resolve) => {
@@ -176,7 +182,7 @@ describe("semantic no-progress shadow observer", () => {
   it("propagates caller cancellation while retaining no detached provider work", async () => {
     const controller = new AbortController();
     let settle: (() => void) | undefined;
-    const runtime: DecisionRuntimeV1 = {
+    const runtime: TestDecisionRuntime = {
       evaluate: vi.fn(
         () =>
           new Promise((resolve) => {
@@ -237,7 +243,7 @@ describe("semantic no-progress shadow observer", () => {
 
   it("discards a Decision result when a newer outcome changes the captured trajectory", async () => {
     let resolveDecision: (() => void) | undefined;
-    const runtime: DecisionRuntimeV1 = {
+    const runtime: TestDecisionRuntime = {
       evaluate: vi.fn(
         () =>
           new Promise((resolve) => {
@@ -291,6 +297,7 @@ describe("semantic no-progress shadow observer", () => {
       observeOutcome: vi.fn(async () => undefined),
       close: vi.fn(async () => undefined),
       snapshot: vi.fn(() => ({
+        trajectoryVersion: 0,
         metrics: {
           observedOutcomes: 0,
           decisionCalls: 0,
@@ -346,5 +353,59 @@ describe("semantic no-progress shadow observer", () => {
         evidence: expect.objectContaining({ detector: "generic_repeat" }),
       }),
     );
+  });
+  it("preserves bounded thrown error details without stack paths", async () => {
+    const runtime = outcome("stalled");
+    const observer = createSemanticNoProgressObserver({
+      signal: new AbortController().signal,
+      assertActive: vi.fn(),
+      runtime,
+    });
+    await observer.observeOutcome({
+      ...trajectoryEntry(1),
+      error: new Error("generated destination: edit source template"),
+      evidence,
+    });
+    const batch = vi.mocked(runtime.evaluate).mock.calls[0]?.[0];
+    expect(batch?.state).toMatchObject({
+      trajectory: [
+        expect.objectContaining({ error: "Error: generated destination: edit source template" }),
+      ],
+    });
+    await observer.close();
+  });
+
+  it("captures existing ping-pong evidence after the completed call without mutating history", async () => {
+    const sessionKey = "semantic-ping-pong";
+    const runId = "semantic-ping-pong-run";
+    const state = getDiagnosticSessionState({ sessionKey });
+    const config = { enabled: true, semanticNoProgress: "shadow" as const };
+    const observeOutcome = vi.fn(async () => undefined);
+    const observer = {
+      observeOutcome,
+      close: vi.fn(async () => undefined),
+      snapshot: createSemanticNoProgressObserver({
+        signal: new AbortController().signal,
+        assertActive: vi.fn(),
+      }).snapshot,
+    };
+    for (let index = 0; index < 11; index++) {
+      const toolName = index % 2 ? "write" : "read";
+      const toolParams = { path: "/synthetic/same" };
+      const toolCallId = `alternating-${index}`;
+      recordToolCall(state, toolName, toolParams, toolCallId, config, { runId });
+      await recordLoopOutcome({
+        ctx: { sessionKey, runId, loopDetection: config, semanticNoProgressObserver: observer },
+        toolName,
+        toolParams,
+        toolCallId,
+        result: "unchanged",
+      });
+    }
+    expect(observeOutcome).toHaveBeenLastCalledWith(
+      expect.objectContaining({ evidence: expect.objectContaining({ detector: "ping_pong" }) }),
+    );
+    expect(state.toolCallHistory).toHaveLength(11);
+    expect(state.toolCallHistory?.at(-1)?.resultHash).toBeDefined();
   });
 });

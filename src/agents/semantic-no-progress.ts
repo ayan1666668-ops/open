@@ -84,11 +84,14 @@ function compactRawValue(value: unknown): JsonValue {
   if (typeof value === "string") {
     return truncateUtf16Safe(value, MAX_TRAJECTORY_VALUE_CHARS);
   }
+  if (value instanceof Error) {
+    return truncateUtf16Safe(`${value.name}: ${value.message}`, MAX_TRAJECTORY_VALUE_CHARS);
+  }
   let serialized: string;
   try {
-    serialized = JSON.stringify(value) ?? String(value);
+    serialized = JSON.stringify(value) ?? "[unserializable value]";
   } catch {
-    serialized = String(value);
+    serialized = "[unserializable value]";
   }
   return truncateUtf16Safe(serialized, MAX_TRAJECTORY_VALUE_CHARS);
 }
