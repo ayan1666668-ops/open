@@ -304,7 +304,6 @@ extensions/discord/src/component-custom-id.ts	1
 extensions/discord/src/components-registry-state.ts	2
 extensions/discord/src/components-registry.ts	3
 extensions/discord/src/components.builders.ts	4
-extensions/discord/src/components.modal.ts	1
 extensions/discord/src/components.parse.ts	13
 extensions/discord/src/doctor-contract.ts	4
 extensions/discord/src/internal/api.commands.ts	1
@@ -701,7 +700,7 @@ extensions/memory-core/src/cli-runtime-common.ts	2
 extensions/memory-core/src/cli-status.runtime.ts	2
 extensions/memory-core/src/cli.ts	1
 extensions/memory-core/src/concept-vocabulary.ts	1
-extensions/memory-core/src/dreaming-phases.ts	2
+extensions/memory-core/src/dreaming-phases.ts	1
 extensions/memory-core/src/dreaming.ts	1
 extensions/memory-core/src/memory/embeddings.ts	2
 extensions/memory-core/src/memory/hybrid.ts	1
@@ -723,7 +722,7 @@ extensions/memory-core/src/session-backfill-lifecycle.ts	2
 extensions/memory-core/src/session-backfill.ts	1
 extensions/memory-core/src/session-ingestion.ts	2
 extensions/memory-core/src/session-reset-recall-metadata.ts	3
-extensions/memory-core/src/short-term-promotion-apply.ts	4
+extensions/memory-core/src/short-term-promotion-apply.ts	2
 extensions/memory-core/src/short-term-promotion-memory-write.ts	2
 extensions/memory-core/src/short-term-promotion-record.ts	1
 extensions/memory-core/src/short-term-promotion-rehydrate.ts	1
@@ -1778,7 +1777,7 @@ src/agents/lazy-process-tool.ts	2
 src/agents/live-auth-keys.ts	2
 src/agents/live-cache-regression-policy.ts	2
 src/agents/main-session-recovery/main-session-recovery-store.ts	3
-src/agents/main-session-recovery/main-session-restart-recovery-checkpoint.ts	8
+src/agents/main-session-recovery/main-session-restart-recovery-checkpoint.ts	7
 src/agents/main-session-recovery/main-session-restart-recovery-failure.ts	1
 src/agents/main-session-recovery/main-session-restart-recovery-resume-policy.ts	39
 src/agents/mcp-app-model-context.ts	1
@@ -2682,7 +2681,7 @@ src/gateway/server-methods/config.ts	7
 src/gateway/server-methods/cron.ts	14
 src/gateway/server-methods/device-scope-upgrade.ts	2
 src/gateway/server-methods/devices.ts	4
-src/gateway/server-methods/doctor.ts	5
+src/gateway/server-methods/doctor.ts	3
 src/gateway/server-methods/exec-approval.ts	2
 src/gateway/server-methods/exec-approvals.ts	2
 src/gateway/server-methods/mcp-app.ts	1
