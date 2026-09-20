@@ -823,10 +823,10 @@ describe("transcripts tool", () => {
       };
       const entered = createDeferred<TranscriptStartRequest>();
       const start = vi.fn(async (request: TranscriptStartRequest) => {
-        entered.resolve(request);
         await request.onUtterance({
           text: "Decision: keep meeting notes with their routed agent.",
         });
+        entered.resolve(request);
         return { ok: true as const, session: request.session };
       });
       getTranscriptSourceProviderMock.mockReturnValue({
