@@ -136,7 +136,9 @@ describe("native Codex tool response fidelity", () => {
           'cli_auth_credentials_store="ephemeral"',
           'web_search="disabled"',
           'approval_policy="never"',
-          'sandbox_mode="read-only"',
+          // This fixture owns a fixed read-only command in a fresh temp directory;
+          // platform sandbox behavior is covered separately from output fidelity.
+          'sandbox_mode="danger-full-access"',
           "allow_login_shell=false",
           // The synthetic model uses fallback metadata; give the full-result case
           // an explicit history budget instead of relying on a model catalog default.
@@ -211,9 +213,6 @@ describe("native Codex tool response fidelity", () => {
       const turn = await client.request("turn/start", {
         threadId,
         input: [{ type: "text", text: "Read source.txt.", text_elements: [] }],
-        // This fixture proves exec-result fidelity, not network isolation. Keep the
-        // filesystem read-only without requiring CI runners to create a loopback namespace.
-        sandboxPolicy: { type: "readOnly", networkAccess: true },
       });
       await expect(completed.promise).resolves.toMatchObject({ status: "completed" });
       clearTimeout(timer);
