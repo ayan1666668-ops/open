@@ -1,11 +1,13 @@
 import fs from "node:fs";
 import path from "node:path";
+import { setImmediate as nextTurn } from "node:timers/promises";
 import { afterEach, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import {
   readDeferredPluginMigrations,
   recordDeferredPluginMigrations,
 } from "../infra/deferred-plugin-migrations.js";
+import { resolvePrivateSqliteSnapshotStagingRoot } from "../infra/sqlite-private-directory.js";
 import * as sqliteReadOnlyWorker from "../infra/sqlite-readonly-worker.js";
 import {
   clearBundledDiscoveryModeMemo,
@@ -89,6 +91,55 @@ it("strictly loads cold plugin metadata and records health without main-thread S
   ).toBe(hashConfigRaw(raw));
   expect(fs.readFileSync(configPath, "utf8")).toBe(raw);
 });
+
+it.each(["sync", "async"] as const)(
+  "reads current runtime migration obligations without full database snapshots (%s)",
+  async (mode) => {
+    const options = fixture(JSON.stringify({ gateway: { mode: "local" } }));
+    const pending = {
+      pluginId: "fixture-plugin",
+      reason: "Missing plugin",
+      command: "openclaw doctor --fix",
+    };
+    recordDeferredPluginMigrations({ env: options.env, pending: [pending] });
+    await closeOpenClawStateDatabaseAsync();
+    const synchronousSnapshot = vi.spyOn(sqliteReadOnlyWorker, "runSqliteReadOnlyWorkerSync");
+    const context = configContext.createConfigIoContext(options);
+    const read = () =>
+      mode === "sync"
+        ? context.resolveDeferredPluginMigrations()
+        : context.resolveDeferredPluginMigrationsAsync();
+    const allocations: string[] = [];
+    const watcher = fs.watch(
+      resolvePrivateSqliteSnapshotStagingRoot(),
+      { recursive: true },
+      (_event, filename) => {
+        if (filename?.includes("openclaw-sqlite-readonly-")) {
+          allocations.push(filename);
+        }
+      },
+    );
+    try {
+      expect(await read()).toEqual([pending]);
+      const loaded = mode === "sync" ? options.io.loadConfig() : await options.io.loadConfigAsync();
+      expect(loaded.gateway?.mode).toBe("local");
+      recordDeferredPluginMigrations({
+        env: options.env,
+        pending: [{ ...pending, reason: "Changed obligation" }],
+      });
+      await closeOpenClawStateDatabaseAsync();
+      expect(await read()).toEqual([{ ...pending, reason: "Changed obligation" }]);
+      await nextTurn();
+      expect(synchronousSnapshot).not.toHaveBeenCalled();
+      expect(allocations).toEqual([]);
+      // Verify the filesystem observer sees the mandatory inspection path too.
+      await withArtifactPreservingStateReads(read);
+      await vi.waitFor(() => expect(allocations.length).toBeGreaterThan(0));
+    } finally {
+      watcher.close();
+    }
+  },
+);
 
 it.each(["load", "snapshot"] as const)(
   "%s reads retained migration inputs without synchronous SQLite work or artifact changes",
