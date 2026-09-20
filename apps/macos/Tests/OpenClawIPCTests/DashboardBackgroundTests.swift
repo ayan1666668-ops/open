@@ -36,13 +36,12 @@ struct DashboardBackgroundTests {
         let unstyled = try await Self.centerPixel(controller.webView)
         #expect(unstyled.alphaComponent < 0.01)
 
+        // Preloaded dashboards can be hidden; snapshots must not wait for animation frames.
+        window.orderOut(nil)
         // Black and white are invariant under the snapshot's display color profile.
         for (css, expected) in [("black", 0.0), ("white", 1.0)] {
             _ = try await controller.webView.callAsyncJavaScript(
-                """
-                document.documentElement.style.background = color;
-                await new Promise(requestAnimationFrame);
-                """,
+                "document.documentElement.style.background = color;",
                 arguments: ["color": css],
                 in: nil,
                 contentWorld: .page)
