@@ -238,7 +238,14 @@ export function normalizePreparedModelRuntimeInput(
   const env = input.env ? Object.freeze({ ...input.env }) : undefined;
   const selections = new Map<string, AgentHarnessPluginSelection>();
   for (const selection of input.runtimePluginSelections ?? []) {
-    const runtime = resolveSelectedAgentHarnessRuntime(selection, input.config);
+    // The owner belongs to input.agentId and the stored selection drops its agentId, so the
+    // runtime must resolve under the owner's scope on every normalization. Resolving under
+    // any other scope (or none, which falls back to the legacy compatibility agent) can yield
+    // a different runtime, which changes the owner key and livelocks lease acquisition (#153313).
+    const runtime = resolveSelectedAgentHarnessRuntime(
+      { ...selection, agentId: input.agentId ?? selection.agentId },
+      input.config,
+    );
     const { agentId: _agentId, ...normalized } = selection;
     const entry = Object.freeze({ ...normalized, runtime });
     selections.set(JSON.stringify(entry), entry);

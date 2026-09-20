@@ -108,6 +108,13 @@ export async function acquirePreparedModelRuntimeLeaseFromOwners(
   let key = ownerKey(input);
   let owner: PreparedModelRuntimeOwner;
   let snapshot: PreparedModelRuntimeSnapshot;
+  let stalledMismatch:
+    | {
+        owner: PreparedModelRuntimeOwner;
+        generation: number;
+        snapshot: PreparedModelRuntimeSnapshot | undefined;
+      }
+    | undefined;
   const admission = createPreparedModelRuntimeAdmissionClaim(context);
   for (;;) {
     admission.release();
@@ -337,6 +344,30 @@ export async function acquirePreparedModelRuntimeLeaseFromOwners(
       published.needsRefresh ||
       published.pending
     ) {
+      // A settled owner whose snapshot still differs from the one prepared for this key has
+      // nothing left to wait on: retrying re-runs the same synchronous resolution, and the
+      // already-resolved awaits never yield to the event loop, so the Gateway would livelock.
+      // One mismatch may be a publication race; the same mismatch twice cannot make progress.
+      const settledMismatch =
+        published !== undefined &&
+        !context.getPendingReplacement() &&
+        !published.needsRefresh &&
+        !published.pending &&
+        published.snapshot !== snapshot;
+      if (
+        settledMismatch &&
+        stalledMismatch?.owner === published &&
+        stalledMismatch.generation === published.generation &&
+        stalledMismatch.snapshot === published.snapshot
+      ) {
+        admission.release();
+        throw new PreparedModelRuntimeOwnerNotPublishedError(
+          `prepared model runtime owner for ${input.agentDir} resolved a snapshot from another owner; the normalized input does not map back to its own owner key`,
+        );
+      }
+      stalledMismatch = settledMismatch
+        ? { owner: published, generation: published.generation, snapshot: published.snapshot }
+        : undefined;
       continue;
     }
     admission.claim(key, published);
