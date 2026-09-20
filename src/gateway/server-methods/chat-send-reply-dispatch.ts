@@ -224,6 +224,14 @@ export function createChatSendReplyDispatch(params: {
       ...(current.entry?.lifecycleRevision
         ? { expectedLifecycleRevision: current.entry.lifecycleRevision }
         : {}),
+      assertCommitAllowed: () => {
+        if (params.abortSignal?.aborted) {
+          throw new Error("Chat pre-dispatch notice run was aborted.");
+        }
+        if (params.isRunCurrent && !params.isRunCurrent()) {
+          throw new Error("Chat pre-dispatch notice run is no longer current.");
+        }
+      },
       ...(session.agentId ? { agentId: session.agentId } : {}),
       createIfMissing: true,
       // A notice is visible transcript state, but must not become model context
@@ -233,6 +241,12 @@ export function createChatSendReplyDispatch(params: {
       cfg,
     });
     if (!appended.ok) {
+      // A replacement can invalidate the run without aborting its signal. Do
+      // not fall back to transport delivery for a notice whose durable commit
+      // was correctly rejected by the same live-authority guard.
+      if (params.abortSignal?.aborted || (params.isRunCurrent && !params.isRunCurrent())) {
+        return true;
+      }
       logGateway.warn(
         `webchat pre-dispatch notice append failed: ${appended.error ?? "unknown error"}`,
       );
