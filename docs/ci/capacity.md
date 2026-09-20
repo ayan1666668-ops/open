@@ -255,20 +255,28 @@ Gateway coverage remain. The complete-file proof inventory belongs to
 plans after owner resolution. Main/manual plans keep every proof assertion.
 
 The Windows planner consumes all explicit files in the two existing package
-scripts, balances whole files by measured cost, and emits at most five rows.
-It never splits the worker-artifact file's shared fixture. Reference run
-`35520647082` had 689/837-second Windows jobs. The current 133-file model includes
-65 seconds per row for setup, three seconds per file for import/setup, recorded
-case costs rounded up, a three-second fallback for unmeasured files, and the
-measured 56-second runtime build charged once to each row requiring it. Four
-rows peak at 483 seconds; five predict 410/411/410/410/405 seconds. Those are
-estimates, not measured improvements. Five concurrent runners must actually be
-available. The unchanged project/worker limits keep native process ownership
-and cleanup coverage intact.
+scripts and keeps every file intact. Reference run `35520647082` had
+689/837-second Windows jobs. The first five-row run `35530187452` passed all
+Windows tests in 333/496/425/450/370 seconds, exposing both uneven file costs
+and a duplicated 67.2-second runtime build.
+
+The planner now uses elapsed whole-file segments from that run, including
+imports and hooks, instead of summed concurrent case times. Canonical Vitest
+metadata groups compatible project files together; an oversized project splits
+only at file boundaries. The canonical runtime prerequisite owner places its
+two consumers together, so preparation happens once. Current project
+invocations fall from 72 to 35, without changing process isolation or coverage.
+The model reserves 104 seconds per row for observed setup, shared worker
+compilation, and wrapper transitions, plus 68 seconds for the one runtime
+preparation. It retains a three-second fallback for unmeasured files.
+Four rows predict 489 seconds each; five predict 412 seconds each. These are
+estimates requiring hosted verification, including actual runner queue time.
+All 133 files and the shared worker-artifact fixture remain intact.
 
 The worker-artifact fixture remains a Windows follow-up: the reference logged
 one shared 18.087-second compile, then at least 139.608 seconds before its last
-case finished (213.267 seconds summed concurrent cases). Profile generation
+case finished (213.267 seconds summed concurrent cases). The first five-row run measured 170.203 seconds elapsed for the whole file
+versus 217.299 summed concurrent case seconds. Profile generation
 copy/verification and borrower startup on Windows before another optimization.
 
 Proof tiering alone leaves the reference 924-second critical path unchanged.

@@ -248,8 +248,12 @@ These are intentionally guarded by `test/scripts/ci-workflow-guards.test.ts`:
   inside the compact cap. Excess inventory fails preflight.
 - Windows consumes the complete two package-script inventories and balances
   whole files into up to five rows. Current measured inputs need five to keep
-  the longest prediction below 420 seconds (four peak at 483 seconds). Each
-  row retains serial projects, one Vitest worker, and shared file fixtures.
+  the longest prediction below 420 seconds (four predict 489, five predict 412). Each
+  row retains serial projects and shared file fixtures. Self-hosted Windows uses
+  four Vitest workers; hosted fallback uses one. Selected files enable file
+  parallelism while single-file project budgets remain unchanged.
+  Group by canonical project metadata; keep runtime consumers in one preparation
+  row. Elapsed file costs include imports/hooks instead of concurrent case sums.
   Frozen targets without the planner retain their original two rows. Native
   runner capacity must be measured; a max-parallel setting is not capacity proof.
   Budget three additional non-Node registrations: the conservative full-tier
