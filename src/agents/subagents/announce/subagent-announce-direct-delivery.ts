@@ -456,7 +456,7 @@ export async function sendSubagentAnnounceDirectly(params: {
     }
 
     if (isGatewayAgentRunPending(directAnnounceResponse)) {
-      return parentOnly
+      return parentOnly || params.sourceTool === "subagent_settle"
         ? {
             delivered: false,
             path: "direct",

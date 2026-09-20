@@ -43,29 +43,6 @@ function buildResolvedSubagentModelMetadata(resolvedModel?: string): {
   };
 }
 
-type ResolvedSubagentChildPlan = {
-  spawnedCwd?: string;
-  toolSpawnMetadata: ReturnType<typeof mapToolContextToSpawnedRunMetadata>;
-  spawnedWorkspaceDir?: string;
-  requesterOrigin: ReturnType<typeof normalizeDeliveryContext>;
-  childSessionOrigin: ReturnType<typeof resolveRequesterOriginForChild>;
-  incognito: boolean;
-  childSessionKey: string;
-  childRuntimeSandboxed: boolean;
-  creationPolicy: ReturnType<typeof inheritSessionCreationPolicy>;
-  targetAgentDir: string;
-  modelPlan: Extract<
-    Awaited<ReturnType<typeof resolveSubagentModelAndThinkingPlan>>,
-    { status: "ok" }
-  >;
-  launchAuthorization?: SubagentLaunchAuthorization;
-  resolvedModelMetadata: ReturnType<typeof buildResolvedSubagentModelMetadata>;
-};
-
-type ResolveSubagentChildPlanResult =
-  | { ok: false; result: SpawnSubagentResult }
-  | { ok: true; resolved: ResolvedSubagentChildPlan };
-
 export async function resolveSubagentChildPlan(params: {
   request: SpawnSubagentParams;
   ctx: SpawnSubagentContext;
@@ -78,7 +55,7 @@ export async function resolveSubagentChildPlan(params: {
   /** Active requester sandbox classification from the spawn tool, preferred over key-derived
    * status so durable-lineage key substitution does not weaken sandbox admission. */
   requesterSandboxed?: boolean;
-}): Promise<ResolveSubagentChildPlanResult> {
+}) {
   const spawnedCwd = resolveExplicitSpawnedCwd(params.request.cwd);
   const toolSpawnMetadata = mapToolContextToSpawnedRunMetadata({
     agentGroupId: params.ctx.agentGroupId,
@@ -146,19 +123,22 @@ export async function resolveSubagentChildPlan(params: {
     sandbox: params.sandboxMode,
   });
   if (sandboxError) {
-    return { ok: false, result: { status: "forbidden", error: sandboxError } };
+    return {
+      ok: false as const,
+      result: { status: "forbidden", error: sandboxError } satisfies SpawnSubagentResult,
+    };
   }
   const spawnedWorkspaceCwd = spawnedWorkspaceDir
     ? resolveUserPath(spawnedWorkspaceDir)
     : undefined;
   if (childRuntimeSandboxed && spawnedCwd && spawnedCwd !== spawnedWorkspaceCwd) {
     return {
-      ok: false,
+      ok: false as const,
       result: {
         status: "forbidden",
         error:
           "cwd override is not supported for sandboxed subagent runs; omit cwd or use the target agent workspace as cwd",
-      },
+      } satisfies SpawnSubagentResult,
     };
   }
   const targetAgentDir = resolveAgentDir(params.cfg, params.targetAgentId);
@@ -204,12 +184,12 @@ export async function resolveSubagentChildPlan(params: {
   });
   if (modelPlan.status === "error") {
     return {
-      ok: false,
+      ok: false as const,
       result: {
         status: "error",
         error: modelPlan.error,
         ...(params.request.outputSchema ? { childSessionKey } : {}),
-      },
+      } satisfies SpawnSubagentResult,
     };
   }
   const { resolvedModel } = modelPlan;
@@ -224,7 +204,7 @@ export async function resolveSubagentChildPlan(params: {
         }
       : undefined;
   return {
-    ok: true,
+    ok: true as const,
     resolved: {
       spawnedCwd,
       toolSpawnMetadata,

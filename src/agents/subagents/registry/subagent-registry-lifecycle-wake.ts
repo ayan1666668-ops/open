@@ -80,6 +80,9 @@ const transitionRequesterSettleWakeBatch = (
   for (const entry of entries) {
     entry.requesterSettleWake = {
       ...state,
+      ...(entry.requesterSettleWake?.progressOperationId
+        ? { progressOperationId: entry.requesterSettleWake.progressOperationId }
+        : {}),
       ...(entry.requesterSettleWake?.retireAfterSettle === true ? { retireAfterSettle: true } : {}),
     };
   }
