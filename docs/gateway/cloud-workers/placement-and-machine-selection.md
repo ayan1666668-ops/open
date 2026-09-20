@@ -83,7 +83,7 @@ Cloud profile rows and the selected Place chip show the configured backend, incl
 
 In New Session and Move, recognized cloud-provider profiles appear before local containers, Incus infrastructure, and custom or unidentified backends. Each group stays alphabetical by profile name. Machine0 belongs to the cloud-provider group even though it uses a server glyph; profile names never determine the group. The Gateway and paired-device sections keep their existing order.
 
-On phones, the New Session environment and workspace controls stack vertically and grow to at most 80% of the available row width. Long selected names stay on one line and fade at the trailing edge instead of wrapping. The operating-system and machine summary sits below the environment name without a leading separator. Desktop controls remain horizontal.
+On phones, the New Session environment and workspace controls stack vertically and grow to at most 90% of the available row width. Long selected names stay on one line and fade at the trailing edge instead of wrapping. The operating-system and machine summary sits below the environment name without a leading separator. Desktop controls remain horizontal.
 
 Providers may supply this optional read-only identity through their presentation hook. If it is unavailable, the picker keeps a generic icon. The display ID does not change routing, allocation, permissions, or operating-system and machine selection.
 

@@ -1348,7 +1348,7 @@ wa-popover.new-session-page__where-popover::part(body) {
 
   .new-session-page__triggers > span.new-session-page__select > .new-session-page__trigger {
     width: fit-content;
-    max-width: 80%;
+    max-width: 90%;
   }
 
   .new-session-page__catalog-unavailable,

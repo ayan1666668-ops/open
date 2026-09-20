@@ -178,14 +178,14 @@ it.each([
         const availableWidth = trigger.closest<HTMLElement>(
           ".new-session-page__select",
         )!.clientWidth;
-        expect(box.width).toBeLessThanOrEqual(availableWidth * 0.8 + 1);
+        expect(box.width).toBeLessThanOrEqual(availableWidth * 0.9 + 1);
         const overflows = Array.from(
           trigger.querySelectorAll<HTMLElement>(
             ".new-session-page__trigger-label, .new-session-page__trigger-summary",
           ),
         ).some((label) => label.scrollWidth > label.clientWidth + 1);
         if (overflows) {
-          expect(box.width).toBeCloseTo(availableWidth * 0.8, 0);
+          expect(box.width).toBeCloseTo(availableWidth * 0.9, 0);
         }
       }
       for (const label of trigger.querySelectorAll<HTMLElement>(
