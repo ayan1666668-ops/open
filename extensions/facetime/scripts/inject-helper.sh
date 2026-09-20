@@ -29,8 +29,32 @@ case "${target_app}" in
     ;;
 esac
 
-if ! /usr/bin/csrutil status 2>/dev/null | grep -Eq \
-  'System Integrity Protection status: disabled|Debugging Restrictions: disabled'; then
+sip_debugging=unknown
+if sip_status="$(/usr/bin/csrutil status 2>/dev/null)"; then
+  if printf '%s\n' "$sip_status" | grep -Eq \
+    '^[[:space:]]*(System Integrity Protection status|Debugging Restrictions):[[:space:]]*disabled\.?[[:space:]]*$'; then
+    sip_debugging=disabled
+  elif printf '%s\n' "$sip_status" | grep -Eq \
+    '^[[:space:]]*(System Integrity Protection status|Debugging Restrictions):[[:space:]]*enabled\.?[[:space:]]*$'; then
+    sip_debugging=enabled
+  fi
+fi
+
+if [[ "$sip_debugging" == unknown ]]; then
+  cat >&2 <<'EOF'
+Could not verify SIP debugging restrictions. Helper injection was not attempted.
+
+Run this in Terminal and inspect the result before changing security policy:
+
+  /usr/bin/csrutil status
+
+Rerun setup after resolving the status check. SIP status alone does not verify
+Developer Tools authorization or a responding FaceTime helper.
+EOF
+  exit 1
+fi
+
+if [[ "$sip_debugging" == enabled ]]; then
   cat >&2 <<'EOF'
 System Integrity Protection debugging restrictions are enabled.
 

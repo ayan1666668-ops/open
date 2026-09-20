@@ -94,6 +94,69 @@ function readyCommandRunner() {
 }
 
 describe("FaceTime guided setup", () => {
+  it.each([
+    ["disabled", "System Integrity Protection status: disabled.\n", 0, undefined],
+    [
+      "custom debug disabled",
+      "System Integrity Protection status: unknown (Custom Configuration).\n\tDebugging Restrictions: disabled\n",
+      0,
+      undefined,
+    ],
+    ["enabled", "System Integrity Protection status: enabled.\n", 0, "disable-sip-debugging"],
+    [
+      "custom debug enabled",
+      "System Integrity Protection status: unknown (Custom Configuration).\n\tDebugging Restrictions: enabled\n",
+      0,
+      "disable-sip-debugging",
+    ],
+    ["empty", "", 0, "verify-sip-status"],
+    ["unknown", "System Integrity Protection status: unknown.\n", 0, "verify-sip-status"],
+    ["failed", "System Integrity Protection status: disabled.\n", 1, "verify-sip-status"],
+    [
+      "malformed disabled",
+      "System Integrity Protection status: disabled unexpectedly\n",
+      0,
+      "verify-sip-status",
+    ],
+    ["malformed debug", "Debugging Restrictions: disabled unexpectedly\n", 0, "verify-sip-status"],
+    [
+      "unrelated substring",
+      "Could not read System Integrity Protection status: disabled.\n",
+      0,
+      "verify-sip-status",
+    ],
+  ])(
+    "reports SIP %s without recommending unnecessary protection changes",
+    async (_name, stdout, code, actionId) => {
+      const readyRunner = readyCommandRunner();
+      const report = await runFaceTimeSetup({
+        config: resolveFaceTimeConfig({ ownerHandles: ["owner@example.com"] }),
+        nativePackageReady: true,
+        pluginRoot: "/plugin",
+        runCommandWithTimeout: vi.fn(async (argv: string[]) =>
+          argv[0] === "/usr/bin/csrutil" ? { code, stdout, stderr: "" } : readyRunner(argv),
+        ) as never,
+        runtimeStatus: readyRuntime,
+        preflight: readyPreflight,
+        readAssertionsFile: async () => JSON.stringify({ data: [] }),
+      });
+      const check = report.checks.find((entry) => entry.id === "system-integrity-protection");
+      expect(check?.status).toBe(actionId ? "action-required" : "ready");
+      expect(check?.actionId).toBe(actionId);
+      expect(report.readyForTest).toBe(!actionId);
+      if (actionId === "verify-sip-status") {
+        expect(report.actions.find((entry) => entry.id === actionId)).toMatchObject({
+          kind: "command",
+          command: "/usr/bin/csrutil status",
+        });
+        expect(report.actions.some((entry) => entry.id === "disable-sip-debugging")).toBe(false);
+      } else if (!actionId) {
+        expect(check?.message).toContain("permits");
+        expect(check?.message).toContain("helper");
+      }
+    },
+  );
+
   it("reports a statically ready machine and leaves live call proof explicit", async () => {
     const report = await runFaceTimeSetup({
       config: resolveFaceTimeConfig({ ownerHandles: ["owner@example.com"] }),

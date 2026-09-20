@@ -338,25 +338,41 @@ export async function runFaceTimeSetup(params: SetupParams): Promise<FaceTimeSet
   );
   const debuggingRestrictionsDisabled =
     sip.ok &&
-    (/System Integrity Protection status:\s*disabled/iu.test(sip.message) ||
-      /Debugging Restrictions:\s*disabled/iu.test(sip.message));
+    /^[\t ]*(?:System Integrity Protection status:|Debugging Restrictions:)[\t ]*disabled\.?[\t ]*\r?$/imu.test(
+      sip.message,
+    );
+  const debuggingRestrictionsEnabled =
+    sip.ok &&
+    /^[\t ]*(?:System Integrity Protection status:|Debugging Restrictions:)[\t ]*enabled\.?[\t ]*\r?$/imu.test(
+      sip.message,
+    );
+  const sipActionId = debuggingRestrictionsEnabled ? "disable-sip-debugging" : "verify-sip-status";
   checks.push({
     id: "system-integrity-protection",
     label: "System Integrity Protection debugging restrictions",
     status: debuggingRestrictionsDisabled ? "ready" : "action-required",
     required: true,
     message: debuggingRestrictionsDisabled
-      ? "Debugging restrictions are disabled, so LLDB can attach to FaceTime and Phone"
-      : "SIP debugging restrictions block LLDB helper injection into protected Apple apps",
-    ...(!debuggingRestrictionsDisabled ? { actionId: "disable-sip-debugging" } : {}),
+      ? "SIP permits debugger attachment to FaceTime and Phone; a connected helper must still be verified separately"
+      : debuggingRestrictionsEnabled
+        ? "SIP debugging restrictions block LLDB helper injection into protected Apple apps"
+        : "Could not verify SIP debugging restrictions; run csrutil status before changing protection settings",
+    ...(!debuggingRestrictionsDisabled ? { actionId: sipActionId } : {}),
   });
-  if (!debuggingRestrictionsDisabled) {
+  if (!debuggingRestrictionsDisabled && debuggingRestrictionsEnabled) {
     addAction(actions, {
       id: "disable-sip-debugging",
       kind: "recovery",
       label: "Disable SIP debugging restrictions from macOS Recovery, then reboot and rerun setup",
       command: "csrutil enable --without debug",
       settingsPath: "macOS Recovery > Utilities > Terminal",
+    });
+  } else if (!debuggingRestrictionsDisabled) {
+    addAction(actions, {
+      id: "verify-sip-status",
+      kind: "command",
+      label: "Verify SIP status, then rerun setup",
+      command: "/usr/bin/csrutil status",
     });
   }
 
