@@ -1,6 +1,6 @@
 import { toStringifiedError } from "@openclaw/normalization-core/error-coercion";
+import { createPreparedModelRuntimeReplacement } from "./prepared-model-runtime.lifecycle.js";
 import {
-  createPreparedModelRuntimeReplacement,
   ownerKey,
   publishPreparedModelRuntimeOwnerBatch,
   resolveConfiguredOwner,

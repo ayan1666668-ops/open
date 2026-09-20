@@ -2,6 +2,7 @@ import { toStringifiedError } from "@openclaw/normalization-core/error-coercion"
 import { createDeferredCore, type Deferred } from "../shared/deferred.js";
 import { resolveLegacyInheritedAuthDir } from "./legacy-inherited-auth-dir.js";
 import { PreparedModelRuntimePublicationSupersededError } from "./prepared-model-runtime.errors.js";
+import { retirePreparedModelRuntimeGeneration } from "./prepared-model-runtime.lifecycle.js";
 import {
   normalizeOptionalDir,
   normalizePreparedModelRuntimeInput,
@@ -410,6 +411,7 @@ export function invalidatePreparedModelRuntimeOwnersForAuthMutation(
     }
     invalidatedOwners.push(owner);
     owner.generation += 1;
+    retirePreparedModelRuntimeGeneration(owner);
     owner.needsRefresh = true;
     owner.refreshError = staleError;
     if (normalizedEvent.profileSetChanged) {
@@ -434,7 +436,12 @@ export function invalidatePreparedModelRuntimeOwnersForAuthMutation(
     const input = normalizePreparedModelRuntimeInput({ ...owner.input, inheritedAuthDir });
     prepareModelRuntimeOwner(input, "configured", owner.catalogMode, owner);
     owners.delete(previousKey);
-    owners.set(ownerKey(input), owner);
+    const key = ownerKey(input);
+    const previous = owners.get(key);
+    owners.set(key, owner);
+    if (previous && previous !== owner) {
+      retirePreparedModelRuntimeGeneration(previous);
+    }
   }
   return { invalidatedOwners, invalidatedConfiguredAgentIds };
 }

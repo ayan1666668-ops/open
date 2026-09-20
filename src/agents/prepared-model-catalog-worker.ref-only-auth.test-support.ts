@@ -19,6 +19,7 @@ type RefOnlyAuthFixture = {
   env: NodeJS.ProcessEnv;
   pluginMetadataSnapshot: PluginMetadataSnapshot;
   isCurrent: () => boolean;
+  retirementSignal: AbortSignal;
 };
 
 export async function expectRefOnlyAuthProfilesThroughWorker(
@@ -60,6 +61,7 @@ export async function expectRefOnlyAuthProfilesThroughWorker(
     } satisfies PreparedModelRuntimeAgentFacts,
     pluginMetadataSnapshot: fixture.pluginMetadataSnapshot,
     isCurrent: fixture.isCurrent,
+    retirementSignal: fixture.retirementSignal,
   });
   const { modelCatalog: catalog } = await worker.loadCatalog();
 

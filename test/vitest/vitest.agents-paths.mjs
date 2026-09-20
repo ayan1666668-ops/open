@@ -26,9 +26,7 @@ const coreIsolatedFiles = [
   "src/agents/prepared-model-runtime.catalog-recovery.test.ts",
   "src/agents/subagents/announce/subagent-announce.test.ts",
   "src/agents/subagents/registry/subagent-registry.announce-loop-guard.test.ts",
-  "src/agents/subagents/registry/subagent-registry-restart-recovery-notice.test.ts",
   "src/agents/subagents/registry/subagent-registry-restart-recovery.test.ts",
-  "src/agents/subagents/spawn/subagent-spawn.authority.test.ts",
 ];
 const incompleteTurnFiles = [
   `${embeddedRoot}/run.incomplete-turn.classification.test.ts`,
@@ -36,10 +34,7 @@ const incompleteTurnFiles = [
   `${embeddedRoot}/run.incomplete-turn.error-recovery.test.ts`,
   `${embeddedRoot}/run.incomplete-turn.payload-resolution.test.ts`,
 ];
-const overflowCompactionFiles = [
-  `${embeddedRoot}/run.overflow-compaction.test.ts`,
-  `${embeddedRoot}/run.prepared-harness-source-delivery.integration.test.ts`,
-];
+const overflowCompactionFiles = [`${embeddedRoot}/run.overflow-compaction.test.ts`];
 
 export const agentVitestProjectOwners = {
   all: {
