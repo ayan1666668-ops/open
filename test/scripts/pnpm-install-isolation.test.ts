@@ -11,6 +11,7 @@ import {
 } from "../../scripts/lib/vitest-worker-artifacts.mts";
 import { createPnpmRunnerSpawnSpec } from "../../scripts/pnpm-runner.mts";
 import { useAutoCleanupTempDirTracker } from "../helpers/temp-dir.js";
+import { resolveTestCorepackHome } from "../test-home-context.mts";
 
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 
@@ -52,6 +53,7 @@ it("keeps installed compiler inputs unchanged when another checkout imports the 
     TMPDIR: root,
     TMP: root,
     TEMP: root,
+    COREPACK_HOME: resolveTestCorepackHome(process.env),
     COREPACK_ENABLE_NETWORK: "0",
     CI: "true",
   };
