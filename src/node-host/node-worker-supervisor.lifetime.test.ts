@@ -4,7 +4,9 @@ import { createConnection } from "node:net";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { WORKER_PROTOCOL_MAX_INFERENCE_PAYLOAD_BYTES } from "../../packages/gateway-protocol/src/schema/worker-inference.js";
+import { createDeferred } from "../../test/helpers/promise.js";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
+import { racePromiseWithAbortSignal } from "../infra/abort-signal.js";
 import { resetSecretRedactionRegistryForTest } from "../logging/secret-redaction-registry.test-support.js";
 import { closeOpenClawStateDatabaseForTest } from "../state/openclaw-state-db.js";
 import { completeWorkerLaunchDescriptor } from "../worker/launch-descriptor.js";
@@ -473,7 +475,9 @@ describe("node worker environment lifetime", () => {
     }
   });
 
-  it("does not observe retirement before teardown, connection close, and definitive identity", async () => {
+  it("does not observe retirement before teardown, connection close, and definitive identity", async ({
+    signal: testSignal,
+  }) => {
     const { supervisor, workspaceDir } = fixture({ capacity: 1 });
     const first = testWorkerLaunchInput(workspaceDir, "held-first", "background-start");
     const next = structuredClone(first);
@@ -490,6 +494,7 @@ describe("node worker environment lifetime", () => {
     let restoreClose: (() => void) | undefined;
     let restoreIdentity: (() => void) | undefined;
     let releaseClose: (() => void) | undefined;
+    const closeCaptured = createDeferred();
     let replacement: ReturnType<NodeWorkerSupervisor["launch"]> | undefined;
     const releaseSignals = () => {
       restoreSignals?.();
@@ -518,6 +523,7 @@ describe("node worker environment lifetime", () => {
       const close = vi.spyOn(socket, "emit").mockImplementation((event, ...args) => {
         if (event === "close") {
           releaseClose = () => emit(event, ...args);
+          closeCaptured.resolve();
           return true;
         }
         return emit(event, ...args);
@@ -538,7 +544,9 @@ describe("node worker environment lifetime", () => {
       expect(assertRetired).toThrow();
 
       releaseSignals();
-      await vi.waitFor(() => expect(releaseClose).toBeDefined());
+      // Join the owned close event; a polling deadline can precede real teardown.
+      await racePromiseWithAbortSignal(closeCaptured.promise, testSignal);
+      expect(releaseClose).toBeDefined();
       await replacement;
       await waitForTerminal(supervisor, next.launchId);
       await vi.waitFor(() => {
