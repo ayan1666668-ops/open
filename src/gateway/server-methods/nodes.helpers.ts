@@ -7,7 +7,7 @@ import {
 import type { RespondFn } from "./types.js";
 export { parseGatewayPayload } from "../server-json.js";
 
-export function markNodeCommandNotDispatched(details?: Record<string, unknown>) {
+function markNodeCommandNotDispatched(details?: Record<string, unknown>) {
   return { ...details, nodeCommandDispatched: false as const };
 }
 
