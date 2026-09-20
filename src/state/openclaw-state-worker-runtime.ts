@@ -131,7 +131,7 @@ const log = createSubsystemLogger("state/worker");
 export function executeSharedStateCommand(
   command: Exclude<
     SqliteWorkerCommand<Operations>,
-    { type: "plugins.metadata.read" | "database.inspectIdle" }
+    { type: "plugins.metadata.read" | "database.inspectIdle" | "stateLease.acquire" }
   >,
   context: { databasePath: string },
   open: () => OpenClawStateDatabase,
