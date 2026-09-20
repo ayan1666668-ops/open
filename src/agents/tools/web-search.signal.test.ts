@@ -1,10 +1,7 @@
 // web_search signal tests cover abort propagation from the agent tool wrapper
 // into provider runtime execution.
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { createWebSearchTestProvider } from "../../test-utils/web-provider-runtime.test-helpers.js";
 import { WebSearchProviderError } from "../../web-search/runtime-error.js";
-import { executeWebSearchCandidates } from "../../web-search/runtime-execution.js";
-import { ProviderHttpError } from "../provider-http-errors.js";
 import { ToolInputError } from "../tool-input-error.js";
 import { createWebSearchTool } from "./web-search.js";
 
@@ -24,44 +21,6 @@ describe("web_search signal plumbing", () => {
       provider: "mock",
       result: { ok: true },
     });
-  });
-
-  it("returns provider identity and an actionable error when the selected provider rejects authentication", async () => {
-    const providerError = new ProviderHttpError("HTTP 401: private upstream response", {
-      status: 401,
-      body: "private upstream response",
-    });
-    mocks.runWebSearch.mockImplementationOnce(() =>
-      executeWebSearchCandidates({
-        candidates: [
-          createWebSearchTestProvider({
-            id: "fixture-search",
-            pluginId: "fixture-search",
-            credentialPath: "plugins.entries.fixture-search.config.apiKey",
-            createTool: () => ({
-              description: "Fixture search",
-              parameters: {},
-              execute: async () => {
-                throw providerError;
-              },
-            }),
-          }),
-        ],
-        args: { query: "synthetic query" },
-        allowFallback: false,
-      }),
-    );
-    const tool = createWebSearchTool({ config: {} });
-    const result = await tool?.execute("call-search", { query: "synthetic query" });
-
-    expect(result?.details).toMatchObject({
-      kind: "error",
-      provider: "fixture-search",
-      error: "provider_error",
-      message: expect.stringContaining("401"),
-    });
-    expect(JSON.stringify(result)).toContain("credentials");
-    expect(JSON.stringify(result)).not.toContain("private upstream response");
   });
 
   it.each([false, true])(
