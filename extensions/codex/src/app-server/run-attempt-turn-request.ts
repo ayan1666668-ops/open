@@ -1,4 +1,5 @@
 import { embeddedAgentLog, formatErrorMessage } from "openclaw/plugin-sdk/agent-harness-runtime";
+import { isIncognitoSessionKey } from "../incognito-session.js";
 import {
   interruptCodexTurnAndWaitBestEffort,
   retireUnsafeCodexTurnClientBestEffort,
@@ -13,6 +14,7 @@ import { isCodexAppServerIndeterminateRequestCancellationError } from "./client.
 import { resolveCodexExplicitSkillInputs } from "./explicit-skill-input.js";
 import { CODEX_INFERENCE_GENERATION_KEY } from "./inference-context.js";
 import { getCodexInferenceThread } from "./inference-routing.js";
+import { prepareCodexLunaReserveTurn } from "./luna-reserve.js";
 import { assertCodexTurnStartResponse } from "./protocol-validators.js";
 import type { CodexTurnStartResponse } from "./protocol.js";
 import { readCodexRateLimitsRevision } from "./rate-limit-cache.js";
@@ -160,7 +162,9 @@ export async function prepareCodexAttemptTurnRequest(
       ...(usesSupervisionConnection
         ? {}
         : {
-            model: resourceState.thread.model,
+            model: resourceState.thread.reserveReturn
+              ? runtimeParams.modelId
+              : resourceState.thread.model,
             modelProvider: resourceState.thread.modelProvider,
           }),
       turnScopedDeveloperInstructions: workspaceBootstrapContext.turnScopedDeveloperInstructions,
@@ -174,6 +178,36 @@ export async function prepareCodexAttemptTurnRequest(
         (tool) => tool.name === "session_status",
       ),
     });
+    const turnThread = resourceState.thread;
+    const assertTurnCurrent = () => {
+      runAbortController.signal.throwIfAborted();
+      params.hostCapabilities.assertActive();
+      connection.assertCurrent();
+      if (resourceState.thread !== turnThread) {
+        throw new Error("Codex pending thread ownership changed");
+      }
+      turnThread.liveThreadOwnership?.assertCurrent();
+    };
+    const reserveTurn = isIncognitoSessionKey(runtimeParams.sessionKey)
+      ? undefined
+      : await prepareCodexLunaReserveTurn({
+          client: resourceState.client,
+          bindingStore: connection.bindingStore,
+          identity: connection.bindingIdentity,
+          binding: resourceState.thread,
+          normal: turnStartParams,
+          signal: runAbortController.signal,
+          timeoutMs: params.timeoutMs,
+          assertCurrent: assertTurnCurrent,
+        });
+    const reserveSettings = reserveTurn?.settings;
+    if (reserveSettings) {
+      Object.assign(turnStartParams, reserveSettings);
+    }
+    const assertSubmissionCurrent = () => {
+      assertTurnCurrent();
+      reserveTurn?.assertCurrent();
+    };
     if (inferenceRoute) {
       prompt.setParentLocalEgress();
       resourceState.releaseInferenceContext?.();
@@ -243,7 +277,10 @@ export async function prepareCodexAttemptTurnRequest(
       data: {
         phase: "turn_starting",
         threadId: resourceState.thread.threadId,
-        model: params.modelId,
+        model: turnStartParams.model ?? params.modelId,
+        ...(reserveSettings
+          ? { requestedModel: params.modelId, route: "luna_reserve_transition" }
+          : {}),
         effort: turnStartParams.effort,
         collaborationEffort: turnStartParams.collaborationMode?.settings.reasoning_effort,
         serviceTier: turnStartParams.serviceTier,
@@ -258,11 +295,17 @@ export async function prepareCodexAttemptTurnRequest(
         await resourceState.client.request("turn/start", turnStartParams, {
           timeoutMs: params.timeoutMs,
           signal: runAbortController.signal,
-          assertCurrent: connection.assertCurrent,
+          assertCurrent: assertSubmissionCurrent,
         }),
       );
       acceptedTurnId = startedTurn.turn.id;
-      connection.assertCurrent();
+      assertSubmissionCurrent();
+      await reserveTurn?.accepted?.();
+      assertSubmissionCurrent();
+      if (reserveSettings?.model) {
+        resourceState.acceptedReserveModel = reserveSettings.model;
+        codexModelCallDiagnostics.setAcceptedModel(reserveSettings.model);
+      }
       // Fitting may drop or truncate references; only acknowledge the complete block.
       if (referencesRetained) {
         references.accepted();

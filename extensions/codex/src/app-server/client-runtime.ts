@@ -1,5 +1,4 @@
 /** Client-scoped Codex auth and account observers. */
-import { createHash } from "node:crypto";
 import { embeddedAgentLog, formatErrorMessage } from "openclaw/plugin-sdk/agent-harness-runtime";
 import { pruneMapToMaxSize } from "openclaw/plugin-sdk/collection-runtime";
 import { readCodexSessionMeta } from "../session-catalog-provenance.js";
@@ -17,6 +16,11 @@ import {
   type ThreadOwnerToken,
   type ThreadReleaseTransition,
 } from "./client-thread-owner.js";
+import {
+  invalidateCodexClientWorkspaceReferences,
+  prepareCodexClientWorkspaceReferences,
+  type CodexClientWorkspaceReferenceState,
+} from "./client-workspace-references.js";
 import type { CodexAppServerClient } from "./client.js";
 import { isJsonObject, type CodexServiceTier, type JsonObject } from "./protocol.js";
 import { mergeCodexRateLimitsUpdate } from "./rate-limit-cache.js";
@@ -27,13 +31,17 @@ type ClientRuntimeContext = CodexAppServerAuthProfileLookup & {
   onAuthRefreshFailure?: () => void;
 };
 
-type ClientRuntime = ThreadOwnershipState & {
-  context: ClientRuntimeContext;
-  authHandoff?: CodexAppServerAuthHandoff;
-  sessionMetadata: Map<string, { sessionsRoot: string; rolloutPath: string; metadata: JsonObject }>;
-  workspaceReferences: Map<string, { digest?: string; needsReintroduction: boolean }>;
-  evictionTimer?: ReturnType<typeof setTimeout>;
-};
+type ClientRuntime = ThreadOwnershipState &
+  CodexClientWorkspaceReferenceState & {
+    context: ClientRuntimeContext;
+    authHandoff?: CodexAppServerAuthHandoff;
+    authHandoffRevoked?: boolean;
+    sessionMetadata: Map<
+      string,
+      { sessionsRoot: string; rolloutPath: string; metadata: JsonObject }
+    >;
+    evictionTimer?: ReturnType<typeof setTimeout>;
+  };
 
 export type CodexAppServerLiveThreadOwnership = {
   assertCurrent: () => void;
@@ -75,9 +83,21 @@ export function recordCodexAppServerAuthHandoff(
   handoff: CodexAppServerAuthHandoff | undefined,
 ): void {
   const runtime = configuredClients.get(client);
-  if (runtime && !runtime.closed && handoff) {
-    runtime.authHandoff = handoff;
+  if (runtime && !runtime.closed) {
+    runtime.authHandoffRevoked = !handoff && Boolean(runtime.authHandoff);
+    // Retain the last handoff as refresh provenance, never as revoked authority.
+    runtime.authHandoff = handoff ?? runtime.authHandoff;
   }
+}
+
+/** Identity observation for account-bound transitions; replacing auth invalidates retained observers. */
+export function readCodexAppServerAuthHandoff(
+  client: CodexAppServerClient,
+): CodexAppServerAuthHandoff | "revoked" | undefined {
+  const runtime = configuredClients.get(client);
+  return runtime?.authHandoff && (runtime.closed || runtime.authHandoffRevoked)
+    ? "revoked"
+    : runtime?.authHandoff;
 }
 
 /** Reference history is only trusted while this native subscription stays warm. */
@@ -94,23 +114,7 @@ export function prepareCodexWorkspaceReferences(
   threadId: string,
   reference: string | undefined,
 ) {
-  const runtime = configuredClients.get(client);
-  const digest = createHash("sha256")
-    .update(reference ?? "")
-    .digest("hex");
-  const previous = runtime?.workspaceReferences.get(threadId) ?? { needsReintroduction: true };
-  if (runtime && !runtime.closed) {
-    runtime.workspaceReferences.set(threadId, previous);
-  }
-  return {
-    include: previous.needsReintroduction || previous.digest !== digest,
-    accepted: () => {
-      if (!runtime || runtime.closed || runtime.workspaceReferences.get(threadId) !== previous) {
-        return;
-      }
-      runtime.workspaceReferences.set(threadId, { digest, needsReintroduction: false });
-    },
-  };
+  return prepareCodexClientWorkspaceReferences(configuredClients.get(client), threadId, reference);
 }
 
 /** Immutable declarations are data owned by this physical client, never retained executors. */
@@ -235,19 +239,28 @@ export function ensureCodexAppServerClientRuntime(
       if (runtime.closed) {
         throw new Error("Codex app-server client closed during ChatGPT token refresh.");
       }
-      runtime.authHandoff = {
+      recordCodexAppServerAuthHandoff(client, {
         accessFingerprint: fingerprintTokenAuthProfileCacheKey(tokens.accessToken),
         chatgptAccountId: tokens.chatgptAccountId,
-      };
+      });
       return { ...tokens };
     } catch (error) {
-      // Failed refresh leaves Codex holding its old account. Detach the cached
-      // process before another acquisition; existing leases can finish safely.
+      // Detach future acquisitions; retained leases lose submission authority, not
+      // provenance needed to reuse a late same-account rotation without refreshing twice.
+      runtime.authHandoffRevoked = true;
       runtime.context.onAuthRefreshFailure?.();
       throw error;
     }
   });
   client.addNotificationHandler((notification) => {
+    if (notification.method === "account/updated") {
+      const mode = isJsonObject(notification.params) ? notification.params.authMode : undefined;
+      // Login success emits this *after* its RPC response, without account identity.
+      // Same-mode notices cannot attest replacement; the host handoff owner does.
+      if (mode !== "chatgpt" && mode !== "chatgptAuthTokens") {
+        runtime.authHandoffRevoked = true;
+      }
+    }
     if (
       notification.method === "item/completed" &&
       isJsonObject(notification.params) &&
@@ -255,12 +268,8 @@ export function ensureCodexAppServerClientRuntime(
       notification.params.item.type === "contextCompaction" &&
       typeof notification.params.threadId === "string"
     ) {
-      const threadId = notification.params.threadId;
       // Observe manual and automatic compaction even without an active turn projector.
-      const previous = runtime.workspaceReferences.get(threadId);
-      if (previous) {
-        runtime.workspaceReferences.set(threadId, { ...previous, needsReintroduction: true });
-      }
+      invalidateCodexClientWorkspaceReferences(runtime, notification.params.threadId);
     }
     if (notification.method === "account/rateLimits/updated") {
       mergeCodexRateLimitsUpdate(client, notification.params);
