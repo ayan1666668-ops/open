@@ -2,7 +2,6 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
-import diffsPlugin from "../../extensions/diffs/index.js";
 import { registerTestPlugin } from "../plugin-sdk/plugin-test-contracts.js";
 import { createPluginRuntimeMock } from "../plugin-sdk/plugin-test-runtime.js";
 import {
@@ -11,14 +10,16 @@ import {
 } from "../plugin-state/plugin-blob-store.js";
 import { createDeferredCore } from "../shared/deferred.js";
 import { closeOpenClawStateDatabaseAsync } from "../state/openclaw-state-db.js";
+import { loadBundledPluginFacade } from "../test-utils/bundled-plugin-public-surface.js";
 import { PluginInstance } from "./plugin-instance.js";
 import { createPluginRegistry } from "./registry.js";
 import { startPluginServices, type PluginServicesHandle } from "./services.js";
 import { createPluginRecord } from "./status.test-helpers.js";
+import type { OpenClawPluginDefinition } from "./types.js";
 
 const temporaryRoot = vi.hoisted(() => ({ value: "" }));
-vi.mock("../../extensions/diffs/api.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../../extensions/diffs/api.js")>()),
+vi.mock("../infra/tmp-openclaw-dir.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../infra/tmp-openclaw-dir.js")>()),
   resolvePreferredOpenClawTmpDir: () => temporaryRoot.value,
 }));
 vi.mock("../plugin-state/plugin-blob-store.js", async (importOriginal) => {
@@ -46,6 +47,12 @@ it.each([false, true])(
     try {
       temporaryRoot.value = root;
       vi.stubEnv("OPENCLAW_STATE_DIR", path.join(root, "state"));
+      const { default: diffsPlugin } = await loadBundledPluginFacade<{
+        default: OpenClawPluginDefinition;
+      }>({ pluginId: "diffs", artifactBasename: "index.js" });
+      if (!diffsPlugin.register) {
+        throw new Error("Diffs has no plugin registration entry point");
+      }
       const config = {};
       const builder = createPluginRegistry({
         logger: { info() {}, warn() {}, error() {}, debug() {} },
