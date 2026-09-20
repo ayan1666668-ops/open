@@ -113,12 +113,15 @@ describe("tool output inspection", () => {
     try {
       await expect(panel.updateComplete).resolves.toBe(true);
       expect(panel.querySelector("[aria-busy]")?.getAttribute("aria-busy")).toBe("true");
+      expect(panel.querySelector(".chat-tool-output__actions")).toBeNull();
     } finally {
       complete(result("resolved output"));
     }
     await vi.waitFor(() =>
       expect(panel.querySelector(".chat-tool-output__text")?.textContent).toBe("resolved output"),
     );
+    expect(button(panel, t("chat.toolCards.copyOutput"))).toBeDefined();
+    expect(button(panel, t("chat.toolCards.downloadOutput"))).toBeDefined();
   });
 
   it("defers detached selection changes and retrieves the new result when reattached", async () => {
@@ -141,23 +144,36 @@ describe("tool output inspection", () => {
     expect(load).toHaveBeenCalledTimes(2);
   });
 
-  it("retrieves the selected result and copies/downloads exact text beyond the Markdown cap", async () => {
+  it("retrieves and exports exact text beyond the inherited detail and Markdown caps", async () => {
     const text =
-      "  \r\n" + "x".repeat(150_000) + "\r\n\x60\x60\x60\n<strong>literal</strong> 🦞 TAIL\r\n";
-    const request = vi.fn().mockResolvedValue(result(text));
+      "  \r\n" + "x".repeat(600_000) + "\r\n\x60\x60\x60\n<strong>literal</strong> 🦞 TAIL\r\n";
+    const request = vi.fn(async (_method: string, params: { maxChars: number }) => {
+      const response = result(text.slice(0, params.maxChars));
+      return {
+        ...response,
+        message: {
+          ...response.message,
+          __openclaw: {
+            ...response.message["__openclaw"],
+            truncated: text.length > params.maxChars,
+          },
+        },
+      };
+    });
     const loader = createSidebarFullMessageLoader(
       { client: { request } as unknown as GatewayBrowserClient, connected: true },
       false,
     )!;
     const panel = mount(outputCard(), loader);
     await vi.waitFor(() =>
-      expect(panel.querySelector(".chat-tool-output__text")?.textContent).toBe(text),
+      expect(panel.querySelector(".chat-tool-output__text")?.textContent?.length).toBe(text.length),
     );
+    expect(panel.querySelector(".chat-tool-output__text")?.textContent).toBe(text);
     expect(request).toHaveBeenCalledWith("chat.message.get", {
       sessionKey: "global",
       agentId: "work",
       messageId: "result-b",
-      maxChars: 500_000,
+      maxChars: 2_000_000,
     });
     expect(panel.textContent).not.toContain("wrong sibling");
     expect(panel.querySelector("strong")).toBeNull();

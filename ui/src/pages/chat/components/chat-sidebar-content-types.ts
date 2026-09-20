@@ -15,6 +15,7 @@ type SidebarFullMessageRequest = {
   sessionKey: string;
   agentId?: string;
   messageId: string;
+  maxChars?: number;
 };
 
 export type SidebarFullMessageLoader = (
@@ -150,8 +151,9 @@ export type SidebarContent =
   | ImageSidebarContent
   | AttachmentSidebarContent
   | FileSidebarContent
-  | SessionDiffSidebarContent
-  | { kind: "task"; taskId: string };
+  | SessionDiffSidebarContent;
+
+export type ChatDetailPanelContent = Exclude<SidebarContent, { kind: "tool-output" }>;
 
 export type SidebarSelection = (
   | SidebarContent

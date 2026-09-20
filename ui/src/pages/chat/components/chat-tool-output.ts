@@ -85,6 +85,7 @@ class ChatToolOutput extends OpenClawLightDomElement {
         sessionKey,
         agentId,
         messageId: card.resultMessageId,
+        maxChars: 2_000_000,
       });
       if (version !== this.requestVersion || this.content !== content || !this.isConnected) {
         return;
@@ -153,12 +154,16 @@ class ChatToolOutput extends OpenClawLightDomElement {
             </details>`
           : nothing
       }
-      <div class="chat-tool-output__actions">
-        ${keyed(text, renderCopyButton(text, t("chat.toolCards.copyOutput")))}
-        <button class="btn btn--sm" type="button" @click=${() => this.downloadOutput(card)}>
-          ${t("chat.toolCards.downloadOutput")}
-        </button>
-      </div>
+      ${
+        this.loadState === "loading"
+          ? nothing
+          : html`<div class="chat-tool-output__actions">
+              ${keyed(text, renderCopyButton(text, t("chat.toolCards.copyOutput")))}
+              <button class="btn btn--sm" type="button" @click=${() => this.downloadOutput(card)}>
+                ${t("chat.toolCards.downloadOutput")}
+              </button>
+            </div>`
+      }
       ${this.downloadFailed ? html`<p role="alert">${t("chat.toolCards.outputDownloadFailed")}</p>` : nothing}
       <pre class="chat-tool-output__text"><code>${text}</code></pre>
     </section>`;

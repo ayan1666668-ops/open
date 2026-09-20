@@ -267,7 +267,7 @@ export function createSidebarFullMessageLoader(
         sessionKey: request.sessionKey,
         ...(request.agentId ? { agentId: request.agentId } : {}),
         messageId: request.messageId,
-        maxChars: DETAIL_FULL_MESSAGE_MAX_CHARS,
+        maxChars: request.maxChars ?? DETAIL_FULL_MESSAGE_MAX_CHARS,
       },
     );
     return state.connected && state.client === client ? result : null;

@@ -4258,6 +4258,7 @@ public struct ChatSendParams: Codable, Sendable {
     public let sessionid: String?
     public let message: String
     public let mentions: [HumanMention]?
+    public let workcontext: [String: AnyCodable]?
     public let intent: [String: AnyCodable]?
     public let thinking: String?
     public let fastmodevalue: AnyCodable?
@@ -4288,6 +4289,7 @@ public struct ChatSendParams: Codable, Sendable {
         sessionid: String? = nil,
         message: String,
         mentions: [HumanMention]? = nil,
+        workcontext: [String: AnyCodable]? = nil,
         intent: [String: AnyCodable]? = nil,
         thinking: String? = nil,
         fastmodevalue: AnyCodable? = nil,
@@ -4316,6 +4318,7 @@ public struct ChatSendParams: Codable, Sendable {
         self.sessionid = sessionid
         self.message = message
         self.mentions = mentions
+        self.workcontext = workcontext
         self.intent = intent
         self.thinking = thinking
         self.fastmodevalue = fastmodevalue
@@ -4346,6 +4349,7 @@ public struct ChatSendParams: Codable, Sendable {
         sessionid: String? = nil,
         message: String,
         mentions: [HumanMention]? = nil,
+        workcontext: [String: AnyCodable]? = nil,
         intent: [String: AnyCodable]? = nil,
         thinking: String? = nil,
         fastmode: Bool?,
@@ -4374,6 +4378,7 @@ public struct ChatSendParams: Codable, Sendable {
             sessionid: sessionid,
             message: message,
             mentions: mentions,
+            workcontext: workcontext,
             intent: intent,
             thinking: thinking,
             fastmodevalue: fastmode.map { AnyCodable($0) },
@@ -4404,6 +4409,7 @@ public struct ChatSendParams: Codable, Sendable {
         case sessionid = "sessionId"
         case message
         case mentions
+        case workcontext = "workContext"
         case intent
         case thinking
         case fastmodevalue = "fastMode"
@@ -13545,6 +13551,7 @@ public struct SessionCatalogHost: Codable, Sendable {
     public let label: String
     public let kind: AnyCodable
     public let connected: Bool
+    public let pending: Bool?
     public let nodeid: String?
     public let canstartterminal: Bool?
     public let sessions: [SessionCatalogSession]
@@ -13556,6 +13563,7 @@ public struct SessionCatalogHost: Codable, Sendable {
         label: String,
         kind: AnyCodable,
         connected: Bool,
+        pending: Bool? = nil,
         nodeid: String? = nil,
         canstartterminal: Bool? = nil,
         sessions: [SessionCatalogSession],
@@ -13566,6 +13574,7 @@ public struct SessionCatalogHost: Codable, Sendable {
         self.label = label
         self.kind = kind
         self.connected = connected
+        self.pending = pending
         self.nodeid = nodeid
         self.canstartterminal = canstartterminal
         self.sessions = sessions
@@ -13578,6 +13587,7 @@ public struct SessionCatalogHost: Codable, Sendable {
         case label
         case kind
         case connected
+        case pending
         case nodeid = "nodeId"
         case canstartterminal = "canStartTerminal"
         case sessions
@@ -15967,6 +15977,7 @@ public struct SessionsCatalogListParams: Codable, Sendable {
     public let cursors: [String: AnyCodable]?
     public let agentid: String?
     public let progressid: String?
+    public let allowpartialresults: Bool?
     public let search: String?
     public let limitperhost: Int?
     public let hostids: [String]?
@@ -15977,6 +15988,7 @@ public struct SessionsCatalogListParams: Codable, Sendable {
         cursors: [String: AnyCodable]? = nil,
         agentid: String? = nil,
         progressid: String? = nil,
+        allowpartialresults: Bool? = nil,
         search: String? = nil,
         limitperhost: Int? = nil,
         hostids: [String]? = nil)
@@ -15986,6 +15998,7 @@ public struct SessionsCatalogListParams: Codable, Sendable {
         self.cursors = cursors
         self.agentid = agentid
         self.progressid = progressid
+        self.allowpartialresults = allowpartialresults
         self.search = search
         self.limitperhost = limitperhost
         self.hostids = hostids
@@ -15997,6 +16010,7 @@ public struct SessionsCatalogListParams: Codable, Sendable {
         case cursors
         case agentid = "agentId"
         case progressid = "progressId"
+        case allowpartialresults = "allowPartialResults"
         case search
         case limitperhost = "limitPerHost"
         case hostids = "hostIds"

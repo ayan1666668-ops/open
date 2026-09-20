@@ -13,7 +13,7 @@ const suite = createControlUiE2eSuite({
 const timestamp = Date.UTC(2026, 8, 19, 12);
 const fullOutput =
   "  Command output begins\r\n" +
-  "Deterministic output line for full-output inspection.\r\n".repeat(3_100) +
+  "Deterministic output line for full-output inspection.\r\n".repeat(12_000) +
   "\r\nTAIL: the complete captured result 🦞\r\n";
 const result = {
   role: "toolResult",
@@ -87,7 +87,7 @@ suite.define(() => {
         expect(await page.locator(".chat-tool-msg-body").textContent()).not.toContain("TAIL:");
         await page.getByRole("button", { name: "Show full output", exact: true }).click();
         const request = await gateway.waitForRequest("chat.message.get");
-        expect(request.params).toMatchObject({ messageId: "output-result" });
+        expect(request.params).toMatchObject({ messageId: "output-result", maxChars: 2_000_000 });
         const output = page.locator(".chat-tool-output__text");
         await expect.poll(() => output.textContent()).toBe(fullOutput);
         await page
