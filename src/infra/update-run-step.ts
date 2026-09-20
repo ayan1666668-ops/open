@@ -7,6 +7,21 @@ import type { UpdateSnapshotCapacity } from "./update-snapshot-capacity.js";
 
 type ResultStep = Omit<UpdateStepResult, "command" | "cwd" | "durationMs" | "recoverySteps">;
 
+/** Physical process success does not erase a failed inspection or incomplete termination. */
+export function isFailedUpdateStep(
+  step: Pick<
+    UpdateStepResult,
+    "exitCode" | "advisory" | "failureFacts" | "termination" | "killed" | "outputLimitExceeded"
+  >,
+): boolean {
+  return (
+    !step.advisory &&
+    (step.exitCode !== 0 ||
+      Boolean(step.failureFacts?.length || step.killed || step.outputLimitExceeded) ||
+      (step.termination !== undefined && step.termination !== "exit"))
+  );
+}
+
 export function isUpdateGatewayReadinessPending(result: UpdateRunResult): boolean {
   const step = result.steps.findLast(
     (entry) =>
@@ -18,6 +33,7 @@ export function isUpdateGatewayReadinessPending(result: UpdateRunResult): boolea
 /** Warning rows preserve producer-classified advisories in the existing diagnostic ledger. */
 export function updateRunStepsFromResultStep(step: ResultStep): UpdateRunStep[] {
   const text = (value: string) => truncateUtf16Safe(value, UPDATE_RUN_TEXT_LIMIT);
+  const failed = isFailedUpdateStep(step);
   const refusal = step.configWriteRefusal;
   const configWriteRefusal = refusal
     ? {
@@ -54,14 +70,14 @@ export function updateRunStepsFromResultStep(step: ResultStep): UpdateRunStep[] 
   return [
     {
       step: text(step.name),
-      status: step.exitCode === 0 || step.advisory ? "completed" : "failed",
+      status: failed ? "failed" : "completed",
       exitCode: step.exitCode,
       ...(step.failureFacts?.length && !step.advisory
         ? { failureFacts: step.failureFacts.slice(0, 5) }
         : {}),
       ...(configWriteRefusal ? { configWriteRefusal } : {}),
       ...(snapshotCapacity ? { snapshotCapacity } : {}),
-      ...(step.exitCode !== 0
+      ...(failed || step.exitCode !== 0
         ? { detail: text(step.advisory?.message ?? summarizeUpdateStepFailure(step)) }
         : {}),
     },

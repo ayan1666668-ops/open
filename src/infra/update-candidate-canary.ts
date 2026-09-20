@@ -22,10 +22,7 @@ import {
   type UpdateCandidateRehearsal,
 } from "./update-candidate-rehearsal.js";
 import type { UpdateDoctorConfigChange } from "./update-doctor-config.js";
-import {
-  formatUpdateDoctorLintFinding,
-  parseUpdateDoctorLintReport,
-} from "./update-doctor-lint.js";
+import { applyUpdateDoctorLintReport, parseUpdateDoctorLintReport } from "./update-doctor-lint.js";
 import {
   consumeUpdatePostInstallDoctorResult,
   createUpdatePostInstallDoctorResultPath,
@@ -390,37 +387,10 @@ export async function validateUpdateCandidateCanary(params: {
             }
           : undefined;
       params.signal?.throwIfAborted();
-      let lintReport: ReturnType<typeof parseUpdateDoctorLintReport> | undefined;
-      if (phase === "lint") {
-        if (code === 0 && running.outputExceeded()) {
-          throw new Error("Update health check output exceeded the inspection limit");
-        }
-        if (!running.outputExceeded()) {
-          try {
-            lintReport = parseUpdateDoctorLintReport(running.stdout(), env);
-          } catch (error) {
-            if (code === 0) {
-              throw error;
-            }
-            // Failed children can exit before emitting JSON; retain stderr below.
-          }
-        }
-        if (
-          code === 1 &&
-          !timedOut &&
-          !activeLintStep?.signal &&
-          !activeLintStep?.killed &&
-          lintReport?.advisoryOnly
-        ) {
-          doctorAdvisory = {
-            kind: "recoverable-maintenance",
-            message: "Doctor security policy findings are advisory during updates.",
-          };
-        }
-      }
-      const lintWarnings = (lintReport?.doctorLintFindings ?? [])
-        .filter((finding) => finding.severity === "warning")
-        .map((finding) => formatUpdateDoctorLintFinding(finding, env));
+      const lintReport = activeLintStep
+        ? applyUpdateDoctorLintReport(activeLintStep, running.stdout(), code, env)
+        : undefined;
+      doctorAdvisory ??= activeLintStep?.advisory;
       if (code === 0 && phase === "plugins") {
         const fail = (message: string) => {
           code = 1;
@@ -496,9 +466,6 @@ export async function validateUpdateCandidateCanary(params: {
       if (doctorAdvisory) {
         step.advisory = doctorAdvisory;
       }
-      if (lintReport) {
-        step.doctorLintFindings = lintReport.doctorLintFindings;
-      }
       if (code === 0 && pluginObservations.length > 0) {
         step.stdoutTail = pluginObservations.join("\n");
       }
@@ -533,9 +500,6 @@ export async function validateUpdateCandidateCanary(params: {
                 env,
               ),
             ];
-      }
-      if (lintWarnings.length > 0) {
-        step.warnings = lintWarnings;
       }
       steps.push(step);
       if (code !== 0 && !doctorAdvisory) {

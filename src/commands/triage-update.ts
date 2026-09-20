@@ -9,7 +9,7 @@ import {
 } from "../infra/update-doctor-lint.js";
 import { normalizeUpdateFailureFacts } from "../infra/update-failure-facts.js";
 import { UpdateFailureFactSchema } from "../infra/update-run-schema.js";
-import { formatUpdateDoctorLintReceipt } from "../infra/update-run-step.js";
+import { formatUpdateDoctorLintReceipt, isFailedUpdateStep } from "../infra/update-run-step.js";
 import {
   redactSupportString,
   type SupportRedactionContext,
@@ -206,9 +206,8 @@ export function sanitizeTriageUpdateFailure(
     );
   if (format === "artifact") {
     const lint =
-      result.steps.findLast(
-        (step) => step.doctorLintFindings && step.exitCode !== 0 && !step.advisory,
-      ) ?? result.steps.findLast((step) => step.doctorLintFindings);
+      result.steps.findLast((step) => step.doctorLintFindings && isFailedUpdateStep(step)) ??
+      result.steps.findLast((step) => step.doctorLintFindings);
     if (lint) {
       // Released 9.4 keeps only 160-byte step tails, but preserves this 768-byte field.
       const receipt = ` Doctor lint receipt: ${lintReceipt(lint)}`;
@@ -305,7 +304,7 @@ export function sanitizeTriageUpdateFailure(
       }
     : undefined;
   takePluginErrors(pluginWarnings?.slice(0, -1), true, warnings);
-  const failedSteps = result.steps.filter((step) => step.exitCode !== 0 && !step.advisory);
+  const failedSteps = result.steps.filter(isFailedUpdateStep);
   const latest = new Set(failedSteps.slice(-3));
   const retained = new Set(
     result.steps.filter(

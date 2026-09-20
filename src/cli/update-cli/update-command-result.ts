@@ -31,7 +31,10 @@ import {
   recordUpdateRunStep,
 } from "../../infra/update-run-ledger.js";
 import type { UpdateRunRecord } from "../../infra/update-run-record.js";
-import { updateRunStepsFromResultStep } from "../../infra/update-run-step.js";
+import {
+  isFailedUpdateStep,
+  updateRunStepsFromResultStep,
+} from "../../infra/update-run-step.js";
 import type { UpdateRunResult, UpdateStepResult } from "../../infra/update-runner.js";
 import { hasCommandProcessCleanupError } from "../../process/exec-result.js";
 import { defaultRuntime } from "../../runtime.js";
@@ -439,7 +442,7 @@ export function resolveAutomaticUpdateTriage(
     ) &&
     params.preManagedServiceStop?.serviceMutationAllowed !== false &&
     !result.steps.some((step) => step.termination === "signal");
-  const failedStep = result.steps.find((step) => step.exitCode !== 0 && !step.advisory);
+  const failedStep = result.steps.find(isFailedUpdateStep);
   const phase = result.reason ?? "update";
   return eligible
     ? {

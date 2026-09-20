@@ -31,6 +31,7 @@ import {
 import type { UpdateRunRecord } from "./update-run-record.js";
 import { readUpdateRunReportHealth } from "./update-run-report-health.js";
 import { formatUpdateRunCurrentHealth, formatUpdateRunIdentity } from "./update-run-report.js";
+import { isFailedUpdateStep } from "./update-run-step.js";
 import type { UpdateRunResult, UpdateStepResult } from "./update-runner.js";
 
 const UPDATE_REPORT_BODY_MAX_BYTES = 16_000;
@@ -138,16 +139,15 @@ function resolveFailedSteps(input: UpdateFailureReportInput): ReportedFailedStep
   const direct = new Map(input.result.steps.map((step) => [step.name, step]));
   const recorded = input.recordedRun?.runId === input.attemptId ? input.recordedRun.steps : [];
   const recordedNames = new Set(recorded.map((step) => step.step));
-  const failed = (step: UpdateStepResult) =>
-    !step.advisory &&
-    (step.exitCode !== 0 || step.killed === true || step.termination === "timeout");
   // The ledger orders recovery after the initial failure; measured results enrich it in place.
   return [
-    ...Array.from(direct.values()).filter((step) => failed(step) && !recordedNames.has(step.name)),
+    ...Array.from(direct.values()).filter(
+      (step) => isFailedUpdateStep(step) && !recordedNames.has(step.name),
+    ),
     ...recorded.flatMap((step): ReportedFailedStep[] => {
       const measured = direct.get(step.step);
       if (measured) {
-        return failed(measured)
+        return isFailedUpdateStep(measured)
           ? [{ ...measured, failureFacts: measured.failureFacts ?? step.failureFacts }]
           : [];
       }

@@ -3,6 +3,7 @@ import { z } from "zod";
 import { resolveStateDir } from "../config/paths.js";
 import { redactSupportDiagnosticLine } from "../logging/diagnostic-support-redaction.js";
 import { normalizeUpdateFailureFacts } from "./update-failure-facts.js";
+import type { UpdateStepResult } from "./update-runner-types.js";
 
 export const UpdateDoctorLintFindingSchema = z.object({
   checkId: z.string(),
@@ -107,4 +108,46 @@ export function parseUpdateDoctorLintReport(stdout: string, env: NodeJS.ProcessE
       env,
     ),
   };
+}
+
+export function applyUpdateDoctorLintReport(
+  step: UpdateStepResult,
+  stdout: string,
+  code: number | null,
+  env: NodeJS.ProcessEnv,
+) {
+  if (code === 0 && step.outputLimitExceeded) {
+    throw new Error("Update health check output exceeded the inspection limit");
+  }
+  let report: ReturnType<typeof parseUpdateDoctorLintReport> | undefined;
+  if (!step.outputLimitExceeded) {
+    try {
+      report = parseUpdateDoctorLintReport(stdout, env);
+    } catch (error) {
+      if (code === 0) {
+        throw error;
+      }
+      // Failed children can exit before emitting JSON; the caller retains stderr.
+    }
+  }
+  if (
+    code === 1 &&
+    step.termination === "exit" &&
+    !step.signal &&
+    !step.killed &&
+    report?.advisoryOnly
+  ) {
+    step.advisory = {
+      kind: "recoverable-maintenance",
+      message: "Doctor security policy findings are advisory during updates.",
+    };
+  }
+  step.doctorLintFindings = report?.doctorLintFindings ?? [];
+  const warnings = step.doctorLintFindings
+    .filter((finding) => finding.severity === "warning")
+    .map((finding) => formatUpdateDoctorLintFinding(finding, env));
+  if (warnings.length) {
+    step.warnings = warnings;
+  }
+  return report;
 }

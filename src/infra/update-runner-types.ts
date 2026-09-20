@@ -17,7 +17,7 @@ import type { UpdateRecovery } from "./update-recovery.js";
 import type { UpdateRollbackOutcome } from "./update-run-schema.js";
 import type { UpdateSnapshotCapacity } from "./update-snapshot-capacity.js";
 
-export type UpdateStepAdvisory =
+type UpdateStepAdvisory =
   | PackageUpdateStepAdvisory
   | { kind: "candidate-runtime-unavailable" | "recoverable-maintenance"; message: string };
 

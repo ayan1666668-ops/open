@@ -16,9 +16,9 @@ import {
   renderUpdateRunReport,
   updateRunReportInputFromResult,
 } from "../../infra/update-run-report.js";
+import { isFailedUpdateStep } from "../../infra/update-run-step.js";
 import type {
   UpdateRunResult,
-  UpdateStepAdvisory,
   UpdateStepProgress,
   UpdateStepResult,
 } from "../../infra/update-runner.js";
@@ -192,7 +192,7 @@ function printStep(step: Omit<UpdateStepResult, "cwd">): void {
   for (const finding of step.doctorLintFindings ?? []) {
     defaultRuntime.log(`    ${formatUpdateDoctorLintFinding(finding)}`);
   }
-  if (step.advisory === undefined && step.exitCode === 0) {
+  if (step.advisory === undefined && !isFailedUpdateStep(step)) {
     return;
   }
   if (!step.advisory && step.failureFacts?.length) {
@@ -218,20 +218,14 @@ function printStep(step: Omit<UpdateStepResult, "cwd">): void {
   }
 }
 
-function formatStepStatus(step: {
-  exitCode: number | null;
-  advisory?: UpdateStepAdvisory;
-}): string {
-  if (step.advisory !== undefined) {
-    return theme.warn("!");
-  }
-  if (step.exitCode === 0) {
-    return theme.success("\u2713");
-  }
-  if (step.exitCode === null) {
-    return theme.warn("?");
-  }
-  return theme.error("\u2717");
+function formatStepStatus(step: Omit<UpdateStepResult, "cwd">): string {
+  return step.advisory
+    ? theme.warn("!")
+    : !isFailedUpdateStep(step)
+      ? theme.success("\u2713")
+      : step.exitCode === null
+        ? theme.warn("?")
+        : theme.error("\u2717");
 }
 
 export async function printResult(

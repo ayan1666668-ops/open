@@ -13,6 +13,7 @@ import {
   writePersistedAuthProfileStoreRaw,
 } from "../agents/auth-profiles/sqlite.js";
 import { collectSecurityWarnings } from "../commands/doctor-security.js";
+import { sanitizeTriageUpdateFailure } from "../commands/triage-update.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { securityAuditFindingToHealthFinding } from "../flows/health-check-adapter.js";
 import { runSecretsAudit } from "../secrets/audit.js";
@@ -29,7 +30,7 @@ import {
 } from "./update-candidate-canary.test-support.js";
 import { writeUpdateRunReportArtifact } from "./update-failure-report-artifact.js";
 import { createUpdateRun, finishUpdateRun, recordUpdateRunStep } from "./update-run-ledger.js";
-import { renderUpdateRunReport } from "./update-run-report.js";
+import { renderUpdateRunReport, updateRunReportInputFromResult } from "./update-run-report.js";
 import { updateRunStepsFromResultStep, updateRunWarningMessages } from "./update-run-step.js";
 
 const mocks = vi.hoisted(() => ({ spawn: vi.fn(), snapshot: vi.fn(), signal: vi.fn() }));
@@ -359,6 +360,27 @@ describe("update candidate Doctor lint", () => {
     });
     expect(step.advisory).toBeUndefined();
     expect(step.doctorLintFindings).toBeDefined();
+    const failure = { ...result, mode: "npm" as const, root };
+    expect(updateRunStepsFromResultStep(step)[0]).toMatchObject({
+      status: "failed",
+      exitCode: physical.exitCode,
+      failureFacts: step.failureFacts,
+    });
+    expect(renderSteps([step])).toContain(
+      physical.outputLimitExceeded && physical.exitCode === 0
+        ? "Update health check output exceeded the inspection limit"
+        : "Update health check failed",
+    );
+    expect(renderUpdateRunReport(updateRunReportInputFromResult(failure)).markdown).toContain(
+      "Failed: Checking update health",
+    );
+    expect(
+      sanitizeTriageUpdateFailure({ result: failure }, { env: {}, stateDir: root }),
+    ).toMatchObject({
+      result: {
+        steps: [expect.objectContaining({ name: step.name, exitCode: physical.exitCode })],
+      },
+    });
   });
   it("preserves bounded Doctor findings before the diagnostic log tail", async () => {
     const spawnNormally = mocks.spawn.getMockImplementation()!;
