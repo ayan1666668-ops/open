@@ -58,10 +58,13 @@ export function prepareRetainedSessionImport(
   };
   if (!isSqliteStore) {
     try {
-      if (params.mode === "import" && rebuildDeferredPluginSessionSourceIndex(sourceVerification)) {
+      if (
+        (params.mode === "import" || params.mode === "recover") &&
+        rebuildDeferredPluginSessionSourceIndex(sourceVerification)
+      ) {
         issues.push({
           code: "retained_plugin_source_index_rebuilt",
-          message: `Rebuilt the verified source index from the deferred import receipt: ${params.target.storePath}. Canonical SQLite sessions were not replayed.`,
+          message: `Rebuilt the verified source index and database binding from the deferred import receipt: ${params.target.storePath}. Canonical SQLite sessions were not replayed.`,
         });
       }
       retainedImport = readDeferredPluginSessionImport(sourceVerification);

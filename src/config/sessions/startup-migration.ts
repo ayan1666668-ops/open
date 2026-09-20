@@ -2,11 +2,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { formatCliCommand } from "../../cli/command-format.js";
-import { readDeferredPluginMigrations } from "../../infra/deferred-plugin-migrations.js";
-import {
-  deferredPluginSessionStoreIds,
-  readDeferredPluginSessionImport,
-} from "../../infra/deferred-plugin-session-sources.js";
+import { readDeferredPluginSessionImport } from "../../infra/deferred-plugin-session-sources.js";
 import { formatDoctorStateRepairFailure } from "../../infra/state-repair-message.js";
 import { readAgentDatabaseAdmissionRefusal } from "../../state/agent-database-admission.js";
 import { readAgentDeletionJournal } from "../../state/agent-deletion-journal.js";
@@ -50,7 +46,6 @@ export function assertSessionStoreMigrationComplete(params: {
   ).filter(
     (target) => !target.agentId || !readAgentDatabaseAdmissionRefusal(target.agentId, { env }),
   );
-  let pending: ReturnType<typeof readDeferredPluginMigrations> | undefined;
   const legacyRootStore = path.join(resolveStateDir(env), "sessions", "sessions.json");
   const legacyTargets = fs.existsSync(legacyRootStore)
     ? resolveSessionStoreTargets(params.cfg, { allAgents: true }, { env }).map((target) => ({
@@ -81,13 +76,7 @@ export function assertSessionStoreMigrationComplete(params: {
     };
     const owners = new Map<string, SourceOwner>();
     for (const target of candidates) {
-      if (
-        !target.agentId ||
-        deferredPluginSessionStoreIds({
-          target: { ...target, agentId: target.agentId },
-          pending: (pending ??= readDeferredPluginMigrations({ env })),
-        }).length === 0
-      ) {
+      if (!target.agentId) {
         return true;
       }
       const destination =
@@ -131,9 +120,9 @@ export function assertSessionStoreMigrationComplete(params: {
         target,
         sqlitePath: destination,
         env,
+        purpose: "readiness",
       });
-      // Owners without a database can never hold a replayable receipt (receipts bind
-      // the database identity, which a later-created database would invalidate).
+      // Owners without a database cannot have completed a core session import.
       // Without a receipt or unindexed history, demanding one deadlocks startup:
       // Doctor refuses to create a database just for the receipt.
       if (!receipt && source.entries.length === 0 && !fs.existsSync(destination)) {

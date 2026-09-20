@@ -47,29 +47,37 @@ function verifyTranscriptEvents(
       return undefined;
     }
     const db = getSessionKysely(database);
-    for (const event of iterateSqliteQuerySync(
-      database,
-      db
-        .selectFrom("transcript_events")
-        .select("event_json")
-        .where("session_id", "=", source.sessionId),
-    )) {
-      stage.addSeen(event.event_json);
-    }
-    for (const event of stage.rows(0)) {
-      if (!stage.contains(event.eventJson)) {
-        return undefined;
+    const sourceRows = stage.rows(0)[Symbol.iterator]();
+    try {
+      let expected = sourceRows.next();
+      for (const event of iterateSqliteQuerySync(
+        database,
+        db
+          .selectFrom("transcript_events")
+          .select("event_json")
+          .where("session_id", "=", source.sessionId)
+          .orderBy("seq", "asc"),
+      )) {
+        if (expected.done) {
+          break;
+        }
+        // Canonical history may contain newer events, but must preserve source order and repeats.
+        if (event.event_json === expected.value.eventJson) {
+          expected = sourceRows.next();
+        }
       }
+      validate();
+      return expected.done ? { events: seq } : undefined;
+    } finally {
+      sourceRows.return?.();
     }
-    validate();
-    return { events: seq };
   });
 }
 
 /** Read-only content proof for Doctor's informational missing-index finding. */
 export function verifyCanonicalSessionTranscriptSources(params: {
   target: { agentId: string; sqlitePath: string };
-  sources: readonly { path: string; sessionId: string }[];
+  sources: readonly { path: string; sessionId: string; originalPath?: string }[];
   env: NodeJS.ProcessEnv;
 }): { entries: number; events: number } | undefined {
   const verified = withOpenClawAgentDatabaseReadOnly(
@@ -78,7 +86,7 @@ export function verifyCanonicalSessionTranscriptSources(params: {
       for (const source of params.sources) {
         const verifiedSource = verifyTranscriptEvents(database.db, {
           ...source,
-          originalPath: source.path,
+          originalPath: source.originalPath ?? source.path,
         });
         if (!verifiedSource) {
           return undefined;

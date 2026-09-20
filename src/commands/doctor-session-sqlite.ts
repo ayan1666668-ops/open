@@ -184,7 +184,7 @@ export async function runDoctorSessionSqlite(
         inspectOrMigrateTarget({
           cfg,
           env,
-          mode: "validate",
+          mode: "recover",
           target,
           verifyMissingIndex,
           deferredPluginIds: deferredPluginSessionStoreIds({ target, pending: pendingPlugins }),
@@ -692,7 +692,7 @@ async function inspectOrMigrateTarget(params: {
   archiveTargets?: LegacyArchiveTarget[];
   cfg: OpenClawConfig;
   env: NodeJS.ProcessEnv;
-  mode: Exclude<DoctorSessionSqliteMode, "restore" | "recover">;
+  mode: Exclude<DoctorSessionSqliteMode, "restore">;
   target: SessionStoreTarget;
   expectedIndexIdentity?: MigrationArtifactIdentity;
   deferredPluginIds?: string[];

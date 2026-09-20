@@ -111,6 +111,19 @@ without recreating `sessions.json` or replaying session metadata. Hash-matching
 sources continue through import; changed or unverifiable sources remain protected
 and are listed by path. Preserve those files for inspection.
 
+A restored copy with the recorded SHA-256 and size remains valid even when its
+inode or modification time differs. `--session-sqlite recover` records its current
+identity in the existing receipt, including when no failed migration manifest exists.
+If the database file was replaced, recovery first verifies retained transcript
+content against the current SQLite database before rebinding the receipt. It does
+not overwrite current session settings or resurrect deleted history. Incomplete
+matches stay protected with an actionable finding naming the remaining source.
+
+A receipt identity mismatch does not prevent Gateway readiness when retained
+content verifies. Doctor owns the repair and the Gateway keeps serving SQLite.
+Recovery reports include every remaining issue code and distinguish unresolved
+findings from completed validation.
+
 When both a recorded legacy index and its archive are missing, Doctor verifies
 the remaining transcripts against canonical SQLite before reporting that the
 canonical transcripts are complete and the legacy index entries are informational.
