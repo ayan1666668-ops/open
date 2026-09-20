@@ -75,6 +75,9 @@ type AssistantTextContentBlock = {
 };
 
 function readAssistantTextContentBlock(value: unknown): AssistantTextContentBlock | null {
+  // Every field of AssistantTextContentBlock is optional `unknown`, so the
+  // assertion only names a shape for property reads; callers still narrow.
+  // SAFETY: the guard above proves `value` is a non-null object.
   return value && typeof value === "object" ? (value as AssistantTextContentBlock) : null;
 }
 

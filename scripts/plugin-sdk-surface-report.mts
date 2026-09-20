@@ -397,7 +397,11 @@ export function readPluginSdkSurfaceBudgets(env: NodeJS.ProcessEnv = process.env
       // +2: prepare admitted input attachments and bind a workspace transfer adapter.
       // +1: approved host workspace Skill resource reader.
       // +1: approved terminal-reply classifier for A2A task completion.
-      4547,
+      // -1: absorb of upstream main ff004d3605 nets one fewer public export
+      //     across 93 changed plugin-sdk files; SystemEvent now reaches the SDK
+      //     only through the plugins/runtime facade instead of a second raw
+      //     infra/system-events re-export.
+      4546,
       env,
     ),
     publicFunctionExports: readPluginSdkSurfaceBudgetEnv(
@@ -554,7 +558,9 @@ export function readPluginSdkSurfaceBudgets(env: NodeJS.ProcessEnv = process.env
       // +2: prepare admitted input attachments and bind a workspace transfer adapter.
       // +1: approved host workspace Skill resource reader.
       // +1: approved terminal-reply classifier for A2A task completion.
-      2678,
+      // -1: absorb of upstream main ff004d3605 nets one fewer public callable
+      //     export across 93 changed plugin-sdk files.
+      2677,
       env,
     ),
     publicDeprecatedExports: readPluginSdkSurfaceBudgetEnv(
