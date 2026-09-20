@@ -15,6 +15,10 @@ import {
   type Model,
   type SimpleStreamOptions,
 } from "@openclaw/llm-core";
+import {
+  CHARS_PER_TOKEN_ESTIMATE,
+  estimateStringChars,
+} from "@openclaw/normalization-core/cjk-chars";
 import { resolveAgentReasoningOption } from "../../reasoning.js";
 import type { AgentMessage, ThinkingLevel } from "../../types.js";
 import { buildSummarizationPromptText } from "./summarization-completion.js";
@@ -29,10 +33,6 @@ import {
 export type CompactionSummaryPrompt =
   | { kind: "turn-prefix" }
   | { kind: "custom"; instructions: string };
-import {
-  CHARS_PER_TOKEN_ESTIMATE,
-  estimateStringChars,
-} from "@openclaw/normalization-core/cjk-chars";
 
 function createSummarizationOptions(
   model: Model,
@@ -53,7 +53,7 @@ function createSummarizationOptions(
 }
 
 /** Managed-transport alias applied when the host requires OpenClaw's HTTP transport. */
-export const MANAGED_ANTHROPIC_TRANSPORT_API = "openclaw-anthropic-messages-transport";
+const MANAGED_ANTHROPIC_TRANSPORT_API = "openclaw-anthropic-messages-transport";
 
 /** Returns whether the api is the managed Anthropic Messages transport alias. */
 function isManagedAnthropicTransportApi(api: string): boolean {
@@ -114,7 +114,7 @@ function resolveTransportThinkingLevel<TLevel extends Exclude<ThinkingLevel, "of
   return isManagedAnthropicTransportApi(model.api) && reasoning === "max" ? "high" : reasoning;
 }
 
-export function resolveSummarizationCompletionAllowance(params: {
+function resolveSummarizationCompletionAllowance(params: {
   model: Model;
   maxTokens: number;
   thinkingLevel?: ThinkingLevel;

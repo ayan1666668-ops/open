@@ -4,10 +4,10 @@
 // under its counted-line cap. Imported by
 // compaction.identifier-preservation.test.ts, which owns this test root.
 import { describe, expect, it } from "vitest";
-import {
-  MANAGED_ANTHROPIC_TRANSPORT_API,
-  resolveSummarizationCompletionAllowance,
-} from "../../packages/agent-core/src/harness/compaction/summarization-budget.js";
+import { resolveSummarizationRequestBudget } from "../../packages/agent-core/src/harness/compaction/summarization-budget.js";
+
+/** The managed-transport alias; narrowing to "high" only happens behind it. */
+const MANAGED_ANTHROPIC_TRANSPORT_API = "openclaw-anthropic-messages-transport";
 
 describe("sub-minimum thinking budget follows the executing transport", () => {
   // Below Anthropic's 1024-token thinking minimum every transport disables
@@ -32,33 +32,31 @@ describe("sub-minimum thinking budget follows the executing transport", () => {
       contextWindow: 200_000,
       maxTokens: modelMaxTokens,
       ...overrides,
-    } as Parameters<typeof resolveSummarizationCompletionAllowance>[0]["model"];
+    } as Parameters<typeof resolveSummarizationRequestBudget>[0]["model"];
+  }
+
+  /** Completion allowance production really budgets for this model. */
+  function allowanceFor(model: Parameters<typeof resolveSummarizationRequestBudget>[0]["model"]) {
+    return resolveSummarizationRequestBudget({
+      messages: [],
+      model,
+      reserveTokens,
+      thinkingLevel: "low",
+    }).completionAllowanceTokens;
   }
 
   it("keeps the direct visible-output cap for Anthropic-direct", () => {
-    expect(
-      resolveSummarizationCompletionAllowance({
-        model: modelWith({}),
-        maxTokens,
-        thinkingLevel: "low",
-      }),
-    ).toBe(maxTokens);
+    expect(allowanceFor(modelWith({}))).toBe(maxTokens);
   });
 
   it("matches the inflated cap the managed alias transport actually sends", () => {
-    expect(
-      resolveSummarizationCompletionAllowance({
-        model: modelWith({ api: MANAGED_ANTHROPIC_TRANSPORT_API }),
-        maxTokens,
-        thinkingLevel: "low",
-      }),
-    ).toBe(modelMaxTokens);
+    expect(allowanceFor(modelWith({ api: MANAGED_ANTHROPIC_TRANSPORT_API }))).toBe(modelMaxTokens);
   });
 
   it("matches the inflated cap Bedrock actually sends", () => {
     expect(
-      resolveSummarizationCompletionAllowance({
-        model: modelWith({
+      allowanceFor(
+        modelWith({
           id: "anthropic.claude-sonnet-4-5-20250929-v1:0",
           // Bedrock's api discriminator is the converse-stream transport;
           // "amazon-bedrock" is the provider, which isClaudeBedrockModel
@@ -66,9 +64,7 @@ describe("sub-minimum thinking budget follows the executing transport", () => {
           api: "bedrock-converse-stream",
           provider: "amazon-bedrock",
         }),
-        maxTokens,
-        thinkingLevel: "low",
-      }),
+      ),
     ).toBe(modelMaxTokens);
   });
 });
