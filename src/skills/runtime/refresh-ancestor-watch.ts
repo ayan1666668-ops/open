@@ -46,15 +46,15 @@ function createAncestorWatcher(
   subscriptions: Set<AncestorSubscription>,
 ): Pick<AncestorWatcher, "watcher" | "close"> {
   const ignored: AncestorSubscription["ignored"] = (candidate, stats) => {
-    let ignored = true;
+    let allIgnored = true;
     // Each logical filter records directory-symlink identity for unlink
     // events. Evaluate all of them even when another target admits entry.
     for (const current of subscriptions) {
       if (!current.ignored(candidate, stats)) {
-        ignored = false;
+        allIgnored = false;
       }
     }
-    return ignored;
+    return allIgnored;
   };
   return runInWatcherContext(() => {
     if (useNativeAncestorWatcher(watchRoot, usePolling)) {

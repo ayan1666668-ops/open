@@ -516,7 +516,9 @@ describe("shared missing skill ancestors", () => {
       } finally {
         unregister();
         await closeSkillsWatchers(true);
-        await new Promise<void>((resolve) => setImmediate(resolve));
+        await new Promise<void>((resolve) => {
+          setImmediate(resolve);
+        });
         if (nativeAncestor) {
           expect(nativeHandles.every(({ closed }) => closed)).toBe(true);
         }
@@ -561,14 +563,14 @@ describe("shared missing skill ancestors", () => {
       const watcher = originalWatch(...args);
       if (resolveSkillsWatcherUsePolling()) {
         const originalEmit = watcher.emit.bind(watcher);
-        vi.spyOn(watcher, "emit").mockImplementation((event, ...values) => {
-          if (event !== "raw") {
-            return originalEmit(event, ...values);
+        vi.spyOn(watcher, "emit").mockImplementation((...emitArgs) => {
+          if (emitArgs[0] !== "raw") {
+            return originalEmit(...emitArgs);
           }
-          pollingRawPaths.push(path.resolve(String(values[1])));
+          pollingRawPaths.push(path.resolve(String(emitArgs[2])));
           pollingRawDeliveries += 1;
           try {
-            return originalEmit(event, ...values);
+            return originalEmit(...emitArgs);
           } finally {
             pollingRawPaths.pop();
           }

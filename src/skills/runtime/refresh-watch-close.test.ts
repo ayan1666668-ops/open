@@ -61,7 +61,9 @@ it
         native!.close();
         native!.emit("error", Object.assign(new Error("native watch failed"), { code: "EIO" }));
       }
-      await new Promise<void>((resolve) => setImmediate(resolve));
+      await new Promise<void>((resolve) => {
+        setImmediate(resolve);
+      });
       expect(errors).toHaveLength(1);
       expect(ready).not.toHaveBeenCalled();
       let joined = false;
@@ -69,7 +71,9 @@ it
       void joinSkillsWatcherCloses().then(() => {
         joined = true;
       });
-      await new Promise<void>((resolve) => setImmediate(resolve));
+      await new Promise<void>((resolve) => {
+        setImmediate(resolve);
+      });
       expect(joined).toBe(true);
       await closing;
     } finally {
