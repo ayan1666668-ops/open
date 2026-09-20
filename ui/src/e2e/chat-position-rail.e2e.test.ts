@@ -700,7 +700,13 @@ suite.define(() => {
             .toBe(84);
           expect(await marks.count()).toBeLessThan(84);
           const runMarker = thread.locator('[data-position-marker-id="run:review-run"]');
-          await runMarker.focus();
+          await thread.locator('.chat-position-rail__marker[tabindex="0"]').focus();
+          await page.keyboard.press("End");
+          await page.keyboard.press("ArrowUp");
+          await page.keyboard.press("ArrowUp");
+          expect(await runMarker.evaluate((element) => element === document.activeElement)).toBe(
+            true,
+          );
           await runMarker.press("Enter");
           const first = thread.locator('.chat-bubble[data-entry-id="first"]');
           await expect
