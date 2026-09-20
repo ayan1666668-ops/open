@@ -49,11 +49,16 @@ import {
 } from "../../scripts/check-changed.mts";
 import { resolveOxfmtInvocation } from "../../scripts/format-docs.mts";
 import { resolveTestNodeExecPath } from "../../src/test-utils/node-process.js";
-import { cleanupTempDirs, makeTempDir as makeTempRepoRoot } from "../helpers/temp-dir.js";
+import {
+  cleanupTempDirs,
+  makeTempDir as makeTempRepoRoot,
+  useAutoCleanupTempDirTracker,
+} from "../helpers/temp-dir.js";
 import { createNestedGitEnv } from "../helpers/temp-repo.js";
 import { materializeNativeCompiler } from "./native-boundary-fixture.js";
 
 const tempDirs: string[] = [];
+const uiCompanionTempDirs = useAutoCleanupTempDirTracker(afterEach);
 const repoRoot = process.cwd();
 const testNodeExecPath = resolveTestNodeExecPath();
 const githubActivityHelper = ".agents/skills/openclaw-pr-maintainer/scripts/github-activity.sh";
@@ -2167,7 +2172,7 @@ describe("scripts/changed-lanes", () => {
   it.each([false, true])(
     "selects consuming test graphs with UI CSS and docs companions (deleted UI test: %s)",
     (deleted) => {
-      const dir = makeTempRepoRoot(tempDirs, "openclaw-ui-companion-checks-");
+      const dir = uiCompanionTempDirs.make("openclaw-ui-companion-checks-");
       const testPath = "ui/src/e2e/fixture.e2e.test.ts";
       const styles = ["ui/src/styles/chat/fixture-a.css", "ui/src/styles/chat/fixture-b.css"];
       const docsPath = "docs/web/control-ui/fixture.md";
