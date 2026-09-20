@@ -7388,21 +7388,18 @@ describe("runCodexAppServerAttempt", () => {
       vi.stubEnv("OPENCLAW_STATE_DIR", path.join(tempDir, "ephemeral-state"));
       const storePath = path.join(tempDir, "ephemeral-sessions.json");
       let generation = 0;
-      let turnStarted = createDeferred<void>();
       const harness = createStartedThreadHarness(async (method) => {
         if (method === "thread/start") {
           generation += 1;
           return threadStartResult(`thread-ephemeral-${generation}`);
         }
         if (method === "turn/start") {
-          turnStarted.resolve();
           return turnStartResult(`turn-ephemeral-${generation}`);
         }
         return undefined;
       });
 
       for (const [index, sessionId] of ["session-ephemeral-1", "session-ephemeral-2"].entries()) {
-        turnStarted = createDeferred<void>();
         const params = createParams(sessionFile, workspaceDir);
         params.sessionId = sessionId;
         params.sessionKey = sessionKey;
@@ -7413,16 +7410,21 @@ describe("runCodexAppServerAttempt", () => {
         }
 
         const run = runCodexAppServerAttempt(params);
+        let startupError: unknown;
+        void run.catch((error: unknown) => {
+          startupError = error;
+        });
         const expectedGeneration = index + 1;
-        await Promise.race([
-          turnStarted.promise,
-          run.then(() => {
-            throw new Error("Codex attempt ended before turn/start");
-          }),
-        ]);
-        expect(harness.requests.filter((request) => request.method === "turn/start")).toHaveLength(
-          expectedGeneration,
-        );
+        await vi.waitFor(() => {
+          if (startupError) {
+            throw startupError instanceof Error
+              ? startupError
+              : new Error("Codex attempt failed.", { cause: startupError });
+          }
+          expect(
+            harness.requests.filter((request) => request.method === "turn/start"),
+          ).toHaveLength(expectedGeneration);
+        }, fastWait);
         const threadId = `thread-ephemeral-${expectedGeneration}`;
         const turnId = `turn-ephemeral-${expectedGeneration}`;
         await harness.completeTurn({ threadId, turnId });
