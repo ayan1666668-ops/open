@@ -7,7 +7,7 @@ type ToolsFactory = (
   options: Parameters<CreateTools>[0],
   actual: CreateTools,
 ) => ReturnType<CreateTools>;
-let createTools: ToolsFactory | undefined;
+let createTools: CreateTools | undefined;
 const factories = new Map<string, ToolsFactory>();
 
 /** Substitutes construction while preserving the real host's private authority and bindings. */

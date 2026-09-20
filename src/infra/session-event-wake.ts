@@ -12,7 +12,6 @@ import {
   type HeartbeatRunResult,
   type HeartbeatWakeRequest,
 } from "./heartbeat-wake-contracts.js";
-import type { HeartbeatRunResult, HeartbeatWakeRequest } from "./heartbeat-wake-contracts.js";
 import {
   getSystemEventStorePath,
   isSystemEventStoreCurrent,

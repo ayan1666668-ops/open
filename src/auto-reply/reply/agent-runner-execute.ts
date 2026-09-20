@@ -16,7 +16,6 @@ import {
 import { setReplyPayloadMetadata } from "../reply-payload.js";
 import { SILENT_REPLY_TOKEN } from "../tokens.js";
 import type { ReplyPayload } from "../types.js";
-import type { ReplyContinuationController } from "./agent-runner-continuation.js";
 import {
   resolveReplyRunDeliveryContext,
   resolveSourceReplyPolicy,

@@ -281,7 +281,6 @@ export * from "../infra/secure-random.js";
 // `trusted: true`. Every SDK subpath (this deprecated barrel, system-event-runtime,
 // channel-runtime) goes through the `plugins/runtime/system-events` facade, which
 // forces `trusted: false` and strips ack/trace fields a plugin must not inject.
-export type { SystemEvent } from "../infra/system-events.js";
 export {
   consumeSelectedSystemEventEntriesFromSdk as consumeSelectedSystemEventEntries,
   consumeSelectedSystemEventEntriesFromSdk as consumeSystemEventEntries,

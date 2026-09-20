@@ -357,7 +357,7 @@ export function startGatewayMaintenanceTimers(params: {
   void performDevicePairSetupCompletionGc(Date.now());
 
   const stopSkillUsageTracking = registerSkillUsageTracking();
-  const skillUsageCleanup = () => {
+  const skillUsageCleanup = async () => {
     delegateArtifactGcCancelled = true;
     clearInterval(delegateArtifactCleanup);
     stopSkillUsageTracking();
@@ -647,7 +647,7 @@ export function startGatewayMaintenanceTimers(params: {
     stopTelemetryChecks,
     startMediaCleanup,
     stopMediaCleanup,
-    stopSessionColdStorageMaintenance: sessionColdStorageMaintenance.stop,
+    stopSessionColdStorageMaintenance: async () => sessionColdStorageMaintenance.stop(),
     worktreeCleanup,
     delegateArtifactCleanup,
     skillUsageCleanup,

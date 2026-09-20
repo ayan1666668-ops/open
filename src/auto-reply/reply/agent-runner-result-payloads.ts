@@ -6,24 +6,12 @@ import {
   hasVisibleOutboundDeliveryEvidence,
 } from "../../agents/embedded-agent-runner/delivery-evidence.js";
 import { resolveReplyCompletion } from "../../agents/reply-completion.js";
-import {
-  deriveContextPromptTokens,
-  hasBillableUsage,
-  toDiagnosticUsage,
-} from "../../agents/usage.js";
 import { normalizeChatType } from "../../channels/chat-type.js";
 import type { ProgressContinuationState } from "../../channels/progress-continuation.js";
 import { emitAgentEvent } from "../../infra/agent-events.js";
-import { emitTrustedDiagnosticEvent, isDiagnosticsEnabled } from "../../infra/diagnostic-events.js";
-import {
-  createChildDiagnosticTraceContext,
-  freezeDiagnosticTraceContext,
-} from "../../infra/diagnostic-trace-context.js";
-import { isSubagentSessionKey } from "../../routing/session-key.js";
 import { resolveLiveContinuationRuntimeConfig } from "../continuation/config.js";
 import { stagedPostCompactionDelegateCount } from "../continuation/delegate-store-post-compaction.js";
 import { pendingDelegateCount } from "../continuation/delegate-store.js";
-import { estimateAggregateUsageCost } from "../../utils/usage-format.js";
 import {
   buildFallbackClearedNotice,
   buildFallbackNotice,
@@ -44,7 +32,6 @@ import {
   refreshSessionEntryFromStore,
   resolveSourceReplyPolicy,
 } from "./agent-runner-core.js";
-import { hasBlockReplyDeliveryCustody } from "./block-reply-delivery.js";
 import { buildEmptyInteractiveReplyPayload } from "./agent-runner-failure-reply.js";
 import { signalTypingIfNeeded } from "./agent-runner-helpers.js";
 import { buildReplyPayloads } from "./agent-runner-payloads.js";
@@ -57,6 +44,7 @@ import type { accountAgentTurn } from "./agent-runner-result-accounting.js";
 import type { FinalizeReplyAgentRunInput } from "./agent-runner-result.types.js";
 import { emitReplyAgentUsageDiagnostic } from "./agent-runner-usage-diagnostic.js";
 import { resolveResponseUsageLine } from "./agent-runner-usage-line.js";
+import { hasBlockReplyDeliveryCustody } from "./block-reply-delivery.js";
 import type { PendingContinuationSettlement } from "./get-reply.types.js";
 import { attachMcpAppChannelAction } from "./mcp-app-channel-action.js";
 import { attachMcpConnectChannelAction } from "./mcp-connect-channel-action.js";
@@ -99,7 +87,6 @@ export async function prepareReplyAgentPayloads(state: {
   } = context;
   const {
     configuredFallbackModel,
-    contextTokensUsed,
     hasDirectlySentBlockReply,
     directBlockDeliveries,
     effectiveContinuationSignal,
