@@ -1,6 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import { executeWithCachedStatement } from "../../infra/kysely-sync-cache-state.js";
 import { executeSqliteQueryTakeFirstSync, getNodeSqliteKysely } from "../../infra/kysely-sync.js";
+import { prepareSqliteReadCache } from "../../infra/sqlite-read-cache.js";
 import type { DB as OpenClawAgentKyselyDatabase } from "../../state/openclaw-agent-db.generated.js";
 import type { DB as OpenClawStateKyselyDatabase } from "../../state/openclaw-state-db.generated.js";
 import {
@@ -23,6 +24,7 @@ export const PRIMARY_ROW_KEY = "primary";
 // in STATE_SECRET_CONFIG_STATE_KEY_PREFIXES so git backups never carry them.
 export const SHARED_STORE_STATE_KEY = "authProfiles.store";
 export const SHARED_STATE_STATE_KEY = "authProfiles.state";
+export const SHARED_AUTH_STORE_STATE_KEY = "auth.sharedStore";
 
 // Callers own transactions; opening another here would nest.
 export function readSharedAuthKvCell(db: DatabaseSync, stateKey: string): string | undefined {
@@ -142,11 +144,36 @@ export function inspectAgentAuthProfileJsonCellReadOnly(
 /** The isolated reader closes its native pool before transferring credential rows. */
 export function readAuthProfileRowsReadOnly(databasePath: string): AuthProfileRowRead {
   try {
-    return {
-      store: inspectAgentAuthProfileJsonCellReadOnly(databasePath, "store"),
-      state: inspectAgentAuthProfileJsonCellReadOnly(databasePath, "state"),
-    };
+    const acquired = acquireAuthProfileReadDatabase(databasePath);
+    if (acquired.status !== "readable") {
+      const inspection: PersistedAuthProfileStoreInspection =
+        acquired.status === "missing"
+          ? { status: "missing", reason: "database" }
+          : { status: "unreadable" };
+      return { store: inspection, state: inspection, cacheable: false };
+    }
+    try {
+      return readAuthProfileRows(acquired.db, databasePath, "agent");
+    } catch {
+      return { store: { status: "unreadable" }, state: { status: "unreadable" }, cacheable: false };
+    }
   } finally {
     closeAuthProfileReadPool({ kind: "database", databasePath });
   }
+}
+
+/** Shared and agent rows use one connection for their committed-generation proof. */
+export function readAuthProfileRows(
+  database: DatabaseSync,
+  databasePath: string,
+  databaseKind: "agent" | "shared-state",
+): AuthProfileRowRead {
+  const canCache = prepareSqliteReadCache(database, databasePath);
+  const store = inspectAuthProfileJsonCell(database, "store", databaseKind);
+  const state = inspectAuthProfileJsonCell(database, "state", databaseKind);
+  return {
+    store,
+    state,
+    cacheable: store.status !== "unreadable" && state.status !== "unreadable" && canCache(),
+  };
 }

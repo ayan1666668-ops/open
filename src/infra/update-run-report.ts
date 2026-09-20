@@ -179,7 +179,13 @@ export function renderUpdateRunReport(
   // Git updates can change commits without changing the package version.
   const before = run.before.sha?.slice(0, 8) ?? run.before.version;
   const after = run.after.sha?.slice(0, 8) ?? run.after.version;
-  const reason = bounded(run.reason?.trim() || "unknown reason", 240);
+  const reason = bounded(
+    run.reason?.trim() ||
+      (run.status === "failed" &&
+        run.steps.find((step) => step.status === "failed" && step.step !== "requested")?.step) ||
+      "unknown reason",
+    240,
+  );
   const running =
     !currentHealth && run.verification.serviceRunning === true
       ? run.verification.runningVersion
@@ -200,9 +206,11 @@ export function renderUpdateRunReport(
       break;
     case "skipped":
       headline =
-        run.reason === "gateway-readiness-unverified"
-          ? `ℹ️ OpenClaw${after ? ` ${after}` : ""} installed; Gateway readiness unverified; recovery backups retained.`
-          : `ℹ️ OpenClaw update skipped: ${reason}.`;
+        run.reason === "still-starting"
+          ? `ℹ️ OpenClaw${after ? ` ${after}` : ""} installed; Gateway still starting; readiness unverified; recovery backups retained.`
+          : run.reason === "gateway-readiness-unverified"
+            ? `ℹ️ OpenClaw${after ? ` ${after}` : ""} installed; Gateway readiness unverified; recovery backups retained.`
+            : `ℹ️ OpenClaw update skipped: ${reason}.`;
       break;
     case "rolled-back":
       headline = `↩️ OpenClaw update rolled back to ${after ?? running ?? before ?? "the previous version"}: ${reason}.`;
@@ -297,14 +305,13 @@ export function renderUpdateRunReport(
   if (run.downtimeMs != null) {
     lines.push(`Gateway downtime: ${formatDurationPrecise(run.downtimeMs)}.`);
   }
-  const savedAction =
-    opts.nextAction ??
-    run.origin.nextAction ??
-    (run.status === "skipped" &&
+  const skipGuidance =
+    run.status === "skipped" &&
     run.reason &&
     Object.hasOwn(UPDATE_INSTALL_SKIP_GUIDANCE, run.reason)
       ? UPDATE_INSTALL_SKIP_GUIDANCE[run.reason]
-      : undefined);
+      : undefined;
+  const savedAction = opts.nextAction ?? run.origin.nextAction ?? skipGuidance;
   const nextAction =
     savedAction && currentHealth
       ? `${formatUpdateRunCurrentHealth(currentHealth)} ${
@@ -337,7 +344,10 @@ export function renderUpdateRunReport(
         : [
             ...new Set(
               [
-                opts.doctorHint ?? facts.doctorHint ?? run.origin.doctorHint,
+                // Install ownership refusals need the deployment workflow, not Doctor repair.
+                skipGuidance
+                  ? undefined
+                  : (opts.doctorHint ?? facts.doctorHint ?? run.origin.doctorHint),
                 ...recoveryHints(run, nextAction),
                 nextAction,
               ].filter((line): line is string => Boolean(line)),

@@ -22,11 +22,13 @@ import { resolveAuthProfileFailureReason } from "../embedded-agent-runner/run/au
 import { buildEmbeddedRunPayloads } from "../embedded-agent-runner/run/payloads.js";
 import { mergeAttemptToolMediaPayloads } from "../embedded-agent-runner/run/tool-media-payloads.js";
 import { isFailoverError } from "../failover-error.js";
+import { resolveReplyExpectation } from "../reply-completion.js";
 import { recordAgentCleanupFailure } from "../run-cleanup-timeout.js";
 import { clearTurnSendLedgerForRun } from "../tools/turn-send-ledger.js";
 import { CliAuthProfilePreparationError } from "./auth-profile-preparation-error.js";
 import { runCliCleanup } from "./cleanup.js";
 import { resolveCliSessionId } from "./cli-run-recovery.js";
+import { projectCliMessagingDeliveryEvidence } from "./delivery-evidence.js";
 import { hashCliReseedPrompt } from "./reseed-envelope.js";
 import type { ClaudeCliRunDiagnosticLifecycle } from "./run-diagnostics.js";
 import type { PreparedCliRunContext, RunCliAgentParams } from "./types.js";
@@ -261,28 +263,25 @@ export async function settlePreparedCliRun(params: {
     if (context.effectiveAuthProfileId && context.authProfileStore) {
       const profileId = context.effectiveAuthProfileId;
       const authProfileStore = context.authProfileStore;
-      if (terminalRunError) {
+      const terminal: Parameters<typeof settleCliAuthProfile>[0]["terminal"] | undefined =
+        terminalRunError
+          ? {
+              outcome: "failure",
+              error: terminalRunError,
+              config: runParams.config,
+              runId: runParams.runId,
+              modelId: context.modelId,
+            }
+          : result?.meta.executionTrace?.attempts?.at(-1)?.result === "success"
+            ? { outcome: "success" }
+            : undefined;
+      if (terminal) {
         await settleCliAuthProfile({
           store: authProfileStore,
           profileId,
           provider: authProfileStore.profiles[profileId]?.provider ?? runParams.provider,
           agentDir: context.agentDir,
-          terminal: {
-            outcome: "failure",
-            error: terminalRunError,
-            config: runParams.config,
-            runId: runParams.runId,
-            modelId: context.modelId,
-          },
-        });
-      } else if (result?.meta.executionTrace?.attempts?.at(-1)?.result === "success") {
-        const provider = authProfileStore.profiles[profileId]?.provider ?? runParams.provider;
-        await settleCliAuthProfile({
-          store: authProfileStore,
-          profileId,
-          provider,
-          agentDir: context.agentDir,
-          terminal: { outcome: "success" },
+          terminal,
         });
       }
     }
@@ -346,6 +345,28 @@ export function resolveCliSourceReplyMirror(params: {
   return { payloads, delivered, visibleText };
 }
 
+function buildCliExecutionMetadata(
+  context: PreparedCliRunContext,
+  attempt: Pick<
+    NonNullable<NonNullable<EmbeddedAgentRunResult["meta"]["executionTrace"]>["attempts"]>[number],
+    "result" | "reason"
+  >,
+): Pick<EmbeddedAgentRunResult["meta"], "executionTrace" | "requestShaping"> {
+  return {
+    executionTrace: {
+      winnerProvider: context.params.provider,
+      winnerModel: context.modelId,
+      attempts: [{ provider: context.params.provider, model: context.modelId, ...attempt }],
+      fallbackUsed: false,
+      runner: "cli",
+    },
+    requestShaping: {
+      ...(context.params.thinkLevel ? { thinking: context.params.thinkLevel } : {}),
+      ...(context.effectiveAuthProfileId ? { authMode: "auth-profile" } : {}),
+    },
+  };
+}
+
 export function buildBlockedCliRunResult(params: {
   message: string;
   context: PreparedCliRunContext;
@@ -366,24 +387,10 @@ export function buildBlockedCliRunResult(params: {
         message,
       },
       systemPromptReport: context.systemPromptReport,
-      executionTrace: {
-        winnerProvider: runParams.provider,
-        winnerModel: context.modelId,
-        attempts: [
-          {
-            provider: runParams.provider,
-            model: context.modelId,
-            result: "error",
-            reason: "before_agent_run blocked the run",
-          },
-        ],
-        fallbackUsed: false,
-        runner: "cli",
-      },
-      requestShaping: {
-        ...(runParams.thinkLevel ? { thinking: runParams.thinkLevel } : {}),
-        ...(context.effectiveAuthProfileId ? { authMode: "auth-profile" } : {}),
-      },
+      ...buildCliExecutionMetadata(context, {
+        result: "error",
+        reason: "before_agent_run blocked the run",
+      }),
       completion: {
         finishReason: "blocked",
         stopReason: "blocked",
@@ -437,24 +444,7 @@ export function buildCliDeliveredFailure(params: {
       durationMs: Date.now() - context.started,
       systemPromptReport: context.systemPromptReport,
       stopReason: "error",
-      executionTrace: {
-        winnerProvider: runParams.provider,
-        winnerModel: context.modelId,
-        attempts: [
-          {
-            provider: runParams.provider,
-            model: context.modelId,
-            result: "error",
-            reason: message,
-          },
-        ],
-        fallbackUsed: false,
-        runner: "cli",
-      },
-      requestShaping: {
-        ...(runParams.thinkLevel ? { thinking: runParams.thinkLevel } : {}),
-        ...(context.effectiveAuthProfileId ? { authMode: "auth-profile" } : {}),
-      },
+      ...buildCliExecutionMetadata(context, { result: "error", reason: message }),
       completion: {
         finishReason: "error",
         stopReason: "error",
@@ -468,23 +458,8 @@ export function buildCliDeliveredFailure(params: {
         ...(sessionBindingDisabled || reusableCliSessionId ? { clearCliSessionBinding: true } : {}),
       },
     },
+    ...projectCliMessagingDeliveryEvidence(evidence),
     didSendViaMessagingTool: true,
-    ...(evidence.didDeliverSourceReplyViaMessageTool
-      ? { didDeliverSourceReplyViaMessageTool: true }
-      : {}),
-    ...(evidence.sourceReplyDelivered ? { sourceReplyDelivered: true } : {}),
-    ...(evidence.messagingToolSentTexts?.length
-      ? { messagingToolSentTexts: evidence.messagingToolSentTexts }
-      : {}),
-    ...(evidence.messagingToolSentMediaUrls?.length
-      ? { messagingToolSentMediaUrls: evidence.messagingToolSentMediaUrls }
-      : {}),
-    ...(evidence.messagingToolSentTargets?.length
-      ? { messagingToolSentTargets: evidence.messagingToolSentTargets }
-      : {}),
-    ...(evidence.messagingToolSourceReplyPayloads?.length
-      ? { messagingToolSourceReplyPayloads: evidence.messagingToolSourceReplyPayloads }
-      : {}),
   };
 }
 
@@ -542,7 +517,7 @@ export function buildCliRunResult(params: {
                   )
                 : { text },
             ]
-          : runParams.allowEmptyAssistantReplyAsSilent === true
+          : resolveReplyExpectation(runParams) === "optional"
             ? [{ text: SILENT_REPLY_TOKEN }]
             : undefined;
   const payloadsWithToolMedia = mergeAttemptToolMediaPayloads({
@@ -643,26 +618,12 @@ export function buildCliRunResult(params: {
           ? { yielded: true, livenessState: "paused" as const, stopReason }
           : {}),
       ...(output.yieldAcknowledgment ? { yieldAcknowledgment: output.yieldAcknowledgment } : {}),
-      executionTrace: {
-        winnerProvider: runParams.provider,
-        winnerModel: context.modelId,
-        attempts: [
-          {
-            provider: runParams.provider,
-            model: context.modelId,
-            result: terminalInterruption?.reason ?? "success",
-            ...(terminalInterruption
-              ? { reason: formatCliTerminalInterruption(terminalInterruption) }
-              : {}),
-          },
-        ],
-        fallbackUsed: false,
-        runner: "cli",
-      },
-      requestShaping: {
-        ...(runParams.thinkLevel ? { thinking: runParams.thinkLevel } : {}),
-        ...(context.effectiveAuthProfileId ? { authMode: "auth-profile" } : {}),
-      },
+      ...buildCliExecutionMetadata(context, {
+        result: terminalInterruption?.reason ?? "success",
+        ...(terminalInterruption
+          ? { reason: formatCliTerminalInterruption(terminalInterruption) }
+          : {}),
+      }),
       completion: {
         finishReason: terminalInterruption?.reason ?? (yielded ? "end_turn" : "stop"),
         stopReason,
@@ -712,23 +673,7 @@ export function buildCliRunResult(params: {
         ...(cliSessionBindingCleared ? { clearCliSessionBinding: true } : {}),
       },
     },
-    ...(output.didSendViaMessagingTool ? { didSendViaMessagingTool: true } : {}),
-    ...(output.didDeliverSourceReplyViaMessageTool
-      ? { didDeliverSourceReplyViaMessageTool: true }
-      : {}),
-    ...(output.sourceReplyDelivered ? { sourceReplyDelivered: true } : {}),
-    ...(output.messagingToolSentTexts?.length
-      ? { messagingToolSentTexts: output.messagingToolSentTexts }
-      : {}),
-    ...(output.messagingToolSentMediaUrls?.length
-      ? { messagingToolSentMediaUrls: output.messagingToolSentMediaUrls }
-      : {}),
-    ...(output.messagingToolSentTargets?.length
-      ? { messagingToolSentTargets: output.messagingToolSentTargets }
-      : {}),
-    ...(output.messagingToolSourceReplyPayloads?.length
-      ? { messagingToolSourceReplyPayloads: output.messagingToolSourceReplyPayloads }
-      : {}),
+    ...projectCliMessagingDeliveryEvidence(output),
     ...(output.acceptedSessionSpawns?.length
       ? { acceptedSessionSpawns: output.acceptedSessionSpawns }
       : {}),
