@@ -22,7 +22,7 @@ import type { UserTurnTranscriptAdmissionReceipt } from "../../sessions/user-tur
 import { runContextEngineMaintenance } from "../embedded-agent-runner/context-engine-maintenance.js";
 import { stripRuntimeContextCustomMessages } from "../internal-runtime-context.js";
 import type { AgentMessage } from "../runtime/index.js";
-import type { observeSemanticTurnContext } from "./semantic-turn-context.js";
+import type { SemanticTurnContextOptions } from "./semantic-turn-context.js";
 
 export {
   buildAfterTurnRuntimeContext as buildHarnessContextEngineRuntimeContext,
@@ -160,7 +160,7 @@ export async function assembleHarnessContextEngine(
     runtimeContext?: ContextEngineRuntimeContext;
     transcriptReadFence?: UserTurnTranscriptAdmissionReceipt;
     /** Captured run authority; optional for hosts that have not adopted semantic observation. */
-    semanticCuration?: Parameters<typeof observeSemanticTurnContext>[1];
+    semanticCuration?: SemanticTurnContextOptions;
   },
 ) {
   if (!params.contextEngine) {

@@ -17,7 +17,7 @@ import type { AgentMessage } from "../runtime/index.js";
 import { resolveTurnCurationPolicy } from "./semantic-turn-context-policy.js";
 
 const log = createSubsystemLogger("agents/semantic-context");
-type Options = {
+export type SemanticTurnContextOptions = {
   config?: AgentDefaultsConfig["turnContextCuration"];
   signal: AbortSignal;
   assertActive: () => void;
@@ -30,7 +30,7 @@ type Options = {
 /** Curate only a temporary execution view; never mutate the engine's messages. */
 export async function observeSemanticTurnContext(
   assembled: AssembleResult,
-  options: Options,
+  options: SemanticTurnContextOptions,
   runtime: DecisionRuntimeV1 = { evaluate: evaluateDecision },
 ): Promise<AssembleResult> {
   if (!options.config || (options.config.mode !== "shadow" && options.config.mode !== "apply")) {
