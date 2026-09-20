@@ -807,10 +807,7 @@ export async function finalizeSetupWizard(
       }
 
       if (gatewayProbe.ok) {
-        await prompter.note(
-          gatewayCompletionAuthNotes(settings.authMode).join("\n"),
-          "Token",
-        );
+        await prompter.note(gatewayCompletionAuthNotes(settings.authMode).join("\n"), "Token");
       }
     } else if (opts.skipUi) {
       await prompter.note(t("wizard.finalize.skipControlUi"), t("wizard.finalize.controlUiTitle"));
