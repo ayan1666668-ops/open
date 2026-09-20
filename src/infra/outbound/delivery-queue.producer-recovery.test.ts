@@ -1,6 +1,5 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { setTimeout as delay } from "node:timers/promises";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../../test/helpers/promise.js";
 import { onTrustedMessageAuditEventForTest } from "../../audit/message-audit-events.test-support.js";
@@ -333,27 +332,26 @@ describe("exhausted delivery producer recovery", () => {
     }
   });
   it.each(["startup", "recurring"] as const)(
-    "%s preserves a platform lease renewed after its scan snapshot",
+    "%s preserves a renewed platform lease when its scan snapshot is expired",
     async (mode) => {
       const id = "renewed-platform-owner";
       const claimId = await reserveProducer(id);
       await queueStorage.markDeliveryPlatformSendAttemptStarted(id, tmpDir(), undefined, claimId);
-      setProducerExpiry(id, Date.now() + 5_000);
-      let renewedUntil: number | undefined;
-      const load = queueStorage.loadUnfinishedDelivery;
-      vi.spyOn(queueStorage, "loadUnfinishedDelivery").mockImplementationOnce(async (...args) => {
-        const snapshot = await load(...args);
-        const snapshotExpiry = snapshot?.availableAt;
-        if (typeof snapshotExpiry !== "number") {
-          throw new Error("Expected a leased platform snapshot");
-        }
-        renewedUntil = await renewDeliveryPlatformSendLease(id, tmpDir(), claimId);
-        expect(renewedUntil).toBeGreaterThan(snapshotExpiry);
-        // Return the real scan snapshot only after its old lease has expired;
-        // the canonical worker renewal must still protect the current row.
-        await delay(Math.max(0, snapshotExpiry - Date.now() + 1));
-        expect(Date.now()).toBeGreaterThanOrEqual(snapshotExpiry);
-        return snapshot;
+      const snapshot = await queueStorage.loadUnfinishedDelivery(id, tmpDir());
+      if (!snapshot || typeof snapshot.availableAt !== "number") {
+        throw new Error("Expected a leased platform snapshot");
+      }
+      const renewedUntil = await renewDeliveryPlatformSendLease(id, tmpDir(), claimId);
+      expect(renewedUntil).toEqual(expect.any(Number));
+      if (renewedUntil === undefined) {
+        throw new Error("Expected the live platform owner to renew");
+      }
+      // Fix only the host clock after real worker renewal and before recovery
+      // captures its deadline. Expire the detached view, not the authoritative row.
+      vi.spyOn(Date, "now").mockReturnValue(renewedUntil - 1);
+      vi.spyOn(queueStorage, "loadUnfinishedDelivery").mockResolvedValueOnce({
+        ...snapshot,
+        availableAt: renewedUntil - 2,
       });
       await recover(mode);
       expect(await queueStorage.loadPendingDelivery(id, tmpDir())).toMatchObject({
