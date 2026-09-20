@@ -93,6 +93,7 @@ import {
   buildCliSessionDriftNote,
   hashCliSessionText,
   resolveCliSessionReuse,
+  resolveOperatorEquivalentProfileIds,
 } from "../cli-session.js";
 import {
   claudeCliSessionTranscriptHasContent,
@@ -1760,6 +1761,15 @@ async function prepareCliRunContextWithinReadFence(
       authProfileId: effectiveAuthProfileId,
       skipLocalCredential: skipLocalCredentialEpoch,
     });
+    // A credit/limit-driven failover rebinds the live session to another leg,
+    // changing its profile id and per-leg auth epoch. When the operator has
+    // declared the from/to profiles as their own equivalent identities, that
+    // routing change must preserve the reused transcript instead of discarding
+    // it as a cross-account switch. Ungrouped profiles keep strict invalidation.
+    const operatorEquivalentProfileIds = resolveOperatorEquivalentProfileIds(
+      params.config?.auth?.historyEquivalenceGroups,
+      effectiveAuthProfileId,
+    );
     const authBindingFingerprint = params.onSuccessfulAuthBinding
       ? resolveCliAuthBindingFingerprint({
           provider: params.provider,
@@ -1875,6 +1885,7 @@ async function prepareCliRunContextWithinReadFence(
               cwdHash,
               mcpConfigHash: preparedBackendFinal.mcpConfigHash,
               mcpResumeHash: preparedBackendFinal.mcpResumeHash,
+              ...(operatorEquivalentProfileIds ? { operatorEquivalentProfileIds } : {}),
             })
           : params.cliSessionId
             ? { mode: "reuse", sessionId: params.cliSessionId }
