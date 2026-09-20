@@ -273,6 +273,7 @@ export async function finishUpdate(
     assertCurrent();
     let restoreFailure = initialRestoreFailure;
     let finalResult = completeUpdateCommandResult(params, result);
+    let root = finalResult.root ?? params.root;
     pendingResult = finalResult;
     pendingNotify = notify;
     if (!restoreFailure) {
@@ -343,6 +344,7 @@ export async function finishUpdate(
         invocationCwd: params.invocationCwd,
       });
       if (service && !params.originalManagedServiceRuntime) {
+        root = serviceVerdict && "root" in serviceVerdict ? serviceVerdict.root : root;
         finalResult.recovery = { ...finalResult.recovery, service };
         if (service === "healthy" && params.shouldRestart) {
           gateway = "verify-running";
@@ -372,7 +374,7 @@ export async function finishUpdate(
     if ((finalResult.status === "error" || cleanupFailure) && !originalServiceRecoveryHandled) {
       finalResult = await verifyUpdateFailureRecovery({
         result: finalResult,
-        root: params.root,
+        root,
         opts: params.opts,
         env: currentServiceStop()?.serviceEnv ?? params.ownedManagedUpdateEnv,
         timeoutMs: params.updateStepTimeoutMs,

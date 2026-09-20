@@ -138,7 +138,7 @@ export function registerRepairCustodyTests(mocks: {
       const reconcile = vi.spyOn(ledger, "reconcileAbandonedUpdateRuns").mockReturnValue([]);
       const acknowledge = vi
         .spyOn(ledger, "acknowledgeAbandonedUpdateRun")
-        .mockImplementation(() => {});
+        .mockReturnValue(true);
       if (phase === "convergence") {
         vi.mocked(completePostCorePluginUpdate).mockImplementationOnce(async () => {
           retainCleanup();

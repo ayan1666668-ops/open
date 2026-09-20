@@ -32,7 +32,7 @@ export async function verifyUpdateFailureRecovery(params: {
   const startedAt = Date.now();
   const result = params.result;
   const env = params.env ?? params.opts.run?.env ?? process.env;
-  const root = result.root ?? params.root;
+  const root = params.root;
   const run = params.opts.run;
   const warnRecording = (message: string) => {
     params.assertCurrent?.();
@@ -57,7 +57,7 @@ export async function verifyUpdateFailureRecovery(params: {
   }
   const constraint = recorded?.verification.recovery;
   const previousRecovery =
-    constraint?.serviceRestartSafe === false && constraint.reason !== "runtime-verification-failed"
+    constraint?.serviceRestartSafe === false
       ? constraint
       : (result.recovery ?? constraint ?? undefined);
   result.recovery = previousRecovery;
@@ -117,9 +117,8 @@ export async function verifyUpdateFailureRecovery(params: {
       });
       params.assertCurrent?.();
       Object.assign(result, appendPluginUpdateWarnings(result, validation.pluginWarnings ?? []));
-      const restartUnsafe =
-        previousRecovery?.serviceRestartSafe === false &&
-        previousRecovery.reason !== "runtime-verification-failed";
+      // A read-only health observation cannot grant the helper authority to restart.
+      const restartUnsafe = previousRecovery?.serviceRestartSafe === false;
       result.recovery =
         validation.ok && !restartUnsafe
           ? {

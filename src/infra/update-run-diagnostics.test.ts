@@ -16,6 +16,44 @@ import { renderUpdateRunReport } from "./update-run-report.js";
 const dirs = useAutoCleanupTempDirTracker(afterEach);
 afterEach(() => closeOpenClawStateDatabaseForTest());
 
+it("records serving health without replacing a persisted restart refusal", () => {
+  const options = { env: { OPENCLAW_STATE_DIR: dirs.make("update-unsafe-observation-") } };
+  const run = createUpdateRun({ trigger: "cli" }, options);
+  const recovery = { serviceRestartSafe: false, reason: "runtime-verification-failed" } as const;
+  recordUpdateRunVerification(run.runId, { recovery }, options);
+  const verification = {
+    serviceRunning: true,
+    runningVersion: "2026.9.5",
+    versionMatch: true,
+    readyz: true,
+    settled: true,
+  };
+  const recorded = recordUpdateRunDiagnostics(
+    run.runId,
+    {
+      recovery: { serviceRestartSafe: true, version: "2026.9.5", service: "healthy" },
+      verification,
+      steps: [
+        {
+          name: "gateway recovery verification",
+          command: "verify",
+          cwd: "",
+          durationMs: 0,
+          exitCode: 0,
+        },
+      ],
+    },
+    () => {
+      throw new Error("observation was not recorded");
+    },
+    options,
+  );
+  expect(recorded?.verification).toEqual({ ...verification, recovery });
+  expect(renderUpdateRunReport(recorded!).markdown).toContain(
+    "Recovery: verified serving 2026.9.5; restart remains unsafe (runtime-verification-failed)",
+  );
+});
+
 it.each([false, true])(
   "keeps the first terminal receipt when a stale publisher carries verification=%s",
   (observed) => {

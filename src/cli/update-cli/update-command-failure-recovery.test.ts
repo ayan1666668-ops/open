@@ -288,32 +288,35 @@ describe("post-update failure recovery observation", () => {
     },
   );
 
-  it("preserves an explicit unsafe recovery verdict even when the Gateway is healthy", async () => {
-    const root = dirs.make("unsafe-serving-recovery-");
-    await fs.writeFile(
-      path.join(root, "package.json"),
-      JSON.stringify({ name: "openclaw", version: "2026.9.5" }),
-    );
-    vi.mocked(verifyUpdatedGateway).mockResolvedValueOnce({
-      ok: true,
-      score: 7,
-      summary: "Gateway version and readiness verified.",
-    });
-    mocks.converge.mockImplementationOnce(async ({ result }) => ({
-      resultWithPostUpdate: {
-        ...result,
-        status: "error",
-        reason: "post-update-plugins",
-        recovery: { serviceRestartSafe: false, reason: "state-migration-started" },
-      },
-    }));
-    await expect(
-      finishSuccessfulPackageSwitch({ packageRoot: root, json: true }),
-    ).rejects.toMatchObject({
-      result: { recovery: { serviceRestartSafe: false, reason: "state-migration-started" } },
-    });
-    expect(verifyUpdatedGateway).toHaveBeenCalledOnce();
-  });
+  it.each(["state-migration-started", "runtime-verification-failed"] as const)(
+    "preserves an explicit %s verdict even when the Gateway is healthy",
+    async (reason) => {
+      const root = dirs.make("unsafe-serving-recovery-");
+      await fs.writeFile(
+        path.join(root, "package.json"),
+        JSON.stringify({ name: "openclaw", version: "2026.9.5" }),
+      );
+      vi.mocked(verifyUpdatedGateway).mockResolvedValueOnce({
+        ok: true,
+        score: 7,
+        summary: "Gateway version and readiness verified.",
+      });
+      mocks.converge.mockImplementationOnce(async ({ result }) => ({
+        resultWithPostUpdate: {
+          ...result,
+          status: "error",
+          reason: "post-update-plugins",
+          recovery: { serviceRestartSafe: false, reason },
+        },
+      }));
+      await expect(
+        finishSuccessfulPackageSwitch({ packageRoot: root, json: true }),
+      ).rejects.toMatchObject({
+        result: { recovery: { serviceRestartSafe: false, reason } },
+      });
+      expect(verifyUpdatedGateway).toHaveBeenCalledOnce();
+    },
+  );
 
   it.each(["returned", "thrown"] as const)(
     "records a serving Gateway after a %s post-update failure",
@@ -341,7 +344,10 @@ describe("post-update failure recovery observation", () => {
         result: {
           status: "error",
           reason: failure === "thrown" ? "post-update-failed" : "post-update-plugins",
-          recovery: { serviceRestartSafe: true, service: "healthy", version: "2026.9.5" },
+          recovery:
+            failure === "thrown"
+              ? { serviceRestartSafe: false, reason: "runtime-verification-failed" }
+              : { serviceRestartSafe: true, service: "healthy", version: "2026.9.5" },
         },
       });
       expect(verifyUpdatedGateway).toHaveBeenCalledOnce();
@@ -349,7 +355,12 @@ describe("post-update failure recovery observation", () => {
         expect.objectContaining({ purpose: "recovery", expectedVersion: "2026.9.5" }),
       );
       expect(mocks.printResult).toHaveBeenCalledWith(
-        expect.objectContaining({ recovery: expect.objectContaining({ service: "healthy" }) }),
+        expect.objectContaining({
+          recovery:
+            failure === "thrown"
+              ? { serviceRestartSafe: false, reason: "runtime-verification-failed" }
+              : { serviceRestartSafe: true, service: "healthy", version: "2026.9.5" },
+        }),
         expect.anything(),
         expect.anything(),
       );

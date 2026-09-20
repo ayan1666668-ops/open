@@ -137,11 +137,7 @@ function applyUpdateRunDiagnostics(
   }
   const constraint = record.verification.recovery;
   const recovery =
-    verification &&
-    constraint?.serviceRestartSafe === false &&
-    constraint.reason !== "runtime-verification-failed"
-      ? constraint
-      : observedRecovery;
+    verification && constraint?.serviceRestartSafe === false ? constraint : observedRecovery;
   if (recovery || observedRollback || verification) {
     recordUpdateRunVerificationRecord(record, {
       ...verification,

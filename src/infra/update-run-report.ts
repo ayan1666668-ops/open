@@ -452,8 +452,7 @@ export function updateRunReportInputFromResult(
             ...(result.verification ?? recorded?.verification),
             ...(recorded?.verification ? { booted, noticeDelivered, doctorHint } : {}),
             recovery:
-              recovery?.serviceRestartSafe === false &&
-              recovery.reason !== "runtime-verification-failed"
+              recovery?.serviceRestartSafe === false
                 ? recovery
                 : (result.recovery ?? (result.verification === undefined ? recovery : undefined)),
             rollbackOutcome: result.rollbackOutcome ?? rollbackOutcome,

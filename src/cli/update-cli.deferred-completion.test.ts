@@ -4,6 +4,7 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { PluginInstallRecord } from "../config/types.plugins.js";
+import { listUpdateRuns } from "../infra/update-run-ledger.js";
 import type { UpdateRunResult } from "../infra/update-runner.js";
 import { VERSION } from "../version.js";
 import {
@@ -25,6 +26,7 @@ import {
   mutateConfigFileWithRetry,
   updateFinalizeCommand,
   ExitError,
+  observeUpdateGatewayReadiness,
 } from "./update-cli.deferred-completion.test-support.js";
 
 describe("update-cli child-owned deferred completion", () => {
@@ -249,6 +251,31 @@ describe("update-cli child-owned deferred completion", () => {
           await expect(updateFinalizeCommand({ json: true, yes: true })).rejects.toEqual(
             new ExitError(1),
           );
+          expect(observeUpdateGatewayReadiness).toHaveBeenCalledOnce();
+          const recorded = listUpdateRuns({ limit: 1 })[0];
+          expect(recorded?.status).toBe("failed");
+          expect(recorded?.verification).toEqual({
+            serviceRunning: false,
+            port: 18789,
+            pluginErrors: [],
+            channelsReady: false,
+            settled: false,
+            readyz: false,
+            recovery: { serviceRestartSafe: false, reason: "runtime-verification-failed" },
+          });
+          expect(
+            recorded?.steps.filter((step) => step.step === "gateway recovery verification"),
+          ).toEqual([
+            {
+              step: "gateway recovery verification",
+              status: "failed",
+              exitCode: 1,
+              detail: "Exit code: 1",
+              failureFacts: [
+                { check: "settled", code: "stopped-free", message: "Gateway did not settle." },
+              ],
+            },
+          ]);
         }
       }
 
