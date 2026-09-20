@@ -1,5 +1,6 @@
 import { html, nothing, render } from "lit";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { markdownBlocks } from "../../../components/markdown-blocks.ts";
 import {
   handleMarkdownCodeBlockClick,
   readMarkdownCodeBlockCopyText,
@@ -31,14 +32,16 @@ afterEach(() => {
 
 function renderReply(text: string, isStreaming = true, media?: MarkdownMedia) {
   render(
-    renderMessageMarkdown(
-      text,
-      "streaming-reply",
-      { role: "assistant", isStreaming },
-      { codeBlockInteraction: "interactive", tableInteractions: "enabled" },
-      undefined,
-      media,
-    ),
+    html`<section ${markdownBlocks()}>
+      ${renderMessageMarkdown(
+        text,
+        "streaming-reply",
+        { role: "assistant", isStreaming },
+        { codeBlockInteraction: "interactive", tableInteractions: "enabled" },
+        undefined,
+        media,
+      )}
+    </section>`,
     container,
   );
 }
@@ -102,12 +105,13 @@ describe("streaming Markdown DOM", () => {
     expect(container.querySelectorAll("li")).toHaveLength(3);
   });
 
-  it("keeps code wrap controls and updates copy content while a fence grows", () => {
+  it("keeps code wrap controls and updates copy content while a fence grows", async () => {
     const code = Array.from({ length: 6 }, (_, index) => `const value${index} = ${index};`).join(
       "\n",
     );
     const initial = `\`\`\`ts\n${code}`;
     renderReply(initial);
+    await Promise.resolve();
     const wrapper = container.querySelector<HTMLElement>(".code-block-wrapper")!;
     const button = wrapper.querySelector<HTMLButtonElement>(".code-block-wrap")!;
     container.addEventListener("click", handleMarkdownCodeBlockClick);
@@ -115,11 +119,15 @@ describe("streaming Markdown DOM", () => {
       button.click();
       const extra = "\nconst seventh = 7;\nconst eighth = 8;";
       renderReply(initial + extra);
+      await Promise.resolve();
       expect(container.querySelector(".code-block-wrapper")).toBe(wrapper);
       expect(wrapper.classList.contains("is-wrapped")).toBe(true);
       expect(wrapper.classList.contains("is-collapsible")).toBe(true);
       expect(button.getAttribute("aria-pressed")).toBe("true");
       const expand = wrapper.querySelector<HTMLButtonElement>(".code-block-expand")!;
+      const viewport = wrapper.querySelector<HTMLElement>(".code-block-viewport")!;
+      expect(viewport.id).not.toBe("");
+      expect(expand.getAttribute("aria-controls")).toBe(viewport.id);
       expand.click();
       renderReply(initial + extra + "\nconst ninth = 9;");
       expect(wrapper.classList.contains("is-expanded")).toBe(true);

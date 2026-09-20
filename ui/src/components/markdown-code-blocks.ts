@@ -111,7 +111,12 @@ export function handleMarkdownCodeBlockClick(event: Event): void {
   const code = readMarkdownCodeBlockCopyText(button);
   const attempt = (codeBlockCopyAttempts.get(button) ?? 0) + 1;
   codeBlockCopyAttempts.set(button, attempt);
-  const isCurrent = () => button.isConnected && codeBlockCopyAttempts.get(button) === attempt;
+  // Streaming retains the control while its payload changes; old content must
+  // not trigger a fallback write or claim the current control's feedback.
+  const isCurrent = () =>
+    button.isConnected &&
+    codeBlockCopyAttempts.get(button) === attempt &&
+    readMarkdownCodeBlockCopyText(button) === code;
   void copyToClipboard(code, isCurrent).then((copied) => {
     // Clipboard writes can finish out of click order; older attempts must not own feedback.
     if (!isCurrent()) {
