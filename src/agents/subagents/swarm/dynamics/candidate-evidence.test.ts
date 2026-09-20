@@ -110,7 +110,7 @@ describe("evidence-bound convergence", () => {
   });
   it("deduplicates identical receipts and rejects conflicting receipt ids", () => {
     const result = verifyCandidate({ candidate, contract, measurements: complete });
-    expect(verifyCandidate({ candidate, contract, measurements: [...complete].reverse() })).toEqual(result);
+    expect(verifyCandidate({ candidate, contract, measurements: complete.toReversed() })).toEqual(result);
     expect(verifyCandidate({ candidate, contract, measurements: [...complete, complete[0]!] })).toEqual(result);
     expect(() => verifyCandidate({ candidate, contract, measurements: [...complete, { ...complete[0]!, passed: false }] })).toThrow("conflicting receipts");
   });
