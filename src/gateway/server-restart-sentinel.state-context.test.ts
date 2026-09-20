@@ -4,6 +4,7 @@ import { resetConfigRuntimeState, setRuntimeConfigSnapshot } from "../config/con
 import { replaceSessionEntry } from "../config/sessions/session-accessor.js";
 import { captureDeliveryQueueStateContext } from "../infra/delivery-queue-state-context.js";
 import { findDeliveryIntentOwner } from "../infra/outbound/delivery-queue-storage.js";
+import * as restartSentinel from "../infra/restart-sentinel.js";
 import { readRestartSentinel, writeRestartSentinel } from "../infra/restart-sentinel.js";
 import { resetSystemEventsForTest } from "../infra/system-events.js";
 import {
@@ -30,6 +31,16 @@ const mocks = vi.hoisted(() => ({
     status: "sent" as const,
     results: [{ channel: "matrix" as const, messageId: "synthetic-notice" }],
   })),
+  dispatchAssembledChannelTurn: vi.fn(
+    async (
+      params: Parameters<
+        typeof import("../channels/turn/lifecycle.js").dispatchAssembledChannelTurn
+      >[0],
+    ) => {
+      await params.turnAdoptionLifecycle?.onAdopted();
+      return { dispatched: true, dispatchResult: { observedReplyDelivery: true } };
+    },
+  ),
   hookRunner: {
     hasHooks: (name: string) => name === "message_sending",
     runMessageSending: vi.fn(async () => undefined),
@@ -46,6 +57,9 @@ vi.mock("../infra/heartbeat-wake.js", async (importOriginal) => ({
 }));
 vi.mock("../channels/message/runtime.js", () => ({
   sendDurableMessageBatchCore: mocks.sendDurableMessageBatchCore,
+}));
+vi.mock("../channels/turn/lifecycle.js", () => ({
+  dispatchAssembledChannelTurn: mocks.dispatchAssembledChannelTurn,
 }));
 vi.mock("../plugins/hook-runner-global.js", () => ({
   getGlobalHookRunner: () => mocks.hookRunner,
@@ -69,7 +83,8 @@ const { startGatewaySidecars } = await import("./server-startup-post-attach.js")
 const { loadSessionEntry: realLoadSessionEntry } =
   await vi.importActual<typeof import("./session-utils.js")>("./session-utils.js");
 const sidecars: Array<{ stop: () => void | Promise<void> }> = [];
-const { scheduleRestartSentinelWake } = await import("./server-restart-sentinel.js");
+const { scheduleRestartSentinelWake, refreshLatestUpdateRestartSentinel } =
+  await import("./server-restart-sentinel.js");
 let envSnapshot: ReturnType<typeof captureEnv>;
 const tempDirs = useAutoCleanupTempDirTracker((cleanup) => {
   afterEach(async () => {
@@ -176,7 +191,144 @@ async function waitForPendingWork(assertion: () => void) {
   await vi.waitFor(assertion, { interval: 0 });
 }
 
-it.each(["requested", "verifying", "stopped"] as const)(
+it.each([
+  "same",
+  "continuation",
+  "other-handoff",
+  "other-run",
+  "restart",
+  "replaced-again",
+  "stopped",
+] as const)(
+  "reconciles only the pending update's terminal snapshot before preparing work (%s)",
+  async (replacement) => {
+    const originalRoot = tempDirs.make("openclaw-restart-terminal-original-");
+    const unrelatedRoot = tempDirs.make("openclaw-restart-terminal-unrelated-");
+    const originalEnv = { OPENCLAW_STATE_DIR: originalRoot };
+    const unrelatedEnv = { OPENCLAW_STATE_DIR: unrelatedRoot };
+    setTestEnvValue("OPENCLAW_STATE_DIR", originalRoot);
+    const context = captureDeliveryQueueStateContext();
+    const sessionKey = "agent:main:main";
+    const run = createUpdateRun({ trigger: "cli", origin: { sessionKey } }, { env: originalEnv });
+    const payload = {
+      kind: "update" as const,
+      status: "skipped" as const,
+      ts: 123,
+      sessionKey,
+      deliveryContext: { channel: "matrix", to: "!operator:example" },
+      stats: {
+        runId: run.runId,
+        handoffId: "synthetic-update-handoff",
+        reason: "restart-health-pending",
+      },
+    };
+    await writeRestartSentinel(payload, originalEnv);
+    const unrelated = await writeRestartSentinel(
+      { kind: "restart", status: "ok", ts: 124, message: "unrelated" },
+      unrelatedEnv,
+    );
+    let retained: Awaited<ReturnType<typeof readRestartSentinel>> = null;
+    let terminalRevision = 0;
+    let shouldRun = true;
+    const readSnapshot = restartSentinel.readRestartSentinel;
+    vi.spyOn(restartSentinel, "readRestartSentinel").mockImplementationOnce(async (env) => {
+      const pending = await readSnapshot(env);
+      retained = await writeRestartSentinel(
+        replacement === "restart"
+          ? { kind: "restart", status: "ok", ts: 124, message: "newer unrelated restart" }
+          : {
+              ...payload,
+              status: "ok",
+              ...(replacement === "continuation"
+                ? {
+                    continuation: {
+                      kind: "agentTurn" as const,
+                      message: "Continue after this update.",
+                    },
+                  }
+                : {}),
+              stats: {
+                runId: replacement === "other-run" ? "unrelated-run" : run.runId,
+                handoffId:
+                  replacement === "other-handoff" ? "unrelated-handoff" : payload.stats.handoffId,
+              },
+            },
+        originalEnv,
+      );
+      terminalRevision = retained.revision;
+      finishUpdateRun(run.runId, { status: "succeeded" }, { env: originalEnv });
+      setTestEnvValue("OPENCLAW_STATE_DIR", unrelatedRoot);
+      shouldRun = replacement !== "stopped";
+      return pending;
+    });
+    if (replacement === "replaced-again") {
+      mocks.hookRunner.runMessageSending.mockImplementationOnce(async () => {
+        retained = await writeRestartSentinel(
+          { kind: "restart", status: "ok", ts: 125, message: "replacement after reconciliation" },
+          originalEnv,
+        );
+        return undefined;
+      });
+    }
+
+    await scheduleRestartSentinelWake({ deps: {}, context, shouldRun: () => shouldRun });
+
+    if (replacement === "stopped") {
+      expect(mocks.sendDurableMessageBatchCore).not.toHaveBeenCalled();
+      expect(
+        findDeliveryIntentOwner(`update-run-finished:${run.runId}`, undefined, context),
+      ).toBeNull();
+    } else {
+      expect(mocks.sendDurableMessageBatchCore).toHaveBeenCalledOnce();
+      expect(
+        findDeliveryIntentOwner(`update-run-finished:${run.runId}`, undefined, context),
+      ).toMatchObject({ status: "completed" });
+    }
+    expect(await readRestartSentinel(originalEnv)).toEqual(
+      replacement === "same" || replacement === "continuation" ? null : retained,
+    );
+    expect(await readRestartSentinel(unrelatedEnv)).toEqual(unrelated);
+    expect(findDeliveryIntentOwner(`update-run-finished:${run.runId}`, unrelatedRoot)).toBeNull();
+    if (replacement === "continuation") {
+      expect(mocks.dispatchAssembledChannelTurn).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({
+          ctxPayload: expect.objectContaining({
+            Body: "Continue after this update.",
+            MessageSid: `restart-sentinel:agent:main:main:agentTurn:${terminalRevision}`,
+          }),
+        }),
+      );
+      await scheduleRestartSentinelWake({ deps: {}, context });
+      expect(mocks.dispatchAssembledChannelTurn).toHaveBeenCalledOnce();
+    }
+  },
+);
+
+it("does not rewrite pending update sentinels during status refresh", async () => {
+  const originalEnv = { OPENCLAW_STATE_DIR: tempDirs.make("openclaw-restart-status-") };
+  const sentinel = await writeRestartSentinel(
+    {
+      kind: "update",
+      status: "skipped",
+      ts: 123,
+      stats: { mode: "git", handoffId: "handoff-1", reason: "managed-service-handoff-started" },
+    },
+    originalEnv,
+  );
+
+  await expect(refreshLatestUpdateRestartSentinel(originalEnv)).resolves.toEqual(sentinel.payload);
+
+  expect(await readRestartSentinel(originalEnv)).toEqual(sentinel);
+});
+
+it.each([
+  "requested",
+  "verifying",
+  "stopped",
+  "terminal-before-marker",
+  "replaced-handoff",
+  "replaced-kind",
+] as const)(
   "keeps registered pending restart recovery on its original state and session after ambient drift (%s)",
   async (phase) => {
     const originalRoot = tempDirs.make("openclaw-restart-delayed-original-");
@@ -273,6 +425,34 @@ it.each(["requested", "verifying", "stopped"] as const)(
       expect(await readRestartSentinel(unrelatedEnv)).toEqual(unrelated);
       return;
     }
+    if (phase === "replaced-handoff" || phase === "replaced-kind") {
+      const replacement = await writeRestartSentinel(
+        phase === "replaced-kind"
+          ? { kind: "restart", status: "ok", ts: 124, message: "newer restart" }
+          : {
+              ...payload,
+              status: "ok",
+              stats: { runId: run.runId, handoffId: "newer-handoff" },
+            },
+        originalEnv,
+      );
+      await vi.advanceTimersByTimeAsync(1);
+      await admittedWork.mock.results.at(-1)?.value;
+      expect(mocks.sendDurableMessageBatchCore).toHaveBeenCalledTimes(initialNoticeCount);
+      expect(await readRestartSentinel(originalEnv)).toEqual(replacement);
+      expect(await readRestartSentinel(unrelatedEnv)).toEqual(unrelated);
+      return;
+    }
+    if (phase === "terminal-before-marker") {
+      await vi.advanceTimersByTimeAsync(1);
+      await admittedWork.mock.results.at(-1)?.value;
+      expect(mocks.sendDurableMessageBatchCore).toHaveBeenCalledTimes(initialNoticeCount);
+      expect(await readRestartSentinel(originalEnv)).not.toBeNull();
+    }
+    await writeRestartSentinel(
+      { ...payload, status: "ok", stats: { runId: run.runId } },
+      originalEnv,
+    );
     await vi.advanceTimersByTimeAsync(1);
     await admittedWork.mock.results.at(-1)?.value;
     expect(mocks.sendDurableMessageBatchCore).toHaveBeenCalledTimes(initialNoticeCount + 1);

@@ -72,6 +72,10 @@ import {
   deliverRestartSentinelNotice,
   enqueueRestartSentinelNotice,
 } from "./server-restart-sentinel-notice.js";
+import {
+  readRestartSentinelStartupSnapshot,
+  type PendingUpdateSentinelIdentity,
+} from "./server-restart-sentinel-snapshot.js";
 import { finalizeRestartUpdateRun } from "./server-restart-update-run.js";
 import { loadSessionEntry } from "./session-utils.js";
 import { runStartupTasks, type StartupTask } from "./startup-tasks.js";
@@ -384,14 +388,17 @@ async function loadRestartSentinelStartupTask(params: {
   attempt?: number;
   context: DeliveryQueueStateContext;
   shouldRun?: () => boolean;
+  pendingUpdate?: PendingUpdateSentinelIdentity;
 }): Promise<StartupTask | null> {
   const noticeContext = params.context;
   const queueContext = noticeContext.workerContext;
   const env = queueContext.environment;
-  const sentinel = await readRestartSentinel(env);
-  if (!sentinel) {
+  const snapshot = await readRestartSentinelStartupSnapshot(params);
+  if (!snapshot) {
     return null;
   }
+  const { sentinel, pendingUpdate, pendingSnapshotSuperseded } = snapshot;
+  let { updateRun } = snapshot;
   const payload = sentinel.payload;
   const sentinelRevision = sentinel.revision;
   if (payload.kind === "update") {
@@ -399,10 +406,6 @@ async function loadRestartSentinelStartupTask(params: {
   }
   const sessionKey = payload.sessionKey?.trim();
   const message = formatRestartSentinelMessage(payload);
-  let updateRun =
-    payload.kind === "update"
-      ? await finalizeRestartUpdateRun(payload, false, noticeContext)
-      : undefined;
   const updateRunId = updateRun?.runId;
   let noticeMessage =
     payload.kind === "update"
@@ -431,10 +434,7 @@ async function loadRestartSentinelStartupTask(params: {
     }
     let routedSessionKey = sessionKey;
     let wakeAgentId: string | undefined;
-    if (
-      isPendingControlPlaneUpdateRestartSentinel(payload) &&
-      (!updateRun || updateRun.status === "running")
-    ) {
+    if (isPendingControlPlaneUpdateRestartSentinel(payload) && !pendingSnapshotSuperseded) {
       const attempt = params.attempt ?? 0;
       if (attempt < CONTROL_PLANE_UPDATE_PENDING_MAX_ATTEMPTS) {
         const timer = setTimeout(() => {
@@ -445,6 +445,7 @@ async function loadRestartSentinelStartupTask(params: {
             await scheduleRestartSentinelWakeAttempt({
               ...params,
               attempt: attempt + 1,
+              ...(pendingUpdate ? { pendingUpdate } : {}),
             });
           }, "restart-sentinel:wake").catch((err: unknown) => {
             log.warn(`restart sentinel pending update retry failed: ${formatErrorMessage(err)}`);
@@ -700,6 +701,7 @@ async function scheduleRestartSentinelWakeAttempt(params: {
   attempt: number;
   context: DeliveryQueueStateContext;
   shouldRun?: () => boolean;
+  pendingUpdate?: PendingUpdateSentinelIdentity;
 }) {
   if (params.shouldRun?.() === false) {
     return;

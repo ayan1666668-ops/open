@@ -544,7 +544,6 @@ const {
   deliverQueuedSessionDelivery,
   getLatestUpdateRestartSentinel,
   recoverPendingRestartContinuationDeliveries,
-  refreshLatestUpdateRestartSentinel,
   scheduleRestartSentinelWake,
   settleQueuedSessionDelivery,
 } = await import("./server-restart-sentinel.js");
@@ -1072,7 +1071,10 @@ describe("scheduleRestartSentinelWake", () => {
       }
       // The sentinel owns 900 one-millisecond retries under VITEST. WAL
       // maintenance has its own persistent interval and must remain running.
-      await vi.advanceTimersByTimeAsync(900);
+      await vi.advanceTimersByTimeAsync(899);
+      expect(mocks.clearSentinel).not.toHaveBeenCalled();
+      expect(mocks.appendAssistantMessageToSessionTranscript).toHaveBeenCalledOnce();
+      await vi.advanceTimersByTimeAsync(1);
 
       const result = getUpdateRun(record.runId)!;
       expect(result.status).toBe(cliFinished ? "succeeded" : "running");
@@ -1088,6 +1090,17 @@ describe("scheduleRestartSentinelWake", () => {
         observedRun = finishUpdateRun(record.runId, {
           status: "succeeded",
           after: { version: resolveRuntimeServiceVersion() },
+        });
+        mocks.readRestartSentinel.mockResolvedValue({
+          version: 1,
+          revision: 124,
+          payload: {
+            kind: "update",
+            status: "ok",
+            ts: 124,
+            sessionKey: "agent:main:main",
+            stats: { runId: record.runId, handoffId: "managed-update-handoff" },
+          },
         });
         await scheduleRestartSentinelWake({ deps: {} as never });
       }
@@ -3567,29 +3580,6 @@ describe("scheduleRestartSentinelWake", () => {
     await scheduleRestartSentinelWake({ deps: {} as never });
 
     expect(mocks.clearSentinel).toHaveBeenCalledOnce();
-    expect(getLatestUpdateRestartSentinel()).toEqual(payload);
-  });
-
-  it("does not rewrite pending update sentinels during status refresh", async () => {
-    const payload: RestartSentinelPayload = {
-      kind: "update",
-      status: "skipped",
-      ts: 123,
-      stats: {
-        mode: "git",
-        handoffId: "handoff-1",
-        reason: "managed-service-handoff-started",
-      },
-    };
-    mocks.readRestartSentinel.mockResolvedValue({
-      version: 1,
-      revision: 123,
-      payload,
-    });
-
-    await expect(refreshLatestUpdateRestartSentinel()).resolves.toEqual(payload);
-
-    expect(mocks.finalizeUpdateRestartSentinelRunningVersion).not.toHaveBeenCalled();
     expect(getLatestUpdateRestartSentinel()).toEqual(payload);
   });
 
