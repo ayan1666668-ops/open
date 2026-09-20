@@ -190,7 +190,10 @@ describe("Tool Search semantic ranking shadow", () => {
     let mutate = () => {};
     const decisionRuntime = decisionFixture(undefined, () => mutate());
     const { runtime, catalogRef } = makeHarness({ semanticRanking: "shadow", decisionRuntime });
-    const entry = catalogRef.current!.entries[0];
+    const entry = catalogRef.current?.entries[0];
+    if (!entry) {
+      throw new Error("Expected synthetic catalog entry");
+    }
     mutate = () => {
       entry.description = "Updated calendar events description";
     };
