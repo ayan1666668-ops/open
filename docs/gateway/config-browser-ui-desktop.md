@@ -258,6 +258,14 @@ it on other network interfaces according to macOS Sharing settings.
 
 ### Paired node desktops
 
+Upgrades preserve desktop access that was disabled by removing `desktop.stream`
+from the Gateway allow list. Those existing desktop approvals require approval
+again when the node reconnects. Other node capabilities and device tokens stay
+intact, and new nodes use the enabled default. Existing explicit allow and deny
+entries remain respected. The one-time transition is recorded in the existing
+shared SQLite migration ledger; it does not rewrite your config. Doctor applies
+the same preservation when importing older pairing files.
+
 A paired macOS, Windows, or Linux node can expose its own desktop in the same
 Control UI Desktop panel and **Systems**. Desktop sharing is enabled by default and always
 uses an existing node-local RFB server on `127.0.0.1`; the Gateway never asks a
@@ -270,10 +278,14 @@ Control** controls agent screenshots and input separately; **Keep computer
 awake** controls idle sleep. Desktop sharing does not enable macOS Screen
 Sharing: turn that on under **System Settings → General → Sharing** first.
 
+The [Tauri companion](/platforms/linux#desktop-sharing) has the same sharing
+switch under **Settings → This computer → Capabilities** (**This Mac** on macOS).
+It uses the local CLI to connect a desktop-only node to its Primary Gateway.
+
 CLI nodes use `desktop.host.enabled` in their local config. An absent setting
 defaults to enabled; an explicit `false` disables sharing. Existing explicit
 disable settings remain disabled after an update. An explicit choice in the
-Mac app takes precedence over that Mac's local config.
+desktop app takes precedence over that computer's local config.
 
 To use a nondefault port or password file, configure attach mode on the node:
 

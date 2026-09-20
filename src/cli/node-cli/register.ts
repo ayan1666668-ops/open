@@ -57,6 +57,10 @@ export function registerNodeCli(program: Command) {
     .option("--display-name <name>", "Override node display name")
     .option("--session-host", "Host worker sessions for this foreground process")
     .addOption(new Option("--ephemeral").hideHelp())
+    .addOption(new Option("--desktop-sharing").hideHelp())
+    .addOption(new Option("--no-desktop-sharing").hideHelp())
+    .addOption(new Option("--auth-from-env").hideHelp())
+    .addOption(new Option("--parent-stdin").hideHelp())
     .option("--share-installed-apps", "Share installed macOS applications with the Gateway")
     .option("--no-share-installed-apps", "Disable installed application sharing")
     .action(async (opts, command: Command) => {
@@ -100,6 +104,9 @@ export function registerNodeCli(program: Command) {
         nodeId: opts.nodeId,
         displayName: opts.displayName,
         installedAppsSharing: opts.shareInstalledApps,
+        desktopSharingEnabled: opts.desktopSharing,
+        gatewayAuthFromEnv: opts.authFromEnv,
+        parentStdin: opts.parentStdin,
         commands: opts.commands ?? inheritOptionFromParent<string[]>(command, "commands"),
         allCommands: opts.allCommands ?? inheritOptionFromParent<boolean>(command, "allCommands"),
       });

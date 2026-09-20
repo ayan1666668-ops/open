@@ -10,7 +10,7 @@ type DesktopHostConfig = NonNullable<DesktopConfig["host"]>;
 const DesktopHostConfigShape = {
   enabled: z.boolean().register(configUiMetadata, {
     label: "Desktop Sharing",
-    help: "Enables this machine's desktop source. Paired macOS, Windows, and Linux nodes default to enabled; an explicit macOS Desktop Sharing preference takes precedence. The Gateway host Labs source defaults to disabled. Restart the owning node or Gateway after config changes.",
+    help: "Enables this machine's desktop source. Paired macOS, Windows, and Linux nodes default to enabled; an explicit desktop-app sharing preference takes precedence. The Gateway host Labs source defaults to disabled. Restart the owning node or Gateway after config changes.",
   }),
   managed: z.boolean().optional().register(configUiMetadata, {
     label: "Managed Linux Host Desktop",

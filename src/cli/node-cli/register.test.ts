@@ -87,6 +87,40 @@ describe("registerNodeCli", () => {
   );
 
   it.each([
+    { args: [], enabled: undefined },
+    { args: ["--desktop-sharing"], enabled: true },
+    { args: ["--no-desktop-sharing"], enabled: false },
+  ])("forwards the desktop companion preference to node run: $args", async ({ args, enabled }) => {
+    const program = createProgram();
+    await program.parseAsync(["node", "run", ...args], { from: "user" });
+    expect(daemonMocks.runNodeHost).toHaveBeenCalledWith(
+      expect.objectContaining({ desktopSharingEnabled: enabled }),
+    );
+    expect(
+      program.commands
+        .find((command) => command.name() === "node")
+        ?.commands.find((command) => command.name() === "run")
+        ?.helpInformation(),
+    ).not.toContain("--desktop-sharing");
+  });
+
+  it("forwards a companion's scoped authentication and parent lifetime without public help flags", async () => {
+    const program = createProgram();
+    await program.parseAsync(["node", "run", "--auth-from-env", "--parent-stdin"], {
+      from: "user",
+    });
+    expect(daemonMocks.runNodeHost).toHaveBeenCalledWith(
+      expect.objectContaining({ gatewayAuthFromEnv: true, parentStdin: true }),
+    );
+    const help = program.commands
+      .find((command) => command.name() === "node")
+      ?.commands.find((command) => command.name() === "run")
+      ?.helpInformation();
+    expect(help).not.toContain("--auth-from-env");
+    expect(help).not.toContain("--parent-stdin");
+  });
+
+  it.each([
     ["status", daemonMocks.runNodeDaemonStatus],
     ["uninstall", daemonMocks.runNodeDaemonUninstall],
     ["stop", daemonMocks.runNodeDaemonStop],
