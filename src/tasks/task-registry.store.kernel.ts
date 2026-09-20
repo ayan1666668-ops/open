@@ -216,12 +216,12 @@ export function bindTaskRecord(record: TaskRecord): BoundTaskRecord {
     requester_session_key: normalized.scopeKind === "system" ? "" : normalized.requesterSessionKey,
     owner_key: normalized.ownerKey,
     scope_kind: normalized.scopeKind,
-    child_session_key: normalized.childSessionKey ?? null,
+    child_session_key: normalized.childSessionKey?.trim() || null,
     parent_flow_id: normalized.parentFlowId ?? null,
     parent_task_id: normalized.parentTaskId ?? null,
     agent_id: normalized.agentId ?? null,
     requester_agent_id: normalized.requesterAgentId ?? null,
-    run_id: normalized.runId ?? null,
+    run_id: normalized.runId?.trim() || null,
     execution_owner_host: normalized.executionOwner?.host ?? null,
     execution_owner_pid: normalized.executionOwner?.pid ?? null,
     execution_owner_start_identity: normalized.executionOwner?.startIdentity ?? null,
@@ -608,17 +608,15 @@ export function readTaskRegistryMutationSnapshotInDatabase(
 ): TaskRegistryStoreSnapshot {
   return runSqliteDeferredTransactionSync(db, () => {
     const kysely = getTaskRegistryKysely(db);
+    const runId = scope.runId?.trim();
+    const childSessionKey = scope.childSessionKey?.trim();
     const selected = kysely
       .selectFrom("task_runs")
       .where((eb) =>
         eb.or([
           eb("task_id", "=", scope.taskId),
-          eb(eb.fn<string>("trim", [eb.ref("run_id")]), "=", scope.runId?.trim() || null),
-          eb(
-            eb.fn<string>("trim", [eb.ref("child_session_key")]),
-            "=",
-            scope.childSessionKey?.trim() || null,
-          ),
+          ...(runId ? [eb("run_id", "=", runId)] : []),
+          ...(childSessionKey ? [eb("child_session_key", "=", childSessionKey)] : []),
         ]),
       );
     const taskRows = executeSqliteQuerySync(

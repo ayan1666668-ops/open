@@ -14,7 +14,7 @@ vi.mock("../plugins/loader-runtime-load.js", () => {
   throw new Error("A connection-bound kernel imported plugin runtime ownership");
 });
 
-it("preserves ordered scoped tasks and their exact delivery rows", async () => {
+it("uses indexed scopes and preserves ordered tasks and their exact delivery rows", async () => {
   const [tasks, { OPENCLAW_STATE_SCHEMA_SQL }, { runSqliteImmediateTransactionSync }] =
     await Promise.all([
       import("./task-registry.store.kernel.js"),
@@ -37,23 +37,25 @@ it("preserves ordered scoped tasks and their exact delivery rows", async () => {
   });
   const direct = record("direct", { createdAt: 50 });
   const runFirst = record("run\0first", {
-    runId: " shared-run ",
-    childSessionKey: " shared-child ",
+    runId: "shared-run",
+    childSessionKey: "shared-child",
   });
   const runSecond = record("run-second", { runId: "shared-run", createdAt: 200 });
   const literalEscape = record("run\\u0000first", { runId: "shared-run" });
-  const child = record("child", { childSessionKey: " shared-child " });
+  const child = record("child", { childSessionKey: "shared-child" });
   const unrelated = record("unrelated", { runId: " ", childSessionKey: " " });
   const broad = Array.from({ length: 64 }, (_, index) =>
     record(`broad-${String(index).padStart(3, "0")}`, { runId: "broad-run" }),
   );
   const cases: Array<{ scope: TaskRegistryMutationScope; expected: TaskRecord[] }> = [
+    { scope: { taskId: direct.taskId }, expected: [direct] },
     { scope: { taskId: "absent", runId: " ", childSessionKey: " " }, expected: [] },
     {
       scope: { taskId: direct.taskId, runId: " shared-run ", childSessionKey: " shared-child " },
       expected: [direct, child, runFirst, literalEscape, runSecond],
     },
     { scope: { taskId: "absent", runId: "broad-run" }, expected: broad },
+    { scope: { taskId: "absent", childSessionKey: "shared-child" }, expected: [child, runFirst] },
   ];
   try {
     db.exec(OPENCLAW_STATE_SCHEMA_SQL);
@@ -70,7 +72,10 @@ it("preserves ordered scoped tasks and their exact delivery rows", async () => {
         tasks.upsertTaskWithDeliveryStateInDatabase(
           { db },
           {
-            task,
+            task:
+              task === runFirst
+                ? { ...task, runId: " shared-run ", childSessionKey: " shared-child " }
+                : task,
             ...(task === child
               ? {}
               : {
@@ -80,7 +85,19 @@ it("preserves ordered scoped tasks and their exact delivery rows", async () => {
         );
       }
     });
+    expect(
+      db
+        .prepare("SELECT run_id, child_session_key FROM task_runs WHERE task_id = ?")
+        .get(runFirst.taskId),
+    ).toEqual({ run_id: "shared-run", child_session_key: "shared-child" });
+    expect(
+      db
+        .prepare("SELECT run_id, child_session_key FROM task_runs WHERE task_id = ?")
+        .get(unrelated.taskId),
+    ).toEqual({ run_id: null, child_session_key: null });
+    const prepare = vi.spyOn(db, "prepare");
     for (const { scope, expected } of cases) {
+      prepare.mockClear();
       const snapshot = tasks.readTaskRegistryMutationSnapshotInDatabase(db, scope);
       expect([...snapshot.tasks.values()]).toEqual(expected);
       expect([...snapshot.deliveryStates.values()]).toEqual(
@@ -91,6 +108,19 @@ it("preserves ordered scoped tasks and their exact delivery rows", async () => {
             left.taskId < right.taskId ? -1 : left.taskId > right.taskId ? 1 : 0,
           ),
       );
+      const taskQuery = prepare.mock.results.find(
+        (result) => result.type === "return" && result.value.sourceSQL.includes('from "task_runs"'),
+      );
+      expect(taskQuery?.type).toBe("return");
+      if (taskQuery?.type === "return") {
+        const plan = db
+          .prepare(`EXPLAIN QUERY PLAN ${taskQuery.value.expandedSQL}`)
+          .all()
+          .map((row) => row.detail)
+          .join("\n");
+        expect(plan).not.toContain("SCAN task_runs");
+        expect(plan).toContain("SEARCH task_runs USING INDEX");
+      }
     }
   } finally {
     db.close();
