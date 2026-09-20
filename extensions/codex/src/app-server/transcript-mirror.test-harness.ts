@@ -18,7 +18,7 @@ export function createTranscriptMirrorTestHarness() {
   const makeRoot = (prefix: string) => tempDirs.make(prefix);
 
   async function createSqliteMirrorTarget(prefix: string, options: { sessionId?: string } = {}) {
-    const root = await makeRoot(prefix);
+    const root = makeRoot(prefix);
     const agentId = "main";
     const sessionId = options.sessionId ?? "session-1";
     const sessionKey = `agent:${agentId}:${sessionId}`;
