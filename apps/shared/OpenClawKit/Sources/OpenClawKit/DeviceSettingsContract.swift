@@ -93,6 +93,8 @@ public enum DeviceSettingsPanel: String, CaseIterable, Sendable {
     case quickChatShortcut = "quick-chat-shortcut"
     case microphoneTest = "microphone-test"
     case browserImport = "browser-import"
+    case macTabImport = "mac-tab-import"
+    case macTabPasskeys = "mac-tab-passkeys"
     case connection, gateways, debug, diagnostics, licenses, about, watch
 }
 
@@ -359,14 +361,26 @@ public struct DeviceSettingsSnapshot: Encodable, Sendable {
     }
 
     public struct Browser: Encodable, Sendable {
+        public enum Passkeys: String, Encodable, Sendable {
+            case requiresSigning = "requires-signing"
+            case notDetermined = "not-determined"
+            case denied, authorized
+        }
+
+        public let macTabPasskeys: Passkeys?
         public let importAvailable: Bool
+        public let macTabImportAvailable: Bool?
         public let cookieSync: CookieSync
 
         public init(
             importAvailable: Bool,
+            macTabImportAvailable: Bool? = nil,
+            macTabPasskeys: Passkeys? = nil,
             cookieSync: CookieSync)
         {
             self.importAvailable = importAvailable
+            self.macTabImportAvailable = macTabImportAvailable
+            self.macTabPasskeys = macTabPasskeys
             self.cookieSync = cookieSync
         }
     }

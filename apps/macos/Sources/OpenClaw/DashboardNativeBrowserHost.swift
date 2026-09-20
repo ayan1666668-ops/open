@@ -46,7 +46,6 @@ final class DashboardNativeBrowserHost {
         didSet { self.tabs.forEach { $0.browser.webView.uiDelegate = self.uiDelegate } }
     }
 
-    var onOpen: (() -> Void)?
     private weak var dashboardWebView: WKWebView?
     private weak var container: NSView?
     private let websiteDataStore: WKWebsiteDataStore
@@ -132,7 +131,6 @@ final class DashboardNativeBrowserHost {
                .first(where: { $0.sessionKey == sessionKey && $0.browser.representedURL == requestedURL }) ??
                self.tabs.first(where: { $0.sessionKey == sessionKey && $0.browser.requestedURLAlias == requestedURL })
         {
-            self.onOpen?()
             self.scheduleStatePush()
             return existing.id
         }
@@ -158,7 +156,6 @@ final class DashboardNativeBrowserHost {
             self.scheduleStatePush()
         }
         self.scheduleStatePush()
-        self.onOpen?()
         browser.webView.load(URLRequest(url: url))
     }
 
@@ -335,6 +332,21 @@ final class DashboardNativeBrowserHost {
 }
 
 extension DashboardNativeBrowserHost {
+    var usesPersistentCookieStore: Bool {
+        self.websiteDataStore.isPersistent
+    }
+
+    /// Write to the existing tab store, restoring this operation's writes if its
+    /// document retires during WebKit's non-cancellable asynchronous operations.
+    func importChromeCookies(
+        _ batch: MacTabCookieImport.Batch,
+        protectedHost: String?,
+        isCurrent: @MainActor () -> Bool) async throws -> MacTabCookieImport.ImportResult
+    {
+        try await MacTabCookieWriter.write(
+            batch, to: self.websiteDataStore, protectedHost: protectedHost, isCurrent: isCurrent)
+    }
+
     func download(tabId: String, isCurrent: @escaping @MainActor () -> Bool) async throws -> Bool {
         let webView = try self.requireWebView(tabId)
         guard self.downloads[tabId] == nil else { throw DashboardBrowserError.downloadInProgress }

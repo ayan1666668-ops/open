@@ -40,6 +40,8 @@ final class DashboardManager {
     @ObservationIgnored private let endpointStateProvider: @Sendable () async -> GatewayEndpointState
     @ObservationIgnored let mainWindowAutosaveName: String
     @ObservationIgnored private let websiteDataStore: WKWebsiteDataStore
+    @ObservationIgnored private let requestBrowserProfileImportOffer:
+        (@MainActor (@escaping @MainActor () -> Bool) async -> Bool)?
     @ObservationIgnored private var profileBrowserStores: [String: DashboardBrowserSessionStore] = [:]
     @ObservationIgnored private var profileCredentialRevisions: [String: UInt64] = [:]
     @ObservationIgnored private var unavailableProfileIDs: Set<String> = []
@@ -61,6 +63,7 @@ final class DashboardManager {
 
     init(
         websiteDataStore: WKWebsiteDataStore,
+        requestBrowserProfileImportOffer: (@MainActor (@escaping @MainActor () -> Bool) async -> Bool)? = nil,
         selection: MacGatewaySelectionPreferences,
         authTokenProvider: @escaping @Sendable (GatewayConnection.Config) async -> String? = { config in
             await GatewayConnection.shared.controlUiAutoAuthToken(config: config)
@@ -91,6 +94,7 @@ final class DashboardManager {
         mainWindowAutosaveName: String = DashboardWindowLayout.windowFrameAutosaveName)
     {
         self.websiteDataStore = websiteDataStore
+        self.requestBrowserProfileImportOffer = requestBrowserProfileImportOffer
         self.selection = selection
         self.mainTarget = selection.target
         self.pendingInitialSelection = selection.profileID
@@ -1106,10 +1110,7 @@ extension DashboardManager {
             windowTitle: configuration.displayName,
             windowAutosaveName: windowAutosaveName,
             reusingWindow: reusingWindow,
-            requestBrowserProfileImportOffer: { shouldApply in
-                guard primaryLocal else { return false }
-                return await BrowserProfileImportModel.shared.requestAutomaticOfferIfEligible(while: shouldApply)
-            })
+            requestBrowserProfileImportOffer: self.requestBrowserProfileImportOffer)
         controller.onBackgroundSessionOpen = { [weak self] completion, sourceURL in
             Task { @MainActor in
                 await self?.openBackgroundSession(
@@ -1509,10 +1510,6 @@ extension DashboardManager {
             endpoint.revision ?? self.displayedPrimaryRoutes[key]?.revision,
             endpoint.routeAuthority)
         self.observeEndpointChanges()
-    }
-
-    func handleOnboardingCompletion() {
-        self.controller?.handleOnboardingCompletion()
     }
 
     @discardableResult

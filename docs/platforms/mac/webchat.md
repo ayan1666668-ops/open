@@ -123,6 +123,83 @@ token/password profiles retain their existing browser store and preferences.
 Signing in with your browser starts a personal store without copying credentials
 from the shared browser store. Mac tabs in a browser-authenticated dashboard
 use a separate temporary browser session, shared by that window's Mac tabs.
+
+### Use existing browser logins in Mac tabs
+
+The first HTTP or HTTPS link opened in integrated Mac tabs offers native login
+setup **before navigation**. Choose one Chrome, Brave, Edge, or Chromium profile
+and explicitly approve the import, or continue without importing. The initial
+request waits for cookie writes to finish, so the site does not first load with
+an empty cookie jar. Concurrent link opens join the same setup operation.
+
+You can repeat setup from **Settings → This Mac → Browser → Mac tab logins**.
+Existing tabs share the destination with new tabs; reload an existing page when
+ready. Import never reloads pages automatically or discards unsaved forms.
+
+This reuses the Browser plugin's `readSystemProfileCookies` producer, also used
+by **Cookie sync** and managed-profile import. Discovery, coherent database
+snapshots, Keychain access, supported formats and decryption have one owner.
+The version-matched bundled local runtime exchanges requests and results only
+through app-owned anonymous pipes; no external Gateway or SSH command resolver
+participates. Raw replies and errors are not logged or returned to JavaScript.
+Cookie values and temporary producer snapshots stay on the Mac. This is not a
+privileged credential broker: local code running as the same OS user retains
+the canonical producer’s existing Keychain access boundary. Pipe checks do not
+authenticate arbitrary local callers. Native consent protects the app workflow;
+no Keychain ACLs or entitlements are changed. Passwords, passkeys, local storage
+and extensions are not imported.
+
+The source profile is not selected or imported silently. The OS may request
+Safe Storage permission for the selected browser. Missing profiles, an
+incompatible app runtime, denial, unsupported formats and partial imports have
+visible outcomes. No browser account data is copied to the Gateway, and Peter's
+existing domain-allowlisted **remote Cookie sync** behavior is unchanged.
+
+Mac tabs retain their existing store lifetime. Persistent cookies retain their
+expiry; session cookies remain session-only. Browser-authenticated Gateway
+windows use a separate temporary reading store, discarded when that window
+closes. Other windows retain existing store sharing. The native consent sheet
+explains the destination lifetime. Cookies covering the current Gateway host
+are excluded so import cannot replace the authorizing Gateway account.
+Partitioned cookies are not flattened into unpartitioned ones. Some websites
+bind sessions to device keys or additional browser state and still require
+fresh sign-in; cookie import cannot transfer those credentials.
+
+### Fresh passkey sign-in
+
+Passkeys are independent of cookie import. Apple documents that
+[WKWebView handles website WebAuthn ceremonies automatically](https://developer.apple.com/documentation/authenticationservices/passkey-use-in-web-browsers).
+OpenClaw does not intercept `navigator.credentials`, construct assertions from
+JavaScript, import passkey material, or weaken origin/RP validation.
+
+**Platform passkeys** in This Mac settings reports the app's Apple browser
+permission for system-Keychain and third-party credential-provider passkeys.
+An appropriately entitled build can request that permission explicitly when it
+is undetermined; denied and authorized states remain visible. The website's
+actual ceremony and native credential chooser stay with WebKit. Permission
+being authorized is not proof that a given relying party or authenticator will
+accept a particular request.
+
+For browser-wide arbitrary relying parties, Apple's
+[managed browser capability](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.developer.web-browser.public-key-credential)
+requires the Apple Developer organization's Account Holder to request approval,
+browser eligibility (including functional HTTP/HTTPS URL handling), and a
+properly provisioned signed app. The current packaging configuration does not
+supply that capability. The UI reports this prerequisite instead of adding a
+restricted entitlement to unapproved builds. Embedded-app associated domains
+are a separate route for services the app legitimately controls, not permission
+to invent associations with third-party sites.
+
+Hardware security keys and cross-device/hybrid choices are separate WebAuthn
+transports selected by the site and system. WebKit's credential handling remains
+intact; the platform-passkey permission row does not diagnose or disable all
+those transports. Successful platform, provider, security-key and hybrid sign-in
+must be validated independently on the approved signed build. The original
+reported failure has not been reproduced and is not attributed to one missing
+entitlement alone.
+
+### Gateway window lifecycle
+
 Removing a profile closes its native chat and dashboard windows and shuts down
 its secondary connection.
 Updating a saved profile's credentials refreshes its open dashboard windows.

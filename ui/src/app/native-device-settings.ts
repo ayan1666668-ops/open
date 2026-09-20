@@ -61,6 +61,10 @@ const nativeDeviceSettingsSnapshotSchema = z.object({
   browser: z
     .object({
       importAvailable: z.boolean(), // local mode with Chrome-family cookies available
+      macTabPasskeys: z
+        .enum(["requires-signing", "not-determined", "denied", "authorized"])
+        .optional(),
+      macTabImportAvailable: z.boolean().optional(), // device-local WKWebView import, independent of Gateway mode
       cookieSync: z.object({
         available: z.boolean(), // remote mode with an external CLI
         enabled: z.boolean(),
@@ -176,6 +180,8 @@ type NativePanel =
   | "quick-chat-shortcut"
   | "microphone-test"
   | "browser-import"
+  | "mac-tab-import"
+  | "mac-tab-passkeys"
   | "connection"
   | "gateways"
   | "debug"
