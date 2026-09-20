@@ -110,7 +110,7 @@ describe("semantic turn context", () => {
     const { requests } = installDecisionFixture();
     const source = fixture();
     const tool = source.messages[2];
-    if (tool.role === "toolResult") {
+    if (tool?.role === "toolResult") {
       tool.isError = true;
     }
     const result = await observeSemanticTurnContext(source, options());
