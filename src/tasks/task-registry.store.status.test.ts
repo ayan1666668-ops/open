@@ -168,10 +168,6 @@ it("keeps the first cron match in raw SQLite order, including nonterminal blocke
   cron("whitespace-target", " whitespace ", " run ", "running", 30);
   cron("blank-target", " missing ", " ", "queued", 30);
   cron("blank-unrelated", "missing", " ", "succeeded", 10);
-  // Exercise historical raw rows independently of the canonical writer's normalization.
-  const rawRunId = db.prepare("UPDATE task_runs SET run_id = ? WHERE task_id IN (?, ?)");
-  rawRunId.run(" run ", "exact-run", "whitespace-target");
-  rawRunId.run(" ", "blank-target", "blank-unrelated");
   cron("lost-target", "lost", "same", "lost", 30);
   db.prepare("UPDATE task_runs SET error = ? WHERE task_id = ?").run(
     "Prior BACKING SESSION MISSING",

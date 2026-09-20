@@ -216,12 +216,12 @@ export function bindTaskRecord(record: TaskRecord): BoundTaskRecord {
     requester_session_key: normalized.scopeKind === "system" ? "" : normalized.requesterSessionKey,
     owner_key: normalized.ownerKey,
     scope_kind: normalized.scopeKind,
-    child_session_key: normalized.childSessionKey?.trim() || null,
+    child_session_key: normalized.childSessionKey ?? null,
     parent_flow_id: normalized.parentFlowId ?? null,
     parent_task_id: normalized.parentTaskId ?? null,
     agent_id: normalized.agentId ?? null,
     requester_agent_id: normalized.requesterAgentId ?? null,
-    run_id: normalized.runId?.trim() || null,
+    run_id: normalized.runId ?? null,
     execution_owner_host: normalized.executionOwner?.host ?? null,
     execution_owner_pid: normalized.executionOwner?.pid ?? null,
     execution_owner_start_identity: normalized.executionOwner?.startIdentity ?? null,
@@ -610,15 +610,19 @@ export function readTaskRegistryMutationSnapshotInDatabase(
     const kysely = getTaskRegistryKysely(db);
     const runId = scope.runId?.trim();
     const childSessionKey = scope.childSessionKey?.trim();
-    const selected = kysely
-      .selectFrom("task_runs")
-      .where((eb) =>
-        eb.or([
-          eb("task_id", "=", scope.taskId),
-          ...(runId ? [eb("run_id", "=", runId)] : []),
-          ...(childSessionKey ? [eb("child_session_key", "=", childSessionKey)] : []),
-        ]),
-      );
+    const selected = kysely.selectFrom("task_runs").where((eb) => {
+      // Null-bound trim predicates would force even a task-ID-only lookup to scan all rows.
+      const matches = [eb("task_id", "=", scope.taskId)];
+      if (runId) {
+        matches.push(eb(eb.fn<string>("trim", [eb.ref("run_id")]), "=", runId));
+      }
+      if (childSessionKey) {
+        matches.push(
+          eb(eb.fn<string>("trim", [eb.ref("child_session_key")]), "=", childSessionKey),
+        );
+      }
+      return eb.or(matches);
+    });
     const taskRows = executeSqliteQuerySync(
       db,
       selected.selectAll().orderBy("created_at", "asc").orderBy("task_id", "asc"),
