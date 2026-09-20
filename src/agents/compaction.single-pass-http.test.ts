@@ -11,7 +11,7 @@
 // an official Anthropic or Bedrock endpoint and is not presented as one.
 import { createServer } from "node:http";
 import { describe, expect, it } from "vitest";
-import { resolveSummarizationRequestBudget } from "../../packages/agent-core/src/harness/compaction/compaction.js";
+import { resolveSummarizationRequestBudget } from "../../packages/agent-core/src/harness/compaction/summarization-budget.js";
 import { makeUserMessage } from "../../test/helpers/user-message.js";
 import { estimateMessagesTokens, SAFETY_MARGIN } from "./compaction-planning.js";
 import { summarizeInStages } from "./compaction.js";

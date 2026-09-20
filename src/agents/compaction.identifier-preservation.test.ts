@@ -1,6 +1,7 @@
 // Covers identifier-preservation instructions through single and staged
 // compaction summarization paths.
 import "./compaction-planning-single-pass.test-support.js";
+import "./compaction-planning-transport-budget.test-support.js";
 import type { AgentMessage } from "openclaw/plugin-sdk/agent-core";
 import type { ExtensionContext } from "openclaw/plugin-sdk/agent-sessions";
 import { beforeEach, describe, expect, it, vi } from "vitest";

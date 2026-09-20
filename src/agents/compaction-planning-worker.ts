@@ -1,5 +1,5 @@
 import type { Model } from "@openclaw/llm-core";
-import { resolveSummarizationRequestBudget } from "../../packages/agent-core/src/harness/compaction/compaction.js";
+import { resolveSummarizationRequestBudget } from "../../packages/agent-core/src/harness/compaction/summarization-budget.js";
 import {
   CompactionPlanningWorkerError,
   runCompactionPlanningWorker,

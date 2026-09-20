@@ -9,7 +9,7 @@ vi.mock("./sessions/index.js", async () => {
     generateSummary: vi.fn(),
   };
 });
-import { resolveSummarizationRequestBudget } from "../../packages/agent-core/src/harness/compaction/compaction.js";
+import { resolveSummarizationRequestBudget } from "../../packages/agent-core/src/harness/compaction/summarization-budget.js";
 import { serializeConversation } from "../../packages/agent-core/src/harness/compaction/utils.js";
 import { convertToLlm } from "../../packages/agent-core/src/harness/messages.js";
 import { adjustMaxTokensForThinking } from "../../packages/ai/src/providers/simple-options.js";
@@ -260,6 +260,67 @@ describe("compaction single-pass fast path", () => {
         thinkingLevel: "high",
       }),
     ).toBeGreaterThan(1);
+  });
+
+  it("matches each transport's output cap when the thinking budget is subminimum", () => {
+    // Below Anthropic's 1024 minimum every transport disables thinking, but they
+    // disagree on the resulting cap, and the budget must follow the one that
+    // will actually execute:
+    //   - Anthropic-direct restores the visible-output cap
+    //     (clampMaxTokensToModel(model, options.maxTokens ?? model.maxTokens));
+    //   - the managed alias transport and Bedrock keep adjusted.maxTokens.
+    // Reviewer's boundary: reserveTokens 1000 and model.maxTokens 1536 give a
+    // 0.8*1000 = 800 visible cap and a subminimum thinking budget.
+    const reserveTokens = 1_000;
+    const messages = buildTranscript(4, 200);
+    const baseClaude = {
+      ...TEST_MODEL,
+      id: "claude-3-5-sonnet-20241022",
+      name: "Claude 3.5 Sonnet",
+      reasoning: true,
+      maxTokens: 1_536,
+    };
+    const summaryOutputTokens = Math.min(Math.floor(0.8 * reserveTokens), baseClaude.maxTokens);
+    expect(summaryOutputTokens).toBe(800);
+
+    const subminimum = adjustMaxTokensForThinking(
+      summaryOutputTokens,
+      baseClaude.maxTokens,
+      "high",
+    );
+    // Guard the premise: this really is the subminimum branch.
+    expect(subminimum.thinkingBudget).toBeLessThan(1024);
+
+    const allowanceFor = (
+      model: Parameters<typeof resolveSummarizationRequestBudget>[0]["model"],
+    ) =>
+      resolveRequestBudget(messages, { model, reserveTokens, thinkingLevel: "high" })
+        .completionAllowanceTokens;
+
+    // Anthropic-direct restores the visible cap.
+    expect(allowanceFor({ ...baseClaude, api: "anthropic-messages", provider: "anthropic" })).toBe(
+      summaryOutputTokens,
+    );
+
+    // The managed alias and Bedrock keep the adjusted cap, which is what they send.
+    expect(
+      allowanceFor({
+        ...baseClaude,
+        api: "openclaw-anthropic-messages-transport",
+        provider: "anthropic",
+      }),
+    ).toBe(subminimum.maxTokens);
+    expect(
+      allowanceFor({
+        ...baseClaude,
+        id: "us.anthropic.claude-3-5-sonnet-20241022-v2:0",
+        api: "bedrock-converse-stream",
+        provider: "amazon-bedrock",
+      }),
+    ).toBe(subminimum.maxTokens);
+
+    // The two contracts must actually differ here, or this case proves nothing.
+    expect(subminimum.maxTokens).not.toBe(summaryOutputTokens);
   });
 
   it("budgets each Anthropic transport's actual max-reasoning allowance", () => {
