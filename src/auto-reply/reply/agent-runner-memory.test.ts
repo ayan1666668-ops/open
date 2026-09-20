@@ -50,6 +50,7 @@ import {
 } from "./agent-runner-memory.js";
 import {
   createTestFollowupRun,
+  createTestSessionTranscript,
   withTestModelContextTokens,
   writeTestSessionStore,
 } from "./agent-runner.test-fixtures.js";
@@ -229,17 +230,7 @@ async function writeTestSessionTranscript(params: {
     sessionKey,
     storePath: path.join(params.rootDir, "sessions.json"),
   };
-  await upsertSessionEntryCore(scope, { sessionId, updatedAt: 10 });
-  // Write through SessionManager so the transcript carries the tree structure that
-  // model-context reads require; flat replaceTranscriptEvents rows are only visible
-  // to display-history reads, which preflight estimation no longer uses.
-  const manager = SessionManager.open(scope);
-  for (const event of params.events) {
-    if (event.type !== "message") {
-      throw new Error(`writeTestSessionTranscript: unsupported event type ${event.type}`);
-    }
-    manager.appendMessage(event.message);
-  }
+  await createTestSessionTranscript(scope, params.events);
   await waitForSessionTranscriptProjection(scope);
 }
 
