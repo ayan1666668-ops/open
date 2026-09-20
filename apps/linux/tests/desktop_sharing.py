@@ -29,11 +29,16 @@ border-radius:8px;background:#253b50;color:white}#state{color:#82e5b4}
 <button id="unrelated">Check unrelated controls</button><p id="checks"></p><p id="failure"></p>
 </main><script>
 const instance=crypto.randomUUID();let unsupported=null;let trustedClicks=0;
+let reportTail=Promise.resolve();
 const snapshot=()=>window.__OPENCLAW_NATIVE_DEVICE_SETTINGS__;
 const post=message=>window.webkit.messageHandlers.openclawDeviceSettings.postMessage(message);
 async function report(error=null){
-  await fetch('/fixture/desktop-report',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({instance,path:location.pathname,snapshot:snapshot(),unsupported,trustedClicks,error})});
+  const body=JSON.stringify({instance,path:location.pathname,snapshot:snapshot(),unsupported,trustedClicks,error});
+  // The threaded fixture server must observe native snapshots in their original order.
+  const request=reportTail.then(()=>fetch('/fixture/desktop-report',{
+    method:'POST',headers:{'Content-Type':'application/json'},body}));
+  reportTail=request.catch(()=>{});
+  await request;
 }
 function render(){
   const current=snapshot();if(!current)return;
