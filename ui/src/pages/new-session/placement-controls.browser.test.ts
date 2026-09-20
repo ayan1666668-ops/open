@@ -97,9 +97,9 @@ it.each([320, 390, 560, 1440])(
     });
     render(html`${where}${project}`, controls);
     await document.fonts.ready;
-    await new Promise<void>((resolve) =>
-      requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
-    );
+    await new Promise<void>((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+    });
     const environment = controls.querySelector<HTMLButtonElement>("#new-session-where-trigger")!;
     const workspaceTrigger = controls.querySelector<HTMLButtonElement>(
       "#new-session-project-trigger",
