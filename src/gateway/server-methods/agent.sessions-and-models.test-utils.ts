@@ -31,6 +31,10 @@ import { bindInProcessSubagentResume } from "../in-process-subagent-resume.js";
 import { bindParentSubagentResume } from "../session-subagent-resume.js";
 import { registerPluginSubagentRunFromGateway } from "./agent-task-tracking.js";
 import { spyDetachedCreateRunningTaskRun } from "./agent-task-tracking.test-helpers.js";
+import {
+  createPluginSubagentTestLifetime,
+  mockSpawnedChildSessionEntry,
+} from "./agent.spawned-child.test-support.js";
 import { registerAgentTaskCancellationTests } from "./agent.task-cancellation.test-utils.js";
 import {
   registerCompactionSessionSettlementCase,
@@ -61,24 +65,6 @@ import {
 } from "./agent.test-harness.js";
 
 const mocks = getAgentTestMocks();
-
-// Shared by every spawn control plane whose child turn reaches the gateway as a
-// plain `agent` run: ACP manual spawns, plugin subagents, and native subagents.
-function mockSpawnedChildSessionEntry(childSessionKey: string, root: string) {
-  // The real transcript target reader must stay inside this fixture's state directory.
-  mocks.userTurnStorePath = path.join(root, "agents", "main", "sessions", "sessions.json");
-  mocks.loadSessionEntry.mockReturnValue({
-    cfg: {},
-    storePath: mocks.userTurnStorePath,
-    entry: { sessionId: "spawned-child-session", updatedAt: Date.now() },
-    canonicalKey: childSessionKey,
-  });
-  mocks.updateSessionStore.mockResolvedValue(undefined);
-  mocks.agentCommand.mockResolvedValue({
-    payloads: [{ text: "ok" }],
-    meta: { durationMs: 100 },
-  });
-}
 
 describe("gateway agent handler", () => {
   afterEach(describe0AfterEach0);
@@ -3314,6 +3300,7 @@ describe("gateway agent handler", () => {
         resetSubagentRegistryForTests({ persist: false });
         const childSessionKey = "agent:main:acp:plugin-child";
         const runId = "acp-plugin-subagent-run";
+        await using fixture = createPluginSubagentTestLifetime({ root, runId, childSessionKey });
         mockSpawnedChildSessionEntry(childSessionKey, root);
         mocks.readAcpSessionMeta.mockReturnValue(confirmedAcpMeta);
         const createRunningTaskRunSpy = spyDetachedCreateRunningTaskRun();
@@ -3328,14 +3315,16 @@ describe("gateway agent handler", () => {
           },
         };
 
-        await invokeAgent(
-          {
-            message: "plugin subagent over acp child",
-            sessionKey: childSessionKey,
-            acpTurnSource: "manual_spawn",
-            idempotencyKey: runId,
-          },
-          { reqId: runId, client: pluginClient },
+        await fixture.work.track(() =>
+          invokeAgent(
+            {
+              message: "plugin subagent over acp child",
+              sessionKey: childSessionKey,
+              acpTurnSource: "manual_spawn",
+              idempotencyKey: runId,
+            },
+            { reqId: runId, client: pluginClient },
+          ),
         );
         await waitForAgentCommandCall();
 
@@ -3356,6 +3345,8 @@ describe("gateway agent handler", () => {
             label: "plugin:memory-core",
           });
         });
+        // Detached announcement must finish before withTestDir removes its database.
+        await fixture.cleanupCompleted;
       });
     });
   });
