@@ -45,7 +45,7 @@ class GatewayDevicePairingRuntimeTest {
           }
 
           "device.pair.list" -> {
-            """{"pending":[],"paired":[{"deviceId":"device-1","displayName":"Pixel","roles":["operator"],"scopes":["operator.read"],"tokens":[],"approvedAtMs":2}]}"""
+            """{"pending":[],"paired":[{"deviceId":"device-1","displayName":"Pixel","operatorLabel":"  desk phone  ","roles":["operator"],"scopes":["operator.read"],"tokens":[],"approvedAtMs":2}]}"""
           }
 
           else -> {
@@ -69,6 +69,18 @@ class GatewayDevicePairingRuntimeTest {
           .map { it.deviceId },
       )
       assertEquals(emptyList<GatewayPendingDeviceSummary>(), runtime.nodesDevicesSummary.value.pendingDevices)
+      assertEquals(
+        "desk phone",
+        runtime.nodesDevicesSummary.value.pairedDevices
+          .single()
+          .operatorLabel,
+      )
+      assertEquals(
+        "Pixel",
+        runtime.nodesDevicesSummary.value.pairedDevices
+          .single()
+          .displayName,
+      )
     }
 
   @Test

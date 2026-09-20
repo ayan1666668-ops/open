@@ -453,16 +453,17 @@ private fun PendingDeviceRow(
 }
 
 @Composable
-private fun PairedDeviceRow(
+internal fun PairedDeviceRow(
   device: GatewayPairedDeviceSummary,
   canRemove: Boolean,
   actionEnabled: Boolean,
   onRemove: () -> Unit,
 ) {
+  val name = device.operatorLabel ?: device.displayName
   Column {
     DeviceListRow(
-      badge = nodeBadge(device.displayName ?: device.deviceId),
-      title = device.displayName ?: nativeString("Paired device"),
+      badge = nodeBadge(name ?: device.deviceId),
+      title = name ?: nativeString("Paired device"),
       subtitle = pairedDeviceSubtitle(device),
       statusText = pairedDeviceStatusText(device.tokens),
       status = pairedDeviceStatus(device.tokens),
@@ -562,6 +563,7 @@ private fun pendingDeviceSubtitle(device: GatewayPendingDeviceSummary): String {
 }
 
 private fun pairedDeviceSubtitle(device: GatewayPairedDeviceSummary): String {
+  val reportedName = device.displayName?.takeIf { device.operatorLabel != null && it != device.operatorLabel }
   val roles = formatDeviceList(device.roles, DeviceListKind.Role)
   val scopes = formatDeviceList(device.scopes, DeviceListKind.Scope)
   val tokens =
@@ -570,7 +572,7 @@ private fun pairedDeviceSubtitle(device: GatewayPairedDeviceSummary): String {
       device.tokens.count { !it.revoked },
       device.tokens.size,
     )
-  return listOfNotNull(roles, scopes, tokens, device.remoteIp).joinToString(" · ")
+  return listOfNotNull(reportedName, roles, scopes, tokens, device.remoteIp).joinToString(" · ")
 }
 
 private fun pairedDeviceStatusText(tokens: List<GatewayDeviceTokenSummary>): String =

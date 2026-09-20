@@ -9609,6 +9609,7 @@ class NodeRuntime private constructor(
         GatewayPairedDeviceSummary(
           deviceId = deviceId,
           displayName = obj["displayName"].asStringOrNull()?.trim()?.takeIf { it.isNotEmpty() },
+          operatorLabel = obj["operatorLabel"].asStringOrNull()?.trim()?.takeIf { it.isNotEmpty() },
           remoteIp = obj["remoteIp"].asStringOrNull()?.trim()?.takeIf { it.isNotEmpty() },
           roles = parseDeviceRoles(obj),
           scopes = parseStringArray(obj["scopes"] as? JsonArray),
@@ -10309,6 +10310,7 @@ data class GatewayPairedDeviceSummary(
   val scopes: List<String>,
   val tokens: List<GatewayDeviceTokenSummary>,
   val approvedAtMs: Long?,
+  val operatorLabel: String? = null,
 )
 
 data class GatewayDeviceTokenSummary(
