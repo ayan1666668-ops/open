@@ -53,6 +53,7 @@ import {
   CLI_DEFAULT_OPERATOR_SCOPES,
   authorizeOperatorScopesForMethod,
 } from "./method-scopes.js";
+import { normalizeOperatorScopeList } from "./operator-scopes.js";
 import { resolveBrowserOriginPolicy } from "./origin-check.js";
 import { withSerializedCredentialFallbackAttempt } from "./rate-limit-attempt-serialization.js";
 import type { GatewayClient } from "./server-methods/shared-types.js";
@@ -500,7 +501,10 @@ export function authorizeControlUiPluginCookieRequest(
     }
   }
   for (const grant of grants) {
-    grant.scopes = applyHttpOperatorRoleScopeCeiling(grant.scopes, authenticatedProfile);
+    grant.scopes =
+      normalizeOperatorScopeList(
+        applyHttpOperatorRoleScopeCeiling(grant.scopes, authenticatedProfile),
+      ) ?? [];
   }
   return {
     requestAuth: {
