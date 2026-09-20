@@ -149,6 +149,9 @@ finishes or the owned inspector process tree is confirmed stopped. The disposal
 allowance follows measured check time and the remaining published-driver window;
 an overrun records a warning with its duration. This also lets the 2026.9.4 driver,
 which requires a zero process exit, finish when only disposal is slow.
+Supervisor-initiated disposal termination preserves completed checks on Windows
+as well as macOS and Linux. Caller cancellation and independent failed exits
+remain failures.
 
 When a candidate Doctor completes its checks but its process or output pipes
 remain open past the allowance, the updater records an exit-phase warning and

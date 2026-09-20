@@ -36,7 +36,7 @@ export async function runUpdateDoctorLintProcess(
   let pending = "";
   let report: ReturnType<typeof parseUpdateDoctorLintReport> | undefined;
   let reportedAt: number | undefined;
-  let disposalTimedOut = false;
+  let disposalTerminationRequested = false;
   let callerAborted = false;
   let outputError: Error | undefined;
   let cancelDisposalDeadline: (() => void) | undefined;
@@ -95,7 +95,7 @@ export async function runUpdateDoctorLintProcess(
         cancelDisposalDeadline = scheduleAbsoluteDeadline(
           Math.min(reportedAt + allowance, disposalDeadlineMs ?? Infinity),
           () => {
-            disposalTimedOut = true;
+            disposalTerminationRequested = true;
             controller.abort();
           },
         );
@@ -120,11 +120,10 @@ export async function runUpdateDoctorLintProcess(
     // Recheck the complete stream so trailing data cannot turn an early result into success.
     parseUpdateDoctorLintReport(result.stdout);
     const exitCode = report.ok ? 0 : 1;
+    // The runner records our abort separately from the OS signal, which can be null.
+    // Independent exits or signals can also require forced descendant cleanup.
     const stoppedDisposal =
-      disposalTimedOut &&
-      result.termination === "signal" &&
-      result.signal === "SIGKILL" &&
-      result.cleanup === "forced";
+      disposalTerminationRequested && result.killIssuedByAbort && result.cleanup === "forced";
     if (stoppedDisposal) {
       process.stderr.write(
         `${UPDATE_DOCTOR_DISPOSAL_WARNING_PREFIX} timed out after ${Date.now() - reportedAt}ms; checks completed.\n`,
