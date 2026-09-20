@@ -15,7 +15,10 @@ import {
 } from "../llm/model-runtime-binding.js";
 import { completeSimple } from "../llm/stream.js";
 import type { AssistantMessage, Model, SimpleStreamOptions } from "../llm/types.js";
-import { resolveConfiguredOpenAICompletionsPayloadParams } from "./embedded-agent-runner/extra-params.js";
+import {
+  resolveConfiguredOpenAICompletionsPayloadParams,
+  shouldStripOpenAICompletionsStore,
+} from "./embedded-agent-runner/extra-params.js";
 import type { ResolvedProviderAuth } from "./model-auth.js";
 
 type SimpleCompletionModelOptions = {
@@ -61,6 +64,11 @@ export async function completeWithPreparedSimpleCompletionModel(
  * configured `chat_template_kwargs` / `extra_body` never reached the wire on
  * this path. Reuse the same config resolution the agent path uses and patch
  * the outgoing payload directly via `onPayload`.
+ *
+ * Takes the logical (pre-transport) model, not the prepared transport model:
+ * transport preparation can rewrite `model.api` to an internal dispatch
+ * alias, which would make the `openai-completions` check below miss
+ * managed proxy/TLS/local-service and provider-wrapper routes.
  */
 function buildConfiguredOpenAICompletionsOnPayload(
   model: Model,
@@ -77,6 +85,7 @@ function buildConfiguredOpenAICompletionsOnPayload(
   if (!chatTemplateKwargs && !extraBody) {
     return undefined;
   }
+  const stripStore = extraBody ? shouldStripOpenAICompletionsStore(model) : false;
   return (payload) => {
     if (!payload || typeof payload !== "object") {
       return payload;
@@ -91,6 +100,9 @@ function buildConfiguredOpenAICompletionsOnPayload(
     }
     if (extraBody) {
       Object.assign(payloadObj, extraBody);
+      if (stripStore) {
+        delete payloadObj.store;
+      }
     }
     return payloadObj;
   };
@@ -118,7 +130,7 @@ async function completePreparedModel(params: PreparedCompletionParams): Promise<
   const reasoning =
     rawReasoning === "adaptive" ? "medium" : rawReasoning === "ultra" ? "max" : rawReasoning;
   const headers = prepareHeadersForSimpleCompletion(completionModel, options);
-  const onPayload = buildConfiguredOpenAICompletionsOnPayload(completionModel, params.cfg);
+  const onPayload = buildConfiguredOpenAICompletionsOnPayload(params.model, params.cfg);
   const completionOptions: SimpleStreamOptions = {
     ...options,
     ...(reasoning ? { reasoning } : {}),

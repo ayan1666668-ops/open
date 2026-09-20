@@ -554,7 +554,7 @@ function createParallelToolCallsWrapper(
   };
 }
 
-function shouldStripOpenAICompletionsStore(model: ProviderRuntimeModel): boolean {
+export function shouldStripOpenAICompletionsStore(model: ProviderRuntimeModel): boolean {
   if (model.api !== "openai-completions") {
     return false;
   }
