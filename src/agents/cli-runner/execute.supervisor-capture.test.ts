@@ -51,7 +51,7 @@ import {
   supervisorSpawnMock,
   wrapPreparedCliRunWithTestAdmission,
 } from "./execute.test-support.js";
-import type { PreparedCliRunContext } from "./types.js";
+import { captureCliRunStartTime, type PreparedCliRunContext } from "./types.js";
 
 const executePreparedCliRun = wrapPreparedCliRunWithTestAdmission(executePreparedCliRunImpl);
 
@@ -143,7 +143,7 @@ function buildPreparedCliRunContext(params: {
       timeoutMs: 1_000,
       runId,
     },
-    started: Date.now(),
+    ...captureCliRunStartTime(),
     workspaceDir: "/tmp",
     backendResolved: {
       id: provider,
@@ -3122,9 +3122,12 @@ describe("executePreparedCliRun supervisor output capture", () => {
     };
     const adapter = createStubChildAdapter();
     vi.mocked(createChildAdapter).mockResolvedValueOnce({
-      ...adapter,
-      onExit: vi.fn(),
-      onError: vi.fn(),
+      adapter: {
+        ...adapter,
+        onExit: vi.fn(),
+        onError: vi.fn(),
+      },
+      ready: Promise.resolve(),
     });
     const supervisor = createProcessSupervisor();
     const spawned = createDeferred<Awaited<ReturnType<ProcessSupervisor["spawn"]>>>();

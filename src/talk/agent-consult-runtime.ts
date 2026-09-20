@@ -10,6 +10,7 @@ import type { RunEmbeddedAgentParams } from "../agents/embedded-agent-runner/run
 import type { EmbeddedAgentRunMeta } from "../agents/embedded-agent-runner/types.js";
 import type { QuestionPromptDelivery } from "../agents/tools/question-prompt-delivery.types.js";
 import { createChannelQuestionPromptDelivery } from "../agents/tools/question-prompt-send.js";
+import { getReplyPayloadMetadata } from "../auto-reply/reply-payload.js";
 import type { ReplyToolAuthorityOverlay } from "../auto-reply/reply/reply-run-registry.contracts.js";
 import {
   buildSessionCreationStamp,
@@ -504,7 +505,7 @@ export async function consultRealtimeVoiceAgent(params: {
       const sessionId = sessionEntry.sessionId;
       assertRealtimeVoiceAgentConsultModelSelectionUnlocked(modelLockParams);
 
-      const runId = `${params.runIdPrefix}:${Date.now()}:${randomUUID()}`;
+      const runId = `${params.runIdPrefix}-${randomUUID()}`;
       const timeoutMs =
         params.timeoutMs ?? params.agentRuntime.resolveAgentTimeoutMs({ cfg: params.cfg });
       const runRegistration = params.onRunStarted?.({ runId, sessionId, timeoutMs });
@@ -560,6 +561,8 @@ export async function consultRealtimeVoiceAgent(params: {
         verboseLevel: "off",
         reasoningLevel: "off",
         toolResultFormat: "plain",
+        execSession: sessionEntry,
+        toolsAllow: params.toolsAllow,
         timeoutMs,
         runId,
         lane: params.lane,
@@ -590,7 +593,11 @@ export async function consultRealtimeVoiceAgent(params: {
           yielded: true,
         };
       }
-      const text = collectRealtimeVoiceAgentConsultVisibleText(result.payloads ?? []);
+      // Earlier input answers remain in history; this completion speaks for the current input.
+      const currentInputPayloads = (result.payloads ?? []).filter(
+        (payload) => getReplyPayloadMetadata(payload)?.precedingInputAnswer !== true,
+      );
+      const text = collectRealtimeVoiceAgentConsultVisibleText(currentInputPayloads);
       if (!text) {
         params.logger.warn(
           "[talk] agent consult produced no answer: agent returned no speakable text",
