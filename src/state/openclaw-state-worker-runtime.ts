@@ -1,5 +1,7 @@
-import { SHARED_AUTH_STORE_STATE_KEY } from "../agents/auth-profiles/path-resolve.js";
-import { readAuthProfileRows } from "../agents/auth-profiles/sqlite-json.js";
+import {
+  readAuthProfileRows,
+  SHARED_AUTH_STORE_STATE_KEY,
+} from "../agents/auth-profiles/sqlite-json.js";
 import { isMissingDatabasePath } from "../agents/auth-profiles/sqlite-read-pool.js";
 import type { AuthProfileRowRead } from "../agents/auth-profiles/types.js";
 import {
@@ -30,16 +32,22 @@ import {
   reserveFleetCellInDatabase,
   updateFleetCellImageInDatabase,
 } from "../fleet/registry.kernel.js";
+import { readPendingRepositoryGitHubPublicationInDatabase } from "../gateway/github-repository-publication.kernel.js";
 import {
   readManagedImageRecordInDatabase,
   listManagedImageRecordEntriesInDatabase,
   listManagedImageOriginalMediaIdsInDatabase,
 } from "../gateway/managed-image-record-store.kernel.js";
+import { registerSessionGroupInDatabase } from "../gateway/session-group-registration.kernel.js";
 import { readDeferredPluginMigrations } from "../infra/deferred-plugin-migrations.js";
-import { countFailedDeliveryQueueEntriesInDatabase } from "../infra/delivery-queue-sqlite.kernel.js";
+import {
+  countFailedDeliveryQueueEntriesInDatabase,
+  pruneExpiredDeliveryQueueTombstonesInDatabase,
+} from "../infra/delivery-queue-sqlite.kernel.js";
 import * as deviceAuth from "../infra/device-auth-store.kernel.js";
 import { executeDeliveryQueueAck } from "../infra/outbound/delivery-queue-ack.worker.js";
 import { executeDeliveryQueueEnqueue } from "../infra/outbound/delivery-queue-enqueue.worker.js";
+import { loadDeliveryQueueMediaRetentionSnapshotInDatabase } from "../infra/outbound/delivery-queue-media-staging.kernel.js";
 import { executePendingDeliveryFailure } from "../infra/outbound/delivery-queue-pending-failure.worker.js";
 import { executePromotionCommand } from "../infra/promotions-feed.worker.js";
 import {
@@ -48,6 +56,7 @@ import {
 } from "../infra/push-apns-store.js";
 import { readPersistedVapidKeyPairInDatabase } from "../infra/push-web-store.kernel.js";
 import { executeWebPushCommand } from "../infra/push-web-store.worker.js";
+import { isSessionDeliveryCommand } from "../infra/session-delivery-queue.worker-contract.js";
 import { executeSessionDeliveryCommand } from "../infra/session-delivery-queue.worker.js";
 import { createSqliteAuditRecordKernel } from "../infra/sqlite-audit-record.kernel.js";
 import {
@@ -91,10 +100,11 @@ import {
 } from "../sessions/session-state-events.kernel.js";
 import { listWatchedSessionUpstreamLinksInDatabase } from "../sessions/session-upstream-links.kernel.js";
 import { commitSkillUploadInDatabase } from "../skills/lifecycle/upload-store-commit.js";
+import * as skillWorkshop from "../skills/workshop/store.worker.js";
 import { isTaskRegistryWorkerCommand } from "../tasks/task-registry.worker-contract.js";
 import { executeTaskRegistryCommand } from "../tasks/task-registry.worker.js";
-import { ensureMeetingTranscriptsSchema } from "../transcripts/sqlite-schema.js";
 import { executeTranscriptRead } from "../transcripts/store-worker-read.js";
+import { appendTranscriptInWorker } from "../transcripts/store-worker-write.js";
 import {
   listAgentProvenanceInDatabase,
   readAgentProvenanceBatchInDatabase,
@@ -102,6 +112,8 @@ import {
 import { ensureAgentProvenanceSchema } from "./agent-provenance.schema.js";
 import { recordBackupRunInDatabase } from "./backup-run-records.kernel.js";
 import { readConfigMachineState } from "./config-machine-state.js";
+import { isOnboardingRecommendationWriteCommand } from "./onboarding-recommendations.contract.js";
+import { executeOnboardingRecommendationCommand } from "./onboarding-recommendations.kernel.js";
 import { executeAgentDatabaseCleanupCommand } from "./openclaw-agent-execution-cleanup.worker.js";
 import type { OpenClawStateDatabase } from "./openclaw-state-db-contract.js";
 import { assertOpenClawStateDatabaseOwner } from "./openclaw-state-db-maintenance.js";
@@ -131,7 +143,7 @@ const log = createSubsystemLogger("state/worker");
 export function executeSharedStateCommand(
   command: Exclude<
     SqliteWorkerCommand<Operations>,
-    { type: "plugins.metadata.read" | "database.inspectIdle" }
+    { type: "plugins.metadata.read" | "database.inspectIdle" | "stateLease.acquire" }
   >,
   context: { databasePath: string },
   open: () => OpenClawStateDatabase,
@@ -294,10 +306,14 @@ export function executeSharedStateCommand(
     return readDeferredPluginMigrations({
       path: context.databasePath,
       env: getSqliteWorkerStateContext().environment,
+      artifactPreservingReadOnly: command.input.artifactPreservingReadOnly,
     });
   }
   if (command.type === "claws.install-schema-versions") {
-    return withExistingOpenClawStateDatabaseArtifactPreservingReadOnly(
+    const read = command.input.artifactPreservingReadOnly
+      ? withExistingOpenClawStateDatabaseArtifactPreservingReadOnly
+      : withExistingOpenClawStateDatabaseReadOnly;
+    return read(
       ({ db, path: pathname }) => {
         assertOpenClawStateDatabaseOwner(db, { pathname });
         return readClawInstallSchemaVersionRows(db);
@@ -311,6 +327,13 @@ export function executeSharedStateCommand(
       command.input.generation,
       readStableSqliteFileGeneration(context.databasePath),
     );
+  }
+  if (isOnboardingRecommendationWriteCommand(command)) {
+    return executeOnboardingRecommendationCommand(command, {
+      database: open(),
+      path: context.databasePath,
+      env: getSqliteWorkerStateContext().environment,
+    });
   }
   if (command.type === "userPreferences.read" || command.type === "userPreferences.write") {
     return executeUserPreferenceCommand(command, {
@@ -366,8 +389,17 @@ export function executeSharedStateCommand(
       : read(open().db);
   }
   const database = open();
+  if (command.type === "githubRepository.personalPending") {
+    return readPendingRepositoryGitHubPublicationInDatabase(database.db, command.input);
+  }
+  if (skillWorkshop.isSkillWorkshopCommand(command)) {
+    return skillWorkshop.executeSkillWorkshopCommand(command, database, context.databasePath);
+  }
   if (command.type === "deviceAuth.list") {
     return deviceAuth.readDeviceAuthTokensFromDatabase(database.db, command.input);
+  }
+  if (command.type === "transcripts.append") {
+    return appendTranscriptInWorker(command.input, { database, path: context.databasePath });
   }
   switch (command.type) {
     case "transcripts.sessionEntries":
@@ -382,13 +414,7 @@ export function executeSharedStateCommand(
     case "transcripts.summarySnapshot":
     case "transcripts.utterances":
     case "transcripts.summary": {
-      ensureMeetingTranscriptsSchema({
-        database,
-        path: context.databasePath,
-        env: getSqliteWorkerStateContext().environment,
-        readOnly: command.input.readOnly,
-      });
-      return executeTranscriptRead(database.db, command);
+      return executeTranscriptRead({ database, path: context.databasePath }, command);
     }
     default:
       break;
@@ -441,21 +467,13 @@ export function executeSharedStateCommand(
   if (command.type === "deliveryQueue.countFailed") {
     return countFailedDeliveryQueueEntriesInDatabase(database);
   }
-  if (
-    command.type === "sessionDelivery.enqueue" ||
-    command.type === "sessionDelivery.enqueueClaimed" ||
-    command.type === "sessionDelivery.releaseClaim" ||
-    command.type === "sessionDelivery.defer" ||
-    command.type === "sessionDelivery.advanceAgentRun" ||
-    command.type === "sessionDelivery.mergePreparedMedia" ||
-    command.type === "sessionDelivery.markAttemptStarted" ||
-    command.type === "sessionDelivery.markSettlement" ||
-    command.type === "sessionDelivery.complete" ||
-    command.type === "sessionDelivery.fail" ||
-    command.type === "sessionDelivery.load" ||
-    command.type === "sessionDelivery.list" ||
-    command.type === "sessionDelivery.moveToFailed"
-  ) {
+  if (command.type === "deliveryQueue.pruneTombstones") {
+    return pruneExpiredDeliveryQueueTombstonesInDatabase(database);
+  }
+  if (command.type === "deliveryQueue.mediaRetentionSnapshot") {
+    return loadDeliveryQueueMediaRetentionSnapshotInDatabase(database, command.input);
+  }
+  if (isSessionDeliveryCommand(command)) {
     return executeSessionDeliveryCommand(command, database);
   }
   const writeOptions = {
@@ -463,6 +481,9 @@ export function executeSharedStateCommand(
     path: context.databasePath,
     env: getSqliteWorkerStateContext().environment,
   };
+  if (command.type === "sessionGroups.register") {
+    return registerSessionGroupInDatabase(database, command.input.name, writeOptions.env);
+  }
   if (command.type === "deliveryQueue.ack") {
     return executeDeliveryQueueAck(command.input, writeOptions);
   }
