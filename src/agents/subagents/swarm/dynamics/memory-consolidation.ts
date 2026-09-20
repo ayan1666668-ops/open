@@ -1,13 +1,7 @@
 export const MEMORY_PHASES = [
-  "observation",
-  "trace",
-  "correlated",
-  "candidate-belief",
-  "crystal",
+  "observation", "trace", "correlated", "candidate-belief", "crystal",
 ] as const;
-
 export type MemoryPhase = (typeof MEMORY_PHASES)[number];
-
 export type MemoryEvidence = {
   recurrence: number;
   independentConfirmations: number;
@@ -15,7 +9,6 @@ export type MemoryEvidence = {
   evidenceStrength: number;
   freshness: number;
 };
-
 export type MemoryAssessment = {
   phase: MemoryPhase;
   reason: string;
@@ -23,20 +16,17 @@ export type MemoryAssessment = {
   authority: "knowledge-only";
 };
 
-function inUnitInterval(value: number): boolean {
-  return Number.isFinite(value) && value >= 0 && value <= 1;
-}
-
 export function assessMemoryEvidence(evidence: MemoryEvidence): MemoryAssessment {
   for (const value of [evidence.recurrence, evidence.evidenceStrength, evidence.freshness]) {
-    if (!inUnitInterval(value)) {
+    if (!Number.isFinite(value) || value < 0 || value > 1) {
       throw new Error("memory evidence scalars must be finite and in [0,1]");
     }
   }
-  if (evidence.independentConfirmations < 0 || evidence.contradictions < 0) {
-    throw new Error("memory evidence counts must be non-negative");
+  for (const count of [evidence.independentConfirmations, evidence.contradictions]) {
+    if (!Number.isSafeInteger(count) || count < 0) {
+      throw new Error("memory evidence counts must be non-negative safe integers");
+    }
   }
-
   if (evidence.contradictions > 0) {
     return {
       phase: "candidate-belief",
@@ -45,12 +35,8 @@ export function assessMemoryEvidence(evidence: MemoryEvidence): MemoryAssessment
       authority: "knowledge-only",
     };
   }
-  if (
-    evidence.independentConfirmations >= 3 &&
-    evidence.recurrence >= 0.75 &&
-    evidence.evidenceStrength >= 0.85 &&
-    evidence.freshness >= 0.6
-  ) {
+  if (evidence.independentConfirmations >= 3 && evidence.recurrence >= 0.75 &&
+      evidence.evidenceStrength >= 0.85 && evidence.freshness >= 0.6) {
     return {
       phase: "crystal",
       reason: "recurring independently confirmed evidence is strong and fresh",
