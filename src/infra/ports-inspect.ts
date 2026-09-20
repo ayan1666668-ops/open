@@ -500,22 +500,18 @@ async function buildPortUsage(
 ): Promise<PortUsage> {
   const errors: string[] = [];
   errors.push(...result.errors);
-  let listeners = result.listeners;
-  const status: PortUsageStatus = probeHosts
-    ? await probePortUsage(port, probeHosts)
-    : listeners.length > 0
-      ? "busy"
-      : await probePortUsage(port);
-  if (status !== "busy") {
-    listeners = [];
-  } else if (probeHosts) {
-    listeners = listeners.filter((listener) =>
-      isListenerRelevantToProbeHosts(listener, port, probeHosts),
-    );
-  }
+  const listeners = probeHosts
+    ? result.listeners.filter((listener) =>
+        isListenerRelevantToProbeHosts(listener, port, probeHosts),
+      )
+    : result.listeners;
+  // macOS can allow a loopback bind alongside a wildcard listener. A successful
+  // bind must not erase native evidence that this endpoint is already served.
+  const status: PortUsageStatus =
+    listeners.length > 0 ? "busy" : await probePortUsage(port, probeHosts);
   const hints = buildPortHints(listeners, port);
   if (status === "busy" && listeners.length === 0) {
-    // The bind probe is authoritative; filtered diagnostics must never turn busy into free.
+    // A busy bind remains useful when native process details are unavailable.
     hints.push(
       "Port is in use but process details are unavailable (install lsof or run as an admin user).",
     );
