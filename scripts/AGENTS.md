@@ -14,6 +14,11 @@ This directory owns local tooling, script wrappers, and generated-artifact helpe
 - For changed-file verification, prefer `scripts/check-changed.mjs` and keep lane classification in `scripts/changed-lanes.mjs`. Use `node scripts/check-changed.mjs --dry-run [--staged|-- <files...>]` to inspect the plan before running anything expensive. Do not copy path-scope rules into new hooks or ad hoc CI snippets.
 - For one/few lint files, prefer direct `node scripts/run-oxlint.mjs --tsconfig <matching config> <files...>` over sharded `pnpm lint`; `check-changed.mjs` owns this targeting for core, extension, and script diffs.
 
+## Testbox Command Checkout
+
+- `.github/actions/prepare-testbox-shell` owns the Testbox shell/working-directory contract. Noninteractive login shells preserve the caller-selected directory; hydration adapts only the known Blacksmith interactive-SSH auto-`cd` and probes exact physical cwd before ready registration. Do not force nested shells into `GITHUB_WORKSPACE` or the transport checkout.
+- Raw Crabbox payloads start in the synchronized transport checkout. `crabbox-wrapper.mjs` instead verifies/applies its source capsule and reconciles dependencies in the prepared execution workspace before running the payload. Preserve that intentional receiver handoff; its pathname alone does not identify stale source. Verify selected source bytes/patch as well as directory, and stop/re-warm leases when preparation changes.
+
 ## TypeScript Syntax
 
 - Keep TypeScript implementation files under `scripts/**` erasable by Node without transformation. Do not use parameter properties, runtime enums or namespaces, import-equals, export-assignment, or other transform-required TypeScript syntax.
