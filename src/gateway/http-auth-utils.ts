@@ -473,8 +473,7 @@ export async function authorizePluginGatewayHttpRequestOrReply(
     authGeneration,
   });
   if (cookieAuth) {
-    bindControlUiPluginCookieRequestAuthority(cookieAuth, params);
-    return cookieAuth;
+    return bindControlUiPluginCookieRequestAuthority(cookieAuth, params);
   }
   const requestAuth = await authorizeGatewayHttpRequestWithOrReply(
     params,

@@ -1029,6 +1029,7 @@ describe("scoped vitest configs", () => {
       "src/gateway/**/*.test.ts",
       "test/plugins/codex-model-catalog.gateway.test.ts",
       "test/plugins/crabbox-allocation-authority.gateway.test.ts",
+      "test/plugins/team-reports-http.gateway.test.ts",
     ]);
     expect(testConfig.exclude).toContain("src/gateway/gateway.test.ts");
     expect(testConfig.exclude).toContain(

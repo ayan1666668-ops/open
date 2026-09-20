@@ -6,19 +6,15 @@ import { getUserProfileListItem } from "../state/user-profiles.js";
 import type { ResolvedGatewayAuth } from "./auth.js";
 import { resolveControlUiPluginAuthCookieGrants } from "./control-ui-plugin-auth-cookie.js";
 import { applyHttpOperatorRoleScopeCeiling, resolveHttpProfile } from "./http-auth-user-profile.js";
-import type { AuthorizedGatewayHttpRequest } from "./http-auth-utils.js";
 import { sendUnauthorized } from "./http-common.js";
 import { resolveSharedGatewaySessionGeneration } from "./server/ws-shared-generation.js";
 
-type CookieRequestAuth = {
-  requestAuth: AuthorizedGatewayHttpRequest;
-  operatorScopes: string[];
-};
+type CookieRequestAuth = NonNullable<ReturnType<typeof authorizeControlUiPluginCookieRequest>>;
 
 export function authorizeControlUiPluginCookieRequest(
   req: IncomingMessage,
   params: { requestPath: string; authGeneration: string | undefined },
-): CookieRequestAuth | null {
+) {
   // WebSocket upgrades bypass this HTTP-only handoff and use
   // checkGatewayHttpRequestAuth directly in attachGatewayUpgradeHandler.
   if (req.method !== "GET" && req.method !== "HEAD") {
@@ -35,10 +31,7 @@ export function authorizeControlUiPluginCookieRequest(
     return null;
   }
   const cfg = getRuntimeConfig();
-  let authenticatedProfile: Pick<
-    AuthorizedGatewayHttpRequest,
-    "authenticatedUserProfile" | "operatorRolePolicy"
-  > = {};
+  let authenticatedProfile: Partial<ReturnType<typeof resolveHttpProfile>> = {};
   const profileId = grants[0]?.profileId;
   if (grants.some((grant) => grant.profileId !== profileId) || (cfg.gateway?.roles && !profileId)) {
     return null;
@@ -78,8 +71,8 @@ export function bindControlUiPluginCookieRequestAuthority(
     getResolvedAuth?: () => ResolvedGatewayAuth;
     trustedProxies?: string[];
   },
-): void {
-  cookieAuth.requestAuth.revalidate = async () => {
+) {
+  const revalidate = async () => {
     if (params.res.writableEnded || params.res.destroyed) {
       throw new Error("HTTP request authority expired");
     }
@@ -94,7 +87,7 @@ export function bindControlUiPluginCookieRequestAuthority(
     });
     const currentGrants = current?.requestAuth.controlUiPluginGrants ?? [];
     if (
-      !cookieAuth.requestAuth.controlUiPluginGrants?.every((admitted) =>
+      !cookieAuth.requestAuth.controlUiPluginGrants.every((admitted) =>
         currentGrants.some(
           (grant) =>
             grant.pluginId === admitted.pluginId &&
@@ -112,5 +105,9 @@ export function bindControlUiPluginCookieRequestAuthority(
       sendUnauthorized(params.res);
       throw new Error("Unauthorized");
     }
+  };
+  return {
+    ...cookieAuth,
+    requestAuth: { ...cookieAuth.requestAuth, revalidate },
   };
 }
