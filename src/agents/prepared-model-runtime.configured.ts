@@ -48,7 +48,7 @@ import type {
 import type { AuthStorageData } from "./sessions/auth-storage.js";
 import { resolveEffectiveAgentRuntime } from "./thinking-runtime.js";
 
-/** Collects scoped config refs and exact runtime selections without changing config. */
+/** Collects scoped config refs and optional exact selections for a read-only request. */
 export function collectPreparedModelRuntimeConfiguredRefs(
   config: OpenClawConfig,
   agentId: string | undefined,

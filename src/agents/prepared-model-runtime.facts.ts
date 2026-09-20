@@ -265,7 +265,7 @@ export async function prepareWorkspaceBuildGroup(
         const refs = collectPreparedModelRuntimeConfiguredRefs(
           config,
           agentId,
-          candidate.runtimePluginSelections,
+          candidate.readOnly ? candidate.runtimePluginSelections : undefined,
         );
         configuredModelRefs.push(...refs);
         return [

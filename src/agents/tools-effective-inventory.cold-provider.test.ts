@@ -920,8 +920,8 @@ describe("cold dynamic-model effective inventory", () => {
       { policy: "entry disable", plugins: { entries: { [pluginId]: { enabled: false } } } },
       { policy: "deny", plugins: { deny: [pluginId] } },
       { policy: "restrictive allow omission", plugins: { allow: ["unrelated-inventory-plugin"] } },
-    ].flatMap((policy) =>
-      (["configured", "persisted"] as const).map((source) => ({ ...policy, source })),
+    ].flatMap(({ policy, plugins }) =>
+      (["configured", "persisted"] as const).map((source) => ({ policy, plugins, source })),
     ),
   )(
     "honors $policy despite an ambient competing provider ($source)",
