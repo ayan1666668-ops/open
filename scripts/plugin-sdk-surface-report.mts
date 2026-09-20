@@ -393,7 +393,7 @@ export function readPluginSdkSurfaceBudgets(env: NodeJS.ProcessEnv = process.env
       // +6: shared delivery facts, source-reply detection, argument sanitization, and media comparison.
       // +1: workspace Memory file client.
       // +2: prepare admitted input attachments and bind a workspace transfer adapter.
-      4526,
+      4527,
       env,
     ),
     publicFunctionExports: readPluginSdkSurfaceBudgetEnv(
@@ -546,7 +546,7 @@ export function readPluginSdkSurfaceBudgets(env: NodeJS.ProcessEnv = process.env
       // +6: shared delivery facts, source-reply detection, argument sanitization, and media comparison.
       // +1: workspace Memory file client.
       // +2: prepare admitted input attachments and bind a workspace transfer adapter.
-      2669,
+      2670,
       env,
     ),
     publicDeprecatedExports: readPluginSdkSurfaceBudgetEnv(

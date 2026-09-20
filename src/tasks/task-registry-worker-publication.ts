@@ -75,9 +75,8 @@ export function createTaskRegistryPublicationRecovery(
       witness.replaced = false;
     },
     recover: (snapshot: TaskRegistryStoreSnapshot) => {
-      const record = recover(snapshot);
-      expected = record ? cloneTaskRecord(record) : undefined;
-      return record;
+      expected = recover(snapshot);
+      return expected;
     },
     assertCurrent() {
       if (!expected) {
@@ -232,13 +231,8 @@ export function publishTaskRegistryWorkerMutation(params: {
     return;
   }
   const { tasks } = getTaskRegistryProcessState();
-  // Equal-value committed readbacks can still supersede a held publication.
-  const isInvalidated = (taskId: string) =>
-    publication.invalidated.has(taskId) ||
-    pending.recoveryWitness?.replaced ||
-    pending.recoveryWitness?.writtenTaskIds.has(taskId);
   for (const [taskId, expected] of publication.records) {
-    if (!publication.ready.has(taskId) || isInvalidated(taskId)) {
+    if (!publication.ready.has(taskId) || publication.invalidated.has(taskId)) {
       continue;
     }
     const next = tasks.get(taskId);
@@ -256,7 +250,11 @@ export function publishTaskRegistryWorkerMutation(params: {
         ...(previous ? { previous } : {}),
       }));
       const current = tasks.get(taskId);
-      if (current && !isInvalidated(taskId) && isEquivalentTaskRecord(expected, current)) {
+      if (
+        current &&
+        !publication.invalidated.has(taskId) &&
+        isEquivalentTaskRecord(expected, current)
+      ) {
         params.onPublished?.(current);
       }
     }
@@ -294,7 +292,12 @@ export function claimTaskRegistryPublication(
     ready: new Set(),
     invalidated: new Set(),
   };
+  const recovery = pending.recoveryWitness;
   for (const [taskId, record] of pending.publication.records) {
+    // Competing writes can precede the receipt's publication claim.
+    if (recovery?.replaced || recovery?.writtenTaskIds.has(taskId)) {
+      pending.publication.invalidated.add(taskId);
+    }
     const previous = pending.published.get(taskId);
     for (const other of getTaskRegistryProcessState().projection.pending) {
       if (

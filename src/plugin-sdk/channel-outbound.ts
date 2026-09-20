@@ -8,6 +8,8 @@ import {
   resolveChannelProgressDraftConfig as readProgressDraftConfig,
   type StreamingCompatEntry as ProgressDraftCompatEntry,
 } from "../channels/streaming.js";
+import { classifyGatewayStaleInstall } from "../gateway/stale-install.js";
+import { PlatformMessageNotDispatchedError } from "../infra/outbound/deliver-types.js";
 import { preserveReplyPayloadMediaSelectionCore } from "../infra/outbound/reply-media-entries.js";
 import { createLazyRuntimeModule } from "../shared/lazy-runtime.js";
 import type { ReplyPayload } from "./reply-payload.js";
@@ -226,17 +228,28 @@ export type {
   MessageReceiptSourceResult,
 } from "../channels/message/types.js";
 
+async function loadChannelDurableDeliveryModule(): Promise<ChannelDurableDeliveryModule> {
+  return await import("../channels/turn/durable-delivery.js").catch((error: unknown) => {
+    const staleInstall = classifyGatewayStaleInstall(error);
+    // Only import failure proves no send: errors from the delivery runtime may be ambiguous.
+    throw new PlatformMessageNotDispatchedError(
+      staleInstall?.error.message ?? "Reply delivery runtime could not load before dispatch",
+      { cause: error },
+    );
+  });
+}
+
 /** Lazily forwards inbound reply delivery through the channel turn durable-delivery module. */
 export const deliverInboundReplyWithMessageSendContext: ChannelDurableDeliveryModule["deliverInboundReplyWithMessageSendContextCore"] =
   async (...args) => {
-    const mod = await import("../channels/turn/durable-delivery.js");
+    const mod = await loadChannelDurableDeliveryModule();
     return await mod.deliverInboundReplyWithMessageSendContextCore(...args);
   };
 
 /** Delivers a producer's prepared plan without reparsing literal text. */
 export const deliverStructuredInboundReplyWithMessageSendContext: ChannelDurableDeliveryModule["deliverStructuredInboundReplyWithMessageSendContextCore"] =
   async (...args) => {
-    const mod = await import("../channels/turn/durable-delivery.js");
+    const mod = await loadChannelDurableDeliveryModule();
     return await mod.deliverStructuredInboundReplyWithMessageSendContextCore(...args);
   };
 
