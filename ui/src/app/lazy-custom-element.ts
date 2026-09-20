@@ -250,9 +250,11 @@ export const KEYBOARD_SHORTCUTS_ELEMENT = {
   loadModule: () => import("../components/keyboard-shortcuts-dialog.ts"),
 } satisfies OptionalCustomElement;
 
+const APP_SIDEBAR_TAG = "openclaw-app-sidebar";
+
 export const APP_SIDEBAR_ELEMENT = {
-  tagName: "openclaw-app-sidebar",
-  label: "openclaw-app-sidebar",
+  tagName: APP_SIDEBAR_TAG,
+  label: APP_SIDEBAR_TAG,
   loadModule: () => import("../components/app-sidebar.ts"),
 } satisfies OptionalCustomElement;
 
