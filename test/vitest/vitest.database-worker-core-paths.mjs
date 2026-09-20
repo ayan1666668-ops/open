@@ -244,6 +244,7 @@ export const databaseWorkerCoreTestFiles = [
   "src/tasks/task-registry.async-restore.test.ts",
   "src/tasks/task-registry-agent-events.test.ts",
   "src/tasks/task-registry-agent-events.lineage.test.ts",
+  "src/tasks/task-registry-owner-read.test.ts",
   "src/tasks/task-registry-read.test.ts",
   "src/tasks/task-registry-terminal-read.test.ts",
   "src/tasks/task-registry-progress-runtime.test.ts",
