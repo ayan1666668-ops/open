@@ -1107,7 +1107,7 @@ describe("AcpxRuntime fresh reset wrapper", () => {
     },
   );
 
-  it("keeps rejecting an unsupported model id after reading the advertised catalog", async () => {
+  it("keeps rejecting an unsupported model after retrying its OpenClaw reference", async () => {
     const baseStore: TestSessionStore = makeEmptySessionStore();
     const { runtime, delegate } = makeRuntime(baseStore, {
       agentRegistry: {
@@ -1117,7 +1117,7 @@ describe("AcpxRuntime fresh reset wrapper", () => {
     });
     const ensure = vi
       .spyOn(delegate, "ensureSession")
-      .mockRejectedValueOnce(
+      .mockRejectedValue(
         new RequestedModelUnsupportedError(
           "Cannot apply --model: the ACP agent did not advertise that model",
           "unadvertised-model",
@@ -1132,8 +1132,8 @@ describe("AcpxRuntime fresh reset wrapper", () => {
         model: "unknown/model",
       }),
     ).rejects.toThrow("did not advertise that model");
-    // One model-less attempt reads the catalog; it cannot turn the rejection into success.
-    expect(ensure).toHaveBeenCalledTimes(2);
+    // Both attempts carry a model; failed startup never publishes a model-less session.
+    expect(ensure.mock.calls.map(([input]) => input.model)).toEqual(["unknown/model", "model"]);
   });
 
   it("does not retry an unrelated error with similar wording", async () => {

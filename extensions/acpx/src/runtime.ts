@@ -28,11 +28,6 @@ import {
   type AcpRuntimeCapabilities,
   type AcpRuntimeErrorCode,
 } from "../runtime-api.js";
-import {
-  ensureSessionWithAdvertisedModel,
-  resolveAdvertisedModelId,
-  withAcpxSessionOptions,
-} from "./advertised-model.js";
 import { OPENCLAW_CODEX_CONFIG_ARG } from "./codex-adapter.js";
 import {
   isClaudeAcpCommand,
@@ -43,6 +38,11 @@ import {
   splitCommandParts,
   type AcpxAgentCommand,
 } from "./command-line.js";
+import {
+  ensureSessionWithModelRef,
+  withAcpxSessionOptions,
+  withOpenClawModelRef,
+} from "./model-ref.js";
 import {
   ACPX_PROBE_LEASE_SESSION_KEY,
   hashAcpxProcessCommand,
@@ -1005,12 +1005,10 @@ export class AcpxRuntime implements CompleteAcpRuntime {
           run: () =>
             codexModelOverride
               ? delegate.ensureSession(withAcpxSessionOptions(ensureInput))
-              : ensureSessionWithAdvertisedModel({
-                  delegate,
-                  input: ensureInput,
-                  loadRecord: (ensured) =>
-                    this.sessionStore.load(ensured.acpxRecordId ?? ensured.sessionKey),
-                }),
+              : ensureSessionWithModelRef((request) => {
+                  this.generationRegistry.assertCurrentGeneration(generation);
+                  return delegate.ensureSession(request);
+                }, ensureInput),
         }),
     });
     return {
@@ -1235,14 +1233,13 @@ export class AcpxRuntime implements CompleteAcpRuntime {
         value: normalizeClaudeAcpModelOverride(input.value) ?? input.value,
       });
     }
-    // Harnesses may advertise opaque model IDs; send the unique one this request names.
-    const advertisedModel =
-      key === "model"
-        ? resolveAdvertisedModelId(input.value, snapshot.record?.acpx?.available_models)
-        : undefined;
-    return await delegate.setConfigOption(
-      advertisedModel ? { ...input, value: advertisedModel } : input,
-    );
+    if (key === "model") {
+      return await withOpenClawModelRef(input.value, (value) => {
+        this.generationRegistry.assertCurrentGeneration(snapshot.generation);
+        return delegate.setConfigOption({ ...input, value });
+      });
+    }
+    return await delegate.setConfigOption(input);
   }
 
   async cancel(input: Parameters<AcpRuntime["cancel"]>[0]): Promise<void> {
