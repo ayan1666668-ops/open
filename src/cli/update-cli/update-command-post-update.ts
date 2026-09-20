@@ -7,7 +7,7 @@ import {
 } from "../../infra/update-control-plane-sentinel.js";
 import { recordUpdateRunStep } from "../../infra/update-run-ledger.js";
 import { isUpdateGatewayReadinessPending } from "../../infra/update-run-step.js";
-import type { UpdateRunResult } from "../../infra/update-runner.js";
+import type { UpdateRunResult } from "../../infra/update-runner-types.js";
 import { defaultRuntime } from "../../runtime.js";
 import { classifyUpdateOutcome } from "../../shared/update-outcome.js";
 import { convergeUpdatePlugins } from "./update-command-convergence.js";
@@ -34,7 +34,6 @@ import {
 import { rollbackFailedUpdate } from "./update-command-rollback.js";
 import type { UpdateServiceDefinitionRecovery } from "./update-command-service-context-types.js";
 import { withOwnedManagedUpdateEnv } from "./update-command-service-env.js";
-import { isPendingUpdateServiceLoad } from "./update-command-service-load.js";
 import { createWindowsTaskAutoStartGuard } from "./update-command-service-maintenance.js";
 import { GatewayServiceUpdateOwnershipError } from "./update-command-service-plan.js";
 import {
@@ -64,9 +63,6 @@ export async function finishUpdate(
   { candidateRuntime = false } = {},
 ): Promise<UpdateRunResult> {
   const definitionRecovery: UpdateServiceDefinitionRecovery = {};
-  if (params.serviceLoadBoundary && process.platform !== "linux") {
-    throw new Error("Deferred native service loading is not supported on this platform.");
-  }
   const assertCurrent = createUpdateCommandFinalizationFence(params);
   const parkForegroundOrigin = () => parkForegroundUpdateForActivation(params, assertCurrent);
 
@@ -530,7 +526,6 @@ export async function finishUpdate(
           opts: params.opts,
           refreshServiceEnv: restartContext.refreshGatewayServiceEnv,
           definitionRecovery,
-          serviceLoadBoundary: params.serviceLoadBoundary,
           serviceUpdateVerdict: restartContext.serviceUpdateVerdict,
           serviceManagerUid: restartContext.serviceManagerUid,
           serviceRuntimeRefreshRequired: params.serviceRuntimeRefreshRequired,
@@ -710,8 +705,7 @@ export async function finishUpdate(
         cause: error,
       });
     }
-    if (error instanceof UpdateCommandFailure || isPendingUpdateServiceLoad(error)) {
-      // Staging may already have changed files. Keep intent/material for fenced reconciliation.
+    if (error instanceof UpdateCommandFailure) {
       throw error;
     }
     const { result, message } = createPostUpdateFailureResult(params, error);
