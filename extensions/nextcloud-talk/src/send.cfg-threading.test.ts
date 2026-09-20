@@ -112,10 +112,26 @@ describe("nextcloud-talk send cfg threading", () => {
     const cfg = useUnavailableBotSecretAccount();
 
     await expect(sendMessageNextcloudTalk("room:abc123", "hello", { cfg })).rejects.toThrow(
-      /secret|unavailable/i,
+      'Nextcloud Talk bot secret is configured but unavailable for account "default" (check the configured channels.nextcloud-talk.botSecret/botSecretFile).',
     );
 
     expect(hoisted.mockFetchGuard).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps the configure-a-secret error when no credential was ever configured", async () => {
+    hoisted.resolveNextcloudTalkAccount.mockReturnValue({
+      ...defaultAccount,
+      secret: "",
+      tokenStatus: "missing",
+    });
+
+    await expect(
+      sendMessageNextcloudTalk("room:abc123", "hello", { cfg: { source: "provided" } }),
+    ).rejects.toThrow(
+      'Nextcloud Talk bot secret missing for account "default" (set channels.nextcloud-talk.botSecret/botSecretFile or NEXTCLOUD_TALK_BOT_SECRET for default).',
+    );
+
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
