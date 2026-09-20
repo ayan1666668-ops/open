@@ -60,9 +60,9 @@ const enModelControls = {
       modelPending: "Model pending",
       modelStarting: "Starting…",
       modelSelectionAutoHelp:
-        "Automatic routing chooses a model for each turn. Use /autorouter off to choose manually.",
+        "Automatic model selection is managed by the active plugin. Use its advertised control to choose manually.",
       modelSelectionShadowHelp:
-        "Shadow routing recommends a model without changing dispatch. Use /autorouter on to enable it.",
+        "Shadow model selection is managed by the active plugin. Use its advertised control to enable automatic dispatch.",
       modelsUnavailable: "Models unavailable",
       runtimeUnavailable: "This harness is unavailable for this model.",
       modelsRefreshFailed: "Some models could not be refreshed. Open Models to try again.",

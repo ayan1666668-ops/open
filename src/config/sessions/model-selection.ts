@@ -15,6 +15,8 @@ export type SessionModelSelectionDecision = {
 
 export type SessionModelSelection = {
   mode: ModelSelectionMode;
+  /** Short, sanitized recovery instruction advertised by the active plugin. */
+  recoveryHint?: string;
   lastDecision?: SessionModelSelectionDecision;
 };
 
@@ -53,12 +55,14 @@ export function normalizeSessionModelSelection(value: unknown): SessionModelSele
   }
   const candidate = value as {
     mode?: unknown;
+    recoveryHint?: unknown;
     lastDecision?: unknown;
   };
   const mode = normalizeMode(candidate.mode);
   if (!mode) {
     return undefined;
   }
+  const recoveryHint = normalizeShortText(candidate.recoveryHint);
   const rawDecision = candidate.lastDecision;
   let lastDecision: SessionModelSelectionDecision | undefined;
   if (rawDecision && typeof rawDecision === "object" && !Array.isArray(rawDecision)) {
@@ -77,7 +81,11 @@ export function normalizeSessionModelSelection(value: unknown): SessionModelSele
       };
     }
   }
-  return { mode, ...(lastDecision ? { lastDecision } : {}) };
+  return {
+    mode,
+    ...(recoveryHint ? { recoveryHint } : {}),
+    ...(lastDecision ? { lastDecision } : {}),
+  };
 }
 
 /**

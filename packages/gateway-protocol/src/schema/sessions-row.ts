@@ -53,6 +53,8 @@ export const SessionToolOverridesSchema = closedObject({
 /** Host projection of a plugin-owned model selector's current session mode. */
 export const SessionModelSelectionSchema = closedObject({
   mode: Type.Union([Type.Literal("auto"), Type.Literal("shadow"), Type.Literal("off")]),
+  /** Bounded recovery instruction supplied by the active selector plugin. */
+  recoveryHint: Type.Optional(NonEmptyString),
   lastDecision: Type.Optional(
     closedObject({
       model: Type.Optional(NonEmptyString),

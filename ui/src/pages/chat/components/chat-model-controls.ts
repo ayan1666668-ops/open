@@ -528,11 +528,12 @@ export function renderChatModelControls(props: ChatModelControlsProps) {
   const modelSelectionLabel =
     modelSelectionMode === "auto" ? "Auto" : modelSelectionMode === "shadow" ? "Shadow" : undefined;
   const modelSelectionHelp =
-    modelSelectionMode === "auto"
+    props.selectedSession?.modelSelection?.recoveryHint ??
+    (modelSelectionMode === "auto"
       ? t("chat.modelControls.modelSelectionAutoHelp")
       : modelSelectionMode === "shadow"
         ? t("chat.modelControls.modelSelectionShadowHelp")
-        : undefined;
+        : undefined);
   const hasResolvableModel =
     managedCatalog.status === "ready" &&
     activeModelOption?.disabled !== true &&

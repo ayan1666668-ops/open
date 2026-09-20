@@ -10,6 +10,7 @@ describe("session model-selection projection", () => {
     expect(
       normalizeSessionModelSelection({
         mode: "auto",
+        recoveryHint: "Use /jev-router off",
         lastDecision: {
           model: "  openai/gpt-5.6-luna\n",
           reason: "complex \u0000 task",
@@ -19,6 +20,7 @@ describe("session model-selection projection", () => {
       }),
     ).toEqual({
       mode: "auto",
+      recoveryHint: "Use /jev-router off",
       lastDecision: {
         model: "openai/gpt-5.6-luna",
         reason: "complex task",
@@ -37,9 +39,13 @@ describe("session model-selection projection", () => {
     expect(
       normalizeSessionModelSelection({
         mode: "shadow",
+        recoveryHint: "  recover\u0000 with the plugin\ncontrol  ",
         lastDecision: { model: "", reason: "\u0000", at: Number.NaN },
       }),
-    ).toEqual({ mode: "shadow" });
+    ).toEqual({
+      mode: "shadow",
+      recoveryHint: "recover with the plugin control",
+    });
   });
 
   it("projects only the active namespaced extension", () => {
@@ -48,11 +54,16 @@ describe("session model-selection projection", () => {
         { namespace: "other", value: { mode: "auto" } },
         {
           namespace: MODEL_SELECTION_EXTENSION_NAMESPACE,
-          value: { mode: "off", lastDecision: { model: "openai/gpt-5.6-sol" } },
+          value: {
+            mode: "off",
+            recoveryHint: "Use the plugin control",
+            lastDecision: { model: "openai/gpt-5.6-sol" },
+          },
         },
       ]),
     ).toEqual({
       mode: "off",
+      recoveryHint: "Use the plugin control",
       lastDecision: { model: "openai/gpt-5.6-sol" },
     });
     expect(resolveSessionModelSelectionFromExtensions(undefined)).toBeUndefined();

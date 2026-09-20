@@ -241,6 +241,32 @@ describe("resolveHookModelSelection", () => {
     );
   });
 
+  it("derives omitted provider and model fields from the original host selection", async () => {
+    const hookRunner = {
+      hasHooks: vi.fn(() => true),
+      runBeforeModelResolve: vi.fn(async () => ({
+        modelOverride: "routed-model",
+        reasoningEffortOverride: "high",
+        preDispatchNotice: { text: "routed before dispatch" },
+      })),
+    };
+
+    await expect(
+      resolveHookModelSelection({
+        prompt: "route this",
+        provider: "default-provider",
+        modelId: "default-model",
+        hookRunner,
+        hookContext,
+      }),
+    ).resolves.toEqual({
+      provider: "default-provider",
+      modelId: "routed-model",
+      reasoningEffortOverride: "high",
+      preDispatchNotice: { text: "routed before dispatch" },
+    });
+  });
+
   it("drops malformed effort and empty notices from hook output", async () => {
     const hookRunner = {
       hasHooks: vi.fn(() => true),
