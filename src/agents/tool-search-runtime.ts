@@ -348,7 +348,7 @@ export class ToolSearchRuntime {
     // the caller asks for additional lexical context around the exact match.
     if (
       exactMatches.length > 0 ||
-      this.config.enabled !== true ||
+      !this.config.enabled ||
       this.config.semanticRanking !== "shadow" ||
       results.length < 2
     ) {
