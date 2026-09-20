@@ -28,6 +28,20 @@ Topologies for running `imsg` next to a signed-in Messages account, and the conf
 
   </Accordion>
 
+  <Accordion title="No spare phone number? Scope one Mac to an email alias">
+    Apple only issues a new Apple Account against a phone number that is not already on one, so a dedicated bot Apple ID is not available to everyone. This pattern reaches the same isolation from the Apple Account you already have: the bot Mac stays registered for one email alias and nothing else.
+
+    1. At [appleid.apple.com](https://appleid.apple.com), add an extra email address under **Reachable At** and verify it.
+    2. On the bot Mac, open **Messages > Settings > iMessage**. Under **You can be reached for messages at**, uncheck the phone number and every other address so only the new alias stays checked. That list is per device, so your iPhone keeps receiving everything.
+    3. On the same Mac, turn off **Enable Messages in iCloud**. Those checkboxes control delivery only; iCloud sync ignores them and pulls your whole message history down anyway.
+    4. If that Mac already synced history, turning sync off does not remove the local copy. Sign out of Messages, quit it, delete `~/Library/Messages/`, then sign back in. Otherwise `chat.db` still holds your personal threads, and `chat.db` is the file the bot reads.
+
+    Message the alias from your phone to open the bot thread. Messages you send to your own phone number never register on that Mac, so they never reach its `chat.db`. The isolation comes from device registration rather than from a separate account.
+
+    An iPhone does not let you deselect its own phone number, so this pattern works on a Mac only.
+
+  </Accordion>
+
   <Accordion title="Remote Mac over Tailscale (example)">
     Common topology:
 
