@@ -1,16 +1,21 @@
 import { expectDefined } from "@openclaw/normalization-core";
 import { describe, expect, expectTypeOf, it, onTestFinished, vi } from "vitest";
+import { wrapToolWithBeforeToolCallHook as wrapToolWithBeforeToolCallHookInternal } from "../agents/agent-tools.before-tool-call.js";
 import { createOpenClawCodingTools as createCoreCodingTools } from "../agents/agent-tools.js";
+import { getBeforeToolCallHookContext } from "../agents/before-tool-call-metadata.js";
 import type { EmbeddedRunAttemptParams as CoreAttempt } from "../agents/embedded-agent-runner/run/types.js";
 import * as toolSurfaceCore from "../agents/harness/tool-surface-bridge.js";
 import type { SemanticNoProgressObserver } from "../agents/semantic-no-progress.js";
 import { omitSemanticNoProgressObserver } from "../agents/tool-outcome-hooks.js";
+import type { AnyAgentTool } from "../agents/tools/common.js";
 import type {
   AgentHarnessAttemptParams,
   AgentHarnessAttemptParamsV2,
+  DeferredPluginToolApproval,
   EmbeddedRunAttemptParams,
   EmbeddedRunAttemptParamsV2,
 } from "./agent-harness-runtime.js";
+import { runBeforeToolCallHook, wrapToolWithBeforeToolCallHook } from "./agent-harness-runtime.js";
 import {
   createAgentHarnessToolSurfaceRuntime,
   type AgentHarnessToolSurfaceRuntime,
@@ -62,6 +67,40 @@ describe("agent harness private options", () => {
 
   it("keeps the public factory on the existing shared implementation", () => {
     expect(createOpenClawCodingTools).toBe(createCoreCodingTools);
+  });
+
+  it("keeps the semantic observer out of public hook contexts while preserving internal ownership", () => {
+    type PublicWrapContext = NonNullable<Parameters<typeof wrapToolWithBeforeToolCallHook>[1]>;
+    type PublicHookContext = NonNullable<Parameters<typeof runBeforeToolCallHook>[0]["ctx"]>;
+    type PublicDeferredContext = NonNullable<DeferredPluginToolApproval["ctx"]>;
+    expectTypeOf<PublicWrapContext>().not.toHaveProperty("semanticNoProgressObserver");
+    expectTypeOf<PublicHookContext>().not.toHaveProperty("semanticNoProgressObserver");
+    expectTypeOf<PublicDeferredContext>().not.toHaveProperty("semanticNoProgressObserver");
+
+    const observer = {} as SemanticNoProgressObserver;
+    const tool: AnyAgentTool = {
+      name: "public-wrapper-boundary",
+      label: "Public wrapper boundary",
+      description: "Public wrapper boundary test tool",
+      parameters: { type: "object", properties: {} },
+      execute: vi.fn().mockResolvedValue({ content: [], details: {} }),
+    };
+    const callerContext = {
+      agentId: "sdk-public",
+      semanticNoProgressObserver: observer,
+    } as PublicWrapContext;
+    const publicWrapped = wrapToolWithBeforeToolCallHook(tool, callerContext);
+    expect(getBeforeToolCallHookContext(publicWrapped)).not.toHaveProperty(
+      "semanticNoProgressObserver",
+    );
+
+    const internalWrapped = wrapToolWithBeforeToolCallHookInternal(tool, {
+      agentId: "core-owner",
+      semanticNoProgressObserver: observer,
+    });
+    expect(getBeforeToolCallHookContext(internalWrapped)).toMatchObject({
+      semanticNoProgressObserver: observer,
+    });
   });
 
   it("drops a runtime-injected semantic observer from caller tool options", () => {
