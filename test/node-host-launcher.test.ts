@@ -832,8 +832,11 @@ report({ pid: process.pid });
       ]);
       await expect.poll(() => launched.output(), { timeout: 10_000 }).toContain("pid");
       const { pid } = JSON.parse(launched.output().trim());
-      if (mode === "parent-stdin") launched.child.stdin.end();
-      else launched.child.kill("SIGTERM");
+      if (mode === "parent-stdin") {
+        launched.child.stdin.end();
+      } else {
+        launched.child.kill("SIGTERM");
+      }
       const result = await launched.done;
       expect(result.stdout).toContain('"stopped"');
       expect(() => process.kill(pid, 0)).toThrow();
