@@ -319,6 +319,7 @@ const COMPACT_NODE_TEST_OWNER_RUNNERS = new Map([
       ["agentic-commands-doctor-sessions-cron", DEFAULT_NODE_TEST_RUNNER],
       ["agentic-commands-doctor-sessions-cron-memory", DEFAULT_NODE_TEST_RUNNER],
       ["agentic-commands-doctor-sessions-cron-sqlite", DEFAULT_NODE_TEST_RUNNER],
+      ["agentic-commands-doctor-sessions-cron-sqlite-recovery", DEFAULT_NODE_TEST_RUNNER],
       ["agentic-commands-doctor-platform", DEFAULT_NODE_TEST_RUNNER],
       ["agentic-commands-status-tools", DEFAULT_NODE_TEST_RUNNER],
       ["agentic-control-plane-auth-node", DEFAULT_NODE_TEST_RUNNER],
@@ -405,6 +406,8 @@ const COMPACT_GROUP_SECONDS_HINTS = new Map<string, number>([
   ["agentic-commands-doctor-sessions-cron", 31],
   ["agentic-commands-doctor-sessions-cron-memory", 167],
   ["agentic-commands-doctor-sessions-cron-sqlite", 171],
+  // Job 106098306092 measured 11.27s including setup for both recovery files.
+  ["agentic-commands-doctor-sessions-cron-sqlite-recovery", 15],
   ["agentic-commands-doctor-shared", 37],
   ["agentic-commands-doctor-whatsapp", 1],
   ["agentic-commands-doctor-workspace", 1],
@@ -880,7 +883,7 @@ function estimateCompactStripeSeconds(
 // fixed stripes.
 function compactStripeFamily(group: NodeTestShardGroup): string | undefined {
   if (
-    /^agentic-commands-doctor-sessions-cron(?:-(?:memory|sqlite))?(?:-hosted-\d+)?$/u.test(
+    /^agentic-commands-doctor-sessions-cron(?:-(?:memory|sqlite(?:-recovery)?))?(?:-hosted-\d+)?$/u.test(
       group.shard_name,
     )
   ) {
@@ -1111,14 +1114,16 @@ function resolveCommandShardName(file: string): string {
     if (name === "doctor-session-sqlite.memory.test.ts") {
       return "agentic-commands-doctor-sessions-cron-memory";
     }
+    if (name === "doctor-session-sqlite.test.ts") {
+      return "agentic-commands-doctor-sessions-cron-sqlite";
+    }
     if (
       [
-        "doctor-session-sqlite.test.ts",
         "doctor-session-sqlite.receipt-recovery.test.ts",
         "doctor-session-transcripts.missing-index.test.ts",
       ].includes(name)
     ) {
-      return "agentic-commands-doctor-sessions-cron-sqlite";
+      return "agentic-commands-doctor-sessions-cron-sqlite-recovery";
     }
     if (
       name.startsWith("doctor-cron") ||
@@ -1195,6 +1200,7 @@ function createAgenticCommandSplitShards(): NodeTestSplitShard[] {
     "agentic-commands-doctor-sessions-cron",
     "agentic-commands-doctor-sessions-cron-memory",
     "agentic-commands-doctor-sessions-cron-sqlite",
+    "agentic-commands-doctor-sessions-cron-sqlite-recovery",
     "agentic-commands-doctor-shared",
     "agentic-commands-doctor-whatsapp",
     "agentic-commands-doctor-workspace",

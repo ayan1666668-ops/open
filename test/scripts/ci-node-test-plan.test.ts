@@ -1443,6 +1443,7 @@ describe("scripts/lib/ci-node-test-plan.mts", () => {
           "agentic-commands-doctor-sessions-cron",
           "agentic-commands-doctor-sessions-cron-memory",
           "agentic-commands-doctor-sessions-cron-sqlite",
+          "agentic-commands-doctor-sessions-cron-sqlite-recovery",
           "agentic-control-plane-auth-node",
           "core-runtime-infra-storage-state",
           "agentic-control-plane-runtime-ui-tools",
@@ -2230,6 +2231,7 @@ describe("scripts/lib/ci-node-test-plan.mts", () => {
       "agentic-commands-doctor-sessions-cron",
       "agentic-commands-doctor-sessions-cron-memory",
       "agentic-commands-doctor-sessions-cron-sqlite",
+      "agentic-commands-doctor-sessions-cron-sqlite-recovery",
     ];
     const base = createNodeTestShards({ includeReleaseOnlyPluginShards: false });
     const commandShards = base.filter((shard) =>
@@ -2244,8 +2246,10 @@ describe("scripts/lib/ci-node-test-plan.mts", () => {
       "src/commands/doctor-session-sqlite.memory.test.ts",
     ]);
     expect(owners.get("agentic-commands-doctor-sessions-cron-sqlite")).toEqual([
-      "src/commands/doctor-session-sqlite.receipt-recovery.test.ts",
       "src/commands/doctor-session-sqlite.test.ts",
+    ]);
+    expect(owners.get("agentic-commands-doctor-sessions-cron-sqlite-recovery")).toEqual([
+      "src/commands/doctor-session-sqlite.receipt-recovery.test.ts",
       "src/commands/doctor-session-transcripts.missing-index.test.ts",
     ]);
     expect(owners.get("agentic-commands-doctor-sessions-cron")).toEqual([
@@ -3683,6 +3687,7 @@ describe("scripts/lib/ci-node-test-plan.mts", () => {
       "agentic-commands-doctor-sessions-cron",
       "agentic-commands-doctor-sessions-cron-memory",
       "agentic-commands-doctor-sessions-cron-sqlite",
+      "agentic-commands-doctor-sessions-cron-sqlite-recovery",
       "agentic-commands-doctor-shared",
       "agentic-commands-doctor-whatsapp",
       "agentic-commands-doctor-workspace",
