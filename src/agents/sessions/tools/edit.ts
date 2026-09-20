@@ -151,10 +151,8 @@ function prepareEditArguments(input: unknown): EditToolInput {
 
   const args = { ...(input as Record<string, unknown>) };
 
-  // Some models (Opus 4.6, GLM-5.1) send edits as a JSON string instead of an array.
-  // That string is a completed argument buffer, so it takes the repair owner's
-  // authoritative mode: one raw newline inside a multi-line replacement makes bare
-  // JSON.parse throw, which used to discard the model's entire edit set.
+  // Serialized replacements contain literal file text, so valid JSON escapes must
+  // survive rather than being reinterpreted by the repair owner's path heuristic.
   if (typeof args.edits === "string") {
     try {
       const parsed = JSON.parse(repairJson(args.edits, { preserveValidControlEscapes: true }));

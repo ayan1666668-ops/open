@@ -390,57 +390,20 @@ describe("edit tool", () => {
     await expect(fs.readFile(filePath, "utf-8")).resolves.toBe("after\n");
   });
 
-  it("repairs a string-form edits payload that carries raw newlines", async () => {
-    const filePath = await createTempFile("alpha\nbeta\n");
-    const tool = createEditTool(tmpDir);
-    // The model emitted a real newline inside the JSON string instead of the two-character
-    // escape, which is the shape that made bare JSON.parse discard the whole edit set.
-    const rawNewline = String.fromCharCode(10);
-    const raw = {
-      path: filePath,
-      edits: `[{"oldText":"alpha${rawNewline}beta","newText":"ALPHA${rawNewline}BETA"}]`,
-    };
-
-    const prepared = tool.prepareArguments?.(raw);
-
-    expect(Value.Check(tool.parameters, prepared)).toBe(true);
-    expect(prepared).toEqual({
-      path: filePath,
-      edits: [{ oldText: "alpha\nbeta", newText: "ALPHA\nBETA" }],
-    });
-    await tool.execute("call-repaired-string-edits", prepared as never, undefined);
-    await expect(fs.readFile(filePath, "utf-8")).resolves.toBe("ALPHA\nBETA\n");
-  });
-
-  it("parses an already-valid string-form edits payload unchanged", async () => {
-    const filePath = await createTempFile("alpha\nbeta\n");
-    const tool = createEditTool(tmpDir);
-    const raw = {
-      path: filePath,
-      edits: '[{"oldText":"alpha\\nbeta","newText":"ALPHA\\nBETA"}]',
-    };
-
-    const prepared = tool.prepareArguments?.(raw);
-
-    expect(prepared).toEqual({
-      path: filePath,
-      edits: [{ oldText: "alpha\nbeta", newText: "ALPHA\nBETA" }],
-    });
-    await tool.execute("call-valid-string-edits", prepared as never, undefined);
-    await expect(fs.readFile(filePath, "utf-8")).resolves.toBe("ALPHA\nBETA\n");
-  });
-
-  it("still rejects a string-form edits payload the repair cannot recover", async () => {
-    const filePath = await createTempFile("alpha\n");
+  it("repairs string edits without reinterpreting valid control escapes", async () => {
+    const filePath = await createTempFile("alpha\nbeta\nC:\npath\nliteral\\n\n");
     const tool = createEditTool(tmpDir);
     const prepared = tool.prepareArguments?.({
       path: filePath,
-      edits: '[{"oldText":"alpha"',
+      edits: `[{"oldText":"alpha\nbeta","newText":"ALPHA\nBETA"},${JSON.stringify({ oldText: "C:\npath", newText: "C:\nPATH" })},${JSON.stringify({ oldText: "literal\\n", newText: "LITERAL\\n" })}]`,
     });
-
-    await expect(
-      tool.execute("call-unrecoverable-string-edits", prepared as never, undefined),
-    ).rejects.toThrow(/edits must contain at least one replacement/);
+    if (!Value.Check(tool.parameters, prepared)) {
+      throw new Error("Prepared replacements did not satisfy the edit schema");
+    }
+    await tool.execute("call-repaired-string", prepared, undefined);
+    await expect(fs.readFile(filePath, "utf-8")).resolves.toBe(
+      "ALPHA\nBETA\nC:\nPATH\nLITERAL\\n\n",
+    );
   });
 
   it.each(["local", "injected"] as const)(
