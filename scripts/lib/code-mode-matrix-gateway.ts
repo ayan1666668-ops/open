@@ -385,10 +385,15 @@ function isDirectApiRead(call: ToolCall, method: "list" | "read", argument: stri
 }
 
 function normalizeCaughtError(message: string): string {
+  // Host activity retains the catalog ID; the guest bridge exposes the callable name.
   return message
     .replace(/\r\n/gu, "\n")
     .trim()
-    .replace(/^(?:Error|ToolInputError):\s*/u, "");
+    .replace(/^(?:Error|ToolInputError):\s*/u, "")
+    .replace(
+      /^Invalid arguments for tool "openclaw:core:read":/u,
+      'Invalid arguments for tool "read":',
+    );
 }
 
 function matchesTextRead(activity: ToolActivity | undefined, expected: unknown): boolean {

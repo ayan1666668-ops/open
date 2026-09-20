@@ -1214,7 +1214,10 @@ describe("JavaScript declaration and argument-validation evidence", () => {
         "invalid",
         "read",
         { path: 42 },
-        { status: "error", error: 'Invalid arguments for tool "read": /path: must be string.' },
+        {
+          status: "error",
+          error: 'Invalid arguments for tool "openclaw:core:read": /path: must be string.',
+        },
         true,
       ),
       toolOutcome("invalid", {
@@ -1272,6 +1275,7 @@ describe("JavaScript declaration and argument-validation evidence", () => {
     "fabricated-error",
     "wrong-rejected-input",
     "wrong-error-text",
+    "wrong-error-tool",
     "fabricated-types",
     "dead-discovery",
     "shadowed-api",
@@ -1330,6 +1334,13 @@ describe("JavaScript declaration and argument-validation evidence", () => {
         "validation result",
       ).details.output = [
         { type: "text", text: 'Invalid arguments for tool "read": path fabricated error.' },
+      ];
+    } else if (violation === "wrong-error-tool") {
+      expectDefined(
+        trace.outcomes.find((outcome) => outcome.id === "invalid"),
+        "validation result",
+      ).details.output = [
+        { type: "text", text: 'Invalid arguments for tool "write": /path: must be string.' },
       ];
     } else if (["fabricated-types", "dead-discovery", "shadowed-api"].includes(violation)) {
       const call = expectDefined(
