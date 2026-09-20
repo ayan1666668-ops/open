@@ -322,6 +322,7 @@ export function fingerprintCompactionMessages(messages: readonly AgentMessage[])
       timestamp: (message as { timestamp?: unknown }).timestamp,
       // SAFETY: Read only an optional unknown field across built-in and custom message roles.
       content: (message as { content?: unknown }).content,
+      summary: "summary" in message ? message.summary : undefined,
       // SAFETY: Read only an optional unknown field across built-in and custom message roles.
       toolCallId: (message as { toolCallId?: unknown }).toolCallId,
       // SAFETY: Read only an optional unknown field across built-in and custom message roles.

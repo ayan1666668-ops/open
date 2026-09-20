@@ -160,6 +160,20 @@ describe("semantic turn context", () => {
     const result = await observeSemanticTurnContext(source, options());
     expect(result.semanticCurationObservation?.reason).toBe("stale-source");
   });
+  it.each(["branchSummary", "compactionSummary"])(
+    "rejects a summary-only mutation during selection (%s)",
+    async (role) => {
+      const source = fixture();
+      const summary = { role, summary: "Keep staging isolated", timestamp: 0 };
+      source.messages.unshift(castAgentMessage(summary));
+      installDecisionFixture("preserved", () => {
+        summary.summary = "New unresolved requirement: do not deploy";
+      });
+      const result = await observeSemanticTurnContext(source, options());
+      expect(result.messages).toBe(source.messages);
+      expect(result.semanticCurationObservation?.reason).toBe("stale-source");
+    },
+  );
   it("caller cancellation and replaced authority win after evaluation", async () => {
     const controller = new AbortController();
     const reason = new Error("caller cancelled");
