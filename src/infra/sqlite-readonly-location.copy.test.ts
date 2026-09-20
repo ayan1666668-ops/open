@@ -7,6 +7,7 @@ import {
   prepareSqliteReadOnlyLocationInProcess,
   prepareSqliteReadOnlyLocationSyncInProcess,
 } from "./sqlite-readonly-location.js";
+import { waitForSnapshotQuiescence } from "./sqlite-snapshot-policy.js";
 
 const MIB = 1024 * 1024;
 const tempDirs = useAutoCleanupTempDirTracker((cleanup) => {
@@ -99,26 +100,29 @@ function interceptSourceReads(
 }
 
 describe("stable read-only snapshot copies", () => {
-  it("proceeds after the bounded quiescence deadline while the source stays active", async () => {
+  it("bounds quiescence admission while the source stays active", async () => {
     const fixture = createFixture(Buffer.alloc(0));
-    const started = performance.now();
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    const completed = vi.fn();
+    const settled = waitForSnapshotQuiescence(fixture.sourcePath, controller.signal).then(
+      completed,
+      completed,
+    );
     const timer = setInterval(() => {
       const now = new Date();
       fs.utimesSync(fixture.sourcePath, now, now);
     }, 5);
-    let prepared: Awaited<ReturnType<typeof prepareSqliteReadOnlyLocationInProcess>> | undefined;
     try {
-      prepared = await prepareSqliteReadOnlyLocationInProcess(
-        fixture.sourcePath,
-        fixture.stagingRoot,
+      await vi.advanceTimersByTimeAsync(200);
+      expect(completed).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ stabilized: false }),
       );
-      expect(performance.now() - started).toBeLessThan(1_000);
-      expect(fs.statSync(prepared.location).size).toBe(0);
     } finally {
       clearInterval(timer);
-      if (prepared) {
-        expect(await prepared.cleanupAsync()).toBe(true);
-      }
+      controller.abort();
+      await settled;
+      vi.useRealTimers();
     }
   });
 
