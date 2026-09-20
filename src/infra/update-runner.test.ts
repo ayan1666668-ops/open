@@ -597,6 +597,7 @@ describe("runGatewayUpdate", () => {
         return await runCommandWithTimeout(argv, {
           cwd: options.cwd,
           input: options.input,
+          stdinFileDescriptor: options.stdinFileDescriptor,
           env: options.env,
           timeoutMs: options.timeoutMs ?? 5000,
         });

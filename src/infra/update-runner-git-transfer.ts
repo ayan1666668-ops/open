@@ -1,8 +1,12 @@
 import { randomUUID } from "node:crypto";
+import { closeSync, createReadStream, openSync, writeSync } from "node:fs";
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
+import { createInterface } from "node:readline";
 import { hasErrnoCode } from "./errno.js";
 import { readLocalFileSafely } from "./fs-safe.js";
+import { createUpdateFailureFact } from "./update-failure-facts.js";
 import { runStep } from "./update-runner-command.js";
 import { classifyPartialCloneGitFailure } from "./update-runner-git-target.js";
 import type { RunStepOptions, UpdateStepResult } from "./update-runner-types.js";
@@ -10,6 +14,172 @@ import type { RunStepOptions, UpdateStepResult } from "./update-runner-types.js"
 // Bound the retained import buffer independently of Git's pack-file size. An
 // oversized candidate must fail in staging while the installed runtime still serves.
 const MAX_CANDIDATE_PACK_BYTES = 256 * 1024 * 1024;
+const MAX_HISTORY_INVENTORY_BYTES = 256 * 1024 * 1024;
+const GIT_OBJECT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u;
+
+type HistoryInventory = {
+  filePath: string;
+  objectCount: number;
+  bytes: number;
+};
+
+function countNewlines(chunk: Buffer): number {
+  let count = 0;
+  for (const byte of chunk) {
+    if (byte === 0x0a) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
+async function streamGitHistoryInventory(params: {
+  args: string[];
+  filePath: string;
+  installedRoot: string;
+  installedRunCommand: RunStepOptions["runCommand"];
+  maxBytes: number;
+  probeTimeoutMs: number;
+  step: RunStepOptions;
+}): Promise<HistoryInventory | undefined> {
+  const descriptor = openSync(params.filePath, "wx", 0o600);
+  let bytes = 0;
+  let objectCount = 0;
+  let tooLarge = false;
+  const consume = (chunk: Buffer): boolean | undefined => {
+    bytes += chunk.byteLength;
+    objectCount += countNewlines(chunk);
+    if (bytes > params.maxBytes) {
+      tooLarge = true;
+      return false;
+    }
+    writeSync(descriptor, chunk);
+    return undefined;
+  };
+  try {
+    const result = await runStep({
+      ...params.step,
+      name: "git update history",
+      argv: ["git", "-C", params.step.cwd, ...params.args],
+      runCommand: async (argv, options) => {
+        const raw = await params.step.runCommand(argv, {
+          ...options,
+          outputCapture: { stdout: "discard", stderr: "tail" },
+          onOutputChunk: (chunk, stream) => {
+            if (stream !== "stdout") {
+              return;
+            }
+            return consume(chunk);
+          },
+        });
+        // Injected runners may return stdout without implementing output observers.
+        if (bytes === 0 && raw.stdout) {
+          consume(Buffer.from(raw.stdout));
+        }
+        const classified = await classifyPartialCloneGitFailure({
+          result: raw,
+          root: params.installedRoot,
+          runCommand: params.installedRunCommand,
+          timeoutMs: params.probeTimeoutMs,
+        });
+        if (tooLarge) {
+          const message =
+            `Git update history inventory is too large: objects=${objectCount} ` +
+            `bytes=${bytes} limit=${params.maxBytes}. Narrow the update range or use a fresh checkout.`;
+          return {
+            ...classified,
+            code: 1,
+            stdout: "",
+            stderr: message,
+            signal: null,
+            killed: false,
+            termination: "exit" as const,
+            outputLimitExceeded: false,
+            failureFacts: [
+              createUpdateFailureFact({
+                check: "git update history",
+                code: "history-inventory-too-large",
+                message,
+              }),
+            ],
+          };
+        }
+        if (classified.outputLimitExceeded) {
+          const message =
+            `Git update history output was truncated: objects=${objectCount} bytes=${bytes}. ` +
+            "The candidate was not admitted.";
+          return {
+            ...classified,
+            code: 1,
+            stdout: "",
+            stderr: message,
+            signal: null,
+            killed: false,
+            termination: "exit" as const,
+            outputLimitExceeded: false,
+            failureFacts: [
+              createUpdateFailureFact({
+                check: "git update history",
+                code: "history-inventory-output-limit",
+                message,
+              }),
+            ],
+          };
+        }
+        return {
+          ...classified,
+          stdout: classified.code === 0 ? `objects=${objectCount} bytes=${bytes}` : "",
+        };
+      },
+    });
+    if (
+      result.exitCode !== 0 ||
+      result.killed ||
+      result.signal ||
+      (result.termination && result.termination !== "exit")
+    ) {
+      return undefined;
+    }
+    return { filePath: params.filePath, objectCount, bytes };
+  } finally {
+    closeSync(descriptor);
+  }
+}
+
+async function writePackInventory(params: {
+  historyPath: string;
+  tree: string;
+  retained: ReadonlySet<string>;
+  targetPath: string;
+}): Promise<boolean> {
+  const descriptor = openSync(params.targetPath, "wx", 0o600);
+  try {
+    const lines = createInterface({
+      input: createReadStream(params.historyPath),
+      crlfDelay: Number.POSITIVE_INFINITY,
+    });
+    for await (const oid of lines) {
+      if (!GIT_OBJECT_ID.test(oid)) {
+        return false;
+      }
+      if (!params.retained.has(oid)) {
+        writeSync(descriptor, `${oid}\n`);
+      }
+    }
+    for (const oid of params.tree.split("\n").filter(Boolean)) {
+      if (!GIT_OBJECT_ID.test(oid)) {
+        return false;
+      }
+      if (!params.retained.has(oid)) {
+        // pack-objects de-duplicates repeated object IDs internally.
+        writeSync(descriptor, `${oid}\n`);
+      }
+    }
+    return true;
+  } finally {
+    closeSync(descriptor);
+  }
+}
 
 function recordStagingFailure(
   step: RunStepOptions,
@@ -40,6 +210,7 @@ export async function prepareGitCandidateTransfer(params: {
   upstreamRef?: string;
   step: RunStepOptions;
   probeTimeoutMs: number;
+  historyInventoryLimitBytes?: number;
 }) {
   const { candidateSha, beforeSha, installedRoot, installedRunCommand, upstreamRef, step } = params;
   const runGit = async (
@@ -48,6 +219,7 @@ export async function prepareGitCandidateTransfer(params: {
     input?: string,
     root = step.cwd,
     budget: { timeoutMs?: number } = { timeoutMs: params.probeTimeoutMs },
+    stdinFileDescriptor?: number,
   ) => {
     let stdout = "";
     const result = await runStep({
@@ -61,6 +233,7 @@ export async function prepareGitCandidateTransfer(params: {
         const rawCommandResult = await step.runCommand(argv, {
           ...options,
           input,
+          stdinFileDescriptor,
           terminateOnOutputLimit: true,
         });
         const commandResult = await classifyPartialCloneGitFailure({
@@ -91,70 +264,92 @@ export async function prepareGitCandidateTransfer(params: {
   if (upstreamRef && !upstreamSha) {
     return undefined;
   }
-  const objects = await runGit("git update history", [
-    "rev-list",
-    "--objects",
-    "--no-object-names",
-    "--missing=allow-any",
-    candidateSha,
-    ...(upstreamSha ? [upstreamSha] : []),
-    ...(beforeSha ? [`^${beforeSha}`] : []),
-  ]);
-  // An older/divergent target may reuse blobs omitted from the installed partial
-  // clone. Include its entire tree separately, even when no new commits exist.
-  const tree = await runGit("git update tree", [
-    "rev-list",
-    "--objects",
-    "--no-object-names",
-    `${candidateSha}^{tree}`,
-  ]);
-  if (objects === undefined || tree === undefined) {
-    return undefined;
-  }
-  const retained = new Set<string>();
-  // Capability probing is read-only. Older Git safely transfers the full bounded
-  // candidate instead of risking a lazy fetch while checking installed objects.
-  const probe = beforeSha
-    ? await step.runCommand(["git", "--no-lazy-fetch", "version"], {
-        cwd: installedRoot,
-        timeoutMs: params.probeTimeoutMs,
-      })
-    : undefined;
-  if (
-    probe?.code === 0 &&
-    probe.stdout.startsWith("git version ") &&
-    !probe.killed &&
-    !probe.signal &&
-    (!probe.termination || probe.termination === "exit")
-  ) {
-    const beforeTree = await runGit("git retained tree", [
+  const inventoryRoot = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-git-inventory-"));
+  try {
+    const history = await streamGitHistoryInventory({
+      args: [
+        "rev-list",
+        "--objects",
+        "--no-object-names",
+        "--missing=allow-any",
+        candidateSha,
+        ...(upstreamSha ? [upstreamSha] : []),
+        ...(beforeSha ? [`^${beforeSha}`] : []),
+      ],
+      filePath: path.join(inventoryRoot, "history"),
+      installedRoot,
+      installedRunCommand,
+      maxBytes: params.historyInventoryLimitBytes ?? MAX_HISTORY_INVENTORY_BYTES,
+      probeTimeoutMs: params.probeTimeoutMs,
+      step,
+    });
+    // An older/divergent target may reuse blobs omitted from the installed partial
+    // clone. Include its entire tree separately, even when no new commits exist.
+    const tree = await runGit("git update tree", [
       "rev-list",
       "--objects",
       "--no-object-names",
-      `${beforeSha}^{tree}`,
+      `${candidateSha}^{tree}`,
     ]);
-    if (beforeTree === undefined) {
+    if (!history || tree === undefined) {
       return undefined;
     }
-    const local = await runGit(
-      "git retained object availability",
-      ["--no-lazy-fetch", "cat-file", "--batch-check=%(objectname) %(objecttype)"],
-      `${beforeTree}\n`,
-      installedRoot,
-    );
-    if (local === undefined) {
-      return undefined;
-    }
-    const pending = new Set(beforeTree.split("\n"));
-    for (const line of local.split("\n")) {
-      const [oid, type, ...extra] = line.split(" ");
-      if (
-        !oid ||
-        !type ||
-        extra.length ||
-        !pending.delete(oid) ||
-        !["blob", "tree", "missing"].includes(type)
-      ) {
+    const retained = new Set<string>();
+    // Capability probing is read-only. Older Git safely transfers the full bounded
+    // candidate instead of risking a lazy fetch while checking installed objects.
+    const probe = beforeSha
+      ? await step.runCommand(["git", "--no-lazy-fetch", "version"], {
+          cwd: installedRoot,
+          timeoutMs: params.probeTimeoutMs,
+        })
+      : undefined;
+    if (
+      probe?.code === 0 &&
+      probe.stdout.startsWith("git version ") &&
+      !probe.killed &&
+      !probe.signal &&
+      (!probe.termination || probe.termination === "exit")
+    ) {
+      const beforeTree = await runGit("git retained tree", [
+        "rev-list",
+        "--objects",
+        "--no-object-names",
+        `${beforeSha}^{tree}`,
+      ]);
+      if (beforeTree === undefined) {
+        return undefined;
+      }
+      const local = await runGit(
+        "git retained object availability",
+        ["--no-lazy-fetch", "cat-file", "--batch-check=%(objectname) %(objecttype)"],
+        `${beforeTree}\n`,
+        installedRoot,
+      );
+      if (local === undefined) {
+        return undefined;
+      }
+      const pending = new Set(beforeTree.split("\n"));
+      for (const line of local.split("\n")) {
+        const [oid, type, ...extra] = line.split(" ");
+        if (
+          !oid ||
+          !type ||
+          extra.length ||
+          !pending.delete(oid) ||
+          !["blob", "tree", "missing"].includes(type)
+        ) {
+          return recordStagingFailure(
+            { ...step, cwd: installedRoot },
+            "git retained object inventory",
+            "verify retained Git object availability",
+            "Incomplete retained Git object availability inventory",
+          );
+        }
+        if (type !== "missing") {
+          retained.add(oid);
+        }
+      }
+      if (pending.size) {
         return recordStagingFailure(
           { ...step, cwd: installedRoot },
           "git retained object inventory",
@@ -162,125 +357,135 @@ export async function prepareGitCandidateTransfer(params: {
           "Incomplete retained Git object availability inventory",
         );
       }
-      if (type !== "missing") {
-        retained.add(oid);
-      }
     }
-    if (pending.size) {
+    // Only physically available retained-HEAD objects are safe to borrow. Objects
+    // left unreferenced by an earlier failed update can disappear during repack.
+    const packInventoryPath = path.join(inventoryRoot, "pack-input");
+    if (
+      !(await writePackInventory({
+        historyPath: history.filePath,
+        tree,
+        retained,
+        targetPath: packInventoryPath,
+      }))
+    ) {
       return recordStagingFailure(
-        { ...step, cwd: installedRoot },
-        "git retained object inventory",
-        "verify retained Git object availability",
-        "Incomplete retained Git object availability inventory",
+        step,
+        "git update inventory validation",
+        "validate Git update object inventory",
+        `Invalid Git object ID in update inventory: objects=${history.objectCount} bytes=${history.bytes}`,
       );
     }
-  }
-  // Only physically available retained-HEAD objects are safe to borrow. Objects
-  // left unreferenced by an earlier failed update can disappear during repack.
-  const input = [...new Set(`${objects}\n${tree}`.split("\n").filter(Boolean))]
-    .filter((oid) => !retained.has(oid))
-    .map((oid) => `${oid}\n`)
-    .join("");
-  const prefix = path.join(step.cwd, "update-candidate");
-  // Explicit objects and file output produce a non-thin pack: no excluded delta
-  // base can trigger a lazy network fetch when the installed Git imports it.
-  // A configured packSizeLimit also needs clearing to guarantee a single pack.
-  const hash = await runGit(
-    "git pack update",
-    ["-c", "pack.packSizeLimit=0", "pack-objects", "--max-pack-size=0", prefix],
-    input,
-    step.cwd,
-    { timeoutMs: step.timeoutMs },
-  );
-  if (!hash) {
-    return undefined;
-  }
-  let pack: Buffer;
-  const packPath = `${prefix}-${hash}.pack`;
-  const readStarted = Date.now();
-  try {
-    ({ buffer: pack } = await readLocalFileSafely({
-      filePath: packPath,
-      maxBytes: MAX_CANDIDATE_PACK_BYTES,
-    }));
-  } catch (error) {
-    return recordStagingFailure(
-      step,
-      "git update pack read",
-      `read update pack ${packPath}`,
-      `Cannot stage the Git update pack: ${String(error)}`,
-      Date.now() - readStarted,
-    );
-  }
-  const keepMessage = `openclaw-update-${randomUUID()}`;
-  return {
-    async importInto(target: RunStepOptions): Promise<boolean> {
-      const imported = await runStep({
-        ...target,
-        // Repack may run before checkout makes the candidate reachable. Keep its
-        // pack until activation/rollback finishes, including source publication.
-        argv: ["git", "-C", target.cwd, "index-pack", "--stdin", `--keep=${keepMessage}`],
-        runCommand: (argv, options) => target.runCommand(argv, { ...options, input: pack }),
-      });
-      if (imported.exitCode !== 0) {
-        return false;
-      }
-      if (!upstreamRef || !upstreamSha) {
-        return true;
-      }
-      const tracked = await runStep({
-        ...target,
-        name: "git import admitted upstream",
-        argv: ["git", "-C", target.cwd, "update-ref", upstreamRef, upstreamSha],
-      });
-      return tracked.exitCode === 0;
-    },
-    async cleanup(target: RunStepOptions): Promise<void> {
-      try {
-        // Resolve at cleanup time: publication may have moved the installed repo.
-        const location = await target.runCommand(
-          [
-            "git",
-            "-C",
-            target.cwd,
-            "rev-parse",
-            "--path-format=absolute",
-            "--git-path",
-            `objects/pack/pack-${hash}.keep`,
-          ],
-          { cwd: target.cwd, timeoutMs: params.probeTimeoutMs },
-        );
-        if (location.code !== 0) {
-          throw new Error("Cannot locate the retained Git update pack");
-        }
-        const keepPath = location.stdout.trim();
-        const message = await fs.readFile(keepPath, "utf8").catch((error: unknown) => {
-          if (hasErrnoCode(error, "ENOENT")) {
-            return undefined;
-          }
-          throw error;
+    const prefix = path.join(step.cwd, "update-candidate");
+    // Explicit objects and file output produce a non-thin pack: no excluded delta
+    // base can trigger a lazy network fetch when the installed Git imports it.
+    // A configured packSizeLimit also needs clearing to guarantee a single pack.
+    const packInputDescriptor = openSync(packInventoryPath, "r");
+    let hash: string | undefined;
+    try {
+      hash = await runGit(
+        "git pack update",
+        ["-c", "pack.packSizeLimit=0", "pack-objects", "--max-pack-size=0", prefix],
+        undefined,
+        step.cwd,
+        { timeoutMs: step.timeoutMs },
+        packInputDescriptor,
+      );
+    } finally {
+      closeSync(packInputDescriptor);
+    }
+    if (!hash) {
+      return undefined;
+    }
+    let pack: Buffer;
+    const packPath = `${prefix}-${hash}.pack`;
+    const readStarted = Date.now();
+    try {
+      ({ buffer: pack } = await readLocalFileSafely({
+        filePath: packPath,
+        maxBytes: MAX_CANDIDATE_PACK_BYTES,
+      }));
+    } catch (error) {
+      return recordStagingFailure(
+        step,
+        "git update pack read",
+        `read update pack ${packPath}`,
+        `Cannot stage the Git update pack: ${String(error)}`,
+        Date.now() - readStarted,
+      );
+    }
+    const keepMessage = `openclaw-update-${randomUUID()}`;
+    return {
+      async importInto(target: RunStepOptions): Promise<boolean> {
+        const imported = await runStep({
+          ...target,
+          // Repack may run before checkout makes the candidate reachable. Keep its
+          // pack until activation/rollback finishes, including source publication.
+          argv: ["git", "-C", target.cwd, "index-pack", "--stdin", `--keep=${keepMessage}`],
+          runCommand: (argv, options) => target.runCommand(argv, { ...options, input: pack }),
         });
-        // index-pack never overwrites an existing keep file. Do not remove one
-        // created by another updater or operator, even for an identical pack.
-        if (message === `${keepMessage}\n`) {
-          await fs.unlink(keepPath);
+        if (imported.exitCode !== 0) {
+          return false;
         }
-      } catch (error) {
-        const warning: UpdateStepResult = {
-          name: "git update pack cleanup",
-          command: "release retained Git update pack",
-          cwd: target.cwd,
-          durationMs: 0,
-          exitCode: 1,
-          stderrTail: String(error),
-          advisory: {
-            kind: "recoverable-maintenance",
-            message: `Git update pack could not be removed: ${String(error)}`,
-          },
-        };
-        target.results?.push(warning);
-        target.progress?.onStepComplete?.({ ...warning, index: 0, total: 0 });
-      }
-    },
-  };
+        if (!upstreamRef || !upstreamSha) {
+          return true;
+        }
+        const tracked = await runStep({
+          ...target,
+          name: "git import admitted upstream",
+          argv: ["git", "-C", target.cwd, "update-ref", upstreamRef, upstreamSha],
+        });
+        return tracked.exitCode === 0;
+      },
+      async cleanup(target: RunStepOptions): Promise<void> {
+        try {
+          // Resolve at cleanup time: publication may have moved the installed repo.
+          const location = await target.runCommand(
+            [
+              "git",
+              "-C",
+              target.cwd,
+              "rev-parse",
+              "--path-format=absolute",
+              "--git-path",
+              `objects/pack/pack-${hash}.keep`,
+            ],
+            { cwd: target.cwd, timeoutMs: params.probeTimeoutMs },
+          );
+          if (location.code !== 0) {
+            throw new Error("Cannot locate the retained Git update pack");
+          }
+          const keepPath = location.stdout.trim();
+          const message = await fs.readFile(keepPath, "utf8").catch((error: unknown) => {
+            if (hasErrnoCode(error, "ENOENT")) {
+              return undefined;
+            }
+            throw error;
+          });
+          // index-pack never overwrites an existing keep file. Do not remove one
+          // created by another updater or operator, even for an identical pack.
+          if (message === `${keepMessage}\n`) {
+            await fs.unlink(keepPath);
+          }
+        } catch (error) {
+          const warning: UpdateStepResult = {
+            name: "git update pack cleanup",
+            command: "release retained Git update pack",
+            cwd: target.cwd,
+            durationMs: 0,
+            exitCode: 1,
+            stderrTail: String(error),
+            advisory: {
+              kind: "recoverable-maintenance",
+              message: `Git update pack could not be removed: ${String(error)}`,
+            },
+          };
+          target.results?.push(warning);
+          target.progress?.onStepComplete?.({ ...warning, index: 0, total: 0 });
+        }
+      },
+    };
+  } finally {
+    await fs.rm(inventoryRoot, { recursive: true, force: true });
+  }
 }

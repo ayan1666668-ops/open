@@ -91,7 +91,9 @@ function fixture(relativeRemote = false, partialClone = false) {
       cwd: options.cwd,
       env: { ...env, ...options.env },
       encoding: "utf8",
-      input: options.input,
+      ...(options.stdinFileDescriptor === undefined
+        ? { input: options.input }
+        : { stdio: [options.stdinFileDescriptor, "pipe", "pipe"] }),
       timeout: 15_000,
     });
     return { code: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "" };

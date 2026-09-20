@@ -365,6 +365,7 @@ export async function updateGitCheckout(params: {
       const { step: inspectionStep, workStep: inspectionWorkStep } =
         forRunner(runInspectionCommand);
       const importCandidate = async (candidateSha: string, upstreamRef?: string) => {
+        const transferStepStart = steps.length;
         const transfer = await prepareGitCandidateTransfer({
           candidateSha,
           beforeSha,
@@ -375,7 +376,17 @@ export async function updateGitCheckout(params: {
           probeTimeoutMs: timeoutMs,
         });
         if (!transfer) {
-          return { status: "error" as const, reason: "fetch-failed" };
+          const explicitReason = steps
+            .slice(transferStepStart)
+            .flatMap((candidate) => candidate.failureFacts ?? [])
+            .map((fact) => fact.code)
+            .find((code) =>
+              ["history-inventory-too-large", "history-inventory-output-limit"].includes(code),
+            );
+          return {
+            status: "error" as const,
+            reason: explicitReason ?? "fetch-failed",
+          };
         }
         const sourceChanged = await checkSourceUnchanged();
         if (sourceChanged) {

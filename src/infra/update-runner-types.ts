@@ -110,6 +110,8 @@ export type CommandRunner = (
   signal?: NodeJS.Signals | null;
   killed?: boolean;
   termination?: "exit" | "timeout" | "no-output-timeout" | "signal";
+  outputLimitExceeded?: boolean;
+  failureFacts?: UpdateFailureFact[];
 }>;
 
 export type UpdateStepInfo = {

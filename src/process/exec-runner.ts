@@ -54,6 +54,8 @@ export type CommandOptions = {
   timeoutMs?: number;
   cwd?: string;
   input?: string | Uint8Array;
+  /** Inherit an already-open file descriptor as stdin without buffering its contents. */
+  stdinFileDescriptor?: number;
   /** Synchronous admission with the spawned PID and argv, before input is released. */
   beforeInput?: (pid: number, argv?: readonly string[]) => void;
   baseEnv?: NodeJS.ProcessEnv;
@@ -134,6 +136,7 @@ async function runCommandWithOutputEncoding(
     timeoutMs,
     cwd,
     input,
+    stdinFileDescriptor,
     baseEnv,
     env,
     noOutputTimeoutMs,
@@ -148,6 +151,9 @@ async function runCommandWithOutputEncoding(
     throw new Error("Process-tree extinction requires process-tree ownership");
   }
   const hasInput = input !== undefined;
+  if (hasInput && stdinFileDescriptor !== undefined) {
+    throw new Error("Command accepts either input or stdinFileDescriptor, not both");
+  }
   if (options.beforeInput && !hasInput) {
     throw new Error("Child input admission requires explicit input");
   }
@@ -223,7 +229,14 @@ async function runCommandWithOutputEncoding(
     killSignal,
     ...(hasInput && !options.beforeInput ? { input } : {}),
     reject: false,
-    stdio: [hasInput ? "pipe" : "inherit", "pipe", "pipe"],
+    ...(stdinFileDescriptor === undefined
+      ? { stdio: [hasInput ? "pipe" : "inherit", "pipe", "pipe"] as const }
+      : {
+          // Execa forwards arbitrary numeric stdin descriptors to Node, but its type narrows them to fd 0.
+          stdin: stdinFileDescriptor as 0,
+          stdout: "pipe" as const,
+          stderr: "pipe" as const,
+        }),
     stripFinalNewline: false,
     windowsVerbatimArguments: options.windowsVerbatimArguments,
   });

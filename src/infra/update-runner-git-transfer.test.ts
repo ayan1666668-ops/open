@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import fs from "node:fs";
+import fs, { fstatSync } from "node:fs";
 import path from "node:path";
 import { afterEach, expect, it } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
@@ -101,6 +101,7 @@ it
     "missing-before",
     "legacy-git",
     "configured-limit",
+    "large-history",
   ] as const)("bounds transfer inventories and binary input (failure=%s)", async (failure) => {
   const overflow = failure === "inventory";
   const oversized = failure === "pack";
@@ -165,35 +166,28 @@ it
   const results: UpdateStepResult[] = [];
   let inventoryBytes = 0;
   let packBytes = 0;
-  let boundedExitObserved = false;
   let historyInventoryAllowsMissingObjects = false;
   const runCommand: CommandRunner = async (argv, options) => {
-    if (argv.includes("rev-list") && argv.includes(candidateSha)) {
+    const isHistoryInventory = argv.includes("rev-list") && argv.includes("--missing=allow-any");
+    if (isHistoryInventory && argv.includes(candidateSha)) {
       historyInventoryAllowsMissingObjects = argv.includes("--missing=allow-any");
     }
     if (failure === "legacy-git" && argv.includes("--no-lazy-fetch") && argv.includes("version")) {
       return { code: 129, stdout: "", stderr: "unknown option: --no-lazy-fetch" };
     }
-    if (overflow && argv.includes("rev-list")) {
-      // The child emits real Git output and handles termination with exit zero.
-      // This is legal process behavior; exit status alone cannot admit its tail.
+    if (failure === "large-history" && isHistoryInventory) {
       const script = `const { spawnSync } = require("node:child_process");
-        process.on("SIGTERM", () => process.exit(0));
-        const result = spawnSync(process.argv[1], process.argv.slice(2), { encoding: "utf8" });
-        if (result.status !== 0) process.exit(result.status ?? 1);
-        process.stdout.write(result.stdout); setInterval(() => {}, 1000);`;
-      const result = await runCommandWithTimeout([process.execPath, "-e", script, ...argv], {
+        const result = spawnSync(process.argv[1], process.argv.slice(2), { encoding: null });
+        if (result.status !== 0) { process.stderr.write(result.stderr); process.exit(result.status ?? 1); }
+        const target = 17 * 1024 * 1024;
+        for (let written = 0; written < target; written += result.stdout.length) process.stdout.write(result.stdout);`;
+      return await runCommandWithTimeout([process.execPath, "-e", script, ...argv], {
         ...options,
         env,
-        maxOutputBytes: 41 * 12,
       });
-      expect(result.code).toBe(0);
-      expect(result.outputLimitExceeded).toBe(true);
-      boundedExitObserved = true;
-      return result;
     }
     if (argv.includes("pack-objects")) {
-      inventoryBytes = Buffer.byteLength(options.input as string);
+      inventoryBytes = fstatSync(options.stdinFileDescriptor!).size;
     }
     if (argv.includes("index-pack")) {
       packBytes = (options.input as Buffer).byteLength;
@@ -224,12 +218,25 @@ it
     installedRunCommand: runCommand,
     probeTimeoutMs: 15_000,
     step: step(source),
+    ...(overflow ? { historyInventoryLimitBytes: 41 * 12 } : {}),
   });
   expect(historyInventoryAllowsMissingObjects).toBe(true);
   if (overflow || oversized) {
     expect(transfer).toBeUndefined();
     if (overflow) {
+      const boundedExitObserved = results.some(
+        (result) =>
+          result.name === "git update history" &&
+          result.failureFacts?.some((fact) => fact.code === "history-inventory-too-large"),
+      );
       expect(boundedExitObserved).toBe(true);
+      expect(results).toContainEqual(
+        expect.objectContaining({
+          name: "git update history",
+          signal: null,
+          stderrTail: expect.stringMatching(/objects=\d+ bytes=\d+ limit=492/u),
+        }),
+      );
       expect(inventoryBytes).toBe(0);
     } else {
       expect(results).toContainEqual(
@@ -244,6 +251,15 @@ it
   }
   expect(transfer).toBeDefined();
   expect(inventoryBytes).toBeGreaterThan(8000);
+  if (failure === "large-history") {
+    expect(inventoryBytes).toBeGreaterThan(16 * 1024 * 1024);
+    expect(results).toContainEqual(
+      expect.objectContaining({
+        name: "git update history",
+        stdoutTail: expect.stringMatching(/objects=\d+ bytes=\d+/u),
+      }),
+    );
+  }
   expect(await transfer!.importInto(step(install))).toBe(true);
   expect(packBytes).toBeGreaterThan(8000);
   if (failure === "none") {

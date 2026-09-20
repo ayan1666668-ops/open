@@ -71,6 +71,7 @@ export async function runStep(opts: RunStepOptions): Promise<UpdateStepResult> {
   } finally {
     clearInterval(heartbeat);
   }
+  failureFacts ??= result.failureFacts;
   const durationMs = Date.now() - started;
   const stdoutTail = trimLogTail(result.stdout, MAX_LOG_CHARS);
   const stderrTail = trimLogTail(result.stderr, MAX_LOG_CHARS);
