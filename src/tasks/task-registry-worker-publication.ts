@@ -74,7 +74,7 @@ export function createTaskRegistryPublicationRecovery(
       witness.writtenTaskIds.clear();
       witness.replaced = false;
     },
-    recover(snapshot: TaskRegistryStoreSnapshot) {
+    recover: (snapshot: TaskRegistryStoreSnapshot) => {
       expected = recover(snapshot);
       return expected;
     },
