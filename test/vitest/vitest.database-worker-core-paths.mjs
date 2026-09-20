@@ -1,8 +1,8 @@
 // These consumers need the host-owned SQLite broker, which runs in forked processes.
 export const databaseWorkerCoreTestFiles = [
-  "src/agents/auth-profiles/store-owner-publication.test.ts",
-  "src/agents/auth-profiles/usage.inherited-owner.test.ts",
-  "test/helpers/stage-live-auth-profiles.test.ts",
+  "test/loopback-ask-user-telegram-channel.test.ts",
+  "test/slack-outbound-permanent-rejection-loopback.test.ts",
+  "test/telegram-outbound-permanent-rejection-loopback.test.ts",
   "src/agents/worktrees/empty-source.test.ts",
   "src/agents/worktrees/registry-read.test.ts",
   "src/agents/worktrees/service-branches.test.ts",
@@ -241,6 +241,9 @@ export const databaseWorkerCoreTestFiles = [
   "src/plugins/services.cron.test.ts",
   "test/plugins/memory-dreaming-cron.test.ts",
   "src/state/creator-namespace-migration.test.ts",
+  "src/agents/auth-profiles/store-owner-publication.test.ts",
+  "src/agents/auth-profiles/usage.inherited-owner.test.ts",
+  "test/helpers/stage-live-auth-profiles.test.ts",
 ];
 
 const databaseWorkerCoreTestFileSet = new Set(databaseWorkerCoreTestFiles);
