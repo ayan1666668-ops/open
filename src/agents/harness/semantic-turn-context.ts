@@ -164,7 +164,9 @@ export async function observeSemanticTurnContext(
   const decisionWallMs = performance.now() - started;
   if (
     before !== fingerprintCompactionMessages(assembled.messages) ||
-    (policy && policy.fingerprint !== fingerprint(assembled.semanticCurationCandidates))
+    (policy &&
+      (!assembled.semanticCurationCandidates ||
+        policy.fingerprint !== fingerprint(assembled.semanticCurationCandidates)))
   ) {
     return observe("stale-source", { decisionWallMs });
   }

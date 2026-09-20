@@ -140,6 +140,7 @@ describe("semantic turn context", () => {
       },
       messages: source.messages,
       sessionId: "unbound",
+      modelId: "synthetic-unbound",
     });
     expect(result).toBe(source);
     expect(requests).toHaveLength(0);
@@ -323,6 +324,19 @@ describe("semantic turn context apply", () => {
     expect(result.messages).toBe(source.messages);
     expect(result.semanticCurationObservation?.reason).toBe("incomplete-selection");
   });
+  it.each(["withdrawn", "aborted"] as const)(
+    "retains the custom assembled view after %s input changes",
+    async (change) => {
+      const source = candidate();
+      installDecisionFixture("preserved", () => {
+        if (change === "withdrawn") delete source.semanticCurationCandidates;
+        else if (source.messages[1].role === "assistant") source.messages[1].stopReason = "aborted";
+      });
+      const result = await observeSemanticTurnContext(source, applyOptions());
+      expect(result.messages).toBe(source.messages);
+      expect(result.semanticCurationObservation?.reason).toBe("stale-source");
+    },
+  );
   it("rejects owner metadata that changed while the Decision was in flight", async () => {
     const source = candidate();
     installDecisionFixture("preserved", () => {
