@@ -29,7 +29,10 @@ import { SessionStoreMigrationRequiredError } from "./migration-required.js";
 import { resolveSqliteReadScope, toDatabaseOptions } from "./session-accessor.sqlite-scope.js";
 import { isCanonicalSqliteSessionMainKeyCurrent } from "./session-canonical-key-read.js";
 import { setCanonicalSqliteSessionMainKey } from "./session-canonical-key.js";
-import { resolveSqliteTargetFromSessionStorePath } from "./session-sqlite-target.js";
+import {
+  resolveSqliteTargetFromSessionStorePath,
+  type SessionStoreRegistryRead,
+} from "./session-sqlite-target.js";
 import { resolveAllAgentSessionStoreTargetsSync, resolveSessionStoreTargets } from "./targets.js";
 
 export type SessionStartupMigrationLogger = Record<"info" | "warn", (message: string) => void>;
@@ -38,21 +41,23 @@ export function assertSessionStoreMigrationComplete(params: {
   cfg: OpenClawConfig;
   env?: NodeJS.ProcessEnv;
   targets?: readonly { agentId?: string; storePath: string }[];
+  registeredDatabases?: SessionStoreRegistryRead;
   operation?: "doctor";
 }): void {
   const env = params.env ?? process.env;
+  const readOptions = { env, registeredDatabases: params.registeredDatabases };
   const targets = (
-    params.targets ?? resolveAllAgentSessionStoreTargetsSync(params.cfg, { env })
+    params.targets ?? resolveAllAgentSessionStoreTargetsSync(params.cfg, readOptions)
   ).filter(
     (target) => !target.agentId || !readAgentDatabaseAdmissionRefusal(target.agentId, { env }),
   );
   const legacyRootStore = path.join(resolveStateDir(env), "sessions", "sessions.json");
   const legacyTargets = fs.existsSync(legacyRootStore)
-    ? resolveSessionStoreTargets(params.cfg, { allAgents: true }, { env }).map((target) => ({
+    ? resolveSessionStoreTargets(params.cfg, { allAgents: true }, readOptions).map((target) => ({
         agentId: target.agentId,
         sqlitePath: resolveSqliteTargetFromSessionStorePath(target.storePath, {
           agentId: target.agentId,
-          env,
+          ...readOptions,
         }).path,
         storePath: legacyRootStore,
       }))
@@ -81,8 +86,10 @@ export function assertSessionStoreMigrationComplete(params: {
       }
       const destination =
         target.sqlitePath ??
-        resolveSqliteTargetFromSessionStorePath(target.storePath, { agentId: target.agentId, env })
-          .path;
+        resolveSqliteTargetFromSessionStorePath(target.storePath, {
+          agentId: target.agentId,
+          ...readOptions,
+        }).path;
       owners.set(`${target.agentId}\0${destination}`, {
         target: { ...target, agentId: target.agentId },
         destination,

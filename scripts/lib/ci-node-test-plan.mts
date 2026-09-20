@@ -1111,7 +1111,13 @@ function resolveCommandShardName(file: string): string {
     if (name === "doctor-session-sqlite.memory.test.ts") {
       return "agentic-commands-doctor-sessions-cron-memory";
     }
-    if (name === "doctor-session-sqlite.test.ts") {
+    if (
+      [
+        "doctor-session-sqlite.test.ts",
+        "doctor-session-sqlite.receipt-recovery.test.ts",
+        "doctor-session-transcripts.missing-index.test.ts",
+      ].includes(name)
+    ) {
       return "agentic-commands-doctor-sessions-cron-sqlite";
     }
     if (
