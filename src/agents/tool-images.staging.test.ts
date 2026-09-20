@@ -1,7 +1,8 @@
-// Tool image staging tests cover the managed media reference an explicitly presentable
-// inline image carries, so the chat display projection renders the image instead of a
+// Tool image staging tests cover the managed media reference an image explicitly marked
+// outbound carries, so the chat display projection renders the image instead of a
 // non-recoverable "omitted from history" placeholder, and cover the inverse: an
-// inspection-only result never reaches the shared store.
+// inspection-only result, including one marked media.outbound false, never reaches the
+// shared store.
 import fs from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -24,8 +25,10 @@ const imageBlock = (): ImageContent => ({
   mimeType: "image/png",
 });
 
-/** The explicit presentation decision publication requires; production callers omit it. */
-const PRESENTABLE_DETAILS = { media: { present: true } };
+// The explicit presentation decision publication requires: media the producer marked
+// outbound, meaning it is meant for the user to see. A native inspection result marks
+// media.outbound false, and everything else carries no decision at all.
+const PRESENTABLE_DETAILS = { media: { outbound: true } };
 
 /** Stages one block the way a tool result does, so these cases exercise the real path. */
 async function stageViaToolResult(
@@ -53,7 +56,7 @@ async function withMediaStore(run: (stateDir: string) => Promise<void>): Promise
 }
 
 describe("inline image staging", () => {
-  it("publishes an explicitly presentable image so the display projection keeps a reference", async () => {
+  it("publishes an image marked outbound so the display projection keeps a reference", async () => {
     await withMediaStore(async (stateDir) => {
       const staged = (await stageViaToolResult(imageBlock())) as ImageContent;
       expect(staged.type).toBe("image");
@@ -122,9 +125,9 @@ describe("inline image staging", () => {
   // the shared read tool and private reads carry no decision at all, and none of them may
   // copy bytes into storage the media route serves.
   it.each([
-    ["no presentation decision", {}],
+    ["no presentation decision", { media: {} }],
     ["native inspection", { media: { outbound: false } }],
-    ["an explicit refusal", { media: { present: false } }],
+    ["media without an outbound decision", { media: { mediaUrl: "media://inbound/x.png" } }],
     ["no details at all", undefined],
   ])("keeps an inspection-only result private with %s", async (_name, details) => {
     await withMediaStore(async (stateDir) => {

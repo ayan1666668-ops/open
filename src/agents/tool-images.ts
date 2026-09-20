@@ -414,10 +414,12 @@ export async function sanitizeImageBlocks(
  * Decides whether a tool result may be published into the conversation.
  *
  * Publication copies bytes into shared managed storage, which the assistant media route
- * serves, so it happens only on an explicit presentation decision carried by the result
- * itself. Everything else stays inspection-only: a native vision result marks
+ * serves, so it happens only on the explicit presentation decision the producer already
+ * carries: `media.outbound: true`, the flag a result sets when its media is meant for the
+ * user to see. Everything else stays inspection-only. A native vision result marks
  * `media.outbound: false` under the shipped inspection contract, the shared read tool and
- * private image reads carry no decision at all, and the default is to publish nothing.
+ * private image reads carry no decision at all, and the default is to publish nothing, so
+ * only media explicitly marked outbound is ever copied into the served store.
  */
 function resolveToolMediaPresentation(details: unknown): "inspection-only" | "conversation" {
   if (!details || typeof details !== "object" || Array.isArray(details)) {
@@ -429,7 +431,7 @@ function resolveToolMediaPresentation(details: unknown): "inspection-only" | "co
     return "inspection-only";
   }
   // SAFETY: media is confirmed a non-null, non-array object by the guard immediately above.
-  return (media as { present?: unknown }).present === true ? "conversation" : "inspection-only";
+  return (media as { outbound?: unknown }).outbound === true ? "conversation" : "inspection-only";
 }
 
 /**
