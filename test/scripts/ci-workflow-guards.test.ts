@@ -14575,7 +14575,7 @@ printf '%s\n' "\${CURL_SUCCESS_IP:-203.0.113.7}"
     expect(swiftLint.run).toContain("swiftlint lint --config config/swiftlint.yml");
     expect(swiftLint.run).toContain('elif [[ "$HISTORICAL_TARGET" == "true" ]]');
     expect(openClawKitTests.if).toBe(
-      "matrix.phase == 'tests' && needs.preflight.outputs.run_openclawkit_tests == 'true'",
+      "matrix.phase == 'packages' && needs.preflight.outputs.run_openclawkit_tests == 'true'",
     );
 
     const checkShard = workflow.jobs["check-shard"].steps.find(
