@@ -5,16 +5,20 @@ export {
   createManagedTaskFlowWithAtomicUpdates,
   deleteTaskFlowRecordById,
   ensureTaskFlowRegistryReady,
+  ensureTaskFlowRegistryReadyAsync,
+  prepareTaskFlowRegistryRead,
   failFlow,
   finishFlow,
   getTaskFlowById,
+  readResidentTaskFlow,
   getTaskMirroredFlowIds,
   listTaskFlowRecords,
   listTaskFlowsForOwnerKey,
   prepareTaskMirroredFlowSync,
   publishTaskFlowAfterAtomicStore,
   requestFlowCancel,
-  reloadTaskFlowRegistryFromStore,
+  reconcileTaskFlowWorkerReceipts,
+  reloadTaskFlowRegistryFromStoreAsync,
   resolveTaskFlowForLookupToken,
   resumeFlow,
   runTaskFlowRegistryWorkerMutation,
@@ -25,3 +29,4 @@ export {
 } from "./task-flow-registry.js";
 
 export type { TaskFlowAtomicUpdate, TaskFlowUpdateResult } from "./task-flow-registry.js";
+export type { TaskFlowRegistryRead } from "./task-flow-registry.read.js";

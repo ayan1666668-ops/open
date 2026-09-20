@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { isPromiseLike } from "@openclaw/normalization-core/promise-like";
 import {
+  copyReplyPayloadMetadata,
   getReplyPayloadMetadata,
   markReplyPayloadForSourceSuppressionDelivery,
   setReplyPayloadMetadata,
@@ -510,6 +511,7 @@ export function createReplyDelivery({ params, state, log }: ReplyDeliveryParams)
             trustedLocalMedia: true,
           });
     const assistantTranscriptMediaUrls = Array.from(new Set(payload.mediaUrls ?? []));
+    copyReplyPayloadMetadata(payload, blockPayload);
     const taggedPayload =
       options?.assistantMessageIndex !== undefined
         ? setReplyPayloadMetadata(blockPayload, {

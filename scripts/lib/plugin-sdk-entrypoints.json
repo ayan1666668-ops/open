@@ -1,5 +1,6 @@
 [
   "core",
+  "control-ui-link-reader",
   "provider-setup",
   "sandbox",
   "routing",
@@ -130,6 +131,7 @@
   "agent-harness-exec-review-runtime",
   "agent-harness-registration",
   "agent-harness-runtime",
+  "agent-workspace-runtime",
   "agent-harness-tool-runtime",
   "hook-runtime",
   "html-entity-runtime",
@@ -338,6 +340,7 @@
   "param-readers",
   "secret-input",
   "secret-input-runtime",
+  "decisions",
   "secret-ref-readonly",
   "channel-status",
   "status-helpers",

@@ -9,7 +9,6 @@ import {
   deliveryQueueEntriesQuery,
   terminalizeBoundDeliveryQueueEntry,
   type DeliveryQueueReadMode,
-  type UpsertDeliveryQueueEntryParams,
 } from "./delivery-queue-sqlite-bound.js";
 import {
   inflateDeliveryQueueEntryResult,
@@ -22,11 +21,9 @@ import {
   deliveryQueueEntryNotFoundError,
   getDeliveryQueueEntryOwnersInDatabase,
   prepareDeliveryQueueTerminalEntry,
-  pruneExpiredDeliveryQueueTombstonesInDatabase,
   reserveDeliveryQueueEntryAttemptInDatabase,
   terminalizePendingDeliveryQueueEntryInDatabase,
   updateDeliveryQueueEntryInDatabase,
-  upsertDeliveryQueueEntryInDatabase,
   type DeliveryQueueStoredStatus,
   type ReserveDeliveryQueueAttemptResult,
   type TerminalizePendingDeliveryQueueEntryParams as KernelTerminalizeParams,
@@ -70,14 +67,6 @@ function openStateDatabase(stateDir?: string, context?: DeliveryQueueStateContex
   return openOpenClawStateDatabase({
     env: resolveDeliveryQueueStateEnv(stateDir, context),
   });
-}
-
-/** Insert or replace a delivery queue entry under a queue namespace. */
-export function upsertDeliveryQueueEntry(
-  params: UpsertDeliveryQueueEntryParams,
-  context?: DeliveryQueueStateContext,
-): boolean {
-  return upsertDeliveryQueueEntryInDatabase(params, openStateDatabase(params.stateDir, context));
 }
 
 /** Load a single pending delivery queue entry. */
@@ -255,8 +244,14 @@ export async function countPendingDeliveryQueueEntriesReadOnly(
 }
 
 /** Physically expire age-bounded delivery queue tombstones. */
-export function pruneExpiredDeliveryQueueTombstones(stateDir?: string): void {
-  pruneExpiredDeliveryQueueTombstonesInDatabase(openStateDatabase(stateDir));
+export async function pruneExpiredDeliveryQueueTombstones(
+  stateDir?: string,
+  context?: DeliveryQueueStateContext,
+): Promise<void> {
+  await executeDeliveryQueueOperation(context, stateDir, {
+    type: "deliveryQueue.pruneTombstones",
+    input: undefined,
+  });
 }
 
 /** Terminalize one pending row using its failure-retention ownership fact. */

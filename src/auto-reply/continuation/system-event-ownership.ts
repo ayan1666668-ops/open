@@ -1,9 +1,9 @@
 import { withSystemEventOwner } from "../../infra/system-event-ownership.js";
 
-export function withContinuationOwner<T extends object>(
+export function withContinuationOwner<T extends { sessionKey: string }>(
   options: T,
   ownerAgentId: string | undefined,
-): T {
+): Omit<T, "sessionKey"> & { sessionKey: string } {
   if (!ownerAgentId) {
     throw new Error("Continuation system event owner is unavailable.");
   }
@@ -11,5 +11,7 @@ export function withContinuationOwner<T extends object>(
 }
 
 export function bindContinuationOwner(ownerAgentId: string | undefined) {
-  return <T extends object>(options: T): T => withContinuationOwner(options, ownerAgentId);
+  return <T extends { sessionKey: string }>(
+    options: T,
+  ): Omit<T, "sessionKey"> & { sessionKey: string } => withContinuationOwner(options, ownerAgentId);
 }

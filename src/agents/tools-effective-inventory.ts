@@ -253,15 +253,18 @@ export async function acquireEffectiveToolInventoryRuntimeModelContext(
   const agentId = params.agentId?.trim() || resolveSessionAgentId({ config: params.cfg });
   const agentDir = params.agentDir ?? resolveAgentDir(params.cfg, agentId);
   const workspaceDir = params.workspaceDir ?? resolveAgentWorkspaceDir(params.cfg, agentId);
-  const lease = await acquireReadOnlyPreparedModelRuntime({
-    agentId,
-    agentDir,
-    config: params.cfg,
-    workspaceDir,
-    // The selected provider owner must join the generation before dynamic hooks resolve.
-    loadRuntimePlugins: true,
-    runtimePluginSelections: [{ provider, modelId, agentId }],
-  });
+  const lease = await acquireReadOnlyPreparedModelRuntime(
+    {
+      agentId,
+      agentDir,
+      config: params.cfg,
+      workspaceDir,
+      // The selected provider owner must join the generation before dynamic hooks resolve.
+      loadRuntimePlugins: true,
+      runtimePluginSelections: [{ provider, modelId, agentId }],
+    },
+    { catalogMode: "static" },
+  );
   let transferred = false;
   try {
     const stores = lease.snapshot.createStores();
@@ -351,6 +354,7 @@ export function resolveEffectiveToolInventory(
   const effectiveTools = createOpenClawCodingTools({
     agentId,
     sessionKey: params.sessionKey,
+    sessionId: params.sessionId,
     workspaceDir,
     agentDir,
     config: params.cfg,

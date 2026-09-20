@@ -31,6 +31,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js";
 
 // ─── Mock setup ──────────────────────────────────────────────────────────
 // Mock TaskFlow registry — same pattern as delegate-dispatch.test.ts.
@@ -137,12 +138,33 @@ vi.mock("../../tasks/task-flow-registry.js", () => ({
 }));
 
 import { clearRuntimeConfigSnapshot } from "../../config/config.js";
+import { upsertSessionEntryCore } from "../../config/sessions/session-accessor.js";
 import { resetContinuationTracer } from "../../infra/continuation-tracer.js";
+import { resolveSystemEventQueueKey } from "../../infra/system-event-ownership.js";
+import { closeOpenClawAgentDatabasesForTest } from "../../state/openclaw-agent-db.js";
 import { dispatchToolDelegates, resetDelegateDispatchHedgesForTests } from "./delegate-dispatch.js";
 import { enqueuePendingDelegate } from "./delegate-store.js";
 import { resetContinuationStateForTests } from "./state.js";
 
+const tempDirs = useAutoCleanupTempDirTracker(afterEach);
+
+// Dispatch revalidates the owner session before claiming a delegate, so tests
+// that reach the spawn path seed the owner row in the isolated session store
+// (mirrors delegate-dispatch-post-compaction.test.ts).
+async function seedOwnerSession(sessionKey: string): Promise<void> {
+  await upsertSessionEntryCore(
+    { agentId: "main", sessionKey },
+    {
+      sessionId: `session:${sessionKey}`,
+      lifecycleRevision: `lifecycle:${sessionKey}`,
+      updatedAt: Date.now(),
+    },
+  );
+}
+
 beforeEach(() => {
+  closeOpenClawAgentDatabasesForTest();
+  vi.stubEnv("OPENCLAW_STATE_DIR", tempDirs.make("openclaw-chain-depth-"));
   // Fresh state per test so chain-state contamination from a prior test
   // can't mask a real budget-check regression.
   mockFlows.clear();
@@ -159,6 +181,8 @@ afterEach(() => {
   resetContinuationTracer();
   clearRuntimeConfigSnapshot();
   mockFlows.clear();
+  closeOpenClawAgentDatabasesForTest();
+  vi.unstubAllEnvs();
   vi.useRealTimers();
 });
 
@@ -213,7 +237,7 @@ describe("chain-depth exhaustion", () => {
     // text changes, the model's self-correction prompt will also need to
     // change — keep these strings in sync with continue-work-signal-v2.
     expect(enqueueSystemEventMock).toHaveBeenCalledWith(expect.stringContaining("chain-capped"), {
-      sessionKey,
+      sessionKey: resolveSystemEventQueueKey(sessionKey, "main"),
       trusted: true,
     });
   });
@@ -233,6 +257,7 @@ describe("chain-depth exhaustion", () => {
   // ───────────────────────────────────────────────────────────────────────
   it("accepts a delegate at count 9/10, then rejects the next at 10/10", async () => {
     const sessionKey = "session-chain-depth-incremental";
+    await seedOwnerSession(sessionKey);
     enqueuePendingDelegate(sessionKey, { task: "first delegate" });
     enqueuePendingDelegate(sessionKey, { task: "second delegate" });
 
@@ -268,7 +293,7 @@ describe("chain-depth exhaustion", () => {
     // Rejection-surface assertion: the second delegate's rejection must
     // emit the same chain-capped system event shape as the at-limit case.
     expect(enqueueSystemEventMock).toHaveBeenCalledWith(expect.stringContaining("chain-capped"), {
-      sessionKey,
+      sessionKey: resolveSystemEventQueueKey(sessionKey, "main"),
       trusted: true,
     });
   });

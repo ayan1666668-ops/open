@@ -20,11 +20,7 @@ import {
 import { isSessionRecipientAuthorityCurrent as isActualSessionRecipientAuthorityCurrent } from "../config/sessions/session-accessor.sqlite-recipient-authority.js";
 import { addSessionMember, removeSessionMember } from "../config/sessions/session-sharing-store.js";
 import type { RestartSentinelPayload } from "../infra/restart-sentinel.js";
-import {
-  recordSystemEventOwner,
-  resolveSystemEventOwnerAgentId,
-  selectAgentSystemEvents,
-} from "../infra/system-event-ownership.js";
+import { resolveSystemEventQueueKey } from "../infra/system-event-ownership.js";
 import {
   createUpdateRun,
   finishUpdateRun,
@@ -44,7 +40,12 @@ import {
 } from "../test-utils/openclaw-test-state.js";
 import { normalizeSessionDeliveryState } from "../utils/delivery-context.shared.js";
 import { resolveRuntimeServiceVersion } from "../version.js";
-import { lastMockCallArg, mockCallArg } from "./server-restart-sentinel.test-support.js";
+import {
+  expectRecordFields,
+  mockCallArg,
+  lastMockCallArg,
+  expectMockCallFields,
+} from "./server-restart-sentinel.test-support.js";
 import * as restartUpdateRun from "./server-restart-update-run.js";
 import { createTranscriptUpdateBroadcastHandler } from "./server-session-events.js";
 import { createSessionRowProjection } from "./session-row-projection.js";
@@ -604,28 +605,6 @@ const actualRestartUpdateRun = await vi.importActual<
   typeof import("./server-restart-update-run.js")
 >("./server-restart-update-run.js");
 
-function expectRecordFields(
-  record: unknown,
-  expected: Record<string, unknown>,
-): Record<string, unknown> {
-  if (!record || typeof record !== "object") {
-    throw new Error("Expected record");
-  }
-  const actual = record as Record<string, unknown>;
-  for (const [key, value] of Object.entries(expected)) {
-    expect(actual[key]).toEqual(value);
-  }
-  return actual;
-}
-
-function expectMockCallFields(
-  mock: { mock: { calls: Array<Array<unknown>> } },
-  expected: Record<string, unknown>,
-  callIndex = 0,
-): Record<string, unknown> {
-  return expectRecordFields(mockCallArg(mock, callIndex), expected);
-}
-
 function expectNthSystemEventFields(callIndex: number, expected: Record<string, unknown>): void {
   const call = mocks.enqueueSystemEvent.mock.calls[callIndex];
   if (!call) {
@@ -971,6 +950,7 @@ describe("scheduleRestartSentinelWake", () => {
       source: "restart-sentinel",
       intent: "immediate",
       reason: "wake",
+      agentId: "main",
       sessionKey: "agent:main:main",
     });
     expect(mocks.recordInboundSessionAndDispatchReply).not.toHaveBeenCalled();
@@ -2773,7 +2753,10 @@ describe("scheduleRestartSentinelWake", () => {
       expect(artifactId).toBeTypeOf("string");
       const parsedArtifact = managedMediaActual.parseManagedOutgoingArtifactId(String(artifactId));
       expect(parsedArtifact).not.toBeNull();
-      const record = readManagedImageRecord(parsedArtifact?.attachmentId ?? "", testState.stateDir);
+      const record = await readManagedImageRecord(
+        parsedArtifact?.attachmentId ?? "",
+        testState.stateDir,
+      );
       expect(record).toMatchObject({ messageId: messageEvent.id, sessionKey: "global" });
       await expect(
         managedMediaActual.resolveManagedOutgoingMediaArtifactDownload({
@@ -3704,11 +3687,12 @@ describe("scheduleRestartSentinelWake", () => {
     });
 
     const eventOptions = mocks.enqueueSystemEvent.mock.calls[0]?.[1];
-    expect(resolveSystemEventOwnerAgentId(eventOptions as object)).toBe("helper");
-    const replayedEvent = {};
-    recordSystemEventOwner(replayedEvent, resolveSystemEventOwnerAgentId(eventOptions as object));
-    expect(selectAgentSystemEvents([replayedEvent], "helper")).toEqual([replayedEvent]);
-    expect(selectAgentSystemEvents([replayedEvent], "main")).toEqual([]);
+    const helperQueueKey = resolveSystemEventQueueKey(sessionKey, "helper");
+    expect(eventOptions).toMatchObject({ sessionKey: helperQueueKey });
+    // Ownership is the agent-qualified queue key: main cannot derive a queue for this replay.
+    expect(() => resolveSystemEventQueueKey(helperQueueKey, "main")).toThrow(
+      "System event owner does not match its session key.",
+    );
     expect(mocks.requestHeartbeat).toHaveBeenCalledWith({
       source: "restart-sentinel",
       intent: "immediate",
@@ -3978,18 +3962,15 @@ describe("scheduleRestartSentinelWake", () => {
       sessionDeliveryAckStateDir: testState.stateDir,
       trusted: true,
     });
-    expect(mocks.requestHeartbeat).toHaveBeenNthCalledWith(1, {
+    const wake = {
       source: "restart-sentinel",
       intent: "immediate",
       reason: "wake",
+      agentId: "main",
       sessionKey: "agent:main:main",
-    });
-    expect(mocks.requestHeartbeat).toHaveBeenNthCalledWith(2, {
-      source: "restart-sentinel",
-      intent: "immediate",
-      reason: "wake",
-      sessionKey: "agent:main:main",
-    });
+    };
+    expect(mocks.requestHeartbeat).toHaveBeenNthCalledWith(1, wake);
+    expect(mocks.requestHeartbeat).toHaveBeenNthCalledWith(2, wake);
   });
 
   it("logs and continues when continuation delivery fails", async () => {
@@ -4506,8 +4487,10 @@ describe("scheduleRestartSentinelWake", () => {
         }),
       );
       const eventOptions = mocks.enqueueSystemEvent.mock.calls[0]?.[1];
-      expect(eventOptions).toMatchObject({ sessionKey, deliveryContext: context });
-      expect(resolveSystemEventOwnerAgentId(eventOptions as object)).toBe("ops");
+      expect(eventOptions).toMatchObject({
+        sessionKey,
+        deliveryContext: context,
+      });
       expect(mocks.requestHeartbeat).toHaveBeenCalledWith({
         source: "restart-sentinel",
         intent: "immediate",
@@ -4548,7 +4531,6 @@ describe("scheduleRestartSentinelWake", () => {
     });
     expect(mocks.deliverOutboundPayloads).not.toHaveBeenCalled();
     const eventOptions = mocks.enqueueSystemEvent.mock.calls[0]?.[1];
-    expect(resolveSystemEventOwnerAgentId(eventOptions as object)).toBe("ops");
     expect(eventOptions).not.toHaveProperty("deliveryContext");
   });
 
@@ -4566,8 +4548,7 @@ describe("scheduleRestartSentinelWake", () => {
     await scheduleRestartSentinelWake({ deps: {} as never });
 
     const eventOptions = mocks.enqueueSystemEvent.mock.calls[0]?.[1];
-    expect(eventOptions).toMatchObject({ sessionKey: "global" });
-    expect(resolveSystemEventOwnerAgentId(eventOptions as object)).toBe("ops");
+    expect(eventOptions).toMatchObject({ sessionKey: "agent:ops:global" });
     expect(mocks.requestHeartbeat).toHaveBeenCalledWith({
       source: "restart-sentinel",
       intent: "immediate",

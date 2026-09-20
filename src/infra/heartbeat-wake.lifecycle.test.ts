@@ -144,7 +144,7 @@ describe("heartbeat-wake", () => {
   it("recovers interrupted wakes when a replacement handler is registered", async () => {
     vi.useFakeTimers();
 
-    // Simulate a handler that's mid-execution when SIGUSR1 fires.
+    // Simulate a handler that's mid-execution when SIGUSR2 fires.
     // We do this by having the handler hang forever (never resolve).
     let resolveHang: () => void;
     const hangPromise = new Promise<void>((r) => {
@@ -160,7 +160,7 @@ describe("heartbeat-wake", () => {
     await vi.advanceTimersByTimeAsync(1);
     expect(handlerA).toHaveBeenCalledTimes(1);
 
-    // Now simulate SIGUSR1: register a new handler while handlerA is still running.
+    // Now simulate SIGUSR2: register a new handler while handlerA is still running.
     // Without the fix, `running` would stay true and handlerB would never fire.
     const handlerB = vi.fn().mockResolvedValue({ status: "ran", durationMs: 1 });
     setHeartbeatWakeHandler(handlerB);
@@ -306,7 +306,7 @@ describe("heartbeat-wake", () => {
     await vi.advanceTimersByTimeAsync(1);
     expect(handlerA).toHaveBeenCalledTimes(1);
 
-    // Simulate SIGUSR1 startup with a fresh wake handler.
+    // Simulate SIGUSR2 startup with a fresh wake handler.
     const handlerB = vi.fn().mockResolvedValue({ status: "ran", durationMs: 1 });
     setHeartbeatWakeHandler(handlerB);
 

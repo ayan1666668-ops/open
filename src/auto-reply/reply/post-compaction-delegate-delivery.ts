@@ -520,8 +520,9 @@ export async function deliverQueuedPostCompactionDelegate(
     sessionKey: params.entry.sessionKey,
   });
   assertPostCompactionSourceLifecycle(params.entry, sessionEntry);
-  const ownerEventOptions = <T extends object>(options: T): T =>
-    withContinuationOwner(options, agentId);
+  const ownerEventOptions = <T extends { sessionKey: string }>(
+    options: T,
+  ): Omit<T, "sessionKey"> & { sessionKey: string } => withContinuationOwner(options, agentId);
   const {
     maxChainLength: maxCompactionChainLength,
     costCapTokens: compactionCostCapTokens,

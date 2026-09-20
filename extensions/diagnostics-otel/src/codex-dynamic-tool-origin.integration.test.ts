@@ -36,7 +36,7 @@ import {
 import { resetTaskFlowRegistryForTests } from "openclaw/plugin-sdk/task-flow-test-runtime";
 import { withOpenClawTestState } from "openclaw/plugin-sdk/test-state";
 import { expect, test } from "vitest";
-import { dynamicToolBuildState } from "../../codex/src/app-server/dynamic-tool-build-state.js";
+import { setCodexTestToolFactory } from "../../codex/src/app-server/host-capability.test-support.js";
 import {
   bindProductionHarnessHostCapabilitiesForTest,
   createCodexRuntimePlanFixture,
@@ -220,7 +220,6 @@ test("exports Codex dynamic continuation origins through the production tool bou
         resetContinueDelegateTurnAdmissionForTests();
         resetTaskFlowRegistryForTests();
 
-        dynamicToolBuildState.extraOpenClawCodingTools = [timeoutTool];
         const params = createParams(
           path.join(tempDir, "session.jsonl"),
           path.join(tempDir, "workspace"),
@@ -230,6 +229,7 @@ test("exports Codex dynamic continuation origins through the production tool bou
             sessionKey: SESSION_KEY,
           },
         );
+        setCodexTestToolFactory(params, (options, actual) => [...actual(options), timeoutTool]);
         params.config = {
           ...params.config,
           agents: {

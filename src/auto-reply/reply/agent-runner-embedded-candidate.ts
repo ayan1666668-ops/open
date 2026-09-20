@@ -20,6 +20,7 @@ import {
 import type { PartialReplyPayload } from "../get-reply-options.types.js";
 import type { ReplyPayload } from "../types.js";
 import { createAgentLifecycleTerminalBackstop } from "./agent-lifecycle-terminal.js";
+import { resolveTerminalReplyDelivery } from "./agent-runner-core.js";
 import {
   createAgentRunEventHandler,
   type MessageToolDeliveryState,
@@ -31,6 +32,7 @@ import {
   releaseQueuedCompactionTolerant,
 } from "./agent-runner-post-compaction-release.js";
 import { buildEmbeddedRunExecutionParams } from "./agent-runner-utils.js";
+import type { DirectBlockDelivery } from "./reply-delivery.js";
 import { resolveReplyOperationTerminationFields } from "./reply-operation-abort.js";
 import { markReplyOperationGlobalLaneWaitProgress } from "./reply-run-registry.js";
 import { resolveOperationalRunCompactionCount } from "./run-compaction-count.js";
@@ -42,13 +44,13 @@ import {
 export async function runEmbeddedFallbackCandidate(
   params: AgentFallbackCandidateCommonParams & {
     effectiveRun: AgentFallbackCandidateCommonParams["candidateRun"];
+    directBlockDeliveries: DirectBlockDelivery[];
     sessionRuntimeOverride?: string;
     getLifecycleGeneration: () => string;
     onLifecycleGeneration: (generation: string) => void;
     allowTransientCooldownProbe?: boolean;
     notifyUserAboutCompaction: boolean;
     messageToolDeliveryState: MessageToolDeliveryState;
-    githubPublicationAvailable: boolean;
     onCompactionFacts: (facts: {
       accounting?: CompactionAccountingFact;
       postCompactionModelAttempted: boolean;
@@ -134,7 +136,6 @@ export async function runEmbeddedFallbackCandidate(
     const result = await params.timing.measure("embedded_run", () => {
       const embeddedRunParams: RunEmbeddedAgentInternalParams = {
         preparedRunAdmission: params.preparedRunAdmission,
-        githubPublicationAvailable: params.githubPublicationAvailable,
         ...embeddedContext,
         messageActionTurnCapability: params.messageActionTurnCapability,
         lifecycleGeneration: params.getLifecycleGeneration(),
@@ -380,6 +381,13 @@ export async function runEmbeddedFallbackCandidate(
         },
         // Flush-before-tool requires a handler even when regular block streaming is off.
         onBlockReply: params.presentation.blockReplyHandler,
+        resolveReplyDelivery: (minimumAssistantMessageIndex) =>
+          resolveTerminalReplyDelivery({
+            blockReplyPipeline: turn.blockReplyPipeline,
+            directBlockDeliveries: params.directBlockDeliveries,
+            minimumAssistantMessageIndex,
+            resolveReplyDelivery: turn.opts?.resolveReplyDelivery,
+          }),
         onBlockReplyFlush:
           turn.blockStreamingEnabled && turn.blockReplyPipeline
             ? async () => {

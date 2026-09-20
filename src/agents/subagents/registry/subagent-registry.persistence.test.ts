@@ -852,7 +852,7 @@ describe("subagent registry persistence", () => {
     waitForRegistryWork,
   });
 
-  it("finalizes restored runs whose restart interruption exceeded the recovery window", async () => {
+  it("finalizes restored interrupted runs without replay", async () => {
     vi.mocked(callGateway).mockImplementationOnce(async (request) => {
       expectFields(request, {
         method: "agent.wait",
@@ -888,7 +888,7 @@ describe("subagent registry persistence", () => {
     await writeChildSessionEntry({
       sessionKey: childSessionKey,
       sessionId: "sess-stale-aborted-restore",
-      // Age the interruption marker; task age alone remains restart-recoverable.
+      // A retained interruption is reconciled even when its last activity is old.
       updatedAt: now - 3 * 60 * 60 * 1_000,
       abortedLastRun: true,
     });
@@ -901,7 +901,7 @@ describe("subagent registry persistence", () => {
     expect(callGateway).not.toHaveBeenCalled();
     expect(getSubagentRunByChildSessionKey(childSessionKey)?.execution.outcome).toMatchObject({
       status: "error",
-      error: expect.stringContaining("stale aborted subagent run"),
+      error: expect.stringContaining("Gateway restart"),
     });
   });
 

@@ -22,6 +22,7 @@ import { getCanonicalGatewayContextResolver } from "../plugins/runtime/gateway-r
 import type { PluginServicesHandle } from "../plugins/services.js";
 import { AsyncWorkScope } from "../shared/async-work-scope.js";
 import { drainGlobalSingletonLifecycleState } from "../shared/global-singleton.js";
+import { closeOpenClawAgentDatabasesAsync } from "../state/openclaw-agent-db-lifecycle.js";
 import {
   collectGatewayProcessMemoryUsageMb,
   markGatewayRestartTrace,
@@ -481,11 +482,12 @@ export async function completeGatewayClose(
       clearInterval(params.maintenance.dedupeCleanup);
       clearInterval(params.maintenance.worktreeCleanup);
       clearInterval(params.maintenance.delegateArtifactCleanup);
-      params.maintenance.skillUsageCleanup();
     }
     if (params.delegateArtifactCleanup) {
       clearInterval(params.delegateArtifactCleanup);
     }
+    await shutdownStep("skill-usage", () => params.maintenance?.skillUsageCleanup(), warnings);
+    await shutdownStep("telemetry", () => params.maintenance?.stopTelemetryChecks(), warnings);
     await shutdownStep(
       "session-cold-storage",
       () => params.maintenance?.stopSessionColdStorageMaintenance(),
@@ -659,6 +661,8 @@ export async function completeGatewayClose(
           await closePreparedModelRuntimeSnapshots();
           await closeSessionTranscriptReconcileWorkerPool();
           await retire();
+          // Releasing agent leases still writes shared state; keep its owner alive until then.
+          await closeOpenClawAgentDatabasesAsync();
           if (mediaCleanupStopResult !== undefined) {
             await closePluginStateDatabaseAsync();
           }

@@ -202,22 +202,18 @@ export function isSessionRecipientAuthorityCurrent(
   authority: SessionRecipientAuthority,
 ): boolean {
   const resolved = resolveSqliteScope(scope);
-  const result = withOpenClawAgentDatabaseReadOnly(
-    (database) => {
-      const row = executeSqliteQueryTakeFirstSync(
-        database.db,
-        getSessionRecipientAuthorityKysely(database)
-          .selectFrom("session_recipient_authority")
-          .select("epoch")
-          .where("session_key", "=", resolved.sessionKey),
-      );
-      return sessionRecipientAuthorityMatches(
-        authority,
-        readSessionRecipientAuthorityEpoch(row?.epoch),
-      );
-    },
-    toDatabaseOptions(resolved),
-    { throwOnMissingTable: true },
-  );
-  return result.found && result.value;
+  const result = withOpenClawAgentDatabaseReadOnly((database) => {
+    const row = executeSqliteQueryTakeFirstSync(
+      database.db,
+      getSessionRecipientAuthorityKysely(database)
+        .selectFrom("session_recipient_authority")
+        .select("epoch")
+        .where("session_key", "=", resolved.sessionKey),
+    );
+    return sessionRecipientAuthorityMatches(
+      authority,
+      readSessionRecipientAuthorityEpoch(row?.epoch),
+    );
+  }, toDatabaseOptions(resolved));
+  return result.found && result.value === true;
 }

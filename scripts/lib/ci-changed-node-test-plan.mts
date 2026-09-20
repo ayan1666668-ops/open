@@ -38,6 +38,7 @@ import {
   shouldSplitExtensionTestProcesses,
   splitExtensionTestJobTargets,
 } from "./extension-test-plan.mts";
+import { isExclusiveCiTestConfig } from "./local-check-runtime.mts";
 import { buildPluginSdkEntrySources, publicPluginSdkEntrypoints } from "./plugin-sdk-entries.mts";
 import {
   resolveVitestPretestBuildMode,
@@ -111,7 +112,12 @@ const fullNodeTestShards = createNodeTestShards({
 });
 const configsRequiringCanonicalMetadata = new Set(
   fullNodeTestShards
-    .filter((shard) => shard.env || shard.shardName.startsWith("core-tooling"))
+    .filter(
+      (shard) =>
+        shard.env ||
+        shard.shardName.startsWith("core-tooling") ||
+        shard.configs.some(isExclusiveCiTestConfig),
+    )
     .flatMap((shard) => shard.configs),
 );
 const splitNodeTestConfigs = new Set(
@@ -440,14 +446,14 @@ function createChangedExtensionConfigShards(
     );
     const chunks = testFiles.length > 0 ? splitExtensionTestJobTargets(config, testFiles) : [roots];
     const partitionSeconds = Math.ceil(
-      estimateExtensionTestCost(config, testFiles.length) / chunks.length,
+      estimateExtensionTestCost(config, testFiles.length, testFiles) / chunks.length,
     );
     return chunks.map((includePatterns, index) =>
       Object.assign(
         {
           config,
           predictedSeconds: splitProcesses
-            ? estimateExtensionTestCost(config, includePatterns.length)
+            ? estimateExtensionTestCost(config, includePatterns.length, includePatterns)
             : partitionSeconds,
         },
         splitProcesses
@@ -629,13 +635,15 @@ export function createChangedNodeTestShards(
     return null;
   }
 
-  // Packing changes can move every compact child. Observe the complete plan on
+  // Packing changes and their policy guard need the complete compact plan on
   // Blacksmith while preserving hosted targeting and its registration footprint.
   if (
     options.runnerBackend !== "github" &&
     changedPaths.some(
       (file) =>
-        file === "config/ci-test-timings.json" || file === "scripts/lib/ci-node-test-plan.mts",
+        file === "config/ci-test-timings.json" ||
+        file === "scripts/lib/ci-node-test-plan.mts" ||
+        file === "test/scripts/ci-node-test-plan.test.ts",
     )
   ) {
     return null;

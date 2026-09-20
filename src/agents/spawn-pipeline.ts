@@ -6,6 +6,7 @@ import type {
 } from "./subagents/registry/subagent-registry-run-launch.js";
 import { registerSubagentRun } from "./subagents/registry/subagent-registry.js";
 export { summarizeSpawnError } from "./spawn-error.js";
+import type { SubagentRegistrationScope } from "./subagents/registry/subagent-registry.types.js";
 
 type SpawnPipelinePhase = "initialize" | "dispatch" | "register";
 
@@ -16,6 +17,7 @@ export type SpawnBackendAdapter<TState> = {
     phase: SpawnPipelinePhase;
     state?: TState;
     error: unknown;
+    registrationScope?: SubagentRegistrationScope;
   }): Promise<void>;
 };
 
@@ -39,6 +41,7 @@ type SpawnPipelineResult<TState> =
       state: TState;
       runId: string;
       rollbackAccepted: () => Promise<void>;
+      registrationScope?: SubagentRegistrationScope;
     }
   | {
       ok: false;
@@ -116,7 +119,11 @@ type SpawnPipelineParams<TState> = {
   assertRegistrationAdmission?: () => void;
   assertPostPublicationAdmission?: () => void;
   publishRegistration?: (registration: RegisterSubagentRunInput) => void;
-  afterRegistration?: (state: TState, runId: string) => Promise<void>;
+  afterRegistration?: (
+    state: TState,
+    runId: string,
+    registrationScope?: SubagentRegistrationScope,
+  ) => Promise<void>;
   recordAcceptedRollback?: (
     registration: OwnedSubagentRegistration,
     error: unknown,
@@ -162,6 +169,7 @@ async function executeSpawnPipeline<TState>(
 
   let registration!: RegisterSubagentRunInput;
   let registrationOwnership: SubagentRegistrationIdentity | undefined;
+  let registrationScope: SubagentRegistrationScope | undefined;
   let rollbackPromise: Promise<void> | undefined;
   const rollbackAccepted = (
     error: unknown = new Error("Accepted subagent registration rolled back."),
@@ -188,6 +196,7 @@ async function executeSpawnPipeline<TState>(
           phase: "register",
           state,
           error,
+          ...(registrationScope ? { registrationScope } : {}),
         });
         cleanupComplete = true;
       } catch (cleanupError) {
@@ -222,13 +231,24 @@ async function executeSpawnPipeline<TState>(
     params.assertActive?.();
     registration = params.buildRegistration(state, runId);
     params.assertRegistrationAdmission?.();
-    const registrationResult = registerSubagentRun(registration);
+    // Required queued registrations await durable persistence; ordinary child
+    // admission keeps the synchronous handoff.
+    const registrationOutcome = registration.queued
+      ? registerSubagentRun(registration, {
+          assertCurrent: params.assertActive,
+          retainOwnership: (scope) => {
+            registrationScope = scope;
+          },
+        })
+      : registerSubagentRun(registration);
+    const registrationResult =
+      registrationOutcome instanceof Promise ? await registrationOutcome : registrationOutcome;
     if (registrationResult.status !== "new-row-committed") {
       throw new SpawnRegistrationOwnershipError(registrationResult);
     }
     registrationOwnership = registrationResult.attempted;
     params.publishRegistration?.(registration);
-    // Registry insertion takes ownership synchronously; keeping the slot would double-count it.
+    // Registry insertion takes ownership; keeping the slot would double-count it.
     params.admissionReservation?.release();
   } catch (error) {
     const failedOwnership = readRegistrationOwnership(error);
@@ -248,7 +268,12 @@ async function executeSpawnPipeline<TState>(
       return { ok: false, phase: "register", state, runId, error };
     }
     try {
-      await params.adapter.cleanupOnFailure({ phase: "register", state, error });
+      await params.adapter.cleanupOnFailure({
+        phase: "register",
+        state,
+        error,
+        ...(registrationScope ? { registrationScope } : {}),
+      });
     } catch (cleanupError) {
       const aggregate = new AggregateError(
         [error, cleanupError],
@@ -302,7 +327,7 @@ async function executeSpawnPipeline<TState>(
 
   if (params.afterRegistration) {
     try {
-      await params.afterRegistration(state, runId);
+      await params.afterRegistration(state, runId, registrationScope);
       params.assertPostPublicationAdmission?.();
     } catch (error) {
       try {
@@ -324,5 +349,11 @@ async function executeSpawnPipeline<TState>(
     }
   }
 
-  return { ok: true, state, runId, rollbackAccepted: () => rollbackAccepted() };
+  return {
+    ok: true,
+    state,
+    runId,
+    rollbackAccepted: () => rollbackAccepted(),
+    ...(registrationScope ? { registrationScope } : {}),
+  };
 }

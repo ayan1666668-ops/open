@@ -341,7 +341,7 @@ export async function getExecuteAgentTurnForTest() {
         compactionTraceparent: outcome.compactionTraceparent,
         continueWorkRequests: outcome.continueWorkRequests,
         rawContinuationText: outcome.rawContinuationText,
-        directlySentBlockKeys: outcome.directlySentBlockKeys,
+        hasDirectlySentBlockReply: outcome.hasDirectlySentBlockReply,
         directBlockDeliveries: outcome.directBlockDeliveries,
         terminalFailurePayload: outcome.terminalFailurePayload,
         postCompactionModelFailure: outcome.postCompactionModelFailure,
@@ -569,27 +569,6 @@ export function expectNoMockCallWithFields(mock: unknown, fields: Record<string,
     return Object.entries(fields).every(([key, expected]) => record[key] === expected);
   });
   expect(hasMatchingCall).toBe(false);
-}
-
-export function requireMockCallArgWithFields(
-  mock: unknown,
-  fields: Record<string, unknown>,
-  label: string,
-) {
-  const calls = (mock as { mock?: { calls?: unknown[][] } }).mock?.calls ?? [];
-  const found = calls
-    .map((call) => call[0])
-    .find((value) => {
-      if (typeof value !== "object" || value === null) {
-        return false;
-      }
-      const record = value as Record<string, unknown>;
-      return Object.entries(fields).every(([key, expected]) => record[key] === expected);
-    });
-  if (!found) {
-    throw new Error(`missing ${label}`);
-  }
-  return requireRecord(found, label);
 }
 
 export function expectBlockReplyCall(

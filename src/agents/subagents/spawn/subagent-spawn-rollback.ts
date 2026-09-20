@@ -1,7 +1,9 @@
-import type { SubagentSpawnPreparation } from "../../../context-engine/types.js";
 import { cleanupMaterializedSubagentAttachments } from "../subagent-attachment-cleanup.js";
 import { terminateAcceptedCollectorRun } from "./subagent-spawn-cleanup.js";
-import { rollbackPreparedContextEngine } from "./subagent-spawn-context.js";
+import {
+  type PreparedContextEngineSubagentSpawn,
+  rollbackPreparedContextEngine,
+} from "./subagent-spawn-context.js";
 import { isSpawnSubagentAdmissionCancelledError } from "./subagent-spawn-contract.js";
 
 export async function cleanupAcceptedSubagentSpawnFailure(params: {
@@ -11,15 +13,19 @@ export async function cleanupAcceptedSubagentSpawnFailure(params: {
   childSessionKey: string;
   acceptedChildRunId?: string;
   taskRowOwnership: "required" | "gateway_best_effort";
-  contextEnginePreparation?: SubagentSpawnPreparation;
+  contextEnginePreparation?: PreparedContextEngineSubagentSpawn;
   attachmentId?: string;
   expectedSessionId?: string;
   expectedLifecycleRevision?: string;
   emitLifecycleHooks: boolean;
   cleanupCreatedSession: (emitLifecycleHooks: boolean) => Promise<unknown>;
+  /** Retained queued-registration ownership; false means another owner holds the child now. */
+  isCurrent?: () => boolean;
 }): Promise<void> {
   const cleanupFailures: unknown[] = [];
+  const ownsChild = params.isCurrent?.() !== false;
   if (
+    ownsChild &&
     params.phase === "register" &&
     params.acceptedChildRunId &&
     (params.taskRowOwnership === "required" || isSpawnSubagentAdmissionCancelledError(params.error))
@@ -42,21 +48,26 @@ export async function cleanupAcceptedSubagentSpawnFailure(params: {
       cleanupFailures.push(error);
     }
   }
-  try {
-    if (
-      !(await rollbackPreparedContextEngine(params.contextEnginePreparation)) &&
-      params.phase === "register"
-    ) {
-      throw new Error("Prepared context rollback was not confirmed", { cause: params.error });
+  if (!ownsChild) {
+    await params.contextEnginePreparation?.dispose().catch(() => {});
+  } else {
+    try {
+      if (
+        !(await rollbackPreparedContextEngine(params.contextEnginePreparation)) &&
+        params.phase === "register"
+      ) {
+        throw new Error("Prepared context rollback was not confirmed", { cause: params.error });
+      }
+    } catch (error) {
+      cleanupFailures.push(error);
     }
-  } catch (error) {
-    cleanupFailures.push(error);
   }
-  if (params.attachmentId) {
+  if (params.attachmentId && ownsChild) {
     try {
       await cleanupMaterializedSubagentAttachments({
         childSessionKey: params.childSessionKey,
         attachmentId: params.attachmentId,
+        isCurrent: params.isCurrent,
       });
     } catch {
       // Best-effort cleanup only.

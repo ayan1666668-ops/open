@@ -71,6 +71,7 @@ export async function retrySubagentCleanup(
 }
 
 type SessionCleanupOptions = {
+  isCurrent?: () => boolean;
   emitLifecycleHooks?: boolean;
   deleteTranscript?: boolean;
   expectedSessionId?: string;
@@ -107,15 +108,19 @@ async function waitForProvisionalSessionDeletion(
     return false;
   }
   let deleted = false;
-  await retrySubagentCleanup(async () => {
-    const outcome = await requestProvisionalSessionCleanup(childSessionKey, options);
-    deleted = outcome === "deleted";
-    return outcome !== "failed";
-  });
+  await retrySubagentCleanup(
+    async () => {
+      const outcome = await requestProvisionalSessionCleanup(childSessionKey, options);
+      deleted = outcome === "deleted";
+      return outcome !== "failed";
+    },
+    { shouldRetry: options?.isCurrent },
+  );
   return deleted;
 }
 
 export async function cleanupFailedSpawnBeforeAgentStart(params: {
+  isCurrent?: () => boolean;
   childSessionKey: string;
   attachmentId?: string;
   emitLifecycleHooks?: boolean;
@@ -132,6 +137,7 @@ export async function cleanupFailedSpawnBeforeAgentStart(params: {
       await cleanupMaterializedSubagentAttachments({
         childSessionKey,
         attachmentId,
+        isCurrent: params.isCurrent,
       });
     } catch {
       attachmentsRemoved = false;
@@ -146,6 +152,7 @@ export async function cleanupFailedSpawnBeforeAgentStart(params: {
 }
 
 export async function terminateAcceptedCollectorRun(params: {
+  isCurrent?: () => boolean;
   childSessionKey: string;
   gatewayRunId: string;
   expectedSessionId?: string;
@@ -189,6 +196,7 @@ export async function terminateAcceptedCollectorRun(params: {
         return false;
       }
       const cleanup = await requestProvisionalSessionCleanup(params.childSessionKey, {
+        isCurrent: params.isCurrent,
         deleteTranscript: true,
         expectedSessionId: params.expectedSessionId,
         expectedLifecycleRevision: params.expectedLifecycleRevision,
@@ -196,7 +204,7 @@ export async function terminateAcceptedCollectorRun(params: {
         timeoutMs,
       });
       // A changed lifecycle proves the accepted run no longer owns this session.
-      return cleanup !== "failed";
+      return cleanup !== "failed" || params.isCurrent?.() === false;
     },
     {
       // Retry abort while the request owner can still dispatch. Preserve retries

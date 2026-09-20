@@ -1,6 +1,7 @@
 // Connection-bound task-flow row codecs and SQLite operations.
 import type { DatabaseSync } from "node:sqlite";
 import type { Insertable, Selectable } from "kysely";
+import { deleteExecutionOwnerLifecycleMetadata } from "../audit/execution-owner-lifecycle-binding-store.js";
 import {
   executeSqliteQuerySync,
   getNodeSqliteKysely,
@@ -8,8 +9,16 @@ import {
 } from "../infra/kysely-sync.js";
 import { normalizeSqliteNumber } from "../infra/sqlite-number.js";
 import type { DB as OpenClawStateKyselyDatabase } from "../state/openclaw-state-db.generated.js";
-import { applyFlowPatch, normalizeRestoredFlowRecord } from "./task-flow-registry.records.js";
+import {
+  applyFlowPatch,
+  isTaskMirroredFlowSyncUnchanged,
+  normalizeRestoredFlowRecord,
+  prepareTaskMirroredFlowSyncFromCurrent,
+  type TaskFlowSyncInput,
+} from "./task-flow-registry.records.js";
 import type {
+  TaskFlowRegistryMirroredSync,
+  TaskFlowRegistryStoreSnapshot,
   TaskFlowRegistryUpdate,
   TaskFlowRegistryUpdateResult,
 } from "./task-flow-registry.store.types.js";
@@ -172,6 +181,20 @@ export function listTaskFlowRecordsForOwnerReadInDatabase(
   return read(ownerKey).rows.map(rowToFlowRecord);
 }
 
+export function readTaskFlowRegistrySnapshot(db: DatabaseSync): TaskFlowRegistryStoreSnapshot {
+  const query = getFlowRegistryKysely(db)
+    .selectFrom("flow_runs")
+    .select(FLOW_RUN_SELECT_COLUMNS)
+    .orderBy("created_at", "asc")
+    .orderBy("flow_id", "asc");
+  const flows = new Map<string, TaskFlowRecord>();
+  // Finish native reads before decoding so SQLite errors retain precedence.
+  for (const row of executeSqliteQuerySync(db, query).rows) {
+    flows.set(row.flow_id, rowToFlowRecord(row));
+  }
+  return { flows };
+}
+
 const FLOW_VIEW_SELECT_COLUMNS = FLOW_RUN_SELECT_COLUMNS.filter(
   (column) => column !== "state_json" && column !== "wait_json",
 );
@@ -271,6 +294,33 @@ export function readTaskFlowRecord(db: DatabaseSync, flowId: string): TaskFlowRe
   return row ? rowToFlowRecord(row) : undefined;
 }
 
+/** Select and prepare only after the owning transaction has acquired its writer. */
+export function syncTaskMirroredFlowRecordInDatabase(
+  db: DatabaseSync,
+  task: TaskFlowSyncInput,
+  assertSelected?: (current: TaskFlowRecord) => void,
+): TaskFlowRegistryMirroredSync {
+  if (!db.isTransaction) {
+    throw new Error("Task-mirrored flow synchronization requires a write transaction");
+  }
+  const flowId = task.parentFlowId?.trim();
+  const stored = flowId ? readTaskFlowRecord(db, flowId) : undefined;
+  if (!stored) {
+    return { changed: false, flow: null };
+  }
+  const current = normalizeRestoredFlowRecord(stored);
+  if (current.syncMode !== "task_mirrored") {
+    return { changed: false, flow: current };
+  }
+  assertSelected?.(current);
+  const prepared = prepareTaskMirroredFlowSyncFromCurrent(task, current);
+  if (isTaskMirroredFlowSyncUnchanged(prepared)) {
+    return { changed: false, flow: current };
+  }
+  upsertTaskFlowRowInDatabase(db, bindTaskFlowRecord(prepared.next));
+  return { changed: true, flow: prepared.next, previous: current };
+}
+
 /** The caller holds the SQLite write transaction across the revision check and update. */
 export function updateTaskFlowRecordInDatabase(
   db: DatabaseSync,
@@ -292,4 +342,13 @@ export function updateTaskFlowRecordInDatabase(
   }
   upsertTaskFlowRowInDatabase(db, bindTaskFlowRecord(flow));
   return { applied: true, previous: current, flow };
+}
+
+/** The caller keeps the flow deletion and native metadata cleanup in one transaction. */
+export function deleteTaskFlowRowInDatabase(db: DatabaseSync, flowId: string): void {
+  executeSqliteQuerySync(
+    db,
+    getFlowRegistryKysely(db).deleteFrom("flow_runs").where("flow_id", "=", flowId),
+  );
+  deleteExecutionOwnerLifecycleMetadata({ db, ownerKind: "flow", ownerIds: [flowId] });
 }

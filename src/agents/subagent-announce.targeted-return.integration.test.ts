@@ -5,7 +5,7 @@ import type { ContinuationRecipientAuthorityBinding } from "../config/sessions/s
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { loadPendingSessionDeliveries } from "../infra/session-delivery-queue-storage.js";
 import type { QueuedSessionDelivery } from "../infra/session-delivery-queue-storage.js";
-import { selectAgentSystemEvents } from "../infra/system-event-ownership.js";
+import { resolveSystemEventQueueKey } from "../infra/system-event-ownership.js";
 import { peekSystemEventEntries, resetSystemEventsForTest } from "../infra/system-events.js";
 import { withTestDir } from "../test-helpers/temp-dir.js";
 
@@ -195,9 +195,14 @@ describe("subagent announce targeted continuation return integration", () => {
         expect.stringContaining(`[continuation:targeted-return] Delivered to ${targetSessionKey}`),
       );
 
-      const queuedEvents = peekSystemEventEntries(targetSessionKey);
-      expect(selectAgentSystemEvents(queuedEvents, "helper")).toEqual(queuedEvents);
-      expect(selectAgentSystemEvents(queuedEvents, "main")).toEqual([]);
+      const queuedEvents = peekSystemEventEntries(
+        resolveSystemEventQueueKey(targetSessionKey, "helper"),
+      );
+      expect(queuedEvents.length).toBeGreaterThan(0);
+      // Ownership is the agent-qualified queue key: main cannot derive a queue for this recipient.
+      expect(() => resolveSystemEventQueueKey(targetSessionKey, "main")).toThrow(
+        "System event owner does not match its session key.",
+      );
       const promptContext = await drainFormattedSystemEvents({
         cfg: mockConfig,
         agentId: "helper",

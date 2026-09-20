@@ -73,6 +73,7 @@ export function buildPersistedUserTurnMetadata(
     ...(senderName ? { senderName } : {}),
     ...(senderUsername ? { senderUsername } : {}),
     ...(senderIdentity && senderIdentity.id === senderId ? { senderIdentity } : {}),
+    ...(input.workContext ? { workContext: structuredClone(input.workContext) } : {}),
     ...(input.mentions?.length
       ? { humanMentions: input.mentions.map((mention) => ({ ...mention })) }
       : {}),
@@ -167,6 +168,10 @@ export function restorePreparedUserTurnOperationalMetaForRuntime<
   if (typeof senderIsOwner === "boolean") {
     runtimeMeta.senderIsOwner = senderIsOwner;
   }
+  // A rewritten runtime input cannot retain an alternate copy of the original words.
+  if (!isDeepStrictEqual(params.runtimeMessage.content, params.preparedMessage.content)) {
+    delete runtimeMeta.workContext;
+  }
   // Selections belong to the submitted bytes, not a hook's rewritten text.
   delete runtimeMeta.humanMentions;
   if (
@@ -223,7 +228,11 @@ export function preparePersistedUserTurnMessageForTranscriptWrite(
   const provenance = normalizeInputProvenance(Reflect.get(message, "provenance"));
   const originalMeta = message["__openclaw"];
   const originalContent =
-    originalMeta?.humanMentions === undefined ? undefined : structuredClone(message.content);
+    originalMeta?.humanMentions === undefined && originalMeta?.workContext === undefined
+      ? undefined
+      : structuredClone(message.content);
+  const workContext =
+    originalMeta?.workContext === undefined ? undefined : structuredClone(originalMeta.workContext);
   const humanMentions =
     originalMeta?.humanMentions === undefined
       ? undefined
@@ -286,6 +295,11 @@ export function preparePersistedUserTurnMessageForTranscriptWrite(
   };
   if (intent === undefined) {
     delete protectedMeta.intent;
+  }
+  // A redacting hook must not leave an alternate copy of the original text visible.
+  delete protectedMeta.workContext;
+  if (workContext !== undefined && isDeepStrictEqual(nextUserMessage.content, originalContent)) {
+    protectedMeta.workContext = workContext;
   }
   delete protectedMeta.humanMentions;
   if (humanMentions !== undefined && isDeepStrictEqual(nextUserMessage.content, originalContent)) {

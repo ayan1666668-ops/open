@@ -39,6 +39,15 @@ let updateSessionStoreForRecoveryShouldThrow = false;
 let updateSessionStoreForRecoveryRequiredWriteCalls = 0;
 let updateSessionStoreForRecoveryThrowOnRequiredWriteCall: number | undefined;
 
+// Dispatch revalidates the owner session before claiming a delegate, so the
+// default store must resolve every owner key with a stable lifecycle identity
+// (mirrors delegate-dispatch.test.ts). Tests that need an absent owner set {}.
+const loadOwnerSession = (_target: object, sessionKey: string | symbol) =>
+  typeof sessionKey === "string"
+    ? { sessionId: `session-${sessionKey}`, lifecycleRevision: "revision-1" }
+    : undefined;
+const ownerSessionStore = new Proxy<Record<string, unknown>>({}, { get: loadOwnerSession });
+
 vi.mock("../../agents/subagents/spawn/subagent-spawn.js", () => ({
   spawnSubagentDirect: (...args: unknown[]) => spawnSubagentDirectMock(...args),
 }));
@@ -319,7 +328,7 @@ beforeEach(() => {
   assertDelegateArtifactPolicyPreparedMock.mockClear();
   hasRecordedDelegateArtifactCompletionForProducerMock.mockClear().mockReturnValue(false);
   removeUnacceptedDelegateArtifactPolicyMock.mockClear();
-  loadSessionStoreForRecoveryMock.mockReset().mockReturnValue({});
+  loadSessionStoreForRecoveryMock.mockReset().mockReturnValue(ownerSessionStore);
   flowIdCounter = 0;
   listTaskFlowsShouldThrow = false;
   activeRegistryChildSessionKeys.clear();
@@ -1103,7 +1112,9 @@ describe("recoverAndReleaseStagedPostCompactionDelegates", () => {
       runningUpdatedAtOrBefore: Date.now(),
     });
 
-    expect(result).toMatchObject({ sessions: 0, dispatched: 0, failed: 0 });
+    // The corrupt row is scrubbed at listing time, so only the valid owner session
+    // reaches recovery; it is counted, then held because continuation is off.
+    expect(result).toMatchObject({ sessions: 1, dispatched: 0, failed: 0 });
     expect(spawnSubagentDirectMock).not.toHaveBeenCalled();
     expect(mockFlows.get(validFlowId)).toMatchObject({ status: "running" });
     expect(mockFlows.get(corruptFlowId)).toMatchObject({ status: "failed", stateJson: {} });
