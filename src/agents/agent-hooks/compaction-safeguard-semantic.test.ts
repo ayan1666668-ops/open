@@ -58,6 +58,30 @@ function runtimeWithChoices(choices: Record<string, string>): DecisionRuntimeV1 
 }
 
 describe("compaction semantic snapshot", () => {
+  it.each(["branchSummary", "compactionSummary"])(
+    "counts native %s payloads without changing their source",
+    (role) => {
+      const source = message({
+        role,
+        summary: "Keep staging-only changes and preserve the active approval request.",
+      });
+      const before = structuredClone(source);
+      const snapshot = buildCompactionSemanticSnapshot({ messages: [source] });
+      const expected = `${role}: Keep staging-only changes and preserve the active approval request.`;
+      expect(snapshot.segments[0]?.text).toBe(expected);
+      expect(snapshot.originalChars).toBe(expected.length);
+      expect(source).toEqual(before);
+    },
+  );
+
+  it("protects oversized native summaries and retains their full size for accounting", () => {
+    const source = message({ role: "compactionSummary", summary: "x".repeat(7000) });
+    const snapshot = buildCompactionSemanticSnapshot({ messages: [source] });
+    expect(snapshot.originalChars).toBe("compactionSummary: ".length + 7000);
+    expect(snapshot.segments[0]?.protected).toBe(true);
+    expect(snapshot.complete).toBe(false);
+  });
+
   it("keeps tool calls and their results in one source segment", () => {
     const user = message({
       role: "user",

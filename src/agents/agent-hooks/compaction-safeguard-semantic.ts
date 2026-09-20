@@ -178,7 +178,9 @@ function renderMessage(message: AgentMessage): {
   const toolName =
     message.role === "toolResult" && typeof message.toolName === "string" ? message.toolName : "";
   // SAFETY: Read only an optional unknown field across built-in and custom message roles.
-  const rawContent = (message as { content?: unknown }).content;
+  const payload = message as { content?: unknown; summary?: unknown };
+  const rawContent =
+    role === "branchSummary" || role === "compactionSummary" ? payload.summary : payload.content;
   const unsupported = hasUnsupportedContent(rawContent);
   const content = renderContent(rawContent).trim();
   const rendered = [toolName ? `${role}(${toolName})` : role, content].filter(Boolean).join(": ");
