@@ -589,9 +589,12 @@ describe("legacy state migration caller mode", () => {
       },
       receipts: result.stepReceipts,
     });
-    expect(
-      result.stepReceipts.find((receipt) => receipt.id === "legacy-main-session-keys"),
-    ).toMatchObject({
+    const legacyKeys = result.stepReceipts.find(
+      (receipt) => receipt.id === "legacy-main-session-keys",
+    );
+    // Report the origin before a subset match can strip it from the failure.
+    expect(legacyKeys?.refusal, JSON.stringify(legacyKeys?.originatingRefusal)).toBeUndefined();
+    expect(legacyKeys).toMatchObject({
       source: [
         { kind: "path", path: legacySessionStorePath },
         { kind: "sqlite", path: agentDatabasePath },
@@ -603,9 +606,6 @@ describe("legacy state migration caller mode", () => {
       requiredness: "conditional",
       outcome: "skipped",
     });
-    expect(
-      result.stepReceipts.find((receipt) => receipt.id === "legacy-main-session-keys")?.refusal,
-    ).toBeUndefined();
     expect(result.stepReceipts.find((receipt) => receipt.id === "shared-auth-store")).toMatchObject(
       {
         outcome: "skipped",
