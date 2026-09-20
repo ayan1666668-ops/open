@@ -2,10 +2,10 @@ import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { expectDefined } from "@openclaw/normalization-core";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, expect, it, vi } from "vitest";
 import { createDeferred } from "../../test/helpers/promise.js";
 import { createRuntimeTaskFlow } from "../plugins/runtime/runtime-taskflow.js";
-import { getActiveGatewayRootWorkCount } from "../process/gateway-work-admission.js";
+import * as gatewayWorkAdmission from "../process/gateway-work-admission.js";
 import { closeOpenClawStateDatabaseAsync } from "../state/openclaw-state-db.js";
 import { captureOpenClawStateWorkerContext } from "../state/openclaw-state-worker-context.js";
 import { captureTaskExecutionOwner } from "../tasks/task-execution-owner.js";
@@ -30,7 +30,7 @@ import {
   getTaskRegistryStore,
 } from "../tasks/task-registry.store.js";
 import { upsertTaskWithDeliveryStateToSqlite } from "../tasks/task-registry.store.sqlite.js";
-import type { TaskRecord } from "../tasks/task-registry.types.js";
+import type { TaskExecutionOwner, TaskRecord } from "../tasks/task-registry.types.js";
 import {
   resetTaskFlowRegistryForTests,
   resetTaskRegistryForTests,
@@ -45,7 +45,16 @@ import type { SqliteWorkerOperations, SqliteWorkerStore } from "./sqlite-worker-
 import * as workerAdmission from "./sqlite-worker-operation-admission.js";
 import * as workerStore from "./sqlite-worker-store.js";
 
-afterEach(() => vi.restoreAllMocks());
+let executionOwner: TaskExecutionOwner;
+
+beforeAll(async () => {
+  executionOwner = await exitedExecutionOwner();
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+});
 
 async function exitedExecutionOwner() {
   const child = spawn(process.execPath, ["-e", "process.stdin.resume()"], {
@@ -123,7 +132,6 @@ it.each([
 ] as const)(
   "keeps committed $operation flow reads current with unrelated pending work=$unrelatedPending and $completion",
   async ({ operation, unrelatedPending, completion }) => {
-    const executionOwner = await exitedExecutionOwner();
     await withOpenClawTestState({ layout: "state-only" }, async () => {
       resetTaskRegistryForTests({ persist: false });
       resetTaskFlowRegistryForTests({ persist: false });
@@ -159,6 +167,16 @@ it.each([
       upsertTaskWithDeliveryStateToSqlite({ task });
       const context = captureOpenClawStateWorkerContext();
       await ensureTaskFlowRegistryReadyAsync(context);
+      const detachedWork: Promise<unknown>[] = [];
+      const runDetached = gatewayWorkAdmission.runWithGatewayDetachedWorkContinuation;
+      vi.spyOn(gatewayWorkAdmission, "runWithGatewayDetachedWorkContinuation").mockImplementation(
+        <T>(run: () => Promise<T>, origin?: string) => {
+          const work = runDetached(run, origin);
+          detachedWork.push(work);
+          return work;
+        },
+      );
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
       const legacy = createRuntimeTaskFlow().bindSession({ sessionKey: ownerKey });
       const unrelatedRelease = createDeferred();
       const flowStore = getTaskFlowRegistryStore();
@@ -192,6 +210,7 @@ it.each([
           pending = ensureTaskRegistryReadyAsync(context);
         } else {
           retainTaskRegistryRestoreFlowObligations(context, getTaskRegistryStore(), [task]);
+          await vi.advanceTimersByTimeAsync(1_000);
         }
         await (completion === "refused admission" ? refused.promise : held.promise);
         const canonical = normalizeRestoredFlowRecord(
@@ -227,7 +246,8 @@ it.each([
         unrelatedRelease.resolve();
         const results = await Promise.allSettled([pending, unrelated]);
         try {
-          await vi.waitFor(() => expect(getActiveGatewayRootWorkCount()).toBe(0));
+          await Promise.allSettled(detachedWork);
+          expect(gatewayWorkAdmission.getActiveGatewayRootWorkCount()).toBe(0);
           if (completion !== "normal") {
             expect(results[0]?.status).toBe(
               completion === "refused admission" ? "fulfilled" : "rejected",
@@ -243,6 +263,7 @@ it.each([
             expect(read?.getTaskFlowById(flow.flowId)).toMatchObject(expected);
           }
         } finally {
+          vi.useRealTimers();
           await closeOpenClawStateDatabaseAsync();
           resetTaskRegistryForTests({ persist: false });
           resetTaskFlowRegistryForTests({ persist: false });
