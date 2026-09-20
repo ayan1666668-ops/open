@@ -491,11 +491,13 @@ export function authorizeControlUiPluginCookieRequest(
   }
   const cfg = getRuntimeConfig();
   let authenticatedProfile: AuthenticatedHttpUserProfile = {};
-  if (cfg.gateway?.roles) {
-    const profileId = grants[0]?.profileId;
-    if (!profileId || grants.some((grant) => grant.profileId !== profileId)) {
-      return null;
-    }
+  const profileId = grants[0]?.profileId;
+  if (grants.some((grant) => grant.profileId !== profileId) || (cfg.gateway?.roles && !profileId)) {
+    return null;
+  }
+  // A signed viewer identity also narrows session sharing when named roles are disabled.
+  // Only genuinely unbound legacy grants retain the anonymous shared-secret behavior.
+  if (profileId) {
     try {
       const profile = getUserProfileListItem(profileId);
       authenticatedProfile = resolveHttpProfile(profile.id, profile.updatedAt, cfg);
