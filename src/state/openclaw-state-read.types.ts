@@ -10,6 +10,7 @@ import type { AsyncWorkScope } from "../shared/async-work-scope.js";
 import type { ConfigMachineState } from "./openclaw-state-db.generated.js";
 import type { OpenClawStateWorkerContext } from "./openclaw-state-worker-context.types.js";
 import type { OpenClawStateWorkerErrorPayload } from "./openclaw-state-worker-error.js";
+import type { ProfileDisplayRow } from "./user-profiles.types.js";
 
 export type OpenClawStateReadLocation = {
   context: OpenClawStateWorkerContext;
@@ -25,6 +26,7 @@ export type OpenClawStateReadAuthority = {
 };
 
 export type OpenClawStateReadCommand =
+  | { type: "userProfiles.avatar.reconcile"; profileId: string }
   | { type: "audit.run.inspect"; input: ExecutionIdentityInspectionQuery }
   | { type: "fleet.list" }
   | { type: "fleet.get"; tenantId: string }
@@ -38,7 +40,13 @@ export type OpenClawStateReadRequest = {
   snapshotRoot?: string;
   command: OpenClawStateReadCommand | { type: "admit" };
 };
-export type OpenClawStateReadReply =
+export type OpenClawStateReadReply = (
+  | {
+      ok: true;
+      type: "userProfiles.avatar.reconcile";
+      sourceAdmitted: true;
+      profile: ProfileDisplayRow | undefined;
+    }
   | {
       ok: true;
       type: "audit.run.inspect";
@@ -59,7 +67,11 @@ export type OpenClawStateReadReply =
       sourceAdmitted?: true;
       message: string;
       error: OpenClawStateWorkerErrorPayload | undefined;
-    };
+    }
+) & {
+  /** A best-effort admission read completed without confirmed native cleanup. */
+  nativeCleanupFailure?: { error: OpenClawStateWorkerErrorPayload | undefined };
+};
 
 export type OpenClawStateReadOutcome =
   | { value: Extract<OpenClawStateReadReply, { ok: true }> }
