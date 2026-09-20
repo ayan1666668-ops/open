@@ -90,6 +90,9 @@ suite.define(() => {
                 const range = document.createRange();
                 range.selectNodeContents(name);
                 const textBox = range.getClientRects()[0];
+                if (!textBox) {
+                  throw new Error("Expected a rendered mention label");
+                }
                 const box = avatar.getBoundingClientRect();
                 return { offset: box.top - textBox.top, width: box.width, height: box.height };
               }),
