@@ -3213,7 +3213,6 @@ src/plugins/loader-shared.ts	2
 src/plugins/managed-npm-retention.ts	4
 src/plugins/manifest-capability-normalizers.ts	3
 src/plugins/manifest-install-owner.ts	1
-src/plugins/manifest-registry.ts	2
 src/plugins/manifest-setup-normalizers.ts	4
 src/plugins/manifest.ts	2
 src/plugins/marketplace.ts	6
@@ -3465,7 +3464,7 @@ src/tts/tts-settings.ts	4
 src/tts/tts-telephony.ts	1
 src/tts/voice-models.ts	4
 src/tui/components/chat-log.ts	2
-src/tui/embedded-backend.ts	4
+src/tui/embedded-backend.ts	3
 src/tui/gateway-chat.ts	2
 src/tui/tui-autocomplete.ts	1
 src/tui/tui-command-handlers.ts	5
