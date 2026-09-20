@@ -219,9 +219,9 @@ async function getGatewayCatalogPool(
             gatewayCatalog.current = undefined;
           }
           if (!options?.failedOwner) {
-            const { recoverPreparedModelRuntimeCatalogWorker } =
-              await import("./prepared-model-runtime.js");
-            await recoverPreparedModelRuntimeCatalogWorker(borrowers);
+            const { recoverPreparedModelRuntimeCatalogWorkerAtRuntime } =
+              await import("./prepared-model-runtime.catalog-recovery-runtime.js");
+            await recoverPreparedModelRuntimeCatalogWorkerAtRuntime(borrowers);
           }
         })()),
       close: async (error) => {

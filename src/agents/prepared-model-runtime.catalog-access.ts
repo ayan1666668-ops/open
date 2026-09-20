@@ -124,9 +124,9 @@ export function createFullModelCatalogAccess(params: {
       return;
     }
     const snapshot = params.inventoryOwner.snapshot;
-    void import("./prepared-model-runtime.js")
-      .then(async ({ replacePreparedModelRuntimeSnapshotAfterCatalogGenerationMismatch }) => {
-        await replacePreparedModelRuntimeSnapshotAfterCatalogGenerationMismatch(snapshot);
+    void import("./prepared-model-runtime.catalog-recovery-runtime.js")
+      .then(async ({ replacePreparedModelRuntimeSnapshotAtRuntime }) => {
+        await replacePreparedModelRuntimeSnapshotAtRuntime(snapshot);
       })
       .catch((recoveryError: unknown) => {
         process.emitWarning(
