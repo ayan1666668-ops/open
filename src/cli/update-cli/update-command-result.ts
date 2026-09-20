@@ -37,7 +37,7 @@ import { isFailedUpdateStep, updateRunStepsFromResultStep } from "../../infra/up
 import type { UpdateRunResult, UpdateStepResult } from "../../infra/update-runner.js";
 import { hasCommandProcessCleanupError } from "../../process/exec-result.js";
 import { defaultRuntime } from "../../runtime.js";
-import type { UpdateRecoveryStep } from "../../shared/update-outcome.js";
+import { isVerifiedUpdateRollback, type UpdateRecoveryStep } from "../../shared/update-outcome.js";
 import type { OpenClawSchemaVersions } from "../../state/openclaw-schema-versions.js";
 import { formatCliCommand } from "../command-format.js";
 import {
@@ -401,15 +401,6 @@ export function mergeWindowsTaskRecoveryFailure(
         )
       : recoveryError,
   };
-}
-
-/** The restored package and its running service have both passed verification. */
-export function isVerifiedUpdateRollback(result: UpdateRunResult): boolean {
-  return (
-    result.recovery?.serviceRestartSafe === true &&
-    result.recovery.packageRollbackVerified === true &&
-    result.recovery.service === "healthy"
-  );
 }
 
 export function resolveAutomaticUpdateTriage(
