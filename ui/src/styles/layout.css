@@ -1111,7 +1111,7 @@ openclaw-settings-save-indicator:empty {
   --sidebar-lead: 20px;
   --sidebar-row-gap: 8px;
   --sidebar-text-offset: calc(var(--sidebar-inset) + var(--sidebar-lead) + var(--sidebar-row-gap));
-  --sidebar-pad-x: 10px;
+  --sidebar-pad-x: 16px;
   --sidebar-session-link-padding-block: 4px;
   --sidebar-session-row-floor: 30px;
   --sidebar-title-line-height: calc(18px * var(--control-ui-text-scale));
