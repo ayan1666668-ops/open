@@ -10,6 +10,7 @@ import { readWorkspaceStateSnapshotForDirectoryInDatabase } from "../agents/work
 import { ExecutionDecisionCursorError } from "../audit/execution-decision-receipts.js";
 import { inspectExecutionIdentityRunInDatabase } from "../audit/execution-identity-context.js";
 import { getFleetCellInDatabase, listFleetCellsInDatabase } from "../fleet/registry.kernel.js";
+import { readExecApprovalsConfigRow } from "../infra/exec-approvals-sqlite.js";
 import { runSqliteDeferredTransactionSync } from "../infra/sqlite-transaction.js";
 import { runWithSqliteWorkerStateContext } from "../infra/sqlite-worker-state-context.js";
 import { withStateDatabaseCoordinatorRuntimeDirectory } from "../infra/state-database-coordinator.js";
@@ -50,6 +51,7 @@ function isReadRequest(input: unknown): input is OpenClawStateReadRequest {
     typeof coordinatorRuntime.directory === "string" &&
     typeof coordinatorRuntime.keepAlive === "boolean" &&
     (input.command.type === "admit" ||
+      input.command.type === "exec-approvals.read" ||
       input.command.type === "agentDatabaseRegistry.read" ||
       (input.command.type === "userProfiles.avatar.reconcile" &&
         typeof input.command.profileId === "string") ||
@@ -126,6 +128,14 @@ serveWorkerTasks((input): OpenClawStateReadReply => {
           return withOpenClawStateReadOnlyLocation(
             ({ db }) => {
               sourceAdmitted = true;
+              if (command.type === "exec-approvals.read") {
+                return {
+                  ok: true,
+                  type: command.type,
+                  sourceAdmitted,
+                  row: readExecApprovalsConfigRow(db),
+                };
+              }
               if (command.type === "onboardingRecommendations.read") {
                 return {
                   ok: true,

@@ -8,6 +8,7 @@ import {
   readControlPlaneUpdateSentinelMeta,
 } from "../../infra/update-control-plane-sentinel.js";
 import { hasDeferredUpdateModelRetirement } from "../../infra/update-deferred-model-retirement.js";
+import { writeUpdateRunReportArtifact } from "../../infra/update-failure-report-artifact.js";
 import { resolveUpdateInstallRoot } from "../../infra/update-install-root.js";
 import { createManagedHandoffProcessIdentityReader } from "../../infra/update-managed-service-handoff-process.js";
 import type { HandoffProcessIdentity } from "../../infra/update-managed-service-handoff-schema.js";
@@ -96,7 +97,7 @@ export async function resumePostCoreUpdate(params: ResumePostCoreUpdateParams): 
     );
     const record =
       runId && !params.opts.run && !parentOwnsCompletion ? getUpdateRun(runId, { env }) : undefined;
-    let pluginUpdate: PostCorePluginUpdateResult;
+    let completed: Awaited<ReturnType<typeof resumePostCoreUpdateInternal>>;
     if (runId && record && isUnfencedUpdateDriver(record.before.version)) {
       if (!parent) {
         throw new UpdateCommandRecoveryPendingError(
@@ -142,7 +143,7 @@ export async function resumePostCoreUpdate(params: ResumePostCoreUpdateParams): 
           postCore: true,
         });
       }
-      pluginUpdate = await withUpdateCommandExecutor(
+      completed = await withUpdateCommandExecutor(
         runId,
         async (executor) => {
           const fence = await executor.enter(root);
@@ -181,8 +182,9 @@ export async function resumePostCoreUpdate(params: ResumePostCoreUpdateParams): 
         },
       );
     } else {
-      pluginUpdate = await resumePostCoreUpdateInternal(resumed);
+      completed = await resumePostCoreUpdateInternal(resumed);
     }
+    const { pluginUpdate, result } = completed;
     // Shipped parents may stop this child as soon as this file appears. Publish
     // only after the executor has joined its Doctor and released native custody.
     if (process.env[POST_CORE_UPDATE_RESULT_PATH_ENV]) {
@@ -192,14 +194,7 @@ export async function resumePostCoreUpdate(params: ResumePostCoreUpdateParams): 
       );
     }
     if (params.opts.json && !process.env[POST_CORE_UPDATE_RESULT_PATH_ENV]) {
-      defaultRuntime.writeJson({
-        status: pluginUpdate.status === "error" ? "error" : "ok",
-        mode: "unknown",
-        root: params.root,
-        steps: [],
-        durationMs: 0,
-        postUpdate: { plugins: pluginUpdate },
-      } satisfies UpdateRunResult);
+      defaultRuntime.writeJson(result);
     }
   } catch (error) {
     // Publish only after phase cleanup releases its leases. The parent owns
@@ -217,7 +212,7 @@ export async function resumePostCoreUpdate(params: ResumePostCoreUpdateParams): 
 
 async function resumePostCoreUpdateInternal(
   params: ResumePostCoreUpdateParams,
-): Promise<PostCorePluginUpdateResult> {
+): Promise<{ pluginUpdate: PostCorePluginUpdateResult; result: UpdateRunResult }> {
   const { assertCurrent } = createUpdateCommandAuthority({ opts: params.opts }, "Post-core update");
   assertCurrent?.();
   if (
@@ -357,6 +352,15 @@ async function resumePostCoreUpdateInternal(
   const { pluginUpdate } = outcome;
   assertCurrent?.();
   const runId = process.env[UPDATE_RUN_ID_ENV]?.trim();
+  const result: UpdateRunResult = {
+    status: pluginUpdate.status === "error" ? "error" : "ok",
+    mode: "unknown",
+    root: params.root,
+    runId,
+    steps: pluginUpdate.doctorLint ? [pluginUpdate.doctorLint] : [],
+    durationMs: 0,
+    postUpdate: { plugins: pluginUpdate },
+  };
   if (process.env[POST_CORE_UPDATE_ENV] === "1" && runId) {
     try {
       recordPostCoreUpdateEvidence(runId, {
@@ -365,15 +369,29 @@ async function resumePostCoreUpdateInternal(
             ? await readPackageUpdateIdentity(params.root)
             : undefined,
         warnings: collectPostCorePluginAdvisories(pluginUpdate),
+        doctorLint: pluginUpdate.doctorLint,
       });
+      if (!parentOwnsCompletion && pluginUpdate.doctorLint) {
+        const reportPath = await writeUpdateRunReportArtifact({
+          result,
+          detached: true,
+          report: {
+            markdown:
+              "Post-plugin Doctor diagnostics; update completion is pending with the parent updater.",
+          },
+        });
+        defaultRuntime.error(
+          `Post-plugin Doctor report (update completion pending): ${reportPath}`,
+        );
+      }
     } catch (error) {
       defaultRuntime.error(
-        `Post-core update evidence could not be saved to update history: ${formatErrorMessage(error)} Update completion may require Doctor verification.`,
+        `Post-core update evidence could not be saved: ${formatErrorMessage(error)} Update completion may require Doctor verification.`,
       );
     }
   }
   assertCurrent?.();
-  return pluginUpdate;
+  return { pluginUpdate, result };
 }
 
 /** Candidate code owns this phase whether reached by CLI resume or migrated finalization. */

@@ -533,6 +533,15 @@ compatibility paths retain their native owners. Mutable workspace reads, writes,
 and Doctor alias repair keep their existing transaction owners. Schemas,
 retention, and update behavior are unchanged.
 
+MCP grant preparation reads exec approval policy through the independent shared-state
+read worker. The policy owner captures the original database path before yielding
+and keeps legacy-file migration checks, normalization, fail-closed results, and
+warning throttling on the host. The reader preserves inherited snapshots and joins
+accepted reads before disposable source cleanup. Missing stores stay absent, and
+worker failures never retry through host SQLite. Synchronous execution-authorization
+callbacks and policy mutation, restore, and initialization keep their existing
+owners.
+
 Use Kysely for ordinary queries and mutations. The current
 `getNodeSqliteKysely` facade compiles queries; `executeSqliteQuerySync` runs them
 on the supplied `node:sqlite` connection. Calling Kysely's asynchronous
@@ -581,6 +590,17 @@ An unadmitted worker-capacity refusal leaves cold registry preparation retryable
 it does not become a permanent restore failure.
 Task observation waits for each acknowledged row's required flow effects.
 Acknowledged task mutations are never replayed.
+
+Active core Gateway task completion retains the creation-time registry owners and
+updates its original run/runtime/session selection through the shared-state worker.
+Each selected task is reread against its exact receipt and current Gateway/run
+owner, and its publication and flow effects settle before the next sibling is
+admitted. Cancellation can still record its terminal outcome while its producer
+holds the Gateway lease. A replaced Gateway or adopted task cannot authorize a
+stale write; changing the registered runtime cannot redirect an existing core run.
+Deferred publication or required flow work stops settlement before another task is
+admitted. The committed result survives, and the existing bounded flow-repair owner
+retains its obligation without replaying that task write.
 
 Agent-event task progress uses the same shared-state worker and publication owner.
 Ingestion retains exact task, run, and backing identities without waiting for a native
@@ -771,6 +791,15 @@ the selected state environment before waiting and recheck retired-file refusal o
 that original root before accepting the worker reply. Managed nodes retain the
 canonical existing-schema scope without taking over schema repair. Configuration
 replacement retains its synchronous transaction owner.
+
+First-use session-group registration runs in the shared-state worker. Existing
+categories return without writer admission; missing names are rechecked inside
+the synchronous transaction that allocates their position and inserts them.
+Session creation and patch callers await registration before publishing a groups
+invalidation. Both preserve the durable session result and warn when catalog
+bookkeeping fails. Patches also refresh only the catalog on uncertain outcomes;
+retrying the same category assignment repairs a missing registration. Catalog
+reads and other mutations, defaults, and sidebar ordering retain their owners.
 
 The host captures the database path, state environment, and current admission
 before awaited work. The shared worker owns its canonical connection and schema
