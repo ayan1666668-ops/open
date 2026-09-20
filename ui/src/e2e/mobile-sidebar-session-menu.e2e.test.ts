@@ -49,7 +49,7 @@ suite.define(() => {
 
       const row = page.locator(`[data-session-key="${sessionKey}"]`);
       await row.waitFor({ state: "visible" });
-      await row.getByRole("button", { name: "Open session menu" }).click();
+      await row.click({ button: "right" });
 
       const menu = page.getByRole("menu", { name: "Actions for Mobile sidebar menu" });
       await menu.waitFor({ state: "visible" });

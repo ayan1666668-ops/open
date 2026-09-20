@@ -94,7 +94,8 @@ const CATALOG_CONTROL_SELECTORS = [
   ".sidebar-recent-session__link",
   "[data-child-session-toggle]",
   "[data-sidebar-session-pin]",
-  "[data-catalog-session-menu], [data-session-menu]",
+  "[data-sidebar-session-archive]",
+  "[data-catalog-session-menu]",
 ] as const;
 
 function catalogRowRef(
@@ -122,7 +123,9 @@ function catalogRowRef(
     if (menuOpen) {
       params.onCatalogMenuTriggerRendered(
         catalogKey,
-        element.querySelector(CATALOG_CONTROL_SELECTORS[3]) ?? undefined,
+        element.querySelector("[data-catalog-session-menu]") ??
+          element.querySelector(".sidebar-recent-session__link") ??
+          undefined,
       );
     }
     if (restoreFocus) {

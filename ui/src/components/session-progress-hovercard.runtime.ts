@@ -36,7 +36,7 @@ let nextHovercardId = 0;
 function sessionHovercardMenuOpen(owner: ParentNode): boolean {
   return (
     owner.querySelector(
-      '[data-session-menu][aria-expanded="true"], [data-catalog-session-menu][aria-expanded="true"]',
+      '.sidebar-recent-session__link[aria-expanded="true"], [data-catalog-session-menu][aria-expanded="true"]',
     ) !== null
   );
 }

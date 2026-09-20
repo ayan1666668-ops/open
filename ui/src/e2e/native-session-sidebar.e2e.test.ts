@@ -270,7 +270,7 @@ suite.define(() => {
       await page.goto(`${suite.server.baseUrl}chat`);
       const row = page.locator(`[data-session-key="${adoptedKey}"]`);
       await row.waitFor({ state: "visible" });
-      const menuButton = row.locator('[data-session-menu="true"]');
+      const menuTrigger = row.locator(".sidebar-recent-session__link");
       const catalogMenu = () => page.locator("openclaw-catalog-session-menu");
       const menuValues = async () =>
         catalogMenu()
@@ -298,20 +298,13 @@ suite.define(() => {
         }
       };
 
-      await row.hover();
-      await menuButton.hover();
-      await menuButton.click();
-      await assertCatalogMenu("01-button");
-      await page.keyboard.press("Escape");
-      await expect.poll(() => catalogMenu().count()).toBe(0);
-
       await row.click({ button: "right" });
-      await assertCatalogMenu("02-context");
+      await assertCatalogMenu("context");
       await page.keyboard.press("Escape");
       await expect.poll(() => catalogMenu().count()).toBe(0);
 
       for (const key of ["ContextMenu", "Shift+F10"]) {
-        await menuButton.focus();
+        await menuTrigger.focus();
         await page.keyboard.press(key);
         await assertCatalogMenu(key);
         await page.keyboard.press("Escape");
