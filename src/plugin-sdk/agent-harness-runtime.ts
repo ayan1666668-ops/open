@@ -10,9 +10,9 @@ import {
   setAgentRunAttemptTerminalFailure,
 } from "../agents/agent-run-terminal-outcome.js";
 import {
-  requestDeferredPluginToolApproval as requestDeferredPluginToolApprovalInternal,
-  runBeforeToolCallHook as runBeforeToolCallHookInternal,
-  wrapToolWithBeforeToolCallHook as wrapToolWithBeforeToolCallHookInternal,
+  requestDeferredPluginToolApprovalCore as requestDeferredPluginToolApprovalInternal,
+  runBeforeToolCallHookCore as runBeforeToolCallHookInternal,
+  wrapToolWithBeforeToolCallHookCore as wrapToolWithBeforeToolCallHookInternal,
 } from "../agents/agent-tools.before-tool-call.js";
 import type {
   DeferredPluginToolApproval as InternalDeferredPluginToolApproval,
