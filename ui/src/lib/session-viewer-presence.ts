@@ -119,7 +119,9 @@ function createStore(gateway: ApplicationGateway): SessionViewerPresenceStore {
         document.addEventListener("pointerdown", onActivity, true);
         document.addEventListener("pointermove", onActivity, true);
         document.addEventListener("keydown", onActivity, true);
-        document.addEventListener("scroll", onActivity, true);
+        // Auto-follow also emits scroll events; only input can renew human activity.
+        document.addEventListener("wheel", onActivity, true);
+        document.addEventListener("touchmove", onActivity, true);
         document.addEventListener("visibilitychange", onVisibility);
       }
       knownClient = gateway.snapshot.client;
@@ -140,7 +142,8 @@ function createStore(gateway: ApplicationGateway): SessionViewerPresenceStore {
         document.removeEventListener("pointerdown", onActivity, true);
         document.removeEventListener("pointermove", onActivity, true);
         document.removeEventListener("keydown", onActivity, true);
-        document.removeEventListener("scroll", onActivity, true);
+        document.removeEventListener("wheel", onActivity, true);
+        document.removeEventListener("touchmove", onActivity, true);
         document.removeEventListener("visibilitychange", onVisibility);
       }
       requestGeneration += 1;

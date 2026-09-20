@@ -396,7 +396,8 @@ internal class ConversationReplyNotifier(
       if (!canPostNotifications()) return@synchronized false
       val generation = checkNotNull(publicationGeneration(target, PendingIntent.FLAG_CANCEL_CURRENT))
       try {
-        post(target, buildAssistantReplyNotification(target, text, generation, agentName, sessionTitle), agentName, sessionTitle)
+        ensureConversationShortcut(target, agentName, sessionTitle)
+        post(target, buildAssistantReplyNotification(target, text, generation, agentName, sessionTitle))
         true
       } catch (err: Throwable) {
         // Cancel only this token: cancelling an obsolete token can remove its replacement's lookup key.
@@ -439,10 +440,21 @@ internal class ConversationReplyNotifier(
         } else {
           NotificationCompat.Action.Builder(0, nativeString("Open conversation"), contentIntent).build()
         }
+      // The published shortcut retains labels across notifier instances and notification dismissal.
+      val title =
+        runCatching {
+          ShortcutManagerCompat
+            .getShortcuts(
+              context,
+              ShortcutManagerCompat.FLAG_MATCH_DYNAMIC or ShortcutManagerCompat.FLAG_MATCH_PINNED or ShortcutManagerCompat.FLAG_MATCH_CACHED,
+            ).firstOrNull { it.id == target.shortcutId }
+            ?.shortLabel
+        }.getOrNull() ?: conversationNotificationTitle(target.agentId, null, null)
       // Reply outcomes update the notice; Android may retain and re-enqueue a canceled direct reply.
       post(
         target,
         baseBuilder(target, contentIntent, generation)
+          .setContentTitle(title)
           .setSilent(outcome == ConversationNotificationReplyOutcome.Admitted)
           .setContentText(text)
           .setStyle(NotificationCompat.BigTextStyle().bigText("$text\n\n${reply.take(maxReplyLength)}"))
@@ -455,11 +467,8 @@ internal class ConversationReplyNotifier(
   private fun post(
     target: ConversationNotificationTarget,
     notification: Notification,
-    agentName: String? = null,
-    sessionTitle: String? = null,
   ) {
     ensureChannel()
-    ensureConversationShortcut(target, agentName, sessionTitle)
     notificationManager().notify(target.notificationTag, conversationNotificationId, notification)
   }
 

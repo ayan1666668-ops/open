@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { upsertSessionEntryCore } from "../../../src/config/sessions/session-accessor.js";
+import * as automationIndex from "../../../src/gateway/session-automation-index.js";
 import {
   disconnectGatewayClient,
   getGatewayE2ePortBlock,
@@ -11,6 +12,7 @@ import {
 import { createOpenClawTestState } from "../../../src/test-utils/openclaw-test-state.js";
 import { createDeferred, withTestTimeout } from "../../../test/helpers/promise.js";
 import { createRequireRecord } from "../../../test/helpers/record.js";
+import { revealChatModelOption } from "../test-helpers/select-picker-e2e.ts";
 import { createChatFlowE2eSuite, installMockGateway } from "./chat-flow.test-support.ts";
 import { createControlUiE2eContextOptions } from "./control-ui-e2e-suite.test-support.ts";
 
@@ -133,6 +135,7 @@ suite.define(() => {
         const requestsBeforeOpen = (await gateway.getRequests("models.list")).length;
         const sessionRequestsBeforeOpen = (await gateway.getRequests("sessions.list")).length;
         await trigger.click();
+        await revealChatModelOption(currentRow);
         await expect.poll(() => currentRow.isVisible()).toBe(true);
         expect(await picker.textContent()).toContain("Pinned session account");
         expect(await picker.locator("[data-chat-model-catalog-state]").textContent()).toContain(
@@ -152,6 +155,7 @@ suite.define(() => {
         expect(await picker.textContent()).toContain("Pinned session account");
         await trigger.click();
         await trigger.click();
+        await revealChatModelOption(currentRow);
         await expect.poll(() => currentRow.isVisible()).toBe(true);
         expect(await gateway.getRequests("models.list")).toHaveLength(requestsBeforeOpen);
         expect(await gateway.getRequests("sessions.list")).toHaveLength(sessionRequestsBeforeOpen);
@@ -179,6 +183,14 @@ suite.define(() => {
       const sessionKey = "agent:alpha:session-mutation";
       const frames: unknown[] = [];
       let gateway: Awaited<ReturnType<typeof startGatewayWithClient>> | undefined;
+      const cronBindingsReady = createDeferred();
+      const registerAutomationSource = automationIndex.registerSessionAutomationSource;
+      const cronRegistration = vi
+        .spyOn(automationIndex, "registerSessionAutomationSource")
+        .mockImplementation((...args) => {
+          registerAutomationSource(...args);
+          cronBindingsReady.resolve();
+        });
       try {
         state.applyEnv();
         await state.writeAuthProfiles(
@@ -239,6 +251,12 @@ suite.define(() => {
             },
           },
         });
+        // Cron publishes a catalog invalidation after startupSettled; finish it before the browser scenario.
+        await withTestTimeout(
+          cronBindingsReady.promise,
+          10_000,
+          "Cron binding publication did not finish",
+        );
         const admin = gateway.client;
         await upsertSessionEntryCore(
           { agentId: "alpha", sessionKey },
@@ -368,6 +386,7 @@ suite.define(() => {
             await expect.poll(() => account.isVisible()).toBe(true);
             await expect.poll(() => account.textContent()).toContain("Account A");
             const row = picker.locator('[data-chat-model-option="fixture/first"]');
+            await revealChatModelOption(row);
             await expect.poll(() => row.isVisible()).toBe(true);
             expect(await row.isEnabled()).toBe(true);
             expect(catalogRequests.size).toBe(requestsBeforeOpen);
@@ -378,6 +397,7 @@ suite.define(() => {
             heldReplies.splice(0).forEach((send) => send());
             await trigger.click();
             await trigger.click();
+            await revealChatModelOption(row);
             await expect.poll(() => row.isVisible()).toBe(true);
             expect(catalogRequests.size).toBe(requestsBeforeOpen);
             return;
@@ -420,6 +440,7 @@ suite.define(() => {
           }
           await expect.poll(() => account.textContent()).toContain("Account B");
           const selectedRow = picker.locator('[data-chat-model-option="fixture/second"]');
+          await revealChatModelOption(selectedRow);
           await expect.poll(() => selectedRow.isVisible()).toBe(true);
           expect(await selectedRow.isEnabled()).toBe(true);
           expect(await account.textContent()).not.toContain("Account A");
@@ -431,6 +452,7 @@ suite.define(() => {
           expect(catalogRequests.size).toBe(readsBeforeReopen);
         });
       } finally {
+        cronRegistration.mockRestore();
         await writeFile(
           path.join(suite.artifactDir, `catalog-mutation-${replacementState}.json`),
           JSON.stringify(frames, null, 2),

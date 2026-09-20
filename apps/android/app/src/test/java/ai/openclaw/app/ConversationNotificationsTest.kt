@@ -12,6 +12,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.pm.ShortcutManager
 import android.net.Uri
 import android.os.Parcel
 import androidx.core.app.NotificationCompat
@@ -496,6 +497,41 @@ class ConversationNotificationsTest {
         notification.publicVersion.extras
           .toString()
           .contains("Review"),
+      )
+    }
+  }
+
+  @Test
+  fun replyOutcomesRetainPinnedConversationLabelsAfterNotificationDismissal() {
+    val shortcuts = context.getSystemService(ShortcutManager::class.java)
+    for (outcome in ConversationNotificationReplyOutcome.entries) {
+      val original = postAssistantReply(target, "Done", "Review agent", "Troubleshooting")
+      val reply = replyFrom(original)
+      val title = "Review agent · Troubleshooting"
+      val published = (shortcuts.dynamicShortcuts + shortcuts.pinnedShortcuts).first { it.id == target.shortcutId }
+      assertEquals(title, published.shortLabel.toString())
+      assertTrue(shortcuts.requestPinShortcut(published, null))
+      shortcuts.removeDynamicShortcuts(listOf(target.shortcutId))
+      assertTrue(shortcuts.dynamicShortcuts.none { it.id == target.shortcutId })
+      val posted = notificationManager().activeNotifications.single { it.tag == target.notificationTag }
+      notificationManager().cancel(posted.tag, posted.id)
+
+      assertTrue(ConversationReplyNotifier(context).completeReply(reply, "Continue", outcome) { true })
+
+      val notification = currentNotification()
+      assertEquals(title, notification.extras.getCharSequence(Notification.EXTRA_TITLE).toString())
+      assertEquals(
+        title,
+        shortcuts.pinnedShortcuts
+          .single { it.id == target.shortcutId }
+          .shortLabel
+          .toString(),
+      )
+      assertEquals(
+        "OpenClaw",
+        notification.publicVersion.extras
+          .getCharSequence(Notification.EXTRA_TITLE)
+          .toString(),
       )
     }
   }

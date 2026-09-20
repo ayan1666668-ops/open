@@ -323,7 +323,13 @@ describe("session viewer presence store", () => {
     expect(harness.request).toHaveBeenLastCalledWith(SESSION_VIEWERS_SET_METHOD, {
       sessionKeys: ["agent:main:main"],
     });
-    await vi.advanceTimersByTimeAsync(119_999);
+    // Stream auto-follow emits scroll events without human input.
+    for (let scroll = 0; scroll < 3; scroll += 1) {
+      await vi.advanceTimersByTimeAsync(30_000);
+      document.dispatchEvent(new Event("scroll"));
+      await flushSync();
+    }
+    await vi.advanceTimersByTimeAsync(29_999);
     expect(harness.request).toHaveBeenLastCalledWith(SESSION_VIEWERS_SET_METHOD, {
       sessionKeys: ["agent:main:main"],
     });
@@ -332,11 +338,17 @@ describe("session viewer presence store", () => {
       sessionKeys: [],
     });
     expect(vi.getTimerCount()).toBe(0);
-    document.dispatchEvent(new Event("pointerdown"));
-    await flushSync();
-    expect(harness.request).toHaveBeenLastCalledWith(SESSION_VIEWERS_SET_METHOD, {
-      sessionKeys: ["agent:main:main"],
-    });
+    for (const activityEvent of ["pointerdown", "wheel", "touchmove"]) {
+      document.dispatchEvent(new Event(activityEvent));
+      await flushSync();
+      expect(harness.request).toHaveBeenLastCalledWith(SESSION_VIEWERS_SET_METHOD, {
+        sessionKeys: ["agent:main:main"],
+      });
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(harness.request).toHaveBeenLastCalledWith(SESSION_VIEWERS_SET_METHOD, {
+        sessionKeys: [],
+      });
+    }
     store.unwatch(owner);
     await flushSync();
     expect(vi.getTimerCount()).toBe(0);
