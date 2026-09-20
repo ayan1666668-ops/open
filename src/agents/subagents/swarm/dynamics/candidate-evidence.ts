@@ -65,9 +65,15 @@ export type EffectRequest = {
   authority: "request-only";
 };
 
-const MEASUREMENT_KINDS: readonly MeasurementKind[] = [
-  "test", "static-analysis", "replay", "performance", "security", "formal", "human",
-];
+const MEASUREMENT_KINDS = new Set<MeasurementKind>([
+  "test",
+  "static-analysis",
+  "replay",
+  "performance",
+  "security",
+  "formal",
+  "human",
+]);
 
 function requireText(value: unknown, name: string): asserts value is string {
   if (typeof value !== "string" || !value.trim()) {
@@ -102,7 +108,7 @@ function canonical(value: unknown, parents = new Set<object>()): string {
       return `[${Array.from(value, (item) => canonical(item, parents)).join(",")}]`;
     }
     const record = value as Record<string, unknown>;
-    return `{${Object.keys(record).sort().map(
+    return `{${Object.keys(record).toSorted().map(
       (key) => `${JSON.stringify(key)}:${canonical(record[key], parents)}`,
     ).join(",")}}`;
   } finally {
@@ -121,7 +127,7 @@ export function verificationContractDigest(contract: VerificationContract): stri
   const ids = new Set<string>();
   for (const requirement of contract.requirements) {
     requireText(requirement.id, "requirement id");
-    if (ids.has(requirement.id) || !MEASUREMENT_KINDS.includes(requirement.kind)) {
+    if (ids.has(requirement.id) || !MEASUREMENT_KINDS.has(requirement.kind)) {
       throw new Error("verification requirements must have unique ids and valid kinds");
     }
     if (!Number.isSafeInteger(requirement.minIndependentConfirmations) || requirement.minIndependentConfirmations < 1) {
@@ -149,7 +155,7 @@ export function candidateIdentity(manifest: CandidateManifest): string {
 }
 
 function validateMeasurement(measurement: MeasurementReceipt): void {
-  if (measurement.version !== 1 || typeof measurement.passed !== "boolean" || !MEASUREMENT_KINDS.includes(measurement.kind)) {
+  if (measurement.version !== 1 || typeof measurement.passed !== "boolean" || !MEASUREMENT_KINDS.has(measurement.kind)) {
     throw new Error("invalid measurement version, status, or kind");
   }
   for (const key of [
@@ -189,7 +195,7 @@ export function verifyCandidate(params: {
     }
     byId.set(measurement.measurementId, measurement);
   }
-  const relevant = [...byId.keys()].sort().map((id) => byId.get(id)!);
+  const relevant = [...byId.keys()].toSorted().map((id) => byId.get(id)!);
   const failedMeasurementIds = relevant.filter((item) => !item.passed).map((item) => item.measurementId);
   if (failedMeasurementIds.length > 0) {
     return { ...binding, status: "rejected", missingRequirementIds: [], failedMeasurementIds };
