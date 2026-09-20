@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { AsyncLocalStorage } from "node:async_hooks";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -6,7 +7,7 @@ import { setImmediate as nextTurn } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
-import { AsyncWorkScope } from "../shared/async-work-scope.js";
+import { AsyncWorkScope, trackAsyncWork } from "../shared/async-work-scope.js";
 import { createDeferredCore } from "../shared/deferred.js";
 import { resolveGlobalSingleton } from "../shared/global-singleton.js";
 import { detectBundleManifestFormat, loadBundleManifest } from "./bundle-manifest.js";
@@ -689,6 +690,32 @@ it("lets the last cache borrower own retirement after the requesting scope close
     await Promise.allSettled([retirement, released, drain]);
   }
 });
+
+it.each([false, true])(
+  "owns cache cleanup when retirement runs in a closed request scope (borrowed: %s)",
+  async (borrowed) => {
+    const requester = new AsyncWorkScope();
+    const cache = createPluginCache();
+    const instance = new PluginInstance("closed-cache-borrower");
+    cache.instances.add(instance);
+    const cleaned = vi.fn();
+    instance.lifecycle.onDispose(() => trackAsyncWork(cleaned));
+    const release = borrowed ? retainPluginCache(cache) : undefined;
+    const run = requester.run(() => AsyncLocalStorage.snapshot());
+    await requester.drain();
+    try {
+      const retirement = run(() => retirePluginCache(cache));
+      void retirement.catch(() => {});
+      run(() => release?.());
+      await expect(retirement).resolves.toMatchObject({ failures: [] });
+      expect(cleaned).toHaveBeenCalledOnce();
+      await expect(requester.track(() => undefined)).rejects.toThrow("Async work scope is closed");
+    } finally {
+      release?.();
+      await instance.dispose();
+    }
+  },
+);
 
 it("retires a cache released by a borrower captured before package replacement", async () => {
   const requester = new AsyncWorkScope();

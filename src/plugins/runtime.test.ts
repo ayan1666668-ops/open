@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { setImmediate as nextTurn } from "node:timers/promises";
 import { beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
+import { GatewayConnectionWork } from "../gateway/server-connection-work.js";
+import { runGatewayCloseSteps } from "../gateway/server-shutdown.js";
 import { AsyncWorkScope, trackAsyncWork } from "../shared/async-work-scope.js";
 import { createDeferredCore } from "../shared/deferred.js";
 import { resolveGlobalSingleton } from "../shared/global-singleton.js";
@@ -212,51 +214,82 @@ describe("setActivePluginRegistry", () => {
     expect(listImportedRuntimePluginIds()).toEqual(["broken-plugin"]);
   });
 
-  it("registers retirement before its caller drains across asynchronous initialization", async () => {
-    const owner = new AsyncWorkScope();
-    const registry = createEmptyPluginRegistry();
-    const record = createPluginRecord({ id: "closing-scope", status: "loaded" });
-    registry.plugins.push(record);
-    const instance = new PluginInstance(record.id, { record, registry });
-    const initialize = createDeferredCore();
-    const cleanupStarted = createDeferredCore();
-    const finishCleanup = createDeferredCore();
-    const cleaned = vi.fn();
-    instance.lifecycle.onDispose(async () => {
-      cleanupStarted.resolve();
-      await finishCleanup.promise;
-      cleaned();
-    });
-    let retirement: ReturnType<typeof disposePluginRegistryInstances> | undefined;
-    const request = owner.track(() => {
-      retirement = disposePluginRegistryInstances(registry, undefined, {
-        beforeDispose: () => initialize.promise,
+  it.each(["instance", "runtime"] as const)(
+    "keeps %s plugin cleanup admitted through the restart connection drain",
+    async (kind) => {
+      const owner = new GatewayConnectionWork();
+      const registry = createEmptyPluginRegistry();
+      const record = createPluginRecord({ id: "closing-scope", status: "loaded" });
+      registry.plugins.push(record);
+      const instance = new PluginInstance(record.id, { record, registry });
+      const initialize = createDeferredCore();
+      const cleanupStarted = createDeferredCore();
+      const finishCleanup = createDeferredCore();
+      const cleaned = vi.fn();
+      const cleanup = () =>
+        trackAsyncWork(async () => {
+          cleanupStarted.resolve();
+          await finishCleanup.promise;
+          cleaned();
+        });
+      if (kind === "instance") {
+        instance.lifecycle.onDispose(cleanup);
+      } else {
+        registry.runtimeLifecycles.push({
+          pluginId: record.id,
+          source: record.source,
+          rootDir: record.rootDir,
+          lifecycle: { id: "tracked-store-close", cleanup },
+        });
+      }
+      let retirement: ReturnType<typeof disposePluginRegistryInstances> | undefined;
+      const request = owner.track(() => {
+        retirement = disposePluginRegistryInstances(registry, undefined, {
+          beforeDispose: () => initialize.promise,
+        });
+        void retirement.catch(() => {});
       });
-      void retirement.catch(() => {});
-    });
-    let closed = false;
-    const drain = owner.drain().then(() => {
-      closed = true;
-    });
-    try {
-      await request;
-      await nextTurn();
-      expect(closed).toBe(false);
-      initialize.resolve();
-      await cleanupStarted.promise;
-      await nextTurn();
-      expect(closed).toBe(false);
-      finishCleanup.resolve();
-      await expect(retirement).resolves.toMatchObject({ failures: [] });
-      await drain;
-      expect(cleaned).toHaveBeenCalledOnce();
-      expect(closed).toBe(true);
-    } finally {
-      initialize.resolve();
-      finishCleanup.resolve();
-      await Promise.allSettled([retirement, drain]);
-    }
-  });
+      let closed = false;
+      const onError = vi.fn();
+      const drain = runGatewayCloseSteps({
+        owner: {
+          connectionWork: owner,
+          stopConnectionDependentSidecars() {},
+          stopRegisteredGatewayLifetimeSidecars() {},
+          stopRegisteredPostReadySidecars() {},
+          runClosePrelude() {},
+          sealAndJoinRegisteredSidecarStops() {},
+        },
+        disposeTerminalSessions: () => {
+          closed = true;
+        },
+        close: async () => {
+          await retirement;
+        },
+        onError,
+      });
+      try {
+        await request;
+        await nextTurn();
+        expect(closed).toBe(false);
+        initialize.resolve();
+        await cleanupStarted.promise;
+        await nextTurn();
+        expect(closed).toBe(false);
+        finishCleanup.resolve();
+        await expect(retirement).resolves.toMatchObject({ failures: [] });
+        await drain;
+        expect(cleaned).toHaveBeenCalledOnce();
+        expect(closed).toBe(true);
+        expect(onError).not.toHaveBeenCalled();
+        await expect(owner.track(() => undefined)).rejects.toThrow("Async work scope is closed");
+      } finally {
+        initialize.resolve();
+        finishCleanup.resolve();
+        await Promise.allSettled([retirement, drain]);
+      }
+    },
+  );
 
   it("clears the root only after its host cleanup completes", async () => {
     let cleanupCount = 0;

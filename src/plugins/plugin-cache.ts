@@ -364,13 +364,28 @@ export function retirePluginCache(
   }
   const completion = createDeferredCore<PluginHostCleanupResult>();
   retained.retirement = completion.promise;
+  const trackRetirement: typeof trackAsyncWork = async (run) => {
+    const work = new AsyncWorkScope();
+    try {
+      return await work.track(run);
+    } finally {
+      await work.run(() => work.drain());
+    }
+  };
   retained.beginRetirement = (track = trackAsyncWork) => {
-    retained.beginRetirement = undefined;
-    // The final borrower owns cleanup; the original requesting scope may already be closed.
-    void track(() => beginPluginCacheRetirement(cache, beforeRetire)).then(
-      completion.resolve,
-      completion.reject,
-    );
+    let admitted = false;
+    void track(() => {
+      admitted = true;
+      retained.beginRetirement = undefined;
+      return beginPluginCacheRetirement(cache, beforeRetire);
+    }).then(completion.resolve, (error: unknown) => {
+      if (admitted) {
+        completion.reject(error);
+      } else {
+        // A retained release may outlive its request; only admission consumes the handoff.
+        retained.beginRetirement?.(trackRetirement);
+      }
+    });
   };
   // Abort listeners may reenter retirement or release the final generation immediately.
   retained.controller.abort();
@@ -380,14 +395,7 @@ export function retirePluginCache(
   } else {
     // Released borrowers only resolve this promise; their requesting scope may have closed.
     void retained.settled.promise.then(() => {
-      retained.beginRetirement?.(async (run) => {
-        const work = new AsyncWorkScope();
-        try {
-          return await work.track(run);
-        } finally {
-          await work.run(() => work.drain());
-        }
-      });
+      retained.beginRetirement?.(trackRetirement);
     });
   }
   return completion.promise;
