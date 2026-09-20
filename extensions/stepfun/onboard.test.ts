@@ -11,25 +11,25 @@ describe.each([
     name: "standard global",
     provider: "stepfun",
     apply: applyStepFunStandardConfig,
-    rows: ["step-3.7-flash", "step-3.5-flash"],
+    rows: ["step-5-preview", "step-3.7-flash", "step-3.5-flash"],
   },
   {
     name: "standard China",
     provider: "stepfun",
     apply: applyStepFunStandardConfigCn,
-    rows: ["step-3.7-flash", "step-3.5-flash"],
+    rows: ["step-5-preview", "step-3.7-flash", "step-3.5-flash"],
   },
   {
     name: "plan global",
     provider: "stepfun-plan",
     apply: applyStepFunPlanConfig,
-    rows: ["step-3.7-flash", "step-3.5-flash", "step-3.5-flash-2603"],
+    rows: ["step-5-preview", "step-3.7-flash", "step-3.5-flash", "step-3.5-flash-2603"],
   },
   {
     name: "plan China",
     provider: "stepfun-plan",
     apply: applyStepFunPlanConfigCn,
-    rows: ["step-3.7-flash", "step-3.5-flash", "step-3.5-flash-2603"],
+    rows: ["step-5-preview", "step-3.7-flash", "step-3.5-flash", "step-3.5-flash-2603"],
   },
 ])("StepFun $name setup", ({ provider, apply, rows }) => {
   it.each([undefined, "merge"] as const)(
@@ -39,7 +39,8 @@ describe.each([
 
       expect(config.models?.providers?.[provider]?.models).toEqual([]);
       expect(config.agents?.defaults?.models?.[`${provider}/step-3.7-flash`]).toEqual({});
-      expect(config.agents?.defaults?.models?.[`${provider}/step-3.5-flash`]?.alias).toBeDefined();
+      expect(config.agents?.defaults?.models?.[`${provider}/step-3.5-flash`]).toEqual({});
+      expect(config.agents?.defaults?.models?.[`${provider}/step-5-preview`]?.alias).toBeDefined();
       expect(apply(config)).toEqual(config);
     },
   );
