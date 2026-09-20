@@ -177,7 +177,12 @@ function renderQuietHoursWindowRows(
                 })}
             >
               ${timeZoneOptions(quietHours.timeZone).map(
-                (option) => html`<option value=${option.value}>${option.label}</option>`,
+                (option) => html`<option
+                  value=${option.value}
+                  ?selected=${quietHours.timeZone === option.value}
+                >
+                  ${option.label}
+                </option>`,
               )}
             </select>
           </label>
