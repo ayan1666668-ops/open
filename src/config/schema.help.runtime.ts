@@ -136,7 +136,7 @@ export const RUNTIME_FIELD_HELP: Record<string, string> = {
   "tools.toolSearch.semanticRanking":
     'Optional typed semantic ranking observation after lexical BM25. Set to "shadow" to record a Decision observation without changing the original result order or candidate set. Off by default.',
   "tools.toolSearch.semanticRankingTimeoutMs":
-    "Maximum milliseconds for the optional semantic Tool Search ranking observation. Runtime clamps values to 1..5000.",
+    "Cooperative cancellation budget in milliseconds for optional semantic Tool Search ranking, clamped to 1..5000. Search waits for provider settlement after cancellation, so this is not a maximum completion time.",
   "tools.codeMode":
     "Generic OpenClaw code mode. When enabled, agent runs expose only `exec` and `wait` to the model and hide normal tools behind a QuickJS-WASI catalog bridge.",
   "tools.codeMode.enabled":

@@ -428,7 +428,10 @@ never changes the returned candidate set or order:
 }
 ```
 
-The default is `semanticRanking: "off"`; the timeout is clamped to 1-5000 ms.
+The default is `semanticRanking: "off"`; the cancellation budget is clamped to
+1-5000 ms. At that deadline, the host requests cancellation and waits for the
+provider to settle. A provider that ignores cancellation can delay search and
+code-tool completion beyond this budget; it is not a hard return deadline.
 Exact tool-name and tool-id searches remain a zero-semantic-call fast path.
 
 Disable it:
