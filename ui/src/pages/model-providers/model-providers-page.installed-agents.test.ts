@@ -87,7 +87,7 @@ describe("ModelProvidersPage installed agents", () => {
     }));
     const originalRequest = request.getMockImplementation()!;
     let recovered = false;
-    request.mockImplementation(async (method, params) => {
+    request.mockImplementation(async (method: string, params?: { refresh?: boolean }) => {
       if (method === "models.list") {
         recovered ||= params?.refresh === true;
         return recovered
@@ -103,7 +103,7 @@ describe("ModelProvidersPage installed agents", () => {
               ],
             };
       }
-      return originalRequest(method, params);
+      return originalRequest(method);
     });
     const page = appendPage(context);
     await waitForProviders(page);
@@ -120,6 +120,27 @@ describe("ModelProvidersPage installed agents", () => {
       expect(agentRow(page, "qwen")?.textContent).toMatch(/models available/i);
       expect(agentRow(page, "qwen")?.textContent).not.toMatch(/sign in required/i);
     });
+  });
+
+  it("shows pending-only native discovery without suggesting an authentication failure", async () => {
+    const { context, request } = createAgentsHarness(async () => ({
+      agents: [agent("opencode", "OpenCode")],
+    }));
+    const originalRequest = request.getMockImplementation()!;
+    request.mockImplementation(async (method) =>
+      method === "models.list"
+        ? { models: [], pendingProviders: ["acp-opencode"] }
+        : originalRequest(method),
+    );
+    const page = appendPage(context);
+    await waitForProviders(page);
+    await waitForFast(() => {
+      expect(agentRow(page, "opencode")?.textContent).toMatch(/discovering models/i);
+      expect(agentRow(page, "opencode")?.textContent).not.toMatch(/sign.in/i);
+    });
+    expect(agentRow(page, "opencode")?.querySelector("wa-switch")?.hasAttribute("disabled")).toBe(
+      false,
+    );
   });
 
   it("saves the enabled flag and keeps it over a list read that started earlier", async () => {

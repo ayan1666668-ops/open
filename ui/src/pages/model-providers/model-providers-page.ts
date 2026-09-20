@@ -614,6 +614,8 @@ export class ModelProvidersPage extends OpenClawLightDomElement {
     const cards = buildModelProviderCards({
       ...data,
       models: catalog?.models ?? null,
+      providerOutcomes: catalog ? (catalog.providerOutcomes ?? []) : data.providerOutcomes,
+      pendingProviders: catalog?.pendingProviders,
       providerUsage: data.providerUsage?.ok ? data.providerUsage.value : null,
       configProviderIds: config.providerIds,
       configApiKeyProviderIds: config.apiKeyProviderIds,
