@@ -1027,10 +1027,15 @@ describe("subagent registry persistence resume", () => {
         } else {
           expect(restored?.requesterSettleWake).toBeUndefined();
         }
-        await vi.waitFor(() => expect(wakeRequester).toHaveBeenCalledOnce(), {
-          timeout: 1_000,
-          interval: 10,
-        });
+        if (requesterYielded) {
+          await vi.waitFor(() => expect(wakeRequester).toHaveBeenCalledOnce(), {
+            timeout: 1_000,
+            interval: 10,
+          });
+        } else {
+          await nextTask();
+          expect(wakeRequester).not.toHaveBeenCalled();
+        }
       });
     },
   );

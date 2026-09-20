@@ -39,6 +39,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js";
 
 // ─── Mock setup ──────────────────────────────────────────────────────────
 // Mock TaskFlow registry — same pattern as delegate-dispatch.test.ts.
@@ -141,12 +142,33 @@ vi.mock("../../tasks/task-flow-registry.js", () => ({
 }));
 
 import { clearRuntimeConfigSnapshot } from "../../config/config.js";
+import { upsertSessionEntryCore } from "../../config/sessions/session-accessor.js";
 import { resetContinuationTracer } from "../../infra/continuation-tracer.js";
+import { resolveSystemEventQueueKey } from "../../infra/system-event-ownership.js";
+import { closeOpenClawAgentDatabasesForTest } from "../../state/openclaw-agent-db.js";
 import { dispatchToolDelegates, resetDelegateDispatchHedgesForTests } from "./delegate-dispatch.js";
 import { enqueuePendingDelegate } from "./delegate-store.js";
 import { resetContinuationStateForTests } from "./state.js";
 
+const tempDirs = useAutoCleanupTempDirTracker(afterEach);
+
+// Dispatch revalidates the owner session before claiming a delegate, so tests
+// that reach the spawn path seed the owner row in the isolated session store
+// (mirrors delegate-dispatch-post-compaction.test.ts).
+async function seedOwnerSession(sessionKey: string): Promise<void> {
+  await upsertSessionEntryCore(
+    { agentId: "main", sessionKey },
+    {
+      sessionId: `session:${sessionKey}`,
+      lifecycleRevision: `lifecycle:${sessionKey}`,
+      updatedAt: Date.now(),
+    },
+  );
+}
+
 beforeEach(() => {
+  closeOpenClawAgentDatabasesForTest();
+  vi.stubEnv("OPENCLAW_STATE_DIR", tempDirs.make("openclaw-cost-cap-"));
   // Fresh mock state per test — chain-state contamination between tests
   // could mask a real budget-check regression by carrying tokens forward.
   mockFlows.clear();
@@ -163,6 +185,8 @@ afterEach(() => {
   resetContinuationTracer();
   clearRuntimeConfigSnapshot();
   mockFlows.clear();
+  closeOpenClawAgentDatabasesForTest();
+  vi.unstubAllEnvs();
   vi.useRealTimers();
 });
 
@@ -186,6 +210,7 @@ describe("cost-cap exhaustion mid-chain", () => {
   // ───────────────────────────────────────────────────────────────────────
   it("allows dispatch when accumulatedChainTokens is 1 below costCapTokens", async () => {
     const sessionKey = "session-cost-cap-just-under";
+    await seedOwnerSession(sessionKey);
     enqueuePendingDelegate(sessionKey, { task: "squeaks under the cap" });
 
     const result = await dispatchToolDelegates({
@@ -268,7 +293,7 @@ describe("cost-cap exhaustion mid-chain", () => {
     // The text content is part of the contract with continue-work-signal-v2
     // so the model can self-correct on next turn.
     expect(enqueueSystemEventMock).toHaveBeenCalledWith(expect.stringContaining("cost-capped"), {
-      sessionKey,
+      sessionKey: resolveSystemEventQueueKey(sessionKey, "main"),
       trusted: true,
     });
   });
@@ -289,6 +314,7 @@ describe("cost-cap exhaustion mid-chain", () => {
   // ───────────────────────────────────────────────────────────────────────
   it("rejects all remaining queued delegates once cost cap is crossed", async () => {
     const sessionKey = "session-cost-cap-remaining-rejected";
+    await seedOwnerSession(sessionKey);
     enqueuePendingDelegate(sessionKey, { task: "delegate-1" });
     enqueuePendingDelegate(sessionKey, { task: "delegate-2" });
     enqueuePendingDelegate(sessionKey, { task: "delegate-3" });
@@ -396,6 +422,7 @@ describe("cost-cap exhaustion mid-chain", () => {
   // ───────────────────────────────────────────────────────────────────────
   it("rejects at exact boundary (accumulatedChainTokens === costCapTokens is NOT over)", async () => {
     const sessionKey = "session-cost-cap-exact-boundary";
+    await seedOwnerSession(sessionKey);
     enqueuePendingDelegate(sessionKey, { task: "at exact cap" });
 
     const result = await dispatchToolDelegates({

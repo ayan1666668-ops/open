@@ -105,6 +105,8 @@ export type SubagentRunReadRecord = {
   requesterAgentId?: string;
   /** Validated child-session owner captured at spawn; never supplied by the model. */
   agentId?: string;
+  requesterStorePath?: string;
+  controllerStorePath?: string;
   model?: string;
   /** Monotonic ownership generation within one child session. */
   generation?: number;

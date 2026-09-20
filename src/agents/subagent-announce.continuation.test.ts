@@ -86,7 +86,7 @@ import {
   replaceSessionEntry,
 } from "../config/sessions/session-accessor.js";
 import type { SessionEntry } from "../config/sessions/types.js";
-import { selectAgentSystemEvents } from "../infra/system-event-ownership.js";
+import { resolveSystemEventQueueKey } from "../infra/system-event-ownership.js";
 import { drainSystemEventEntries, peekSystemEventEntries } from "../infra/system-events.js";
 import { defaultRuntime } from "../runtime.js";
 import { runSubagentAnnounceFlow } from "./subagents/announce/subagent-announce.js";
@@ -355,12 +355,14 @@ describe("subagent announce continuation chaining", () => {
       multiAgent: true,
     });
 
-    const events = peekSystemEventEntries(childSessionKey);
+    const events = peekSystemEventEntries(resolveSystemEventQueueKey(childSessionKey, "main"));
     expect(events.some((event) => event.text.includes("[continuation:delegate-spawned]"))).toBe(
       true,
     );
-    expect(selectAgentSystemEvents(events, "main")).toEqual(events);
-    expect(selectAgentSystemEvents(events, "helper")).toEqual([]);
+    // Ownership is the agent-qualified queue key: helper cannot derive a queue for the child.
+    expect(() => resolveSystemEventQueueKey(childSessionKey, "helper")).toThrow(
+      "System event owner does not match its session key.",
+    );
     drainSystemEventEntries(childSessionKey);
   });
 

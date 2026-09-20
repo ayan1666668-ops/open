@@ -13,11 +13,13 @@ import {
   parseAssistantTextSignature,
   type AssistantPhase,
 } from "../shared/chat-message-content.js";
+import { assistantVisibleTextFilters } from "../shared/text/assistant-visible-text.js";
 import {
-  assistantVisibleTextFilters,
-  sanitizeAssistantVisibleTextWithProfile,
-} from "../shared/text/assistant-visible-text.js";
-import { createTextProjection, trimTextFilter } from "../shared/text/text-projection.js";
+  applyTextFilters,
+  createTextProjection,
+  trimTextFilter,
+  trimTextPreservingCode,
+} from "../shared/text/text-projection.js";
 import {
   sanitizeUserFacingText,
   userFacingTextFilters,
@@ -25,18 +27,26 @@ import {
 import { renderUserFacingText } from "./embedded-agent-helpers/user-facing-text.js";
 import type { AgentMessage } from "./runtime/index.js";
 
-export { stripDowngradedToolCallText } from "../shared/text/assistant-visible-text.js";
+export { stripDowngradedToolCallText } from "../shared/text/downgraded-tool-call-text.js";
 
 /** Narrow an agent message to an assistant message. */
 export function isAssistantMessage(msg: AgentMessage | undefined): msg is AssistantMessage {
   return msg?.role === "assistant";
 }
 
-function sanitizeAssistantText(text: string, phase?: AssistantPhase, streaming = false): string {
-  return sanitizeAssistantVisibleTextWithProfile(
+function sanitizeAssistantText(
+  text: string,
+  phase?: AssistantPhase,
+  streaming = false,
+  options?: { preserveTrailingWhitespace?: boolean },
+): string {
+  return applyTextFilters(
     text,
-    phase === "final_answer" ? "final-answer-delivery" : "delivery",
-    streaming && phase === "final_answer",
+    assistantVisibleTextFilters(
+      phase === "final_answer" ? "final-answer-delivery" : "delivery",
+      streaming && phase === "final_answer",
+      options,
+    ),
   );
 }
 
@@ -54,8 +64,14 @@ function isAssistantTextContentBlockType(value: unknown): boolean {
   return value === "text" || value === "input_text" || value === "output_text";
 }
 
-export function sanitizeAssistantVisibleStreamText(text: string, phase?: AssistantPhase): string {
-  return sanitizeUserFacingText(sanitizeAssistantText(text, phase, true), { errorContext: false });
+export function sanitizeAssistantVisibleStreamText(
+  text: string,
+  phase?: AssistantPhase,
+  options?: { preserveTrailingWhitespace?: boolean },
+): string {
+  return sanitizeUserFacingText(sanitizeAssistantText(text, phase, true, options), {
+    errorContext: false,
+  });
 }
 
 export function createAssistantVisibleStreamText(phase?: AssistantPhase) {
@@ -65,7 +81,7 @@ export function createAssistantVisibleStreamText(phase?: AssistantPhase) {
       phase === "final_answer",
     ),
     ...userFacingTextFilters(),
-    trimTextFilter("both"),
+    trimTextFilter("both", { preserveCodeIndentation: true }),
   ]);
 }
 
@@ -164,7 +180,7 @@ function extractEmbeddedAssistantTextForPhase(
       )
       .filter((text) => text.trim())
       .join("\n")
-      .trim(),
+      .trimEnd(),
   );
   return selectedPhase === "final_answer" && !extracted.trim() ? "" : extracted;
 }
@@ -193,7 +209,7 @@ export function extractEmbeddedAssistantText(msg: AssistantMessage): string {
     extractTextFromChatContent(msg.content, {
       sanitizeText: (text) => sanitizeAssistantText(text),
       joinWith: "\n",
-      normalizeText: (text) => text.trim(),
+      normalizeText: (text) => text.trimEnd(),
     }) ?? "";
   // Only apply keyword-based error rewrites when the assistant message is actually an error.
   // Otherwise normal prose that *mentions* errors (e.g. "context overflow") can get clobbered.
@@ -379,7 +395,7 @@ export function promoteThinkingTagsToBlocks(message: AssistantMessage): void {
       if (part.type === "thinking") {
         next.push({ type: "thinking", thinking: part.thinking });
       } else if (part.type === "text") {
-        const cleaned = part.text.trimStart();
+        const cleaned = trimTextPreservingCode(part.text, "start");
         if (cleaned) {
           next.push({ type: "text", text: cleaned });
         }

@@ -1,8 +1,3 @@
-import {
-  resolveAgentIdFromSessionKey,
-  resolveSessionStorePathCore,
-} from "../../../config/sessions.js";
-import { loadSessionEntryReadOnly } from "../../../config/sessions/session-accessor.js";
 import type { GatewayContextResolver } from "../../../gateway/server-methods/types.js";
 import {
   getAgentEventLifecycleGeneration,
@@ -13,6 +8,7 @@ import {
   bindGatewayContextResolver,
   getGatewayContextResolver,
 } from "../../../plugins/runtime/gateway-request-scope.js";
+import { runWithGatewayDetachedWorkContinuation } from "../../../process/gateway-work-admission.js";
 import { finalizeTaskRunByRunId } from "../../../tasks/detached-task-runtime.js";
 import { prepareCanonicalTaskActivation } from "../../../tasks/task-backing-authority-write.js";
 import { createSubagentTaskBackingDetail } from "../../../tasks/task-backing-authority.js";
@@ -29,11 +25,10 @@ import { resolveFinalizedSubagentTaskState } from "./subagent-registry-completio
 import { safeRemoveAttachmentsDir } from "./subagent-registry-helpers.js";
 import { subagentRuns } from "./subagent-registry-memory.js";
 import { commitSubagentTaskReplacement } from "./subagent-registry-replacement-store.js";
-import { SubagentRestartRecoveryLaunchManager } from "./subagent-registry-run-recovery-launch.js";
+import { SubagentWaitManager } from "./subagent-registry-run-wait.js";
 import type {
   RequesterSettleWakeState,
   SubagentAcceptedSteerDispatch,
-  SubagentRestartRecoveryReceipt,
   SubagentRunRecord,
 } from "./subagent-registry.types.js";
 import {
@@ -47,7 +42,7 @@ import {
 
 const log = createSubsystemLogger("agents/subagent-registry");
 
-export class SubagentRecoveryManager extends SubagentRestartRecoveryLaunchManager {
+export class SubagentRecoveryManager extends SubagentWaitManager {
   readonly markSubagentRunForSteerRestart = (
     runId: string,
     expected?: SubagentRunRecord,
@@ -246,7 +241,6 @@ export class SubagentRecoveryManager extends SubagentRestartRecoveryLaunchManage
     preserveRequesterSettleWake?: boolean;
     transcriptTarget?: AgentRunSessionTarget;
     task?: string;
-    restartRecovery?: SubagentRestartRecoveryReceipt;
     lifecycleGeneration?: string;
     persistenceFailure?: "return-false" | "throw";
     gatewayContextResolver?: GatewayContextResolver;
@@ -289,17 +283,6 @@ export class SubagentRecoveryManager extends SubagentRestartRecoveryLaunchManage
       source.childSessionKey,
     );
     const cfg = this.options.getRuntimeConfig();
-    const acceptedReceipt = this.unpersistedAcceptances.get(source);
-    const acceptanceSessionTarget =
-      acceptedReceipt && this.currentRunOwnsSession(source)
-        ? {
-            storePath: resolveSessionStorePathCore(cfg.session?.store, {
-              agentId: resolveAgentIdFromSessionKey(source.childSessionKey),
-            }),
-            sessionKey: source.childSessionKey,
-            clone: false,
-          }
-        : undefined;
     const spawnMode = source.spawnMode === "session" ? "session" : "run";
     const runTimeoutSeconds = replaceParams.runTimeoutSeconds ?? source.runTimeoutSeconds ?? 0;
     const waitTimeoutMs = this.options.resolveSubagentWaitTimeoutMs(cfg, runTimeoutSeconds);
@@ -312,14 +295,7 @@ export class SubagentRecoveryManager extends SubagentRestartRecoveryLaunchManage
       ) ?? 0;
 
     const sourceCompletion = ensureCompletionState(source);
-    // Prefer the caller-supplied task (the text actually dispatched to the
-    // child session during steer/wake/orphan-resume) over the previous run's
-    // stale `task`. Falling back to the prior task preserves behavior for any
-    // caller that does not pass a replacement message. The orphan-session
-    // registry restart recovery flow rewraps the persisted `task` into the
-    // `[Subagent Task]` block after a gateway restart; using stale text would
-    // silently re-run the original instruction and lose the user's steer
-    // update.
+    // Follow-up work keeps the latest direction in the task's durable record.
     const nextTask =
       typeof replaceParams.task === "string" && replaceParams.task.length > 0
         ? replaceParams.task
@@ -366,11 +342,8 @@ export class SubagentRecoveryManager extends SubagentRestartRecoveryLaunchManage
         status: "running",
         startedAt: now,
         lifecycleGeneration:
-          replaceParams.lifecycleGeneration ??
-          replaceParams.restartRecovery?.lifecycleGeneration ??
-          getAgentEventLifecycleGeneration(),
+          replaceParams.lifecycleGeneration ?? getAgentEventLifecycleGeneration(),
         transcriptTarget: replaceParams.transcriptTarget,
-        restartRecovery: replaceParams.restartRecovery,
       },
       swarmLaunchPending: false,
       completion: {
@@ -444,40 +417,6 @@ export class SubagentRecoveryManager extends SubagentRestartRecoveryLaunchManage
       ...[...killReconciliationSnapshots.keys()].map((entry) => entry.runId),
       ...[...wakeSnapshots.keys()].map((entry) => entry.runId),
     ];
-    const canReconcileAcceptedReceipt = () => {
-      // Staging replaces the map entry before commit. Only this exact
-      // live acceptance may bridge its failed write, never a restored copy.
-      if (
-        !acceptedReceipt ||
-        !acceptanceSessionTarget ||
-        this.unpersistedAcceptances.get(source) !== acceptedReceipt ||
-        source.execution.restartRecovery !== acceptedReceipt ||
-        replaceParams.restartRecovery !== acceptedReceipt ||
-        acceptedReceipt.idempotencyKey !== nextRunId ||
-        !acceptedReceipt.lifecycleGeneration ||
-        !isAgentEventLifecycleGenerationCurrent(acceptedReceipt.lifecycleGeneration) ||
-        this.options.runs.get(nextRunId) !== next ||
-        source.generation !== sourceSnapshot.generation ||
-        source.createdAt !== sourceSnapshot.createdAt ||
-        typeof source.execution.endedAt === "number" ||
-        source.killIntent ||
-        source.killReconciliation ||
-        source.pauseReason === "sessions_yield" ||
-        source.suppressAnnounceReason === "steer-restart" ||
-        Array.from(this.options.getRunsForChildSession(source.childSessionKey)).some(
-          (candidate) =>
-            candidate !== next && compareSubagentRunGeneration(candidate, sourceSnapshot) > 0,
-        )
-      ) {
-        return false;
-      }
-      const session = loadSessionEntryReadOnly(acceptanceSessionTarget);
-      return (
-        session?.sessionId === acceptedReceipt.sessionId &&
-        (acceptedReceipt.sessionLifecycleRevision === undefined ||
-          session.lifecycleRevision === acceptedReceipt.sessionLifecycleRevision)
-      );
-    };
     try {
       if (taskActivation) {
         commitSubagentTaskReplacement({
@@ -486,7 +425,6 @@ export class SubagentRecoveryManager extends SubagentRestartRecoveryLaunchManage
           source: sourceSnapshot,
           successor: next,
           task: taskActivation,
-          canReconcileAcceptedReceipt,
         });
       } else {
         this.options.persistOrThrow(...changedRunIds);
@@ -511,7 +449,6 @@ export class SubagentRecoveryManager extends SubagentRestartRecoveryLaunchManage
       }
       throw error;
     }
-    this.unpersistedAcceptances.delete(source);
     // Atomic publication can synchronously trigger another replacement. Do not
     // start stale cleanup or completion work after that newer owner takes over.
     if (this.options.runs.get(nextRunId) !== next) {
@@ -535,15 +472,25 @@ export class SubagentRecoveryManager extends SubagentRestartRecoveryLaunchManage
         source.execution.transcriptTarget &&
         source.execution.transcriptTarget !== replaceParams.transcriptTarget
       ) {
-        void removeInternalSessionEffectsSession(source.execution.transcriptTarget);
+        const retiredTarget = source.execution.transcriptTarget;
+        // The committed replacement owns cleanup beyond its caller's lifetime,
+        // including when restart closes admission before this tail settles.
+        void runWithGatewayDetachedWorkContinuation(
+          () => removeInternalSessionEffectsSession(retiredTarget),
+          "subagents:replacement-cleanup",
+        ).catch((error: unknown) => {
+          log.warn("failed to remove replaced subagent internal session effects", {
+            previousRunId,
+            nextRunId,
+            error,
+          });
+        });
       }
     }
     this.options.ensureListener();
     // Always start sweeper — session-mode runs (no archiveAtMs) also need TTL cleanup.
     this.options.startSweeper();
-    if (!next.execution.restartRecovery) {
-      void this.waitForSubagentCompletion(nextRunId, waitTimeoutMs, next);
-    }
+    void this.waitForSubagentCompletion(nextRunId, waitTimeoutMs, next);
     return true;
   };
 }

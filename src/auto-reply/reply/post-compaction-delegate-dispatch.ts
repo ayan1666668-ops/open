@@ -10,6 +10,7 @@ import {
   enqueuePostCompactionDelegateDelivery,
   type SessionDeliveryContext,
 } from "../../infra/session-delivery-queue-storage.js";
+import { withSystemEventOwner } from "../../infra/system-event-ownership.js";
 import { enqueueSystemEventRaw as enqueueSystemEvent } from "../../infra/system-events.js";
 import { defaultRuntime } from "../../runtime.js";
 import { captureOpenClawStateWorkerContext } from "../../state/openclaw-state-worker-context.js";
@@ -162,11 +163,15 @@ function terminalizeDroppedManagedDelegate(params: {
 function enqueueSystemEventOrLog(params: {
   deps: Pick<PostCompactionDelegateDispatchDeps, "enqueueSystemEvent" | "log">;
   label: string;
+  agentId: string;
   sessionKey: string;
   text: string;
 }): void {
   try {
-    params.deps.enqueueSystemEvent(params.text, { sessionKey: params.sessionKey });
+    params.deps.enqueueSystemEvent(
+      params.text,
+      withSystemEventOwner({ sessionKey: params.sessionKey }, params.agentId),
+    );
   } catch (err) {
     params.deps.log(
       `Failed to enqueue ${params.label} for ${params.sessionKey}: ${formatErrorMessage(err)}`,
@@ -385,6 +390,8 @@ export async function dispatchPostCompactionDelegates(
     return { queuedDelegates: 0, droppedDelegates: 0 };
   }
   const internalReleaseTraceparent = resolveContinuationTraceparent(params.releaseTraceparent);
+  // Queue identity is owner-scoped; a bare session key must not enqueue into a foreign queue.
+  const ownerAgentId = deps.resolveSessionAgentId({ sessionKey: params.sessionKey, config: params.cfg });
   const stagedCompactionDelegates = deps.consumeStagedPostCompactionDelegates(params.sessionKey);
   // Capture the claim handles immediately: consumeStagedPostCompactionDelegates
   // now claims TaskFlow rows to `running` (not `finished`), and we finalize ONLY
@@ -433,6 +440,7 @@ export async function dispatchPostCompactionDelegates(
     deps.log(`Failed to load post-compaction delegates for ${params.sessionKey}: ${message}`);
     enqueueSystemEventOrLog({
       deps,
+      agentId: ownerAgentId,
       label: "persisted post-compaction delegate warning",
       sessionKey: params.sessionKey,
       text:
@@ -451,7 +459,7 @@ export async function dispatchPostCompactionDelegates(
         : deps.resolveAgentWorkspaceDir(params.cfg, params.followupRun.run.agentId),
       {
         cfg: params.cfg,
-        agentId: deps.resolveSessionAgentId({ sessionKey: params.sessionKey, config: params.cfg }),
+        agentId: ownerAgentId,
       },
     );
   } catch (err) {
@@ -473,6 +481,7 @@ export async function dispatchPostCompactionDelegates(
     );
     enqueueSystemEventOrLog({
       deps,
+      agentId: ownerAgentId,
       label: "post-compaction context read failure",
       sessionKey: params.sessionKey,
       text:
@@ -622,14 +631,21 @@ export async function dispatchPostCompactionDelegates(
     droppedDelegates: droppedCompactionDelegates,
   });
   if (postCompactionContextContent) {
-    deps.enqueueSystemEvent(postCompactionContextContent, {
-      sessionKey: params.sessionKey,
-    });
+    deps.enqueueSystemEvent(
+      postCompactionContextContent,
+      withSystemEventOwner({ sessionKey: params.sessionKey }, ownerAgentId),
+    );
   }
-  deps.enqueueSystemEvent(lifecycleEvent, {
-    sessionKey: params.sessionKey,
-    ...(internalReleaseTraceparent ? { traceparent: internalReleaseTraceparent } : {}),
-  });
+  deps.enqueueSystemEvent(
+    lifecycleEvent,
+    withSystemEventOwner(
+      {
+        sessionKey: params.sessionKey,
+        ...(internalReleaseTraceparent ? { traceparent: internalReleaseTraceparent } : {}),
+      },
+      ownerAgentId,
+    ),
+  );
 
   if (queuedEntryIds.length > 0) {
     // Drain unfiltered for this sessionKey: the prior `entryIds`-filtered

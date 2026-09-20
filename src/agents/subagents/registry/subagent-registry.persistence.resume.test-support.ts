@@ -187,7 +187,7 @@ export function createRestoredWakeRuns(params: {
     const runId = `run-restored-wake-${index}`;
     return createDeliveredWake(
       runId,
-      params.activationSettlement ? undefined : { status: "pending", attemptCount: 0 },
+      params.requesterYielded ? undefined : { status: "pending", attemptCount: 0 },
       {
         childSessionKey: `agent:main:subagent:restored-wake-${index}`,
         requesterSessionKey: `agent:main:requester-${index}`,

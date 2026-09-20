@@ -33,7 +33,7 @@ import {
 } from "./post-compaction-staleness.js";
 import { rejectPostCompactionTaskFlowDelegate } from "./post-compaction-taskflow-rejection.js";
 import { checkContinuationBudget, type ChainState } from "./scheduler.js";
-import { withContinuationOwner } from "./system-event-ownership.js";
+import { bindContinuationOwner } from "./system-event-ownership.js";
 import { hasCrossSessionDelegateTargeting } from "./targeting-pure.js";
 
 const postCompactionLog = createSubsystemLogger("continuation/compaction");
@@ -113,8 +113,7 @@ export async function dispatchStagedPostCompactionDelegates(
     sessionKey,
     spawnCtx.requesterAgentIdOverride,
   );
-  const ownerEventOptions = <T extends object>(eventOptions: T): T =>
-    withContinuationOwner(eventOptions, ownerSession.agentId);
+  const ownerEventOptions = bindContinuationOwner(ownerSession.agentId);
 
   postCompactionLog.info(
     `[continuation:compaction-delegate] Consuming ${delegates.length} compaction delegate(s) for session ${sessionKey}`,

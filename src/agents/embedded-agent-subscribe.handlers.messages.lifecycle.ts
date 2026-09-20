@@ -4,7 +4,6 @@ import { truncateUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
  * Handles assistant message lifecycle boundaries, and final reconciliation.
  */
 import { resolveSendableOutboundReplyParts } from "openclaw/plugin-sdk/reply-payload";
-import { createInlineCodeState } from "../../packages/markdown-core/src/code-spans.js";
 import { parseReplyDirectives } from "../auto-reply/reply/reply-directives.js";
 import { isSilentReplyText, SILENT_REPLY_TOKEN } from "../auto-reply/tokens.js";
 import { splitMediaFromOutput } from "../media/parse.js";
@@ -28,16 +27,20 @@ import {
   resolveManagedStreamMediaUrls,
 } from "./embedded-agent-subscribe.handlers.messages.replies.js";
 import {
+  extractAssistantStreamSnapshot,
+  reconcileBlockReplySnapshot,
+} from "./embedded-agent-subscribe.handlers.messages.snapshot.js";
+import {
   emitAssistantCommentaryStreamData,
   emitAssistantMessageStart,
   emitReasoningEnd,
-  extractAssistantStreamSnapshot,
   extractStandaloneMessageToolText,
   hasMessageToolOnlySourceDelivery,
   isOpenAiCompletionsAssistantMessage,
   isResponsesApiAssistantMessage,
   isSubscribeTranscriptOnlyOpenClawAssistantMessage,
-  replaceBlockReplyBuffer,
+  resolveAssistantStreamBlockIndex,
+  resolveAssistantStreamItemId,
   scopeAssistantMessageToStreamBlock,
   shouldSuppressDeterministicApprovalOutput,
   stripContinuationSignalFromDisplayText,
@@ -91,6 +94,11 @@ export function handleMessageEnd(
       finalMessageStart: ctx.state.assistantMessageStartIndex,
       lastAssistant: ctx.state.lastAssistant,
     });
+    ctx.state.sourceReplyDeliveryState = "missing";
+    ctx.state.messageToolOnlySourceReplyDelivered = false;
+    ctx.state.deterministicApprovalPromptPending = false;
+    ctx.state.deterministicApprovalPromptSent = false;
+    ctx.state.currentSourceMessagingToolSentTextsNormalized.length = 0;
     ctx.state.lastAssistant = undefined;
     return;
   }
@@ -192,7 +200,7 @@ export function handleMessageEnd(
   const trimmedReasoning = rawThinking ? rawThinking.trim() : "";
   const trimmedText = text.trim();
   ctx.resetPartialReplyDirectives();
-  const parsedRawText = parseReplyDirectives(trimmedText);
+  const parsedRawText = parseReplyDirectives(text);
   const replyTargetOnlyTerminalEvidence = hasReplyTargetOnlyTerminalEvidence(parsedRawText);
   const displayText = stripContinuationSignalFromDisplayText(parsedRawText.text);
   const parsedText =
@@ -216,12 +224,7 @@ export function handleMessageEnd(
         block.type === "text" && parseAssistantTextSignature(block)?.phase === "final_answer",
     ).length > 1;
   const resolveSourceIndex = (contentIndex: number | undefined, itemId: string | undefined) =>
-    contentIndex ??
-    (Array.isArray(sourceContent) && itemId
-      ? sourceContent.findIndex(
-          (block) => block.type === "text" && parseAssistantTextSignature(block)?.id === itemId,
-        )
-      : -1);
+    resolveAssistantStreamBlockIndex(sourceMessage, contentIndex, itemId) ?? -1;
   const lastIndex = resolveSourceIndex(
     ctx.state.lastAssistantStreamContentIndex,
     ctx.state.lastAssistantStreamItemId,
@@ -249,14 +252,9 @@ export function handleMessageEnd(
   // visible reply. A final replacement must rebuild that logical reply in full.
   if (ctx.state.lastBlockReplyText == null) {
     ctx.blockChunker.reset();
+    ctx.state.blockReplyScopeStart = undefined;
   }
-  if (text !== rawVisibleText) {
-    // A structured message-tool result is projected before it enters the reply buffer.
-    ctx.state.blockState.textIsVisible = true;
-    replaceBlockReplyBuffer(ctx, text);
-  } else if (ctx.blockChunker.consumedLength === 0) {
-    // Observing a native index does not mean its predecessors were delivered:
-    // phase-pending and suppressed streams can leave the whole message unsent.
+  if (ctx.blockChunker.consumedLength === 0 && !ctx.blockChunker.hasBuffered()) {
     const preparedIndex =
       ctx.state.lastAssistantTextMessageIndex >= ctx.state.assistantMessageStartIndex
         ? resolveSourceIndex(
@@ -264,42 +262,30 @@ export function handleMessageEnd(
             ctx.state.lastAssistantTextItemId,
           )
         : -1;
-    const pendingText =
-      preparedIndex >= 0 && Array.isArray(sourceContent)
-        ? extractAssistantStreamSnapshot(ctx, {
-            ...sourceMessage,
-            content: sourceContent.slice(preparedIndex + 1),
-          }).text
-        : sourceSnapshot.text;
-    ctx.state.blockState = {
-      thinking: false,
-      final: false,
-      inlineCode: createInlineCodeState(),
-      textIsVisible: true,
-    };
-    replaceBlockReplyBuffer(ctx, pendingText);
-  } else if (lastIndex >= 0) {
-    const currentPart = sourceSnapshot.parts.find((part) => part.index === lastIndex);
-    const currentText = ctx.state.blockState.textIsVisible
-      ? preparedSourceText(lastIndex)
-      : (currentPart?.text ?? "");
-    replaceBlockReplyBuffer(ctx, currentText, ctx.state.streamBlockOffset);
-    for (const part of sourceSnapshot.parts) {
-      if ((part.index ?? 0) > lastIndex) {
-        const partText = ctx.state.blockState.textIsVisible
-          ? preparedSourceText(part.index ?? 0)
-          : part.text;
-        ctx.blockChunker.append(
-          `${ctx.blockChunker.hasBuffered() ? part.separator : ""}${partText}`,
-        );
-        ctx.state.lastAssistantStreamContentIndex = part.index;
-      }
+    if (preparedIndex >= 0) {
+      ctx.state.blockReplyScopeStart = {
+        contentIndex: preparedIndex,
+        itemId: resolveAssistantStreamItemId({
+          contentIndex: preparedIndex,
+          message: sourceMessage,
+        }),
+        after: true,
+      };
     }
-  } else {
-    replaceBlockReplyBuffer(
-      ctx,
-      ctx.state.blockState.textIsVisible ? cleanedText : sourceSnapshot.rawText,
-    );
+  }
+  const previousBlock = extractAssistantStreamSnapshot(ctx, sourceMessage, {
+    throughIndex: lastIndex >= 0 ? lastIndex : undefined,
+    observedText: ctx.state.streamBlockText,
+    final: ctx.state.streamBlockFinal,
+  });
+  reconcileBlockReplySnapshot(
+    ctx,
+    previousBlock,
+    text === rawVisibleText ? sourceSnapshot : { ...snapshot, blockText: cleanedText },
+  );
+  const lastSourceIndex = sourceSnapshot.parts.at(-1)?.index;
+  if (lastIndex >= 0 && lastSourceIndex !== undefined && lastSourceIndex > lastIndex) {
+    ctx.state.lastAssistantStreamContentIndex = lastSourceIndex;
   }
   if (deliverMessageEndPartsIndividually) {
     ctx.blockChunker.reset();
@@ -361,12 +347,12 @@ export function handleMessageEnd(
     }
     ctx.state.deltaBuffer = "";
     ctx.state.streamBlockText = "";
-    ctx.state.streamBlockOffset = 0;
+    ctx.state.streamBlockFinal = false;
+    ctx.state.blockReplyScopeStart = undefined;
     ctx.state.thinkingTagStream = createThinkingTagStreamState();
     ctx.state.deltaBufferIsCommentary = false;
     ctx.state.hasFlushedPartialText = false;
     ctx.blockChunker.reset();
-    ctx.state.blockState = { thinking: false, final: false, inlineCode: createInlineCodeState() };
     // Late text_end events still use the partial lane's tag/inline state.
     const { thinking, final, inlineCode } = ctx.state.partialBlockState;
     ctx.state.partialBlockState = { thinking, final, inlineCode };

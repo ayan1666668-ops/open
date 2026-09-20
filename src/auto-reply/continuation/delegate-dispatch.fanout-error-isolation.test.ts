@@ -17,6 +17,7 @@
  */
 import { expectDefined } from "@openclaw/normalization-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js";
 
 // ---------------------------------------------------------------------------
 // Mock infrastructure — copied from delegate-dispatch.test.ts so this file
@@ -137,12 +138,32 @@ vi.mock("../../tasks/task-flow-registry.js", () => ({
 }));
 
 import { clearRuntimeConfigSnapshot } from "../../config/config.js";
+import { upsertSessionEntryCore } from "../../config/sessions/session-accessor.js";
 import { resetContinuationTracer } from "../../infra/continuation-tracer.js";
+import { closeOpenClawAgentDatabasesForTest } from "../../state/openclaw-agent-db.js";
 import { dispatchToolDelegates, resetDelegateDispatchHedgesForTests } from "./delegate-dispatch.js";
 import { enqueuePendingDelegate } from "./delegate-store.js";
 import { resetContinuationStateForTests } from "./state.js";
 
+const tempDirs = useAutoCleanupTempDirTracker(afterEach);
+
+// Dispatch revalidates the owner session before claiming a delegate, so tests
+// that reach the spawn path seed the owner row in the isolated session store
+// (mirrors delegate-dispatch-post-compaction.test.ts).
+async function seedOwnerSession(sessionKey: string): Promise<void> {
+  await upsertSessionEntryCore(
+    { agentId: "main", sessionKey },
+    {
+      sessionId: `session:${sessionKey}`,
+      lifecycleRevision: `lifecycle:${sessionKey}`,
+      updatedAt: Date.now(),
+    },
+  );
+}
+
 beforeEach(() => {
+  closeOpenClawAgentDatabasesForTest();
+  vi.stubEnv("OPENCLAW_STATE_DIR", tempDirs.make("openclaw-fanout-"));
   mockFlows.clear();
   enqueueSystemEventMock.mockClear();
   loggerRecords.length = 0;
@@ -156,11 +177,14 @@ afterEach(() => {
   resetContinuationTracer();
   clearRuntimeConfigSnapshot();
   mockFlows.clear();
+  closeOpenClawAgentDatabasesForTest();
+  vi.unstubAllEnvs();
 });
 
 describe("fanout error isolation", () => {
   it("three delegates targeting different sessions: middle one fails, first and third still dispatch", async () => {
     const sessionKey = "session-fanout-isolation";
+    await seedOwnerSession(sessionKey);
 
     // Each delegate fans out to a DIFFERENT target session via targetSessionKey:
     // one tool turn, N delegates, each with an independent target.
@@ -248,6 +272,7 @@ describe("fanout error isolation", () => {
     // permits all tail siblings to dispatch. Pins that the dispatch loop
     // has no "stop on first error" path.
     const sessionKey = "session-fanout-head-failure";
+    await seedOwnerSession(sessionKey);
 
     enqueuePendingDelegate(sessionKey, {
       task: "head-fails",

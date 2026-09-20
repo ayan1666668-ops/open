@@ -169,43 +169,56 @@ describe("subagent registry persistence timing", () => {
     expect(persisted?.startedAt).toBeLessThanOrEqual(registeredBy);
   });
 
-  it("rejects a stale timing write after session ownership changes", async () => {
-    tempStateDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-subagent-"));
-    setTestEnvValue("OPENCLAW_STATE_DIR", tempStateDir);
+  it.each([false, true])(
+    "preserves session state when timing commit is denied (current=%s)",
+    async (isCurrent) => {
+      tempStateDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-subagent-"));
+      setTestEnvValue("OPENCLAW_STATE_DIR", tempStateDir);
 
-    const startedAt = Date.now();
-    const storePath = await writeChildSessionEntry({
-      sessionKey: "agent:main:subagent:stale-timing",
-      sessionId: "sess-stale-timing",
-      updatedAt: startedAt - 1,
-    });
-    await persistSubagentSessionTiming(
-      createCanonicalSubagentRunFixture({
-        runId: "run-stale-timing",
-        childSessionKey: "agent:main:subagent:stale-timing",
-        requesterSessionKey: "agent:main:main",
-        requesterDisplayKey: "main",
-        task: "do not persist stale timing",
-        cleanup: "keep",
-        createdAt: startedAt,
-        startedAt,
-        endedAt: startedAt + 500,
-        outcome: { status: "ok" },
-      }),
-      { isCurrentGeneration: () => false },
-    );
+      const startedAt = Date.now();
+      const storePath = await writeChildSessionEntry({
+        sessionKey: "agent:main:subagent:stale-timing",
+        sessionId: "sess-stale-timing",
+        updatedAt: startedAt - 1,
+      });
+      const write = persistSubagentSessionTiming(
+        createCanonicalSubagentRunFixture({
+          runId: "run-stale-timing",
+          childSessionKey: "agent:main:subagent:stale-timing",
+          requesterSessionKey: "agent:main:main",
+          requesterDisplayKey: "main",
+          task: "do not persist stale timing",
+          cleanup: "keep",
+          createdAt: startedAt,
+          startedAt,
+          endedAt: startedAt + 500,
+          outcome: { status: "ok" },
+        }),
+        {
+          isCurrentGeneration: () => isCurrent,
+          assertCommitAllowed: () => {
+            throw new Error("timing commit denied");
+          },
+        },
+      );
+      if (isCurrent) {
+        await expect(write).rejects.toThrow("timing commit denied");
+      } else {
+        await expect(write).resolves.toBeUndefined();
+      }
 
-    const persisted = (await readSubagentSessionStore(storePath))[
-      "agent:main:subagent:stale-timing"
-    ];
-    expect(persisted).toMatchObject({
-      sessionId: "sess-stale-timing",
-      updatedAt: startedAt - 1,
-    });
-    expect(persisted?.startedAt).toBeUndefined();
-    expect(persisted?.endedAt).toBeUndefined();
-    expect(persisted?.status).toBeUndefined();
-  });
+      const persisted = (await readSubagentSessionStore(storePath))[
+        "agent:main:subagent:stale-timing"
+      ];
+      expect(persisted).toMatchObject({
+        sessionId: "sess-stale-timing",
+        updatedAt: startedAt - 1,
+      });
+      expect(persisted?.startedAt).toBeUndefined();
+      expect(persisted?.endedAt).toBeUndefined();
+      expect(persisted?.status).toBeUndefined();
+    },
+  );
 
   it("does not overwrite durable completion with a provisional killed status", async () => {
     tempStateDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-subagent-"));

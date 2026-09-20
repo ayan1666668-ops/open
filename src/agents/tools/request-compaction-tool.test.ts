@@ -14,10 +14,7 @@ import {
   runWithDiagnosticTraceContext,
   type DiagnosticTraceContext,
 } from "../../infra/diagnostic-trace-context.js";
-import {
-  resolveSystemEventOwnerAgentId,
-  selectAgentSystemEvents,
-} from "../../infra/system-event-ownership.js";
+import { resolveSystemEventQueueKey } from "../../infra/system-event-ownership.js";
 import {
   enqueueSystemEventRaw,
   peekSystemEventEntries,
@@ -287,21 +284,19 @@ describe("request_compaction tool", () => {
     expect(result).toMatchObject({ status: "compaction_requested" });
     await flushBackgroundCompaction();
 
-    const events = peekSystemEventEntries(SESSION_KEY);
-    const failureEvents = events.filter((event) =>
-      event.text.includes("[system:compaction-failed]"),
-    );
+    const isFailureEvent = (event: { text: string }) =>
+      event.text.includes("[system:compaction-failed]");
+    // Ownership is the agent-qualified queue key: the owner's queue holds the failure
+    // notice and another agent's queue for the same session key stays empty.
     const receipt = {
-      count: failureEvents.length,
-      owner: failureEvents[0] ? resolveSystemEventOwnerAgentId(failureEvents[0]) : null,
-      visibleToOtherAgent: selectAgentSystemEvents(failureEvents, "other-agent").length,
+      count: peekSystemEventEntries(resolveSystemEventQueueKey(SESSION_KEY, OWNER_AGENT_ID)).filter(
+        isFailureEvent,
+      ).length,
+      visibleToOtherAgent: peekSystemEventEntries(
+        resolveSystemEventQueueKey(SESSION_KEY, "other-agent"),
+      ).filter(isFailureEvent).length,
     };
-    expect(receipt).toEqual({
-      count: 1,
-      owner: OWNER_AGENT_ID,
-      visibleToOtherAgent: 0,
-    });
-    expect(selectAgentSystemEvents(failureEvents, OWNER_AGENT_ID)).toEqual(failureEvents);
+    expect(receipt).toEqual({ count: 1, visibleToOtherAgent: 0 });
     resetSystemEventsForTest();
   });
 
@@ -321,7 +316,8 @@ describe("request_compaction tool", () => {
     expect(result).toMatchObject({ status: "compaction_requested" });
     await flushBackgroundCompaction();
 
-    const events = peekSystemEventEntries(SESSION_KEY);
+    // An owner-less failure notice cannot be enqueued at all; the owner queue stays empty.
+    const events = peekSystemEventEntries(resolveSystemEventQueueKey(SESSION_KEY, OWNER_AGENT_ID));
     expect(events).toEqual([]);
     resetSystemEventsForTest();
   });

@@ -469,7 +469,7 @@ describe("handleMessageUpdate text signatures", () => {
       }),
     );
 
-    expect(ctx.blockChunker.bufferedText).toBe("Done.");
+    expect(ctx.blockChunker.bufferedText).toBe("Done.\n\n");
     expect(
       consumePendingAssistantReplyDirectivesIntoReply(ctx.state, {
         text: "Done.",
@@ -481,5 +481,6 @@ describe("handleMessageUpdate text signatures", () => {
       replyToTag: true,
       replyToCurrent: true,
     });
+    expect(ctx.state.pendingAssistantReplyDirectives).toBeUndefined();
   });
 });

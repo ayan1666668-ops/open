@@ -45,6 +45,7 @@ export function subscribeEmbeddedAgentSession(params: SubscribeEmbeddedAgentSess
     getUsageTotals,
     getLastAssistantUsage,
     getCurrentAttemptAssistant,
+    hasSuccessfulModelResponse,
   } = createEmbeddedModelState(params, log);
   let compactionCount = 0;
   const assistantTexts = state.assistantTexts;
@@ -75,24 +76,15 @@ export function subscribeEmbeddedAgentSession(params: SubscribeEmbeddedAgentSess
       messagingToolSentTexts.splice(0, overflow);
       messagingToolSentTextsNormalized.splice(0, overflow);
     }
-    if (
-      state.currentSourceMessagingToolSentTextsNormalized.length > MAX_MESSAGING_HISTORY_ENTRIES
-    ) {
-      const overflow =
-        state.currentSourceMessagingToolSentTextsNormalized.length - MAX_MESSAGING_HISTORY_ENTRIES;
-      state.currentSourceMessagingToolSentTextsNormalized.splice(0, overflow);
-    }
-    if (messagingToolSentTargets.length > MAX_MESSAGING_HISTORY_ENTRIES) {
-      const overflow = messagingToolSentTargets.length - MAX_MESSAGING_HISTORY_ENTRIES;
-      messagingToolSentTargets.splice(0, overflow);
-    }
-    if (messagingToolSentMediaUrls.length > MAX_MESSAGING_HISTORY_ENTRIES) {
-      const overflow = messagingToolSentMediaUrls.length - MAX_MESSAGING_HISTORY_ENTRIES;
-      messagingToolSentMediaUrls.splice(0, overflow);
-    }
-    if (messagingToolSourceReplyPayloads.length > MAX_MESSAGING_HISTORY_ENTRIES) {
-      const overflow = messagingToolSourceReplyPayloads.length - MAX_MESSAGING_HISTORY_ENTRIES;
-      messagingToolSourceReplyPayloads.splice(0, overflow);
+    for (const history of [
+      state.currentSourceMessagingToolSentTextsNormalized,
+      messagingToolSentTargets,
+      messagingToolSentMediaUrls,
+      messagingToolSourceReplyPayloads,
+    ]) {
+      if (history.length > MAX_MESSAGING_HISTORY_ENTRIES) {
+        history.splice(0, history.length - MAX_MESSAGING_HISTORY_ENTRIES);
+      }
     }
   };
 
@@ -243,17 +235,6 @@ export function subscribeEmbeddedAgentSession(params: SubscribeEmbeddedAgentSess
     pushAssistantText: replyDelivery.pushAssistantText,
     shouldSkipAssistantText: replyDelivery.shouldSkipAssistantText,
   });
-  const {
-    consumePartialReplyDirectives,
-    consumeReplyDirectives,
-    emitBlockChunk,
-    emitReasoningStream,
-    flushBlockReplyBuffer,
-    resetAssistantMessageState,
-    resetBlockReplyDirectives,
-    resetPartialReplyDirectives,
-    stripBlockTags,
-  } = streamRendering;
 
   const invalidateBlockReplyDeliveries = () => {
     replyDelivery.invalidateBlockReplyDeliveries();
@@ -322,14 +303,14 @@ export function subscribeEmbeddedAgentSession(params: SubscribeEmbeddedAgentSess
     state.toolExecutionSinceLastBlockReply = false;
     state.replayState = mergeEmbeddedRunReplayState(state.replayState, params.initialReplayState);
     state.livenessState = "working";
-    resetAssistantMessageState(0);
+    streamRendering.resetAssistantMessageState(0);
   };
 
   // Re-filter the full raw buffer. Reusing live scanner state would hide the
   // visible prefix when timeout interrupts an open <think> or <final> block.
   const finalizeFlushedAssistantText = (text: string) =>
     stripDowngradedToolCallText(
-      stripBlockTags(
+      streamRendering.stripBlockTags(
         text,
         {
           thinking: false,
@@ -362,6 +343,7 @@ export function subscribeEmbeddedAgentSession(params: SubscribeEmbeddedAgentSess
   };
 
   const ctx: EmbeddedAgentSubscribeContext = {
+    ...streamRendering,
     params,
     state,
     log,
@@ -375,21 +357,12 @@ export function subscribeEmbeddedAgentSession(params: SubscribeEmbeddedAgentSess
     shouldEmitToolOutput,
     emitToolSummary,
     emitToolOutput,
-    stripBlockTags,
-    emitBlockChunk,
-    flushBlockReplyBuffer,
     emitAssistantStreamData,
     emitBlockReply,
     flushAssistantStream,
     releaseDeferredReplies,
     clearAssistantStream,
     clearDeferredBlockReplies,
-    emitReasoningStream,
-    consumePartialReplyDirectives,
-    consumeReplyDirectives,
-    resetBlockReplyDirectives,
-    resetPartialReplyDirectives,
-    resetAssistantMessageState,
     getBlockReplyDeliveryGeneration: replyDelivery.getBlockReplyDeliveryGeneration,
     settleBlockReplyDeliveries: replyDelivery.settleBlockReplyDeliveries,
     invalidateBlockReplyDeliveriesForCompactionRetry,
@@ -457,6 +430,7 @@ export function subscribeEmbeddedAgentSession(params: SubscribeEmbeddedAgentSess
     assistantTexts,
     answerSegments: state.answerSegments,
     getCurrentAttemptAssistant,
+    hasSuccessfulModelResponse,
     getLastAssistantTextMessageIndex: () =>
       state.lastAssistantTextMessageIndex >= 0 ? state.lastAssistantTextMessageIndex : undefined,
     toolMetas,
@@ -505,6 +479,7 @@ export function subscribeEmbeddedAgentSession(params: SubscribeEmbeddedAgentSess
     getMessagingToolSentTargets: () => messagingToolSentTargets.slice(),
     getMessagingToolSourceReplyPayloads: () => messagingToolSourceReplyPayloads.slice(),
     getSourceReplyDelivered: () => state.sourceReplyDelivered,
+    getSourceReplyDeliveryState: () => state.sourceReplyDeliveryState,
     getHeartbeatToolResponse: () =>
       state.heartbeatToolResponse ? { ...state.heartbeatToolResponse } : undefined,
     getPendingToolMediaReply: () => readPendingToolMediaReply(state),

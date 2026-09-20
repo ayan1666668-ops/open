@@ -35,13 +35,14 @@ import {
   loadPendingSessionDelivery,
 } from "../../infra/session-delivery-queue-storage.js";
 // Records system-level session events for restarts, forks, and resets.
-import { selectAgentSystemEvents } from "../../infra/system-event-ownership.js";
+import { resolveSystemEventQueueKey } from "../../infra/system-event-ownership.js";
 import {
   consumeSelectedSystemEventEntries,
   peekSystemEventEntries,
   type SystemEvent,
 } from "../../infra/system-events.js";
 import { defaultRuntime } from "../../runtime.js";
+import { SESSION_CREATED_NOTICE_CONTEXT_PREFIX } from "../../sessions/session-state-event-kinds.js";
 import { acknowledgeSessionStateNotices } from "../../sessions/session-state-events.js";
 import { decodeSessionStateNoticeContextKey } from "../../sessions/session-state-notices.js";
 import { resolveContinuationRuntimeConfig } from "../continuation/config.js";
@@ -76,10 +77,14 @@ function selectGenericSystemEvents(
   );
 }
 
-function compactSystemEvent(line: string): string | null {
-  const trimmed = line.trim();
+function compactSystemEvent(event: SystemEvent): string | null {
+  const trimmed = event.text.trim();
   if (!trimmed) {
     return null;
+  }
+  // Creation metadata may mention heartbeat work; it is not a retired wake prompt.
+  if (event.contextKey?.startsWith(SESSION_CREATED_NOTICE_CONTEXT_PREFIX)) {
+    return trimmed;
   }
   const lower = normalizeLowercaseStringOrEmpty(trimmed);
   if (lower.includes("reason periodic")) {
@@ -200,17 +205,15 @@ export async function prepareFormattedSystemEvents(params: {
 }): Promise<PreparedFormattedSystemEvents> {
   const summaryLines: string[] = [];
   const blocks: PreparedSystemEventBlock[] = [];
+  const queueKey = resolveSystemEventQueueKey(params.sessionKey, params.agentId);
   // Exec completions have a dedicated heartbeat prompt; leave those entries queued
   // so the heartbeat path can consume and deliver them.
-  // Upstream scopes queued events to the owning agent before generic selection;
-  // keep that ownership filter ahead of our delivery-ack/session filtering.
+  // The queue is keyed by the owning agent, so peeking the resolved queue key is
+  // the ownership filter; our delivery-ack/session filtering runs after it.
   // Heartbeat turns pass a prepared generic selection so dedicated reminders
   // never leak into this consume window.
   let selected = selectGenericSystemEvents(
-    selectAgentSystemEvents(
-      params.events ?? peekSystemEventEntries(params.sessionKey),
-      params.agentId,
-    ),
+    params.events ?? peekSystemEventEntries(queueKey),
     { suppressHeartbeatOwnedEvents: params.suppressHeartbeatOwnedEvents },
   );
   // Storage must resolve under the SAME agent the ownership filter selected for,
@@ -239,7 +242,7 @@ export async function prepareFormattedSystemEvents(params: {
     for (const event of staleAuthorityEvents) {
       await settleStaleSystemEventAuthority({
         event,
-        sessionKey: params.sessionKey,
+        sessionKey: queueKey,
       });
     }
     if (staleAuthorityEvents.length > 0) {
@@ -464,7 +467,7 @@ export async function prepareFormattedSystemEvents(params: {
     }
   }
   for (const settlement of terminalManagedSettlements) {
-    await settleManagedDelivery(params.sessionKey, settlement);
+    await settleManagedDelivery(queueKey, settlement);
   }
   // Classify adoption-scoped deliveries BEFORE the prompt is assembled: an id
   // the persisted turn already adopted must be settled and excluded, not
@@ -514,7 +517,7 @@ export async function prepareFormattedSystemEvents(params: {
     }
   }
   const queued = consumeSelectedSystemEventEntries(
-    params.sessionKey,
+    queueKey,
     selected.filter((event) => !event.delegateArtifactReceipt && !deferredManagedEvents.has(event)),
   ).map(refreshManagedEvent);
   const deliverable = queued.filter(
@@ -581,7 +584,7 @@ export async function prepareFormattedSystemEvents(params: {
     log: (message) => defaultRuntime.log(message),
   });
   for (const event of promptEvents) {
-    const compacted = compactSystemEvent(event.text);
+    const compacted = compactSystemEvent(event);
     if (!compacted) {
       continue;
     }
@@ -616,7 +619,7 @@ export async function prepareFormattedSystemEvents(params: {
   }
   const pendingManagedDeliveries = pendingManagedSettlements.map((settlement) => {
     const authorityKey = readPreparedSystemEventAuthorityKey(settlement.event);
-    const acknowledge = () => settleManagedDelivery(params.sessionKey, settlement);
+    const acknowledge = () => settleManagedDelivery(queueKey, settlement);
     return authorityKey
       ? { id: settlement.id, acknowledge, authorityKey }
       : { id: settlement.id, acknowledge };

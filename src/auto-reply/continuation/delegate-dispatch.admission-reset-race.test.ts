@@ -19,7 +19,13 @@ vi.mock("../../agents/subagents/registry/subagent-registry-read.js", async (impo
 
 vi.mock("../../config/sessions/session-accessor.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../config/sessions/session-accessor.js")>()),
-  loadSessionEntry: () => undefined,
+  // Dispatch revalidates the owner session before and after the spawn fence; the
+  // race under test is the claim abort, so the owner must resolve with a stable
+  // lifecycle identity on every load.
+  loadSessionEntry: ({ sessionKey }: { sessionKey: string }) => ({
+    sessionId: `session-${sessionKey}`,
+    lifecycleRevision: "revision-1",
+  }),
   updateSessionEntry: vi.fn(async () => null),
 }));
 

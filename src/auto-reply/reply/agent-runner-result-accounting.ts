@@ -134,7 +134,7 @@ export async function accountAgentTurn(context: AgentTurnAccountingContext) {
   const fallbackModel = execution.resolved.model;
   const fallbackExhausted = execution.fallback.exhausted;
   const fallbackAttempts = execution.fallback.attempts;
-  const directlySentBlockKeys = execution.directlySentBlockKeys;
+  const hasDirectlySentBlockReply = execution.hasDirectlySentBlockReply;
   const directBlockDeliveries = execution.directBlockDeliveries;
   const terminalFailurePayload = execution.terminalFailurePayload;
   const { autoCompactionCount, didLogHeartbeatStrip } = execution;
@@ -463,7 +463,7 @@ export async function accountAgentTurn(context: AgentTurnAccountingContext) {
     continuationExtractionFromBracket: continuationExtraction.fromBracket,
     continuationWorkReason,
     didLogHeartbeatStrip,
-    directlySentBlockKeys,
+    hasDirectlySentBlockReply,
     directBlockDeliveries,
     effectiveContinuationSignal,
     effectiveContinueWorkRequests,

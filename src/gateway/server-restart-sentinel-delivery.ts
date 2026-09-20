@@ -51,7 +51,7 @@ type ResolvedQueuedSessionDelivery = QueuedSessionDelivery & {
 function enqueueRestartSentinelWake(params: {
   message: string;
   sessionKey: string;
-  agentId?: string;
+  agentId: string;
   deliveryContext?: {
     channel?: string;
     to?: string;
@@ -87,10 +87,7 @@ function enqueueRestartSentinelWake(params: {
       ? { delegateArtifactReceipt: params.delegateArtifactReceipt }
       : {}),
   };
-  enqueueSystemEvent(
-    params.message,
-    params.agentId ? withSystemEventOwner(eventOptions, params.agentId) : eventOptions,
-  );
+  enqueueSystemEvent(params.message, withSystemEventOwner(eventOptions, params.agentId));
   if (params.recipientAuthority && params.isRecipientAuthorityCurrent?.() !== true) {
     removeSystemEvents(
       params.sessionKey,
@@ -104,7 +101,7 @@ function enqueueRestartSentinelWake(params: {
     source: "restart-sentinel",
     intent: "immediate",
     reason: "wake",
-    ...(params.agentId ? { agentId: params.agentId } : {}),
+    agentId: params.agentId,
     sessionKey: params.sessionKey,
   });
   return true;
@@ -341,7 +338,7 @@ async function deliverResolvedQueuedSessionDelivery(params: {
     const replayed = enqueueRestartSentinelWake({
       message: deliveryText,
       sessionKey: canonicalKey,
-      agentId: params.entry.agentId,
+      agentId: params.entry.agentId ?? agentId,
       deliveryContext: queuedDeliveryContext,
       traceparent: params.entry.traceparent,
       sessionDeliveryAckId: params.entry.id,
@@ -389,6 +386,7 @@ async function deliverResolvedQueuedSessionDelivery(params: {
     enqueueRestartSentinelWake({
       message: params.entry.message,
       sessionKey: canonicalKey,
+      agentId,
       deliveryContext: queuedDeliveryContext,
       traceparent: params.entry.traceparent,
       sessionDeliveryAckId: params.entry.id,
@@ -401,6 +399,7 @@ async function deliverResolvedQueuedSessionDelivery(params: {
     enqueueRestartSentinelWake({
       message: params.entry.message,
       sessionKey: canonicalKey,
+      agentId,
       deliveryContext: queuedDeliveryContext,
       traceparent: params.entry.traceparent,
       sessionDeliveryAckId: params.entry.id,
