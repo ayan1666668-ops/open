@@ -2,7 +2,6 @@
 import {
   normalizeLowercaseStringOrEmpty,
   normalizeOptionalString,
-  readNonEmptyStringPreservingWhitespace,
 } from "@openclaw/normalization-core/string-coerce";
 import type { Command } from "commander";
 import { randomIdempotencyKey } from "../../gateway/call.js";
@@ -24,28 +23,6 @@ function parseNodeInvokeParams(value = "{}"): unknown {
   } catch {
     throw new Error("--params must be valid JSON.");
   }
-}
-
-/**
- * Resolve the optional --idempotency-key flag. An omitted flag generates a fresh
- * key, but an explicitly empty value is operator error: forwarding "" reaches the
- * Gateway as a real key, where node.invoke requires a non-empty string, so the
- * whole request is rejected with a cryptic schema error.
- *
- * Any nonempty key is returned byte-for-byte, including a whitespace-only one: the
- * shipped Gateway accepts those, and pending node actions deduplicate by exact key
- * equality, so trimming or rejecting a key callers can already retry with would
- * change its identity and let the retry queue a second action.
- */
-function resolveIdempotencyKey(value: unknown): string {
-  if (value === undefined) {
-    return randomIdempotencyKey();
-  }
-  const key = readNonEmptyStringPreservingWhitespace(value);
-  if (key === undefined) {
-    throw new Error("--idempotency-key must not be empty.");
-  }
-  return key;
 }
 
 /** Register direct node command invocation. */
@@ -76,14 +53,16 @@ export function registerNodesInvokeCommands(nodes: Command) {
             opts.invokeTimeout,
             "--invoke-timeout",
           );
-          const idempotencyKey = resolveIdempotencyKey(opts.idempotencyKey);
+          if (opts.idempotencyKey === "") {
+            throw new Error("--idempotency-key must not be empty.");
+          }
           const nodeId = await resolveCliNodeId(opts, nodeQuery);
 
           const invokeParams: Record<string, unknown> = {
             nodeId,
             command,
             params,
-            idempotencyKey,
+            idempotencyKey: opts.idempotencyKey ?? randomIdempotencyKey(),
           };
           if (typeof timeoutMs === "number" && Number.isFinite(timeoutMs)) {
             invokeParams.timeoutMs = timeoutMs;
