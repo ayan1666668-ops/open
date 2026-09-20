@@ -1,10 +1,15 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
+import fsNode from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../test/helpers/promise.js";
-import { beginAgentDeletion, isAgentDeletionBlocked } from "../agents/agent-lifecycle-registry.js";
+import {
+  withAgentDeletion,
+  isAgentDeletionBlocked,
+  type AgentDeletionOperation,
+} from "../agents/agent-lifecycle-registry.js";
 import { listAgentEntries } from "../agents/agent-scope.js";
 import { applyClawAddPlan } from "../claws/add.js";
 import type { ClawRemoveApplyOptions } from "../claws/lifecycle-remove-contract.js";
@@ -20,12 +25,16 @@ import {
   type ClawMonitorCleanupGateway,
 } from "../claws/monitor-cleanup-contract.js";
 import { parseClawManifest } from "../claws/schema.js";
+import { registerConfigWriteListener, resetConfigRuntimeState } from "../config/config.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { applyHeartbeatMonitorJobs } from "../cron/heartbeat-monitor.js";
 import { cronJobReadView } from "../cron/job-read-view.js";
 import { normalizeCronJobCreate } from "../cron/normalize.js";
 import { CronService } from "../cron/service.js";
-import { getSuspensionVisibleCronTaskRunCount } from "../cron/service/active-run-cancellation.js";
+import {
+  getSuspensionVisibleCronTaskRunCount,
+  waitForActiveCronTaskRuns,
+} from "../cron/service/active-run-cancellation.js";
 import type { CronServiceDeps } from "../cron/service/state.js";
 import * as sessionReaper from "../cron/session-reaper.js";
 import { upsertCronJobRow } from "../cron/store/row-codec.js";
@@ -35,9 +44,13 @@ import {
   releaseLocalCronRunReceiptOwnership,
 } from "../cron/store/run-receipt-store.js";
 import { getFileLockProcessStartTime } from "../shared/pid-alive.js";
-import { readAgentDeletionJournal } from "../state/agent-deletion-journal.js";
+import {
+  beginAgentDeletionJournal,
+  readAgentDeletionJournal,
+} from "../state/agent-deletion-journal.js";
 import { openOpenClawAgentDatabase } from "../state/openclaw-agent-db.js";
 import {
+  closeOpenClawStateDatabaseAsync,
   closeOpenClawStateDatabaseForTest,
   openOpenClawStateDatabase,
   runOpenClawStateWriteTransaction,
@@ -126,6 +139,8 @@ async function fixture(
     consentPlanIntegrity: addPlan.planIntegrity,
     commitConfig: async (transform) => {
       config = transform(config);
+      await state.writeConfig(config);
+      resetConfigRuntimeState();
     },
     cronGateway: {
       add: async (input) => {
@@ -137,14 +152,23 @@ async function fixture(
       },
     },
   });
+  let reconcilePending = false;
   const reconcile = async () => {
     expect((await applyHeartbeatMonitorJobs({ cron, cfg: config })).ok).toBe(true);
     expect(
       (await reconcileSkillCollectionReviewJobs({ cron, cfg: config, logger })).ok,
       JSON.stringify(logger.warn.mock.calls.slice(-3)),
     ).toBe(true);
+    reconcilePending = false;
   };
   await reconcile();
+  const unsubscribe = registerConfigWriteListener((event) => {
+    if (event.configPath === state.configPath) {
+      config = event.runtimeConfig;
+      reconcilePending = true;
+    }
+  });
+  cleanups.push(async () => unsubscribe());
   let reloadSettled = true;
   const context = {
     cron,
@@ -179,11 +203,16 @@ async function fixture(
       await invoke({ phase: "quiesce", agentId, operationId, monitors });
     },
     drain: async (agentId, operationId) => {
+      if (reconcilePending) {
+        await reconcile();
+      }
       await invoke({ phase: "drain", agentId, operationId });
     },
   };
-  const commitConfig = async (transform: (cfg: OpenClawConfig) => OpenClawConfig) => {
-    config = transform(config);
+  const writeConfig = async (nextConfig: OpenClawConfig) => {
+    config = nextConfig;
+    await state.writeConfig(config);
+    resetConfigRuntimeState();
     await reconcile();
   };
   const plan = () => buildClawRemovePlan("worker", { config, monitorGateway: gateway });
@@ -201,7 +230,10 @@ async function fixture(
         },
         remove: async (id) => await cron.remove(id),
       },
-      commitConfig,
+      trashPath: async (pathname) => {
+        await fs.rm(pathname, { recursive: true, force: true });
+        return true;
+      },
       consentPlanIntegrity: removal.planIntegrity,
       ...overrides,
     });
@@ -213,7 +245,7 @@ async function fixture(
     plan,
     apply,
     invoke,
-    commitConfig,
+    writeConfig,
     reconcile,
     replaceCron: () => {
       const replacement = new CronService(cronDeps);
@@ -223,6 +255,18 @@ async function fixture(
       });
     },
     getConfig: () => config,
+    withDeletion: <T>(run: (deletion: AgentDeletionOperation) => Promise<T>) =>
+      withAgentDeletion("worker", async (begin) =>
+        run(
+          begin({
+            agentId: "worker",
+            agentDir: state.agentDir("worker"),
+            workspaceDir,
+            sessionsDir: state.sessionsDir("worker"),
+            deleteFiles: false,
+          }),
+        ),
+      ),
     setReloadSettled: (value: boolean) => {
       reloadSettled = value;
     },
@@ -234,36 +278,33 @@ describe("Claw serving monitor cleanup", () => {
     "retains a configured agent without a Claw install during %s",
     async (phase) => {
       const current = await fixture(false);
-      const deletion = beginAgentDeletion({
-        agentId: "worker",
-        agentDir: current.state.agentDir("worker"),
-        workspaceDir: current.workspaceDir,
-        sessionsDir: current.state.sessionsDir("worker"),
-        deleteFiles: false,
+      await current.withDeletion(async (deletion) => {
+        openOpenClawStateDatabase()
+          .db.prepare("DELETE FROM claw_installs WHERE agent_id = ?")
+          .run("worker");
+        await expect(
+          current.invoke({
+            phase,
+            agentId: "worker",
+            operationId: deletion.entry.operationId,
+            ...(phase === "quiesce" ? { monitors: await current.gateway.inspect("worker") } : {}),
+          }),
+        ).rejects.toThrow("configuration changed");
+        expect(listAgentEntries(current.getConfig()).some((agent) => agent.id === "worker")).toBe(
+          true,
+        );
+        await expect(
+          fs.access(path.join(current.workspaceDir, "SOUL.md")),
+        ).resolves.toBeUndefined();
       });
-      openOpenClawStateDatabase()
-        .db.prepare("DELETE FROM claw_installs WHERE agent_id = ?")
-        .run("worker");
-      await expect(
-        current.invoke({
-          phase,
-          agentId: "worker",
-          operationId: deletion.entry.operationId,
-          ...(phase === "quiesce" ? { monitors: await current.gateway.inspect("worker") } : {}),
-        }),
-      ).rejects.toThrow("configuration changed");
-      expect(listAgentEntries(current.getConfig()).some((agent) => agent.id === "worker")).toBe(
-        true,
-      );
-      await expect(fs.access(path.join(current.workspaceDir, "SOUL.md"))).resolves.toBeUndefined();
     },
   );
 
   it("removes orphaned workspace ownership through the serving monitor handler", async () => {
     const current = await fixture(false);
-    await current.commitConfig(() => ({
+    await current.writeConfig({
       agents: { entries: { main: { workspace: current.state.path("main-workspace") } } },
-    }));
+    });
     openOpenClawStateDatabase()
       .db.prepare("DELETE FROM claw_installs WHERE agent_id = ?")
       .run("worker");
@@ -354,35 +395,29 @@ describe("Claw serving monitor cleanup", () => {
       const current = await fixture(false);
       const database = openOpenClawAgentDatabase({ agentId: "worker" });
       const monitors = await current.gateway.inspect("worker");
-      const target = {
-        agentId: "worker",
-        agentDir: current.state.agentDir("worker"),
-        workspaceDir: current.workspaceDir,
-        sessionsDir: current.state.sessionsDir("worker"),
-        deleteFiles: false,
-      };
-      const deletion = beginAgentDeletion(target);
-      const originalList = current.cron.list.bind(current.cron);
-      const list = vi.spyOn(current.cron, "list").mockImplementationOnce(async (opts) => {
-        const jobs = await originalList(opts);
-        if (changedOwner === "operation") {
-          beginAgentDeletion(target);
-        } else {
-          current.replaceCron();
+      await current.withDeletion(async (deletion) => {
+        const originalList = current.cron.list.bind(current.cron);
+        const list = vi.spyOn(current.cron, "list").mockImplementationOnce(async (opts) => {
+          const jobs = await originalList(opts);
+          if (changedOwner === "operation") {
+            beginAgentDeletionJournal({ ...deletion.entry, operationId: "replacement" });
+          } else {
+            current.replaceCron();
+          }
+          return jobs;
+        });
+        try {
+          await expect(
+            current.gateway.quiesce("worker", deletion.entry.operationId, monitors),
+          ).rejects.toThrow(changedOwner === "operation" ? "deletion fence" : "changing");
+          expect(database.db.prepare("SELECT 1 AS alive").get()).toEqual({ alive: 1 });
+          await expect(
+            fs.access(path.join(current.workspaceDir, "SOUL.md")),
+          ).resolves.toBeUndefined();
+        } finally {
+          list.mockRestore();
         }
-        return jobs;
       });
-      try {
-        await expect(
-          current.gateway.quiesce("worker", deletion.entry.operationId, monitors),
-        ).rejects.toThrow(changedOwner === "operation" ? "deletion fence" : "changing");
-        expect(database.db.prepare("SELECT 1 AS alive").get()).toEqual({ alive: 1 });
-        await expect(
-          fs.access(path.join(current.workspaceDir, "SOUL.md")),
-        ).resolves.toBeUndefined();
-      } finally {
-        list.mockRestore();
-      }
     },
   );
 
@@ -459,30 +494,25 @@ describe("Claw serving monitor cleanup", () => {
     const current = await fixture(false);
     const database = openOpenClawAgentDatabase({ agentId: "worker" });
     const monitors = await current.gateway.inspect("worker");
-    const deletion = beginAgentDeletion({
-      agentId: "worker",
-      agentDir: current.state.agentDir("worker"),
-      workspaceDir: current.workspaceDir,
-      sessionsDir: current.state.sessionsDir("worker"),
-      deleteFiles: false,
+    await current.withDeletion(async (deletion) => {
+      await current.gateway.quiesce("worker", deletion.entry.operationId, monitors);
+      expect(() => database.db.prepare("SELECT 1")).toThrow();
+      const config = current.getConfig();
+      config.agents = { ...config.agents, entries: undefined, list: listAgentEntries(config) };
+      for (const monitor of monitors) {
+        await current.cron.remove(monitor.id, { systemOwned: true });
+      }
+      expect(
+        (await current.cron.list({ includeDisabled: true })).filter(
+          (job) => job.agentId === "worker",
+        ),
+      ).toEqual([]);
+      expect(listAgentEntries(current.getConfig()).map((agent) => agent.id)).toContain("worker");
+      await expect(current.gateway.drain("worker", deletion.entry.operationId)).rejects.toThrow(
+        "config convergence is incomplete",
+      );
+      await expect(fs.access(path.join(current.workspaceDir, "SOUL.md"))).resolves.toBeUndefined();
     });
-    await current.gateway.quiesce("worker", deletion.entry.operationId, monitors);
-    expect(() => database.db.prepare("SELECT 1")).toThrow();
-    const config = current.getConfig();
-    config.agents = { ...config.agents, entries: undefined, list: listAgentEntries(config) };
-    for (const monitor of monitors) {
-      await current.cron.remove(monitor.id, { systemOwned: true });
-    }
-    expect(
-      (await current.cron.list({ includeDisabled: true })).filter(
-        (job) => job.agentId === "worker",
-      ),
-    ).toEqual([]);
-    expect(listAgentEntries(current.getConfig()).map((agent) => agent.id)).toContain("worker");
-    await expect(current.gateway.drain("worker", deletion.entry.operationId)).rejects.toThrow(
-      "config convergence is incomplete",
-    );
-    await expect(fs.access(path.join(current.workspaceDir, "SOUL.md"))).resolves.toBeUndefined();
     expect(await current.apply(await current.plan())).toMatchObject({ status: "complete" });
   });
 
@@ -550,56 +580,63 @@ describe("Claw serving monitor cleanup", () => {
     async (failure) => {
       const current = await fixture(false);
       const plan = await current.plan();
-      const result = await current.apply(plan, {
-        ...(failure === "reload"
-          ? {
-              commitConfig: async (transform) => {
-                await current.commitConfig(transform);
-                current.setReloadSettled(false);
-              },
-            }
-          : {}),
-        ...(failure === "config-write"
-          ? {
-              commitConfig: async () => {
+      const database = openOpenClawStateDatabase();
+      if (failure === "cron-persistence") {
+        database.db.exec(`CREATE TRIGGER refuse_monitor_delete
+          BEFORE DELETE ON cron_jobs WHEN OLD.agent_id = 'worker'
+          BEGIN SELECT RAISE(ABORT, 'synthetic monitor persistence failure'); END`);
+      }
+      const renameSync = fsNode.renameSync.bind(fsNode);
+      const writeFailure =
+        failure === "config-write"
+          ? vi.spyOn(fsNode, "renameSync").mockImplementation((...args) => {
+              if (args[1] === current.state.configPath) {
                 throw new Error("synthetic config persistence failure");
-              },
-            }
-          : {}),
-        ...(failure === "cron-persistence"
-          ? {
-              commitConfig: async (transform) => {
-                const database = openOpenClawStateDatabase();
-                database.db.exec(`CREATE TEMP TRIGGER refuse_monitor_delete
-                  BEFORE DELETE ON cron_jobs WHEN OLD.agent_id = 'worker'
-                  BEGIN SELECT RAISE(ABORT, 'synthetic monitor persistence failure'); END`);
-                try {
-                  await current.commitConfig(transform);
-                } finally {
-                  database.db.exec("DROP TRIGGER refuse_monitor_delete");
+              }
+              renameSync(...args);
+            })
+          : undefined;
+      let result: Awaited<ReturnType<typeof current.apply>>;
+      try {
+        result = await current.apply(plan, {
+          monitorGateway: {
+            ...current.gateway,
+            ...(failure === "lost-cancellation-response"
+              ? {
+                  quiesce: async (...args: Parameters<ClawMonitorCleanupGateway["quiesce"]>) => {
+                    await current.gateway.quiesce(...args);
+                    throw new Error("synthetic lost cancellation response");
+                  },
                 }
-              },
-            }
-          : {}),
-        ...(failure === "lost-cancellation-response"
-          ? {
-              monitorGateway: {
-                ...current.gateway,
-                quiesce: async (...args) => {
-                  await current.gateway.quiesce(...args);
-                  throw new Error("synthetic lost cancellation response");
-                },
-              },
-            }
-          : {}),
-      });
+              : {}),
+            ...(failure === "reload"
+              ? {
+                  drain: async (...args: Parameters<ClawMonitorCleanupGateway["drain"]>) => {
+                    current.setReloadSettled(false);
+                    await current.gateway.drain(...args);
+                  },
+                }
+              : {}),
+          },
+        });
+      } finally {
+        writeFailure?.mockRestore();
+        if (failure === "cron-persistence") {
+          database.db.exec("DROP TRIGGER refuse_monitor_delete");
+        }
+      }
       expect(result).toMatchObject({
         status: "partial",
+        agentRemoved: failure === "cron-persistence" || failure === "reload",
         error: { code: "monitor_cleanup_failed" },
       });
+      if (failure === "config-write") {
+        expect(result.error?.message).toContain("synthetic config persistence failure");
+      }
       const firstJournal = readAgentDeletionJournal("worker");
       expect(firstJournal).toBeDefined();
       await expect(fs.access(path.join(current.workspaceDir, "SOUL.md"))).resolves.toBeUndefined();
+      await closeOpenClawStateDatabaseAsync();
       closeOpenClawStateDatabaseForTest();
       expect(readAgentDeletionJournal("worker")?.operationId).toBe(firstJournal?.operationId);
       current.setReloadSettled(true);
@@ -754,10 +791,9 @@ describe("Claw serving monitor cleanup", () => {
     const signal = await started.promise;
     try {
       const plan = await current.plan();
-      const removal = current.apply(plan);
-      await vi.waitFor(() => expect(signal.aborted).toBe(true));
+      const result = await current.apply(plan);
+      expect(signal.aborted).toBe(true);
       await run;
-      const result = await removal;
       expect(result).toMatchObject({
         status: "partial",
         agentRemoved: false,
@@ -766,15 +802,16 @@ describe("Claw serving monitor cleanup", () => {
       expect(readAgentDeletionJournal("worker")).toBeDefined();
       expect(Object.hasOwn(current.getConfig().agents?.entries ?? {}, "worker")).toBe(true);
       await expect(fs.access(path.join(current.workspaceDir, "SOUL.md"))).resolves.toBeUndefined();
+      await closeOpenClawStateDatabaseAsync();
       closeOpenClawStateDatabaseForTest();
       expect(readAgentDeletionJournal("worker")).toBeDefined();
       release.resolve();
-      await vi.waitFor(() => expect(signal.aborted).toBe(true));
       const retry = await current.plan();
       expect(await current.apply(retry)).toMatchObject({ status: "complete" });
     } finally {
       release.resolve();
       await run;
+      expect(await waitForActiveCronTaskRuns(1_000)).toEqual({ drained: true, active: 0 });
     }
   });
 });

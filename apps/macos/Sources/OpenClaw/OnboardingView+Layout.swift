@@ -186,7 +186,7 @@ extension OnboardingView {
             }
 
             switch outcome {
-            case let .configured(modelRef, _):
+            case let .configured(modelRef, modelTarget, _):
                 switch pendingState {
                 case .activating, .activationExpired, .completed:
                     // A live setup/verification already owns this marker. A
@@ -195,7 +195,8 @@ extension OnboardingView {
                     guard !self.aiSetup.connected else { return }
                     // Reopening a receipt authorizes observation, never another automatic test.
                     let recoveryIntent = intent == .inspectOnly ? intent : .resumePending
-                    await self.resumePendingSystemAgent(modelRef: modelRef, intent: recoveryIntent).value
+                    await self.resumePendingSystemAgent(
+                        modelRef: modelRef, modelTarget: modelTarget, intent: recoveryIntent).value
                     return
                 case .verified:
                     // Inference was observed, but the dropped activation can
@@ -204,13 +205,6 @@ extension OnboardingView {
                     return
                 case .none:
                     break
-                }
-                // A configured label is a display fact, not permission for a live
-                // completion. Existing routes appear in the same explicit picker.
-                if intent != .inspectOnly,
-                   knownAISetupPage || self.activePageIndex == self.aiPageIndex
-                {
-                    self.aiSetup.startIfNeeded()
                 }
             case .missing:
                 // A route-bound activation/verification can complete while the
@@ -239,15 +233,18 @@ extension OnboardingView {
                 case .none:
                     break
                 }
-                if intent != .inspectOnly,
-                   knownAISetupPage || self.activePageIndex == self.aiPageIndex
-                {
-                    self.aiSetup.startIfNeeded()
-                }
             case .unavailable, .authIssue:
                 self.showConfiguredGatewayProbeBlocker(outcome)
+                return
             case .superseded:
-                break
+                return
+            }
+            // Both configured and empty Gateways enter the picker only after
+            // native receipt recovery. A configured label never authorizes a live test.
+            if intent != .inspectOnly,
+               knownAISetupPage || self.activePageIndex == self.aiPageIndex
+            {
+                self.aiSetup.startIfNeeded()
             }
         }
     }

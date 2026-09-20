@@ -7,14 +7,13 @@ import { clearConfigCache, clearRuntimeConfigSnapshot } from "../../config/confi
 import { stampConfigWriteMetadata } from "../../config/io.meta.js";
 import type { CallGatewayOptions } from "../../gateway/call.js";
 import { gatewayHealthResponse } from "../../gateway/health-response.test-support.js";
-import type {
-  VerifyUpdateServingParams,
-  UpdateServingVerificationResult,
-} from "../../infra/update-serving-verification.js";
+import { getUpdateRun } from "../../infra/update-run-ledger.js";
+import type { UpdateRunResult } from "../../infra/update-runner.js";
 import { captureEnv } from "../../test-utils/env.js";
 import * as runtimeUtils from "../../utils.js";
 import { VERSION } from "../../version.js";
 import type { UpdateCommandOptions } from "./shared.js";
+import { completeUpdateCommandRun } from "./update-command-run.js";
 import {
   maybeRestartService,
   maybeStopManagedServiceBeforeMutableUpdate,
@@ -28,6 +27,9 @@ export async function createServiceActivationFixture() {
   vi.spyOn(os, "userInfo").mockReturnValue({ ...os.userInfo(), homedir: root });
   const keys = [
     "HOME",
+    "XDG_RUNTIME_DIR",
+    "DBUS_SESSION_BUS_ADDRESS",
+    "SUDO_USER",
     "OPENCLAW_HOME",
     "OPENCLAW_STATE_DIR",
     "OPENCLAW_CONFIG_PATH",
@@ -48,6 +50,8 @@ export async function createServiceActivationFixture() {
     delete process.env[key];
   }
   process.env.HOME = root;
+  process.env.XDG_RUNTIME_DIR = path.join(root, ".runtime");
+  process.env.DBUS_SESSION_BUS_ADDRESS = `unix:path=${process.env.XDG_RUNTIME_DIR}/bus`;
   // This fixture models an installed service even though its manager calls are simulated.
   const unitPath = path.join(root, ".config/systemd/user/openclaw-gateway.service");
   await fs.mkdir(path.dirname(unitPath), { recursive: true });
@@ -70,33 +74,6 @@ export async function createServiceActivationFixture() {
   return { root, configPath, envSnapshot };
 }
 
-export async function verifiedServingResult(
-  params: VerifyUpdateServingParams,
-): Promise<UpdateServingVerificationResult> {
-  return {
-    status: "verified",
-    receipt: {
-      runId: params.runId,
-      gateway: {
-        bootId: "service-boot",
-        version: params.expectedVersion,
-        buildId: params.expectedBuildId ?? null,
-      },
-      agentId: "main",
-      sessionKey: "service-session",
-      sessionId: "service-session-id",
-      agentRunId: "00000000-0000-4000-8000-000000000002",
-      verifiedAtMs: Date.now(),
-      transcript: {
-        generation: "service-generation",
-        maxSeq: 2,
-        user: { entryId: "user-entry", seq: 1 },
-        assistant: { entryId: "assistant-entry", seq: 2 },
-      },
-    },
-  };
-}
-
 export function readyRecoveryHealth(
   port: number,
   running: boolean,
@@ -105,9 +82,9 @@ export function readyRecoveryHealth(
 > {
   return {
     healthy: true,
-    gatewayBootId: "service-boot",
     staleGatewayPids: [],
-    runtime: { status: running ? "running" : "stopped" },
+    runtime: { status: running ? "running" : "stopped", pid: running ? 4242 : undefined },
+    gatewayBootId: "service-boot",
     portUsage: { port, status: "busy", listeners: [], hints: [] },
   };
 }
@@ -145,7 +122,7 @@ export function registerRecoveryTests(params: {
   it.each([
     { startup: "fast", readyAfterMs: 0, needsRecovery: false },
     { startup: "slow", readyAfterMs: 20_000, needsRecovery: false },
-    { startup: "unready", readyAfterMs: Infinity, needsRecovery: true },
+    { startup: "unready", readyAfterMs: Infinity, needsRecovery: false },
     { startup: "wrong version", readyAfterMs: 0, needsRecovery: true },
   ])(
     "verifies the $startup refresh before deciding on recovery",
@@ -215,28 +192,51 @@ export function registerRecoveryTests(params: {
         return health;
       });
 
+      const result: UpdateRunResult = {
+        status: "ok",
+        mode: "npm",
+        root,
+        steps: [],
+        durationMs: 0,
+        before: { version: "2026.1.1" },
+        after: { version: VERSION },
+      };
       const activated = await maybeRestartService({
         shouldRestart: true,
-        result: {
-          status: "ok",
-          mode: "npm",
-          root,
-          steps: [],
-          durationMs: 0,
-          before: { version: "2026.1.1" },
-          after: { version: VERSION },
-        },
+        result,
         opts: { json: true, run: params.run() },
         refreshServiceEnv: true,
         serviceInstallEnv: process.env,
         serviceUpdateVerdict: before.serviceUpdateVerdict,
+        serviceManagerUid: before.serviceManagerUid,
         serviceEnv: before.serviceEnv,
         gatewayPort: 19305,
         requireRunningServiceAfterRestart: true,
         timeoutMs: 1_000,
       });
 
-      expect(activated).toBe("ok");
+      const pending = startup === "slow" || startup === "unready";
+      expect(activated).toBe(pending ? "readiness-pending" : "ok");
+      if (pending) {
+        const run = params.run();
+        expect(completeUpdateCommandRun(result, run)).toMatchObject({
+          status: "skipped",
+          reason: "gateway-readiness-unverified",
+        });
+        expect(getUpdateRun(run.runId, { env: run.env })).toMatchObject({
+          status: "skipped",
+          reason: "gateway-readiness-unverified",
+          confirmedAtMs: null,
+          verification: { serviceRunning: true, pid: 4242, readyz: false },
+          steps: expect.arrayContaining([
+            expect.objectContaining({
+              step: "warning:gateway verification",
+              detail: expect.stringContaining("Keep recovery backups"),
+            }),
+          ]),
+        });
+        expect(mocks.running).toBe(true);
+      }
       expect(mocks.events).toEqual([
         "native stop",
         "refresh activation",
@@ -246,12 +246,12 @@ export function registerRecoveryTests(params: {
               "recovery restart",
             ]
           : []),
-        "health: healthy",
+        pending ? "health: timeout" : "health: healthy",
       ]);
       expect(mocks.script).not.toHaveBeenCalled();
       expect(mocks.restart).not.toHaveBeenCalled();
-      if (startup === "unready") {
-        expect(healthResults[0]?.elapsedMs).toBeGreaterThanOrEqual(60_000);
+      if (startup === "unready" || startup === "slow") {
+        expect(healthResults[0]?.elapsedMs).toBe(6_500);
       } else if (!needsRecovery) {
         expect(nowMs).toBeGreaterThanOrEqual(readyAfterMs + 5_500);
       }

@@ -1,5 +1,9 @@
+import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
+import { sanitizeForLog } from "../../packages/terminal-core/src/ansi.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { coerceSecretRef } from "../config/types.secrets.js";
+import { formatErrorMessage } from "../infra/errors.js";
+import { redactSensitiveText } from "../logging/redact.js";
 import { secretRefKey } from "../secrets/ref-contract.js";
 import { resolveAuthProfileSecretOwnerId } from "../secrets/runtime-auth-profile-owner.js";
 import { SecretSurfaceUnavailableError } from "../secrets/runtime-degraded-state.js";
@@ -34,11 +38,13 @@ export async function prepareProviderDiscoveryAuth(
   {
     agentDir,
     authStore,
+    env,
     resolveProviderApiKey,
     resolveProviderAuth,
   }: {
     agentDir: string;
     authStore: AuthProfileStore;
+    env: NodeJS.ProcessEnv;
     resolveProviderApiKey: ProviderApiKeyResolver;
     resolveProviderAuth: ProviderAuthResolver;
   },
@@ -55,12 +61,17 @@ export async function prepareProviderDiscoveryAuth(
           : undefined,
       config?.secrets?.defaults,
     );
-    if (!ref || ref.source === "env") {
+    if (!ref) {
+      continue;
+    }
+    // Cold catalog readers can use env material without a Gateway auth snapshot.
+    const envValue = ref.source === "env" ? normalizeOptionalString(env[ref.id.trim()]) : undefined;
+    if (envValue) {
+      profiles.set(profileId, () => envValue);
       continue;
     }
     try {
       // Only the canonical owner may redeem this exact profile's published ref.
-      // OAuth/env/plain profiles retain their existing discovery semantics.
       const resolved = await resolveApiKeyForProfile({
         cfg: config,
         store: authStore,
@@ -118,6 +129,7 @@ export async function prepareProviderCatalogOAuthAuth(
   config?: OpenClawConfig,
 ) {
   const failedProfileIds: string[] = [];
+  const failures: Array<{ profileId: string; message: string }> = [];
   let preparedProfile: { profileId: string; apiKey: string } | undefined;
   // Let an admitted refresh finish persisting its rotation, but do not start
   // another candidate after the catalog owner closes preparation admission.
@@ -139,6 +151,7 @@ export async function prepareProviderCatalogOAuthAuth(
     ) {
       break;
     }
+    let message = "No OAuth credential was returned";
     try {
       const resolved = await resolveApiKeyForProfile({
         cfg: config,
@@ -151,13 +164,18 @@ export async function prepareProviderCatalogOAuthAuth(
         preparedProfile = { profileId: auth.profileId, apiKey: resolved.apiKey };
         break;
       }
-    } catch {
-      failedProfileIds.push(auth.profileId);
-      continue;
+    } catch (error) {
+      message = sanitizeForLog(redactSensitiveText(formatErrorMessage(error), { mode: "tools" }))
+        .replace(/\s+/gu, " ")
+        .slice(0, 500);
     }
     failedProfileIds.push(auth.profileId);
+    failures.push({ profileId: auth.profileId, message });
   }
-  return (requestedProvider?: string, options?: { oauthMarker?: string }) => {
+  const resolvePreparedProviderAuth = (
+    requestedProvider?: string,
+    options?: { oauthMarker?: string },
+  ) => {
     const target = requestedProvider?.trim() || provider;
     const auth = resolveProviderAuth(target, {
       ...options,
@@ -178,4 +196,5 @@ export async function prepareProviderCatalogOAuthAuth(
       ? { ...auth, discoveryApiKey: preparedProfile.apiKey }
       : auth;
   };
+  return { resolveProviderAuth: resolvePreparedProviderAuth, failures };
 }

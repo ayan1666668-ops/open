@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   collectCliBootstrapExternalImportErrors,
   collectGatewayRunChunkBudgetErrors,
+  collectNativeHookRelayBundleErrors,
   collectWorkerDeployArtifactErrors,
   listStaticImportSpecifiers,
 } from "../../scripts/check-cli-bootstrap-imports.mts";
@@ -19,6 +20,14 @@ import {
 } from "../../scripts/lib/gateway-run-chunk-metadata.mts";
 
 const tempRoots: string[] = [];
+const workerDeployArtifactNames = [
+  "github-exec-launcher.mjs",
+  "image-processor.worker.mjs",
+  "service-child-group-anchor.mjs",
+  "service-child-relay.mjs",
+  "worker.mjs",
+  "workspace-rsync-receiver.mjs",
+];
 
 function makeTempRoot(): string {
   const root = mkdtempSync(join(tmpdir(), "openclaw-cli-bootstrap-imports-"));
@@ -272,23 +281,69 @@ describe("check-cli-bootstrap-imports", () => {
     ]);
   });
 
-  it("accepts the self-contained worker deploy artifacts with builtin imports", () => {
+  it("requires the relay in current builds but accepts older package inventories", () => {
+    const rootDir = makeTempRoot();
+
+    expect(collectNativeHookRelayBundleErrors({ rootDir })).toEqual([]);
+    expect(collectNativeHookRelayBundleErrors({ rootDir, requireNativeHookRelay: true })).toEqual([
+      "CLI bootstrap import guard could not read dist/native-hook-relay/entry.js. Run pnpm build first.",
+    ]);
+  });
+
+  it("accepts a bounded native hook relay graph with shared runtime chunks", () => {
     const root = makeTempRoot();
     writeFixture(
       root,
-      "dist/worker/worker.mjs",
-      'import fs from "node:fs";\nexport const worker = Boolean(fs);\n',
+      "dist/native-hook-relay/entry.js",
+      'import "../client.js";\nvoid import("../gateway-call.js");\n',
     );
     writeFixture(
       root,
-      "dist/worker/workspace-rsync-receiver.mjs",
-      'import path from "node:path";\nexport const receiver = Boolean(path);\n',
+      "dist/client.js",
+      'import "kysely";\nimport "@openclaw/fs-safe/config";\nimport "@openclaw/fs-safe/advanced";\n',
     );
-    writeFixture(
-      root,
-      "dist/worker/github-exec-launcher.mjs",
-      'import fs from "node:fs";\nexport const launcher = Boolean(fs);\n',
-    );
+
+    expect(collectNativeHookRelayBundleErrors({ rootDir: root })).toEqual([]);
+  });
+
+  it("reports server owners and static imports that escape the built runtime", () => {
+    const root = makeTempRoot();
+    writeFixture(root, "dist/native-hook-relay/entry.js", 'import "../../outside.js";\n');
+    writeFixture(root, "outside.js", "const MAX_NATIVE_HOOK_RELAY_INVOCATIONS = 200;\n");
+
+    expect(collectNativeHookRelayBundleErrors({ rootDir: root })).toEqual([
+      'Native hook relay static graph contains server marker "MAX_NATIVE_HOOK_RELAY_INVOCATIONS" in outside.js.',
+      'Native hook relay static graph escapes the built runtime via "../../outside.js" from dist/native-hook-relay/entry.js.',
+    ]);
+  });
+
+  it("reports an oversized native hook relay static graph", () => {
+    const root = makeTempRoot();
+    writeFixture(root, "dist/native-hook-relay/entry.js", "x".repeat(100));
+
+    expect(
+      collectNativeHookRelayBundleErrors({ rootDir: root, nativeHookRelayStaticMaxBytes: 50 }),
+    ).toEqual(["Native hook relay static graph is 100 bytes, above budget 50 bytes."]);
+  });
+
+  it("reports unexpected external packages in the native hook relay static graph", () => {
+    const root = makeTempRoot();
+    writeFixture(root, "dist/native-hook-relay/entry.js", 'import "commander";\n');
+
+    expect(collectNativeHookRelayBundleErrors({ rootDir: root })).toEqual([
+      'Native hook relay static graph imports unexpected package "commander" from dist/native-hook-relay/entry.js.',
+    ]);
+  });
+
+  it("accepts the self-contained worker deploy artifacts with builtin imports", () => {
+    const root = makeTempRoot();
+    for (const artifact of workerDeployArtifactNames) {
+      writeFixture(
+        root,
+        `dist/worker/${artifact}`,
+        'import fs from "node:fs";\nexport const available = Boolean(fs);\n',
+      );
+    }
 
     expect(collectWorkerDeployArtifactErrors({ rootDir: root })).toEqual([]);
   });
@@ -314,6 +369,9 @@ describe("check-cli-bootstrap-imports", () => {
 
   it("rejects worker package imports and dependency manifests", () => {
     const root = makeTempRoot();
+    for (const artifact of workerDeployArtifactNames) {
+      writeFixture(root, `dist/worker/${artifact}`, "export {};\n");
+    }
     writeFixture(
       root,
       "dist/worker/worker.mjs",
@@ -325,8 +383,13 @@ describe("check-cli-bootstrap-imports", () => {
         'moduleNamespace.createRequire(import.meta.url)("@openclaw/fs-safe/temp");',
       ].join("\n"),
     );
-    writeFixture(root, "dist/worker/workspace-rsync-receiver.mjs", "export {};\n");
     writeFixture(root, "dist/worker/github-exec-launcher.mjs", 'import "yaml";\n');
+    writeFixture(root, "dist/worker/service-child-group-anchor.mjs", 'import "signal-exit";\n');
+    writeFixture(
+      root,
+      "dist/worker/service-child-relay.mjs",
+      'await import("./service-child-group-anchor.mjs");\n',
+    );
     writeFixture(root, "dist/worker/lazy.mjs", "export {};\n");
     writeFixture(
       root,
@@ -336,6 +399,8 @@ describe("check-cli-bootstrap-imports", () => {
 
     expect(collectWorkerDeployArtifactErrors({ rootDir: root })).toEqual([
       'Worker deploy artifact dist/worker/github-exec-launcher.mjs retains runtime import "yaml" instead of bundling it.',
+      'Worker deploy artifact dist/worker/service-child-group-anchor.mjs retains runtime import "signal-exit" instead of bundling it.',
+      'Worker deploy artifact dist/worker/service-child-relay.mjs retains runtime import "./service-child-group-anchor.mjs" instead of bundling it.',
       'Worker deploy artifact dist/worker/worker.mjs retains runtime import "../../package.json" instead of bundling it.',
       'Worker deploy artifact dist/worker/worker.mjs retains runtime import "./lazy.mjs" instead of bundling it.',
       'Worker deploy artifact dist/worker/worker.mjs retains runtime import "@openclaw/fs-safe/temp" instead of bundling it.',
@@ -346,19 +411,29 @@ describe("check-cli-bootstrap-imports", () => {
     ]);
   });
 
-  it.each(["two", "three", "default"] as const)(
-    "requires the %s-artifact worker deployment contract",
-    (contract) => {
+  it.each([
+    ["two", undefined],
+    ["three", undefined],
+    ["three", "github-exec-launcher.mjs"],
+    ["default", "github-exec-launcher.mjs"],
+    ["default", "service-child-group-anchor.mjs"],
+    ["default", "service-child-relay.mjs"],
+  ] as const)(
+    "enforces the %s-artifact worker deployment contract with missing artifact %s",
+    (contract, missingArtifact) => {
       const root = makeTempRoot();
-      const workerDeployEntrypoints = [
-        "dist/worker/worker.mjs",
-        "dist/worker/workspace-rsync-receiver.mjs",
-      ];
-      for (const entrypoint of workerDeployEntrypoints) {
-        writeFixture(root, entrypoint, "export {};\n");
-      }
+      const artifacts =
+        contract === "default"
+          ? workerDeployArtifactNames
+          : ["worker.mjs", "workspace-rsync-receiver.mjs"];
       if (contract === "three") {
-        workerDeployEntrypoints.push("dist/worker/github-exec-launcher.mjs");
+        artifacts.push("github-exec-launcher.mjs");
+      }
+      const workerDeployEntrypoints = artifacts.map((artifact) => `dist/worker/${artifact}`);
+      for (const entrypoint of workerDeployEntrypoints) {
+        if (entrypoint !== `dist/worker/${missingArtifact}`) {
+          writeFixture(root, entrypoint, "export {};\n");
+        }
       }
       expect(
         collectWorkerDeployArtifactErrors({
@@ -366,10 +441,10 @@ describe("check-cli-bootstrap-imports", () => {
           workerDeployEntrypoints: contract === "default" ? undefined : workerDeployEntrypoints,
         }),
       ).toEqual(
-        contract === "two"
+        missingArtifact === undefined
           ? []
           : [
-              "Worker deploy artifact dist/worker/github-exec-launcher.mjs is missing. Run pnpm build first.",
+              `Worker deploy artifact dist/worker/${missingArtifact} is missing. Run pnpm build first.`,
             ],
       );
     },
@@ -398,16 +473,16 @@ describe("gateway run chunk metadata", () => {
     const root = createGatewayBuildFixture();
     const plugin = createGatewayRunChunkMetadataPlugin(root);
     let producerMs = 0;
-    const handler = plugin.generateBundle.handler;
+    const originalHook = { ...plugin.generateBundle };
     plugin.generateBundle.handler = function (...args) {
       const start = performance.now();
       try {
-        return handler.apply(this, args);
+        return originalHook.handler.apply(this, args);
       } finally {
         producerMs += performance.now() - start;
       }
     };
-    const bundles = await build({
+    const { bundles } = await build({
       config: false,
       cwd: root,
       entry: { "cli/run-main": "entry.ts" },
@@ -436,14 +511,16 @@ describe("gateway run chunk metadata", () => {
       // Evidence only, not a timing threshold that would depend on the runner.
       console.log(JSON.stringify({ proof: "gateway-locator-producer", sourcemap, producerMs }));
     } finally {
-      for (const bundle of bundles) await bundle[Symbol.asyncDispose]();
+      for (const bundle of bundles) {
+        await bundle[Symbol.asyncDispose]();
+      }
     }
   });
 
   it("permits subset builds that do not include the gateway command", async () => {
     const root = createGatewayBuildFixture();
     fs.writeFileSync(join(root, "entry.ts"), "export const unrelated = 1;");
-    const bundles = await build({
+    const { bundles } = await build({
       config: false,
       cwd: root,
       entry: "entry.ts",
@@ -455,7 +532,9 @@ describe("gateway run chunk metadata", () => {
     try {
       expect(fs.existsSync(join(root, "dist", GATEWAY_RUN_CHUNK_METADATA_PATH))).toBe(false);
     } finally {
-      for (const bundle of bundles) await bundle[Symbol.asyncDispose]();
+      for (const bundle of bundles) {
+        await bundle[Symbol.asyncDispose]();
+      }
     }
   });
 });

@@ -12,6 +12,8 @@ import {
   parseKnipCompactUnusedExports,
   parseKnipCompactUnusedExportsResult,
 } from "../../scripts/check-deadcode-exports.mts";
+import { vitestWorkerBuildEntries } from "../../scripts/lib/vitest-worker-build-entries.mts";
+import { vitestWorkerDeclarationEntries } from "../../scripts/lib/vitest-worker-declarations.mts";
 
 const fullRootWorkspace = allExportsKnipConfig.workspaces["."];
 const fullExtensionWorkspace = allExportsKnipConfig.workspaces["extensions/*"];
@@ -82,10 +84,39 @@ describe("check-deadcode-exports", () => {
         "scripts/**/*.{test,spec}.{js,mjs,cjs,ts,mts,cts}!",
         "test/**/*.{test,spec}.{js,mjs,cjs,ts,mts,cts}!",
         "test/vitest/vitest*.config.ts!",
+        "scripts/crabbox-wrapper.mjs!",
+        "scripts/crabbox-wrapper.mts!",
+        "scripts/check-openclaw-package-tarball.mjs!",
+        "scripts/check-openclaw-package-tarball.mts!",
       ]),
     );
     expect(fullExtensionWorkspace.entry).toContain("**/*.{test,spec}.{js,mjs,cjs,ts,mts,cts}!");
     expect(fullUiWorkspace.entry).toContain("**/*.{test,spec}.{js,mjs,cjs,ts,mts,cts}!");
+  });
+
+  it("models both compiled subprocess registries as workspace-relative full-tree roots", () => {
+    const buildSources = Object.values(vitestWorkerBuildEntries).map((source) =>
+      path.relative(".", source).replaceAll("\\", "/"),
+    );
+    const declarationSources = Object.values(vitestWorkerDeclarationEntries);
+    for (const [workspace, settings] of Object.entries(allExportsKnipConfig.workspaces)) {
+      expect(
+        settings.entry.filter((entry) => entry.replaceAll("\\", "/").startsWith("../")),
+        workspace,
+      ).toEqual([]);
+      const prefix = workspace === "." ? "" : `${workspace}/`;
+      for (const source of [...buildSources, ...declarationSources]) {
+        if (source.startsWith(prefix)) {
+          expect(settings.entry, `${workspace}: ${source}`).toContain(
+            `${source.slice(prefix.length)}!`,
+          );
+        }
+      }
+    }
+
+    expect(allExportsKnipConfig.workspaces["extensions/qa-lab"]?.entry).toContain(
+      "src/gateway-child-artifacts-runtime.test-support.ts!",
+    );
   });
 
   it("models every QA scenario execution path as a full-tree root", () => {
@@ -102,6 +133,21 @@ describe("check-deadcode-exports", () => {
     );
   });
 
+  it("models path-launched Mantis runtime roots separately from its cross-repository test fixture", () => {
+    const runtimeEntries = [
+      "scripts/mantis/observe-request-telegram-qa.mts!",
+      "scripts/mantis/observe-request-web-ui.mts!",
+      "scripts/mantis/telegram-proof-bridge.mjs!",
+    ];
+    for (const workspace of [knipConfig.workspaces["."], fullRootWorkspace, scriptRootWorkspace]) {
+      expect(workspace.entry).toEqual(expect.arrayContaining(runtimeEntries));
+    }
+    const fixture = "test/fixtures/mantis-request-producer.mts!";
+    expect(fullRootWorkspace.entry).toContain(fixture);
+    expect(knipConfig.workspaces["."].entry).not.toContain(fixture);
+    expect(scriptRootWorkspace.entry).not.toContain(fixture);
+  });
+
   it("keeps the script unused-export scan scoped to real executable roots", () => {
     expect(scriptRootWorkspace.entry).toEqual(
       expect.arrayContaining([
@@ -111,6 +157,8 @@ describe("check-deadcode-exports", () => {
         "security/opengrep/check-rule-metadata.mjs!",
         "skills/meme-maker/scripts/meme.mjs!",
         "scripts/check-openclaw-package-tarball.mts!",
+        "scripts/crabbox-wrapper.mjs!",
+        "scripts/crabbox-wrapper.mts!",
         "scripts/check-live-cache.ts!",
         "scripts/lib/vitest-resource-reporter.mts!",
         "scripts/**/*.{test,spec}.{js,mjs,cjs,ts,mts,cts}!",

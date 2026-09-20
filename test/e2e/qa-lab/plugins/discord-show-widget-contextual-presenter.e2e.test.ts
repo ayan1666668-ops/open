@@ -338,6 +338,10 @@ describe("Discord show_widget contextual presenter process proof", () => {
         controlUiEnabled: false,
         mutateConfig: (cfg) => ({
           ...cfg,
+          models: {
+            ...cfg.models,
+            catalogRefresh: { ...cfg.models?.catalogRefresh, enabled: false },
+          },
           // Public message actions do not need QA Lab's private runtime tools.
           plugins: {
             ...cfg.plugins,
@@ -350,10 +354,10 @@ describe("Discord show_widget contextual presenter process proof", () => {
         }),
         runtimeEnvPatch: {
           DISCORD_BOT_TOKEN: "qa-activities-token",
-          NODE_OPTIONS: `--import=${pathToFileURL(preloadPath).href}`,
           OPENCLAW_QA_DISCORD_REST_BASE: discord.baseUrl,
           OPENCLAW_SKIP_CHANNELS: "1",
         },
+        runtimePreloads: [pathToFileURL(preloadPath).href],
       });
       const invokeAction = async (label: string, args: JsonRecord) => {
         const before = discord.requests.length;
@@ -634,7 +638,12 @@ describe("Discord show_widget contextual presenter process proof", () => {
       cleanups.push(() => stopQaGatewayFixture(gatewayOwner));
       const gateway = await gatewayOwner.start({
         repoRoot: REPO_ROOT,
-        useRepoCli: true,
+        command: {
+          executablePath: process.execPath,
+          argsPrefix: [path.join(REPO_ROOT, "dist", "entry.js")],
+          cwd: REPO_ROOT,
+          usePackagedPlugins: true,
+        },
         providerBaseUrl: `${mock.baseUrl}/v1`,
         providerMode: "mock-openai",
         primaryModel: MODEL_REF,
@@ -645,11 +654,11 @@ describe("Discord show_widget contextual presenter process proof", () => {
         mutateConfig: configureDiscordActivities,
         runtimeEnvPatch: {
           DISCORD_BOT_TOKEN: "qa-activities-token",
-          NODE_OPTIONS: `--import=${pathToFileURL(preloadPath).href}`,
           OPENCLAW_QA_DISCORD_REST_BASE: discord.baseUrl,
           OPENCLAW_SKIP_CANVAS_HOST: undefined,
           OPENCLAW_SKIP_CHANNELS: "1",
         },
+        runtimePreloads: [pathToFileURL(preloadPath).href],
       });
 
       const started = (await gateway.call("chat.send", {

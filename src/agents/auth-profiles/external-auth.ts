@@ -97,6 +97,7 @@ function resolveAllowedExternalCliAuthProfiles(params: {
   const cliProfiles =
     externalCliSync.resolveExternalCliAuthProfiles?.(params.store, {
       allowKeychainPrompt: params.externalCli?.allowKeychainPrompt,
+      ...(params.env ? { env: params.env } : {}),
       providerIds: params.externalCli?.externalCliProviderIds,
       profileIds: explicitProfileIds,
     }) ?? [];
@@ -161,7 +162,11 @@ export function syncPersistedExternalCliAuthProfiles(
   for (const profile of persistedProfiles) {
     const target = next ?? store;
     const existing = target.profiles[profile.profileId];
-    if (existing?.type === "oauth" && areOAuthCredentialsEquivalent(existing, profile.credential)) {
+    if (
+      existing?.type === "oauth" &&
+      existing.authFlow === profile.credential.authFlow &&
+      areOAuthCredentialsEquivalent(existing, profile.credential)
+    ) {
       continue;
     }
     next ??= cloneAuthProfileStore(store);

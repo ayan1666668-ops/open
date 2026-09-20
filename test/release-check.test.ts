@@ -1,4 +1,5 @@
 // Release check tests cover release validation script behavior.
+import { createHash } from "node:crypto";
 import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve as resolvePath, win32 } from "node:path";
@@ -34,6 +35,7 @@ import {
 } from "../scripts/release-check.ts";
 import { COMPLETION_SKIP_PLUGIN_COMMANDS_ENV } from "../src/cli/completion-runtime.ts";
 import { resolveNpmJsonEntries as resolveRuntimeNpmJsonEntries } from "../src/infra/npm-registry-spec.js";
+import { RUNTIME_DEPENDENCY_OWNERSHIP_RELATIVE_PATH } from "../src/infra/runtime-dependency-ownership.js";
 import { withEnv } from "../src/test-utils/env.js";
 
 function makeItem(shortVersion: string, sparkleVersion: string, channel?: string): string {
@@ -50,6 +52,9 @@ function withProcessEnv<T>(env: Record<string, string>, callback: () => T): T {
 }
 
 const requiredBundledPluginPackPaths = listBundledPluginPackArtifacts();
+
+// Prepare the public SDK graph through the test runner before the consumer test deadline.
+await import("openclaw/plugin-sdk/channel-outbound");
 
 describe("collectAppcastSparkleVersionErrors", () => {
   it("accepts legacy 9-digit calver builds before lane-floor cutover", () => {
@@ -159,6 +164,32 @@ describe("packed CLI smoke", () => {
       OPENCLAW_SUPPRESS_NOTES: "1",
       OPENCLAW_STATE_DIR: "/tmp/smoke-state",
     });
+  });
+
+  it("does not inherit provider credentials from the base environment", () => {
+    const env = createPackedCliSmokeEnv({
+      HOME: "/tmp/original-home",
+      OPENAI_API_KEY: "base-openai-secret",
+    });
+
+    expect(env).not.toHaveProperty("OPENAI_API_KEY");
+  });
+
+  it("does not admit provider credentials through smoke overrides", () => {
+    const env = createPackedCliSmokeEnv(
+      { HOME: "/tmp/original-home" },
+      {
+        HOME: "/tmp/smoke-home",
+        OPENCLAW_STATE_DIR: "/tmp/smoke-state",
+        OPENAI_API_KEY: "override-openai-secret",
+      },
+    );
+
+    expect(env).toMatchObject({
+      HOME: "/tmp/smoke-home",
+      OPENCLAW_STATE_DIR: "/tmp/smoke-state",
+    });
+    expect(env).not.toHaveProperty("OPENAI_API_KEY");
   });
 
   it("skips plugin command discovery during packed completion cache smoke", () => {
@@ -372,14 +403,14 @@ describe("collectBundledExtensionManifestErrors", () => {
 });
 
 describe("bundled plugin package dependency checks", () => {
-  it("does not require root deps for root chunks sourced from the owning installed plugin", () => {
+  it("does not require root deps for byte-matched chunks owned by a bundled plugin", () => {
     const tempRoot = mkdtempSync(join(tmpdir(), "openclaw-root-owned-installed-"));
 
     try {
       mkdirSync(join(tempRoot, "dist", "extensions", "memory-lancedb"), { recursive: true });
       writeFileSync(
         join(tempRoot, "package.json"),
-        `{"name":"openclaw","dependencies":{}}\n`,
+        `{"name":"openclaw","version":"2026.7.33","dependencies":{}}\n`,
         "utf8",
       );
       writeFileSync(
@@ -387,9 +418,18 @@ describe("bundled plugin package dependency checks", () => {
         `{"name":"@openclaw/memory-lancedb","dependencies":{"root-owned-test-dep":"^1.0.0"}}\n`,
         "utf8",
       );
+      const source = 'import("root-owned-test-dep");\n';
+      writeFileSync(join(tempRoot, "dist", "lancedb-runtime-7TYK-Pto.js"), source, "utf8");
       writeFileSync(
-        join(tempRoot, "dist", "lancedb-runtime-7TYK-Pto.js"),
-        `//#region extensions/memory-lancedb/lancedb-runtime.ts\nimport("root-owned-test-dep");\n`,
+        join(tempRoot, RUNTIME_DEPENDENCY_OWNERSHIP_RELATIVE_PATH),
+        JSON.stringify({
+          chunks: {
+            "lancedb-runtime-7TYK-Pto.js": {
+              sha256: createHash("sha256").update(source).digest("hex"),
+              extensions: ["memory-lancedb"],
+            },
+          },
+        }),
         "utf8",
       );
 
@@ -609,6 +649,46 @@ describe("packed install verification", () => {
 });
 
 describe("createPackedPluginSdkTypescriptSmokeProject", () => {
+  it("preserves the unchanged released progress consumer behavior", async () => {
+    await import("../scripts/fixtures/packed-plugin-sdk-progress-consumer.js");
+  });
+
+  it("creates a focused strict-declaration progress consumer without source aliases", () => {
+    const consumerDir = mkdtempSync(join(tmpdir(), "release-check-progress-consumer-"));
+    try {
+      createPackedPluginSdkTypescriptSmokeProject({
+        consumerDir,
+        packageSpec: "2026.9.4",
+        progressConsumerOnly: true,
+      });
+      expect(JSON.parse(readFileSync(join(consumerDir, "tsconfig.json"), "utf8"))).toEqual({
+        compilerOptions: {
+          module: "NodeNext",
+          moduleResolution: "NodeNext",
+          noEmit: true,
+          strict: true,
+          skipLibCheck: false,
+          types: ["node"],
+          target: "ES2022",
+        },
+        include: ["src/packed-plugin-sdk-progress-consumer.ts"],
+      });
+      expect(
+        readFileSync(join(consumerDir, "src/packed-plugin-sdk-progress-consumer.ts"), "utf8"),
+      ).toBe(readFileSync("scripts/fixtures/packed-plugin-sdk-progress-consumer.ts", "utf8"));
+    } finally {
+      rmSync(consumerDir, { recursive: true, force: true });
+    }
+  });
+
+  it("limits setupSurface omission to the recorded frozen targets", async () => {
+    const { packedPluginSdkMayOmitSetupSurface } = await import("../scripts/release-check.js");
+    expect(packedPluginSdkMayOmitSetupSurface("2026.7.33")).toBe(true);
+    expect(packedPluginSdkMayOmitSetupSurface("2026.7.34")).toBe(true);
+    expect(packedPluginSdkMayOmitSetupSurface("2026.9.4")).toBe(false);
+    expect(packedPluginSdkMayOmitSetupSurface("2026.10.1")).toBe(false);
+  });
+
   it("writes a consumer project that imports representative public SDK subpaths", () => {
     const root = mkdtempSync(join(tmpdir(), "release-check-plugin-sdk-types-"));
     try {

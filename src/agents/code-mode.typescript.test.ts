@@ -24,6 +24,10 @@ import {
 } from "./code-mode.test-support.js";
 import { clearToolSearchCatalog, registerHeadlessToolSearchCatalog } from "./tool-search.js";
 
+// Removal condition (bun#35690): node:module registerHooks can redirect TypeScript inside a
+// Bun Worker, allowing the real source-preparation stall to run there too.
+const moduleHookIt = process.versions.bun ? it.skip : it;
+
 async function observeTypeScriptPreparation(source: string) {
   const tempDirs = useAutoCleanupTempDirTracker(onTestFinished);
   const dir = tempDirs.make("code-mode-typescript-load-");
@@ -65,7 +69,13 @@ describe("Code Mode TypeScript execution", () => {
     {
       name: "runtime error after erased declarations",
       code: "type Ignored = string;\ninterface IgnoredToo {\n  value: number;\n}\nconst value: number = 1;\n(value as unknown as () => void)();",
-      location: /openclaw-code-mode:generated\.js:\d+:\d+/,
+      location: /openclaw-code-mode:user\.ts:6:2/,
+      cause: "TypeError",
+    },
+    {
+      name: "runtime error after Unicode and erased types",
+      code: 'type Ignored = string;\nconst emoji: string = "😀"; (42 as unknown as () => void)();',
+      location: /openclaw-code-mode:user\.ts:2:30/,
       cause: "TypeError",
     },
     {
@@ -87,6 +97,30 @@ describe("Code Mode TypeScript execution", () => {
     expect(String(result.error)).toMatch(location);
     expect(String(result.error)).not.toContain("openclaw-code-mode:user.js");
     expect(String(result.error)).not.toContain("controller.js");
+  });
+
+  it("keeps original call-site coordinates on caught tool failures after a wait", async () => {
+    const h = createCodeModeHarness();
+    const target = pluginTool("failing", "Fail at execution");
+    target.execute = vi.fn(async () => {
+      throw new Error("implementation started");
+    });
+    applyCodeModeCatalog({ ...h.ctx, tools: [...h.tools, target] });
+    const result = await runUntilCompleted({
+      execTool: expectDefined(h.tools[0], "exec"),
+      waitTool: expectDefined(h.tools[1], "wait"),
+      language: "typescript",
+      code: "type Ignored = string;\nawait yield_control();\ntry {\n  await failing({});\n} catch (error) { return {code:error.code, effectStatus:error.effectStatus, location:error.location}; }",
+    });
+    expect(result).toMatchObject({
+      status: "completed",
+      value: {
+        code: "tool_error",
+        effectStatus: "unknown",
+        location: expect.stringMatching(/openclaw-code-mode:user\.ts:4:/),
+      },
+    });
+    expect(target.execute).toHaveBeenCalledOnce();
   });
 
   it("supports TypeScript source transform", async () => {
@@ -172,7 +206,7 @@ describe("Code Mode TypeScript execution", () => {
     expect(testing.activeRuns.size).toBe(0);
   });
 
-  it.each(
+  moduleHookIt.each(
     (["exec", "headless"] as const).flatMap((mode) =>
       (["aborted", "timeout"] as const).map((outcome) => ({ mode, outcome })),
     ),
@@ -231,7 +265,7 @@ describe("Code Mode TypeScript execution", () => {
     },
   );
 
-  it.each([
+  moduleHookIt.each([
     {
       name: "short guest",
       code: "const value: number = 42; return value;",

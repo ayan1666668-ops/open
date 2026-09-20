@@ -1,15 +1,16 @@
-// Workspace skill loading turns validated discovery candidates into source-aware skill entries.
 import path from "node:path";
 import { normalizeTrimmedStringList } from "@openclaw/normalization-core/string-normalization";
 import { tryResolveAmbientOwnerAgentId } from "../../agents/agent-scope-config.js";
 import { canonicalizePath } from "../../agents/utils/paths.js";
 import { isDefaultStateDir } from "../../config/paths.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import { sha256Hex } from "../../infra/crypto-digest.js";
 import { pruneMapToMaxSize } from "../../infra/map-size.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import { shouldRejectHardlinkedPluginFiles } from "../../plugins/hardlink-policy.js";
 import type { PluginMetadataSnapshot } from "../../plugins/plugin-metadata-snapshot.types.js";
 import { normalizeAgentId } from "../../routing/session-key.js";
+import { prepareBinaryAvailability } from "../../shared/config-eval.js";
 import { CONFIG_DIR, resolveUserPath } from "../../utils.js";
 import {
   isSessionSkillEnabled,
@@ -18,7 +19,7 @@ import {
 import { normalizeSkillFilter } from "../discovery/filter.js";
 import { assertUnambiguousManagedSkillNames } from "../library/command-name.js";
 import { loadSkillLibrarySelection } from "../library/selection.js";
-import { getSkillsSnapshotVersion } from "../runtime/refresh-state.js";
+import { getSkillsSourceVersion, observeSkillsSnapshotSource } from "../runtime/refresh-state.js";
 import { mergeRemoteNodeSkillEntries } from "../runtime/remote-skills.js";
 import { fingerprintSkillSnapshotConfig } from "../runtime/snapshot-config-fingerprint.js";
 import type { SkillEligibilityContext, SkillEntry, SkillSnapshot } from "../types.js";
@@ -30,7 +31,11 @@ import { loadSingleSkillDirectory } from "./local-loader.js";
 import { resolvePluginSkillRoots, resolvePluginSkillRootsFromMetadata } from "./plugin-skills.js";
 import type { Skill } from "./skill-contract.js";
 import { resolveSkillEntryMetadata } from "./skill-entry-metadata.js";
-import { compactSkillPath, resolveSkillsUserHomeDir } from "./skill-paths.js";
+import {
+  compactSkillPath,
+  resolvePluginSkillsDir,
+  resolveSkillsUserHomeDir,
+} from "./skill-paths.js";
 import { resolveSkillDiscoveryLimits } from "./skill-root-discovery.js";
 import {
   loadGeneratedPluginSkillRecords,
@@ -39,19 +44,27 @@ import {
   type LoadedSkillRecord,
 } from "./skill-root-loader.js";
 import { tryRealpath } from "./symlink-targets.js";
+import {
+  normalizeWorkspaceSkillRoots,
+  resolveWorkspaceSkillDirectories,
+} from "./workspace-skill-roots.js";
 
 const skillsLogger = createSubsystemLogger("skills");
 const CUSTODIAN_SKILLS_DIR_NAME = "custodian-skills";
 const MAX_SKILL_ENTRY_CACHE_SIZE = 64;
-const skillEntryCache = new Map<string, SkillEntry[]>();
-const reportedSkillCollisions = new Map<string, true>();
-
-type WorkspaceSkillRoots = {
-  agentWorkspaceDir: string;
-  executionSkillsDir?: string;
+type SkillCollision = { winner: Skill; loser: Skill };
+type LocalSkillTiers = {
+  sourceKey: string;
+  agent: SkillEntry[];
+  execution: SkillEntry[];
+  collisions: SkillCollision[];
 };
+const skillEntryCache = new Map<string, LocalSkillTiers>();
+const reportedSkillCollisions = new Set<string>();
 
 type WorkspaceSkillLoadOptions = {
+  executionWorkspaceDir?: string;
+  librarySelections?: SkillSnapshot["librarySelections"];
   config?: OpenClawConfig;
   managedSkillsDir?: string;
   bundledSkillsDir?: string;
@@ -70,39 +83,37 @@ type WorkspaceSkillLoadOptions = {
   pluginMetadataSnapshot?: PluginMetadataSnapshot;
 };
 
-export function normalizeWorkspaceSkillRoots(roots: WorkspaceSkillRoots): WorkspaceSkillRoots {
-  const agentWorkspaceDir = path.resolve(roots.agentWorkspaceDir);
-  const executionSkillsDir = roots.executionSkillsDir
-    ? path.resolve(roots.executionSkillsDir)
-    : undefined;
-  return executionSkillsDir && executionSkillsDir !== path.join(agentWorkspaceDir, "skills")
-    ? { agentWorkspaceDir, executionSkillsDir }
-    : { agentWorkspaceDir };
+// Content includes declared frontmatter. Paths identify copies, not new conflicts.
+function warnSkillPrecedenceCollisions(collisions: SkillCollision[]): void {
+  for (const { winner, loser } of collisions) {
+    if (
+      winner.contentHash &&
+      winner.contentHash === loser.contentHash &&
+      winner.name === loser.name &&
+      winner.description === loser.description &&
+      winner.disableModelInvocation === loser.disableModelInvocation
+    ) {
+      continue;
+    }
+    const fingerprint = sha256Hex(
+      JSON.stringify(
+        [winner, loser].map((skill) => [
+          skill.name,
+          skill.contentHash ?? skill.filePath,
+          skill.description,
+          skill.disableModelInvocation,
+        ]),
+      ),
+    );
+    if (reportedSkillCollisions.has(fingerprint)) {
+      continue;
+    }
+    reportedSkillCollisions.add(fingerprint);
+    warnSkillPrecedenceCollision(winner, loser);
+  }
 }
 
-// Shared by both merge paths so a dropped skill is never silent: the by-name merge in
-// loadSkillEntries and the execution-directory filter in loadMergedWorkspaceSkills.
-function warnSkillPrecedenceCollision(winner: Skill, loser: Skill, workspaceDir: string): void {
-  const collisionKey = JSON.stringify([
-    workspaceDir,
-    getSkillsSnapshotVersion(workspaceDir),
-    winner.name,
-    winner.source,
-    winner.filePath,
-    loser.source,
-    loser.filePath,
-  ]);
-  if (reportedSkillCollisions.has(collisionKey)) {
-    return;
-  }
-  // One file reachable through two roots is not a collision. normalizeWorkspaceSkillRoots only
-  // rejects the literal <agentWorkspaceDir>/skills path, so a symlinked execution dir still
-  // arrives here with both sides naming the same skill.
-  if (canonicalizePath(winner.filePath) === canonicalizePath(loser.filePath)) {
-    return;
-  }
-  reportedSkillCollisions.set(collisionKey, true);
-  pruneMapToMaxSize(reportedSkillCollisions, MAX_SKILL_ENTRY_CACHE_SIZE * 4);
+function warnSkillPrecedenceCollision(winner: Skill, loser: Skill): void {
   const collisionName = winner.name.slice(0, 128);
   skillsLogger.warn("Skill precedence collision resolved.", {
     skill: collisionName,
@@ -123,11 +134,12 @@ function filterSkillEntries(
   skillFilter?: string[],
   skillOverrides?: Readonly<Record<string, boolean>>,
   eligibility?: SkillEligibilityContext,
+  hasBin?: (bin: string) => boolean,
 ): SkillEntry[] {
   const bundledAllowlist = resolveBundledAllowlist(config);
   assertUnambiguousManagedSkillNames(entries);
   let filtered = entries.filter((entry) =>
-    shouldIncludeSkill({ entry, config, bundledAllowlist, eligibility }),
+    shouldIncludeSkill({ entry, config, bundledAllowlist, eligibility, hasBin }),
   );
   if (skillFilter !== undefined || skillOverrides !== undefined) {
     const normalized = normalizeSkillFilter(skillFilter) ?? [];
@@ -149,21 +161,38 @@ function filterSkillEntries(
   return filtered;
 }
 
-function loadSkillEntries(
+function createSkillEntry(record: LoadedSkillRecord): SkillEntry {
+  const { skill, frontmatter } = record;
+  const invocation = resolveSkillInvocationPolicy(frontmatter);
+  const entry: SkillEntry = {
+    skill,
+    frontmatter,
+    metadata: resolveSkillEntryMetadata({ frontmatter, skillDir: skill.baseDir }),
+    invocation,
+    exposure: {
+      includeInRuntimeRegistry: true,
+      includeInAvailableSkillsPrompt: !invocation.disableModelInvocation,
+      userInvocable: invocation.userInvocable ?? true,
+    },
+  };
+  if (record.syncSourceDir !== undefined) {
+    entry.syncSourceDir = record.syncSourceDir;
+  }
+  if (record.syncDirName !== undefined) {
+    entry.syncDirName = record.syncDirName;
+  }
+  return entry;
+}
+
+function loadLocalSkillTiers(
   workspaceDir: string,
-  opts?: {
-    config?: OpenClawConfig;
-    agentId?: string;
-    managedSkillsDir?: string;
-    bundledSkillsDir?: string;
-    pluginSkillsDir?: string;
-    workspaceSkillsDir?: string;
-    workspaceOnly?: boolean;
-    pluginMetadataSnapshot?: PluginMetadataSnapshot;
-  },
-): SkillEntry[] {
+  opts?: WorkspaceSkillLoadOptions,
+): LocalSkillTiers {
   const workspaceOnly = opts?.workspaceOnly === true;
-  const workspaceSkillsDir = opts?.workspaceSkillsDir ?? path.resolve(workspaceDir, "skills");
+  const { executionWorkspaceDir } = normalizeWorkspaceSkillRoots({
+    agentWorkspaceDir: workspaceDir,
+    executionWorkspaceDir: opts?.executionWorkspaceDir,
+  });
   const configuredCustodianAgentId = opts?.config
     ? tryResolveAmbientOwnerAgentId(opts.config)
     : undefined;
@@ -175,20 +204,24 @@ function loadSkillEntries(
       ? configuredCustodianAgentId
       : undefined;
   const osHomeDir = resolveSkillsUserHomeDir();
-  // Snapshot versions are the watcher-owned invalidation boundary; cache hits must do no IO.
-  const cacheKey = JSON.stringify([
+  const pluginSkillsDir = opts?.pluginSkillsDir ?? resolvePluginSkillsDir();
+  // Source revisions invalidate discovery even when resolved content stays unchanged.
+  const sourceKey = JSON.stringify([
     workspaceDir,
-    workspaceSkillsDir,
+    executionWorkspaceDir,
     workspaceOnly,
     opts?.agentId ? normalizeAgentId(opts.agentId) : undefined,
     custodianAgentId,
     opts?.managedSkillsDir,
     opts?.bundledSkillsDir,
-    opts?.pluginSkillsDir,
-    opts?.config ? fingerprintSkillSnapshotConfig(opts.config) : undefined,
+    pluginSkillsDir,
     osHomeDir,
     process.env.OPENCLAW_STATE_DIR,
-    getSkillsSnapshotVersion(workspaceDir),
+  ]);
+  const cacheKey = JSON.stringify([
+    sourceKey,
+    opts?.config ? fingerprintSkillSnapshotConfig(opts.config) : undefined,
+    getSkillsSourceVersion(workspaceDir, opts),
   ]);
   const cachedEntries = skillEntryCache.get(cacheKey);
   if (cachedEntries) {
@@ -205,7 +238,6 @@ function loadSkillEntries(
   const bundledSkillsDir = workspaceOnly
     ? undefined
     : (opts?.bundledSkillsDir ?? resolveBundledSkillsDir());
-  const pluginSkillsDir = opts?.pluginSkillsDir ?? path.join(CONFIG_DIR, "plugin-skills");
   const extraDirsRaw = workspaceOnly ? [] : (opts?.config?.skills?.load?.extraDirs ?? []);
   const extraDirs = normalizeTrimmedStringList(extraDirsRaw);
   const pluginSkillRoots = workspaceOnly
@@ -264,23 +296,27 @@ function loadSkillEntries(
     workspaceOnly || !isDefaultStateDir()
       ? []
       : loadSkills({ dir: personalAgentsSkillsDir, source: "agents-skills-personal" });
-  const projectAgentsSkillsDir = path.resolve(workspaceDir, ".agents", "skills");
-  const projectAgentsSkills = workspaceOnly
-    ? []
-    : loadSkills({ dir: projectAgentsSkillsDir, source: "agents-skills-project" });
-  const workspaceSkills = loadSkills({ dir: workspaceSkillsDir, source: "openclaw-workspace" });
+  const workspaceSkills = resolveWorkspaceSkillDirectories(workspaceDir, workspaceOnly).flatMap(
+    loadSkills,
+  );
 
-  const merged = new Map<string, LoadedSkillRecord>();
-  const mergeRecord = (record: LoadedSkillRecord) => {
-    const replaced = merged.get(record.skill.name);
-    if (replaced) {
-      warnSkillPrecedenceCollision(record.skill, replaced.skill, workspaceDir);
+  const collisions: SkillCollision[] = [];
+  const mergeRecords = (records: LoadedSkillRecord[]) => {
+    const merged = new Map<string, LoadedSkillRecord>();
+    for (const record of records) {
+      const replaced = merged.get(record.skill.name);
+      if (
+        replaced &&
+        canonicalizePath(record.skill.filePath) !== canonicalizePath(replaced.skill.filePath)
+      ) {
+        collisions.push({ winner: record.skill, loser: replaced.skill });
+      }
+      merged.set(record.skill.name, record);
     }
-    merged.set(record.skill.name, record);
+    return Array.from(merged.values()).toSorted((a, b) =>
+      a.skill.name.localeCompare(b.skill.name, "en"),
+    );
   };
-  for (const record of extraSkills) {
-    mergeRecord(record);
-  }
   // Custodian skills share bundled precedence. Sort the tier so source traversal
   // remains deterministic even if a package accidentally ships a duplicate name.
   const bundledTierSkills = [...bundledSkills, ...custodianSkills].toSorted(
@@ -288,51 +324,93 @@ function loadSkillEntries(
       left.skill.name.localeCompare(right.skill.name, "en") ||
       left.skill.source.localeCompare(right.skill.source, "en"),
   );
-  for (const record of bundledTierSkills) {
-    mergeRecord(record);
-  }
-  for (const record of workshopSkills) {
-    mergeRecord(record);
-  }
-  for (const record of managedSkills) {
-    mergeRecord(record);
-  }
-  for (const record of personalAgentsSkills) {
-    mergeRecord(record);
-  }
-  for (const record of projectAgentsSkills) {
-    mergeRecord(record);
-  }
-  for (const record of workspaceSkills) {
-    mergeRecord(record);
-  }
-
-  const entries = Array.from(merged.values())
-    .toSorted((a, b) => a.skill.name.localeCompare(b.skill.name, "en"))
-    .map((record) => {
-      const { skill, frontmatter } = record;
-      const invocation = resolveSkillInvocationPolicy(frontmatter);
-      const entry: SkillEntry = {
-        skill,
-        frontmatter,
-        metadata: resolveSkillEntryMetadata({ frontmatter, skillDir: skill.baseDir }),
-        invocation,
-        exposure: {
-          includeInRuntimeRegistry: true,
-          includeInAvailableSkillsPrompt: !invocation.disableModelInvocation,
-          userInvocable: invocation.userInvocable ?? true,
-        },
-      };
-      if (record.syncSourceDir !== undefined) {
-        entry.syncSourceDir = record.syncSourceDir;
-      }
-      if (record.syncDirName !== undefined) {
-        entry.syncDirName = record.syncDirName;
-      }
-      return entry;
-    });
+  const records = mergeRecords([
+    ...extraSkills,
+    ...bundledTierSkills,
+    ...workshopSkills,
+    ...managedSkills,
+    ...personalAgentsSkills,
+    ...workspaceSkills,
+  ]);
+  const entries = {
+    sourceKey,
+    collisions,
+    agent: records.map(createSkillEntry),
+    execution:
+      executionWorkspaceDir && !workspaceOnly
+        ? mergeRecords(
+            resolveWorkspaceSkillDirectories(executionWorkspaceDir).flatMap(loadSkills),
+          ).map(createSkillEntry)
+        : [],
+  };
   skillEntryCache.set(cacheKey, entries);
   pruneMapToMaxSize(skillEntryCache, MAX_SKILL_ENTRY_CACHE_SIZE);
+  const winners = new Map(entries.agent.map((entry) => [entry.skill.name, entry]));
+  for (const entry of entries.execution) {
+    const winner = winners.get(entry.skill.name);
+    if (!winner) {
+      winners.set(entry.skill.name, entry);
+    } else if (canonicalizePath(winner.skill.filePath) !== canonicalizePath(entry.skill.filePath)) {
+      collisions.push({ winner: winner.skill, loser: entry.skill });
+    }
+  }
+  // Retain only discovery inputs, never the turn's assertions, eligibility, or session state.
+  const sourceOptions: WorkspaceSkillLoadOptions = {
+    executionWorkspaceDir,
+    workspaceOnly,
+    agentId: opts?.agentId,
+    config: opts?.config,
+    managedSkillsDir: opts?.managedSkillsDir,
+    bundledSkillsDir: opts?.bundledSkillsDir,
+    pluginSkillsDir: opts?.pluginSkillsDir,
+    pluginMetadataSnapshot: opts?.pluginMetadataSnapshot,
+  };
+  observeSkillsSnapshotSource({
+    workspaceDir,
+    sourceKey,
+    sourceScope: sourceOptions,
+    entries: Array.from(winners.values())
+      .toSorted((a, b) => a.skill.name.localeCompare(b.skill.name, "en"))
+      .map((entry) => ({ skill: entry.skill, skillKey: resolveSkillKey(entry.skill, entry) })),
+    reconcile: (inputs) => {
+      if (inputs) {
+        sourceOptions.config = inputs.config;
+        sourceOptions.pluginMetadataSnapshot = inputs.pluginMetadataSnapshot;
+      }
+      return loadLocalSkillTiers(workspaceDir, sourceOptions).sourceKey;
+    },
+    suspend: () => {
+      sourceOptions.config = undefined;
+      sourceOptions.pluginMetadataSnapshot = undefined;
+    },
+  });
+  return entries;
+}
+
+function loadSkillEntries(workspaceDir: string, opts?: WorkspaceSkillLoadOptions): SkillEntry[] {
+  const tiers = loadLocalSkillTiers(workspaceDir, opts);
+  const entries = mergeRemoteNodeSkillEntries(tiers.agent, opts?.eligibility?.nodeSkills);
+  const collisions = [...tiers.collisions];
+  if (tiers.execution.length > 0) {
+    const agentByName = new Map(entries.map((entry) => [entry.skill.name, entry]));
+    const localNames = new Set(tiers.agent.map((entry) => entry.skill.name));
+    // Include node skills in the agent tier before admitting execution-local names.
+    // Agent entries also stay first when the prompt budget truncates the catalog.
+    for (const entry of tiers.execution) {
+      const agentEntry = agentByName.get(entry.skill.name);
+      if (agentEntry) {
+        if (!localNames.has(entry.skill.name)) {
+          collisions.push({ winner: agentEntry.skill, loser: entry.skill });
+        }
+      } else {
+        entries.push(entry);
+      }
+    }
+  }
+  warnSkillPrecedenceCollisions(collisions);
+  if (opts?.librarySelections?.length) {
+    entries.push(...loadSkillLibrarySelection(opts.librarySelections));
+  }
   return entries;
 }
 
@@ -351,9 +429,11 @@ function resolveEffectiveWorkspaceSkillFilter(opts?: {
   return resolveEffectiveAgentSkillFilter(opts.config, opts.agentId);
 }
 
-export function resolveWorkspaceSkillPromptEntries(
+export async function resolveWorkspaceSkillPromptEntries(
   workspaceDir: string,
   opts?: {
+    executionWorkspaceDir?: string;
+    librarySelections?: SkillSnapshot["librarySelections"];
     config?: OpenClawConfig;
     managedSkillsDir?: string;
     bundledSkillsDir?: string;
@@ -363,41 +443,149 @@ export function resolveWorkspaceSkillPromptEntries(
     skillOverrides?: Record<string, boolean>;
     eligibility?: SkillEligibilityContext;
     pluginMetadataSnapshot?: PluginMetadataSnapshot;
+    assertCurrent?: () => void;
   },
-): { eligible: SkillEntry[]; skillFilter: string[] | undefined } {
-  const skillFilter = resolveEffectiveWorkspaceSkillFilter(opts);
-  const skillEntries =
-    opts?.entries ??
-    mergeRemoteNodeSkillEntries(loadSkillEntries(workspaceDir, opts), {
-      canExec: opts?.eligibility?.nodeSkills?.canExec,
-      node: opts?.eligibility?.nodeSkills?.node,
-    });
-  return {
-    eligible: filterSkillEntries(
+): Promise<{ eligible: SkillEntry[]; skillFilter: string[] | undefined }> {
+  for (;;) {
+    opts?.assertCurrent?.();
+    const sourceVersion = getSkillsSourceVersion(workspaceDir, opts);
+    const skillFilter = resolveEffectiveWorkspaceSkillFilter(opts);
+    const skillEntries = opts?.entries ?? loadSkillEntries(workspaceDir, opts);
+    const probe = await prepareSkillBinaryProbe(skillEntries, opts, opts?.assertCurrent);
+    if (
+      probe.needsRetry() ||
+      (!opts?.entries && getSkillsSourceVersion(workspaceDir, opts) !== sourceVersion)
+    ) {
+      continue;
+    }
+    const eligible = filterSkillEntries(
       skillEntries,
       opts?.config,
       skillFilter,
       opts?.skillOverrides,
       opts?.eligibility,
-    ),
-    skillFilter,
+      probe.hasBin,
+    );
+    opts?.assertCurrent?.();
+    if (probe.needsRetry()) {
+      continue;
+    }
+    return { eligible, skillFilter };
+  }
+}
+
+async function prepareSkillBinaryProbe(
+  entries: SkillEntry[],
+  opts?: Pick<WorkspaceSkillLoadOptions, "config" | "eligibility">,
+  assertCurrent?: () => void,
+) {
+  const bins = new Set<string>();
+  const bundledAllowlist = resolveBundledAllowlist(opts?.config);
+  let needsBinaries: boolean;
+  const recordBinaryRequirement = () => {
+    needsBinaries = true;
+    return true;
   };
+  for (const entry of entries) {
+    const requires = entry.metadata?.requires;
+    if (!requires?.bins?.length && !requires?.anyBins?.length) {
+      continue;
+    }
+    needsBinaries = false;
+    shouldIncludeSkill({
+      entry,
+      config: opts?.config,
+      bundledAllowlist,
+      eligibility: opts?.eligibility,
+      hasBin: recordBinaryRequirement,
+    });
+    if (needsBinaries) {
+      for (const bin of entry.metadata?.requires?.bins ?? []) {
+        bins.add(bin);
+      }
+      for (const bin of entry.metadata?.requires?.anyBins ?? []) {
+        bins.add(bin);
+      }
+    }
+  }
+  const facts = await prepareBinaryAvailability(bins, assertCurrent);
+  let unprepared = false;
+  return {
+    hasBin: (bin: string) => {
+      // Eligibility can change while probing; prepare newly requested facts before publishing.
+      if (!bins.has(bin)) {
+        unprepared = true;
+        return false;
+      }
+      return facts.hasBinary(bin);
+    },
+    needsRetry: () => unprepared || !facts.isCurrent(),
+  };
+}
+
+function resolveWorkspaceSkillLoad(workspaceDir: string, opts?: WorkspaceSkillLoadOptions) {
+  const roots = normalizeWorkspaceSkillRoots({
+    agentWorkspaceDir: workspaceDir,
+    executionWorkspaceDir: opts?.executionWorkspaceDir,
+  });
+  const entries = loadSkillEntries(roots.agentWorkspaceDir, opts);
+  const effectiveSkillFilter = resolveEffectiveWorkspaceSkillFilter(opts);
+  return {
+    entries,
+    effectiveSkillFilter,
+    shouldFilter:
+      Boolean(roots.executionWorkspaceDir) ||
+      effectiveSkillFilter !== undefined ||
+      opts?.skillOverrides !== undefined ||
+      opts?.eligibility !== undefined,
+  };
+}
+
+/** Runtime preparation shares discovery and filtering with synchronous SDK inventory reads. */
+export async function prepareWorkspaceSkills(
+  workspaceDir: string,
+  opts?: WorkspaceSkillLoadOptions,
+  assertCurrent?: () => void,
+): Promise<SkillEntry[]> {
+  for (;;) {
+    assertCurrent?.();
+    const sourceVersion = getSkillsSourceVersion(workspaceDir, opts);
+    const { entries, effectiveSkillFilter, shouldFilter } = resolveWorkspaceSkillLoad(
+      workspaceDir,
+      opts,
+    );
+    if (!shouldFilter) {
+      return entries;
+    }
+    const probe = await prepareSkillBinaryProbe(entries, opts, assertCurrent);
+    if (probe.needsRetry() || getSkillsSourceVersion(workspaceDir, opts) !== sourceVersion) {
+      continue;
+    }
+    const eligible = filterSkillEntries(
+      entries,
+      opts?.config,
+      effectiveSkillFilter,
+      opts?.skillOverrides,
+      opts?.eligibility,
+      probe.hasBin,
+    );
+    assertCurrent?.();
+    if (probe.needsRetry()) {
+      continue;
+    }
+    return eligible;
+  }
 }
 
 export function loadWorkspaceSkills(
   workspaceDir: string,
   opts?: WorkspaceSkillLoadOptions,
 ): SkillEntry[] {
-  const entries = mergeRemoteNodeSkillEntries(loadSkillEntries(workspaceDir, opts), {
-    canExec: opts?.eligibility?.nodeSkills?.canExec,
-    node: opts?.eligibility?.nodeSkills?.node,
-  });
-  const effectiveSkillFilter = resolveEffectiveWorkspaceSkillFilter(opts);
-  if (
-    effectiveSkillFilter === undefined &&
-    opts?.skillOverrides === undefined &&
-    opts?.eligibility === undefined
-  ) {
+  const { entries, effectiveSkillFilter, shouldFilter } = resolveWorkspaceSkillLoad(
+    workspaceDir,
+    opts,
+  );
+  if (!shouldFilter) {
     return entries;
   }
   return filterSkillEntries(
@@ -406,40 +594,6 @@ export function loadWorkspaceSkills(
     effectiveSkillFilter,
     opts?.skillOverrides,
     opts?.eligibility,
-  );
-}
-export function loadMergedWorkspaceSkills(
-  params: WorkspaceSkillRoots & WorkspaceSkillLoadOptions,
-): SkillEntry[] {
-  const { agentWorkspaceDir, executionSkillsDir } = normalizeWorkspaceSkillRoots(params);
-  if (!executionSkillsDir) {
-    return loadWorkspaceSkills(agentWorkspaceDir, params);
-  }
-
-  const agentEntries = mergeRemoteNodeSkillEntries(loadSkillEntries(agentWorkspaceDir, params), {
-    canExec: params.eligibility?.nodeSkills?.canExec,
-    node: params.eligibility?.nodeSkills?.node,
-  });
-  const agentEntriesByName = new Map(agentEntries.map((entry) => [entry.skill.name, entry]));
-  const executionEntries = loadSkillEntries(agentWorkspaceDir, {
-    ...params,
-    workspaceOnly: true,
-    workspaceSkillsDir: executionSkillsDir,
-  }).filter((entry) => {
-    const agentEntry = agentEntriesByName.get(entry.skill.name);
-    if (!agentEntry) {
-      return true;
-    }
-    warnSkillPrecedenceCollision(agentEntry.skill, entry.skill, agentWorkspaceDir);
-    return false;
-  });
-  const effectiveSkillFilter = resolveEffectiveWorkspaceSkillFilter(params);
-  return filterSkillEntries(
-    [...agentEntries, ...executionEntries],
-    params.config,
-    effectiveSkillFilter,
-    params.skillOverrides,
-    params.eligibility,
   );
 }
 
@@ -458,14 +612,7 @@ export function loadVisibleSkills(
     pluginMetadataSnapshot?: PluginMetadataSnapshot;
   },
 ): SkillEntry[] {
-  let entries = mergeRemoteNodeSkillEntries(loadSkillEntries(workspaceDir, opts), {
-    canExec: opts?.eligibility?.nodeSkills?.canExec,
-    node: opts?.eligibility?.nodeSkills?.node,
-  });
-  if (opts?.librarySelections?.length) {
-    // Pins are session-owned: append before filtering without mutating the workspace cache.
-    entries = entries.concat(loadSkillLibrarySelection(opts.librarySelections));
-  }
+  const entries = loadSkillEntries(workspaceDir, opts);
   const effectiveSkillFilter = resolveEffectiveWorkspaceSkillFilter(opts);
   return filterSkillEntries(
     entries,
@@ -511,23 +658,8 @@ export function loadBundledSkillEntryByName(
   if (!loaded || loaded.skill.name.trim().toLowerCase() !== normalizedName) {
     return undefined;
   }
-  const invocation = resolveSkillInvocationPolicy(loaded.frontmatter);
-  const entry: SkillEntry = {
-    skill: loaded.skill,
-    frontmatter: loaded.frontmatter,
-    metadata: resolveSkillEntryMetadata({
-      frontmatter: loaded.frontmatter,
-      skillDir: loaded.skill.baseDir,
-    }),
-    invocation,
-    exposure: {
-      includeInRuntimeRegistry: true,
-      includeInAvailableSkillsPrompt: !invocation.disableModelInvocation,
-      userInvocable: invocation.userInvocable ?? true,
-    },
-  };
   return filterSkillEntries(
-    [entry],
+    [createSkillEntry(loaded)],
     opts?.config,
     resolveEffectiveWorkspaceSkillFilter(opts),
     undefined,

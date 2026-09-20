@@ -10,6 +10,7 @@ import {
   renderSettingsValue,
 } from "../../components/settings-ui.ts";
 import { t } from "../../i18n/index.ts";
+import { registerGitHubEnglish } from "../../i18n/locales/en-github.ts";
 import { buildExternalLinkRel, EXTERNAL_LINK_TARGET } from "../../lib/external-link.ts";
 import { formatUiExternalText } from "../../lib/format-error.ts";
 import { formatDateTimeMs } from "../../lib/format.ts";
@@ -384,6 +385,7 @@ export function renderGitHubIdentity(
   return renderSettingsSection(
     {
       title: t("githubConnections.agentTitle"),
+      description: t("githubConnections.agentDescription"),
       actions: controller.statusReadable
         ? html`<button
             class="btn btn--sm"
@@ -446,3 +448,5 @@ export function renderGitHubIdentity(
     `,
   );
 }
+
+registerGitHubEnglish();

@@ -86,6 +86,7 @@ export async function installPluginFromNpmPackArchive(
     extensionsDir?: string;
     npmDir?: string;
     timeoutMs?: number;
+    workTimeoutMs?: number | null;
     signal?: AbortSignal;
     logger?: PluginInstallLogger;
     mode?: "install" | "update";
@@ -98,7 +99,7 @@ export async function installPluginFromNpmPackArchive(
   },
 ): Promise<InstallPluginResult & { npmTarballName?: string }> {
   const runtime = await loadPluginInstallRuntime();
-  const { logger, timeoutMs, mode, dryRun } = runtime.resolveTimedInstallModeOptions(
+  const { logger, timeoutMs, workTimeoutMs, mode, dryRun } = runtime.resolveTimedInstallModeOptions(
     params,
     defaultLogger,
   );
@@ -140,7 +141,6 @@ export async function installPluginFromNpmPackArchive(
 
   const result = await installPluginFromManagedNpmRoot(
     copyPluginInstallTransactionRequest(params, {
-      dangerouslyForceUnsafeInstall: params.dangerouslyForceUnsafeInstall,
       onInstallPolicyWarning: params.onInstallPolicyWarning,
       trustedSourceLinkedOfficialInstall: params.trustedSourceLinkedOfficialInstall,
       config: params.config,
@@ -177,6 +177,7 @@ export async function installPluginFromNpmPackArchive(
       extensionsDir: params.extensionsDir,
       npmDir: npmBaseDir,
       timeoutMs,
+      workTimeoutMs,
       signal: params.signal,
       logger,
       mode,

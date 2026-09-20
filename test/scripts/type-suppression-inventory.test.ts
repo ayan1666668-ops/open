@@ -26,6 +26,48 @@ afterEach(() => {
 });
 
 describe("type suppression inventory", () => {
+  it.each(["\n", "\r\n"])("reports comment markers once with %j line endings", (newline) => {
+    const fixtureRoot = createFixture({
+      "src/comments.ts": [
+        'const text = "\u{1f680} @ts-expect-error string";',
+        "const template = `@ts-expect-error template`;",
+        "function example() {",
+        "  /* @ts-expect-error first",
+        "   * @ts-expect-error second",
+        "   */",
+        "} // @ts-expect-error trailing",
+        'consume("\u96ea"); /* @ts-expect-error left */ /* @ts-expect-error right */',
+        "consume(",
+        "  1",
+        "  // @ts-expect-error closing token",
+        ");",
+        "// @ts-expect-error eof",
+      ].join(newline),
+    });
+
+    const report = collectTypeSuppressionReport({
+      files: ["src/comments.ts"],
+      repoRoot: fixtureRoot,
+    });
+
+    expect(report.findings).toEqual(
+      [
+        { excerpt: "@ts-expect-error first", line: 4 },
+        { excerpt: "@ts-expect-error second", line: 5 },
+        { excerpt: "@ts-expect-error trailing", line: 7 },
+        { excerpt: "@ts-expect-error left */", line: 8 },
+        { excerpt: "@ts-expect-error right */", line: 8 },
+        { excerpt: "@ts-expect-error closing token", line: 11 },
+        { excerpt: "@ts-expect-error eof", line: 13 },
+      ].map(({ excerpt, line }) => ({
+        excerpt,
+        line,
+        file: "src/comments.ts",
+        kind: "expect-error",
+      })),
+    );
+  });
+
   it("detects syntax suppressions without counting prose", () => {
     const fixtureRoot = createFixture({
       "src/example.ts": `
@@ -83,6 +125,7 @@ describe("type suppression inventory", () => {
     ).toEqual(
       [
         "extensions/openai/realtime-quicksilver-session-lifecycle.test.ts:@ts-expect-error JavaScript callers must still fail before reserving a native session.",
+        "src/infra/backup-archive-publication.ts:@ts-expect-error Remove after adopting the declaration fix in openclaw/fs-safe#495.",
         "src/infra/kysely-sync.types.test.ts:@ts-expect-error Kysely checks selected column string literals.",
         "src/infra/kysely-sync.types.test.ts:@ts-expect-error Kysely checks table string literals.",
         "src/infra/kysely-sync.types.test.ts:@ts-expect-error Kysely checks where-reference string literals.",
@@ -91,6 +134,7 @@ describe("type suppression inventory", () => {
         "src/infra/net/fetch-guard.socks.test.ts:@ts-expect-error Undici's Node TLS intersection rejects its runtime-valid null timeout.",
         "src/infra/net/fetch-guard.socks.test.ts:@ts-expect-error Undici's Node TLS intersection rejects its runtime-valid null timeout.",
         "src/infra/net/fetch-guard.socks.test.ts:@ts-expect-error Undici's Node TLS intersection rejects its runtime-valid null timeout.",
+        "src/infra/update-managed-service-handoff-database.ts:@ts-expect-error Remove after adopting the declaration fix in openclaw/fs-safe#495.",
         "src/plugin-sdk/plugin-entry.reply-trigger.test.ts:@ts-expect-error Trigger eligibility is only supported for before_agent_reply.",
         "src/plugin-sdk/plugin-entry.reply-trigger.test.ts:@ts-expect-error An empty trigger list cannot prove that a hook is inactive.",
         "src/plugin-sdk/plugin-entry.reply-trigger.test.ts:@ts-expect-error Tool authority is only supported for before_prompt_build.",
@@ -99,6 +143,7 @@ describe("type suppression inventory", () => {
         "src/plugins/registry.diagnostics.test.ts:@ts-expect-error Unknown JavaScript hook names must produce a diagnostic.",
         "src/plugins/registry.diagnostics.test.ts:@ts-expect-error Untyped hook input reaches the existing rejection/coercion path.",
         "src/plugins/registry.diagnostics.test.ts:@ts-expect-error Closed registration must stop before coercing untyped hook input.",
+        "src/snapshot/local-repository.ts:@ts-expect-error Remove after adopting the declaration fix in openclaw/fs-safe#495.",
       ].toSorted(),
     );
   });

@@ -15,7 +15,10 @@ import {
   normalizeReservedToolNames,
   TOOL_NAME_SEPARATOR,
 } from "./agent-bundle-mcp-names.js";
-import { runWithSessionMcpRequestSignal } from "./agent-bundle-mcp-request-context.js";
+import {
+  getSessionMcpRequestSignal,
+  runWithSessionMcpRequestSignal,
+} from "./agent-bundle-mcp-request-context.js";
 import { mergeMcpConnectCatalog } from "./agent-bundle-mcp-requester-connect.js";
 import type {
   BundleMcpToolRuntime,
@@ -25,6 +28,7 @@ import type {
 } from "./agent-bundle-mcp-types.js";
 import {
   projectMcpCallToolResult,
+  projectMcpGetPromptResult,
   setMcpCodeModeGuestResult,
   setMcpCodeModeGuestResultFromAgentResult,
 } from "./mcp-content.js";
@@ -307,6 +311,7 @@ export function buildBundleMcpToolsFromCatalog(params: {
         safeServerName: tool.safeServerName,
         toolName: tool.toolName,
         operation: "tool",
+        ...(tool.oauthConnectBootstrap ? { oauthConnectBootstrap: true } : {}),
         ...(tool.excludedFromOpenClawCatalog || appOnly
           ? { excludedFromOpenClawCatalog: true }
           : {}),
@@ -466,6 +471,7 @@ export async function materializeBundleMcpToolsForRun(params: {
       ? Array.from(params.reservedToolNames)
       : undefined;
     const materializedCatalog = mergeMcpConnectCatalog(catalog, runtime.requesterConnect);
+    const getPrompt = runtime.getPrompt?.bind(runtime);
     const tools = buildBundleMcpToolsFromCatalog({
       catalog: materializedCatalog,
       reservedToolNames,
@@ -548,19 +554,22 @@ export async function materializeBundleMcpToolsForRun(params: {
               });
             })
         : undefined,
-      createPromptGetExecute: runtime.getPrompt
+      createPromptGetExecute: getPrompt
         ? (serverName) => (_toolCallId: string, input: unknown, signal?: AbortSignal) =>
             runWithSessionMcpRequestSignal(signal, async () => {
               runtime.markUsed();
-              return toJsonAgentToolResult({
-                serverName,
-                operation: "prompts_get",
-                value: await runtime.getPrompt?.(
+              return projectMcpGetPromptResult(
+                await getPrompt(
                   serverName,
                   requireStringArg(input, "name"),
                   optionalStringRecordArg(input, "arguments"),
                 ),
-              });
+                {
+                  mcpServer: serverName,
+                  mcpOperation: "prompts_get",
+                  untrustedMcpOutput: true,
+                },
+              );
             })
         : undefined,
     });
@@ -613,8 +622,11 @@ export async function createBundleMcpToolRuntime(params: {
     safeServerNamesByServer?: ReadonlyMap<string, string>;
   }) => SessionMcpRuntime;
 }): Promise<BundleMcpToolRuntime> {
+  const signal = getSessionMcpRequestSignal();
+  signal?.throwIfAborted();
   const createRuntime =
     params.createRuntime ?? (await import("./agent-bundle-mcp-runtime.js")).createSessionMcpRuntime;
+  signal?.throwIfAborted();
   const runtime = createRuntime({
     sessionId: `bundle-mcp:${crypto.randomUUID()}`,
     workspaceDir: params.workspaceDir,
@@ -625,11 +637,44 @@ export async function createBundleMcpToolRuntime(params: {
       ? { safeServerNamesByServer: params.safeServerNamesByServer }
       : {}),
   });
-  return await materializeBundleMcpToolsForRun({
-    runtime,
-    reservedToolNames: params.reservedToolNames,
-    disposeRuntime: async () => {
+  // Private acquisition owns cancellation until the caller receives its disposal handle.
+  let abortDisposal: Promise<void> | undefined;
+  const onAbort = () => {
+    abortDisposal = (async () => {
       await runtime.dispose();
-    },
-  });
+    })();
+    void abortDisposal.catch(() => recordAgentCleanupFailure());
+  };
+  signal?.addEventListener("abort", onAbort, { once: true });
+  if (signal?.aborted) {
+    onAbort();
+  }
+  try {
+    const materialized = await materializeBundleMcpToolsForRun({
+      runtime,
+      reservedToolNames: params.reservedToolNames,
+      disposeRuntime: async () => {
+        await runtime.dispose();
+      },
+    }).catch(async (error: unknown) => {
+      if (signal?.aborted) {
+        // Catalog failure keeps its own error; cancellation must first replay physical cleanup failure.
+        try {
+          await abortDisposal;
+        } finally {
+          await runtime.joinCleanup?.();
+        }
+        signal.throwIfAborted();
+      }
+      throw error;
+    });
+    if (signal?.aborted) {
+      await materialized.dispose();
+      signal.throwIfAborted();
+    }
+    return materialized;
+  } finally {
+    signal?.removeEventListener("abort", onAbort);
+    await abortDisposal;
+  }
 }
