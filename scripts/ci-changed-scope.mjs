@@ -277,6 +277,9 @@ export function detectChangedScope(changedPaths) {
       WINDOWS_WORKER_BUNDLE_SCOPE_RE.test(path) ||
       WINDOWS_WORKER_WORKSPACE_SCOPE_RE.test(path) ||
       WINDOWS_PROCESS_IDENTITY_SCOPE_RE.test(path) ||
+      /^scripts\/lib\/ci-windows-test-plan\.mts$|^test\/scripts\/ci-windows-test-plan\.test\.ts$/u.test(
+        path,
+      ) ||
       (!facts.isTestOnly &&
         (WINDOWS_SCOPE_RE.test(path) ||
           WINDOWS_SQLITE_SCOPE_RE.test(path) ||

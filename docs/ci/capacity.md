@@ -246,31 +246,55 @@ two; at most 4 GiB caps them at one. Committed timing weights are unchanged.
 
 ## Owner-path and release coverage
 
-Docker seed and QA Smoke use the same owner-path gates on canonical PRs and
-`main`. Unrelated main changes can omit one 16-class Docker job and four 16-class
-QA profile jobs on a normal hybrid first attempt. Control UI performance uses
-its own UI/build/dependency/import scope; in hybrid it already runs hosted, so
-narrowing its scope removes a hosted row and candidate/base UI builds.
+Docker seed and QA Smoke retain owner-path selection on canonical main pushes;
+ordinary manual CI and Full Release Validation retain the supported complete
+proofs. Pull requests and their exact-head fallback dispatches omit these jobs,
+real-Gateway UI, and named built-process verifiers. Unit/boundary and mocked
+Gateway coverage remain. The complete-file proof inventory belongs to
+`scripts/lib/ci-proof-test-inventory.mts` and applies to precise and compact PR
+plans after owner resolution. Main/manual plans keep every proof assertion.
 
-The 2026-09-16 burden analysis estimated about 1,526 Blacksmith vCPU-minutes per
-hour from Docker and QA gating, using the sampled workload and head-commit diff
-proxies. Its 20 Docker and 80 QA main jobs had no failures; that small sample
-does not establish that the lanes cannot catch integration regressions.
-These are projected savings, with no measured post-change timing improvement.
-Production routing uses the triggering push's changed-path manifest; it does not
-accumulate earlier pushes whose pending runs were coalesced away.
+The Windows planner consumes all explicit files in the two existing package
+scripts, balances whole files by measured cost, and emits at most five rows.
+It never splits the worker-artifact file's shared fixture. Reference run
+`35520647082` had 689/837-second Windows jobs. The current 133-file model includes
+65 seconds per row for setup, three seconds per file for import/setup, recorded
+case costs rounded up, a three-second fallback for unmeasured files, and the
+measured 56-second runtime build charged once to each row requiring it. Four
+rows peak at 483 seconds; five predict 410/411/410/410/405 seconds. Those are
+estimates, not measured improvements. Five concurrent runners must actually be
+available. The unchanged project/worker limits keep native process ownership
+and cleanup coverage intact.
 
-| Lane                   | Automatic PR/main coverage                                                                   | Manual and full release coverage                                                                                     |
-| ---------------------- | -------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| Docker seed            | Existing seed owners; unknown paths retain survivor                                          | Canonical CI retains `legacy-operator-state` with `auto-auth`; Package Acceptance retains expanded upgrade scenarios |
-| QA Smoke CI            | Existing QA, channel, packaging, and orchestration owners                                    | Complete smoke profile on supported targets                                                                          |
-| Control UI performance | UI, plugin browser, workspace-package, build, dependency, policy, and relative-import owners | Retained independently of changed paths, subject to existing target capabilities                                     |
+The worker-artifact fixture remains a Windows follow-up: the reference logged
+one shared 18.087-second compile, then at least 139.608 seconds before its last
+case finished (213.267 seconds summed concurrent cases). Profile generation
+copy/verification and borrower startup on Windows before another optimization.
 
-Per-main integration detection outside these owners moves to manual/release
-validation. Keep the conservative peak registration envelope above: a broad owner
-change can still select every lane. This scope change does not change runner
-backends, caps, budgets, or timeouts. Verify emitted rows and observed timing
-before claiming realized savings.
+Proof tiering alone leaves the reference 924-second critical path unchanged.
+With five Windows rows and every C1–C6 target shard at or below 500 seconds,
+retaining the recorded Node matrix waits gives 793 seconds, led by compact-small-46.
+If all job queues instead stay below eight seconds, compact-small-4 still gives
+680 seconds. The 96-row Node concurrency cap caused observed waits of 140–160
+seconds; reducing proof admission does not prove those waits disappear. Neither
+scenario claims the ten-minute goal is already achieved.
+
+Full-tier Windows expansion adds at most three non-Node registrations. Without
+spending any PR proof savings, use 83 potentially eligible non-Node rows and the
+unchanged 70/130 Node caps: `4 × 153 + 21 × 213 = 5,085`, leaving 915 below the
+6,000 reference envelope. Historical calculations elsewhere on this page use
+the earlier two-row Windows inventory. Compact90, push70, PR130, and the
+96-concurrent-Node limit remain unchanged. The daily timing refit still observes
+main and release proofs; no committed weight baseline was changed for tiering.
+
+| Lane                            | PR coverage                                                                                             | Main/manual and full release coverage                                           |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| Docker seed                     | Selector, scheduler, update/Doctor/state unit and boundary owners                                       | Owner-selected main; exact published-upgrade survivor on ordinary manual CI     |
+| QA Smoke CI                     | QA plan, catalog, transport, lifecycle and channel unit suites                                          | Owner-selected main; complete supported smoke profile on manual CI              |
+| Real-Gateway UI                 | UI units and mocked-Gateway browser projects                                                            | Existing selected main/manual real-Gateway inventory                            |
+| Built process proofs            | Browser registration, Doctor persistence, Discord multipart, SQLite store, watch and TUI boundary tests | Native host, Doctor, Discord, SQLite, watch and TUI canaries in build-artifacts |
+| Doctor refusal / Codex recovery | Doctor admission/repair and harness replacement/cancellation boundaries                                 | Complete files in main/manual Node plans                                        |
+| Windows                         | All 133 native unit/boundary/process files in measured whole-file rows                                  | Same inventory, historical targets retain their package commands                |
 
 ## Measured shard weights
 
