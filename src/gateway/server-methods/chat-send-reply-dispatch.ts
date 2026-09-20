@@ -202,6 +202,44 @@ export function createChatSendReplyDispatch(params: {
     );
     return params.prepareAssistantTranscriptMessage?.(prepared, sourceText) ?? prepared;
   };
+  const onPreDispatchNotice = async (payload: ReplyPayload): Promise<boolean> => {
+    if (!isReplyPayloadStatusNotice(payload) || !payload.text?.trim()) {
+      return false;
+    }
+    if (params.abortSignal?.aborted || (params.isRunCurrent && !params.isRunCurrent())) {
+      return false;
+    }
+    const current = loadSessionEntry(session.sessionKey, sessionLoadOptions);
+    const sessionId = current.entry?.sessionId ?? backingSessionId;
+    if (!sessionId || !current.storePath) {
+      logGateway.warn("webchat pre-dispatch notice skipped: transcript identity unavailable");
+      return false;
+    }
+    const appended = await appendAssistantTranscriptMessage({
+      sessionKey: session.sessionKey,
+      message: payload.text.trim(),
+      sessionId,
+      storePath: current.storePath,
+      ...(current.entry?.sessionId ? { expectedSessionId: current.entry.sessionId } : {}),
+      ...(current.entry?.lifecycleRevision
+        ? { expectedLifecycleRevision: current.entry.lifecycleRevision }
+        : {}),
+      ...(session.agentId ? { agentId: session.agentId } : {}),
+      createIfMissing: true,
+      // A notice is visible transcript state, but must not become model context
+      // or perturb the next provider prompt cache.
+      contextFreeCommand: true,
+      idempotencyKey: `${clientRunId}:pre-dispatch-notice`,
+      cfg,
+    });
+    if (!appended.ok) {
+      logGateway.warn(
+        `webchat pre-dispatch notice append failed: ${appended.error ?? "unknown error"}`,
+      );
+      return false;
+    }
+    return true;
+  };
   const resolveReplyDelivery = async (
     minimumAssistantMessageIndex = 0,
   ): Promise<ReplyDeliveryState> => {
@@ -714,6 +752,7 @@ export function createChatSendReplyDispatch(params: {
     dispatcherOptions,
     hasAppendedWebchatAgentMedia: () => appendedWebchatAgentMedia,
     onModelSelected,
+    onPreDispatchNotice,
     prepareAssistantTranscriptMessage,
     resolveReplyDelivery,
     runAgentMediaTranscript,

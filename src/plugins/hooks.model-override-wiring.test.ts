@@ -149,6 +149,63 @@ describe("model override pipeline wiring", () => {
     ] as const)("$name", async ({ event, expected, withBrokenHook, catchErrors }) => {
       await expectBeforeModelResolve({ event, expected, withBrokenHook, catchErrors });
     });
+
+    it("keeps effort and notice paired with the hook that won route selection", async () => {
+      addBeforeModelResolveHook(
+        registry,
+        "high-priority-router",
+        () => ({
+          modelOverride: "high-model",
+          providerOverride: "high-provider",
+          reasoningEffortOverride: "high",
+        }),
+        10,
+      );
+      addBeforeModelResolveHook(
+        registry,
+        "lower-priority-router",
+        () => ({
+          modelOverride: "low-model",
+          providerOverride: "low-provider",
+          reasoningEffortOverride: "low",
+        }),
+        1,
+      );
+
+      await expect(
+        createHookRunner(registry).runBeforeModelResolve({ prompt: "test" }, stubCtx),
+      ).resolves.toEqual({
+        modelOverride: "high-model",
+        providerOverride: "high-provider",
+        reasoningEffortOverride: "high",
+      });
+    });
+
+    it("does not attach a lower-priority notice to a higher-priority route", async () => {
+      addBeforeModelResolveHook(
+        registry,
+        "high-priority-router",
+        () => ({ modelOverride: "high-model", providerOverride: "high-provider" }),
+        10,
+      );
+      addBeforeModelResolveHook(
+        registry,
+        "lower-priority-router",
+        () => ({
+          modelOverride: "low-model",
+          providerOverride: "low-provider",
+          preDispatchNotice: { text: "low route" },
+        }),
+        1,
+      );
+
+      await expect(
+        createHookRunner(registry).runBeforeModelResolve({ prompt: "test" }, stubCtx),
+      ).resolves.toEqual({
+        modelOverride: "high-model",
+        providerOverride: "high-provider",
+      });
+    });
   });
 
   describe("before_prompt_build (attempt.ts pattern)", () => {

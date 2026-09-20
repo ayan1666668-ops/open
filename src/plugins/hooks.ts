@@ -390,6 +390,20 @@ export function createHookRunner(
     // Keep the first defined override so higher-priority hooks win.
     modelOverride: firstDefined(acc?.modelOverride, next.modelOverride),
     providerOverride: firstDefined(acc?.providerOverride, next.providerOverride),
+    // Keep model/provider and effort atomic: a selected higher-priority route
+    // must not inherit an effort from a lower-priority hook.
+    reasoningEffortOverride:
+      acc?.modelOverride || acc?.providerOverride || acc?.reasoningEffortOverride
+        ? acc.reasoningEffortOverride
+        : next.reasoningEffortOverride,
+    // A notice belongs to the route that won selection. Do not let a lower
+    // priority notice describe a higher-priority hook's unrelated override.
+    preDispatchNotice:
+      acc?.modelOverride || acc?.providerOverride || acc?.reasoningEffortOverride
+        ? acc.preDispatchNotice
+        : next.modelOverride || next.providerOverride || next.reasoningEffortOverride
+          ? next.preDispatchNotice
+          : firstDefined(acc?.preDispatchNotice, next.preDispatchNotice),
   });
 
   const normalizeHookToolsAllow = (value: unknown): string[] | undefined => {
