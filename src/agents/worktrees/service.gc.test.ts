@@ -10,7 +10,10 @@ import { runNodeScript } from "../../../test/helpers/run-node-script.js";
 import * as backoff from "../../infra/backoff.js";
 import { createWarnLogCapture } from "../../logging/test-helpers/warn-log-capture.js";
 import * as pidAlive from "../../shared/pid-alive.js";
-import { closeOpenClawStateDatabaseForTest } from "../../state/openclaw-state-db.js";
+import {
+  closeOpenClawStateDatabaseAsync,
+  closeOpenClawStateDatabaseForTest,
+} from "../../state/openclaw-state-db.js";
 import * as worktreeGit from "./git.js";
 import { requireGit } from "./git.js";
 import { findLiveRegistryWorktreeByPath, getRegistryWorktree } from "./registry.js";
@@ -25,6 +28,19 @@ const execFileAsync = promisify(execFile);
 async function git(cwd: string, ...args: string[]): Promise<string> {
   const { stdout } = await execFileAsync("git", ["-C", cwd, ...args], { encoding: "utf8" });
   return stdout.trim();
+}
+
+/** Commits both sides of a modify/delete conflict for a tracked `entry` file. */
+async function commitConflictedParent(repo: string): Promise<void> {
+  await fs.writeFile(path.join(repo, "entry"), "base\n");
+  await git(repo, "add", "entry");
+  await git(repo, "commit", "-m", "add tracked parent");
+  await git(repo, "checkout", "-q", "-b", "theirs");
+  await fs.writeFile(path.join(repo, "entry"), "modified\n");
+  await git(repo, "commit", "-am", "modify parent");
+  await git(repo, "checkout", "-q", "main");
+  await git(repo, "rm", "-q", "entry");
+  await git(repo, "commit", "-m", "delete parent");
 }
 
 async function initializeNestedRepository(root: string, name: string): Promise<string> {
@@ -78,6 +94,7 @@ describe("ManagedWorktreeService garbage collection", () => {
   });
 
   afterEach(async () => {
+    await closeOpenClawStateDatabaseAsync();
     closeOpenClawStateDatabaseForTest();
     await fs.rm(root, { recursive: true, force: true });
   });
@@ -220,15 +237,7 @@ describe("ManagedWorktreeService garbage collection", () => {
   );
 
   it("detects a nested repository inside a directory replacing a conflicted tracked file", async () => {
-    await fs.writeFile(path.join(repo, "entry"), "base\n");
-    await git(repo, "add", "entry");
-    await git(repo, "commit", "-m", "add tracked parent");
-    await git(repo, "checkout", "-q", "-b", "theirs");
-    await fs.writeFile(path.join(repo, "entry"), "modified\n");
-    await git(repo, "commit", "-am", "modify parent");
-    await git(repo, "checkout", "-q", "main");
-    await git(repo, "rm", "-q", "entry");
-    await git(repo, "commit", "-m", "delete parent");
+    await commitConflictedParent(repo);
     const created = await materializeRunOwnedFixture("replaced-conflicted", "workboard");
     // A modify/delete conflict leaves index stages 1 and 3 without stage 2, which
     // diff-files reports as unmerged rather than deleted, and which keeps the
@@ -251,6 +260,34 @@ describe("ManagedWorktreeService garbage collection", () => {
     } finally {
       warnLogs.cleanup();
     }
+  });
+
+  it("garbage collects a directory replacing a conflicted tracked file and restores it", async () => {
+    await commitConflictedParent(repo);
+    const created = await materializeRunOwnedFixture("collected-conflicted", "workboard");
+    await expect(
+      execFileAsync("git", ["-C", created.path, "merge", "theirs"]),
+    ).rejects.toBeTruthy();
+    // Stages 1 and 3 without stage 2, and no blob in HEAD: the snapshot index has
+    // no stage 0 entry Git could drop by name when the path becomes a directory.
+    expect(
+      (await git(created.path, "ls-files", "--stage", "--", "entry"))
+        .split("\n")
+        .map((line) => line.split("\t")[0]?.split(" ").at(-1)),
+    ).toEqual(["1", "3"]);
+    expect(await git(created.path, "ls-tree", "HEAD", "--", "entry")).toBe("");
+    const parentPath = path.join(created.path, "entry");
+    await fs.rm(parentPath, { force: true });
+    await fs.mkdir(parentPath);
+    await fs.writeFile(path.join(parentPath, "child.txt"), "replacement\n");
+    now += IDLE_GC_MS + 1;
+
+    expect((await service.gc()).removed).toEqual([created.id]);
+    await expect(fs.stat(created.path)).rejects.toMatchObject({ code: "ENOENT" });
+    const restored = await service.restore({ id: created.id });
+    expect(await fs.readFile(path.join(restored.path, "entry", "child.txt"), "utf8")).toBe(
+      "replacement\n",
+    );
   });
 
   it("protects a nested repository inside an untracked tree over the Git output cap", async () => {
@@ -731,7 +768,7 @@ describe("ManagedWorktreeService garbage collection", () => {
     const newest = await materializeRunOwnedFixture("default-newest", "session");
     expect((await service.gc()).removed).toEqual([oldest.id]);
     expect(
-      service.listRegistryRecords().filter((record) => record.removedAt === undefined),
+      (await service.listRegistryRecords()).filter((record) => record.removedAt === undefined),
     ).toHaveLength(100);
     expect(getRegistryWorktree(env, newest.id)?.removedAt).toBeUndefined();
   });

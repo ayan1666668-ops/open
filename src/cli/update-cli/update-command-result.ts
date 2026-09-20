@@ -17,12 +17,14 @@ import {
   writeControlPlaneUpdateRestartSentinel,
   type ControlPlaneUpdateSentinelMetaFile,
 } from "../../infra/update-control-plane-sentinel.js";
-import type { UpdateFailureFact } from "../../infra/update-failure-facts.js";
+import { createUpdateErrorFact, type UpdateFailureFact } from "../../infra/update-failure-facts.js";
 import { FreeBsdPkgOwnershipError } from "../../infra/update-freebsd-pkg-ownership.js";
 import { UpdateRequesterRevokedError } from "../../infra/update-requester-authority.js";
 import { UpdateRunAdmissionBusyError } from "../../infra/update-run-admission.js";
 import { getUpdateRun, recordUpdateRunPhase } from "../../infra/update-run-ledger.js";
+import type { UpdateRunRecord } from "../../infra/update-run-record.js";
 import type { UpdateRunResult, UpdateStepResult } from "../../infra/update-runner.js";
+import { hasCommandProcessCleanupError } from "../../process/exec-result.js";
 import { defaultRuntime } from "../../runtime.js";
 import type { UpdateRecoveryStep } from "../../shared/update-outcome.js";
 import type { OpenClawSchemaVersions } from "../../state/openclaw-schema-versions.js";
@@ -32,7 +34,10 @@ import { UpdatePreMutationError, type UpdateCommandOptions } from "./shared.js";
 import type { UpdateConfigSnapshot } from "./update-command-config-snapshot.js";
 import type { FinishUpdateParams } from "./update-command-finish-types.js";
 import type { OwnedManagedUpdateContext } from "./update-command-managed-context.js";
-import type { PreManagedServiceStop } from "./update-command-service-context-types.js";
+import type {
+  OriginalManagedServiceRuntime,
+  PreManagedServiceStop,
+} from "./update-command-service-context-types.js";
 import { GatewayServiceUpdateOwnershipError } from "./update-command-service-plan.js";
 import { resolveUpdateResultNextAction } from "./update-recovery-guidance.js";
 
@@ -62,16 +67,18 @@ export type MutableUpdateExecutionResult = {
   candidateSchemaVersions?: OpenClawSchemaVersions;
   previousSchemaVersions?: OpenClawSchemaVersions;
   previousVerified?: boolean;
+  originalManagedServiceRuntime?: OriginalManagedServiceRuntime;
   activationConfig?: UpdateConfigSnapshot;
 };
 
-export function createUpdateCommandFailureResult(
+function createUpdateCommandFailureResult(
   params: Pick<UpdateRunResult, "mode" | "root" | "recovery" | "durationMs"> & {
     failure: { cause: unknown; detail?: string };
     admission?: true;
+    phase?: string;
   },
 ): UpdateRunResult {
-  const { failure, admission, ...result } = params;
+  const { failure, admission, phase, ...result } = params;
   const { cause, detail } = failure;
   const preMutationFailure = cause instanceof UpdatePreMutationError;
   const pkgOwnershipFailure = cause instanceof FreeBsdPkgOwnershipError;
@@ -86,7 +93,8 @@ export function createUpdateCommandFailureResult(
           ? "managed-service-preflight"
           : "update-failed";
   const failedStep: UpdateStepResult = {
-    name: preMutationFailure || pkgOwnershipFailure || admissionFailure ? reason : "update",
+    name:
+      preMutationFailure || pkgOwnershipFailure || admissionFailure ? reason : (phase ?? "update"),
     command: "openclaw update",
     cwd: result.root ?? process.cwd(),
     durationMs: result.durationMs,
@@ -95,11 +103,54 @@ export function createUpdateCommandFailureResult(
     ...(detail !== undefined ? { stderrTail: detail } : {}),
     ...(preMutationFailure && cause.recoverySteps ? { recoverySteps: cause.recoverySteps } : {}),
     // Recorded diagnostics do not change post-mutation recovery eligibility.
-    ...(preMutationFailure || cause instanceof GatewayServiceUpdateOwnershipError
-      ? { failureFacts: cause.failureFacts }
-      : {}),
+    failureFacts:
+      preMutationFailure || cause instanceof GatewayServiceUpdateOwnershipError
+        ? cause.failureFacts
+        : [createUpdateErrorFact(phase ?? "update", cause)],
   };
   return { ...result, status: "error", reason, failedStep, steps: [failedStep] };
+}
+
+/** Mutable exceptions cannot authorize recovery while command cleanup is unknown. */
+export async function resolveMutableUpdateFailure(params: {
+  cause: unknown;
+  durationMs: number;
+  mode: UpdateRunResult["mode"];
+  root: string;
+  originalRecovery: () => Promise<UpdateRunResult["recovery"]>;
+  run?: UpdateCommandOptions["run"];
+}): Promise<{ result: UpdateRunResult; failure: { cause: unknown; detail: string } }> {
+  if (hasCommandProcessCleanupError(params.cause)) {
+    throw params.cause;
+  }
+  const failure = { cause: params.cause, detail: formatErrorMessage(params.cause) };
+  defaultRuntime.error(failure.detail);
+  let phase: string | undefined;
+  if (params.run) {
+    try {
+      const current = getUpdateRun(params.run.runId, { env: params.run.env });
+      phase =
+        current?.steps.findLast((step) => step.status === "in_progress")?.step ?? current?.phase;
+    } catch {
+      defaultRuntime.error(
+        "Warning: Update history could not be read; retaining the original failure without its recorded phase.",
+      );
+    }
+  }
+  return {
+    failure,
+    result: createUpdateCommandFailureResult({
+      durationMs: params.durationMs,
+      mode: params.mode,
+      root: params.root,
+      recovery:
+        params.cause instanceof UpdatePreMutationError
+          ? await params.originalRecovery()
+          : { serviceRestartSafe: false, reason: "runtime-verification-failed" },
+      failure,
+      phase,
+    }),
+  };
 }
 
 /** Report rejected read-only admission without creating a run or recovery diagnostics. */
@@ -296,6 +347,7 @@ export function resolveAutomaticUpdateTriage(
 }
 
 export type UpdateAdmissionReportParams = {
+  mode?: UpdateRunResult["mode"];
   recoverySteps?: readonly UpdateRecoveryStep[];
   failureFacts?: readonly UpdateFailureFact[];
   root: string;
@@ -372,9 +424,10 @@ export async function markControlPlaneUpdateRestartSentinelFailureBestEffort(par
 export function recordUpdateResultNextAction(
   params: Pick<FinishUpdateParams, "opts" | "coreAlreadyCurrent" | "ownedManagedUpdateEnv">,
   result: UpdateRunResult,
+  committed?: UpdateRunRecord,
 ) {
   const run = params.opts.run;
-  const active = run ? getUpdateRun(run.runId, { env: run.env }) : undefined;
+  const active = committed ?? (run ? getUpdateRun(run.runId, { env: run.env }) : undefined);
   const nextAction = resolveUpdateResultNextAction({
     result,
     restart: params.coreAlreadyCurrent ? params.opts.restart : undefined,
