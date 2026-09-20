@@ -850,9 +850,12 @@ export function evaluateGatewayMatrixTask(params: {
       matchesTextRead(sourceRead, `verification_code=${expected.verificationCode}\n`);
     checks.observedReadback = matchesTextRead(readback, expected.verificationCode);
     checks.onlyFixtureAccess =
-      reads.length === 2 &&
-      activity.length === 3 &&
-      trace.activities.length === 4 &&
+      reads.every(
+        (item) =>
+          item.input.path === sourceRead?.input.path || item.input.path === readback?.input.path,
+      ) &&
+      activity.length === reads.length + writes.length &&
+      trace.activities.length === activity.length + rejectedReads.length &&
       trace.activities.every(codeModeInvocation);
   }
 

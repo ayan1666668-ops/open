@@ -1179,8 +1179,8 @@ describe("process lifecycle evidence", () => {
 
 describe("JavaScript declaration and argument-validation evidence", () => {
   const expected = { verificationCode: "JAVASCRIPT_R1_OK" };
-  function evidence() {
-    return collectGatewayMatrixTrace([
+  function evidence(extraReadPath?: string) {
+    const trace = collectGatewayMatrixTrace([
       assistantCall("list", 'return await API.list("tools/");'),
       toolOutcome("list", {
         status: "completed",
@@ -1254,17 +1254,33 @@ describe("JavaScript declaration and argument-validation evidence", () => {
       ),
       toolOutcome("write", { status: "completed", value: expected.verificationCode }),
     ]);
+    if (extraReadPath) {
+      const write = expectDefined(
+        trace.calls.find((call) => call.id === "write"),
+        "write call",
+      );
+      write.args.code = `await read(${JSON.stringify({ path: extraReadPath })});\n${String(write.args.code)}`;
+      trace.activities.splice(2, 0, {
+        ...expectDefined(trace.activities[1], "source read"),
+        input: { path: extraReadPath },
+        parentId: "write",
+      });
+    }
+    return trace;
   }
-  it("requires observed declarations, caught validation, and dependent file operations", () => {
-    const checks = evaluateGatewayMatrixTask({
-      task: "javascript-contracts",
-      expected,
-      final: JSON.stringify(expected),
-      trace: evidence(),
-      receipts: [],
-    });
-    expect(Object.values(checks).every(Boolean)).toBe(true);
-  });
+  it.each([undefined, "facts.txt"])(
+    "accepts complete evidence with extra read %s",
+    (extraReadPath) => {
+      const checks = evaluateGatewayMatrixTask({
+        task: "javascript-contracts",
+        expected,
+        final: JSON.stringify(expected),
+        trace: evidence(extraReadPath),
+        receipts: [],
+      });
+      expect(Object.values(checks).every(Boolean)).toBe(true);
+    },
+  );
   it.each([
     "missing-types",
     "late-types",
@@ -1276,6 +1292,7 @@ describe("JavaScript declaration and argument-validation evidence", () => {
     "wrong-rejected-input",
     "wrong-error-text",
     "wrong-error-tool",
+    "unexpected-read",
     "fabricated-types",
     "dead-discovery",
     "shadowed-api",
@@ -1287,7 +1304,7 @@ describe("JavaScript declaration and argument-validation evidence", () => {
     "wrong-readback-details",
     "retired-options",
   ] as const)("rejects %s even when the final answer is correct", (violation) => {
-    const trace = evidence();
+    const trace = evidence(violation === "unexpected-read" ? "other.txt" : undefined);
     if (violation === "missing-types") {
       expectDefined(trace.outcomes[0], "declaration result").details.value = {};
     } else if (violation === "late-types") {
@@ -1369,7 +1386,7 @@ describe("JavaScript declaration and argument-validation evidence", () => {
       ];
     } else if (violation === "wrong-readback-details") {
       expectDefined(trace.activities.at(-1), "readback").result.content = "WRONG_VALUE";
-    } else {
+    } else if (violation === "retired-options") {
       expectDefined(trace.calls[0], "first cell").args.language = "typescript";
     }
     const checks = evaluateGatewayMatrixTask({
