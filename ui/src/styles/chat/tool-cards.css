@@ -1541,5 +1541,5 @@ openclaw-chat-tool-output {
 .chat-tool-output__text {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  font-family: var(--font-mono);
+  font-family: var(--mono);
 }
