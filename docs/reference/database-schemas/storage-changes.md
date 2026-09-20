@@ -31,11 +31,6 @@ the captured task owner and database lifecycle still authorize the operation.
 Maintenance joins the sweep before completing; expiry, storage formats, and
 update behavior are unchanged.
 
-Dirty task-flow point reads refresh their requested and pending flow IDs in one
-canonical query, without decoding unrelated retained flow state. Broad lists and
-initial restoration retain full snapshots. Projection publication still follows
-the current database owner and managed transaction commit or rollback.
-
 Sandbox registry lists, point lookups, backend/scope runtime IDs, and browser
 registry reads execute in the shared-state read worker. CLI management and
 runtime provisioning await the same domain APIs. Reads retain inherited snapshot
@@ -891,6 +886,14 @@ during orderly shutdown. Delayed results cannot overwrite newer synchronous
 writes or refreshes. Reconciliation failures leave the flow projection dirty and
 preserve the durable mutation result without replaying the write.
 
+Task restoration and its mirrored-flow retries register each discovered flow ID
+with the process registry before the worker receives permission to update it.
+Synchronous reads refresh those pending identities even while the committed
+reply is in transit. Host reconciliation still follows task snapshot installation
+and precedes restored observers; failed replies also retain settlement and
+canonical flow reconciliation. This changes no schema, update migration, or
+synchronous plugin API.
+
 Synchronous callers keep their existing transaction behavior. Native cancellation,
 child-task linkage, and compound task/subagent completion retain their existing
 owners until their complete persistence and lifecycle boundaries move together.
@@ -932,12 +935,17 @@ Meeting transcript identity, descriptor, notes, summary, and utterance reads use
 the shared-state worker. Typed commands call the existing synchronous query
 kernels, preserve complete stored results and library error fields, and retain
 first-use schema creation. Compound enumeration, matching, and library reads
-use one deferred read snapshot, keeping their queries coherent while capture
-writes still run on the parent connection. Schema creation finishes before the
+use one deferred read snapshot, keeping their queries coherent with concurrent
+capture writes. Schema creation finishes before the
 read transaction, and domain errors are translated after it settles. Canonical
-close drains these reads before closing their worker connection. Chronological
+close drains these reads before closing their worker connection. Capture utterance
+appends also run their existing deduplication, sequence allocation, and insertion
+transaction on that worker. The capture records accepted speech before preparing
+its immutable input, preserves its order, and retains authority through native
+settlement. Terminal notes and failed-start restoration wait for accepted appends;
+terminal callbacks cannot admit new speech. Chronological
 list reads still use the parent process because their SQL date function observes
-its current timezone. Streamed reads, export snapshots, and capture writes retain
+its current timezone. Streamed reads, export snapshots, and session and summary writes retain
 their existing owners until their snapshot and write-drainage lifecycles move
 together.
 

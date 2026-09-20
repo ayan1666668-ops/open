@@ -1,6 +1,5 @@
 // Covers managed task-flow creation, lookup, ownership, and state transitions.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createDeferred } from "../../test/helpers/promise.js";
 import * as sqlitePostCommit from "../infra/sqlite-post-commit.js";
 import { openClawStateDatabaseCache } from "../state/openclaw-state-db-cache.js";
 import { captureOpenClawStateWorkerContext } from "../state/openclaw-state-worker-context.js";
@@ -16,7 +15,6 @@ import {
   listTaskFlowRecords,
   listTaskFlowsForOwnerKey,
   requestFlowCancel,
-  readResidentTaskFlow,
   reloadTaskFlowRegistryFromStoreAsync,
   runTaskFlowRegistryWorkerMutation,
   resumeFlow,
@@ -91,51 +89,6 @@ describe("task-flow-registry", () => {
     resetTaskFlowRegistryForTests({ persist: false });
   });
 
-  it("rejects a dirty flow snapshot after its store is replaced during the read", async () => {
-    const original = createInMemoryTaskFlowRegistryStore();
-    configureTaskFlowRegistryRuntime({ store: original });
-    const flow = createManagedTaskFlow({
-      ownerKey: "agent:main:main",
-      controllerId: "tests/refresh-owner",
-      goal: "Original owner",
-    });
-    const replacement = createInMemoryTaskFlowRegistryStore({
-      flows: new Map([[flow.flowId, { ...flow, goal: "Replacement owner" }]]),
-    });
-    configureTaskFlowRegistryRuntime({
-      store: {
-        ...original,
-        loadSnapshot(flowIds) {
-          const snapshot = original.loadSnapshot(flowIds);
-          if (flowIds) {
-            configureTaskFlowRegistryRuntime({ store: replacement });
-            expect(getTaskFlowById(flow.flowId)?.goal).toBe("Replacement owner");
-          }
-          return snapshot;
-        },
-      },
-    });
-    const context = captureOpenClawStateWorkerContext();
-    const release = createDeferred();
-    const onPublicationError = vi.fn();
-    const pending = runTaskFlowRegistryWorkerMutation(
-      { flowId: flow.flowId, admission: context.admission, onPublicationError },
-      () => release.promise,
-      () => original.readFlowAsync(context, flow.flowId),
-    );
-    try {
-      expect(() => getTaskFlowById(flow.flowId)).toThrow(
-        "Task-flow registry refresh changed before publication",
-      );
-      expect(getTaskFlowById(flow.flowId)?.goal).toBe("Replacement owner");
-    } finally {
-      release.resolve();
-      await pending;
-    }
-    expect(onPublicationError).toHaveBeenCalledOnce();
-    expect(getTaskFlowById(flow.flowId)?.goal).toBe("Replacement owner");
-  });
-
   it("publishes the committed flow after refresh rollback restores an older cache", async () => {
     const store = createInMemoryTaskFlowRegistryStore();
     configureTaskFlowRegistryRuntime({ store });
@@ -162,19 +115,22 @@ describe("task-flow-registry", () => {
         return current;
       }
       changed = true;
-      const database = createProjectionTransactionDatabase({ isTransaction: false });
+      const database = createProjectionTransactionDatabase();
       const lookup = vi
         .spyOn(openClawStateDatabaseCache, "getOpenClawStateDatabaseIfOpenAtPath")
         .mockReturnValue(database);
+      const stage = vi
+        .spyOn(sqlitePostCommit, "stageSqliteTransactionState")
+        .mockImplementation((_db, publication) => {
+          publication.stage();
+          publication.rollback(new Error("Synthetic projection rollback"));
+          return true;
+        });
       try {
-        expect(() =>
-          sqlitePostCommit.withSqlitePostCommitPublications(database.db, () => {
-            expect(getTaskFlowById(flow.flowId)?.goal).toBe("Committed");
-            throw new Error("Synthetic projection rollback before BEGIN");
-          }),
-        ).toThrow("Synthetic projection rollback before BEGIN");
-        expect(readResidentTaskFlow(flow.flowId)?.goal).toBe("Original");
+        expect(getTaskFlowById(flow.flowId)?.goal).toBe("Original");
+        expect(stage).toHaveBeenCalledTimes(1);
       } finally {
+        stage.mockRestore();
         lookup.mockRestore();
       }
       return current;

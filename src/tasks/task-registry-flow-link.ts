@@ -17,8 +17,7 @@ export function assertParentFlowLinkAllowed(params: {
 }
 
 export function ensureLinkedTaskFlowRegistryReady(task: Pick<TaskRecord, "parentFlowId">): void {
-  const flowId = task.parentFlowId?.trim();
-  if (flowId) {
-    ensureTaskFlowRegistryReady({ flowIds: [flowId] });
+  if (task.parentFlowId?.trim()) {
+    ensureTaskFlowRegistryReady();
   }
 }

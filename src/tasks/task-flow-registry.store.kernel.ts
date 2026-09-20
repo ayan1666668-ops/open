@@ -207,18 +207,18 @@ export function readTaskFlowRegistrySnapshot(
   db: DatabaseSync,
   flowIds?: readonly string[],
 ): TaskFlowRegistryStoreSnapshot {
-  if (flowIds?.length === 0) {
-    return { flows: new Map() };
-  }
   let query = getFlowRegistryKysely(db)
     .selectFrom("flow_runs")
     .select(FLOW_RUN_SELECT_COLUMNS)
     .orderBy("created_at", "asc")
     .orderBy("flow_id", "asc");
+  const flows = new Map<string, TaskFlowRecord>();
   if (flowIds) {
+    if (flowIds.length === 0) {
+      return { flows };
+    }
     query = query.where("flow_id", "in", sqliteStringSet(flowIds));
   }
-  const flows = new Map<string, TaskFlowRecord>();
   // Finish native reads before decoding so SQLite errors retain precedence.
   for (const row of executeSqliteQuerySync(db, query).rows) {
     flows.set(row.flow_id, rowToFlowRecord(row));

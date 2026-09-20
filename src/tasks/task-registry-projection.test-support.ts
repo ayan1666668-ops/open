@@ -5,13 +5,11 @@ function unexpectedDatabaseAccess(): never {
 }
 
 /** Satisfy the complete driver contract without constructing or invoking a native database. */
-export function createProjectionTransactionDatabase(options?: {
-  isTransaction?: boolean;
-}): OpenClawStateDatabase {
+export function createProjectionTransactionDatabase(): OpenClawStateDatabase {
   return {
     path: "projection-only",
     db: {
-      isTransaction: options?.isTransaction ?? true,
+      isTransaction: true,
       get isOpen() {
         return unexpectedDatabaseAccess();
       },

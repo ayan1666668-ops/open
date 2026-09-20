@@ -29,7 +29,7 @@ export type TaskFlowRegistryUpdatePublication = {
   publish: () => void;
 };
 
-/** Canonical flow rows, either the full registry or an explicitly requested ID set. */
+/** Task-flow rows for a full restore or an explicitly scoped projection refresh. */
 export type TaskFlowRegistryStoreSnapshot = {
   flows: Map<string, TaskFlowRecord>;
 };

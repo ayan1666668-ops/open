@@ -15,7 +15,6 @@ export {
   prepareTaskMirroredFlowSync,
   publishTaskFlowAfterAtomicStore,
   requestFlowCancel,
-  reconcileTaskFlowWorkerReceipts,
   reloadTaskFlowRegistryFromStoreAsync,
   resolveTaskFlowForLookupToken,
   resumeFlow,
