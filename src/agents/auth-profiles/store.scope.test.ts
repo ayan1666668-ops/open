@@ -33,6 +33,7 @@ function rows(key: string): AuthProfileRowRead {
       },
     },
     state: { status: "missing", reason: "row" },
+    cacheable: true,
   };
 }
 
