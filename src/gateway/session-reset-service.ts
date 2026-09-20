@@ -121,11 +121,11 @@ import {
 import { resolvePluginSessionOwnershipError } from "./session-plugin-ownership.js";
 import { buildPendingAcpMeta, closeAcpRuntimeForSession } from "./session-reset-acp.js";
 import { notifyGatewaySessionReset } from "./session-reset-notifications.js";
+import { readGatewayBeforeResetPluginHookMessages } from "./session-reset-transcript.js";
 import {
   resolveStableSessionEndTranscript,
   type ArchivedSessionTranscript,
 } from "./session-transcript-files.fs.js";
-import { readSessionMessagesAsync } from "./session-transcript-readers.js";
 import {
   loadSessionEntry,
   resolveGatewaySessionStoreTarget,
@@ -337,10 +337,9 @@ async function ensureSessionRuntimeCleanup(params: {
       : undefined,
     assertCurrent: params.assertCurrent,
   });
-  // Session lifecycle mutation owns this heavy runtime edge; read-only gateway
-  // commands such as status must not load the embedded-agent barrel.
+  // Cleanup needs the active-run owner, not the runner and compaction orchestration.
   const [embeddedAgent, mcpTools, { clearFinishedSessionsForScopes }] = await Promise.all([
-    import("../agents/embedded-agent.js"),
+    import("../agents/embedded-agent-runner/runs.js"),
     import("../agents/agent-bundle-mcp-tools.js"),
     import("../agents/bash-process-registry.js"),
   ]);
@@ -715,38 +714,6 @@ export async function emitGatewayBeforeResetPluginHook(params: {
     .catch((err: unknown) => {
       logVerbose(`before_reset hook failed: ${String(err)}`);
     });
-}
-
-async function readGatewayBeforeResetPluginHookMessages(params: {
-  agentId: string;
-  entry?: SessionEntry;
-  sessionId?: string;
-  sessionKey: string;
-  storePath: string;
-}): Promise<unknown[]> {
-  if (typeof params.sessionId !== "string" || params.sessionId.trim().length === 0) {
-    return [];
-  }
-  try {
-    return await readSessionMessagesAsync(
-      {
-        agentId: params.agentId,
-        sessionEntry: params.entry,
-        sessionId: params.sessionId,
-        sessionKey: params.sessionKey,
-        storePath: params.storePath,
-      },
-      {
-        mode: "full",
-        reason: "before_reset hook payload",
-      },
-    );
-  } catch (err) {
-    logVerbose(
-      `before_reset: failed to read session messages for ${params.sessionId}; firing hook with empty messages (${String(err)})`,
-    );
-    return [];
-  }
 }
 
 export async function performGatewaySessionReset(params: {
@@ -1169,6 +1136,17 @@ export async function performGatewaySessionReset(params: {
           ok: false,
           error: errorShape(ErrorCodes.INVALID_REQUEST, placementRetirementError.message),
         };
+      }
+      if (entry?.worktree?.id) {
+        const record = managedWorktrees.findLiveById(entry.worktree.id);
+        if (record) {
+          const { withSettledLocalWorkspace } =
+            await import("./worker-environments/local-workspace-projection.js");
+          await withSettledLocalWorkspace(
+            { worktree: record, assertCurrent: params.assertCurrent, retireRuntime: true },
+            async () => {},
+          );
+        }
       }
       const hadExistingEntry = Boolean(entry);
       const detachedWorktreeId = params.clearSpawnedCwd

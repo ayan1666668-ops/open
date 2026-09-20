@@ -29,6 +29,7 @@ import {
   maxTranscriptScrollOffset,
   measureConnectedTranscriptRows,
   measureTranscriptRow,
+  reconcileInitialTranscriptOffset,
   resolveTranscriptScrollMargin,
   PositionRailGutterController,
   syncScrollMargin,
@@ -132,11 +133,14 @@ export class ChatSessionVirtualizerHost implements ReactiveControllerHost, ChatT
       () => this.offsetState.pendingInteractionAnchor === anchor && this.host.requestUpdate(),
     );
   };
-  private measureConnectedRows(): void {
+  private measureConnectedRows(): boolean {
     // Native input can land after takeover but before its offset observer.
     // Refresh the offset and direction before compensating deferred row growth.
     this.offsetState.syncNativeOffset?.();
-    measureConnectedTranscriptRows(this.scrollElement, this.virtualizerController.getVirtualizer());
+    return measureConnectedTranscriptRows(
+      this.scrollElement,
+      this.virtualizerController.getVirtualizer(),
+    );
   }
   private readonly handleGeometryCommit = (event: Event) => {
     this.reconcileInteractionResize(event.target);
@@ -176,12 +180,9 @@ export class ChatSessionVirtualizerHost implements ReactiveControllerHost, ChatT
             // The parent update can finish before a virtualized target mounts.
             queueMicrotask(() => this.completeMessageReveal());
           }
-          if (element.isConnected) {
-            this.virtualizerController.getVirtualizer().measureElement(element);
-          } else {
-            // Lit invokes refs before the row is connected. Measuring a new
-            // key there records offsetHeight=0 and corrupts the virtual range
-            // until ResizeObserver catches up.
+          // Nested message refs finish their preview clamps in a microtask.
+          // Measure afterward, once the row is connected and those writes settle.
+          queueMicrotask(() => {
             queueMicrotask(() => {
               if (
                 element.isConnected &&
@@ -192,7 +193,7 @@ export class ChatSessionVirtualizerHost implements ReactiveControllerHost, ChatT
                 this.virtualizerController.getVirtualizer().measureElement(element);
               }
             });
-          }
+          });
           return;
         }
         // Re-stamps (e.g. the chat<->dashboard face switch) re-invoke each
@@ -283,7 +284,14 @@ export class ChatSessionVirtualizerHost implements ReactiveControllerHost, ChatT
             isProgrammaticScroll: () => this.isProgrammaticScroll,
             cancelScroll: () => this.cancelScroll(),
             requestUpdate: () => this.host.requestUpdate(),
-            onReaderScroll: (towardEnd) => this.callbacks.onReaderScroll?.(towardEnd),
+            onReaderScroll: (towardEnd) => {
+              this.callbacks.onReaderScroll?.(towardEnd);
+              // Downward input at the physical end may not emit a scroll event.
+              // Remember that edge before late content measurement can move it.
+              if (towardEnd && this.canAutoFollow()) {
+                this.endAnchor.capture(this.scrollElement);
+              }
+            },
           },
           instance,
           callback,
@@ -542,6 +550,8 @@ export class ChatSessionVirtualizerHost implements ReactiveControllerHost, ChatT
           captureInteractionResize: this.captureInteractionResize,
           measureRowRefFor: (key) => this.measureRowRefFor(key),
           measureRows:
+            // The first correction reveals new rows; their real sizes must land before retiring the anchor.
+            this.prependAnchor.messageKey !== null ||
             this.offsetState.scrollCommand?.target === "message" ||
             this.offsetState.scrollCommand?.target === "index",
         });
@@ -770,24 +780,13 @@ export class ChatSessionVirtualizerHost implements ReactiveControllerHost, ChatT
     if (!this.implicitEndAnchorPending || !this.connected || !this.contentReady) {
       return;
     }
-    const maxOffset = maxTranscriptScrollOffset(this.scrollElement);
-    const virtualizer = this.virtualizerController.getVirtualizer();
-    const scrollOffset = virtualizer.scrollOffset;
-    if (maxOffset === null || scrollOffset === null) {
-      return;
+    const result = reconcileInitialTranscriptOffset(
+      this.scrollElement,
+      this.virtualizerController.getVirtualizer(),
+    );
+    this.implicitEndAnchorPending = result === "pending";
+    if (result === "corrected") {
+      this.host.requestUpdate();
     }
-    if (scrollOffset >= 0 && scrollOffset <= maxOffset) {
-      this.implicitEndAnchorPending = false;
-      return;
-    }
-    if (maxOffset !== 0) {
-      return;
-    }
-    this.implicitEndAnchorPending = false;
-    // The DOM clamps an underfilled end anchor to zero without a scroll event,
-    // so TanStack cannot reconcile its maximum-integer initial offset itself.
-    virtualizer.scrollOffset = 0;
-    virtualizer.scrollToOffset(0);
-    this.host.requestUpdate();
   }
 }

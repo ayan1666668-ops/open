@@ -1,11 +1,7 @@
 // Preserve module setup before modules that consume it.
 // oxfmt-ignore
-import {
-  cleanupPreparedModelRuntimeHarness,
-  getPreparedModelRuntimeMocks,
-  resetPreparedModelRuntimeHarness,
-} from "./prepared-model-runtime.test-harness.js";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { usePreparedModelRuntimeHarness } from "./prepared-model-runtime.test-harness.js";
+import { describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../test/helpers/promise.js";
 import {
   createPluginMetadataSnapshot,
@@ -19,10 +15,7 @@ import { isPluginRegistryRetired } from "../plugins/registry-lifecycle.js";
 import { clearActivePluginRegistry, setActivePluginRegistry } from "../plugins/runtime.js";
 import { setPluginRuntimeLoadContext } from "../plugins/runtime/load-context.js";
 import { createPluginRecord } from "../plugins/status.test-helpers.js";
-import {
-  createOpenClawTestState,
-  type OpenClawTestState,
-} from "../test-utils/openclaw-test-state.js";
+import { PreparedModelRuntimePublicationSupersededError } from "./prepared-model-runtime.errors.js";
 import { loadPreparedInboundPluginRegistry } from "./prepared-model-runtime.inbound-registry.js";
 import {
   acquireAgentRunPreparedModelRuntime,
@@ -36,17 +29,8 @@ import { retainPreparedPluginRegistry } from "./prepared-model-runtime.plugin-li
 import { PreparedModelRuntimeBuildResources } from "./prepared-model-runtime.resources.js";
 import * as runtimePlugins from "./runtime-plugins.js";
 
-const mocks = getPreparedModelRuntimeMocks();
-let state: OpenClawTestState;
-
-beforeEach(async () => {
-  state = await createOpenClawTestState({ label: "prepared-registry-borrow" });
-  await resetPreparedModelRuntimeHarness(state);
-});
-
-afterEach(async ({ task }) => {
-  await cleanupPreparedModelRuntimeHarness(state, task.result?.state === "fail");
-});
+const fixture = usePreparedModelRuntimeHarness({ label: "prepared-registry-borrow" });
+const { mocks } = fixture;
 
 async function acquireConfiguredRegistryBorrower(source: "owned" | "gateway" = "owned") {
   mocks.configuredAgentIds = ["default"];
@@ -71,10 +55,7 @@ async function acquireConfiguredRegistryBorrower(source: "owned" | "gateway" = "
   const instance = new PluginInstance(record.id, { record, registry });
   mocks.loadAgentRuntimePluginRegistryHandle.mockReturnValue(registry);
   const input = {
-    agentId: "default",
-    config,
-    agentDir: state.agentDir("default"),
-    inheritedAuthDir: state.agentDir("default"),
+    ...fixture.agentInput("default", config),
     workspaceDir,
     ...(source === "gateway" ? { allowGatewaySubagentBinding: true } : {}),
   };
@@ -178,6 +159,7 @@ describe("prepared registry construction borrows", () => {
       expect(() => instance.reserveReplacement()()).toThrow("active retained work");
       finishInspection.resolve();
       await expect(pending).rejects.toThrow("superseded");
+      await expect(pending).rejects.toBeInstanceOf(PreparedModelRuntimePublicationSupersededError);
       expect(isPluginRegistryRetired(registry)).toBe(true);
     } finally {
       finishInspection.resolve();
