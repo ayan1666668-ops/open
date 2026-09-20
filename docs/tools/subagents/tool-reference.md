@@ -62,6 +62,25 @@ the provider prefix when the ref has one.
 
 ### Cloud placement
 
+`placement` is optional and only selects cloud execution. Omit the entire field for
+local subagents (including hidden review and test workers) and ACP runs. Do not
+supply dummy profile, OS, or machine identifiers to fill unused fields. An existing
+local worktree needs only `cwd`, not `worktree: true` or `placement`:
+
+```json
+{
+  "task": "Review the current changes and report findings",
+  "runtime": "subagent",
+  "mode": "run",
+  "cwd": "/path/to/existing/worktree",
+  "completionTarget": "parent"
+}
+```
+
+For intentional cloud execution, use `visible: true`, `worktree: true`, and a real
+configured profile. A contradictory placement request is rejected before creating
+a child; it never silently becomes a local run.
+
 Discover configured profiles with `sessions({ action: "cloud_profiles" })`. The list returns at most 32 summaries and supplies `nextOffset` when another page is available. Pass that value as `offset`. Request `sessions({ action: "cloud_profiles", profileId: "build" })` for that profile's operating systems, availability, defaults, and per-OS machine classes. Discovery reads the same provider-authored catalog as the Control UI, not profile settings or credentials.
 
 Then start the child using the selected identifiers:

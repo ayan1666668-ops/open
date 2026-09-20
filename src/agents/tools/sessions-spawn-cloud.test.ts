@@ -1,6 +1,9 @@
 import path from "node:path";
 import { createRequireRecord } from "openclaw/plugin-sdk/test-fixtures";
+import { Value } from "typebox/value";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { convertResponsesToolPayload } from "../../../packages/ai/src/providers/openai-responses-tools.js";
+import { validateToolArguments } from "../../../packages/llm-core/src/validation.js";
 import { upsertSessionEntryCore } from "../../config/sessions/session-accessor.js";
 import type { GatewayRequestContext } from "../../gateway/server-methods/types.js";
 import { withTestDir } from "../../test-helpers/temp-dir.js";
@@ -66,6 +69,64 @@ describe("visible session placement and authority", () => {
     }
     return requireRecord(call[argIndex], `${label} call ${callIndex + 1} arg ${argIndex + 1}`);
   }
+
+  it.each([undefined, false])(
+    "preserves omitted placement through Responses conversion and hidden dispatch (visible: %s)",
+    async (visible) => {
+      const callGateway = vi.fn();
+      const tool = createSessionsSpawnTool({
+        agentSessionKey: "agent:main:dashboard:parent",
+        workspaceDir: "/workspace/parent",
+        callGateway,
+      });
+      const [wireTool] = convertResponsesToolPayload([tool], { strict: true });
+      expect(wireTool?.strict).toBe(false);
+      const parameters = requireRecord(wireTool?.parameters, "Responses parameters");
+      expect(parameters.required).not.toContain("placement");
+      const request = {
+        task: "Review the local worktree",
+        runtime: "subagent",
+        ...(visible === undefined ? {} : { visible }),
+        worktree: false,
+        mode: "run",
+        cwd: "/workspace/review",
+        completionTarget: "parent",
+      };
+      expect(Value.Check(parameters, request)).toBe(true);
+      const args = validateToolArguments(tool, {
+        type: "toolCall",
+        id: "local-review",
+        name: tool.name,
+        arguments: request,
+      });
+      expect(args).toEqual(request);
+      expect(args).not.toHaveProperty("placement");
+      hoisted.spawnSubagentDirectMock.mockResolvedValue({
+        status: "accepted",
+        childSessionKey: "agent:main:subagent:review",
+        runId: "local-review-run",
+      });
+
+      const result = await tool.execute("local-review", args);
+
+      expect(result.details).toMatchObject({ status: "accepted", runId: "local-review-run" });
+      expect(hoisted.spawnSubagentDirectMock).toHaveBeenCalledOnce();
+      expect(hoisted.spawnSubagentDirectMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          task: request.task,
+          cwd: request.cwd,
+          mode: "run",
+          completionTarget: "parent",
+          expectsCompletionMessage: true,
+        }),
+        expect.objectContaining({
+          agentSessionKey: "agent:main:dashboard:parent",
+          workspaceDir: "/workspace/parent",
+        }),
+      );
+      expect(callGateway).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([false, true])(
     "rejects cloud creation outside a hosted Gateway (embedded: %s)",
@@ -185,11 +246,19 @@ describe("visible session placement and authority", () => {
     { placement: { kind: "profile", profileId: "build" }, visible: true, worktree: false },
     { placement: { kind: "profile", profileId: "build", os: "" }, visible: true, worktree: true },
     { placement: { kind: "device", deviceId: "other" }, visible: true, worktree: true },
+    ...["ignored", "placeholder"].map((selector) => ({
+      visible: false,
+      worktree: false,
+      placement: { kind: "profile", profileId: selector, os: selector, machineClass: selector },
+    })),
   ])("rejects invalid cloud placement before creating a child: %j", async (args) => {
     const callGateway = vi.fn();
     const tool = createSessionsSpawnTool({ callGateway, countActiveRuns: () => 0 });
-    await expect(tool.execute("invalid-cloud", { task: "inspect", ...args })).rejects.toThrow();
+    await expect(tool.execute("invalid-cloud", { task: "inspect", ...args })).rejects.toThrow(
+      /Omit placement for local.*configured cloud profile/,
+    );
     expect(callGateway).not.toHaveBeenCalled();
+    expect(hoisted.spawnSubagentDirectMock).not.toHaveBeenCalled();
   });
 
   it.each([

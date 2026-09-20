@@ -69,7 +69,7 @@ export const VISIBLE_SESSIONS_SPAWN_SCHEMA = {
   placement: Type.Optional({
     ...SessionMoveProfileTargetSchema,
     description:
-      "Cloud destination: kind=profile, profileId, optional os and machineClass. Requires visible=true and worktree=true. Omitted selectors use profile defaults; first task starts only after cloud dispatch.",
+      "Optional cloud destination; omit placement entirely for local subagent or ACP runs. Use kind=profile and a configured profileId, with optional os and machineClass; never fill unused fields with placeholders. Requires visible=true and worktree=true. Omitted selectors use profile defaults; first task starts only after cloud dispatch.",
   }),
   visible: Type.Optional(
     Type.Boolean({
@@ -153,7 +153,8 @@ export async function maybeSpawnVisibleSession(params: {
       !worktree)
   ) {
     throw new ToolInputError(
-      'placement requires visible=true, worktree=true, and {kind: "profile", profileId, os?, machineClass?} with non-empty selectors.',
+      'placement requires visible=true, worktree=true, and {kind: "profile", profileId, os?, machineClass?} with non-empty selectors. ' +
+        "Omit placement for local subagent or ACP runs. For cloud execution, use a configured cloud profile with visible=true and worktree=true; do not supply placeholder selectors.",
     );
   }
   const worktreeName = readToolStringParam(params.raw, "worktreeName");
