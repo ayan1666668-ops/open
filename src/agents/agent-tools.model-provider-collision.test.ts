@@ -6,6 +6,11 @@
 import { describe, expect, it, vi } from "vitest";
 import { createOpenClawCodingTools } from "./agent-tools.js";
 import type { AnyAgentTool } from "./agent-tools.types.js";
+import { createCodeModeCatalogProjection } from "./code-mode-catalog.js";
+import {
+  createToolSearchCatalogRef,
+  registerHeadlessToolSearchCatalog,
+} from "./tool-search-catalog.js";
 
 vi.mock("./openclaw-plugin-tools.js", () => ({
   resolveOpenClawPluginToolsForOptions: () => [{ name: "browser" }],
@@ -78,6 +83,58 @@ describe("applyModelProviderToolPolicy", () => {
 
     expect(toolNames(filtered)).toEqual(["read", "web_search", "exec"]);
   });
+
+  it.each([
+    { label: "automatic", provider: undefined, baseUrl: "https://api.openai.com/v1", native: true },
+    {
+      label: "explicit managed",
+      provider: "brave",
+      baseUrl: "https://api.openai.com/v1",
+      native: false,
+    },
+    {
+      label: "custom endpoint",
+      provider: undefined,
+      baseUrl: "https://proxy.example/v1",
+      native: false,
+    },
+    {
+      label: "resolved custom endpoint",
+      provider: undefined,
+      baseUrl: "https://api.openai.com/v1",
+      modelBaseUrl: "https://proxy.example/v1",
+      native: false,
+    },
+    {
+      label: "resolved official endpoint",
+      provider: undefined,
+      baseUrl: "https://proxy.example/v1",
+      modelBaseUrl: "https://api.openai.com/v1",
+      native: true,
+    },
+  ])(
+    "uses one search route before tool discovery for OpenAI $label",
+    ({ provider, baseUrl, modelBaseUrl, native }) => {
+      const filtered = testing.applyModelProviderToolPolicy(baseTools, {
+        config: {
+          tools: { web: { search: { provider } } },
+          models: { providers: { openai: { api: "openai-responses", baseUrl, models: [] } } },
+        },
+        modelProvider: "openai",
+        modelApi: "openai-responses",
+        modelBaseUrl,
+        modelId: "gpt-5.4",
+      });
+
+      expect(toolNames(filtered)).toEqual(
+        native ? ["read", "exec"] : ["read", "web_search", "exec"],
+      );
+      const catalogRef = createToolSearchCatalogRef();
+      registerHeadlessToolSearchCatalog({ catalogRef, tools: filtered });
+      const projection = createCodeModeCatalogProjection(catalogRef.current?.entries ?? []);
+      expect(projection.byCallableName.has("web_search")).toBe(!native);
+    },
+  );
 
   it("removes managed web_search when native Codex search is active", () => {
     const filtered = testing.applyModelProviderToolPolicy(baseTools, {

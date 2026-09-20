@@ -295,6 +295,16 @@ result on the resolved runtime model rather than writing configuration.
 Explicit `tools.toolSearch` settings take precedence. This hook changes
 schema exposure, not tool permissions or availability.
 
+`resolveNativeWebSearch(ctx)` can be exported from the same policy artifact
+when a provider supplies hosted search. Its `ProviderNativeWebSearchPolicyContext`
+(from `openclaw/plugin-sdk/provider-model-types`) contains `config`, `provider`,
+optional `modelId`, `api`, and `baseUrl`. Return `true` only when that route
+will inject hosted search; share this policy with payload construction. Keep
+the hook synchronous and free of runtime activation or credential probes.
+The host applies tool permissions independently and removes managed
+`web_search` before building Tool Search and Code Mode catalogs. Explicit
+managed-provider selection must remain authoritative.
+
 `resolveFastModeSupport(ctx)` can be exported from the same policy artifact
 and registered on the provider. Return `false` only for a confirmed no-op
 Fast choice, `true` for an applicable local request mapping, or `undefined`
