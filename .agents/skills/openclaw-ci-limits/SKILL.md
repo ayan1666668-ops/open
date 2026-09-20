@@ -390,6 +390,12 @@ These are intentionally guarded by `test/scripts/ci-workflow-guards.test.ts`:
   `legacy-operator-state` with `auto-auth`. Full Release Validation reaches this
   exact proof through `normal_ci`; expanded Package Acceptance scenarios alone
   do not replace its restart mode.
+  PRs and exact-head PR fallbacks do not run Docker seed. Main selection uses
+  only the triggering push's diff, without accumulating coalesced/cancelled
+  pushes. A skipped proof waits for a later non-cancelled main run that selects
+  its lane or applicable manual/release validation; the next main run alone
+  does not guarantee coverage. Ordinary manual CI and `normal_ci` select the
+  published-upgrade survivor independently of changed paths.
 - `run_control_ui_performance` selects production UI, plugin browser, workspace
   package, dependency/build/policy inputs and their relative import graph,
   including tooling. Workspace package aliases require conservative package
