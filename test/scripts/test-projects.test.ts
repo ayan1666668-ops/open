@@ -46,6 +46,10 @@ import {
 import { databaseWorkerCoreTestFiles } from "../vitest/vitest.database-worker-core-paths.mjs";
 import { databaseWorkerExtensionTestFiles } from "../vitest/vitest.extension-database-workers-paths.mjs";
 import { gatewayDatabaseWorkerTestFiles } from "../vitest/vitest.gateway-server-paths.mjs";
+import {
+  startupCorpusTestFiles,
+  stateStartupCorpusTestFiles,
+} from "../vitest/vitest.startup-corpus-paths.mjs";
 
 const normalizeRepoPath = toRepoPath;
 const CODEX_TEST_PROCESS_FILE_LIMIT = 12;
@@ -102,7 +106,7 @@ describe("test runtime prerequisites", () => {
     ["infra config", ["test/vitest/vitest.infra.config.ts"], "runtime"],
     ["native SDK generation", ["src/plugins/plugin-module-generation.sdk.test.ts"], "runtime"],
     ["config startup SDK", ["src/config/config-startup-corpus.test.ts"], "runtime"],
-    ["state startup SDK", ["src/config/state-startup-corpus.test.ts"], "runtime"],
+    ...stateStartupCorpusTestFiles.map((file) => [file, [file], "runtime"] as const),
     ["runtime config project", ["test/vitest/vitest.runtime-config.config.ts"], "runtime"],
     [
       "context engine sandbox SDK",
@@ -122,6 +126,11 @@ describe("test runtime prerequisites", () => {
     [
       "native catalog worker SDK",
       ["src/agents/prepared-model-catalog-worker.integration.test.ts"],
+      "runtime",
+    ],
+    [
+      "native catalog worker capture custody",
+      ["src/agents/prepared-model-catalog-worker.custody.integration.test.ts"],
       "runtime",
     ],
     [
@@ -294,17 +303,14 @@ describe("test runtime prerequisites", () => {
     ["tooling", ["test/**"], undefined],
     ["plugins", ["plugin-module-generation.sdk.test.ts"], undefined],
     ["runtime-config", ["config/config-startup-corpus.test.ts"], "runtime"],
-    ["runtime-config", ["config/state-startup-corpus.test.ts"], "runtime"],
-    [
-      "runtime-config",
-      ["config/config-startup-corpus.test.ts", "config/state-startup-corpus.test.ts"],
-      "runtime",
-    ],
+    ...stateStartupCorpusTestFiles.map(
+      (file) => ["runtime-config", [file.slice("src/".length)], "runtime"] as const,
+    ),
+    ["runtime-config", startupCorpusTestFiles.map((file) => file.slice("src/".length)), "runtime"],
     [
       "runtime-config",
       [
-        "config/config-startup-corpus.test.ts",
-        "config/state-startup-corpus.test.ts",
+        ...startupCorpusTestFiles.map((file) => file.slice("src/".length)),
         "config/sessions/session-accessor.sqlite-reclamation-memory.test.ts",
       ],
       undefined,
@@ -316,6 +322,7 @@ describe("test runtime prerequisites", () => {
       [
         "agent-command-local.test.ts",
         "simple-completion-runtime.plugin-scope.test.ts",
+        "prepared-model-catalog-worker.custody.integration.test.ts",
         "prepared-model-catalog-worker.integration.test.ts",
         "runtime-plugins.context-engine.integration.test.ts",
       ],
@@ -326,6 +333,7 @@ describe("test runtime prerequisites", () => {
       [
         "agent-command-local.test.ts",
         "simple-completion-runtime.plugin-scope.test.ts",
+        "prepared-model-catalog-worker.custody.integration.test.ts",
         "prepared-model-catalog-worker.integration.test.ts",
         "runtime-plugins.context-engine.integration.test.ts",
       ],
@@ -2575,6 +2583,10 @@ describe("scripts/test-projects changed-target routing", () => {
       "test/vitest/vitest.unit-fast.config.ts",
       "src/agents/embedded-agent-runner/run/model-setup.selected-model.test.ts",
     ],
+    [
+      "test/vitest/vitest.unit-fast-isolated.config.ts",
+      "src/state/openclaw-agent-execution-cleanup.test.ts",
+    ],
   ])("preserves whole-owner watch coverage for %s with %s", (config, file) => {
     const [plan] = buildVitestRunPlans(["--watch", config, file]);
     expect(plan).toMatchObject({
@@ -2662,10 +2674,6 @@ describe("scripts/test-projects changed-target routing", () => {
       "test/vitest/vitest.agents-embedded-agent-overflow-compaction.config.ts",
     ],
     [
-      "src/agents/embedded-agent-runner/run.prepared-harness-source-delivery.integration.test.ts",
-      "test/vitest/vitest.agents-embedded-agent-overflow-compaction.config.ts",
-    ],
-    [
       "src/agents/embedded-agent-runner/run/attempt.abort-race.test.ts",
       "test/vitest/vitest.agents-embedded-agent-run.config.ts",
     ],
@@ -2716,15 +2724,19 @@ describe("scripts/test-projects changed-target routing", () => {
     }
   });
 
+  const embeddedRunWorkerFiles = [
+    "src/agents/embedded-agent-runner/run/model-setup.ownership.test.ts",
+    "src/agents/embedded-agent-runner/run/model-setup.selected-model.test.ts",
+    "src/agents/embedded-agent-runner/run/runtime-preparation.thinking.test.ts",
+    "src/agents/embedded-agent-runner/run/run-attempt-dispatch.owner.test.ts",
+    "src/agents/embedded-agent-runner/run/failover-retry-controller.inline-auth.worker.test.ts",
+  ];
+
   it.each([
     {
       directory: "src/agents/embedded-agent-runner/run",
       config: "test/vitest/vitest.agents-embedded-agent-run.config.ts",
-      workerFiles: [
-        "src/agents/embedded-agent-runner/run/model-setup.ownership.test.ts",
-        "src/agents/embedded-agent-runner/run/model-setup.selected-model.test.ts",
-        "src/agents/embedded-agent-runner/run/runtime-preparation.thinking.test.ts",
-      ],
+      workerFiles: embeddedRunWorkerFiles,
     },
     {
       directory: "src/agents/runtime-plan",
@@ -2783,11 +2795,7 @@ describe("scripts/test-projects changed-target routing", () => {
       {
         config: "test/vitest/vitest.infra.config.ts",
         forwardedArgs: ["--sequence.shuffle", "--sequence.seed", "3"],
-        includePatterns: [
-          "src/agents/embedded-agent-runner/run/model-setup.ownership.test.ts",
-          "src/agents/embedded-agent-runner/run/model-setup.selected-model.test.ts",
-          "src/agents/embedded-agent-runner/run/runtime-preparation.thinking.test.ts",
-        ],
+        includePatterns: embeddedRunWorkerFiles,
         watchMode: false,
       },
       {
@@ -2820,10 +2828,7 @@ describe("scripts/test-projects changed-target routing", () => {
         {
           config: "test/vitest/vitest.agents-embedded-agent-overflow-compaction.config.ts",
           forwardedArgs: [],
-          includePatterns: [
-            `${root}/run.overflow-compaction.test.ts`,
-            `${root}/run.prepared-harness-source-delivery.integration.test.ts`,
-          ],
+          includePatterns: [`${root}/run.overflow-compaction.test.ts`],
           watchMode: false,
         },
         {
@@ -4903,16 +4908,13 @@ describe("scripts/test-projects changed-target routing", () => {
   });
 
   it("routes forced stateful unit-fast tests to the isolated lane", () => {
-    const plans = buildVitestRunPlans(
-      ["src/system-agent/assistant.configured.test.ts"],
-      process.cwd(),
-    );
-
+    const file = "src/system-agent/assistant.configured.test.ts";
+    const plans = buildVitestRunPlans([file], process.cwd());
     expect(plans).toEqual([
       {
         config: "test/vitest/vitest.unit-fast-isolated.config.ts",
         forwardedArgs: [],
-        includePatterns: ["src/system-agent/assistant.configured.test.ts"],
+        includePatterns: [file],
         watchMode: false,
       },
     ]);

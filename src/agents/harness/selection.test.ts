@@ -36,8 +36,8 @@ import {
 import { mintSecretSentinel } from "../../secrets/sentinel.js";
 import { createUserTurnTranscriptRecorder } from "../../sessions/user-turn-transcript.js";
 import type { UserTurnTranscriptRecorder } from "../../sessions/user-turn-transcript.types.js";
-import { closeOpenClawAgentDatabasesForTest } from "../../state/openclaw-agent-db.js";
-import { closeOpenClawStateDatabaseForTest } from "../../state/openclaw-state-db.js";
+import { closeOpenClawAgentDatabasesAsync } from "../../state/openclaw-agent-db.js";
+import { closeStateDatabaseForTest } from "../../test-utils/database-cleanup.js";
 import {
   createOpenClawTestState,
   type OpenClawTestState,
@@ -269,10 +269,10 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  await closeOpenClawAgentDatabasesAsync();
   vi.unstubAllEnvs();
   clearRuntimeConfigSnapshot();
-  closeOpenClawAgentDatabasesForTest();
-  closeOpenClawStateDatabaseForTest();
+  await closeStateDatabaseForTest();
   trajectoryTempDirs.cleanup();
   selectionAdmission.close();
   resetAgentRunRegistryForTest();
