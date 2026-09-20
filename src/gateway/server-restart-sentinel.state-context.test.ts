@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { createDeferred } from "../../test/helpers/promise.js";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import { resetConfigRuntimeState, setRuntimeConfigSnapshot } from "../config/config.js";
 import { replaceSessionEntry } from "../config/sessions/session-accessor.js";
@@ -187,10 +188,6 @@ it.each([false, true])(
   },
 );
 
-async function waitForPendingWork(assertion: () => void) {
-  await vi.waitFor(assertion, { interval: 0 });
-}
-
 it.each([
   "same",
   "continuation",
@@ -377,10 +374,17 @@ it.each([
       unrelatedEnv,
     );
     const warn = vi.fn();
-    const admittedWork = vi.spyOn(
-      gatewayWorkAdmission,
-      "runWithGatewayIndependentRootWorkAdmission",
-    );
+    const startupCompleted = createDeferred();
+    const runWithAdmission = gatewayWorkAdmission.runWithGatewayIndependentRootWorkAdmission;
+    const admittedWork = vi
+      .spyOn(gatewayWorkAdmission, "runWithGatewayIndependentRootWorkAdmission")
+      .mockImplementation((callback, origin, signal) => {
+        const work = runWithAdmission(callback, origin, signal);
+        if (origin === "startup:sidecars.restart-sentinel") {
+          void work.then(() => startupCompleted.resolve(), startupCompleted.reject);
+        }
+        return work;
+      });
     const testMode = captureEnv(["VITEST", "NODE_ENV"]);
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     setTestEnvValue("VITEST", "");
@@ -404,17 +408,14 @@ it.each([
       },
     });
     setTestEnvValue("OPENCLAW_STATE_DIR", unrelatedRoot);
-    await waitForPendingWork(() => expect(vi.getTimerCount()).toBeGreaterThan(0));
+    await startupCompleted.promise;
+    expect(vi.getTimerCount()).toBeGreaterThan(0);
     testMode.restore();
     await vi.advanceTimersByTimeAsync(750);
     await admittedWork.mock.results.at(-1)?.value;
-    await waitForPendingWork(() =>
-      expect(getUpdateRun(run.runId, { env: originalEnv })?.verification.booted).toBe(true),
-    );
+    expect(getUpdateRun(run.runId, { env: originalEnv })?.verification.booted).toBe(true);
     expect(await readRestartSentinel(originalEnv)).not.toBeNull();
-    await waitForPendingWork(() =>
-      expect(mocks.sendDurableMessageBatchCore).toHaveBeenCalledTimes(initialNoticeCount),
-    );
+    expect(mocks.sendDurableMessageBatchCore).toHaveBeenCalledTimes(initialNoticeCount);
     expect(vi.getTimerCount()).toBeGreaterThan(0);
     finishUpdateRun(run.runId, { status: "succeeded" }, { env: originalEnv });
     if (phase === "stopped") {
