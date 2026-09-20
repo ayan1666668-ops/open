@@ -1002,6 +1002,7 @@ src/plugins/runtime/generation-state.ts
 src/plugins/runtime/load-context-state.ts
 src/plugins/schema-validator.ts
 src/plugins/sdk-alias-normalization.ts
+src/plugins/sdk-alias-workspace.ts
 src/plugins/sdk-alias.ts
 src/plugins/setup-descriptors.ts
 src/plugins/setup-presentation-url.ts
