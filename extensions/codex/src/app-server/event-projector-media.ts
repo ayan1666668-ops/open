@@ -3,7 +3,10 @@ import {
   type EmbeddedRunAttemptParamsV2 as EmbeddedRunAttemptParams,
   type MessagingToolSend,
 } from "openclaw/plugin-sdk/agent-harness-runtime";
-import { generatedImageAssetFromBase64 } from "openclaw/plugin-sdk/image-generation";
+import {
+  generatedImageAssetFromBase64,
+  parseImageDataUrl,
+} from "openclaw/plugin-sdk/image-generation";
 import { resolveGeneratedMediaMaxBytes } from "openclaw/plugin-sdk/media-generation-runtime";
 import {
   normalizeMediaReferenceForComparison,
@@ -12,7 +15,8 @@ import {
 import { readStringField as readString } from "openclaw/plugin-sdk/string-coerce-runtime";
 import type { CodexConfirmedMediaDelivery } from "./dynamic-tools.js";
 import { readItemString } from "./event-projector-values.js";
-import type { CodexThreadItem, JsonObject } from "./protocol.js";
+import { sanitizeInlineImageDataUrl } from "./image-payload-sanitizer.js";
+import { isJsonObject, type CodexThreadItem, type JsonObject } from "./protocol.js";
 import type { CodexRemoteWorkspaceFileReader } from "./remote-workspace-media.js";
 
 const GENERATED_IMAGE_MEDIA_SUBDIR = "tool-image-generation";
@@ -98,20 +102,56 @@ export class CodexGeneratedMediaProjection {
   }
 
   async recordRaw(item: JsonObject): Promise<void> {
-    if (readString(item, "type") !== "image_generation_call") {
+    const type = readString(item, "type");
+    if (type === "image_generation_call") {
+      const result = readString(item, "result");
+      if (!result) {
+        return;
+      }
+      const itemId = readString(item, "id") ?? `raw-image-${this.itemIds.size}`;
+      await this.recordImage({
+        itemId,
+        result,
+        revisedPrompt: readString(item, "revised_prompt") ?? readString(item, "revisedPrompt"),
+        source: "raw",
+      });
       return;
     }
-    const result = readString(item, "result");
-    if (!result) {
+    if (type === "function_call_output" || type === "custom_tool_call_output") {
+      await this.recordRawToolOutputImages(item);
+    }
+  }
+
+  // Native tool results (e.g. Codex's ImageView) surface here as a raw
+  // function/custom tool-output item whose output array carries nested
+  // input_image entries; readCodexResponseOutput deliberately leaves those
+  // bytes to this media owner instead of copying them into the text transcript.
+  private async recordRawToolOutputImages(item: JsonObject): Promise<void> {
+    if (!Array.isArray(item.output)) {
       return;
     }
-    const itemId = readString(item, "id") ?? `raw-image-${this.itemIds.size}`;
-    await this.recordImage({
-      itemId,
-      result,
-      revisedPrompt: readString(item, "revised_prompt") ?? readString(item, "revisedPrompt"),
-      source: "raw",
-    });
+    const baseItemId =
+      readString(item, "id") ??
+      readString(item, "call_id") ??
+      `raw-tool-output-${this.itemIds.size}`;
+    let index = 0;
+    for (const part of item.output) {
+      if (!isJsonObject(part) || readString(part, "type") !== "input_image") {
+        continue;
+      }
+      const rawImageUrl = readString(part, "image_url");
+      const sanitizedImageUrl = rawImageUrl ? sanitizeInlineImageDataUrl(rawImageUrl) : undefined;
+      const parsed = sanitizedImageUrl ? parseImageDataUrl(sanitizedImageUrl) : undefined;
+      if (!parsed) {
+        continue;
+      }
+      await this.recordImage({
+        itemId: `${baseItemId}-image-${index}`,
+        result: parsed.base64,
+        source: "raw",
+      });
+      index += 1;
+    }
   }
 
   private async recordImage(params: {
