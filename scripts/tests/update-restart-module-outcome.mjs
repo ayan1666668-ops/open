@@ -66,7 +66,14 @@ async function fixture({
     commandCalls = 0,
     assertions = 0,
     verifiedCalls = 0;
-  const service = { readRuntime: async () => ({ status: "stopped" }) };
+  const service = {
+    readRuntime: async () => {
+      if (mutateExecutor === "native-state") {
+        run.executorFence = { assertCurrent() {} };
+      }
+      return { status: "stopped" };
+    },
+  };
   const run = {
     runId: "fixture-run",
     env: {},
@@ -186,7 +193,7 @@ async function fixture({
       assert.equal(params.expectedVersion, "2026.9.4");
       assert.equal(params.requireRunningService, params.purpose === "recovery" ? undefined : true);
       params.assertCurrent?.();
-      if (mutateExecutor) {
+      if (mutateExecutor === "verification") {
         run.executorFence = { assertCurrent() {} };
       }
       if (verifyOnDisk) {
@@ -359,6 +366,7 @@ async function fixture({
     await verificationOwner.evaluate();
     values.recordFailedUpdateGatewayState =
       verificationOwner.namespace.recordFailedUpdateGatewayState;
+    values.readFailedUpdateGatewayState = verificationOwner.namespace.readFailedUpdateGatewayState;
   }
   const entry = modules.get("update-command-post-update.js");
   await entry.link(link);
@@ -497,12 +505,15 @@ if (main) {
     assert.equal(f.counts().commandCalls, 1);
     assert.deepEqual(f.unexpected, []);
   });
-  void test("current-main cannot turn executor replacement during thrown verification into success", async () => {
-    const f = await fixture({ error: thrownCases[0][1](), mutateExecutor: true });
-    await assert.rejects(f.direct(), /lost its original update executor/);
-    assert.equal(f.counts().verifyCalls, 1);
-    assert.deepEqual(f.unexpected, []);
-  });
+  for (const mutateExecutor of ["verification", "native-state"]) {
+    void test(`current-main cannot publish after executor replacement during ${mutateExecutor}`, async () => {
+      const f = await fixture({ error: thrownCases[0][1](), mutateExecutor });
+      await assert.rejects(f.direct(), /lost its original update executor/);
+      assert.equal(f.counts().verifyCalls, 1);
+      assert.deepEqual(f.records, []);
+      assert.deepEqual(f.unexpected, []);
+    });
+  }
   void test("current-main readiness pending remains distinct from verified success", async () => {
     const f = await fixture({
       verification: { ok: false, stopReason: "gateway-readiness-pending" },

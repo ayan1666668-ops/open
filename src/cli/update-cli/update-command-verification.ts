@@ -83,9 +83,10 @@ export async function readFailedUpdateGatewayState(
 export async function recordFailedUpdateGatewayState(
   run: UpdateCommandOptions["run"],
   env: NodeJS.ProcessEnv,
+  assertCurrent: () => void,
 ): Promise<void> {
   const facts = await readFailedUpdateGatewayState(run, env);
-  run?.executorFence?.assertCurrent();
+  assertCurrent();
   if (run && facts) {
     recordUpdateRunVerification(run.runId, facts, { env: run.env });
   }

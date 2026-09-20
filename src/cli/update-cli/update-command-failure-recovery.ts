@@ -15,8 +15,10 @@ import {
   readManagedGatewayServiceForUpdate,
   resolveUpdatedGatewayRestartPort,
 } from "./update-command-service-plan.js";
-import { readFailedUpdateGatewayState } from "./update-command-verification.js";
-import { verifyUpdatedGateway } from "./update-command-verification.js";
+import {
+  readFailedUpdateGatewayState,
+  verifyUpdatedGateway,
+} from "./update-command-verification.js";
 
 /** Observe recovery after writers settle; this never starts or stops a Gateway. */
 export async function verifyUpdateFailureRecovery(params: {
@@ -91,6 +93,11 @@ export async function verifyUpdateFailureRecovery(params: {
         params.assertCurrent?.();
       }
       const version = await readPackageVersion(root);
+      if (!version) {
+        throw new Error(
+          "The installed Gateway version could not be read for recovery verification.",
+        );
+      }
       const buildId = await readBuiltGatewayBuildId(root);
       const gatewayPort =
         (await readActiveGatewayLockPort({ env, requireInspection: true })) ??
@@ -99,11 +106,6 @@ export async function verifyUpdateFailureRecovery(params: {
           serviceCommand: (await readManagedGatewayServiceForUpdate(env))?.command,
         }));
       params.assertCurrent?.();
-      if (!version) {
-        throw new Error(
-          "The installed Gateway version could not be read for recovery verification.",
-        );
-      }
       const validation = await verifyUpdatedGateway({
         result,
         opts: params.opts,
@@ -117,7 +119,7 @@ export async function verifyUpdateFailureRecovery(params: {
       });
       params.assertCurrent?.();
       Object.assign(result, appendPluginUpdateWarnings(result, validation.pluginWarnings ?? []));
-      // A read-only health observation cannot grant the helper authority to restart.
+      // Observed health cannot override an owner's unsafe restart verdict.
       const restartUnsafe = previousRecovery?.serviceRestartSafe === false;
       result.recovery =
         validation.ok && !restartUnsafe

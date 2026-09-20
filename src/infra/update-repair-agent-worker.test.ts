@@ -93,12 +93,14 @@ describe("fresh candidate repair process", () => {
   );
 
   it.each([
-    { phase: "verifying", failure: "cleanup" },
-    { phase: "validating", failure: "wrapped-cleanup" },
-    { phase: "validating", failure: "ordinary" },
+    { phase: "verifying", failure: "cleanup", retainedRehearsal: false },
+    { phase: "validating", failure: "wrapped-cleanup", retainedRehearsal: false },
+    { phase: "validating", failure: "ordinary", retainedRehearsal: false },
+    { phase: "validating", failure: "wrapped-cleanup", retainedRehearsal: true },
+    { phase: "validating", failure: "ordinary", retainedRehearsal: true },
   ] as const)(
-    "settles the repair child before propagating $failure during $phase",
-    async ({ phase, failure }) => {
+    "settles the repair child before propagating $failure during $phase (retained=$retainedRehearsal)",
+    async ({ phase, failure, retainedRehearsal }) => {
       await withOpenClawTestState(
         {
           prefix: "repair-child-cleanup-",
@@ -123,6 +125,9 @@ describe("fresh candidate repair process", () => {
           if (message.type === "start") {
             fs.writeFileSync("child-pid", String(process.pid));
             process.send({ type: "validate", id: 1 });
+          } else if (message.type === "validation-result" && message.id === 1) {
+            fs.writeFileSync("cached-validation", JSON.stringify(message.validation));
+            process.send({ type: "validate", id: 2 });
           } else if (message.type === "validation-error") {
             fs.writeFileSync("validation-error", "received");
             finish();
@@ -138,26 +143,31 @@ describe("fresh candidate repair process", () => {
           const cleanup = vi.fn(async () => {
             await fs.rm(rehearsalDir, { recursive: true });
           });
+          const rehearsal: rehearsalOwner.UpdateCandidateRehearsal = {
+            sourceConfig: { plugins: { enabled: false } },
+            sourceConfigHash: "synthetic-config-hash",
+            stateDir: rehearsalDir,
+            configPath: path.join(rehearsalDir, "openclaw.json"),
+            workspaceDir: path.join(rehearsalDir, "workspace"),
+            env: state.env,
+            port: 0,
+            snapshotCapacity: {
+              reason: "state-volume",
+              sqliteBytes: 0,
+              pluginBytes: 0,
+              requiredBytes: 0,
+              candidates: [],
+              selection: { kind: "state-volume", directory: rehearsalDir },
+            },
+            cleanupDirectories: [rehearsalDir],
+            cleanup,
+          };
           const prepare = vi
             .spyOn(rehearsalOwner, "prepareUpdateCandidateRehearsal")
             .mockImplementationOnce(async ({ config, sourceConfigHash }) => ({
+              ...rehearsal,
               sourceConfig: config,
               sourceConfigHash,
-              stateDir: rehearsalDir,
-              configPath: path.join(rehearsalDir, "openclaw.json"),
-              workspaceDir: path.join(rehearsalDir, "workspace"),
-              env: state.env,
-              port: 0,
-              snapshotCapacity: {
-                reason: "state-volume",
-                sqliteBytes: 0,
-                pluginBytes: 0,
-                requiredBytes: 0,
-                candidates: [],
-                selection: { kind: "state-volume", directory: rehearsalDir },
-              },
-              cleanupDirectories: [rehearsalDir],
-              cleanup,
             }));
           const canonical = new CommandProcessCleanupError();
           const error =
@@ -171,23 +181,41 @@ describe("fresh candidate repair process", () => {
             env: state.env,
           };
           const events: UpdateRepairEvent[] = [];
+          const validate = vi.fn(async () => {
+            throw error;
+          });
           try {
             const outcome = await runUpdateCommandRepair({
               root: state.workspaceDir,
               env: state.env,
               run,
-              phase,
-              result: {
-                status: "error",
-                mode: "npm",
-                root: state.workspaceDir,
-                steps: [],
-                durationMs: 0,
-              },
+              ...(phase === "validating"
+                ? {
+                    phase,
+                    candidateRoot: state.workspaceDir,
+                    mode: "npm" as const,
+                    validation: {
+                      status: "error" as const,
+                      reason: "runtime-verification-failed" as const,
+                      phase: "runtime" as const,
+                      steps: [],
+                      durationMs: 0,
+                      logTail: ["Synthetic validation failed"],
+                      ...(retainedRehearsal ? { retainedRehearsal: { rehearsal, cleanup } } : {}),
+                    },
+                  }
+                : {
+                    phase,
+                    result: {
+                      status: "error" as const,
+                      mode: "npm" as const,
+                      root: state.workspaceDir,
+                      steps: [],
+                      durationMs: 0,
+                    },
+                  }),
               onEvent: (event) => events.push(event),
-              validate: async () => {
-                throw error;
-              },
+              validate,
             }).then(
               (value) => ({ value }),
               (cause: unknown) => ({ error: cause }),
@@ -196,6 +224,17 @@ describe("fresh candidate repair process", () => {
               await fs.readFile(path.join(state.workspaceDir, "child-pid"), "utf8"),
             );
             expect(isPidAlive(childPid)).toBe(false);
+            expect(validate).toHaveBeenCalledOnce();
+            expect(prepare).toHaveBeenCalledTimes(
+              phase === "validating" && !retainedRehearsal ? 1 : 0,
+            );
+            if (retainedRehearsal) {
+              expect(
+                JSON.parse(
+                  await fs.readFile(path.join(state.workspaceDir, "cached-validation"), "utf8"),
+                ),
+              ).toEqual({ ok: false, score: 0, summary: "Synthetic validation failed" });
+            }
             const repairing = getUpdateRun(run.runId, { env: run.env })?.steps.find(
               (step) => step.step === "repairing",
             );

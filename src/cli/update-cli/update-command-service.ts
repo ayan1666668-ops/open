@@ -229,7 +229,7 @@ export async function maybeRestartService(params: {
   const failed = async (outcome: "failed" | "restart-health-failed" = "failed") => {
     // A restart can fail before health verification starts; recovery owns that phase.
     recordPhase("verifying");
-    await recordFailedUpdateGatewayState(params.opts.run, serviceEnv);
+    await recordFailedUpdateGatewayState(params.opts.run, serviceEnv, assertCurrent);
     assertCurrent();
     return outcome;
   };
@@ -288,7 +288,7 @@ export async function maybeRestartService(params: {
         `The previous service installation was not restarted automatically because update state may have changed. Inspect \`${formatCliCommand("openclaw gateway status --deep", activation.serviceEnv)}\` before choosing a recovery installation.`,
       );
     }
-    await recordFailedUpdateGatewayState(params.opts.run, activation.serviceEnv);
+    await recordFailedUpdateGatewayState(params.opts.run, activation.serviceEnv, assertCurrent);
     assertCurrent();
     return "reconciliation-pending" as const;
   };

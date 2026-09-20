@@ -257,6 +257,10 @@ describe("post-update failure recovery observation", () => {
         mocks.activePort.mockResolvedValueOnce(19431);
       } else {
         mocks.managedService.mockResolvedValueOnce({
+          installed: true,
+          loadState: { status: "loaded" },
+          running: true,
+          env: {},
           command: {
             programArguments: [
               "node",
@@ -344,10 +348,7 @@ describe("post-update failure recovery observation", () => {
         result: {
           status: "error",
           reason: failure === "thrown" ? "post-update-failed" : "post-update-plugins",
-          recovery:
-            failure === "thrown"
-              ? { serviceRestartSafe: false, reason: "runtime-verification-failed" }
-              : { serviceRestartSafe: true, service: "healthy", version: "2026.9.5" },
+          recovery: { serviceRestartSafe: true, service: "healthy", version: "2026.9.5" },
         },
       });
       expect(verifyUpdatedGateway).toHaveBeenCalledOnce();
@@ -356,10 +357,7 @@ describe("post-update failure recovery observation", () => {
       );
       expect(mocks.printResult).toHaveBeenCalledWith(
         expect.objectContaining({
-          recovery:
-            failure === "thrown"
-              ? { serviceRestartSafe: false, reason: "runtime-verification-failed" }
-              : { serviceRestartSafe: true, service: "healthy", version: "2026.9.5" },
+          recovery: { serviceRestartSafe: true, service: "healthy", version: "2026.9.5" },
         }),
         expect.anything(),
         expect.anything(),
