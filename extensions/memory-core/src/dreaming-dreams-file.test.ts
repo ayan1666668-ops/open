@@ -4,6 +4,7 @@ import path from "node:path";
 import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  appendNarrativeEntry,
   dedupeDreamDiaryEntries,
   readDreamsFile,
   readRecentDreamDiaryEntries,
@@ -146,6 +147,39 @@ describe("dream diary file behavior", () => {
     await expect(readRecentDreamDiaryEntries({ workspaceDir, limit: 1 })).resolves.toEqual([
       `${prefix}...`,
     ]);
+  });
+
+  it("publishes a narrative when a truncated recent entry is unchanged", async () => {
+    const workspaceDir = await createTempWorkspace("dreaming-narrative-clamp-");
+    // The 360-character cut lands on whitespace, so the stored context entry is 362 characters:
+    // trimEnd() drops that space before the ellipsis is appended, and clamping the result again
+    // would yield 363.
+    const body = `${"x".repeat(8)} `.repeat(60).trim();
+    await writeBackfillDiaryEntries({
+      workspaceDir,
+      entries: [
+        {
+          isoDay: "2026-04-05",
+          bodyLines: [body],
+        },
+      ],
+      timezone: "UTC",
+    });
+    const recentDiaryEntries = await readRecentDreamDiaryEntries({ workspaceDir, limit: 3 });
+
+    await expect(
+      appendNarrativeEntry({
+        workspaceDir,
+        narrative: "Unchanged context must still publish.",
+        nowMs: Date.parse("2026-04-06T03:00:00Z"),
+        timezone: "UTC",
+        recentDiaryEntries,
+      }),
+    ).resolves.toBeDefined();
+
+    await expect(readDreamsFile(path.join(workspaceDir, "DREAMS.md"))).resolves.toContain(
+      "Unchanged context must still publish.",
+    );
   });
 
   it("skips symlinked and non-file DREAMS.md when reading recent context", async () => {
