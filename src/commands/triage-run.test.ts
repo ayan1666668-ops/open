@@ -239,6 +239,10 @@ describe("triage --run", () => {
     "upgrade with generic failure",
     "upgrade from git",
     "explicit upgrade",
+    "rollback",
+    "rollback without restoration",
+    "rollback with mismatched restoration",
+    "explicit rollback",
   ])("preserves recorded resolution behind a newer %s", async (newer) => {
     let now = Date.now();
     vi.spyOn(Date, "now").mockImplementation(() => now++);
@@ -247,11 +251,16 @@ describe("triage --run", () => {
       throw new Error("Fixture installation version missing");
     }
     const upgrade = newer.includes("upgrade");
+    const rollback = newer.includes("rollback");
     const target = {
       kind: newer === "upgrade from git" ? ("git" as const) : ("package" as const),
       version: upgrade ? "2026.9.1" : version,
     };
-    const failed = createUpdateRun({ trigger: "cli", target });
+    const failed = createUpdateRun({
+      trigger: "cli",
+      target,
+      before: { version: "2026.9.1" },
+    });
     finishUpdateRun(failed.runId, {
       status: "failed",
       reason: newer === "upgrade with generic failure" ? "update-failed" : "finalize:doctor",
@@ -262,10 +271,27 @@ describe("triage --run", () => {
       trigger: "cli",
       preview: newer === "preview",
       ...(upgrade ? { target: { kind: "package", version } } : {}),
+      ...(rollback
+        ? {
+            target: { kind: "package", version: "2099.1.0" },
+            before: {
+              version: newer === "rollback with mismatched restoration" ? "2026.9.1" : version,
+            },
+          }
+        : {}),
     });
+    if (rollback && newer !== "rollback without restoration") {
+      recordUpdateRunStep(extra.runId, { step: "package rollback", status: "completed" });
+    }
     finishUpdateRun(extra.runId, {
-      status: upgrade ? "succeeded" : newer === "preview" ? "skipped" : "failed",
-      ...(upgrade
+      status: rollback
+        ? "rolled-back"
+        : upgrade
+          ? "succeeded"
+          : newer === "preview"
+            ? "skipped"
+            : "failed",
+      ...(upgrade || rollback
         ? { after: { version } }
         : { reason: newer === "preview" ? "dry-run" : "abandoned" }),
     });
@@ -291,7 +317,7 @@ describe("triage --run", () => {
     mocks.runUpdateRepairLoop.mockImplementation(real.runUpdateRepairLoop);
     const runtime = createTriageRuntime();
     let updateResult: string | undefined;
-    if (newer === "explicit upgrade") {
+    if (newer.startsWith("explicit")) {
       updateResult = path.join(stateDir, "explicit-failure.json");
       await fs.writeFile(
         updateResult,
@@ -309,14 +335,17 @@ describe("triage --run", () => {
     const command = withTriageTerminal(true, () =>
       triageCommand(runtime, { run: true, noExport: true, updateResult }),
     );
-    if (updateResult) {
+    if (updateResult || newer.includes("restoration")) {
       await expect(command).rejects.toMatchObject({ code: 1 });
       expect(verified).not.toHaveBeenCalled();
+      expect(runtime.log.mock.calls.flat().join("\n")).not.toContain("already resolved");
       return;
     }
     await command;
     expect(runtime.log).toHaveBeenCalledWith(
-      expect.stringContaining("Embedded repair already resolved: Update to"),
+      expect.stringContaining(
+        `Embedded repair already resolved: ${rollback ? "Rollback" : "Update"} to ${version}`,
+      ),
     );
     expect(verified).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({ expectedVersion: version }),

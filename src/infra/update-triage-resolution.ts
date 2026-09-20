@@ -162,9 +162,11 @@ export async function validateTriageUpdateResolution(params: {
     return unresolved("Cannot establish the update target.", true, nextRepair);
   }
   const completion = history.outcome;
+  const rolledBack = completion?.status === "rolled-back";
   const superseded =
     params.implicit &&
-    completion?.status === "succeeded" &&
+    completion &&
+    (completion.status === "succeeded" || rolledBack) &&
     completion.finishedAtMs !== null &&
     completion.createdAtMs >= original.createdAtMs &&
     completion.target.kind &&
@@ -200,9 +202,10 @@ export async function validateTriageUpdateResolution(params: {
       family === "doctor" ? nextRepair : nextUpdate,
     );
   }
-  const rolledBack = completion.status === "rolled-back";
   const expected = rolledBack
-    ? original.before
+    ? superseded
+      ? completion.before
+      : original.before
     : superseded
       ? completion.after
       : {
