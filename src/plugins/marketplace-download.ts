@@ -46,9 +46,7 @@ function formatMarketplaceDownloadError(url: string, detail: string): string {
 function hasStreamingResponseBody(
   response: Response,
 ): response is Response & { body: ReadableStream<Uint8Array> } {
-  return Boolean(
-    response.body && typeof (response.body as { getReader?: unknown }).getReader === "function",
-  );
+  return Boolean(response.body && typeof response.body.getReader === "function");
 }
 
 async function cancelUnreadMarketplaceResponseBody(response: Response): Promise<void> {

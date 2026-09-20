@@ -1,3 +1,5 @@
+import { readErrorName } from "@openclaw/normalization-core/error-coercion";
+import { asOptionalObjectRecord, isRecord } from "@openclaw/normalization-core/record-coerce";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import {
   createConfiguredGatewayLocalProbe,
@@ -18,23 +20,22 @@ const SUPERVISED_GATEWAY_HEALTH_PROBE_TIMEOUT_MS = 1000;
 const EXIT_CONFIG_ERROR = 78;
 type GatewayRunLogger = Pick<SubsystemLogger, "info" | "warn">;
 
-export function isGatewayLockError(err: unknown): err is GatewayLockError {
-  return (
-    err instanceof GatewayLockError ||
-    (Boolean(err) &&
-      typeof err === "object" &&
-      (err as { name?: string }).name === "GatewayLockError")
-  );
+export function isGatewayLockError(err: unknown): boolean {
+  return err instanceof GatewayLockError || readErrorName(err) === "GatewayLockError";
 }
 
 function isGatewayRetryableLockError(err: unknown): boolean {
-  if (!isGatewayLockError(err) || typeof err.message !== "string") {
+  if (!isGatewayLockError(err)) {
+    return false;
+  }
+  const message = asOptionalObjectRecord(err)?.message;
+  if (typeof message !== "string") {
     return false;
   }
   return (
     isGatewayLifecycleContentionError(err) ||
-    err.message.includes("gateway already running") ||
-    err.message.includes("another gateway instance is already listening")
+    message.includes("gateway already running") ||
+    message.includes("another gateway instance is already listening")
   );
 }
 
@@ -59,8 +60,8 @@ export function isGatewayHealthzResponse(statusCode: number | undefined, body: s
     return false;
   }
   try {
-    const payload = JSON.parse(body) as { ok?: unknown; status?: unknown };
-    return payload.ok === true && payload.status === "live";
+    const payload: unknown = JSON.parse(body);
+    return isRecord(payload) && payload.ok === true && payload.status === "live";
   } catch {
     return false;
   }

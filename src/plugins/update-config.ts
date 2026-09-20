@@ -417,6 +417,7 @@ export function buildPluginUpdateInstallRecord(params: {
   const { result, resultSource, record, effectiveSpec, recordSpec } = params;
   let installRecord: PluginInstallRecord;
   if (resultSource === "npm") {
+    // SAFETY: runPluginUpdateAttempt selects the npm installer for this source and preserves its result.
     const npmResult = result as NpmPluginUpdateSuccess;
     installRecord = {
       source: "npm",
@@ -424,12 +425,14 @@ export function buildPluginUpdateInstallRecord(params: {
       ...buildNpmResolutionInstallFields(npmResult.npmResolution),
     };
   } else if (resultSource === "clawhub") {
+    // SAFETY: Both the primary and fallback ClawHub attempts return the ClawHub install contract.
     const clawhubResult = result as ClawHubPluginUpdateSuccess;
     installRecord = {
       ...buildClawHubPluginInstallRecordFields(clawhubResult.clawhub),
       spec: recordSpec ?? record.spec ?? `clawhub:${record.clawhubPackage!}`,
     };
   } else if (record.source === "git") {
+    // SAFETY: The attempt uses the Git installer for this record; only ClawHub has a fallback.
     const gitResult = result as GitPluginUpdateSuccess;
     installRecord = {
       source: "git",
@@ -440,6 +443,7 @@ export function buildPluginUpdateInstallRecord(params: {
       gitCommit: gitResult.git.commit,
     };
   } else {
+    // SAFETY: The caller admits only npm, ClawHub, Git, or marketplace records before running the attempt.
     const marketplaceResult = result as MarketplacePluginUpdateSuccess;
     installRecord = {
       source: "marketplace",

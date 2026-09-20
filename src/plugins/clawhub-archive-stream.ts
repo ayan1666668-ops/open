@@ -29,6 +29,7 @@ async function readLimitedClawHubArchiveEntry<T>(
   },
 ): Promise<T | ClawHubInstallFailure> {
   limits.signal?.throwIfAborted();
+  // SAFETY: JSZip loadAsync stores a CompressedObject in _data; its optional size hint is checked below.
   const hintedSize = (entry as JSZipObjectWithSize)["_data"]?.uncompressedSize;
   if (
     typeof hintedSize === "number" &&
@@ -43,6 +44,7 @@ async function readLimitedClawHubArchiveEntry<T>(
   let entryBytes = 0;
   return await new Promise<T | ClawHubInstallFailure>((resolve, reject) => {
     let settled = false;
+    // SAFETY: JSZip's NodejsStreamOutputAdapter extends readable-stream.Readable, which implements destroy.
     const stream = entry.nodeStream("nodebuffer") as NodeJS.ReadableStream & {
       destroy?: (error?: Error) => void;
     };
@@ -82,8 +84,7 @@ async function readLimitedClawHubArchiveEntry<T>(
         onAbort();
         return;
       }
-      const buffer =
-        typeof chunk === "string" ? Buffer.from(chunk) : Buffer.from(chunk as Uint8Array);
+      const buffer = typeof chunk === "string" ? Buffer.from(chunk) : Buffer.from(chunk);
       entryBytes += buffer.byteLength;
       if (entryBytes > limits.maxEntryBytes) {
         stream.destroy?.();
