@@ -51,6 +51,8 @@ minimumReleaseAgeExclude:
 
 # Isolated installs let pnpm reuse whole-package APFS clones instead of relinking every file.
 nodeLinker: isolated
+# Private inodes keep sibling installs from changing compiler input ctimes.
+packageImportMethod: clone-or-copy
 # GWTs share node_modules; script commands must not reconcile that shared install.
 verifyDepsBeforeRun: false
 blockExoticSubdeps: true
