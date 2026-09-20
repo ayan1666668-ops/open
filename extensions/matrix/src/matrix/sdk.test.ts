@@ -9,7 +9,6 @@ import { CryptoEvent } from "matrix-js-sdk/lib/crypto-api/CryptoEvent.js";
 import type { DecryptionFailureCode as DecryptionFailureCodeValue } from "matrix-js-sdk/lib/crypto-api/index.js";
 import { MatrixError } from "matrix-js-sdk/lib/http-api/errors.js";
 import {
-  type ICreateClientOpts,
   type MatrixClient as MatrixJsSdkClient,
   type MatrixEvent,
   MsgType,
@@ -23,18 +22,18 @@ import { useAutoCleanupTempDirTracker } from "openclaw/plugin-sdk/test-env";
 // Matrix tests cover sdk plugin behavior.
 import { createRequireRecord } from "openclaw/plugin-sdk/test-fixtures";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { getMatrixRuntime } from "../runtime.js";
 import { installMatrixTestRuntime } from "../test-runtime.js";
 import type { CoreConfig } from "../types.js";
 import { SqliteBackedMatrixSyncStore } from "./client/file-sync-store.js";
-import {
-  readMatrixIdbSnapshotJson,
-  readMatrixRecoveryKeyStateForPathAsync,
-} from "./crypto-state-store.js";
+import { readMatrixIdbSnapshotJson } from "./crypto-state-store.js";
 import { MatrixDecryptBridge } from "./sdk/decrypt-bridge.js";
 import { clearAllIndexedDbState } from "./sdk/idb-persistence.test-helpers.js";
 import { LogService } from "./sdk/logger.js";
-import { holdRecoveryKeyPersistence } from "./sdk/recovery-key-persistence.test-helpers.js";
+import {
+  captureRecoveryCacheWrite,
+  holdRecoveryKeyPersistence,
+  readStoredRecoveryKey,
+} from "./sdk/recovery-persistence.test-support.js";
 
 vi.mock("./sdk/joined-room-encryption.js", () => ({
   reconcileJoinedRoomEncryption: vi.fn(async () => undefined),
@@ -120,32 +119,6 @@ function expectSomeMockCallOptions(
     return Object.entries(fields).every(([key, value]) => Object.is(record[key], value));
   });
   expect(matched).toBe(true);
-}
-
-async function readStoredRecoveryKey(recoveryKeyPath: string) {
-  return readMatrixRecoveryKeyStateForPathAsync(recoveryKeyPath, getMatrixRuntime().state);
-}
-
-function captureRecoveryCacheWrite() {
-  // The createClient mock captures the production SDK options without changing their shape.
-  const options = lastCreateClientOpts as unknown as ICreateClientOpts;
-  const callbacks = options?.cryptoCallbacks;
-  if (!callbacks?.cacheSecretStorageKey || !callbacks.getSecretStorageKey) {
-    throw new Error("expected Matrix recovery callbacks");
-  }
-  const getSecretStorageKey = vi.spyOn(callbacks, "getSecretStorageKey");
-  callbacks.cacheSecretStorageKey(
-    "SSSSKEY",
-    {
-      algorithm: "m.secret_storage.v1.aes-hmac-sha2",
-      name: "Synthetic recovery key",
-      passphrase: { algorithm: "m.pbkdf2", iterations: 1, salt: "synthetic" },
-      iv: "synthetic-iv",
-      mac: "synthetic-mac",
-    },
-    new Uint8Array([1, 2, 3, 4]),
-  );
-  return { options, getSecretStorageKey };
 }
 
 const TEST_UNDICI_RUNTIME_DEPS_KEY = "__OPENCLAW_TEST_UNDICI_RUNTIME_DEPS__";
@@ -1129,10 +1102,17 @@ describe("MatrixClient request hardening", () => {
         }
       });
       let networkFailurePending = failNetworkOnce;
+      let retryTimersInstalled = false;
       const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         expect((await readStoredRecoveryKey(recoveryKeyPath))?.keyId).toBe("SSSSKEY");
         if (networkFailurePending) {
           networkFailurePending = false;
+          // Persistence and the first request stay real; only SDK backoff is virtual.
+          vi.useFakeTimers({
+            toFake: ["setTimeout", "clearTimeout"],
+            shouldClearNativeTimers: true,
+          });
+          retryTimersInstalled = true;
           throw new TypeError("Synthetic network interruption");
         }
         return Response.json(
@@ -1149,7 +1129,7 @@ describe("MatrixClient request hardening", () => {
         stateRuntime: persistence.stateRuntime,
         ssrfPolicy: { allowPrivateNetwork: true },
       });
-      const { options, getSecretStorageKey } = captureRecoveryCacheWrite();
+      const { options, getSecretStorageKey } = captureRecoveryCacheWrite(lastCreateClientOpts);
       const sdk = await vi.importActual<typeof import("matrix-js-sdk/lib/matrix.js")>(
         "matrix-js-sdk/lib/matrix.js",
       );
@@ -1157,6 +1137,7 @@ describe("MatrixClient request hardening", () => {
       const accountDataRequest = vi.spyOn(sdkClient.http, "authedRequest");
       let operationSettled: Promise<PromiseSettledResult<void>[]> | undefined;
       let outcome: PromiseSettledResult<void> | undefined;
+      let retryDriver: Promise<void> | undefined;
       try {
         await persistence.admitted.promise;
         const pending = sdkClient.secretStorage.store(
@@ -1168,6 +1149,20 @@ describe("MatrixClient request hardening", () => {
           outcome = results[0];
           return results;
         });
+        const firstRequest = accountDataRequest.mock.results[0];
+        if (firstRequest?.type !== "return") {
+          throw new Error("expected the real SDK account-data request");
+        }
+        if (failNetworkOnce) {
+          retryDriver = (async () => {
+            await Promise.allSettled([firstRequest.value]);
+            await setImmediate();
+            if (retryTimersInstalled) {
+              await vi.advanceTimersByTimeAsync(2_000);
+            }
+          })();
+          void retryDriver.catch(() => {});
+        }
         await setImmediate();
         expect(fetchMock).not.toHaveBeenCalled();
         expect(getSecretStorageKey).not.toHaveBeenCalled();
@@ -1175,10 +1170,6 @@ describe("MatrixClient request hardening", () => {
         authorized = !revokeAuthority;
         persistence.release.resolve();
         if (revokeAuthority) {
-          const firstRequest = accountDataRequest.mock.results[0];
-          if (firstRequest?.type !== "return") {
-            throw new Error("expected the real SDK account-data request");
-          }
           await Promise.allSettled([firstRequest.value]);
           await setImmediate();
           // A settled authority rejection must not leave the SDK waiting in network backoff.
@@ -1187,6 +1178,7 @@ describe("MatrixClient request hardening", () => {
           await expect(pending).rejects.toMatchObject({ name: "AbortError" });
           expect(fetchMock).not.toHaveBeenCalled();
         } else {
+          await retryDriver;
           await pending;
           const put = fetchMock.mock.calls.find(([, init]) => init?.method === "PUT");
           expect(put).toBeDefined();
@@ -1204,11 +1196,16 @@ describe("MatrixClient request hardening", () => {
       } finally {
         authorized = true;
         persistence.release.resolve();
-        await operationSettled;
-        accountDataRequest.mockRestore();
-        sdkClient.stopClient();
-        await client.stopWithoutPersist();
-        getSecretStorageKey.mockRestore();
+        try {
+          await Promise.allSettled([retryDriver, operationSettled]);
+        } finally {
+          if (retryTimersInstalled) {
+            vi.useRealTimers();
+          }
+          accountDataRequest.mockRestore();
+          sdkClient.stopClient();
+          await client.stopWithoutPersist().finally(() => getSecretStorageKey.mockRestore());
+        }
       }
     },
   );
@@ -1231,7 +1228,7 @@ describe("MatrixClient request hardening", () => {
       stateRuntime: persistence.stateRuntime,
       ssrfPolicy: { allowPrivateNetwork: true },
     });
-    const { options, getSecretStorageKey } = captureRecoveryCacheWrite();
+    const { options, getSecretStorageKey } = captureRecoveryCacheWrite(lastCreateClientOpts);
     const { RustCrypto } = await import("matrix-js-sdk/lib/rust-crypto/rust-crypto.js");
     const fetchFn = options.fetchFn;
     if (!fetchFn) {
@@ -1809,7 +1806,7 @@ describe("MatrixClient request hardening", () => {
         recoveryKeyPath,
         stateRuntime: persistence.stateRuntime,
       });
-      const { getSecretStorageKey } = captureRecoveryCacheWrite();
+      const { getSecretStorageKey } = captureRecoveryCacheWrite(lastCreateClientOpts);
       const quiesceError = new Error("synthetic sync quiescence failure");
       const quiesce = vi.spyOn(client, "quiesceSync");
       if (quiesceFails) {
