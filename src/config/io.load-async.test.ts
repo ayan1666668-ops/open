@@ -15,7 +15,10 @@ import {
 } from "../plugins/bundled-discovery-state.js";
 import { createPluginCache, withPluginCache } from "../plugins/plugin-cache.js";
 import { createDeferredCore } from "../shared/deferred.js";
-import { withArtifactPreservingStateReads } from "../state/openclaw-state-db-readonly.js";
+import {
+  withArtifactPreservingStateReads,
+  withSynchronousArtifactPreservingStateSnapshot,
+} from "../state/openclaw-state-db-readonly.js";
 import { closeOpenClawStateDatabaseAsync } from "../state/openclaw-state-db.js";
 import { resolveOpenClawStateSqlitePath } from "../state/openclaw-state-db.paths.js";
 import { observeMainThreadSql } from "../test-utils/main-thread-sql-spies.js";
@@ -110,15 +113,16 @@ it.each(["sync", "async"] as const)(
         ? context.resolveDeferredPluginMigrations()
         : context.resolveDeferredPluginMigrationsAsync();
     const allocations: string[] = [];
-    const watcher = fs.watch(
-      resolvePrivateSqliteSnapshotStagingRoot(),
-      { recursive: true },
-      (_event, filename) => {
-        if (filename?.includes("openclaw-sqlite-readonly-")) {
-          allocations.push(filename);
-        }
-      },
-    );
+    const coldStagingRoot = resolvePrivateSqliteSnapshotStagingRoot();
+    fs.mkdirSync(path.dirname(coldStagingRoot), { recursive: true });
+    const stagingRoot = resolvePrivateSqliteSnapshotStagingRoot();
+    // Linux recursive watches rescan after synchronous snapshots have already been removed.
+    // Watch the staging root directly so their creation and removal remain observable.
+    const watcher = fs.watch(stagingRoot, (_event, filename) => {
+      if (filename?.includes("openclaw-sqlite-readonly-")) {
+        allocations.push(filename);
+      }
+    });
     try {
       expect(await read()).toEqual([pending]);
       const loaded = mode === "sync" ? options.io.loadConfig() : await options.io.loadConfigAsync();
@@ -132,8 +136,15 @@ it.each(["sync", "async"] as const)(
       await nextTurn();
       expect(synchronousSnapshot).not.toHaveBeenCalled();
       expect(allocations).toEqual([]);
-      // Verify the filesystem observer sees the mandatory inspection path too.
-      await withArtifactPreservingStateReads(read);
+      expect(
+        withArtifactPreservingStateReads(() =>
+          withSynchronousArtifactPreservingStateSnapshot(() =>
+            context.resolveDeferredPluginMigrations(),
+          ),
+        ),
+      ).toEqual([{ ...pending, reason: "Changed obligation" }]);
+      expect(synchronousSnapshot).toHaveBeenCalledTimes(1);
+      expect(path.dirname(synchronousSnapshot.mock.calls[0]?.[1] ?? "")).toBe(stagingRoot);
       await vi.waitFor(() => expect(allocations.length).toBeGreaterThan(0));
     } finally {
       watcher.close();
