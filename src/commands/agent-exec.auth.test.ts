@@ -50,6 +50,7 @@ describe("agent exec stored auth", () => {
       const emptyRows: AuthProfileRowRead = {
         store: { status: "readable", raw: { version: 1, profiles: {} } },
         state: { status: "missing", reason: "row" },
+        cacheable: true,
       };
       let temporaryStateDir = "";
       vi.spyOn(sqliteRead, "readSharedAuthProfileRows").mockImplementation(() => {
