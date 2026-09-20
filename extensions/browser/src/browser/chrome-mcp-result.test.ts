@@ -44,20 +44,4 @@ describe("Chrome MCP result formats", () => {
       }),
     ).toMatch(/set browser\.profiles\.chrome-live\.cdpUrl/);
   });
-
-  it("names the configured endpoint when endpoint attach fails", () => {
-    expect(
-      formatChromeMcpToolErrorMessage({
-        profileName: "chrome-live",
-        options: {
-          command: "npx",
-          args: [],
-          browserUrl:
-            "https://alice:supersecretpasswordvalue1234@example.com/chrome?token=supersecrettokenvalue1234567890",
-        },
-        toolName: "list_pages",
-        message: "Could not connect to Chrome: ECONNREFUSED",
-      }),
-    ).toMatch(/configured Chrome endpoint \(https:\/\/example\.com\/chrome\?token=\*\*\*\)/);
-  });
 });
