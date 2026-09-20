@@ -1,15 +1,19 @@
+import { runAgentLoop } from "openclaw/plugin-sdk/agent-core";
+import {
+  createAssistantOutput,
+  createSubscribedSessionHarness,
+} from "openclaw/plugin-sdk/agent-runtime-test-contracts";
 import { AssistantMessageEventStream, type Message, type Model } from "openclaw/plugin-sdk/llm";
+import { consumeGoogleGenerateContentStream } from "openclaw/plugin-sdk/provider-transport-runtime";
+import {
+  createReplyTurnLedger,
+  createBlockReplyDeliveryHandler,
+  createReplyToModeFilterForChannel,
+  createTypingSignaler,
+  createTypingController,
+} from "openclaw/plugin-sdk/reply-payload-testing";
+import { createReplyDispatcher } from "openclaw/plugin-sdk/reply-runtime";
 import { expect, it, vi } from "vitest";
-import { consumeGoogleGenerateContentStream } from "../../../packages/ai/src/providers/google-stream.js";
-import { createAssistantOutput } from "../../../packages/ai/src/transports/assistant-output.js";
-import { createSubscribedSessionHarness } from "../../../src/agents/embedded-agent-subscribe.e2e-harness.js";
-import { createReplyTurnLedger } from "../../../src/auto-reply/reply/dispatch-from-config.turn-ledger.js";
-import { createBlockReplyDeliveryHandler } from "../../../src/auto-reply/reply/reply-delivery.js";
-import { createReplyDispatcher } from "../../../src/auto-reply/reply/reply-dispatcher.js";
-import { createReplyToModeFilterForChannel } from "../../../src/auto-reply/reply/reply-threading.js";
-import { createTypingSignaler } from "../../../src/auto-reply/reply/typing-mode.js";
-import { createTypingController } from "../../../src/auto-reply/reply/typing.js";
-import { runAgentLoop } from "../../../src/plugin-sdk/agent-core.js";
 import {
   createContext,
   describeTelegramDispatch,

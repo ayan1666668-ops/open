@@ -1,31 +1,33 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { SessionManager } from "openclaw/plugin-sdk/agent-sessions";
-import type { Model } from "openclaw/plugin-sdk/llm";
-import { closeQaRuntimeStores } from "openclaw/plugin-sdk/qa-runtime";
-import { patchSessionEntry } from "openclaw/plugin-sdk/session-store-runtime";
-import { expect, it, vi } from "vitest";
-import { buildEmbeddedRunPayloads } from "../../../src/agents/embedded-agent-runner/run/payloads.js";
-import { subscribeEmbeddedAgentSession } from "../../../src/agents/embedded-agent-subscribe.js";
 import {
+  buildEmbeddedRunPayloads,
+  subscribeEmbeddedAgentSession,
   createAssistant,
   createAssistantResultStream,
   createTestSession,
   registerAgentSessionLoopTestLifecycle,
   streamMocks,
-} from "../../../src/agents/sessions/agent-session-loop-correctness.test-support.js";
-import { buildReplyPayloads } from "../../../src/auto-reply/reply/agent-runner-payloads.js";
+} from "openclaw/plugin-sdk/agent-runtime-test-contracts";
+import { SessionManager } from "openclaw/plugin-sdk/agent-sessions";
+import type { PluginHookReplyPayloadSendingEvent } from "openclaw/plugin-sdk/core";
+import type { Model } from "openclaw/plugin-sdk/llm";
 import {
-  createReplyDispatcher,
+  createHookRunner,
+  addTestHook,
+  createEmptyPluginRegistry,
+} from "openclaw/plugin-sdk/plugin-test-runtime";
+import { closeQaRuntimeStores } from "openclaw/plugin-sdk/qa-runtime";
+import {
+  buildReplyPayloads,
   captureReplyDispatchDeliveryOutcome,
-} from "../../../src/auto-reply/reply/reply-dispatcher.js";
-import { runReplyPayloadSendingHook } from "../../../src/auto-reply/reply/reply-payload-sending-hook.js";
-import { createReplyToModeFilterForChannel } from "../../../src/auto-reply/reply/reply-threading.js";
-import type { PluginHookReplyPayloadSendingEvent } from "../../../src/plugins/hook-types.js";
-import { createHookRunner } from "../../../src/plugins/hooks.js";
-import { addTestHook } from "../../../src/plugins/hooks.test-fixtures.js";
-import { createEmptyPluginRegistry } from "../../../src/plugins/registry.js";
+  runReplyPayloadSendingHook,
+  createReplyToModeFilterForChannel,
+} from "openclaw/plugin-sdk/reply-payload-testing";
+import { createReplyDispatcher } from "openclaw/plugin-sdk/reply-runtime";
+import { patchSessionEntry } from "openclaw/plugin-sdk/session-store-runtime";
+import { expect, it, vi } from "vitest";
 import {
   createContext,
   describeTelegramDispatch,
