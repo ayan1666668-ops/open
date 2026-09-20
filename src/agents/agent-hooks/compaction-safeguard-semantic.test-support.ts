@@ -5,7 +5,7 @@ import {
   type OpenClawConfig,
 } from "../../config/config.js";
 import { prepareDecisionProviderReload } from "../../decisions/runtime.js";
-import type { DecisionBatch } from "../../decisions/types.js";
+import type { DecisionBatch, DecisionProviderV1 } from "../../decisions/types.js";
 import { runPluginRegisterSyncInRegistry } from "../../plugins/loader-module-runtime.js";
 import { createPluginRecord } from "../../plugins/loader-records.js";
 import { getPluginInstance } from "../../plugins/plugin-instance-scope.js";
@@ -14,7 +14,10 @@ import { setActivePluginRegistry } from "../../plugins/runtime.js";
 
 export function installDecisionFixture(
   fidelity = "preserved",
-  onEvaluate?: (batch: DecisionBatch) => void | Promise<void>,
+  onEvaluate?: (
+    batch: DecisionBatch,
+    context: Parameters<DecisionProviderV1["evaluate"]>[1],
+  ) => void | Promise<void>,
 ) {
   const config: OpenClawConfig = {
     agents: {
@@ -43,7 +46,7 @@ export function installDecisionFixture(
         contractVersion: 1,
         async evaluate(batch, context) {
           requests.push({ agentId: context.agentId, model: context.model });
-          await onEvaluate?.(batch);
+          await onEvaluate?.(batch, context);
           return {
             status: "ok",
             result: {

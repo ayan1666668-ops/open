@@ -183,6 +183,69 @@ async function runCompactionScenario(params: {
 }
 
 describe("compaction semantic observer wiring", () => {
+  it("joins both Decision requests before propagating caller cancellation", async () => {
+    const controller = new AbortController();
+    const abortError = new Error("cancel asymmetric semantic observation");
+    let started = 0;
+    let releaseSlowRequest: (() => void) | undefined;
+    const slowRequest = new Promise<void>((resolve) => {
+      releaseSlowRequest = resolve;
+    });
+    const { config, builder } = installDecisionFixture("preserved", async (_batch, context) => {
+      started += 1;
+      if (started === 1) {
+        await new Promise<never>((_resolve, reject) => {
+          context.signal.addEventListener("abort", () => reject(context.signal.reason), {
+            once: true,
+          });
+        });
+      }
+      await slowRequest;
+    });
+    mockSummarizeInStages.mockReset();
+    mockSummarizeInStages.mockResolvedValue("The report remains pending.");
+    const sessionManager = stubSessionManager("specialist");
+    setCompactionSafeguardRuntime(sessionManager, {
+      agentId: "specialist",
+      model: createAnthropicModelFixture(),
+      recentTurnsPreserve: 0,
+      semanticCurationMode: "shadow",
+    });
+    const event = createCompactionEvent({ messageText: "Finish the report.", tokensBefore: 100 });
+    event.preparation.messagesToSummarize.push(
+      castAgentMessage(timestampedTextAssistant("Unrelated old discussion.", 2)),
+    );
+    const eventWithSignal = {
+      ...event,
+      signal: controller.signal,
+      preparation: { ...event.preparation, settings: { reserveTokens: 4000 } },
+    };
+    const completion = runCompactionScenario({
+      sessionManager,
+      event: eventWithSignal,
+      apiKey: "test-key",
+    }).then(
+      () => ({ status: "resolved" as const }),
+      (error: unknown) => ({ status: "rejected" as const, error }),
+    );
+
+    await vi.waitFor(() => expect(started).toBe(2));
+    controller.abort(abortError);
+    await expect(
+      Promise.race([
+        completion.then(() => "settled" as const),
+        new Promise<"pending">((resolve) => {
+          setTimeout(() => resolve("pending"), 20);
+        }),
+      ]),
+    ).resolves.toBe("pending");
+    expect(builder.registry.decisionProviders[0]?.host.inspect(config).activeRequests).toBe(1);
+
+    releaseSlowRequest?.();
+    await expect(completion).resolves.toEqual({ status: "rejected", error: abortError });
+    expect(builder.registry.decisionProviders[0]?.host.inspect(config).activeRequests).toBe(0);
+  });
+
   it.each(
     [false, true].flatMap((registeredProvider) =>
       [

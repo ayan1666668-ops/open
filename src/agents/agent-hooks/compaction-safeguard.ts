@@ -757,7 +757,7 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
         return;
       }
       try {
-        const [shadow, fidelity] = await Promise.all([
+        const [shadowResult, fidelityResult] = await Promise.allSettled([
           evaluateCompactionShadowCuration({
             runtime: { evaluate: evaluateDecision },
             agentId: semanticAgentId,
@@ -775,6 +775,14 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
           }),
         ]);
         semanticSignal.throwIfAborted();
+        if (shadowResult.status === "rejected") {
+          throw shadowResult.reason;
+        }
+        if (fidelityResult.status === "rejected") {
+          throw fidelityResult.reason;
+        }
+        const shadow = shadowResult.value;
+        const fidelity = fidelityResult.value;
         const currentSemanticMode =
           getCompactionSafeguardRuntime(ctx.sessionManager)?.semanticCurationMode ?? "off";
         if (
