@@ -29,6 +29,19 @@ function createStepFunPresetAppliers(params: {
     resolveParams: (cfg: OpenClawConfig, baseUrl: string) => {
       const provider = params.buildProvider(baseUrl);
       const models = provider.models ?? [];
+      // A prior onboarding run bound the shared alias (e.g. "StepFun") to the
+      // then-current default. Re-binding it to a new default would leave two
+      // model refs claiming the alias, and last-wins resolution would silently
+      // redirect it off the model the user's config still points at. Only claim
+      // the alias for the new default when no other ref already owns it.
+      const aliasKey = params.alias.toLowerCase();
+      const primaryKey = params.primaryModelRef.toLowerCase();
+      const aliasOwnedByOtherModel = Object.entries(cfg.agents?.defaults?.models ?? {}).some(
+        ([ref, entry]) =>
+          typeof entry?.alias === "string" &&
+          entry.alias.toLowerCase() === aliasKey &&
+          ref.toLowerCase() !== primaryKey,
+      );
       return {
         providerId: params.providerId,
         api: provider.api ?? "openai-completions",
@@ -36,7 +49,9 @@ function createStepFunPresetAppliers(params: {
         catalogModels: cfg.models?.mode === "replace" ? models : [],
         aliases: [
           ...models.map((model) => `${params.providerId}/${model.id}`),
-          { modelRef: params.primaryModelRef, alias: params.alias },
+          ...(aliasOwnedByOtherModel
+            ? []
+            : [{ modelRef: params.primaryModelRef, alias: params.alias }]),
         ],
       };
     },
