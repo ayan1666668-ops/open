@@ -97,7 +97,7 @@ suite.define(() => {
               : {}),
             __openclaw: { id: "follow-up", seq: 4, runId: "finishing-run" },
           };
-          const completedHistory = [...history, nextRequest, nextFinal];
+          const finalHistory = [...history, nextRequest, nextFinal];
           await gateway.setHistoryMessages([...history, nextRequest]);
           await gateway.emitGatewayEvent("session.message", {
             sessionKey: "agent:main:main",
@@ -111,7 +111,7 @@ suite.define(() => {
             }),
           ).toBeVisible();
           await expectBrowser(dock).toBeVisible();
-          await gateway.setHistoryMessages(completedHistory);
+          await gateway.setHistoryMessages(finalHistory);
           await gateway.emitGatewayEvent("session.message", {
             sessionKey: "agent:main:main",
             messageId: "summary-finalized",
@@ -127,7 +127,7 @@ suite.define(() => {
           expect(await gateway.getRequests("chat.send")).toHaveLength(0);
           expect(await gateway.getRequests("question.resolve")).toHaveLength(0);
 
-          return completedHistory;
+          return finalHistory;
         },
       );
 

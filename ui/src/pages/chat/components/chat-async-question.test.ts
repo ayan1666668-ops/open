@@ -226,7 +226,7 @@ it("retires the unowned mirrored prompt only after its canonical restart recover
   expect(
     present([
       ...messages,
-      { ...recovered, __openclaw: { ...recovered.__openclaw, runId: "other-run" } },
+      { ...recovered, __openclaw: { ...recovered["__openclaw"], runId: "other-run" } },
     ]).pending,
   ).toHaveLength(1);
 });
