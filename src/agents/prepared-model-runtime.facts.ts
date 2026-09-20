@@ -262,7 +262,11 @@ export async function prepareWorkspaceBuildGroup(
       options.assertCurrent?.(candidate);
       const { config, agentId } = candidate;
       for (const provider of withAgentRosterFactsBatch(config, () => {
-        const refs = collectPreparedModelRuntimeConfiguredRefs(config, agentId);
+        const refs = collectPreparedModelRuntimeConfiguredRefs(
+          config,
+          agentId,
+          candidate.runtimePluginSelections,
+        );
         configuredModelRefs.push(...refs);
         return [
           ...collectPreparedModelRuntimeProviderIds(config, {}, false, refs, agentId),
