@@ -50,28 +50,6 @@ class RunWorkspaceAgentNotConfiguredError extends Error {
   }
 }
 
-function resolveRunAgentId(params: {
-  sessionKey?: string;
-  agentId?: string;
-  config: OpenClawConfig;
-}): {
-  agentId: string;
-  agentIdSource: AgentIdSource;
-} {
-  const rawSessionKey = params.sessionKey?.trim() ?? "";
-  const explicit = params.agentId;
-  const parsed = parseAgentSessionKey(rawSessionKey);
-  const agentId = resolveSessionAgentId({
-    sessionKey: rawSessionKey || undefined,
-    agentId: explicit,
-    config: params.config,
-  });
-  return {
-    agentId,
-    agentIdSource: explicit ? "explicit" : parsed?.agentId ? "session_key" : "default",
-  };
-}
-
 /** Redacts a run/session identifier for logs and prompts. */
 export function redactRunIdentifier(value: string | undefined): string {
   return redactIdentifier(value, { len: 12 });
@@ -97,11 +75,16 @@ export function resolveRunWorkspaceDir(params: {
   }
   const env = params.env ?? process.env;
   const requested = params.workspaceDir;
-  const { agentId, agentIdSource } = resolveRunAgentId({
-    sessionKey: params.sessionKey,
+  const agentId = resolveSessionAgentId({
+    sessionKey: rawSessionKey || undefined,
     agentId: params.agentId,
     config,
   });
+  const agentIdSource: AgentIdSource = params.agentId
+    ? "explicit"
+    : parseAgentSessionKey(rawSessionKey)?.agentId
+      ? "session_key"
+      : "default";
   if (!resolveAgentConfig(config, agentId)) {
     throw new RunWorkspaceAgentNotConfiguredError(agentId);
   }

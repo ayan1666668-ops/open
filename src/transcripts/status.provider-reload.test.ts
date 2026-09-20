@@ -1,5 +1,6 @@
 import { expect, it, vi } from "vitest";
 import { createTranscriptsAutoStartService } from "./auto-start.js";
+import * as transcriptCapture from "./capture.js";
 import {
   transcriptStatusRoom as room,
   useTranscriptStatusFixture,
@@ -17,10 +18,12 @@ it.each(["same date", "next date"] as const)(
     const f = fixture({ transcripts: { autoStart: [{ ...room, sessionId: "daily" }] } });
     const start = vi.fn(f.provider.start!);
     f.provider.start = start;
+    const captureStarts = vi.spyOn(transcriptCapture, "startTranscripts");
     const service = createTranscriptsAutoStartService(f.ctx);
     try {
       service.start();
-      await vi.waitFor(async () => expect((await f.read()).active).toHaveLength(1));
+      await Promise.allSettled(captureStarts.mock.results.map(({ value }) => value));
+      expect((await f.read()).active).toHaveLength(1);
       const original = start.mock.calls[0]![0].session;
       await service.stop(new Set([room.providerId]));
       const selector = transcriptSessionSelector(original);
@@ -30,6 +33,7 @@ it.each(["same date", "next date"] as const)(
       // A new admission has a new tuple even on the same date.
       vi.setSystemTime(startedAt + 60_000 + (date === "next date" ? 86_400_000 : 0));
       service.start();
+      await Promise.allSettled(captureStarts.mock.results.map(({ value }) => value));
       if (date === "same date") {
         await vi.waitFor(async () =>
           expect((await f.read()).configuredSources[0]?.startDiagnostic).not.toBe("starting"),
@@ -41,7 +45,7 @@ it.each(["same date", "next date"] as const)(
         expect(f.ctx.logger.warn).toHaveBeenCalledOnce();
         expect(f.ctx.logger.warn).toHaveBeenCalledWith(expect.stringContaining("id-conflict"));
       } else {
-        await vi.waitFor(async () => expect((await f.read()).active).toHaveLength(1));
+        expect((await f.read()).active).toHaveLength(1);
         expect(start).toHaveBeenCalledTimes(2);
         expect(write).toHaveBeenCalledOnce();
         expect(start.mock.calls[1]![0].session.startedAt).not.toBe(original.startedAt);
