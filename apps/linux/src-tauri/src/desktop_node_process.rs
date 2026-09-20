@@ -415,27 +415,68 @@ mod tests {
     #[test]
     fn job_joins_a_real_command_wrapper_and_its_descendant() {
         use windows::Win32::Foundation::{CloseHandle, STILL_ACTIVE};
+        use windows::Win32::System::Diagnostics::ToolHelp::{
+            CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
+            TH32CS_SNAPPROCESS,
+        };
         use windows::Win32::System::Threading::{
             GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
         };
-        let mut command = Command::new("powershell.exe");
-        command.args(["-NoProfile", "-NonInteractive", "-Command", "$child = Start-Process cmd.exe -ArgumentList '/d /c ping -n 120 127.0.0.1 >nul' -NoNewWindow -PassThru; Write-Output $child.Id; Wait-Process -Id $child.Id"]);
+        let mut command = Command::new("cmd.exe");
+        command.args(["/d", "/s", "/c", "ping.exe -n 120 127.0.0.1 >nul"]);
         let mut process = DesktopNodeProcess::spawn(command).unwrap();
-        let descendant = process
-            .output
-            .recv_timeout(Duration::from_secs(10))
-            .unwrap()
-            .1
-            .trim()
-            .parse::<u32>()
-            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        // Observe the real cmd wrapper's child without depending on PowerShell startup or stdout.
+        let descendant = loop {
+            let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) }.unwrap();
+            let mut entry = PROCESSENTRY32W {
+                dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32,
+                ..Default::default()
+            };
+            let mut next = unsafe { Process32FirstW(snapshot, &mut entry) };
+            let mut descendant = None;
+            while next.is_ok() {
+                if entry.th32ParentProcessID == process.child.id() {
+                    let name_length = entry
+                        .szExeFile
+                        .iter()
+                        .position(|unit| *unit == 0)
+                        .unwrap_or(entry.szExeFile.len());
+                    if String::from_utf16_lossy(&entry.szExeFile[..name_length])
+                        .eq_ignore_ascii_case("ping.exe")
+                    {
+                        descendant = Some(entry.th32ProcessID);
+                        break;
+                    }
+                }
+                next = unsafe { Process32NextW(snapshot, &mut entry) };
+            }
+            unsafe { CloseHandle(snapshot) }.unwrap();
+            if let Some(descendant) = descendant {
+                break descendant;
+            }
+            assert!(
+                !process.exited().unwrap(),
+                "cmd exited before its child was observed"
+            );
+            assert!(
+                Instant::now() < deadline,
+                "cmd did not start ping within the readiness budget"
+            );
+            thread::sleep(Duration::from_millis(25));
+        };
         let handle =
             unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, descendant) }.unwrap();
+        let mut code = 0;
+        unsafe { GetExitCodeProcess(handle, &mut code) }.unwrap();
+        assert_eq!(
+            code, STILL_ACTIVE.0 as u32,
+            "wrapper child was not alive before shutdown"
+        );
         assert!(!process.job.is_empty().unwrap());
         process.stop().unwrap();
         assert!(process.job.is_empty().unwrap());
         assert!(process.exited().unwrap());
-        let mut code = 0;
         unsafe { GetExitCodeProcess(handle, &mut code) }.unwrap();
         let _ = unsafe { CloseHandle(handle) };
         assert_ne!(
