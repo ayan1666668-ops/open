@@ -3,7 +3,6 @@
 import { html, nothing, render } from "lit";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { readMarkdownCodeBlockCopyText } from "../../../components/markdown-code-blocks.ts";
-import { toSanitizedMarkdownHtml } from "../../../components/markdown.ts";
 import { TOOL_OUTPUT_PREVIEW_CHARS } from "../../../lib/chat/tool-output.ts";
 import "./chat-tool-output.ts";
 import { renderGroupedMessage } from "./chat-message-bubble.ts";
