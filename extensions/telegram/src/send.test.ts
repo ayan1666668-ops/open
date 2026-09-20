@@ -45,6 +45,7 @@ import {
   installTelegramSendTestHooks,
   makeTelegramInvalidApiResultMock,
   makeTelegramApiTestMock,
+  mockLoadedMedia,
 } from "./send.test-harness.js";
 import { recordSentMessage, wasSentByBot } from "./sent-message-cache.js";
 import {
@@ -391,22 +392,6 @@ async function expectTelegramMembershipErrorWithChatId(
     expect(message).toMatch(/Fix: Add the bot to the channel\/group/i);
     expect(message).toMatch(new RegExp(`chat_id=${expectedChatId}`));
   }
-}
-
-function mockLoadedMedia({
-  buffer = Buffer.from("media"),
-  contentType,
-  fileName,
-}: {
-  buffer?: Buffer;
-  contentType?: string;
-  fileName?: string;
-}): void {
-  loadWebMedia.mockResolvedValueOnce({
-    buffer,
-    ...(contentType ? { contentType } : {}),
-    ...(fileName ? { fileName } : {}),
-  });
 }
 
 function requireMockCall<T extends unknown[]>(call: T | undefined, label: string): T {
