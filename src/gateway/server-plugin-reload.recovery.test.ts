@@ -22,6 +22,7 @@ import {
 import { createChannelTestPluginBase } from "../test-utils/channel-plugins.js";
 import { withEnvAsync } from "../test-utils/env.js";
 import { activeSessions } from "../transcripts/capture.js";
+import { clearTranscriptCapturesForTest } from "../transcripts/capture.test-support.js";
 import type { TranscriptStartRequest } from "../transcripts/provider-types.js";
 import { TranscriptsStore } from "../transcripts/store.js";
 import { buildGatewayReloadPlan } from "./config-reload-plan.js";
@@ -42,6 +43,10 @@ import {
   verifyGatewayCacheOwnership,
   verifySharedGatewayCacheOwnership,
 } from "./server-plugin-reload.cache.test-support.js";
+import {
+  verifyDecisionSelectionIsolation,
+  verifyDecisionEarlyReloadRecovery,
+} from "./server-plugin-reload.decisions.test-support.js";
 import {
   verifyManagedCandidateRetirement,
   verifyExpandedReplacementTargets,
@@ -122,7 +127,7 @@ afterEach(async () => {
     }
     await clearActivePluginRegistry();
   } finally {
-    activeSessions.clear();
+    await clearTranscriptCapturesForTest();
     await closeOpenClawStateDatabaseAsync();
     closeOpenClawStateDatabaseForTest();
     clearRuntimeConfigSnapshot();
@@ -308,6 +313,9 @@ it.each(["prepare", "committed"] as const)(
   "preserves the operation receipt when a %s failure has an unreadable message",
   (boundary) => verifyMalformedReloadFailureReceipt(createRecoveryFixture, boundary),
 );
+
+it("keeps another agent's decision request live across a default selection change", () =>
+  verifyDecisionSelectionIsolation(createRecoveryFixture));
 
 it.each(["held-close", "failed-close"] as const)(
   "drains retained memory before Gateway provider replacement (%s)",
@@ -1011,4 +1019,9 @@ it.for(["replace", "remove", "disable"] as const)(
       }
     });
   },
+);
+
+it.each(["prepare", "drain", "discovery"] as const)(
+  "recovers decision admission after early %s failure",
+  (boundary) => verifyDecisionEarlyReloadRecovery(createRecoveryFixture, boundary),
 );

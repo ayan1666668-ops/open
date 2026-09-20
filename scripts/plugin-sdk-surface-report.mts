@@ -204,7 +204,10 @@ export function readPluginSdkSurfaceBudgets(env: NodeJS.ProcessEnv = process.env
       // +3: typed feature contracts, backend registration, and native Control UI hosting.
       // +1: public provider-owned asynchronous embedding batch contract.
       // +1: runtime-neutral WebSocket client/server adapter for bundled and external plugins.
-      154,
+      // +1: approved host-owned workspace access runtime entrypoint.
+      // +1: passive docked link-reader contracts.
+      // +1: typed decision provider contract.
+      157,
       env,
     ),
     publicExports: readPluginSdkSurfaceBudgetEnv(
@@ -378,7 +381,13 @@ export function readPluginSdkSurfaceBudgets(env: NodeJS.ProcessEnv = process.env
       // +1: approved shared native-command argument-menu applicability predicate.
       // +4: shared activity projectors and complete-preamble admission, including the shipped barrel.
       // -1: keep complete-preamble admission off the deprecated compatibility facade.
-      4485,
+      // +4: approved workspace access exports; later stack exports belong to their consumers.
+      // +6: passive link-reader descriptor, metadata, document, preview, and request types.
+      // +1: shared workspace bootstrap file policy.
+      // +2: typed workspace unavailability and its structural classifier.
+      // +13: twelve decision contract types and one prepared plugin secret reader.
+      // +6: shared delivery facts, source-reply detection, argument sanitization, and media comparison.
+      4517,
       env,
     ),
     publicFunctionExports: readPluginSdkSurfaceBudgetEnv(
@@ -520,7 +529,12 @@ export function readPluginSdkSurfaceBudgets(env: NodeJS.ProcessEnv = process.env
       // +1: approved shared native-command argument-menu applicability predicate.
       // +4: shared activity projectors and complete-preamble admission, including the shipped barrel.
       // -1: keep complete-preamble admission off the deprecated compatibility facade.
-      2649,
+      // +3: approved workspace access callables; later stack exports belong to their consumers.
+      // +1: shared workspace bootstrap file policy.
+      // +1: workspace unavailability classifier.
+      // +1: prepared plugin capability secret reader.
+      // +6: shared delivery facts, source-reply detection, argument sanitization, and media comparison.
+      2661,
       env,
     ),
     publicDeprecatedExports: readPluginSdkSurfaceBudgetEnv(
