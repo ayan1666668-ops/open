@@ -564,17 +564,12 @@ export class MemoryIndexManager extends MemorySearchOrchestration implements Mem
 
     // Status projects the effective keyword-only search mode while degraded.
     // Sync generations still snapshot this.provider so recovery can rebuild vectors.
-    const statusProvider = this.embeddingBootstrapFailure ? null : this.provider;
-    const statusProviderInitialized =
-      Boolean(this.embeddingBootstrapFailure) || this.providerInitialized;
     const providerInfo = resolveStatusProviderInfo({
-      provider: statusProvider,
-      providerInitialized: statusProviderInitialized,
+      provider: this.embeddingBootstrapFailure ? null : this.provider,
+      providerInitialized: this.embeddingBootstrapFailure ? true : this.providerInitialized,
       requestedProvider: this.requestedProvider,
-      configuredModel:
-        !statusProvider && !statusProviderInitialized
-          ? this.resolveConfiguredIndexIdentity()?.provider.model || this.settings.model
-          : undefined,
+      resolveConfiguredModel: () =>
+        this.resolveConfiguredIndexIdentity()?.provider.model || this.settings.model,
     });
     const storage =
       this.sourceInspections.size > 0
