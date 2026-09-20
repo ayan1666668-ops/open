@@ -42,13 +42,125 @@ afterAll(() => {
 });
 `,
     "11-b-sqlite-cleanup.test.ts": `
-import { expect } from "vitest";
-import ${source("state/openclaw-agent-execution-cleanup.test.ts")};
+import { afterEach, expect, it, vi } from "vitest";
+import type { SqliteWorkerStore } from ${source("infra/sqlite-worker-contract.ts")};
+import {
+  runWithSqliteWorkerStateContext,
+  type SqliteWorkerStateContext,
+} from ${source("infra/sqlite-worker-state-context.ts")};
+import { cleanupRetiredAgentDatabaseLease } from ${source("state/openclaw-agent-execution-cleanup.ts")};
+import {
+  assertOpenClawStateSchemaRepairAllowed,
+  getExistingOpenClawStateSchemaPath,
+} from ${source("state/openclaw-state-db-schema-policy.ts")};
+import type { OpenClawStateWorkerContext } from ${source("state/openclaw-state-worker-context.types.ts")};
+import type { OpenClawStateWorkerCleanupOperations } from ${source("state/openclaw-state-worker-contract.ts")};
+
+// Keep the real shared-state owner in this cross-file proof; another test's mocks
+// are not part of the runner's lifecycle contract.
 const drainKey = Symbol.for("fixture.sqliteDrain");
 const retained = Reflect.get(globalThis, drainKey);
 expect(retained.drains).toBe(1);
 expect(retained.database.db.isOpen).toBe(false);
 Reflect.deleteProperty(globalThis, drainKey);
+
+const edge = vi.hoisted(() => ({
+  close: vi.fn(async () => {}),
+  repairs: [] as Array<{ phase: string; error: unknown }>,
+  forbidden: vi.fn((): never => {
+    throw new Error("Cleanup schema proof crossed a native database or Worker boundary");
+  }),
+}));
+
+vi.mock("node:sqlite", () => ({ DatabaseSync: edge.forbidden }));
+vi.mock("node:worker_threads", () => ({ Worker: edge.forbidden }));
+vi.mock(${source("infra/runtime-worker-url.ts")}, () => ({
+  resolveRuntimeWorkerUrl: () => new URL("file:///synthetic/shared-state.worker.js"),
+}));
+vi.mock(${source("infra/sqlite-worker-identity.ts")}, () => ({
+  readDatabasePathIdentity: async (canonicalPath: string) => ({
+    key: "file:synthetic-state",
+    canonicalPath,
+  }),
+}));
+vi.mock(${source("infra/sqlite-worker-store.ts")}, () => ({
+  openSharedStateSqliteWorkerStore: async (
+    options: { databasePath: string },
+    context: SqliteWorkerStateContext,
+  ) => {
+    runWithSqliteWorkerStateContext(context, () =>
+      inspectRepairPolicy("open", options.databasePath),
+    );
+    const store: SqliteWorkerStore<OpenClawStateWorkerCleanupOperations> = {
+      async execute(command) {
+        inspectRepairPolicy("cleanup", command.input.sharedStatePath);
+      },
+      close: edge.close,
+    };
+    return store;
+  },
+  runSqliteWorkerStoreOperation: async (
+    store: SqliteWorkerStore<OpenClawStateWorkerCleanupOperations>,
+    operation: (scope: SqliteWorkerStore<OpenClawStateWorkerCleanupOperations>) => Promise<void>,
+    context: SqliteWorkerStateContext,
+  ) => runWithSqliteWorkerStateContext(context, () => operation(store)),
+}));
+
+function inspectRepairPolicy(phase: string, databasePath: string) {
+  let error: unknown;
+  try {
+    assertOpenClawStateSchemaRepairAllowed(databasePath);
+  } catch (failure) {
+    error = failure;
+  }
+  edge.repairs.push({ phase, error });
+}
+
+afterEach(() => {
+  expect(edge.forbidden).not.toHaveBeenCalled();
+  edge.repairs.length = 0;
+  vi.clearAllMocks();
+});
+
+it("retains installed-schema repair ownership through retired agent lease cleanup", async () => {
+  const databasePath = "/synthetic/state/openclaw.sqlite";
+  const context: OpenClawStateWorkerContext = {
+    environment: { OPENCLAW_STATE_DIR: "/synthetic" },
+    coordinatorRuntime: { directory: "/synthetic/coordinators", keepAlive: true },
+    existingSchemaPath: databasePath,
+    admission: {
+      databasePath,
+      identity: { key: "file:synthetic-state", canonicalPath: databasePath },
+      assertCurrent() {},
+    },
+  };
+  // There is no ambient schema scope for the mocked transport to inherit.
+  expect(getExistingOpenClawStateSchemaPath()).toBeUndefined();
+  await cleanupRetiredAgentDatabaseLease({
+    context,
+    stopped: Promise.resolve(),
+    assertOwned() {},
+    lease: {
+      leaseId: "synthetic-lease",
+      agentId: "main",
+      path: "/synthetic/agents/main.sqlite",
+      ownerPid: process.pid,
+      ownerStartTime: null,
+      sharedStatePath: databasePath,
+      sharedStateIdentity: "file:synthetic-state",
+    },
+  });
+  expect(edge.repairs).toEqual(
+    ["open", "cleanup"].map((phase) => ({
+      phase,
+      error: expect.objectContaining({
+        message: expect.stringContaining("schema repair is owned by the existing installation"),
+      }),
+    })),
+  );
+  expect(edge.close).toHaveBeenCalledOnce();
+  expect(getExistingOpenClawStateSchemaPath()).toBeUndefined();
+});
 `,
   };
 }
