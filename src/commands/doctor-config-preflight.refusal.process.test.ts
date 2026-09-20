@@ -382,6 +382,9 @@ it.each([
   "valid",
   "valid managed v1",
   "valid managed pnpm",
+  "managed pnpm missing metadata",
+  "managed pnpm partial metadata",
+  "managed pnpm missing metadata run",
   "managed handoff mismatch",
   "managed handoff missing",
   "failed schema publication",
@@ -448,7 +451,8 @@ it.each([
         const bytes = originals.map((file) => fs.readFileSync(file));
         let runtimeRoot = createBuiltRuntime(state.root, undefined, { copyDirectories: true });
         let managedRoot = runtimeRoot;
-        if (mode === "valid managed pnpm") {
+        const malformedHandoff = mode.startsWith("managed pnpm ");
+        if (mode === "valid managed pnpm" || malformedHandoff) {
           const project = state.path("pnpm", "global", "5");
           const previous = path.join(
             project,
@@ -536,6 +540,7 @@ it.each([
         const managed =
           mode === "valid managed v1" ||
           mode === "valid managed pnpm" ||
+          malformedHandoff ||
           mode === "managed handoff mismatch" ||
           mode === "managed handoff missing";
         const success =
@@ -565,42 +570,64 @@ it.each([
           } finally {
             db.close();
           }
-          fs.writeFileSync(
-            metaPath,
-            JSON.stringify({
-              version: 1,
-              meta: {
-                runId: run.runId,
-                root: managedRoot,
-                handoffId: mode === "managed handoff mismatch" ? "another-owner" : managedRow.owner,
-              },
-            }),
-          );
+          if (mode !== "managed pnpm missing metadata") {
+            fs.writeFileSync(
+              metaPath,
+              JSON.stringify({
+                version: 1,
+                meta: {
+                  runId: mode === "managed pnpm missing metadata run" ? undefined : run.runId,
+                  root: mode === "managed pnpm partial metadata" ? undefined : managedRoot,
+                  handoffId:
+                    mode === "managed handoff mismatch" ? "another-owner" : managedRow.owner,
+                },
+              }),
+            );
+          }
         }
         if (mode === "managed handoff missing") {
           const db = new DatabaseSync(resolveManagedUpdateLeaseDatabasePath());
           db.prepare("DELETE FROM managed_update_handoffs WHERE install_root = ?").run(managedRoot);
           db.close();
         }
-        const resumed = await runBuiltRuntime(
-          runtimeRoot,
-          {
-            ...process.env,
-            OPENCLAW_UPDATE_POST_CORE: "1",
-            ...(managed ? { OPENCLAW_CONTROL_PLANE_UPDATE_SENTINEL_META: metaPath } : {}),
-            OPENCLAW_UPDATE_RUN_ID:
-              mode === "missing post-core run" ? "53e56de0-a951-4b3d-af1a-9e4f1ac5a069" : run.runId,
-            OPENCLAW_UPDATE_POST_CORE_CHANNEL: "stable",
-            OPENCLAW_UPDATE_POST_CORE_RESULT_PATH: state.path("post-core-result.json"),
-            OPENCLAW_UPDATE_POST_CORE_STARTED_AT_MS: String(Date.now()),
-            NODE_ENV: undefined,
-            VITEST: undefined,
-            VITEST_POOL_ID: undefined,
-            VITEST_WORKER_ID: undefined,
-          },
-          ["update", "--json", "--yes", "--no-restart"],
-          DOCTOR_CHILD_TIMEOUT_MS,
-        );
+        const resume = () =>
+          runBuiltRuntime(
+            runtimeRoot,
+            {
+              ...process.env,
+              OPENCLAW_UPDATE_POST_CORE: "1",
+              OPENCLAW_UPDATE_RUN_HANDOFF: managed ? "1" : undefined,
+              ...(managed ? { OPENCLAW_CONTROL_PLANE_UPDATE_SENTINEL_META: metaPath } : {}),
+              OPENCLAW_UPDATE_RUN_ID:
+                mode === "missing post-core run"
+                  ? "53e56de0-a951-4b3d-af1a-9e4f1ac5a069"
+                  : run.runId,
+              OPENCLAW_UPDATE_POST_CORE_CHANNEL: "stable",
+              OPENCLAW_UPDATE_POST_CORE_RESULT_PATH: state.path("post-core-result.json"),
+              OPENCLAW_UPDATE_POST_CORE_STARTED_AT_MS: String(Date.now()),
+              NODE_ENV: undefined,
+              VITEST: undefined,
+              VITEST_POOL_ID: undefined,
+              VITEST_WORKER_ID: undefined,
+            },
+            ["update", "--json", "--yes", "--no-restart"],
+            DOCTOR_CHILD_TIMEOUT_MS,
+          );
+        const resumed = await resume();
+        if (mode === "valid managed v1" && resumed.code === 0) {
+          const current = new DatabaseSync(agentPath, { readOnly: true });
+          try {
+            expect(current.prepare("PRAGMA user_version").get()?.user_version).toBe(
+              OPENCLAW_AGENT_SCHEMA_VERSION,
+            );
+          } finally {
+            current.close();
+          }
+          // A current-schema continuation must retain the same live parent
+          // without requiring another migration or a new update-history row.
+          const sameSchema = await resume();
+          expect(sameSchema.code, `${sameSchema.stdout}\n${sameSchema.stderr}`).toBe(0);
+        }
         if (managedRow) {
           const db = new DatabaseSync(resolveManagedUpdateLeaseDatabasePath());
           try {
@@ -643,6 +670,11 @@ it.each([
           phase: beforeResume?.phase,
         });
         if (!success) {
+          if (malformedHandoff) {
+            expect(`${resumed.stdout}\n${resumed.stderr}`).toContain(
+              "Legacy managed post-core handoff is incomplete or names another update run.",
+            );
+          }
           expect(fs.readFileSync(agentPath)).toEqual(bytes[0]);
           return;
         }

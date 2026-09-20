@@ -123,18 +123,25 @@ it.each(["missing writable marker", "forged post-core marker"])(
   },
 );
 
-it("does not accept a phase claim without database maintenance ownership", async () => {
-  await withOpenClawTestState({ scenario: "minimal" }, async () => {
-    const f = await legacyAgentFixture(true);
-    await expect(
-      guardUpdateDoctorSchemaUpgrade({
+it.each([false, true])(
+  "refuses post-core repair without maintenance (claim=%s) with committed-package recovery",
+  async (claim) => {
+    await withOpenClawTestState({ scenario: "minimal" }, async () => {
+      const f = await legacyAgentFixture(true);
+      const refusal = guardUpdateDoctorSchemaUpgrade({
         schemas: f.schemas,
-        postCoreSchemaRepair: { runId: f.runId, assertCurrent() {} },
-      }),
-    ).rejects.toMatchObject({ code: "update-schema-bump-unfenced" });
-    expect(fs.readFileSync(f.pathname)).toEqual(f.bytes);
-  });
-});
+        ...(claim ? { postCoreSchemaRepair: { runId: f.runId, assertCurrent() {} } } : {}),
+      });
+      await expect(refusal).rejects.toMatchObject({
+        code: "update-schema-bump-unfenced",
+        message: expect.stringContaining("already committed its package"),
+        commands: ["openclaw doctor --fix", "openclaw gateway start"],
+      });
+      await expect(refusal).rejects.not.toThrow("Let the updater restore");
+      expect(fs.readFileSync(f.pathname)).toEqual(f.bytes);
+    });
+  },
+);
 
 it.each(["rollback phase", "different update"])(
   "refuses a delegated claim for the %s even under maintenance",

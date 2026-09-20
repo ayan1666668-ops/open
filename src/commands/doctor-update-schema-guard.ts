@@ -128,19 +128,25 @@ export async function guardUpdateDoctorSchemaUpgrade(options: {
   if (blockedMigrations.length === 0) {
     return schemas;
   }
-  const recovery = await resolveUpdateDoctorGitRecovery();
+  const postCoreRecovery = {
+    message:
+      "The update has already committed its package. Complete Doctor repair with the installed compatible build before restarting the Gateway; package rollback cannot undo migrated state.",
+    commands: ["openclaw doctor --fix", "openclaw gateway start"],
+  };
+  const recovery = updater.postCoreStarted
+    ? postCoreRecovery
+    : await resolveUpdateDoctorGitRecovery();
   if (updater.canDeferStateSchema && blockedMigrations.every((entry) => entry.kind === "agent")) {
     const capturePending = () =>
       blockedMigrations.map((database) => ({
         database,
         identity: statSync(database.path),
       }));
-    let postCoreRecovery: { message: string; commands: string[] } | undefined;
     const coverageRefusal = (uncovered: typeof blockedMigrations, detail: string) =>
       new UpdateSchemaRefusalError(uncovered, updater.version, {
         targetVersion: VERSION,
         cause: new Error(`Missing recoverable canonical backup coverage: ${detail}`),
-        recovery: postCoreRecovery,
+        recovery,
       });
     const authority = options.postCoreSchemaRepair;
     const maintenance = getOpenClawDatabaseMaintenanceScope();
@@ -152,11 +158,6 @@ export async function guardUpdateDoctorSchemaUpgrade(options: {
       maintenance?.ownsSchemaMaintenance
     ) {
       const pending = capturePending();
-      postCoreRecovery = {
-        message:
-          "The update has already committed its package. Complete Doctor repair with the installed compatible build before restarting the Gateway; package rollback cannot undo migrated state.",
-        commands: ["openclaw doctor --fix", "openclaw gateway start"],
-      };
       const assertCurrent = () => {
         authority.assertCurrent();
         maintenance.assertAdmission();

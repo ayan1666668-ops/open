@@ -122,9 +122,14 @@ export async function resumePostCoreUpdate(params: ResumePostCoreUpdateParams): 
         );
       }
       const meta = await readControlPlaneUpdateSentinelMeta(env);
-      if (meta?.runId && meta.runId !== runId) {
+      const managedHandoff =
+        env.OPENCLAW_UPDATE_RUN_HANDOFF === "1" || Boolean(meta?.handoffId || meta?.root);
+      if (
+        (meta?.runId && meta.runId !== runId) ||
+        (managedHandoff && (!meta?.runId || !meta.handoffId || !meta.root))
+      ) {
         throw new UpdateCommandRecoveryPendingError(
-          "Legacy managed parent names another update run.",
+          "Legacy managed post-core handoff is incomplete or names another update run.",
         );
       }
       if (meta?.handoffId && meta.root) {

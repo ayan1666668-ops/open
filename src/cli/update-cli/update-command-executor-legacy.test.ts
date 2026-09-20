@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { expectDefined } from "@openclaw/normalization-core/expect";
 import { afterEach, expect, it } from "vitest";
 import { waitForDead } from "../../../test/helpers/process-wait.js";
 import { createDeferred } from "../../../test/helpers/promise.js";
@@ -72,6 +73,10 @@ it.skipIf(process.platform === "win32").each([
       // Only scratch location is injected; live processes and lease authority remain real.
       registerSealedRuntime({json5:JSON,resolveSecureTempRoot:()=>control});
       const parent=createManagedHandoffLeaseStore().processIdentity(process.ppid);
+      if(process.env.LEGACY_SECOND_PROBE==='1')await new Promise(resolve=>{
+        process.once('message',()=>{process.disconnect();resolve();});
+        process.send('ready');
+      });
       try {
         await withUpdateCommandExecutor('original-update',async executor=>{
           const fence=await executor.enter(${JSON.stringify(targetRoot)});
@@ -86,8 +91,13 @@ it.skipIf(process.platform === "win32").each([
     const wrappedContinuation = `
       import {spawn} from 'node:child_process';
       import fs from 'node:fs';
-      if(process.env.LEGACY_SECOND_PROBE!=='1')fs.writeFileSync(${JSON.stringify(path.join(root, "wrapper-pid"))},String(process.pid));
-      const child=spawn(process.execPath,[...${JSON.stringify(importArgs)},'--input-type=module','-e',${JSON.stringify(continuation)}],{stdio:'inherit'});
+      const probe=process.env.LEGACY_SECOND_PROBE==='1';
+      if(!probe)fs.writeFileSync(${JSON.stringify(path.join(root, "wrapper-pid"))},String(process.pid));
+      const child=spawn(process.execPath,[...${JSON.stringify(importArgs)},'--input-type=module','-e',${JSON.stringify(continuation)}],{stdio:probe?['ignore','inherit','inherit','ipc']:'inherit'});
+      if(probe){
+        child.once('message',()=>process.send('ready'));
+        process.once('message',()=>{child.send('probe');process.disconnect();});
+      }
       child.once('exit',code=>{process.exitCode=code??1;});
       child.once('error',error=>{process.stderr.write(String(error));process.exitCode=1;});
     `;
@@ -107,29 +117,28 @@ it.skipIf(process.platform === "win32").each([
         fs.chmodSync(${JSON.stringify(path.join(control, "managed-update-handoffs.sqlite"))},0o600);
         fs.writeFileSync(${JSON.stringify(path.join(root, "original-row.json"))},JSON.stringify({install_root:${JSON.stringify(root)},owner:'shipped-owner',payload_json:payload,updated_at:7}));
       }
-      const launch=probe=>spawn(process.execPath,[...${JSON.stringify(importArgs)},'--input-type=module','-e',${JSON.stringify(managed ? wrappedContinuation : continuation)}],{stdio:'inherit',env:{...process.env,...(probe?{LEGACY_SECOND_PROBE:'1'}:{})}});
-      let probed=false;
-      const watch=${managed && lifetime === "live"} ? fs.watch(${JSON.stringify(root)},()=>{
-        if(probed || !fs.existsSync(${JSON.stringify(path.join(root, "second-start"))}))return;
-        probed=true;
-        watch.close();
+      const launch=probe=>spawn(process.execPath,[...${JSON.stringify(importArgs)},'--input-type=module','-e',${JSON.stringify(managed ? wrappedContinuation : continuation)}],{stdio:probe?['ignore','inherit','inherit','ipc']:'inherit',env:{...process.env,...(probe?{LEGACY_SECOND_PROBE:'1'}:{})}});
+      if(${managed && lifetime === "live"}){
         const second=launch(true);
+        second.once('message',()=>process.stdout.write('SECOND_READY\\n'));
         second.once('exit',code=>process.stdout.write('SECOND_EXIT:'+code+'\\n'));
-      }):undefined;
+        process.once('message',()=>{second.send('probe');process.disconnect();});
+      }
       const child=launch(false);
-      child.once('exit',code=>{watch?.close();process.exitCode=code??1;});
+      child.once('exit',code=>{if(process.connected)process.disconnect();process.exitCode=code??1;});
       child.once('error',error=>{process.stderr.write(String(error));process.exitCode=1;});
     `;
     // The published parent has no modern executor. Keep its descendant alive
     // after parent death so the grandchild, not transport teardown, proves refusal.
     const child = spawn(process.execPath, [...importArgs, "--input-type=module", "-e", original], {
       detached: true,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ["ignore", "pipe", "pipe", "ipc"],
     });
     const ready = createDeferred();
+    const secondReady = createDeferred();
     const secondExited = createDeferred();
     let output = "";
-    child.stdout.on("data", (chunk) => {
+    expectDefined(child.stdout, "Legacy fixture stdout").on("data", (chunk) => {
       output += String(chunk);
       if (output.includes("LEAF_READY\n") || output.includes("LEAF_REFUSED\n")) {
         ready.resolve();
@@ -137,8 +146,11 @@ it.skipIf(process.platform === "win32").each([
       if (output.includes("SECOND_EXIT:")) {
         secondExited.resolve();
       }
+      if (output.includes("SECOND_READY\n")) {
+        secondReady.resolve();
+      }
     });
-    child.stderr.on("data", (chunk) => {
+    expectDefined(child.stderr, "Legacy fixture stderr").on("data", (chunk) => {
       output += String(chunk);
     });
     const closed = new Promise<void>((resolve, reject) => {
@@ -164,7 +176,9 @@ it.skipIf(process.platform === "win32").each([
     }, 20_000);
     try {
       await Promise.race([
-        ready.promise,
+        managed && lifetime === "live"
+          ? Promise.all([ready.promise, secondReady.promise])
+          : ready.promise,
         closed.then(() => {
           throw new Error(`Legacy descendant exited before admission: ${output}`);
         }),
@@ -182,9 +196,10 @@ it.skipIf(process.platform === "win32").each([
         );
       }
       if (managed && lifetime === "live") {
-        fs.writeFileSync(path.join(root, "second-start"), "go");
+        child.send("probe");
         await Promise.race([secondExited.promise, closed]);
         expect(output).toContain("SECOND_EXIT:1");
+        expect(output).toContain("Legacy finalizer lifetime could not be acquired.");
       }
       if (lifetime === "exited") {
         child.kill("SIGKILL");
