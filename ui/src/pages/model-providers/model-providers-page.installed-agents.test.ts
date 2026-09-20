@@ -68,6 +68,7 @@ describe("ModelProvidersPage installed agents", () => {
     const page = appendPage(context);
     await waitForProviders(page);
     await waitForFast(() => expect(agentRow(page, "pi")).not.toBeNull());
+    expect(agentRow(page, "opencode")?.textContent).not.toContain("Models available");
     expect(agentRow(page, "qwen")?.textContent).toContain("Not detected");
     expect(agentRow(page, "pi")?.textContent).toContain("Not verified");
     expect(agentRow(page, "qwen")?.textContent).toContain("Use Qwen Code");
@@ -92,7 +93,7 @@ describe("ModelProvidersPage installed agents", () => {
         recovered ||= params?.refresh === true;
         return recovered
           ? {
-              models: [{ provider: "acp-qwen", id: "cedar", name: "Cedar" }],
+              models: [{ provider: "acp-qwen", id: "cedar", name: "Cedar", available: true }],
               providerOutcomes: [{ provider: "acp-qwen", status: "ready" }],
             }
           : {

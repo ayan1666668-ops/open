@@ -198,7 +198,7 @@ export class InstalledAgentsController {
       hint = t("modelProviders.installedAgents.discoveryHint", { name: agent.name });
     } else if (card?.checkingModels) {
       status = { kind: "muted", labelKey: "modelProviders.installedAgents.status.discovering" };
-    } else if (card && card.modelCount > 0) {
+    } else if (card && card.availableModelCount > 0) {
       status = { kind: "ok", labelKey: "modelProviders.installedAgents.status.modelsAvailable" };
     } else {
       hint = t("modelProviders.installedAgents.signInHint", { name: agent.name });
