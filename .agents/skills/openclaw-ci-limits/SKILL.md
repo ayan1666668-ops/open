@@ -276,7 +276,7 @@ These are intentionally guarded by `test/scripts/ci-workflow-guards.test.ts`:
   plugin row, including the five added QA/provider rows, in the burst envelope.
 - Precise and fallback plugin groups retain separate child processes, including process-bounded
   configs. Compatible envelopes, including repeated configs, run one at a time
-  within 240 predicted seconds without a pair-count limit; expanded serial compact
+  within 320 predicted seconds without a pair-count limit; expanded serial compact
   jobs use 210. Runtime preparation stays separate. Each original envelope retains
   its file/process bounds, native shard arguments and worker limits. The complete supplemental boundary list runs in one job
   with four concurrent checks and one full-root focused-rule scan.

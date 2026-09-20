@@ -96,7 +96,8 @@ const MAX_CHANGED_NODE_TEST_TARGETS = 96;
 // Each target runs in its own child process (isolation contract), so bound the
 // serial tail per job; the shard runner overlaps two children at a time.
 const CHANGED_NODE_TEST_TARGETS_PER_JOB = 12;
-const CHANGED_EXTENSION_JOB_SECONDS = 240;
+// The measured fallback needs 320s to fit the final 120-row PR matrix.
+const CHANGED_EXTENSION_JOB_SECONDS = 320;
 const MAX_CHANGED_EXTENSION_FALLBACK_JOBS = 50;
 // Memory Core targets perform real SQLite/indexing work. Two concurrent Vitest
 // processes starve each other on 4-vCPU runners and push otherwise healthy
@@ -446,14 +447,14 @@ function createChangedExtensionConfigShards(
     );
     const chunks = testFiles.length > 0 ? splitExtensionTestJobTargets(config, testFiles) : [roots];
     const partitionSeconds = Math.ceil(
-      estimateExtensionTestCost(config, testFiles.length) / chunks.length,
+      estimateExtensionTestCost(config, testFiles.length, testFiles) / chunks.length,
     );
     return chunks.map((includePatterns, index) =>
       Object.assign(
         {
           config,
           predictedSeconds: splitProcesses
-            ? estimateExtensionTestCost(config, includePatterns.length)
+            ? estimateExtensionTestCost(config, includePatterns.length, includePatterns)
             : partitionSeconds,
         },
         splitProcesses
