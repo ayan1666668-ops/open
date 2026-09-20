@@ -2,13 +2,34 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
+import {
+  noteCommittedSharedAuthStoreOwnership,
+  resolveSharedAuthStorePath,
+  SHARED_AUTH_STORE_STATE_KEY,
+} from "../agents/auth-profiles/path-resolve.js";
+import {
+  closeAuthProfileReadPool,
+  readPersistedSharedAuthProfileStoreRaw,
+  writePersistedAuthProfileStoreRaw,
+} from "../agents/auth-profiles/sqlite.js";
+import { collectSecurityWarnings } from "../commands/doctor-security.js";
+import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { securityAuditFindingToHealthFinding } from "../flows/health-check-adapter.js";
+import { runSecretsAudit } from "../secrets/audit.js";
+import { writeConfigMachineState } from "../state/config-machine-state-write.js";
+import { closeOpenClawStateDatabaseForTest } from "../state/openclaw-state-db.js";
+import { withEnvAsync } from "../test-utils/env.js";
 import { validateUpdateCandidateCanary } from "./update-candidate-canary.js";
 import {
   completeCanaryCommand,
   createCanarySnapshotResult,
   FakeChild,
+  renderSteps,
   stubHealthyGateway,
 } from "./update-candidate-canary.test-support.js";
+import { writeUpdateRunReportArtifact } from "./update-failure-report-artifact.js";
+import { createUpdateRun, finishUpdateRun, recordUpdateRunStep } from "./update-run-ledger.js";
+import { renderUpdateRunReport } from "./update-run-report.js";
 import { updateRunStepsFromResultStep, updateRunWarningMessages } from "./update-run-step.js";
 
 const mocks = vi.hoisted(() => ({ spawn: vi.fn(), snapshot: vi.fn(), signal: vi.fn() }));
@@ -30,6 +51,11 @@ vi.mock("../process/kill-tree.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../process/kill-tree.js")>()),
   signalProcessTree: mocks.signal,
 }));
+// These fixtures use core credential fields; bundled-plugin targets have separate audit coverage.
+vi.mock("../secrets/target-registry-data.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../secrets/target-registry-data.js")>();
+  return { ...actual, getSecretTargetRegistry: actual.getCoreSecretTargetRegistry };
+});
 
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 let root: string;
@@ -76,6 +102,8 @@ beforeEach(async () => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  closeAuthProfileReadPool();
+  closeOpenClawStateDatabaseForTest();
   for (const child of children.values()) {
     child.stdout.destroy();
     child.stderr.destroy();
@@ -84,6 +112,156 @@ afterEach(() => {
 });
 
 describe("update candidate Doctor lint", () => {
+  it.each(["PLAINTEXT_FOUND", "REF_SHADOWED", "LEGACY_RESIDUE"] as const)(
+    "retains candidate-reported %s as a warning in the receipt and report",
+    async (code) => {
+      const stateDir = path.join(root, "state");
+      const configPath = path.join(root, "openclaw.json");
+      const archive = path.join(
+        stateDir,
+        "agents/main/agent/auth-profiles.json.sqlite-import.123.bak",
+      );
+      const config: OpenClawConfig = {
+        gateway: { mode: "local" },
+        models: {
+          providers: Object.fromEntries(
+            Array.from({ length: 4 }, (_, index) => [
+              `fixture_${"x".repeat(140)}_${index}`,
+              {
+                baseUrl: "https://example.invalid/v1",
+                api: "openai-completions",
+                apiKey: "synthetic-config-credential",
+                models: [],
+              },
+            ]),
+          ),
+        },
+      };
+      if (code === "REF_SHADOWED") {
+        config.models!.providers!.fixture = {
+          baseUrl: "https://example.invalid/v1",
+          api: "openai-completions",
+          apiKey: { source: "env", provider: "default", id: "TEST_UPDATE_SECRET" },
+          models: [],
+        };
+      }
+      const authored = JSON.stringify(config);
+      await fs.mkdir(path.dirname(archive), { recursive: true });
+      await fs.writeFile(configPath, authored);
+      if (code === "LEGACY_RESIDUE") {
+        await fs.writeFile(archive, "opaque retained recovery bytes");
+      }
+      await withEnvAsync(
+        {
+          OPENCLAW_STATE_DIR: stateDir,
+          OPENCLAW_CONFIG_PATH: configPath,
+          OPENCLAW_WORKSPACE_DIR: path.join(root, "workspace"),
+          TEST_UPDATE_SECRET: "synthetic-env-credential",
+        },
+        async () => {
+          const env = { ...process.env };
+          const auth = {
+            version: 1,
+            profiles: {
+              "fixture:default": {
+                type: "api_key",
+                provider: "fixture",
+                key: "synthetic-auth-credential",
+              },
+            },
+          };
+          writeConfigMachineState(SHARED_AUTH_STORE_STATE_KEY, { location: "state-db" }, { env });
+          noteCommittedSharedAuthStoreOwnership({ location: "state-db" }, env);
+          writePersistedAuthProfileStoreRaw(auth);
+          const audit = await runSecretsAudit({ env });
+          const finding = audit.findings.find(
+            (entry) =>
+              entry.code === code &&
+              (code !== "PLAINTEXT_FOUND" || entry.profileId === "fixture:default"),
+          );
+          expect(finding).toMatchObject({
+            code,
+            severity: "warn",
+            ...(code === "PLAINTEXT_FOUND"
+              ? { file: resolveSharedAuthStorePath(env), profileId: "fixture:default" }
+              : code === "REF_SHADOWED"
+                ? { jsonPath: "models.providers.fixture.apiKey" }
+                : { file: archive }),
+          });
+          const guidance = (await collectSecurityWarnings(config, env)).find(
+            (entry) => entry.checkId === "config.plaintext_secrets",
+          )!.remediation;
+          // Released Doctor does not run secrets audit. Model a candidate reporting
+          // its audit code through the existing security-finding contract, including
+          // a stricter policy severity; this is wire compatibility, not release attribution.
+          lintReport = {
+            ok: false,
+            checksRun: 1,
+            findings: [
+              securityAuditFindingToHealthFinding({
+                checkId: code,
+                severity: "critical",
+                title: "Secret policy",
+                detail: finding!.message,
+                remediation: guidance,
+              }),
+            ],
+            warnings: [],
+          };
+          stubHealthyGateway();
+          const result = await validateUpdateCandidateCanary({
+            root,
+            stateDir,
+            config,
+            env,
+          });
+          expect(result.status).toBe("ok");
+          const step = result.steps.find((entry) => entry.name === "Checking update health")!;
+          expect(step).toMatchObject({
+            exitCode: 1,
+            advisory: { kind: "recoverable-maintenance" },
+            doctorLintFindings: [expect.objectContaining({ severity: "warning" })],
+          });
+          const run = createUpdateRun({ trigger: "cli" }, { env });
+          for (const row of result.steps.flatMap(updateRunStepsFromResultStep)) {
+            recordUpdateRunStep(run.runId, row, { env });
+          }
+          const recorded = finishUpdateRun(run.runId, { status: "succeeded" }, { env });
+          const reportPath = await writeUpdateRunReportArtifact({
+            result: { ...result, status: "ok", mode: "npm", root, runId: run.runId },
+            report: renderUpdateRunReport(recorded),
+            env,
+          });
+          const markdown = await fs.readFile(reportPath, "utf8");
+          const printed = renderSteps(result.steps);
+          const warnings = updateRunWarningMessages(recorded.steps).join("\n");
+          for (const output of [markdown, printed, warnings]) {
+            expect({
+              code: output.includes(code),
+              configure: output.includes("openclaw secrets configure"),
+              apply: output.includes("openclaw secrets apply"),
+            }).toEqual({ code: true, configure: true, apply: true });
+            expect(output).not.toContain(auth.profiles["fixture:default"].key);
+          }
+          const receipt = recorded.steps.find((row) =>
+            row.step.startsWith("finalize:doctor-lint:"),
+          )!;
+          expect(JSON.parse(receipt.detail!)).toMatchObject({
+            exitCode: 1,
+            counts: { error: 0, warning: 1, info: 0 },
+            omitted: 0,
+          });
+          expect(step.failureFacts).toBeUndefined();
+          expect(await fs.readFile(configPath, "utf8")).toBe(authored);
+          expect(readPersistedSharedAuthProfileStoreRaw(env)).toEqual(auth);
+          if (code === "LEGACY_RESIDUE") {
+            expect(await fs.readFile(archive, "utf8")).toBe("opaque retained recovery bytes");
+          }
+        },
+      );
+    },
+  );
+
   it.each([false, true])(
     "retains posture warnings without admitting blocking lint errors (blocking: %s)",
     async (blocking) => {
