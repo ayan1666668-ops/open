@@ -14,13 +14,12 @@ import { createServiceChildCleanupDeadline } from "./service-child-cleanup-deadl
 import { readServiceChildControl } from "./service-child-control-reader.js";
 import { isOwnedProcessGroupGone } from "./service-child-group-ownership.js";
 import { createOutputRelay } from "./service-child-output-relay.js";
-import {
-  encodeServiceChildMessage,
-  type ServiceChildAnchorMessage,
-  type ServiceChildControlMessage,
-  type ServiceChildRelayMessage,
-  type ServiceChildStart,
+import type {
+  ServiceChildAnchorMessage,
+  ServiceChildRelayMessage,
+  ServiceChildStart,
 } from "./service-child-protocol.js";
+import { createServiceChildMessaging } from "./service-child-relay-messaging.js";
 import {
   prepareServiceChildRelay,
   type ServiceChildRelayParams,
@@ -51,8 +50,14 @@ export async function createServiceChildRelayAdapter(
   if (params.abortSignal?.aborted) {
     throw new Error("service child construction aborted");
   }
-  params.assertCurrent?.();
-  params.beforeSpawn?.();
+  const current = params.assertCurrent?.();
+  if (current) {
+    await current;
+  }
+  const admission = params.beforeSpawn?.();
+  if (admission) {
+    await admission;
+  }
   const { child, cleanup, transportReady } = spawnServiceChildRelay({
     ...preparation.spawn,
     onSpawnCleanup: params.onSpawnCleanup,
@@ -232,41 +237,11 @@ export async function createServiceChildRelayAdapter(
     force: () => kill("SIGKILL"),
   });
 
-  const sendChildMessage = (
-    message: ServiceChildStart | ServiceChildControlMessage,
-  ): Promise<void> =>
-    new Promise((resolve, reject) => {
-      if (!child.connected) {
-        reject(new Error("service child lifecycle IPC is closed"));
-        return;
-      }
-      child.send(message, (error) => {
-        if (error) {
-          reject(error);
-        } else {
-          resolve();
-        }
-      });
-    });
-
-  const sendControlMessage = (message: ServiceChildControlMessage): Promise<void> => {
-    if (useWindowsJobAnchor) {
-      return sendChildMessage(message);
-    }
-    return new Promise((resolve, reject) => {
-      if (!control || control.destroyed) {
-        reject(new Error("service child control pipe is closed"));
-        return;
-      }
-      control.write(encodeServiceChildMessage(message), "utf8", (error) => {
-        if (error) {
-          reject(error);
-        } else {
-          resolve();
-        }
-      });
-    });
-  };
+  const { sendChildMessage, sendControlMessage } = createServiceChildMessaging({
+    child,
+    control,
+    useWindowsJobAnchor,
+  });
 
   const retirement = createServiceChildRelayRetirement({
     child,
@@ -604,13 +579,29 @@ export async function createServiceChildRelayAdapter(
   const ready = (async () => {
     using delivery = preparation.transferSecretInput();
     try {
-      params.assertCurrent?.();
+      const entryCurrent = params.assertCurrent?.();
+      if (entryCurrent) {
+        await entryCurrent;
+      }
       if (params.abortSignal?.aborted) {
         onConstructionAbort();
       }
-      params.beforeSpawn?.();
+      const relayAdmission = params.beforeSpawn?.();
+      if (relayAdmission) {
+        await relayAdmission;
+      }
+      const postAdmissionCurrent = params.assertCurrent?.();
+      if (postAdmissionCurrent) {
+        await postAdmissionCurrent;
+      }
+      if (params.abortSignal?.aborted) {
+        throw new Error("service child construction aborted");
+      }
       await Promise.race([sendChildMessage(start), constructionAbort.promise]);
-      params.assertCurrent?.();
+      const postStartCurrent = params.assertCurrent?.();
+      if (postStartCurrent) {
+        await postStartCurrent;
+      }
       const [startupResult, secretDeliveryResult] = await Promise.allSettled([
         startup.promise,
         delivery?.deliverTo(child, { abortSignal: params.abortSignal }),
@@ -629,7 +620,10 @@ export async function createServiceChildRelayAdapter(
       if (params.abortSignal?.aborted || waitError) {
         throw waitError ?? new Error("service child construction aborted");
       }
-      params.assertCurrent?.();
+      const finalCurrent = params.assertCurrent?.();
+      if (finalCurrent) {
+        await finalCurrent;
+      }
       if (params.input !== undefined) {
         stdin?.write(params.input);
         stdin?.end();

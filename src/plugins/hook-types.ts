@@ -14,7 +14,6 @@ import type { PrepareAssistantTranscriptMessage } from "../config/sessions/trans
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { TtsAutoMode } from "../config/types.tts.js";
 import type { DiagnosticTraceContext } from "../infra/diagnostic-trace-context.js";
-import type { InputProvenance } from "../sessions/input-provenance.js";
 import type {
   PluginHookBeforeModelResolveEvent,
   PluginHookBeforeModelResolveResult,
@@ -22,7 +21,6 @@ import type {
   PluginHookBeforePromptBuildResult,
 } from "./hook-before-agent-start.types.js";
 import type { PluginHookBeforeToolCallResult } from "./hook-before-tool-call-result.js";
-import type { PluginHookChannelContext } from "./hook-channel-context.types.js";
 import type { InputGateDecision } from "./hook-decision-types.js";
 import type {
   PluginHookCronChangedEvent,
@@ -48,6 +46,20 @@ import type {
   PluginHookSkillProposalEvaluateEvent,
   PluginHookSkillProposalEvaluateResult,
 } from "./hook-skill.types.js";
+import type {
+  PluginHookAgentContext,
+  PluginHookContextWindowSource,
+} from "./hook-types.agent-context.js";
+import type {
+  PluginHookBeforeInstallContext,
+  PluginHookBeforeInstallEvent,
+  PluginHookBeforeInstallResult,
+} from "./hook-types.before-install.js";
+import type {
+  PluginHookSecretEnvAuthorizeContext,
+  PluginHookSecretEnvAuthorizeEvent,
+  PluginHookSecretEnvAuthorizeResult,
+} from "./hook-types.secret-env.js";
 import type { PluginJsonValue } from "./host-hook-json.js";
 import type {
   PluginAgentTurnPrepareEvent,
@@ -144,7 +156,8 @@ export type PluginHookName =
   | "reply_dispatch"
   | "before_install"
   | "before_agent_run"
-  | "resolve_exec_env";
+  | "resolve_exec_env"
+  | "secret_env_authorize";
 
 const PLUGIN_HOOK_NAMES = [
   "before_model_resolve",
@@ -189,6 +202,7 @@ const PLUGIN_HOOK_NAMES = [
   "before_install",
   "before_agent_run",
   "resolve_exec_env",
+  "secret_env_authorize",
 ] as const satisfies readonly PluginHookName[];
 
 type MissingPluginHookNames = Exclude<PluginHookName, (typeof PLUGIN_HOOK_NAMES)[number]>;
@@ -292,71 +306,6 @@ export type PluginHookRegistrationOptions<K extends PluginHookName> = {
         requiresToolAuthority?: true;
       }
     : { requiresToolAuthority?: never });
-
-export type PluginHookToolAuthority = {
-  /** Opaque host fingerprint for the exact turn, route, policy, and active tool surface. */
-  readonly fingerprint: string;
-  /** Checks whether the finalized turn surface contains this exact tool. */
-  allows(toolName: string): boolean;
-  /** Rejects retained or timed-out capabilities after the host dispatch closes. */
-  assertActive(): void;
-};
-
-export type PluginHookAgentContext = {
-  runId?: string;
-  jobId?: string;
-  trace?: DiagnosticTraceContext;
-  agentId?: string;
-  sessionKey?: string;
-  sessionId?: string;
-  workspaceDir?: string;
-  /** Run-prepared repository identities; empty when the turn is outside a repository. */
-  activeProjectKeys?: string[];
-  modelProviderId?: string;
-  modelId?: string;
-  messageProvider?: string;
-  /** Channel/plugin id for channel-originated runs, e.g. `discord`. */
-  channel?: string;
-  /** Channel account used by the agent when multiple accounts are configured. */
-  accountId?: string;
-  /** Conversation target id for channel-originated runs. Mirrors `channelId` for compatibility. */
-  chatId?: string;
-  /** Sender identity for channel-originated runs when available. */
-  senderId?: string;
-  trigger?: string;
-  channelId?: string;
-  /**
-   * Typed origin of the turn's user-role input. Absent when the producer did not
-   * supply a classification; absence does not establish human origin.
-   */
-  inputProvenance?: InputProvenance;
-  /** Resolved effective context-token budget after model/config/agent caps. */
-  contextTokenBudget?: number;
-  /** Source that supplied the resolved context-token budget. */
-  contextWindowSource?: PluginHookContextWindowSource;
-  /** Native/configured reference window when a lower cap wins. */
-  contextWindowReferenceTokens?: number;
-  /**
-   * @deprecated Core does not populate cross-app sender ids. Channel plugins
-   * should expose channel-specific identities by augmenting `channelContext.sender`.
-   */
-  senderExternalId?: string;
-  /** Channel-owned sender/chat details. Plugins may augment the nested interfaces. */
-  channelContext?: PluginHookChannelContext;
-  /** Present only for post-policy prompt enrichment hooks that requested tool authority. */
-  toolAuthority?: PluginHookToolAuthority;
-  /**
-   * Present for before_prompt_build only. Checks this handler's result-acceptance lifetime,
-   * not tool authorization or eventual model consumption. Underlying work is not cancelled.
-   */
-  readonly hookInvocation?: Readonly<{ assertActive(): void }>;
-};
-
-export type PluginHookContextWindowSource =
-  | "model"
-  | "modelsConfig"
-  | "agentContextTokens"
-  | "default";
 
 export type PluginHookBeforeAgentReplyEvent = {
   cleanedBody: string;
@@ -925,95 +874,6 @@ type PluginHookSubagentEndedEvent = {
   error?: string;
 };
 
-export type PluginInstallTargetType = "skill" | "plugin";
-type PluginInstallRequestKind =
-  | "skill-install"
-  | "plugin-dir"
-  | "plugin-archive"
-  | "plugin-file"
-  | "plugin-npm"
-  | "plugin-git";
-export type PluginInstallSourcePathKind = "file" | "directory";
-
-type PluginInstallFinding = {
-  ruleId: string;
-  severity: "info" | "warn" | "critical";
-  file: string;
-  line: number;
-  message: string;
-};
-
-export type PluginHookBeforeInstallRequest = {
-  kind: PluginInstallRequestKind;
-  mode: "install" | "update";
-  requestedSpecifier?: string;
-};
-
-export type PluginHookBeforeInstallBuiltinScan = {
-  status: "ok" | "error";
-  scannedFiles: number;
-  critical: number;
-  warn: number;
-  info: number;
-  findings: PluginInstallFinding[];
-  error?: string;
-};
-
-type PluginHookBeforeInstallSkillInstallSpec = {
-  id?: string;
-  kind: "brew" | "node" | "go" | "uv" | "download";
-  label?: string;
-  bins?: string[];
-  os?: string[];
-  formula?: string;
-  package?: string;
-  module?: string;
-  url?: string;
-  sha256?: string;
-  archive?: string;
-  extract?: boolean;
-  stripComponents?: number;
-  targetDir?: string;
-};
-
-export type PluginHookBeforeInstallSkill = {
-  installId: string;
-  installSpec?: PluginHookBeforeInstallSkillInstallSpec;
-};
-
-export type PluginHookBeforeInstallPlugin = {
-  pluginId: string;
-  contentType: "bundle" | "package" | "file";
-  packageName?: string;
-  manifestId?: string;
-  version?: string;
-  extensions?: string[];
-};
-
-export type PluginHookBeforeInstallContext = {
-  targetType: PluginInstallTargetType;
-  requestKind: PluginInstallRequestKind;
-  origin?: string;
-};
-
-export type PluginHookBeforeInstallEvent = {
-  targetType: PluginInstallTargetType;
-  targetName: string;
-  sourcePath: string;
-  sourcePathKind: PluginInstallSourcePathKind;
-  origin?: string;
-  request: PluginHookBeforeInstallRequest;
-  builtinScan: PluginHookBeforeInstallBuiltinScan;
-  skill?: PluginHookBeforeInstallSkill;
-  plugin?: PluginHookBeforeInstallPlugin;
-};
-
-type PluginHookBeforeInstallResult = {
-  findings?: PluginInstallFinding[];
-  block?: boolean;
-  blockReason?: string;
-};
-
 // ---------------------------------------------------------------------------
 // before_agent_run — Lifecycle Gate Hook
 // ---------------------------------------------------------------------------
@@ -1046,6 +906,26 @@ export type PluginHookResolveExecEnvEvent = {
 };
 
 export type PluginHookResolveExecEnvContext = PluginHookAgentContext;
+export type {
+  PluginHookBeforeInstallBuiltinScan,
+  PluginHookBeforeInstallContext,
+  PluginHookBeforeInstallEvent,
+  PluginHookBeforeInstallPlugin,
+  PluginHookBeforeInstallRequest,
+  PluginHookBeforeInstallSkill,
+  PluginInstallSourcePathKind,
+  PluginInstallTargetType,
+} from "./hook-types.before-install.js";
+export type {
+  PluginHookSecretEnvAuthorizeContext,
+  PluginHookSecretEnvAuthorizeEvent,
+  PluginHookSecretEnvAuthorizeResult,
+} from "./hook-types.secret-env.js";
+export type {
+  PluginHookAgentContext,
+  PluginHookContextWindowSource,
+  PluginHookToolAuthority,
+} from "./hook-types.agent-context.js";
 
 export type PluginHookHandlerMap = {
   agent_turn_prepare: (
@@ -1228,6 +1108,10 @@ export type PluginHookHandlerMap = {
     event: PluginHookResolveExecEnvEvent,
     ctx: PluginHookResolveExecEnvContext,
   ) => Promise<Record<string, string> | void> | Record<string, string> | void;
+  secret_env_authorize: (
+    event: PluginHookSecretEnvAuthorizeEvent,
+    ctx: PluginHookSecretEnvAuthorizeContext,
+  ) => Promise<PluginHookSecretEnvAuthorizeResult> | PluginHookSecretEnvAuthorizeResult;
 };
 
 export type PluginHookRegistration<K extends PluginHookName = PluginHookName> = {
