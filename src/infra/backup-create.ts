@@ -672,6 +672,18 @@ export async function createBackupArchive(
                     }
                     entry.path = archiveEntryPath;
                   },
+                  // Files can vanish between readdir and lstat during the walk (transient
+                  // temp files, SQLite sidecars, concurrent cleanup); ENOENT on a single
+                  // entry means "skip, do not abort the whole archive". Any other warning
+                  // continues through tar.c's default behavior.
+                  onwarn: (code, message) => {
+                    if (code === "ENOENT") {
+                      return;
+                    }
+                    if (typeof message === "string" && message.includes("ENOENT")) {
+                      return;
+                    }
+                  },
                 },
                 [
                   ...configRemaps.keys(),
