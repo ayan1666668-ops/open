@@ -42,7 +42,7 @@ export type OpenClawStateReadRequest = {
   snapshotRoot?: string;
   command: OpenClawStateReadCommand | { type: "admit" };
 };
-export type OpenClawStateReadReply =
+export type OpenClawStateReadReply = (
   | {
       ok: true;
       type: "onboardingRecommendations.read";
@@ -75,7 +75,11 @@ export type OpenClawStateReadReply =
       sourceAdmitted?: true;
       message: string;
       error: OpenClawStateWorkerErrorPayload | undefined;
-    };
+    }
+) & {
+  /** A best-effort admission read completed without confirmed native cleanup. */
+  nativeCleanupFailure?: { error: OpenClawStateWorkerErrorPayload | undefined };
+};
 
 export type OpenClawStateReadOutcome =
   | { value: Extract<OpenClawStateReadReply, { ok: true }> }

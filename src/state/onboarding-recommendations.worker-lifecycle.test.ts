@@ -22,7 +22,6 @@ vi.mock("./openclaw-state-worker-store.js", () => ({
 vi.mock("./openclaw-state-read-worker.js", () => ({
   createOpenClawStateReadTransport: () => ({
     read: mocks.read,
-    readFailure: async () => undefined,
     validateFresh: async () => {},
     close: mocks.close,
   }),
