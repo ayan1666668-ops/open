@@ -183,6 +183,10 @@ export const ChannelDangerouslyAllowNameMatchingSchema = z.boolean().optional();
 export const ChannelSendReadReceiptsSchema = z.boolean().optional();
 
 /** Build the shared allowBots leaf without widening boolean-only channels. */
+export function buildChannelAllowBotsSchema(): z.ZodOptional<z.ZodBoolean>;
+export function buildChannelAllowBotsSchema(options: {
+  allowMentions: true;
+}): z.ZodOptional<z.ZodUnion<readonly [z.ZodBoolean, z.ZodLiteral<"mentions">]>>;
 export function buildChannelAllowBotsSchema(options?: { allowMentions?: boolean }) {
   return options?.allowMentions
     ? z.union([z.boolean(), z.literal("mentions")]).optional()
@@ -207,15 +211,42 @@ export function buildChannelExecApprovalsSchema<T extends ZodRawShape = Record<n
     .optional();
 }
 
+type StringEnumValues = readonly [string, string, ...string[]];
+
 type ChannelReactionShapeOptions = {
-  notificationModes?: readonly [string, string, ...string[]];
-  reactionLevels?: readonly [string, string, ...string[]];
+  notificationModes?: StringEnumValues;
+  reactionLevels?: StringEnumValues;
   reactionAllowlist?: boolean;
   ackReaction?: ZodTypeAny;
 };
 
+type EnumSchema<TValues extends StringEnumValues> = z.ZodEnum<{
+  [TValue in TValues[number]]: TValue;
+}>;
+
+type ChannelReactionShape<TOptions extends ChannelReactionShapeOptions> = (TOptions extends {
+  notificationModes: infer TValues extends StringEnumValues;
+}
+  ? { reactionNotifications: z.ZodOptional<EnumSchema<TValues>> }
+  : unknown) &
+  (TOptions extends { reactionLevels: infer TValues extends StringEnumValues }
+    ? { reactionLevel: z.ZodOptional<EnumSchema<TValues>> }
+    : unknown) &
+  (TOptions extends { reactionAllowlist: true }
+    ? {
+        reactionAllowlist: z.ZodOptional<
+          z.ZodArray<z.ZodUnion<readonly [z.ZodString, z.ZodNumber]>>
+        >;
+      }
+    : unknown) &
+  (TOptions extends { ackReaction: infer TSchema extends ZodTypeAny }
+    ? { ackReaction: TSchema }
+    : unknown);
+
 /** Build the repeated reaction leaves while retaining each channel's exact enum. */
-export function buildChannelReactionShape(options: ChannelReactionShapeOptions) {
+export function buildChannelReactionShape<const TOptions extends ChannelReactionShapeOptions>(
+  options: TOptions,
+): ChannelReactionShape<TOptions> {
   return {
     ...(options.notificationModes
       ? { reactionNotifications: z.enum(options.notificationModes).optional() }
@@ -227,5 +258,6 @@ export function buildChannelReactionShape(options: ChannelReactionShapeOptions) 
       : {}),
     ...(options.reactionLevels ? { reactionLevel: z.enum(options.reactionLevels).optional() } : {}),
     ...(options.ackReaction ? { ackReaction: options.ackReaction } : {}),
-  };
+    // SAFETY: each conditional property is emitted only when its matching option is present.
+  } as ChannelReactionShape<TOptions>;
 }
