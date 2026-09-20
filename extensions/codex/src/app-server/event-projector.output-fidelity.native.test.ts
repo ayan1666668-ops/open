@@ -4,6 +4,7 @@ import path from "node:path";
 import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
 import { useAutoCleanupTempDirTracker } from "openclaw/plugin-sdk/test-env";
 import { describe, expect, it, vi } from "vitest";
+import { redactCodexAppServerLinePreview } from "./client-line-preview.js";
 import {
   buildEmptyToolTelemetry,
   CodexAppServerEventProjector,
@@ -245,7 +246,9 @@ describe("native Codex tool response fidelity", () => {
             ),
           )
           .find((item) => item.type === "commandExecution" && item.id === callId),
-        "native command execution",
+        `native command execution; output=${JSON.stringify(
+          redactCodexAppServerLinePreview(output),
+        )}; stderr=${JSON.stringify(client.getStderrDiagnostic())}`,
       );
       expect(command).toMatchObject({ status: "completed", exitCode: 0, aggregatedOutput: source });
       expect(output).not.toBe(command.aggregatedOutput);
