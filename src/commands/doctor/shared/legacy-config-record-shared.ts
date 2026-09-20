@@ -66,11 +66,9 @@ export function deepCloneForMigrationProbe<T>(value: T): T {
       }
       const childIsArray = Array.isArray(entry);
       const childIsObject = !childIsArray && isPlainObject(entry);
-      const child: JsonRecord | unknown[] | unknown = childIsObject
-        ? {}
-        : childIsArray
-          ? []
-          : entry;
+      // SAFETY: entry comes from a JsonRecord, so non-container children keep
+      // their JSON leaf value and containers are recreated below.
+      const child = childIsObject ? {} : childIsArray ? [] : entry;
       if (Array.isArray(frame.target)) {
         frame.target[Number(key)] = child;
       } else {
