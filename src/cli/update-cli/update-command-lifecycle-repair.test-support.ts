@@ -136,9 +136,7 @@ export function registerRepairCustodyTests(mocks: {
       // recovery record; the finalizer's own invocation still uses the real ledger.
       const ledger = await import("../../infra/update-run-ledger.js");
       const reconcile = vi.spyOn(ledger, "reconcileAbandonedUpdateRuns").mockReturnValue([]);
-      const acknowledge = vi
-        .spyOn(ledger, "acknowledgeAbandonedUpdateRun")
-        .mockReturnValue(true);
+      const acknowledge = vi.spyOn(ledger, "acknowledgeAbandonedUpdateRun").mockReturnValue(true);
       if (phase === "convergence") {
         vi.mocked(completePostCorePluginUpdate).mockImplementationOnce(async () => {
           retainCleanup();

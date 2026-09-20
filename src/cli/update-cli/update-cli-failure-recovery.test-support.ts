@@ -107,12 +107,14 @@ export function registerFailureSelectorTests({
   readConfigFileSnapshot,
   profileStateDir,
   runUpdateFailureTriage,
+  expectSelectorTriageFailure,
 }: {
   updateCommand: typeof UpdateCommand;
   updateFinalizeCommand: typeof UpdateCommand;
   readConfigFileSnapshot: typeof ReadConfigFileSnapshot;
   profileStateDir: () => string;
   runUpdateFailureTriage: typeof RunUpdateFailureTriage;
+  expectSelectorTriageFailure: typeof import("../update-cli-invocation.test-support.js").expectSelectorTriageFailure;
 }) {
   it.each([
     { name: "update", run: updateCommand },
@@ -129,35 +131,38 @@ export function registerFailureSelectorTests({
         OPENCLAW_WORKSPACE_DIR: "relative-workspace",
       };
       await withEnvAsync(selectors, async () => {
-        await expect(run({ yes: true, json: true, restart: false })).rejects.toBe(failure);
+        const error = await run({ yes: true, json: true, restart: false }).catch(
+          (caught: unknown) => caught,
+        );
         expect(runUpdateFailureTriage).toHaveBeenCalledOnce();
         const triageCall = vi.mocked(runUpdateFailureTriage).mock.calls[0]?.[0];
-        expect(triageCall?.failure).toEqual({
-          error: failure.message,
-          ...(name === "repair"
-            ? {
-                result: {
-                  status: "error",
-                  mode: "unknown",
-                  root: cwd,
-                  durationMs: expect.any(Number),
-                  recovery: { serviceRestartSafe: false, reason: "runtime-verification-failed" },
-                  rollbackOutcome: undefined,
-                  verification: {},
-                  steps: [
-                    recoveryVerificationStep([
-                      {
-                        check: "gateway-recovery",
-                        code: "gateway-probe-failed",
-                        message:
-                          "service management skipped: non-default state dir or config path. Rerun with HOME set to the OS account home, without OPENCLAW_HOME, and with OPENCLAW_STATE_DIR and OPENCLAW_CONFIG_PATH either unset o",
-                      },
-                    ]),
-                  ],
-                },
-              }
-            : {}),
-        });
+        if (name === "update") {
+          expectSelectorTriageFailure(error, triageCall?.failure, failure, true);
+        } else {
+          expect(error).toBe(failure);
+          expect(triageCall?.failure).toEqual({
+            error: failure.message,
+            result: {
+              status: "error",
+              mode: "unknown",
+              root: cwd,
+              durationMs: expect.any(Number),
+              recovery: { serviceRestartSafe: false, reason: "runtime-verification-failed" },
+              rollbackOutcome: undefined,
+              verification: {},
+              steps: [
+                recoveryVerificationStep([
+                  {
+                    check: "gateway-recovery",
+                    code: "gateway-probe-failed",
+                    message:
+                      "service management skipped: non-default state dir or config path. Rerun with HOME set to the OS account home, without OPENCLAW_HOME, and with OPENCLAW_STATE_DIR and OPENCLAW_CONFIG_PATH either unset o",
+                  },
+                ]),
+              ],
+            },
+          });
+        }
         for (const [key, value] of Object.entries(selectors)) {
           expect(triageCall?.target.env[key], key).toBe(path.resolve(cwd, value));
           expect(process.env[key]).toBe(value);

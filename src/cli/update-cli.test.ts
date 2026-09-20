@@ -9143,6 +9143,7 @@ describe("update-cli", () => {
     readConfigFileSnapshot,
     profileStateDir,
     runUpdateFailureTriage,
+    expectSelectorTriageFailure,
   });
 
   it("does not inspect or mutate a Windows host service from an isolated install", async () => {

@@ -449,7 +449,7 @@ describe("update progress", () => {
           : {}),
       };
 
-      printResult(latest, { run: context });
+      await printResult(latest, { run: context });
       const output = log.mock.calls.flat().join("\n");
       expect(output).toContain(
         rolledBack
@@ -463,15 +463,15 @@ describe("update progress", () => {
         { env: {}, stateDir: "/isolated/update-progress" },
       );
       expect(publicReport.body).toContain(`Recorded verification: ${identity}`);
-      printResult(latest, { json: true, run: context });
-      expect(writeJson).toHaveBeenCalledExactlyOnceWith({ ...latest, run: saved });
+      await printResult(latest, { json: true, run: context });
+      expect(writeJson).toHaveBeenCalledExactlyOnceWith({ ...latest, run: saved, reportPath });
       expect(run).toEqual(saved);
     },
   );
 
   it.each([true, false, undefined])(
     "prints raw recovery observations without rewriting saved history (running=%s)",
-    (serviceRunning) => {
+    async (serviceRunning) => {
       const log = vi.spyOn(defaultRuntime, "log").mockImplementation(() => {});
       const writeJson = vi.spyOn(defaultRuntime, "writeJson").mockImplementation(() => {});
       run.status = "failed";
@@ -533,7 +533,7 @@ describe("update progress", () => {
               ],
       };
 
-      printResult(latest, { run: context });
+      await printResult(latest, { run: context });
 
       const output = log.mock.calls.flat().join("\n");
       expect(output).toContain("gateway booted");
@@ -551,13 +551,13 @@ describe("update progress", () => {
             : "not serving (service-not-running)",
         );
       }
-      printResult(latest, { json: true, run: context });
-      expect(writeJson).toHaveBeenCalledExactlyOnceWith({ ...latest, run: saved });
+      await printResult(latest, { json: true, run: context });
+      expect(writeJson).toHaveBeenCalledExactlyOnceWith({ ...latest, run: saved, reportPath });
       expect(run).toEqual(saved);
     },
   );
 
-  it("preserves a captured success receipt over stale raw recovery proof", () => {
+  it("preserves a captured success receipt over stale raw recovery proof", async () => {
     const log = vi.spyOn(defaultRuntime, "log").mockImplementation(() => {});
     const writeJson = vi.spyOn(defaultRuntime, "writeJson").mockImplementation(() => {});
     const captured: UpdateRunRecord = {
@@ -602,15 +602,15 @@ describe("update progress", () => {
         throw new Error("Captured terminal publication must not reopen history.");
       });
 
-    printResult(stale, { run: context }, { record: captured });
+    await printResult(stale, { run: context }, { record: captured });
 
     const output = log.mock.calls.flat().join("\n");
     expect(output).toContain("OpenClaw updated to 2026.9.5");
     expect(output).toContain("Recovery: verified serving 2026.9.5.");
     expect(output).not.toContain("stale-readiness-failure");
     expect(output).not.toContain("state-migration-started");
-    printResult(stale, { json: true, run: context }, { record: captured });
-    expect(writeJson).toHaveBeenCalledExactlyOnceWith({ ...stale, run: saved });
+    await printResult(stale, { json: true, run: context }, { record: captured });
+    expect(writeJson).toHaveBeenCalledExactlyOnceWith({ ...stale, run: saved, reportPath });
     expect(read).not.toHaveBeenCalled();
     expect(captured).toEqual(saved);
   });

@@ -430,7 +430,37 @@ describe("update plugin lifecycle lease boundaries", () => {
         path.join(await resolveUpdateRoot(), "package.json"),
         JSON.stringify({ name: "openclaw", version: "2026.9.4" }),
       );
-      mocks.verifyGateway.mockResolvedValue({ ok: true, score: 7, summary: "healthy" });
+      const maintenance = {
+        run: <T>(operation: () => T): T => operation(),
+        finish: vi.fn(async () => {}),
+        release: vi.fn(async () => {}),
+        releaseState: vi.fn(async () => {}),
+      };
+      mocks.maintenance.mockResolvedValueOnce(maintenance);
+      const verification = await vi.importActual<typeof gatewayVerification>(
+        "./update-command-verification.js",
+      );
+      mocks.verifyGateway.mockImplementationOnce(verification.verifyUpdatedGateway);
+      const observation = vi
+        .spyOn(await import("./update-command-readiness.js"), "observeUpdateGatewayReadiness")
+        .mockImplementationOnce(async (params) => {
+          expect(maintenance.finish).toHaveBeenCalledOnce();
+          expect(maintenance.release).toHaveBeenCalledOnce();
+          expect(listUpdateRuns()[0]?.status).toBe("running");
+          return {
+            health: {
+              healthy: true,
+              runtime: { status: "running", pid: 4242 },
+              portUsage: { port: params.gatewayPort, status: "busy", listeners: [], hints: [] },
+              staleGatewayPids: [],
+              gatewayVersion: "2026.9.4",
+              expectedVersion: params.expectedVersion,
+            },
+            readyz: true,
+            http: undefined,
+            launchAgentRecovery: null,
+          };
+        });
       const message =
         "Doctor could not enter maintenance. Error: The update parent owns Gateway activation.";
       vi.mocked(runUpdateFinalizationDoctorInFreshProcess).mockRejectedValueOnce(
@@ -461,12 +491,21 @@ describe("update plugin lifecycle lease boundaries", () => {
         expect(body).toContain("Update target: 2026.9.4");
         expect(body).toContain("Failed phase finalize-doctor: exit 23");
         expect(body).toContain(`Failing check doctor (doctor-failed): ${message}`);
-        expect(body).toContain("Recovery outcome: Gateway serving 2026.9.4; health verified");
+        expect(body).toContain("Recovery outcome: verified serving 2026.9.4");
         expect(mocks.triage).not.toHaveBeenCalled();
       } else {
         expect(mocks.triage).toHaveBeenCalledOnce();
       }
       expect(listUpdateRuns()).toHaveLength(1);
+      expect(mocks.maintenance).toHaveBeenCalledOnce();
+      expect(observation).toHaveBeenCalledOnce();
+      expect(listUpdateRuns()[0]?.verification).toMatchObject({
+        serviceRunning: true,
+        runningVersion: "2026.9.4",
+        versionMatch: true,
+        readyz: true,
+        recovery: { serviceRestartSafe: true, service: "healthy", version: "2026.9.4" },
+      });
       closeOpenClawStateDatabaseForTest();
       expect(listUpdateRuns()[0]?.steps).toContainEqual(
         expect.objectContaining({ step: "finalize:doctor", status: "failed", exitCode: 23 }),
