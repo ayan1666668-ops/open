@@ -3428,6 +3428,30 @@ describe("scripts/lib/ci-node-test-plan.mts", () => {
     expect(new Set(actual).size).toBe(actual.length);
   });
 
+  it.each(["github", "blacksmith", "hybrid"] as const)(
+    "bounds serial storage-state files per physical %s job without losing coverage",
+    (runnerBackend) => {
+      const owner = "core-runtime-infra-storage-state";
+      const expected = defaultShards.find((shard) => shard.shardName === owner)!.includePatterns!;
+      const plan = getCommittedCompactPlan("pull-request", runnerBackend);
+      const actual: string[] = [];
+      for (const job of plan) {
+        const files = job.groups
+          .filter((group) => group.shard_name.replace(/-hosted-\d+$/u, "") === owner)
+          .flatMap((group) => group.includePatterns ?? []);
+        expect(files.length, job.shardName).toBeLessThanOrEqual(64);
+        actual.push(...files);
+      }
+      expect(actual.toSorted()).toEqual(expected.toSorted());
+      expect(new Set(actual).size).toBe(actual.length);
+      expect(plan.length).toBeLessThanOrEqual(80);
+      const config = createInfraVitestConfig({});
+      expect(config.test?.fileParallelism).toBe(false);
+      expect(config.test?.isolate).toBe(true);
+      expect(config.test?.pool).toBe(diagnosticForksPool);
+    },
+  );
+
   it("preserves Gateway runner hooks while assigning database consumers to parallel forks", () => {
     const worker = createGatewayDatabaseWorkersVitestConfig({});
     const core = createGatewayCoreVitestConfig({});
