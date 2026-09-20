@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { createDeferred } from "../../../test/helpers/promise.js";
 import { createTempDirTracker } from "../../../test/helpers/temp-dir.js";
 import {
   closeOpenClawStateDatabaseAsync,
@@ -35,6 +36,7 @@ function harness() {
   vi.useFakeTimers({ toFake: ["Date"] });
   const stateDir = tempDirs.make("transcript-selection-");
   const requests: TranscriptStartRequest[] = [];
+  const started = createDeferred<TranscriptStartRequest>();
   const authorize = vi.fn<NonNullable<TranscriptSourceProvider["accessControl"]>["authorize"]>(
     async ({ source }) =>
       source.accountId === "private-account"
@@ -57,6 +59,7 @@ function harness() {
     start: async (request) => {
       requests.push(request);
       await request.onUtterance({ text: `Notes for ${request.session.sessionId}`, final: true });
+      started.resolve(request);
       return { ok: true, session: request.session };
     },
     stop,
@@ -84,7 +87,7 @@ function harness() {
         transcripts: { autoStart: [{ providerId: "capture", sessionId: "notes", accountId }] },
       },
     });
-  return { ctx, execute, start, configuredCapture, store, requests, stop, authorize };
+  return { ctx, execute, start, configuredCapture, store, requests, started, stop, authorize };
 }
 
 const collision = [
@@ -373,6 +376,7 @@ describe("transcript tool selection", () => {
       const service = h.configuredCapture("public-account");
       try {
         service.start();
+        await h.started.promise;
         await vi.waitFor(() => expect(activeSessions.has("notes")).toBe(true));
         const session = (await h.store.readSession("notes"))!;
         const read = vi.spyOn(TranscriptsStore.prototype, "readSessionEntry");
@@ -407,6 +411,7 @@ describe("transcript tool selection", () => {
       const service = h.configuredCapture("private-account");
       try {
         service.start();
+        await h.started.promise;
         await vi.waitFor(() => expect(activeSessions.has("notes")).toBe(true));
         const session = (await h.store.readSession("notes"))!;
         const selector = transcriptSessionSelector(session);
