@@ -129,7 +129,7 @@ export async function downloadClawHubPackageArchive(params: {
         )}/artifact/download`,
         token: params.token,
         timeoutMs: params.timeoutMs,
-      ...(params.signal ? { signal: params.signal } : {}),
+        ...(params.signal ? { signal: params.signal } : {}),
         fetchImpl: params.fetchImpl,
       },
       `ClawPack download for ${params.name}@${params.version}`,

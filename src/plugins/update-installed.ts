@@ -96,7 +96,7 @@ export async function updateNpmInstalledPlugins(
   if (params.dryRun) {
     return await runInstalledPluginUpdate(params);
   }
-  return await withPluginLifecycleLease({}, (lease) =>
+  return await withPluginLifecycleLease({ acquisitionSignal: params.signal }, (lease) =>
     withPluginInstallTransactions(params, () => lease.assertOwned(), runInstalledPluginUpdate),
   );
 }
@@ -544,6 +544,15 @@ async function runInstalledPluginUpdate(
       beforePersistentEffect: assertCurrent,
       ...(params.signal ? { signal: params.signal } : {}),
     });
+    if (attempt.kind === "result" && attempt.result.ok && !params.dryRun) {
+      // Keep rollback custody before cancellation or consent can reject the result.
+      recordPluginUpdateTransaction(
+        transactionState,
+        attempt.result,
+        pluginId,
+        attempt.result.pluginId,
+      );
+    }
     params.signal?.throwIfAborted();
     consentCallbacks.rethrowCallbackError();
     if (attempt.kind === "exception") {
@@ -643,7 +652,6 @@ async function runInstalledPluginUpdate(
     }
 
     const resolvedPluginId = result.pluginId;
-    recordPluginUpdateTransaction(transactionState, result, pluginId, resolvedPluginId);
     if (resolvedPluginId !== pluginId) {
       next = migratePluginConfigId(next, pluginId, resolvedPluginId);
     }

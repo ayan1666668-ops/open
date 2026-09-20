@@ -246,7 +246,10 @@ async function installPluginFromSourceDir(
     sourceDir: params.sourceDir,
     ...pickPackageInstallCommonParams(params),
   });
-  params.signal?.throwIfAborted();
+  // Published installs must reach the caller with their rollback transaction.
+  if (!bundleResult?.ok) {
+    params.signal?.throwIfAborted();
+  }
   if (bundleResult) {
     return bundleResult;
   }

@@ -99,7 +99,7 @@ export async function acquireGitSource(params: {
       params.repoDir,
       true,
     );
-  params.signal?.throwIfAborted();
+    params.signal?.throwIfAborted();
     if (checkout.code !== 0) {
       return await failure({ action: "checkout", ...checkout });
     }

@@ -501,7 +501,11 @@ export async function runPluginUpdateAttempt(params: {
       error,
     };
   }
-  throwIfAborted();
+  // A successful installer may already have published a deferred transaction.
+  // Its caller must own that result before cancellation can unwind the update.
+  if (!result.ok) {
+    throwIfAborted();
+  }
 
   let activeClawHubInstallSpec = params.effectiveSpec;
   let channelFallbackSuffix = "";
@@ -539,7 +543,9 @@ export async function runPluginUpdateAttempt(params: {
         ...(params.signal ? { signal: params.signal } : {}),
       }),
     );
-    throwIfAborted();
+    if (!result.ok) {
+      throwIfAborted();
+    }
     activeClawHubInstallSpec = params.clawhubSpecs.fallbackSpec;
   }
 

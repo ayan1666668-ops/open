@@ -246,7 +246,9 @@ async function requestClawHub(params: ClawHubRequestParams): Promise<ClawHubResp
     try {
       const response = await (params.fetchImpl ?? fetch)(url, {
         ...init,
-        signal: params.signal ? AbortSignal.any([params.signal, controller.signal]) : controller.signal,
+        signal: params.signal
+          ? AbortSignal.any([params.signal, controller.signal])
+          : controller.signal,
       });
       return { response, url, hasToken: Boolean(token), releaseDeadline };
     } catch (error) {

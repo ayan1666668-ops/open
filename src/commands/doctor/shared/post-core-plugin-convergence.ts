@@ -206,7 +206,11 @@ export async function runPostCorePluginConvergence(params: {
   signal?: AbortSignal;
 }): Promise<PostCoreConvergenceResult> {
   return await withPluginLifecycleLease(
-    { env: params.env, assertCurrent: params.beforePersistentEffect },
+    {
+      env: params.env,
+      acquisitionSignal: params.signal,
+      assertCurrent: params.beforePersistentEffect,
+    },
     (lease) =>
       runPostCorePluginConvergenceWithLease({
         ...params,

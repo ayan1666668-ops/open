@@ -196,56 +196,58 @@ async function repairMissingPluginInstalls(params: {
   signal?: AbortSignal;
 }): Promise<RepairMissingPluginInstallsResult> {
   // Baseline, awaited review, package publication, and the index write share one generation.
-  return await withPluginLifecycleLease({ env: params.env }, (lease) =>
-    withPluginInstallTransactions(
-      copyPluginInstallTransactionRequest(params, {
-        ...params,
-        signal: params.signal ? AbortSignal.any([params.signal, lease.signal]) : lease.signal,
-      }),
-      () => lease.assertOwned(),
-      async (owned, assertCurrent) => {
-        const dependencyRepairMarkers = new Map<string, string>();
-        let result: RepairMissingPluginInstallsResult | undefined;
-        let failure: unknown;
-        try {
-          result = await repairMissingPluginInstallsWithLease(
-            owned,
-            lease,
-            dependencyRepairMarkers,
-            assertCurrent,
-          );
-        } catch (error) {
-          failure = error;
-        }
-        // Markers belong to this repair only; never remove pre-existing retention.
-        const cleanupErrors: unknown[] = [];
-        for (const [pluginId, packageDir] of dependencyRepairMarkers) {
-          if (result?.repairedPluginIds?.includes(pluginId)) {
-            continue;
-          }
+  return await withPluginLifecycleLease(
+    { env: params.env, acquisitionSignal: params.signal },
+    (lease) =>
+      withPluginInstallTransactions(
+        copyPluginInstallTransactionRequest(params, {
+          ...params,
+          signal: params.signal ? AbortSignal.any([params.signal, lease.signal]) : lease.signal,
+        }),
+        () => lease.assertOwned(),
+        async (owned, assertCurrent) => {
+          const dependencyRepairMarkers = new Map<string, string>();
+          let result: RepairMissingPluginInstallsResult | undefined;
+          let failure: unknown;
           try {
-            await clearRetainedManagedNpmInstallMarker(packageDir, assertCurrent);
-          } catch (error) {
-            cleanupErrors.push(error);
-          }
-        }
-        if (!result) {
-          if (cleanupErrors.length > 0) {
-            throw new AggregateError(
-              [failure, ...cleanupErrors],
-              "Plugin dependency repair failed and its retention markers could not be cleared.",
+            result = await repairMissingPluginInstallsWithLease(
+              owned,
+              lease,
+              dependencyRepairMarkers,
+              assertCurrent,
             );
+          } catch (error) {
+            failure = error;
           }
-          throw failure;
-        }
-        result.warnings.push(
-          ...cleanupErrors.map(
-            (error) => `Failed to clear dependency repair retention marker: ${String(error)}`,
-          ),
-        );
-        return result;
-      },
-    ),
+          // Markers belong to this repair only; never remove pre-existing retention.
+          const cleanupErrors: unknown[] = [];
+          for (const [pluginId, packageDir] of dependencyRepairMarkers) {
+            if (result?.repairedPluginIds?.includes(pluginId)) {
+              continue;
+            }
+            try {
+              await clearRetainedManagedNpmInstallMarker(packageDir, assertCurrent);
+            } catch (error) {
+              cleanupErrors.push(error);
+            }
+          }
+          if (!result) {
+            if (cleanupErrors.length > 0) {
+              throw new AggregateError(
+                [failure, ...cleanupErrors],
+                "Plugin dependency repair failed and its retention markers could not be cleared.",
+              );
+            }
+            throw failure;
+          }
+          result.warnings.push(
+            ...cleanupErrors.map(
+              (error) => `Failed to clear dependency repair retention marker: ${String(error)}`,
+            ),
+          );
+          return result;
+        },
+      ),
   );
 }
 
@@ -624,6 +626,7 @@ async function repairMissingPluginInstallsWithLease(
         ...(params.signal ? { signal: params.signal } : {}),
       }),
     );
+    params.signal?.throwIfAborted();
     if (shouldReplaceBrokenOfficialInstall) {
       const installedRecord = installed.records[candidate.pluginId];
       const replacementSucceeded = installed.records !== previousRecords;
@@ -634,6 +637,7 @@ async function repairMissingPluginInstallsWithLease(
           !installPathsEqual(resolveUserPath(installedRecord.installPath, env), removalPath))
       ) {
         await params.beforePersistentEffect?.();
+        params.signal?.throwIfAborted();
         // Authority refusal is not a package-cleanup warning. Planning may
         // yield, so both owners must still hold at dispatch without another await.
         lease.assertOwned();
@@ -684,6 +688,7 @@ async function repairMissingPluginInstallsWithLease(
         await params.beforePersistentEffect();
       }
     }
+    params.signal?.throwIfAborted();
     lease.assertOwned();
     await writePersistedInstalledPluginIndexInstallRecordsWithLease(
       nextRecords,

@@ -4,13 +4,27 @@ import path from "node:path";
 import { expectDefined } from "@openclaw/normalization-core";
 import { bundledPluginRootAt } from "openclaw/plugin-sdk/test-fixtures";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import type { OpenClawConfig } from "../config/config.js";
 import type { PluginInstallRecord } from "../config/types.plugins.js";
+import {
+  installPackageDir,
+  requestDeferredPackageDirInstall,
+  resolvePackageDirInstallTransaction,
+} from "../infra/install-package-dir.js";
 import type { SpawnResult } from "../process/exec.js";
 import { withEnvAsync } from "../test-utils/env.js";
 import { resolvePluginArtifactDeclaredSurface } from "./capability-artifact.js";
 import { computeDeclaredSurfaceHash } from "./capability-summary.js";
-import { resolvePluginInstallOwnerMigrations } from "./install-transaction.js";
+import {
+  attachPluginInstallTransaction,
+  requestDeferredPluginInstall,
+  resolvePluginInstallOwnerMigrations,
+  resolvePluginInstallTransactionRequest,
+  settlePluginInstallTransactions,
+  type PluginInstallTransaction,
+} from "./install-transaction.js";
+import { withPluginLifecycleLease } from "./plugin-lifecycle-lease.js";
 import { makeTrackedTempDir } from "./test-helpers/fs-fixtures.js";
 
 const APP_ROOT = "/app";
@@ -68,6 +82,7 @@ const withClawPackageLifecycleLeaseMock = vi.fn(
     await operation(),
 );
 const tempDirs: string[] = [];
+const cancellationDirs = useAutoCleanupTempDirTracker(afterEach);
 const capabilityConsentMode = vi.hoisted(() => ({ real: false }));
 
 afterEach(() => {
@@ -886,6 +901,115 @@ describe("updateNpmInstalledPlugins", () => {
     runCommandWithTimeoutMock.mockReset();
     validatePackageExtensionEntriesForInstallMock.mockReset();
   });
+
+  it.each(
+    (["npm", "clawhub", "clawhub-fallback"] as const).flatMap((source) =>
+      [false, true].map((deferred) => ({ source, deferred })),
+    ),
+  )(
+    "retains rollback custody for a published $source update on late cancellation (deferred=$deferred)",
+    async ({ source, deferred }) => {
+      const root = cancellationDirs.make("openclaw-update-cancel-");
+      const installPath = path.join(root, "extensions", "demo");
+      const sourceDir = path.join(root, "source");
+      createInstalledPackageDir({ name: "demo", version: "1.0.0", installPath });
+      createInstalledPackageDir({ name: "demo", version: "2.0.0", installPath: sourceDir });
+      const previousManifest = fs.readFileSync(path.join(installPath, "package.json"), "utf8");
+      const config =
+        source === "npm"
+          ? createNpmInstallConfig({ pluginId: "demo", spec: "demo", installPath })
+          : createClawHubInstallConfig({ installPath });
+      const previousConfig = structuredClone(config);
+      const controller = new AbortController();
+      const reason = new Error("startup SIGTERM after publication");
+      const publishThenAbort = async (params: object) => {
+        const published = await installPackageDir(
+          requestDeferredPackageDirInstall(
+            {
+              sourceDir,
+              targetDir: installPath,
+              mode: "update",
+              timeoutMs: 1000,
+              hasDeps: false,
+              copyErrorPrefix: "copy failed",
+              depsLogMessage: "",
+              signal: controller.signal,
+            },
+            resolvePluginInstallTransactionRequest(params)?.assertOwned,
+          ),
+        );
+        expect(published.ok).toBe(true);
+        expect(fs.readFileSync(path.join(installPath, "package.json"), "utf8")).not.toBe(
+          previousManifest,
+        );
+        const transaction = expectDefined(
+          resolvePackageDirInstallTransaction(published),
+          "published update transaction",
+        );
+        controller.abort(reason);
+        const result =
+          source === "npm"
+            ? createSuccessfulNpmUpdateResult({
+                pluginId: "demo",
+                targetDir: installPath,
+                version: "2.0.0",
+              })
+            : createSuccessfulClawHubUpdateResult({
+                pluginId: "demo",
+                targetDir: installPath,
+                version: "2.0.0",
+              });
+        return attachPluginInstallTransaction(result, transaction);
+      };
+      if (source === "npm") {
+        runCommandWithTimeoutMock.mockResolvedValue(failedNpmVersionQueryResult);
+        installPluginFromNpmSpecMock.mockImplementation(publishThenAbort);
+      } else {
+        if (source === "clawhub-fallback") {
+          installPluginFromClawHubMock.mockResolvedValueOnce({
+            ok: false,
+            code: "version_not_found",
+            error: "version not found: beta",
+          });
+        }
+        installPluginFromClawHubMock.mockImplementation(publishThenAbort);
+      }
+      const transactions: PluginInstallTransaction[] = [];
+      const options: UpdateInstalledPluginParams = {
+        config,
+        pluginIds: ["demo"],
+        signal: controller.signal,
+        ...(source === "clawhub-fallback" ? { updateChannel: "beta" } : {}),
+      };
+      await withPluginLifecycleLease({}, async () => {
+        await expect(
+          updateNpmInstalledPlugins(
+            deferred ? requestDeferredPluginInstall(options, transactions) : options,
+          ),
+        ).rejects.toBe(reason);
+        if (deferred) {
+          expect(transactions).toHaveLength(1);
+          await settlePluginInstallTransactions(transactions, "rollback");
+        }
+        expect(fs.readFileSync(path.join(installPath, "package.json"), "utf8")).toBe(
+          previousManifest,
+        );
+        expect(config).toEqual(previousConfig);
+        expect(fs.readdirSync(path.join(root, "extensions", ".openclaw-install-backups"))).toEqual(
+          [],
+        );
+        expect(
+          fs
+            .readdirSync(path.join(root, "extensions"))
+            .filter(
+              (name) =>
+                name.startsWith(".openclaw-install-stage-") ||
+                name.startsWith(".openclaw-install-rollback-"),
+            ),
+        ).toEqual([]);
+      });
+    },
+  );
 
   it("propagates a managed installer ownership refusal before later updates", async () => {
     const { createManagedPluginArtifactConsentHandler } =
