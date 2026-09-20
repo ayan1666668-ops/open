@@ -25,7 +25,10 @@ import { classifySystemdUnavailableDetail } from "../../daemon/systemd-unavailab
 import { resolveControlUiLinks } from "../../gateway/control-ui-links.js";
 import { formatGatewayRestartHandoffDiagnostic } from "../../infra/restart-handoff.js";
 import { isWSLEnv } from "../../infra/wsl.js";
-import { resolvePluginVersionDriftUpdateCommand } from "../../plugins/plugin-version-drift.js";
+import {
+  resolvePluginVersionDriftRegistryLag,
+  resolvePluginVersionDriftUpdateCommand,
+} from "../../plugins/plugin-version-drift.js";
 import { defaultRuntime } from "../../runtime.js";
 import { shortenHomePath } from "../../utils.js";
 import { formatCliCommand } from "../command-format.js";
@@ -43,13 +46,7 @@ import {
   renderPortDiagnosticsForCli,
   resolvePortListeningAddresses,
 } from "./status.gather.js";
-
-function formatCliVersionLine(cli: DaemonStatus["cli"]): string | null {
-  if (!cli) {
-    return null;
-  }
-  return cli.entrypoint ? `${cli.version} (${shortenHomePath(cli.entrypoint)})` : cli.version;
-}
+import { printDaemonStatusVersions } from "./status.print.version.js";
 
 function formatConnectionLine(
   connection: NonNullable<DaemonStatus["connections"]>["established"][number],
@@ -254,27 +251,12 @@ export function printDaemonStatus(status: DaemonStatus, opts: { json: boolean; d
     spacer();
   }
 
-  const gatewayVersion = rpc?.server?.version?.trim() || status.gateway?.version?.trim();
-  const cliVersionLine = formatCliVersionLine(status.cli);
-  if (gatewayVersion) {
-    if (cliVersionLine) {
-      defaultRuntime.log(`${label("CLI version:")} ${infoText(cliVersionLine)}`);
-    }
-    defaultRuntime.log(`${label("Gateway version:")} ${infoText(gatewayVersion)}`);
-    if (status.cli?.version && status.cli.version !== gatewayVersion) {
-      defaultRuntime.error(
-        warnText(
-          `Warning: this OpenClaw command is version ${status.cli.version}, but the running Gateway is version ${gatewayVersion}.`,
-        ),
-      );
-      defaultRuntime.error(
-        warnText(
-          "Check `openclaw --version`, `which openclaw`, and `openclaw gateway status --deep`; if this mismatch is unexpected, update PATH so `openclaw` points to the version you want, or reinstall the Gateway service from that same OpenClaw install.",
-        ),
-      );
-    }
-    spacer();
-  }
+  printDaemonStatusVersions(
+    status,
+    { label, infoText, warnText },
+    installBlock ??
+      `Compare the service entrypoint with \`which openclaw\`, then reinstall the service from the install you want with \`${reinstallCommand}\`.`,
+  );
 
   const runtimeLine = formatRuntimeStatus(
     service.inspectionReason ? { ...service.runtime, detail: undefined } : service.runtime,
@@ -354,9 +336,6 @@ export function printDaemonStatus(status: DaemonStatus, opts: { json: boolean; d
           `${label("Gateway event loop:")} ${warnText(formatProbeEventLoop(rpc.eventLoop))}`,
         );
       }
-      if (rpc.authWarning) {
-        defaultRuntime.error(`${label("Probe auth:")} ${warnText(rpc.authWarning)}`);
-      }
       if (rpc.url) {
         defaultRuntime.error(`${label("Probe target:")} ${rpc.url}`);
       }
@@ -367,6 +346,9 @@ export function printDaemonStatus(status: DaemonStatus, opts: { json: boolean; d
       if (status.port?.status === "busy" && status.lastError) {
         defaultRuntime.error(`${errorText("Last gateway error:")} ${status.lastError}`);
       }
+    }
+    if (rpc.authWarning) {
+      defaultRuntime.error(`${label("Probe auth:")} ${warnText(rpc.authWarning)}`);
     }
     const capability = rpc.capability ? rpc.capability.replaceAll("_", "-") : null;
     if (capability) {
@@ -645,10 +627,15 @@ export function printDaemonStatus(status: DaemonStatus, opts: { json: boolean; d
         const sourceLabel = entry.source === "clawhub" ? "clawhub" : "npm";
         const resolvedTarget =
           entry.targetResolution?.status === "resolved"
-            ? `; npm target ${entry.targetResolution.packageName}@${entry.targetResolution.version}`
+            ? `; ${sourceLabel} target ${entry.targetResolution.packageName}@${entry.targetResolution.version}`
             : "";
+        // A registry-confirmed version is the only target an update can actually reach.
+        const expectedVersion =
+          entry.targetResolution?.status === "resolved"
+            ? entry.targetResolution.version
+            : drift.gatewayVersion;
         defaultRuntime.log(
-          `- ${warnText(entry.pluginId)}: ${entry.installedVersion} (${sourceLabel}) → expected ${drift.gatewayVersion}${resolvedTarget}`,
+          `- ${warnText(entry.pluginId)}: ${entry.installedVersion} (${sourceLabel}) → expected ${expectedVersion}${resolvedTarget}`,
         );
       }
       const repairs = drift.drifts.map((entry) => ({
@@ -659,7 +646,17 @@ export function printDaemonStatus(status: DaemonStatus, opts: { json: boolean; d
         .map(({ command }) => command)
         .filter((command): command is string => Boolean(command))
         .map((command) => formatCliCommand(command));
-      const unresolvedRepairs = repairs.filter(({ command }) => !command);
+      const unresolvedRepairs = repairs.filter(
+        ({ entry, command }) => !command && !resolvePluginVersionDriftRegistryLag(entry),
+      );
+      for (const { entry } of repairs) {
+        const registryLag = resolvePluginVersionDriftRegistryLag(entry);
+        if (registryLag) {
+          defaultRuntime.log(
+            `- ${entry.pluginId}: registry version ${registryLag.registryVersion} is already installed; no release reaches ${registryLag.expectedVersion} yet, so no update command applies.`,
+          );
+        }
+      }
       if (unresolvedRepairs.length > 0) {
         defaultRuntime.error(errorText("Plugin repair target resolution failed:"));
         for (const { entry } of unresolvedRepairs) {

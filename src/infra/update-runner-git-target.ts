@@ -9,12 +9,14 @@ import {
   type OpenClawSchemaVersions,
 } from "../state/openclaw-schema-versions.js";
 import { gitNullConfigPath } from "./git-exec.js";
-import { isBetaTag, isStableTag, type UpdateChannel } from "./update-channels.js";
+import { DEV_BRANCH, isBetaTag, isStableTag, type UpdateChannel } from "./update-channels.js";
 import { compareSemverStrings } from "./update-check.js";
 import { cleanupUpdateTemporaryDirectory } from "./update-maintenance.js";
+import { runStep } from "./update-runner-command.js";
 import { runGitCandidatePreflight } from "./update-runner-git-preflight.js";
 import type {
   CommandRunner,
+  RunStepOptions,
   UpdateRunnerOptions,
   UpdateStepResult,
 } from "./update-runner-types.js";
@@ -102,16 +104,22 @@ export async function withGitTargetInspectionRoot<T>(
     root: string;
     runCommand: CommandRunner;
     timeoutMs: number;
+    work?: { timeoutMs?: number };
     onWarning: (step: UpdateStepResult) => void;
   },
   inspect: (root: string, runCommand: CommandRunner) => Promise<T>,
 ): Promise<T> {
   const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-git-admission-"));
   const inspectionRoot = path.join(temporaryRoot, "repository.git");
-  const command = async (root: string, args: string[], allowMissing = false) => {
+  const command = async (
+    root: string,
+    args: string[],
+    allowMissing = false,
+    budget: { timeoutMs?: number } = { timeoutMs: params.timeoutMs },
+  ) => {
     const result = await params.runCommand(["git", "-C", root, ...args], {
       cwd: root,
-      timeoutMs: params.timeoutMs,
+      timeoutMs: budget.timeoutMs,
     });
     if (result.code !== 0 && !(allowMissing && result.code === 1)) {
       // Configuration can contain credentials; never include its output in errors.
@@ -120,15 +128,12 @@ export async function withGitTargetInspectionRoot<T>(
     return result.stdout;
   };
   try {
-    await command(params.root, [
-      "clone",
-      "--mirror",
-      "--shared",
-      "--template=",
-      "--",
+    await command(
       params.root,
-      inspectionRoot,
-    ]);
+      ["clone", "--mirror", "--shared", "--template=", "--", params.root, inspectionRoot],
+      false,
+      params.work ?? { timeoutMs: params.timeoutMs },
+    );
     await command(inspectionRoot, ["config", "--remove-section", "remote.origin"]);
     const config = await command(
       params.root,
@@ -308,7 +313,7 @@ async function listGitTags(
  * `origin` can be tag-less; otherwise the clone's canonical `origin`, then the
  * only declared remote. Multiple non-origin remotes need explicit tracking.
  */
-export function resolveReleaseTagRemote(
+function resolveReleaseTagRemote(
   remotes: readonly string[],
   trackedUpdateRemote: string,
 ): string | undefined {
@@ -316,6 +321,75 @@ export function resolveReleaseTagRemote(
     return trackedUpdateRemote;
   }
   return remotes.includes("origin") ? "origin" : remotes.length === 1 ? remotes[0] : undefined;
+}
+
+export async function fetchGitUpdateTarget(params: {
+  root: string;
+  channel: UpdateChannel;
+  name: string;
+  step: (name: string, argv: string[], cwd: string) => RunStepOptions;
+  workStep: (name: string, argv: string[], cwd: string) => RunStepOptions;
+  steps: UpdateStepResult[];
+}): Promise<boolean> {
+  const { root, channel, name, step: targetStep, workStep, steps } = params;
+  const fetch = await runStep(
+    workStep(
+      name,
+      ["git", "-C", root, "fetch", "--all", "--prune", "--no-tags", "--no-prune-tags"],
+      root,
+    ),
+  );
+  if (fetch.exitCode !== 0 || channel === "dev") {
+    return fetch.exitCode === 0;
+  }
+  const remote = await runStep(targetStep("git remote", ["git", "-C", root, "remote"], root));
+  if (remote.exitCode !== 0) {
+    return false;
+  }
+  const remotes = normalizeStringEntries((remote.stdoutTail ?? "").split("\n"));
+  const tracked = await runStep(
+    targetStep(
+      "git config update upstream",
+      ["git", "-C", root, "config", "--get", `branch.${DEV_BRANCH}.remote`],
+      root,
+    ),
+  );
+  if (tracked.exitCode !== 0 && tracked.exitCode !== 1) {
+    return false;
+  }
+  const tagRemote = resolveReleaseTagRemote(remotes, (tracked.stdoutTail ?? "").trim());
+  if (!tagRemote) {
+    steps.push({
+      name: "git release remote",
+      command: "git remote",
+      cwd: root,
+      durationMs: 0,
+      exitCode: 1,
+      stderrTail:
+        "Cannot determine the release remote. Set branch.main.remote to the remote that publishes releases.",
+    });
+    return false;
+  }
+  // Only the release authority may replace shared tag refs. Disable pruning
+  // even when Git config enables it, so operator-only tags survive.
+  const tags = await runStep(
+    workStep(
+      `git fetch tags ${tagRemote}`,
+      [
+        "git",
+        "-C",
+        root,
+        "fetch",
+        "--no-tags",
+        "--no-prune",
+        "--no-prune-tags",
+        tagRemote,
+        "+refs/tags/*:refs/tags/*",
+      ],
+      root,
+    ),
+  );
+  return tags.exitCode === 0;
 }
 
 export async function resolveChannelTag(

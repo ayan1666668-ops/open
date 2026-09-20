@@ -1,6 +1,8 @@
 import { EventEmitter } from "node:events";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../test/helpers/promise.js";
+import { createGatewayPortalService } from "../gateway/portals/portal-service.js";
+import { prepareTailscalePublishedOrigin } from "../gateway/tailscale-published-origin.js";
 
 const { forkMock, runExecMock } = vi.hoisted(() => ({
   forkMock: vi.fn(),
@@ -77,9 +79,136 @@ afterEach(() => {
 });
 
 describe("private Tailscale Serve claims", () => {
+  it.for([
+    { boundary: "queue", revoke: true },
+    { boundary: "queue", revoke: false },
+    { boundary: "status", revoke: true },
+    { boundary: "status", revoke: false },
+  ] as const)(
+    "checks authority after $boundary wait (revoked: $revoke)",
+    async ({ boundary, revoke }) => {
+      const readStarted = createDeferred();
+      const releaseRead = createDeferred();
+      const previousOwner = boundary === "queue" ? queueOwner({ ready: false }) : undefined;
+      const previous = previousOwner
+        ? claimTailscaleRoute("serve", 19000, 18789, vi.fn())
+        : undefined;
+      await previousOwner?.started;
+      const previousForks = forkMock.mock.calls.length;
+      if (boundary === "status") {
+        runExecMock.mockImplementation(async (_bin: string, args: string[]) => {
+          if (args[0] === "serve" && args[1] === "status") {
+            readStarted.resolve();
+            await releaseRead.promise;
+          }
+          return {
+            stdout: args[0] === "status" ? '{"BackendState":"Running"}' : legacyRoutes,
+            stderr: "",
+          };
+        });
+      }
+      queueOwner();
+      let current = true;
+      const denied = new Error("permission denied: caller authority expired");
+      const starting = claimTailscaleServePort(19001, 24443, () => {
+        if (!current) {
+          throw denied;
+        }
+      });
+      if (boundary === "status") {
+        await readStarted.promise;
+      }
+      current = !revoke;
+      releaseRead.resolve();
+      previousOwner?.owner.emit("message", { type: "ready" });
+      const settled = await starting.then(
+        (claim) => ({ claim }),
+        (error: unknown) => ({ error }),
+      );
+      try {
+        expect(forkMock).toHaveBeenCalledTimes(previousForks + (revoke ? 0 : 1));
+        if (revoke) {
+          expect(settled).toEqual({ error: denied });
+        } else {
+          expect("claim" in settled && settled.claim.isActive()).toBe(true);
+        }
+        expect(runExecMock.mock.calls.some(([bin]) => bin === "sudo")).toBe(false);
+      } finally {
+        if ("claim" in settled) {
+          await settled.claim.stop();
+        }
+        await (await previous)?.stop();
+      }
+    },
+  );
+
+  it.each(["caller", "gateway", "service"] as const)(
+    "does not create a portal route after %s authority closes during status discovery",
+    async (owner) => {
+      const readStarted = createDeferred();
+      const releaseRead = createDeferred();
+      runExecMock.mockImplementation(async (_bin: string, args: string[]) => {
+        if (args[0] === "serve" && args[1] === "status") {
+          readStarted.resolve();
+          await releaseRead.promise;
+        }
+        return {
+          stdout: args[0] === "status" ? '{"BackendState":"Running"}' : legacyRoutes,
+          stderr: "",
+        };
+      });
+      queueOwner();
+      const withdraw = prepareTailscalePublishedOrigin({
+        origin: "https://fixture.tailnet.ts.net",
+        mode: "serve",
+      });
+      const httpServers: import("node:http").Server[] = [];
+      const service = createGatewayPortalService({
+        managedTailscale: true,
+        httpBindHosts: ["127.0.0.1"],
+        httpServers,
+      });
+      let current = true;
+      const releaseTarget = vi.fn();
+      const opening = service.open({
+        targetPort: 3000,
+        assertCurrent: () => {
+          if (!current) {
+            throw new Error("caller authority expired");
+          }
+        },
+        onClose: releaseTarget,
+      });
+      const rejected = expect(opening).rejects.toThrow();
+      await readStarted.promise;
+      const listeners = [...httpServers];
+      let closing: Promise<void> | undefined;
+      if (owner === "caller") {
+        current = false;
+      } else if (owner === "gateway") {
+        withdraw();
+      } else {
+        closing = service.closeAll();
+      }
+      releaseRead.resolve();
+      try {
+        await rejected;
+        await closing;
+        expect(forkMock).not.toHaveBeenCalled();
+        expect(service.list()).toEqual([]);
+        expect(httpServers).toEqual([]);
+        expect(listeners.every((server) => !server.listening)).toBe(true);
+        expect(releaseTarget).toHaveBeenCalledOnce();
+      } finally {
+        withdraw();
+        await service.closeAll();
+      }
+    },
+  );
+
   it("claims an explicit private port without adopting even a matching legacy backend", async () => {
     const { owner } = queueOwner();
-    const claim = await claimTailscaleServePort(18789, 24443);
+    const claim = await claimTailscaleServePort(18789, 24443, () => {});
 
     expect(forkMock.mock.calls[0]?.[1]).toEqual([
       "--openclaw-tailscale-route-owner",
@@ -107,27 +236,27 @@ describe("private Tailscale Serve claims", () => {
   it.each([0, -1, 65536, 1.5, Number.NaN, Number.POSITIVE_INFINITY])(
     "rejects invalid HTTPS port %s before daemon access",
     async (port) => {
-      await expect(claimTailscaleServePort(18789, port)).rejects.toThrow(/httpsPort/);
+      await expect(claimTailscaleServePort(18789, port, () => {})).rejects.toThrow(/httpsPort/);
       expect(runExecMock).not.toHaveBeenCalled();
       expect(forkMock).not.toHaveBeenCalled();
     },
   );
 
   it.each([0, -1, 65536, 1.5, Number.NaN])("rejects invalid backend port %s", async (port) => {
-    await expect(claimTailscaleServePort(port, 24443)).rejects.toThrow(/target/);
+    await expect(claimTailscaleServePort(port, 24443, () => {})).rejects.toThrow(/target/);
     expect(runExecMock).not.toHaveBeenCalled();
     expect(forkMock).not.toHaveBeenCalled();
   });
 
   it.each([1, 65535])("accepts bounded HTTPS port %s", async (port) => {
     queueOwner();
-    const claim = await claimTailscaleServePort(18789, port);
+    const claim = await claimTailscaleServePort(18789, port, () => {});
     await claim.stop();
   });
 
   it("withdraws activity when the owned worker exits unexpectedly", async () => {
     const { owner } = queueOwner();
-    const claim = await claimTailscaleServePort(18789, 24443);
+    const claim = await claimTailscaleServePort(18789, 24443, () => {});
     owner.emit("exit", 1, null);
     await claim.exited;
     expect(claim.isActive()).toBe(false);
@@ -136,7 +265,7 @@ describe("private Tailscale Serve claims", () => {
   it("keeps explicit private arguments and operator diagnostics on permission fallback", async () => {
     queueOwner({ failure: "permission denied" });
     queueOwner({ failure: "sudo: a password is required" });
-    await expect(claimTailscaleServePort(18789, 24443)).rejects.toThrow(
+    await expect(claimTailscaleServePort(18789, 24443, () => {})).rejects.toThrow(
       /Tailscale serve needs elevated access[\s\S]*sudo tailscale set --operator=\$USER/,
     );
     expect(forkMock.mock.calls[1]?.[1]).toEqual([
@@ -151,8 +280,8 @@ describe("private Tailscale Serve claims", () => {
   it("reports an occupied port without retrying or clearing it, then allows the next claim", async () => {
     queueOwner({ failure: "listener already exists for port 18790" });
     queueOwner();
-    const failure = claimTailscaleServePort(18789, 18790);
-    const next = claimTailscaleServePort(18789, 24443);
+    const failure = claimTailscaleServePort(18789, 18790, () => {});
+    const next = claimTailscaleServePort(18789, 24443, () => {});
     await expect(failure).rejects.toThrow(/ownership OpenClaw cannot prove; it was not modified/);
     const claim = await next;
     await claim.stop();
@@ -166,7 +295,7 @@ describe("private Tailscale Serve claims", () => {
       const first = queueOwner({ ready: false });
       const second = queueOwner({ ready: false });
       const gateway = () => claimTailscaleRoute("serve", 19000, 18789, vi.fn());
-      const portal = () => claimTailscaleServePort(19001, 24443);
+      const portal = () => claimTailscaleServePort(19001, 24443, () => {});
       const firstClaim = order === "gateway-first" ? gateway() : portal();
       const secondClaim = order === "gateway-first" ? portal() : gateway();
       await first.started;
@@ -185,7 +314,7 @@ describe("private Tailscale Serve claims", () => {
   it("waits for an owned stop to finish before starting another claim", async () => {
     const first = queueOwner({ stop: false });
     queueOwner();
-    const claimA = await claimTailscaleServePort(19000, 24443);
+    const claimA = await claimTailscaleServePort(19000, 24443, () => {});
     const stopping = claimA.stop();
     const starting = claimTailscaleRoute("serve", 19001, 18789, vi.fn());
     await first.stopped;
@@ -200,7 +329,7 @@ describe("private Tailscale Serve claims", () => {
     const first = queueOwner();
     const second = queueOwner({ ready: false });
     const claimA = await claimTailscaleRoute("serve", 19000, 18789, vi.fn());
-    const starting = claimTailscaleServePort(19001, 24443);
+    const starting = claimTailscaleServePort(19001, 24443, () => {});
     await second.started;
     const stopping = claimA.stop();
     await Promise.resolve();

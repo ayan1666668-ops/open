@@ -445,11 +445,18 @@ export function createGatewayPortalService(params: {
                 if (httpsPort === Number(gatewayUrl.port || 443)) {
                   throw new Error("Portal HTTPS port conflicts with the Gateway origin");
                 }
-                input.assertCurrent?.();
-                if (closed || managed.signal.aborted) {
-                  throw new Error("Private portal ingress closed during startup");
-                }
-                claim = await claimTailscaleServePort(portal.listenPort, httpsPort);
+                const assertServeCurrent = () => {
+                  input.assertCurrent?.();
+                  if (closed || managed.signal.aborted) {
+                    throw new Error("Private portal ingress closed during startup");
+                  }
+                };
+                assertServeCurrent();
+                claim = await claimTailscaleServePort(
+                  portal.listenPort,
+                  httpsPort,
+                  assertServeCurrent,
+                );
                 if (!claim.isActive() || managed.signal.aborted) {
                   throw new Error("Private portal ingress lost during startup");
                 }

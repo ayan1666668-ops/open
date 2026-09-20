@@ -267,6 +267,7 @@ describe("managed private Serve portal ingress", () => {
       expect(claimTailscaleServePort).toHaveBeenCalledExactlyOnceWith(
         portal.listenPort,
         portal.listenPort,
+        expect.any(Function),
       );
       expect(httpServers[0]?.address()).toMatchObject({ address: "127.0.0.1" });
       expect(portal.listenPort).not.toBe(443);

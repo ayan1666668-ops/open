@@ -375,6 +375,7 @@ export async function claimTailscaleRoute(
 export async function claimTailscaleServePort(
   target: number,
   httpsPort: number,
+  assertCurrent: () => void,
 ): Promise<TailscaleRouteClaim> {
   for (const [name, port] of [
     ["target", target],
@@ -385,25 +386,44 @@ export async function claimTailscaleServePort(
     }
   }
   return serializeTailscaleRouteOperation(() =>
-    claimTailscaleRouteOwned({ mode: "serve", target, httpsPort, info: () => undefined }),
+    claimTailscaleRouteOwned({
+      mode: "serve",
+      target,
+      httpsPort,
+      assertCurrent,
+      info: () => undefined,
+    }),
   );
 }
 
 // Startup failure cleanup stays inside the queued operation. Only a returned
 // claim's stop reenters the queue, so cleanup cannot deadlock its own startup.
 async function claimTailscaleRouteOwned(
-  params: { target: number; info: (message: string) => void } & (
+  params: { target: number; info: (message: string) => void; assertCurrent?: () => void } & (
     | { mode: "serve" | "funnel"; gatewayPort: number; httpsPort?: never }
     | { mode: "serve"; httpsPort: number; gatewayPort?: never }
   ),
 ): Promise<TailscaleRouteClaim> {
   const { mode, target, info } = params;
+  let authorityDenied = false;
+  const assertCurrent = () => {
+    try {
+      params.assertCurrent?.();
+    } catch (error) {
+      // An owner denial must never be retried as a local CLI permission failure.
+      authorityDenied = true;
+      throw error;
+    }
+  };
+  assertCurrent();
   const tailscaleBin = await getTailscaleBinary();
   let adopted = false;
   const start = async (bin: string, prefix: string[] = []) => {
+    assertCurrent();
     const exec = (args: string[]) =>
       runExec(bin, [...prefix, ...args], { timeoutMs: 5000, maxBuffer: 400_000 });
     await waitForTailscaleBackendReady({ bin, prefix, info });
+    assertCurrent();
     const { stdout } = await exec(["serve", "status", "--json"]);
     const routes =
       params.gatewayPort === undefined
@@ -415,6 +435,7 @@ async function claimTailscaleRouteOwned(
       await exec(["serve", "--yes", "--https=443", "--set-path=/", "off"]);
       adopted = true;
     }
+    assertCurrent();
     return startTailscaleRouteOwner(
       [
         bin,
@@ -432,12 +453,15 @@ async function claimTailscaleRouteOwned(
   try {
     claim = await start(tailscaleBin);
   } catch (error) {
-    if (!isPermissionDeniedError(error)) {
+    if (authorityDenied || !isPermissionDeniedError(error)) {
       throw error;
     }
     try {
       claim = await start("sudo", ["-n", tailscaleBin]);
     } catch (sudoError) {
+      if (authorityDenied) {
+        throw sudoError;
+      }
       const { stderr, message } = extractExecErrorText(sudoError);
       const detail = stderr.trim() || message.trim();
       if (!SUDO_NONINTERACTIVE_AUTH_ERROR.test(detail)) {
