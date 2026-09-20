@@ -52,12 +52,18 @@ const coreVersion = "2026.9.5";
 function createDriftedInstalls({
   hostVersion = coreVersion,
   installedVersion = oldVersion,
+  dependencies,
   packages = [
     ["discord", "@openclaw/discord"],
     ["exa", "@openclaw/exa-plugin"],
     ["community", "@example/community"],
   ],
-}: { hostVersion?: string; installedVersion?: string; packages?: [string, string][] } = {}) {
+}: {
+  hostVersion?: string;
+  installedVersion?: string;
+  dependencies?: Record<string, string>;
+  packages?: [string, string][];
+} = {}) {
   const stateDir = tempDirs.make("openclaw-doctor-plugin-version-drift-");
   const env = {
     ...testEnv,
@@ -73,6 +79,7 @@ function createDriftedInstalls({
       JSON.stringify({
         name: packageName,
         version: installedVersion,
+        dependencies,
         openclaw: { extensions: ["./index.js"] },
       }),
     );
@@ -106,6 +113,7 @@ function createDriftedInstalls({
         rootDir: record.installPath,
         packageName: record.resolvedName,
         packageVersion: installedVersion,
+        packageDependencies: dependencies,
       })),
     }),
   );
@@ -219,6 +227,37 @@ describe("Doctor official plugin version repair", () => {
         }
       },
     );
+  });
+
+  it("reinstalls a newer official pin with missing dependencies during drift repair", async () => {
+    const { cfg, env, records } = createDriftedInstalls({
+      installedVersion: "2026.9.6",
+      dependencies: { "required-runtime": "1.0.0" },
+      packages: [["discord", "@openclaw/discord"]],
+    });
+
+    const result = await repairMissingConfiguredPluginInstalls({
+      cfg,
+      env,
+      repairVersionDrift: true,
+      baselineRecords: records,
+    });
+
+    expect(mocks.installPluginFromNpmSpec.mock.calls.map(([request]) => request.spec)).toEqual([
+      "@openclaw/discord@2026.9.6",
+    ]);
+    expect(result.records.discord).toMatchObject({
+      spec: "@openclaw/discord@2026.9.6",
+      version: "2026.9.6",
+      resolvedVersion: "2026.9.6",
+      resolvedSpec: "@openclaw/discord@2026.9.6",
+    });
+    expect(result.changes).toEqual([
+      'Repaired missing dependencies for installed plugin "discord".',
+      "If the Gateway is not restarted by Doctor, run openclaw gateway restart to load the updated plugins.",
+    ]);
+    expect(result.warnings).toEqual([]);
+    expect(readPersistedInstalledPluginIndexInstallRecords({ env })).toEqual(result.records);
   });
 
   it.each([coreVersion, "2026.9.5-beta.2"])(
