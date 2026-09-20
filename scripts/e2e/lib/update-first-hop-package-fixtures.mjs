@@ -63,7 +63,6 @@ export function markFutureUpdateFixture(packageRoot, sequence = 0) {
     throw new Error("future fixture sequence must be an integer from 0 to 9");
   }
   const version = FUTURE_FIXTURE_VERSION.replace(/0$/, String(sequence));
-  removeLegacyUpdateCompatChunks(packageRoot);
   const paths = resolveFixturePaths(packageRoot);
   const packageJson = readJson(paths.packageJson);
   const buildInfo = readJson(paths.buildInfo);

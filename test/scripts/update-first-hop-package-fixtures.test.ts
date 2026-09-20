@@ -18,7 +18,7 @@ function writeJson(filePath: string, value: unknown) {
   fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`);
 }
 
-function makePackageFixture() {
+function makePackageFixture(options: { compatibilityChunks?: boolean } = {}) {
   const root = tempDirs.make("openclaw-first-hop-package-");
   writeJson(path.join(root, "package.json"), {
     name: "openclaw",
@@ -31,14 +31,15 @@ function makePackageFixture() {
     builtAt: "2026-09-02T00:00:00.000Z",
     buildId: "old-build",
   });
-  const inventory = [
-    "dist/build-info.json",
-    ...LEGACY_UPDATE_COMPAT_CHUNKS.map((name) => `dist/${name}`),
-    "dist/index.js",
-  ];
+  const compatibilityChunks = options.compatibilityChunks
+    ? LEGACY_UPDATE_COMPAT_CHUNKS.map((name) => `dist/${name}`)
+    : [];
+  const inventory = ["dist/build-info.json", ...compatibilityChunks, "dist/index.js"];
   writeJson(path.join(root, "dist", "postinstall-inventory.json"), inventory);
-  for (const name of LEGACY_UPDATE_COMPAT_CHUNKS) {
-    fs.writeFileSync(path.join(root, "dist", name), "export function resolveNodeRunner() {}\n");
+  if (options.compatibilityChunks) {
+    for (const name of LEGACY_UPDATE_COMPAT_CHUNKS) {
+      fs.writeFileSync(path.join(root, "dist", name), "export function resolveNodeRunner() {}\n");
+    }
   }
   fs.writeFileSync(path.join(root, "dist", "index.js"), "export {};\n");
   return root;
@@ -46,7 +47,7 @@ function makePackageFixture() {
 
 describe("first-hop package fixtures", () => {
   it("removes only the declared legacy compatibility inputs", () => {
-    const root = makePackageFixture();
+    const root = makePackageFixture({ compatibilityChunks: true });
     removeLegacyUpdateCompatChunks(root);
 
     const inventory = JSON.parse(
@@ -59,7 +60,7 @@ describe("first-hop package fixtures", () => {
     expect(fs.readFileSync(path.join(root, "dist", "index.js"), "utf8")).toBe("export {};\n");
   });
 
-  it("marks a distinct future package after the compatibility window closes", () => {
+  it("marks a distinct future package without requiring compatibility chunks", () => {
     const root = makePackageFixture();
     markFutureUpdateFixture(root);
 

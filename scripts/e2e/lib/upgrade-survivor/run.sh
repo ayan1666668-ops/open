@@ -72,7 +72,7 @@ BASELINE_RAW="${OPENCLAW_UPGRADE_SURVIVOR_BASELINE:?missing OPENCLAW_UPGRADE_SUR
 CANDIDATE_KIND="${OPENCLAW_UPGRADE_SURVIVOR_CANDIDATE_KIND:-tarball}"
 CANDIDATE_SPEC="${OPENCLAW_UPGRADE_SURVIVOR_CANDIDATE_SPEC:-${OPENCLAW_CURRENT_PACKAGE_TGZ:-}}"
 UPDATE_RESTART_MODE="${OPENCLAW_UPGRADE_SURVIVOR_UPDATE_RESTART_MODE:-manual}"
-OPENCLAW_UPGRADE_SURVIVOR_UPDATE_CHANNEL="${OPENCLAW_UPGRADE_SURVIVOR_UPDATE_CHANNEL:-extended-stable}"
+OPENCLAW_UPGRADE_SURVIVOR_UPDATE_CHANNEL="${OPENCLAW_UPGRADE_SURVIVOR_UPDATE_CHANNEL:-stable}"
 if [ "$SCENARIO" = "prerelease-plugin-registry" ] ||
   { [ "$UPDATE_RESTART_MODE" = "auto-auth" ] &&
     [ -n "${OPENCLAW_PREPUBLISH_PLUGIN_REGISTRY_DIR:-}" ] &&
@@ -494,6 +494,11 @@ configure_plugin_registry() {
   local tarball="$fixture_root/openclaw-brave-plugin-${candidate_version}.tgz"
   local registry_args=()
 
+  if [ "$OPENCLAW_UPGRADE_SURVIVOR_UPDATE_CHANNEL" = "extended-stable" ] &&
+    [ "$CANDIDATE_KIND" = "tarball" ]; then
+    registry_args+=("openclaw" "$candidate_version" "$CANDIDATE_SPEC")
+  fi
+
   if configured_plugin_installs_enabled; then
     mkdir -p "$package_dir"
     FIXTURE_PACKAGE_DIR="$package_dir" FIXTURE_PACKAGE_VERSION="$candidate_version" node <<'NODE'
@@ -558,7 +563,8 @@ NODE
     [ -n "${OPENCLAW_PREPUBLISH_PLUGIN_REGISTRY_DIR:-}" ] || return 0
   fi
 
-  openclaw_prepublish_plugin_registry_start \
+  OPENCLAW_PREPUBLISH_PLUGIN_REGISTRY_DIST_TAGS="${OPENCLAW_UPGRADE_SURVIVOR_UPDATE_CHANNEL}=$candidate_version" \
+    openclaw_prepublish_plugin_registry_start \
     "${OPENCLAW_PREPUBLISH_PLUGIN_REGISTRY_DIR:-}" \
     "${OPENCLAW_DOCKER_E2E_SELECTED_SHA:-}" \
     "$candidate_version" \
