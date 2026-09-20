@@ -12,15 +12,6 @@ type LeaseOperations = Pick<
   "deliveryQueue.claimPlatformSend" | "deliveryQueue.renewPlatformSendLease"
 >;
 
-export function isDeliveryQueuePlatformLeaseCommand(command: {
-  type: string;
-}): command is { type: keyof LeaseOperations } {
-  return (
-    command.type === "deliveryQueue.claimPlatformSend" ||
-    command.type === "deliveryQueue.renewPlatformSendLease"
-  );
-}
-
 export function executeDeliveryQueuePlatformLeaseCommand(
   command: SqliteWorkerCommand<LeaseOperations>,
   options: { database: OpenClawStateDatabase; env: NodeJS.ProcessEnv },

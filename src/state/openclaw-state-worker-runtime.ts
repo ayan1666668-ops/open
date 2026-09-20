@@ -40,16 +40,8 @@ import {
 } from "../gateway/managed-image-record-store.kernel.js";
 import { registerSessionGroupInDatabase } from "../gateway/session-group-registration.kernel.js";
 import { readDeferredPluginMigrations } from "../infra/deferred-plugin-migrations.js";
-import {
-  countFailedDeliveryQueueEntriesInDatabase,
-  pruneExpiredDeliveryQueueTombstonesInDatabase,
-} from "../infra/delivery-queue-sqlite.kernel.js";
+import * as deliveryQueue from "../infra/delivery-queue.worker.js";
 import * as deviceAuth from "../infra/device-auth-store.kernel.js";
-import { executeDeliveryQueueAck } from "../infra/outbound/delivery-queue-ack.worker.js";
-import { executeDeliveryQueueEnqueue } from "../infra/outbound/delivery-queue-enqueue.worker.js";
-import { loadDeliveryQueueMediaRetentionSnapshotInDatabase } from "../infra/outbound/delivery-queue-media-staging.kernel.js";
-import { executePendingDeliveryFailure } from "../infra/outbound/delivery-queue-pending-failure.worker.js";
-import * as deliveryQueueLease from "../infra/outbound/delivery-queue-platform-lease.worker.js";
 import { executePromotionCommand } from "../infra/promotions-feed.worker.js";
 import {
   readApnsRegistrationFromDatabase,
@@ -468,15 +460,6 @@ export function executeSharedStateCommand(
   if (command.type === "cron.save" || command.type === "cron.saveChanges") {
     return executeCronStoreSaveCommand(command, database);
   }
-  if (command.type === "deliveryQueue.countFailed") {
-    return countFailedDeliveryQueueEntriesInDatabase(database);
-  }
-  if (command.type === "deliveryQueue.pruneTombstones") {
-    return pruneExpiredDeliveryQueueTombstonesInDatabase(database);
-  }
-  if (command.type === "deliveryQueue.mediaRetentionSnapshot") {
-    return loadDeliveryQueueMediaRetentionSnapshotInDatabase(database, command.input);
-  }
   if (isSessionDeliveryCommand(command)) {
     return executeSessionDeliveryCommand(command, database);
   }
@@ -488,20 +471,11 @@ export function executeSharedStateCommand(
   if (command.type === "sessionGroups.register") {
     return registerSessionGroupInDatabase(database, command.input.name, writeOptions.env);
   }
-  if (deliveryQueueLease.isDeliveryQueuePlatformLeaseCommand(command)) {
-    return deliveryQueueLease.executeDeliveryQueuePlatformLeaseCommand(command, writeOptions);
-  }
-  if (command.type === "deliveryQueue.ack") {
-    return executeDeliveryQueueAck(command.input, writeOptions);
-  }
-  if (command.type === "deliveryQueue.failPending") {
-    return executePendingDeliveryFailure(command.input, writeOptions);
+  if (deliveryQueue.isDeliveryQueueCommand(command)) {
+    return deliveryQueue.executeDeliveryQueueCommand(command, writeOptions);
   }
   if (command.type === "skillUploads.commit") {
     return commitSkillUploadInDatabase(command.input, writeOptions);
-  }
-  if (command.type === "deliveryQueue.enqueue") {
-    return executeDeliveryQueueEnqueue(command.input, writeOptions);
   }
   if (
     command.type === "deviceAuth.store" ||
