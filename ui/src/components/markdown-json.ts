@@ -1,7 +1,10 @@
 import { createScanner, parseTree, type Node, type ParseError } from "jsonc-parser";
 import { t } from "../i18n/index.ts";
+import { registerCodeBlocksEnglish } from "../i18n/locales/en-code-blocks.ts";
 import { MARKDOWN_PARSE_LIMIT } from "./markdown-render-options.ts";
 import { escapeMarkdownHtml } from "./markdown-text.ts";
+
+registerCodeBlocksEnglish();
 
 // Keep the existing auto-JSON budget; bound recursive parser depth and generated DOM too.
 const MAX_JSON_CHARS = 20_000;

@@ -14,6 +14,7 @@ import typescript from "highlight.js/lib/languages/typescript";
 import xml from "highlight.js/lib/languages/xml";
 import yaml from "highlight.js/lib/languages/yaml";
 import { t } from "../i18n/index.ts";
+import { registerCodeBlocksEnglish } from "../i18n/locales/en-code-blocks.ts";
 import { copyToClipboard } from "../lib/clipboard.ts";
 import {
   parseMarkdownJson,
@@ -23,6 +24,8 @@ import {
 } from "./markdown-json.ts";
 import type { MarkdownRenderEnv } from "./markdown-render-options.ts";
 import { escapeMarkdownHtml, isMarkdownBlockArtText } from "./markdown-text.ts";
+
+registerCodeBlocksEnglish();
 
 const blockArtCopyPayloadPrefix = "openclaw:block-art-code:";
 const blockArtCodeBlockCopyPayloadEncoding = "block-art-json";
