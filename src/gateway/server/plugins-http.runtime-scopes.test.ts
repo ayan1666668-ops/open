@@ -18,7 +18,7 @@ import { ensureProfileForEmail, linkEmail, setUserProfileRole } from "../../stat
 import { withOpenClawTestState } from "../../test-utils/openclaw-test-state.js";
 import { setControlUiPluginAuthCookie } from "../control-ui-plugin-auth-cookie.js";
 import { createTestApprovalManager } from "../exec-approval-manager.test-support.js";
-import { authorizeControlUiPluginCookieRequest } from "../http-auth-utils.js";
+import { authorizeControlUiPluginCookieRequest } from "../http-auth-plugin-cookie.js";
 import type { AuthorizedGatewayHttpRequest } from "../http-utils.js";
 import { authorizeOperatorScopesForMethod, CLI_DEFAULT_OPERATOR_SCOPES } from "../method-scopes.js";
 import { invalidateOperatorRolePolicy } from "../operator-role-policy.js";

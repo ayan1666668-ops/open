@@ -11,8 +11,6 @@ import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { verifyDeviceToken } from "../infra/device-pairing-tokens.js";
 import { listDevicePairing } from "../infra/device-pairing.js";
 import { verifyPairingToken } from "../infra/pairing-token.js";
-import { roleScopesAllow } from "../shared/operator-scope-compat.js";
-import { getUserProfileListItem } from "../state/user-profiles.js";
 import type { AuthRateLimiter } from "./auth-rate-limit.js";
 import {
   AUTH_RATE_LIMIT_SCOPE_DEVICE_TOKEN,
@@ -25,17 +23,18 @@ import {
   type ResolvedGatewayAuth,
 } from "./auth.js";
 import type { ControlUiPluginFrameGrantAck } from "./control-ui-contract.js";
-import {
-  resolveControlUiPluginAuthCookieGrants,
-  setControlUiPluginAuthCookie,
-} from "./control-ui-plugin-auth-cookie.js";
+import { setControlUiPluginAuthCookie } from "./control-ui-plugin-auth-cookie.js";
 import {
   listControlUiPluginTabAuthGrants,
   type ControlUiPluginTabAuthGrant,
 } from "./control-ui-plugin-tabs.js";
 import {
+  authorizeControlUiPluginCookieRequest,
+  bindControlUiPluginCookieRequestAuthority,
+} from "./http-auth-plugin-cookie.js";
+import {
+  applyHttpOperatorRoleScopeCeiling,
   resolveAuthenticatedHttpUserProfile,
-  resolveHttpProfile,
   usesSharedSecretGatewayMethod,
 } from "./http-auth-user-profile.js";
 import {
@@ -143,18 +142,6 @@ export function resolveHttpBrowserOriginPolicy(
 
 function usesSharedSecretHttpAuth(auth: SharedSecretGatewayAuth | undefined): boolean {
   return auth?.mode === "token" || auth?.mode === "password";
-}
-
-export function applyHttpOperatorRoleScopeCeiling<Scope extends string>(
-  scopes: Scope[],
-  auth: Pick<AuthorizedGatewayHttpRequest, "operatorRolePolicy"> | undefined,
-): Scope[] {
-  const allowedScopes = auth?.operatorRolePolicy?.scopes;
-  return allowedScopes
-    ? scopes.filter((scope) =>
-        roleScopesAllow({ role: "operator", requestedScopes: [scope], allowedScopes }),
-      )
-    : scopes;
 }
 
 function shouldTrustDeclaredHttpOperatorScopes(
@@ -467,59 +454,6 @@ export function setControlUiPluginAuthCookieForRequest(
   return [];
 }
 
-export function authorizeControlUiPluginCookieRequest(
-  req: IncomingMessage,
-  params: { requestPath: string; authGeneration: string | undefined },
-): {
-  requestAuth: AuthorizedGatewayHttpRequest;
-  operatorScopes: string[];
-} | null {
-  // WebSocket upgrades bypass this HTTP-only handoff and use
-  // checkGatewayHttpRequestAuth directly in attachGatewayUpgradeHandler.
-  if (req.method !== "GET" && req.method !== "HEAD") {
-    return null;
-  }
-  // Native plugins and the UI they serve share the Gateway's trusted in-process
-  // boundary. Cross-site sandbox descendants need an ambient cookie, so this
-  // handoff is read-only; mutations stay on explicit Gateway auth surfaces.
-  const grants = resolveControlUiPluginAuthCookieGrants(req, {
-    requestPath: params.requestPath,
-    generation: params.authGeneration,
-  });
-  if (grants.length === 0) {
-    return null;
-  }
-  const cfg = getRuntimeConfig();
-  let authenticatedProfile: AuthenticatedHttpUserProfile = {};
-  const profileId = grants[0]?.profileId;
-  if (grants.some((grant) => grant.profileId !== profileId) || (cfg.gateway?.roles && !profileId)) {
-    return null;
-  }
-  // A signed viewer identity also narrows session sharing when named roles are disabled.
-  // Only genuinely unbound legacy grants retain the anonymous shared-secret behavior.
-  if (profileId) {
-    try {
-      const profile = getUserProfileListItem(profileId);
-      authenticatedProfile = resolveHttpProfile(profile.id, profile.updatedAt, cfg);
-    } catch {
-      return null;
-    }
-  }
-  for (const grant of grants) {
-    grant.scopes = applyHttpOperatorRoleScopeCeiling(grant.scopes, authenticatedProfile);
-  }
-  return {
-    requestAuth: {
-      trustDeclaredOperatorScopes: false,
-      controlUiPluginGrants: grants,
-      ...authenticatedProfile,
-    },
-    // Route dispatch selects the candidate that owns the first matched gateway
-    // route. Do not union scopes before that owner boundary is known.
-    operatorScopes: [],
-  };
-}
-
 export async function authorizePluginGatewayHttpRequestOrReply(
   params: GatewayHttpRequestAuthParams & {
     getResolvedAuth?: () => ResolvedGatewayAuth;
@@ -539,6 +473,7 @@ export async function authorizePluginGatewayHttpRequestOrReply(
     authGeneration,
   });
   if (cookieAuth) {
+    bindControlUiPluginCookieRequestAuthority(cookieAuth, params);
     return cookieAuth;
   }
   const requestAuth = await authorizeGatewayHttpRequestWithOrReply(

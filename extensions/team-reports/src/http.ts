@@ -124,12 +124,14 @@ function visiblePeople(configured: Person[], recentReports: ReportPerson[]): Per
 export function createTeamReportsHttpHandler(options: TeamReportsHttpOptions) {
   return async (req: IncomingMessage, res: ServerResponse): Promise<boolean> => {
     const nonce = randomBytes(16).toString("base64url");
-    const send = (
+    const send = async (
       status: number,
       contentType: string,
       body: string | Buffer,
       headers: Record<string, string> = {},
     ) => {
+      // Discovery and stored-report reads can outlive the admitted browser grant.
+      await getPluginRuntimeGatewayRequestScope()?.revalidate?.();
       res.writeHead(status, {
         "Content-Type": typeof body === "string" ? `${contentType}; charset=utf-8` : contentType,
         "Content-Length": Buffer.byteLength(body),

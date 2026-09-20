@@ -6,7 +6,7 @@ import {
   resolveControlUiPluginAuthCookieGrants,
   setControlUiPluginAuthCookie,
 } from "./control-ui-plugin-auth-cookie.js";
-import { authorizeControlUiPluginCookieRequest } from "./http-auth-utils.js";
+import { authorizeControlUiPluginCookieRequest } from "./http-auth-plugin-cookie.js";
 import { invalidateOperatorRolePolicy } from "./operator-role-policy.js";
 import { makeMockHttpResponse } from "./test-http-response.js";
 import { withTempConfig } from "./test-temp-config.js";
