@@ -42,6 +42,7 @@ import { drainGatewayActiveWork, resolveRestartDrainTimeoutMs } from "./run-loop
 import * as loopLogs from "./run-loop-log-flush.js";
 import {
   isUpdateProcessRestartReason,
+  resolveGatewayRunSignalRequestUpgrade,
   sameManagedUpdateOwner,
   type GatewayRunSignalAction,
   type GatewayRunSignalRequest,
@@ -1029,29 +1030,11 @@ export async function runGatewayLoop(params: {
     failureWork?.controller.abort();
     if (shuttingDown) {
       const currentRestartRequest = pendingStartupRequest ?? activeRestartRequest;
-      if (
-        action === "restart" &&
-        isUpdateProcessRestartReason(restartReason) &&
-        currentRestartRequest?.action === "restart" &&
-        (!isUpdateProcessRestartReason(currentRestartRequest.restartReason) ||
-          (restartIntent?.successorOwner &&
-            !sameManagedUpdateOwner(
-              restartIntent.successorOwner,
-              currentRestartRequest.restartIntent?.successorOwner,
-            )))
-      ) {
-        const upgradedRequest = {
-          ...currentRestartRequest,
-          signal,
-          restartReason,
-          foregroundUpdate: acceptedRequest.foregroundUpdate,
-          restartIntent: {
-            ...currentRestartRequest.restartIntent,
-            ...restartIntent,
-            force: true,
-            reason: restartReason,
-          },
-        };
+      const upgradedRequest = resolveGatewayRunSignalRequestUpgrade(
+        currentRestartRequest,
+        acceptedRequest,
+      );
+      if (upgradedRequest) {
         if (pendingStartupRequest) {
           pendingStartupRequest = upgradedRequest;
         } else {
