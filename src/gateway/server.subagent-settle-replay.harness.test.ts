@@ -290,9 +290,13 @@ describe("public yielded settle replay with real Gateway admission", () => {
     "legacy completed",
     "legacy pending",
     "legacy pending revoked",
+    "legacy transcript same child",
+    "legacy transcript different sibling",
   ] as const)("reconciles private batch identity after restart (%s)", async (trigger) => {
     const legacy = trigger.startsWith("legacy");
     const pending = trigger.startsWith("legacy pending");
+    const transcriptOnly = trigger.startsWith("legacy transcript");
+    const retryable = pending || transcriptOnly;
     const revoked = trigger === "legacy pending revoked";
     const sibling: SubagentRunRecord = {
       ...child,
@@ -337,6 +341,13 @@ describe("public yielded settle replay with real Gateway admission", () => {
         }
         const receipt = await realStage(scope, options);
         admittedSources.push(receipt?.message.provenance?.sourceSessionKey);
+        if (transcriptOnly && acceptedMessages.length === 1 && receipt) {
+          // Leave the real committed transcript as the only durable evidence,
+          // as when the process exits before the completion write is admitted.
+          receipt.complete = () => {
+            throw new Error("isolated process exit before completion persistence");
+          };
+        }
         return receipt;
       });
     const dispatch = (settledEntry: SubagentRunRecord) =>
@@ -365,18 +376,21 @@ describe("public yielded settle replay with real Gateway admission", () => {
         throw new Error("isolated provider unavailable before input consumption");
       }
       // A handled private completion can retain only its hash/outcome receipt.
-      if (!legacy) {
+      if (!legacy || transcriptOnly) {
         await command.userTurnTranscriptRecorder!.persistApproved();
       }
       command.onExecutionStarted?.();
       return finalResult();
     });
-    if (pending) {
+    if (retryable) {
       agentCommandMock.mockImplementationOnce(async (input) => {
         const command = input as AgentCommandOpts;
         expect(command.inputProvenance?.sourceSessionKey).toBe(sibling.childSessionKey);
         expect(command.message).toContain(`sourceSession=${sibling.childSessionKey}`);
-        await command.userTurnTranscriptRecorder!.persistApproved();
+        const persistence = await command.userTurnTranscriptRecorder!.persistApproved();
+        if (transcriptOnly) {
+          expect(persistence).toMatchObject({ appended: false });
+        }
         return finalResult();
       });
     }
@@ -404,13 +418,13 @@ describe("public yielded settle replay with real Gateway admission", () => {
     try {
       const admitted = await dispatch(sibling);
       legacyDispatch?.mockRestore();
-      expect(admitted).toBe(!pending);
-      if (!pending) {
+      expect(admitted).toBe(!retryable);
+      if (!retryable) {
         expect(completion.mock.calls[0]?.[2]).toMatchObject({ delivered: true });
       }
       expect(agentCommandMock).toHaveBeenCalledOnce();
       expect(loadSubagentRegistryFromSqlite().get(child.runId)?.requesterSettleWake).toMatchObject({
-        status: pending ? "pending" : "dispatching",
+        status: retryable ? "pending" : "dispatching",
         attemptCount: 1,
         batchRunIds,
       });
@@ -433,7 +447,7 @@ describe("public yielded settle replay with real Gateway admission", () => {
         vi.setSystemTime(replayDueAt + 1);
       }
       completion.mockClear();
-      const replayed = await dispatch(trigger === "same child" ? sibling : child);
+      const replayed = await dispatch(trigger.endsWith("same child") ? sibling : child);
       expect(acceptedMessages).toHaveLength(2);
       const [first, replay] = acceptedMessages;
       expect(first!.runId).toBe(replay!.runId);
@@ -462,7 +476,7 @@ describe("public yielded settle replay with real Gateway admission", () => {
       }
       expect(admittedSources).toEqual([originalSource, originalSource]);
       expect(replayed).toBe(true);
-      expect(agentCommandMock).toHaveBeenCalledTimes(pending ? 2 : 1);
+      expect(agentCommandMock).toHaveBeenCalledTimes(retryable ? 2 : 1);
       expect(completion.mock.calls[0]?.[2]).toMatchObject({ delivered: true });
     } finally {
       vi.useRealTimers();

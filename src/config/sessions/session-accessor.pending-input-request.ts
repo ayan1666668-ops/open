@@ -3,8 +3,12 @@ import { asOptionalRecord } from "@openclaw/normalization-core/record-coerce";
 import { stableStringify } from "@openclaw/normalization-core/stable-stringify";
 import { MAX_PAYLOAD_BYTES } from "../../gateway/server-constants.js";
 import type { PersistedUserTurnMessage } from "../../sessions/user-turn-transcript.types.js";
+import type { OpenClawConfig } from "../types.openclaw.js";
 import type { SessionPendingInputRow } from "./session-accessor.sqlite-pending-inputs.js";
-import { readMessageIdempotencyKey } from "./session-accessor.sqlite-transcript-store.js";
+import {
+  readMessageIdempotencyKey,
+  redactTranscriptMessageForStorage,
+} from "./session-accessor.sqlite-transcript-store.js";
 
 function resolvePendingInputRequestHash(
   message: Record<string, unknown>,
@@ -34,8 +38,12 @@ export type PendingInputRequest = {
   runId: string;
   /** Authenticated ingress binds raw input before randomized media preparation. */
   requestFingerprint?: string;
-  /** Trusted frozen-cohort sources, matched against an existing full request hash only. */
+  /** Trusted frozen-cohort sources, checked against a receipt or whole committed input. */
   replaySourceSessionKeys?: readonly string[];
+  prepareMessageAfterIdempotencyCheck?: (
+    message: PersistedUserTurnMessage,
+  ) => PersistedUserTurnMessage | undefined;
+  config?: OpenClawConfig;
 };
 
 export function preparePendingInputRequest(params: PendingInputRequest) {
@@ -86,6 +94,56 @@ export function resolvePendingInputReplayRequest(
     }
   }
   return original;
+}
+
+/** Prove committed private input by its approved bytes, while hashing the raw retry. */
+export function resolveCommittedPendingInputRequestHash(
+  options: PendingInputRequest,
+  committedMessage: PersistedUserTurnMessage,
+): string | undefined {
+  let candidate = preparePendingInputRequest(options);
+  if (options.replaySourceSessionKeys) {
+    // Consumption retired the raw receipt. The scoped transcript retains
+    // the run-bound key and approved bytes, not the original request hash.
+    if (candidate.idempotencyKey !== `${options.runId}:user`) {
+      throw new Error("Input completion retry conflicts with the accepted run");
+    }
+    const committedProvenance = committedMessage.provenance;
+    const sourceSessionKey = committedProvenance?.sourceSessionKey;
+    if (
+      !options.message.provenance ||
+      committedProvenance?.kind !== "inter_session" ||
+      committedProvenance.sourceTool !== "subagent_settle" ||
+      !sourceSessionKey ||
+      !options.replaySourceSessionKeys.includes(sourceSessionKey)
+    ) {
+      throw new Error("Input completion committed source is outside the frozen settle cohort");
+    }
+    // Preparation may erase provenance, so prove the committed source before invoking it.
+    candidate = preparePendingInputRequest({
+      ...options,
+      message: {
+        ...options.message,
+        provenance: { ...options.message.provenance, sourceSessionKey },
+      },
+    });
+  }
+  // Source reconstruction is only a candidate until the whole approved payload matches.
+  const prepared = options.prepareMessageAfterIdempotencyCheck
+    ? options.prepareMessageAfterIdempotencyCheck(candidate.message)
+    : candidate.message;
+  if (!prepared) {
+    return undefined;
+  }
+  const { timestamp: _preparedTimestamp, ...stablePrepared } = redactTranscriptMessageForStorage(
+    prepared,
+    { config: options.config },
+  );
+  const { timestamp: _committedTimestamp, ...stableCommitted } = committedMessage;
+  if (stableStringify(stablePrepared) !== stableStringify(stableCommitted)) {
+    throw new Error("Input completion retry conflicts with the committed input");
+  }
+  return candidate.requestHash;
 }
 
 export function matchesSessionPendingInputRequest(

@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import { asOptionalRecord } from "@openclaw/normalization-core/record-coerce";
-import { stableStringify } from "@openclaw/normalization-core/stable-stringify";
 import { sql } from "kysely";
 import type { AgentRunTerminalOutcome } from "../../agents/agent-run-terminal-outcome.types.js";
 import {
@@ -29,9 +28,9 @@ import {
   hasPendingInputConsumptionColumn,
   hasSessionPendingInputsSchema,
 } from "../../state/openclaw-agent-pending-inputs-schema.js";
-import type { OpenClawConfig } from "../types.openclaw.js";
 import {
   preparePendingInputRequest,
+  resolveCommittedPendingInputRequestHash,
   resolvePendingInputReplayRequest,
   matchesSessionPendingInputRequest,
   type PendingInputRequest,
@@ -187,10 +186,6 @@ export async function stageSessionPendingInput(
   options: PendingInputRequest & {
     /** Records processing completion separately from canonical transcript consumption. */
     trackCompletion?: boolean;
-    prepareMessageAfterIdempotencyCheck?: (
-      message: PersistedUserTurnMessage,
-    ) => PersistedUserTurnMessage | undefined;
-    config?: OpenClawConfig;
     assertCurrent: () => void;
     /** Retained only after the full admission checks and custody transaction commit. */
     assertAdmittedCurrent?: () => void;
@@ -217,10 +212,9 @@ export async function stageSessionPendingInput(
       const previous = options.trackCompletion
         ? readSessionInputCompletion(database, completionIdentity)
         : undefined;
-      const { message, stableMessage, requestHash } = resolvePendingInputReplayRequest(
-        preparedRequest,
-        previous ?? existing,
-      );
+      const replayRequest = resolvePendingInputReplayRequest(preparedRequest, previous ?? existing);
+      const { message, stableMessage } = replayRequest;
+      let requestHash = replayRequest.requestHash;
       const lifecycleGeneration = getAgentEventLifecycleGeneration();
       let finished = false;
       let complete: SessionPendingInputReceipt["complete"];
@@ -228,7 +222,6 @@ export async function stageSessionPendingInput(
         const completionScope = {
           ...completionIdentity,
           runId: options.runId,
-          requestHash,
           lifecycleGeneration,
         };
         if (
@@ -263,7 +256,11 @@ export async function stageSessionPendingInput(
             ) {
               throw new Error("Input completion no longer owns the admitted session");
             }
-            return writeSessionInputCompletion(current, completionScope, outcome);
+            return writeSessionInputCompletion(
+              current,
+              { ...completionScope, requestHash },
+              outcome,
+            );
           }, databaseOptions);
       }
       if (existing) {
@@ -304,18 +301,20 @@ export async function stageSessionPendingInput(
       if (committed) {
         const committedMessage = parseSessionPendingInputMessage(JSON.stringify(committed.message));
         if (options.trackCompletion) {
-          const prepared = options.prepareMessageAfterIdempotencyCheck
-            ? options.prepareMessageAfterIdempotencyCheck(message)
-            : message;
-          if (!prepared) {
+          const committedRequestHash = resolveCommittedPendingInputRequestHash(
+            {
+              ...options,
+              message,
+              replaySourceSessionKeys:
+                previous || existing ? undefined : options.replaySourceSessionKeys,
+            },
+            committedMessage,
+          );
+          if (!committedRequestHash) {
             return undefined;
           }
-          const { timestamp: _preparedTimestamp, ...stablePrepared } =
-            redactTranscriptMessageForStorage(prepared, { config: options.config });
-          const { timestamp: _committedTimestamp, ...stableCommitted } = committedMessage;
-          if (stableStringify(stablePrepared) !== stableStringify(stableCommitted)) {
-            throw new Error("Input completion retry conflicts with the committed input");
-          }
+          requestHash = committedRequestHash;
+          options.assertCurrent();
         }
         // Committed transcript replay keeps its existing contract and never creates new custody.
         return {
