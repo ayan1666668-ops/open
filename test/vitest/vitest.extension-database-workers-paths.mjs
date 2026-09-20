@@ -16,6 +16,7 @@ export const databaseWorkerExtensionTestFiles = [
   "extensions/feishu/src/monitor.lifecycle.test.ts",
   "extensions/feishu/src/outbound-delivery.test.ts",
   "extensions/feishu/src/outbound.send-authority.test.ts",
+  "extensions/feishu/src/outbound.handoff.test.ts",
   "extensions/googlechat/src/api.fetchok.transport.test.ts",
   "extensions/googlechat/src/sender-authority.transport.test.ts",
   "extensions/matrix/src/matrix/monitor/inbound-dedupe.test.ts",
