@@ -1,4 +1,4 @@
-export const TSGO_CORE_TEST_MAX_ROOTS = 730;
+export const TSGO_CORE_TEST_MAX_ROOTS = 720;
 
 export const TSGO_CORE_TEST_SHARDS = [
   {
@@ -93,6 +93,11 @@ export const TSGO_CORE_TEST_SHARDS = [
     name: "ui-chat",
     group: "ui",
     config: "test/tsconfig/tsconfig.core.test.ui-chat.json",
+  },
+  {
+    name: "security-secrets",
+    group: "src",
+    config: "test/tsconfig/tsconfig.core.test.security-secrets.json",
   },
 ] as const;
 

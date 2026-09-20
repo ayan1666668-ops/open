@@ -16,9 +16,11 @@ export function parseToolCallArguments(toolCall: ResponsesInputItem) {
   }
   try {
     const parsed = JSON.parse(toolCall.arguments) as unknown;
-    return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>)
-      : null;
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return null;
+    }
+    // SAFETY: the guard above confirms parsed is a non-null, non-array object.
+    return parsed as Record<string, unknown>;
   } catch {
     return null;
   }

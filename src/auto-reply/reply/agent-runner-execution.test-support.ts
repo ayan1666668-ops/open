@@ -570,7 +570,6 @@ export {
   expectNoMockCallWithFields,
   expectRecordFields,
   requireMockCall,
-  requireMockCallArgWithFields,
   requireRecord,
 } from "./agent-runner-execution-assertions.test-support.js";
 
