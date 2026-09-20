@@ -9,9 +9,9 @@ import messageCss from "../../../styles/chat/message-layout.css?inline";
 import textCss from "../../../styles/chat/text.css?inline";
 
 const containers: HTMLElement[] = [];
-const originalCopy = { ...en.chat.pairingQrExpired };
+const originalCopy = en.chat.pairingQrExpired;
 afterEach(() => {
-  Object.assign(en.chat.pairingQrExpired, originalCopy);
+  en.chat.pairingQrExpired = originalCopy;
   for (const container of containers.splice(0)) {
     render(nothing, container);
     container.remove();
@@ -27,12 +27,12 @@ describe("expired pairing QR layout", () => {
     "keeps readable insets at $width px, $direction, scale $scale",
     ({ width, direction, scale, long }) => {
       if (long) {
-        Object.assign(en.chat.pairingQrExpired, {
+        en.chat.pairingQrExpired = {
           title: "A deliberately long pairing invitation title that wraps across several lines",
           badge: "Expired setup invitation",
           reason:
             "Generate a fresh setup code for VeryLongUnbrokenDeviceIdentifierThatMustNotClipAtTheCardEdge.",
-        });
+        };
       }
       const container = document.body.appendChild(document.createElement("section"));
       containers.push(container);
