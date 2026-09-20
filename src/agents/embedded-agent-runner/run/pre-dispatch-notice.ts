@@ -163,7 +163,7 @@ export async function deliverPreDispatchNotice(params: {
       });
   const abortPromise = signal
     ? new Promise<"aborted">((_, reject) => {
-        const onAbort = () => reject(signal.reason ?? Error("aborted"));
+        const onAbort = () => reject(signal.reason ?? new Error("aborted"));
         removeAbortListener = () => signal.removeEventListener("abort", onAbort);
         if (signal.aborted) {
           onAbort();

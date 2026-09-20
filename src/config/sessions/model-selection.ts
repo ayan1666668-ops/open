@@ -32,6 +32,8 @@ function normalizeShortText(value: unknown): string | undefined {
     return undefined;
   }
   const normalized = value
+    // Control-character stripping is the purpose of this sanitizer.
+    // oxlint-disable-next-line eslint/no-control-regex -- Intentional control-character sanitization for host-visible text.
     .replace(/[\u0000-\u001f\u007f\u2028\u2029]/gu, " ")
     .trim()
     .replace(/\s+/gu, " ");
