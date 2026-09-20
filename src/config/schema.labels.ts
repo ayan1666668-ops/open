@@ -4,6 +4,7 @@ import { GATEWAY_FIELD_LABELS } from "./schema.gateway-labels.js";
 import { AGENT_MODEL_FIELD_LABELS } from "./schema.labels.agent-models.js";
 import { SESSION_FIELD_LABELS } from "./schema.labels.session.js";
 import { TOOL_EXECUTION_FIELD_LABELS } from "./schema.labels.tool-execution.js";
+import { WORKSPACE_FIELD_LABELS } from "./schema.labels.workspace.js";
 import { META_FIELD_LABELS } from "./schema.meta.js";
 import { NODE_CAPABILITY_FIELD_LABELS } from "./schema.node-capabilities.js";
 import { CLOUD_WORKER_FIELD_LABELS } from "./zod-schema.cloud-workers.js";
@@ -398,13 +399,7 @@ export const FIELD_LABELS: Record<string, string> = {
   "agents.defaults.skills": "Skills",
   "agents.defaults.subagents.delegationMode": "Sub-agent Delegation Mode",
   "agents.entries.*.subagents.delegationMode": "Sub-agent Delegation Mode",
-  "agents.defaults.workspace": "Workspace",
-  "agents.defaults.cwd": "Working Directory",
-  "agents.defaults.repoRoot": "Repo Root",
-  "agents.defaults.skipOptionalBootstrapFiles": "Skipped Optional Bootstrap Files",
-  "agents.defaults.contextInjection": "Context Injection",
-  "agents.defaults.bootstrapMaxChars": "Bootstrap Max Chars",
-  "agents.defaults.bootstrapTotalMaxChars": "Bootstrap Total Max Chars",
+  ...WORKSPACE_FIELD_LABELS,
   "agents.defaults.experimental": "Experimental Agent Flags",
   "agents.defaults.experimental.localModelLean": "Enable Lean Local Model Mode (Experimental)",
   "agents.defaults.startupContext": "Startup Context",
