@@ -196,25 +196,9 @@ function resolveCredentialsForSetup(cfg: OpenClawConfig, accountId: string) {
 }
 
 function hasConfiguredCredentialsForSetup(cfg: OpenClawConfig, accountId: string): boolean {
-  const accountConfig = resolveMSTeamsAccountConfig(cfg, accountId);
-  if (accountId === DEFAULT_ACCOUNT_ID) {
-    return hasConfiguredMSTeamsCredentials(accountConfig);
-  }
-  if (resolveCredentialsForSetup(cfg, accountId)) {
-    return true;
-  }
-  if (accountConfig.authType === "federated") {
-    return Boolean(
-      normalizeSecretInputString(accountConfig.appId) &&
-      normalizeSecretInputString(accountConfig.tenantId) &&
-      (accountConfig.certificatePath || accountConfig.useManagedIdentity),
-    );
-  }
-  return Boolean(
-    normalizeSecretInputString(accountConfig.appId) &&
-    normalizeSecretInputString(accountConfig.tenantId) &&
-    accountConfig.appPassword,
-  );
+  return hasConfiguredMSTeamsCredentials(resolveMSTeamsAccountConfig(cfg, accountId), {
+    allowEnvFallback: accountId === DEFAULT_ACCOUNT_ID,
+  });
 }
 
 export const msteamsSetupAdapter: ChannelSetupAdapter<MSTeamsSetupInput> = {

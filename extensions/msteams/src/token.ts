@@ -83,24 +83,26 @@ function resolveMSTeamsTenantId(cfg: MSTeamsConfig | undefined, allowEnvFallback
 
 // ── hasConfiguredMSTeamsCredentials ────────────────────────────────────────
 
-export function hasConfiguredMSTeamsCredentials(cfg?: MSTeamsConfig): boolean {
-  const authType = resolveAuthType(cfg);
+export function hasConfiguredMSTeamsCredentials(
+  cfg?: MSTeamsConfig,
+  options?: { allowEnvFallback?: boolean },
+): boolean {
+  const allowEnvFallback = options?.allowEnvFallback ?? true;
+  const authType = resolveAuthType(cfg, { allowEnvFallback });
 
-  const hasAppId = Boolean(
-    normalizeSecretInputString(cfg?.appId) ||
-    normalizeSecretInputString(process.env.MSTEAMS_APP_ID),
-  );
-  const hasTenantId = Boolean(
-    normalizeSecretInputString(cfg?.tenantId) ||
-    normalizeSecretInputString(process.env.MSTEAMS_TENANT_ID),
-  );
+  const hasAppId = Boolean(resolveMSTeamsAppId(cfg, allowEnvFallback));
+  const hasTenantId = Boolean(resolveMSTeamsTenantId(cfg, allowEnvFallback));
 
   if (authType === "federated") {
     const hasCert = Boolean(
-      resolveFederatedPath(cfg?.certificatePath, process.env.MSTEAMS_CERTIFICATE_PATH),
+      resolveFederatedPath(
+        cfg?.certificatePath,
+        allowEnvFallback ? process.env.MSTEAMS_CERTIFICATE_PATH : undefined,
+      ),
     );
     const hasManagedIdentity =
-      cfg?.useManagedIdentity ?? process.env.MSTEAMS_USE_MANAGED_IDENTITY === "true";
+      cfg?.useManagedIdentity ??
+      (allowEnvFallback ? process.env.MSTEAMS_USE_MANAGED_IDENTITY === "true" : false);
 
     return hasAppId && hasTenantId && (hasCert || hasManagedIdentity);
   }
@@ -110,7 +112,7 @@ export function hasConfiguredMSTeamsCredentials(cfg?: MSTeamsConfig): boolean {
     hasAppId &&
     hasTenantId &&
     (hasConfiguredSecretInput(cfg?.appPassword) ||
-      normalizeSecretInputString(process.env.MSTEAMS_APP_PASSWORD)),
+      (allowEnvFallback && normalizeSecretInputString(process.env.MSTEAMS_APP_PASSWORD))),
   );
 }
 

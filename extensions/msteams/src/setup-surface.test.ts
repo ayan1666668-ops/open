@@ -396,6 +396,7 @@ describe("msteams setup surface", () => {
       appPassword: "support-secret",
       tenantId: "tenant-id",
     });
+    hasConfiguredMSTeamsCredentials.mockReturnValue(true);
 
     expect(
       msteamsSetupContract.validateInput?.({
@@ -404,6 +405,10 @@ describe("msteams setup surface", () => {
         input: { webhookPort: 3980 },
       }),
     ).toBeNull();
+    expect(hasConfiguredMSTeamsCredentials).toHaveBeenCalledWith(
+      expect.objectContaining({ appId: "support-app" }),
+      { allowEnvFallback: false },
+    );
     expect(
       msteamsSetupContract.applyAccountConfig({
         cfg,
@@ -441,6 +446,7 @@ describe("msteams setup surface", () => {
       tenantId: "tenant-id",
       certificatePath: "/secure/support.pem",
     });
+    hasConfiguredMSTeamsCredentials.mockReturnValue(true);
 
     expect(
       msteamsSetupContract.validateInput?.({
@@ -857,7 +863,7 @@ describe("msteams setup surface", () => {
       tenantId: "tenant-id",
       certificatePath: "/secure/support.pem",
     });
-    hasConfiguredMSTeamsCredentials.mockReturnValue(false);
+    hasConfiguredMSTeamsCredentials.mockReturnValue(true);
     const confirm = vi.fn(async () => true);
     const text = vi.fn();
 

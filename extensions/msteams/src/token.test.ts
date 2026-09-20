@@ -103,6 +103,13 @@ describe("token – secret credentials", () => {
     expect(hasConfiguredMSTeamsCredentials(undefined)).toBe(true);
   });
 
+  it("does not borrow default environment credentials when fallback is disabled", () => {
+    process.env.MSTEAMS_APP_PASSWORD = "default-secret";
+    const cfg = { appId: "named-app", tenantId: "tenant-id" } satisfies MSTeamsConfig;
+
+    expect(hasConfiguredMSTeamsCredentials(cfg, { allowEnvFallback: false })).toBe(false);
+  });
+
   it("resolves secret credentials from config", () => {
     const cfg = {
       appId: "app-id",
@@ -186,6 +193,17 @@ describe("token – federated credentials (certificate)", () => {
       authType: "federated",
     } satisfies MSTeamsConfig;
     expect(hasConfiguredMSTeamsCredentials(cfg)).toBe(false);
+  });
+
+  it("does not borrow default federated environment auth when fallback is disabled", () => {
+    process.env.MSTEAMS_CERTIFICATE_PATH = "/default/cert.pem";
+    const cfg = {
+      appId: "named-app",
+      tenantId: "tenant-id",
+      authType: "federated",
+    } satisfies MSTeamsConfig;
+
+    expect(hasConfiguredMSTeamsCredentials(cfg, { allowEnvFallback: false })).toBe(false);
   });
 
   it("ignores blank certificate settings", () => {

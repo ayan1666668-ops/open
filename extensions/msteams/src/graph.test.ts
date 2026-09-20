@@ -500,6 +500,52 @@ describe("msteams graph helpers", () => {
     expect(getAccessToken).toHaveBeenCalledWith("https://graph.microsoft.com");
   });
 
+  it("rejects a disabled named account without blocking an enabled sibling", async () => {
+    const { getAccessToken } = mockGraphTokenResolution();
+    const cfg = {
+      channels: {
+        msteams: {
+          accounts: {
+            disabled: {
+              enabled: false,
+              appId: "disabled-app",
+              appPassword: "disabled-password",
+              tenantId: "tenant-id",
+              webhook: { port: 3978 },
+            },
+            active: {
+              enabled: true,
+              appId: "active-app",
+              appPassword: "active-password",
+              tenantId: "tenant-id",
+              webhook: { port: 3979 },
+            },
+          },
+        },
+      },
+    };
+
+    await expectRejectsToThrow(
+      resolveGraphToken(cfg, { accountId: "disabled" }),
+      "MS Teams account disabled: disabled",
+    );
+    await expect(resolveGraphToken(cfg, { accountId: "active" })).resolves.toBe("resolved-token");
+
+    expect(loadMSTeamsSdkWithAuthMock).toHaveBeenCalledTimes(1);
+    expect(getAccessToken).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects Graph token resolution when the Teams channel is disabled", async () => {
+    mockGraphTokenResolution();
+
+    await expectRejectsToThrow(
+      resolveGraphToken({ channels: { msteams: { enabled: false } } }),
+      "MS Teams account disabled: default",
+    );
+
+    expect(loadMSTeamsSdkWithAuthMock).not.toHaveBeenCalled();
+  });
+
   it("scopes delegated Graph token lookup by account", async () => {
     resolveMSTeamsCredentialsMock.mockReturnValue(mockCredentials);
     resolveDelegatedAccessTokenMock.mockResolvedValue("delegated-token");
