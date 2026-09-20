@@ -71,14 +71,8 @@ export function createManagedServiceManagerBoundary({
       await vi.importActual<typeof import("node:child_process")>("node:child_process");
     const { startManagedServiceUpdateHandoff } =
       await import("./update-managed-service-handoff.js");
-    const root = await fs.realpath(
-      await fs.mkdtemp(
-        path.join(
-          os.tmpdir(),
-          `openclaw-${kind}-manager-boundary-${options?.updaterOutput === "split-utf8" ? "安装-" : ""}`,
-        ),
-      ),
-    );
+    const prefix = `openclaw-${kind}-manager-boundary-${options?.updaterOutput === "split-utf8" ? "安装-" : ""}`;
+    const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), prefix)));
     tempDirs.add(root);
     const commandsPath = path.join(root, "manager-commands.log");
     const statePath = path.join(root, "manager-state.json");
@@ -142,9 +136,7 @@ export function createManagedServiceManagerBoundary({
         configPath: path.join(root, "openclaw.json"),
         options,
       }),
-      {
-        mode: 0o755,
-      },
+      { mode: 0o755 },
     );
     const env = {
       ...process.env,
@@ -202,8 +194,7 @@ export function createManagedServiceManagerBoundary({
         string[],
         { env: NodeJS.ProcessEnv },
       ];
-      const scriptPath = generatedArgs[0];
-      const generatedParamsPath = generatedArgs[1];
+      const [scriptPath, generatedParamsPath] = generatedArgs;
       if (!scriptPath || !generatedParamsPath) {
         throw new Error("expected generated managed handoff script and parameters");
       }
@@ -458,7 +449,6 @@ export function createManagedServiceManagerBoundary({
           // the updater's validation signal permits revocation or activation below.
           await waitForFile(validationStartedPath, DEFAULT_VITEST_TEST_TIMEOUT_MS);
           await expect(pathExists(commandsPath)).resolves.toBe(false);
-          await expect(pathExists(validationStartedPath)).resolves.toBe(true);
           const validationClockAdvanceMs = options.validationClockAdvanceMs;
           if (validationClockAdvanceMs) {
             await vi.waitFor(async () => {
@@ -468,8 +458,7 @@ export function createManagedServiceManagerBoundary({
             });
           }
           // A real updater child is now validating, but the service has received no stop.
-          expect(parent.exitCode).toBeNull();
-          expect(parent.signalCode).toBeNull();
+          expect(parent).toMatchObject({ exitCode: null, signalCode: null });
           await expect(pathExists(commandsPath)).resolves.toBe(false);
           if (options.cancelDuringValidation) {
             const cancelled = waitForHandoffResponse(runningHelper.stdout, "cancelled");
@@ -525,8 +514,7 @@ export function createManagedServiceManagerBoundary({
                 { timeout: 5_000 },
               );
               await expect(pathExists(mutationPath)).resolves.toBe(false);
-              expect(parent.exitCode).toBeNull();
-              expect(parent.signalCode).toBeNull();
+              expect(parent).toMatchObject({ exitCode: null, signalCode: null });
             }
           }
         }
@@ -578,8 +566,7 @@ export function createManagedServiceManagerBoundary({
         } finally {
           clearTimeout(timer);
         }
-        expect(parent.signalCode).toBeNull();
-        expect(parent.exitCode).toBeNull();
+        expect(parent).toMatchObject({ exitCode: null, signalCode: null });
         await expect(pathExists(commandsPath)).resolves.toBe(false);
         expect(stdout).not.toContain("committed\n");
         await expect(pathExists(updaterPath)).resolves.toBe(false);
@@ -588,8 +575,7 @@ export function createManagedServiceManagerBoundary({
         runningHelper.stdin?.write("park\n");
         await cancelled;
         expect(await completion, stderr).toBe(0);
-        expect(parent.exitCode).toBeNull();
-        expect(parent.signalCode).toBeNull();
+        expect(parent).toMatchObject({ exitCode: null, signalCode: null });
         await expect(pathExists(updaterPath)).resolves.toBe(false);
       } else {
         const parked = waitForHandoffResponse(runningHelper.stdout, "parked");

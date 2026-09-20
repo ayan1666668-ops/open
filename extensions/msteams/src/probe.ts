@@ -1,5 +1,4 @@
 import { DEFAULT_ACCOUNT_ID, normalizeAccountId } from "openclaw/plugin-sdk/account-id";
-// Msteams plugin module implements probe behavior.
 import { isFutureDateTimestampMs } from "openclaw/plugin-sdk/number-runtime";
 import {
   normalizeStringEntries,

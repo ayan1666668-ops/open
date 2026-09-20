@@ -1,4 +1,3 @@
-// Msteams plugin module implements sent message cache behavior.
 import { createHash } from "node:crypto";
 import { createPersistentDedupeCache } from "openclaw/plugin-sdk/dedupe-runtime";
 import { createPluginStateErrorReporter } from "openclaw/plugin-sdk/plugin-state-runtime";

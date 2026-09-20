@@ -14,6 +14,7 @@ import { formatDocsLink } from "openclaw/plugin-sdk/setup-tools";
 import type { MSTeamsConfig } from "../runtime-api.js";
 import {
   resolveDefaultMSTeamsAccountId,
+  resolveMSTeamsAccountConfigPath,
   resolveMSTeamsAccountConfig,
   resolveMSTeamsAccountEntryKey,
   type MSTeamsMultiAccountConfig,
@@ -190,10 +191,7 @@ export function patchMSTeamsAccountConfig(params: {
 function resolveCredentialsForSetup(cfg: OpenClawConfig, accountId: string) {
   return resolveMSTeamsCredentials(resolveMSTeamsAccountConfig(cfg, accountId), {
     allowEnvFallback: accountId === DEFAULT_ACCOUNT_ID,
-    pathPrefix:
-      accountId === DEFAULT_ACCOUNT_ID
-        ? "channels.msteams"
-        : `channels.msteams.accounts.${accountId}`,
+    pathPrefix: resolveMSTeamsAccountConfigPath(cfg, accountId),
   });
 }
 
@@ -232,6 +230,7 @@ export const msteamsSetupAdapter: ChannelSetupAdapter<MSTeamsSetupInput> = {
       : cfg;
   },
   validateInput: ({ cfg, accountId, input }) => {
+    const resolvedAccountId = resolveSetupAccountId(cfg, accountId);
     const appId = readMSTeamsSetupCredential(input, "appId");
     const appPassword = readMSTeamsSetupCredential(input, "appPassword");
     const tenantId = readMSTeamsSetupCredential(input, "tenantId");
@@ -239,7 +238,7 @@ export const msteamsSetupAdapter: ChannelSetupAdapter<MSTeamsSetupInput> = {
     const hasCompleteExplicitCredentials = Boolean(
       appId?.trim() && appPassword?.trim() && tenantId?.trim(),
     );
-    if (input.useEnv && accountId !== DEFAULT_ACCOUNT_ID) {
+    if (input.useEnv && resolvedAccountId !== DEFAULT_ACCOUNT_ID) {
       return "MSTEAMS_* environment variables can only be used for the default account.";
     }
     if (input.useEnv && hasAnyExplicitCredential && !hasCompleteExplicitCredentials) {
@@ -252,7 +251,11 @@ export const msteamsSetupAdapter: ChannelSetupAdapter<MSTeamsSetupInput> = {
     ) {
       return "MS Teams --use-env requires complete secret, certificate, or managed-identity environment credentials.";
     }
-    if (!input.useEnv && !hasCompleteExplicitCredentials) {
+    if (
+      !input.useEnv &&
+      !hasCompleteExplicitCredentials &&
+      !hasConfiguredCredentialsForSetup(cfg, resolvedAccountId)
+    ) {
       return "MS Teams requires appId, appPassword, and tenantId (or --use-env for the default account).";
     }
     if (
@@ -262,9 +265,9 @@ export const msteamsSetupAdapter: ChannelSetupAdapter<MSTeamsSetupInput> = {
       return "MS Teams webhook port must be an integer between 1 and 65535.";
     }
     if (
-      accountId !== DEFAULT_ACCOUNT_ID &&
+      resolvedAccountId !== DEFAULT_ACCOUNT_ID &&
       input.webhookPort === undefined &&
-      typeof resolveRawMSTeamsAccountConfig(cfg, accountId).webhook?.port !== "number"
+      typeof resolveRawMSTeamsAccountConfig(cfg, resolvedAccountId).webhook?.port !== "number"
     ) {
       return "MS Teams named accounts require --webhook-port <1-65535>.";
     }
@@ -290,9 +293,9 @@ export const msteamsSetupAdapter: ChannelSetupAdapter<MSTeamsSetupInput> = {
       patch.webhook = { ...existing.webhook, port: input.webhookPort };
     }
     const credentialPatch =
-      input.useEnv && !(appId?.trim() && appPassword?.trim() && tenantId?.trim())
-        ? patch
-        : applySecretAuthCredentials(patch, existing);
+      appId?.trim() && appPassword?.trim() && tenantId?.trim()
+        ? applySecretAuthCredentials(patch, existing)
+        : patch;
     return patchMSTeamsAccountConfig({
       cfg,
       accountId: resolvedAccountId,

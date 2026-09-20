@@ -1,6 +1,10 @@
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { listMSTeamsAccountIds, resolveMSTeamsRuntimeAccount } from "./accounts.js";
+import {
+  listMSTeamsAccountIds,
+  resolveMSTeamsAccountConfigPath,
+  resolveMSTeamsRuntimeAccount,
+} from "./accounts.js";
 import { msteamsConfigAdapter } from "./channel-config.js";
 
 describe("msteams account selection", () => {
@@ -71,5 +75,26 @@ describe("msteams account selection", () => {
       tokenStatus: "available",
       port: 3979,
     });
+  });
+
+  it("preserves an authored default-account key in credential paths", () => {
+    const cfg = {
+      channels: {
+        msteams: {
+          defaultAccount: "Default",
+          accounts: {
+            Default: {
+              appId: "default-app-id",
+              appPassword: "default-secret",
+              tenantId: "tenant-id",
+            },
+          },
+        },
+      },
+    } as OpenClawConfig;
+
+    expect(resolveMSTeamsAccountConfigPath(cfg, "default")).toBe(
+      "channels.msteams.accounts.Default",
+    );
   });
 });

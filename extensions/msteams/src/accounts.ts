@@ -88,6 +88,20 @@ export function resolveMSTeamsAccountEntryKey(
   return undefined;
 }
 
+export function resolveMSTeamsAccountConfigPath(cfg: OpenClawConfig, accountId: string): string {
+  const normalized = normalizeAccountId(accountId);
+  const rawAccountKey = resolveMSTeamsAccountEntryKey(
+    resolveMSTeamsChannelConfig(cfg)?.accounts,
+    normalized,
+  );
+  if (rawAccountKey) {
+    return `channels.msteams.accounts.${rawAccountKey}`;
+  }
+  return normalized === DEFAULT_ACCOUNT_ID
+    ? "channels.msteams"
+    : `channels.msteams.accounts.${normalized}`;
+}
+
 function isAccountScopedChannelConfig(
   channelConfig: MSTeamsMultiAccountConfig | undefined,
   accountId: string,
@@ -177,10 +191,7 @@ export function resolveMSTeamsRuntimeAccount(params: {
   const config = params.msteamsCfg ?? resolveMSTeamsAccountConfig(params.cfg, accountId);
   const credentials = resolveMSTeamsCredentials(config, {
     allowEnvFallback: accountId === DEFAULT_ACCOUNT_ID,
-    pathPrefix:
-      accountId === DEFAULT_ACCOUNT_ID
-        ? "channels.msteams"
-        : `channels.msteams.accounts.${accountId}`,
+    pathPrefix: resolveMSTeamsAccountConfigPath(params.cfg, accountId),
   });
   return { accountId, config, credentials };
 }
@@ -196,10 +207,7 @@ function resolveMSTeamsAccountWithMode(params: {
   const channelEnabled = params.cfg.channels?.msteams?.enabled !== false;
   const config = resolveMSTeamsAccountConfig(params.cfg, accountId);
   const accountEnabled = config.enabled !== false;
-  const pathPrefix =
-    accountId === DEFAULT_ACCOUNT_ID
-      ? "channels.msteams"
-      : `channels.msteams.accounts.${accountId}`;
+  const pathPrefix = resolveMSTeamsAccountConfigPath(params.cfg, accountId);
   const credentialResolution =
     params.mode === "inspect"
       ? inspectMSTeamsCredentials(config, {

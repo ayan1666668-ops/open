@@ -1,4 +1,3 @@
-// Msteams plugin module implements sqlite state behavior.
 import crypto from "node:crypto";
 import path from "node:path";
 import { DEFAULT_ACCOUNT_ID } from "openclaw/plugin-sdk/account-id";

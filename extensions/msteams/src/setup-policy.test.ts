@@ -79,6 +79,47 @@ describe("msteamsSetupWizard account-scoped policies", () => {
     expect(disabled.channels?.msteams?.accounts).not.toHaveProperty("default");
   });
 
+  it("writes an explicit default account group allowlist without changing its sibling", () => {
+    const cfg = {
+      channels: {
+        msteams: {
+          defaultAccount: "Default",
+          teams: { root: {} },
+          accounts: {
+            Default: {
+              teams: { existing: {} },
+            },
+            support: {
+              teams: { support: {} },
+            },
+          },
+        },
+      },
+    };
+
+    const next = msteamsSetupWizard.groupAccess!.applyAllowlist?.({
+      cfg,
+      accountId: "default",
+      resolved: [{ teamKey: "team-a", channelKey: "channel-a" }],
+    });
+
+    expect(next?.channels?.msteams).toMatchObject({
+      teams: { root: {} },
+      accounts: {
+        Default: {
+          teams: {
+            existing: {},
+            "team-a": { channels: { "channel-a": {} } },
+          },
+        },
+        support: {
+          teams: { support: {} },
+        },
+      },
+    });
+    expect(next?.channels?.msteams?.accounts).not.toHaveProperty("default");
+  });
+
   it("preserves a display-style key for policy paths and allowlist writes", async () => {
     resolveMSTeamsUserAllowlist.mockReset();
     resolveMSTeamsUserAllowlist.mockResolvedValue([

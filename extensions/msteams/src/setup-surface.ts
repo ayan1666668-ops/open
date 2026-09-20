@@ -1,5 +1,4 @@
 import { createChannelDmPolicy } from "openclaw/plugin-sdk/channel-dm-policy";
-// Msteams plugin module implements setup surface behavior.
 import {
   mergeAllowFromEntries,
   setSetupChannelEnabled,
@@ -15,6 +14,7 @@ import type { MSTeamsTeamConfig } from "../runtime-api.js";
 import {
   resolveDefaultMSTeamsAccountId,
   resolveMSTeamsAccount,
+  resolveMSTeamsAccountConfigPath,
   resolveMSTeamsAccountConfig,
   resolveMSTeamsAccountEntryKey,
 } from "./accounts.js";
@@ -154,6 +154,7 @@ function setMSTeamsTeamsAllowlist(
     cfg,
     accountId,
     patch: { teams },
+    scopeDefaultToAccounts: shouldScopeMSTeamsDefaultToAccounts(cfg, accountId),
   });
 }
 
@@ -183,10 +184,7 @@ async function resolveMSTeamsGroupAllowlist(params: {
     params.entries.length === 0 ||
     !resolveMSTeamsCredentials(resolveMSTeamsAccountConfig(params.cfg, params.accountId), {
       allowEnvFallback: params.accountId === "default",
-      pathPrefix:
-        params.accountId === "default"
-          ? "channels.msteams"
-          : `channels.msteams.accounts.${params.accountId}`,
+      pathPrefix: resolveMSTeamsAccountConfigPath(params.cfg, params.accountId),
     })
   ) {
     return resolvedEntries;
@@ -334,10 +332,7 @@ export const msteamsSetupWizard: ChannelSetupWizard = {
       resolveMSTeamsAccountConfig(next, resolvedAccountId),
       {
         allowEnvFallback: resolvedAccountId === "default",
-        pathPrefix:
-          resolvedAccountId === "default"
-            ? "channels.msteams"
-            : `channels.msteams.accounts.${resolvedAccountId}`,
+        pathPrefix: resolveMSTeamsAccountConfigPath(next, resolvedAccountId),
       },
     );
     if (finalCreds?.type === "secret") {
@@ -350,6 +345,7 @@ export const msteamsSetupWizard: ChannelSetupWizard = {
           cfg: next,
           accountId: resolvedAccountId,
           patch: { delegatedAuth: { enabled: true } },
+          scopeDefaultToAccounts: shouldScopeMSTeamsDefaultToAccounts(next, resolvedAccountId),
         });
         const noteDelegatedAuthFailure = async (err: unknown) => {
           await params.prompter.note(

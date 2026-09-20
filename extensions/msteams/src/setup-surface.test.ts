@@ -86,7 +86,6 @@ describe("msteams setup surface", () => {
             default: {
               enabled: true,
               appId: "existing-app",
-              authType: "secret",
             },
           },
         },
@@ -389,6 +388,96 @@ describe("msteams setup surface", () => {
       authType: "secret",
       tenantId: "tenant-id",
       webhook: { port: 3979 },
+    });
+  });
+
+  it("allows partial noninteractive updates for an already configured named account", () => {
+    const cfg = {
+      channels: {
+        msteams: {
+          accounts: {
+            support: {
+              appId: "support-app",
+              appPassword: "support-secret",
+              tenantId: "tenant-id",
+              webhook: { port: 3979, path: "/support/messages" },
+            },
+          },
+        },
+      },
+    };
+    resolveMSTeamsCredentials.mockReturnValue({
+      type: "secret",
+      appId: "support-app",
+      appPassword: "support-secret",
+      tenantId: "tenant-id",
+    });
+
+    expect(
+      msteamsSetupContract.validateInput?.({
+        cfg,
+        accountId: "support",
+        input: { webhookPort: 3980 },
+      }),
+    ).toBeNull();
+    expect(
+      msteamsSetupContract.applyAccountConfig({
+        cfg,
+        accountId: "support",
+        input: { webhookPort: 3980 },
+      }).channels?.msteams?.accounts?.support,
+    ).toEqual({
+      enabled: true,
+      appId: "support-app",
+      appPassword: "support-secret",
+      tenantId: "tenant-id",
+      webhook: { port: 3980, path: "/support/messages" },
+    });
+  });
+
+  it("preserves federated auth during a partial noninteractive update", () => {
+    const cfg = {
+      channels: {
+        msteams: {
+          accounts: {
+            support: {
+              authType: "federated" as const,
+              appId: "support-app",
+              tenantId: "tenant-id",
+              certificatePath: "/secure/support.pem",
+              webhook: { port: 3979 },
+            },
+          },
+        },
+      },
+    };
+    resolveMSTeamsCredentials.mockReturnValue({
+      type: "federated",
+      appId: "support-app",
+      tenantId: "tenant-id",
+      certificatePath: "/secure/support.pem",
+    });
+
+    expect(
+      msteamsSetupContract.validateInput?.({
+        cfg,
+        accountId: "support",
+        input: { webhookPort: 3980 },
+      }),
+    ).toBeNull();
+    expect(
+      msteamsSetupContract.applyAccountConfig({
+        cfg,
+        accountId: "support",
+        input: { webhookPort: 3980 },
+      }).channels?.msteams?.accounts?.support,
+    ).toEqual({
+      enabled: true,
+      authType: "federated",
+      appId: "support-app",
+      tenantId: "tenant-id",
+      certificatePath: "/secure/support.pem",
+      webhook: { port: 3980 },
     });
   });
 
@@ -1053,5 +1142,66 @@ describe("msteams setup surface", () => {
       { accountId: "support" },
     );
     expect(progress.stop).toHaveBeenCalled();
+  });
+
+  it("finalize stores delegated auth under an explicit default account", async () => {
+    resolveMSTeamsCredentials.mockReturnValue({
+      type: "secret",
+      appId: "default-app",
+      appPassword: "default-password",
+      tenantId: "tenant-id",
+    });
+    hasConfiguredMSTeamsCredentials.mockReturnValue(true);
+    loginMSTeamsDelegated.mockResolvedValue({
+      accessToken: "access-token",
+      refreshToken: "refresh-token",
+      expiresAt: Date.parse("2030-01-01T00:00:00.000Z"),
+      scopes: ["ChatMessage.Send"],
+    });
+    const progress = { update: vi.fn(), stop: vi.fn() };
+
+    const result = await exportedMSTeamsSetupWizard.finalize?.({
+      cfg: {
+        channels: {
+          msteams: {
+            defaultAccount: "Default",
+            accounts: {
+              Default: {
+                appId: "default-app",
+                appPassword: "default-password",
+                tenantId: "tenant-id",
+                webhook: { port: 3978 },
+              },
+            },
+          },
+        },
+      },
+      accountId: "default",
+      prompter: {
+        confirm: vi.fn(async () => true),
+        note: vi.fn(async () => {}),
+        progress: vi.fn(() => progress),
+        text: vi.fn(),
+      },
+    } as never);
+
+    expect(result?.cfg?.channels?.msteams?.accounts?.Default).toMatchObject({
+      delegatedAuth: { enabled: true },
+    });
+    expect(result?.cfg?.channels?.msteams?.accounts).not.toHaveProperty("default");
+    expect(result?.cfg?.channels?.msteams?.delegatedAuth).toBeUndefined();
+    expect(resolveMSTeamsCredentials).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        pathPrefix: "channels.msteams.accounts.Default",
+      }),
+    );
+    expect(saveDelegatedTokens).toHaveBeenCalledWith(
+      expect.objectContaining({
+        accessToken: "access-token",
+        refreshToken: "refresh-token",
+      }),
+      { accountId: "default" },
+    );
   });
 });

@@ -752,6 +752,8 @@ describe("msteamsOutbound cfg threading", () => {
   });
 
   it("passes resolved cfg to sendPollMSTeams and stores poll metadata", async () => {
+    const assertDirectAdapterHandoff = vi.fn();
+    const onPlatformSendDispatch = vi.fn(async () => {});
     const cfgLocal = {
       channels: {
         msteams: {
@@ -764,6 +766,8 @@ describe("msteamsOutbound cfg threading", () => {
       cfg: cfgLocal,
       accountId: "secondary",
       to: "conversation:abc",
+      assertDirectAdapterHandoff,
+      onPlatformSendDispatch,
       poll: {
         question: "Snack?",
         options: ["Pizza", "Sushi"],
@@ -777,6 +781,8 @@ describe("msteamsOutbound cfg threading", () => {
       question: "Snack?",
       options: ["Pizza", "Sushi"],
       maxSelections: 1,
+      assertDirectAdapterHandoff,
+      onPlatformSendDispatch,
     });
     const pollRecord = firstPollRecord();
     expect(pollRecord).toEqual({
@@ -812,6 +818,8 @@ describe("msteamsOutbound cfg threading", () => {
       question: "Ship it?",
       options: ["Yes", "No"],
       maxSelections: 1,
+      assertDirectAdapterHandoff: undefined,
+      onPlatformSendDispatch: undefined,
     });
   });
 
