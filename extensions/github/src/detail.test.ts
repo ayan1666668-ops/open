@@ -6,6 +6,17 @@ import { parseGitHubTarget } from "./targets.js";
 const date = "2026-09-13T12:00:00Z";
 const sha = "abcdef0123456789abcdef0123456789abcdef01";
 let sequence = 0;
+
+/** True when truncated text starts or ends on half of a surrogate pair. */
+function isLoneSurrogateAtEdge(text: string): boolean {
+  if (text.length === 0) {
+    return false;
+  }
+  const first = text.charCodeAt(0);
+  const last = text.charCodeAt(text.length - 1);
+  return (last >= 0xd800 && last <= 0xdbff) || (first >= 0xdc00 && first <= 0xdfff);
+}
+
 function target(kind: "issue" | "pull" | "commit" = "issue"): GitHubTarget {
   const repo = "detail-" + ++sequence;
   return kind === "commit"
@@ -303,6 +314,25 @@ describe("GitHub detail public read boundary", () => {
     for (const [, options] of fetchMock.mock.calls) {
       expect(options?.headers).not.toHaveProperty("Authorization");
     }
+  });
+
+  it("keeps truncated GitHub bodies and patches UTF-16 safe at the cut boundary", async () => {
+    // A non-BMP code point (emoji) is a surrogate pair; cutting between its two
+    // halves leaves a lone surrogate that renders as a replacement character.
+    const emoji = "\u{1F600}";
+    const body = "a".repeat(32 * 1024 - 1) + emoji + "tail";
+    const patch = "p".repeat(16 * 1024 - 1) + emoji + "tail";
+    const fetchMock = publicFetch(item({ body, comments: 1, review_comments: 1, changed_files: 1 }))
+      .mockResolvedValueOnce(json([commentItem({ body: "c" })]))
+      .mockResolvedValueOnce(json([commentItem({ body: "r", path: "src/file.ts" })]))
+      .mockResolvedValueOnce(json([file({ patch })]));
+    const detail = await loadGitHubDetail(target("pull"), fetchMock);
+    expect(detail.bodyTruncated).toBe(true);
+    expect(detail.body).toHaveLength(32 * 1024 - 1);
+    expect(isLoneSurrogateAtEdge(detail.body)).toBe(false);
+    const patchResult = detail.files[0]?.patch ?? "";
+    expect(patchResult).toHaveLength(16 * 1024 - 1);
+    expect(isLoneSurrogateAtEdge(patchResult)).toBe(false);
   });
 
   it("preserves complete nonempty comments and renamed file patches", async () => {
