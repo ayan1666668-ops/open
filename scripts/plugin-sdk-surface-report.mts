@@ -391,7 +391,9 @@ export function readPluginSdkSurfaceBudgets(env: NodeJS.ProcessEnv = process.env
       // +1: preserve accepted modifier media selection during transcript recovery.
       // +13: twelve decision contract types and one prepared plugin secret reader.
       // +6: shared delivery facts, source-reply detection, argument sanitization, and media comparison.
-      4523,
+      // +1: workspace Memory file client.
+      // +2: prepare admitted input attachments and bind a workspace transfer adapter.
+      4526,
       env,
     ),
     publicFunctionExports: readPluginSdkSurfaceBudgetEnv(
@@ -542,7 +544,9 @@ export function readPluginSdkSurfaceBudgets(env: NodeJS.ProcessEnv = process.env
       // +1: preserve accepted modifier media selection during transcript recovery.
       // +1: prepared plugin capability secret reader.
       // +6: shared delivery facts, source-reply detection, argument sanitization, and media comparison.
-      2666,
+      // +1: workspace Memory file client.
+      // +2: prepare admitted input attachments and bind a workspace transfer adapter.
+      2669,
       env,
     ),
     publicDeprecatedExports: readPluginSdkSurfaceBudgetEnv(
