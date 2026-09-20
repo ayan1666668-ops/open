@@ -8,6 +8,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -150,7 +152,7 @@ class ChatControllerTranscriptCacheTest {
     )
 
   @Test
-  fun liveHistoryCapturesFinalMetricsAndReloadRestoresEarlierEntries() =
+  fun historyRetainsEntryMetricsWithoutBorrowingPreviousRunTokens() =
     runTest {
       val cache = FakeTranscriptCache()
       val previousMetrics = ChatReplyMetrics("transcript-one", "answer-1", 200L, 100L, 12L)
@@ -164,7 +166,7 @@ class ChatControllerTranscriptCacheTest {
             "chat.history" -> {
               """{
             "sessionId":"transcript-one",
-            "sessionInfo":{"key":"main","status":"done","startedAt":300,"endedAt":500,"runtimeMs":200,"outputTokens":42},
+            "sessionInfo":{"key":"main","status":"done","startedAt":300,"endedAt":500,"runtimeMs":200,"outputTokens":12},
             "messages":[
               {"role":"assistant","content":"first","phase":"final_answer","timestamp":190,"__openclaw":{"id":"answer-1"}},
               {"role":"user","content":"second question","timestamp":310},
@@ -181,7 +183,8 @@ class ChatControllerTranscriptCacheTest {
       controller.loadCurrent("main")
       advanceUntilIdle()
 
-      val expected = listOf(previousMetrics, null, ChatReplyMetrics("transcript-one", "answer-2", 500L, 200L, 42L))
+      // A successful run without usage retains the previous session-wide counter.
+      val expected = listOf(previousMetrics, null, ChatReplyMetrics("transcript-one", "answer-2", 500L, 200L, null))
       assertEquals(expected, controller.messages.value.map { it.replyMetrics })
       assertEquals(
         expected,
@@ -189,6 +192,91 @@ class ChatControllerTranscriptCacheTest {
           .last()
           .messages
           .map { it.replyMetrics },
+      )
+      val saved = cache.savedTranscripts.last()
+      cache.transcripts[TranscriptKey(saved.gatewayId, saved.agentId, saved.sessionKey)] = saved.messages
+      val offline = createCachedController(cache) { _, _ -> error("offline") }
+      offline.loadCurrent("main")
+      advanceUntilIdle()
+      assertEquals(expected, offline.messages.value.map { it.replyMetrics })
+    }
+
+  @Test
+  fun terminalHistoryKeepsRunQualifiedUsageAfterTelemetryRetires() =
+    runTest {
+      val cache = FakeTranscriptCache()
+      var completed = false
+      var clientRunId: String? = null
+      val controller =
+        createCachedController(cache) { method, paramsJson ->
+          when (method) {
+            "chat.send" -> {
+              clientRunId =
+                chatControllerTestJson
+                  .parseToJsonElement(requireNotNull(paramsJson))
+                  .jsonObject["idempotencyKey"]!!
+                  .jsonPrimitive
+                  .content
+              """{"runId":"counted-run","status":"started"}"""
+            }
+
+            "chat.history" -> {
+              if (completed) {
+                """{"sessionId":"transcript-one",
+                "sessionInfo":{"key":"main","status":"done","hasActiveRun":false,"activeRunIds":[],
+                "startedAt":100,"endedAt":200,"runtimeMs":100,"outputTokens":999},
+                "messages":[
+                  {"role":"user","content":"question","timestamp":110,"idempotencyKey":"$clientRunId:user"},
+                  {"role":"assistant","content":"answer","phase":"final_answer","timestamp":190,
+                  "__openclaw":{"id":"counted-answer","runId":"counted-run"}}
+                ]}"""
+              } else {
+                """{"sessionId":"transcript-one","messages":[]}"""
+              }
+            }
+
+            else -> {
+              emptyChatGatewayResponse(method)
+            }
+          }
+        }
+      controller.loadCurrent("main")
+      runCurrent()
+      assertTrue(controller.sendMessageAwaitAcceptance("question", "off", emptyList()))
+      controller.handleGatewayEvent(
+        "agent",
+        """{"sessionKey":"main","runId":"counted-run","seq":1,"stream":"usage","data":{"outputTokens":42}}""",
+      )
+      assertEquals(42L, controller.selectedActiveRunPresentation.value.outputTokens)
+      completed = true
+      controller.handleGatewayEvent("chat", chatTerminalPayload("main", "counted-run", seq = 2, assistantText = "answer"))
+      advanceUntilIdle()
+      val expected = ChatReplyMetrics("transcript-one", "counted-answer", 200L, 100L, 42L)
+      assertEquals(
+        expected,
+        controller.messages.value
+          .last()
+          .replyMetrics,
+      )
+      controller.refresh()
+      advanceUntilIdle()
+      assertEquals(
+        expected,
+        controller.messages.value
+          .last()
+          .replyMetrics,
+      )
+      val saved = cache.savedTranscripts.last()
+      assertEquals(expected, saved.messages.last().replyMetrics)
+      cache.transcripts[TranscriptKey(saved.gatewayId, saved.agentId, saved.sessionKey)] = saved.messages
+      val offline = createCachedController(cache) { _, _ -> error("offline") }
+      offline.loadCurrent("main")
+      advanceUntilIdle()
+      assertEquals(
+        expected,
+        offline.messages.value
+          .last()
+          .replyMetrics,
       )
     }
 

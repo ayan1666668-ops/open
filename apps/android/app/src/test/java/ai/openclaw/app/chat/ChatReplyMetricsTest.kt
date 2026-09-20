@@ -56,6 +56,24 @@ class ChatReplyMetricsTest {
   }
 
   @Test
+  fun outputTokensRequireTheFinalEntryRunAndNeverUseSessionOrSingleCallUsage() {
+    val final = answer("a", 190).copy(usage = ChatMessageUsage(output = 7))
+    for (runId in listOf(null, "unobserved-run", "observed-run")) {
+      val result =
+        history(listOf(final.copy(runId = runId))).withReplyMetrics(emptyList()) { observedRun ->
+          if (observedRun == "observed-run") 120L else null
+        }
+      assertEquals(
+        if (runId == "observed-run") 120L else null,
+        result.messages
+          .single()
+          .replyMetrics
+          ?.outputTokens,
+      )
+    }
+  }
+
+  @Test
   fun missingIdentityFailedActiveStaleAndNonfinalSnapshotsCannotAcquireMetrics() {
     val base = history(listOf(answer("a", 190)))
     val variants =

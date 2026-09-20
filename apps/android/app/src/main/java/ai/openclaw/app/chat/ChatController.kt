@@ -4756,6 +4756,11 @@ class ChatController internal constructor(
                 val reportedRun = history.inFlightRun
                 val inFlightRun = reportedRun?.takeUnless { hasTerminalRunTelemetry(it.runId) }
                 val snapshotRunId = inFlightRun?.runId
+                // Capture entry-owned usage before publishing the settled row retires telemetry.
+                val annotatedHistory =
+                  history.withReplyMetrics(cachedMetricsMessages + _messages.value) { runId ->
+                    synchronized(liveRunTelemetryLock) { liveRunTelemetryByRunId[runId]?.outputTokens }
+                  }
                 if (reconcileRunState) {
                   // A newer settings observation invalidates only this projection,
                   // not the useful transcript carried by the same history response.
@@ -4781,7 +4786,6 @@ class ChatController internal constructor(
                         !unresolvedRepliesByRunId.containsKey(it)
                     }.forEach { clearPendingRun(it, publishRunState = false) }
                 }
-                val annotatedHistory = history.withReplyMetrics(cachedMetricsMessages + _messages.value)
                 val nextMessages = mergeOptimisticMessages(incoming = annotatedHistory.messages, optimistic = optimisticMessagesByRunId.values)
                 _messagesFromCache.value = false
                 _messages.value = nextMessages

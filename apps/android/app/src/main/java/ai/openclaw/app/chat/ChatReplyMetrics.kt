@@ -5,7 +5,10 @@ package ai.openclaw.app.chat
  * successful final inside its authoritative run interval. Never search backward for an answer
  * when the terminal row is a tool, commentary, error, synthetic mirror, or media-only reply.
  */
-internal fun ChatHistory.withReplyMetrics(previous: List<ChatMessage>): ChatHistory {
+internal fun ChatHistory.withReplyMetrics(
+  previous: List<ChatMessage>,
+  outputTokensForRun: (String) -> Long? = { null },
+): ChatHistory {
   val sid = sessionId?.takeIf(String::isNotBlank) ?: return copy(messages = messages.map { it.copy(replyMetrics = null) })
   val retained = previous.mapNotNull { it.replyMetrics }.filter { it.sessionId == sid }.associateBy { it.entryId }
   var annotated =
@@ -28,7 +31,8 @@ internal fun ChatHistory.withReplyMetrics(previous: List<ChatMessage>): ChatHist
   ) {
     annotated = annotated.dropLast(1) +
       final.copy(
-        replyMetrics = ChatReplyMetrics(sid, final.entryId, endedAt, runtimeMs, row.outputTokens?.takeIf { it >= 0 }),
+        // Session counters survive usage-missing runs; only this entry's run can own its tokens.
+        replyMetrics = ChatReplyMetrics(sid, final.entryId, endedAt, runtimeMs, final.runId?.let(outputTokensForRun)?.takeIf { it >= 0 }),
       )
   }
   return copy(messages = annotated)
