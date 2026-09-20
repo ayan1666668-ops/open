@@ -232,8 +232,13 @@ export function publishTaskRegistryWorkerMutation(params: {
     return;
   }
   const { tasks } = getTaskRegistryProcessState();
+  // Equal-value committed readbacks can still supersede a held publication.
+  const isInvalidated = (taskId: string) =>
+    publication.invalidated.has(taskId) ||
+    pending.recoveryWitness?.replaced ||
+    pending.recoveryWitness?.writtenTaskIds.has(taskId);
   for (const [taskId, expected] of publication.records) {
-    if (!publication.ready.has(taskId) || publication.invalidated.has(taskId)) {
+    if (!publication.ready.has(taskId) || isInvalidated(taskId)) {
       continue;
     }
     const next = tasks.get(taskId);
@@ -251,11 +256,7 @@ export function publishTaskRegistryWorkerMutation(params: {
         ...(previous ? { previous } : {}),
       }));
       const current = tasks.get(taskId);
-      if (
-        current &&
-        !publication.invalidated.has(taskId) &&
-        isEquivalentTaskRecord(expected, current)
-      ) {
+      if (current && !isInvalidated(taskId) && isEquivalentTaskRecord(expected, current)) {
         params.onPublished?.(current);
       }
     }

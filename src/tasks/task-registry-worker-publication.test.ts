@@ -295,13 +295,14 @@ describe("worker publication scope", () => {
     }
   });
 
-  it.each(
-    (["queued", "read", "effects"] as const).flatMap((phase) =>
+  it.each([
+    ...(["queued", "read", "effects"] as const).flatMap((phase) =>
       (["none", "no-op refresh", "delivery", "unrelated row", "row ABA"] as const).map(
         (change) => ({ phase, change }),
       ),
     ),
-  )(
+    { phase: "effects", change: "overlapping worker ABA" } as const,
+  ])(
     "keeps receipt readiness correct across $change while $phase waits",
     async ({ phase, change }) => {
       const other = { ...task, taskId: "other-task", runId: "other-run" };
@@ -341,6 +342,7 @@ describe("worker publication scope", () => {
             return new Map([[task.taskId, receipt]]);
           },
           forcePublish: () => receipt,
+          ...(change === "overlapping worker ABA" ? { recoverPublication: () => undefined } : {}),
           beforeObservers: async () => {
             if (phase === "effects") {
               started.resolve();
@@ -363,7 +365,33 @@ describe("worker publication scope", () => {
       );
       try {
         await started.promise;
-        if (change === "no-op refresh") {
+        if (change === "overlapping worker ABA") {
+          const bothCommitted = createDeferred();
+          const writes = [{ ...receipt, task: "Other writer" }, receipt].map((row, index) =>
+            runTaskRegistryWorkerMutation(
+              {
+                admission: context.admission,
+                scope: { taskId: task.taskId },
+                publicationRecords: () => new Map([[task.taskId, row]]),
+              },
+              async () => {
+                store.upsertTaskWithDeliveryState({ task: row });
+                if (index === 1) {
+                  bothCommitted.resolve();
+                }
+                await bothCommitted.promise;
+              },
+              async () => store.loadSnapshot(),
+            ),
+          );
+          try {
+            await Promise.all(writes);
+            expect(events).toEqual(["upserted:existing-task:original-run"]);
+          } finally {
+            bothCommitted.resolve();
+            await Promise.allSettled(writes);
+          }
+        } else if (change === "no-op refresh") {
           withTaskRegistryMutation(() => {});
         } else if (change === "delivery") {
           upsertTaskDeliveryState({ taskId: task.taskId, lastNotifiedEventAt: 42 });
@@ -377,7 +405,10 @@ describe("worker publication scope", () => {
         await expect(pending).resolves.toEqual(receipt);
         expect(tasks.get(task.taskId)).toEqual(receipt);
         expect(events).toEqual(
-          change === "delivery" || change === "none" || change === "no-op refresh"
+          change === "delivery" ||
+            change === "none" ||
+            change === "no-op refresh" ||
+            change === "overlapping worker ABA"
             ? ["upserted:existing-task:original-run"]
             : change === "unrelated row"
               ? ["upserted:other-task:other-run", "upserted:existing-task:original-run"]
