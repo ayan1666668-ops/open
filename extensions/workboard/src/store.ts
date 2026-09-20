@@ -579,10 +579,15 @@ export class WorkboardStore extends WorkboardNotificationStore {
     const shouldArchive = archived !== false;
     return await this.updateMetadata(
       id,
-      (existing) => ({
-        ...existing.metadata,
-        archivedAt: shouldArchive ? Date.now() : 0,
-      }),
+      (existing) => {
+        if (shouldArchive && existing.status !== "done") {
+          throw new Error("only done Workboard cards can be archived.");
+        }
+        return {
+          ...existing.metadata,
+          archivedAt: shouldArchive ? Date.now() : 0,
+        };
+      },
       options,
     );
   }

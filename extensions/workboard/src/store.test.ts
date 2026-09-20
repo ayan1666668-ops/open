@@ -32,6 +32,16 @@ function expectSameCardState(actual: WorkboardCard | undefined, expected: Workbo
   expect(actualState).toEqual(expectedState);
 }
 
+async function seedLegacyArchivedStatus(
+  store: WorkboardStore,
+  card: WorkboardCard,
+  status: WorkboardCard["status"],
+): Promise<WorkboardCard> {
+  const done = card.status === "done" ? card : await store.move(card.id, "done", undefined);
+  await store.archive(done.id, true);
+  return status === "done" ? (await store.get(done.id))! : await store.update(done.id, { status });
+}
+
 function createPausedCardStore(delegate: WorkboardCardStore) {
   let pause:
     | {
@@ -381,7 +391,10 @@ describe("WorkboardStore", () => {
     async (action) => {
       const harness = createConcurrentSqliteHarness("openclaw-workboard-action-cas-");
       try {
-        const base = await harness.host.create({ title: "Original", status: "todo" });
+        const base = await harness.host.create({
+          title: "Original",
+          status: action === "archive" ? "done" : "todo",
+        });
         const newer = await harness.host.update(base.id, { title: "Newer title" });
         const options = { expectedUpdatedAt: base.updatedAt };
         const pending =
@@ -426,7 +439,10 @@ describe("WorkboardStore", () => {
     async (action) => {
       const harness = createConcurrentSqliteHarness("openclaw-workboard-action-race-");
       try {
-        const base = await harness.host.create({ title: "Original", status: "todo" });
+        const base = await harness.host.create({
+          title: "Original",
+          status: action === "archive" ? "done" : "todo",
+        });
         const pause = harness.paused.pauseNextWrite();
         const options = { expectedUpdatedAt: base.updatedAt };
         const pending =
@@ -642,6 +658,7 @@ describe("WorkboardStore", () => {
     try {
       const sessionKey = "agent:main:dashboard:archived-race";
       const captured = await second.captureSession({ title: "Captured", sessionKey });
+      await second.move(captured.id, "done", undefined);
       await second.archive(captured.id, true);
 
       const pause = paused.pauseNextWrite();
@@ -695,7 +712,12 @@ describe("WorkboardStore", () => {
     const store = createWorkboardSqliteTestStore();
     const sessionKey = "agent:main:dashboard:captured";
     const active = await store.create({ title: "Active", sessionKey, boardId: "default" });
-    const historical = await store.create({ title: "Historical", sessionKey, boardId: "ops" });
+    const historical = await store.create({
+      title: "Historical",
+      sessionKey,
+      boardId: "ops",
+      status: "done",
+    });
     await store.archive(historical.id, true);
 
     const captured = await store.captureSession({
@@ -708,6 +730,7 @@ describe("WorkboardStore", () => {
     expect(captured.metadata?.automation?.boardId).toBe("default");
     expect((await store.list()).filter((card) => !card.metadata?.archivedAt)).toEqual([active]);
 
+    await store.move(active.id, "done", undefined);
     await store.archive(active.id, true);
     const restored = await store.captureSession({ title: "Restore", sessionKey, boardId: "other" });
     expect([active.id, historical.id]).toContain(restored.id);
@@ -965,7 +988,7 @@ describe("WorkboardStore", () => {
         const archived = await initial.create({
           title: "Summarize archived card",
           boardId: "ops",
-          status: "ready",
+          status: "done",
         });
         await initial.archive(archived.id, true);
       } finally {
@@ -995,7 +1018,7 @@ describe("WorkboardStore", () => {
               total: 2,
               active: 1,
               archived: 1,
-              byStatus: { ready: 1, todo: 1 },
+              byStatus: { done: 1, todo: 1 },
             }),
           ]),
         });
@@ -1903,6 +1926,7 @@ describe("WorkboardStore", () => {
     });
     expect(artifacted.events?.at(-1)).toMatchObject({ kind: "artifact_added" });
 
+    await store.move(card.id, "done", undefined);
     const archived = await store.archive(card.id, true);
     expect(archived.metadata?.archivedAt).toBeGreaterThan(0);
     expect(archived.events?.at(-1)).toMatchObject({ kind: "archived" });
@@ -1916,6 +1940,7 @@ describe("WorkboardStore", () => {
     const store = createWorkboardSqliteTestStore();
     const card = await store.create({
       title: "Injected archive",
+      status: "done",
       metadata: { archivedAt: Date.now() },
     });
 
@@ -3565,34 +3590,16 @@ describe("WorkboardStore", () => {
     });
   });
 
-  it.each(WORKBOARD_STATUSES)(
-    "reports archived %s cards according to terminal state",
+  it.each(WORKBOARD_STATUSES.filter((status) => status !== "done"))(
+    "refuses to archive a non-terminal %s card",
     async (status) => {
       const store = createWorkboardSqliteTestStore();
-      const card = await store.create({ title: `Archived ${status}`, status });
+      const card = await store.create({ title: `Active ${status}`, status });
 
-      await store.archive(card.id, true);
-
-      const result = await store.diagnostics(Date.now());
-      if (status === "done") {
-        expect(result).toEqual({ diagnostics: [], count: 0 });
-        return;
-      }
-      expect(result).toMatchObject({
-        diagnostics: [
-          expect.objectContaining({
-            card: expect.objectContaining({ id: card.id }),
-            diagnostics: [
-              expect.objectContaining({
-                kind: "archived_but_active",
-                severity: "warning",
-                actions: [],
-              }),
-            ],
-          }),
-        ],
-        count: 1,
-      });
+      await expect(store.archive(card.id, true)).rejects.toThrow(
+        "only done Workboard cards can be archived",
+      );
+      await expect(store.get(card.id)).resolves.toEqual(card);
     },
   );
 
@@ -3601,7 +3608,7 @@ describe("WorkboardStore", () => {
     const card = await store.create({ title: "Archived but ready", status: "ready" });
     const now = Date.now();
 
-    await store.archive(card.id, true);
+    await seedLegacyArchivedStatus(store, card, "ready");
 
     await expect(store.refreshDiagnostics(now)).resolves.toEqual({ diagnostics: [], count: 0 });
     await expect(store.get(card.id)).resolves.not.toHaveProperty("metadata.diagnostics");
@@ -3613,7 +3620,7 @@ describe("WorkboardStore", () => {
     await store.archive(card.id, false);
     await expect(store.diagnostics(now + 1)).resolves.toEqual({ diagnostics: [], count: 0 });
 
-    await store.archive(card.id, true);
+    await seedLegacyArchivedStatus(store, (await store.get(card.id))!, "ready");
     await store.move(card.id, "done", undefined);
     await expect(store.diagnostics(now + 2)).resolves.toEqual({ diagnostics: [], count: 0 });
   });
@@ -3787,7 +3794,7 @@ describe("WorkboardStore", () => {
         status: "ready",
       });
       vi.setSystemTime(2_000);
-      await store.archive(oldReady.id, true);
+      await seedLegacyArchivedStatus(store, oldReady, "ready");
 
       await expect(store.stats({ boardId: "ops" }, 5_000)).resolves.toMatchObject({
         total: 1,
@@ -4415,10 +4422,11 @@ describe("WorkboardStore", () => {
       }
       const archived = await store.create({
         title: "Archived import flow",
-        status: "triage",
+        status: "done",
         boardId: "planning",
       });
       await store.archive(archived.id, true);
+      await store.update(archived.id, { status: "triage" });
 
       const dispatch = await store.dispatch(10);
 
@@ -4459,7 +4467,7 @@ describe("WorkboardStore", () => {
       title: "Archived ready work",
       status: "ready",
     });
-    const archived = await store.archive(card.id, true);
+    const archived = await seedLegacyArchivedStatus(store, card, "ready");
     const changes = vi.fn();
     store.subscribeChanges(changes);
 
@@ -4487,7 +4495,7 @@ describe("WorkboardStore", () => {
         status: "scheduled",
         scheduledAt: 2_000,
       });
-      const archived = await store.archive(card.id, true);
+      const archived = await seedLegacyArchivedStatus(store, card, "scheduled");
       const changes = vi.fn();
       store.subscribeChanges(changes);
 
@@ -4531,12 +4539,12 @@ describe("WorkboardStore", () => {
         title: "Archived dependent work",
         parents: [parent.id],
       });
-      const archived = await Promise.all([
-        store.archive(timedOut.id, true),
-        store.archive(scheduled.id, true),
-        store.archive(dependent.id, true),
-      ]);
       await store.complete(parent.id, { summary: "Dependency finished." });
+      const archived = await Promise.all([
+        seedLegacyArchivedStatus(store, timedOut, "running"),
+        seedLegacyArchivedStatus(store, scheduled, "scheduled"),
+        seedLegacyArchivedStatus(store, dependent, "todo"),
+      ]);
       const changes = vi.fn();
       store.subscribeChanges(changes);
 
