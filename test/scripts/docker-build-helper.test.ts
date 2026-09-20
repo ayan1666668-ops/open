@@ -2763,7 +2763,11 @@ docker_e2e_docker_run_cmd run demo
     expect(publishedRunner).toContain(
       'OPENCLAW_PREPUBLISH_PLUGIN_REGISTRY_DIST_TAGS="${OPENCLAW_UPGRADE_SURVIVOR_UPDATE_CHANNEL}=$candidate_version"',
     );
-    expect(runner).toContain("-e OPENCLAW_UPGRADE_SURVIVOR_UPDATE_CHANNEL=extended-stable");
+    expect(runner).toContain(
+      '-e OPENCLAW_UPGRADE_SURVIVOR_UPDATE_CHANNEL="$CANDIDATE_UPDATE_CHANNEL"',
+    );
+    expect(runner).toContain('CANDIDATE_UPDATE_CHANNEL="stable"');
+    expect(runner).toContain('CANDIDATE_UPDATE_CHANNEL="extended-stable"');
     expect(publishedRunner).toContain(
       'OPENCLAW_UPGRADE_SURVIVOR_UPDATE_CHANNEL="${OPENCLAW_UPGRADE_SURVIVOR_UPDATE_CHANNEL:-stable}"',
     );
