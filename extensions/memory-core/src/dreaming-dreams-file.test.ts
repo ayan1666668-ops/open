@@ -130,57 +130,37 @@ describe("dream diary file behavior", () => {
     await expect(fs.readFile(targetPath, "utf8")).resolves.toBe("outside\n");
   });
 
-  it("keeps truncated recent diary entries UTF-16 safe", async () => {
-    const workspaceDir = await createTempWorkspace("dreaming-narrative-utf16-");
-    const prefix = "a".repeat(359);
-    await writeBackfillDiaryEntries({
-      workspaceDir,
-      entries: [
-        {
-          isoDay: "2026-04-05",
-          bodyLines: [`${prefix}😀tail`],
-        },
-      ],
-      timezone: "UTC",
-    });
+  it.each([" 😀tail", "😀tail"])(
+    "publishes unchanged truncated context ending in %s",
+    async (suffix) => {
+      const workspaceDir = await createTempWorkspace("dreaming-narrative-utf16-");
+      const prefix = "a".repeat(359);
+      const body = `${prefix}${suffix}`;
+      await writeBackfillDiaryEntries({
+        workspaceDir,
+        entries: [
+          {
+            isoDay: "2026-04-05",
+            bodyLines: [body],
+          },
+        ],
+        timezone: "UTC",
+      });
 
-    await expect(readRecentDreamDiaryEntries({ workspaceDir, limit: 1 })).resolves.toEqual([
-      `${prefix}...`,
-    ]);
-  });
-
-  it("publishes a narrative when a truncated recent entry is unchanged", async () => {
-    const workspaceDir = await createTempWorkspace("dreaming-narrative-clamp-");
-    // The 360-character cut lands on whitespace, so the stored context entry is 362 characters:
-    // trimEnd() drops that space before the ellipsis is appended, and clamping the result again
-    // would yield 363.
-    const body = `${"x".repeat(8)} `.repeat(60).trim();
-    await writeBackfillDiaryEntries({
-      workspaceDir,
-      entries: [
-        {
-          isoDay: "2026-04-05",
-          bodyLines: [body],
-        },
-      ],
-      timezone: "UTC",
-    });
-    const recentDiaryEntries = await readRecentDreamDiaryEntries({ workspaceDir, limit: 3 });
-
-    await expect(
-      appendNarrativeEntry({
+      const recentDiaryEntries = await readRecentDreamDiaryEntries({ workspaceDir, limit: 1 });
+      expect(recentDiaryEntries).toEqual([`${prefix}...`]);
+      await appendNarrativeEntry({
         workspaceDir,
         narrative: "Unchanged context must still publish.",
         nowMs: Date.parse("2026-04-06T03:00:00Z"),
         timezone: "UTC",
         recentDiaryEntries,
-      }),
-    ).resolves.toBeDefined();
-
-    await expect(readDreamsFile(path.join(workspaceDir, "DREAMS.md"))).resolves.toContain(
-      "Unchanged context must still publish.",
-    );
-  });
+      });
+      const content = await readDreamsFile(path.join(workspaceDir, "DREAMS.md"));
+      expect(content).toContain("Unchanged context must still publish.");
+      expect(content).toContain(body);
+    },
+  );
 
   it("skips symlinked and non-file DREAMS.md when reading recent context", async () => {
     const symlinkWorkspace = await createTempWorkspace("dreaming-narrative-read-symlink-");
