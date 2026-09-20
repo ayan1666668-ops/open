@@ -397,9 +397,11 @@ describe("CodexAppServerEventProjector media projection", () => {
     await expect(fs.readFile(mediaUrl ?? "")).resolves.toEqual(
       Buffer.from(tinyPngBase64, "base64"),
     );
+    // A native tool-output attachment (e.g. a screenshot) is delivery media,
+    // not a billable/replay-unsafe image-generation side effect.
     expect(result.replayMetadata).toStrictEqual({
-      hadPotentialSideEffects: true,
-      replaySafe: false,
+      hadPotentialSideEffects: false,
+      replaySafe: true,
     });
   });
 

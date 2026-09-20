@@ -21,8 +21,25 @@ import type { CodexRemoteWorkspaceFileReader } from "./remote-workspace-media.js
 
 const GENERATED_IMAGE_MEDIA_SUBDIR = "tool-image-generation";
 
+interface RecordImageParams {
+  itemId: string;
+  result: string;
+  revisedPrompt?: string;
+  source: "native" | "raw";
+  // True for actual image-generation results (billable/replay-unsafe side
+  // effect); false for images projected out of a tool-output attachment
+  // (e.g. a screenshot), which are delivery media only.
+  isGeneratedSideEffect: boolean;
+}
+
 export class CodexGeneratedMediaProjection {
   private readonly itemIds = new Set<string>();
+  // Only actual image-generation identities (native `imageGeneration` items and
+  // raw `image_generation_call` events) count toward billing/replay-safety.
+  // Projected tool-output attachments (e.g. a screenshot handed back by a
+  // native tool) are delivery media, not a generation side effect, and must
+  // stay out of this set.
+  private readonly generatedSideEffectItemIds = new Set<string>();
   private readonly mediaByItemId = new Map<string, { mediaUrl?: string; savedPath?: string }>();
   private readonly gatewayMaterializedItemIds = new Set<string>();
   private readonly pendingMaterializationsByItemId = new Map<string, Promise<void>>();
@@ -38,7 +55,7 @@ export class CodexGeneratedMediaProjection {
   ) {}
 
   hasGeneratedMedia(): boolean {
-    return this.itemIds.size > 0;
+    return this.generatedSideEffectItemIds.size > 0;
   }
 
   async recordNative(item: CodexThreadItem | undefined): Promise<void> {
@@ -48,6 +65,7 @@ export class CodexGeneratedMediaProjection {
     // Image generation is already a billable side effect even if its remote
     // artifact cannot be transferred into this gateway's media store.
     this.itemIds.add(item.id);
+    this.generatedSideEffectItemIds.add(item.id);
     const savedPath = readItemString(item, "savedPath")?.trim();
     if (savedPath) {
       this.mediaByItemId.set(item.id, { ...this.mediaByItemId.get(item.id), savedPath });
@@ -59,6 +77,7 @@ export class CodexGeneratedMediaProjection {
         result,
         revisedPrompt: readItemString(item, "revisedPrompt"),
         source: "native",
+        isGeneratedSideEffect: true,
       });
       return;
     }
@@ -88,6 +107,7 @@ export class CodexGeneratedMediaProjection {
             result: response.dataBase64,
             revisedPrompt: readItemString(item, "revisedPrompt"),
             source: "native",
+            isGeneratedSideEffect: true,
           });
         } catch (error) {
           embeddedAgentLog.warn("codex app-server remote image file read failed", {
@@ -114,6 +134,7 @@ export class CodexGeneratedMediaProjection {
         result,
         revisedPrompt: readString(item, "revised_prompt") ?? readString(item, "revisedPrompt"),
         source: "raw",
+        isGeneratedSideEffect: true,
       });
       return;
     }
@@ -149,18 +170,19 @@ export class CodexGeneratedMediaProjection {
         itemId: `${baseItemId}-image-${index}`,
         result: parsed.base64,
         source: "raw",
+        // A projected tool-output attachment (e.g. a screenshot) is delivery
+        // media, not a billable/replay-unsafe generation side effect.
+        isGeneratedSideEffect: false,
       });
       index += 1;
     }
   }
 
-  private async recordImage(params: {
-    itemId: string;
-    result: string;
-    revisedPrompt?: string;
-    source: "native" | "raw";
-  }): Promise<void> {
+  private async recordImage(params: RecordImageParams): Promise<void> {
     this.itemIds.add(params.itemId);
+    if (params.isGeneratedSideEffect) {
+      this.generatedSideEffectItemIds.add(params.itemId);
+    }
     if (this.gatewayMaterializedItemIds.has(params.itemId)) {
       return;
     }
@@ -186,12 +208,7 @@ export class CodexGeneratedMediaProjection {
     }
   }
 
-  private async materializeImage(params: {
-    itemId: string;
-    result: string;
-    revisedPrompt?: string;
-    source: "native" | "raw";
-  }): Promise<void> {
+  private async materializeImage(params: RecordImageParams): Promise<void> {
     const maxBytes = resolveGeneratedMediaMaxBytes(this.config, "image");
     const estimatedDecodedBytes = estimateBase64DecodedBytes(params.result);
     if (estimatedDecodedBytes !== undefined && estimatedDecodedBytes > maxBytes) {
