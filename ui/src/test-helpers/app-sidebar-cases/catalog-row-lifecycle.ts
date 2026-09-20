@@ -92,7 +92,7 @@ describe("AppSidebar catalog row lifecycle", () => {
     const popup = sidebar.querySelector<HTMLElement & { trigger?: HTMLElement }>(
       "openclaw-catalog-session-menu",
     );
-    expect(adoptedMenu?.getAttribute("aria-expanded")).toBe("true");
+    expect(popup).not.toBeNull();
     expect(popup?.trigger).toBe(adoptedMenu);
     popup?.querySelector<HTMLElement>("wa-dropdown-item")?.focus();
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));

@@ -120,6 +120,11 @@ export interface SessionListHost {
   handleSessionRowClick(event: MouseEvent, session: SidebarRecentSession): void;
   toggleSessionChildren(session: SidebarRecentSession): void;
   toggleSessionPin(session: SidebarRecentSession): void;
+  toggleSessionMenu(
+    session: SidebarRecentSession,
+    trigger: HTMLElement,
+    catalogMenu?: CatalogSessionMenuRequest,
+  ): void;
   showMoreChildren(sessionKey: string): void;
   sectionDragOver(event: DragEvent, sectionId: string, group?: string): void;
   sectionDragLeave(event: DragEvent, sectionId: string, group?: string): void;
@@ -374,8 +379,9 @@ export function renderRecentSession(params: {
   const archiveLabel = t(
     session.archived ? "sessionsView.restoreSession" : "sessionsView.archiveSession",
   );
-  const menuOpen =
-    host.sidebarMenus.sessionMenu?.session.key === session.key || display?.catalogMenuOpen === true;
+  const menuOpen = display?.catalogMenu
+    ? host.sidebarMenus.catalogMenu.isOpenFor(display.catalogMenu.key)
+    : host.sidebarMenus.sessionMenu?.session.key === session.key;
   const color = normalizeSessionColorValue(session.color ?? "");
   const rowClass = [
     "sidebar-recent-session",
@@ -464,8 +470,6 @@ export function renderRecentSession(params: {
         class="sidebar-recent-session__link"
         draggable="false"
         aria-current=${session.visuallyActive ? "page" : nothing}
-        aria-haspopup="menu"
-        aria-expanded=${String(menuOpen)}
         aria-describedby=${[stateId, metaId].filter(Boolean).join(" ") || nothing}
         @click=${(event: MouseEvent) => host.handleSessionRowClick(event, session)}
       >
@@ -557,6 +561,25 @@ export function renderRecentSession(params: {
               ${session.archived ? icons.archiveRestore : icons.archive}
             </button>
           </openclaw-tooltip>
+          <button
+            class="session-action session-action--touch-menu"
+            data-sidebar-session-menu="true"
+            type="button"
+            title=${t("chat.sidebar.openSessionMenu")}
+            aria-label=${`${t("chat.sidebar.openSessionMenu")}: ${label}`}
+            aria-haspopup="menu"
+            aria-expanded=${String(menuOpen)}
+            @click=${(event: MouseEvent) => {
+              event.stopPropagation();
+              host.toggleSessionMenu(
+                session,
+                event.currentTarget as HTMLElement,
+                display?.catalogMenu,
+              );
+            }}
+          >
+            ${icons.moreHorizontal}
+          </button>
         </span>
       </span>
     </div>

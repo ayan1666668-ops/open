@@ -269,7 +269,7 @@ suite.define(() => {
             const card = page.locator(".community-invite-card");
             await expect.poll(() => card.count()).toBe(0);
             if (interaction === "touch") {
-              await row.click({ button: "right" });
+              await row.locator("[data-sidebar-session-menu]").tap();
               await page.getByRole("menuitem", { name: "Move to group" }).waitFor();
             } else if (interaction === "keyboard") {
               await page.mouse.move(900, 500);
@@ -336,7 +336,7 @@ suite.define(() => {
             }
             await card.waitFor({ state: "visible" });
             if (interaction === "touch") {
-              await row.click({ button: "right" });
+              await row.locator("[data-sidebar-session-menu]").tap();
             } else {
               await row.hover();
             }

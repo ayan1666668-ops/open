@@ -95,6 +95,7 @@ const CATALOG_CONTROL_SELECTORS = [
   "[data-child-session-toggle]",
   "[data-sidebar-session-pin]",
   "[data-sidebar-session-archive]",
+  "[data-sidebar-session-menu]",
   "[data-catalog-session-menu]",
 ] as const;
 
@@ -536,7 +537,6 @@ function renderCatalogSessionRow(
   if (adoptedRow) {
     return params.renderLiveRow(adoptedRow, {
       catalogIdentityKey: identityKey,
-      catalogMenuOpen: menuOpen,
       catalogMenu,
       ...(rowRef ? { rowRef } : {}),
       ...(session.pullRequest ? { pullRequest: session.pullRequest } : {}),

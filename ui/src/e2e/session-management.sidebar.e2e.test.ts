@@ -416,6 +416,7 @@ suite.define(() => {
       await followUpRow
         .getByRole("button", { name: "Archive session: Follow-up work", exact: true })
         .waitFor();
+      expect(await researchRow.locator("[data-sidebar-session-menu]").isVisible()).toBe(false);
 
       await researchLink.focus();
       await page.keyboard.press("ContextMenu");
@@ -1070,7 +1071,7 @@ suite.define(() => {
       await expect.poll(() => actionPointerEvents(pin)).toBe("auto");
       await expect.poll(() => actionOpacity(archive)).toBe("1");
       await expect.poll(() => actionPointerEvents(archive)).toBe("auto");
-      await row.click({ button: "right" });
+      await row.locator("[data-sidebar-session-menu]").tap();
       await page.getByRole("menuitem", { name: "Archive session" }).waitFor({ state: "visible" });
     } finally {
       await context.close();

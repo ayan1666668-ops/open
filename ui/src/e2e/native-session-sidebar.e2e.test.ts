@@ -212,7 +212,7 @@ suite.define(() => {
     }
   });
 
-  it("preserves native actions across adopted session menu entry points", async () => {
+  it.each([false, true])("preserves adopted session menus (touch: %s)", async (hasTouch) => {
     const adoptedKey = "agent:main:adopted-native-menu";
     const proofRoot = process.env.OPENCLAW_UI_E2E_ARTIFACT_DIR?.trim();
     const proofDir = proofRoot
@@ -220,6 +220,7 @@ suite.define(() => {
       : undefined;
     const context = await suite.newBrowserContext({
       deviceScaleFactor: 2,
+      hasTouch,
       locale: "en-US",
       serviceWorkers: "block",
       viewport: { height: 1100, width: 1440 },
@@ -298,8 +299,15 @@ suite.define(() => {
         }
       };
 
-      await row.click({ button: "right" });
-      await assertCatalogMenu("context");
+      const touchMenu = row.locator("[data-sidebar-session-menu]");
+      if (hasTouch) {
+        await touchMenu.tap();
+        await assertCatalogMenu("touch");
+      } else {
+        expect(await touchMenu.isVisible()).toBe(false);
+        await row.click({ button: "right" });
+        await assertCatalogMenu("context");
+      }
       await page.keyboard.press("Escape");
       await expect.poll(() => catalogMenu().count()).toBe(0);
 

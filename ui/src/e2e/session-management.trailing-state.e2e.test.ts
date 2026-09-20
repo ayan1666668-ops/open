@@ -308,7 +308,12 @@ suite.define(() => {
       localStorage.setItem("openclaw:sidebar:sessions:show-preview", "false");
     });
     const gateway = await installMockGateway(page, {
-      featureMethods: ["chat.metadata", "chat.startup", SESSION_PULL_REQUESTS_SUBSCRIBE_METHOD],
+      featureMethods: [
+        "chat.metadata",
+        "chat.startup",
+        "sessions.patch",
+        SESSION_PULL_REQUESTS_SUBSCRIBE_METHOD,
+      ],
       methodResponses: {
         [SESSION_PULL_REQUESTS_SUBSCRIBE_METHOD]: { subscribed: true },
         "sessions.list": sessionsListResponse([
