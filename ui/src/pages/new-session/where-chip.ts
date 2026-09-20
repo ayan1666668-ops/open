@@ -96,7 +96,7 @@ export function resolveWhereChip(params: {
     return {
       kind: params.execNode ? "node-tools" : "device",
       label: params.execNode
-        ? t("newSession.nodeToolsDevice", { name: nodeToolsDevice?.label ?? params.execNode })
+        ? (nodeToolsDevice?.label ?? params.execNode)
         : (device?.label ?? params.deviceId),
       cloudMachines: [],
       selectedMachineId: "",
@@ -309,6 +309,14 @@ export function renderWhereChip(params: {
         aria-label="${t("newSession.where")}: ${label}${
           configurationSummary ? `, ${configurationSummary}` : ""
         }"
+        aria-description=${
+          params.state.kind === "node-tools"
+            ? t("newSession.nodeToolsHint", {
+                device: label,
+                gateway: params.gatewayName.trim() || t("newSession.assistantHost"),
+              })
+            : nothing
+        }
         data-cloud-profile=${params.cloudProfileId || nothing}
         data-machine-class=${params.machineClass || nothing}
         data-os=${params.os || nothing}
@@ -452,7 +460,7 @@ export function renderWhereChip(params: {
                       value: "gateway",
                       label: localName,
                       icon: icons.home,
-                      summary: t("newSession.runsOnGateway"),
+                      description: t("newSession.sessionDeviceAction"),
                       compact: true,
                       checked: params.state.kind === "local",
                       onSelect: () => params.onSelectDevice(""),
@@ -481,12 +489,20 @@ export function renderWhereChip(params: {
                 return renderSessionMenuItem(
                   {
                     value: `${nodeTools ? "node-tools" : "device"}:${device.deviceId}`,
-                    label: nodeTools
-                      ? t("newSession.nodeToolsDevice", { name: device.label })
-                      : device.label,
+                    label: device.label,
+                    description: t(
+                      (nodeTools ? Boolean(nodeToolsDisabledReason) : !device.selectable)
+                        ? "newSession.computerUnavailable"
+                        : nodeTools
+                          ? "newSession.nodeToolsAction"
+                          : "newSession.sessionDeviceAction",
+                    ),
                     sub: device.subtitle,
                     summary: nodeTools
-                      ? t("newSession.nodeToolsHint")
+                      ? t("newSession.nodeToolsHint", {
+                          device: device.label,
+                          gateway: params.gatewayName.trim() || t("newSession.assistantHost"),
+                        })
                       : !device.selectable &&
                           device.nodeToolsAvailable &&
                           params.isAdmin &&
@@ -510,14 +526,7 @@ export function renderWhereChip(params: {
                       ? params.execNode === device.deviceId
                       : params.state.kind === "device" && params.deviceId === device.deviceId,
                     disabled: nodeTools ? Boolean(nodeToolsDisabledReason) : !device.selectable,
-                    title: nodeTools
-                      ? (nodeToolsDisabledReason ??
-                        (device.disabledReason
-                          ? t("newSession.sessionHostingUnavailable", {
-                              reason: device.disabledReason,
-                            })
-                          : undefined))
-                      : device.disabledReason,
+                    title: nodeTools ? nodeToolsDisabledReason : device.disabledReason,
                     onSelect: () =>
                       nodeTools
                         ? params.onSelectNodeTools?.(device.deviceId)

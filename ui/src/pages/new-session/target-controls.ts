@@ -195,7 +195,10 @@ export function renderNewSessionPlaceControls({
   }${
     place.execNode
       ? html`<span class="new-session-page__node-tools-hint"
-          >${t("newSession.nodeToolsHint")}</span
+          >${t("newSession.nodeToolsHint", {
+            device: whereState.label,
+            gateway: gateway.gatewayName.trim() || t("newSession.assistantHost"),
+          })}</span
         >`
       : nativeTerminal && place.terminalOnNode
         ? html`<label class="new-session-page__select new-session-page__menu-field"

@@ -87,7 +87,7 @@ function detailRow(icon: TemplateResult, text: string) {
 
 export function renderSessionMenuItem(params: SessionMenuItemOptions, submitting: boolean) {
   const unavailableReason = params.disabled ? params.title || params.description : undefined;
-  const description = params.compact ? undefined : params.description;
+  const description = params.description;
   const accessibleBlocker = params.compact && params.disabled && !params.hideDetails;
   const touchDetails = params.compact && !params.disabled && !params.hideDetails;
   const row = html`

@@ -135,10 +135,12 @@ suite.define(() => {
       await page.goto(`${suite.server.baseUrl}new`);
       await gateway.waitForRequest("environments.list");
       const trigger = page.locator("#new-session-where-trigger");
-      await pollLocatorText(trigger.locator(".new-session-page__trigger-label")).toBe("Local");
+      await pollLocatorText(trigger.locator(".new-session-page__trigger-label")).toBe(
+        "OpenClaw server",
+      );
       await trigger.click();
       const place = page.locator("wa-popover.new-session-page__where-popover");
-      await place.getByRole("button", { name: "Local" }).waitFor();
+      await place.getByRole("button", { name: "OpenClaw server" }).waitFor();
       expect(await place.locator('[data-value^="device:"]').count()).toBe(0);
       expect(await place.locator('[data-value^="cloud:"]').count()).toBe(0);
       expect(await place.locator('[data-value="auto-device"]').count()).toBe(0);
@@ -197,13 +199,13 @@ suite.define(() => {
         await gateway.waitForRequest("system.info");
         const trigger = page.locator("#new-session-where-trigger");
         await pollLocatorText(trigger.locator(".new-session-page__trigger-label")).toBe(
-          late === "system info" ? "Local" : "QA-Gateway",
+          late === "system info" ? "OpenClaw server" : "QA-Gateway",
         );
         const place = page.locator("wa-popover.new-session-page__where-popover");
         const local = place.locator('[data-value="gateway"]');
         if (late === "recovery scope") {
           await trigger.click();
-          await expect.poll(() => tooltipTitleText(local)).toBe("QA-Gateway Runs on your gateway");
+          await expect.poll(() => tooltipTitleText(local)).toBe("QA-Gateway Run session here");
           const catalogRequests = (await gateway.getRequests("environments.list")).length;
           await page.evaluate(() => window.dispatchEvent(new Event("test-release-recovery-scope")));
           await waitForGatewayRecoveryScope(page);
@@ -220,7 +222,7 @@ suite.define(() => {
         if (late === "system info") {
           await expect.poll(() => pathInput.getAttribute("placeholder")).toBe("Gateway · local");
           await gateway.resolveDeferred("system.info", systemInfo);
-          await expect.poll(() => tooltipTitleText(local)).toBe("QA-Gateway Runs on your gateway");
+          await expect.poll(() => tooltipTitleText(local)).toBe("QA-Gateway Run session here");
         }
         await pollLocatorText(trigger.locator(".new-session-page__trigger-label")).toBe(
           "QA-Gateway",
@@ -237,7 +239,7 @@ suite.define(() => {
           "QA-Gateway",
         );
         await trigger.click();
-        await expect.poll(() => tooltipTitleText(local)).toBe("QA-Gateway Runs on your gateway");
+        await expect.poll(() => tooltipTitleText(local)).toBe("QA-Gateway Run session here");
       } finally {
         try {
           await captureProjectUiProof(

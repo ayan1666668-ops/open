@@ -27,10 +27,10 @@ describe("Where chip node tools", () => {
     );
     const row = container.querySelector<HTMLButtonElement>('[data-value="node-tools:runner"]');
     expect(row).not.toBeNull();
-    expect(row?.textContent).toContain("Node tools only");
+    expect(row?.textContent).toContain("Run commands here");
     expect(row?.disabled).toBe(false);
-    expect(hoverDetails(row)).toContain("No workspace is transferred");
-    expect(hoverDetails(row)).toContain("Full-session hosting is unavailable");
+    expect(hoverDetails(row)).toContain("No files are copied automatically");
+    expect(hoverDetails(row)).not.toContain("runtime.exec");
     row?.click();
     expect(onSelectNodeTools).toHaveBeenCalledWith("runner");
     expect(onSelectDevice).not.toHaveBeenCalled();
@@ -104,8 +104,11 @@ describe("Where chip node tools", () => {
       { onSelectNodeTools, nodeToolsDisabledReason: () => reason, nodeToolsSupported },
     );
     expect(container.querySelector("#new-session-where-trigger")?.textContent).toContain(
-      "Node tools only",
+      "Build runner",
     );
+    expect(
+      container.querySelector("#new-session-where-trigger")?.getAttribute("aria-description"),
+    ).toContain("Commands run on Build runner.");
     const row = container.querySelector<HTMLButtonElement>('[data-value="node-tools:runner"]');
     expect(row?.getAttribute("aria-disabled")).toBe("true");
     expect(hoverDetails(row)).toContain(reason);

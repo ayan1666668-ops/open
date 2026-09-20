@@ -98,8 +98,9 @@ describe("Where chip", () => {
         expect(
           container
             .querySelector('[data-value="gateway"] .session-menu__text')
-            ?.textContent?.trim(),
-        ).toBe("Gateway Mac Studio");
+            ?.textContent?.replace(/\s+/g, " ")
+            .trim(),
+        ).toBe("Gateway Mac Studio Run session here");
       }
       const expected = document.createElement("div");
       render(icon, expected);
@@ -125,7 +126,7 @@ describe("Where chip", () => {
   );
 
   it.each([
-    { query: "  local  ", expected: ["gateway"] },
+    { query: "  openclaw server  ", expected: ["gateway"] },
     { query: "STUDIO", expected: ["gateway"] },
     { query: "device", expected: ["device:runner", "device:alpha-device", "device:beta-device"] },
     { query: "beta-device", expected: ["device:beta-device"] },
@@ -360,7 +361,7 @@ describe("Where chip", () => {
       { onEnvironmentQueryInput, onSelectDevice },
     );
     const input = container.querySelector<HTMLInputElement>(
-      'input[placeholder="Search environments"]',
+      'input[placeholder="Search computers"]',
     )!;
 
     input.value = "cloud";
@@ -761,7 +762,10 @@ describe("Where chip", () => {
     expect(hoverDetails(writer.querySelector('[data-value="device:beta-device"]'))).toContain(
       "beta-dev",
     );
-    expect(writer.querySelector(".session-menu__sub, .session-menu__description")).toBeNull();
+    expect(writer.querySelector(".session-menu__sub")).toBeNull();
+    expect(
+      writer.querySelector('[data-value="device:runner"] .session-menu__description')?.textContent,
+    ).toContain("Run session here");
     expect(writer.querySelector('[data-value="cloud:aws"]')).toBeNull();
     expect(writer.querySelector('[data-action="connect-machine"]')).toBeNull();
 
@@ -789,7 +793,9 @@ describe("Where chip", () => {
 
     const device = container.querySelector<HTMLButtonElement>('[data-value="device:macbook"]');
     expect(device?.matches(':disabled, [aria-disabled="true"]')).toBe(true);
-    expect(device?.querySelector(".session-menu__description")).toBeNull();
+    expect(device?.querySelector(".session-menu__description")?.textContent).toContain(
+      "Unavailable",
+    );
     // Unavailable cards show only the actionable reason.
     expect(capacityCaption(device)).toBeUndefined();
     expect(hoverDetails(device)).toContain("This runtime does not support paired devices");

@@ -134,7 +134,7 @@ describe("PaletteSessionDraft", () => {
       choice.click();
       await host.updateComplete;
       expect(host.querySelector(".palette-session-settings__workspace")?.textContent).toContain(
-        "Node tools only",
+        "Run commands here",
       );
       expect(host.querySelector<HTMLButtonElement>('[role="switch"]')?.disabled).toBe(true);
       await openPlaces();
@@ -897,7 +897,9 @@ describe("palette-only remembered settings", () => {
     ).click();
     await host.updateComplete;
     expect(
-      host.querySelector('section[aria-label="Local"] [data-machine="local"][data-project=""]'),
+      host.querySelector(
+        'section[aria-label="OpenClaw server"] [data-machine="local"][data-project=""]',
+      ),
     ).not.toBeNull();
     const search = expectDefined(
       host.querySelector<HTMLInputElement>(".palette-session-settings__search"),
