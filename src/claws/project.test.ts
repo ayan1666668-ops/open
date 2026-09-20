@@ -4,7 +4,7 @@ import { dirname, join, sep } from "node:path";
 import * as tar from "tar";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
-import { withEnvAsync } from "../test-utils/env.js";
+import { configureFsSafeNative, getFsSafeNativeConfig } from "../infra/fs-safe-defaults.js";
 import { buildClawProject } from "./project-build.js";
 import { ClawProjectError, createClawProject, validateClawProject } from "./project.js";
 
@@ -110,15 +110,16 @@ describe("Claw projects", () => {
       }
       return handle;
     });
+    const nativeConfig = getFsSafeNativeConfig();
     try {
-      await withEnvAsync({ FS_SAFE_NATIVE_MODE: "off" }, async () => {
-        await expect(
-          buildClawProject(join(process.cwd(), "test", "fixtures", "claws", "project-v1"), output),
-        ).rejects.toBe(closeError);
-      });
+      configureFsSafeNative({ mode: "off" });
+      await expect(
+        buildClawProject(join(process.cwd(), "test", "fixtures", "claws", "project-v1"), output),
+      ).rejects.toBe(closeError);
       expect(closeAttempts).toBe(1);
       await expect(readdir(outputDirectory)).resolves.toEqual([]);
     } finally {
+      configureFsSafeNative(nativeConfig);
       vi.restoreAllMocks();
     }
   });
