@@ -23,30 +23,16 @@ type AgentLifecycleModule = Pick<
   typeof import("../src/state/openclaw-agent-db-lifecycle.js"),
   "agentDatabaseLifecycle" | "closeOpenClawAgentDatabasesAsync"
 >;
+type AgentOwner = AgentLifecycleModule["agentDatabaseLifecycle"];
+const agentClosers = new WeakMap<AgentOwner, () => Promise<void>>();
 
-/** Agent lease cleanup still needs its original shared-state owner and broker. */
-export async function drainSqliteTestAgentOwner(
+/** Preserve the verified owner's closer before a test hook can reset its module exports. */
+export function rememberSqliteTestAgentOwner(
   modules: Iterable<EvaluatedModuleNode>,
   executions: ReadonlyMap<string, { external?: boolean }>,
-): Promise<void> {
-  const globalStore = globalThis as Record<PropertyKey, unknown>;
-  const owner = globalStore[agentKey] as AgentLifecycleModule["agentDatabaseLifecycle"] | undefined;
-  const resources = globalStore[Symbol.for("openclaw.agentDatabaseAsyncResources")] as
-    | { active: Set<unknown>; closing: Map<unknown, unknown>; selections: Set<unknown> }
-    | undefined;
-  const hasCustody = () =>
-    Boolean(
-      owner &&
-      (owner.databases.size ||
-        owner.leases.size ||
-        owner.pending.size ||
-        owner.activePending.size ||
-        owner.retainedCloses.size),
-    ) ||
-    Boolean(
-      resources && (resources.active.size || resources.closing.size || resources.selections.size),
-    );
-  if (!hasCustody()) {
+): void {
+  const owner = (globalThis as Record<PropertyKey, unknown>)[agentKey] as AgentOwner | undefined;
+  if (!owner || agentClosers.has(owner)) {
     return;
   }
   for (const node of modules) {
@@ -63,23 +49,67 @@ export async function drainSqliteTestAgentOwner(
       typeof exports.closeOpenClawAgentDatabasesAsync === "function" &&
       !vi.isMockFunction(exports.closeOpenClawAgentDatabasesAsync)
     ) {
-      await exports.closeOpenClawAgentDatabasesAsync();
-      break;
+      agentClosers.set(owner, exports.closeOpenClawAgentDatabasesAsync);
+      return;
     }
+  }
+}
+
+/** Agent lease cleanup still needs its original shared-state owner and broker. */
+export async function drainSqliteTestAgentOwner(
+  modules: Iterable<EvaluatedModuleNode>,
+  executions: ReadonlyMap<string, { external?: boolean }>,
+  testFiles: string,
+): Promise<void> {
+  rememberSqliteTestAgentOwner(modules, executions);
+  const globalStore = globalThis as Record<PropertyKey, unknown>;
+  const owner = globalStore[agentKey] as AgentLifecycleModule["agentDatabaseLifecycle"] | undefined;
+  const resources = globalStore[Symbol.for("openclaw.agentDatabaseAsyncResources")] as
+    | { active: Set<unknown>; closing: Map<unknown, unknown>; selections: Set<unknown> }
+    | undefined;
+  const custody = () => ({
+    databases: owner?.databases.size ?? 0,
+    leases: owner?.leases.size ?? 0,
+    pending: owner?.pending.size ?? 0,
+    activePending: owner?.activePending.size ?? 0,
+    retainedCloses: owner?.retainedCloses.size ?? 0,
+    resources: resources?.active.size ?? 0,
+    closing: resources?.closing.size ?? 0,
+    selections: resources?.selections.size ?? 0,
+  });
+  const hasCustody = () => Object.values(custody()).some((count) => count > 0);
+  if (!hasCustody()) {
+    return;
+  }
+  console.warn(
+    `[sqlite-test-lifecycle] ${testFiles}: draining agent database custody ${JSON.stringify(custody())}`,
+  );
+  const close = owner && agentClosers.get(owner);
+  if (close) {
+    await close();
   }
   // A module reset can erase the real closer. Never load a replacement under the
   // file's mocks or abandon handles just to make the next file start cleanly.
   if (hasCustody()) {
     throw new Error(
-      "SQLite test teardown cannot retire agent owners with unsettled database custody",
+      `SQLite test teardown cannot retire agent owners with unsettled database custody from ${testFiles}: ${JSON.stringify(custody())}`,
     );
   }
 }
 
 /** Called only for an evaluated source generation, after successful owner drainage. */
-export function retireSqliteTestSingleton(key: symbol): void {
+export function retireSqliteTestSingleton(key: symbol, testFiles: string): void {
   const globalStore = globalThis as Record<PropertyKey, unknown>;
   const resets = globalStore[resetKey] as Map<symbol, unknown> | undefined;
+  if (key === agentKey) {
+    const owner = globalStore[agentKey] as AgentOwner | undefined;
+    if (owner) {
+      agentClosers.delete(owner);
+    }
+  }
+  if (Object.hasOwn(globalStore, key)) {
+    console.warn(`[sqlite-test-lifecycle] ${testFiles}: retiring ${key.description}`);
+  }
   Reflect.deleteProperty(globalStore, key);
   resets?.delete(key);
 }
