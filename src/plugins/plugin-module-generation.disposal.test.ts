@@ -7,6 +7,10 @@ import { expectDefined } from "@openclaw/normalization-core";
 import { afterEach, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import { createDeferredCore } from "../shared/deferred.js";
+import {
+  PluginHostCleanupTimeoutError,
+  withPluginHostCleanupTimeout,
+} from "./host-hook-cleanup-timeout.js";
 import type { PluginManifestRecord } from "./manifest-registry.types.js";
 import { createPluginCache, retirePluginCache, withPluginCache } from "./plugin-cache.js";
 import { bindPluginInstanceModuleLoader } from "./plugin-instance-module-loader.js";
@@ -144,29 +148,99 @@ it("reports asynchronous artifact removal failure through setup cache retirement
   }
 });
 
-it("keeps plugin callback deadlines while joining subsequent physical removal", async () => {
+it("retains captured bytes for a consumer derived while retirement waits on its parent", async () => {
   const { value, instance, retire } = fixture("runtime");
-  const callback = createDeferredCore();
-  instance.lifecycle.onDispose(() => callback.promise);
-  const gate = gateRemoval(value.filename, []);
-  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-  let settled = false;
-  const retirement = retire().finally(() => {
-    settled = true;
-  });
+  const parent = instance.retainConsumer();
+  let child: ReturnType<PluginInstance["retainConsumer"]> | undefined;
+  const events: string[] = [];
+  const gate = gateRemoval(value.filename, events);
+  const retirement = retire();
   try {
     await nextTurn();
-    await vi.advanceTimersByTimeAsync(5_001);
+    child = parent.run(() => instance.retainConsumer());
+    parent.release();
+    await nextTurn();
+    expect(events).toEqual([]);
+    expect(fs.existsSync(value.filename)).toBe(true);
+    expect(child.run(() => value.read())).toBe("retained");
+    child.release();
     await Promise.race([gate.entered, retirement]);
-    expect(gate.directory()).toBeDefined();
-    expect(settled).toBe(false);
+    expect(events).toEqual(["remove"]);
     gate.resume.resolve();
-    await expect(retirement).resolves.toEqual([
-      new Error("Plugin disposal-runtime cleanup did not settle"),
-    ]);
+    await expect(retirement).resolves.toEqual([]);
+    expect(fs.existsSync(value.filename)).toBe(false);
   } finally {
-    callback.resolve();
+    parent.release();
+    child?.release();
     gate.resume.resolve();
     await retirement;
   }
 });
+
+it.each(["plugin callback", "host prelude"] as const)(
+  "retains captured bytes until a timed-out %s actually settles",
+  async (kind) => {
+    const { value, instance, retire } = fixture("runtime");
+    const capturedBytes = fs.readFileSync(value.filename, "utf8");
+    const callback = createDeferredCore();
+    const entered = createDeferredCore();
+    const events: string[] = [];
+    const cleanup = async () => {
+      entered.resolve();
+      await callback.promise;
+      expect(fs.readFileSync(value.filename, "utf8")).toBe(capturedBytes);
+      events.push("callback");
+    };
+    instance.lifecycle.onDispose(() => {
+      events.push("sibling");
+    });
+    if (kind === "plugin callback") {
+      instance.lifecycle.onDispose(cleanup);
+    }
+    const gate = gateRemoval(value.filename, events);
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    let settled = false;
+    let hostTimeout: unknown;
+    const retirement = (
+      kind === "plugin callback"
+        ? retire()
+        : instance
+            .dispose(async () => {
+              try {
+                await withPluginHostCleanupTimeout("fixture", cleanup);
+              } catch (error) {
+                hostTimeout = error;
+              }
+            })
+            .then((result) => result.errors)
+    ).finally(() => {
+      settled = true;
+    });
+    try {
+      await entered.promise;
+      await vi.advanceTimersByTimeAsync(5_001);
+      expect(instance.lifecycle.signal.aborted).toBe(true);
+      expect(events).toEqual(["sibling"]);
+      expect(gate.directory()).toBeUndefined();
+      expect(fs.existsSync(value.filename)).toBe(true);
+      expect(settled).toBe(false);
+      callback.resolve();
+      await Promise.race([gate.entered, retirement]);
+      expect(events).toEqual(["sibling", "callback", "remove"]);
+      gate.resume.resolve();
+      await expect(retirement).resolves.toEqual(
+        kind === "plugin callback"
+          ? [new Error("Plugin disposal-runtime cleanup did not settle")]
+          : [],
+      );
+      if (kind === "host prelude") {
+        expect(hostTimeout).toBeInstanceOf(PluginHostCleanupTimeoutError);
+      }
+      expect(fs.existsSync(value.filename)).toBe(false);
+    } finally {
+      callback.resolve();
+      gate.resume.resolve();
+      await retirement;
+    }
+  },
+);

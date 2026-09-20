@@ -238,8 +238,12 @@ changing that digest. Invalid optional package metadata fails only when selected
 Module acquisition uses the instance's current admission, and disposal closes
 further capture.
 Runtime and setup retirement remove captured artifacts asynchronously and wait
-for removal to finish. Plugin callback deadlines do not end custody of those
-files; synchronous source inspection and failed capture still clean up before returning.
+for removal to finish. Retirement closes ordinary invocation authority and
+runs cancellation hooks after bounded drains, but captured files and module resolvers
+remain until those calls and cleanup tails actually settle. Web provider
+descriptors keep their registration identity; runtime projections bind their
+factories and returned tools to the selected plugin instance. Synchronous source
+inspection and failed capture still clean up before returning.
 
 Default source captures live under
 `<stateDir>/tmp/plugin-captures/<instanceId>/captures/`, with a random instance ID

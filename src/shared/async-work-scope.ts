@@ -2,10 +2,12 @@ import { AsyncLocalStorage, AsyncResource } from "node:async_hooks";
 import { createDeferredCore } from "./deferred.js";
 import { resolveGlobalSingleton } from "./global-singleton.js";
 
+type AsyncWorkScopeFrame = { scope: AsyncWorkScope; parent?: AsyncWorkScopeFrame };
+
 // Lazy runtime chunks share the context carrier, never the lifetime of its owners.
 const currentWorkScope = resolveGlobalSingleton(
   Symbol.for("openclaw.asyncWorkScope"),
-  () => new AsyncLocalStorage<AsyncWorkScope>(),
+  () => new AsyncLocalStorage<AsyncWorkScopeFrame>(),
 );
 const detachedAsyncContext = resolveGlobalSingleton(
   Symbol.for("openclaw.detachedAsyncContext"),
@@ -30,6 +32,16 @@ export class AsyncWorkScope {
     return this.phase !== "open";
   }
 
+  /** Detects reentry through this scope or a nested scope in the current continuation. */
+  isActiveHere(): boolean {
+    for (let frame = currentWorkScope.getStore(); frame; frame = frame.parent) {
+      if (frame.scope === this) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   /** Enters synchronous work without inspecting or assimilating its return value. */
   run<T>(run: () => T): T {
     if (this.phase === "closed") {
@@ -39,7 +51,7 @@ export class AsyncWorkScope {
     const operation = createDeferredCore();
     this.pending.add(operation.promise);
     try {
-      return currentWorkScope.run(this, run);
+      return currentWorkScope.run({ scope: this, parent: currentWorkScope.getStore() }, run);
     } finally {
       operation.resolve();
       this.pending.delete(operation.promise);
@@ -54,7 +66,9 @@ export class AsyncWorkScope {
     // a subsequent socket-close event. Async descendants inherit this exact owner.
     const operation = this.registerWork<T>();
     try {
-      operation.resolve(currentWorkScope.run(this, run));
+      operation.resolve(
+        currentWorkScope.run({ scope: this, parent: currentWorkScope.getStore() }, run),
+      );
     } catch (error) {
       operation.reject(error);
     }
@@ -112,13 +126,13 @@ export class AsyncWorkScope {
 
 /** Outside a managed scope, the returned promise remains the caller's responsibility. */
 export async function trackAsyncWork<T>(run: () => T | Promise<T>): Promise<T> {
-  const scope = currentWorkScope.getStore();
+  const scope = currentWorkScope.getStore()?.scope;
   return await (scope ? scope.track(run) : run());
 }
 
 /** Captures only work ownership, never the caller's authorization or other async context. */
 export function captureAsyncWorkTracker(): typeof trackAsyncWork {
-  const scope = currentWorkScope.getStore();
+  const scope = currentWorkScope.getStore()?.scope;
   return async (run) => await (scope ? scope.track(run) : currentWorkScope.exit(run));
 }
 
@@ -133,7 +147,7 @@ export function runInDetachedAsyncContext<T>(run: () => T): T {
 }
 
 export function getAsyncWorkSignal(): AbortSignal | undefined {
-  return currentWorkScope.getStore()?.signal;
+  return currentWorkScope.getStore()?.scope.signal;
 }
 
 /** Preserves cancellation context until cooperating work ends, without delaying its result. */
@@ -141,7 +155,7 @@ export async function runWithTrackedCancellation<T>(
   signal: AbortSignal,
   run: (signal: AbortSignal) => T | Promise<T>,
 ): Promise<T> {
-  const parentWork = currentWorkScope.getStore();
+  const parentWork = currentWorkScope.getStore()?.scope;
   if (!parentWork) {
     return await run(signal);
   }

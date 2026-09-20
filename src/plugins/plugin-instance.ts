@@ -1,5 +1,6 @@
 import { formatErrorMessage } from "../infra/errors.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
+import { AsyncWorkScope } from "../shared/async-work-scope.js";
 import { createDeferredCore } from "../shared/deferred.js";
 import {
   PluginInstanceDrainTimeoutError,
@@ -93,7 +94,7 @@ export class PluginInstance {
   }
 
   /** Captured module resources must finish releasing before instance retirement settles. */
-  onModuleDispose(cleanup: () => Promise<void>): void {
+  onModuleDispose(cleanup: () => void | Promise<void>): void {
     this.addCleanup(cleanup, "module");
   }
 
@@ -509,6 +510,13 @@ export class PluginInstance {
     }
     const failures: unknown[] = [];
     let hostFailure: { error: unknown } | undefined;
+    const cleanupWork = [...this.cleanups.values()].includes("module")
+      ? new AsyncWorkScope()
+      : undefined;
+    const runCleanup = (cleanup: () => void | Promise<void>) => {
+      const run = () => this.invoke(cleanup, this.lease(false));
+      return cleanupWork ? cleanupWork.track(run) : run();
+    };
     try {
       await this.waitForCalls();
     } catch (error) {
@@ -522,29 +530,36 @@ export class PluginInstance {
     // Logical consumers retain only their own scope through engine disposal;
     // physical cleanup waits for those consumers to close.
     this.calls.clear();
-    await Promise.all([...this.consumers.values()].map(({ completion }) => completion));
+    while (this.consumers.size > 0) {
+      await Promise.all([...this.consumers.values()].map(({ completion }) => completion));
+    }
     if (beforeCleanup) {
       // Host hooks own their bounds; explicit cleanup starts its budget after they settle.
       try {
         // This internal lease cannot join the disposal promise awaiting these hooks.
-        await this.invoke(beforeCleanup, this.lease(false));
+        await runCleanup(beforeCleanup);
       } catch (error) {
         // Host admission/persistence guards are not plugin cleanup callbacks.
         hostFailure = { error };
       }
     }
     const deadline = Date.now() + SHUTDOWN_TIMEOUT_MS;
-    this.controller.abort(new Error(`Plugin ${this.pluginId} is retiring`));
+    const abort = () => this.controller.abort(new Error(`Plugin ${this.pluginId} is retiring`));
+    if (cleanupWork) {
+      cleanupWork.run(abort);
+    } else {
+      abort();
+    }
+    const moduleCleanups: Array<() => void | Promise<void>> = [];
     for (const [cleanup, kind] of Array.from(this.cleanups).toReversed()) {
+      if (kind === "module") {
+        moduleCleanups.push(cleanup);
+        continue;
+      }
       let timer: ReturnType<typeof setTimeout> | undefined;
       try {
-        if (kind === "module") {
-          // Plugin hook deadlines cannot release custody of an in-flight filesystem removal.
-          await this.invoke(cleanup);
-          continue;
-        }
         await Promise.race([
-          this.invoke(cleanup),
+          runCleanup(cleanup),
           new Promise<never>((_, reject) => {
             timer = setTimeout(
               () => reject(new Error(`Plugin ${this.pluginId} cleanup did not settle`)),
@@ -556,6 +571,17 @@ export class PluginInstance {
         failures.push(error);
       } finally {
         clearTimeout(timer);
+      }
+    }
+    if (cleanupWork) {
+      // Deadlines revoke authority, not custody of files still used by calls or cleanup.
+      await Promise.all([this.timedOutCalls?.settled.promise, cleanupWork.drain()]);
+    }
+    for (const cleanup of moduleCleanups) {
+      try {
+        await this.invoke(cleanup, this.lease(false));
+      } catch (error) {
+        failures.push(error);
       }
     }
     this.cleanups.clear();

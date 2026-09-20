@@ -5,6 +5,7 @@ import { trackAsyncWork } from "../shared/async-work-scope.js";
 import { createDeferredCore } from "../shared/deferred.js";
 import { resolveGlobalSingleton } from "../shared/global-singleton.js";
 import { getPluginRunContext, setPluginRunContext } from "./host-hook-runtime.js";
+import { PluginInstance } from "./plugin-instance.js";
 import { createEmptyPluginRegistry } from "./registry-empty.js";
 import {
   capturePluginRegistryLifecycleEpoch,
@@ -235,29 +236,53 @@ describe("setActivePluginRegistry", () => {
     expect(cleanupCount).toBe(1);
   });
 
-  it("lets retired cleanup clear its successor without joining itself", async () => {
-    const registry = createEmptyPluginRegistry();
-    const started = createDeferredCore();
-    const finished = createDeferredCore();
-    const cleanup = vi.fn(async () => {
-      started.resolve();
-      await clearActivePluginRegistry();
-      finished.resolve();
-    });
-    registry.runtimeLifecycles.push({
-      pluginId: "reentrant-cleanup",
-      lifecycle: { id: "clear-successor", cleanup },
-      source: "/virtual/reentrant-cleanup/index.ts",
-    });
-    setActivePluginRegistry(registry);
-    setActivePluginRegistry(createEmptyPluginRegistry());
+  it.each(["host", "module", "module abort descendant"] as const)(
+    "lets retired %s cleanup clear its successor without joining itself",
+    async (kind) => {
+      const registry = createEmptyPluginRegistry();
+      const started = createDeferredCore();
+      const finished = createDeferredCore();
+      const escape = createDeferredCore();
+      let clearing: Promise<void> | undefined;
+      const cleanup = vi.fn(async () => {
+        started.resolve();
+        clearing = clearActivePluginRegistry();
+        await Promise.race([clearing, escape.promise]);
+        finished.resolve();
+      });
+      if (kind !== "host") {
+        const record = createPluginRecord({ id: "reentrant-cleanup", status: "loaded" });
+        registry.plugins.push(record);
+        const instance = new PluginInstance(record.id, { record, registry });
+        instance.onModuleDispose(() => undefined);
+        if (kind === "module abort descendant") {
+          instance.lifecycle.signal.addEventListener("abort", () => {
+            void trackAsyncWork(cleanup);
+          });
+        }
+      }
+      if (kind !== "module abort descendant") {
+        registry.runtimeLifecycles.push({
+          pluginId: "reentrant-cleanup",
+          lifecycle: { id: "clear-successor", cleanup },
+          source: "/virtual/reentrant-cleanup/index.ts",
+        });
+      }
+      setActivePluginRegistry(registry);
+      setActivePluginRegistry(createEmptyPluginRegistry());
 
-    await started.promise;
-    await waitForCleanupSignal(finished.promise, "reentrant retired cleanup");
-    await clearActivePluginRegistry();
-    expect(cleanup).toHaveBeenCalledOnce();
-    expect(getActivePluginRegistry()).toBeNull();
-  });
+      try {
+        await started.promise;
+        await waitForCleanupSignal(finished.promise, "reentrant retired cleanup");
+        expect(cleanup).toHaveBeenCalledOnce();
+        expect(getActivePluginRegistry()).toBeNull();
+      } finally {
+        escape.resolve();
+        await clearing;
+        await clearActivePluginRegistry();
+      }
+    },
+  );
 
   it.each([
     "install",

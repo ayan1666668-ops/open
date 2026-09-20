@@ -190,14 +190,20 @@ describe("async work scope", () => {
     try {
       await authorization.run("invoker", () =>
         caller.track(() => {
+          expect(caller.isActiveHere()).toBe(true);
+          expect(owner.isActiveHere()).toBe(false);
           producer = track(async () => {
             expect(authorization.getStore()).toBe("invoker");
             expect(getAsyncWorkSignal()).toBe(owner.signal);
+            expect(owner.isActiveHere()).toBe(true);
+            expect(caller.isActiveHere()).toBe(true);
             await Promise.resolve();
             descendant = trackAsyncWork(() => gate.promise);
           });
         }),
       );
+      expect(caller.isActiveHere()).toBe(false);
+      expect(owner.isActiveHere()).toBe(false);
       await producer;
       const closing = owner.drain().then(() => {
         drained = true;
@@ -231,6 +237,7 @@ describe("async work scope", () => {
       await caller.track(() => {
         producer = track(() => {
           expect(getAsyncWorkSignal()).toBeUndefined();
+          expect(caller.isActiveHere()).toBe(false);
           descendant = trackAsyncWork(async () => {
             await gate.promise;
             descendantSettled = true;
