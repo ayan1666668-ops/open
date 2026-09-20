@@ -7,6 +7,7 @@ from pathlib import Path
 import shutil
 import signal
 import subprocess
+import sys
 import threading
 import time
 
@@ -259,7 +260,7 @@ class DesktopSharingFixture(GatewaySwitchFixture):
         fill("Gateway URL", f"ws://127.0.0.1:{self.server_port}/secondary/")
         click("Authentication", "combo box")
         self.chrome.command("xdotool", "key", "End", "Return")
-        fill("Gateway password (optional)", SECONDARY_PASSWORD)
+        fill("Gateway password", SECONDARY_PASSWORD)
         click("Connect to Gateway")
         wait("Desktop sharing · Replacement Gateway", "heading")
         replacement = self.wait_snapshot(True, "running", gateway_path="/secondary/")
@@ -301,6 +302,7 @@ class DesktopSharingFixture(GatewaySwitchFixture):
         print("PASS: real Tauri settings/vault/teardown with synthetic Gateway and desktop-only CLI", flush=True)
 
     def close(self):
+        failure = sys.exc_info()[1]
         leaked = []
         try:
             super().close()
@@ -334,4 +336,7 @@ class DesktopSharingFixture(GatewaySwitchFixture):
                     "boundary": "Real Tauri WebKit bridge, OS vault, process launch, selected-auth handoff, and joined teardown; not real Gateway pairing or RFB",
                 }, indent=2) + "\n")
             if leaked:
-                raise RuntimeError("Native desktop teardown required emergency fixture process cleanup")
+                message = "Native desktop teardown required emergency fixture process cleanup"
+                if failure is not None:
+                    message = f"{failure}; {message}"
+                raise RuntimeError(message) from failure
