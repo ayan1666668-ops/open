@@ -276,24 +276,35 @@ if (!isMainThread) {
     await fs.writeFile(
       preloadPath,
       `
-const { isMainThread } = require("node:worker_threads");
+const { isMainThread, parentPort } = require("node:worker_threads");
 if (!isMainThread) {
   const fs = require("node:fs");
+  const { deserialize } = require("node:v8");
   const { DatabaseSync } = require("node:sqlite");
   const exec = DatabaseSync.prototype.exec;
   const close = DatabaseSync.prototype.close;
+  let enqueueRequest = false;
   let committed = false;
   let injected = false;
   let failedDatabase;
+  parentPort.on("message", (request) => {
+    enqueueRequest = request?.type === "execute" &&
+      request.input instanceof Uint8Array &&
+      deserialize(request.input)?.type === "deliveryQueue.enqueue";
+    committed = false;
+  });
   DatabaseSync.prototype.exec = function(sql) {
-    if (committed && !injected && sql === "ROLLBACK" && fs.realpathSync(this.location()) === fs.realpathSync(${JSON.stringify(coordinatorPath)})) {
+    if (enqueueRequest && committed && !injected && sql === "ROLLBACK" && fs.realpathSync(this.location()) === fs.realpathSync(${JSON.stringify(coordinatorPath)})) {
       injected = true;
       failedDatabase = this;
       fs.writeFileSync(${JSON.stringify(failedPath)}, "after commit");
       throw new Error("Synthetic enqueue coordinator rollback failure");
     }
     const result = Reflect.apply(exec, this, [sql]);
-    if (sql === "COMMIT" && fs.realpathSync(this.location()) === fs.realpathSync(${JSON.stringify(databasePath)}) && fs.existsSync(${JSON.stringify(armPath)})) committed = true;
+    if (enqueueRequest && sql === "COMMIT" && fs.existsSync(${JSON.stringify(armPath)}) && fs.realpathSync(this.location()) === fs.realpathSync(${JSON.stringify(databasePath)})) {
+      fs.unlinkSync(${JSON.stringify(armPath)});
+      committed = true;
+    }
     return result;
   };
   DatabaseSync.prototype.close = function(...args) {

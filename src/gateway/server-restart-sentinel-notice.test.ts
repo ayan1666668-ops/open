@@ -87,10 +87,10 @@ describe("restart sentinel notice recovery", () => {
   const tempDirs = useAutoCleanupTempDirTracker((cleanup) => {
     afterEach(async () => {
       vi.useRealTimers();
-      await closeOpenClawStateDatabaseAsync();
       vi.restoreAllMocks();
       resetGatewayWorkAdmission();
       resetPluginRuntimeStateForTest();
+      await closeOpenClawStateDatabaseAsync();
       closeOpenClawStateDatabaseForTest();
       envSnapshot?.restore();
       envSnapshot = undefined;
