@@ -1,4 +1,3 @@
-// Owns strict CLI channel selection for channel commands.
 export function parseChannelSelector(channel: string | undefined): string | undefined {
   // Only omission infers the channel. Blank input often comes from an unset shell
   // variable and must fail before channel setup, auth, or a directory lookup runs.

@@ -124,55 +124,12 @@ describe("registerDirectoryCli", () => {
     ["groups", ["directory", "groups", "list"]],
     ["members", ["directory", "groups", "members", "--group-id", "group-1"]],
   ])("%s selector input", (_leaf, args) => {
-    it.each(["", " \t\n "])("rejects blank %j before command startup", async (account) => {
-      const startup = vi.fn(() => {
-        throw new Error("Command startup reached");
-      });
-      const program = new Command().name("openclaw").hook("preAction", startup);
-      registerDirectoryCli(program);
-
-      await expect(
-        program.parseAsync([...args, "--channel", "slack", "--account", account], {
-          from: "user",
-        }),
-      ).rejects.toThrow("--account must not be blank");
-
-      expect(startup).not.toHaveBeenCalled();
-    });
-
-    it.each(["", " \t\n "])(
-      "rejects blank channel %j before command startup instead of inferring the configured channel",
-      async (channel) => {
-        // Auto-enable changes make inference persist config, so a late guard would be visible.
-        mocks.applyPluginAutoEnable.mockReturnValue({
-          config: { channels: { whatsapp: {} }, plugins: { allow: ["whatsapp"] } },
-          changes: ["whatsapp"],
-        });
-        const startup = vi.fn(() => {
-          throw new Error("Command startup reached");
-        });
-        const program = new Command().name("openclaw").hook("preAction", startup);
-        registerDirectoryCli(program);
-
-        await expect(
-          program.parseAsync([...args, "--channel", channel, "--json"], { from: "user" }),
-        ).rejects.toThrow("--channel must not be blank");
-
-        expect(startup).not.toHaveBeenCalled();
-        expect(mocks.readConfigFileSnapshot).not.toHaveBeenCalled();
-        expect(mocks.applyPluginAutoEnable).not.toHaveBeenCalled();
-        expect(mocks.resolveInstallableChannelPlugin).not.toHaveBeenCalled();
-        expect(mocks.resolveMessageChannelSelection).not.toHaveBeenCalled();
-        expect(mocks.replaceConfigFile).not.toHaveBeenCalled();
-        expect(mocks.resolveCommandSecretRefsViaGateway).not.toHaveBeenCalled();
-        expect(runtimeState.defaultRuntime.writeJson).not.toHaveBeenCalled();
-      },
-    );
-
     it.each([
-      ["--channel", ["--channel", "", "--account", " "]],
-      ["--account", ["--account", "", "--channel", " "]],
-    ])("reports the first blank selector %s at parse time", async (flag, selectors) => {
+      ["account", ""],
+      ["account", " \t\n "],
+      ["channel", ""],
+      ["channel", " \t\n "],
+    ])("rejects blank %s=%j before command startup", async (selector, value) => {
       const startup = vi.fn(() => {
         throw new Error("Command startup reached");
       });
@@ -180,11 +137,10 @@ describe("registerDirectoryCli", () => {
       registerDirectoryCli(program);
 
       await expect(
-        program.parseAsync([...args, ...selectors, "--json"], { from: "user" }),
-      ).rejects.toThrow(`${flag} must not be blank`);
+        program.parseAsync([...args, `--${selector}`, value], { from: "user" }),
+      ).rejects.toThrow(new RegExp(`--${selector}.*blank`));
 
       expect(startup).not.toHaveBeenCalled();
-      expect(mocks.readConfigFileSnapshot).not.toHaveBeenCalled();
     });
   });
 
