@@ -382,7 +382,9 @@ describe("runReplyAgent :: continuation-delegate rejection observability", () =>
     });
 
     const { drainSystemEventEntries } = await import("../../infra/system-events.js");
-    drainSystemEventEntries(sessionKey);
+    const { resolveSystemEventQueueKey } = await import("../../infra/system-event-ownership.js");
+    const queueKey = resolveSystemEventQueueKey(sessionKey, "main");
+    drainSystemEventEntries(queueKey);
 
     await runDelegateTurn(run, { [sessionKey]: run.sessionEntry });
 
@@ -390,7 +392,7 @@ describe("runReplyAgent :: continuation-delegate rejection observability", () =>
     expect(spawnSubagentDirectMock).toHaveBeenCalledTimes(1);
 
     // System event surfaces real reason text (substring on full event body).
-    const entries = drainSystemEventEntries(sessionKey);
+    const entries = drainSystemEventEntries(queueKey);
     const rejectionEvent = entries.find((e) => e.text.includes("DELEGATE spawn forbidden"));
     expect(
       rejectionEvent,
@@ -426,13 +428,15 @@ describe("runReplyAgent :: continuation-delegate rejection observability", () =>
     });
 
     const { drainSystemEventEntries } = await import("../../infra/system-events.js");
-    drainSystemEventEntries(sessionKey);
+    const { resolveSystemEventQueueKey } = await import("../../infra/system-event-ownership.js");
+    const queueKey = resolveSystemEventQueueKey(sessionKey, "main");
+    drainSystemEventEntries(queueKey);
 
     await runDelegateTurn(run, { [sessionKey]: run.sessionEntry });
 
     expect(spawnSubagentDirectMock).toHaveBeenCalledTimes(1);
 
-    const entries = drainSystemEventEntries(sessionKey);
+    const entries = drainSystemEventEntries(queueKey);
     const rejectionEvent = entries.find((e) => e.text.includes("DELEGATE spawn forbidden"));
     expect(rejectionEvent).toBeDefined();
     expect(rejectionEvent!.text).toContain("delegation was not accepted.");
@@ -456,14 +460,16 @@ describe("runReplyAgent :: continuation-delegate rejection observability", () =>
     });
 
     const { drainSystemEventEntries } = await import("../../infra/system-events.js");
-    drainSystemEventEntries(sessionKey);
+    const { resolveSystemEventQueueKey } = await import("../../infra/system-event-ownership.js");
+    const queueKey = resolveSystemEventQueueKey(sessionKey, "main");
+    drainSystemEventEntries(queueKey);
 
     await runDelegateTurn(run, { [sessionKey]: run.sessionEntry });
 
     const spawnArgs = spawnSubagentDirectMock.mock.calls[0]?.[0] as { task?: string };
     expect(spawnArgs.task).toContain(ROLE_MARKED_BRACKET_TASK);
 
-    const entries = drainSystemEventEntries(sessionKey);
+    const entries = drainSystemEventEntries(queueKey);
     const rejectionEvent = entries.find((e) => e.text.includes("DELEGATE spawn forbidden"));
     expect(
       rejectionEvent,
@@ -495,14 +501,16 @@ describe("runReplyAgent :: continuation-delegate rejection observability", () =>
     });
 
     const { drainSystemEventEntries } = await import("../../infra/system-events.js");
-    drainSystemEventEntries(sessionKey);
+    const { resolveSystemEventQueueKey } = await import("../../infra/system-event-ownership.js");
+    const queueKey = resolveSystemEventQueueKey(sessionKey, "main");
+    drainSystemEventEntries(queueKey);
 
     await runDelegateTurn(run, { [sessionKey]: run.sessionEntry });
 
     const spawnArgs = spawnSubagentDirectMock.mock.calls[0]?.[0] as { task?: string };
     expect(spawnArgs.task).toContain(ROLE_MARKED_BRACKET_TASK);
 
-    const entries = drainSystemEventEntries(sessionKey);
+    const entries = drainSystemEventEntries(queueKey);
     const failureEvent = entries.find((e) => e.text.includes("DELEGATE spawn failed"));
     expect(
       failureEvent,
