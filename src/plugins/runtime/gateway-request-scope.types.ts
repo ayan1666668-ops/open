@@ -1,3 +1,4 @@
+import type { ChannelPlugin } from "../../channels/plugins/types.plugin.js";
 import type {
   GatewayContextResolver,
   GatewayRequestContext,
@@ -54,5 +55,11 @@ export type PluginRuntimeGatewayRequestScope = {
   pluginTrustedOfficialInstall?: boolean;
   gatewayMethodDispatchAllowed?: boolean;
   pluginRegistry?: PluginRegistry;
+  /** Original inbound transport registration, scoped only to its durable reply. */
+  inboundChannelDelivery?: {
+    channel: string;
+    plugin: ChannelPlugin;
+    registry: PluginRegistry;
+  };
   declaredProviderOwners?: DeclaredProviderOwnerIndex;
 };

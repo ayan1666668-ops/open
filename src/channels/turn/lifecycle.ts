@@ -12,6 +12,7 @@ import {
   resolveInboundReplyHookTarget,
 } from "../../hooks/message-hook-mappers.js";
 import { formatErrorMessage, toErrorObject } from "../../infra/errors.js";
+import { bindInboundChannelDelivery } from "../../infra/outbound/deliver-channel.js";
 import { applyMessageSendingHook } from "../../infra/outbound/deliver-hooks.js";
 import { normalizeEmptyPayloadForDelivery } from "../../infra/outbound/deliver-payload.js";
 import {
@@ -390,6 +391,7 @@ async function dispatchChannelTurnWithDeliveryOwner(
     | [params: RoutedAssembledChannelTurn, ownership: "routed-delivery"]
 ): Promise<ChannelTurnResult> {
   const [params, ownership] = args;
+  const runInboundDelivery = bindInboundChannelDelivery(params.channel);
   const replyPipeline = resolveAssembledReplyPipeline(params);
   const adoption = params.turnAdoptionLifecycle ?? params.replyOptions?.turnAdoptionLifecycle;
   const delivery =
@@ -534,17 +536,19 @@ async function dispatchChannelTurnWithDeliveryOwner(
                         ? await declaredDurable(preparedPayload, info)
                         : declaredDurable;
                     if (durableOptions) {
-                      const durable = await deliverInboundReplyWithMessageSendContextCore({
-                        cfg: params.cfg,
-                        channel: params.channel,
-                        accountId: params.accountId,
-                        agentId: params.agentId,
-                        ctxPayload: params.ctxPayload,
-                        payload: preparedPayload,
-                        info,
-                        executionIdentityToken: agentRun[1],
-                        ...durableOptions,
-                      });
+                      const durable = await runInboundDelivery(() =>
+                        deliverInboundReplyWithMessageSendContextCore({
+                          cfg: params.cfg,
+                          channel: params.channel,
+                          accountId: params.accountId,
+                          agentId: params.agentId,
+                          ctxPayload: params.ctxPayload,
+                          payload: preparedPayload,
+                          info,
+                          executionIdentityToken: agentRun[1],
+                          ...durableOptions,
+                        }),
+                      );
                       throwIfDurableInboundReplyDeliveryFailed(durable);
                       if (isDurableInboundReplyDeliveryHandled(durable)) {
                         // Durable sends emit canonical message_sent after outbound hooks settle.
