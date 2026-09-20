@@ -1111,7 +1111,7 @@ openclaw-settings-save-indicator:empty {
   --sidebar-lead: 20px;
   --sidebar-row-gap: 8px;
   --sidebar-text-offset: calc(var(--sidebar-inset) + var(--sidebar-lead) + var(--sidebar-row-gap));
-  --sidebar-pad-x: 16px;
+  --sidebar-pad-x: 10px;
   --sidebar-session-link-padding-block: 4px;
   --sidebar-session-row-floor: 30px;
   --sidebar-title-line-height: calc(18px * var(--control-ui-text-scale));
@@ -1246,6 +1246,13 @@ openclaw-settings-save-indicator:empty {
      both values share --sidebar-pad-x so they cannot drift. */
   margin-right: calc(-1 * var(--sidebar-pad-x));
   padding-right: var(--sidebar-pad-x);
+}
+
+/* Give list highlights breathing room without squeezing the header controls
+   or changing the mobile drawer's own gutters. The scrollbar stays at the edge. */
+.shell:not(.shell--mobile-nav) .sidebar-shell__body {
+  padding-left: 6px;
+  padding-right: calc(var(--sidebar-pad-x) + 6px);
 }
 
 /* Chrome, not content: the strip bleeds past both shell gutters. Negating the
