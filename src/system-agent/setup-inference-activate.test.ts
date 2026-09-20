@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { resolveAgentDir } from "../agents/agent-scope-config.js";
 import { buildAuthHealthSummary } from "../agents/auth-health.js";
 import { resolveApiKeyForProfile } from "../agents/auth-profiles/oauth.js";
@@ -43,7 +43,17 @@ import {
 import * as credentialActivation from "./setup-inference-credential-access.js";
 import { saveSetupCredential } from "./setup-inference-credentials.js";
 import * as activationTransition from "./setup-inference-transition.js";
+import {
+  createSystemAgentPluginMetadataTestSnapshot,
+  type SystemAgentPluginMetadataTestSnapshot,
+} from "./system-agent.test-helpers.js";
 import { codexRuntimeArtifactAuth } from "./verified-inference.test-support.js";
+
+let metadata: SystemAgentPluginMetadataTestSnapshot;
+
+beforeAll(() => {
+  metadata = createSystemAgentPluginMetadataTestSnapshot();
+});
 
 afterEach(async () => {
   closeOpenClawAgentDatabasesForTest();
@@ -62,7 +72,7 @@ describe("setup activation credentials and configuration", () => {
   ])(
     "rejects mismatched setup-role acknowledgement before login ($target/$requested)",
     async ({ target, requested }) => {
-      const setup = await fixture({ modelTarget: target });
+      const setup = await fixture(metadata, { modelTarget: target });
       const result = await setup.activate("provider-auth", undefined, { modelTarget: requested });
       expect(result).toMatchObject({ ok: false, status: "unavailable" });
       expect(setup.login).not.toHaveBeenCalled();
@@ -78,7 +88,7 @@ describe("setup activation credentials and configuration", () => {
   ])(
     "isolates utility activation from primary $primaryModel (failure: $fail)",
     async ({ primaryModel, fail }) => {
-      const setup = await fixture({ modelTarget: "utility", primaryModel });
+      const setup = await fixture(metadata, { modelTarget: "utility", primaryModel });
       if (fail) {
         setup.run.mockRejectedValueOnce(new Error("Utility inference unavailable"));
       }
@@ -104,7 +114,7 @@ describe("setup activation credentials and configuration", () => {
   it.each([true, false])(
     "signs in before verifying an isolated detected Codex installation (fresh: %s)",
     async (fresh) => {
-      const setup = await fixture({ codex: true, fresh, subscription: true });
+      const setup = await fixture(metadata, { codex: true, fresh, subscription: true });
       const result = await setup.activate("codex-cli");
       expect(setup.login).toHaveBeenCalledOnce();
       expect(result).toMatchObject({ ok: true });
@@ -124,7 +134,7 @@ describe("setup activation credentials and configuration", () => {
     },
   );
   it("preserves explicit native user-home setup without importing or starting host sign-in", async () => {
-    const setup = await fixture({ codex: true, homeScope: "user" });
+    const setup = await fixture(metadata, { codex: true, homeScope: "user" });
     const nativeAuth = {
       apiKey: "fixture-native-key",
       source: "Codex native login",
@@ -167,7 +177,7 @@ describe("setup activation credentials and configuration", () => {
 
   it("cancels detected Codex sign-in without verification or promotion", async () => {
     const controller = new AbortController();
-    const setup = await fixture({ codex: true, signal: controller.signal });
+    const setup = await fixture(metadata, { codex: true, signal: controller.signal });
     setup.login.mockImplementationOnce(async () => {
       controller.abort();
       throw new WizardCancelledError();
@@ -180,7 +190,7 @@ describe("setup activation credentials and configuration", () => {
   });
 
   it("reuses an existing OpenClaw credential for detected Codex without another login", async () => {
-    const setup = await fixture({ codex: true });
+    const setup = await fixture(metadata, { codex: true });
     await persistProviderAuthProfilesAfterLogin({
       config: setup.config,
       agentDir: setup.agentDir,
@@ -193,7 +203,7 @@ describe("setup activation credentials and configuration", () => {
   });
 
   it("retries a saved Codex sign-in after failed verification without another login", async () => {
-    const setup = await fixture({ codex: true });
+    const setup = await fixture(metadata, { codex: true });
     setup.run.mockRejectedValueOnce(new Error("fixture provider unavailable"));
     const rejected = await setup.activate("codex-cli");
     expect(rejected).toMatchObject({ ok: false });
@@ -210,7 +220,7 @@ describe("setup activation credentials and configuration", () => {
   });
 
   it("retains the detected Codex API-key setup path without guided login", async () => {
-    const setup = await fixture({ codex: true });
+    const setup = await fixture(metadata, { codex: true });
     setup.deps.readCodexCliActiveApiKey = () => credential;
     const result = await setup.activate("codex-cli");
     expect(result).toMatchObject({ ok: true });
@@ -223,7 +233,7 @@ describe("setup activation credentials and configuration", () => {
     "does not promote a SecretRef when %s revokes final activation revalidation",
     async (revocation) => {
       const controller = new AbortController();
-      const setup = await fixture({ secretRef: true, signal: controller.signal });
+      const setup = await fixture(metadata, { secretRef: true, signal: controller.signal });
       const activatePrepared = credentialActivation.activatePreparedSetupCredential;
       const revoked = vi.fn();
       vi.spyOn(credentialActivation, "activatePreparedSetupCredential").mockImplementation(
@@ -282,7 +292,7 @@ describe("setup activation credentials and configuration", () => {
   it.each([false, true])(
     "preserves first-team provisioning across provider activation (rejected: %s)",
     async (rejected) => {
-      const setup = await fixture({ fresh: true });
+      const setup = await fixture(metadata, { fresh: true });
       if (rejected) {
         setup.run.mockRejectedValueOnce(new Error("fixture provider unavailable"));
       }
@@ -295,13 +305,17 @@ describe("setup activation credentials and configuration", () => {
         expect(await fs.readdir(path.dirname(setup.workspace))).not.toContain("workspace");
         return;
       }
-      const created = await ensureOnboardingAgent({
-        config: activated.sourceConfig,
-        baseConfig: activated.sourceConfig,
-        workspace: setup.workspace,
-        firstAgent: { name: "coordinator", team: true },
-        expectedConfigHash: activated.hash ?? null,
-      });
+      const created = await metadata.run(
+        () =>
+          ensureOnboardingAgent({
+            config: activated.sourceConfig,
+            baseConfig: activated.sourceConfig,
+            workspace: setup.workspace,
+            firstAgent: { name: "coordinator", team: true },
+            expectedConfigHash: activated.hash ?? null,
+          }),
+        activated.sourceConfig,
+      );
       expect(created.createdAgent).toBe(true);
       expect(created.createdAgentIds).toEqual(["coordinator", "researcher", "writer", "reviewer"]);
       for (const agentId of created.createdAgentIds ?? []) {
@@ -361,7 +375,7 @@ describe("setup activation credentials and configuration", () => {
           key: "unrelated-fixture-key",
         } as const,
       };
-      const setup = await fixture({
+      const setup = await fixture(metadata, {
         profiles: matching ? [unrelated, { profileId: "openai:fixture", credential }] : [unrelated],
       });
       setup.run.mockImplementation(async (params) => {
@@ -391,7 +405,7 @@ describe("setup activation credentials and configuration", () => {
   ])(
     "saves the credential before one tool-free turn and commits after success ($name)",
     async ({ localService, addProviderDuringLogin }) => {
-      const setup = await fixture({ localService, addProviderDuringLogin });
+      const setup = await fixture(metadata, { localService, addProviderDuringLogin });
       setup.run.mockImplementation(async (params) => {
         expect(setup.readProfile()?.[1]).toMatchObject(credential);
         expect(await fs.readFile(setup.configPath, "utf8")).toBe(setup.before);
@@ -417,7 +431,7 @@ describe("setup activation credentials and configuration", () => {
   );
 
   it("records persisted root hashes when setup retains an unrelated include", async () => {
-    const setup = await fixture({ surface: "gateway" });
+    const setup = await fixture(metadata, { surface: "gateway" });
     const includePath = path.join(path.dirname(setup.configPath), "logging.json5");
     const included = '{level:"warn"}\n';
     const before = `${JSON.stringify({ ...setup.config, logging: { $include: "./logging.json5" } })}\n`;
@@ -449,7 +463,7 @@ describe("setup activation credentials and configuration", () => {
   });
 
   it("retains the saved sign-in after rejection and retries without another login", async () => {
-    const setup = await fixture();
+    const setup = await fixture(metadata);
     setup.run.mockImplementationOnce(async () => {
       expect(setup.readProfile()?.[1]).toMatchObject(credential);
       throw new Error("401 invalid_api_key: fixture provider rejected the request");
@@ -485,7 +499,7 @@ describe("setup activation credentials and configuration", () => {
   ])(
     "keeps a working credential and rotation when a replacement is rejected (configured: $explicitProfile, restart: $restartRequired, confirmed: $activationConfirmed)",
     async ({ explicitProfile, restartRequired, activationConfirmed }) => {
-      const setup = await fixture({ restartRequired });
+      const setup = await fixture(metadata, { restartRequired });
       const originalProfileId = "openai:fixture";
       const originalCredential = { ...credential, key: "working-original-key" };
       const configured: OpenClawConfig = {
@@ -603,7 +617,7 @@ describe("setup activation credentials and configuration", () => {
   );
 
   it("activates saved sparse model settings without treating runtime defaults as a changed connection", async () => {
-    const setup = await fixture();
+    const setup = await fixture(metadata);
     const configured: OpenClawConfig = {
       ...setup.config,
       agents: {
@@ -657,7 +671,7 @@ describe("setup activation credentials and configuration", () => {
   });
 
   it("preserves an unrelated config edit when selecting the verified model", async () => {
-    const setup = await fixture();
+    const setup = await fixture(metadata);
     const changed = `${JSON.stringify({ ...setup.config, messages: { ackReaction: "seen" } })}\n`;
     setup.run.mockImplementation(async (params) => {
       await fs.writeFile(setup.configPath, changed);
@@ -678,7 +692,7 @@ describe("setup activation credentials and configuration", () => {
   });
 
   it("discovers a persisted API-key sign-in without an in-memory candidate or another login", async () => {
-    const setup = await fixture({ authMethod: "api_key" });
+    const setup = await fixture(metadata, { authMethod: "api_key" });
     await persistProviderAuthProfilesAfterLogin({
       config: setup.config,
       agentDir: setup.agentDir,
@@ -703,7 +717,7 @@ describe("setup activation credentials and configuration", () => {
   });
 
   it("rejects a concurrent provider change without overwriting it or removing the sign-in", async () => {
-    const setup = await fixture();
+    const setup = await fixture(metadata);
     const edited = structuredClone(setup.config);
     edited.models!.providers!.openai!.baseUrl = "https://changed.example/v1";
     const changed = `${JSON.stringify(edited)}\n`;
@@ -763,7 +777,7 @@ describe.each(["initial", "deferred"] as const)("setup %s error boundary", (phas
     },
     { name: "aborted signal", create: () => new Error(), status: "unavailable", abort: true },
   ])("preserves $name without exposing submitted secrets", async ({ create, status, abort }) => {
-    const setup = await fixture({ authMethod: "api_key" });
+    const setup = await fixture(metadata, { authMethod: "api_key" });
     const controller = new AbortController();
     const submitted = "opaque-submitted-setup-secret";
     const payload = `activation failed: ${submitted}; {"access_token":"structured-setup-secret"}`;

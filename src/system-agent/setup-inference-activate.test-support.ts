@@ -26,7 +26,7 @@ import type {
   ActivateSetupInferenceParams,
 } from "./setup-inference-core.js";
 import { detectSetupInference } from "./setup-inference-detect.js";
-import { createSystemAgentPluginMetadataTestSnapshot } from "./system-agent.test-helpers.js";
+import type { SystemAgentPluginMetadataTestSnapshot } from "./system-agent.test-helpers.js";
 import { createSystemAgentVerifiedInferenceBinding } from "./verified-inference.js";
 import {
   codexRuntimeArtifactAuth,
@@ -44,6 +44,7 @@ export const credential = {
 type RunParams = Parameters<NonNullable<ActivateSetupInferenceDeps["runEmbeddedAgent"]>>[0];
 
 export async function fixture(
+  metadata: SystemAgentPluginMetadataTestSnapshot,
   options: {
     localService?: boolean;
     authMethod?: "oauth" | "api_key";
@@ -147,7 +148,7 @@ export async function fixture(
   await fs.writeFile(configPath, before);
   clearConfigCache();
   const agentDir = resolveAgentDir(config, "main");
-  const metadata = createSystemAgentPluginMetadataTestSnapshot(config);
+  metadata.bindForConfig(config, workspace);
   const choice: ProviderAuthChoiceMetadata = {
     pluginId: "openai",
     providerId: "openai",

@@ -45,6 +45,7 @@ import {
   type ConfigWriteOptions,
 } from "./io.js";
 import { hashConfigRaw } from "./io.read-helpers.js";
+import { createConfigIoWorkerFixture } from "./io.worker.test-support.js";
 import { replaceConfigFile, transformConfigFile, transformConfigFileWithRetry } from "./mutate.js";
 import { ConfigMutationConflictError } from "./mutation-conflict.js";
 import { createProviderConfigFixture } from "./runtime-snapshot.test-fixtures.js";
@@ -72,6 +73,16 @@ const mockPrepareConfigFileWrite = vi.hoisted(() =>
 vi.mock("../plugins/manifest-registry.js", () => ({
   loadPluginManifestRegistryCore: mockLoadPluginManifestRegistry,
 }));
+
+vi.mock("../plugins/discovery.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../plugins/discovery.js")>();
+  const discovery = { candidates: [], diagnostics: [] };
+  return {
+    ...actual,
+    // The registry above owns this suite's synthetic plugin inventory.
+    discoverOpenClawPlugins: () => discovery,
+  };
+});
 
 vi.mock("../plugins/plugin-registry.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../plugins/plugin-registry.js")>();
@@ -116,6 +127,7 @@ function createConfigIO(options: ConfigIoOptions = {}) {
 
 describe("config io write", () => {
   const suiteRootTracker = createSuiteTempRootTracker({ prefix: "openclaw-config-io-" });
+  const workers = createConfigIoWorkerFixture();
   const silentLogger = {
     warn: () => {},
     error: () => {},
@@ -161,6 +173,7 @@ describe("config io write", () => {
     vi.spyOn(tmpDirOwner, "resolvePreferredOpenClawTmpDir").mockReturnValue(
       await suiteRootTracker.make("coordinator"),
     );
+    await workers.setup(await suiteRootTracker.make("workers"));
 
     // Default: return an empty plugin list so existing tests that don't need
     // plugin-owned channel schemas keep working unchanged.
@@ -180,7 +193,7 @@ describe("config io write", () => {
   });
 
   afterAll(async () => {
-    await closeOpenClawStateDatabaseAsync();
+    await workers.close();
     closeOpenClawStateDatabaseForTest();
     resetConfigRuntimeState();
     vi.mocked(tmpDirOwner.resolvePreferredOpenClawTmpDir).mockRestore();

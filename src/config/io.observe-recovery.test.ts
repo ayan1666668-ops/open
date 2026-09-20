@@ -6,6 +6,7 @@ import path from "node:path";
 import JSON5 from "json5";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { executeSqliteQueryTakeFirstSync, getNodeSqliteKysely } from "../infra/kysely-sync.js";
+import * as pluginModuleLoader from "../plugins/plugin-module-loader-cache.js";
 import { createDeferredCore } from "../shared/deferred.js";
 import type { DB as OpenClawStateKyselyDatabase } from "../state/openclaw-state-db.generated.js";
 import {
@@ -27,6 +28,7 @@ import {
   recoverConfigFromLastKnownGoodCore,
 } from "./io.observe-recovery.js";
 import * as configObserveState from "./io.observe-state.js";
+import { createConfigIoWorkerFixture } from "./io.worker.test-support.js";
 import type { ConfigFileSnapshot } from "./types.js";
 
 const CONFIG_CLOBBER_SNAPSHOT_LIMIT = 32;
@@ -44,6 +46,9 @@ function resolveLastKnownGoodConfigPath(configPath: string): string {
 describe("config observe recovery", () => {
   let fixtureRoot = "";
   let homeCaseId = 0;
+  const workerFixture = createConfigIoWorkerFixture();
+  const loadModule = pluginModuleLoader.getCachedPluginModuleLoader;
+  const moduleLoader = vi.spyOn(pluginModuleLoader, "getCachedPluginModuleLoader");
   const clobberedUpdateChannelConfig = { update: { channel: "beta" } };
   const clobberedUpdateChannelRaw = `${JSON.stringify(clobberedUpdateChannelConfig, null, 2)}\n`;
   const recoverableTelegramConfig = {
@@ -73,11 +78,22 @@ describe("config observe recovery", () => {
 
   beforeAll(async () => {
     fixtureRoot = await fsp.mkdtemp(path.join(os.tmpdir(), "openclaw-config-observe-recovery-"));
+    await workerFixture.setup(fixtureRoot);
+    const bindingRepair =
+      await import("../commands/doctor/shared/legacy-config-binding-repair.runtime.js");
+    // Keep the real migrations in Vitest's graph instead of transforming them
+    // again through the synchronous source loader used by config recovery.
+    moduleLoader.mockImplementation((options) =>
+      /legacy-config-binding-repair\.runtime\.[jt]s$/u.test(options.modulePath)
+        ? () => bindingRepair
+        : loadModule(options),
+    );
   });
 
   afterAll(async () => {
-    await closeOpenClawStateDatabaseAsync();
+    await workerFixture.close();
     closeOpenClawStateDatabaseForTest();
+    moduleLoader.mockRestore();
     await fsp.rm(fixtureRoot, { recursive: true, force: true });
   });
 

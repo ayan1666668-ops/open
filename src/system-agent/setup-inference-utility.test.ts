@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { resolveConfiguredPrimaryModelForAgent } from "../agents/utility-model.js";
 import { migrateLegacyConfig } from "../commands/doctor/shared/legacy-config-migrate.js";
 import { clearConfigCache, readConfigFileSnapshot } from "../config/config.js";
@@ -11,6 +11,16 @@ import {
   closeOpenClawStateDatabaseForTest,
 } from "../state/openclaw-state-db.js";
 import { fixture, modelRef, tempDirs } from "./setup-inference-activate.test-support.js";
+import {
+  createSystemAgentPluginMetadataTestSnapshot,
+  type SystemAgentPluginMetadataTestSnapshot,
+} from "./system-agent.test-helpers.js";
+
+let metadata: SystemAgentPluginMetadataTestSnapshot;
+
+beforeAll(() => {
+  metadata = createSystemAgentPluginMetadataTestSnapshot();
+});
 
 afterEach(async () => {
   closeOpenClawAgentDatabasesForTest();
@@ -30,7 +40,7 @@ describe("configured utility detection and activation", () => {
   ])(
     "preserves the pre-setup implicit primary $priorModel when utility login adds a provider: $addProviderDuringLogin",
     async ({ priorModel, addProviderDuringLogin }) => {
-      const setup = await fixture({
+      const setup = await fixture(metadata, {
         modelTarget: "utility",
         addProviderDuringLogin,
         fresh: priorModel === undefined,
@@ -125,7 +135,7 @@ describe("configured utility detection and activation", () => {
   it.each(["helper", modelRef])(
     "rechecks the advertised canonical identity while preserving authored %s and its profile",
     async (authoredModel) => {
-      const setup = await fixture({ modelTarget: "utility" });
+      const setup = await fixture(metadata, { modelTarget: "utility" });
       const activated = await setup.activate();
       expect(activated).toMatchObject({ ok: true });
       const profile = setup.readProfile();
