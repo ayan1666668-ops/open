@@ -49,9 +49,9 @@ function expectSnapshot(
   } finally {
     if (prepared) {
       expect(prepared.cleanup()).toBe(true);
+      expect(fs.readFileSync(fixture.sourcePath).equals(expected)).toBe(true);
     }
     expect(fs.readdirSync(fixture.stagingRoot)).toEqual([]);
-    expect(fs.readFileSync(fixture.sourcePath).equals(expected)).toBe(true);
   }
 }
 
@@ -260,6 +260,44 @@ describe("stable read-only snapshot copies", () => {
       expectSnapshot(fixture, after);
       expect(injected()).toBe(true);
       expect(fs.readdirSync(fixture.sourceRoot)).toEqual(["source.sqlite"]);
+    },
+  );
+
+  it.each(["header", "copy"] as const)(
+    "waits out a transient writer during synchronous %s inspection",
+    (phase) => {
+      const bytes = patternedBytes(4099);
+      const fixture = createFixture(bytes);
+      const open = fs.openSync.bind(fs);
+      const fsync = fs.fsyncSync.bind(fs);
+      const canonicalPath = fs.realpathSync.native(fixture.sourcePath);
+      let elapsedMs = 0;
+      let changes = 0;
+      vi.spyOn(Atomics, "wait").mockImplementation((_array, _index, _value, timeout) => {
+        elapsedMs += timeout ?? 0;
+        return "timed-out";
+      });
+      if (phase === "header") {
+        vi.spyOn(fs, "openSync").mockImplementation((pathname, flags, mode) => {
+          if (String(pathname) === canonicalPath && elapsedMs < 30) {
+            changes += 1;
+            throw Object.assign(new Error("source replacement in progress"), { code: "ENOENT" });
+          }
+          return open(pathname, flags, mode);
+        });
+      } else {
+        vi.spyOn(fs, "fsyncSync").mockImplementation((descriptor) => {
+          fsync(descriptor);
+          if (elapsedMs < 30) {
+            changes += 1;
+            bytes.writeUInt8(bytes.readUInt8(bytes.length - 1) ^ 0xff, bytes.length - 1);
+            fs.writeFileSync(fixture.sourcePath, bytes);
+          }
+        });
+      }
+
+      expectSnapshot(fixture, bytes);
+      expect(changes).toBeGreaterThan(0);
     },
   );
 
