@@ -22,15 +22,10 @@ import { useAutoCleanupTempDirTracker } from "openclaw/plugin-sdk/test-env";
 // Matrix tests cover sdk plugin behavior.
 import { createRequireRecord } from "openclaw/plugin-sdk/test-fixtures";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { getMatrixRuntime } from "../runtime.js";
 import { installMatrixTestRuntime } from "../test-runtime.js";
 import type { CoreConfig } from "../types.js";
 import { SqliteBackedMatrixSyncStore } from "./client/file-sync-store.js";
-import {
-  readMatrixIdbSnapshotJson,
-  readMatrixRecoveryKeyStateForPathAsync,
-  type MatrixSnapshotStateRuntime,
-} from "./crypto-state-store.js";
+import { readMatrixIdbSnapshotJson } from "./crypto-state-store.js";
 import * as keyUploadFence from "./sdk.key-upload-fence.test-helpers.js";
 import { MatrixDecryptBridge } from "./sdk/decrypt-bridge.js";
 import { clearAllIndexedDbState } from "./sdk/idb-persistence.test-helpers.js";
@@ -125,57 +120,6 @@ function expectSomeMockCallOptions(
     return Object.entries(fields).every(([key, value]) => Object.is(record[key], value));
   });
   expect(matched).toBe(true);
-}
-
-async function readStoredRecoveryKey(recoveryKeyPath: string) {
-  return readMatrixRecoveryKeyStateForPathAsync(recoveryKeyPath, getMatrixRuntime().state);
-}
-
-function holdRecoveryKeyPersistence() {
-  const admitted = createDeferred<void>();
-  const release = createDeferred<void>();
-  const stateRuntime: MatrixSnapshotStateRuntime = {
-    openKeyedStore<T>(options: OpenAsyncKeyedStoreOptions): PluginStateKeyedStore<T> {
-      const store = createPluginStateKeyedStoreForTests<T>("matrix", options);
-      const compareAndApply = store.compareAndApply;
-      if (!compareAndApply) {
-        throw new Error("expected current SQLite comparison support");
-      }
-      return {
-        ...store,
-        compareAndApply: async (key, comparison, intent) => {
-          if (options.namespace === "recovery-key" && intent.action === "set") {
-            admitted.resolve();
-            await release.promise;
-          }
-          return await compareAndApply(key, comparison, intent);
-        },
-      };
-    },
-  };
-  return { admitted, release, stateRuntime };
-}
-
-function captureRecoveryCacheWrite() {
-  // The createClient mock captures the production SDK options without changing their shape.
-  const options = lastCreateClientOpts as unknown as ICreateClientOpts;
-  const callbacks = options?.cryptoCallbacks;
-  if (!callbacks?.cacheSecretStorageKey || !callbacks.getSecretStorageKey) {
-    throw new Error("expected Matrix recovery callbacks");
-  }
-  const getSecretStorageKey = vi.spyOn(callbacks, "getSecretStorageKey");
-  callbacks.cacheSecretStorageKey(
-    "SSSSKEY",
-    {
-      algorithm: "m.secret_storage.v1.aes-hmac-sha2",
-      name: "Synthetic recovery key",
-      passphrase: { algorithm: "m.pbkdf2", iterations: 1, salt: "synthetic" },
-      iv: "synthetic-iv",
-      mac: "synthetic-mac",
-    },
-    new Uint8Array([1, 2, 3, 4]),
-  );
-  return { options, getSecretStorageKey };
 }
 
 async function consumeMatrixSecretStorageKey(keyId = "SSSSKEY"): Promise<boolean> {
