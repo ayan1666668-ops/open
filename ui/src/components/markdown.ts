@@ -522,7 +522,7 @@ function installHooks() {
   hooksInstalled = true;
 
   DOMPurify.addHook("afterSanitizeAttributes", (node) => {
-    if (node instanceof HTMLElement && node.matches("progress")) {
+    if (node instanceof HTMLElement && node.localName === "progress") {
       // Progress markup is authored content; it must not inherit KaTeX's
       // geometry-preserving inline styles.
       node.removeAttribute("style");
