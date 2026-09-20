@@ -16,8 +16,9 @@
 
 import type { SessionEntry } from "../../config/sessions.js";
 import { patchSessionEntryCore } from "../../config/sessions/session-accessor.js";
-import { enqueueSystemEventRaw as enqueueSystemEvent } from "../../infra/system-events.js";
+import { enqueueSystemEvent } from "../../infra/system-events.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
+import { withContinuationOwner } from "./system-event-ownership.js";
 
 const log = createSubsystemLogger("continuation/context-pressure");
 
@@ -64,6 +65,8 @@ export function resolveContextPressureBand(
 interface CheckSessionContextPressureParams {
   sessionEntry: SessionEntry;
   sessionKey: string;
+  /** Owner of the session-event queue; system events require an agent-qualified key. */
+  agentId?: string;
   contextPressureThreshold: number | undefined;
   contextWindowTokens: number;
   admittedToolNames?: ReadonlySet<string>;
@@ -209,11 +212,17 @@ function publishSessionContextPressure(
     return { fired: false, band: evaluation.band };
   }
   log[evaluation.logLevel ?? "warn"](evaluation.logMessage);
-  enqueueSystemEvent(evaluation.eventText, {
-    sessionKey: params.sessionKey,
-    trusted: true,
-    ...(params.expectedSessionId ? { expectedSessionId: params.expectedSessionId } : {}),
-  });
+  enqueueSystemEvent(
+    evaluation.eventText,
+    withContinuationOwner(
+      {
+        sessionKey: params.sessionKey,
+        trusted: true,
+        ...(params.expectedSessionId ? { expectedSessionId: params.expectedSessionId } : {}),
+      },
+      params.agentId,
+    ),
+  );
   params.sessionEntry.lastContextPressureBand = evaluation.band;
   return { fired: true, band: evaluation.band };
 }
@@ -240,7 +249,6 @@ export function checkContextPressure(
 export async function emitPersistedContextPressure(
   params: CheckSessionContextPressureParams & {
     continuationEnabled: boolean;
-    agentId?: string;
     storePath: string;
     expectedSessionId?: string;
   },

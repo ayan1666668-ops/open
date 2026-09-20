@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SessionEntry } from "../../config/sessions.js";
+import { resolveSystemEventQueueKey } from "../../infra/system-event-ownership.js";
 import { peekSystemEvents, resetSystemEventsForTest } from "../../infra/system-events.js";
 
 const mockedLog = vi.hoisted(() => ({
@@ -49,6 +50,10 @@ function makeSessionEntry(overrides: Partial<SessionEntry> = {}): SessionEntry {
 }
 
 const SESSION_KEY = "test:context-pressure";
+const OWNER_AGENT_ID = "main";
+// Production enqueues under the agent-qualified queue key, so the peek has to
+// look there rather than under the bare conversation key.
+const QUEUE_KEY = resolveSystemEventQueueKey(SESSION_KEY, OWNER_AGENT_ID);
 const CONTEXT_WINDOW = 100_000; // 100k token context window
 
 /* ------------------------------------------------------------------ */
@@ -75,12 +80,13 @@ describe("checkContextPressure", () => {
     const result = checkContextPressure({
       sessionEntry: entry,
       sessionKey: SESSION_KEY,
+      agentId: OWNER_AGENT_ID,
       contextPressureThreshold: undefined as unknown as number,
       contextWindowTokens: CONTEXT_WINDOW,
     });
     expect(result.fired).toBe(false);
     expect(result.band).toBe(0);
-    const events = peekSystemEvents(SESSION_KEY);
+    const events = peekSystemEvents(QUEUE_KEY);
     expect(events).toHaveLength(0);
   });
 
@@ -89,12 +95,13 @@ describe("checkContextPressure", () => {
     const result = checkContextPressure({
       sessionEntry: entry,
       sessionKey: SESSION_KEY,
+      agentId: OWNER_AGENT_ID,
       contextPressureThreshold: 0,
       contextWindowTokens: CONTEXT_WINDOW,
     });
     expect(result.fired).toBe(false);
     expect(result.band).toBe(0);
-    expect(peekSystemEvents(SESSION_KEY)).toHaveLength(0);
+    expect(peekSystemEvents(QUEUE_KEY)).toHaveLength(0);
   });
 
   /* ---------------------------------------------------------------- */
@@ -106,6 +113,7 @@ describe("checkContextPressure", () => {
     const result = checkContextPressure({
       sessionEntry: entry,
       sessionKey: SESSION_KEY,
+      agentId: OWNER_AGENT_ID,
       contextPressureThreshold: 0.8,
       contextWindowTokens: CONTEXT_WINDOW,
     });
@@ -118,6 +126,7 @@ describe("checkContextPressure", () => {
     const result = checkContextPressure({
       sessionEntry: entry,
       sessionKey: SESSION_KEY,
+      agentId: OWNER_AGENT_ID,
       contextPressureThreshold: 0.8,
       contextWindowTokens: CONTEXT_WINDOW,
     });
@@ -130,6 +139,7 @@ describe("checkContextPressure", () => {
     const result = checkContextPressure({
       sessionEntry: entry,
       sessionKey: SESSION_KEY,
+      agentId: OWNER_AGENT_ID,
       contextPressureThreshold: 0.8,
       contextWindowTokens: CONTEXT_WINDOW,
       earlyWarningBand: 0.3125,
@@ -144,6 +154,7 @@ describe("checkContextPressure", () => {
     const result = checkContextPressure({
       sessionEntry: entry,
       sessionKey: SESSION_KEY,
+      agentId: OWNER_AGENT_ID,
       contextPressureThreshold: 0.8,
       contextWindowTokens: CONTEXT_WINDOW,
       earlyWarningBand: 0,
@@ -161,6 +172,7 @@ describe("checkContextPressure", () => {
     const result = checkContextPressure({
       sessionEntry: entry,
       sessionKey: SESSION_KEY,
+      agentId: OWNER_AGENT_ID,
       contextPressureThreshold: 0.8,
       contextWindowTokens: CONTEXT_WINDOW,
     });
@@ -174,6 +186,7 @@ describe("checkContextPressure", () => {
     const result = checkContextPressure({
       sessionEntry: entry,
       sessionKey: SESSION_KEY,
+      agentId: OWNER_AGENT_ID,
       contextPressureThreshold: 0.8,
       contextWindowTokens: CONTEXT_WINDOW,
     });
@@ -190,6 +203,7 @@ describe("checkContextPressure", () => {
     const result = checkContextPressure({
       sessionEntry: entry,
       sessionKey: SESSION_KEY,
+      agentId: OWNER_AGENT_ID,
       contextPressureThreshold: 0.8,
       contextWindowTokens: CONTEXT_WINDOW,
     });
@@ -203,6 +217,7 @@ describe("checkContextPressure", () => {
     const result = checkContextPressure({
       sessionEntry: entry,
       sessionKey: SESSION_KEY,
+      agentId: OWNER_AGENT_ID,
       contextPressureThreshold: 0.8,
       contextWindowTokens: CONTEXT_WINDOW,
     });
@@ -210,7 +225,7 @@ describe("checkContextPressure", () => {
     expect(result.band).toBe(95);
     expect(entry.lastContextPressureBand).toBe(95);
     // Verify the event text contains imminent language
-    const events = peekSystemEvents(SESSION_KEY);
+    const events = peekSystemEvents(QUEUE_KEY);
     expect(events.length).toBeGreaterThan(0);
     expect(events[0]).toMatch(/imminent/i);
   });
@@ -220,6 +235,7 @@ describe("checkContextPressure", () => {
     const result = checkContextPressure({
       sessionEntry: entry,
       sessionKey: SESSION_KEY,
+      agentId: OWNER_AGENT_ID,
       contextPressureThreshold: 0.8,
       contextWindowTokens: CONTEXT_WINDOW,
     });
@@ -240,6 +256,7 @@ describe("checkContextPressure", () => {
     const result = checkContextPressure({
       sessionEntry: entry,
       sessionKey: SESSION_KEY,
+      agentId: OWNER_AGENT_ID,
       contextPressureThreshold: 0.8,
       contextWindowTokens: CONTEXT_WINDOW,
     });
@@ -256,6 +273,7 @@ describe("checkContextPressure", () => {
     const result = checkContextPressure({
       sessionEntry: entry,
       sessionKey: SESSION_KEY,
+      agentId: OWNER_AGENT_ID,
       contextPressureThreshold: 0.8,
       contextWindowTokens: CONTEXT_WINDOW,
     });
@@ -276,6 +294,7 @@ describe("checkContextPressure", () => {
     const result = checkContextPressure({
       sessionEntry: entry,
       sessionKey: SESSION_KEY,
+      agentId: OWNER_AGENT_ID,
       contextPressureThreshold: 0.8,
       contextWindowTokens: CONTEXT_WINDOW,
     });
@@ -293,6 +312,7 @@ describe("checkContextPressure", () => {
     const result = checkContextPressure({
       sessionEntry: entry,
       sessionKey: SESSION_KEY,
+      agentId: OWNER_AGENT_ID,
       contextPressureThreshold: 0.8,
       contextWindowTokens: CONTEXT_WINDOW,
     });
@@ -313,6 +333,7 @@ describe("checkContextPressure", () => {
     const result = checkContextPressure({
       sessionEntry: entry,
       sessionKey: SESSION_KEY,
+      agentId: OWNER_AGENT_ID,
       contextPressureThreshold: 0.8,
       contextWindowTokens: CONTEXT_WINDOW,
     });
@@ -328,6 +349,7 @@ describe("checkContextPressure", () => {
     const result = checkContextPressure({
       sessionEntry: entry,
       sessionKey: SESSION_KEY,
+      agentId: OWNER_AGENT_ID,
       contextPressureThreshold: 0.8,
       contextWindowTokens: CONTEXT_WINDOW,
     });
@@ -343,6 +365,7 @@ describe("checkContextPressure", () => {
     const result = checkContextPressure({
       sessionEntry: entry,
       sessionKey: SESSION_KEY,
+      agentId: OWNER_AGENT_ID,
       contextPressureThreshold: 0.8,
       contextWindowTokens: CONTEXT_WINDOW,
     });
@@ -359,6 +382,7 @@ describe("checkContextPressure", () => {
     const result = checkContextPressure({
       sessionEntry: entry,
       sessionKey: SESSION_KEY,
+      agentId: OWNER_AGENT_ID,
       contextPressureThreshold: 0.8,
       contextWindowTokens: 0,
     });
@@ -375,10 +399,11 @@ describe("checkContextPressure", () => {
     checkContextPressure({
       sessionEntry: entry,
       sessionKey: SESSION_KEY,
+      agentId: OWNER_AGENT_ID,
       contextPressureThreshold: 0.8,
       contextWindowTokens: CONTEXT_WINDOW,
     });
-    const events = peekSystemEvents(SESSION_KEY);
+    const events = peekSystemEvents(QUEUE_KEY);
     expect(events.length).toBeGreaterThan(0);
     expect(events[0]).toMatch(/85%/);
   });
@@ -388,10 +413,11 @@ describe("checkContextPressure", () => {
     checkContextPressure({
       sessionEntry: entry,
       sessionKey: SESSION_KEY,
+      agentId: OWNER_AGENT_ID,
       contextPressureThreshold: 0.8,
       contextWindowTokens: CONTEXT_WINDOW,
     });
-    const events = peekSystemEvents(SESSION_KEY);
+    const events = peekSystemEvents(QUEUE_KEY);
     expect(events.length).toBeGreaterThan(0);
     // 85k / 100k
     expect(events[0]).toMatch(/85k/);
@@ -403,11 +429,12 @@ describe("checkContextPressure", () => {
     checkContextPressure({
       sessionEntry: entry,
       sessionKey: SESSION_KEY,
+      agentId: OWNER_AGENT_ID,
       contextPressureThreshold: 0.8,
       contextWindowTokens: CONTEXT_WINDOW,
       admittedToolNames: new Set(["continue_delegate", "request_compaction"]),
     });
-    const events = peekSystemEvents(SESSION_KEY);
+    const events = peekSystemEvents(QUEUE_KEY);
     expect(events.length).toBeGreaterThan(0);
     // The urgency text below 95% names
     // continue_delegate(mode='post-compaction') for staging working-state survival,
@@ -425,11 +452,12 @@ describe("checkContextPressure", () => {
     checkContextPressure({
       sessionEntry: entry,
       sessionKey: SESSION_KEY,
+      agentId: OWNER_AGENT_ID,
       contextPressureThreshold: 0.8,
       contextWindowTokens: CONTEXT_WINDOW,
       admittedToolNames,
     });
-    const events = peekSystemEvents(SESSION_KEY);
+    const events = peekSystemEvents(QUEUE_KEY);
     expect(events).toHaveLength(1);
     expect(events[0]).not.toContain("continue_delegate");
     expect(events[0]).not.toContain("request_compaction");
@@ -456,11 +484,12 @@ describe("checkContextPressure", () => {
       checkContextPressure({
         sessionEntry: entry,
         sessionKey: SESSION_KEY,
+        agentId: OWNER_AGENT_ID,
         contextPressureThreshold: 0.8,
         contextWindowTokens: CONTEXT_WINDOW,
         admittedToolNames,
       });
-      const events = peekSystemEvents(SESSION_KEY);
+      const events = peekSystemEvents(QUEUE_KEY);
       expect(events).toHaveLength(1);
       expect(events[0]).toContain(present);
       expect(events[0]).not.toContain(absent);
@@ -472,10 +501,11 @@ describe("checkContextPressure", () => {
     checkContextPressure({
       sessionEntry: entry,
       sessionKey: SESSION_KEY,
+      agentId: OWNER_AGENT_ID,
       contextPressureThreshold: 0.8,
       contextWindowTokens: CONTEXT_WINDOW,
     });
-    const events = peekSystemEvents(SESSION_KEY);
+    const events = peekSystemEvents(QUEUE_KEY);
     expect(events.length).toBeGreaterThan(0);
     expect(events[0]).toMatch(/imminent/i);
   });
@@ -489,6 +519,7 @@ describe("checkContextPressure", () => {
     const result = checkContextPressure({
       sessionEntry: entry,
       sessionKey: SESSION_KEY,
+      agentId: OWNER_AGENT_ID,
       contextPressureThreshold: 0.5,
       contextWindowTokens: CONTEXT_WINDOW,
     });
@@ -501,6 +532,7 @@ describe("checkContextPressure", () => {
     const result = checkContextPressure({
       sessionEntry: entry,
       sessionKey: SESSION_KEY,
+      agentId: OWNER_AGENT_ID,
       contextPressureThreshold: 0.5,
       contextWindowTokens: CONTEXT_WINDOW,
     });
@@ -513,6 +545,7 @@ describe("checkContextPressure", () => {
     const result = checkContextPressure({
       sessionEntry: entry,
       sessionKey: SESSION_KEY,
+      agentId: OWNER_AGENT_ID,
       contextPressureThreshold: 0.94,
       contextWindowTokens: CONTEXT_WINDOW,
     });
@@ -529,6 +562,7 @@ describe("checkContextPressure", () => {
     const result = checkContextPressure({
       sessionEntry: entry,
       sessionKey: SESSION_KEY,
+      agentId: OWNER_AGENT_ID,
       contextPressureThreshold: 0.94,
       contextWindowTokens: CONTEXT_WINDOW,
     });
@@ -549,6 +583,7 @@ describe("checkContextPressure", () => {
     const result = checkContextPressure({
       sessionEntry: entry,
       sessionKey: SESSION_KEY,
+      agentId: OWNER_AGENT_ID,
       contextPressureThreshold: 0.8,
       contextWindowTokens: CONTEXT_WINDOW,
     });
@@ -565,6 +600,7 @@ describe("checkContextPressure", () => {
     const result = checkContextPressure({
       sessionEntry: entry,
       sessionKey: SESSION_KEY,
+      agentId: OWNER_AGENT_ID,
       contextPressureThreshold: 0.8,
       contextWindowTokens: CONTEXT_WINDOW,
     });
@@ -577,6 +613,7 @@ describe("checkContextPressure", () => {
     const result = checkContextPressure({
       sessionEntry: entry,
       sessionKey: SESSION_KEY,
+      agentId: OWNER_AGENT_ID,
       contextPressureThreshold: 0.8,
       contextWindowTokens: CONTEXT_WINDOW,
     });
@@ -589,6 +626,7 @@ describe("checkContextPressure", () => {
     const result = checkContextPressure({
       sessionEntry: entry,
       sessionKey: SESSION_KEY,
+      agentId: OWNER_AGENT_ID,
       contextPressureThreshold: 0.8,
       contextWindowTokens: CONTEXT_WINDOW,
     });
@@ -602,6 +640,7 @@ describe("checkContextPressure", () => {
     const result = checkContextPressure({
       sessionEntry: entry,
       sessionKey: SESSION_KEY,
+      agentId: OWNER_AGENT_ID,
       contextPressureThreshold: 0.92,
       contextWindowTokens: CONTEXT_WINDOW,
     });
@@ -614,6 +653,7 @@ describe("checkContextPressure", () => {
     const result = checkContextPressure({
       sessionEntry: entry,
       sessionKey: SESSION_KEY,
+      agentId: OWNER_AGENT_ID,
       contextPressureThreshold: 0.94,
       contextWindowTokens: CONTEXT_WINDOW,
     });
@@ -626,6 +666,7 @@ describe("checkContextPressure", () => {
     const result = checkContextPressure({
       sessionEntry: entry,
       sessionKey: SESSION_KEY,
+      agentId: OWNER_AGENT_ID,
       contextPressureThreshold: 0.92,
       contextWindowTokens: CONTEXT_WINDOW,
     });
@@ -642,6 +683,7 @@ describe("checkContextPressure", () => {
     const result = checkContextPressure({
       sessionEntry: entry,
       sessionKey: SESSION_KEY,
+      agentId: OWNER_AGENT_ID,
       contextPressureThreshold: 0.8,
       contextWindowTokens: CONTEXT_WINDOW,
     });
@@ -653,6 +695,7 @@ describe("checkContextPressure", () => {
     const result2 = checkContextPressure({
       sessionEntry: entry,
       sessionKey: SESSION_KEY,
+      agentId: OWNER_AGENT_ID,
       contextPressureThreshold: 0.8,
       contextWindowTokens: CONTEXT_WINDOW,
     });
@@ -671,6 +714,7 @@ describe("checkContextPressure", () => {
     checkContextPressure({
       sessionEntry: entry,
       sessionKey: SESSION_KEY,
+      agentId: OWNER_AGENT_ID,
       contextPressureThreshold: 0.8,
       contextWindowTokens: CONTEXT_WINDOW,
     });

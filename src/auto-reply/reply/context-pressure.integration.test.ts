@@ -7,10 +7,12 @@
  */
 import { describe, it, expect, beforeEach } from "vitest";
 import type { SessionEntry } from "../../config/sessions/types.js";
+import { resolveSystemEventQueueKey } from "../../infra/system-event-ownership.js";
 import { peekSystemEventEntries, drainSystemEventEntries } from "../../infra/system-events.js";
 import { checkContextPressure } from "../continuation/context-pressure.js";
 
 const TEST_SESSION_KEY = "phase2-integration-test";
+const TEST_QUEUE_KEY = resolveSystemEventQueueKey(TEST_SESSION_KEY, "main");
 
 /** Helper: partial SessionEntry for testing */
 function makeEntry(overrides: Partial<SessionEntry> = {}): SessionEntry {
@@ -24,7 +26,7 @@ function makeEntry(overrides: Partial<SessionEntry> = {}): SessionEntry {
 describe("Phase 2 integration: context-pressure → event queue → drain ordering", () => {
   beforeEach(() => {
     // Drain any leftover events from prior tests
-    drainSystemEventEntries(TEST_SESSION_KEY);
+    drainSystemEventEntries(TEST_QUEUE_KEY);
   });
 
   it("event is available in queue BEFORE drain (P1 fix verification)", () => {
@@ -42,7 +44,7 @@ describe("Phase 2 integration: context-pressure → event queue → drain orderi
     expect(band).toBe(80);
 
     // 2. Peek — event should be visible (this is what buildQueuedSystemPrompt reads)
-    const peeked = peekSystemEventEntries(TEST_SESSION_KEY);
+    const peeked = peekSystemEventEntries(TEST_QUEUE_KEY);
     expect(peeked).toBeDefined();
     expect(peeked.length).toBeGreaterThanOrEqual(1);
     const pressureEvent = peeked.find((e) => e.text?.includes("[system:context-pressure]"));
@@ -51,13 +53,13 @@ describe("Phase 2 integration: context-pressure → event queue → drain orderi
     expect(pressureEvent!.text).toContain("context window consumed");
 
     // 3. Drain — event should be consumed (simulating buildQueuedSystemPrompt)
-    const drained = drainSystemEventEntries(TEST_SESSION_KEY);
+    const drained = drainSystemEventEntries(TEST_QUEUE_KEY);
     expect(drained).toBeDefined();
     const drainedPressure = drained.find((e) => e.text?.includes("[system:context-pressure]"));
     expect(drainedPressure).toBeDefined();
 
     // 4. After drain, queue should be empty
-    const afterDrain = peekSystemEventEntries(TEST_SESSION_KEY);
+    const afterDrain = peekSystemEventEntries(TEST_QUEUE_KEY);
     expect(!afterDrain || afterDrain.length === 0).toBe(true);
   });
 
@@ -71,7 +73,7 @@ describe("Phase 2 integration: context-pressure → event queue → drain orderi
       contextPressureThreshold: 0.8,
       contextWindowTokens: 10000,
     });
-    let events = drainSystemEventEntries(TEST_SESSION_KEY);
+    let events = drainSystemEventEntries(TEST_QUEUE_KEY);
     expect(events.some((e) => e.text?.includes("[system:context-pressure]"))).toBe(true);
 
     // Band 90 (simulate tokens growing)
@@ -82,7 +84,7 @@ describe("Phase 2 integration: context-pressure → event queue → drain orderi
       contextPressureThreshold: 0.8,
       contextWindowTokens: 10000,
     });
-    events = drainSystemEventEntries(TEST_SESSION_KEY);
+    events = drainSystemEventEntries(TEST_QUEUE_KEY);
     expect(events.some((e) => e.text?.includes("[system:context-pressure]"))).toBe(true);
 
     // Band 95
@@ -93,7 +95,7 @@ describe("Phase 2 integration: context-pressure → event queue → drain orderi
       contextPressureThreshold: 0.8,
       contextWindowTokens: 10000,
     });
-    events = drainSystemEventEntries(TEST_SESSION_KEY);
+    events = drainSystemEventEntries(TEST_QUEUE_KEY);
     const imminent = events.find((e) => e.text?.toLowerCase().includes("imminent"));
     expect(imminent).toBeDefined();
   });
@@ -109,7 +111,7 @@ describe("Phase 2 integration: context-pressure → event queue → drain orderi
       contextWindowTokens: 10000,
     });
     expect(r1.fired).toBe(true);
-    drainSystemEventEntries(TEST_SESSION_KEY);
+    drainSystemEventEntries(TEST_QUEUE_KEY);
 
     // Second call at same band — should NOT fire
     const r2 = checkContextPressure({
@@ -121,7 +123,7 @@ describe("Phase 2 integration: context-pressure → event queue → drain orderi
     expect(r2.fired).toBe(false);
 
     // Queue should be empty
-    const events = peekSystemEventEntries(TEST_SESSION_KEY);
+    const events = peekSystemEventEntries(TEST_QUEUE_KEY);
     expect(!events || events.length === 0).toBe(true);
   });
 
@@ -138,7 +140,7 @@ describe("Phase 2 integration: context-pressure → event queue → drain orderi
     expect(fired).toBe(true);
     expect(band).toBe(10);
 
-    const events = drainSystemEventEntries(TEST_SESSION_KEY);
+    const events = drainSystemEventEntries(TEST_QUEUE_KEY);
     const pressureEvent = events.find((e) => e.text?.includes("[system:context-pressure]"));
     expect(pressureEvent).toBeDefined();
     expect(pressureEvent!.text).toContain("15%");
@@ -155,7 +157,7 @@ describe("Phase 2 integration: context-pressure → event queue → drain orderi
     });
 
     expect(fired).toBe(false);
-    const events = peekSystemEventEntries(TEST_SESSION_KEY);
+    const events = peekSystemEventEntries(TEST_QUEUE_KEY);
     expect(!events || events.length === 0).toBe(true);
   });
 });
