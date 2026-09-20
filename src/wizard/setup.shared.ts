@@ -1,4 +1,5 @@
 // Shared setup-wizard steps used by the classic wizard and the bootstrap onboarding flow.
+import { formatCliCommand } from "../cli/command-format.js";
 import type { OnboardOptions } from "../commands/onboard-types.js";
 import { createConfigIO, resolveGatewayPort } from "../config/config.js";
 import type { ConfigWriteOptions } from "../config/io.js";
@@ -24,6 +25,40 @@ import {
   getSecurityNoteTitle,
 } from "./setup.security-note.js";
 import type { QuickstartGatewayDefaults, WizardGatewayAuthChoice } from "./setup.types.js";
+
+/** Auth modes whose Gateway keeps a local shared secret usable by loopback probes. */
+export function usesLocalGatewayPassword(mode: WizardGatewayAuthChoice): boolean {
+  // trusted-proxy delegates remote identity to the proxy, but its documented
+  // local fallback still authenticates loopback clients with gateway.auth.password.
+  return mode === "password" || mode === "trusted-proxy";
+}
+
+/** Completion guidance notes for the preserved Gateway auth mode. */
+export function gatewayCompletionAuthNotes(mode: WizardGatewayAuthChoice): string[] {
+  // Proxy-auth gateways keep no Gateway token, so token retrieval guidance is
+  // replaced by an explicit delegation note; the dashboard hint stays useful.
+  if (mode === "trusted-proxy") {
+    return [
+      t("wizard.finalize.gatewayProxyAuthManaged"),
+      t("wizard.finalize.dashboardOpenAnytime", {
+        command: formatCliCommand("openclaw dashboard --no-open"),
+      }),
+    ].filter(Boolean);
+  }
+  return [
+    t("wizard.finalize.gatewayTokenShared"),
+    t("wizard.finalize.gatewayTokenStored"),
+    t("wizard.finalize.gatewayTokenView", {
+      command: formatCliCommand("openclaw gateway auth-token --show"),
+    }),
+    t("wizard.finalize.gatewayTokenGenerate", {
+      command: formatCliCommand("openclaw doctor --generate-gateway-token"),
+    }),
+    t("wizard.finalize.dashboardOpenAnytime", {
+      command: formatCliCommand("openclaw dashboard --no-open"),
+    }),
+  ].filter(Boolean);
+}
 
 type QuickstartGatewayOptionOverrides = Pick<
   OnboardOptions,

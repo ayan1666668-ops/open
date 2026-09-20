@@ -1116,6 +1116,7 @@ export const zh_TW = {
       gatewayServiceRestarted: "Gateway 服務已重新啟動。",
       gatewayServiceRestarting: "正在重新啟動 Gateway 服務...",
       gatewayServiceRestartScheduled: "Gateway 服務重新啟動已排程。",
+      gatewayProxyAuthManaged: "Gateway 認證已由可信代理管理；未儲存 Gateway 密鑰。",
       gatewayTokenGenerate: "產生密鑰：{command}",
       gatewayTokenShared: "Gateway 密鑰：Gateway 和 Control UI 的共用存取憑證。",
       gatewayTokenStored:
