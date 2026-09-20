@@ -23,6 +23,7 @@ import type { FinishUpdateParams } from "./update-command-finish-types.js";
 import { UpdateCommandRecoveryPendingError } from "./update-command-recovery.js";
 import {
   recordUpdateResultNextAction,
+  failUpdateCommandRun,
   createUpdateCommandFailureResult,
   UnreportedUpdateAdmissionOutcome,
   type UpdateAdmissionReportParams,
@@ -31,7 +32,7 @@ import {
   UpdateCommandPendingRecoveryFailure,
   writeControlPlaneUpdateRestartSentinelBestEffort,
 } from "./update-command-result.js";
-import { completeUpdateCommandRun, failUpdateCommandRun } from "./update-command-run.js";
+import { completeUpdateCommandRun } from "./update-command-run.js";
 import {
   readUpdateCommandTerminalRecord,
   type UpdateCommandTerminalRecord,

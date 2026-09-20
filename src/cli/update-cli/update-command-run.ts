@@ -28,7 +28,6 @@ import {
   type DevUpdateTarget,
   UPDATE_DEV_TARGET_REF_ENV,
 } from "../../infra/update-dev-target.js";
-import { createUpdateErrorFact } from "../../infra/update-failure-facts.js";
 import {
   createFreeBsdPkgOwnershipInspection,
   type FreeBsdPkgOwnershipInspection,
@@ -397,50 +396,6 @@ export async function withUpdatePreviewSignals<T>(
     process.off("SIGTERM", onSigterm);
     unregister();
   }
-}
-
-export function failUpdateCommandRun(
-  error: unknown,
-  run: NonNullable<UpdateCommandOptions["run"]>,
-): ReturnType<typeof createUpdateErrorFact> | undefined {
-  const options = { env: run.env };
-  // Recovery owns failure/outcome publication; outer unwind must not rewrite a
-  // database whose exact contents may still be needed to reconcile restoration.
-  if (loadUpdateRecovery(run.runId, options)) {
-    return undefined;
-  }
-  const active = getUpdateRun(run.runId, options);
-  if (active?.status !== "running") {
-    return undefined;
-  }
-  const step =
-    active.steps.findLast((entry) => entry.status === "in_progress")?.step ?? active.phase;
-  const fact = createUpdateErrorFact(step, error, run.env);
-  recordUpdateRunDiagnostics(
-    run.runId,
-    { failure: { step, detail: fact.message, failureFacts: [fact] } },
-    defaultRuntime.error,
-    options,
-  );
-  if (!active.verification.rollbackOutcome) {
-    recordUpdateRunDiagnostics(
-      run.runId,
-      (recorded) => ({
-        rollbackOutcome:
-          recorded.rollbackOutcome ??
-          (active.phase === "requested"
-            ? { status: "not-needed", reason: "Update admission failed before package mutation" }
-            : {
-                status: "not-attempted",
-                reason:
-                  "CLI unwind does not attempt package rollback after an unexpected exception",
-              }),
-      }),
-      defaultRuntime.error,
-      options,
-    );
-  }
-  return fact;
 }
 
 export function createUpdateRunProgress(

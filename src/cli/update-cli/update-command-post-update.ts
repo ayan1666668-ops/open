@@ -16,7 +16,10 @@ import { verifyUpdateFailureRecovery } from "./update-command-failure-recovery.j
 import type { FinishUpdateParams } from "./update-command-finish-types.js";
 import { parkForegroundUpdateForActivation } from "./update-command-handoff.js";
 import { appendPluginUpdateWarnings } from "./update-command-plugins-internals.js";
-import { completePostUpdateMaintenance } from "./update-command-post-update-maintenance.js";
+import {
+  completePostUpdateMaintenance,
+  resumePostUpdateWindowsAutoStart,
+} from "./update-command-post-update-maintenance.js";
 import {
   assertUpdateCommandPackageFinalization,
   createUpdateCommandFinalizationFence,
@@ -37,12 +40,10 @@ import { rollbackFailedUpdate } from "./update-command-rollback.js";
 import type { UpdateServiceDefinitionRecovery } from "./update-command-service-context-types.js";
 import { withOwnedManagedUpdateEnv } from "./update-command-service-env.js";
 import { isPendingUpdateServiceLoad } from "./update-command-service-load.js";
-import { createWindowsTaskAutoStartGuard } from "./update-command-service-maintenance.js";
 import { GatewayServiceUpdateOwnershipError } from "./update-command-service-plan.js";
 import {
   maybeRestartService,
   maybeRestartServiceAfterFailedMutableUpdate,
-  maybeResumeWindowsTaskAutoStartAfterPackageUpdate,
   maybeStopManagedServiceBeforeMutableUpdate,
   type PreManagedServiceStop,
 } from "./update-command-service.js";
@@ -101,24 +102,6 @@ export async function finishUpdate(
   let rollbackStopState: PreManagedServiceStop | undefined;
   // Rollback can replace the suspension owner.
   const currentServiceStop = () => rollbackStopState ?? params.preManagedServiceStop;
-  const resumeWindowsAutoStart = async (result: UpdateRunResult) => {
-    const stopped = currentServiceStop();
-    await maybeResumeWindowsTaskAutoStartAfterPackageUpdate(
-      stopped,
-      true,
-      stopped
-        ? createWindowsTaskAutoStartGuard({
-            root:
-              result.recovery?.packageRollbackVerified &&
-              stopped.serviceUpdateVerdict?.kind === "owned"
-                ? stopped.serviceUpdateVerdict.root
-                : (result.root ?? params.root),
-            before: stopped,
-            timeoutMs: params.updateStepTimeoutMs,
-          })
-        : undefined,
-    );
-  };
   let rolledBack = false;
   let originalServiceRecoveryHandled = false;
   let completedDowntimeMs: number | undefined = params.coreAlreadyCurrent ? 0 : undefined;
@@ -290,7 +273,7 @@ export async function finishUpdate(
         ) {
           await currentServiceStop()?.windowsTaskAutoStartRecovery?.complete(false);
         } else {
-          await resumeWindowsAutoStart(finalResult);
+          await resumePostUpdateWindowsAutoStart(params, finalResult, currentServiceStop());
         }
       } catch (cause) {
         restoreFailure = { cause };
@@ -421,7 +404,7 @@ export async function finishUpdate(
   };
   const restoreWindowsAutoStart = async (result: UpdateRunResult) => {
     try {
-      await resumeWindowsAutoStart(result);
+      await resumePostUpdateWindowsAutoStart(params, result, currentServiceStop());
     } catch (cause) {
       // The attempted restore already failed; reporting must not attempt it again.
       await reportResult(result, false, { cause });

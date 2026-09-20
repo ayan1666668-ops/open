@@ -28,10 +28,12 @@ import { UpdateRequesterRevokedError } from "../../infra/update-requester-author
 import { UpdateRunAdmissionBusyError } from "../../infra/update-run-admission.js";
 import {
   getUpdateRun,
+  recordUpdateRunDiagnostics,
   recordUpdateRunPhase,
   recordUpdateRunStep,
 } from "../../infra/update-run-ledger.js";
 import type { UpdateRunRecord } from "../../infra/update-run-record.js";
+import { loadUpdateRecovery } from "../../infra/update-run-recovery.js";
 import { updateRunReportInputFromResult } from "../../infra/update-run-report.js";
 import { isFailedUpdateStep, updateRunStepsFromResultStep } from "../../infra/update-run-step.js";
 import type { UpdateRunResult, UpdateStepResult } from "../../infra/update-runner.js";
@@ -57,6 +59,50 @@ import type {
 } from "./update-command-service-context-types.js";
 import { GatewayServiceUpdateOwnershipError } from "./update-command-service-plan.js";
 import { resolveUpdateResultNextAction } from "./update-recovery-guidance.js";
+
+export function failUpdateCommandRun(
+  error: unknown,
+  run: NonNullable<UpdateCommandOptions["run"]>,
+): ReturnType<typeof createUpdateErrorFact> | undefined {
+  const options = { env: run.env };
+  // Recovery owns failure/outcome publication; outer unwind must not rewrite a
+  // database whose exact contents may still be needed to reconcile restoration.
+  if (loadUpdateRecovery(run.runId, options)) {
+    return undefined;
+  }
+  const active = getUpdateRun(run.runId, options);
+  if (active?.status !== "running") {
+    return undefined;
+  }
+  const step =
+    active.steps.findLast((entry) => entry.status === "in_progress")?.step ?? active.phase;
+  const fact = createUpdateErrorFact(step, error, run.env);
+  recordUpdateRunDiagnostics(
+    run.runId,
+    { failure: { step, detail: fact.message, failureFacts: [fact] } },
+    defaultRuntime.error,
+    options,
+  );
+  if (!active.verification.rollbackOutcome) {
+    recordUpdateRunDiagnostics(
+      run.runId,
+      (recorded) => ({
+        rollbackOutcome:
+          recorded.rollbackOutcome ??
+          (active.phase === "requested"
+            ? { status: "not-needed", reason: "Update admission failed before package mutation" }
+            : {
+                status: "not-attempted",
+                reason:
+                  "CLI unwind does not attempt package rollback after an unexpected exception",
+              }),
+      }),
+      defaultRuntime.error,
+      options,
+    );
+  }
+  return fact;
+}
 
 export function collectServiceInspectionFailureFacts(
   verdict: ManagedGatewayUpdateVerdict | undefined,

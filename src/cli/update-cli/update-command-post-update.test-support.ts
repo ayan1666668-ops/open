@@ -11,7 +11,11 @@ import {
   hasDeferredUpdateModelRetirement,
   recordUpdateModelRetirement,
 } from "../../infra/update-deferred-model-retirement.js";
-import { createUpdateRun, getUpdateRun, recordUpdateRunVerification } from "../../infra/update-run-ledger.js";
+import {
+  createUpdateRun,
+  getUpdateRun,
+  recordUpdateRunVerification,
+} from "../../infra/update-run-ledger.js";
 import type { UpdateRunResult } from "../../infra/update-runner.js";
 import { defaultRuntime } from "../../runtime.js";
 import { captureEnv } from "../../test-utils/env.js";
