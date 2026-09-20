@@ -103,7 +103,6 @@ type SubagentListItem = {
   sharedCwdGroupId?: number;
   execution: SubagentExecutionObservation;
   deliveryStatus?: NonNullable<SubagentRunRecord["delivery"]>["status"];
-  resume?: { method: "sessions.send"; sessionKey: string };
 };
 
 type BuiltSubagentList = {
@@ -510,9 +509,6 @@ export function buildSubagentList(params: {
       task,
       status,
       execution,
-      ...(execution.wait?.kind === "external"
-        ? { resume: { method: "sessions.send" as const, sessionKey: entry.childSessionKey } }
-        : {}),
       ...(entry.delivery ? { deliveryStatus: entry.delivery.status } : {}),
       pendingDescendants,
       runtime,
