@@ -79,7 +79,7 @@ function createTestCronState(): GatewayCronState {
     reconcileExitWatchers: vi.fn(async () => {}),
     reconcileStreamWatchers: vi.fn(async () => {}),
     stopStreamWatchers: vi.fn(async () => {}),
-    reconcileSystemJobs: vi.fn(async () => "converged"),
+    reconcileSystemJobs: vi.fn(async () => "converged" as const),
   };
 }
 
@@ -96,7 +96,7 @@ function makePreparedSecretsSnapshot(config: OpenClawConfig): PreparedSecretsRun
 }
 
 function startManagedGatewayConfigReloader(params: ManagedReloaderTestParams) {
-  let state = {
+  let state: ReturnType<ManagedReloaderParams["getState"]> = {
     hooksConfig: {} as never,
     hookClientIpConfig: {} as never,
     heartbeatRunner: { stop: vi.fn(), updateConfig: vi.fn() } as never,
