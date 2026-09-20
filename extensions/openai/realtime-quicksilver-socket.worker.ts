@@ -14,9 +14,7 @@ if (!port) {
 // SAFETY: OpenAIQuicksilverWorkerSocket.create constructs this private worker-data contract.
 const data = workerData as QuicksilverSocketWorkerData;
 function post(message: QuicksilverSocketMessage): void {
-  // Node MessagePort has no browser targetOrigin.
-  // oxlint-disable-next-line unicorn/require-post-message-target-origin
-  port!.postMessage(message);
+  port!.postMessage(message, []);
 }
 try {
   // These are the only options constructed by sideband admission; do not clone

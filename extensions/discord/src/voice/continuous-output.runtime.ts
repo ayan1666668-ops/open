@@ -50,9 +50,7 @@ export class DiscordContinuousOutput {
         this.fail(error);
       } finally {
         if (message.type === "audio") {
-          // Node MessagePort has no browser targetOrigin.
-          // oxlint-disable-next-line unicorn/require-post-message-target-origin
-          params.port.postMessage({ type: "ack" });
+          params.port.postMessage({ type: "ack" }, []);
         }
       }
     });

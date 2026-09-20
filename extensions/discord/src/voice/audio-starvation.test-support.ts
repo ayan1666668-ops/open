@@ -61,14 +61,10 @@ if (!isMainThread && parentPort && workerData?.runtime === "discord-audio-starva
     workerData;
   if (data.role === "receiver") {
     const receiver = startDiscordPacingReceiver(data.port, data.state, () =>
-      // Node MessagePort has no browser targetOrigin.
-      // oxlint-disable-next-line unicorn/require-post-message-target-origin
-      control.postMessage({ type: "playing" }),
+      control.postMessage({ type: "playing" }, []),
     );
     control.on("message", () => {
-      // Node MessagePort has no browser targetOrigin.
-      // oxlint-disable-next-line unicorn/require-post-message-target-origin
-      control.postMessage({ type: "result", times: receiver.times });
+      control.postMessage({ type: "result", times: receiver.times }, []);
       receiver.close();
       control.close();
     });
@@ -91,9 +87,7 @@ if (!isMainThread && parentPort && workerData?.runtime === "discord-audio-starva
         );
       }
       inFlight = true;
-      // Node MessagePort has no browser targetOrigin.
-      // oxlint-disable-next-line unicorn/require-post-message-target-origin
-      data.port.postMessage({ type: "audio", audio });
+      data.port.postMessage({ type: "audio", audio }, []);
     }, 20);
     control.on("message", () => {
       clearInterval(timer);

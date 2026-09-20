@@ -68,8 +68,7 @@ export function createRealtimeVoiceAudioPortSender(output: RealtimeVoiceAudioOut
       }
       queue.clear();
       // The same port orders interruption after old PCM and before new PCM.
-      // oxlint-disable-next-line unicorn/require-post-message-target-origin
-      output.port.postMessage({ type: "clear" } satisfies RealtimeVoiceAudioOutputMessage);
+      output.port.postMessage({ type: "clear" } satisfies RealtimeVoiceAudioOutputMessage, []);
     },
     close,
   };
