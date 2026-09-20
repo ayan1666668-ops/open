@@ -328,6 +328,26 @@ describe("Models auth params schemas", () => {
 });
 
 describe("ModelsListResultSchema", () => {
+  it.each([undefined, false, true])(
+    "accepts additive direct-node capability metadata (%s)",
+    (nodeToolsSupported) => {
+      const model = {
+        id: "test-model",
+        name: "Test Model",
+        provider: "custom",
+        agentRuntime: {
+          id: "test-runtime",
+          source: "model",
+          ...(nodeToolsSupported !== undefined ? { nodeToolsSupported } : {}),
+        },
+      };
+      expectAccepted(ModelsListResultSchema, { models: [model] });
+      expectRejected(ModelsListResultSchema, {
+        models: [{ ...model, agentRuntime: { ...model.agentRuntime, nodeToolsSupported: "true" } }],
+      });
+    },
+  );
+
   it("accepts closed unavailability reasons and epoch-millisecond retry times", () => {
     const model = { id: "test-model", name: "Test Model", provider: "custom", available: false };
     for (const unavailableReason of ["missing-auth", "auth-failed", "cooldown"]) {

@@ -71,6 +71,92 @@ afterEach(() => {
 });
 
 describe("PaletteSessionDraft", () => {
+  it.each([true, false])(
+    "offers node tools only for a compatible runtime (%s)",
+    async (supported) => {
+      const { host, context } = await mount({
+        scopes: ["operator.admin"],
+        methods: ["sessions.create", "environments.list", "projects.list"],
+        agents: [{ id: "main", workspace: "/workspace", model: { primary: "example/model" } }],
+        modelCatalog: async () => ({
+          models: [
+            {
+              id: "model",
+              name: "Example model",
+              provider: "example",
+              available: true,
+              agentRuntime: {
+                id: "example-runtime",
+                nodeToolsSupported: supported,
+                source: "model",
+              },
+            },
+          ],
+        }),
+        request: async (method) =>
+          method === "environments.list"
+            ? {
+                environments: [
+                  {
+                    id: "node:runner",
+                    type: "node",
+                    label: "Build runner",
+                    status: "available",
+                    sessionHost: false,
+                    invocableCommands: ["system.run"],
+                  },
+                ],
+              }
+            : method === "projects.list"
+              ? { projects: [] }
+              : {},
+      });
+      const openPlaces = async () => {
+        expectDefined(
+          host.querySelector<HTMLButtonElement>(".palette-session-settings__workspace"),
+          "workspace picker",
+        ).click();
+        await host.updateComplete;
+      };
+      await openPlaces();
+      await vi.waitFor(() =>
+        expect(host.querySelector('[data-machine$=":runner"]')).not.toBeNull(),
+      );
+      if (!supported) {
+        expect(host.querySelector('[data-machine="node-tools:runner"]')).toBeNull();
+        return;
+      }
+      const choice = expectDefined(
+        host.querySelector<HTMLButtonElement>('[data-machine="node-tools:runner"]'),
+        "node tools choice",
+      );
+      await vi.waitFor(() => expect(choice.disabled).toBe(false));
+      choice.click();
+      await host.updateComplete;
+      expect(host.querySelector(".palette-session-settings__workspace")?.textContent).toContain(
+        "Node tools only",
+      );
+      expect(host.querySelector<HTMLButtonElement>('[role="switch"]')?.disabled).toBe(true);
+      await openPlaces();
+      expect(
+        host.querySelector('[data-machine="node-tools:runner"]')?.getAttribute("aria-pressed"),
+      ).toBe("true");
+      expect(host.querySelectorAll('[data-machine="node-tools:runner"]')).toHaveLength(1);
+      vi.mocked(context.sessions.createResult).mockResolvedValue({
+        status: "accepted",
+        key: "agent:main:tools",
+        initialRun: { status: "started", runId: "tools-turn" },
+      });
+      host.draft.setMessage("Check the node");
+      await host.draft.submit();
+      expect(context.sessions.createResult).toHaveBeenCalledWith(
+        expect.objectContaining({ execNode: "runner" }),
+        expect.anything(),
+      );
+      expect(vi.mocked(context.sessions.createResult).mock.calls[0]?.[0]).not.toHaveProperty("cwd");
+    },
+  );
+
   it.each(["connection", "account"] as const)(
     "retires a locked prompt when the %s owner changes",
     async (change) => {

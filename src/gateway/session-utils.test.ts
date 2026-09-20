@@ -36,6 +36,7 @@ import {
 } from "../state/openclaw-agent-db.js";
 import { withStateDirEnv as withRawStateDirEnv } from "../test-helpers/state-dir-env.js";
 import { normalizeSessionDeliveryState } from "../utils/delivery-context.shared.js";
+import { UNREGISTERED_CODEX_RUNTIME } from "./agent-runtime.test-support.js";
 import type { GatewayModelCatalogSnapshot } from "./server-model-catalog.types.js";
 import { registerSessionAutomationSource } from "./session-automation-index.js";
 import { buildGatewaySessionSnapshot } from "./session-event-payload.js";
@@ -1941,12 +1942,7 @@ describe("gateway session utils", () => {
       } as SessionEntry,
     });
 
-    expect(row.agentRuntime).toEqual({
-      id: "codex",
-      cloudPlacementSupported: false,
-      devicePlacementSupported: false,
-      source: "session",
-    });
+    expect(row.agentRuntime).toEqual({ ...UNREGISTERED_CODEX_RUNTIME, source: "session" });
   });
 
   test.each([true, false])(
@@ -4782,12 +4778,7 @@ describe("gateway session utils", () => {
       primary: "openai/gpt-5.4",
       fallbacks: ["openai/gpt-5.4"],
     });
-    expect(result.agents[0]?.agentRuntime).toEqual({
-      id: "codex",
-      cloudPlacementSupported: false,
-      devicePlacementSupported: false,
-      source: "implicit",
-    });
+    expect(result.agents[0]?.agentRuntime).toEqual(UNREGISTERED_CODEX_RUNTIME);
   });
 
   test("listAgentsForGateway reports whether each workspace is a git checkout", async () => {
@@ -4841,9 +4832,7 @@ describe("gateway session utils", () => {
       id: "main",
     });
     expect(result.agents[0]?.agentRuntime).toEqual({
-      id: "codex",
-      cloudPlacementSupported: false,
-      devicePlacementSupported: false,
+      ...UNREGISTERED_CODEX_RUNTIME,
       source: "provider",
     });
   });
@@ -5099,12 +5088,7 @@ describe("session list selected model display", () => {
         derivedTitle: "Title 10",
         lastMessagePreview: "last 10",
       });
-      expect(listed.sessions[0]?.agentRuntime).toEqual({
-        id: "codex",
-        cloudPlacementSupported: false,
-        devicePlacementSupported: false,
-        source: "implicit",
-      });
+      expect(listed.sessions[0]?.agentRuntime).toEqual(UNREGISTERED_CODEX_RUNTIME);
       expect(listed.sessions[0]?.thinkingLevel).toBeUndefined();
       expect(listed.sessions[0]?.thinkingLevels?.length).toBeGreaterThan(0);
       expect(listed.sessions[0]?.thinkingOptions?.length).toBeGreaterThan(0);
@@ -5315,6 +5299,7 @@ describe("session list selected model display", () => {
       id: "claude-cli",
       cloudPlacementSupported: false,
       devicePlacementSupported: false,
+      nodeToolsSupported: false,
       source: "model",
     });
   });

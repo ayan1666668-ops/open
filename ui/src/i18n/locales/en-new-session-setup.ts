@@ -25,6 +25,12 @@ const enNewSessionSetup = {
       "Session setup was interrupted and the temporary session was cleaned up. Your prompt is kept here.",
     discardUnsavedAndReload: en.newSession.discardUnsavedAndReload,
     yourDevices: "Your devices",
+    nodeToolsDevice: "{name} · Node tools only",
+    nodeToolsHint:
+      "The agent runs on the Gateway; shell commands run on this device. No workspace is transferred. No agent runtime needs to be installed on the device.",
+    nodeToolsRuntimeUnsupported:
+      "This model runtime cannot use node tools from the Gateway. Choose another model runtime or use the Gateway.",
+    sessionHostingUnavailable: "Full-session hosting is unavailable: {reason}",
     autoDeviceSub: "Least-busy device",
     autoDeviceSubEligible: "First eligible device",
     cloud: "Cloud",

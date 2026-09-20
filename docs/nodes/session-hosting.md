@@ -59,8 +59,8 @@ empty isolated workspace without requiring a user Git repository. A selected
 GitHub repository or Gateway Git checkout remains an optional source. OpenClaw creates a
 session-owned managed workspace, dispatches it with the exact
 `deviceId` or `autoDevice: true`, and sends the first turn only after the chosen
-device placement becomes active. New Session does not bind `execNode` or browse
-the device filesystem.
+device placement becomes active. Full-session placement does not bind `execNode`
+or browse the device filesystem.
 
 On POSIX hosts, OpenClaw keeps its managed workspace directories private (`0700`),
 including when the host uses umask `0002`. Existing node-owned workspace ancestry
@@ -75,8 +75,8 @@ This status is observational and reconnect-scoped: launch still
 requires the exact durable receipt and current node authority.
 
 Node hosts must support the current private worker-supervisor dialect before
-they can host sessions. An older connected host remains visible but disabled in
-the session picker. Update OpenClaw on that device and reconnect it; for a
+they can host sessions. An older connected host remains visible but cannot be
+selected for full-session hosting. Update OpenClaw on that device and reconnect it; for a
 headless node, run `openclaw update` followed by `openclaw node restart`. The
 Gateway does not fall back to the node's local OpenClaw package or an older
 supervisor dialect.
@@ -108,8 +108,8 @@ the node's supervisor. Recovery keeps capacity occupied while the previous owner
 finishes stopping its commands. An upgraded node host preserves the released
 startup message and detached process-group ownership for older worker bundles.
 
-The picker derives every device row from `environments.list`. Every selected
-runtime requires an available, connected paired session host. OpenClaw worker
+The picker derives every device row from `environments.list`. For full-session
+placement, every selected runtime requires an available, connected paired session host. OpenClaw worker
 turns additionally require captured exec-policy support and valid exact worker
 slots with at least one free slot. Codex paired-device execution launches its
 exec-server directly, so it does not consume or require a worker slot. Its
@@ -118,10 +118,11 @@ not merely its declared capabilities. A declared command is usable only when
 the approved pairing and Gateway command allowlist both authorize it.
 Connected non-hosts, ineligible
 or saturated hosts, update-required devices, and unavailable hosts remain
-visible but disabled with an actionable reason. Enable hosting with
+visible but unavailable for full-session placement, with an actionable reason. Enable hosting with
 `openclaw connect --service --session-host` or the `nodeHost.workerRuns`
 setting, then restart the node host. Update-required hosts must be upgraded and
-restarted before selection.
+restarted before full-session selection. Eligible devices can still offer the
+**Node tools only** alternative described below.
 
 While node inventory refreshes, or if that refresh fails, the picker keeps known
 devices visible but disables remote selection and Start until fresh inventory
@@ -185,6 +186,28 @@ failed provider or placement cleanup.
 
 See [Anthropic: Claude sessions across computers](/providers/anthropic#claude-sessions-across-computers)
 for the Control UI behavior and storage sources.
+
+### Use node tools without hosting a session
+
+A connected node does not need Codex to run ordinary shell commands. When the
+selected runtime cannot host a session on a device but its `system.run` command
+is authorized, administrators can choose **Node tools only** in New Session.
+This also works when session hosting is disabled, needs an update, or has no
+free worker slots. The selected runtime must support Gateway-hosted node tools
+(Codex and OpenClaw do); other runtimes keep their full-session requirements.
+
+This is an explicit alternative, not an automatic runtime or host change. The
+agent and conversation stay on the Gateway with the selected model; shell
+commands target the chosen node through the existing node execution policy.
+No workspace, repository, or worktree is transferred. Choose working directories
+on the node when running commands. If that node becomes unavailable, execution
+does not silently fall back to the Gateway.
+
+Full-session placement has additional runtime requirements. The OpenClaw runtime
+uses its worker bundle and does not require Codex on the node. Codex placement
+requires the OpenClaw Codex plugin to advertise and authorize
+`codex.exec-server.stdio.v1`; installing the standalone Codex CLI alone does not
+register that command. These requirements do not disable ordinary node tools.
 
 ### Isolate hosted worker sessions in containers
 

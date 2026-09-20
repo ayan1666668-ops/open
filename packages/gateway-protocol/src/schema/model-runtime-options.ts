@@ -18,6 +18,7 @@ export const GatewayAgentRuntimeSchema = closedObject({
     }),
   ),
   devicePlacementSupported: Type.Optional(Type.Boolean()),
+  nodeToolsSupported: Type.Optional(Type.Boolean()),
   source: Type.Union([
     Type.Literal("env"),
     Type.Literal("agent"),

@@ -21,6 +21,7 @@ const IMPLICIT_CODEX_RUNTIME = {
   id: "codex",
   cloudPlacementSupported: false,
   devicePlacementSupported: false,
+  nodeToolsSupported: false,
   source: "implicit",
 } as const;
 const IMPLICIT_OPENCLAW_RUNTIME = {
@@ -29,6 +30,7 @@ const IMPLICIT_OPENCLAW_RUNTIME = {
   cloudPlacementExecutionMode: "worker-turn",
   devicePlacement: { requiredNodeCommands: [], consumesWorkerSlot: true },
   devicePlacementSupported: true,
+  nodeToolsSupported: true,
   source: "implicit",
 } as const;
 const MODEL_CODEX_RUNTIME = { ...IMPLICIT_CODEX_RUNTIME, source: "model" } as const;

@@ -32,6 +32,35 @@ describe("create-as-draft availability", () => {
 });
 
 describe("buildDraftSessionCreateParams", () => {
+  it("binds direct node tools atomically without transferring a previous workspace", () => {
+    expect(
+      buildDraftSessionCreateParams({
+        agentId: "main",
+        message: "Inspect this device",
+        model: "openai/test-model",
+        agentRuntime: "codex",
+        execNode: " desktop ",
+        deferInitialTurn: true,
+        worktree: true,
+        worktreeSource: "empty",
+        projectId: "old-project",
+        projectGitUrl: "https://github.com/example/project.git",
+        repository: { url: "https://github.com/example/project.git" },
+        cwd: "/gateway/project",
+        baseRef: "main",
+        worktreeName: "old-worktree",
+        attachments: [{ type: "image", mimeType: "image/png", content: "aGVsbG8=" }],
+      }),
+    ).toEqual({
+      agentId: "main",
+      message: "Inspect this device",
+      model: "openai/test-model",
+      agentRuntime: "codex",
+      execNode: "desktop",
+      attachments: [{ type: "image", mimeType: "image/png", content: "aGVsbG8=" }],
+    });
+  });
+
   it("creates an empty workspace without carrying a previous checkout source", () => {
     expect(
       buildDraftSessionCreateParams({

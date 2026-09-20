@@ -377,6 +377,11 @@ type AgentHarnessRunCapability<
   /** Declares host-owned remote execution and its exact paired-device requirements. */
   cloudPlacement?: { mode: "remote-exec"; devicePlacement?: DevicePlacementRequirement };
   /**
+   * Supports session execNode bindings as ordinary node tools while the agent stays
+   * on the Gateway. Independent of full-session placement; omitted means unsupported.
+   */
+  nodeToolsSupported?: boolean;
+  /**
    * Plugin ids this harness owner permits to execute its locked sessions.
    * Delegates receive work admission and execution only; session mutation stays owner-only.
    */

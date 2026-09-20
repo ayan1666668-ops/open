@@ -106,6 +106,7 @@ export function createCodexAppServerAgentHarness(
     id: harnessRuntimeId,
     label: options?.label ?? "Codex agent harness",
     autoSelection: { providerIds: [...providerIds] },
+    nodeToolsSupported: true,
     cloudPlacement: {
       mode: "remote-exec",
       devicePlacement: {

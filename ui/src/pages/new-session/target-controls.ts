@@ -103,6 +103,7 @@ export function renderNewSessionPlaceControls({
     machineClass,
     os,
     deviceId: place.deviceId,
+    execNode: place.execNode,
     autoDevice: place.autoDevice,
     devicePlacement: place.devicePlacementRuntime()?.devicePlacement,
     deviceDisabledReason:
@@ -147,6 +148,9 @@ export function renderNewSessionPlaceControls({
           machineClass,
           os,
           deviceId: place.deviceId,
+          execNode: place.execNode,
+          nodeToolsSupported: place.devicePlacementRuntime()?.nodeToolsSupported === true,
+          nodeToolsDisabledReason: (deviceId) => place.nodeToolsDisabledReason(deviceId),
           autoDevice: place.autoDevice,
           autoPlacementMode: place.modelControl.autoPlacementSelectionMode(),
           cloudDisabledReason: place.modelControl.cloudRuntimeUnsupportedReason(),
@@ -158,6 +162,7 @@ export function renderNewSessionPlaceControls({
           isAdmin: place.isAdmin(),
           ...browser.popoverCallbacks("where"),
           onSelectDevice: (deviceId) => place.selectDevice(deviceId),
+          onSelectNodeTools: (deviceId) => place.selectNodeTools(deviceId),
           onSelectAutoDevice: () => place.selectDevice("", true),
           onSelectCloudProfile: (profileId, useDefaults) => {
             if (useDefaults) {
@@ -188,71 +193,78 @@ export function renderNewSessionPlaceControls({
           },
         })
   }${
-    nativeTerminal && place.terminalOnNode
-      ? html`<label class="new-session-page__select new-session-page__menu-field"
-          ><span>${t("newSession.terminalNodeFolder")}</span
-          ><input
-            aria-label=${t("newSession.terminalNodeFolder")}
-            .value=${place.folder}
-            ?disabled=${submitting}
-            @input=${(event: Event) => {
-              if (event.currentTarget instanceof HTMLInputElement) {
-                place.applyFolder(event.currentTarget.value);
-              }
-            }}
-        /></label>`
-      : renderProjectChip({
-          idPrefix,
-          state: projectState,
-          browseAvailable: place.browseAvailable(),
-          isAdmin: place.isAdmin(),
-          canWrite: place.canWrite(),
-          folder: place.folder,
-          workspace: place.workspacePath(),
-          projects,
-          projectQuery: browser.projectQuery,
-          projectSearchAvailable:
-            !nativeTerminal &&
-            canCallGatewayMethod(
-              context?.gateway.snapshot,
-              "projects.searchRemote",
-              "operator.read",
-            ),
-          projectAddAvailable:
-            !nativeTerminal &&
-            canCallGatewayMethod(
-              context?.gateway.snapshot,
-              place.remotePlacement ? "sessions.create" : "projects.add",
-              "operator.write",
-            ),
-          remoteProjects: browser.projectSearchResult?.projects ?? [],
-          selectedRemoteProject: browser.remoteProject,
-          projectSearchCredentialMissing: browser.projectSearchResult?.credential === "missing",
-          projectSearchLoading: browser.projectSearchLoading,
-          projectSearchError: browser.projectSearchError,
-          projectId: browser.projectId,
-          freshWorkspace: place.freshWorkspace,
-          onNewWorkspace: place.remotePlacement ? () => place.selectNewWorkspace() : undefined,
-          gatewayLabel,
-          submitting,
-          pendingPlacement,
-          ...browser.popoverCallbacks("project"),
-          browserOpen: browser.browserOpen,
-          browser: browser.browser,
-          registerProjectPath: browser.browserProjectPath,
-          registeringProject: browser.browserRegistering,
-          onSelectProject: (projectId) => place.selectProjectId(projectId),
-          onProjectQueryInput: (query) => browser.changeProjectQuery(query),
-          onSelectRemoteProject: (project) => place.selectRemoteProject(project),
-          onApplyFolder: (folder) => place.applyFolder(folder),
-          onBrowse: () =>
-            browser.selectGatewayBrowser(place.folder.trim() || place.workspacePath()),
-          onBrowserBack: () => browser.showRoot(),
-          onRegisterProject: (path) => void browser.registerBrowserProject(path),
-          onClose: () => browser.close(),
-        })
+    place.execNode
+      ? html`<span class="new-session-page__node-tools-hint"
+          >${t("newSession.nodeToolsHint")}</span
+        >`
+      : nativeTerminal && place.terminalOnNode
+        ? html`<label class="new-session-page__select new-session-page__menu-field"
+            ><span>${t("newSession.terminalNodeFolder")}</span
+            ><input
+              aria-label=${t("newSession.terminalNodeFolder")}
+              .value=${place.folder}
+              ?disabled=${submitting}
+              @input=${(event: Event) => {
+                if (event.currentTarget instanceof HTMLInputElement) {
+                  place.applyFolder(event.currentTarget.value);
+                }
+              }}
+          /></label>`
+        : renderProjectChip({
+            idPrefix,
+            state: projectState,
+            browseAvailable: place.browseAvailable(),
+            isAdmin: place.isAdmin(),
+            canWrite: place.canWrite(),
+            folder: place.folder,
+            workspace: place.workspacePath(),
+            projects,
+            projectQuery: browser.projectQuery,
+            projectSearchAvailable:
+              !nativeTerminal &&
+              canCallGatewayMethod(
+                context?.gateway.snapshot,
+                "projects.searchRemote",
+                "operator.read",
+              ),
+            projectAddAvailable:
+              !nativeTerminal &&
+              canCallGatewayMethod(
+                context?.gateway.snapshot,
+                place.remotePlacement ? "sessions.create" : "projects.add",
+                "operator.write",
+              ),
+            remoteProjects: browser.projectSearchResult?.projects ?? [],
+            selectedRemoteProject: browser.remoteProject,
+            projectSearchCredentialMissing: browser.projectSearchResult?.credential === "missing",
+            projectSearchLoading: browser.projectSearchLoading,
+            projectSearchError: browser.projectSearchError,
+            projectId: browser.projectId,
+            freshWorkspace: place.freshWorkspace,
+            onNewWorkspace: place.remotePlacement ? () => place.selectNewWorkspace() : undefined,
+            gatewayLabel,
+            submitting,
+            pendingPlacement,
+            ...browser.popoverCallbacks("project"),
+            browserOpen: browser.browserOpen,
+            browser: browser.browser,
+            registerProjectPath: browser.browserProjectPath,
+            registeringProject: browser.browserRegistering,
+            onSelectProject: (projectId) => place.selectProjectId(projectId),
+            onProjectQueryInput: (query) => browser.changeProjectQuery(query),
+            onSelectRemoteProject: (project) => place.selectRemoteProject(project),
+            onApplyFolder: (folder) => place.applyFolder(folder),
+            onBrowse: () =>
+              browser.selectGatewayBrowser(place.folder.trim() || place.workspacePath()),
+            onBrowserBack: () => browser.showRoot(),
+            onRegisterProject: (path) => void browser.registerBrowserProject(path),
+            onClose: () => browser.close(),
+          })
   }${
-    checkoutState && !place.freshWorkspace && !(nativeTerminal && place.terminalOnNode)
+    checkoutState &&
+    !place.execNode &&
+    !place.freshWorkspace &&
+    !(nativeTerminal && place.terminalOnNode)
       ? renderCheckoutChip({
           idPrefix,
           state: checkoutState,
