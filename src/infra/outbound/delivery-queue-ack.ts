@@ -1,8 +1,5 @@
 // Settles exact outbound custody before releasing its queue-owned media.
-import {
-  openOpenClawStateDatabase,
-  runOpenClawStateWriteTransaction,
-} from "../../state/openclaw-state-db.js";
+import { runOpenClawStateWriteTransaction } from "../../state/openclaw-state-db.js";
 import {
   captureDeliveryQueueStateContext,
   resolveDeliveryQueueStateEnv,
@@ -11,7 +8,6 @@ import {
 import { prepareDeliveryQueueTerminalEntry } from "../delivery-queue-sqlite.kernel.js";
 import { executeDeliveryQueueOperation } from "../delivery-queue-worker-store.js";
 import {
-  ackDeliveryInDatabase,
   type failPendingDeliveryInDatabase,
   retireUnsentDeliveryInDatabase,
 } from "./delivery-queue-ack.kernel.js";
@@ -57,18 +53,23 @@ export async function ackDelivery(
   options?: AckDeliveryOptions,
   context?: DeliveryQueueStateContext,
 ): Promise<void> {
-  const stateDir = context?.stateDir ?? requestedStateDir;
-  const env = resolveDeliveryQueueStateEnv(stateDir, context);
-  const database = openOpenClawStateDatabase({ env });
-  const spoolPaths =
-    options && "expectedPlatformSendAttemptId" in options
-      ? runOpenClawStateWriteTransaction(
-          (writer) => ackDeliveryInDatabase(writer, id, stateDir, options),
-          { database, env },
-          { operationLabel: `mutate owned ${OUTBOUND_DELIVERY_QUEUE_NAME} delivery platform send` },
-        )
-      : ackDeliveryInDatabase(database, id, stateDir, options);
-  if (!options?.retainSpoolArtifacts) {
+  const captured = context ?? captureDeliveryQueueStateContext(requestedStateDir);
+  const stateDir = captured.stateDir;
+  // Presence requests an exact-owner check even when the supplied value is undefined.
+  const capturedOptions: AckDeliveryOptions | undefined = options
+    ? {
+        retainSpoolArtifacts: options.retainSpoolArtifacts,
+        suppressCompletionReceipt: options.suppressCompletionReceipt,
+        ...("expectedPlatformSendAttemptId" in options
+          ? { expectedPlatformSendAttemptId: options.expectedPlatformSendAttemptId }
+          : {}),
+      }
+    : undefined;
+  const spoolPaths = await executeDeliveryQueueOperation(captured, stateDir, {
+    type: "deliveryQueue.ack",
+    input: { id, stateDir, options: capturedOptions },
+  });
+  if (!capturedOptions?.retainSpoolArtifacts) {
     await releaseSpoolArtifacts(spoolPaths, stateDir);
   }
 }
