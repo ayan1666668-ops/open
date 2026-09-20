@@ -1,3 +1,4 @@
+import path from "node:path";
 import type { OpenClawPluginNodeInvokePolicy } from "openclaw/plugin-sdk/plugin-entry";
 import { asOptionalRecord } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { evaluateFilePolicy, snapshotNodeFileReadPolicy } from "./policy.js";
@@ -27,7 +28,13 @@ function createWorkspaceWorkerPolicy(kind: "memory" | "skills"): OpenClawPluginN
         const workspaces = asOptionalRecord(ctx.pluginConfig?.workspaces) ?? {};
         const configured = Object.values(workspaces).some((value) => {
           const binding = asOptionalRecord(value);
-          return binding?.nodeId === ctx.nodeId && binding.remoteRoot === request.workspaceDir;
+          return (
+            binding?.nodeId === ctx.nodeId &&
+            typeof binding.remoteRoot === "string" &&
+            path.posix.isAbsolute(binding.remoteRoot) &&
+            !binding.remoteRoot.includes("\0") &&
+            path.posix.resolve(binding.remoteRoot) === request.workspaceDir
+          );
         });
         if (!configured) {
           throw new Error("Node workspace is not configured");

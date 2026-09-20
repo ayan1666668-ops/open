@@ -1,5 +1,6 @@
 import path from "node:path";
 import { asOptionalRecord } from "openclaw/plugin-sdk/string-coerce-runtime";
+import { containsParentRefSegment } from "./policy.js";
 
 /** Paths whose existing file grants must admit a native Memory operation. */
 export function readWorkspaceMemoryRequest(value: unknown) {
@@ -9,6 +10,7 @@ export function readWorkspaceMemoryRequest(value: unknown) {
     typeof workspaceDir !== "string" ||
     !path.posix.isAbsolute(workspaceDir) ||
     workspaceDir.includes("\0") ||
+    containsParentRefSegment(workspaceDir) ||
     typeof params?.request !== "string" ||
     typeof params.watch !== "boolean"
   ) {
@@ -23,6 +25,9 @@ export function readWorkspaceMemoryRequest(value: unknown) {
   const add = (input: unknown, kind: "read" | "write" = "read") => {
     if (typeof input !== "string" || !input || input.includes("\0")) {
       throw new Error("Memory operation requires a file path");
+    }
+    if (containsParentRefSegment(input)) {
+      throw new Error("Memory path contains parent segments");
     }
     const resolved = path.posix.resolve(workspace, input);
     const relative = path.posix.relative(workspace, resolved);
@@ -39,7 +44,13 @@ export function readWorkspaceMemoryRequest(value: unknown) {
       throw new Error("Invalid extra Memory paths");
     }
     for (const entry of values) {
-      add(typeof entry === "string" ? entry : asOptionalRecord(entry)?.path);
+      const input = typeof entry === "string" ? entry : asOptionalRecord(entry)?.path;
+      const trimmed = typeof input === "string" ? input.trim() : input;
+      // Native extra roots expand Node HOME, which Gateway cannot authorize as a workspace path.
+      if (typeof trimmed === "string" && /^~(?:[/\\]|$)/u.test(trimmed)) {
+        throw new Error("Memory extra paths require an explicit workspace path");
+      }
+      add(trimmed);
     }
   };
   if (params.watch) {

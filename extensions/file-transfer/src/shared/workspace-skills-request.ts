@@ -1,5 +1,6 @@
 import path from "node:path";
 import { asOptionalRecord } from "openclaw/plugin-sdk/string-coerce-runtime";
+import { containsParentRefSegment } from "./policy.js";
 
 /** Admission paths for the existing native Skills operations. */
 export function readWorkspaceSkillsRequest(input: unknown) {
@@ -8,6 +9,7 @@ export function readWorkspaceSkillsRequest(input: unknown) {
     typeof params?.workspaceDir !== "string" ||
     !path.posix.isAbsolute(params.workspaceDir) ||
     params.workspaceDir.includes("\0") ||
+    containsParentRefSegment(params.workspaceDir) ||
     typeof params.request !== "string"
   ) {
     throw new Error("Invalid node Skills request");
@@ -21,6 +23,9 @@ export function readWorkspaceSkillsRequest(input: unknown) {
   const add = (value: unknown, kind: "read" | "write" = "read") => {
     if (typeof value !== "string" || !path.posix.isAbsolute(value) || value.includes("\0")) {
       throw new Error("Skill operation requires an absolute path");
+    }
+    if (containsParentRefSegment(value)) {
+      throw new Error("Skill path contains parent segments");
     }
     paths.push({ path: path.posix.resolve(value), kind });
   };
@@ -73,6 +78,9 @@ export function readWorkspaceSkillsRequest(input: unknown) {
         selectionPath.includes("\0")
       ) {
         throw new Error("Skill operation requires an absolute path");
+      }
+      if (containsParentRefSegment(selectionPath)) {
+        throw new Error("Skill path contains parent segments");
       }
       // The native explicit loader selects SKILL.md, regardless of the supplied basename.
       add(path.posix.join(path.posix.dirname(selectionPath), "SKILL.md"));

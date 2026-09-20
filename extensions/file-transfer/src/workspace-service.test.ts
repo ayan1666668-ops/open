@@ -18,7 +18,15 @@ import type {
 } from "openclaw/plugin-sdk/plugin-entry";
 import { createTestPluginApi } from "openclaw/plugin-sdk/plugin-test-api";
 import { useAutoCleanupTempDirTracker } from "openclaw/plugin-sdk/test-env";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  onTestFinished as onTestComplete,
+  vi,
+} from "vitest";
 import { handleDirList } from "./node-host/dir-list.js";
 import { handleFileCreate } from "./node-host/file-create.js";
 import { handleFileFetch } from "./node-host/file-fetch.js";
@@ -380,6 +388,84 @@ describe("registered node workspace service", () => {
       await expect(reader.readSkillFiles(skill!, { allowMissingRoot: false })).rejects.toThrow(
         "denied by the node file read policy",
       );
+      expect(output).toEqual([]);
+    },
+  );
+
+  it.each(["instructions", "explicit Skill", "Memory maintenance"])(
+    "rejects raw parent traversal before native %s access",
+    async (operation) => {
+      const outside = await fs.realpath(tempDirs.make("node-worker-denied-"));
+      await fs.mkdir(path.join(outside, "subdir"));
+      await fs.symlink(path.join(outside, "subdir"), path.join(remote, "link"), "dir");
+      const fileName = operation === "explicit Skill" ? "SKILL.md" : "secret.md";
+      const allowed = path.join(remote, fileName);
+      const denied = path.join(outside, fileName);
+      const content =
+        "---\nname: allowed-tool\ndescription: Allowed metadata\n---\nAllowed instructions.\n";
+      await fs.writeFile(allowed, content);
+      await fs.writeFile(
+        denied,
+        content.replaceAll("Allowed", "Private").replace("allowed-tool", "private-tool"),
+      );
+      nodePolicy.followSymlinks = true;
+      nodePolicy.denyPaths = [denied];
+      const output: Uint8Array[] = [];
+      enableAttachmentTransport(undefined, (bytes) => output.push(bytes));
+      await service.start(context());
+      const access = getAgentWorkspaceAccess(local)!;
+      const read = (filePath: string) =>
+        operation === "instructions"
+          ? access.skillResources!.readInstructions(filePath, {})
+          : operation === "explicit Skill"
+            ? access.skillResources!.resolveExplicitSkill({ name: "allowed-tool", path: filePath })
+            : access.memoryFiles!.maintenance!.readFile(filePath);
+      expect(await read(allowed)).toBeTruthy();
+      output.length = 0;
+      await expect(read(`${remote}/link/../${fileName}`)).rejects.toThrow(/parent|\.\./);
+      expect(output).toEqual([]);
+    },
+  );
+
+  it.each(["/", "/."])("accepts a single configured node root ending in %s", async (suffix) => {
+    api.config.plugins!.entries!["file-transfer"]!.config = {
+      ...api.config.plugins!.entries!["file-transfer"]!.config,
+      workspaces: { main: { nodeId: "node-1", remoteRoot: remote + suffix } },
+    };
+    enableAttachmentTransport();
+    await service.start(context());
+    const access = getAgentWorkspaceAccess(local)!;
+    expect(await access.skillResources!.readInstructions(path.join(remote, "AGENTS.md"), {})).toBe(
+      "Harness instructions",
+    );
+    expect(await access.memoryFiles!.maintenance!.readFile(path.join(remote, "AGENTS.md"))).toEqual(
+      Buffer.from("Harness instructions"),
+    );
+  });
+
+  it.each(["whitespace", "home"])(
+    "does not list denied Memory extra roots through %s expansion",
+    async (kind) => {
+      const home = await fs.realpath(tempDirs.make("node-extra-home-"));
+      const homeSpy = vi.spyOn(os, "homedir").mockReturnValue(home);
+      onTestComplete(() => homeSpy.mockRestore());
+      const allowed = path.join(remote, "notes");
+      const denied = kind === "home" ? path.join(home, "notes") : allowed;
+      await fs.mkdir(allowed);
+      if (denied !== allowed) {
+        await fs.mkdir(denied);
+      }
+      await fs.writeFile(path.join(denied, "private.md"), "Private memory");
+      const output: Uint8Array[] = [];
+      enableAttachmentTransport(undefined, (bytes) => output.push(bytes));
+      await service.start(context());
+      const memory = getAgentWorkspaceAccess(local)!.memoryFiles!;
+      await expect(memory.listFiles(local, ["notes"])).resolves.toBeInstanceOf(Array);
+      nodePolicy.denyPaths = [denied];
+      output.length = 0;
+      await expect(
+        memory.listFiles(local, [kind === "home" ? "~/notes" : { path: " notes " }]),
+      ).rejects.toThrow();
       expect(output).toEqual([]);
     },
   );

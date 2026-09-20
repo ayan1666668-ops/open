@@ -347,7 +347,7 @@ function normalizeAskMode(value: unknown): FilePolicyAskMode {
  * Treats backslash and forward slash as equivalent separators so a Windows
  * node can't be hit with "C:\\allowed\\..\\Windows\\system.ini".
  */
-function containsParentRefSegment(p: string): boolean {
+export function containsParentRefSegment(p: string): boolean {
   const unified = p.replace(/\\/gu, "/");
   return unified.split("/").includes("..");
 }
