@@ -220,7 +220,7 @@ describeUnix("inspectPortUsage", () => {
       const address = `TCP ${host === "0.0.0.0" ? "*" : host}:${port} (LISTEN)`;
       mockUnixCommands({
         lsof: commandOutput(
-          `p111\ncgateway\nn${address}\n` + `p222\ncother\nnTCP 127.0.0.2:${port} (LISTEN)\n`,
+          `p111\ncgateway\nn${address}\np222\ncother\nnTCP 127.0.0.2:${port} (LISTEN)\n`,
         ),
       });
       const single = await inspectPortUsage(port, { probeHosts: ["127.0.0.1"] });
