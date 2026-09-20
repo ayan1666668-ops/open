@@ -33,8 +33,6 @@ import {
 import {
   handleModelPickerKeydown,
   handleModelSearchKeydown,
-  highlightModelRow,
-  pickerMenu,
   resetModelSearch,
   syncChatModelSearch,
   toggleModelProviderGroup,
@@ -203,12 +201,6 @@ export function renderChatModelPicker(params: ChatModelPickerParams) {
       if (event.detail === 0) {
         details.querySelector<HTMLElement>("summary")?.focus({ preventScroll: true });
       }
-    }
-  };
-  const highlightOption = (row: HTMLButtonElement) => {
-    const menu = pickerMenu(row);
-    if (menu) {
-      highlightModelRow(menu, row);
     }
   };
   return html`
@@ -447,7 +439,6 @@ export function renderChatModelPicker(params: ChatModelPickerParams) {
                                           selectedModelValue: params.selectedModelValue,
                                           selectedAgentRuntime: params.selectedAgentRuntime,
                                           sessionModelPinned: params.sessionModelPinned,
-                                          onHighlight: highlightOption,
                                           onSelect: selectModel,
                                           onModelSetup: params.onModelSetup,
                                         }),
@@ -508,7 +499,6 @@ export function renderChatModelPicker(params: ChatModelPickerParams) {
                                           groupId: group.id,
                                           groupLabel: group.label,
                                           index: orderedOptions.length + targetIndex,
-                                          onHighlight: highlightOption,
                                           onSelect: selectTarget,
                                         }),
                                     )}
