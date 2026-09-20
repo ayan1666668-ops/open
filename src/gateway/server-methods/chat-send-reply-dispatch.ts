@@ -206,7 +206,12 @@ export function createChatSendReplyDispatch(params: {
     if (!isReplyPayloadStatusNotice(payload) || !payload.text?.trim()) {
       return false;
     }
-    if (params.abortSignal?.aborted || (params.isRunCurrent && !params.isRunCurrent())) {
+    if (params.isRunCurrent && !params.isRunCurrent()) {
+      // A replaced run no longer has delivery authority. Claim the notice as
+      // handled so the generic dispatcher cannot fall back to transport output.
+      return true;
+    }
+    if (params.abortSignal?.aborted) {
       return false;
     }
     const current = loadSessionEntry(session.sessionKey, sessionLoadOptions);

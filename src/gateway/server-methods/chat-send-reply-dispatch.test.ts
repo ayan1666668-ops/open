@@ -1,5 +1,6 @@
 import { asOptionalRecord } from "@openclaw/normalization-core/record-coerce";
 import { describe, expect, it, vi } from "vitest";
+import { deliverPreDispatchNotice } from "../../agents/embedded-agent-runner/run/pre-dispatch-notice.js";
 import { runAgentHarnessBeforeMessageWriteHook } from "../../agents/harness/hook-helpers.js";
 import { observeReplyDelivery } from "../../agents/reply-completion.js";
 import { buildAssistantMessage, buildUsageWithNoCost } from "../../agents/stream-message-shared.js";
@@ -764,6 +765,30 @@ describe("createChatSendReplyDispatch", () => {
 });
 
 describe("pre-dispatch notice session authority", () => {
+  it("suppresses durable and fallback delivery for a stale non-aborted run", async () => {
+    await withOpenClawTestState({ label: "webchat-notice-stale-run" }, async () => {
+      const { dispatch, runId, abortController, retire } = await createReplyTranscriptFixture();
+      const append = vi.spyOn(transcriptPersistence, "appendAssistantTranscriptMessage");
+      const onBlockReply = vi.fn();
+      try {
+        retire();
+        await expect(
+          deliverPreDispatchNotice({
+            notice: { text: "Stale routing notice", isStatusNotice: true },
+            runId,
+            signal: abortController.signal,
+            onPreDispatchNotice: dispatch.onPreDispatchNotice,
+            onBlockReply,
+          }),
+        ).resolves.toBe("delivered");
+        expect(append).not.toHaveBeenCalled();
+        expect(onBlockReply).not.toHaveBeenCalled();
+      } finally {
+        append.mockRestore();
+      }
+    });
+  });
+
   it("skips durable and fallback delivery when the live session entry is missing", async () => {
     await withOpenClawTestState({ label: "webchat-notice-missing-session" }, async () => {
       const { dispatch, scope } = await createReplyTranscriptFixture();
