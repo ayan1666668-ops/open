@@ -186,13 +186,13 @@ export async function installLaunchAgent(
         captured.kind === "local"
           ? captured.files.originals.get(targetPlistPath)!.snapshot
           : await readExistingLaunchAgentPlist(targetPlistPath);
+      const wasEnabled = args.preserveAutoStart
+        ? await isLaunchAgentEnabled({ env: args.env })
+        : undefined;
       const wasLoaded = await snapshotLaunchAgentLoadedState(
         previous?.contents ?? null,
         serviceTarget,
       );
-      const wasEnabled = args.preserveAutoStart
-        ? await isLaunchAgentEnabled({ env: args.env })
-        : undefined;
       return { publication: captured, loaded: wasLoaded, enabled: wasEnabled };
     },
     async () => false,

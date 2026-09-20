@@ -102,6 +102,7 @@ it.each([
           .soft({
             root,
             admissionRoot,
+            rebindRoot: prepared.servicePlan?.serviceRoot,
             node: prepared.servicePlan?.nodeRunner,
             state: resolveStateDir(env),
             config: resolveConfigPath(env),
@@ -109,6 +110,7 @@ it.each([
           .toEqual({
             root: sealed ? recorded : requested,
             admissionRoot: selected ? recorded : requested,
+            rebindRoot: selected && !sealed ? recorded : undefined,
             node: selected ? recordedNode : undefined,
             state,
             config: path.join(state, "openclaw.json"),
@@ -120,14 +122,14 @@ it.each([
           phase: "inspect",
           jsonMode: true,
         });
-        const foreign = sealed || fault === "source checkout";
+        const foreign = fault === "source checkout";
         expect(inspection.serviceUpdateVerdict?.kind).toBe(
           foreign ? "foreign" : selected ? "owned" : "unavailable",
         );
-        if (selected && !sealed) {
+        if (selected) {
           expect(inspection.serviceUpdateVerdict).toMatchObject({
             root: recorded,
-            requiresInstallRootRefresh: true,
+            refreshDefinition: !sealed,
           });
         }
         if (!selected && !foreign) {

@@ -115,7 +115,7 @@ it.each(
         outcome === "unavailable" ? undefined : serviceRoot,
       );
       const env = await resolveUpdateCommandAdmissionEnv({ root, opts: {} });
-      expect(root).toBe(callerRoot);
+      expect(root).toBe(outcome === "unavailable" ? callerRoot : serviceRoot);
       expect(env.OPENCLAW_STATE_DIR).toBe(outcome === "unavailable" ? callerState : serviceState);
       if (outcome === "pending") {
         const runId = createUpdateRun({ trigger: "cli" }, { env }).runId;
