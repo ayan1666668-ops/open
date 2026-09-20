@@ -21,7 +21,11 @@ import {
   type UpdateCandidateRehearsal,
 } from "./update-candidate-rehearsal.js";
 import type { UpdateDoctorConfigChange } from "./update-doctor-config.js";
-import { applyUpdateDoctorLintReport, parseUpdateDoctorLintReport } from "./update-doctor-lint.js";
+import {
+  applyUpdateDoctorLintReport,
+  parseUpdateDoctorLintReport,
+  UPDATE_DOCTOR_DISPOSAL_WARNING_PREFIX,
+} from "./update-doctor-lint.js";
 import {
   consumeUpdatePostInstallDoctorResult,
   createUpdatePostInstallDoctorResultPath,
@@ -322,12 +326,14 @@ export async function validateUpdateCandidateCanary(params: {
         ? JSON5.parse(await fs.readFile(rehearsal.configPath, "utf8"))
         : undefined;
       let checksCompletedAt: number | undefined;
+      const disposalWarnings: string[] = [];
       const running = launch(command.entry ?? entry, command.args, {
         onLine: (line) => {
-          if (
-            phase === "doctor" &&
-            /^(?:└\s*)?Doctor complete\.$/u.test(stripVTControlCharacters(line).trim())
-          ) {
+          const plain = stripVTControlCharacters(line).trim();
+          if (phase === "lint" && plain.startsWith(UPDATE_DOCTOR_DISPOSAL_WARNING_PREFIX)) {
+            disposalWarnings.push(redactSupportString(plain, { env, stateDir: params.stateDir }));
+          }
+          if (phase === "doctor" && /^(?:└\s*)?Doctor complete\.$/u.test(plain)) {
             checksCompletedAt ??= Date.now();
           }
         },
@@ -505,8 +511,9 @@ export async function validateUpdateCandidateCanary(params: {
       } else if (exitWarning && code === 0) {
         step.advisory = { kind: "recoverable-maintenance", message: exitWarning };
       }
-      if (exitWarning) {
-        step.warnings = [...(step.warnings ?? []), exitWarning];
+      const lintWarnings = [...disposalWarnings, ...(exitWarning ? [exitWarning] : [])];
+      if (lintWarnings.length) {
+        step.warnings = [...(step.warnings ?? []), ...lintWarnings];
       }
       if (code === 0 && pluginObservations.length > 0) {
         step.stdoutTail = pluginObservations.join("\n");

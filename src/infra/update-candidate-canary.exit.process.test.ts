@@ -9,7 +9,7 @@ import { renderUpdateRunReport, updateRunReportInputFromResult } from "./update-
 
 const dirs = useAutoCleanupTempDirTracker(afterEach);
 
-it.each(["doctor", "lint", "missing", "failed"] as const)(
+it.each(["doctor", "lint", "missing", "failed", "failed-exit", "signalled-exit"] as const)(
   "preserves completed checks across a real child exit stall (%s)",
   async (mode) => {
     const root = await fs.realpath(dirs.make("canary-exit-"));
@@ -26,6 +26,7 @@ it.each(["doctor", "lint", "missing", "failed"] as const)(
     await fs.writeFile(
       path.join(root, "dist", "index.js"),
       `import { createServer } from "node:http";
+import { spawn } from "node:child_process";
 const mode = ${JSON.stringify(mode)};
 const args = process.argv.slice(2);
 if (args.includes("--fix")) {
@@ -36,6 +37,15 @@ if (args.includes("--fix")) {
     ok: mode !== "failed", checksRun: 1,
     findings: mode === "failed" ? [{ checkId: "core/config", message: "Invalid configuration" }] : [],
   }));
+  if (mode === "failed-exit" || mode === "signalled-exit") {
+    spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+      stdio: ["ignore", "inherit", "inherit"],
+    }).unref();
+    process.stdout.write("", () => {
+      if (mode === "signalled-exit") process.kill(process.pid, "SIGTERM");
+      else process.exit(7);
+    });
+  }
   if (mode !== "doctor") setInterval(() => {}, 1000);
 } else if (args.includes("plugins")) {
   console.log(JSON.stringify({plugins: [], diagnostics: []}));
@@ -72,12 +82,22 @@ if (args.includes("--fix")) {
         cleanup: async () => {},
       },
     });
-    const step = result.steps.find((candidate) => candidate.termination === "timeout")!;
+    const failedExit = mode === "failed-exit" || mode === "signalled-exit";
+    const step = result.steps.find((candidate) =>
+      failedExit
+        ? candidate.name === "Checking update health"
+        : candidate.termination === "timeout",
+    )!;
     expect(step).toBeDefined();
     const report = renderUpdateRunReport(
       updateRunReportInputFromResult({ ...result, mode: "npm", root }),
     ).markdown;
-    if (mode === "missing" || mode === "failed") {
+    if (failedExit) {
+      expect(result, report).toMatchObject({ status: "error", phase: "lint" });
+      expect(step.exitCode).toBe(mode === "failed-exit" ? 7 : 1);
+      expect(step.failureFacts).toMatchObject([{ check: "lint", code: "doctor-failed" }]);
+      expect(step.warnings).toBeUndefined();
+    } else if (mode === "missing" || mode === "failed") {
       expect(result).toMatchObject({ status: "error", phase: "lint" });
       expect(step.failureFacts).toMatchObject([
         mode === "failed"

@@ -98,10 +98,12 @@ export function launchCanary(params: {
   });
   let exited = false;
   let processExited = false;
-  child.once("exit", () => {
-    processExited = true;
-  });
   const result = new Promise<number | null>((resolve) => {
+    child.once("exit", (code) => {
+      processExited = true;
+      // A failed leader cannot become a successful timeout while inherited pipes stay open.
+      if (code !== 0) resolve(code ?? 1);
+    });
     child.once("error", (error) => {
       captureStderr(error.message);
       capture(error.message);
@@ -116,7 +118,7 @@ export function launchCanary(params: {
       resolve(code);
     });
   });
-  // An error can settle validation without proving that the child and its pipes closed.
+  // Failed processes can settle validation before their inherited pipes close.
   const closed = new Promise<void>((resolve) => {
     child.once("close", () => resolve());
   });

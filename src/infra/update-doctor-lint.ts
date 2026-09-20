@@ -9,6 +9,8 @@ import {
 import { normalizeUpdateFailureFacts } from "./update-failure-facts.js";
 import type { UpdateStepResult } from "./update-runner-types.js";
 
+export const UPDATE_DOCTOR_DISPOSAL_WARNING_PREFIX = "[warning] Doctor disposal";
+
 const UpdateDoctorLintReportSchema = z.object({
   ok: z.boolean(),
   checksRun: z.number().nonnegative().refine(Number.isInteger),
