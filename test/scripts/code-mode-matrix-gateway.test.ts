@@ -1344,7 +1344,7 @@ describe("JavaScript declaration and argument-validation evidence", () => {
       ];
     } else if (["fabricated-types", "dead-discovery", "shadowed-api"].includes(violation)) {
       const call = expectDefined(
-        trace.calls.find((call) => call.id === "read-types"),
+        trace.calls.find((candidate) => candidate.id === "read-types"),
         "declaration read",
       );
       call.args.code =
