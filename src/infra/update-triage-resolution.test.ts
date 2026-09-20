@@ -303,6 +303,35 @@ describe("saved update failure resolution", () => {
     },
   );
 
+  it.each(["OPENCLAW_UPDATE_IN_PROGRESS", "OPENCLAW_UPDATE_POST_CORE_CONVERGENCE"])(
+    "preserves the caller's %s context in pending migration guidance",
+    async (marker) => {
+      vi.mocked(readDeferredPluginMigrations).mockReturnValue([
+        {
+          pluginId: "fixture-plugin",
+          reason: "Package repair deferred.",
+          command: "openclaw update repair",
+        },
+      ]);
+      const result = await validateTriageUpdateResolution({
+        failure: failure(),
+        installRoot: "/fixture/openclaw",
+        env: { OPENCLAW_STATE_DIR: "/fixture/state", [marker]: "1" },
+        signal: new AbortController().signal,
+        validateDoctor,
+      });
+
+      expect(result).toMatchObject({
+        ok: false,
+        summary: expect.stringContaining("Let the current update or repair finish."),
+      });
+      expect(result.summary).toContain(
+        'If this warning remains afterward, run "openclaw update repair"',
+      );
+      expect(result.stopReason).toBe(result.summary);
+    },
+  );
+
   it.each([false, true])(
     "keeps mixed plugin installation failures unresolved after Doctor is clean (completed update: %s)",
     async (completed) => {
