@@ -528,7 +528,9 @@ export async function resolveMedia(params: {
       ? nativeKind
       : saved.contentType?.startsWith("audio/")
         ? "audio"
-        : nativeKind;
+        : nativeKind === "document" && saved.contentType?.startsWith("image/")
+          ? "image"
+          : nativeKind;
   return {
     id: saved.id,
     path: saved.path,
