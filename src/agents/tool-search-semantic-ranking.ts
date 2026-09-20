@@ -72,6 +72,7 @@ function recordSemanticRankingShadowOutcome(
   catalog: ToolSearchCatalogSession,
   outcome: SemanticRankingShadowOutcome,
 ): void {
+  // SAFETY: The closed outcome union capitalizes to exactly the five counter keys below.
   const key = `semanticRankingShadow${outcome.charAt(0).toUpperCase() + outcome.slice(1)}` as
     | "semanticRankingShadowSucceeded"
     | "semanticRankingShadowUnavailable"

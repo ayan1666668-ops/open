@@ -378,9 +378,12 @@ export function createToolSearchTools(ctx: ToolSearchToolContext): AnyAgentTool[
         if (rejected) {
           throw rejected.reason;
         }
-        const results = settled.map(
-          (result) => (result as PromiseFulfilledResult<ToolSearchBatchGroup>).value,
-        );
+        const results = settled.map((result) => {
+          if (result.status === "rejected") {
+            throw result.reason;
+          }
+          return result.value;
+        });
         return formatToolSearchBatchResponse(results);
       },
     },
