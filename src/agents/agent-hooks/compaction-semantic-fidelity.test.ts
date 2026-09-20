@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { DecisionOutcome } from "../../decisions/types.js";
+import type { DecisionBatch, DecisionOutcome } from "../../decisions/types.js";
 import type { AgentMessage } from "../runtime/index.js";
 import {
   isCompactionSemanticRepairFinding,
@@ -13,7 +13,8 @@ function user(text: string): AgentMessage {
 describe("compaction semantic fidelity", () => {
   it("skips user content already preserved verbatim", async () => {
     const evaluate = vi.fn(
-      async () => ({ status: "unavailable", reason: "not-configured" }) satisfies DecisionOutcome,
+      async (_batch: DecisionBatch) =>
+        ({ status: "unavailable", reason: "not-configured" }) satisfies DecisionOutcome,
     );
     const result = await observeCompactionSemanticFidelity(
       {
@@ -25,7 +26,8 @@ describe("compaction semantic fidelity", () => {
     );
 
     expect(result.verbatimPreserved).toBe(1);
-    expect(evaluate.mock.calls[0]?.[0].state).toMatchObject({
+    expect(evaluate).toHaveBeenCalledTimes(1);
+    expect(evaluate.mock.calls[0]![0].state).toMatchObject({
       sourceItems: [{ text: "Keep production untouched." }],
     });
   });

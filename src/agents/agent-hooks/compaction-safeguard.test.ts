@@ -7,7 +7,6 @@ import { createAssistantMessageEventStream, type Model } from "openclaw/plugin-s
 /** Tests compaction safeguard summaries, quality audit, providers, and runtime settings. */
 import { createRequireRecord } from "openclaw/plugin-sdk/test-fixtures";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { OpenClawConfig } from "../../config/config.js";
 import * as decisionRuntimeModule from "../../decisions/runtime.js";
 import type { DecisionOutcome } from "../../decisions/types.js";
 import type { CompactionProvider } from "../../plugins/compaction-provider.js";
@@ -24,7 +23,6 @@ import * as compactionQualityModule from "./compaction-safeguard-quality.js";
 import {
   consumeCompactionSafeguardCancellation,
   getCompactionSafeguardRuntime,
-  setCompactionSafeguardCancellation,
   setCompactionSafeguardRuntime,
 } from "./compaction-safeguard-runtime.js";
 import compactionSafeguardExtension from "./compaction-safeguard.js";
@@ -3711,7 +3709,7 @@ describe("compaction-safeguard recent-turn preservation", () => {
         resolve();
         await new Promise<void>((settle) => {
           settleDecision = settle;
-          options.signal?.addEventListener("abort", settle, { once: true });
+          options.signal?.addEventListener("abort", () => settle(), { once: true });
         });
         options.signal?.throwIfAborted();
         throw new Error("unreachable");
