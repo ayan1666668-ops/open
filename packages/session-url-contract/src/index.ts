@@ -17,12 +17,6 @@ export {
   parseAgentSessionKeyParts,
   type ParsedAgentSessionKey,
 } from "./session-key.js";
-export {
-  normalizeSessionKeyPreservingOpaquePeerIds,
-  normalizeSessionPeerId,
-  parseAgentSessionKey,
-  requiresFoldedSessionKeyAliasProof,
-} from "./session-key-normalization.js";
 export * from "./focus.js";
 export {
   CONTROL_UI_RESERVED_ROUTE_SEGMENTS,

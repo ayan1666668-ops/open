@@ -4,15 +4,15 @@ import {
   normalizeOptionalLowercaseString,
   normalizeOptionalString,
 } from "@openclaw/normalization-core/string-coerce";
-import { parseAgentSessionKey } from "@openclaw/session-url-contract";
+import { parseAgentSessionKey } from "@openclaw/session-url-contract/session-key-normalization";
 
 export {
   normalizeSessionKeyPreservingOpaquePeerIds,
   normalizeSessionPeerId,
   parseAgentSessionKey,
   requiresFoldedSessionKeyAliasProof,
-  type ParsedAgentSessionKey,
-} from "@openclaw/session-url-contract";
+} from "@openclaw/session-url-contract/session-key-normalization";
+export type { ParsedAgentSessionKey } from "@openclaw/session-url-contract";
 
 export type ParsedThreadSessionSuffix = {
   baseSessionKey: string | undefined;
