@@ -467,9 +467,11 @@ function assertConfigSurvived() {
   if (acceptsIntent(coverage, "update")) {
     const expectedChannel =
       process.env.OPENCLAW_UPGRADE_SURVIVOR_UPDATE_CHANNEL ||
-      (scenario === "prerelease-plugin-registry" ? "beta" : "stable");
+      (scenario === "prerelease-plugin-registry" ? "beta" : "extended-stable");
     assert(
-      expectedChannel === "stable" || expectedChannel === "beta",
+      expectedChannel === "stable" ||
+        expectedChannel === "beta" ||
+        expectedChannel === "extended-stable",
       "upgrade survivor update channel was invalid",
     );
     assert(config.update?.channel === expectedChannel, "update.channel was not preserved");

@@ -72,7 +72,7 @@ BASELINE_RAW="${OPENCLAW_UPGRADE_SURVIVOR_BASELINE:?missing OPENCLAW_UPGRADE_SUR
 CANDIDATE_KIND="${OPENCLAW_UPGRADE_SURVIVOR_CANDIDATE_KIND:-tarball}"
 CANDIDATE_SPEC="${OPENCLAW_UPGRADE_SURVIVOR_CANDIDATE_SPEC:-${OPENCLAW_CURRENT_PACKAGE_TGZ:-}}"
 UPDATE_RESTART_MODE="${OPENCLAW_UPGRADE_SURVIVOR_UPDATE_RESTART_MODE:-manual}"
-OPENCLAW_UPGRADE_SURVIVOR_UPDATE_CHANNEL="stable"
+OPENCLAW_UPGRADE_SURVIVOR_UPDATE_CHANNEL="${OPENCLAW_UPGRADE_SURVIVOR_UPDATE_CHANNEL:-extended-stable}"
 if [ "$SCENARIO" = "prerelease-plugin-registry" ] ||
   { [ "$UPDATE_RESTART_MODE" = "auto-auth" ] &&
     [ -n "${OPENCLAW_PREPUBLISH_PLUGIN_REGISTRY_DIR:-}" ] &&
@@ -965,6 +965,10 @@ resolve_candidate_version() {
 }
 
 candidate_update_spec() {
+  if [ "$OPENCLAW_UPGRADE_SURVIVOR_UPDATE_CHANNEL" = "extended-stable" ]; then
+    printf '%s\n' "$OPENCLAW_UPGRADE_SURVIVOR_UPDATE_CHANNEL"
+    return 0
+  fi
   if [ "$CANDIDATE_KIND" != "tarball" ]; then
     printf '%s\n' "$CANDIDATE_SPEC"
     return 0
@@ -1004,7 +1008,10 @@ update_candidate() {
     previous_service_pid="$(cat "$SYSTEMCTL_SHIM_PID_FILE")"
     previous_systemctl_lines="$(wc -l <"$SYSTEMCTL_SHIM_LOG")"
   fi
-  local update_args=(update --tag "$update_spec" --yes --json)
+  local update_args=(update --channel extended-stable --yes --json)
+  if [ "$OPENCLAW_UPGRADE_SURVIVOR_UPDATE_CHANNEL" != "extended-stable" ]; then
+    update_args=(update --tag "$update_spec" --yes --json)
+  fi
   local update_env=(
     env
     -u OPENCLAW_GATEWAY_TOKEN
@@ -1021,6 +1028,13 @@ update_candidate() {
   if [ "$ROOT_MANAGED_VPS" != "1" ]; then
     update_env+=(OPENCLAW_ALLOW_ROOT=1)
   fi
+  if [ "$OPENCLAW_UPGRADE_SURVIVOR_UPDATE_CHANNEL" = "extended-stable" ]; then
+    # Resolve through the release fixture registry without turning its tarball
+    # path into an explicit tag that extended-stable intentionally rejects.
+    update_env+=(OPENCLAW_UPDATE_PACKAGE_SPEC=openclaw)
+  fi
+  printf '%q ' openclaw "${update_args[@]}" >"$ARTIFACT_ROOT/update-command.args"
+  printf '\n' >>"$ARTIFACT_ROOT/update-command.args"
   update_env+=(
     "OPENCLAW_UPGRADE_SURVIVOR_ARTIFACT_ROOT=$observation_root"
     "NODE_OPTIONS=${NODE_OPTIONS:+$NODE_OPTIONS }--import=$PWD/scripts/e2e/lib/upgrade-survivor/diagnostics.mjs"
