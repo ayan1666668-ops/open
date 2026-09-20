@@ -53,6 +53,13 @@ export type OpenClawAgentDatabaseRegistryReadResult =
   | { status: "available"; entries: OpenClawRegisteredAgentDatabase[] }
   | { status: "unavailable" };
 
+export type OpenClawAgentDatabaseRegistrationCommit = Readonly<{
+  agentId: string;
+  agentPath: string;
+  stateDatabasePath: string;
+  stateDatabaseIdentity: string;
+}>;
+
 export type OpenClawAgentDatabaseOwnerInspection =
   | { status: "owned"; agentId: string }
   | { status: "unowned" }

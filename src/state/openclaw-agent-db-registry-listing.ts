@@ -6,19 +6,25 @@ import { cloneEnvWithPlatformSemantics } from "../config/config-env-vars.js";
 import { resolveStateDir } from "../config/state-dir.js";
 import { resolveSqliteDatabaseFilePaths } from "../infra/sqlite-files.js";
 import { withStateDatabaseCoordinatorRuntimeDirectory } from "../infra/state-database-coordinator.js";
+import { sessionChanges } from "../sessions/session-row-changes.js";
 import { resolveGlobalSingleton } from "../shared/global-singleton.js";
 import {
   OPENCLAW_AGENT_SCHEMA_VERSION,
   type OpenClawAgentDatabaseRegistryReadResult,
+  type OpenClawAgentDatabaseRegistrationCommit,
   type OpenClawRegisteredAgentDatabase,
 } from "./openclaw-agent-db-contract.js";
 import { readRegisteredAgentDatabaseRows } from "./openclaw-agent-db-registry.read.js";
+import {
+  isStateDatabaseReadAdmissionInvalidatedError,
+  type OpenClawStateDatabaseReadAdmission,
+} from "./openclaw-state-db-async-lifecycle.js";
+import type { OpenClawStateDatabaseOptions } from "./openclaw-state-db-contract.js";
 import {
   withExistingOpenClawStateDatabaseArtifactPreservingReadOnlyAsync,
   withExistingOpenClawStateDatabaseReadOnly,
   executeExistingOpenClawStateRead,
 } from "./openclaw-state-db-readonly.js";
-import type { OpenClawStateDatabaseOptions } from "./openclaw-state-db.js";
 import { resolveOpenClawStateSqlitePath } from "./openclaw-state-db.paths.js";
 import { captureOpenClawStateWorkerContext } from "./openclaw-state-worker-context.js";
 // Registry metadata is process-stable: registry writes invalidate after each commit;
@@ -65,6 +71,62 @@ export function invalidateRegisteredAgentDatabasesMemo(
   if (registry.memo?.pathname === pathname) {
     registry.memo = { pathname, token: Symbol(pathname) };
   }
+}
+
+/** Publish only registration witnessed at COMMIT, under its original shared generation. */
+export function captureOpenClawAgentDatabaseRegistration(params: {
+  agentId: string;
+  agentPath: string;
+  admission: OpenClawStateDatabaseReadAdmission;
+}) {
+  const options = { path: params.admission.databasePath };
+  let active = false;
+  let committed = false;
+  let finished = false;
+  return {
+    begin() {
+      if (finished) {
+        throw new Error("Agent database registration admission is closed");
+      }
+      if (!active) {
+        active = true;
+        invalidateRegisteredAgentDatabasesMemo(options);
+      }
+    },
+    recordCommitted(receipt: OpenClawAgentDatabaseRegistrationCommit) {
+      if (
+        finished ||
+        !active ||
+        receipt.agentId !== params.agentId ||
+        receipt.agentPath !== params.agentPath ||
+        receipt.stateDatabasePath !== params.admission.databasePath ||
+        receipt.stateDatabaseIdentity !== params.admission.identity.key
+      ) {
+        throw new Error("Agent registration commit differs from its captured owner");
+      }
+      committed = true;
+    },
+    finish() {
+      if (finished) {
+        return;
+      }
+      finished = true;
+      try {
+        params.admission.assertCurrent();
+      } catch (error) {
+        if (isStateDatabaseReadAdmissionInvalidatedError(error)) {
+          return;
+        }
+        throw error;
+      }
+      if (active) {
+        invalidateRegisteredAgentDatabasesMemo(options);
+      }
+      if (committed) {
+        sessionChanges.emit({ all: true, scope: "stores" });
+      }
+    },
+  };
 }
 
 function cloneRegisteredAgentDatabases(
