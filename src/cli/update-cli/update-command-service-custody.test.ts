@@ -8,6 +8,7 @@ import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js"
 import * as entrypoints from "../../daemon/gateway-entrypoint.js";
 import { resolveRuntimeWorkerUrl } from "../../infra/runtime-worker-url.js";
 import * as tempRoot from "../../infra/tmp-openclaw-dir.js";
+import { resolveUpdateCandidateRuntimeIdentity } from "../../infra/update-candidate-runtime-identity.js";
 import { captureManagedUpdateLeaseDatabaseIdentity } from "../../infra/update-managed-service-handoff-database.js";
 import { createManagedHandoffLeaseStore } from "../../infra/update-managed-service-handoff-lease.js";
 import {
@@ -40,6 +41,15 @@ const sourceImportArgs = sourceLoader ? ["--import", sourceLoader] : [];
 const dirs = useAutoCleanupTempDirTracker(afterEach);
 afterEach(() => vi.restoreAllMocks());
 
+async function resolveFixtureCandidateRuntime(root: string, entrypoint: string) {
+  await fs.writeFile(entrypoint, "");
+  return await resolveUpdateCandidateRuntimeIdentity({
+    root,
+    nodeRunner: process.execPath,
+    entrypoint,
+  });
+}
+
 it.each([
   { supported: true, destination: "same" },
   { supported: false, destination: "same" },
@@ -62,6 +72,7 @@ it.each([
     const effect = path.join(scratch, "effect");
     const receipt = path.join(scratch, "receipt");
     const probeReceipt = path.join(scratch, "probe-receipt");
+    const candidateRuntime = await resolveFixtureCandidateRuntime(receiverRoot, entrypoint);
     await fs.writeFile(
       entrypoint,
       `
@@ -95,7 +106,16 @@ it.each([
       process.stdout.write(JSON.stringify({updateExecutor:"root-spawner-v1"}));
     }
     else if(mode==="check" && ${JSON.stringify(supported)}==="without-backup") {
-      process.stdout.write(JSON.stringify({updateExecutor:"root-spawner-v1",targetRootBinding:true}));
+      process.stdout.write(JSON.stringify({updateExecutor:"root-spawner-v1",targetRootBinding:true,candidateRuntime:${JSON.stringify(candidateRuntime)}}));
+      const {finished}=await import("node:stream/promises");
+      await finished(process.stdin.resume(),{cleanup:true});
+    }
+    else if(mode==="check") {
+      process.stdout.write(JSON.stringify({
+        updateExecutor:"root-spawner-v1",definitionBackup:true,targetRootBinding:true,
+        retainedOwnerBinding:true,originalDefinitionBinding:true,originalRuntimePinBinding:true,
+        candidateRuntime:${JSON.stringify(candidateRuntime)}
+      }));
       const {finished}=await import("node:stream/promises");
       await finished(process.stdin.resume(),{cleanup:true});
     }
@@ -184,16 +204,20 @@ it.each([
       expect(childReceipt.pid).not.toBe(process.pid);
     } else {
       await expect(work).rejects.toThrow(
-        destination === "foreign" ? /installation|binding/ : "cannot fence",
+        destination === "foreign" ? /installation|binding|metadata/ : "cannot fence",
       );
       await expect(fs.stat(effect)).rejects.toMatchObject({ code: "ENOENT" });
       await expect(fs.stat(receipt)).rejects.toMatchObject({ code: "ENOENT" });
     }
-    const probe = JSON.parse(await fs.readFile(probeReceipt, "utf8"));
-    expect(probe).toMatchObject({ owner: runId, helper: process.pid });
-    expect(probe.pid).not.toBe(process.pid);
-    expect(probe.key.startsWith(root + "/.openclaw-update-child-")).toBe(true);
-    expect(probe.boundStart).toBe(probe.actualStart);
+    if (destination === "foreign") {
+      await expect(fs.stat(probeReceipt)).rejects.toMatchObject({ code: "ENOENT" });
+    } else {
+      const probe = JSON.parse(await fs.readFile(probeReceipt, "utf8"));
+      expect(probe).toMatchObject({ owner: runId, helper: process.pid });
+      expect(probe.pid).not.toBe(process.pid);
+      expect(probe.key.startsWith(root + "/.openclaw-update-child-")).toBe(true);
+      expect(probe.boundStart).toBe(probe.actualStart);
+    }
     expect(createManagedHandoffLeaseStore().read(root).kind).toBe("absent");
   },
 );
@@ -370,6 +394,7 @@ it.skipIf(process.platform === "win32").each([
     const entrypoint = path.join(scratch, "probe.mjs");
     const receipt = path.join(scratch, "probe-pids.json");
     const stopped = path.join(scratch, "descendant-stopped");
+    const candidateRuntime = await resolveFixtureCandidateRuntime(root, entrypoint);
     const descendant = `
       const fs = require("node:fs");
       process.on("SIGTERM", () => {
@@ -394,9 +419,13 @@ it.skipIf(process.platform === "win32").each([
       await new Promise(resolve => child.once("message", resolve));
       fs.writeFileSync(${JSON.stringify(receipt)}, JSON.stringify({ root: process.pid, child: child.pid }));
       if (${startupDelayMs} > 0) await new Promise(resolve => setTimeout(resolve, ${startupDelayMs}));
-      await runGatewayServiceUpdateCommand("check", "install", async () => {
-        throw new Error("Capability probe must not enter the mutation callback");
-      });
+      process.stdout.write(JSON.stringify({
+        updateExecutor:"root-spawner-v1",definitionBackup:true,targetRootBinding:true,
+        retainedOwnerBinding:true,originalDefinitionBinding:true,originalRuntimePinBinding:true,
+        candidateRuntime:${JSON.stringify(candidateRuntime)}
+      }));
+      const { finished } = await import("node:stream/promises");
+      await finished(process.stdin.resume(), { cleanup: true });
       child.disconnect();
       child.unref();
     `,
@@ -468,13 +497,14 @@ it.each([
     const entrypoint = path.join(scratch, "entry.mjs");
     const privateInput = path.join(scratch, "private-input");
     const effect = path.join(scratch, "effect");
+    const candidateRuntime = await resolveFixtureCandidateRuntime(root, entrypoint);
     await fs.writeFile(
       entrypoint,
       `
     const fs=await import("node:fs");
     const {runGatewayServiceUpdateCommand}=await import(${JSON.stringify(resolveRuntimeWorkerUrl(updateExecutorNativeEntrypoints.nativeExecutor).href)});
     const mode=process.argv[process.argv.indexOf("--update-executor")+1];
-    if(mode==="check")process.stdout.write(${JSON.stringify(JSON.stringify({ updateExecutor: "root-spawner-v1", targetRootBinding: true, retainedOwnerBinding: advertised }))});
+    if(mode==="check")process.stdout.write(${JSON.stringify(JSON.stringify({ updateExecutor: "root-spawner-v1", targetRootBinding: true, retainedOwnerBinding: advertised, candidateRuntime }))});
     else {
       process.stdin.once("data",()=>fs.writeFileSync(${JSON.stringify(privateInput)},"received"));
       await runGatewayServiceUpdateCommand(mode,"restart",async()=>{
@@ -527,6 +557,7 @@ it.each([
     expect(JSON.parse(probes[0]!.stdout)).toEqual({
       updateExecutor: "root-spawner-v1",
       targetRootBinding: true,
+      candidateRuntime,
       ...(advertised === undefined ? {} : { retainedOwnerBinding: advertised }),
     });
     expect(createManagedHandoffLeaseStore().read(serviceRoot)).toEqual({ kind: "absent" });

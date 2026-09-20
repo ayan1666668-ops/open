@@ -1,5 +1,9 @@
+import fs from "node:fs/promises";
+import path from "node:path";
+import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import { afterEach, beforeEach, vi } from "vitest";
 import type { UpdateRunResult } from "../../infra/update-runner.js";
+import { parsePackageOpenClawSchemaVersions } from "../../state/openclaw-schema-versions.js";
 import type { captureTargetDatabaseSchemaContext } from "./schema-preflight.js";
 import type { executeMutableUpdate } from "./update-command-execution.js";
 import type { PreManagedServiceStop } from "./update-command-service.js";
@@ -12,6 +16,10 @@ const mocks = vi.hoisted(() => ({
     >(),
   captureSchemaContext:
     vi.fn<typeof import("./schema-preflight.js").captureTargetDatabaseSchemaContext>(),
+  candidateRuntime:
+    vi.fn<
+      typeof import("../../infra/update-candidate-runtime-identity.js").resolveUpdateCandidateRuntimeIdentity
+    >(),
   checkTargetSchemas:
     vi.fn<typeof import("./schema-preflight.js").checkTargetDatabaseSchemasForContexts>(),
   formatSchemaRefusalLines: vi.fn(),
@@ -52,6 +60,10 @@ vi.mock("../../infra/update-global.js", async (importOriginal) => ({
 }));
 vi.mock("../../infra/update-candidate-canary.js", () => ({
   validateUpdateCandidateCanary: mocks.validateCanary,
+}));
+vi.mock("../../infra/update-candidate-runtime-identity.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../infra/update-candidate-runtime-identity.js")>()),
+  resolveUpdateCandidateRuntimeIdentity: mocks.candidateRuntime,
 }));
 
 vi.mock("./update-command-plugin-preflight.js", () => ({
@@ -206,6 +218,20 @@ function inspectOrStopService(phase: "inspect" | "prepare" = "prepare"): PreMana
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.serviceStopped = false;
+  mocks.candidateRuntime.mockImplementation(async ({ root, nodeRunner }) => {
+    const manifest: unknown = await fs
+      .readFile(path.join(root, "package.json"), "utf8")
+      .then((raw) => JSON.parse(raw))
+      .catch(() => undefined);
+    return {
+      root,
+      nodeRunner,
+      entrypoint: path.join(root, "dist", "index.js"),
+      version:
+        isRecord(manifest) && typeof manifest.version === "string" ? manifest.version : "1.0.1",
+      schemaVersions: parsePackageOpenClawSchemaVersions(manifest) ?? { state: 15, agent: 19 },
+    };
+  });
   mocks.validateCanary.mockResolvedValue({
     status: "ok",
     phase: "readiness",

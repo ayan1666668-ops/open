@@ -5,6 +5,12 @@ import { GatewayServiceDefinitionBackupReceiptSchema } from "../../daemon/servic
 import type { GatewayServiceRestartResult } from "../../daemon/service-types.js";
 import { GATEWAY_UPDATE_EXECUTOR_CONTRACT } from "../../daemon/service-update-authority.js";
 import { resolveGatewayService } from "../../daemon/service.js";
+import {
+  formatUpdateCandidateRuntimeIdentity,
+  parseUpdateCandidateRuntimeIdentity,
+  resolveUpdateCandidateRuntimeIdentity,
+  updateCandidateRuntimeIdentityMatches,
+} from "../../infra/update-candidate-runtime-identity.js";
 import { resolveUpdateInstallRoot } from "../../infra/update-install-root.js";
 import type { UpdateRecoveryFence } from "../../infra/update-run-recovery.js";
 import { UPDATE_RUNNER_TIMEOUT_MS } from "../../infra/update-run-timeouts.js";
@@ -66,6 +72,7 @@ export async function isUpdatedInstallGatewayExecutorSupported(params: {
   nodeRunner?: string;
   signal?: AbortSignal;
   onDefinitionBackupCapability?: (supported: boolean) => void;
+  onFailureDetail?: (detail: string) => void;
   requireOriginalDefinitionBinding?: boolean;
 }): Promise<boolean> {
   params.signal?.throwIfAborted();
@@ -74,10 +81,17 @@ export async function isUpdatedInstallGatewayExecutorSupported(params: {
   const entrypoint = await resolveGatewayInstallEntrypoint(params.root);
   params.executor.assertCurrent();
   if (!entrypoint) {
+    params.onFailureDetail?.(`Candidate runtime entrypoint is missing under ${params.root}.`);
     return false;
   }
+  const nodeRunner = params.nodeRunner ?? resolveNodeRunner();
+  const expectedRuntime = await resolveUpdateCandidateRuntimeIdentity({
+    root: params.root,
+    nodeRunner,
+    entrypoint,
+  });
   const argv = [
-    params.nodeRunner ?? resolveNodeRunner(),
+    nodeRunner,
     entrypoint,
     "gateway",
     "install",
@@ -110,6 +124,8 @@ export async function isUpdatedInstallGatewayExecutorSupported(params: {
   params.signal?.throwIfAborted();
   params.executor.assertCurrent();
   const capability = safeParseJsonRecord(check.stdout);
+  const candidateRuntime = parseUpdateCandidateRuntimeIdentity(capability?.candidateRuntime);
+  const runtimeMatches = updateCandidateRuntimeIdentityMatches(expectedRuntime, candidateRuntime);
   const supported =
     check.code === 0 &&
     check.termination === "exit" &&
@@ -122,12 +138,23 @@ export async function isUpdatedInstallGatewayExecutorSupported(params: {
     !check.outputLimitExceeded &&
     !check.outputErrorStream &&
     capability?.updateExecutor === GATEWAY_UPDATE_EXECUTOR_CONTRACT &&
+    runtimeMatches &&
     capability.targetRootBinding === true &&
     (!params.requireOriginalDefinitionBinding ||
       (capability.originalDefinitionBinding === true &&
         capability.originalRuntimePinBinding === true)) &&
     (!requiresRetainedOwner || capability.retainedOwnerBinding === true);
   params.onDefinitionBackupCapability?.(supported && capability?.definitionBackup === true);
+  if (!supported) {
+    params.onFailureDetail?.(
+      [
+        `Candidate native-service admission failed for ${formatUpdateCandidateRuntimeIdentity(expectedRuntime)}.`,
+        candidateRuntime
+          ? `Receiver reported ${formatUpdateCandidateRuntimeIdentity(candidateRuntime)}.`
+          : "Receiver did not report a complete candidate runtime identity.",
+      ].join(" "),
+    );
+  }
   return supported;
 }
 
@@ -241,6 +268,7 @@ export async function runUpdatedInstallGatewayCommand(
   }
   if (executor) {
     let definitionBackupSupported = false;
+    let capabilityFailureDetail: string | undefined;
     if (
       !params.result.root ||
       !(await isUpdatedInstallGatewayExecutorSupported({
@@ -253,17 +281,20 @@ export async function runUpdatedInstallGatewayCommand(
         onDefinitionBackupCapability: (supported) => {
           definitionBackupSupported = supported;
         },
+        onFailureDetail: (detail) => {
+          capabilityFailureDetail = detail;
+        },
         requireOriginalDefinitionBinding:
           installing && Boolean(params.originalManagedServiceRuntime),
       }))
     ) {
       if (installing && params.originalManagedServiceRuntime) {
         throw new Error(
-          "Target cannot attest the original definition rewrite; original service compensation is required.",
+          `Target cannot attest the original definition rewrite; original service compensation is required. ${capabilityFailureDetail ?? ""}`.trim(),
         );
       }
       throw new UpdateCommandRecoveryPendingError(
-        "Target runtime cannot fence update-owned native commands.",
+        `Target runtime cannot fence update-owned native commands. ${capabilityFailureDetail ?? ""}`.trim(),
       );
     }
     assertCurrent();

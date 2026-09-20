@@ -387,6 +387,7 @@ describe("runGatewayUpdate", () => {
     env?: NodeJS.ProcessEnv;
     cwd?: string;
     input?: string | Uint8Array;
+    stdinFileDescriptor?: number;
     timeoutMs?: number;
   };
 

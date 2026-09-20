@@ -38,6 +38,10 @@ export function createCanarySnapshotResult(input: string, databasePath?: string)
   };
 }
 
+export function serializeCanaryPackage(version: string, state: number, agent: number): string {
+  return JSON.stringify({ version, openclaw: { schemaVersions: { state, agent } } });
+}
+
 type CanaryCommandFixture = {
   pluginInventory: unknown;
   pluginErrors: boolean;

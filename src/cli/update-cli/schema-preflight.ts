@@ -9,6 +9,10 @@ import { resolveConfiguredAgentDatabaseCandidatePaths } from "../../config/sessi
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { formatErrorMessage } from "../../infra/errors.js";
 import {
+  formatUpdateCandidateRuntimeIdentity,
+  type UpdateCandidateRuntimeIdentity,
+} from "../../infra/update-candidate-runtime-identity.js";
+import {
   OPENCLAW_DATABASE_SCHEMA_DOCS_URL,
   preflightOpenClawDatabaseSchemas,
   type IncompatibleOpenClawDatabase,
@@ -29,16 +33,20 @@ export function formatSchemaRefusalLines(
     indeterminate: readonly IndeterminateOpenClawDatabase[];
   },
   dryRun = false,
+  candidateRuntime?: UpdateCandidateRuntimeIdentity,
 ): string[] {
   const prefix = dryRun ? "Would refuse update" : "Update refused";
+  const runtime = candidateRuntime
+    ? ` Candidate ${formatUpdateCandidateRuntimeIdentity(candidateRuntime)}.`
+    : "";
   return [
     ...schemas.incompatible.map((database) => {
       const agent = database.agentId ? ` (agent ${database.agentId})` : "";
-      return `${prefix}: ${database.kind} database${agent} ${database.path} has schema ${database.foundVersion}; target supports ${database.supportedVersion}; writer build ${database.writerAppVersion ?? "unknown"}.`;
+      return `${prefix}: ${database.kind} database${agent} ${database.path} has schema ${database.foundVersion}; target supports ${database.supportedVersion}; writer build ${database.writerAppVersion ?? "unknown"}.${runtime}`;
     }),
     ...schemas.indeterminate.map(
       (database) =>
-        `${prefix}: could not inspect ${database.kind} database ${database.path}: ${database.reason}; retry once the gateway releases it.`,
+        `${prefix}: could not inspect ${database.kind} database ${database.path}: ${database.reason}; retry once the gateway releases it.${runtime}`,
     ),
     OPENCLAW_DATABASE_SCHEMA_DOCS_URL,
     "Installing manually via npm bypasses this guard; back up first and verify compatibility.",

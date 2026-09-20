@@ -11,10 +11,7 @@ import {
   redactSupportDiagnosticLine,
   redactSupportString,
 } from "../logging/diagnostic-support-redaction.js";
-import {
-  parseOpenClawSchemaVersions,
-  type OpenClawSchemaVersions,
-} from "../state/openclaw-schema-versions.js";
+import type { OpenClawSchemaVersions } from "../state/openclaw-schema-versions.js";
 import { hasErrnoCode } from "./errors.js";
 import { readPackageVersion } from "./package-json.js";
 import { runtimeProcessEntrypoints } from "./runtime-process-entrypoints.js";
@@ -25,6 +22,11 @@ import {
   prepareUpdateCandidateRehearsal,
   type UpdateCandidateRehearsal,
 } from "./update-candidate-rehearsal.js";
+import {
+  parseUpdateCandidateRuntimeContract,
+  resolveUpdateCandidateRuntimeIdentity,
+  type UpdateCandidateRuntimeIdentity,
+} from "./update-candidate-runtime-identity.js";
 import type { UpdateDoctorConfigChange } from "./update-doctor-config.js";
 import { parseUpdateDoctorLintReport } from "./update-doctor-lint.js";
 import {
@@ -61,6 +63,7 @@ type CanaryResult = {
   logTail: string[];
   steps: UpdateStepResult[];
   candidateSchemaVersions?: OpenClawSchemaVersions;
+  candidateRuntimeIdentity?: UpdateCandidateRuntimeIdentity;
   doctorConfigWrites?: boolean;
   doctorConfigChanges?: UpdateDoctorConfigChange[];
   listenerIsolation?: {
@@ -98,6 +101,7 @@ export async function validateUpdateCandidateCanary(params: {
   let stepStartedAt = started;
   const steps: UpdateStepResult[] = [];
   let candidateSchemaVersions: OpenClawSchemaVersions | undefined;
+  let candidateRuntimeIdentity: UpdateCandidateRuntimeIdentity | undefined;
   let doctorConfigWrites = false;
   let doctorConfigChanges: UpdateDoctorConfigChange[] = [];
   let listenerIsolation: CanaryResult["listenerIsolation"];
@@ -251,6 +255,11 @@ export async function validateUpdateCandidateCanary(params: {
     if (!entry) {
       throw new Error("The update is missing its Gateway executable");
     }
+    candidateRuntimeIdentity = await resolveUpdateCandidateRuntimeIdentity({
+      root: params.root,
+      nodeRunner: params.nodeRunner ?? process.execPath,
+      entrypoint: entry,
+    });
     const continuationEntry = path.join(
       params.root,
       "dist",
@@ -498,14 +507,15 @@ export async function validateUpdateCandidateCanary(params: {
         }
       }
       if (code === 0 && phase === "runtime") {
-        const contract: unknown = running.outputExceeded()
-          ? undefined
-          : JSON.parse(running.stdout());
-        candidateSchemaVersions = parseOpenClawSchemaVersions(contract);
-        doctorConfigWrites = isRecord(contract) && contract.doctorConfigWrites === "pid-start-v1";
-        if (!candidateSchemaVersions) {
+        const contract = parseUpdateCandidateRuntimeContract(
+          running.outputExceeded() ? undefined : JSON.parse(running.stdout()),
+          candidateRuntimeIdentity,
+        );
+        candidateSchemaVersions = contract.schemaVersions;
+        doctorConfigWrites = contract.doctorConfigWrites;
+        if (contract.error) {
           code = 1;
-          capture("The update did not report its supported database versions");
+          capture(contract.error);
         }
       }
       const step: UpdateStepResult = {
@@ -610,6 +620,7 @@ export async function validateUpdateCandidateCanary(params: {
       durationMs: Date.now() - started,
       logTail,
       candidateSchemaVersions,
+      candidateRuntimeIdentity,
       ...(doctorConfigWrites ? { doctorConfigWrites } : {}),
       ...(doctorConfigChanges.length ? { doctorConfigChanges } : {}),
       listenerIsolation,
@@ -659,6 +670,7 @@ export async function validateUpdateCandidateCanary(params: {
       durationMs: Date.now() - started,
       logTail,
       candidateSchemaVersions,
+      ...(candidateRuntimeIdentity ? { candidateRuntimeIdentity } : {}),
       ...(doctorConfigChanges.length ? { doctorConfigChanges } : {}),
       listenerIsolation,
       steps,

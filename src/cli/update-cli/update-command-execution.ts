@@ -6,6 +6,7 @@ import { tryReadJson } from "../../infra/json-files.js";
 import type { PackageUpdateTransaction } from "../../infra/package-update-steps.js";
 import { validateUpdateCandidateCanary } from "../../infra/update-candidate-canary.js";
 import type { UpdateCandidateRehearsal } from "../../infra/update-candidate-rehearsal.js";
+import type { UpdateCandidateRuntimeIdentity } from "../../infra/update-candidate-runtime-identity.js";
 import { readUpdateStateSchemaVersions } from "../../infra/update-candidate-state.js";
 import {
   createUpdateDoctorConfigWarningStep,
@@ -20,23 +21,23 @@ import { recordUpdateRunPhase } from "../../infra/update-run-ledger.js";
 import { readCurrentGitUpdateRecovery } from "../../infra/update-runner-git-recovery.js";
 import type { UpdateRunResult } from "../../infra/update-runner.js";
 import { hasCommandProcessCleanupError } from "../../process/exec-result.js";
-import { defaultRuntime } from "../../runtime.js";
 import {
   parsePackageOpenClawSchemaVersions,
   type OpenClawSchemaVersions,
 } from "../../state/openclaw-schema-versions.js";
 import { formatCliCommand } from "../command-format.js";
 import {
-  checkTargetDatabaseSchemasForContexts,
-  formatSchemaRefusalLines,
-  hasSchemaRefusal,
-} from "./schema-preflight.js";
-import {
   normalizeTag,
   readPackageVersion,
   resolveGitInstallDir,
   UpdatePreMutationError,
 } from "./shared.js";
+import {
+  assertUpdateCandidateNativeServiceSupport,
+  preflightUpdateCandidatePlugins,
+  recheckUpdateAdmissionSchemas,
+  resolvePackageUpdateCandidateRuntime,
+} from "./update-command-candidate-runtime.js";
 import { inspectUpdateDatabaseContexts } from "./update-command-database-context.js";
 import { createUpdateCommandExecutionGuards } from "./update-command-execution-guards.js";
 import type { MutableUpdateExecutionParams } from "./update-command-execution.types.js";
@@ -52,7 +53,6 @@ import {
 import {
   captureOwnedManagedUpdateContext,
   readUpdateCandidateSource,
-  revalidateUpdateDatabaseContext,
   type OwnedManagedUpdateContext,
 } from "./update-command-managed-context.js";
 import { observeOriginalManagedServiceRuntime } from "./update-command-original-service.js";
@@ -68,8 +68,6 @@ import {
   resolveMutableUpdateFailure,
   type MutableUpdateExecutionResult,
 } from "./update-command-result.js";
-import { isUpdatedInstallGatewayExecutorSupported } from "./update-command-service-command.js";
-import { resolveUpdatedInstallCommandEnv } from "./update-command-service-env.js";
 import {
   collectServiceInspectionFailureFacts,
   GatewayServiceUpdateOwnershipError,
@@ -134,40 +132,28 @@ export async function executeMutableUpdate(
   let admission: Awaited<ReturnType<typeof inspectUpdateDatabaseContexts>> | undefined;
   let gitContextPrepared = false;
   let admittedTargetSchemaVersions = params.packageTargetSchemaVersions;
+  let candidateRuntimeIdentity: UpdateCandidateRuntimeIdentity | undefined;
   const recheckSchemas = async (versions: OpenClawSchemaVersions | undefined) => {
-    if (!admission) {
-      throw new UpdatePreMutationError(
-        "database-schema-preflight",
-        "Database admission was not inspected.",
-      );
-    }
-    await inspectContexts([...admission.services.keys()], admission.services);
-    admission.contexts = await Promise.all(admission.contexts.map(revalidateUpdateDatabaseContext));
-    const schemas = await checkTargetDatabaseSchemasForContexts(versions, admission.contexts);
-    if (hasSchemaRefusal(schemas)) {
-      throw new UpdatePreMutationError(
-        "database-schema-preflight",
-        formatSchemaRefusalLines(schemas).join("\n"),
-      );
-    }
+    await recheckUpdateAdmissionSchemas({
+      admission,
+      versions,
+      candidateRuntime: candidateRuntimeIdentity,
+      revalidateServices: async (current) => {
+        await inspectContexts([...current.services.keys()], current.services);
+      },
+    });
     admittedTargetSchemaVersions = versions;
   };
   const preflightPlugins = async (targetVersion: string | null) => {
     await recheckSchemas(admittedTargetSchemaVersions);
-    const { preflightConfiguredNpmPluginTargets } =
-      await import("./update-command-plugin-preflight.js");
-    const context = admission!.contexts.at(-1)!;
-    const warnings = await preflightConfiguredNpmPluginTargets({
-      config: context.configSnapshot.sourceConfig,
-      env: context.env,
+    await preflightUpdateCandidatePlugins({
+      context: admission!.contexts.at(-1)!,
       targetVersion,
       channel: params.channel,
       timeoutMs: params.updateStepTimeoutMs,
+      jsonMode: Boolean(opts.json),
     });
     await recheckSchemas(admittedTargetSchemaVersions);
-    for (const warning of warnings) {
-      defaultRuntime[opts.json ? "error" : "log"](warning.message);
-    }
   };
   let recoveryEnv: NodeJS.ProcessEnv | undefined;
   let packageTransaction: PackageUpdateTransaction | undefined;
@@ -366,17 +352,15 @@ export async function executeMutableUpdate(
       signal?.throwIfAborted();
       try {
         if (params.updateInstallKind === "package") {
-          // The staged manifest owns schema support, including artifacts without registry metadata.
-          await recheckSchemas(
-            parsePackageOpenClawSchemaVersions(
-              await tryReadJson<unknown>(path.join(root, "package.json")),
-            ) ?? admittedTargetSchemaVersions,
-          );
+          candidateRuntimeIdentity = await resolvePackageUpdateCandidateRuntime({
+            root,
+            nodeRunner: params.packageUpdateNodeRunner,
+          });
+          await recheckSchemas(candidateRuntimeIdentity.schemaVersions);
           signal?.throwIfAborted();
           assertCurrent?.();
         }
         if (stagedPluginAdmission) {
-          // Explicit artifacts acquire their version before rehearsal or activation.
           await preflightPlugins(await readPackageVersion(root));
           signal?.throwIfAborted();
           assertCurrent?.();
@@ -402,24 +386,20 @@ export async function executeMutableUpdate(
             "Starting the update requires its original update process.",
           );
         }
-        const supported = await isUpdatedInstallGatewayExecutorSupported({
-          root,
-          env: resolveUpdatedInstallCommandEnv({
+        try {
+          await assertUpdateCandidateNativeServiceSupport({
+            root,
             processEnv: env,
             invocationCwd: params.invocationCwd,
-          }),
-          executor,
-          timeoutMs: updateStepTimeoutMs,
-          nodeRunner: params.packageUpdateNodeRunner,
-          signal,
-        });
-        assertUpdateCommandRecovery(opts);
-        if (!supported) {
+            executor,
+            timeoutMs: updateStepTimeoutMs,
+            nodeRunner: params.packageUpdateNodeRunner,
+            signal,
+          });
+          assertUpdateCommandRecovery(opts);
+        } catch (error) {
           candidateFailureReason = "target-native-unsupported";
-          throw new UpdatePreMutationError(
-            candidateFailureReason,
-            "Target runtime cannot fence update-owned native commands; refusing before Gateway stop or package activation.",
-          );
+          throw error;
         }
       }
       const snapshot = rehearsal
@@ -443,6 +423,7 @@ export async function executeMutableUpdate(
       if (validation.status === "ok") {
         validatedConfigSnapshot = snapshot;
         candidateSchemaVersions = validation.candidateSchemaVersions;
+        candidateRuntimeIdentity = validation.candidateRuntimeIdentity;
         doctorConfigWrites = validation.doctorConfigWrites === true;
         observedGatewayStartupMs = validation.steps.find(
           (step) => step.name === "Checking Gateway startup" && step.exitCode === 0,

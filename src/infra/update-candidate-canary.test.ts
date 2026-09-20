@@ -15,6 +15,7 @@ import {
   createCanarySnapshotResult,
   FakeChild,
   renderSteps,
+  serializeCanaryPackage,
   stubHealthyGateway,
 } from "./update-candidate-canary.test-support.js";
 import { prepareUpdateCandidateRehearsal } from "./update-candidate-rehearsal.js";
@@ -80,7 +81,7 @@ beforeEach(async () => {
   await fs.mkdir(path.join(root, "dist", "infra"), { recursive: true });
   await fs.writeFile(path.join(root, "dist", "index.js"), "");
   await fs.writeFile(path.join(root, "dist", "infra", "update-migrated-finalize.worker.js"), "");
-  await fs.writeFile(path.join(root, "package.json"), JSON.stringify({ version: "2026.9.1" }));
+  await fs.writeFile(path.join(root, "package.json"), serializeCanaryPackage("2026.9.1", 2, 3));
   mocks.snapshot.mockImplementation(async (_command, options: { input: string }) =>
     createCanarySnapshotResult(options.input, databasePath),
   );
@@ -651,7 +652,6 @@ describe("update candidate canary", () => {
     expect(result.logTail.join("\n")).toContain("startupz: started");
     await expect(fs.access(childEnv.OPENCLAW_STATE_DIR!)).rejects.toMatchObject({ code: "ENOENT" });
   });
-
   it("reuses caller-owned rehearsal changes across validations until the caller disposes them", async () => {
     const config: OpenClawConfig = { logging: { level: "info" } };
     const observed: Array<{ configPath: string; level: string | undefined }> = [];

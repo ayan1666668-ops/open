@@ -21,6 +21,7 @@ import { defaultRuntime } from "../../runtime.js";
 
 const mocks = vi.hoisted(() => ({
   createUpdateConfigSnapshot: vi.fn(async () => undefined),
+  assertUpdatedGatewayServiceBinding: vi.fn(async () => undefined),
   runRestartScript: vi.fn(async () => true),
   runUpdatedInstallGatewayCommand: vi.fn<
     typeof import("./update-command-service-command.js").runUpdatedInstallGatewayCommand
@@ -32,6 +33,9 @@ const mocks = vi.hoisted(() => ({
 vi.mock("./update-command-service-command.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./update-command-service-command.js")>()),
   runUpdatedInstallGatewayCommand: mocks.runUpdatedInstallGatewayCommand,
+}));
+vi.mock("./update-command-service-binding.js", () => ({
+  assertUpdatedGatewayServiceBinding: mocks.assertUpdatedGatewayServiceBinding,
 }));
 vi.mock("../../infra/update-run-ledger.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../infra/update-run-ledger.js")>()),
@@ -396,6 +400,49 @@ describe("maybeRestartService", () => {
     },
   );
 
+  it("fails closed on package service-install failure without selecting the stale runtime", async () => {
+    const retainedPid = process.pid;
+    mocks.runUpdatedInstallGatewayCommand.mockRejectedValueOnce(
+      new Error(
+        "synthetic install refusal for runtime=/candidate/node; version=2026.9.19; schema-support=state:17,agent:21",
+      ),
+    );
+    const onVerificationFailure = vi.fn();
+
+    await expect(
+      maybeRestartService({
+        shouldRestart: true,
+        result: {
+          status: "ok",
+          mode: "npm",
+          root: "/candidate/openclaw",
+          after: { version: "2026.9.19" },
+          steps: [],
+          durationMs: 0,
+        },
+        opts: { json: true, run },
+        refreshServiceEnv: true,
+        serviceEnv: { HOME: "/home/operator" },
+        serviceInstallEnv: {},
+        nodeRunner: "/candidate/node",
+        gatewayPort: 18789,
+        restartScriptPath: "/tmp/openclaw-stale-runtime-restart.sh",
+        timeoutMs: 1_000,
+        onVerificationFailure,
+      }),
+    ).resolves.toBe("failed");
+
+    expect(process.kill(retainedPid, 0)).toBe(true);
+    expect(mocks.runUpdatedInstallGatewayCommand).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ nodeRunner: "/candidate/node" }),
+      "install",
+    );
+    expect(mocks.assertUpdatedGatewayServiceBinding).not.toHaveBeenCalled();
+    expect(mocks.runRestartScript).not.toHaveBeenCalled();
+    expect(mocks.waitForGatewayHealthyRestart).not.toHaveBeenCalled();
+    expect(onVerificationFailure).toHaveBeenCalledExactlyOnceWith("service-runtime-refresh-failed");
+  });
+
   it("records changed-key warnings before health verification and retains them in the outcome and report", async () => {
     const home = tempDirs.make("service-warning-history-");
     const options = { env: { HOME: home, OPENCLAW_STATE_DIR: home } };
@@ -418,6 +465,7 @@ describe("maybeRestartService", () => {
     const result: UpdateRunResult = {
       status: "ok",
       mode: "npm",
+      root: "/candidate/openclaw",
       after: { version: gateway.version, buildId: gateway.buildId },
       steps: [],
       durationMs: 0,
@@ -540,6 +588,7 @@ describe("maybeRestartService", () => {
         result: {
           status: "ok",
           mode: "git",
+          root: "/tmp/openclaw-verification",
           after: { version: "2026.9.1", buildId: "new-build" },
           steps: [],
           durationMs: 0,

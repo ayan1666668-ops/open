@@ -4,6 +4,7 @@ import { expectDefined } from "@openclaw/normalization-core";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import { expect, vi } from "vitest";
 import type { GatewayServiceCommandConfig } from "../../daemon/service-types.js";
+import { resolveUpdateCandidateRuntimeIdentity } from "../../infra/update-candidate-runtime-identity.js";
 import type { runCommandWithTimeout, runUtf8CommandWithTimeout } from "../../process/exec.js";
 import { createCommandResult as commandResult } from "../../test-utils/npm-spec-install-test-helpers.js";
 
@@ -57,6 +58,11 @@ export async function createUpdateCommandTransportFixture(transport: {
       const executorFlagIndex = argv.indexOf("--update-executor");
       if (executorFlagIndex !== -1 && argv[executorFlagIndex + 1] === "check") {
         // A probe must not run the install/restart effect double.
+        const candidateRuntime = await resolveUpdateCandidateRuntimeIdentity({
+          root: options.cwd ?? transport.hostCwd,
+          nodeRunner: expectDefined(argv[0], "fixture candidate runtime"),
+          entrypoint: expectDefined(argv[1], "fixture candidate entrypoint"),
+        });
         return {
           code: 0,
           stdout: JSON.stringify({
@@ -66,6 +72,7 @@ export async function createUpdateCommandTransportFixture(transport: {
             retainedOwnerBinding: true,
             originalDefinitionBinding: true,
             originalRuntimePinBinding: true,
+            candidateRuntime,
           }),
           stderr: "",
           signal: null,

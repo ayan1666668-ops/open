@@ -2,6 +2,7 @@
 import { Command } from "commander";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { isVerbose, setVerbose } from "../../globals.js";
+import { resolveUpdateCandidateRuntimeIdentity } from "../../infra/update-candidate-runtime-identity.js";
 import { captureEnv, deleteTestEnvValue, setTestEnvValue } from "../../test-utils/env.js";
 import { mockProcessPlatform } from "../../test-utils/vitest-spies.js";
 import { withConsoleLogsRoutedToStderrForJson } from "../json-output-mode.js";
@@ -147,6 +148,10 @@ describe("addGatewayServiceCommands", () => {
         setVerbose(previousVerbose);
         startupEnv.restore();
       }
+      const candidateRuntime = await resolveUpdateCandidateRuntimeIdentity({
+        root: process.cwd(),
+        nodeRunner: process.execPath,
+      });
       expect(output.mock.calls.map(([chunk]) => String(chunk)).join("")).toBe(
         JSON.stringify({
           updateExecutor: "root-spawner-v1",
@@ -155,6 +160,7 @@ describe("addGatewayServiceCommands", () => {
           retainedOwnerBinding: true,
           originalDefinitionBinding: true,
           originalRuntimePinBinding: true,
+          candidateRuntime,
         }),
       );
       expect(ensureConfigReady).not.toHaveBeenCalled();

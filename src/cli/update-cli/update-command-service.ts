@@ -1,14 +1,7 @@
 // Managed gateway service lifecycle before and after an update.
-import { confirm, isCancel } from "@clack/prompts";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
-import { stylePromptMessage } from "../../../packages/terminal-core/src/prompt-style.js";
 import { theme } from "../../../packages/terminal-core/src/theme.js";
-import {
-  checkShellCompletionStatus,
-  ensureCompletionCacheExists,
-} from "../../commands/doctor-completion.js";
 import { readGatewayServiceState, resolveGatewayService } from "../../daemon/service.js";
-import { formatErrorMessage } from "../../infra/errors.js";
 import { readGatewayOwnerLease } from "../../infra/gateway-owner-lease.js";
 import {
   getUpdateRun,
@@ -19,19 +12,18 @@ import {
 import { updateRunStepsFromResultStep } from "../../infra/update-run-step.js";
 import type { UpdateRunResult } from "../../infra/update-runner.js";
 import { defaultRuntime } from "../../runtime.js";
-import { CLI_NAME } from "../cli-name.js";
 import { formatCliCommand } from "../command-format.js";
-import { installCompletion } from "../completion-runtime.js";
 import {
   terminateStaleGatewayPids,
   waitForGatewayHealthyRestart,
   type GatewayRestartSnapshot,
 } from "../daemon-cli/restart-health.js";
 import { runRestartScript } from "./restart-helper.js";
-import { tryWriteCompletionCache, type UpdateCommandOptions } from "./shared.js";
+import type { UpdateCommandOptions } from "./shared.js";
 import { createUpdateConfigSnapshot } from "./update-command-config-snapshot.js";
 import type { PluginUpdateWarning } from "./update-command-plugins-internals.js";
 import { UpdateCommandRecoveryPendingError } from "./update-command-recovery.js";
+import { assertUpdatedGatewayServiceBinding } from "./update-command-service-binding.js";
 import {
   DEFINITION_DENIAL,
   GatewayRestartHealthError,
@@ -70,6 +62,7 @@ export {
 } from "./update-command-service-maintenance.js";
 export { resolveUpdatedGatewayRestartPort } from "./update-command-service-plan.js";
 export { maybeRestartServiceAfterFailedMutableUpdate } from "./update-command-service-recovery.js";
+export { tryInstallShellCompletion } from "./update-command-shell-completion.js";
 
 export function shouldPrepareUpdatedInstallRestart(params: {
   updateMode: UpdateRunResult["mode"];
@@ -98,81 +91,6 @@ export function resolvePostUpdateServiceStateReadEnv(params: {
   const usesServiceEnv =
     params.updateMode === "git" || isPackageManagerUpdateMode(params.updateMode);
   return usesServiceEnv ? (params.preManagedServiceEnv ?? fallbackEnv) : fallbackEnv;
-}
-
-export async function tryInstallShellCompletion(opts: {
-  root: string;
-  jsonMode: boolean;
-  skipPrompt: boolean;
-}): Promise<void> {
-  try {
-    await tryWriteCompletionCache(opts.root, opts.jsonMode);
-  } catch (err) {
-    if (!opts.jsonMode) {
-      const completionCacheRefreshCommand = formatCliCommand("openclaw completion --write-state");
-      defaultRuntime.log(
-        theme.warn(
-          `Completion cache update failed: ${formatErrorMessage(err)}. Update will continue; retry with: ${completionCacheRefreshCommand}`,
-        ),
-      );
-    }
-  }
-  if (opts.jsonMode || !process.stdin.isTTY) {
-    return;
-  }
-
-  try {
-    const status = await checkShellCompletionStatus(CLI_NAME);
-    const generationOptions = { generationMode: "core-only" } as const;
-
-    if (status.usesSlowPattern) {
-      defaultRuntime.log(theme.muted("Upgrading shell completion to cached version..."));
-      if (!(await ensureCompletionCacheExists(CLI_NAME, generationOptions))) {
-        throw new Error("completion cache generation failed");
-      }
-      await installCompletion(status.shell, true, CLI_NAME);
-      return;
-    }
-
-    if (status.profileInstalled && !status.cacheExists) {
-      defaultRuntime.log(theme.muted("Regenerating shell completion cache..."));
-      if (!(await ensureCompletionCacheExists(CLI_NAME, generationOptions))) {
-        throw new Error("completion cache generation failed");
-      }
-      return;
-    }
-
-    if (!status.profileInstalled && !opts.skipPrompt) {
-      defaultRuntime.log("");
-      defaultRuntime.log(theme.heading("Shell completion"));
-
-      const shouldInstall = await confirm({
-        message: stylePromptMessage(`Enable ${status.shell} shell completion for ${CLI_NAME}?`),
-        initialValue: true,
-      });
-
-      if (isCancel(shouldInstall) || !shouldInstall) {
-        defaultRuntime.log(
-          theme.muted(
-            `Skipped. Run \`${formatCliCommand("openclaw completion --install")}\` later to enable.`,
-          ),
-        );
-        return;
-      }
-
-      if (!(await ensureCompletionCacheExists(CLI_NAME, generationOptions))) {
-        throw new Error("completion cache generation failed");
-      }
-      await installCompletion(status.shell, false, CLI_NAME);
-    }
-  } catch (err) {
-    const message = formatErrorMessage(err);
-    defaultRuntime.log(
-      theme.warn(
-        `Shell completion refresh failed: ${message}. Update will continue. Resolve the reported error before retrying: ${formatCliCommand("openclaw completion --write-state --install")}`,
-      ),
-    );
-  }
 }
 
 /** A restart command can throw before health probes; replace pre-activation facts at that boundary. */
@@ -462,6 +380,16 @@ export async function maybeRestartService(params: {
         try {
           recordPhase("restarting");
           await runUpdatedInstallGatewayCommand(activation, "install");
+          if (!activation.result.root) {
+            throw new Error("Updated service binding is missing its candidate package root.");
+          }
+          await assertUpdatedGatewayServiceBinding({
+            root: activation.result.root,
+            nodeRunner: activation.nodeRunner,
+            env: activation.serviceEnv,
+            timeoutMs: activation.timeoutMs,
+            assertCurrent,
+          });
           if (expectedGatewayVersion && (isPackageUpdate || expectedGatewayBuildId)) {
             recordPhase("verifying");
             const service = resolveGatewayService();
@@ -507,6 +435,10 @@ export async function maybeRestartService(params: {
           defaultRuntime.error(
             `Failed to refresh gateway service environment from updated install: ${String(err)}`,
           );
+          if (isPackageUpdate) {
+            params.onVerificationFailure?.("service-runtime-refresh-failed");
+            throw err;
+          }
           if (activation.serviceRuntimeRefreshRequired) {
             params.onVerificationFailure?.("service-runtime-refresh-failed");
             throw err;

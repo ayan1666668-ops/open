@@ -3,6 +3,7 @@ import { once } from "node:events";
 import path from "node:path";
 import { setTimeout } from "node:timers/promises";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { resolveUpdateCandidateRuntimeIdentity } from "../../infra/update-candidate-runtime-identity.js";
 import { tryRunGatewayServiceUpdateCapabilityProbe } from "./update-capability.js";
 
 afterEach(() => vi.restoreAllMocks());
@@ -41,6 +42,10 @@ describe("early service capability routing", () => {
       expect(child.exitCode, "Capability child exited before input admission").toBeNull();
       child.stdin.end();
       expect(await closed, stderr).toEqual([0, null]);
+      const candidateRuntime = await resolveUpdateCandidateRuntimeIdentity({
+        root: process.cwd(),
+        nodeRunner: process.execPath,
+      });
       expect(stdout).toBe(
         JSON.stringify({
           updateExecutor: "root-spawner-v1",
@@ -49,6 +54,7 @@ describe("early service capability routing", () => {
           retainedOwnerBinding: true,
           originalDefinitionBinding: true,
           originalRuntimePinBinding: true,
+          candidateRuntime,
         }) + "\nprobe returned",
       );
     } finally {

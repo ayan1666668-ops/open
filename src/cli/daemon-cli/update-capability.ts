@@ -1,7 +1,17 @@
 import { finished } from "node:stream/promises";
 import { GATEWAY_UPDATE_EXECUTOR_CONTRACT } from "../../daemon/service-update-authority.js";
+import { resolveOpenClawPackageRoot } from "../../infra/openclaw-root.js";
+import { resolveUpdateCandidateRuntimeIdentity } from "../../infra/update-candidate-runtime-identity.js";
 
 export async function writeGatewayServiceUpdateCapability(): Promise<void> {
+  const root = await resolveOpenClawPackageRoot({ moduleUrl: import.meta.url });
+  if (!root) {
+    throw new Error("Cannot resolve the candidate runtime root for update admission.");
+  }
+  const candidateRuntime = await resolveUpdateCandidateRuntimeIdentity({
+    root,
+    nodeRunner: process.execPath,
+  });
   process.stdout.write(
     JSON.stringify({
       updateExecutor: GATEWAY_UPDATE_EXECUTOR_CONTRACT,
@@ -10,6 +20,7 @@ export async function writeGatewayServiceUpdateCapability(): Promise<void> {
       retainedOwnerBinding: true,
       originalDefinitionBinding: true,
       originalRuntimePinBinding: true,
+      candidateRuntime,
     }),
   );
   // The parent closes stdin only after binding this child's PID and start identity.
