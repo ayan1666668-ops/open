@@ -51,9 +51,14 @@ runs, warm and cold prompt caches, and actual provider usage before enabling any
 future execution-changing mode. No per-turn fidelity request is made in shadow
 mode. Caller cancellation and closed run authority still stop the operation.
 
-Hosts must supply captured run cancellation and authority checks. Embedded
-attempts without host capabilities intentionally skip observation, even when
-configured. Native Codex/persistent-thread and signed append-only hosts also
+Hosts must supply captured run cancellation and authority checks. Built-in embedded
+attempts use their existing admitted-run authority, including the pass-through
+legacy history path. Plugin harnesses use captured host capabilities. Unbound
+attempts, raw model runs, and settled-turn finalization skip observation. Native Codex/persistent-thread and signed append-only hosts also
 skip it; they do not incur an optional Decision request. Unexpected provider
 errors retain original context, but caller cancellation and replaced authority
 always propagate.
+
+`timeoutMs` is a cooperative provider deadline, not a hard wall-clock bound.
+Cancellation waits for started provider work to physically settle; a provider
+that ignores abort can delay the opted-in turn beyond this deadline.

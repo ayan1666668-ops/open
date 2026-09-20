@@ -11,7 +11,7 @@ import {
 import type { AgentMessage } from "../runtime/index.js";
 
 const log = createSubsystemLogger("agents/semantic-context");
-type Options = {
+export type SemanticTurnContextOptions = {
   config?: AgentDefaultsConfig["turnContextCuration"];
   signal: AbortSignal;
   assertActive: () => void;
@@ -23,7 +23,7 @@ type Options = {
 /** Observe the existing context engine's view; never persist or replace its messages. */
 export async function observeSemanticTurnContext(
   assembled: AssembleResult,
-  options: Options,
+  options: SemanticTurnContextOptions,
   runtime: DecisionRuntimeV1 = { evaluate: evaluateDecision },
 ): Promise<AssembleResult> {
   if (!options.config || options.config.mode !== "shadow") {

@@ -140,6 +140,7 @@ describe("semantic turn context", () => {
       },
       messages: source.messages,
       sessionId: "unbound",
+      modelId: "synthetic-unbound",
     });
     expect(result).toBe(source);
     expect(requests).toHaveLength(0);
