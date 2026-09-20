@@ -6,7 +6,7 @@ import { icons } from "../../../components/icons.ts";
 import { scrollState } from "../../../components/scroll-state.ts";
 import { t } from "../../../i18n/index.ts";
 import { registerChatGoalsEnglish } from "../../../i18n/locales/en-chat-goals.ts";
-import type { ChatGoalAction } from "../../../lib/chat/chat-types.ts";
+import type { ChatGoalAction, ChatGoalRecovery } from "../../../lib/chat/chat-types.ts";
 import {
   formatGoalDetail,
   formatGoalElapsed,
@@ -14,7 +14,6 @@ import {
   formatGoalUsage,
   goalElapsedMs,
 } from "../../../lib/session-goal.ts";
-import type { ChatGoalRecovery } from "../chat-goals.ts";
 import type { ChatComposerState } from "./chat-composer-types.ts";
 
 registerChatGoalsEnglish();

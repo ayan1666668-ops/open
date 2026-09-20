@@ -11,7 +11,7 @@ import { GatewayRequestError } from "../../api/gateway.ts";
 import type { GatewaySessionRow } from "../../api/types.ts";
 import { t } from "../../i18n/index.ts";
 import { registerChatGoalsEnglish } from "../../i18n/locales/en-chat-goals.ts";
-import type { ChatGoalAction, ChatGoalDraft } from "../../lib/chat/chat-types.ts";
+import type { ChatGoalAction, ChatGoalDraft, ChatGoalRecovery } from "../../lib/chat/chat-types.ts";
 import {
   goalOperationExpired,
   goalOperationScopePrefix,
@@ -46,12 +46,6 @@ type GoalOperation = {
   params?: GoalParams;
   retired?: "expired" | "invalid";
   pending: boolean;
-};
-
-export type ChatGoalRecovery = {
-  pending: boolean;
-  retired?: "expired" | "invalid";
-  onCheck: () => Promise<boolean>;
 };
 
 const goalOperations = new WeakMap<ChatHost, Map<string, GoalOperation>>();
