@@ -14,6 +14,8 @@ import { getTaskRegistryProcessState } from "./task-registry.process-state.js";
 // Stores task registry records in memory and bridges persistence runtime hooks.
 import {
   closeTaskRegistryDatabase,
+  matchesTaskIdentityFromSqlite,
+  settleTriageTaskFromSqlite,
   deleteTaskAndDeliveryStateFromSqlite,
   loadTaskRegistryStateFromSqlite,
   loadTaskRegistryMutationStateFromSqlite,
@@ -42,6 +44,8 @@ export type TaskRegistryStore = TaskExecutionRestoreStore & {
     onGranted: (owner: SqliteWorkerNativeSettlementOwner) => void,
   ): Promise<TaskAgentEventReceipt | null>;
   settleAgentEventWrites(join: (deadlineMs: number) => void): void;
+  matchesTaskIdentity?: (task: TaskRecord) => boolean | undefined;
+  settleTriageTask?: typeof settleTriageTaskFromSqlite;
   runInitialMutationAsync<Key extends keyof TaskInitialWorkerOperations>(
     context: OpenClawStateWorkerContext,
     command: { type: Key; input: TaskInitialWorkerOperations[Key]["input"] },
@@ -118,6 +122,8 @@ const defaultTaskRegistryStore: TaskRegistryStore = {
       scope.execute({ type: "flows.syncMirroredTask", input: params }),
     );
   },
+  matchesTaskIdentity: matchesTaskIdentityFromSqlite,
+  settleTriageTask: settleTriageTaskFromSqlite,
   loadSnapshot: loadTaskRegistryStateFromSqlite,
   async loadMutationSnapshotAsync(context, scope) {
     const { executeOpenClawStateWorker } = await import("../state/openclaw-state-worker-store.js");

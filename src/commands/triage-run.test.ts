@@ -52,6 +52,51 @@ vi.mock("../daemon/gateway-entrypoint.js", () => ({
   resolveGatewayInstallEntrypoint: mocks.resolveGatewayInstallEntrypoint,
 }));
 
+// The repair engine now runs in the admitted child. Parent exit mapping is
+// covered separately by triage-operator.test.ts; native admission has process controls.
+async function runAdmitted(
+  runtime: ReturnType<typeof createTriageRuntime>,
+  options: Parameters<typeof triageCommand>[1] = {},
+) {
+  return triageCommand(
+    runtime,
+    { ...options, run: true, json: true },
+    {
+      signal: options?.recovery?.signal ?? new AbortController().signal,
+      assertCurrent: () => {
+        if (options?.recovery?.isCurrent?.() === false) {
+          throw new Error("Operator owner closed");
+        }
+      },
+      operator: {
+        kind: "operator",
+        installationRoot: path.resolve(import.meta.dirname, "../.."),
+        gateway: "preserve",
+        implicitUpdate: !options?.updateResult && !options?.recovery,
+      },
+    },
+  );
+}
+
+function expectRepair(
+  runtime: ReturnType<typeof createTriageRuntime>,
+  status: "repaired" | "unrepaired",
+  summary: string,
+) {
+  expect(runtime.writeJson).toHaveBeenCalledWith(
+    expect.objectContaining({
+      repair: expect.objectContaining({
+        status,
+        finalValidation: expect.objectContaining({
+          ok: status === "repaired",
+          summary: expect.stringContaining(summary),
+        }),
+      }),
+    }),
+    2,
+  );
+}
+
 describe("triage --run", () => {
   let stateDir: string;
   beforeEach(() => {
@@ -68,6 +113,7 @@ describe("triage --run", () => {
     mocks.runUtf8CommandWithTimeout.mockReset().mockResolvedValue({
       code: 0,
       termination: "exit",
+      cleanup: "normal",
       stdout: JSON.stringify({ ok: true, findings: [] }),
     });
     mocks.runUpdateRepairLoop.mockResolvedValue({
@@ -110,10 +156,8 @@ describe("triage --run", () => {
     );
     mocks.runUpdateRepairLoop.mockImplementation(real.runUpdateRepairLoop);
     const runtime = createTriageRuntime();
-    await withTriageTerminal(true, () => triageCommand(runtime, { run: true, noExport: true }));
-    expect(runtime.log).toHaveBeenCalledWith(
-      "Embedded repair already resolved: Doctor lint reports no errors.",
-    );
+    await runAdmitted(runtime, { noExport: true });
+    expectRepair(runtime, "repaired", "Doctor lint reports no errors.");
     expect(mocks.runUpdateRepairTurn).not.toHaveBeenCalled();
   });
 
@@ -129,13 +173,9 @@ describe("triage --run", () => {
     );
     mocks.runUpdateRepairLoop.mockImplementation(real.runUpdateRepairLoop);
     const runtime = createTriageRuntime();
-    await expect(
-      withTriageTerminal(true, () => triageCommand(runtime, { run: true, noExport: true })),
-    ).rejects.toMatchObject({ code: 1 });
-    expect(runtime.log).toHaveBeenCalledWith(
-      expect.stringMatching(/Embedded repair unrepaired: .*Cannot establish the update target\./),
-    );
-    expect(runtime.log).toHaveBeenCalledWith(expect.stringContaining("openclaw update repair"));
+    await runAdmitted(runtime, { noExport: true });
+    expectRepair(runtime, "unrepaired", "Cannot establish the update target.");
+    expectRepair(runtime, "unrepaired", "openclaw update repair");
     expect(mocks.runUpdateRepairTurn).not.toHaveBeenCalled();
     expect(await readRestartSentinelReadOnly()).toEqual(saved);
   });
@@ -197,15 +237,10 @@ describe("triage --run", () => {
     );
     mocks.runUpdateRepairLoop.mockImplementation(real.runUpdateRepairLoop);
     const runtime = createTriageRuntime();
-    await expect(
-      withTriageTerminal(true, () => triageCommand(runtime, { run: true, noExport: true })),
-    ).rejects.toMatchObject({ code: 1 });
-    const output = runtime.log.mock.calls.flat().join("\n");
-    expect(output).toContain("Embedded repair unrepaired:");
-    expect(output).toContain("openclaw update repair");
-    expect(output).not.toContain("already resolved");
+    await runAdmitted(runtime, { noExport: true });
+    expectRepair(runtime, "unrepaired", "openclaw update repair");
     if (pendingMigration) {
-      expect(output).toContain('Plugin "codex" state migration is pending');
+      expectRepair(runtime, "unrepaired", 'Plugin "codex" state migration is pending');
     }
     expect(getUpdateRun(run.runId)?.status).toBe("failed");
     expect(await readRestartSentinelReadOnly()).toBeNull();
@@ -222,13 +257,9 @@ describe("triage --run", () => {
     );
     mocks.runUpdateRepairLoop.mockImplementation(real.runUpdateRepairLoop);
     const runtime = createTriageRuntime();
-    await expect(
-      withTriageTerminal(true, () => triageCommand(runtime, { run: true, noExport: true })),
-    ).rejects.toMatchObject({ code: 1 });
-    expect(runtime.log).toHaveBeenCalledWith(
-      expect.stringMatching(/Embedded repair unrepaired: .*Update history is unavailable/),
-    );
-    expect(runtime.log).toHaveBeenCalledWith(expect.stringContaining("openclaw update repair"));
+    await runAdmitted(runtime, { noExport: true });
+    expectRepair(runtime, "unrepaired", "Update history is unavailable");
+    expectRepair(runtime, "unrepaired", "openclaw update repair");
     expect(mocks.runUpdateRepairTurn).not.toHaveBeenCalled();
   });
 
@@ -332,21 +363,13 @@ describe("triage --run", () => {
         }),
       );
     }
-    const command = withTriageTerminal(true, () =>
-      triageCommand(runtime, { run: true, noExport: true, updateResult }),
-    );
+    await runAdmitted(runtime, { noExport: true, updateResult });
     if (updateResult || newer.includes("restoration")) {
-      await expect(command).rejects.toMatchObject({ code: 1 });
+      expectRepair(runtime, "unrepaired", "Next step:");
       expect(verified).not.toHaveBeenCalled();
-      expect(runtime.log.mock.calls.flat().join("\n")).not.toContain("already resolved");
       return;
     }
-    await command;
-    expect(runtime.log).toHaveBeenCalledWith(
-      expect.stringContaining(
-        `Embedded repair already resolved: ${rollback ? "Rollback" : "Update"} to ${version}`,
-      ),
-    );
+    expectRepair(runtime, "repaired", `${rollback ? "Rollback" : "Update"} to ${version}`);
     expect(verified).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({ expectedVersion: version }),
     );
@@ -379,6 +402,7 @@ describe("triage --run", () => {
         mocks.runUtf8CommandWithTimeout.mockResolvedValue({
           code: 1,
           termination: "exit",
+          cleanup: "normal",
           stdout: JSON.stringify({
             ok: false,
             findings: [{ severity: "error", message: "Current configuration is invalid." }],
@@ -386,20 +410,12 @@ describe("triage --run", () => {
         });
       }
       const runtime = createTriageRuntime();
-      const command = withTriageTerminal(true, () =>
-        triageCommand(runtime, { run: true, noExport: true }),
-      );
+      await runAdmitted(runtime, { noExport: true });
       if (doctorErrors) {
-        await expect(command).rejects.toMatchObject({ code: 1 });
-        const output = runtime.log.mock.calls.flat().join("\n");
-        expect(output).toContain("Current configuration is invalid.");
-        expect(output).not.toContain("already resolved");
+        expectRepair(runtime, "unrepaired", "Current configuration is invalid.");
         return;
       }
-      await command;
-      expect(runtime.log).toHaveBeenCalledWith(
-        expect.stringContaining("Embedded repair already resolved:"),
-      );
+      expectRepair(runtime, "repaired", "Doctor lint reports no errors.");
       expect(mocks.runUpdateRepairTurn).not.toHaveBeenCalled();
       expect(getUpdateRun(run.runId)?.status).toBe("failed");
     },
@@ -445,18 +461,15 @@ describe("triage --run", () => {
       );
       mocks.runUpdateRepairLoop.mockImplementation(real.runUpdateRepairLoop);
       const runtime = createTriageRuntime();
-      const command = withTriageTerminal(true, () =>
-        triageCommand(runtime, { run: true, noExport: true, updateResult: failurePath }),
-      );
-      await expect(command).rejects.toMatchObject({ code: 1 });
+      await runAdmitted(runtime, { noExport: true, updateResult: failurePath });
       const result = await mocks.runUpdateRepairLoop.mock.results[0]?.value;
       expect(result).toMatchObject({ status: "unrepaired", finalValidation: { ok: false } });
-      expect(runtime.log).toHaveBeenCalledWith(
-        expect.stringContaining(
-          identity === "recorded target"
-            ? "The updater has not recorded a completed resolution"
-            : "Cannot establish the update target.",
-        ),
+      expectRepair(
+        runtime,
+        "unrepaired",
+        identity === "recorded target"
+          ? "The updater has not recorded a completed resolution"
+          : "Cannot establish the update target.",
       );
       expect(mocks.runUpdateRepairTurn).not.toHaveBeenCalled();
       expect(await fs.readFile(failurePath, "utf8")).toBe(saved);
@@ -484,11 +497,13 @@ describe("triage --run", () => {
     );
     mocks.runUpdateRepairLoop.mockImplementation(real.runUpdateRepairLoop);
     const runtime = createTriageRuntime();
-    await expect(
-      withTriageTerminal(true, () => triageCommand(runtime, { run: true, noExport: true })),
-    ).rejects.toMatchObject({ code: 1 });
-    expect(runtime.log).toHaveBeenCalledWith(
-      expect.stringContaining("Embedded repair unrepaired:"),
+    await runAdmitted(runtime, { noExport: true });
+    expect(runtime.writeJson).toHaveBeenCalledWith(
+      expect.objectContaining({
+        updateRunId: run.runId,
+        repair: expect.objectContaining({ status: "unrepaired" }),
+      }),
+      2,
     );
     expect(runtime.log).not.toHaveBeenCalledWith(
       expect.stringContaining("could not be correlated"),
@@ -522,23 +537,12 @@ describe("triage --run", () => {
     >("../infra/update-repair-agent.js");
     mocks.runUpdateRepairLoop.mockImplementation(runUpdateRepairLoop);
     const runtime = createTriageRuntime();
-    let exitCode = 0;
-    try {
-      await withTriageTerminal(true, () =>
-        triageCommand(runtime, { run: true, noExport: true, updateResult: failurePath }),
-      );
-    } catch (error) {
-      if (!(error instanceof Error) || !("code" in error) || typeof error.code !== "number") {
-        throw error;
-      }
-      exitCode = error.code;
-    }
+    await runAdmitted(runtime, { noExport: true, updateResult: failurePath });
     expect(await fs.readFile(failurePath, "utf8")).toBe(failureJson);
     const result = await mocks.runUpdateRepairLoop.mock.results[0]?.value;
-    expect({ exitCode, result, output: runtime.log.mock.calls.flat().join("\n") }).toMatchObject({
-      exitCode: 1,
-      result: { status: "unrepaired", finalValidation: { ok: false } },
-      output: expect.stringContaining("Next step"),
+    expect(result).toMatchObject({
+      status: "unrepaired",
+      finalValidation: { ok: false, summary: expect.stringContaining("Next step") },
     });
   });
 
@@ -570,7 +574,7 @@ describe("triage --run", () => {
     expect(runtime.log).toHaveBeenCalledWith("No repair agent was started.");
   });
 
-  it("labels an evidence-backed zero-attempt repair as already resolved", async () => {
+  it("reports an evidence-backed zero-attempt repair from the admitted child", async () => {
     const summary =
       "Update to 2026.9.4 recorded by the updater; installed runtime and managed Gateway readiness verified.";
     mocks.runUpdateRepairLoop.mockResolvedValue({
@@ -579,11 +583,20 @@ describe("triage --run", () => {
       finalValidation: { ok: true, score: 0, summary },
     });
     const runtime = createTriageRuntime();
-    await withTriageTerminal(true, () => triageCommand(runtime, { run: true, noExport: true }));
-    expect(runtime.log).toHaveBeenCalledWith(`Embedded repair already resolved: ${summary}`);
+    await runAdmitted(runtime, { noExport: true });
+    expect(runtime.writeJson).toHaveBeenCalledWith(
+      expect.objectContaining({
+        repair: expect.objectContaining({
+          status: "repaired",
+          attempts: [],
+          finalValidation: { ok: true, score: 0, summary },
+        }),
+      }),
+      2,
+    );
   });
 
-  it("keeps the onboarding hint when embedded repair has no usable inference", async () => {
+  it("retains unavailable inference for the original parent to explain", async () => {
     mocks.runUpdateRepairLoop.mockResolvedValue({
       status: "unavailable",
       attempts: [],
@@ -593,8 +606,15 @@ describe("triage --run", () => {
     const runtime = createTriageRuntime();
 
     await withTriageTerminal(true, async () => {
-      await expect(triageCommand(runtime, { noExport: true, run: true })).rejects.toThrow(
-        "Run `openclaw onboard` or use a suggested handoff command.",
+      await runAdmitted(runtime, { noExport: true });
+      expect(runtime.writeJson).toHaveBeenCalledWith(
+        expect.objectContaining({
+          repair: expect.objectContaining({
+            status: "unavailable",
+            reason: "The configured model is unavailable",
+          }),
+        }),
+        2,
       );
     });
     expect(mocks.runUpdateRepairLoop).toHaveBeenCalledOnce();
@@ -607,6 +627,7 @@ describe("triage --run", () => {
       .mockResolvedValueOnce({
         code: 1,
         termination: "exit",
+        cleanup: "normal",
         stdout: JSON.stringify({
           ok: false,
           findings: [{ severity: "error", message: "Broken installation" }],
@@ -615,17 +636,19 @@ describe("triage --run", () => {
       .mockResolvedValueOnce({
         code: 0,
         termination: "exit",
+        cleanup: "normal",
         stdout: JSON.stringify({
           ok: true,
           findings: [{ severity: "warning", message: "Optional improvement" }],
         }),
       });
-    mocks.runUpdateRepairLoop.mockImplementation(async ({ validate }) => {
+    mocks.runUpdateRepairLoop.mockImplementation(async ({ validate, context }) => {
       expect(await validate(signal)).toEqual({
         ok: false,
         score: -1,
         summary: "1 Doctor lint error(s): Broken installation",
       });
+      expect(context.error).toBe("1 Doctor lint error(s): Broken installation");
       const finalValidation = await validate(signal);
       expect(finalValidation).toEqual({
         ok: true,
@@ -640,7 +663,7 @@ describe("triage --run", () => {
     });
 
     await withTriageTerminal(true, () =>
-      triageCommand(runtime, {
+      runAdmitted(runtime, {
         noExport: true,
         run: true,
       }),
@@ -655,7 +678,7 @@ describe("triage --run", () => {
           installRoot: path.resolve(import.meta.dirname, "../.."),
         },
         context: expect.objectContaining({
-          error: "Operator requested installation triage",
+          error: "Doctor lint reports no errors.",
           phase: "verifying",
         }),
         budget: { maxTurns: 1 },
@@ -687,8 +710,14 @@ describe("triage --run", () => {
         terminateOnOutputLimit: true,
       }),
     );
-    expect(runtime.log).toHaveBeenCalledWith(
-      "Embedded repair repaired: Doctor lint reports no errors.",
+    expect(runtime.writeJson).toHaveBeenCalledWith(
+      expect.objectContaining({
+        repair: expect.objectContaining({
+          status: "repaired",
+          finalValidation: { ok: true, score: 0, summary: "Doctor lint reports no errors." },
+        }),
+      }),
+      2,
     );
   });
 
@@ -699,12 +728,13 @@ describe("triage --run", () => {
       attempts: [],
       finalValidation: { ok: false, score: -1, summary: "Broken installation" },
     });
-    await expect(
-      withTriageTerminal(true, () =>
-        triageCommand(createTriageRuntime(), { noExport: true, run: true }),
-      ),
-    ).rejects.toThrow(
-      "The operator's policy denies unattended repair (exec-denied-by-policy). Use `openclaw triage` for an external handoff.",
+    const runtime = createTriageRuntime();
+    await runAdmitted(runtime, { noExport: true });
+    expect(runtime.writeJson).toHaveBeenCalledWith(
+      expect.objectContaining({
+        repair: expect.objectContaining({ status: "unavailable", reason: "exec-denied-by-policy" }),
+      }),
+      2,
     );
   });
 
@@ -721,23 +751,47 @@ describe("triage --run", () => {
       expect(finalValidation.summary).not.toContain(secret);
       return { status: "unrepaired", attempts: [], finalValidation };
     });
-    await expect(
-      withTriageTerminal(true, () =>
-        triageCommand(createTriageRuntime(), { noExport: true, run: true }),
-      ),
-    ).rejects.toMatchObject({ code: 1 });
+    const runtime = createTriageRuntime();
+    await runAdmitted(runtime, { noExport: true });
+    expect(mocks.runUpdateRepairLoop).toHaveBeenCalledOnce();
+    expect(runtime.writeJson).toHaveBeenCalledWith(
+      expect.objectContaining({
+        repair: expect.objectContaining({
+          status: "unrepaired",
+          finalValidation: expect.objectContaining({ ok: false }),
+        }),
+      }),
+      2,
+    );
   });
 
   it.each([
-    { name: "malformed JSON", result: { code: 0, termination: "exit", stdout: "not-json" } },
-    { name: "missing findings", result: { code: 0, termination: "exit", stdout: "{}" } },
+    {
+      name: "malformed JSON",
+      result: { code: 0, termination: "exit", cleanup: "normal", stdout: "not-json" },
+    },
+    {
+      name: "missing findings",
+      result: { code: 0, termination: "exit", cleanup: "normal", stdout: "{}" },
+    },
     {
       name: "unexplained failure",
-      result: { code: 1, termination: "exit", stdout: '{"ok":false,"findings":[]}' },
+      result: {
+        code: 1,
+        termination: "exit",
+        cleanup: "normal",
+        stdout: '{"ok":false,"findings":[]}',
+      },
     },
     {
       name: "output limit",
-      result: { code: null, termination: "signal", stdout: "", outputLimitExceeded: true },
+      result: {
+        code: null,
+        termination: "signal",
+        cleanup: "cooperative",
+        stdout: "",
+        outputLimitExceeded: true,
+      },
     },
   ])("never accepts $name as healthy Doctor validation", async ({ result }) => {
     mocks.runUtf8CommandWithTimeout.mockResolvedValue(result);
@@ -747,11 +801,18 @@ describe("triage --run", () => {
       expect(finalValidation.summary).toContain("Doctor checks unavailable:");
       return { status: "unrepaired", attempts: [], finalValidation };
     });
-    await expect(
-      withTriageTerminal(true, () =>
-        triageCommand(createTriageRuntime(), { noExport: true, run: true }),
-      ),
-    ).rejects.toMatchObject({ code: 1 });
+    const runtime = createTriageRuntime();
+    await runAdmitted(runtime, { noExport: true });
+    expect(mocks.runUpdateRepairLoop).toHaveBeenCalledOnce();
+    expect(runtime.writeJson).toHaveBeenCalledWith(
+      expect.objectContaining({
+        repair: expect.objectContaining({
+          status: "unrepaired",
+          finalValidation: expect.objectContaining({ ok: false }),
+        }),
+      }),
+      2,
+    );
   });
 
   it("propagates validation cancellation after the Doctor child settles", async () => {
@@ -760,7 +821,7 @@ describe("triage --run", () => {
     mocks.runUtf8CommandWithTimeout.mockImplementation(async (_argv, { signal }) => {
       expect(signal).toBe(controller.signal);
       controller.abort(reason);
-      return { termination: "signal", code: null, stdout: "" };
+      return { termination: "signal", cleanup: "cooperative", code: null, stdout: "" };
     });
     mocks.runUpdateRepairLoop.mockImplementation(async ({ validate }) => {
       await expect(validate(controller.signal)).rejects.toBe(reason);
@@ -771,25 +832,26 @@ describe("triage --run", () => {
         finalValidation: { ok: false, score: -1, summary: "Cancelled" },
       };
     });
-    await expect(
-      withTriageTerminal(true, () =>
-        triageCommand(createTriageRuntime(), { noExport: true, run: true }),
-      ),
-    ).rejects.toMatchObject({ code: 2 });
+    const runtime = createTriageRuntime();
+    await runAdmitted(runtime, { noExport: true });
+    expect(runtime.writeJson).toHaveBeenCalledWith(
+      expect.objectContaining({
+        repair: expect.objectContaining({ status: "aborted", reason: "wall-clock-budget" }),
+      }),
+      2,
+    );
   });
 
   it.each([
     { interactive: false, nonInteractive: false },
     { interactive: true, nonInteractive: true },
   ])(
-    "refuses embedded execution without an allowed terminal ($interactive/$nonInteractive)",
+    "runs an admitted operator without requiring a terminal ($interactive/$nonInteractive)",
     async ({ interactive, nonInteractive }) => {
-      await expect(
-        withTriageTerminal(interactive, () =>
-          triageCommand(createTriageRuntime(), { noExport: true, run: true, nonInteractive }),
-        ),
-      ).rejects.toThrow("Embedded triage requires an interactive terminal");
-      expect(mocks.runUpdateRepairLoop).not.toHaveBeenCalled();
+      await withTriageTerminal(interactive, () =>
+        runAdmitted(createTriageRuntime(), { noExport: true, nonInteractive }),
+      );
+      expect(mocks.runUpdateRepairLoop).toHaveBeenCalledOnce();
     },
   );
 
@@ -800,8 +862,8 @@ describe("triage --run", () => {
     { status: "unrepaired", reason: "per-turn-budget", code: 2 },
     { status: "improved", reason: "wall-clock-budget", code: 2 },
   ])(
-    "reports $status and preserves nonzero exit $code for $reason",
-    async ({ status, reason, code }) => {
+    "preserves $status and $reason for parent exit mapping ($code)",
+    async ({ status, reason }) => {
       mocks.runUpdateRepairLoop.mockResolvedValue({
         status,
         reason,
@@ -809,14 +871,19 @@ describe("triage --run", () => {
         finalValidation: { ok: false, score: -1, summary: "Doctor lint found an error." },
       });
       const runtime = createTriageRuntime();
-      await expect(
-        withTriageTerminal(true, () => triageCommand(runtime, { noExport: true, run: true })),
-      ).rejects.toMatchObject({ code });
-      expect(runtime.log).toHaveBeenCalledWith("Attempt completed.");
-      expect(runtime.log).toHaveBeenCalledWith(
-        `Embedded repair ${status}: Doctor lint found an error.`,
+      await runAdmitted(runtime, { noExport: true });
+      expect(runtime.writeJson).toHaveBeenCalledWith(
+        expect.objectContaining({
+          repair: {
+            status,
+            reason,
+            attempts: [{ summary: "Attempt completed." }],
+            finalValidation: { ok: false, score: -1, summary: "Doctor lint found an error." },
+          },
+        }),
+        2,
       );
-      expect(runtime.error).toHaveBeenCalledWith(reason);
+      expect(runtime.exit).not.toHaveBeenCalled();
     },
   );
 
@@ -826,24 +893,26 @@ describe("triage --run", () => {
     );
     const runtime = createTriageRuntime();
 
-    await withTriageTerminal(true, () => triageCommand(runtime, { noExport: true, run: true }));
+    await withTriageTerminal(true, () => runAdmitted(runtime, { noExport: true, run: true }));
 
     expect(mocks.runUpdateRepairLoop).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({
-        context: expect.objectContaining({ error: "Operator requested installation triage" }),
+        context: expect.objectContaining({ error: "Operator requested validation and repair." }),
       }),
     );
-    expect(runtime.error).toHaveBeenCalledWith(expect.stringContaining("EACCES"));
+    expect(runtime.writeJson).toHaveBeenCalledWith(
+      expect.objectContaining({ repair: expect.objectContaining({ status: "repaired" }) }),
+      2,
+    );
+    expect(runtime.writeJson.mock.calls[0]?.[0]).not.toHaveProperty("promptPath");
     expect(runtime.log).not.toHaveBeenCalledWith(expect.stringMatching(/^Debugging prompt: /u));
   });
 
   it("does not publish a result after its recovery owner closes during repair", async () => {
     let current = true;
     const runtime = createTriageRuntime();
-    mocks.runUpdateRepairLoop.mockImplementation(async ({ isCurrent, onEvent }) => {
+    mocks.runUpdateRepairLoop.mockImplementation(async ({ isCurrent }) => {
       expect(isCurrent()).toBe(true);
-      onEvent({ type: "turn-started", turn: 1, provider: "openai", model: "gpt-5.6-luna" });
-      expect(runtime.log).toHaveBeenCalledWith("Starting repair turn 1 with openai/gpt-5.6-luna.");
       current = false;
       return {
         status: "aborted",
@@ -851,9 +920,8 @@ describe("triage --run", () => {
         finalValidation: { ok: false, score: -1, summary: "Closed" },
       };
     });
-    await withTriageTerminal(true, () =>
-      triageCommand(runtime, {
-        run: true,
+    await expect(
+      runAdmitted(runtime, {
         noExport: true,
         recovery: {
           target: resolveInstallationTarget(),
@@ -861,10 +929,8 @@ describe("triage --run", () => {
           isCurrent: () => current,
         },
       }),
-    );
-    expect(runtime.log).not.toHaveBeenCalledWith(
-      expect.stringContaining("Embedded repair aborted"),
-    );
+    ).rejects.toThrow("Operator owner closed");
+    expect(runtime.writeJson).not.toHaveBeenCalled();
     expect(runtime.exit).not.toHaveBeenCalled();
   });
 });

@@ -1,4 +1,5 @@
 // Persists task registry records through the global shared-state database owner.
+import { isDeepStrictEqual } from "node:util";
 import type { AdmittedRunContext } from "../agents/admitted-run-context.js";
 import {
   executionOwnerBindingFromAdmission,
@@ -14,6 +15,8 @@ import {
   type OpenClawStateDatabase,
   type OpenClawStateDatabaseOptions,
 } from "../state/openclaw-state-db.js";
+import { prepareTaskRecordUpdate } from "./task-registry-transition.operation.js";
+import { matchesTaskIdentityInDatabase } from "./task-registry.store.identity.js";
 import {
   bindTaskRunExecutionInDatabase,
   deleteTaskRowsWithDeliveryState,
@@ -110,6 +113,62 @@ export function listTaskRegistryRecordsByRuntimeSourceIdFromSqlite(params: {
       listTaskRecordsByRuntimeSourceIdInDatabase(db, params.runtime, sourceId),
     ) ?? []
   );
+}
+
+/** Compares raw persisted identity without creating or migrating shared state. */
+export function matchesTaskIdentityFromSqlite(task: TaskRecord): boolean | undefined {
+  try {
+    return withExistingOpenClawStateDatabaseReadOnly(({ db }) =>
+      matchesTaskIdentityInDatabase(db, task),
+    );
+  } catch {
+    return undefined;
+  }
+}
+
+/** Compare and settle only the joined parent's exact persisted projection, in one write transaction. */
+export function settleTriageTaskFromSqlite(params: {
+  expected: TaskRecord;
+  status: "succeeded" | "failed";
+  endedAt: number;
+  terminalSummary: string;
+  assertCurrent: () => void;
+}): TaskRecord | undefined {
+  return runOpenClawStateWriteTransaction(({ db }) => {
+    params.assertCurrent();
+    if (matchesTaskIdentityInDatabase(db, params.expected) !== true) {
+      return undefined;
+    }
+    const snapshot = readTaskRegistryMutationSnapshotInDatabase(db, {
+      taskId: params.expected.taskId,
+    });
+    const current = snapshot.tasks.get(params.expected.taskId);
+    if (
+      !current ||
+      current.runtime !== "cli" ||
+      current.taskKind !== "triage_repair" ||
+      current.status !== "running" ||
+      current.endedAt !== undefined ||
+      !isDeepStrictEqual(current, params.expected)
+    ) {
+      return undefined;
+    }
+    const { task } = prepareTaskRecordUpdate(current, {
+      status: params.status,
+      endedAt: params.endedAt,
+      lastEventAt: params.endedAt,
+      progressSummary: undefined,
+      terminalSummary: params.terminalSummary,
+    });
+    upsertTaskWithDeliveryStateInDatabase(
+      { db },
+      {
+        task,
+        deliveryState: snapshot.deliveryStates.get(task.taskId),
+      },
+    );
+    return task;
+  });
 }
 
 /** Binds only the exact task row selected before admission; runId is never a join key. */

@@ -13,6 +13,7 @@ import {
   createAgentCleanupScope,
 } from "../agents/run-cleanup-timeout.js";
 import { callGatewayFromCliWithTransport } from "../cli/gateway-rpc.js";
+import { withConsoleLogsRoutedToStderr } from "../cli/json-output-mode.js";
 import { exitCliAfterOutput } from "../cli/one-shot-exit.js";
 import { resolveSubprocessExitCode } from "../cli/subprocess-exit-code.js";
 import { isNodeRuntime } from "../daemon/runtime-binary.js";
@@ -26,10 +27,9 @@ import {
   withInstallationTarget,
   type InstallationTarget,
 } from "../infra/installation-target-context.js";
-import { resolveOpenClawPackageRoot } from "../infra/openclaw-root.js";
+import type { TriageBackingReference } from "../infra/triage-backing.js";
 import { acceptTriageContinuation } from "../infra/triage-continuation.js";
 import { writeTriageUpdateFailure } from "../infra/update-failure-report-artifact.js";
-import type { UpdateRepairValidation } from "../infra/update-repair-protocol.js";
 import {
   redactSupportString,
   type SupportRedactionContext,
@@ -44,7 +44,7 @@ import {
 import {
   renderTriagePrompt,
   type TriageBundle,
-  type TriageFailureContext,
+  type TriageContinuationContext,
 } from "./triage-prompt.js";
 import {
   readTriageUpdateFailure,
@@ -135,25 +135,25 @@ async function collectTriageBundle(
 export async function triageCommand(
   runtime: RuntimeEnv,
   options: TriageOptions = {},
-  automatic?: { failure: TriageFailureContext; signal: AbortSignal } & (
-    | { diagnosticOnly: true }
-    | { diagnosticOnly?: false; assertCurrent: () => void }
-  ),
+  automatic?: TriageContinuationContext & {
+    signal: AbortSignal;
+    backing?: TriageBackingReference;
+  } & ({ diagnosticOnly: true } | { diagnosticOnly?: false; assertCurrent: () => void }),
 ): Promise<void> {
-  if (
-    !automatic &&
-    !options.json &&
-    !options.run &&
-    !options.noExport &&
-    !options.nonInteractive &&
-    !options.agent
-  ) {
+  // Capture selectors before admission and dynamic imports can yield to other bindings.
+  const operatorTarget =
+    options.run === true || automatic !== undefined
+      ? { ...(options.recovery?.target ?? resolveInstallationTarget()) }
+      : undefined;
+
+  if (!automatic) {
     const continuation = await acceptTriageContinuation();
     if (continuation) {
       const bridge = createEmbeddedStateSignalBridge();
       try {
         const automaticRuntime: RuntimeEnv = {
           ...runtime,
+          ...(continuation.failure ? { log: runtime.error } : {}),
           exit: (code) => {
             throw new ExitError(code);
           },
@@ -162,7 +162,7 @@ export async function triageCommand(
         try {
           return await cleanup.run(() =>
             triageCommand(automaticRuntime, options, {
-              failure: continuation.failure,
+              ...continuation,
               signal: AbortSignal.any([continuation.signal, bridge.signal]),
               assertCurrent: continuation.assertCurrent,
             }),
@@ -185,12 +185,37 @@ export async function triageCommand(
   if (!isCurrent()) {
     return;
   }
+  const dispatchOperator = async (capturedTarget: InstallationTarget) => {
+    const { runOperatorTriage } = await import("./triage-operator.js");
+    return await runOperatorTriage({
+      runtime,
+      target: capturedTarget,
+      json: options.json === true,
+      noExport: options.noExport === true,
+      updateResult: options.updateResult,
+      updateFailure: options.recovery?.updateFailure,
+      signal: options.recovery?.signal,
+      isCurrent,
+    });
+  };
+  if (
+    options.run === true &&
+    !automatic &&
+    operatorTarget &&
+    (!options.recovery || options.json === true)
+  ) {
+    return await dispatchOperator(operatorTarget);
+  }
+  // The admitted child receives captured selectors; Doctor may load dotenv.
+  const admittedTarget = automatic ? operatorTarget : undefined;
   const interactive = process.stdin.isTTY && process.stdout.isTTY;
   const allowAgent = automatic
     ? !automatic.diagnosticOnly
-    : options.json !== true && options.nonInteractive !== true && interactive;
+    : options.run === true ||
+      (options.json !== true && options.nonInteractive !== true && interactive);
   const deferDiagnostics =
-    !automatic && allowAgent && Boolean(options.recovery || options.updateResult);
+    !automatic &&
+    (options.run === true || (allowAgent && Boolean(options.recovery || options.updateResult)));
   let findings: readonly HealthFinding[] = [];
   if (!deferDiagnostics) {
     try {
@@ -210,20 +235,23 @@ export async function triageCommand(
     }
   }
   // Standalone Doctor loads dotenv; recovery carries selectors captured before mutation.
-  const target = options.recovery?.target ?? resolveInstallationTarget();
+  const target = options.recovery?.target ?? admittedTarget ?? resolveInstallationTarget();
   const targetEnv = { ...process.env, ...installationTargetEnv(target) };
-  const agentCwd = automatic?.failure.installationRoot ?? options.recovery?.cwd;
+  const agentCwd =
+    (automatic?.failure ?? automatic?.operator)?.installationRoot ?? options.recovery?.cwd;
   const agentOptions = agentCwd ? { cwd: agentCwd } : {};
   const redaction = { env: targetEnv, stateDir: target.stateDir };
   const pendingUpdate =
-    !options.recovery && !options.updateResult
+    !options.recovery && !options.updateResult && !automatic?.operator?.updateFailure
       ? await readPendingTriageUpdateFailure(targetEnv, redaction)
       : undefined;
   const updateFailure = options.recovery
     ? sanitizeTriageUpdateFailure(options.recovery.updateFailure, redaction)
-    : options.updateResult
-      ? await readTriageUpdateFailure(options.updateResult, redaction)
-      : pendingUpdate;
+    : automatic?.operator?.updateFailure
+      ? sanitizeTriageUpdateFailure(automatic.operator.updateFailure, redaction)
+      : options.updateResult
+        ? await readTriageUpdateFailure(options.updateResult, redaction)
+        : pendingUpdate;
   // Captured interactive recovery must reach the repair agent before fresh checks
   // or exports can block on the broken installation. Unattended runs still collect.
   const bundle: TriageBundle = deferDiagnostics
@@ -235,6 +263,7 @@ export async function triageCommand(
     redaction,
     updateFailure,
     failure: automatic?.failure,
+    operator: automatic?.operator,
   });
   // Packaged OpenClaw/Bun hosts cannot interpret npm shim entrypoints. Reuse the
   // active Node runtime or require an installed node.exe before choosing a shim.
@@ -269,7 +298,7 @@ export async function triageCommand(
     );
   });
   let runEmbedded = options.run === true;
-  if (automatic && !automatic.diagnosticOnly) {
+  if (automatic?.failure && !automatic.diagnosticOnly) {
     const { readConfigFileSnapshot } = await import("../config/config.js");
     const snapshot = await readConfigFileSnapshot({ observe: false });
     const config = snapshot.runtimeConfig ?? snapshot.config;
@@ -335,6 +364,88 @@ export async function triageCommand(
     detectedAgents: externalAgents.map(({ agent }) => agent),
     suggestedCommands,
   };
+  let repairTaskId: string | undefined;
+  const startRepairTask = async () => {
+    // Only these routes have a matching original-parent terminal result consumer.
+    if (
+      !automatic ||
+      automatic.diagnosticOnly ||
+      !automatic.backing ||
+      automatic.failure?.gateway === "preserve"
+    ) {
+      return;
+    }
+    const { startTriageRepairTask } = await import("./triage-task.js");
+    repairTaskId = startTriageRepairTask({
+      backing: automatic.backing,
+      signal: automatic.signal,
+      assertCurrent: automatic.assertCurrent,
+      originalUpdateRunId:
+        updateFailure && "result" in updateFailure ? updateFailure.result.runId : undefined,
+    });
+  };
+  const runAutomaticRepair = async (
+    run: () => Promise<{ exitCode: number; repairTaskId?: string }>,
+  ) => {
+    if (
+      automatic &&
+      !automatic.diagnosticOnly &&
+      automatic.backing &&
+      automatic.failure?.gateway === "verify-running"
+    ) {
+      const { backing, failure } = automatic;
+      const { runStartupTriageRepair } = await import("./triage-startup.js");
+      const result = await withConsoleLogsRoutedToStderr(() =>
+        runStartupTriageRepair({
+          env: targetEnv,
+          failure,
+          backing,
+          signal: automatic.signal,
+          assertCurrent: automatic.assertCurrent,
+          run,
+        }),
+      );
+      writeRuntimeJson(runtime, result);
+      return undefined;
+    }
+    return await run();
+  };
+  if (automatic?.operator && !automatic.diagnosticOnly) {
+    const { runTriageRepair } = await import("./triage-repair.js");
+    await startRepairTask();
+    const repair = await runTriageRepair({
+      target,
+      targetEnv,
+      findings,
+      updateFailure,
+      installRoot: automatic.operator.installationRoot,
+      implicitUpdate: automatic.operator.implicitUpdate === true,
+      authority: automatic,
+    });
+    if (!isCurrent()) {
+      return;
+    }
+    if (options.json) {
+      // The original parent consumes only this joined result. Diagnostic handoff
+      // commands can repeat an unsaved prompt and overflow the bounded result pipe.
+      writeRuntimeJson(runtime, {
+        installationRoot: automatic.operator.installationRoot,
+        updateRunId:
+          updateFailure && "result" in updateFailure ? updateFailure.result.runId : undefined,
+        repair,
+        ...(repairTaskId ? { repairTaskId } : {}),
+      });
+    } else {
+      runtime.log(
+        repair.status === "repaired"
+          ? "Repair checks passed. Gateway activation is reported separately."
+          : `Repair incomplete: ${repair.reason ?? repair.finalValidation.summary}`,
+      );
+    }
+    // Transport completion means the admitted operation and cleanup settled.
+    // The parent retains this result and maps repair status to the operator exit code.
+    return;
+  }
   if (options.json === true) {
     writeRuntimeJson(runtime, report);
     return;
@@ -346,7 +457,7 @@ export async function triageCommand(
     interactive &&
     options.nonInteractive !== true &&
     canStartAgent &&
-    (options.recovery !== undefined || automatic?.failure.kind === "update");
+    (options.recovery !== undefined || automatic?.failure?.kind === "update");
   const agentLabel = runEmbedded
     ? "the embedded OpenClaw agent using your configured model"
     : handoff?.agent;
@@ -413,19 +524,24 @@ export async function triageCommand(
       return;
     }
   }
+  if (options.run === true && !automatic && operatorTarget) {
+    return await dispatchOperator(operatorTarget);
+  }
   if (!runEmbedded) {
     if (!handoff) {
+      if (automatic) {
+        await runAutomaticRepair(async () => {
+          throw new Error(
+            "No configured embedded agent or directly launchable external agent is available.",
+          );
+        });
+        return;
+      }
       if (options.agent) {
         runtime.error(`${options.agent} is not found or unavailable for direct launch on PATH.`);
         exitCliAfterOutput(runtime, 1);
       }
-      if (automatic) {
-        runtime.error(
-          "No configured embedded agent or directly launchable external agent is available.",
-        );
-      } else {
-        runtime.log("No coding agent can be launched directly; follow the next step above.");
-      }
+      runtime.log("No coding agent can be launched directly; follow the next step above.");
       return;
     }
     if (handoff.agent === "claude" && !automatic) {
@@ -468,43 +584,51 @@ export async function triageCommand(
     let exitCode: number;
     try {
       if (automatic) {
-        const { runUtf8CommandWithTimeout } = await import("../process/exec.js");
-        const automaticArgs =
-          handoff.agent === "claude"
-            ? ["--safe-mode", "-p"]
-            : ["exec", "--skip-git-repo-check", "-"];
-        if (!isCurrent()) {
-          return;
-        }
-        const result = await runUtf8CommandWithTimeout(
-          [handoff.program.command, ...handoff.program.leadingArgv, ...automaticArgs],
-          {
-            input: prompt,
-            env: { ...targetEnv, OPENCLAW_SHELL: "exec" },
-            ...agentOptions,
-            signal: automatic.signal,
-            timeoutMs: 600_000,
-            killProcessTree: true,
-            killSignal: "SIGINT",
-            outputCapture: "tail",
-            maxOutputBytes: 32 * 1024,
-          },
-        );
-        // External runtimes own native commands in independent process groups.
-        // Their root/group exit is not a descendant-cleanup receipt.
-        recordAgentCleanupFailure();
-        for (const output of [result.stdout, result.stderr]) {
-          if (output.trim()) {
-            runtime.log(redactSupportString(output, redaction, { maxLength: 32 * 1024 }));
+        const automaticResult = await runAutomaticRepair(async () => {
+          const { runUtf8CommandWithTimeout } = await import("../process/exec.js");
+          const automaticArgs =
+            handoff.agent === "claude"
+              ? ["--safe-mode", "-p"]
+              : ["exec", "--skip-git-repo-check", "-"];
+          if (!isCurrent()) {
+            return { exitCode: 1 };
           }
-        }
-        exitCode = result.termination === "exit" ? (result.code ?? 1) : 1;
-        if (exitCode !== 0) {
-          runtime.error(
-            `${handoff.agent} triage failed (${result.termination}, exit ${result.code ?? "unknown"}).`,
+          await startRepairTask();
+          if (!isCurrent()) {
+            return { exitCode: 1 };
+          }
+          const result = await runUtf8CommandWithTimeout(
+            [handoff.program.command, ...handoff.program.leadingArgv, ...automaticArgs],
+            {
+              input: prompt,
+              env: { ...targetEnv, OPENCLAW_SHELL: "exec" },
+              ...agentOptions,
+              signal: automatic.signal,
+              timeoutMs: 600_000,
+              killProcessTree: true,
+              killSignal: "SIGINT",
+              outputCapture: "tail",
+              maxOutputBytes: 32 * 1024,
+            },
           );
-          runtime.log(`Run manually: ${handoffCommands.external[handoff.agent]}`);
-        }
+          // External runtimes own native commands in independent process groups.
+          // Their root/group exit is not a descendant-cleanup receipt.
+          recordAgentCleanupFailure();
+          for (const output of [result.stdout, result.stderr]) {
+            if (output.trim()) {
+              runtime.error(redactSupportString(output, redaction, { maxLength: 32 * 1024 }));
+            }
+          }
+          const agentExitCode = result.termination === "exit" ? (result.code ?? 1) : 1;
+          if (agentExitCode !== 0) {
+            runtime.error(
+              `${handoff.agent} triage failed (${result.termination}, exit ${result.code ?? "unknown"}).`,
+            );
+            runtime.log(`Run manually: ${handoffCommands.external[handoff.agent]}`);
+          }
+          return { exitCode: agentExitCode, ...(repairTaskId ? { repairTaskId } : {}) };
+        });
+        exitCode = automaticResult?.exitCode ?? 0;
       } else {
         exitCode = await new Promise<number>((resolve, reject) => {
           const child = spawn(handoff.program.command, [...handoff.program.leadingArgv, ...args], {
@@ -542,128 +666,32 @@ export async function triageCommand(
   }
 
   if (automatic && !automatic.diagnosticOnly) {
-    const result = await withInstallationTarget(target, async () => {
-      const { agentExecCommand } = await import("./agent-exec.js");
-      if (!isCurrent()) {
-        return { exitCode: 1 };
-      }
-      return agentExecCommand(prompt, agentOptions, runtime, {
-        abortSignal: automatic.signal,
-        timeoutMs: 600_000,
-        maxToolCalls: 40,
-        assertSourceCurrent: automatic.assertCurrent,
+    const runConfigured = async () =>
+      withInstallationTarget(target, async () => {
+        const { agentExecCommand } = await import("./agent-exec.js");
+        if (!isCurrent()) {
+          return { exitCode: 1 };
+        }
+        await startRepairTask();
+        if (!isCurrent()) {
+          return { exitCode: 1 };
+        }
+        const result = await agentExecCommand(
+          prompt,
+          agentOptions,
+          { ...runtime, log: runtime.error },
+          {
+            abortSignal: automatic.signal,
+            timeoutMs: 600_000,
+            maxToolCalls: 40,
+            assertSourceCurrent: automatic.assertCurrent,
+          },
+        );
+        return { ...result, ...(repairTaskId ? { repairTaskId } : {}) };
       });
-    });
-    if (result.exitCode !== 0) {
+    const result = await runAutomaticRepair(runConfigured);
+    if (result && result.exitCode !== 0) {
       exitCliAfterOutput(runtime, result.exitCode);
     }
-
-    return;
-  }
-
-  const { runUpdateRepairLoop } = await import("../infra/update-repair-agent.js");
-  const installRoot = await resolveOpenClawPackageRoot({
-    moduleUrl: import.meta.url,
-    argv1: process.argv[1],
-  });
-  if (!isCurrent()) {
-    return;
-  }
-  if (!installRoot) {
-    throw new Error("Cannot locate the OpenClaw installation; use a suggested handoff command.");
-  }
-  const failedResult =
-    updateFailure && "result" in updateFailure ? updateFailure.result : undefined;
-  const result = await runUpdateRepairLoop({
-    target: {
-      stateDir: target.stateDir,
-      configPath: target.configPath,
-      workspaceDir: target.defaultWorkspaceDir,
-      installRoot,
-    },
-    context: {
-      ...(updateFailure ?? { error: "Operator requested installation triage" }),
-      phase: "verifying",
-      beforeVersion: failedResult?.before?.version ?? undefined,
-      symptoms: findings
-        .slice(0, 20)
-        .map((finding) =>
-          redactSupportString(
-            `[${finding.severity}] ${finding.checkId}: ${finding.message}`,
-            redaction,
-            { maxLength: 200 },
-          ),
-        ),
-    },
-    budget: { maxTurns: 1 },
-    isCurrent,
-    onEvent: (event) => {
-      if (event.type === "turn-started" && isCurrent()) {
-        runtime.log(`Starting repair turn ${event.turn} with ${event.provider}/${event.model}.`);
-      }
-    },
-    validate: async (signal): Promise<UpdateRepairValidation> => {
-      try {
-        const validateDoctor = async () => {
-          const { validateTriageDoctor } = await import("./triage-doctor.js");
-          return validateTriageDoctor({ installRoot, env: targetEnv, signal, redaction });
-        };
-        const { validateTriageUpdateResolution } =
-          await import("../infra/update-triage-resolution.js");
-        const resolution = await validateTriageUpdateResolution({
-          failure: updateFailure,
-          implicit: !options.updateResult && !options.recovery,
-          installRoot,
-          env: targetEnv,
-          signal,
-          validateDoctor,
-        });
-        return {
-          ...resolution,
-          summary: triageCollectionError(resolution.summary, redaction),
-          ...(resolution.stopReason
-            ? { stopReason: triageCollectionError(resolution.stopReason, redaction) }
-            : {}),
-        };
-      } catch (error) {
-        signal.throwIfAborted();
-        const summary = `${updateFailure ? "Update resolution checks" : "Doctor checks"} unavailable: ${triageCollectionError(error, redaction)}${updateFailure ? " Next step: run `openclaw update status --json`, then `openclaw update repair`." : ""}`;
-        return {
-          ok: false,
-          // An unavailable oracle must never appear better than known Doctor errors.
-          score: Number.MIN_SAFE_INTEGER,
-          summary,
-          ...(updateFailure ? { stopReason: summary } : {}),
-        };
-      }
-    },
-  });
-  if (!isCurrent()) {
-    return;
-  }
-  if (result.status === "unavailable") {
-    if (result.reason === "exec-denied-by-policy") {
-      throw new Error(
-        "The operator's policy denies unattended repair (exec-denied-by-policy). Use `openclaw triage` for an external handoff.",
-      );
-    }
-    throw new Error(
-      `Embedded agent unavailable: ${result.reason}. Run \`openclaw onboard\` or use a suggested handoff command.`,
-    );
-  }
-  for (const attempt of result.attempts) {
-    runtime.log(attempt.summary);
-  }
-  const verdict =
-    result.status === "repaired" && result.attempts.length === 0
-      ? "already resolved"
-      : result.status;
-  runtime.log(`Embedded repair ${verdict}: ${result.finalValidation.summary}`);
-  if (result.status !== "repaired") {
-    if (result.reason) {
-      runtime.error(result.reason);
-    }
-    const timedOut = result.reason === "per-turn-budget" || result.reason === "wall-clock-budget";
-    exitCliAfterOutput(runtime, timedOut ? 2 : 1);
   }
 }

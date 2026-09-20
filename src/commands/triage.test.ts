@@ -34,6 +34,7 @@ const mocks = vi.hoisted(() => ({
   writeDiagnosticSupportExport: vi.fn(),
   gatherDaemonStatus: vi.fn(),
   runUpdateRepairLoop: vi.fn(),
+  runOperatorTriage: vi.fn(),
   agentExecCommand: vi.fn(),
   resolveExecutablePath: vi.fn(),
   runUtf8CommandWithTimeout: vi.fn(),
@@ -81,6 +82,8 @@ vi.mock("../infra/update-repair-agent.js", () => ({
   runUpdateRepairLoop: mocks.runUpdateRepairLoop,
 }));
 
+vi.mock("./triage-operator.js", () => ({ runOperatorTriage: mocks.runOperatorTriage }));
+
 vi.mock("./agent-exec.js", () => ({ agentExecCommand: mocks.agentExecCommand }));
 
 describe("triageCommand", () => {
@@ -92,6 +95,8 @@ describe("triageCommand", () => {
     mocks.select.mockResolvedValue("triage");
     stateDir = tempDirs.make("openclaw-triage-test-");
     vi.stubEnv("OPENCLAW_STATE_DIR", stateDir);
+    vi.stubEnv("OPENCLAW_PROFILE", undefined);
+    vi.stubEnv("OPENCLAW_CONTAINER_HINT", undefined);
     vi.stubEnv("OPENCLAW_SHELL", "");
     vi.stubEnv("OPENCLAW_SUPERVISOR_MODE", "");
     vi.stubEnv("CODEX_THREAD_ID", "");
@@ -145,6 +150,7 @@ describe("triageCommand", () => {
 
       expect(mocks.spawn).not.toHaveBeenCalled();
       expect(mocks.runUpdateRepairLoop).not.toHaveBeenCalled();
+      expect(mocks.runOperatorTriage).not.toHaveBeenCalled();
       expect(mocks.agentExecCommand).not.toHaveBeenCalled();
       expect(runtime.exit).not.toHaveBeenCalled();
       const output = runtime.log.mock.calls.flat().join("\n");
@@ -164,6 +170,32 @@ describe("triageCommand", () => {
       ).toMatchObject({ result: { status: "error", reason: "install failed" } });
     },
   );
+
+  it("dispatches explicit JSON repair with a captured recovery context", async () => {
+    const runtime = createTriageRuntime();
+    const target = resolveInstallationTarget();
+    const signal = new AbortController().signal;
+    const updateFailure = { result: failedUpdate };
+    await triageCommand(runtime, {
+      run: true,
+      json: true,
+      noExport: true,
+      recovery: { target, updateFailure, signal },
+    });
+    expect(mocks.runOperatorTriage).toHaveBeenCalledExactlyOnceWith({
+      runtime,
+      target,
+      json: true,
+      noExport: true,
+      updateResult: undefined,
+      updateFailure,
+      signal,
+      isCurrent: expect.any(Function),
+    });
+    expect(runtime.writeJson).not.toHaveBeenCalled();
+    expect(mocks.collectDoctorFindings).not.toHaveBeenCalled();
+    expect(mocks.agentExecCommand).not.toHaveBeenCalled();
+  });
 
   it("keeps the updater's failure exit code when automatic triage is declined", async () => {
     mocks.confirm.mockResolvedValue(false);
@@ -251,13 +283,11 @@ describe("triageCommand", () => {
           }
           await pending;
           expect(mocks.spawn).toHaveBeenCalledTimes(launches && !run ? 1 : 0);
-          expect(mocks.runUpdateRepairLoop).toHaveBeenCalledTimes(launches && run ? 1 : 0);
-          expect(
-            runtime.log.mock.calls
-              .flat()
-              .join("\n")
-              .includes("No answer; skipping automatic repair."),
-          ).toBe(answer === "timeout");
+          expect(mocks.runUpdateRepairLoop).not.toHaveBeenCalled();
+          expect(mocks.runOperatorTriage).toHaveBeenCalledTimes(launches && run ? 1 : 0);
+          const outputText = runtime.log.mock.calls.flat().join("\n");
+          const skipMessage = "No answer; skipping automatic repair.";
+          expect(outputText.includes(skipMessage)).toBe(answer === "timeout");
           expect(input.listenerCount("keypress")).toBe(0);
           expect(output.listenerCount("resize")).toBe(0);
           expect(input.isPaused()).toBe(true);
@@ -628,15 +658,17 @@ describe("triageCommand", () => {
     },
   );
 
-  it.each([false, true])("preserves manual non-TTY semantics (run=%s)", async (run) => {
-    await withTriageTerminal(false, async () => {
-      const invocation = triageCommand(createTriageRuntime(), { noExport: true, run });
-      if (run) {
-        await expect(invocation).rejects.toThrow("requires an interactive terminal");
-      } else {
-        await invocation;
-      }
-    });
+  it.each([false, true])("routes non-TTY repair through the operator (run=%s)", async (run) => {
+    const runtime = createTriageRuntime();
+    const target = resolveInstallationTarget();
+    await withTriageTerminal(false, () => triageCommand(runtime, { noExport: true, run }));
+    expect(mocks.runOperatorTriage).toHaveBeenCalledTimes(run ? 1 : 0);
+    if (run) {
+      expect(mocks.runOperatorTriage).toHaveBeenCalledWith(
+        expect.objectContaining({ runtime, target, json: false, noExport: true }),
+      );
+    }
+    expect(mocks.confirm).not.toHaveBeenCalled();
     expect(mocks.runUpdateRepairLoop).not.toHaveBeenCalled();
     expect(mocks.agentExecCommand).not.toHaveBeenCalled();
     expect(mocks.spawn).not.toHaveBeenCalled();

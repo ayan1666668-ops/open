@@ -20,10 +20,12 @@ export async function validateTriageDoctor(params: {
   env: NodeJS.ProcessEnv;
   signal: AbortSignal;
   redaction: SupportRedactionContext;
+  assertCurrent?: () => void;
 }): Promise<UpdateRepairValidation> {
   const { installRoot, env, signal, redaction } = params;
   const entrypoint = await resolveGatewayInstallEntrypoint(installRoot);
   signal.throwIfAborted();
+  params.assertCurrent?.();
   if (!entrypoint) {
     throw new Error("The installed OpenClaw entrypoint is unavailable.");
   }
@@ -50,7 +52,13 @@ export async function validateTriageDoctor(params: {
       terminateOnOutputLimit: true,
     },
   );
+  if (doctorCommand.cleanup !== "normal" && doctorCommand.cleanup !== "cooperative") {
+    throw Object.assign(new Error("Doctor validation cleanup is uncertain."), {
+      cleanup: "uncertain",
+    });
+  }
   signal.throwIfAborted();
+  params.assertCurrent?.();
   if (doctorCommand.termination !== "exit" || doctorCommand.outputLimitExceeded) {
     throw new Error("Doctor lint did not complete within its execution or output budget.");
   }

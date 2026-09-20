@@ -280,12 +280,15 @@ describe("saved update failure resolution", () => {
     expect(latestRun.status).toBe("skipped");
   });
 
-  it.each([
-    ["before verification", "OPENCLAW_UPDATE_IN_PROGRESS"],
-    ["during verification", "OPENCLAW_UPDATE_POST_CORE_CONVERGENCE"],
-  ])(
-    "does not certify pending plugin migrations %s despite updater completion",
-    async (when, marker) => {
+  it.each(
+    ["before verification", "during verification"].flatMap((when) =>
+      [false, "OPENCLAW_UPDATE_IN_PROGRESS", "OPENCLAW_UPDATE_POST_CORE_CONVERGENCE"].map(
+        (marker) => ({ when, marker }),
+      ),
+    ),
+  )(
+    "does not certify pending plugin migrations $when despite updater completion (marker: $marker)",
+    async ({ when, marker }) => {
       const pending = [
         {
           pluginId: "codex",
@@ -304,13 +307,15 @@ describe("saved update failure resolution", () => {
       }
       const result = await validate(failure(), {
         OPENCLAW_STATE_DIR: "/fixture/state",
-        [marker]: "1",
+        ...(marker ? { [String(marker)]: "1" } : { OPENCLAW_UPDATE_IN_PROGRESS: "0" }),
       });
       expect(result).toMatchObject({
         ok: false,
         summary: expect.stringContaining('Plugin "codex" state migration is pending'),
       });
-      expect(result.summary).toContain("Let the current update or repair finish.");
+      expect(result.summary.includes("Let the current update or repair finish.")).toBe(
+        Boolean(marker),
+      );
     },
   );
 
