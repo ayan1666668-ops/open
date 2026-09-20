@@ -38,7 +38,7 @@ export type OpenAIQuicksilverSocket = {
 
 export type OpenAIQuicksilverSocketFactory = (
   url: string,
-  options: ClientOptions,
+  options: Pick<ClientOptions, "headers" | "maxPayload">,
 ) => OpenAIQuicksilverSocket;
 
 type OpenAIQuicksilverBufferedFrame = { data: RawData; isBinary: boolean };

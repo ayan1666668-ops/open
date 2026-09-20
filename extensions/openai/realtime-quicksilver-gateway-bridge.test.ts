@@ -5,7 +5,7 @@ import { OpenAIQuicksilverGatewayBridge } from "./realtime-quicksilver-gateway-b
 import type {
   OpenAIQuicksilverAudioPeerCallbacks,
   OpenAIQuicksilverAudioPeerContract,
-} from "./realtime-quicksilver-peer.runtime.js";
+} from "./realtime-quicksilver-media.runtime.js";
 import {
   releaseOpenAIQuicksilverSession,
   reserveOpenAIQuicksilverSession,
