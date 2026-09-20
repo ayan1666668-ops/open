@@ -369,7 +369,24 @@ export function createInMemoryTaskFlowRegistryStore(
   return {
     withSnapshotAsync: async (_context, consume) => consume(structuredClone(state)),
     readFlowAsync: async (_context, flowId) => structuredClone(state.flows.get(flowId)),
-    loadSnapshot: () => structuredClone(state),
+    loadSnapshot: (flowIds) => {
+      if (!flowIds) {
+        return structuredClone(state);
+      }
+      const selected = new Set(flowIds);
+      return {
+        flows: new Map(
+          [...state.flows]
+            .filter(([flowId]) => selected.has(flowId))
+            .toSorted(
+              ([leftId, left], [rightId, right]) =>
+                left.createdAt - right.createdAt ||
+                (leftId < rightId ? -1 : leftId > rightId ? 1 : 0),
+            )
+            .map(([flowId, flow]) => [flowId, structuredClone(flow)]),
+        ),
+      };
+    },
     upsertFlow: (flow) => {
       state.flows.set(flow.flowId, structuredClone(flow));
     },

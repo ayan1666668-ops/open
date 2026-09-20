@@ -29,7 +29,7 @@ export type TaskFlowRegistryUpdatePublication = {
   publish: () => void;
 };
 
-/** Full task-flow registry snapshot used for persistence restore and replacement writes. */
+/** Canonical flow rows, either the full registry or an explicitly requested ID set. */
 export type TaskFlowRegistryStoreSnapshot = {
   flows: Map<string, TaskFlowRecord>;
 };

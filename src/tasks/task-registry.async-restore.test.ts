@@ -27,10 +27,15 @@ import {
   reloadTaskFlowRegistryFromStoreAsync,
   runTaskFlowRegistryWorkerMutation,
   getTaskFlowById,
+  getTaskMirroredFlowIds,
+  listTaskFlowRecords,
   setFlowWaiting,
 } from "./task-flow-registry.js";
 import { getTaskFlowRegistryStore } from "./task-flow-registry.store.js";
-import { upsertTaskFlowRegistryRecordToSqlite } from "./task-flow-registry.store.sqlite.js";
+import {
+  deleteTaskFlowRegistryRecordFromSqlite,
+  upsertTaskFlowRegistryRecordToSqlite,
+} from "./task-flow-registry.store.sqlite.js";
 import type { TaskFlowRecord } from "./task-flow-registry.types.js";
 import { getTaskDeliveryState, upsertTaskDeliveryState } from "./task-registry-mutation.js";
 import type { TaskRegistryRestoreResult } from "./task-registry-restore.worker.js";
@@ -286,6 +291,118 @@ describe("asynchronous registry restoration", () => {
     } finally {
       tracker.restore();
     }
+  });
+
+  it("refreshes dirty flows without decoding unrelated retained payloads", async () => {
+    const marker = "unrelated-flow-refresh-payload";
+    for (let index = 0; index < 48; index += 1) {
+      upsertTaskFlowRegistryRecordToSqlite({
+        ...flow,
+        flowId: `unrelated-${index}`,
+        stateJson: { text: marker + "x".repeat(16 * 1024) },
+      });
+    }
+    const selected = [
+      { ...flow, flowId: "dirty-a" },
+      { ...flow, flowId: "dirty-b" },
+    ];
+    for (const record of selected) {
+      upsertTaskFlowRegistryRecordToSqlite(record);
+    }
+    upsertTaskFlowRegistryRecordToSqlite({ ...flow, flowId: "requested" });
+    const context = captureOpenClawStateWorkerContext();
+    await ensureTaskFlowRegistryReadyAsync(context);
+    const release = createDeferred();
+    const store = getTaskFlowRegistryStore();
+    const pending = selected.map((record) =>
+      runTaskFlowRegistryWorkerMutation(
+        { flowId: record.flowId, admission: context.admission },
+        async () => {
+          upsertTaskFlowRegistryRecordToSqlite({ ...record, revision: 1, goal: "Committed" });
+          await release.promise;
+        },
+        () => store.readFlowAsync(context, record.flowId),
+      ),
+    );
+    const tracker = trackSqliteStatementExecutions(
+      openOpenClawStateDatabase().db,
+      ["flows"],
+      (sql) => (/^\s*select\b/i.test(sql) && /\bfrom\s+"?flow_runs\b/i.test(sql) ? "flows" : null),
+    );
+    const parse = JSON.parse;
+    let decodedUnrelated = 0;
+    const decode = vi.spyOn(JSON, "parse").mockImplementation((value, reviver) => {
+      if (typeof value === "string" && value.includes(marker)) {
+        decodedUnrelated += 1;
+      }
+      return parse(value, reviver);
+    });
+    try {
+      expect(getTaskFlowById("dirty-a")).toMatchObject({ revision: 1, goal: "Committed" });
+      expect(decodedUnrelated).toBe(0);
+      expect(tracker.counts.flows).toBe(1);
+      expect(tracker.rowCounts.flows).toBe(2);
+      deleteTaskFlowRegistryRecordFromSqlite("dirty-b");
+      upsertTaskFlowRegistryRecordToSqlite({ ...flow, flowId: "dirty-a", revision: 2 });
+      expect(getTaskFlowById("dirty-b")).toBeUndefined();
+      expect(getTaskFlowById("dirty-a")?.revision).toBe(2);
+      expect(decodedUnrelated).toBe(0);
+      expect(tracker.counts.flows).toBe(3);
+      expect(tracker.rowCounts.flows).toBe(4);
+      upsertTaskFlowRegistryRecordToSqlite({ ...flow, flowId: "requested", revision: 2 });
+      expect(getTaskFlowById("requested")?.revision).toBe(2);
+      expect(decodedUnrelated).toBe(0);
+      expect(tracker.counts.flows).toBe(4);
+      expect(tracker.rowCounts.flows).toBe(6);
+      const absentIds = Array.from({ length: 250_001 }, (_, index) => `absent-${index}`);
+      expect(getTaskMirroredFlowIds([...absentIds, "dirty-a", "requested"])).toEqual(new Set());
+      expect(decodedUnrelated).toBe(0);
+      expect(tracker.counts.flows).toBe(5);
+      expect(tracker.rowCounts.flows).toBe(8);
+    } finally {
+      decode.mockRestore();
+      tracker.restore();
+      release.resolve();
+      await Promise.all(pending);
+    }
+    expect(getTaskFlowById("dirty-b")).toBeUndefined();
+    expect(getTaskFlowById("dirty-a")?.revision).toBe(2);
+  });
+
+  it("preserves tied flow order across dirty insertion and deletion rollback", async () => {
+    upsertTaskFlowRegistryRecordToSqlite(flow);
+    const context = captureOpenClawStateWorkerContext();
+    await ensureTaskFlowRegistryReadyAsync(context);
+    const store = getTaskFlowRegistryStore();
+    const release = createDeferred();
+    const pending = ["new-z", "new-a"].map((flowId) =>
+      runTaskFlowRegistryWorkerMutation(
+        { flowId, admission: context.admission },
+        async () => {
+          upsertTaskFlowRegistryRecordToSqlite({ ...flow, flowId });
+          await release.promise;
+        },
+        () => store.readFlowAsync(context, flowId),
+      ),
+    );
+    const ids = () => listTaskFlowRecords().map((record) => record.flowId);
+    try {
+      expect(ids()).toEqual([flow.flowId, "new-a", "new-z"]);
+      expect(getTaskFlowById("new-a")?.flowId).toBe("new-a");
+      expect(() =>
+        runOpenClawStateWriteTransaction(() => {
+          deleteTaskFlowRegistryRecordFromSqlite("new-a");
+          expect(getTaskFlowById("new-a")).toBeUndefined();
+          expect(ids()).toEqual([flow.flowId, "new-z"]);
+          throw new Error("rollback dirty flow deletion");
+        }),
+      ).toThrow("rollback dirty flow deletion");
+      expect(ids()).toEqual([flow.flowId, "new-a", "new-z"]);
+    } finally {
+      release.resolve();
+      await Promise.all(pending);
+    }
+    expect(ids()).toEqual([flow.flowId, "new-a", "new-z"]);
   });
 
   it.each(["before restore", "from restore observer"] as const)(

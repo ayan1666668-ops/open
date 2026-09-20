@@ -1,10 +1,51 @@
 import type { OpenClawStateDatabaseReadAdmission } from "../state/openclaw-state-db-async-lifecycle.js";
+import { captureOpenClawStateDatabaseReadAdmission } from "../state/openclaw-state-db-cache.js";
+import { resolveOpenClawStateSqlitePath } from "../state/openclaw-state-db.paths.js";
 import { captureOpenClawStateWorkerContext } from "../state/openclaw-state-worker-context.js";
 import type { OpenClawStateWorkerContext } from "../state/openclaw-state-worker-context.types.js";
-import { cloneFlowRecord, selectTaskFlowRecords } from "./task-flow-registry.records.js";
+import {
+  cloneFlowRecord,
+  normalizeRestoredFlowRecord,
+  selectTaskFlowRecords,
+} from "./task-flow-registry.records.js";
 import { getTaskFlowRegistryStore } from "./task-flow-registry.store.js";
 import type { TaskFlowRegistryStoreSnapshot } from "./task-flow-registry.store.types.js";
 import { isTerminalTaskFlow, type TaskFlowRecord } from "./task-flow-registry.types.js";
+import { createSyncRegistryReader } from "./task-registry-restore.js";
+
+/** Prepare canonical rows before the registry stages any projection changes. */
+export function prepareTaskFlowRegistryRefresh(params: {
+  flowIds?: readonly string[];
+  isCurrent: () => boolean;
+  isCurrentDatabase: (admission: OpenClawStateDatabaseReadAdmission) => boolean;
+}): (target: Map<string, TaskFlowRecord>) => void {
+  const store = getTaskFlowRegistryStore();
+  const databasePath = resolveOpenClawStateSqlitePath();
+  const reader = createSyncRegistryReader({
+    admission: captureOpenClawStateDatabaseReadAdmission(databasePath),
+    captureAdmission: () => captureOpenClawStateDatabaseReadAdmission(databasePath),
+    isCurrent: () =>
+      params.isCurrent() &&
+      getTaskFlowRegistryStore() === store &&
+      resolveOpenClawStateSqlitePath() === databasePath,
+    isCurrentDatabase: params.isCurrentDatabase,
+    loadSnapshot: () => store.loadSnapshot(params.flowIds),
+    changedMessage: "Task-flow registry refresh changed before publication.",
+  });
+  const restored = new Map(
+    [...reader.loadSnapshot().flows].map(([id, flow]) => [id, normalizeRestoredFlowRecord(flow)]),
+  );
+  return (target) => {
+    for (const flowId of params.flowIds ?? target.keys()) {
+      if (!restored.has(flowId)) {
+        target.delete(flowId);
+      }
+    }
+    for (const [flowId, flow] of restored) {
+      target.set(flowId, flow);
+    }
+  };
+}
 
 export type TaskFlowRegistryRead = {
   assertCurrent(this: void): void;
@@ -22,7 +63,7 @@ export function createTaskFlowRegistryReaders(owner: {
     dirtyFlowIds: ReadonlySet<string>;
   };
   pendingWrites: ReadonlyMap<string, { completions: ReadonlySet<Promise<void>> }>;
-  ensureReady(): void;
+  ensureReady(options?: { refreshProjection?: boolean; flowIds?: readonly string[] }): void;
   ensureReadyAsync(context: OpenClawStateWorkerContext): Promise<void>;
   isCurrentDatabase(admission: OpenClawStateDatabaseReadAdmission): boolean;
   installSnapshot(
@@ -31,7 +72,7 @@ export function createTaskFlowRegistryReaders(owner: {
   ): void;
 }) {
   const getTaskFlowById = (flowId: string): TaskFlowRecord | undefined => {
-    owner.ensureReady();
+    owner.ensureReady({ flowIds: [flowId] });
     const flow = owner.projection().flows.get(flowId);
     return flow ? cloneFlowRecord(flow) : undefined;
   };
@@ -114,9 +155,12 @@ export function createTaskFlowRegistryReaders(owner: {
     prepareTaskFlowRegistryRead,
     getTaskFlowById,
     getTaskMirroredFlowIds(this: void, flowIds: Iterable<string>): ReadonlySet<string> {
-      owner.ensureReady();
+      // Restore observers can change the live task index behind this lazy candidate iterator.
+      owner.ensureReady({ refreshProjection: false });
+      const selectedIds = [...flowIds];
+      owner.ensureReady({ flowIds: selectedIds });
       const mirrored = new Set<string>();
-      for (const flowId of flowIds) {
+      for (const flowId of selectedIds) {
         if (owner.projection().flows.get(flowId)?.syncMode === "task_mirrored") {
           mirrored.add(flowId);
         }

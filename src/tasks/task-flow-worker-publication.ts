@@ -13,6 +13,26 @@ export type PendingTaskFlowPublication = {
   readers: Set<{ written: boolean }>;
 };
 
+export function recordTaskFlowProjectionWrite(
+  pendingWrites: ReadonlyMap<string, PendingTaskFlowPublication>,
+  flowIds?: readonly string[],
+): void {
+  const recordWrite = (pending: PendingTaskFlowPublication | undefined) => {
+    for (const reader of pending?.readers ?? []) {
+      reader.written = true;
+    }
+  };
+  if (flowIds) {
+    for (const flowId of flowIds) {
+      recordWrite(pendingWrites.get(flowId));
+    }
+  } else {
+    for (const pending of pendingWrites.values()) {
+      recordWrite(pending);
+    }
+  }
+}
+
 /** A witnessed committed projection write supersedes a held read, including absent ABA. */
 export async function reconcileTaskFlowWorkerPublication(params: {
   flowId: string;

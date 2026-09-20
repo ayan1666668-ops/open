@@ -31,6 +31,11 @@ the captured task owner and database lifecycle still authorize the operation.
 Maintenance joins the sweep before completing; expiry, storage formats, and
 update behavior are unchanged.
 
+Dirty task-flow point reads refresh their requested and pending flow IDs in one
+canonical query, without decoding unrelated retained flow state. Broad lists and
+initial restoration retain full snapshots. Projection publication still follows
+the current database owner and managed transaction commit or rollback.
+
 Sandbox registry lists, point lookups, backend/scope runtime IDs, and browser
 registry reads execute in the shared-state read worker. CLI management and
 runtime provisioning await the same domain APIs. Reads retain inherited snapshot

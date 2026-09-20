@@ -1,6 +1,9 @@
 // Coordinates managed task-flow creation, updates, ownership, and snapshots.
 import { formatErrorMessage } from "../infra/errors.js";
-import { stageSqliteTransactionState } from "../infra/sqlite-post-commit.js";
+import {
+  hasSqlitePostCommitScope,
+  stageSqliteTransactionState,
+} from "../infra/sqlite-post-commit.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { createDeferredCore } from "../shared/deferred.js";
 import type { OpenClawStateDatabaseReadAdmission } from "../state/openclaw-state-db-async-lifecycle.js";
@@ -11,7 +14,10 @@ import {
 } from "../state/openclaw-state-db-cache.js";
 import { resolveOpenClawStateSqlitePath } from "../state/openclaw-state-db.paths.js";
 import type { OpenClawStateWorkerContext } from "../state/openclaw-state-worker-context.types.js";
-import { createTaskFlowRegistryReaders } from "./task-flow-registry.read.js";
+import {
+  createTaskFlowRegistryReaders,
+  prepareTaskFlowRegistryRefresh,
+} from "./task-flow-registry.read.js";
 import {
   assertControllerId,
   buildFlowRecord,
@@ -50,6 +56,7 @@ import type {
 } from "./task-flow-registry.types.js";
 import {
   reconcileTaskFlowWorkerPublication,
+  recordTaskFlowProjectionWrite,
   type PendingTaskFlowPublication,
 } from "./task-flow-worker-publication.js";
 import { createAsyncRegistryRestore, createSyncRegistryReader } from "./task-registry-restore.js";
@@ -68,16 +75,6 @@ const pendingFlowWrites = new Map<
   PendingTaskFlowPublication & { completions: Set<Promise<void>> }
 >();
 
-function recordFlowProjectionWrite(flowId?: string): void {
-  for (const [id, pending] of pendingFlowWrites) {
-    if (flowId !== undefined && id !== flowId) {
-      continue;
-    }
-    for (const reader of pending.readers) {
-      reader.written = true;
-    }
-  }
-}
 registerOpenClawStateDatabaseLifecycleListener((event) => {
   if (event.kind !== "opened") {
     projectionEpoch += 1;
@@ -131,7 +128,7 @@ function failTaskFlowRegistryRestore(
   admission: OpenClawStateDatabaseReadAdmission,
 ): never {
   flows = new Map();
-  recordFlowProjectionWrite();
+  recordTaskFlowProjectionWrite(pendingFlowWrites);
   const message = formatErrorMessage(error);
   const restoreError = new Error(`Task-flow registry restore failed: ${message}`, { cause: error });
   taskFlowRegistryRestoreState = { status: "failed", error: restoreError, message, admission };
@@ -169,7 +166,7 @@ function installTaskFlowRegistrySnapshot(
     [...snapshot.flows].map(([id, flow]) => [id, normalizeRestoredFlowRecord(flow)]),
   );
   flows = restoredFlows;
-  recordFlowProjectionWrite();
+  recordTaskFlowProjectionWrite(pendingFlowWrites);
   projectionEpoch += 1;
   projectionDirty = false;
   dirtyFlowIds.clear();
@@ -228,25 +225,38 @@ function restoreTaskFlowRegistryOnce(): void {
   }));
 }
 
-export function ensureTaskFlowRegistryReady(options?: { refreshProjection?: boolean }): void {
+export function ensureTaskFlowRegistryReady(options?: {
+  refreshProjection?: boolean;
+  flowIds?: readonly string[];
+}): void {
   restoreTaskFlowRegistryOnce();
   if (options?.refreshProjection === false || (!projectionDirty && dirtyFlowIds.size === 0)) {
     return;
   }
-  const restored = getTaskFlowRegistryStore().loadSnapshot();
+  const epoch = projectionEpoch;
+  const refreshIds =
+    projectionDirty || !options?.flowIds
+      ? undefined
+      : [...new Set([...dirtyFlowIds, ...options.flowIds])];
   const previous = flows;
-  const next = new Map(previous);
-  for (const flowId of next.keys()) {
-    if (!restored.flows.has(flowId)) {
-      next.delete(flowId);
-    }
-  }
-  for (const [flowId, flow] of restored.flows) {
-    next.set(flowId, normalizeRestoredFlowRecord(flow));
-  }
+  const applyRefresh = prepareTaskFlowRegistryRefresh({
+    flowIds: refreshIds,
+    isCurrent: () => flows === previous && projectionEpoch === epoch,
+    isCurrentDatabase: isCurrentTaskFlowDatabase,
+  });
+  const database = openClawStateDatabaseCache.getOpenClawStateDatabaseIfOpenAtPath(
+    resolveOpenClawStateSqlitePath(),
+  );
+  // Keep transaction rollback and insertion order intact; ordinary dirty reads touch only their rows.
+  const next =
+    !refreshIds || (database && hasSqlitePostCommitScope(database.db))
+      ? new Map(previous)
+      : previous;
+  const recordRefresh = () => recordTaskFlowProjectionWrite(pendingFlowWrites, refreshIds);
   // Transaction-local maps can roll back to older cache state; only commit supersedes a read.
   const publication = {
     stage: () => {
+      applyRefresh(next);
       flows = next;
       projectionEpoch += 1;
       projectionDirty = false;
@@ -261,16 +271,13 @@ export function ensureTaskFlowRegistryReady(options?: { refreshProjection?: bool
       projectionDirty = true;
     },
     commit: () => {
-      recordFlowProjectionWrite();
+      recordRefresh();
       projectionEpoch += 1;
     },
   };
-  const database = openClawStateDatabaseCache.getOpenClawStateDatabaseIfOpenAtPath(
-    resolveOpenClawStateSqlitePath(),
-  );
   if (!database || !stageSqliteTransactionState(database.db, publication)) {
     publication.stage();
-    recordFlowProjectionWrite();
+    recordRefresh();
   }
 }
 
@@ -414,7 +421,7 @@ export async function runTaskFlowRegistryWorkerMutation<T>(
           } else {
             flows.delete(flowId);
           }
-          recordFlowProjectionWrite(flowId);
+          recordTaskFlowProjectionWrite(pendingFlowWrites, [flowId]);
         },
         emit: emitFlowRegistryObserverEvent,
       });
@@ -451,7 +458,7 @@ function writeFlowRecord(next: TaskFlowRecord, previous?: TaskFlowRecord): TaskF
     return null;
   }
   flows.set(next.flowId, next);
-  recordFlowProjectionWrite(next.flowId);
+  recordTaskFlowProjectionWrite(pendingFlowWrites, [next.flowId]);
   projectionEpoch += 1;
   emitFlowRegistryObserverEvent(() => ({
     kind: "upserted",
@@ -462,7 +469,7 @@ function writeFlowRecord(next: TaskFlowRecord, previous?: TaskFlowRecord): TaskF
 }
 
 function createFlowRecord(params: CreateFlowRecordParams): TaskFlowRecord | null {
-  ensureTaskFlowRegistryReady();
+  ensureTaskFlowRegistryReady({ flowIds: [] });
   const record = buildFlowRecord(params);
   return writeFlowRecord(record);
 }
@@ -505,7 +512,7 @@ function prepareFlowRecordPublication(
     advance: () => {
       projectionEpoch += 1;
     },
-    onCommitted: () => recordFlowProjectionWrite(flowId),
+    onCommitted: () => recordTaskFlowProjectionWrite(pendingFlowWrites, [flowId]),
     emit: emitFlowRegistryObserverEvent,
   });
 }
@@ -515,7 +522,7 @@ export function updateFlowRecordByIdExpectedRevision(params: {
   expectedRevision: number;
   patch: FlowRecordPatch;
 }): TaskFlowUpdateResult {
-  ensureTaskFlowRegistryReady();
+  ensureTaskFlowRegistryReady({ flowIds: [params.flowId] });
   const cached = flows.get(params.flowId);
   let result: TaskFlowRegistryUpdateResult;
   try {
@@ -684,7 +691,7 @@ export function publishTaskFlowAfterAtomicStore(
 ): void {
   const next = cloneFlowRecord(prepared.next);
   flows.set(next.flowId, next);
-  recordFlowProjectionWrite(next.flowId);
+  recordTaskFlowProjectionWrite(pendingFlowWrites, [next.flowId]);
   projectionEpoch += 1;
   deferredObserverEvents.push(() =>
     emitFlowRegistryObserverEvent(() => ({
@@ -696,7 +703,7 @@ export function publishTaskFlowAfterAtomicStore(
 }
 
 export function deleteTaskFlowRecordById(flowId: string): boolean {
-  ensureTaskFlowRegistryReady();
+  ensureTaskFlowRegistryReady({ flowIds: [flowId] });
   const current = flows.get(flowId);
   if (!current) {
     return false;
@@ -705,7 +712,7 @@ export function deleteTaskFlowRecordById(flowId: string): boolean {
     return false;
   }
   flows.delete(flowId);
-  recordFlowProjectionWrite(flowId);
+  recordTaskFlowProjectionWrite(pendingFlowWrites, [flowId]);
   projectionEpoch += 1;
   emitFlowRegistryObserverEvent(() => ({
     kind: "deleted",
@@ -720,7 +727,7 @@ function resetTaskFlowRegistryForTests() {
   projectionDirty = false;
   dirtyFlowIds.clear();
   flows = new Map();
-  recordFlowProjectionWrite();
+  recordTaskFlowProjectionWrite(pendingFlowWrites);
   taskFlowRegistryRestoreState = { status: "uninitialized" };
   resetTaskFlowRegistryRuntimeForTests();
   getTaskFlowRegistryStore().close?.();
