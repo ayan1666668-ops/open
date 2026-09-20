@@ -34,7 +34,7 @@ import {
   estimateStringChars,
 } from "@openclaw/normalization-core/cjk-chars";
 
-export function createSummarizationOptions(
+function createSummarizationOptions(
   model: Model,
   maxTokens: number,
   apiKey: string | undefined,
@@ -56,7 +56,7 @@ export function createSummarizationOptions(
 export const MANAGED_ANTHROPIC_TRANSPORT_API = "openclaw-anthropic-messages-transport";
 
 /** Returns whether the api is the managed Anthropic Messages transport alias. */
-export function isManagedAnthropicTransportApi(api: string): boolean {
+function isManagedAnthropicTransportApi(api: string): boolean {
   return api === MANAGED_ANTHROPIC_TRANSPORT_API;
 }
 
@@ -64,11 +64,11 @@ export function isManagedAnthropicTransportApi(api: string): boolean {
 const ANTHROPIC_MIN_THINKING_BUDGET_TOKENS = 1024;
 
 /** Returns whether the api routes through Anthropic Messages, alias included. */
-export function isAnthropicMessagesApi(api: string): boolean {
+function isAnthropicMessagesApi(api: string): boolean {
   return api === "anthropic-messages" || isManagedAnthropicTransportApi(api);
 }
 
-export function isClaudeBedrockModel(model: Model): boolean {
+function isClaudeBedrockModel(model: Model): boolean {
   if (model.api !== "bedrock-converse-stream") {
     return false;
   }
@@ -107,7 +107,7 @@ export function isClaudeBedrockModel(model: Model): boolean {
  * Budgeting therefore follows the alias: an un-aliased model keeps the
  * requested level, and only the managed-transport alias narrows "max".
  */
-export function resolveTransportThinkingLevel<TLevel extends Exclude<ThinkingLevel, "off">>(
+function resolveTransportThinkingLevel<TLevel extends Exclude<ThinkingLevel, "off">>(
   model: Model,
   reasoning: TLevel,
 ): TLevel | "high" {
