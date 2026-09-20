@@ -1,5 +1,6 @@
 import { isResponsesOutputLimitToolCallError } from "@openclaw/ai/diagnostics";
 import { hasOnlyAssistantReasoningContent } from "@openclaw/ai/internal/shared";
+import { isCompactionReplayCheckpoint } from "@openclaw/ai/transports";
 import { MALFORMED_TOOL_CALL_ARGUMENTS_ERROR_CODE } from "../../../llm/types.js";
 import { isTerminalAssistantError } from "../../../llm/utils/retry.js";
 import { hasAcceptedSessionSpawn } from "../../accepted-session-spawn.js";
@@ -24,6 +25,7 @@ import {
   shouldApplyNonVisibleTurnRetryGuard,
   type IncompleteTurnAttempt,
 } from "./incomplete-turn-classification.js";
+import type { RunEmbeddedAgentParams } from "./params.js";
 import type { EmbeddedRunAttemptResult } from "./types.js";
 
 // Allow one immediate continuation plus one follow-up continuation before
@@ -118,27 +120,48 @@ function shouldSkipNonVisibleTurnRetry(params: {
   );
 }
 
-/** Allows configured silent handling for replay-safe empty, reasoning-only, or explicit silent turns. */
-export function shouldTreatEmptyAssistantReplyAsSilent(params: {
-  allowEmptyAssistantReplyAsSilent?: boolean;
-  onlyExplicitSilentReply?: boolean;
-  terminalReplyExpectation?: "required" | "optional";
-  payloadCount: number;
-  aborted: boolean;
-  timedOut: boolean;
-  attempt: IncompleteTurnAttempt;
-}): boolean {
+/** Classifies optional silence while requiring clean empty evidence for session handoffs. */
+export function shouldTreatEmptyAssistantReplyAsSilent(
+  params: Pick<
+    RunEmbeddedAgentParams,
+    | "allowEmptyAssistantReplyAsSilent"
+    | "terminalReplyExpectation"
+    | "inputProvenance"
+    | "sourceReplyDeliveryMode"
+  > & {
+    onlyExplicitSilentReply?: boolean;
+    payloadCount: number;
+    aborted: boolean;
+    timedOut: boolean;
+    attempt: IncompleteTurnAttempt;
+  },
+): boolean {
   const completion = resolveReplyCompletion(
     resolveReplyExpectation(params),
     params.payloadCount === 0 ? "empty" : "ready",
   );
   const assistant = classifyAssistantTurn(params);
+  // The producer grants optional completion, but missing output is not evidence
+  // of a clean handoff. Authored silence still follows the shared reply policy.
+  const requiresCleanEmptyStop =
+    !assistant.silent &&
+    params.inputProvenance?.kind === "inter_session" &&
+    params.inputProvenance.sourceTool === "sessions_send" &&
+    params.sourceReplyDeliveryMode === "message_tool_only";
   return (
     completion.outcome === "silent" &&
     !shouldSkipNonVisibleTurnRetry({ ...params, tolerateSideEffects: true }) &&
     resolveSourceReplyDelivery(params.attempt) === "missing" &&
     (!params.onlyExplicitSilentReply || assistant.silent) &&
-    assistant.nonVisibleEligibleForSilentReply
+    assistant.nonVisibleEligibleForSilentReply &&
+    (!requiresCleanEmptyStop ||
+      (assistant.emptyResponse &&
+        assistant.assistant?.stopReason === "stop" &&
+        !isCompactionReplayCheckpoint(assistant.assistant.providerReplay) &&
+        !params.attempt.replayMetadata.hadPotentialSideEffects &&
+        assistant.assistant.content.every(
+          (block) => block.type === "text" && block.text.trim().length === 0,
+        )))
   );
 }
 
