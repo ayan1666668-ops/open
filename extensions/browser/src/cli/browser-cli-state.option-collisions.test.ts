@@ -103,9 +103,21 @@ describe("browser state option collisions", () => {
     );
   });
 
-  it.each(["local", "session"])("preserves quoted %s storage lookup keys", async (kind) => {
-    const request = await runBrowserCommandAndGetRequest(["storage", kind, "get", " key "]);
-    expect(request.query?.key).toBe(" key ");
+  it("reads the exact quoted storage key", async () => {
+    const entries = [
+      ["account", "plain"],
+      [" account ", "padded"],
+    ];
+    gatewayMock.mockImplementationOnce(async (_method, _opts, request) => ({
+      values: Object.fromEntries(
+        entries.filter(([key]) => request.query?.key === undefined || key === request.query.key),
+      ),
+    }));
+
+    await runBrowserCommand(["storage", "local", "get", " account "]);
+
+    const { runtimeLogs } = getBrowserCliRuntimeCapture();
+    expect(runtimeLogs.map((line) => JSON.parse(line))).toEqual([{ " account ": "padded" }]);
   });
 
   it("inherits the parent timeout for the viewport resize alias", async () => {
