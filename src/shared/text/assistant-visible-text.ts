@@ -487,7 +487,7 @@ export function stripToolCallXmlTags(
  * Minimax sometimes embeds tool calls as XML in text blocks instead of
  * proper structured tool calls.
  */
-export function stripMinimaxToolCallXml(text: string): string {
+function stripMinimaxToolCallXml(text: string): string {
   const encodedTransportBoundaryRe = /\]?<\]minimax\[>\[/g;
   const encodedToolCallOpenRe = /\]?<\]minimax\[>\[<tool_call>/g;
   const encodedToolCallCloseRe = /\]?<\]minimax\[>\[<\/tool_call>/g;
