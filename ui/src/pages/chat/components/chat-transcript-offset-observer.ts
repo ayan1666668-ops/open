@@ -282,11 +282,15 @@ export function observeTranscriptOffset(
       !scrolling &&
       Math.abs((maxTranscriptScrollOffset(element) ?? 0) - (element?.scrollTop ?? 0)) <= 1;
     // End-idle cannot retire a message reveal still waiting for its DOM commit.
-    if (settledAtEnd && owner.state.scrollCommand?.target === "end") {
+    if (settledAtEnd && element && owner.state.scrollCommand?.target === "end") {
       if (owner.state.scrollCommand.behavior === "smooth") {
         owner.cancelScroll();
       } else {
         owner.state.scrollCommand = null;
+        // Native idle can precede the queued reconciliation frame. Retire its
+        // index target too, without cancelling the reader’s end-follow intent.
+        // The idle notification can lag a newer native write; hold the current viewport.
+        instance.scrollToOffset(element.scrollTop, { behavior: "instant" });
       }
     }
   });

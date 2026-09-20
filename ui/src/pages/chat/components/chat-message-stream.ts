@@ -75,42 +75,48 @@ export function renderStreamGroupParts(
   return repeat(
     parts,
     (part) => `${part.kind}:${part.key}`,
-    (part) => {
-      if (part.kind === "reading-indicator") {
-        return renderChatWorkingIndicator(part, {
-          waitingApproval: opts.waitingApproval === true,
-          startupLabel: opts.startupLabel,
-          outputTokens: opts.runOutputTokens,
-          presentation,
-        });
-      }
-      if (part.kind === "question") {
-        const prompt = opts.questionPrompts?.get(part.questionId);
-        return prompt ? renderChatQuestionSummary(prompt) : nothing;
-      }
-      const source = prepareChatMessageRender({
-        role: "assistant",
-        content: [{ type: "text", text: part.text }],
-        timestamp: part.startedAt,
-      });
-      return renderGroupedMessage(
-        source,
-        part.key,
-        {
-          ...opts,
-          isStreaming: part.isStreaming,
-          entryRef: opts.entryRefFor?.(part.key),
-          showReasoning: false,
-          // Settled segments can be replied to without transcript IDs or footer actions.
-          messageActions: resolveMessageActionDetails(source, {
-            messageId: part.key,
-            onReply: opts.onReply,
-            senderLabel: opts.assistant?.name ?? "Assistant",
-          }),
-        },
-        opts.onOpenSidebar,
-      );
+    (part) => renderStreamGroupPart(part, opts, presentation),
+  );
+}
+
+export function renderStreamGroupPart(
+  part: StreamGroupPart,
+  opts: StreamGroupOptions,
+  presentation: "standalone" | "continuation",
+) {
+  if (part.kind === "reading-indicator") {
+    return renderChatWorkingIndicator(part, {
+      waitingApproval: opts.waitingApproval === true,
+      startupLabel: opts.startupLabel,
+      outputTokens: opts.runOutputTokens,
+      presentation,
+    });
+  }
+  if (part.kind === "question") {
+    const prompt = opts.questionPrompts?.get(part.questionId);
+    return prompt ? renderChatQuestionSummary(prompt) : nothing;
+  }
+  const source = prepareChatMessageRender({
+    role: "assistant",
+    content: [{ type: "text", text: part.text }],
+    timestamp: part.startedAt,
+  });
+  return renderGroupedMessage(
+    source,
+    part.key,
+    {
+      ...opts,
+      isStreaming: part.isStreaming,
+      entryRef: opts.entryRefFor?.(part.key),
+      showReasoning: false,
+      // Settled segments can be replied to without transcript IDs or footer actions.
+      messageActions: resolveMessageActionDetails(source, {
+        messageId: part.key,
+        onReply: opts.onReply,
+        senderLabel: opts.assistant?.name ?? "Assistant",
+      }),
     },
+    opts.onOpenSidebar,
   );
 }
 

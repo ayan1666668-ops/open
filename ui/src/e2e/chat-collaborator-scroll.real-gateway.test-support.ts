@@ -146,6 +146,103 @@ export async function startScrollInferenceFixture() {
   };
 }
 
+type AssistantVisibilityFailure = { at: number; text: string; opacity: string; transform: string };
+declare global {
+  interface Window {
+    assistantVisibilityProof?: { failures: AssistantVisibilityFailure[]; stop: () => void };
+    replyPresenceProof?: {
+      missing: Array<{ at: number; runId: string | null; streamLength: number | null }>;
+      stop: () => void;
+    };
+  }
+}
+
+export async function startAssistantVisibilityProbe(page: Page) {
+  await page.evaluate(() => {
+    const failures: AssistantVisibilityFailure[] = [];
+    let frame = 0;
+    const sample = () => {
+      for (const bubble of document.querySelectorAll<HTMLElement>(
+        ".chat-pane-cache__pane--active .chat-group.assistant .chat-bubble",
+      )) {
+        if (!bubble.textContent?.trim()) {
+          continue;
+        }
+        const style = getComputedStyle(bubble);
+        if (style.opacity !== "1" || style.transform !== "none") {
+          failures.push({
+            at: performance.now(),
+            text: bubble.textContent.slice(0, 100),
+            opacity: style.opacity,
+            transform: style.transform,
+          });
+        }
+      }
+      frame = requestAnimationFrame(sample);
+    };
+    frame = requestAnimationFrame(sample);
+    window.assistantVisibilityProof = { failures, stop: () => cancelAnimationFrame(frame) };
+  });
+  return async () =>
+    await page.evaluate(() => {
+      const probe = window.assistantVisibilityProof;
+      if (!probe) {
+        throw new Error("Assistant visibility probe was not started");
+      }
+      probe.stop();
+      return probe.failures;
+    });
+}
+
+export async function watchExistingReply(page: Page, prefix: string) {
+  await page
+    .locator(".chat-text p")
+    .filter({ hasText: prefix })
+    .first()
+    .waitFor({ state: "attached" });
+  await page.evaluate((textPrefix) => {
+    const thread = document.querySelector<HTMLElement>(
+      ".chat-pane-cache__pane--active .chat-thread",
+    );
+    if (!thread) {
+      throw new Error("Reply-presence probe has no transcript");
+    }
+    const present = () =>
+      [...thread.querySelectorAll(".chat-text p")].some((paragraph) =>
+        paragraph.textContent?.startsWith(textPrefix),
+      );
+    if (!present()) {
+      throw new Error("Expected reply was not present before submission");
+    }
+    const missing: Array<{ at: number; runId: string | null; streamLength: number | null }> = [];
+    let frame = 0;
+    const sample = () => {
+      if (!present()) {
+        const state = thread.closest<HTMLElement & { state?: ChatPageHost }>(
+          "openclaw-chat-pane",
+        )?.state;
+        missing.push({
+          at: performance.now(),
+          runId: state?.chatRunId ?? null,
+          streamLength: state?.chatStream?.length ?? null,
+        });
+      }
+      frame = requestAnimationFrame(sample);
+    };
+    window.replyPresenceProof = { missing, stop: () => cancelAnimationFrame(frame) };
+    frame = requestAnimationFrame(sample);
+  }, prefix);
+  return async () =>
+    await page.evaluate(() => {
+      const probe = window.replyPresenceProof;
+      if (!probe) {
+        throw new Error("Reply-presence probe was not started");
+      }
+      probe.stop();
+      return probe.missing;
+    });
+}
+
 type ScrollSample = {
   top: number;
   anchor: number | null;

@@ -99,6 +99,7 @@ export type ChatScrollHost = {
   chatIsMaintenanceScroll?: () => boolean;
   chatScrollElement?: () => HTMLElement | null;
   chatScrollToEnd?: (options: ChatScrollToEndOptions) => boolean;
+  chatCancelScroll?: () => void;
 };
 
 export type ChatScrollToEndOptions = {
@@ -283,6 +284,8 @@ export function lockChatScroll(
   host.chatHasAutoScrolled = true;
   host.chatFollowLocked = true;
   host.chatUserNearBottom = false;
+  // Cancelling queued page work does not retire an already issued native target.
+  host.chatCancelScroll?.();
   if (changed) {
     host.renderLifecycle.invalidate();
   }

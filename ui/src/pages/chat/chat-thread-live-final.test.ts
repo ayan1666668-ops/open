@@ -56,6 +56,19 @@ function completed() {
 }
 
 describe("live terminal continuity with pending collaborators", () => {
+  it("keeps the active reply and its working indicator together before queued custody", () => {
+    const items = project(props());
+    const frames = items.filter((item) => item.kind === "agent-run-frame");
+    expect(frames).toHaveLength(1);
+    const frame = frames[0]!;
+    const parts = frame.parts.flatMap((part) => (part.kind === "stream-run" ? part.parts : []));
+    expect(parts.map((part) => part.kind)).toEqual(["stream", "reading-indicator"]);
+    const peer = items.findIndex(
+      (item) =>
+        item.kind === "group" && item.messages.some((message) => message.key.includes("peer")),
+    );
+    expect(items.indexOf(frame)).toBeLessThan(peer);
+  });
   it("keeps an unsequenced terminal in its existing turn before pending custody", () => {
     const before = project(props());
     const after = project(
@@ -122,6 +135,45 @@ describe("live terminal continuity with pending collaborators", () => {
     );
     expect(index.transcriptMessageKeys.keys().next().value).toBe(group?.messages[0]?.key);
   });
+  it("keeps standalone activity messages addressable for replies and anchors", () => {
+    const message = {
+      role: "toolResult",
+      toolCallId: "standalone-call",
+      content: "Stored tool result",
+      timestamp: 1,
+      __openclaw: { id: "activity-message", seq: 1 },
+    };
+    const groups = buildChatItems(
+      props({
+        messages: [message],
+        pendingInputs: [],
+        stream: null,
+        runId: null,
+        runWorking: false,
+      }),
+    ).filter((item) => item.kind === "group");
+    expect(groups).toHaveLength(1);
+    const items = coalesceAgentRunFrames([
+      { kind: "activity-run", key: "standalone-activity", groups },
+    ]);
+    expect(items[0]?.kind).toBe("activity-run");
+    const loaded = new Map();
+    const index = projectTranscriptMessageIndex(
+      items,
+      new Map(),
+      { assistantName: "Assistant" },
+      loaded,
+    );
+    expect(index.transcriptMessageKeys.get(groups[0]!.messages[0]!.key)).toBe(
+      "standalone-activity",
+    );
+    expect(index.messageRowKeysById.get("activity-message")).toBe("standalone-activity");
+    expect(loaded.get("activity-message")).toMatchObject({
+      message,
+      messageId: groups[0]!.messages[0]!.key,
+    });
+  });
+
   it("does not reorder authoritative history when a late terminal has a canonical receipt", () => {
     const canonical = {
       role: "assistant",

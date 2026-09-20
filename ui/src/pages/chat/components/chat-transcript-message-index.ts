@@ -44,7 +44,7 @@ export function projectTranscriptMessageIndex(
         ? agentRunFrameGroups(item)
         : item.kind === "group"
           ? [item]
-          : item.kind === "work-group"
+          : item.kind === "work-group" || item.kind === "activity-run"
             ? item.groups
             : [];
     const firstGroup = groups.find((group) => group.role === "assistant") ?? groups[0];
@@ -63,8 +63,7 @@ export function projectTranscriptMessageIndex(
       const partGroups =
         part.kind === "group"
           ? [part]
-          : part.kind === "work-group" ||
-              (item.kind === "agent-run-frame" && part.kind === "activity-run")
+          : part.kind === "work-group" || part.kind === "activity-run"
             ? part.groups
             : [];
       for (const group of partGroups) {

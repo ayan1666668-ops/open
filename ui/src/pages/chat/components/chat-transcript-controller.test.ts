@@ -481,6 +481,84 @@ describe("chat transcript controller", () => {
     },
   );
 
+  it.each([0, 252])(
+    "retires an end index without losing newer native movement (%s px)",
+    async (nativeGrowth) => {
+      const flushFrames = stubAnimationFrames();
+      const transcript = new ChatTranscriptController(
+        {
+          addController: vi.fn(),
+          removeController: vi.fn(),
+          requestUpdate: vi.fn(),
+          updateComplete: Promise.resolve(true),
+        },
+        { canFollowEnd: () => false },
+      );
+      const content = numberedContentRows(12);
+      const typing: TestContentRow = {
+        kind: "content",
+        key: "presence:typing",
+        content: html`<div>Typing</div>`,
+      };
+      const { container, renderRows } = await mountTestTranscript(
+        "retired-end-index",
+        [...content, typing],
+        transcript,
+      );
+      let extraExtent = 0;
+      Object.defineProperties(container, {
+        clientHeight: { configurable: true, value: 600 },
+        scrollHeight: { configurable: true, get: () => transcriptSize(container) + extraExtent },
+      });
+      container.scrollTo = vi.fn((options?: ScrollToOptions | number, y?: number) => {
+        container.scrollTop = typeof options === "number" ? (y ?? 0) : (options?.top ?? 0);
+      });
+      const typingRow = expectDefined(
+        container.querySelector<HTMLElement>('[data-virtual-row-key="presence:typing"]'),
+        "typing row",
+      );
+      Object.defineProperty(typingRow, "offsetHeight", { configurable: true, value: 30 });
+      for (const observer of resizeObservers) {
+        observer.emitTarget(container, 800, 600);
+        observer.emitTarget(typingRow, 800, 30);
+      }
+      renderRows([...content, typing]);
+      flushFrames();
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      try {
+        transcript.scrollToEnd({ behavior: "auto" });
+        container.dispatchEvent(new Event("scroll"));
+        if (nativeGrowth > 0) {
+          extraExtent = nativeGrowth;
+          transcript.scrollToEnd({ behavior: "auto" });
+          // Its native scroll event has not arrived when the earlier idle callback fires.
+        }
+        const before = container.scrollTop;
+        // Native idle can beat the queued frame; they are separate schedulers.
+        vi.advanceTimersByTime(150);
+        expect(container.scrollTop, "stale idle must not restore its old offset").toBe(before);
+        // A remote receipt cancels following after the UI considers the command settled.
+        transcript.cancelScroll();
+        transcriptDomState.measuredRowHeight = 120;
+        const next: TestContentRow[] = [
+          ...content,
+          { kind: "content", key: "peer", content: html`<div>Peer</div>` },
+          typing,
+        ];
+        renderRows(next);
+        await Promise.resolve();
+        renderRows(next);
+        flushFrames();
+        expect(container.scrollTop, "retired index must not follow the peer replacing typing").toBe(
+          before,
+        );
+      } finally {
+        transcript.hostDisconnected();
+        vi.useRealTimers();
+      }
+    },
+  );
+
   it("keeps a smooth latest command through an idle observer delivery before reaching its target", async () => {
     const rows = numberedContentRows(40);
     const { container, transcript } = await mountTestTranscript("idle-latest", rows);

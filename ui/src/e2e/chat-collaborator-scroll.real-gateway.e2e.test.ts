@@ -20,9 +20,16 @@ import { waitForControlUiGatewayReady } from "../test-helpers/control-ui-e2e-rea
 import { controlUiSessionUrl } from "../test-helpers/control-ui-e2e.ts";
 import {
   startScrollInferenceFixture,
+  startAssistantVisibilityProbe,
+  watchExistingReply,
   startScrollProbe,
   readScrollProbe,
 } from "./chat-collaborator-scroll.real-gateway.test-support.ts";
+import {
+  traceCollaboratorVisuals,
+  traceCollaboratorPaints,
+  markCollaboratorVisuals,
+} from "./chat-collaborator-visual-trace.test-support.ts";
 import { chatThreadDistanceFromBottom, waitForChatScrollIdle } from "./chat-flow.test-support.ts";
 import { createControlUiE2eSuite } from "./control-ui-e2e-suite.test-support.ts";
 
@@ -190,10 +197,17 @@ function observe(page: Page) {
   return { sent, received, requests, response, history, sockets: () => sockets };
 }
 type Observation = ReturnType<typeof observe>;
-async function send(page: Page, observed: Observation, message: string) {
+async function send(
+  page: Page,
+  observed: Observation,
+  message: string,
+  afterDraft?: () => Promise<void>,
+) {
+  await markCollaboratorVisuals(page, "send:" + message);
   const before = observed.requests("chat.send").length;
   const composer = page.getByRole("textbox", { name: "Chat composer", exact: true });
   await composer.fill(message);
+  await afterDraft?.();
   await page.getByRole("button", { name: /^(Send|Queue) message$/ }).click();
   await expect.poll(() => observed.requests("chat.send").length).toBe(before + 1);
   const request = observed.requests("chat.send")[before]!;
@@ -301,6 +315,17 @@ suite.define(() => {
         await suite.withPage(options, async ({ page: reader }) => {
           await suite.withPage(options, async ({ page: writer }) => {
             const pages = [reader, writer];
+            const traceVisuals = process.env.OPENCLAW_CAPTURE_UI_PROOF === "1";
+            const finishVisuals = traceVisuals
+              ? await Promise.all(
+                  pages.map((page, index) =>
+                    traceCollaboratorVisuals(page, artifactDir, index === 0 ? "reader" : "writer"),
+                  ),
+                )
+              : [];
+            const finishPaints = traceVisuals
+              ? await traceCollaboratorPaints(reader, artifactDir)
+              : null;
             const observers = pages.map(observe);
             const [a, b] = observers as [Observation, Observation];
             const capture = async (stage: string) => {
@@ -321,7 +346,13 @@ suite.define(() => {
                     JSON.stringify({ dismissedAtMs: 1770000000000 }),
                   ),
                 );
-                await page.goto(new URL("settings/profile", urls[index]!).href);
+                const documentResponse = await page.goto(
+                  new URL("settings/profile", urls[index]!).href,
+                );
+                expect(
+                  documentResponse?.status(),
+                  "matching Gateway and UI build must serve the profile document",
+                ).toBe(200);
                 await waitForControlUiGatewayReady(page);
                 if (index === 0) {
                   proof.session = await page.evaluate(async (key) => {
@@ -390,6 +421,7 @@ suite.define(() => {
                     ),
                 ),
               );
+              const finishVisibility = await Promise.all(pages.map(startAssistantVisibilityProbe));
               // Short actual turns qualify both reciprocal sender alignments before scroll assertions.
               const alignments: unknown[] = [];
               for (const [index, prompt] of [
@@ -420,7 +452,12 @@ suite.define(() => {
               await capture("01-reciprocal-identities");
               const scenarios: unknown[] = [];
               proof.scenarios = scenarios;
-              for (const mode of ["reading", "tail"] as const) {
+              for (const [mode, awaitTyping] of [
+                ["reading", false],
+                ["tail", false],
+                ["reading-typed", true],
+                ["tail-typed", true],
+              ] as const) {
                 const turn = provider.plan();
                 const own = await send(reader, a, "Reader starts the " + mode + " scenario");
                 await expect.poll(provider.requests).toBe(turn.index);
@@ -441,16 +478,42 @@ suite.define(() => {
                 await expect
                   .poll(() => chatThreadDistanceFromBottom(reader))
                   .toBeLessThanOrEqual(8);
-                if (mode === "reading") {
+                if (mode.startsWith("reading")) {
                   await wheel(reader, -420);
                 }
+                await markCollaboratorVisuals(reader, mode + ":before-remote");
                 const before = await startScrollProbe(reader);
-                expect(mode === "reading" ? before.distance > 8 : before.distance <= 8).toBe(true);
+                expect(
+                  mode.startsWith("reading") ? before.distance > 8 : before.distance <= 8,
+                ).toBe(true);
                 await capture("02-" + mode + "-before-remote");
-                const remote = await send(writer, b, "Writer follow-up while Reader is at " + mode);
+                const finishWriterPresence = await watchExistingReply(
+                  writer,
+                  mode + " paragraph 1.",
+                );
+                const remotePrompt = "Writer follow-up while Reader is at " + mode;
+                const remote = await send(
+                  writer,
+                  b,
+                  remotePrompt,
+                  awaitTyping
+                    ? async () => {
+                        // Observe real remote typing before submission instead of racing
+                        // the presence packet against its queued-custody replacement.
+                        await expect
+                          .poll(() =>
+                            reader
+                              .locator('.chat-virtual-row[data-virtual-row-key="presence:typing"]')
+                              .textContent(),
+                          )
+                          .toContain(remotePrompt);
+                      }
+                    : undefined,
+                );
                 await expect.poll(() => hasPending(a, remote.runId)).toBe(true);
                 const checkpoints: unknown[] = [];
                 const checkpoint = async (stage: string) => {
+                  await markCollaboratorVisuals(reader, mode + ":" + stage);
                   await waitForChatScrollIdle(reader);
                   const samples = await readScrollProbe(reader);
                   const latest = samples.at(-1)!;
@@ -490,6 +553,7 @@ suite.define(() => {
                   .toBe(true);
                 await checkpoint("assistant-stream-growth");
                 const followup = provider.plan();
+                await markCollaboratorVisuals(reader, mode + ":finish-active");
                 await turn.finish();
                 await expect.poll(provider.requests).toBe(followup.index);
                 await expect.poll(() => persistedEvent(a, remote.runId)).toBeDefined();
@@ -502,6 +566,13 @@ suite.define(() => {
                     .waitFor({ state: "detached" });
                 }
                 await checkpoint("settled-history");
+                const writerMissingFrames = await finishWriterPresence();
+                expect
+                  .soft(
+                    writerMissingFrames,
+                    mode + ": queued sender keeps the active reply present",
+                  )
+                  .toEqual([]);
                 const samples = await readScrollProbe(reader, true);
                 let largestStep = 1;
                 for (let i = 2; i < samples.length; i += 1) {
@@ -525,6 +596,8 @@ suite.define(() => {
                   mode,
                   ownRunId: own.runId,
                   remoteRunId: remote.runId,
+                  remoteAck: b.response(remote.request.id),
+                  writerMissingFrames,
                   before,
                   checkpoints,
                   samples,
@@ -559,12 +632,26 @@ suite.define(() => {
                 }
                 await capture("04-" + mode + "-local-resumed");
               }
+              const visibilityFailures = await Promise.all(
+                finishVisibility.map((finish) => finish()),
+              );
+              proof.assistantVisibilityFailures = visibilityFailures;
+              expect
+                .soft(
+                  visibilityFailures,
+                  "assistant text must not disappear or translate during arrival and handoff",
+                )
+                .toEqual([[], []]);
               expect(provider.failures).toEqual([]);
               for (const observed of observers) {
                 // Profile bootstrap and the chat navigation each own a real connection.
                 expect(observed.sockets()).toBe(2);
               }
             } finally {
+              await finishPaints?.();
+              for (const finish of finishVisuals) {
+                await finish();
+              }
               proof.protocol = observers.map((observed) => ({
                 sockets: observed.sockets(),
                 sends: observed

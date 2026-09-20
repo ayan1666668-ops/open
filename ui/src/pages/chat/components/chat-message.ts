@@ -14,6 +14,7 @@ export {
 export type { MessageReplyTarget } from "./chat-message-markdown.ts";
 export {
   renderStreamGroup,
+  renderStreamGroupPart,
   renderStreamGroupParts,
   renderWorkGroupSummary,
 } from "./chat-message-stream.ts";

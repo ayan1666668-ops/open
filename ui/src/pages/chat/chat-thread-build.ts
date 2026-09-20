@@ -689,6 +689,18 @@ export function buildChatItems(props: BuildChatItemsProps): Array<ChatItem | Mes
       segments,
       tools,
     ));
+  const activeTurnRunId = latestBoundaryRunId ?? normalizeOptionalString(props.runId);
+  const activeTurnBounds = activeTurnRunId ? createRunTurnLookup(items)(activeTurnRunId) : null;
+  const appendActiveRunItem = (item: ChatItem) => {
+    // Queued custody is a ceiling for the whole live response, not just its text.
+    // Moving its working indicator past that ceiling splits and remeasures the run.
+    if (activeTurnBounds) {
+      const { maximum } = insertionIndexesForBounds(items, activeTurnBounds);
+      items.splice(maximum, 0, item);
+    } else {
+      items.push(item);
+    }
+  };
   if (props.stream !== null) {
     const text = sanitizeStreamText(props.stream);
     const prefix = accumulatedStreamText(segments, sanitizeStreamText);
@@ -707,21 +719,13 @@ export function buildChatItems(props: BuildChatItemsProps): Array<ChatItem | Mes
         ...optionalRunIdentity(liveRunId),
         ...optionalBoundaryIdentity(latestBoundaryRunId ?? liveRunId),
       };
-      const liveTurnRunId = latestBoundaryRunId ?? normalizeOptionalString(props.runId);
-      // Pending-custody user rows now participate in the live tail's ceiling.
-      const liveTurnBounds = liveTurnRunId ? createRunTurnLookup(items)(liveTurnRunId) : null;
-      if (liveTurnBounds) {
-        const { maximum } = insertionIndexesForBounds(items, liveTurnBounds);
-        items.splice(maximum, 0, liveStreamItem);
-      } else {
-        items.push(liveStreamItem);
-      }
+      appendActiveRunItem(liveStreamItem);
     }
   }
   if (showWorkingIndicator) {
     const workingProgress = resolveProgress();
     const workingRunId = props.runId ?? workingProgress.runId;
-    items.push({
+    appendActiveRunItem({
       kind: "reading-indicator",
       key: workingProgress.key,
       startedAt: workingProgress.startedAt,
