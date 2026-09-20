@@ -1310,7 +1310,7 @@ wa-popover.new-session-page__where-popover::part(body) {
 
   .new-session-page__triggers {
     display: grid;
-    /* Give long environment and workspace selections the full phone width. */
+    /* Keep placement controls stacked while leaving breathing room on phones. */
     grid-template-columns: minmax(0, 1fr);
     align-items: center;
     gap: 2px 4px;
@@ -1348,7 +1348,7 @@ wa-popover.new-session-page__where-popover::part(body) {
 
   .new-session-page__triggers > span.new-session-page__select > .new-session-page__trigger {
     width: fit-content;
-    max-width: 100%;
+    max-width: 80%;
   }
 
   .new-session-page__catalog-unavailable,
@@ -1366,8 +1366,20 @@ wa-popover.new-session-page__where-popover::part(body) {
     flex: 0 1 auto;
     min-width: 0;
     max-width: 100%;
-    white-space: normal;
-    overflow-wrap: anywhere;
+  }
+
+  .new-session-page__trigger-label,
+  .new-session-page__trigger-summary {
+    /* Padding keeps fitting text out of the fade; only overflow reaches the tail. */
+    padding-inline-end: 16px;
+    white-space: nowrap;
+    text-overflow: clip;
+    mask-image: linear-gradient(to right, black calc(100% - 16px), transparent);
+  }
+
+  .new-session-page__trigger-label:dir(rtl),
+  .new-session-page__trigger-summary:dir(rtl) {
+    mask-image: linear-gradient(to left, black calc(100% - 16px), transparent);
   }
 
   .new-session-page__trigger {
@@ -1387,8 +1399,6 @@ wa-popover.new-session-page__where-popover::part(body) {
   .new-session-page__trigger-summary {
     grid-column: 2;
     grid-row: 2;
-    white-space: normal;
-    overflow-wrap: anywhere;
   }
 
   .new-session-page__select--where .new-session-page__target-icon {

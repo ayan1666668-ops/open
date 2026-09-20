@@ -24,12 +24,21 @@ afterEach(() => {
   styles.remove();
 });
 
-it.each([320, 390, 560, 1440])(
-  "shows long placement labels without clipping at %ipx",
-  async (width) => {
+it.each([
+  { width: 320, shortLabels: false, direction: "ltr" },
+  { width: 390, shortLabels: false, direction: "ltr" },
+  { width: 560, shortLabels: false, direction: "ltr" },
+  { width: 1440, shortLabels: false, direction: "ltr" },
+  { width: 390, shortLabels: true, direction: "ltr" },
+  { width: 390, shortLabels: false, direction: "rtl" },
+])(
+  "caps and fades phone placement text at $width px ($direction, short=$shortLabels)",
+  async ({ width, shortLabels, direction }) => {
     await page.viewport(width, 900);
-    const profileId = "production-europe-development";
-    const workspace = "/workspace/customer-analytics-dashboard";
+    controls.dir = direction;
+    const profileId = shortLabels ? "prod" : "production-europe-development";
+    const workspaceLabel = shortLabels ? "app" : "customer-analytics-dashboard";
+    const workspace = `/workspace/${workspaceLabel}`;
     const where = renderPickerTemplate(
       true,
       undefined,
@@ -108,7 +117,10 @@ it.each([320, 390, 560, 1440])(
     const workspaceBox = workspaceTrigger.getBoundingClientRect();
     if (width <= 560) {
       expect(workspaceBox.top).toBeGreaterThanOrEqual(envBox.bottom);
-      expect(workspaceBox.left).toBeCloseTo(envBox.left, 0);
+      expect(direction === "rtl" ? workspaceBox.right : workspaceBox.left).toBeCloseTo(
+        direction === "rtl" ? envBox.right : envBox.left,
+        0,
+      );
       const environmentIcon = environment
         .querySelector<HTMLElement>(".new-session-page__target-icon")!
         .getBoundingClientRect();
@@ -125,6 +137,7 @@ it.each([320, 390, 560, 1440])(
       expect(summary.getBoundingClientRect().top).toBeGreaterThanOrEqual(
         label.getBoundingClientRect().bottom,
       );
+      expect(summary.textContent).toBe("Windows (WSL2) · Large");
     } else {
       const environmentRow = environment
         .closest(".new-session-page__select")!
@@ -148,36 +161,67 @@ it.each([320, 390, 560, 1440])(
           ? ".new-session-page__trigger-chevron--mobile"
           : ".new-session-page__trigger-chevron--desktop",
       )!;
-      const labelEdge = Math.max(
-        ...Array.from(
+      const labelBoxes = Array.from(
+        trigger.querySelectorAll<HTMLElement>(
+          ".new-session-page__trigger-label, .new-session-page__trigger-summary",
+        ),
+        (label) => label.getBoundingClientRect(),
+      );
+      const labelGap =
+        direction === "rtl"
+          ? Math.min(...labelBoxes.map((labelBox) => labelBox.left)) -
+            chevron.getBoundingClientRect().right
+          : chevron.getBoundingClientRect().left -
+            Math.max(...labelBoxes.map((labelBox) => labelBox.right));
+      expect(labelGap).toBeGreaterThanOrEqual(8);
+      if (width <= 560) {
+        const availableWidth = trigger.closest<HTMLElement>(
+          ".new-session-page__select",
+        )!.clientWidth;
+        expect(box.width).toBeLessThanOrEqual(availableWidth * 0.8 + 1);
+        const overflows = Array.from(
           trigger.querySelectorAll<HTMLElement>(
             ".new-session-page__trigger-label, .new-session-page__trigger-summary",
           ),
-          (label) => label.getBoundingClientRect().right,
-        ),
-      );
-      expect(chevron.getBoundingClientRect().left - labelEdge).toBeGreaterThanOrEqual(8);
+        ).some((label) => label.scrollWidth > label.clientWidth + 1);
+        if (overflows) {
+          expect(box.width).toBeCloseTo(availableWidth * 0.8, 0);
+        }
+      }
       for (const label of trigger.querySelectorAll<HTMLElement>(
         ".new-session-page__trigger-label, .new-session-page__trigger-summary",
       )) {
-        expect(label.scrollWidth).toBeLessThanOrEqual(label.clientWidth + 1);
+        const style = getComputedStyle(label);
+        expect(style.whiteSpace).toBe("nowrap");
         expect(label.scrollHeight).toBeLessThanOrEqual(label.clientHeight + 1);
+        if (width <= 560) {
+          expect(style.textOverflow).toBe("clip");
+          expect(style.maskImage).toContain(direction === "rtl" ? "to left" : "to right");
+          if (shortLabels) {
+            const textRange = document.createRange();
+            textRange.selectNodeContents(label);
+            expect(textRange.getBoundingClientRect().right).toBeLessThanOrEqual(
+              label.getBoundingClientRect().right - Number.parseFloat(style.paddingInlineEnd) + 1,
+            );
+          }
+        } else {
+          expect(style.maskImage).toBe("none");
+          expect(label.scrollWidth).toBeLessThanOrEqual(label.clientWidth + 1);
+        }
       }
     }
     expect(controls.scrollWidth).toBeLessThanOrEqual(controls.clientWidth);
     await expect
       .element(
         page.getByRole("button", {
-          name: "Where: production-europe-development, Windows (WSL2) · Large",
+          name: `Where: ${profileId}, Windows (WSL2) · Large`,
           exact: true,
         }),
       )
       .toHaveAccessibleDescription("Cloud worker provider: AWS");
     // Exercise the real workspace popover after reflow, not a static label facsimile.
-    await page
-      .getByRole("button", { name: "What: customer-analytics-dashboard", exact: true })
-      .click();
-    await page.getByRole("button", { name: "customer-analytics-dashboard", exact: true }).click();
+    await page.getByRole("button", { name: `What: ${workspaceLabel}`, exact: true }).click();
+    await page.getByRole("button", { name: workspaceLabel, exact: true }).click();
     expect(onApplyFolder).toHaveBeenCalledExactlyOnceWith(workspace);
   },
 );
