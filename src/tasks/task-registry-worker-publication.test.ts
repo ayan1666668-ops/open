@@ -63,9 +63,13 @@ describe("worker publication scope", () => {
     createdAt: 1,
   };
 
-  it.each(["before read", "during read", "during effects"] as const)(
-    "does not recover stale committed publication across task ABA %s",
-    async (phase) => {
+  it.each(
+    (["before read", "during read", "during effects"] as const).flatMap((phase) =>
+      (["newer write", "ABA"] as const).map((change) => ({ phase, change })),
+    ),
+  )(
+    "does not recover stale committed publication across $change $phase",
+    async ({ phase, change }) => {
       const { store, context, events } = await prepare([task]);
       const committed = { ...task, task: "Committed" };
       const started = createDeferred();
@@ -114,13 +118,17 @@ describe("worker publication scope", () => {
       try {
         await started.promise;
         expect(updateTask(task.taskId, { task: "Other write" })).not.toBeNull();
-        expect(updateTask(task.taskId, { task: "Committed" })).not.toBeNull();
+        if (change === "ABA") {
+          expect(updateTask(task.taskId, { task: "Committed" })).not.toBeNull();
+        }
         release.resolve();
         await rejected;
-        expect(events).toEqual([
-          "upserted:existing-task:original-run",
-          "upserted:existing-task:original-run",
-        ]);
+        expect(events).toEqual(
+          change === "ABA"
+            ? ["upserted:existing-task:original-run", "upserted:existing-task:original-run"]
+            : ["upserted:existing-task:original-run"],
+        );
+        expect(tasks.get(task.taskId)?.task).toBe(change === "ABA" ? "Committed" : "Other write");
         expect(effects).not.toHaveBeenCalled();
       } finally {
         release.resolve();

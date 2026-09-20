@@ -31,8 +31,11 @@ import {
   createSubagentTaskBackingDetail,
   resolveManagedTaskBackingDetail,
 } from "./task-backing-authority.js";
+import * as taskMutationEffects from "./task-executor-create.async.js";
 import { createRunningTaskRunCoreWithReceiptAsync } from "./task-executor-create.async.js";
 import { createManagedTaskFlow, createTaskFlowForTask } from "./task-flow-registry.js";
+import * as taskRegistryListenerState from "./task-registry-listener-state.js";
+import { updateTask } from "./task-registry-mutation.js";
 import {
   getTaskById,
   listTaskRecordPage,
@@ -168,7 +171,163 @@ function createReadProgressBatch() {
   );
 }
 
+function createTaskListRequest(ownerKey: string) {
+  const registry = createGatewayMethodRegistry(
+    createCoreGatewayMethodDescriptors(coreGatewayHandlers),
+  );
+  const client: GatewayClient = {
+    connId: "task-read-fixture",
+    connect: {
+      minProtocol: 1,
+      maxProtocol: 1,
+      client: {
+        id: "openclaw-control-ui",
+        version: "test",
+        platform: "test",
+        mode: "webchat",
+      },
+      role: "operator",
+      scopes: ["operator.read"],
+    },
+  };
+  const context = { getRuntimeConfig: () => ({}) } as GatewayRequestContext;
+  return async () => {
+    const respond = vi.fn();
+    await handleGatewayRequest({
+      req: {
+        type: "req",
+        id: "task-read",
+        method: "tasks.list",
+        params: { limit: 5, sessionKey: ownerKey },
+      },
+      client,
+      context,
+      methodRegistry: registry,
+      isWebchatConnect: () => false,
+      respond,
+    });
+    return respond;
+  };
+}
+
 describe("task registry read preparation", () => {
+  it.each(["unchanged", "newer write", "ABA"] as const)(
+    "keeps registered tasks.list current after terminal publication is superseded by %s",
+    async (change) => {
+      await withReadState(async () => {
+        const runId = `superseded-terminal-${change}`;
+        const task = createReadTask(runId);
+        const flow = expectDefined(createTaskFlowForTask({ task }), "terminal task flow");
+        expect(linkTaskToFlowById({ taskId: task.taskId, flowId: flow.flowId })).not.toBeNull();
+        const request = createTaskListRequest(task.ownerKey);
+        const terminalInstalled = createDeferred();
+        const releaseEffects = createDeferred();
+        const readCaptured = createDeferred();
+        const finish = taskMutationEffects.finishTaskMutation;
+        let held = false;
+        vi.spyOn(taskMutationEffects, "finishTaskMutation").mockImplementation(async (...args) => {
+          if (
+            !held &&
+            args[3] === task.taskId &&
+            args[4].operation === "update" &&
+            tasks.get(task.taskId)?.status === "succeeded"
+          ) {
+            held = true;
+            terminalInstalled.resolve();
+            await releaseEffects.promise;
+          }
+          return finish(...args);
+        });
+        const captureFence = taskRegistryListenerState.captureTaskRegistryReadFence;
+        let captureRead = false;
+        vi.spyOn(taskRegistryListenerState, "captureTaskRegistryReadFence").mockImplementation(
+          (...args) => {
+            const pending = captureFence(...args);
+            if (captureRead) {
+              readCaptured.resolve();
+            }
+            return pending;
+          },
+        );
+        const publications: string[] = [];
+        const stop = onTaskRegistryChange((event) => {
+          if (event?.kind === "upserted" && event.task.taskId === task.taskId) {
+            publications.push(event.task.task);
+          }
+        });
+        const mutation = vi.spyOn(getTaskRegistryStore(), "runAgentEventMutationAsync");
+        let reading: ReturnType<typeof request> | undefined;
+        let readResult:
+          | Promise<PromiseSettledResult<Awaited<ReturnType<typeof request>>>[]>
+          | undefined;
+        try {
+          emitAgentEvent({
+            runId,
+            stream: "lifecycle",
+            data: { phase: "end", endedAt: Date.now() },
+          });
+          await withTestTimeout(
+            terminalInstalled.promise,
+            5_000,
+            "Terminal event reached publication",
+          );
+          expect(loadTaskRegistryStateFromSqliteReadOnly().tasks.get(task.taskId)?.status).toBe(
+            "succeeded",
+          );
+          captureRead = true;
+          reading = request();
+          readResult = Promise.allSettled([reading]);
+          await withTestTimeout(
+            readCaptured.promise,
+            5_000,
+            "tasks.list captured the terminal event",
+          );
+          if (change !== "unchanged") {
+            expect(updateTask(task.taskId, { task: "Newer task write" })).not.toBeNull();
+            if (change === "ABA") {
+              expect(updateTask(task.taskId, { task: task.task })).not.toBeNull();
+            }
+          }
+          const expectedTitle = change === "newer write" ? "Newer task write" : task.task;
+          const competingPublications = [...publications];
+          releaseEffects.resolve();
+          const [outcome] = await withTestTimeout(readResult, 5_000, "Captured tasks.list settled");
+          expect(loadTaskRegistryStateFromSqliteReadOnly().tasks.get(task.taskId)).toMatchObject({
+            task: expectedTitle,
+            status: "succeeded",
+          });
+          expect(mutation).toHaveBeenCalledOnce();
+          if (change === "unchanged") {
+            expect(publications).toContain(task.task);
+          } else {
+            expect(publications).toEqual(competingPublications);
+          }
+          expect((await request()).mock.calls[0]).toMatchObject([
+            true,
+            { tasks: [{ id: task.taskId, title: expectedTitle, status: "completed" }] },
+          ]);
+          expect(
+            outcome,
+            outcome?.status === "rejected" ? String(outcome.reason) : undefined,
+          ).toMatchObject({
+            status: "fulfilled",
+          });
+          if (outcome?.status === "fulfilled") {
+            expect(outcome.value.mock.calls[0]).toMatchObject([
+              true,
+              { tasks: [{ id: task.taskId, title: expectedTitle, status: "completed" }] },
+            ]);
+          }
+        } finally {
+          releaseEffects.resolve();
+          await readResult;
+          await prepareTaskRegistryRead();
+          stop();
+        }
+      });
+    },
+  );
+
   it.each(["normalized start", "terminal"] as const)(
     "accepts later events after native %s rollback without an intervening refresh",
     async (phase) => {
@@ -414,42 +573,7 @@ describe("task registry read preparation", () => {
         if (scenario === "active progress") {
           createReadProgressBatch();
         }
-        const registry = createGatewayMethodRegistry(
-          createCoreGatewayMethodDescriptors(coreGatewayHandlers),
-        );
-        const client: GatewayClient = {
-          connId: "task-read-fixture",
-          connect: {
-            minProtocol: 1,
-            maxProtocol: 1,
-            client: {
-              id: "openclaw-control-ui",
-              version: "test",
-              platform: "test",
-              mode: "webchat",
-            },
-            role: "operator",
-            scopes: ["operator.read"],
-          },
-        };
-        const context = { getRuntimeConfig: () => ({}) } as GatewayRequestContext;
-        const request = async () => {
-          const respond = vi.fn();
-          await handleGatewayRequest({
-            req: {
-              type: "req",
-              id: "task-read",
-              method: "tasks.list",
-              params: { limit: 5, sessionKey: task.ownerKey },
-            },
-            client,
-            context,
-            methodRegistry: registry,
-            isWebchatConnect: () => false,
-            respond,
-          });
-          return respond;
-        };
+        const request = createTaskListRequest(task.ownerKey);
         emitTool(task.runId!, "warmup");
         await prepareTaskRegistryRead();
         expect((await request()).mock.calls[0]?.[0]).toBe(true);

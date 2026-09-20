@@ -74,9 +74,10 @@ export function createTaskRegistryPublicationRecovery(
       witness.writtenTaskIds.clear();
       witness.replaced = false;
     },
-    recover,
-    bindExpected(record: TaskRecord | undefined) {
-      expected = record;
+    recover: (snapshot: TaskRegistryStoreSnapshot) => {
+      const record = recover(snapshot);
+      expected = record ? cloneTaskRecord(record) : undefined;
+      return record;
     },
     assertCurrent() {
       if (!expected) {
