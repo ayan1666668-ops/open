@@ -5,8 +5,8 @@ import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import {
   noteCommittedSharedAuthStoreOwnership,
   resolveSharedAuthStorePath,
-  SHARED_AUTH_STORE_STATE_KEY,
 } from "../agents/auth-profiles/path-resolve.js";
+import { SHARED_AUTH_STORE_STATE_KEY } from "../agents/auth-profiles/sqlite-json.js";
 import {
   closeAuthProfileReadPool,
   readPersistedSharedAuthProfileStoreRaw,
