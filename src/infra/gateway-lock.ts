@@ -210,7 +210,7 @@ function defaultReadProcessCmdline(pid: number, platform: NodeJS.Platform): stri
   return null;
 }
 
-async function resolveGatewayOwnerStatus(
+export async function resolveGatewayOwnerStatus(
   pid: number,
   payload: LockPayload | null,
   platform: NodeJS.Platform,
@@ -268,7 +268,7 @@ async function resolveGatewayOwnerStatus(
   return isGatewayArgv(args, { allowGatewayBinary: true }) ? "alive" : "dead";
 }
 
-async function readLockPayload(
+export async function readLockPayload(
   lockPath: string,
   requireInspection = false,
 ): Promise<LockPayload | null> {
@@ -327,7 +327,7 @@ async function shouldReclaimGatewayLock(params: {
   }
 }
 
-function resolveGatewayLockPaths(env: NodeJS.ProcessEnv, suppliedLockDir?: string) {
+export function resolveGatewayLockPaths(env: NodeJS.ProcessEnv, suppliedLockDir?: string) {
   const resolvedStateDir = resolveStateDir(env);
   const stateDir = resolveIdentityPathViaExistingAncestorSync(resolvedStateDir);
   const lockDir = suppliedLockDir ?? resolveGatewayLockDir(stateDir);
@@ -409,6 +409,7 @@ export async function acquireGatewayLock(
   const role = opts.role ?? "gateway";
   const ownerId = randomUUID();
   const paths = resolveGatewayLockPaths(env, opts.lockDir);
+  const databasePath = path.join(paths.stateDir, "state", "openclaw.sqlite");
   const now = opts.now ?? performance.now.bind(performance);
   const startedAt = now();
   const timeoutMs = resolveTimerTimeoutMs(
@@ -428,10 +429,7 @@ export async function acquireGatewayLock(
       now,
       sleep: opts.sleep,
       acquire: () => {
-        const options = {
-          databasePath: path.join(paths.stateDir, "state", "openclaw.sqlite"),
-          busyTimeoutMs: 0,
-        };
+        const options = { databasePath, busyTimeoutMs: 0 };
         if (role === "sqlite-maintenance") {
           const owner = acquireGatewayMaintenanceCoordinator(options);
           resources = createOpenClawDatabaseMaintenanceScope(owner.createSchemaFenceDelegate);
@@ -494,8 +492,7 @@ export async function acquireGatewayLock(
     stateLifecycle.release();
     throw error;
   }
-  const shouldAcquireConfigLock = role !== "gateway" || env.OPENCLAW_ALLOW_MULTI_GATEWAY !== "1";
-  if (!shouldAcquireConfigLock) {
+  if (role === "gateway" && env.OPENCLAW_ALLOW_MULTI_GATEWAY === "1") {
     let inTreeReleased = false;
     const releaseInTree = async () => {
       if (inTreeReleased) {

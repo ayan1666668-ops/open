@@ -8,6 +8,23 @@ Dashboard widgets and browser panels load inside the app. Browser tabs belong to
 
 Reading tabs share a private browser session, isolated from the dashboard's native commands and authentication scripts. Closing every reading tab, switching Gateways, or quitting the app ends that private session. Reloading the dashboard retains its tabs. Sign-in links and **Open in browser** continue to use your system browser.
 
+Startup, setup, connection recovery, Manage Gateways, and Quick Chat share the
+web UI's typography and light/dark palettes. They follow system appearance changes
+while open, preserving connection drafts, credential visibility, and Quick Chat
+replies. The connected dashboard retains its own web UI appearance setting.
+
+Quick Chat places the latest reply above a single bottom composer. Its disclosure
+button collapses the reply while retaining streamed text, widget contents, and
+the next draft. Return sends; Shift-Return adds a newline. The next draft remains
+editable while a reply streams, and sending becomes available when that turn
+finishes. **Open dashboard** opens the Primary Gateway's full interface.
+
+During remote setup or in Connection Settings, choose token or password under
+**Authentication**. **Show credential** reveals only what you entered; changing
+authentication types clears that draft and masks the new field. Press Enter or
+**Connect to Gateway** to connect. Leave credentials blank in Connection Settings
+to reuse saved credentials for the same endpoint.
+
 The tray's **Stop Gateway** and **Restart Gateway** actions request graceful shutdown. Running work can delay completion; **Start Gateway** brings a stopped local Gateway back online.
 
 After a connection drops, the companion keeps reconnecting while the service state is unknown. **Start Gateway** remains available only for a confirmed stopped service.
@@ -227,9 +244,22 @@ the dashboard for HTTP errors, authentication prompts, and Gateway readiness.
 ### Switching Gateways
 
 Use **Gateways → Manage Gateways…** in the app or tray menu to save a direct URL
-or SSH connection. Saved credentials stay in this app's system credential store;
-editing a connection keeps its token and password fields empty. Leave both blank
-to retain the credentials for the same endpoint.
+or SSH connection. **Add Gateway** and **Edit** open a focused connection form;
+**Back to Gateways** returns to the saved list and discards unsaved changes.
+Choose token or password under **Authentication** and enter a credential only
+when needed. The credential starts masked; use **Show credential** to inspect
+what you entered. Switching authentication types clears the entered credential.
+For SSH connections, the optional TLS fingerprint is under **Advanced connection
+settings**.
+
+Saved credentials stay in this app's system credential store and are never
+filled into the editor. Leave the credential field blank to retain the saved
+credentials for the same endpoint.
+
+If the credential store is unavailable, the app keeps the dashboard open and
+shows one dismissible notice. Saved connections remain intact. Resolve the
+reported credential-store problem, then use **Manage Gateways… → Try again** to load
+them again.
 
 The dashboard's profile menu switches the current window to a saved Gateway.
 Command-click or Control-click opens another window. The native **Gateways** menu
@@ -300,6 +330,33 @@ package-managed installs still link to the existing release page. The
 `linux-stable` publication channel does not change those client defaults.
 Changing them requires separate release-owner approval and signed
 installed-client migration proof.
+
+## Keep computer awake
+
+Enable **Keep computer awake** beside **Start at Login** in the native tray menu
+to prevent idle sleep while this companion is running. It starts off and remembers
+your choice across restarts using the companion's existing system credential
+store. The checkmark shows the saved preference. If a saved request cannot be
+restored, the menu says **Keep computer awake (inactive)** and reports an error;
+you can still uncheck it without retrying the unavailable power service. A new
+enable request is saved only after the native request succeeds.
+Turning it off or quitting releases the request. Closing the dashboard to the
+tray does not release it.
+
+Linux uses GNOME’s native session inhibitor when available, or another desktop’s
+xdg-desktop-portal idle inhibitor, such as KDE’s backend. A working session or
+portal backend that supports idle inhibition is required; a
+logind sleep-delay inhibitor alone is not a keep-awake implementation. Desktop
+idle inhibition may also keep the display from dimming and delay automatic
+locking. Windows and the macOS Tauri build inhibit system idle sleep without
+requesting that the display stay on. Manual locking, manual sleep, and lid-close
+behavior remain under the operating system's control. This option does not wake
+or unlock a computer and does not replace the Gateway's sleep preparation.
+
+If turning the option off cannot save the preference, idle sleep is still allowed
+for this run, but the error warns that the saved choice may enable it again after
+a restart. The checked menu item is marked **inactive**; restore access to the
+credential store and uncheck it again to save the off preference.
 
 ## Quick Chat widgets
 

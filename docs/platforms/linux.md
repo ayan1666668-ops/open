@@ -46,6 +46,17 @@ When connecting to an older Gateway whose dashboard does not support this layout
 the companion keeps the system title bar. Update the Gateway to enable the unified
 window controls.
 
+The local startup, setup, recovery, Gateway manager, and Quick Chat screens share
+light and dark styling and follow system appearance changes while open. Connection
+drafts, credential visibility, and Quick Chat replies stay intact. The connected
+dashboard retains its own web UI appearance setting.
+
+Remote setup and Connection Settings use one **Authentication** choice for token
+or password. **Show credential** reveals the entered value; switching types clears
+the draft and masks the new field. Press Enter or **Connect to Gateway** to connect.
+In Connection Settings, blank credentials reuse the saved credentials for the same
+endpoint.
+
 ### Desktop compatibility
 
 Published AMD64 AppImages are built on Ubuntu 22.04 and require glibc 2.35 or
@@ -76,10 +87,18 @@ bundles. See their platform pages for requirements and capabilities.
 ### Gateway selection
 
 Open **Gateways → Manage Gateways…** from the native app or tray menu to save a
-direct URL or SSH connection. The dashboard's profile menu switches only its
-current window; Control-click opens an additional window. Choosing a Gateway
-from the native menu focuses its existing window without reloading it, while
-**Open … in New Window** creates an independent one.
+direct URL or SSH connection. Choose **Add Gateway** or **Edit** to open the
+connection form; **Back to Gateways** returns to the saved list and discards
+unsaved changes. Under **Authentication**, choose token or password and enter a
+credential only if needed. Saved credentials stay hidden; leave the field blank
+to keep them for the same connection. Switching authentication types clears the
+credential you have entered. SSH certificate pins are under **Advanced connection
+settings**.
+
+The dashboard's profile menu switches only its current window; Control-click
+opens an additional window. Choosing a Gateway from the native menu focuses its
+existing window without reloading it, while **Open … in New Window** creates an
+independent one.
 
 The Primary Gateway continues to own Quick Chat and the desktop connection.
 Changing it requires the separate **Set as Primary** confirmation on a saved
@@ -88,6 +107,10 @@ The companion remembers successful explicit selections, returns to Primary when
 that saved connection is removed, and keeps credentials in the operating
 system's credential store. Linux requires an unlocked Secret Service, such as
 GNOME Keyring or KWallet's Secret Service support.
+
+An unavailable credential store shows a dismissible notice without blocking the
+dashboard. Saved connections remain intact; use **Manage Gateways… → Try again**
+after resolving the reported credential-store problem.
 
 When a saved Gateway fails to load, the same window returns to its local
 connection editor. Correcting the endpoint updates the remembered selection only
@@ -166,6 +189,20 @@ environment file. Provider admin keys, GitHub tokens, and unrelated environment
 variables are not copied into the service.
 
 ### Host sleep
+
+Choose **Keep computer awake** in the native tray menu to prevent idle sleep
+while the desktop companion is running, including when its windows are closed.
+The setting is off by default and remembers your choice across app restarts.
+Turning it off or quitting OpenClaw releases the keep-awake request. It does not
+change your permanent power settings or unlock the computer. If the operating
+system cannot honor a saved request, the menu marks the checked preference
+**inactive** and reports the error. You can still uncheck it to turn the saved
+preference off.
+
+Linux uses GNOME’s session manager or an xdg-desktop-portal backend that supports
+idle inhibition. Depending on the desktop, this can also prevent display dimming and automatic
+locking; manual locking remains available. The optional macOS and Windows Tauri
+builds prevent system idle sleep without requesting that the display stay on.
 
 On systems with systemd-logind, the companion prepares a suspension lease for
 its local Gateway before the host sleeps. After wake, it reconnects and resumes
@@ -282,8 +319,13 @@ On X11, use the gear in Quick Chat to record or reset a custom shortcut. The
 plain **Quick Chat** tray item. Global shortcuts are not available on Wayland, so
 the shortcut settings are hidden and the tray item remains the entry point.
 After an accepted send, Quick Chat stays open and streams the selected agent's
-plain-text reply below the composer. Press `Esc` to dismiss the bar and its reply;
-`Ctrl+Enter` still opens the dashboard.
+plain-text reply above one bottom composer, with your submitted message alongside
+the reply. Collapse the reply to keep a compact composer; expanding it restores
+the live text and any widget contents. You can prepare the next draft while a
+reply streams, then send it when the turn finishes. Return sends, Shift-Return
+adds a newline, and `Ctrl+Enter` sends and opens the dashboard. **Open dashboard**
+is also available beside the composer controls. Press `Esc` to dismiss the bar
+and its reply.
 
 ## CLI and SSH alternative
 
@@ -359,6 +401,14 @@ Canvas bridge or its A2UI push commands.
 
 ## Gateway service (systemd)
 
+On Linux hosts without a supported service manager, run the Gateway in the
+foreground or through your own supervisor, such as rc.d. `openclaw gateway status
+--deep` reports **no supported service manager detected** and identifies a
+remaining service unit as stale. That recorded unit does not select the status
+probe's configuration or port. Updates continue with a service warning; restart
+your manually launched Gateway after the update. An unavailable user session bus
+on a systemd host remains a separate service-access diagnostic.
+
 Install with one of:
 
 ```bash
@@ -376,6 +426,16 @@ openclaw doctor
 `openclaw gateway install` renders a systemd **user** unit by default. Full
 service guidance, including the **system**-level unit variant for shared or
 always-on hosts, lives in the [Gateway runbook](/gateway#supervision-and-service-lifecycle).
+
+Managed units escape literal paths automatically. In a custom unit, do not add
+shell quotes around `WorkingDirectory=` or `EnvironmentFile=` paths, even when
+they contain spaces. Use a separate `EnvironmentFile=` directive for each absolute
+path; systemd ignores relative paths. Write `%%` for a literal percent sign.
+`EnvironmentFile=` also accepts glob patterns, so escape literal glob characters
+with a backslash. Managed working-directory paths must not end in spaces or
+tabs: systemd 255 loses that trailing whitespace when starting the process.
+OpenClaw rejects those paths rather than risk using a different directory;
+choose a path without trailing whitespace.
 
 Write a unit by hand only for a custom setup. Minimal user-unit example
 (`~/.config/systemd/user/openclaw-gateway[-<profile>].service`):
@@ -432,6 +492,10 @@ Covered child process surfaces:
 - MCP stdio server children
 - Managed local model and embedding service children
 - OpenClaw-launched browser/Chrome processes (via the plugin SDK process runtime)
+
+Sandbox backend transports keep their prepared environment and inherited OOM
+score instead of receiving this wrapper. Workload resource policy belongs to
+the sandbox backend; ordinary host commands and PTYs retain the child-first bias.
 
 The wrapper is Linux-only and skipped when `/bin/sh` is unavailable, or when
 the child env sets `OPENCLAW_CHILD_OOM_SCORE_ADJ` to `0`, `false`, `no`, or

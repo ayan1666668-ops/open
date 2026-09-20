@@ -1,5 +1,5 @@
 /* @vitest-environment jsdom */
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 import { createDeferred } from "../../../test/helpers/promise.js";
 import {
   createIosNativeDeviceSettingsSnapshot,
@@ -29,16 +29,35 @@ function publish(detail: unknown) {
 }
 
 describe("native device settings wire contract", () => {
-  it("validates setup results and forwards an explicit parameter-free installation action", async () => {
+  it.each([
+    ["chromeExtensionStatus", "chrome-extension-status"],
+    ["installChromeExtension", "install-chrome-extension"],
+  ] as const)("validates %s results and forwards its exact native action", async (method, type) => {
     const post = installBridge();
-    const result = { nativeHostRegistered: true, installRequested: true, discoveredProfiles: 0 };
+    const result = {
+      nativeHostRegistered: true,
+      installRequested: true,
+      installedProfiles: 1,
+      discoveredProfiles: 0,
+    };
     post.mockResolvedValueOnce(result);
-    await expect(capability!.installChromeExtension()).resolves.toEqual(result);
-    expect(post).toHaveBeenLastCalledWith({ type: "install-chrome-extension" });
-    post.mockResolvedValueOnce({ ...result, discoveredProfiles: -1 });
-    await expect(capability!.installChromeExtension()).rejects.toThrow("invalid result");
+    await expect(capability![method]()).resolves.toEqual(result);
+    expect(post).toHaveBeenLastCalledWith({ type });
+    post.mockResolvedValueOnce({ ...result, installedProfiles: -1 });
+    await expect(capability![method]()).rejects.toThrow("invalid result");
     post.mockRejectedValueOnce(new Error("CLI unavailable"));
-    await expect(capability!.installChromeExtension()).rejects.toThrow("CLI unavailable");
+    await expect(capability![method]()).rejects.toThrow("CLI unavailable");
+    const shippedReply = {
+      nativeHostRegistered: true,
+      installRequested: false,
+      discoveredProfiles: 1,
+    };
+    post.mockResolvedValueOnce(shippedReply);
+    if (method === "installChromeExtension") {
+      await expect(capability![method]()).resolves.toEqual(shippedReply);
+    } else {
+      await expect(capability![method]()).rejects.toThrow("invalid result");
+    }
   });
   it("exists only with the native message handler and reads the document-start snapshot", () => {
     vi.stubGlobal("webkit", undefined);
@@ -102,6 +121,13 @@ describe("native device settings wire contract", () => {
     { name: "empty", entries: [] },
     { name: "single", entries: [{ id: "camera", status: "granted" }] },
     {
+      name: "requestable macOS",
+      entries: [
+        { id: "screenRecording", status: "notDetermined" },
+        { id: "accessibility", status: "notDetermined" },
+      ],
+    },
+    {
       name: "reordered",
       entries: createNativeDeviceSettingsSnapshot().permissions.entries.toReversed(),
     },
@@ -116,6 +142,34 @@ describe("native device settings wire contract", () => {
     expect(listener).toHaveBeenCalledWith(next);
   });
 
+  it("accepts shipped Mac snapshots without exposing their retired Terminal permission", () => {
+    const snapshot = createNativeDeviceSettingsSnapshot();
+    snapshot.device.appVersion = "2026.9.5";
+    // The v2026.9.5 native permission list always included automation, even when unavailable.
+    const shippedSnapshot = {
+      ...snapshot,
+      permissions: {
+        ...snapshot.permissions,
+        entries: [...snapshot.permissions.entries, { id: "automation", status: "unavailable" }],
+      },
+    };
+    installBridge(shippedSnapshot);
+    expect(capability?.snapshot).toEqual(snapshot);
+
+    const listener = vi.fn();
+    capability?.subscribe(listener);
+    const updated = { ...snapshot, app: { ...snapshot.app, showDockIcon: false } };
+    publish({ ...shippedSnapshot, app: updated.app });
+    expect(capability?.snapshot).toEqual(updated);
+    expect(listener).toHaveBeenCalledWith(updated);
+    expectTypeOf<
+      Extract<Parameters<NativeDeviceSettingsCapability["requestPermission"]>[0], "automation">
+    >().toBeNever();
+    expectTypeOf<
+      Extract<Parameters<NativeDeviceSettingsCapability["openSystemSettings"]>[0], "automation">
+    >().toBeNever();
+  });
+
   it.each([
     ["contract", { contract: 2 }],
     ["device", { device: { platform: "macos" } }],
@@ -123,6 +177,7 @@ describe("native device settings wire contract", () => {
     ["absent family encoded as null", { app: null }],
     ["appearance", { app: { appearance: "sepia" } }],
     ["notifications", { app: { notificationsEnabled: "true" } }],
+    ["native experience", { app: { nativeExperienceEnabled: "true" } }],
     ["iOS capability", { capabilities: { healthSummaryEnabled: "true" } }],
     ["unattended desktop toggle", { capabilities: { unattendedDesktopEnabled: "true" } }],
     ...[null, {}, { state: "available" }, { state: true }].map(
@@ -293,6 +348,7 @@ describe("native device settings wire contract", () => {
     const post = installBridge();
     post.mockClear();
     capability?.set("app.showDockIcon", false);
+    capability?.set("app.nativeExperienceEnabled", true);
     capability?.set("app.iconStyle", "origami");
     capability?.set("voice.microphone", null);
     capability?.set("browser.cookieSync.domains", ["example.com"]);
@@ -303,6 +359,7 @@ describe("native device settings wire contract", () => {
     capability?.checkForUpdates();
     expect(post.mock.calls.map(([message]) => message)).toEqual([
       { type: "set", key: "app.showDockIcon", value: false },
+      { type: "set", key: "app.nativeExperienceEnabled", value: true },
       { type: "set", key: "app.iconStyle", value: "origami" },
       { type: "set", key: "voice.microphone", value: null },
       { type: "set", key: "browser.cookieSync.domains", value: ["example.com"] },

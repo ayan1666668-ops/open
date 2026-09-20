@@ -56,7 +56,15 @@ export const lineOutboundAdapter: NonNullable<ChannelPlugin<ResolvedLineAccount>
   // duplicate the card this channel already delivers to the approver.
   shouldSuppressLocalPayloadPrompt: ({ cfg, accountId, payload, hint }) =>
     shouldSuppressLocalLineExecApprovalPrompt({ cfg, accountId, payload, hint }),
-  sendPayload: async ({ to, payload, accountId, cfg, replyToId, onDeliveryResult }) => {
+  sendPayload: async ({
+    to,
+    payload,
+    accountId,
+    cfg,
+    replyToId,
+    onDeliveryResult,
+    assertDirectAdapterHandoff,
+  }) => {
     const runtime = getLineRuntime();
     const outboundRuntime = await loadLineOutboundRuntime();
     const rawLineData = (payload.channelData?.line as LineChannelData | undefined) ?? {};
@@ -78,7 +86,13 @@ export const lineOutboundAdapter: NonNullable<ChannelPlugin<ResolvedLineAccount>
     const buildTemplate =
       lineRuntime?.buildTemplateMessageFromPayload ??
       outboundRuntime.buildTemplateMessageFromPayload;
-    const sendOptions = { verbose: false, cfg, accountId: accountId ?? undefined };
+    const authorize = assertDirectAdapterHandoff
+      ? () => {
+          assertDirectAdapterHandoff();
+          return true;
+        }
+      : undefined;
+    const sendOptions = { verbose: false, cfg, accountId: accountId ?? undefined, authorize };
 
     let lastResult: LineSendResult | null = null;
     const recordResult = async (
@@ -341,7 +355,15 @@ export const lineOutboundAdapter: NonNullable<ChannelPlugin<ResolvedLineAccount>
     // Core sends a single media reply through here rather than through the payload
     // owner, so the quote has to be resolved again; sendMessageLine puts it on the
     // caption, the one part of a media send LINE accepts a quote on.
-    sendMedia: async ({ cfg, to, text, mediaUrl, accountId, replyToId }) =>
+    sendMedia: async ({
+      cfg,
+      to,
+      text,
+      mediaUrl,
+      accountId,
+      replyToId,
+      assertDirectAdapterHandoff,
+    }) =>
       await (
         await loadLineOutboundRuntime()
       ).sendMessageLine(to, text, {
@@ -349,6 +371,12 @@ export const lineOutboundAdapter: NonNullable<ChannelPlugin<ResolvedLineAccount>
         mediaUrl,
         cfg,
         accountId: accountId ?? undefined,
+        authorize: assertDirectAdapterHandoff
+          ? () => {
+              assertDirectAdapterHandoff();
+              return true;
+            }
+          : undefined,
         quoteToken: resolveLineQuoteToken({ cfg, accountId, chatId: to, messageId: replyToId }),
       }),
   }),

@@ -54,6 +54,8 @@ struct Registry {
     version: u32,
     profiles: Vec<SavedGateway>,
     selected: Option<String>,
+    #[serde(default)]
+    keep_computer_awake: bool,
 }
 
 impl Default for Registry {
@@ -62,6 +64,7 @@ impl Default for Registry {
             version: 1,
             profiles: Vec::new(),
             selected: None,
+            keep_computer_awake: false,
         }
     }
 }
@@ -76,9 +79,27 @@ struct SystemCredential {
 }
 
 fn credential_error(error: keyring::Error) -> String {
+    #[cfg(target_os = "macos")]
+    if let keyring::Error::PlatformFailure(cause) | keyring::Error::NoStorageAccess(cause) = &error
+    {
+        if let Some(cause) = cause.downcast_ref::<security_framework::base::Error>() {
+            return match cause.code() {
+                -25307 => "Saved Gateways are unavailable because macOS has no default login keychain. Open Keychain Access to configure or restore it, then try again.".to_string(),
+                -25294 => "Saved Gateways are unavailable because the login keychain could not be found. Open Keychain Access to restore it, then try again.".to_string(),
+                -25291 => "macOS Keychain is unavailable. Try again after your login session is ready.".to_string(),
+                -25308 | -25293 => "macOS denied access to the login keychain. Unlock it in Keychain Access or approve OpenClaw-Tauri access, then try again.".to_string(),
+                -128 => "Access to saved Gateways was canceled. Try again and approve Keychain access when prompted.".to_string(),
+                code => format!("Could not access saved Gateways in macOS Keychain (error {code}). Check Keychain Access and try again."),
+            };
+        }
+    }
+    // Backend errors can contain credential bytes or entry metadata. Only a
+    // typed macOS status code above is safe to include in the user message.
     match error {
         keyring::Error::TooLong(_, _) => "These saved Gateways exceed the system credential store's size limit. Shorten or remove an entry, then try again.".to_string(),
-        _ => "Could not access saved Gateways in the system credential store. Unlock your keychain or credential vault, then try again.".to_string(),
+        keyring::Error::NoDefaultStore => "The system credential store is unavailable. Check that your keychain or credential vault is configured, then restart OpenClaw-Tauri.".to_string(),
+        keyring::Error::BadEncoding(_) | keyring::Error::BadDataFormat(_, _) | keyring::Error::BadStoreFormat(_) => CORRUPT.to_string(),
+        _ => "Could not access saved Gateways in the system credential store. Check that your keychain or credential vault is available, then try again.".to_string(),
     }
 }
 
@@ -202,6 +223,21 @@ impl GatewayProfiles {
         if next.selected.as_deref() == Some(id) {
             next.selected = None;
         }
+        self.commit(&mut cache, next)
+    }
+
+    pub fn keep_computer_awake(&self) -> Result<bool, String> {
+        let mut cache = self.registry.lock().map_err(|_| CORRUPT)?;
+        Ok(self.load(&mut cache)?.keep_computer_awake)
+    }
+
+    pub fn set_keep_computer_awake(&self, enabled: bool) -> Result<(), String> {
+        let mut cache = self.registry.lock().map_err(|_| CORRUPT)?;
+        let mut next = self.load(&mut cache)?.clone();
+        if next.keep_computer_awake == enabled {
+            return Ok(());
+        }
+        next.keep_computer_awake = enabled;
         self.commit(&mut cache, next)
     }
 
@@ -380,6 +416,102 @@ mod tests {
             password: None,
             remote_port: None,
             tls_fingerprint: None,
+        }
+    }
+
+    #[test]
+    fn keep_awake_defaults_off_and_preserves_profiles_selection_and_credentials() {
+        let vault = MemoryCredential::default();
+        // Existing registry bytes have no power preference; reading must not rewrite them.
+        vault.0.lock().unwrap().value =
+            Some(br#"{"version":1,"profiles":[],"selected":null}"#.to_vec());
+        let before = vault.0.lock().unwrap().value.clone();
+        let profiles = store(&vault);
+        assert!(!profiles.keep_computer_awake().unwrap());
+        assert_eq!(vault.0.lock().unwrap().value, before);
+        let profile = profiles
+            .save(
+                "Studio",
+                None,
+                request("https://studio.example", Some("synthetic-token")),
+            )
+            .unwrap();
+        profiles.remember(Some(&profile.id)).unwrap();
+        profiles.set_keep_computer_awake(true).unwrap();
+        let restarted = store(&vault);
+        assert!(restarted.keep_computer_awake().unwrap());
+        assert_eq!(
+            restarted.selected().unwrap().as_deref(),
+            Some(profile.id.as_str())
+        );
+        assert_eq!(
+            restarted.get(&profile.id).unwrap().request.token.as_deref(),
+            Some("synthetic-token")
+        );
+        restarted.set_keep_computer_awake(false).unwrap();
+        assert!(!store(&vault).keep_computer_awake().unwrap());
+        assert_eq!(store(&vault).list().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn failed_keep_awake_save_preserves_the_vault_and_cached_preference() {
+        let vault = MemoryCredential::default();
+        let profiles = store(&vault);
+        profiles.set_keep_computer_awake(true).unwrap();
+        let bytes = vault.0.lock().unwrap().value.clone();
+        vault.0.lock().unwrap().fail_write = true;
+        assert!(profiles.set_keep_computer_awake(false).is_err());
+        assert!(profiles.keep_computer_awake().unwrap());
+        assert!(store(&vault).keep_computer_awake().unwrap());
+        assert_eq!(vault.0.lock().unwrap().value, bytes);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn credential_errors_distinguish_missing_keychains_from_denied_access() {
+        for (code, no_storage_access, guidance, may_suggest_unlock) in [
+            (-25307, false, "no default login keychain", false),
+            (-25294, true, "login keychain could not be found", false),
+            (-25291, true, "Keychain is unavailable", false),
+            (-25308, false, "Unlock", true),
+            (-25293, false, "Unlock", true),
+            (-128, false, "canceled", false),
+            (-77777, false, "-77777", false),
+        ] {
+            let cause = Box::new(security_framework::base::Error::from_code(code));
+            let error = if no_storage_access {
+                keyring::Error::NoStorageAccess(cause)
+            } else {
+                keyring::Error::PlatformFailure(cause)
+            };
+            let message = credential_error(error);
+            assert!(
+                message.contains(guidance),
+                "wrong guidance for OSStatus {code}"
+            );
+            if !may_suggest_unlock {
+                assert!(!message.to_lowercase().contains("unlock"));
+            }
+        }
+    }
+
+    #[test]
+    fn credential_errors_never_format_secret_bearing_backend_payloads() {
+        for error in [
+            keyring::Error::NoDefaultStore,
+            keyring::Error::BadEncoding(b"fixture-secret".to_vec()),
+            keyring::Error::BadDataFormat(
+                b"fixture-secret".to_vec(),
+                Box::new(std::io::Error::other("fixture-secret")),
+            ),
+            keyring::Error::BadStoreFormat("fixture-secret".to_string()),
+            keyring::Error::Invalid("fixture-secret".to_string(), "fixture-secret".to_string()),
+            keyring::Error::PlatformFailure(Box::new(std::io::Error::other("fixture-secret"))),
+            keyring::Error::NoStorageAccess(Box::new(std::io::Error::other("fixture-secret"))),
+        ] {
+            let message = credential_error(error);
+            assert!(!message.contains("fixture-secret"));
+            assert!(!message.to_lowercase().contains("unlock"));
         }
     }
 

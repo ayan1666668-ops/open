@@ -222,10 +222,10 @@ vi.mock("../server-restart-sentinel-notice.js", () => ({
   resolveGatewayLifecycleNoticeRoute: resolveGatewayLifecycleNoticeRouteMock,
 }));
 
-export const scheduleGatewaySigusr1RestartMock = vi.fn(
-  (
-    _opts?: Parameters<typeof import("../../infra/restart.js").scheduleGatewaySigusr1Restart>[0],
-  ) => ({ scheduled: true }),
+export const scheduleGatewayRestartMock = vi.fn(
+  (_opts?: Parameters<typeof import("../../infra/restart.js").scheduleGatewayRestart>[0]) => ({
+    scheduled: true,
+  }),
 );
 
 export const runPostCoreFinalizeAfterGatewayUpdateMock = vi.fn<
@@ -285,7 +285,7 @@ vi.mock("../../infra/restart-sentinel.js", async () => {
 
 vi.mock("../../infra/restart.js", async () => ({
   ...(await vi.importActual<typeof import("../../infra/restart.js")>("../../infra/restart.js")),
-  scheduleGatewaySigusr1Restart: scheduleGatewaySigusr1RestartMock,
+  scheduleGatewayRestart: scheduleGatewayRestartMock,
 }));
 
 vi.mock("../../infra/package-json.js", () => ({ readPackageVersion: readPackageVersionMock }));
@@ -308,9 +308,12 @@ vi.mock("../../infra/update-channels.js", async () => {
   return { ...actual, normalizeUpdateChannel: normalizeUpdateChannelMock };
 });
 
-vi.mock("../../infra/update-startup.js", () => ({
+vi.mock("../../infra/update-status-state.js", () => ({
   getUpdateAvailable: getUpdateAvailableMock,
   getUpdateSchedule: getUpdateScheduleMock,
+}));
+
+vi.mock("../../infra/update-startup.js", () => ({
   initializeGatewayUpdateStatus: initializeGatewayUpdateStatusMock,
   refreshGatewayUpdateStatus: refreshGatewayUpdateStatusMock,
 }));
@@ -454,8 +457,8 @@ beforeEach(() => {
     handoffId: params?.handoffId ?? "handoff-default",
     installRoot: params?.root ?? "/tmp/openclaw",
   }));
-  scheduleGatewaySigusr1RestartMock.mockClear();
-  scheduleGatewaySigusr1RestartMock.mockReturnValue({ scheduled: true });
+  scheduleGatewayRestartMock.mockClear();
+  scheduleGatewayRestartMock.mockReturnValue({ scheduled: true });
   runPostCoreFinalizeAfterGatewayUpdateMock.mockClear();
   runPostCoreFinalizeAfterGatewayUpdateMock.mockResolvedValue({
     status: "skipped",
@@ -470,6 +473,7 @@ export async function invokeUpdateRun(
     update: {},
     commands: { ownerAllowFrom: ["slack:C0123ABC", "slack:C0456DEF"] },
   },
+  contextOverrides: Record<string, unknown> = {},
 ) {
   const { updateHandlers } = await import("./update.js");
   const onRespond = respond ?? (() => {});
@@ -479,7 +483,7 @@ export async function invokeUpdateRun(
   )({
     params,
     respond: onRespond as never,
-    context: { getRuntimeConfig: () => runtimeConfig },
+    context: { getRuntimeConfig: () => runtimeConfig, ...contextOverrides },
   } as never);
 }
 

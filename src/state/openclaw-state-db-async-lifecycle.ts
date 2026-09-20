@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import path from "node:path";
+import { extractErrorCode } from "@openclaw/normalization-core/error-coercion";
 import { createSqliteLifecycleAggregateError } from "../infra/sqlite-coordinator.js";
 import {
   inspectDatabasePathIdentitySync,
@@ -9,12 +10,24 @@ import {
 import type { tryCreateGatewaySchemaFenceDelegate } from "../infra/state-database-coordinator.js";
 import { resolveGlobalSingleton } from "../shared/global-singleton.js";
 
+const STATE_DATABASE_READ_ADMISSION_INVALIDATED = "STATE_DATABASE_READ_ADMISSION_INVALIDATED";
+
+export class StateDatabaseReadAdmissionInvalidatedError extends Error {
+  readonly code = STATE_DATABASE_READ_ADMISSION_INVALIDATED;
+}
+
+export function isStateDatabaseReadAdmissionInvalidatedError(error: unknown): boolean {
+  return extractErrorCode(error) === STATE_DATABASE_READ_ADMISSION_INVALIDATED;
+}
+
 export type OpenClawStateDatabaseReadAdmission = {
   readonly databasePath: string;
   readonly identity: DatabasePathIdentity;
   assertCurrent: () => void;
 };
 export type OpenClawStateDatabaseAsyncResource = {
+  /** Shared execution resources close only after accepted owners settle their remaining work. */
+  phase?: "after-resources";
   close: (identity?: DatabasePathIdentity) => Promise<void>;
 };
 
@@ -28,6 +41,7 @@ type CloseAttempt = {
   seal: ReadSeal;
   retained: Set<OpenClawStateDatabaseAsyncResource>;
   pending?: Promise<boolean>;
+  queue?: Set<OpenClawStateDatabaseAsyncResource>;
 };
 
 type MaintenanceResource = {
@@ -44,6 +58,7 @@ type SchemaDelegateFactory = (
 ) => ReturnType<typeof tryCreateGatewaySchemaFenceDelegate>;
 
 export type OpenClawDatabaseMaintenanceScope = {
+  readonly ownsSchemaMaintenance: boolean;
   assertAdmission(): void;
   run<T>(operation: () => T): T;
   track<T>(operation: Promise<T>): Promise<T>;
@@ -72,6 +87,11 @@ export function getOpenClawDatabaseMaintenanceScope():
   | OpenClawDatabaseMaintenanceScope
   | undefined {
   return maintenanceResources.current.getStore()?.scope;
+}
+
+/** Delayed work acquires its own resources instead of inheriting the completed scope. */
+export function runOutsideOpenClawDatabaseMaintenanceScope<T>(operation: () => T): T {
+  return maintenanceResources.current.exit(operation);
 }
 
 export function isOpenClawDatabaseMaintenanceResourceOwned(
@@ -122,10 +142,14 @@ function commonMaintenanceAncestor(
   return undefined;
 }
 
-/** Associate lexical maintenance work with exact resources, never all files beneath a root. */
+/** Associate lexical database work with exact resources, never all files beneath a root. */
 export function createOpenClawDatabaseMaintenanceScope(
-  createSchemaFenceDelegate: SchemaDelegateFactory,
+  createSchemaFenceDelegate?: SchemaDelegateFactory,
 ): OpenClawDatabaseMaintenanceScope {
+  const parent = getOpenClawDatabaseMaintenanceScope();
+  const schemaDelegateFactory =
+    createSchemaFenceDelegate ??
+    (parent?.ownsSchemaMaintenance ? parent.createSchemaFenceDelegate : undefined);
   const pending = new Set<Promise<unknown>>();
   const resources = new Map<object, MaintenanceResource>();
   let closed = false;
@@ -136,6 +160,7 @@ export function createOpenClawDatabaseMaintenanceScope(
     }
   };
   const scope: OpenClawDatabaseMaintenanceScope = {
+    ownsSchemaMaintenance: schemaDelegateFactory !== undefined,
     assertAdmission() {
       assertOpen();
       const inherited = maintenanceResources.current.getStore();
@@ -182,7 +207,7 @@ export function createOpenClawDatabaseMaintenanceScope(
     },
     createSchemaFenceDelegate(params) {
       assertOpen();
-      return createSchemaFenceDelegate(params);
+      return schemaDelegateFactory?.(params);
     },
     close() {
       return (closing ??= maintenanceResources.current
@@ -200,6 +225,10 @@ export function createOpenClawDatabaseMaintenanceScope(
               "shared-handles",
             ] as const) {
               while ([...resources.values()].some((resource) => resource.phase === phase)) {
+                // Earlier cleanup can start tracked work using resources in this batch.
+                while (pending.size) {
+                  await Promise.allSettled(pending);
+                }
                 const batch = [...resources].filter(([, resource]) => resource.phase === phase);
                 const results = await Promise.allSettled(
                   batch.map(async ([key, resource]) => {
@@ -232,7 +261,6 @@ export function createOpenClawDatabaseMaintenanceScope(
         }));
     },
   };
-  const parent = getOpenClawDatabaseMaintenanceScope();
   if (parent) {
     maintenanceResources.parents.set(scope, parent);
   }
@@ -258,14 +286,19 @@ export function createOpenClawStateDatabaseAsyncLifecycle() {
     [...seals].some((held) => held.record === undefined || overlaps(held.record, record));
   const assertOpen = (record: IdentityRecord) => {
     if (isSealed(record)) {
-      throw new Error("OpenClaw state database read admission is closed");
+      throw new StateDatabaseReadAdmissionInvalidatedError(
+        "OpenClaw state database read admission is closed",
+      );
     }
   };
   const resolve = (pathname: string, preparedIdentity?: DatabasePathIdentity): IdentityRecord => {
     const resolvedPath = path.resolve(pathname);
     const cached = known(resolvedPath);
-    if (cached) {
-      return cached;
+    if (cached && (!preparedIdentity || cached.identity.key === preparedIdentity.key)) {
+      // Resolve first creation without replacing an established file's admission.
+      return !preparedIdentity && cached.identity.key.startsWith("path:")
+        ? resolve(resolvedPath, readDatabasePathIdentitySync(resolvedPath))
+        : cached;
     }
     const identity = preparedIdentity ?? readDatabasePathIdentitySync(resolvedPath);
     let record = records.get(identity.key);
@@ -326,9 +359,9 @@ export function createOpenClawStateDatabaseAsyncLifecycle() {
 
   return {
     identity(pathname: string): DatabasePathIdentity | undefined {
-      return resolveForNative(pathname)?.identity;
+      return known(pathname)?.identity ?? inspectDatabasePathIdentitySync(pathname);
     },
-    knownIdentity(pathname: string): DatabasePathIdentity | undefined {
+    knownIdentity(this: void, pathname: string): DatabasePathIdentity | undefined {
       return known(pathname)?.identity;
     },
     publish(pathname: string): DatabasePathIdentity {
@@ -349,8 +382,7 @@ export function createOpenClawStateDatabaseAsyncLifecycle() {
         }
       }
       if (!record) {
-        record = { identity, paths: new Set(), generation: {} };
-        records.set(identity.key, record);
+        record = resolve(resolvedPath, identity);
       }
       record.paths.add(resolvedPath).add(identity.canonicalPath);
       return identity;
@@ -367,11 +399,14 @@ export function createOpenClawStateDatabaseAsyncLifecycle() {
     },
     register(resource: OpenClawStateDatabaseAsyncResource): () => void {
       resources.add(resource);
+      for (const attempt of attempts.values()) {
+        attempt.queue?.add(resource);
+      }
       return () => {
         resources.delete(resource);
       };
     },
-    capture(pathname: string): OpenClawStateDatabaseReadAdmission {
+    capture(this: void, pathname: string): OpenClawStateDatabaseReadAdmission {
       const databasePath = path.resolve(pathname);
       const record = resolve(databasePath);
       assertOpen(record);
@@ -384,7 +419,9 @@ export function createOpenClawStateDatabaseAsyncLifecycle() {
         assertCurrent() {
           assertOpen(record);
           if (records.get(record.identity.key) !== record || record.generation !== generation) {
-            throw new Error("OpenClaw state database read admission changed");
+            throw new StateDatabaseReadAdmissionInvalidatedError(
+              "OpenClaw state database read admission changed",
+            );
           }
         },
       };
@@ -421,55 +458,76 @@ export function createOpenClawStateDatabaseAsyncLifecycle() {
         attempts.set(record, attempt);
       }
       const current = attempt;
-      const pending = tail.then(async () => {
-        const closing = new Set([...resources, ...current.retained]);
-        for (const entry of attempts.values()) {
-          for (const resource of entry.retained) {
-            closing.add(resource);
-          }
-        }
-        const errors: unknown[] = [];
-        await Promise.all(
-          [...closing].map(async (resource) => {
-            try {
-              await resource.close(record?.identity);
-              current.retained.delete(resource);
-            } catch (error) {
-              // Unregistration cannot abandon a resource whose close failed.
-              current.retained.add(resource);
-              errors.push(error);
-            }
-          }),
-        );
-        if (errors.length === 1) {
-          throw errors[0];
-        }
-        if (errors.length > 1) {
-          throw createSqliteLifecycleAggregateError(
-            errors,
-            "OpenClaw state resource drainage failed",
-            errors[0],
-          );
-        }
-        const retired = retireNative(record?.identity);
-        attempts.delete(record);
-        seals.delete(current.seal);
-        if (record === undefined) {
-          // A successful whole-cache retry also discharges prior failed path closes.
-          for (const [key, entry] of attempts) {
-            if (!entry.pending) {
-              attempts.delete(key);
-              seals.delete(entry.seal);
+      const pending = tail
+        .then(async () => {
+          const closing = new Set([...resources, ...current.retained]);
+          for (const entry of attempts.values()) {
+            for (const resource of entry.retained) {
+              closing.add(resource);
             }
           }
-          for (const entry of records.values()) {
-            forget(entry);
+          current.queue = closing;
+          const errors: unknown[] = [];
+          while (current.queue.size) {
+            const ordinary = [...current.queue].filter(
+              (resource) => resource.phase !== "after-resources",
+            );
+            // Failed owners retain the transports they may need during a canonical retry.
+            if (!ordinary.length && errors.length) {
+              for (const resource of current.queue) {
+                current.retained.add(resource);
+              }
+              break;
+            }
+            const batch = ordinary.length ? ordinary : [...current.queue];
+            for (const resource of batch) {
+              current.queue.delete(resource);
+            }
+            await Promise.all(
+              batch.map(async (resource) => {
+                try {
+                  await resource.close(record?.identity);
+                  current.retained.delete(resource);
+                } catch (error) {
+                  // Unregistration cannot abandon a resource whose close failed.
+                  current.retained.add(resource);
+                  errors.push(error);
+                }
+              }),
+            );
           }
-        } else {
-          forget(record);
-        }
-        return retired;
-      });
+          if (errors.length === 1) {
+            throw errors[0];
+          }
+          if (errors.length > 1) {
+            throw createSqliteLifecycleAggregateError(
+              errors,
+              "OpenClaw state resource drainage failed",
+              errors[0],
+            );
+          }
+          const retired = retireNative(record?.identity);
+          attempts.delete(record);
+          seals.delete(current.seal);
+          if (record === undefined) {
+            // A successful whole-cache retry also discharges prior failed path closes.
+            for (const [key, entry] of attempts) {
+              if (!entry.pending) {
+                attempts.delete(key);
+                seals.delete(entry.seal);
+              }
+            }
+            for (const entry of records.values()) {
+              forget(entry);
+            }
+          } else {
+            forget(record);
+          }
+          return retired;
+        })
+        .finally(() => {
+          current.queue = undefined;
+        });
       current.pending = pending;
       tail = pending.then(
         () => undefined,

@@ -26,6 +26,7 @@ export const updateFailureSchema = z
   .union([
     z.object({
       result: z.object({
+        runId: z.uuid().optional().catch(undefined),
         status: z.enum(["ok", "error", "skipped"]),
         mode: z.enum(["git", "pnpm", "bun", "npm", "unknown"]),
         root: z.string().optional(),
@@ -272,6 +273,7 @@ export function sanitizeTriageUpdateFailure(
   const sanitized = {
     ...(error ? { error } : {}),
     result: {
+      ...(result.runId ? { runId: result.runId } : {}),
       status: result.status,
       mode: result.mode,
       reason: text(result.reason, 128),
@@ -363,4 +365,46 @@ export async function readTriageUpdateFailure(
   } finally {
     await file.close();
   }
+}
+
+export async function readPendingTriageUpdateFailure(
+  env: NodeJS.ProcessEnv,
+  redaction: SupportRedactionContext,
+): Promise<TriageUpdateFailure | undefined> {
+  // Diagnostic evidence only; the resolution owner selects current ledger history.
+  const { readRestartSentinelReadOnly } = await import("../infra/restart-sentinel.js");
+  const sentinel = await readRestartSentinelReadOnly(env);
+  if (sentinel?.payload.kind !== "update") {
+    return undefined;
+  }
+  const { payload } = sentinel;
+  const stats = payload.stats;
+  if (
+    classifyUpdateOutcome({ status: payload.status, reason: stats?.reason ?? undefined }) !==
+    "failed"
+  ) {
+    return undefined;
+  }
+  return sanitizeTriageUpdateFailure(
+    {
+      result: {
+        ...(stats?.runId ? { runId: stats.runId } : {}),
+        status: payload.status,
+        mode: stats?.mode ?? "unknown",
+        root: stats?.root,
+        reason: stats?.reason ?? undefined,
+        before: stats?.before ?? undefined,
+        after: stats?.after ?? undefined,
+        recovery: stats?.recovery,
+        steps: (stats?.steps ?? []).map((step) => ({
+          name: step.name,
+          exitCode: step.log?.exitCode ?? null,
+          stderrTail: step.log?.stderrTail,
+          stdoutTail: step.log?.stdoutTail,
+          failureFacts: step.failureFacts,
+        })),
+      },
+    },
+    redaction,
+  );
 }
