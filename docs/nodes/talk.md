@@ -177,12 +177,12 @@ broker, so the OAuth token never reaches the browser. A configured Platform
 credential that cannot be resolved fails closed instead of silently falling
 through to OAuth.
 
-iOS client-owned WebRTC, GA Gateway relay, and Android realtime remain
-Platform-key-only. GA browser Talk keeps the existing client-owned data channel
+iOS client-owned WebRTC and GA Gateway relay, including Android GA realtime,
+remain Platform-key-only. GA browser Talk keeps the existing client-owned data channel
 and `talk.client.toolCall` loop. Only the credential owner and SDP exchange path
 change under OAuth. The Codex GPT-Live route remains OAuth-first with
-Platform fallback for browser and Gateway-owned WebRTC, including Discord.
-Public GPT-Live, direct backend sockets, and unlisted GPT-Live routes remain
+Platform fallback for browser and Gateway-owned WebRTC, including Android Talk
+and Discord. Public GPT-Live, direct backend sockets, and unlisted GPT-Live routes remain
 Platform-key-only.
 
 | Key                                      | Default                                     | Notes                                                                                                                                                                                                                                                          |
