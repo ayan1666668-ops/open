@@ -10,6 +10,7 @@ import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { createDeferredCore } from "../shared/deferred.js";
 import { loadOpenClawPlugins } from "./loader.js";
 import { createPluginCache, retirePluginCache, withPluginCache } from "./plugin-cache.js";
+import { PluginInstanceDrainTimeoutError } from "./plugin-instance-error.js";
 import { getPluginInstance } from "./plugin-instance-scope.js";
 import { clearActivePluginRegistry } from "./runtime.js";
 
@@ -95,7 +96,8 @@ module.exports = { id: "search-fixture", register(api) {
         tool.execute(`search-${index}`, { query: `query-${index}` }),
       ),
     );
-    let retirement: Promise<unknown> | undefined;
+    let retirement: ReturnType<typeof instance.dispose> | undefined;
+    let physical: Promise<void> | undefined;
     try {
       await Promise.race([entered.promise, calls]);
       expect(readers).toHaveLength(50);
@@ -109,6 +111,14 @@ module.exports = { id: "search-fixture", register(api) {
       if (kind === "timed-out") {
         await vi.advanceTimersByTimeAsync(5_001);
         await nextTurn();
+        const { errors } = await retirement;
+        const timeout = errors[0];
+        expect(timeout).toBeInstanceOf(PluginInstanceDrainTimeoutError);
+        if (!(timeout instanceof PluginInstanceDrainTimeoutError)) {
+          throw new Error("Expected forced retirement");
+        }
+        expect(timeout.forcedRetirement).toEqual({ activeCallCount: 50, retainedConsumerCount: 0 });
+        physical = timeout.settled;
       }
       expect(cancellation).toHaveBeenCalledTimes(kind === "timed-out" ? 1 : 0);
       expect(instance.lifecycle.signal.aborted).toBe(kind === "timed-out");
@@ -120,13 +130,23 @@ module.exports = { id: "search-fixture", register(api) {
       ).toHaveLength(0);
       expect(fs.existsSync(filename)).toBe(true);
       readers.forEach((reader) => reader.release());
-      expect((await calls).map((result) => result.status)).toEqual(Array(50).fill("fulfilled"));
+      const outcomes = await calls;
+      expect(outcomes.map((result) => result.status)).toEqual(
+        Array(50).fill(kind === "timed-out" ? "rejected" : "fulfilled"),
+      );
+      for (const outcome of outcomes) {
+        if (outcome.status === "rejected") {
+          expect(outcome.reason).toMatchObject({ name: "PluginInstanceUnavailableError" });
+        }
+      }
       await retirement;
+      await physical;
       expect(fs.existsSync(filename)).toBe(false);
     } finally {
       readers.forEach((reader) => reader.release());
       await calls;
       await retirement;
+      await physical;
       await clearActivePluginRegistry();
       await retirePluginCache(cache);
       process.off(event, captureReader);

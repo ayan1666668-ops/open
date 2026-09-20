@@ -6,6 +6,10 @@ import { setImmediate as nextTurn } from "node:timers/promises";
 import { expectDefined } from "@openclaw/normalization-core";
 import { afterEach, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
+import {
+  ContextEngineFactoryResources,
+  disposeContextEngineSources,
+} from "../context-engine/registry.resources.js";
 import { createDeferredCore } from "../shared/deferred.js";
 import {
   PluginHostCleanupTimeoutError,
@@ -13,10 +17,13 @@ import {
 } from "./host-hook-cleanup-timeout.js";
 import type { PluginManifestRecord } from "./manifest-registry.types.js";
 import { createPluginCache, retirePluginCache, withPluginCache } from "./plugin-cache.js";
+import { PluginInstanceDrainTimeoutError } from "./plugin-instance-error.js";
 import { bindPluginInstanceModuleLoader } from "./plugin-instance-module-loader.js";
-import { getPluginValueInstance } from "./plugin-instance-scope.js";
+import { getPluginValueInstance, runPluginCleanup } from "./plugin-instance-scope.js";
 import { PluginInstance } from "./plugin-instance.js";
+import { PluginInvocationScope } from "./plugin-invocation-scope.js";
 import { getPluginSetupModuleLoader } from "./plugin-setup-module.js";
+import { createEmptyPluginRegistry } from "./registry-empty.js";
 
 const temp = useAutoCleanupTempDirTracker(afterEach);
 const nativeRequire = createRequire(import.meta.url);
@@ -61,6 +68,15 @@ function fixture(kind: "runtime" | "setup") {
       ? (await retirePluginCache(cache)).failures.map((failure) => failure.error)
       : (await instance.dispose()).errors;
   return { value, instance, retire };
+}
+
+function forcedRetirement(errors: readonly unknown[]) {
+  const timeout = errors[0];
+  expect(timeout).toBeInstanceOf(PluginInstanceDrainTimeoutError);
+  if (!(timeout instanceof PluginInstanceDrainTimeoutError)) {
+    throw new Error("Expected forced retirement");
+  }
+  return timeout;
 }
 
 function gateRemoval(filename: string, events: string[], failure?: Error) {
@@ -113,10 +129,11 @@ it.each(["runtime", "setup"] as const)(
       expect(() => value.read()).toThrow("reloaded or disabled");
       await vi.advanceTimersByTimeAsync(5_001);
       await nextTurn();
-      expect(settled).toBe(false);
+      expect(settled).toBe(true);
+      const timeout = forcedRetirement(await retirement);
       expect(fs.existsSync(value.filename)).toBe(true);
       gate.resume.resolve();
-      await expect(retirement).resolves.toEqual([]);
+      await expect(timeout.settled).resolves.toBeUndefined();
       expect(fs.existsSync(expectDefined(gate.directory(), "retired artifact"))).toBe(false);
     } finally {
       consumer.release();
@@ -207,7 +224,7 @@ it.each(["plugin callback", "host prelude"] as const)(
         : instance
             .dispose(async () => {
               try {
-                await withPluginHostCleanupTimeout("fixture", cleanup);
+                await withPluginHostCleanupTimeout("fixture", () => instance.runCleanup(cleanup));
               } catch (error) {
                 hostTimeout = error;
               }
@@ -223,16 +240,13 @@ it.each(["plugin callback", "host prelude"] as const)(
       expect(events).toEqual(["sibling"]);
       expect(gate.directory()).toBeUndefined();
       expect(fs.existsSync(value.filename)).toBe(true);
-      expect(settled).toBe(false);
+      expect(settled).toBe(true);
+      const timeout = forcedRetirement(await retirement);
       callback.resolve();
-      await Promise.race([gate.entered, retirement]);
+      await Promise.race([gate.entered, timeout.settled]);
       expect(events).toEqual(["sibling", "callback", "remove"]);
       gate.resume.resolve();
-      await expect(retirement).resolves.toEqual(
-        kind === "plugin callback"
-          ? [new Error("Plugin disposal-runtime cleanup did not settle")]
-          : [],
-      );
+      await expect(timeout.settled).resolves.toBeUndefined();
       if (kind === "host prelude") {
         expect(hostTimeout).toBeInstanceOf(PluginHostCleanupTimeoutError);
       }
@@ -244,3 +258,87 @@ it.each(["plugin callback", "host prelude"] as const)(
     }
   },
 );
+
+it.each(["plugin callback", "host hook"] as const)(
+  "records the terminal failure of a timed-out %s before handing off resources",
+  async (kind) => {
+    const { value, instance } = fixture("runtime");
+    const gate = createDeferredCore();
+    const failure = new Error("late cleanup failed");
+    const cleanup = instance.wrap(async () => {
+      await gate.promise;
+      expect(fs.existsSync(value.filename)).toBe(true);
+      throw failure;
+    });
+    if (kind === "plugin callback") {
+      instance.lifecycle.onDispose(cleanup);
+    }
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const retirement = instance.dispose(
+      kind === "host hook"
+        ? async () => {
+            try {
+              await withPluginHostCleanupTimeout("fixture", () =>
+                runPluginCleanup(cleanup, cleanup),
+              );
+            } catch (error) {
+              expect(error).toBeInstanceOf(PluginHostCleanupTimeoutError);
+            }
+          }
+        : undefined,
+    );
+    try {
+      await vi.advanceTimersByTimeAsync(5_001);
+      const timeout = forcedRetirement((await retirement).errors);
+      const settlement = expect(timeout.settled).rejects.toMatchObject({ errors: [failure] });
+      gate.resolve();
+      await settlement;
+      expect(fs.existsSync(value.filename)).toBe(false);
+    } finally {
+      gate.resolve();
+      await retirement;
+    }
+  },
+);
+
+it("fences a timed-out consumer but lets its owner close and release its capture", async () => {
+  const { value, instance } = fixture("runtime");
+  const consumer = instance.retainConsumer();
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  const retirement = instance.dispose();
+  await vi.advanceTimersByTimeAsync(5_000);
+  const timeout = forcedRetirement((await retirement).errors);
+  expect(timeout.forcedRetirement).toEqual({ activeCallCount: 0, retainedConsumerCount: 1 });
+  expect(() => consumer.run(() => value.read())).toThrow("consumer is closed");
+  expect(fs.existsSync(value.filename)).toBe(true);
+  await consumer.close(() => {
+    expect(value.read()).toBe("retained");
+  });
+  await timeout.settled;
+  expect(fs.existsSync(value.filename)).toBe(false);
+});
+
+it("lets the context-engine owner finish cleanup after forced retirement", async () => {
+  const { value, instance } = fixture("runtime");
+  const scope = new PluginInvocationScope(createEmptyPluginRegistry(), [instance], {
+    retained: true,
+  });
+  const source = new ContextEngineFactoryResources([], scope);
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  const retirement = instance.dispose();
+  await vi.advanceTimersByTimeAsync(5_000);
+  const timeout = forcedRetirement((await retirement).errors);
+  expect(() => scope.run(() => value.read())).toThrow("consumer is closed");
+  const cleanup = vi.fn(() => {
+    expect(value.read()).toBe("retained");
+  });
+  try {
+    await disposeContextEngineSources(undefined, [source], cleanup);
+    expect(cleanup).toHaveBeenCalledOnce();
+    await timeout.settled;
+    expect(fs.existsSync(value.filename)).toBe(false);
+  } finally {
+    await source.release();
+    await timeout.settled;
+  }
+});

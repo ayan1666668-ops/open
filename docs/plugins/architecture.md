@@ -237,10 +237,14 @@ creation-time capture; later inputs extend explicit source-current checks withou
 changing that digest. Invalid optional package metadata fails only when selected.
 Module acquisition uses the instance's current admission, and disposal closes
 further capture.
-Runtime and setup retirement remove captured artifacts asynchronously and wait
-for removal to finish. Retirement closes ordinary invocation authority and
-runs cancellation hooks after bounded drains, but captured files and module resolvers
-remain until those calls and cleanup tails actually settle. Web provider
+Runtime and setup retirement use the existing five-second instance shutdown budget.
+If calls, retained consumers, or cleanup exceed that budget, logical retirement
+returns a forced-retirement diagnostic with the still-running call and consumer
+counts. Ordinary invocation authority closes and late successful results are
+refused. Physical cleanup continues asynchronously: captured files and module
+resolvers remain until calls, consumers, and cleanup tails actually settle.
+Shared writable state stays owned until its cleanup finishes; late cleanup
+failures remain failures of the resource handoff. Web provider
 descriptors keep their registration identity; runtime projections bind their
 factories and returned tools to the selected plugin instance. Synchronous source
 inspection and failed capture still clean up before returning.

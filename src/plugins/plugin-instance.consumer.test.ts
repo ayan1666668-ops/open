@@ -318,7 +318,7 @@ describe("plugin stream consumer admission", () => {
           closed = true;
         });
         expect(instance.dispose()).toBe(closing);
-        await vi.advanceTimersByTimeAsync(10_001);
+        await vi.advanceTimersByTimeAsync(4_999);
         expect(closed).toBe(false);
         expect(cleanup).not.toHaveBeenCalled();
         const stale = first.run(async () => {
@@ -375,7 +375,7 @@ describe("plugin stream consumer admission", () => {
     await entered.promise;
     const closing = instance.dispose();
     try {
-      await vi.advanceTimersByTimeAsync(5_001);
+      await vi.advanceTimersByTimeAsync(4_999);
       resume.resolve();
       await vi.advanceTimersByTimeAsync(0);
       expect(observed).toEqual(["original-owner"]);
