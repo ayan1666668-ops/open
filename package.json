@@ -361,6 +361,7 @@
     "!dist/extensions/tokenjuice/**",
     "!dist/extensions/tlon/**",
     "!dist/extensions/twitch/**",
+    "!dist/extensions/typesafe/**",
     "!dist/extensions/venice/**",
     "!dist/extensions/vercel-ai-gateway/**",
     "!dist/extensions/visitor-access/**",

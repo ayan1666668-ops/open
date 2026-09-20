@@ -8,20 +8,41 @@ read_when:
 
 # TypeSafe AI
 
-The bundled `typesafe` plugin connects OpenClaw's optional decision model role to
-TypeSafe AI's Jev models. Its models appear in the separate **Decision** picker,
-never in the conversational model picker.
+The official external `typesafe` plugin connects OpenClaw's optional decision
+model role to TypeSafe AI's Jev models. Its models appear in the separate
+**Decision** picker, never in the conversational model picker.
 
-The bundled adapter and decision model role were added after released OpenClaw
-`2026.9.5`. Use a development checkout containing these features, or a later
-release that includes them; enabling this configuration on `2026.9.5` does not
-add the missing API or bundled plugin.
+The adapter and decision model role were added after released OpenClaw
+`2026.9.5`. Packaged installs require a host and plugin API of at least
+`2026.9.6`; the installer rejects older hosts before loading the plugin.
 
 See [Decision models](/concepts/decision-models) for the model role, available
 backends, rubric examples, and provider-neutral plugin API.
 
-The plugin is disabled by default. Bundling or enabling it does not select a
+The plugin is disabled by default. Installing or enabling it does not select a
 decision model or schedule background work.
+
+## Install
+
+TypeSafe AI is packaged separately from core for publication to npm and
+ClawHub. Its first publication is pending a supporting release. Once published,
+install it from npm on a compatible host:
+
+```sh
+openclaw plugins install @openclaw/typesafe
+```
+
+To select ClawHub explicitly:
+
+```sh
+openclaw plugins install clawhub:@openclaw/typesafe
+```
+
+Until a supporting release is available, use a source checkout containing the
+decision-provider API and `extensions/typesafe`. Build it with
+`pnpm install --frozen-lockfile` and `pnpm build`, then apply the configuration
+below. Source-checkout plugins use the host's co-versioned development API;
+that does not make the packaged plugin compatible with OpenClaw `2026.9.5`.
 
 ## Enable and configure
 
@@ -118,9 +139,11 @@ publish, send messages, or change durable state.
 
 ## Existing external installation
 
-This bundled plugin uses the same `typesafe` plugin ID as the external prototype.
-Do not configure two installations as independent providers. Inspect plugin
-resolution before switching, preserve existing configuration and credentials,
-and use the supported [plugin management flow](/plugins/manage-plugins) to remove
-an external override if you want the bundled copy to own the ID. Installing this
-change does not delete external plugin files or credentials.
+The official package keeps the `typesafe` plugin ID used by the prototype and
+earlier development checkouts. Preserve `plugins.entries.typesafe`, its
+protected credential, and agent `decisionModel` selections when switching.
+Use the supported [plugin management flow](/plugins/manage-plugins) to replace
+the old installation, and remove an explicit prototype path from
+`plugins.load.paths` if it would override the installed package. Do not configure
+two copies as independent providers. Installing the package does not delete
+prototype files or credentials.
