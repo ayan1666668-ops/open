@@ -65,7 +65,7 @@ internal fun SkillWorkshopSettingsScreen(
   var selectedAgentId by rememberSaveable { mutableStateOf("") }
   var selectedProposalId by rememberSaveable { mutableStateOf<String?>(null) }
   var pendingAction by remember { mutableStateOf<SkillWorkshopPendingAction?>(null) }
-  val selectedAgentParam = selectedAgentId.trim().takeIf { it.isNotEmpty() }
+  val selectedAgentParam = skillWorkshopAgentParam(selectedAgentId, defaultAgentId)
   val visibleProposals = skillWorkshopVisibleProposals(summary, selectedAgentParam)
   val filteredProposals = skillWorkshopFilteredProposals(visibleProposals, statusFilter, query)
   val selectedProposal =
@@ -637,6 +637,13 @@ internal fun skillWorkshopVisibleProposals(
   }
 
 internal fun skillWorkshopAgentScope(agentId: String?): String = agentId?.trim().orEmpty()
+
+internal fun skillWorkshopAgentParam(
+  selectedAgentId: String,
+  defaultAgentId: String?,
+): String? =
+  selectedAgentId.trim().takeIf { it.isNotEmpty() }
+    ?: defaultAgentId?.trim()?.takeIf { it.isNotEmpty() }
 
 internal fun skillWorkshopFilteredProposals(
   proposals: List<GatewaySkillWorkshopProposal>,

@@ -23,6 +23,7 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.runtime.saveable.SaverScope
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -328,6 +329,48 @@ class ShellScreenLogicTest {
     assertEquals("Rejected", skillWorkshopStatusLabel("rejected"))
     assertEquals("Loading", skillWorkshopStatusLabel("loading"))
     assertEquals("future_status", skillWorkshopStatusLabel("future_status"))
+  }
+
+  @Test
+  fun skillWorkshopAgentParamResolvesExplicitSelection() {
+    assertEquals("nora", skillWorkshopAgentParam(selectedAgentId = "nora", defaultAgentId = "main"))
+    assertEquals("victor", skillWorkshopAgentParam(selectedAgentId = " victor ", defaultAgentId = "main"))
+  }
+
+  @Test
+  fun skillWorkshopAgentParamFallsBackToDefaultAgent() {
+    assertEquals("main", skillWorkshopAgentParam(selectedAgentId = "", defaultAgentId = "main"))
+    assertEquals("main", skillWorkshopAgentParam(selectedAgentId = "  ", defaultAgentId = " main "))
+  }
+
+  @Test
+  fun skillWorkshopAgentParamStaysEmptyWithoutUsableScope() {
+    assertNull(skillWorkshopAgentParam(selectedAgentId = "", defaultAgentId = null))
+    assertNull(skillWorkshopAgentParam(selectedAgentId = "", defaultAgentId = ""))
+    assertNull(skillWorkshopAgentParam(selectedAgentId = " ", defaultAgentId = "  "))
+  }
+
+  @Test
+  fun skillWorkshopAgentParamFollowsEverySelection() {
+    val defaultId = "main"
+    val scopes =
+      listOf("", "nora", "victor", "")
+        .map { skillWorkshopAgentParam(selectedAgentId = it, defaultAgentId = defaultId) }
+    assertEquals(listOf("main", "nora", "victor", "main"), scopes)
+  }
+
+  @Test
+  fun skillWorkshopVisibleProposalsMatchResolvedDefaultScope() {
+    val mainProposal = skillWorkshopProposal("main-proposal", "pending")
+    val resolvedParam = skillWorkshopAgentParam(selectedAgentId = "", defaultAgentId = "main")
+
+    assertEquals(
+      listOf("main-proposal"),
+      skillWorkshopVisibleProposals(
+        GatewaySkillWorkshopSummary(agentId = "main", proposals = listOf(mainProposal)),
+        selectedAgentId = resolvedParam,
+      ).map { it.id },
+    )
   }
 
   @Test
