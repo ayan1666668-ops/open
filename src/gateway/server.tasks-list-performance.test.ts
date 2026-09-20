@@ -7,7 +7,7 @@ import * as taskRegistryRead from "../tasks/task-registry-read.js";
 import {
   createTaskRecord,
   deleteTaskRecordById,
-  listTaskRecordsUnsorted,
+  listTaskRecords,
   markTaskTerminalById,
 } from "../tasks/task-registry.js";
 import { configureTaskRegistryRuntime } from "../tasks/task-registry.store.js";
@@ -119,7 +119,7 @@ describe("tasks.list Gateway performance", () => {
         const list = await listPromise;
 
         const listMaxSortedInput = Math.max(0, ...sortedInputLengths);
-        const currentTasks = listTaskRecordsUnsorted();
+        const currentTasks = listTaskRecords();
         const adminExpected = expectedTaskIds(currentTasks, 0, 7);
         expect(mutationsApplied).toBe(true);
         expect(list.ok, JSON.stringify(list.error)).toBe(true);
@@ -179,9 +179,7 @@ describe("tasks.list Gateway performance", () => {
         });
 
         const viewerExpected = expectedTaskIds(
-          listTaskRecordsUnsorted().filter(
-            (task) => task.requesterSessionKey === OWNED_SESSION_KEY,
-          ),
+          listTaskRecords().filter((task) => task.requesterSessionKey === OWNED_SESSION_KEY),
           0,
           25,
         );
