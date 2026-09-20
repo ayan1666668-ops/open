@@ -3096,20 +3096,20 @@ describe("Claude session catalog", () => {
       ),
     ).rejects.toThrow("unknown terminal start parameter");
     const onHost = vi.fn();
-    let rejectNodes!: (error: Error) => void;
+    const nodes = createDeferred<Awaited<ReturnType<PluginRuntime["nodes"]["list"]>>>();
+    const publication = createDeferred<void>();
     const pending = provider.list({
       onHost,
-      listNodes: () =>
-        new Promise((_, reject) => {
-          rejectNodes = reject;
-        }),
+      waitUntil: publication.resolve,
+      listNodes: () => nodes.promise,
     });
-    await vi.waitFor(() =>
-      expect(onHost).toHaveBeenCalledWith(
-        expect.objectContaining({ hostId: "gateway:local", canStartTerminal: true, sessions: [] }),
-      ),
+    await publication.promise.finally(async () => {
+      nodes.reject(new Error("node registry down"));
+      await pending;
+    });
+    expect(onHost).toHaveBeenCalledWith(
+      expect.objectContaining({ hostId: "gateway:local", canStartTerminal: true, sessions: [] }),
     );
-    rejectNodes(new Error("node registry down"));
     expect(await pending).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ hostId: "gateway:local", canStartTerminal: true }),
