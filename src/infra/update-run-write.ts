@@ -13,8 +13,8 @@ import {
   type UpdateRunRecord,
   type UpdateRunStep,
 } from "./update-run-record.js";
-import { updateRunStepsFromResultStep } from "./update-run-step.js";
 import { updateRunStepKey } from "./update-run-step-key.js";
+import { updateRunStepsFromResultStep } from "./update-run-step.js";
 import { recordUpdateRunVerificationRecord } from "./update-run-verification.js";
 import type { UpdateRunResult } from "./update-runner-types.js";
 
@@ -127,12 +127,7 @@ function applyUpdateRunDiagnostics(
     record.verification = { recovery, rollbackOutcome, booted, noticeDelivered, doctorHint };
     record.confirmedAtMs = null;
     for (const step of (steps ?? []).flatMap(updateRunStepsFromResultStep)) {
-      upsertStep(record, {
-        ...(step.step === "gateway recovery verification"
-          ? { failureFacts: undefined, detail: undefined }
-          : {}),
-        ...step,
-      });
+      upsertStep(record, step);
     }
   }
   const constraint = record.verification.recovery;

@@ -601,10 +601,11 @@ describe("update report diagnostic command boundary", () => {
     ["Checking update health cleanup", "candidate-doctor-lint-cleanup"],
     ["candidate snapshot", "candidate-state-snapshot"],
     ["post-install verification", "post-install-verify"],
+    ["gateway recovery verification", "gateway-recovery-verification"],
     ["finalize:targetConfigConvergence", "finalize-target-config-convergence"],
     ["git checkout refs/private/tenant", "git-checkout"],
     ["preflight deps install (ignore scripts) (abcdef01)", "preflight-deps-install-ignore-scripts"],
-  ])("projects the released step %s without copying its command", async (name, id) => {
+  ])("projects the step %s without copying its command", async (name, id) => {
     const report = await prepareUpdateFailureReport(
       {
         attemptId: "structured-phase",
