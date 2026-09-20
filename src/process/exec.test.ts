@@ -1,7 +1,7 @@
 // Exec tests cover command execution, output capture, and cancellation behavior.
 import type { ChildProcess } from "node:child_process";
 import { EventEmitter, once } from "node:events";
-import { closeSync, existsSync, openSync } from "node:fs";
+import { closeSync, existsSync, openSync, readFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
@@ -1002,6 +1002,65 @@ describe("child input admission", () => {
     });
     expect(pid).toBeTypeOf("number");
     expect(isPidAlive(pid!)).toBe(false);
+  });
+
+  it.runIf(process.platform !== "win32")(
+    "does not deliver EOF when admission rejects",
+    async () => {
+      await withTempDir("openclaw-exec-admission-rejection-", async (dir) => {
+        const effectPath = path.join(dir, "effect");
+        const program = [
+          "const fs=require('node:fs');",
+          "const input=fs.readFileSync(0,'utf8');",
+          `fs.writeFileSync(${JSON.stringify(effectPath)},input === '' ? 'eof' : input);`,
+        ].join("");
+        let pid: number | undefined;
+        const refusal = new Error("authority lost before input");
+        const admission = vi.fn((childPid: number) => {
+          pid = childPid;
+          throw refusal;
+        });
+        const work = runCommandWithTimeout([process.execPath, "-e", program], {
+          input: "forbidden",
+          timeoutMs: 5_000,
+          killProcessTree: true,
+          // Keep cancellation from racing the EOF under test; escalation must
+          // still terminate the blocked child when admission is refused.
+          killSignal: "SIGCHLD",
+          beforeInput: admission,
+        });
+
+        await expect(work).rejects.toBe(refusal);
+        expect(admission).toHaveBeenCalledOnce();
+        expect(existsSync(effectPath)).toBe(false);
+        expect(refusal).toMatchObject({
+          cleanup: "forced",
+        });
+        expect(pid).toBeTypeOf("number");
+        expect(isPidAlive(pid!)).toBe(false);
+      });
+    },
+  );
+
+  it("delivers admitted empty input as EOF", async () => {
+    await withTempDir("openclaw-exec-admission-empty-input-", async (dir) => {
+      const effectPath = path.join(dir, "effect");
+      const program = [
+        "const fs=require('node:fs');",
+        "const input=fs.readFileSync(0,'utf8');",
+        `fs.writeFileSync(${JSON.stringify(effectPath)},input === '' ? 'eof' : input);`,
+      ].join("");
+      const admission = vi.fn();
+      const result = await runCommandWithTimeout([process.execPath, "-e", program], {
+        input: "",
+        timeoutMs: 5_000,
+        beforeInput: admission,
+      });
+
+      expect(result.code).toBe(0);
+      expect(admission).toHaveBeenCalledOnce();
+      expect(readFileSync(effectPath, "utf8")).toBe("eof");
+    });
   });
 
   it("rejects asynchronous admission and drains its rejection before returning", async () => {

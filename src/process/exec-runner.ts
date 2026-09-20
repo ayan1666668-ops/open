@@ -498,6 +498,7 @@ async function runCommandWithOutputEncoding(
   });
 
   let inputAdmissionError: Error | undefined;
+  let inputToCloseAfterChild: NonNullable<typeof nodeChild.stdin> | undefined;
   if (options.beforeInput) {
     nodeChild.stdin?.once("error", (cause) => {
       inputAdmissionError ??= toErrorObject(cause, "Command input failed");
@@ -517,12 +518,16 @@ async function runCommandWithOutputEncoding(
       nodeChild.stdin.end(input);
     } catch (cause) {
       inputAdmissionError = toErrorObject(cause, "Child input admission failed");
-      nodeChild.stdin?.destroy();
+      // Keep the input pipe open while cancellation reaches the child. Closing
+      // it here publishes EOF and can let a rejected command run its input
+      // handler before the process-tree signal takes effect.
+      inputToCloseAfterChild = nodeChild.stdin ?? undefined;
       cancel("signal");
     }
   }
 
   const result = await child.finally(() => {
+    inputToCloseAfterChild?.destroy();
     commandSettled = true;
     clearTimers();
     releaseOutput?.();
