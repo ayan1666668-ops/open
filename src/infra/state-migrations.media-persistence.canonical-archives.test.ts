@@ -221,6 +221,7 @@ describe("media migration of canonical SQLite transcript archives", () => {
     } finally {
       database.close();
     }
+    // oxlint-disable-next-line typescript/unbound-method -- called below with the intercepted database receiver.
     const prepare = DatabaseSync.prototype.prepare;
     const plans: string[] = [];
     const observed = vi
