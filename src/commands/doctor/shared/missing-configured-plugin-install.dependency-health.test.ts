@@ -206,7 +206,8 @@ describe("configured npm dependency health and repair authority", () => {
         expect(configuredPluginInstallIssueToHealthFinding(issue)).toMatchObject({
           target: pluginId,
           message: expect.stringContaining("required-runtime"),
-          fixHint: expect.stringContaining("doctor --fix"),
+          fixHint:
+            "Run `openclaw plugins install dependency-plugin@1.0.0 --force` to reinstall the configured plugin package.",
         });
         expect(configuredPluginInstallIssueToRepairEffect(issue)).toMatchObject({
           kind: "package",

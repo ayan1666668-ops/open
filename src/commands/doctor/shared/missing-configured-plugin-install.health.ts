@@ -304,21 +304,21 @@ const CONFIGURED_PLUGIN_INSTALL_ISSUE_DETAILS = {
   "missing-installed-payload": {
     message: (pluginId: string) =>
       `Configured plugin ${pluginId} has an install record but its package payload is missing.`,
-    fixHint: "Run `openclaw doctor --fix` to reinstall the configured plugin package.",
+    fixHint: null,
     action: "would-reinstall-configured-plugin",
     dryRunSafe: false,
   },
   "missing-required-dependencies": {
     message: (pluginId: string) =>
       `Configured plugin ${pluginId} is missing required dependencies:`,
-    fixHint: "Run `openclaw doctor --fix` to reinstall the configured plugin dependencies.",
+    fixHint: null,
     action: "would-repair-configured-plugin-dependencies",
     dryRunSafe: false,
   },
   "repairable-installed-plugin": {
     message: (pluginId: string) =>
       `Configured plugin ${pluginId} has a repairable package install problem.`,
-    fixHint: "Run `openclaw doctor --fix` to repair the configured plugin package.",
+    fixHint: null,
     action: "would-repair-configured-plugin-install",
     dryRunSafe: false,
   },
@@ -347,7 +347,7 @@ const CONFIGURED_PLUGIN_INSTALL_ISSUE_DETAILS = {
   ConfiguredPluginInstallHealthIssue["kind"],
   {
     message: (pluginId: string) => string;
-    fixHint: string;
+    fixHint: string | null;
     action: string;
     dryRunSafe: boolean;
   }
@@ -357,6 +357,7 @@ export function configuredPluginInstallIssueToHealthFinding(
   issue: ConfiguredPluginInstallHealthIssue,
 ): HealthFinding {
   const detail = CONFIGURED_PLUGIN_INSTALL_ISSUE_DETAILS[issue.kind];
+  const installSpec = "installSpec" in issue ? issue.installSpec : undefined;
   return {
     checkId: CONFIGURED_PLUGIN_INSTALLS_CHECK_ID,
     severity: "warning",
@@ -369,7 +370,8 @@ export function configuredPluginInstallIssueToHealthFinding(
     fixHint:
       issue.kind === "missing-install-record"
         ? `Run \`openclaw doctor --fix\` to install ${issue.installSpec}.`
-        : detail.fixHint,
+        : (detail.fixHint ??
+          `Run \`openclaw plugins install ${installSpec ?? issue.pluginId} --force\` to reinstall the configured plugin package.`),
   };
 }
 
