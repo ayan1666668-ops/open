@@ -138,7 +138,7 @@ describe("Systems workspace", () => {
   it.each(["selection", "authority"])(
     "cancels pending desktop enablement when %s changes",
     async (change) => {
-      const loaded = createDeferred<void>();
+      const loaded = createDeferred();
       const { controller, context, gateway } = harness(async () => [
         { ...host, desktopSetup: { state: "ready" } },
         { ...worker, desktop: false },

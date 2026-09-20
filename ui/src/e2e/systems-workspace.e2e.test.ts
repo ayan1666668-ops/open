@@ -12,7 +12,11 @@ const suite = createControlUiE2eSuite({
   startServerBeforeBrowser: true,
 });
 
-function installSystemsGateway(page: Page, additionalWorkers = 20) {
+function installSystemsGateway(
+  page: Page,
+  additionalWorkers = 20,
+  methodResponses: Record<string, unknown> = {},
+) {
   return installMockGateway(page, {
     sessions: Array.from({ length: 30 }, (_, index) =>
       createControlUiSessionRow(`agent:main:task-${index}`, `Task ${index + 1}`, 30 - index),
@@ -69,6 +73,7 @@ function installSystemsGateway(page: Page, additionalWorkers = 20) {
         memoryTotalBytes: 8192,
         memoryFreeBytes: 4096,
       },
+      ...methodResponses,
     },
   });
 }
@@ -79,50 +84,51 @@ suite.define(() => {
     await suite.withPage(
       { locale: "en-US", serviceWorkers: "block", viewport: { width: 1440, height: 900 } },
       async ({ page }) => {
-        const gateway = await installSystemsGateway(page, 0);
-        await gateway.setMethodResponse("environments.list", {
-          environments: [
-            {
-              id: "gateway",
-              type: "local",
-              label: "Gateway Mac",
-              platform: "darwin",
-              status: "available",
-              desktopSetup: { state: "ready" },
-            },
-            {
-              id: "node:mac",
-              type: "node",
-              label: "Paired Mac",
-              platform: "macOS 27.0.0",
-              status: "available",
-            },
-          ],
-        });
-        await gateway.setMethodResponse("system.info", {
-          machineName: "Gateway Mac",
-          hostname: "gateway.test",
-          platform: "darwin",
-          release: "26.0.0",
-          arch: "arm64",
-          osLabel: "macOS 27.0.0",
-          nodeVersion: "v26",
-          pid: 1,
-          uptimeMs: 1000,
-          cpuCount: 8,
-          loadAverage: [0.5, 0.4, 0.3],
-          memoryTotalBytes: 16 * 1024 ** 3,
-          memoryFreeBytes: 8 * 1024 ** 3,
-        });
         const originalConfig = {
           desktop: { host: { port: 5910, passwordFile: "/synthetic/vnc-password" } },
         };
-        await gateway.setMethodResponse("config.get", {
-          config: originalConfig,
-          raw: JSON.stringify(originalConfig),
-          hash: "desktop-config-0",
-          valid: true,
-          issues: [],
+        const gateway = await installSystemsGateway(page, 0, {
+          "environments.list": {
+            environments: [
+              {
+                id: "gateway",
+                type: "local",
+                label: "Gateway Mac",
+                platform: "darwin",
+                status: "available",
+                desktopSetup: { state: "ready" },
+              },
+              {
+                id: "node:mac",
+                type: "node",
+                label: "Paired Mac",
+                platform: "macOS 27.0.0",
+                status: "available",
+              },
+            ],
+          },
+          "system.info": {
+            machineName: "Gateway Mac",
+            hostname: "gateway.test",
+            platform: "darwin",
+            release: "26.0.0",
+            arch: "arm64",
+            osLabel: "macOS 27.0.0",
+            nodeVersion: "v26",
+            pid: 1,
+            uptimeMs: 1000,
+            cpuCount: 8,
+            loadAverage: [0.5, 0.4, 0.3],
+            memoryTotalBytes: 16 * 1024 ** 3,
+            memoryFreeBytes: 8 * 1024 ** 3,
+          },
+          "config.get": {
+            config: originalConfig,
+            raw: JSON.stringify(originalConfig),
+            hash: "desktop-config-0",
+            valid: true,
+            issues: [],
+          },
         });
         await page.goto(suite.server.baseUrl + "systems");
         const inventory = page.locator(".systems-sidebar");
@@ -237,18 +243,19 @@ suite.define(() => {
       await suite.withPage(
         { locale: "en-US", serviceWorkers: "block", viewport: { width: 1440, height: 900 } },
         async ({ page }) => {
-          const gateway = await installSystemsGateway(page, 0);
-          await gateway.setMethodResponse("environments.list", {
-            environments: [
-              {
-                id: "gateway",
-                type: "local",
-                label: "Gateway machine",
-                platform: "linux",
-                status: "available",
-                desktopSetup: { state },
-              },
-            ],
+          const gateway = await installSystemsGateway(page, 0, {
+            "environments.list": {
+              environments: [
+                {
+                  id: "gateway",
+                  type: "local",
+                  label: "Gateway machine",
+                  platform: "linux",
+                  status: "available",
+                  desktopSetup: { state },
+                },
+              ],
+            },
           });
           await page.goto(suite.server.baseUrl + "systems");
           const next = page.getByRole("button", {

@@ -109,7 +109,7 @@ export class SystemsController {
     if (!scope || !this.canEnableHostDesktop || this.desktopSetupBusy) {
       return;
     }
-    const request = Symbol();
+    const request = Symbol("desktop-setup");
     const isCurrent = () =>
       this.desktopSetupRequest === request &&
       this.presented &&
