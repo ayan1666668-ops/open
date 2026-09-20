@@ -6,7 +6,6 @@ import path from "node:path";
 import JSON5 from "json5";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { executeSqliteQueryTakeFirstSync, getNodeSqliteKysely } from "../infra/kysely-sync.js";
-import * as pluginModuleLoader from "../plugins/plugin-module-loader-cache.js";
 import { createDeferredCore } from "../shared/deferred.js";
 import type { DB as OpenClawStateKyselyDatabase } from "../state/openclaw-state-db.generated.js";
 import {
@@ -27,6 +26,14 @@ import {
   promoteConfigSnapshotToLastKnownGoodCore,
   recoverConfigFromLastKnownGoodCore,
 } from "./io.observe-recovery.js";
+import {
+  clobberedUpdateChannelConfig,
+  clobberedUpdateChannelRaw,
+  largeRecoverableCoreConfig,
+  prepareConfigRecoveryMigrationRuntime,
+  recoverableCoreConfig,
+  recoverableTelegramConfig,
+} from "./io.observe-recovery.test-support.js";
 import * as configObserveState from "./io.observe-state.js";
 import { createConfigIoWorkerFixture } from "./io.worker.test-support.js";
 import type { ConfigFileSnapshot } from "./types.js";
@@ -46,29 +53,8 @@ function resolveLastKnownGoodConfigPath(configPath: string): string {
 describe("config observe recovery", () => {
   let fixtureRoot = "";
   let homeCaseId = 0;
+  let restoreMigrationRuntime: (() => void) | undefined;
   const workerFixture = createConfigIoWorkerFixture();
-  const loadModule = pluginModuleLoader.getCachedPluginModuleLoader;
-  const moduleLoader = vi.spyOn(pluginModuleLoader, "getCachedPluginModuleLoader");
-  const clobberedUpdateChannelConfig = { update: { channel: "beta" } };
-  const clobberedUpdateChannelRaw = `${JSON.stringify(clobberedUpdateChannelConfig, null, 2)}\n`;
-  const recoverableTelegramConfig = {
-    meta: { lastTouchedVersion: "2026.4.22" },
-    update: { channel: "beta" },
-    gateway: { mode: "local" },
-    channels: { telegram: { enabled: true, dmPolicy: "pairing", groupPolicy: "allowlist" } },
-  };
-  const recoverableCoreConfig = {
-    meta: { lastTouchedVersion: "2026.4.22" },
-    update: { channel: "beta" },
-    gateway: { mode: "local" as const },
-  };
-  const largeRecoverableCoreConfig = {
-    ...recoverableCoreConfig,
-    gateway: {
-      ...recoverableCoreConfig.gateway,
-      trustedProxies: Array.from({ length: 60 }, (_, index) => `192.0.2.${index}`),
-    },
-  };
 
   async function withSuiteHome<T>(fn: (home: string) => Promise<T>): Promise<T> {
     const home = path.join(fixtureRoot, `case-${homeCaseId++}`);
@@ -79,21 +65,13 @@ describe("config observe recovery", () => {
   beforeAll(async () => {
     fixtureRoot = await fsp.mkdtemp(path.join(os.tmpdir(), "openclaw-config-observe-recovery-"));
     await workerFixture.setup(fixtureRoot);
-    const bindingRepair =
-      await import("../commands/doctor/shared/legacy-config-binding-repair.runtime.js");
-    // Keep the real migrations in Vitest's graph instead of transforming them
-    // again through the synchronous source loader used by config recovery.
-    moduleLoader.mockImplementation((options) =>
-      /legacy-config-binding-repair\.runtime\.[jt]s$/u.test(options.modulePath)
-        ? () => bindingRepair
-        : loadModule(options),
-    );
+    restoreMigrationRuntime = await prepareConfigRecoveryMigrationRuntime();
   });
 
   afterAll(async () => {
+    restoreMigrationRuntime?.();
     await workerFixture.close();
     closeOpenClawStateDatabaseForTest();
-    moduleLoader.mockRestore();
     await fsp.rm(fixtureRoot, { recursive: true, force: true });
   });
 

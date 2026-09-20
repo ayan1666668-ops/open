@@ -46,6 +46,7 @@ import {
 } from "./io.js";
 import { hashConfigRaw } from "./io.read-helpers.js";
 import { createConfigIoWorkerFixture } from "./io.worker.test-support.js";
+import { defaultedDemoPluginRegistry } from "./io.write-config.test-support.js";
 import { replaceConfigFile, transformConfigFile, transformConfigFileWithRetry } from "./mutate.js";
 import { ConfigMutationConflictError } from "./mutation-conflict.js";
 import { createProviderConfigFixture } from "./runtime-snapshot.test-fixtures.js";
@@ -132,30 +133,6 @@ describe("config io write", () => {
     warn: () => {},
     error: () => {},
   };
-  const defaultedDemoPluginRegistry = {
-    diagnostics: [],
-    plugins: [
-      {
-        id: "demo",
-        origin: "bundled",
-        enabledByDefault: true,
-        channels: [],
-        providers: [],
-        cliBackends: [],
-        skills: [],
-        hooks: [],
-        rootDir: "/tmp/openclaw-test-demo",
-        source: "/tmp/openclaw-test-demo/index.ts",
-        manifestPath: "/tmp/openclaw-test-demo/openclaw.plugin.json",
-        configSchema: {
-          type: "object",
-          properties: { mode: { type: "string", default: "auto" } },
-          additionalProperties: true,
-        },
-      },
-    ],
-  } satisfies PluginManifestRegistry;
-
   async function withSuiteHome<T>(fn: (home: string) => Promise<T>): Promise<T> {
     const home = await suiteRootTracker.make("case");
     return withEnvAsync(
