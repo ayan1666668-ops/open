@@ -105,8 +105,8 @@ describe("prepared plugin secret input authority", () => {
     activate("old-key");
     const instance = createOwnedInstance();
     let replacement: PluginInstance | undefined;
-    const started = createDeferredCore<void>();
-    const release = createDeferredCore<void>();
+    const started = createDeferredCore();
+    const release = createDeferredCore();
     try {
       const delayed = instance.run(async () => {
         started.resolve();
@@ -156,8 +156,8 @@ describe("prepared plugin secret input authority", () => {
       throw new Error("loaded plugin instance missing");
     }
 
-    const started = createDeferredCore<void>();
-    const release = createDeferredCore<void>();
+    const started = createDeferredCore();
+    const release = createDeferredCore();
     let replacementRegistry: ReturnType<typeof loadOpenClawPlugins> | undefined;
     try {
       activate("old-key", plugin.id);

@@ -87,6 +87,7 @@ export function getPluginInstanceOwner(
  */
 export function hasCurrentPluginInstanceAuthority(pluginId: string): boolean {
   const current = pluginInstanceInvocation.getStore();
+  // SAFETY: PluginInstance is the only producer of this private invocation scope.
   const instance = current?.instance as PluginInstanceHandle | undefined;
   return (
     instance?.pluginId === pluginId &&

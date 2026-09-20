@@ -595,8 +595,8 @@ it("leaves a timed-out rollback fenced after late physical settlement", async ()
 });
 
 it("settles a provider callback before disposal cleanup waits on its host", async () => {
-  const started = createDeferredCore<void>();
-  const release = createDeferredCore<void>();
+  const started = createDeferredCore();
+  const release = createDeferredCore();
   const host = registered(async () => {
     started.resolve();
     await release.promise;
