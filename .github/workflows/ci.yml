@@ -1336,6 +1336,9 @@ jobs:
               ? "./scripts/lib/channel-contract-test-plan.mts"
               : "./scripts/lib/channel-contract-test-plan.mjs",
           );
+          const windowsTestPlan = existsSync("./scripts/lib/ci-windows-test-plan.mts")
+            ? await import("./scripts/lib/ci-windows-test-plan.mts")
+            : null;
           const createChannelContractTestShards =
             typeof channelContractPlan.createChannelContractTestShards === "function"
               ? channelContractPlan.createChannelContractTestShards
@@ -1931,8 +1934,8 @@ jobs:
             // file cost; historical targets retain their original package commands.
             checks_windows_matrix: createMatrix(
               runWindows
-                ? typeof nodeTestPlan.createWindowsTestShards === "function"
-                  ? nodeTestPlan.createWindowsTestShards(packageScripts).map((shard) => ({
+                ? windowsTestPlan
+                  ? windowsTestPlan.createWindowsTestShards(packageScripts).map((shard) => ({
                       ...shard,
                       runtime: "node",
                       task: "test",

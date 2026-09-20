@@ -696,8 +696,8 @@ function runCiManifestFixture(options: {
       "utf8",
     );
     if (options.windowsPlanner ?? options.bundledPlanner) {
-      appendFileSync(
-        path.join(scriptsDir, "ci-node-test-plan.mts"),
+      writeFileSync(
+        path.join(scriptsDir, "ci-windows-test-plan.mts"),
         `\nexport const createWindowsTestShards = () => Array.from({ length: 5 }, (_, index) => ({
           check_name: "checks-windows-node-test-" + (index + 1),
           targets: ["test/windows-part-" + (index + 1) + ".test.ts"],
@@ -5174,7 +5174,11 @@ require("node:fs").writeFileSync("scheduler-baseline", process.env.OPENCLAW_UPGR
         "scripts/e2e/docker-openai-seed.ts",
         "src/sqlite-session-owner.ts",
       ],
-      scopeEnv: { GITHUB_REF: "refs/heads/main", OPENCLAW_CI_RUN_UI_TESTS: "true" },
+      scopeEnv: {
+        GITHUB_REF: "refs/heads/main",
+        OPENCLAW_CI_RUN_UI_TESTS: "true",
+        OPENCLAW_CI_WORKFLOW_REVISION: "a".repeat(40),
+      },
     });
     expect(manifest.status, manifest.output).toBe(0);
     for (const flag of [
@@ -6624,7 +6628,7 @@ require("node:fs").writeFileSync("scheduler-baseline", process.env.OPENCLAW_UPGR
             preflightOutputs: manifest.outputs,
           }),
           job,
-        ).toBe(uiE2e);
+        ).toBe(job === "checks-ui-e2e" && uiE2e);
       }
       const nodeRows = JSON.parse(
         expectDefined(manifest.outputs.checks_node_core_nondist_matrix, "precise matrix"),
@@ -14217,7 +14221,7 @@ printf '%s\n' "\${CURL_SUCCESS_IP:-203.0.113.7}"
       );
       expect(
         JSON.parse(expectDefined(manifest.outputs.checks_windows_matrix, "Windows matrix")).include,
-      ).toHaveLength(selectedJobs.includes("checks-windows") ? 5 : 0);
+      ).toHaveLength(selectedJobs.includes("checks-windows") ? (legacyOutput ? 2 : 5) : 0);
       if (eventName === "pull_request" && selectedJobs.includes("android")) {
         expect(
           JSON.parse(expectDefined(preflightOutputs.android_matrix, "Android matrix")).include,

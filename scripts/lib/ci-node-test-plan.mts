@@ -65,8 +65,6 @@ import {
   parseCompactSplitTimingKey,
 } from "./vitest-shard-metadata.mts";
 
-export { createWindowsTestShards } from "./ci-windows-test-plan.mts";
-
 export type NodeTestShardGroup = {
   shard_name: string;
   timing_key?: string;
