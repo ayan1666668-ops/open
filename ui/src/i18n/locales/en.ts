@@ -4013,6 +4013,10 @@ export const en: TranslationMap & {
       hideDetails: "Hide goal details",
     },
     asyncQuestions: {
+      title: "Answer when ready",
+      pendingOne: "{count} unanswered question",
+      pendingMany: "{count} unanswered questions",
+      inComposer: "Answer above the message box.",
       sendFailed: "Could not send your answer. Your draft is preserved.",
     },
     questions: {
@@ -5083,7 +5087,7 @@ export const en: TranslationMap & {
         "Condition triggers require an interval, cron, or stream schedule.",
       systemTextRequired: "System text is required.",
       agentMessageRequired: "Agent message is required.",
-      timeoutInvalid: "If set, timeout must be greater than 0 seconds.",
+      timeoutInvalid: "If set, timeout must be 0 or greater (0 disables this timeout).",
       webhookUrlRequired: "Webhook URL is required.",
       webhookUrlInvalid: "Webhook URL must start with http:// or https://.",
       invalidRunTime: "Invalid run time.",
