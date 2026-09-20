@@ -37,7 +37,10 @@ import { mintSecretSentinel } from "../../secrets/sentinel.js";
 import { createUserTurnTranscriptRecorder } from "../../sessions/user-turn-transcript.js";
 import type { UserTurnTranscriptRecorder } from "../../sessions/user-turn-transcript.types.js";
 import { closeOpenClawAgentDatabasesAsync } from "../../state/openclaw-agent-db.js";
-import { closeOpenClawStateDatabaseForTest } from "../../state/openclaw-state-db.js";
+import {
+  closeOpenClawStateDatabaseAsync,
+  closeOpenClawStateDatabaseForTest,
+} from "../../state/openclaw-state-db.js";
 import {
   createOpenClawTestState,
   type OpenClawTestState,
@@ -202,7 +205,6 @@ vi.mock("../tools/gateway.js", () => ({ callGatewayTool: vi.fn() }));
 
 const mockCallGatewayTool = vi.mocked(callGatewayTool);
 
-const originalRuntime = process.env.OPENCLAW_AGENT_RUNTIME;
 const trajectoryTempDirs = createTempDirTracker();
 let generationState: OpenClawTestState;
 let selectionAdmission: PreparedAgentRunAdmission;
@@ -270,6 +272,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await closeOpenClawAgentDatabasesAsync();
+  await closeOpenClawStateDatabaseAsync();
   vi.unstubAllEnvs();
   clearRuntimeConfigSnapshot();
   closeOpenClawStateDatabaseForTest();
@@ -287,11 +290,6 @@ afterEach(async () => {
   compactAuthMocks.ensureAuthProfileStoreWithoutExternalProfiles.mockReset();
   providerOwnerMocks.resolveProviderRefOwnership.mockReset();
   contextEngineTurnAttemptMocks.drainPendingContextEngineTurnsBeforeRun.mockReset();
-  if (originalRuntime == null) {
-    delete process.env.OPENCLAW_AGENT_RUNTIME;
-  } else {
-    process.env.OPENCLAW_AGENT_RUNTIME = originalRuntime;
-  }
   await generationState.cleanup();
 });
 
@@ -1499,7 +1497,7 @@ describe("runAgentHarnessAttempt", () => {
   });
 
   it("fails when a forced plugin harness is unavailable and fallback is omitted", async () => {
-    process.env.OPENCLAW_AGENT_RUNTIME = "codex";
+    vi.stubEnv("OPENCLAW_AGENT_RUNTIME", "codex");
 
     await expect(
       runAgentHarnessAttempt(createAttemptParams(providerRuntimeConfig("codex", "codex"))),
@@ -3599,7 +3597,7 @@ describe("selectAgentHarness", () => {
   });
 
   it("ignores env-forced OpenClaw for OpenAI default runtime selection", () => {
-    process.env.OPENCLAW_AGENT_RUNTIME = "openclaw";
+    vi.stubEnv("OPENCLAW_AGENT_RUNTIME", "openclaw");
     registerFailingCodexHarness();
 
     expect(
