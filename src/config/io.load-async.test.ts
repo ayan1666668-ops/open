@@ -137,14 +137,20 @@ it.each(["sync", "async"] as const)(
       expect(synchronousSnapshot).not.toHaveBeenCalled();
       expect(allocations).toEqual([]);
       expect(
-        withArtifactPreservingStateReads(() =>
-          withSynchronousArtifactPreservingStateSnapshot(() =>
-            context.resolveDeferredPluginMigrations(),
-          ),
+        await withArtifactPreservingStateReads(() =>
+          mode === "sync"
+            ? withSynchronousArtifactPreservingStateSnapshot(() =>
+                context.resolveDeferredPluginMigrations(),
+              )
+            : context.resolveDeferredPluginMigrationsAsync(),
         ),
       ).toEqual([{ ...pending, reason: "Changed obligation" }]);
-      expect(synchronousSnapshot).toHaveBeenCalledTimes(1);
-      expect(path.dirname(synchronousSnapshot.mock.calls[0]?.[1] ?? "")).toBe(stagingRoot);
+      if (mode === "sync") {
+        expect(synchronousSnapshot).toHaveBeenCalledTimes(1);
+        expect(path.dirname(synchronousSnapshot.mock.calls[0]?.[1] ?? "")).toBe(stagingRoot);
+      } else {
+        expect(synchronousSnapshot).not.toHaveBeenCalled();
+      }
       await vi.waitFor(() => expect(allocations.length).toBeGreaterThan(0));
     } finally {
       watcher.close();
