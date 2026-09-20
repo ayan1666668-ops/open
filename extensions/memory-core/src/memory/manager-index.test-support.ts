@@ -34,7 +34,6 @@ type ManagerIndexFixtureConfig = {
   providerAliases?: NonNullable<NonNullable<ManagerConfig["models"]>["providers"]>;
   batchEnabled?: boolean;
   model?: string;
-  local?: { modelPath: string; contextSize?: number };
   outputDimensionality?: number;
   multimodal?: {
     enabled?: boolean;
@@ -60,6 +59,7 @@ type ProviderControls = {
   embeddedQueryTexts: string[];
   embedBatchCalls: number;
   embeddedBatchTexts: string[];
+  embedBatchPermanentFailure: Error | null;
   embedBatchInputCalls: number;
   embeddedBatchInputs: EmbeddingInput[][];
   providerRuntimeBatchCalls: string[][];
@@ -124,6 +124,7 @@ const providerState = vi.hoisted(() => ({
   embeddedQueryTexts: [] as string[],
   embedBatchCalls: 0,
   embeddedBatchTexts: [] as string[],
+  embedBatchPermanentFailure: null as Error | null,
   embedBatchInputCalls: 0,
   embeddedBatchInputs: [] as EmbeddingInput[][],
   providerRuntimeBatchCalls: [] as string[][],
@@ -210,10 +211,7 @@ vi.mock("./embeddings.js", async (importOriginal) => {
         : {
             provider: {
               id: options.config.models?.providers?.[options.provider]?.api ?? options.provider,
-              model:
-                options.provider === "local" && options.local?.modelPath
-                  ? options.local.modelPath
-                  : options.model.trim() || resolveFallbackModel(options.provider, ""),
+              model: options.model.trim() || resolveFallbackModel(options.provider, ""),
             },
           },
     createEmbeddingProvider: async (options: ProviderCall) => {
@@ -302,6 +300,9 @@ vi.mock("./embeddings.js", async (importOriginal) => {
                   return embedText(input.text);
                 });
               }
+            }
+            if (providerState.embedBatchPermanentFailure !== null) {
+              throw providerState.embedBatchPermanentFailure;
             }
             const texts = inputs.map((input) => (typeof input === "string" ? input : input.text));
             providerState.embedBatchCalls += 1;
@@ -426,7 +427,6 @@ export function createManagerIndexFixture(deps: {
         search: {
           ...(params.provider !== undefined ? { provider: params.provider } : {}),
           model: params.model ?? "mock-embed",
-          local: params.local,
           fallback: params.fallback,
           outputDimensionality: params.outputDimensionality,
           store: {
@@ -544,6 +544,7 @@ export function createManagerIndexFixture(deps: {
     providerState.embeddedQueryTexts = [];
     providerState.embedBatchCalls = 0;
     providerState.embeddedBatchTexts = [];
+    providerState.embedBatchPermanentFailure = null;
     providerState.embedBatchInputCalls = 0;
     providerState.embeddedBatchInputs = [];
     providerState.providerRuntimeBatchCalls = [];

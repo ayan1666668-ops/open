@@ -20,12 +20,13 @@ import {
   capturePreparedModelRuntimeLifetime,
   closePreparedModelRuntimeSnapshots,
   registerPreparedModelRuntimeClose,
+  createPreparedModelRuntimeReplacement,
+  retirePreparedModelRuntimeGeneration,
 } from "./prepared-model-runtime.lifecycle.js";
 import {
   PreparedModelRuntimeOwnerNotPublishedError,
   PreparedModelRuntimePublicationSupersededError,
   advancePreparedModelRuntimeOwnerConfig,
-  createPreparedModelRuntimeReplacement,
   hasSameLifecycleInput,
   normalizeOptionalDir,
   normalizePreparedModelRuntimeInput,
@@ -134,6 +135,7 @@ async function closeModelRuntime(error: Error): Promise<void> {
   void closeEphemeralPreparedModelRuntimeResources().catch(() => {});
   const closingOwners = [...owners.values()];
   owners.clear();
+  closingOwners.forEach(retirePreparedModelRuntimeGeneration);
   retainedDirectRunOwners.clear(owners);
   retainedGatewayRunOwners.clear(owners);
   gatewayLifecycleActive = false;
@@ -652,14 +654,14 @@ export function refreshPreparedModelRuntimeSnapshots(
 async function drainPendingAuthMutations(commit?: () => void): Promise<void> {
   await authPublication.drain({
     owners,
-    publish: async (entries, includeCredentialProviders) =>
+    publish: async (ownersToPublish, includeCredentialProviders) =>
       await publishPreparedModelRuntimeOwnerBatch({
-        entries,
+        ownersToPublish,
         owners,
         agentBuildCompletions,
         buildTimeoutMs: modelRuntimeBuildTimeoutMs,
         ...(includeCredentialProviders ? { includeCredentialProviders: true } : {}),
-        reusePluginGenerations: true,
+        selectPluginGeneration: (owner) => owner.pluginGeneration,
       }),
     publishOwners: (publishedOwners) => replyDispatchPublication.replace(publishedOwners),
     commit,

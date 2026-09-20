@@ -1267,10 +1267,22 @@ describe("memory index", () => {
         cacheEnabled: true,
         vectorEnabled: false,
       });
+      const providerCallsBeforeStatus = providerFixture.providerCalls.length;
       const statusManager = await getFreshManager(nextCfg, "status");
       try {
-        expect(statusManager.status().dirty).toBe(false);
-        expect(statusManager.status().custom?.indexIdentity).toEqual({ status: "valid" });
+        expect(statusManager.status()).toMatchObject({
+          dirty: false,
+          provider: providerFixture.identityAlias.provider,
+          model: providerFixture.identityAlias.canonicalModel,
+          custom: {
+            indexIdentity: { status: "valid" },
+            providerState: {
+              mode: "pending",
+              requestedProvider: providerFixture.identityAlias.provider,
+            },
+          },
+        });
+        expect(providerFixture.providerCalls).toHaveLength(providerCallsBeforeStatus);
       } finally {
         await statusManager.close?.();
       }
