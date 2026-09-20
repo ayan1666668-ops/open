@@ -204,6 +204,26 @@ describe("RealtimeTalkPcmOutputQueue", () => {
     expect(queue.queuedUntil).toBeCloseTo(15, 5);
   });
 
+  it("queues a relay-framed reply without tripping the source cap before the seconds cap", () => {
+    // The gateway relay re-chunks provider audio into 20ms frames (480 samples
+    // of 24kHz PCM16), so one second of speech is 50 sources. 750 frames are
+    // 15s of speech, delivered in a burst while the AudioContext clock only
+    // advances at 1/3.6 of real time. That stays well inside the queued-seconds
+    // budget, so only the source count can reject it.
+    const context = new MockOutputAudioContext();
+    const queue = new RealtimeTalkPcmOutputQueue();
+    const sampleRateHz = 24_000;
+    const frame = silentPcmBase64(480);
+
+    for (let index = 0; index < 750; index += 1) {
+      expect(queue.play(frame, context as unknown as AudioContext, sampleRateHz)).toBe("queued");
+      context.currentTime += 0.02 / 3.6;
+    }
+
+    expect(context.sources).toHaveLength(750);
+    expect(queue.queuedUntil).toBeCloseTo(15, 5);
+  });
+
   it("rejects an oversized frame before base64 decoding", () => {
     const context = new MockOutputAudioContext();
     const queue = new RealtimeTalkPcmOutputQueue();
@@ -240,9 +260,10 @@ describe("RealtimeTalkPcmOutputQueue", () => {
       }
     }
 
-    expect(queued).toBe(320);
-    expect(overflowed).toBe(9_680);
-    expect(context.sources).toHaveLength(320);
+    // 60s queued-seconds budget / 20ms relay frame == 3,000 sources.
+    expect(queued).toBe(3_000);
+    expect(overflowed).toBe(7_000);
+    expect(context.sources).toHaveLength(3_000);
   });
 
   it("releases source ownership on ended", () => {
@@ -250,7 +271,7 @@ describe("RealtimeTalkPcmOutputQueue", () => {
     const queue = new RealtimeTalkPcmOutputQueue();
     const chunk = silentPcmBase64(1);
 
-    for (let index = 0; index < 320; index += 1) {
+    for (let index = 0; index < 3_000; index += 1) {
       expect(queue.play(chunk, context as unknown as AudioContext, 48_000)).toBe("queued");
     }
     expect(queue.play(chunk, context as unknown as AudioContext, 48_000)).toBe("overflow");
@@ -258,7 +279,7 @@ describe("RealtimeTalkPcmOutputQueue", () => {
     context.sources[0]?.emitEnded();
 
     expect(queue.play(chunk, context as unknown as AudioContext, 48_000)).toBe("queued");
-    expect(context.sources).toHaveLength(321);
+    expect(context.sources).toHaveLength(3_001);
   });
 
   it("stops idempotently and isolates late ended events from replacement playback", () => {

@@ -229,7 +229,16 @@ export function estimateBase64DecodedByteLength(value: string): number {
 // comfortably covers realistic reply lengths while keeping queued PCM16
 // memory bounded (60s of 24kHz mono PCM is under 3MB).
 const REALTIME_TALK_PCM_OUTPUT_MAX_QUEUED_SECONDS = 60;
-const REALTIME_TALK_PCM_OUTPUT_MAX_SOURCES = 320;
+// The gateway relay re-chunks provider audio into 20ms frames, and each frame
+// becomes one AudioBufferSourceNode that is only released on `ended`. A fixed
+// source cap therefore rejects relayed replies long before the seconds budget
+// does (320 sources was 6.4s of speech). Size it as the number of relay-sized
+// frames the seconds budget holds so both gates bind together, while still
+// bounding graph-node count for frames far smaller than the relay contract.
+const REALTIME_TALK_PCM_OUTPUT_RELAY_FRAME_SECONDS = 0.02;
+const REALTIME_TALK_PCM_OUTPUT_MAX_SOURCES = Math.ceil(
+  REALTIME_TALK_PCM_OUTPUT_MAX_QUEUED_SECONDS / REALTIME_TALK_PCM_OUTPUT_RELAY_FRAME_SECONDS,
+);
 
 type RealtimeTalkPcmOutputQueuePlayResult = "queued" | "ignored" | "overflow";
 
