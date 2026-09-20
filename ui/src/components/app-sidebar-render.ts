@@ -9,6 +9,7 @@ import {
   type SidebarZoneEntry,
 } from "../app-navigation.ts";
 import { isRouteId, isSessionRouteId } from "../app-route-paths.ts";
+import { gatewayPresentationScope } from "../app/gateway-presentation-scope.ts";
 import type { NativeGateway, NativeGatewaysSnapshot } from "../app/native-gateways.runtime.ts";
 import { isHomePanelAvailable } from "../app/panel-availability.ts";
 import { controlUiPublicAssetPath } from "../app/public-assets.ts";
@@ -44,7 +45,7 @@ import { renderSidebarSessionFilter } from "./app-sidebar-session-filter-summary
 import type { AppSidebarSessionNavigationElement } from "./app-sidebar-session-navigation.ts";
 import { renderSidebarSessionSectionHeader } from "./app-sidebar-session-section-header.ts";
 import type { SidebarRecentSession } from "./app-sidebar-session-types.ts";
-import { gatewayStatusLabel, renderGatewayStatus } from "./gateway-status.ts";
+import { renderGatewayStatus } from "./gateway-status.ts";
 import { icons } from "./icons.ts";
 import { renderNewSessionLink } from "./new-session-link.ts";
 import { HOME_PANEL_TOGGLE_EVENT } from "./panel-toggle-contract.ts";
@@ -56,7 +57,6 @@ import {
 import { renderSessionGlyph, renderSessionUnreadBadge } from "./session-glyph.ts";
 import { renderSessionRowBadges } from "./session-row-badges.ts";
 import { formatSidebarBuildSubtitle } from "./sidebar-build-chip-format.ts";
-import { resolveSidebarDisplayIdentity } from "./sidebar-display-identity.ts";
 
 export type AppSidebarRenderHost = AppSidebarSessionNavigationElement & {
   activePluginTabId: string;
@@ -464,7 +464,9 @@ export function renderAppSidebarOnline(host: AppSidebarRenderHost) {
 /** Zone 5: product chrome recedes to one slim footer bar. */
 export function renderAppSidebarFooterBar(host: AppSidebarRenderHost) {
   const connectionStatus = host.connectionStatus;
-  const selfUser = resolveSidebarDisplayIdentity(host.sessionDataContext?.gateway);
+  const selfUser = host.sessionDataContext
+    ? gatewayPresentationScope(host.sessionDataContext.gateway).displayUser
+    : null;
   const selfLabel = selfUser?.name ?? selfUser?.email ?? t("nav.owner");
   const avatarUser = {
     id: "owner",
@@ -476,21 +478,18 @@ export function renderAppSidebarFooterBar(host: AppSidebarRenderHost) {
   const buildSubtitle = formatSidebarBuildSubtitle(CONTROL_UI_BUILD_INFO);
   const gatewayPrimaryTag = gateway?.isPrimary ? t("nav.gateway.primaryTag") : null;
   const identityMenuLabel = t("profilePage.identity.menuButtonLabel", { name: selfLabel });
-  const identityDetail = connectionStatus
-    ? gatewayStatusLabel(connectionStatus)
+  const statusLabel = connectionStatus ? t(`connection.${connectionStatus}`) : null;
+  const identityDetail = statusLabel
+    ? statusLabel
     : gateway
       ? `${gateway.name}${gatewayPrimaryTag ? `, ${gatewayPrimaryTag}` : ""}`
       : buildSubtitle;
   const outboxLabel = host.queuedOutboxCount
-    ? t("connection.outboxCount", { count: String(host.queuedOutboxCount) })
+    ? t("connection.queuedCount", { count: String(host.queuedOutboxCount) })
     : null;
   const accessibleDetail = [identityDetail, outboxLabel].filter(Boolean).join(" · ");
   const announcement = [
-    connectionStatus
-      ? gatewayStatusLabel(connectionStatus)
-      : host.connected
-        ? t("nav.gateway.connected")
-        : null,
+    statusLabel ? statusLabel : host.connected ? t("nav.gateway.connected") : null,
     outboxLabel,
   ]
     .filter(Boolean)

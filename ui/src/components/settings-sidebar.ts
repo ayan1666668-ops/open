@@ -1,7 +1,7 @@
 import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
 // Dedicated sidebar for the full-page settings takeover (see app-host.ts).
 import { html, nothing } from "lit";
-import type { AgentsListResult, UpdateAvailable, UpdateScheduleState } from "../api/types.ts";
+import type { AgentsListResult } from "../api/types.ts";
 import {
   cancelRoutePreload,
   isSettingsNavigationRouteVisible,
@@ -21,8 +21,6 @@ import type { AgentSelectionCapability } from "../app/agent-selection.ts";
 import type { ApplicationNavigationOptions } from "../app/context.ts";
 import type { NativeDeviceSettingsCapability } from "../app/native-device-settings.ts";
 import { beginNativeWindowDragFromTopInset } from "../app/native-window-drag.ts";
-import type { UpdateProgress } from "../app/update-confirmation.ts";
-import type { ApplicationStatusBanner } from "../app/update-overlay-helpers.ts";
 import { t } from "../i18n/index.ts";
 import { listSelectableAgents, normalizeAgentLabel } from "../lib/agents/display.ts";
 import type { AgentIdentityCapability } from "../lib/agents/identity.ts";
@@ -54,26 +52,12 @@ type SettingsSidebarProps = {
   queuedOutboxCount?: number;
   lastError: string | null;
   gatewayVersion: string;
-  updateAvailable: UpdateAvailable | null;
-  updateSchedule?: UpdateScheduleState | null;
-  heldUpdateCampaignId?: string | null;
-  updateBusy: boolean;
-  updateStatusBanner?: ApplicationStatusBanner | null;
-  watchUpdateProgress?: (listener: (progress: UpdateProgress) => void) => () => void;
-  canUpdate?: boolean;
-  canHoldUpdate?: boolean;
-  onUpdate: () => void;
-  refreshRequired: boolean;
-  onRefresh: () => Promise<boolean>;
-  onHoldUpdate?: () => Promise<boolean>;
-  onReviewUpdate?: () => void;
   searchQuery: string;
   searchBlockMatches?: readonly SettingsSearchBlock[];
   searchParams?: Parameters<typeof findSettingsSearchBlocks>[0];
   onExit: () => void;
   onRetryConnect: () => void;
   onNavigate: (routeId: RouteId, options?: ApplicationNavigationOptions) => void;
-  onOpenApprovals?: () => void;
   onPreload?: (routeId: RouteId) => Promise<void> | void;
   onSearchQueryChange: (query: string) => void;
   preloadTimers: Map<EventTarget, ReturnType<typeof globalThis.setTimeout>>;

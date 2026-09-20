@@ -23,6 +23,10 @@
   /* Desktop has no topbar row — the sidebar owns navigation. Narrow viewports
      (layout.mobile.css) and the chat split toolbar restore the row height. */
   --shell-topbar-height: 0px;
+  --shell-dock-reserve-bottom: calc(
+    var(--oc-terminal-reserve-bottom, 0px) + var(--oc-browser-reserve-bottom, 0px) +
+      var(--oc-link-reader-reserve-bottom, 0px) + var(--oc-assistant-reserve-bottom, 0px)
+  );
   --shell-focus-duration: 200ms;
   --shell-focus-ease: var(--ease-out);
   height: 100vh;
@@ -4012,15 +4016,26 @@ button.gateway-status:focus-visible {
 }
 
 .shell-connection-status {
-  position: absolute;
-  inset-block-end: 12px;
-  inset-inline-start: 12px;
-  z-index: 40;
-  max-width: calc(100% - 80px);
+  grid-area: connection;
+  justify-self: start;
+  margin: 6px 12px;
+  max-width: calc(100% - 24px);
   padding: 7px 10px;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--bg);
+}
+
+.shell:not(.shell--mobile-nav):has(> .shell-connection-status) {
+  grid-template-rows: var(--shell-topbar-height) minmax(0, 1fr) auto;
+  grid-template-areas:
+    "nav topbar"
+    "nav content"
+    "nav connection";
+}
+
+.shell:not(.shell--mobile-nav) > .shell-connection-status {
+  margin-bottom: calc(6px + var(--shell-dock-reserve-bottom));
 }
 
 .sidebar-session-group-running {
@@ -4443,10 +4458,7 @@ wa-dropdown.sidebar-identity-menu::part(menu) {
   /* Reserve space for the docked operator terminal and browser panels so they
      reshape the content area (shrink it) instead of overlaying the chat. The
      panels set these vars; they are 0 when closed. */
-  margin-bottom: calc(
-    var(--oc-terminal-reserve-bottom, 0px) + var(--oc-browser-reserve-bottom, 0px) +
-      var(--oc-link-reader-reserve-bottom, 0px) + var(--oc-assistant-reserve-bottom, 0px)
-  );
+  margin-bottom: var(--shell-dock-reserve-bottom);
   margin-right: calc(
     var(--oc-terminal-reserve-right, 0px) + var(--oc-browser-reserve-right, 0px) +
       var(--oc-link-reader-reserve-right, 0px) + var(--oc-assistant-reserve-right, 0px)
@@ -4454,6 +4466,11 @@ wa-dropdown.sidebar-identity-menu::part(menu) {
   transition:
     margin-bottom 0.16s ease,
     margin-right 0.16s ease;
+}
+
+/* The separate status row owns bottom-dock clearance while navigation is hidden. */
+.shell:not(.shell--mobile-nav):has(> .shell-connection-status) > .content {
+  margin-bottom: 0;
 }
 
 /* Programmatic focus anchor (tabindex="-1") used when collapsing the sidebar

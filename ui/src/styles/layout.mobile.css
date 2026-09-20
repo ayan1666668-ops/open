@@ -80,14 +80,6 @@ html:not(.openclaw-native-macos):not(.openclaw-native-nav):not(.openclaw-native-
     "content";
 }
 
-.shell--mobile-nav > .shell-connection-status {
-  position: static;
-  grid-area: connection;
-  justify-self: start;
-  margin: 6px 12px;
-  max-width: calc(100% - 24px);
-}
-
 .shell--mobile-nav .shell-nav,
 .shell--mobile-nav.shell--nav-collapsed .shell-nav {
   position: fixed;
