@@ -1,6 +1,7 @@
 import { sleepWithAbort, toErrorObject } from "openclaw/plugin-sdk/realtime-voice-provider";
 import type { ClientOptions, RawData } from "ws";
 import type { OpenAIRealtimeHost } from "./realtime-host.js";
+import type { QuicksilverMediaSocketFactory } from "./realtime-quicksilver-socket.shared.js";
 import {
   openAIQuicksilverAuthHeaders,
   type OpenAIQuicksilverAuth,
@@ -213,6 +214,15 @@ export async function connectOpenAIQuicksilverSideband(
     }
   }
   throw lastError;
+}
+
+/** Default transport loading belongs to live connection admission, not cold catalogs. */
+export async function loadOpenAIQuicksilverMediaSocketFactory(
+  signal: AbortSignal,
+): Promise<QuicksilverMediaSocketFactory> {
+  return (
+    await waitForOpenAIQuicksilverConnectStep(import("./realtime-quicksilver-socket.js"), signal)
+  ).OpenAIQuicksilverWorkerSocket.create;
 }
 
 export function openAIQuicksilverConnectAbortError(signal: AbortSignal): Error {

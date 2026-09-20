@@ -1,5 +1,4 @@
 // Gateway-owned GPT-Live bridge over released WebRTC and unlisted direct transport.
-import { randomUUID } from "node:crypto";
 import type { PluginLogger } from "openclaw/plugin-sdk/plugin-entry";
 import type {
   RealtimeVoiceAudioOutputPort,
@@ -31,12 +30,12 @@ import {
 } from "./realtime-quicksilver-session-limit.js";
 import {
   connectOpenAIQuicksilverSideband,
+  loadOpenAIQuicksilverMediaSocketFactory,
   openAIQuicksilverConnectAbortError,
   waitForOpenAIQuicksilverConnectStep,
   type OpenAIQuicksilverSocket,
   type OpenAIQuicksilverSocketFactory,
 } from "./realtime-quicksilver-sideband.js";
-import { OpenAIQuicksilverWorkerSocket } from "./realtime-quicksilver-socket.js";
 import {
   QuicksilverSocketAudioQueue,
   type QuicksilverMediaSocket,
@@ -47,6 +46,7 @@ import {
   buildOpenAIQuicksilverSessionUpdate,
   buildOpenAIQuicksilverWebSocketUrl,
   createOpenAIQuicksilverCall,
+  createOpenAIQuicksilverRequestIds,
   type OpenAIQuicksilverAuth,
   type OpenAIQuicksilverRequestIds,
 } from "./realtime-quicksilver-wire.js";
@@ -234,11 +234,7 @@ export class OpenAIQuicksilverGatewayBridge implements RealtimeVoiceBridge {
       throw this.redactAdmissionError(error);
     }
     try {
-      const requestIds = {
-        realtimeSessionId: randomUUID(),
-        sessionId: randomUUID(),
-        threadId: randomUUID(),
-      };
+      const requestIds = createOpenAIQuicksilverRequestIds();
       if (auth.type === "api-key" && !isOpenAIGptLiveSubscriptionModel(this.config.model)) {
         await this.connectDirect(auth, requestIds, connectSignal);
       } else {
@@ -374,38 +370,42 @@ export class OpenAIQuicksilverGatewayBridge implements RealtimeVoiceBridge {
     url: string,
     connectSignal: AbortSignal,
   ): Promise<void> {
-    let directSocket: QuicksilverMediaSocket | undefined;
-    const createSocket: OpenAIQuicksilverSocketFactory =
+    const mediaSocketFactory =
       this.transport === "direct"
-        ? (socketUrl, options) => {
-            const socket = (this.config.mediaSocketFactory ?? OpenAIQuicksilverWorkerSocket.create)(
-              socketUrl,
-              options,
-              {
-                model: this.config.model,
-                paced: true,
-                audioFormat: this.config.audioFormat,
+        ? (this.config.mediaSocketFactory ??
+          (await loadOpenAIQuicksilverMediaSocketFactory(connectSignal)))
+        : undefined;
+    let directSocket: QuicksilverMediaSocket | undefined;
+    const createSocket: OpenAIQuicksilverSocketFactory = mediaSocketFactory
+      ? (socketUrl, options) => {
+          const socket = mediaSocketFactory(
+            socketUrl,
+            options,
+            {
+              model: this.config.model,
+              paced: true,
+              audioFormat: this.config.audioFormat,
+            },
+            {
+              onAudio: (audio) => {
+                if (this.closed) {
+                  return;
+                }
+                this.config.onAudio(audio);
+                this.config.onEvent?.({
+                  direction: "server",
+                  type: isOpenAIGptLiveApiModel(this.config.model)
+                    ? "session.output_audio.delta"
+                    : "output_audio.delta",
+                });
               },
-              {
-                onAudio: (audio) => {
-                  if (this.closed) {
-                    return;
-                  }
-                  this.config.onAudio(audio);
-                  this.config.onEvent?.({
-                    direction: "server",
-                    type: isOpenAIGptLiveApiModel(this.config.model)
-                      ? "session.output_audio.delta"
-                      : "output_audio.delta",
-                  });
-                },
-              },
-            );
-            directSocket = socket;
-            return socket;
-          }
-        : (this.config.webSocketFactory ??
-          ((socketUrl, options) => new WebSocket(socketUrl, options)));
+            },
+          );
+          directSocket = socket;
+          return socket;
+        }
+      : (this.config.webSocketFactory ??
+        ((socketUrl, options) => new WebSocket(socketUrl, options)));
     const connected = await connectOpenAIQuicksilverSideband(
       {
         auth,

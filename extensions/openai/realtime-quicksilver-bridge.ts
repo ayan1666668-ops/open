@@ -1,5 +1,4 @@
 // GPT-Live backend bridge over the Frameless Bidi WebSocket protocol used by Codex realtime v3.
-import { randomUUID } from "node:crypto";
 import type { PluginLogger } from "openclaw/plugin-sdk/plugin-entry";
 import {
   rawDataToString,
@@ -25,10 +24,10 @@ import {
 import { projectOpenAIQuicksilverErrorMessage } from "./realtime-quicksilver-redaction.js";
 import {
   connectOpenAIQuicksilverSideband,
+  loadOpenAIQuicksilverMediaSocketFactory,
   waitForOpenAIQuicksilverConnectStep,
   type OpenAIQuicksilverSocket,
 } from "./realtime-quicksilver-sideband.js";
-import { OpenAIQuicksilverWorkerSocket } from "./realtime-quicksilver-socket.js";
 import type {
   QuicksilverMediaSocket,
   QuicksilverMediaSocketFactory,
@@ -39,6 +38,7 @@ import {
   buildOpenAIQuicksilverSessionUpdate,
   buildOpenAIQuicksilverWebSocketUrl,
   chunkOpenAIQuicksilverAppendText,
+  createOpenAIQuicksilverRequestIds,
   parseOpenAIQuicksilverEvent,
   type OpenAIQuicksilverAuth,
   type OpenAIQuicksilverInboundEvent,
@@ -73,11 +73,7 @@ export class OpenAIQuicksilverVoiceBridge implements RealtimeVoiceBridge {
   private activeDelegations = new Set<string>();
   private publicDelegations: OpenAILiveDelegationQueue | undefined;
   private readonly transcript = new OpenAIQuicksilverTranscript();
-  private readonly requestIds = {
-    realtimeSessionId: randomUUID(),
-    sessionId: randomUUID(),
-    threadId: randomUUID(),
-  };
+  private readonly requestIds = createOpenAIQuicksilverRequestIds();
 
   constructor(
     private readonly config: OpenAIQuicksilverVoiceBridgeConfig,
@@ -121,11 +117,14 @@ export class OpenAIQuicksilverVoiceBridge implements RealtimeVoiceBridge {
         this.config.resolveAuth(),
         connection.signal,
       );
+      const mediaSocketFactory =
+        this.config.mediaSocketFactory ??
+        (await loadOpenAIQuicksilverMediaSocketFactory(connection.signal));
       connected = await connectOpenAIQuicksilverSideband(
         {
           auth,
           createSocket: (url, options) => {
-            const socket = (this.config.mediaSocketFactory ?? OpenAIQuicksilverWorkerSocket.create)(
+            const socket = mediaSocketFactory(
               url,
               options,
               {
