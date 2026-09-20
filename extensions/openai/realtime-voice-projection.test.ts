@@ -96,12 +96,29 @@ describe("OpenAI realtime public projection", () => {
       expect(internalApi.isGatewayRelayConfigured({ providerConfig, agentId: "main" })).toBe(
         hasOAuth,
       );
-      expect(
-        internalApi.isGatewayRelayConfigured({
-          providerConfig: { ...providerConfig, azureEndpoint: "https://example.openai.azure.com" },
-          agentId: "main",
-        }),
-      ).toBe(false);
+      for (const [azureConfig, supportsRelay] of [
+        [{ azureEndpoint: " https://example.openai.azure.com " }, false],
+        [{ azureDeployment: " live-deployment " }, false],
+        [{ azureEndpoint: "", azureDeployment: " \t " }, true],
+        [{ azureEndpoint: " \t ", azureDeployment: "" }, true],
+      ] as const) {
+        const azureProviderConfig = { ...providerConfig, ...azureConfig };
+        for (const project of [
+          projectRealtimeVoicePublicProjection,
+          internalApi.projectPublicProjection,
+        ]) {
+          expect(project({ providerConfig: azureProviderConfig, config: providerConfig })).toEqual({
+            config: providerConfig,
+            clientHints: { gatewayRelaySupported: supportsRelay },
+          });
+        }
+        expect(
+          internalApi.isGatewayRelayConfigured({
+            providerConfig: azureProviderConfig,
+            agentId: "main",
+          }),
+        ).toBe(hasOAuth && supportsRelay);
+      }
     },
   );
 

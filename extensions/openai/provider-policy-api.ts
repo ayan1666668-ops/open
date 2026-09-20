@@ -151,8 +151,13 @@ export function projectRealtimeVoicePublicProjection(ctx: {
     // still resolves the selected agent's auth and validates the relay launch.
     return {
       config: ctx.config,
-      // GPT-Live owns delegation; forced agent consult requires native Talk.
-      clientHints: { gatewayRelaySupported: ctx.config.consultRouting !== "force-agent-consult" },
+      // GPT-Live owns delegation; forced consult and Azure configs require native Talk.
+      clientHints: {
+        gatewayRelaySupported:
+          ctx.config.consultRouting !== "force-agent-consult" &&
+          !normalizeOptionalString(ctx.providerConfig.azureEndpoint) &&
+          !normalizeOptionalString(ctx.providerConfig.azureDeployment),
+      },
     };
   }
   const { model: _model, ...publicConfig } = ctx.config;

@@ -181,6 +181,41 @@
         }
       },
       "realtime": false
+    },
+    {
+      "id": "subscription-azure",
+      "source": {
+        "talk": {
+          "realtime": {
+            "provider": "openai",
+            "providers": {
+              "openai": {
+                "model": "gpt-live-1-codex",
+                "azureEndpoint": "https://example.openai.azure.com"
+              }
+            }
+          }
+        }
+      },
+      "config": {
+        "talk": {
+          "realtime": {
+            "provider": "openai",
+            "providers": {
+              "openai": {
+                "model": "gpt-live-1-codex",
+                "azureEndpoint": "https://example.openai.azure.com"
+              }
+            }
+          }
+        },
+        "clientHints": {
+          "realtime": {
+            "gatewayRelaySupported": false
+          }
+        }
+      },
+      "realtime": false
     }
   ]
 }
