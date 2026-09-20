@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { makeTempDir } from "../../test/helpers/temp-dir.js";
 import {
@@ -222,20 +223,24 @@ describe("media migration of canonical SQLite transcript archives", () => {
     }
     const prepare = DatabaseSync.prototype.prepare;
     const plans: string[] = [];
-    const observed = vi.spyOn(DatabaseSync.prototype, "prepare").mockImplementation(function (sql) {
-      if (
-        /^select .*archive_blob.* from "session_transcript_archives" where .* order by /i.test(sql)
-      ) {
-        const bindings = Array.from({ length: (sql.match(/\?/g) ?? []).length }, () => "");
-        plans.push(
-          ...prepare
-            .call(this, `EXPLAIN QUERY PLAN ${sql}`)
-            .all(...bindings)
-            .map((row) => String(row.detail)),
-        );
-      }
-      return prepare.call(this, sql);
-    });
+    const observed = vi
+      .spyOn(DatabaseSync.prototype, "prepare")
+      .mockImplementation(function (this: DatabaseSync, sql) {
+        if (
+          /^select .*archive_blob.* from "session_transcript_archives" where .* order by /i.test(
+            sql,
+          )
+        ) {
+          const bindings = Array.from({ length: (sql.match(/\?/g) ?? []).length }, () => "");
+          plans.push(
+            ...prepare
+              .call(this, `EXPLAIN QUERY PLAN ${sql}`)
+              .all(...bindings)
+              .map((row) => String(row.detail)),
+          );
+        }
+        return prepare.call(this, sql);
+      });
     const result = await migrateLegacyMediaPersistence({ env: f.env }).finally(() =>
       observed.mockRestore(),
     );
