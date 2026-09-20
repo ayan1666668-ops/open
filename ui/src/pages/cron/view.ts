@@ -61,6 +61,7 @@ import { formatUiExternalText } from "../../lib/format-error.ts";
 import { formatRelativeTimestamp, formatMs } from "../../lib/format.ts";
 import { formatCronSchedule } from "../../lib/presenter.ts";
 import { resolveScrollBehavior } from "../../lib/scroll-behavior.ts";
+import { renderPromptPreview } from "./prompt-preview.ts";
 import { renderSegmented } from "./segmented-control.ts";
 import { CRON_SUGGESTIONS, suggestionFormPatch } from "./suggestions.ts";
 import { renderRunsSection, runStatusLabel } from "./view-runs.ts";
@@ -1538,7 +1539,11 @@ function renderPromptSection(
         })}
       `
     : nothing;
-  return renderSettingsSection({}, html`${promptRow}${actionRow}${agentTurnRows}`);
+  const promptPreviewRow = renderPromptPreview(ctx, payloadText);
+  return renderSettingsSection(
+    {},
+    html`${promptRow}${promptPreviewRow}${actionRow}${agentTurnRows}`,
+  );
 }
 
 function renderGeneralSection(props: CronProps) {
