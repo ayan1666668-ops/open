@@ -195,9 +195,17 @@ describe("compaction semantic observer wiring", () => {
       started += 1;
       if (started === 1) {
         await new Promise<never>((_resolve, reject) => {
-          context.signal.addEventListener("abort", () => reject(context.signal.reason), {
-            once: true,
-          });
+          context.signal.addEventListener(
+            "abort",
+            () => {
+              reject(
+                context.signal.reason instanceof Error
+                  ? context.signal.reason
+                  : new Error("semantic observation aborted"),
+              );
+            },
+            { once: true },
+          );
         });
       }
       await slowRequest;
