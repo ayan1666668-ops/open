@@ -22,12 +22,12 @@ function rect(top: number, height: number): DOMRect {
   };
 }
 
-function fixture() {
+function fixture(scrollHeight = 1600) {
   const scroller = document.body.appendChild(document.createElement("div"));
   scroller.getBoundingClientRect = () => rect(100, 500);
   Object.defineProperties(scroller, {
     clientHeight: { value: 500 },
-    scrollHeight: { value: 1600 },
+    scrollHeight: { value: scrollHeight },
   });
   scroller.innerHTML =
     '<div class="chat-virtual-row" data-index="4"><div class="chat-bubble" data-message-id="visible"></div></div>';
@@ -36,7 +36,7 @@ function fixture() {
   bubble.getBoundingClientRect = () => rect(90, 180);
   const virtualizer = {
     scrollToOffset: vi.fn((offset: number) => {
-      scroller.scrollTop = Math.max(0, Math.min(offset, 1100));
+      scroller.scrollTop = Math.max(0, Math.min(offset, scrollHeight - scroller.clientHeight));
     }),
     scrollOffset: 200,
   };
@@ -123,30 +123,28 @@ describe("transcript prepend anchor", () => {
 
   it("keeps the original reader target when another projection commits before restoration", () => {
     const { scroller, bubble, instance, anchor, measureRows } = fixture();
+    let contentTop = 290;
+    bubble.getBoundingClientRect = () => rect(contentTop - scroller.scrollTop, 180);
     anchor.messageKeys = messages("visible");
     anchor.capture(scroller, false);
     scroller.scrollTop = 200;
     anchor.messageKeys = messages("visible", "peer-one");
     anchor.capture(scroller, false, true);
     anchor.update(scroller, instance, measureRows);
-    bubble.getBoundingClientRect = () => rect(120, 180);
+    contentTop += 30;
     anchor.messageKeys = messages("visible", "peer-one", "peer-two");
     anchor.capture(scroller, false, true);
     anchor.update(scroller, instance, measureRows);
-    bubble.getBoundingClientRect = () => rect(150, 180);
+    contentTop += 30;
     anchor.update(scroller, instance, measureRows);
     expect(scroller.scrollTop).toBe(260);
-    expect(measureRows).toHaveBeenCalledTimes(2);
+    expect(bubble.getBoundingClientRect().top).toBe(90);
   });
 
   it("preserves native wheel movement after a projection captures the reader", () => {
-    const { scroller, bubble, anchor, measureRows } = fixture();
+    const { scroller, bubble, anchor, measureRows } = fixture(2000);
     let headerGrowth = 0;
     bubble.getBoundingClientRect = () => rect(290 + headerGrowth - scroller.scrollTop, 180);
-    Object.defineProperties(scroller, {
-      clientHeight: { value: 500 },
-      scrollHeight: { value: 2000 },
-    });
     const owner = {
       state: createTranscriptOffsetState(),
       getScrollElement: () => scroller,
