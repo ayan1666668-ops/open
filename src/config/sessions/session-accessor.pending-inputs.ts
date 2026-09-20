@@ -32,7 +32,9 @@ import {
 import type { OpenClawConfig } from "../types.openclaw.js";
 import {
   preparePendingInputRequest,
+  resolvePendingInputReplayRequest,
   matchesSessionPendingInputRequest,
+  type PendingInputRequest,
 } from "./session-accessor.pending-input-request.js";
 import type { SessionAccessScope } from "./session-accessor.sqlite-contract.js";
 import { readSessionEntryRow } from "./session-accessor.sqlite-entry-store.js";
@@ -182,13 +184,9 @@ export function bindSessionPendingInputSources(
 /** Accept durable input without changing the active transcript or scheduling execution. */
 export async function stageSessionPendingInput(
   scope: PendingInputScope,
-  options: {
-    runId: string;
-    /** Authenticated ingress binds raw input before randomized media preparation. */
-    requestFingerprint?: string;
+  options: PendingInputRequest & {
     /** Records processing completion separately from canonical transcript consumption. */
     trackCompletion?: boolean;
-    message: PersistedUserTurnMessage;
     prepareMessageAfterIdempotencyCheck?: (
       message: PersistedUserTurnMessage,
     ) => PersistedUserTurnMessage | undefined;
@@ -201,14 +199,8 @@ export async function stageSessionPendingInput(
 ): Promise<SessionPendingInputReceipt | undefined> {
   const resolved = resolveSqliteTranscriptScope(scope);
   const databaseOptions = toDatabaseOptions(resolved);
-  const idempotencyKey = readMessageIdempotencyKey(options.message);
-  if (!idempotencyKey || !options.runId) {
-    throw new Error("Pending input requires an exact run and message idempotency key");
-  }
-  const { stableMessage, requestHash } = preparePendingInputRequest(
-    options.message,
-    options.requestFingerprint,
-  );
+  const preparedRequest = preparePendingInputRequest(options);
+  const { idempotencyKey } = preparedRequest;
   return runExclusiveSqliteSessionWrite(
     resolved,
     async () => {
@@ -218,20 +210,27 @@ export async function stageSessionPendingInput(
         return undefined;
       }
       const existing = readSessionPendingInputByKey(database, resolved, idempotencyKey);
+      if (options.trackCompletion) {
+        ensureSessionInputCompletionsSchema(database.db);
+      }
+      const completionIdentity = { ...resolved, idempotencyKey };
+      const previous = options.trackCompletion
+        ? readSessionInputCompletion(database, completionIdentity)
+        : undefined;
+      const { message, stableMessage, requestHash } = resolvePendingInputReplayRequest(
+        preparedRequest,
+        previous ?? existing,
+      );
       const lifecycleGeneration = getAgentEventLifecycleGeneration();
       let finished = false;
       let complete: SessionPendingInputReceipt["complete"];
       if (options.trackCompletion) {
-        ensureSessionInputCompletionsSchema(database.db);
         const completionScope = {
-          sessionKey: resolved.sessionKey,
-          sessionId: scope.sessionId,
-          idempotencyKey,
+          ...completionIdentity,
           runId: options.runId,
           requestHash,
           lifecycleGeneration,
         };
-        const previous = readSessionInputCompletion(database, completionScope);
         if (
           previous &&
           (previous.request_hash !== requestHash || previous.run_id !== options.runId)
@@ -242,7 +241,7 @@ export async function stageSessionPendingInput(
           return {
             state: "consumed",
             inputId: idempotencyKey,
-            message: options.message,
+            message,
             completion: previous.outcome,
             run: () => {
               throw new Error("Input processing has already completed");
@@ -306,8 +305,8 @@ export async function stageSessionPendingInput(
         const committedMessage = parseSessionPendingInputMessage(JSON.stringify(committed.message));
         if (options.trackCompletion) {
           const prepared = options.prepareMessageAfterIdempotencyCheck
-            ? options.prepareMessageAfterIdempotencyCheck(options.message)
-            : options.message;
+            ? options.prepareMessageAfterIdempotencyCheck(message)
+            : message;
           if (!prepared) {
             return undefined;
           }
@@ -336,8 +335,8 @@ export async function stageSessionPendingInput(
       const prepared = existing
         ? parseSessionPendingInputMessage(existing.message_json)
         : options.prepareMessageAfterIdempotencyCheck
-          ? options.prepareMessageAfterIdempotencyCheck(options.message)
-          : options.message;
+          ? options.prepareMessageAfterIdempotencyCheck(message)
+          : message;
       if (!prepared) {
         return undefined;
       }

@@ -38,6 +38,7 @@ import type { AgentTurnIo, AgentTurnPrincipal } from "./types.js";
 
 type AgentTurnStartRequest = {
   privateCompletion?: true;
+  settleWakeReplay?: import("./internal-facade.types.js").RequesterSettleWakeReplay;
   assertAdmissionCurrent?: () => void;
   hasCurrentClientAuthority?: () => boolean;
   preflight: AgentRequestPreflight;
@@ -52,6 +53,7 @@ export function createAgentTurnService(
 ) {
   const startTurn = async ({
     privateCompletion,
+    settleWakeReplay,
     assertAdmissionCurrent,
     hasCurrentClientAuthority,
     preflight,
@@ -528,6 +530,7 @@ export function createAgentTurnService(
         },
         requestedPromptPersistenceSuppression,
         privateCompletion,
+        settleWakeReplay,
         runId,
         agentDedupeKeys,
         context,
@@ -578,7 +581,7 @@ export function createAgentTurnService(
             images,
             imageOrder,
             media,
-            inputProvenance,
+            inputProvenance: preparedDispatch.userTurn.inputProvenance,
             runId,
             agentDedupeKeys,
             spawnedBy: spawnedByValue,

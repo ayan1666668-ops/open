@@ -95,6 +95,7 @@ export function runWithOperatorToolGatewayCleanupContext<T>(run: () => T): T {
 
 type DispatchGatewayMethodInProcessOptions = {
   privateCompletion?: true;
+  settleWakeReplay?: import("./agent-turn/internal-facade.types.js").RequesterSettleWakeReplay;
   allowSyntheticModelOverride?: boolean;
   allowSyntheticCronRunContinuation?: boolean;
   agentToolCaller?: TrustedAgentToolCaller;
@@ -479,6 +480,7 @@ export async function dispatchGatewayMethodInProcess<T>(
         ? await facade.dispatch<T>(params as AgentRunRequest, {
             assertAdmissionCurrent: options?.sessionMutationCommitGuard,
             privateCompletion: options?.privateCompletion,
+            settleWakeReplay: options?.settleWakeReplay,
             cancelOnDeadline: options?.cancelOnDeadline,
             expectFinal: options?.expectFinal,
             onAccepted: options?.onAccepted,

@@ -84,6 +84,7 @@ export type PrepareAgentRunDispatchParams = {
   onUserTurnMediaPersisted: () => void;
   requestedPromptPersistenceSuppression: boolean;
   privateCompletion?: true;
+  settleWakeReplay?: import("./internal-facade.types.js").RequesterSettleWakeReplay;
   runId: string;
   agentDedupeKeys: readonly string[];
   context: AgentTurnContext;

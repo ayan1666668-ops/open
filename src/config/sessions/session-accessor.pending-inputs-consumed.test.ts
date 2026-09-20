@@ -365,6 +365,125 @@ describe("committed pending input release", () => {
   const pendingCount = () =>
     database().db.prepare("SELECT COUNT(*) AS count FROM session_pending_inputs").get()?.count;
 
+  it.each(["pending", "completed", "public pending"] as const)(
+    "matches a shipped settle source by its whole request hash (%s)",
+    async (state) => {
+      const runId = "announce:settle-cohort";
+      const original = {
+        ...message(runId),
+        display: false as const,
+        provenance: {
+          kind: "inter_session" as const,
+          sourceTool: "subagent_settle",
+          sourceChannel: "internal",
+          sourceSessionKey: "child-b",
+        },
+      };
+      const first = await stage(runId, {
+        message: original,
+        trackCompletion: state !== "public pending",
+      });
+      if (state === "completed") {
+        // Handled private input can leave only its hash/outcome, not a transcript.
+        first.complete!(buildAgentRunTerminalOutcome({ status: "ok" }));
+        expect(readSessionSubmittedInput(scope(), `${runId}:user`)).toBeUndefined();
+      }
+      first.finish("interrupted");
+      const acceptedOrder = () =>
+        database()
+          .db.prepare(
+            "SELECT seq, input_id, request_hash, message_json, accepted_at FROM session_pending_inputs ORDER BY seq",
+          )
+          .all();
+      const beforeReplay = acceptedOrder();
+      rotateAgentEventLifecycleGeneration();
+      closeOpenClawAgentDatabasesForTest();
+      const replay = stage(runId, {
+        message: {
+          ...original,
+          provenance: { ...original.provenance, sourceSessionKey: "child-a" },
+        },
+        trackCompletion: state !== "public pending",
+        replaySourceSessionKeys: ["child-a", "child-b"],
+      });
+      if (state === "public pending") {
+        // Matching identity never grants ordinary input new execution custody.
+        await expect(replay).rejects.toThrow("Pending input ownership ended");
+        expect(acceptedOrder()).toEqual(beforeReplay);
+        return;
+      }
+      const receipt = await replay;
+      expect(acceptedOrder()).toEqual(beforeReplay);
+      expect(receipt.message.provenance).toEqual(original.provenance);
+      if (state === "completed") {
+        expect(receipt.completion).toMatchObject({ reason: "completed" });
+        expect(() => receipt.run(() => {})).toThrow("already completed");
+      } else {
+        expect(receipt.completion).toBeUndefined();
+        expect(receipt.run(() => "resumed")).toBe("resumed");
+      }
+    },
+  );
+
+  it.each(["content", "sender", "tool", "run", "outside cohort", "session", "authority"] as const)(
+    "does not substitute a settle receipt when %s differs",
+    async (difference) => {
+      const runId = "announce:guarded-settle";
+      const original = {
+        ...message(runId),
+        __openclaw: { senderIsOwner: false, senderId: "original" },
+        provenance: {
+          kind: "inter_session" as const,
+          sourceTool: "subagent_settle",
+          sourceChannel: "internal",
+          sourceSessionKey: "child-b",
+        },
+      };
+      const first = await stage(runId, { message: original, trackCompletion: true });
+      first.complete!(buildAgentRunTerminalOutcome({ status: "ok" }));
+      first.finish("interrupted");
+      const before = completionRows();
+      if (difference === "session") {
+        await upsertSessionEntryCore(scope(), { sessionId: "replacement-session", updatedAt: 2 });
+      }
+      const replay = stageSessionPendingInput(scope(), {
+        runId: difference === "run" ? "announce:other-run" : runId,
+        trackCompletion: true,
+        replaySourceSessionKeys:
+          difference === "outside cohort" ? ["child-a"] : ["child-a", "child-b"],
+        assertCurrent: () => {
+          if (difference === "authority") {
+            throw new Error("source owner changed");
+          }
+        },
+        message: {
+          ...original,
+          ...(difference === "content" ? { content: "different result" } : {}),
+          ...(difference === "sender"
+            ? { __openclaw: { senderIsOwner: false, senderId: "other" } }
+            : {}),
+          provenance: {
+            ...original.provenance,
+            sourceSessionKey: "child-a",
+            ...(difference === "tool" ? { sourceTool: "sessions_send" } : {}),
+          },
+        },
+      });
+      if (difference === "session") {
+        await expect(replay).resolves.toBeUndefined();
+      } else {
+        await expect(replay).rejects.toThrow(
+          difference === "tool"
+            ? "requires an internal settle request"
+            : difference === "authority"
+              ? "source owner changed"
+              : "conflicts with the accepted input",
+        );
+      }
+      expect(completionRows()).toEqual(before);
+    },
+  );
+
   it("opens a same-version store without completion tracking and installs it only on private use", async () => {
     const version = database().db.prepare("PRAGMA user_version").get();
     database().db.exec("DROP TABLE session_input_completions");
