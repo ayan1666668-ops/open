@@ -204,13 +204,18 @@ export async function assembleHarnessContextEngine(
         ),
   );
   const assembled = ensureAssembleResultShape(result, contextEngine.info.id);
-  if (!params.semanticCuration || params.semanticCuration.config?.mode !== "shadow") {
+  if (
+    !params.semanticCuration ||
+    (params.semanticCuration.config?.mode !== "shadow" &&
+      params.semanticCuration.config?.mode !== "apply")
+  ) {
     return assembled;
   }
   const { observeSemanticTurnContext } = await import("./semantic-turn-context.js");
   return observeSemanticTurnContext(assembled, {
     ...params.semanticCuration,
     prompt: params.prompt,
+    modelId: params.modelId,
     agentId: params.agentId ?? resolveAgentIdFromSessionKey(params.sessionKey),
     appendOnly:
       params.appendOnlyRuntimeContext || params.contextEngineHostSupport?.id === "codex-app-server",

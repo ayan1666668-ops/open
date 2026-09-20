@@ -1,3 +1,7 @@
+import {
+  classifyToolUseResultPairing,
+  isSyntheticMissingToolResult,
+} from "../../../packages/agent-core/src/harness/session/tool-result-pairing.js";
 import type { AgentDefaultsConfig } from "../../config/types.agent-defaults.js";
 import type { AssembleResult } from "../../context-engine/types.js";
 import { evaluateDecision } from "../../decisions/runtime.js";
@@ -7,8 +11,10 @@ import { evaluateCompactionShadowCuration } from "../agent-hooks/compaction-safe
 import {
   buildCompactionSemanticSnapshot,
   fingerprintCompactionMessages,
+  fingerprint,
 } from "../agent-hooks/compaction-safeguard-semantic.js";
 import type { AgentMessage } from "../runtime/index.js";
+import { resolveTurnCurationPolicy } from "./semantic-turn-context-policy.js";
 
 const log = createSubsystemLogger("agents/semantic-context");
 type Options = {
@@ -17,16 +23,17 @@ type Options = {
   assertActive: () => void;
   prompt?: string;
   agentId?: string;
+  modelId?: string;
   appendOnly?: boolean;
 };
 
-/** Observe the existing context engine's view; never persist or replace its messages. */
+/** Curate only a temporary execution view; never mutate the engine's messages. */
 export async function observeSemanticTurnContext(
   assembled: AssembleResult,
   options: Options,
   runtime: DecisionRuntimeV1 = { evaluate: evaluateDecision },
 ): Promise<AssembleResult> {
-  if (!options.config || options.config.mode !== "shadow") {
+  if (!options.config || (options.config.mode !== "shadow" && options.config.mode !== "apply")) {
     return assembled;
   }
   options.signal.throwIfAborted();
@@ -38,10 +45,15 @@ export async function observeSemanticTurnContext(
     messages.push({ role: "user", content: options.prompt, timestamp: 0 });
   }
   const before = fingerprintCompactionMessages(assembled.messages);
+  const apply = options.config.mode === "apply";
+  const policy = apply
+    ? resolveTurnCurationPolicy(assembled, options.config, options.modelId)
+    : undefined;
   const recentStart = Math.max(0, messages.length - (options.config.recentMessages ?? 4));
   const protectedMessages = new Set(
     messages.filter(
       (message, index) =>
+        (apply && !policy?.discretionary.has(index)) ||
         index >= recentStart ||
         message.role === "user" ||
         (message.role === "toolResult" && message.isError) ||
@@ -50,6 +62,20 @@ export async function observeSemanticTurnContext(
         (message.role !== "assistant" && message.role !== "toolResult"),
     ),
   );
+  // A discretionary hint cannot authorize dropping an unfinished operation.
+  // Pairing is occurrence-aware: repeated provider ids are not conflated.
+  for (const frame of classifyToolUseResultPairing(messages, { preserveUnframedToolResults: true })
+    .frames) {
+    if (
+      frame.failed ||
+      frame.occurrences.some(
+        (occurrence) =>
+          !occurrence.sourceResult || isSyntheticMissingToolResult(occurrence.sourceResult),
+      )
+    ) {
+      protectedMessages.add(frame.assistant);
+    }
+  }
   const latestUser = messages.toReversed().find((message) => message.role === "user");
   const latestUserAsk =
     latestUser?.role === "user"
@@ -60,14 +86,20 @@ export async function observeSemanticTurnContext(
             .map((part) => part.text)
             .join("\n")
       : undefined;
-  const snapshot = buildCompactionSemanticSnapshot({ messages, protectedMessages, latestUserAsk });
+  const snapshot = buildCompactionSemanticSnapshot({
+    messages,
+    protectedMessages,
+    latestUserAsk,
+    identifiers: policy?.requiredIdentifiers,
+  });
   const estimatedTokens = Math.ceil(snapshot.originalChars / 4);
   const observe = (
     reason: string,
     details: Partial<NonNullable<AssembleResult["semanticCurationObservation"]>> = {},
   ) => {
     const observation: NonNullable<AssembleResult["semanticCurationObservation"]> = {
-      mode: "shadow",
+      mode: options.config!.mode === "apply" ? "apply" : "shadow",
+      ...(apply ? { applied: false } : {}),
       reason,
       sourceChars: snapshot.originalChars,
       selectedChars: snapshot.originalChars,
@@ -93,6 +125,22 @@ export async function observeSemanticTurnContext(
   if (!snapshot.complete) {
     return observe("incomplete-source");
   }
+  if (apply && !policy) {
+    return observe("missing-owner-or-economics");
+  }
+  if (policy) {
+    const possibleTokens = Math.floor(
+      snapshot.segments
+        .filter((segment) => !segment.protected)
+        .reduce((total, segment) => total + segment.originalChars, 0) / 4,
+    );
+    if (
+      possibleTokens * policy.savedMsPerEstimatedToken <=
+      policy.overheadMs + policy.cachePenaltyMs
+    ) {
+      return observe("uneconomic-before-decision");
+    }
+  }
   const started = performance.now();
   let selection: Awaited<ReturnType<typeof evaluateCompactionShadowCuration>>;
   try {
@@ -102,6 +150,7 @@ export async function observeSemanticTurnContext(
       agentId: options.agentId,
       signal: options.signal,
       timeoutMs: options.config.timeoutMs,
+      ...(apply ? { minDropProbability: options.config.minDropProbability ?? 0.95 } : {}),
     });
   } catch {
     // Optional observation cannot fail a model turn, but caller cancellation
@@ -113,13 +162,16 @@ export async function observeSemanticTurnContext(
   options.signal.throwIfAborted();
   options.assertActive();
   const decisionWallMs = performance.now() - started;
-  if (before !== fingerprintCompactionMessages(assembled.messages)) {
+  if (
+    before !== fingerprintCompactionMessages(assembled.messages) ||
+    (policy && policy.fingerprint !== fingerprint(assembled.semanticCurationCandidates))
+  ) {
     return observe("stale-source", { decisionWallMs });
   }
   if (selection.status !== "ok") {
     return observe(selection.reason, { decisionWallMs });
   }
-  return observe(selection.complete ? "shadow" : "incomplete-selection", {
+  const observed = observe(selection.complete ? "shadow" : "incomplete-selection", {
     selectedChars: selection.selectedChars,
     selectedEstimatedTokens: Math.ceil(selection.selectedChars / 4),
     reductionRatio: selection.reductionRatio,
@@ -133,4 +185,34 @@ export async function observeSemanticTurnContext(
       ? { decisionOutputTokens: selection.usage.outputTokens }
       : {}),
   });
+  if (!apply || !policy || !selection.complete) {
+    return observed;
+  }
+  const savedTokens = Math.floor((snapshot.originalChars - selection.selectedChars) / 4);
+  const projectedNetSavingsMs =
+    savedTokens * policy.savedMsPerEstimatedToken -
+    Math.max(policy.overheadMs, decisionWallMs) -
+    policy.cachePenaltyMs;
+  if (savedTokens <= 0 || projectedNetSavingsMs <= 0) {
+    return observe("uneconomic-selection", { decisionWallMs, projectedNetSavingsMs });
+  }
+  const excluded = new Set(selection.excludedSegmentIds);
+  const omittedIndexes = new Set(
+    snapshot.segments
+      .filter((segment) => excluded.has(segment.id))
+      .flatMap((segment) => segment.sourceIndexes),
+  );
+  return {
+    ...observed,
+    // Keep the engine's conservative token upper bound; a chars/4 estimate must
+    // not weaken overflow admission. Only the temporary message view shrinks.
+    messages: assembled.messages.filter((_, index) => !omittedIndexes.has(index)),
+    semanticCurationCandidates: undefined,
+    semanticCurationObservation: {
+      ...observed.semanticCurationObservation!,
+      reason: "applied",
+      applied: true,
+      projectedNetSavingsMs,
+    },
+  };
 }

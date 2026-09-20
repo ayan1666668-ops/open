@@ -83,6 +83,18 @@ export const AGENT_FIELD_HELP: Record<string, string> = {
     "Optional per-agent utility model override for short internal tasks. Overrides agents.defaults.utilityModel.",
   "agents.defaults.turnContextCuration":
     "Optional observation of oversized per-turn context using the configured Decision model. Off by default; shadow leaves model input and the transcript unchanged.",
+  "agents.defaults.turnContextCuration.minDropProbability":
+    "Minimum drop probability for per-turn apply (0.9–1, default 0.95). Uncertain segments retain original context.",
+  "agents.defaults.turnContextCuration.economics":
+    "Measured model-specific savings and Decision/cache costs required for per-turn apply. Missing calibration disables application.",
+  "agents.defaults.turnContextCuration.economics.modelId":
+    "Exact target generative model ID whose savings and cache costs were measured.",
+  "agents.defaults.turnContextCuration.economics.savedMsPerEstimatedToken":
+    "Conservative measured lower bound of milliseconds saved per estimated removed input token; not a universal tokenizer rate.",
+  "agents.defaults.turnContextCuration.economics.decisionOverheadMs":
+    "Measured upper-bound Decision overhead in milliseconds. Actual Decision time also gates application.",
+  "agents.defaults.turnContextCuration.economics.cachePenaltyMs":
+    "Measured upper bound in milliseconds for lost prompt-cache reuse caused by changing the prefix.",
   "agents.defaults.turnContextCuration.mode":
     "off disables evaluation; shadow records potential selection without applying it.",
   "agents.defaults.turnContextCuration.minEstimatedTokens":

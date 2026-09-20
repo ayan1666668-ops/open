@@ -181,3 +181,165 @@ describe("semantic turn context", () => {
     await expect(observeSemanticTurnContext(fixture(), opts)).rejects.toBe(error);
   });
 });
+
+describe("semantic turn context apply", () => {
+  function applyOptions() {
+    return {
+      ...options(),
+      modelId: "measured-model",
+      config: {
+        mode: "apply" as const,
+        minEstimatedTokens: 1,
+        recentMessages: 2,
+        economics: {
+          modelId: "measured-model",
+          savedMsPerEstimatedToken: 100,
+          decisionOverheadMs: 1,
+          cachePenaltyMs: 1,
+        },
+      },
+    };
+  }
+  function candidate(): AssembleResult {
+    return {
+      ...fixture(),
+      semanticCurationCandidates: {
+        discretionaryMessageIndexes: [1, 2],
+        requiredIdentifiers: [],
+      },
+    };
+  }
+  it("applies only owner-attested complete tool frames through the registered host", async () => {
+    const { requests } = installDecisionFixture();
+    const source = candidate();
+    const before = JSON.stringify(source);
+    const result = await assembleHarnessContextEngine({
+      contextEngine: {
+        info: { id: "attested-engine", name: "Owner-attested fixture" },
+        ingest: async () => ({ ingested: false }),
+        assemble: async () => source,
+        compact: async () => ({ ok: true, compacted: false }),
+      },
+      messages: source.messages,
+      sessionId: "synthetic",
+      agentId: "specialist",
+      modelId: "measured-model",
+      semanticCuration: applyOptions(),
+    });
+    expect(result?.messages).toEqual([source.messages[0], source.messages[3], source.messages[4]]);
+    expect(result?.estimatedTokens).toBe(source.estimatedTokens);
+    expect(result?.semanticCurationObservation).toMatchObject({ reason: "applied", applied: true });
+    expect(JSON.stringify(source)).toBe(before);
+    expect(requests).toHaveLength(1);
+  });
+  it("makes no call without attestation or model-specific calibration", async () => {
+    const { requests } = installDecisionFixture();
+    for (const [source, opts] of [
+      [fixture(), applyOptions()],
+      [candidate(), { ...applyOptions(), modelId: "unmeasured-model" }],
+      [
+        candidate(),
+        { ...applyOptions(), config: { mode: "apply" as const, minEstimatedTokens: 1 } },
+      ],
+    ] as const) {
+      const result = await observeSemanticTurnContext(source, opts);
+      expect(result.messages).toBe(source.messages);
+      expect(result.semanticCurationObservation?.reason).toBe("missing-owner-or-economics");
+    }
+    expect(requests).toHaveLength(0);
+  });
+  it("never splits frames or drops owner-declared required identifiers", async () => {
+    const { requests } = installDecisionFixture();
+    const partial = candidate();
+    partial.semanticCurationCandidates!.discretionaryMessageIndexes = [2];
+    const identifier = candidate();
+    identifier.semanticCurationCandidates!.requiredIdentifiers = ["health check"];
+    for (const source of [partial, identifier]) {
+      const result = await observeSemanticTurnContext(source, applyOptions());
+      expect(result.messages).toBe(source.messages);
+      expect(result.semanticCurationObservation?.applied).toBe(false);
+    }
+    expect(requests).toHaveLength(0);
+  });
+  it("protects unfinished, synthetic-result, and failed tool frames despite owner hints", async () => {
+    const { requests } = installDecisionFixture();
+    const missing = candidate();
+    missing.messages.splice(2, 1);
+    missing.semanticCurationCandidates!.discretionaryMessageIndexes = [1];
+    const failed = candidate();
+    const assistant = failed.messages[1];
+    if (assistant.role === "assistant") {
+      assistant.stopReason = "aborted";
+    }
+    const synthetic = candidate();
+    const tool = synthetic.messages[2];
+    if (tool.role === "toolResult") {
+      tool.isError = true;
+      tool.details = { openclawSyntheticMissingToolResult: true };
+    }
+    for (const source of [missing, failed, synthetic]) {
+      const result = await observeSemanticTurnContext(source, applyOptions());
+      expect(result.messages).toBe(source.messages);
+      expect(result.semanticCurationObservation?.applied).toBe(false);
+    }
+    expect(requests).toHaveLength(0);
+  });
+  it("skips inference when cache losses outweigh even maximal savings", async () => {
+    const { requests } = installDecisionFixture();
+    const opts = applyOptions();
+    opts.config.economics.cachePenaltyMs = 1e9;
+    const source = candidate();
+    const result = await observeSemanticTurnContext(source, opts);
+    expect(result.messages).toBe(source.messages);
+    expect(result.semanticCurationObservation?.reason).toBe("uneconomic-before-decision");
+    expect(requests).toHaveLength(0);
+  });
+  it("retains original context when confidence is below the configured floor", async () => {
+    const source = candidate();
+    const runtime: DecisionRuntimeV1 = {
+      evaluate: async (batch) => ({
+        status: "ok",
+        provenance: {
+          providerId: "fixture",
+          rubricVersion: "fixture",
+          runtimeGeneration: "fixture",
+        },
+        result: {
+          model: "fixture",
+          answers: Object.fromEntries(
+            Object.keys(batch.questions).map((id) => [
+              id,
+              {
+                type: "choice",
+                choice: "drop",
+                probabilities: { drop: 0.8, keep: 0.1, uncertain: 0.1 },
+              },
+            ]),
+          ),
+        },
+      }),
+    };
+    const result = await observeSemanticTurnContext(source, applyOptions(), runtime);
+    expect(result.messages).toBe(source.messages);
+    expect(result.semanticCurationObservation?.reason).toBe("incomplete-selection");
+  });
+  it("rejects owner metadata that changed while the Decision was in flight", async () => {
+    const source = candidate();
+    installDecisionFixture("preserved", () => {
+      source.semanticCurationCandidates!.requiredIdentifiers.push("health");
+    });
+    const result = await observeSemanticTurnContext(source, applyOptions());
+    expect(result.messages).toBe(source.messages);
+    expect(result.semanticCurationObservation?.reason).toBe("stale-source");
+  });
+  it("retains unavailable context and propagates caller cancellation", async () => {
+    const source = candidate();
+    const result = await observeSemanticTurnContext(source, applyOptions(), unavailable);
+    expect(result.messages).toBe(source.messages);
+    const controller = new AbortController();
+    installDecisionFixture("preserved", () => controller.abort(new Error("stop apply")));
+    await expect(
+      observeSemanticTurnContext(source, { ...applyOptions(), signal: controller.signal }),
+    ).rejects.toThrow("stop apply");
+  });
+});

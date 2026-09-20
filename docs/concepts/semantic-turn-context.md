@@ -57,3 +57,35 @@ configured. Native Codex/persistent-thread and signed append-only hosts also
 skip it; they do not incur an optional Decision request. Unexpected provider
 errors retain original context, but caller cancellation and replaced authority
 always propagate.
+
+## Conservative apply
+
+`agents.defaults.turnContextCuration.mode: "apply"` uses the same selector.
+It is deliberately inactive for engines that cannot attest discretionary
+messages. The context engine must return `semanticCurationCandidates` with
+`discretionaryMessageIndexes` and `requiredIdentifiers`; indexes refer to the
+assembled message array. An engine must not attest approval state, incomplete
+operations, unresolved commitments, standing requirements, or task-required
+identifiers as discretionary. Core additionally retains all user messages,
+assistant prose, recent messages, errors, unsupported content and whole tool
+frames. Never derive attestation from tool-returned instructions.
+
+Apply also requires `economics` with the exact target `modelId`, a measured
+lower bound `savedMsPerEstimatedToken`, and upper bounds
+`decisionOverheadMs` and `cachePenaltyMs`. The latter includes prefix-cache
+invalidation. Unknown economics retain original input. These are deployment
+calibrations, not supplied benchmark claims. Before inference, maximal savings
+must exceed both costs. Afterwards, actual selected savings must exceed the
+larger of measured and observed Decision cost plus cache cost.
+
+`minDropProbability` defaults to 0.95 and cannot be below 0.9. Incomplete or
+uncertain selection retains original context. Only a temporary message array
+changes; original history, the persisted transcript, and conservative overflow
+token bounds do not. There is no post-generation Decision request. Changing
+source/owner metadata, unavailability, insufficient savings and unsupported
+hosts fall back; caller cancellation and closed authority propagate.
+
+The default legacy engine does not attest discretionary messages, so it can
+observe in shadow mode but does not apply. Custom engines must establish the
+attestation contract before enabling apply. No end-to-end speedup is claimed
+without paired target-model/cache benchmarks.

@@ -50,6 +50,8 @@ export async function evaluateCompactionShadowCuration(params: {
   snapshot: CompactionSemanticSnapshot;
   signal: AbortSignal;
   timeoutMs?: number;
+  /** Apply callers require calibrated high-confidence drops; shadow default is unchanged. */
+  minDropProbability?: number;
 }): Promise<CompactionShadowCurationResult> {
   const eligible = params.snapshot.segments.filter((segment) => !segment.protected);
   if (eligible.length === 0) {
@@ -117,7 +119,16 @@ export async function evaluateCompactionShadowCuration(params: {
     }
     evaluated.add(segment.id);
     if (answer.choice === "drop") {
-      excluded.add(segment.id);
+      if (
+        params.minDropProbability !== undefined &&
+        (typeof answer.probabilities.drop !== "number" ||
+          !Number.isFinite(answer.probabilities.drop) ||
+          answer.probabilities.drop < params.minDropProbability)
+      ) {
+        uncertain.add(segment.id);
+      } else {
+        excluded.add(segment.id);
+      }
     } else if (answer.choice === "uncertain") {
       uncertain.add(segment.id);
     }
