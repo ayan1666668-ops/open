@@ -688,7 +688,7 @@ export class ModelProvidersPage extends OpenClawLightDomElement {
       addProviderOpen: this.addProviderOpen,
       addProviderId: this.addProviderId,
       addProviderKey: this.addProviderKey,
-      installedAgents: this.installedAgents.render(),
+      installedAgents: this.installedAgents.render(cards, () => this.catalogDiscovery.retry()),
       onRefresh: () =>
         void (rosterError
           ? this.context.agents.refreshList()
