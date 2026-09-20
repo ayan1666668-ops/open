@@ -1,5 +1,5 @@
-import path from "node:path";
 import { createDeferred } from "../../../test/helpers/promise.js";
+import type { readAcpSessionMeta } from "../../acp/runtime/session-meta.js";
 import { onSubagentRegistryPersisted } from "../../agents/subagents/registry/subagent-registry-state.js";
 import {
   getSubagentRunByChildSessionKey,
@@ -7,24 +7,23 @@ import {
 } from "../../agents/subagents/registry/subagent-registry.test-helpers.js";
 import { AsyncWorkScope } from "../../shared/async-work-scope.js";
 import { cleanupSessionStateForTest } from "../../test-utils/session-state-cleanup.js";
-import { getAgentTestMocks } from "./agent.test-harness.js";
+import { type AgentHandlerArgs, backendGatewayClient, requireValue } from "./agent.test-harness.js";
 
-// Shared by ACP manual spawns, plugin subagents, and native subagent handler fixtures.
-export function mockSpawnedChildSessionEntry(childSessionKey: string, root: string) {
-  const mocks = getAgentTestMocks();
-  // The real transcript target reader must stay inside this fixture's state directory.
-  mocks.userTurnStorePath = path.join(root, "agents", "main", "sessions", "sessions.json");
-  mocks.loadSessionEntry.mockReturnValue({
-    cfg: {},
-    storePath: mocks.userTurnStorePath,
-    entry: { sessionId: "spawned-child-session", updatedAt: Date.now() },
-    canonicalKey: childSessionKey,
-  });
-  mocks.updateSessionStore.mockResolvedValue(undefined);
-  mocks.agentCommand.mockResolvedValue({
-    payloads: [{ text: "ok" }],
-    meta: { durationMs: 100 },
-  });
+export const confirmedAcpMeta: NonNullable<ReturnType<typeof readAcpSessionMeta>> = {
+  backend: "acpx",
+  agent: "codex",
+  runtimeSessionName: "runtime-1",
+  mode: "persistent",
+  state: "idle",
+  lastActivityAt: Date.now(),
+};
+
+export function nativeSubagentClient(): AgentHandlerArgs["client"] {
+  const baseClient = requireValue(backendGatewayClient(), "expected backend client");
+  return {
+    connect: baseClient.connect,
+    internal: { ...baseClient.internal, agentRunTracking: "native_subagent" },
+  };
 }
 
 export function createPluginSubagentTestLifetime(params: {

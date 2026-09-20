@@ -3,7 +3,6 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ErrorCodes } from "../../../packages/gateway-protocol/src/index.js";
 import { createDeferred } from "../../../test/helpers/promise.js";
-import type { readAcpSessionMeta } from "../../acp/runtime/session-meta.js";
 import { registerExecApprovalFollowupRuntimeHandoff } from "../../agents/bash-tools.exec-approval-followup-state.js";
 import { FailoverError } from "../../agents/failover-error.js";
 import { createAgentRunRestartAbortError } from "../../agents/run-termination.js";
@@ -32,8 +31,9 @@ import { bindParentSubagentResume } from "../session-subagent-resume.js";
 import { registerPluginSubagentRunFromGateway } from "./agent-task-tracking.js";
 import { spyDetachedCreateRunningTaskRun } from "./agent-task-tracking.test-helpers.js";
 import {
+  confirmedAcpMeta,
   createPluginSubagentTestLifetime,
-  mockSpawnedChildSessionEntry,
+  nativeSubagentClient,
 } from "./agent.spawned-child.test-support.js";
 import { registerAgentTaskCancellationTests } from "./agent.task-cancellation.test-utils.js";
 import {
@@ -65,6 +65,23 @@ import {
 } from "./agent.test-harness.js";
 
 const mocks = getAgentTestMocks();
+
+// Shared by ACP manual spawns, plugin subagents, and native subagent handler fixtures.
+function mockSpawnedChildSessionEntry(childSessionKey: string, root: string) {
+  // The real transcript target reader must stay inside this fixture's state directory.
+  mocks.userTurnStorePath = path.join(root, "agents", "main", "sessions", "sessions.json");
+  mocks.loadSessionEntry.mockReturnValue({
+    cfg: {},
+    storePath: mocks.userTurnStorePath,
+    entry: { sessionId: "spawned-child-session", updatedAt: Date.now() },
+    canonicalKey: childSessionKey,
+  });
+  mocks.updateSessionStore.mockResolvedValue(undefined);
+  mocks.agentCommand.mockResolvedValue({
+    payloads: [{ text: "ok" }],
+    meta: { durationMs: 100 },
+  });
+}
 
 describe("gateway agent handler", () => {
   afterEach(describe0AfterEach0);
@@ -3070,15 +3087,6 @@ describe("gateway agent handler", () => {
   });
 
   describe("ACP manual-spawn child turn task tracking", () => {
-    const confirmedAcpMeta: NonNullable<ReturnType<typeof readAcpSessionMeta>> = {
-      backend: "acpx",
-      agent: "codex",
-      runtimeSessionName: "runtime-1",
-      mode: "persistent",
-      state: "idle",
-      lastActivityAt: Date.now(),
-    };
-
     it("suppresses the gateway CLI task row for confirmed ACP manual-spawn child turns", async () => {
       await withTestDir({ prefix: "openclaw-gateway-acp-suppress-" }, async (root) => {
         useTestStateDir(root);
@@ -3352,14 +3360,6 @@ describe("gateway agent handler", () => {
   });
 
   describe("native subagent child run task tracking", () => {
-    function nativeSubagentClient(): AgentHandlerArgs["client"] {
-      const baseClient = requireValue(backendGatewayClient(), "expected backend client");
-      return {
-        connect: baseClient.connect,
-        internal: { ...baseClient.internal, agentRunTracking: "native_subagent" },
-      };
-    }
-
     it("suppresses the gateway CLI task row for native subagent child runs", async () => {
       await withTestDir({ prefix: "openclaw-gateway-native-subagent-" }, async (root) => {
         useTestStateDir(root);
