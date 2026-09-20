@@ -1429,11 +1429,11 @@ describe("CI changed Node test plan", () => {
         includeReleaseOnlyPluginShards: false,
         changedPaths: ["scripts/lib/ci-changed-node-test-plan.mts"],
       });
-      expect(compact.length).toBeLessThanOrEqual(80);
+      expect(compact.length).toBeLessThanOrEqual(90);
       expect(
         compact.filter((job) => !job.requiresDist).length + shards.length,
         `${runnerBackend} final PR matrix`,
-      ).toBeLessThanOrEqual(120);
+      ).toBeLessThanOrEqual(130);
     }
     expect(shards.every((shard) => !shard.targets)).toBe(true);
     expect(groups.every((group) => group.configs.length === 1)).toBe(true);
@@ -1443,7 +1443,7 @@ describe("CI changed Node test plan", () => {
     expect(bundles.length).toBeGreaterThan(0);
     for (const bundle of bundles) {
       expect(bundle.groups!.length).toBeGreaterThan(1);
-      expect(bundle.predictedSeconds).toBeLessThanOrEqual(320);
+      expect(bundle.predictedSeconds).toBeLessThanOrEqual(240);
       expect(bundle.configs).toEqual([]);
       expect(bundle.pretestBuildMode).toBeUndefined();
       expect(bundle.groups!.every((group) => !group.pretestBuildMode)).toBe(true);
@@ -1463,15 +1463,15 @@ describe("CI changed Node test plan", () => {
           !other.pretestBuildMode &&
           shard.runner === other.runner &&
           shard.requiresDist === other.requiresDist &&
-          shard.predictedSeconds! + other.predictedSeconds! <= 320 &&
+          shard.predictedSeconds! + other.predictedSeconds! <= 240 &&
           combinedNativeFiles.length <= 20;
         expect(canShareJob, `${shard.shardName} and ${other.shardName} fit one job`).toBe(false);
       }
     }
   });
 
-  it.each([48, 49])("exchanges extension groups within the 320-second budget, tail %s", (tail) => {
-    const costs = [224, 200, 72, tail, 96];
+  it.each([48, 49])("exchanges extension groups within the 240-second budget, tail %s", (tail) => {
+    const costs = [144, 120, 72, tail, 96];
     const ids = costs.map((_, index) => `packing-fixture-${index}`);
     const configs = ids.map((id) => `test/vitest/vitest.${id}.config.ts`);
     const files = ids.map((id) => `extensions/${id}/index.test.ts`);
@@ -1494,7 +1494,7 @@ describe("CI changed Node test plan", () => {
         "scripts/lib/ci-changed-node-test-plan.mts",
       ]);
       const groups = fallbackGroups(shards);
-      // First-fit strands a third row for 224, 200, 72, 48, 48, 48.
+      // First-fit strands a third row for 144, 120, 72, 48, 48, 48.
       // One extra second makes two rows impossible without exceeding the budget.
       expect(shards).toHaveLength(tail === 48 ? 2 : 3);
       expect(groups).toHaveLength(6);
@@ -1516,7 +1516,7 @@ describe("CI changed Node test plan", () => {
       expect(groups.every((group) => !group.includePatterns && !group.pretestBuildMode)).toBe(true);
       expect(new Set(groups.map((group) => group.shard_name)).size).toBe(6);
       expect(shards.every((shard) => shard.planConcurrency === 1)).toBe(true);
-      expect(shards.every((shard) => shard.predictedSeconds! <= 320)).toBe(true);
+      expect(shards.every((shard) => shard.predictedSeconds! <= 240)).toBe(true);
       expect(shards.reduce((seconds, shard) => seconds + shard.predictedSeconds!, 0)).toBe(
         costs.reduce((sum, cost) => sum + cost, 0),
       );
@@ -1675,7 +1675,7 @@ describe("CI changed Node test plan", () => {
 
       expect(shards.length).toBeLessThan(groups.length);
       expect(shards.every((shard) => shard.planConcurrency === 1)).toBe(true);
-      expect(shards.every((shard) => shard.predictedSeconds! <= 320)).toBe(true);
+      expect(shards.every((shard) => shard.predictedSeconds! <= 240)).toBe(true);
       expect(
         groups.every(
           (group) =>
