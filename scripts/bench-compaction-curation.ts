@@ -4,7 +4,7 @@ import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { curateCompactionSummarizerInput } from "../src/agents/agent-hooks/compaction-input-curation.js";
 import { estimateMessagesTokens } from "../src/agents/compaction-planning.js";
-import type { JudgmentOutcome } from "../src/judgments/types.js";
+import type { DecisionOutcome } from "../src/decisions/types.js";
 import {
   COMPACTION_CURATION_CALIBRATION_CASES,
   type CompactionCurationCalibrationCase,
@@ -58,7 +58,7 @@ function parseInteger(
 function buildFixtureOutcome(
   calibrationCase: CompactionCurationCalibrationCase,
   questionIds: string[],
-): JudgmentOutcome {
+): DecisionOutcome {
   if (!calibrationCase.expectedChoice || calibrationCase.expectedProbability === undefined) {
     throw new Error(
       `Calibration case ${calibrationCase.id} unexpectedly reached judgment evaluation`,
@@ -105,7 +105,9 @@ async function delay(ms: number): Promise<void> {
   if (ms <= 0) {
     return;
   }
-  await new Promise<void>((resolve) => setTimeout(resolve, ms));
+  await new Promise<void>((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }
 
 async function runCase(

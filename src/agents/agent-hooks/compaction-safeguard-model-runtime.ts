@@ -65,9 +65,7 @@ export function buildCompactionSummaryHeaders(params: {
     return params.headers;
   }
   // SAFETY: Copilot header inspection reads the same message content fields shared by both SDK projections.
-  const messages = params.messages as unknown as Parameters<
-    typeof buildCopilotDynamicHeaders
-  >[0]["messages"];
+  const messages = params.messages as Parameters<typeof buildCopilotDynamicHeaders>[0]["messages"];
   return {
     ...buildCopilotDynamicHeaders({
       messages,

@@ -9,7 +9,6 @@ import { createRequireRecord } from "openclaw/plugin-sdk/test-fixtures";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../../config/config.js";
 import * as decisionRuntimeModule from "../../decisions/runtime.js";
-import type { DecisionOutcome } from "../../decisions/types.js";
 import type { CompactionProvider } from "../../plugins/compaction-provider.js";
 import {
   requireActivePluginRegistry,
@@ -258,38 +257,6 @@ const createCompactionEvent = (params: { messageText: string; tokensBefore: numb
   },
   customInstructions: "",
   signal: new AbortController().signal,
-});
-
-const createSemanticCompactionEvent = (params: {
-  sourceRequirement: string;
-  latestAsk: string;
-  tokensBefore: number;
-  signal?: AbortSignal;
-}) => ({
-  preparation: {
-    messagesToSummarize: [
-      { role: "user", content: params.sourceRequirement, timestamp: 1 },
-      castAgentMessage({
-        role: "assistant",
-        content: "Acknowledged standing requirement.",
-        timestamp: 2,
-      }),
-      { role: "user", content: params.latestAsk, timestamp: 3 },
-    ] as AgentMessage[],
-    turnPrefixMessages: [] as AgentMessage[],
-    firstKeptEntryId: "entry-1",
-    tokensBefore: params.tokensBefore,
-    fileOps: {
-      read: [],
-      edited: [],
-      written: [],
-    },
-    settings: { reserveTokens: 4_000 },
-    previousSummary: undefined,
-    isSplitTurn: false,
-  },
-  customInstructions: "",
-  signal: params.signal ?? new AbortController().signal,
 });
 
 const createCompactionContext = (params: {

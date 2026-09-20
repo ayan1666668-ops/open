@@ -1,3 +1,4 @@
+/* eslint-disable no-unused-vars -- this split regression suite retains the shared hoisted mock harness so Vitest initialization stays identical across the compaction suites. */
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
