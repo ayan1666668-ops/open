@@ -141,8 +141,8 @@ describe("desktop approval upgrade", () => {
 
   it("serializes with an already-loaded pairing writer before retiring desktop access", async () => {
     await approveDesktopNode();
-    const loaded = createDeferred<void>();
-    const release = createDeferred<void>();
+    const loaded = createDeferred();
+    const release = createDeferred();
     const writer = withPairedDeviceRecords(baseDir, async (devices) => {
       loaded.resolve();
       await release.promise;

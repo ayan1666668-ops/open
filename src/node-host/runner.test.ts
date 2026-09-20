@@ -108,7 +108,9 @@ describe("runNodeHost", () => {
     } finally {
       input.end();
       await running;
-      if (previous) Object.defineProperty(process, "stdin", previous);
+      if (previous) {
+        Object.defineProperty(process, "stdin", previous);
+      }
       process.exitCode = previousExit;
     }
   });
