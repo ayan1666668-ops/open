@@ -56,7 +56,8 @@ struct DashboardBackgroundTests {
 
     private static func centerPixel(_ webView: WKWebView) async throws -> NSColor {
         let image = try await webView.takeSnapshot(configuration: nil)
-        let bitmap = try #require(NSBitmapImageRep(data: #require(image.tiffRepresentation)))
+        let data = try #require(image.tiffRepresentation)
+        let bitmap = try #require(NSBitmapImageRep(data: data))
         return try #require(bitmap.colorAt(x: bitmap.pixelsWide / 2, y: bitmap.pixelsHigh / 2)?
             .usingColorSpace(.sRGB))
     }
