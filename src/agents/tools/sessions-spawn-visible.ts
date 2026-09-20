@@ -16,10 +16,12 @@ import {
 import { getRuntimeConfig } from "../../config/config.js";
 import { resolveControlUiSessionUrl } from "../../config/control-ui-link-base.js";
 import { resolveSessionStorePathCore } from "../../config/sessions/paths.js";
+import { loadSessionEntryReadOnly } from "../../config/sessions/session-accessor.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { ADMIN_SCOPE } from "../../gateway/method-scopes.js";
 import { resolveWorkspacePathContainment } from "../../gateway/server-methods/workspace-path-containment.js";
 import { loadGatewayModelCatalog } from "../../gateway/server-model-catalog.js";
+import { resolveGatewaySessionStoreTarget } from "../../gateway/session-utils-store-lookup.js";
 import { resolveWorkerPlacementDestination } from "../../gateway/worker-environments/placement-destination.js";
 import { isPathInside } from "../../infra/path-guards.js";
 import {
@@ -283,6 +285,16 @@ export async function maybeSpawnVisibleSession(params: {
     agentSessionKey: params.options?.agentSessionKey,
     completionOwnerKey: params.options?.completionOwnerKey,
   });
+  const requesterTarget = resolveGatewaySessionStoreTarget({
+    cfg,
+    key: ownership.completionRequesterSessionKey,
+    agentId: params.options?.requesterAgentIdOverride,
+  });
+  const completionRequesterSessionId = loadSessionEntryReadOnly({
+    storePath: requesterTarget.storePath,
+    sessionKey: requesterTarget.canonicalKey,
+    clone: false,
+  })?.sessionId;
   const requesterKey = ownership.controllerSessionKey;
   const callerDepth = getSubagentDepthFromSessionStore(requesterKey, {
     cfg,
@@ -686,6 +698,7 @@ export async function maybeSpawnVisibleSession(params: {
         childSessionKey,
         controllerSessionKey: ownership.controllerSessionKey,
         requesterSessionKey: ownership.completionRequesterSessionKey,
+        completionRequesterSessionId,
         requesterOrigin: normalizeDeliveryContext({
           channel: params.options?.agentChannel,
           accountId: params.options?.agentAccountId,
@@ -734,6 +747,7 @@ export async function maybeSpawnVisibleSession(params: {
       childSessionKey,
       runId,
       mode: "run",
+      expectsCompletionMessage: params.expectsCompletionMessage,
       cleanup: "keep",
       ...(response.placement ? { placement: response.placement } : {}),
       ...(sessionUrl ? { sessionUrl } : {}),
