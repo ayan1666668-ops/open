@@ -231,7 +231,10 @@ export async function resolveMutableUpdateFailure(params: {
   originalRecovery: () => Promise<UpdateRunResult["recovery"]>;
   run?: UpdateCommandOptions["run"];
 }): Promise<{ result: UpdateRunResult; failure: { cause: unknown; detail: string } }> {
-  if (hasCommandProcessCleanupError(params.cause)) {
+  if (
+    hasCommandProcessCleanupError(params.cause) ||
+    params.cause instanceof UpdateCommandPendingRecoveryFailure
+  ) {
     throw params.cause;
   }
   const failure = { cause: params.cause, detail: formatErrorMessage(params.cause) };

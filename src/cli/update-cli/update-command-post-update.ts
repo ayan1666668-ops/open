@@ -37,7 +37,6 @@ import { isPendingUpdateServiceLoad } from "./update-command-service-load.js";
 import { createWindowsTaskAutoStartGuard } from "./update-command-service-maintenance.js";
 import { GatewayServiceUpdateOwnershipError } from "./update-command-service-plan.js";
 import {
-  recordFailedUpdateGatewayState,
   maybeRestartService,
   maybeRestartServiceAfterFailedMutableUpdate,
   maybeResumeWindowsTaskAutoStartAfterPackageUpdate,
@@ -57,6 +56,7 @@ import {
   deferUpdateCommandTerminalResult,
   recordUpdatePackageCompletion,
 } from "./update-command-terminal.js";
+import { recordFailedUpdateGatewayState } from "./update-command-verification.js";
 
 export type { FinishUpdateParams } from "./update-command-finish-types.js";
 

@@ -551,7 +551,11 @@ export async function installSystemdService(
   args: GatewayServiceInstallArgs,
 ): Promise<{ unitPath: string }> {
   const load = (beforeAction?: (action: string) => void) =>
-    activateSystemdService({ env: args.env, beforeAction, preserveAutoStart: args.preserveAutoStart });
+    activateSystemdService({
+      env: args.env,
+      beforeAction,
+      preserveAutoStart: args.preserveAutoStart,
+    });
   const { unitPath, backedUp } = await writeSystemdUnit(args, load);
   if (
     args.warn &&

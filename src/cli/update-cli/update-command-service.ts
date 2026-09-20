@@ -10,11 +10,7 @@ import {
 import { readGatewayServiceState, resolveGatewayService } from "../../daemon/service.js";
 import { formatErrorMessage } from "../../infra/errors.js";
 import { readGatewayOwnerLease } from "../../infra/gateway-owner-lease.js";
-import {
-  getUpdateRun,
-  recordUpdateRunPhase,
-  recordUpdateRunVerification,
-} from "../../infra/update-run-ledger.js";
+import { recordUpdateRunPhase } from "../../infra/update-run-ledger.js";
 import type { UpdateRunResult } from "../../infra/update-runner.js";
 import { defaultRuntime } from "../../runtime.js";
 import { CLI_NAME } from "../cli-name.js";
@@ -59,7 +55,11 @@ import {
 } from "./update-command-service-plan.js";
 import { recoverLaunchAgentAndRecheckGatewayHealth } from "./update-command-service-recovery.js";
 import { hasLoadedLaunchdKeepAliveSupervisor } from "./update-command-supervisor.js";
-import { recordUpdateGatewayHealth, verifyUpdatedGateway } from "./update-command-verification.js";
+import {
+  recordFailedUpdateGatewayState,
+  recordUpdateGatewayHealth,
+  verifyUpdatedGateway,
+} from "./update-command-verification.js";
 
 export {
   maybeResumeWindowsTaskAutoStartAfterPackageUpdate,
@@ -175,47 +175,6 @@ export async function tryInstallShellCompletion(opts: {
       ),
     );
   }
-}
-
-/** A restart command can throw before health probes; replace pre-activation facts at that boundary. */
-export async function recordFailedUpdateGatewayState(
-  run: UpdateCommandOptions["run"],
-  env: NodeJS.ProcessEnv,
-): Promise<void> {
-  if (!run) {
-    return;
-  }
-  const executor = run.executorFence;
-  executor?.assertCurrent();
-  const runtime = await resolveGatewayService()
-    .readRuntime(env)
-    .catch(() => undefined);
-  executor?.assertCurrent();
-  const verified = getUpdateRun(run.runId, { env: run.env })?.verification;
-  // A failed readiness check does not invalidate health/version facts for the same process.
-  if (
-    runtime?.status === "running" &&
-    typeof runtime.pid === "number" &&
-    verified?.serviceRunning === true &&
-    verified.pid === runtime.pid
-  ) {
-    return;
-  }
-  recordUpdateRunVerification(
-    run.runId,
-    {
-      serviceRunning:
-        runtime?.status === "running" ? true : runtime?.status === "stopped" ? false : undefined,
-      pid: typeof runtime?.pid === "number" ? runtime.pid : undefined,
-      runningVersion: undefined,
-      runningBuildId: undefined,
-      versionMatch: undefined,
-      readyz: false,
-      settled: false,
-      channelsReady: false,
-    },
-    { env: run.env },
-  );
 }
 
 export async function maybeRestartService(params: {

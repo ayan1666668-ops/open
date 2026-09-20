@@ -81,13 +81,9 @@ export async function executeMutableUpdate(
   params: MutableUpdateExecutionParams,
 ): Promise<MutableUpdateExecutionResult | null> {
   const { opts, updateStepTimeoutMs } = params;
-  const inspectContexts = (
-    roots: string[],
-    services?: ReadonlyMap<string, PreManagedServiceStop>,
-  ) =>
+  const inspectContexts = (roots: string[]) =>
     inspectUpdateDatabaseContexts({
       roots,
-      expectedServices: services,
       updateInstallKind: params.updateInstallKind === "git" ? "git" : "package",
       shouldRestart: params.shouldRestart,
       jsonMode: Boolean(opts.json),

@@ -190,10 +190,10 @@ export async function installLaunchAgent(
         previous?.contents ?? null,
         serviceTarget,
       );
-      const enabled = args.preserveAutoStart
+      const wasEnabled = args.preserveAutoStart
         ? await isLaunchAgentEnabled({ env: args.env })
         : undefined;
-      return { publication: captured, loaded: wasLoaded, enabled };
+      return { publication: captured, loaded: wasLoaded, enabled: wasEnabled };
     },
     async () => false,
   );

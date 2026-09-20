@@ -5,8 +5,10 @@ import {
   readDaemonRuntimePin,
   readDaemonRuntimePinForInstall,
 } from "../../daemon/runtime-pin-state.js";
-import { resolveManagedServiceNodeRunner } from "../../daemon/service-layout.js";
-import { resolveServiceEntrypoint } from "../../daemon/service-layout.js";
+import {
+  resolveManagedServiceNodeRunner,
+  resolveServiceEntrypoint,
+} from "../../daemon/service-layout.js";
 import { fingerprintGatewayServiceDefinition } from "../../daemon/service-rebind.js";
 import type { GatewayServiceCommandConfig } from "../../daemon/service-types.js";
 import { readGatewayServiceState, resolveGatewayService } from "../../daemon/service.js";
