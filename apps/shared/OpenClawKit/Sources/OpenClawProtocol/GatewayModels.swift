@@ -4332,6 +4332,7 @@ public struct ChatSendParams: Codable, Sendable {
     public let sessionid: String?
     public let message: String
     public let mentions: [HumanMention]?
+    public let workcontext: [String: AnyCodable]?
     public let intent: [String: AnyCodable]?
     public let thinking: String?
     public let fastmodevalue: AnyCodable?
@@ -4362,6 +4363,7 @@ public struct ChatSendParams: Codable, Sendable {
         sessionid: String? = nil,
         message: String,
         mentions: [HumanMention]? = nil,
+        workcontext: [String: AnyCodable]? = nil,
         intent: [String: AnyCodable]? = nil,
         thinking: String? = nil,
         fastmodevalue: AnyCodable? = nil,
@@ -4390,6 +4392,7 @@ public struct ChatSendParams: Codable, Sendable {
         self.sessionid = sessionid
         self.message = message
         self.mentions = mentions
+        self.workcontext = workcontext
         self.intent = intent
         self.thinking = thinking
         self.fastmodevalue = fastmodevalue
@@ -4420,6 +4423,7 @@ public struct ChatSendParams: Codable, Sendable {
         sessionid: String? = nil,
         message: String,
         mentions: [HumanMention]? = nil,
+        workcontext: [String: AnyCodable]? = nil,
         intent: [String: AnyCodable]? = nil,
         thinking: String? = nil,
         fastmode: Bool?,
@@ -4448,6 +4452,7 @@ public struct ChatSendParams: Codable, Sendable {
             sessionid: sessionid,
             message: message,
             mentions: mentions,
+            workcontext: workcontext,
             intent: intent,
             thinking: thinking,
             fastmodevalue: fastmode.map { AnyCodable($0) },
@@ -4478,6 +4483,7 @@ public struct ChatSendParams: Codable, Sendable {
         case sessionid = "sessionId"
         case message
         case mentions
+        case workcontext = "workContext"
         case intent
         case thinking
         case fastmodevalue = "fastMode"
@@ -4983,17 +4989,20 @@ public struct ControlUiLinkReaderMetadata: Codable, Sendable {
     public let pathpattern: String
     public let detailmethod: String
     public let previewmethod: String?
+    public let imagemethod: String?
 
     public init(
         hosts: [String],
         pathpattern: String,
         detailmethod: String,
-        previewmethod: String? = nil)
+        previewmethod: String? = nil,
+        imagemethod: String? = nil)
     {
         self.hosts = hosts
         self.pathpattern = pathpattern
         self.detailmethod = detailmethod
         self.previewmethod = previewmethod
+        self.imagemethod = imagemethod
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -5001,6 +5010,7 @@ public struct ControlUiLinkReaderMetadata: Codable, Sendable {
         case pathpattern = "pathPattern"
         case detailmethod = "detailMethod"
         case previewmethod = "previewMethod"
+        case imagemethod = "imageMethod"
     }
 }
 
@@ -9244,6 +9254,7 @@ public struct ModelsListParams: Codable, Sendable {
 
 public struct ModelsListResult: Codable, Sendable {
     public let models: [ModelChoice]
+    public let decisionmodels: [[String: AnyCodable]]?
     public let defaultmodels: [String: AnyCodable]?
     public let refreshfailed: Bool?
     public let pendingproviders: [String]?
@@ -9252,6 +9263,7 @@ public struct ModelsListResult: Codable, Sendable {
 
     public init(
         models: [ModelChoice],
+        decisionmodels: [[String: AnyCodable]]? = nil,
         defaultmodels: [String: AnyCodable]? = nil,
         refreshfailed: Bool? = nil,
         pendingproviders: [String]? = nil,
@@ -9259,6 +9271,7 @@ public struct ModelsListResult: Codable, Sendable {
         provideroutcomes: [[String: AnyCodable]]? = nil)
     {
         self.models = models
+        self.decisionmodels = decisionmodels
         self.defaultmodels = defaultmodels
         self.refreshfailed = refreshfailed
         self.pendingproviders = pendingproviders
@@ -9268,6 +9281,7 @@ public struct ModelsListResult: Codable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case models
+        case decisionmodels = "decisionModels"
         case defaultmodels = "defaultModels"
         case refreshfailed = "refreshFailed"
         case pendingproviders = "pendingProviders"
@@ -10467,6 +10481,64 @@ public struct PluginControlUiModule: Codable, Sendable {
     }
 }
 
+public struct PluginDecisionProviderStatus: Codable, Sendable {
+    public let providerid: String
+    public let pluginid: String
+    public let configured: Bool
+    public let credentialready: Bool
+    public let callable: Bool
+    public let runtimegeneration: String
+    public let recentsuccessat: Int?
+    public let activerequests: Int
+    public let successcount: Int
+    public let totallatencyms: Double
+    public let usage: [String: AnyCodable]
+    public let reasons: [String: AnyCodable]
+
+    public init(
+        providerid: String,
+        pluginid: String,
+        configured: Bool,
+        credentialready: Bool,
+        callable: Bool,
+        runtimegeneration: String,
+        recentsuccessat: Int? = nil,
+        activerequests: Int,
+        successcount: Int,
+        totallatencyms: Double,
+        usage: [String: AnyCodable],
+        reasons: [String: AnyCodable])
+    {
+        self.providerid = providerid
+        self.pluginid = pluginid
+        self.configured = configured
+        self.credentialready = credentialready
+        self.callable = callable
+        self.runtimegeneration = runtimegeneration
+        self.recentsuccessat = recentsuccessat
+        self.activerequests = activerequests
+        self.successcount = successcount
+        self.totallatencyms = totallatencyms
+        self.usage = usage
+        self.reasons = reasons
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case providerid = "providerId"
+        case pluginid = "pluginId"
+        case configured
+        case credentialready = "credentialReady"
+        case callable
+        case runtimegeneration = "runtimeGeneration"
+        case recentsuccessat = "recentSuccessAt"
+        case activerequests = "activeRequests"
+        case successcount = "successCount"
+        case totallatencyms = "totalLatencyMs"
+        case usage
+        case reasons
+    }
+}
+
 public struct PluginDeclaredSurface: Codable, Sendable {
     public let channels: [String]
     public let providers: [String]
@@ -11160,6 +11232,7 @@ public struct PluginsInspectResult: Codable, Sendable {
     public let ok: Bool
     public let overview: [String: AnyCodable]?
     public let credentials: [[String: AnyCodable]]?
+    public let decisions: [PluginDecisionProviderStatus]?
     public let plugin: [String: AnyCodable]
     public let source: PluginInspectSource?
     public let declared: PluginDeclaredSurface
@@ -11173,6 +11246,7 @@ public struct PluginsInspectResult: Codable, Sendable {
         ok: Bool,
         overview: [String: AnyCodable]? = nil,
         credentials: [[String: AnyCodable]]? = nil,
+        decisions: [PluginDecisionProviderStatus]? = nil,
         plugin: [String: AnyCodable],
         source: PluginInspectSource? = nil,
         declared: PluginDeclaredSurface,
@@ -11185,6 +11259,7 @@ public struct PluginsInspectResult: Codable, Sendable {
         self.ok = ok
         self.overview = overview
         self.credentials = credentials
+        self.decisions = decisions
         self.plugin = plugin
         self.source = source
         self.declared = declared
@@ -11199,6 +11274,7 @@ public struct PluginsInspectResult: Codable, Sendable {
         case ok
         case overview
         case credentials
+        case decisions
         case plugin
         case source
         case declared

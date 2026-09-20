@@ -14,7 +14,7 @@ import {
   openOpenClawStateDatabase,
 } from "../state/openclaw-state-db.js";
 import { createAgentEventAuditRecorder } from "./agent-event-audit.js";
-import { listAuditEvents, recordAuditEvent } from "./audit-event-store.js";
+import { listAuditEvents, recordAuditEventInDatabase } from "./audit-event-store.js";
 import type { AuditEventInput, SkillSelectionAuditEventInput } from "./audit-event-types.js";
 import type { AuditEventWriter } from "./audit-event-writer.js";
 
@@ -155,12 +155,18 @@ describe("hidden-run skill-selection audit attribution", () => {
 
   it("adds the skill-selection companion table on an existing audit database", async () => {
     const database = createDatabaseOptions();
-    recordAuditEvent(auditInput(), database);
+    recordAuditEventInDatabase(auditInput(), {
+      ...database,
+      database: openOpenClawStateDatabase(database),
+    });
     const { db } = openOpenClawStateDatabase(database);
     db.exec("DROP TABLE IF EXISTS audit_skill_selection_events");
     closeOpenClawStateDatabaseForTest();
 
-    const skill = recordAuditEvent(skillSelectionInput(), database);
+    const skill = recordAuditEventInDatabase(skillSelectionInput(), {
+      ...database,
+      database: openOpenClawStateDatabase(database),
+    });
     expect(skill).toMatchObject({
       kind: "skill_selection",
       sessionKey: "agent:main:main",
@@ -233,7 +239,12 @@ describe("hidden-run skill-selection audit attribution", () => {
         toolName: "debug-toolkit",
       }),
     ]);
-    expect(recordAuditEvent(inputs[0]!, database)).toMatchObject({
+    expect(
+      recordAuditEventInDatabase(inputs[0]!, {
+        ...database,
+        database: openOpenClawStateDatabase(database),
+      }),
+    ).toMatchObject({
       kind: "skill_selection",
       sessionKey,
     });

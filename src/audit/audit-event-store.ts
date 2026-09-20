@@ -12,6 +12,7 @@ import { normalizeSqliteNumber } from "../infra/sqlite-number.js";
 import type { DB as OpenClawStateKyselyDatabase } from "../state/openclaw-state-db.generated.js";
 import {
   runOpenClawStateWriteTransaction,
+  type OpenClawStateDatabase,
   type OpenClawStateDatabaseOptions,
 } from "../state/openclaw-state-db.js";
 import { captureOpenClawStateWorkerContext } from "../state/openclaw-state-worker-context.js";
@@ -503,9 +504,9 @@ function pruneAuditEventsAfterInsert(db: DatabaseSync, now: number): void {
 }
 
 /** Persist one projected event idempotently and prune fixed retention bounds. */
-export function recordAuditEvent(
+export function recordAuditEventInDatabase(
   input: AuditEventInput,
-  options: OpenClawStateDatabaseOptions = {},
+  options: OpenClawStateDatabaseOptions & { database: OpenClawStateDatabase },
 ): AuditEventRecord | undefined {
   if (isOutboundMessageProgressInput(input)) {
     throw new Error("outbound message progress belongs to its companion store");
@@ -570,12 +571,10 @@ export async function listAuditEvents(
   return executeOpenClawStateWorker(context, { type: "audit.events.list", input });
 }
 /** Delete one bounded batch during Gateway startup and periodic audit maintenance. */
-export function pruneExpiredAuditEvents(
-  params: {
-    now?: number;
-    database?: OpenClawStateDatabaseOptions;
-  } = {},
-): number {
+export function pruneExpiredAuditEventsInDatabase(params: {
+  now?: number;
+  database: OpenClawStateDatabaseOptions & { database: OpenClawStateDatabase };
+}): number {
   return runOpenClawStateWriteTransaction(({ db }) => {
     const now = params.now ?? Date.now();
     const deleted = deleteExpiredAuditEvents(db, now);
