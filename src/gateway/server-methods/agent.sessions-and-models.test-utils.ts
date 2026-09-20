@@ -3302,7 +3302,8 @@ describe("gateway agent handler", () => {
     });
 
     it("does not affect plugin-subagent tracking for confirmed ACP conditions", async () => {
-      await withOpenClawTestState({ label: "acp-plugin", layout: "state-only" }, async () => {
+      await withOpenClawTestState({ label: "acp-plugin", layout: "state-only" }, async (state) => {
+        const root = state.stateDir;
         resetAgentTaskRegistryForTests();
         resetSubagentRegistryForTests({ persist: false });
         const childSessionKey = "agent:main:acp:plugin-child";
