@@ -22,10 +22,11 @@ import { loadMatrixCredentials, saveMatrixCredentials } from "./credentials.js";
 const tempDirs = useAutoCleanupTempDirTracker((cleanup) => {
   afterEach(async () => {
     vi.restoreAllMocks();
+    // Resetting bindings writes SQLite, so finish it before draining the fixture database.
+    sessionBindingTesting.resetSessionBindingAdaptersForTests();
     await closeOpenClawStateDatabaseAsync();
     resetPluginStateStoreForTests();
     resetPluginRuntimeStateForTest();
-    sessionBindingTesting.resetSessionBindingAdaptersForTests();
     cleanup();
     vi.unstubAllEnvs();
   });
