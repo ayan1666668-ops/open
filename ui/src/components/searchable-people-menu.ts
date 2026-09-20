@@ -2,6 +2,9 @@ import { html, nothing, type TemplateResult } from "lit";
 import { AsyncDirective, directive } from "lit/async-directive.js";
 import { live } from "lit/directives/live.js";
 import { t } from "../i18n/index.ts";
+import { registerSessionPeopleEnglish } from "../i18n/locales/en-session-people.ts";
+
+registerSessionPeopleEnglish();
 
 type PeopleMenuRow = { text: string; render: () => TemplateResult };
 const PAGE_SIZE = 20;
