@@ -705,6 +705,10 @@ textarea.settings-input {
   white-space: normal;
 }
 
+.settings-permission-recovery {
+  grid-column: 2;
+}
+
 .updates-status-control {
   display: inline-flex;
   align-items: center;

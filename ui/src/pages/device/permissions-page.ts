@@ -45,8 +45,12 @@ class DevicePermissionsPage extends OpenClawLightDomElement {
     return html`
       ${renderSettingsSection(
         { title: t("configPage.deviceSettings.systemAccess") },
-        permissions.entries.map(({ id, status }) =>
-          renderSettingsRow({
+        permissions.entries.map(({ id, status }) => {
+          const requestableBinaryPermission =
+            snapshot.device.platform === "macos" &&
+            (id === "screenRecording" || id === "accessibility") &&
+            status === "notDetermined";
+          return renderSettingsRow({
             title: t(`configPage.deviceSettings.permissions.${id}.title`),
             description: t(`configPage.deviceSettings.permissions.${id}.hint`),
             stackedOnNarrow: true,
@@ -55,13 +59,14 @@ class DevicePermissionsPage extends OpenClawLightDomElement {
                 ${renderSettingsStatus({
                   kind: "muted",
                   dot: false,
-                  label: html`${status === "granted" ? html`<span class="settings-permission-check" aria-hidden="true">${icons.check}</span>` : nothing}${t(`configPage.deviceSettings.permissionStatuses.${status}`)}`,
+                  label: html`${status === "granted" ? html`<span class="settings-permission-check" aria-hidden="true">${icons.check}</span>` : nothing}${t(`configPage.deviceSettings.permissionStatuses.${requestableBinaryPermission ? "notGranted" : status}`)}`,
                 })}
-                ${status === "notDetermined" || status === "notGranted" || status === "unknown" ? html`<button type="button" class="btn" @click=${() => capability?.requestPermission(id)}>${t(status === "unknown" ? "configPage.deviceSettings.checkPermission" : "configPage.deviceSettings.grant")}</button>` : status === "denied" ? html`<button type="button" class="btn" @click=${() => capability?.openSystemSettings(id)}>${t("configPage.deviceSettings.openSystemSettings")}</button>` : nothing}
+                ${status === "notDetermined" ? html`<button type="button" class="btn" @click=${() => capability?.requestPermission(id)}>${t("configPage.deviceSettings.grant")}</button>` : status === "denied" ? html`<button type="button" class="btn" @click=${() => capability?.openSystemSettings(id)}>${t("configPage.deviceSettings.openSystemSettings")}</button>` : nothing}
+                ${requestableBinaryPermission ? html`<button type="button" class="btn settings-permission-recovery" @click=${() => capability?.openSystemSettings(id)}>${t("configPage.deviceSettings.openSystemSettings")}</button>` : nothing}
               </div>
             `,
-          }),
-        ),
+          });
+        }),
       )}
       ${renderSettingsSection(
         { title: t("configPage.deviceSettings.location") },

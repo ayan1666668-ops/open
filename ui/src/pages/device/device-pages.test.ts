@@ -749,10 +749,10 @@ describe("native device settings pages", () => {
   });
 
   it.each([
-    ["screenRecording", "Screen Recording", "notGranted", "Not granted", "Grant…"],
-    ["accessibility", "Accessibility", "notGranted", "Not granted", "Grant…"],
+    ["screenRecording", "Screen Recording", "notDetermined", "Not granted", "Grant…"],
+    ["accessibility", "Accessibility", "notDetermined", "Not granted", "Grant…"],
   ] as const)(
-    "requests %s access without assuming a prior denial",
+    "requests %s access and retains explicit settings recovery without assuming a prior denial",
     async (id, title, status, label, action) => {
       const snapshot = createNativeDeviceSettingsSnapshot();
       snapshot.permissions.entries = [{ id, status }];
@@ -766,6 +766,11 @@ describe("native device settings pages", () => {
       button!.click();
       expect(native.capability.requestPermission).toHaveBeenCalledExactlyOnceWith(id);
       expect(native.capability.openSystemSettings).not.toHaveBeenCalled();
+      const recovery = permission.querySelector<HTMLButtonElement>(".settings-permission-recovery");
+      expect(recovery?.textContent?.trim()).toBe("Open System Settings…");
+      recovery!.click();
+      expect(native.capability.openSystemSettings).toHaveBeenCalledExactlyOnceWith(id);
+      expect(native.capability.requestPermission).toHaveBeenCalledTimes(1);
       snapshot.permissions.entries = [{ id, status: "granted" }];
       native.publish(snapshot);
       await page.updateComplete;

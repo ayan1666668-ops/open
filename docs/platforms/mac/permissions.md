@@ -22,8 +22,9 @@ background permission polling.
 Screen Recording and Accessibility show **Not granted** until access is confirmed;
 macOS's binary checks do not distinguish a first request from a denial. Click
 **Grant** to request access before looking for OpenClaw in System Settings.
-Permissions with a confirmed denial offer
-**Open System Settings** instead.
+If access was denied or the prompt no longer appears, use the adjacent
+**Open System Settings** action. Permissions with a confirmed denial offer
+that action instead of **Grant**.
 
 Enabling camera access, Computer Control, Keep computer awake, the Peekaboo bridge, browser cookie
 sync, or continuous Voice Wake listening requires a native confirmation with
