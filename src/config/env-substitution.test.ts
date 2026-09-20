@@ -1,5 +1,6 @@
 // Covers config environment-variable substitution behavior.
 import { describe, expect, it } from "vitest";
+import { isPlainObject } from "../utils.js";
 import {
   type EnvSubstitutionWarning,
   MissingEnvVarError,
@@ -549,16 +550,30 @@ describe("resolveConfigEnvVars", () => {
         alpha: 1,
       },
       { FIRST: "first", LAST: "last" },
-    ) as Record<string, unknown>;
+    );
     // Slots must be allocated in document order: substitution writes leaves
     // depth-first, and writing them eagerly would reverse object key order.
+    expect(isPlainObject(resolved)).toBe(true);
+    if (!isPlainObject(resolved)) {
+      return;
+    }
     expect(Object.keys(resolved)).toEqual(["zeta", "nested", "alpha"]);
-    expect(Object.keys(resolved.nested as Record<string, unknown>)).toEqual(["mid"]);
-    expect(Object.keys(resolved.nested.mid as Record<string, unknown>)).toEqual(["alpha", "omega"]);
     expect(resolved).toEqual({
       zeta: "last",
       nested: { mid: { alpha: "first", omega: 2 } },
       alpha: 1,
     });
+    const nested = resolved.nested;
+    expect(isPlainObject(nested)).toBe(true);
+    if (!isPlainObject(nested)) {
+      return;
+    }
+    expect(Object.keys(nested)).toEqual(["mid"]);
+    const mid = nested.mid;
+    expect(isPlainObject(mid)).toBe(true);
+    if (!isPlainObject(mid)) {
+      return;
+    }
+    expect(Object.keys(mid)).toEqual(["alpha", "omega"]);
   });
 });
