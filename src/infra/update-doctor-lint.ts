@@ -70,6 +70,9 @@ export function parseUpdateDoctorLintReport(stdout: string, env: NodeJS.ProcessE
     throw new Error("Updated Doctor returned an invalid readiness result.");
   }
   const result = validated.data;
+  if (result.ok && result.findings.length) {
+    throw new Error("Updated Doctor returned findings with a successful readiness result.");
+  }
   // Published 2026.9.5 candidates predate update-specific policy classification.
   const policy = result.findings.filter(
     (finding) => finding.checkId === "core/doctor/security" && finding.severity === "error",

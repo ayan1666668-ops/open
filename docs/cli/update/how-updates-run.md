@@ -135,13 +135,20 @@ including copying and verification passes, with a five-minute startup floor.
 It uses the larger of that allowance and the configured per-step timeout.
 The deadline extends while private files continue changing. A stalled snapshot
 reports its size and applied budget. Snapshot time does not consume the separate
-runtime validation budget. By default, that budget scales with measured database
-and plugin bytes, allowing each validation process to inspect the private state.
-An explicit per-step timeout replaces that derived runtime allowance.
+runtime validation budget. Each validation process receives a fresh allowance
+that scales with measured database and plugin bytes. An explicit per-step
+timeout replaces that derived allowance.
 Automatic and chat updates leave that runtime allowance derived from state.
 Their request and recovery watchdogs do not become update validation deadlines.
-Startup and readiness responses share that validation deadline, including reading
+Startup and readiness responses share their own allowance, including reading
 the response body.
+
+When a candidate Doctor completes its checks but its process or output pipes
+remain open past the allowance, the updater records an exit-phase warning and
+continues with the completed result. Lint completion requires that child's
+complete JSON report; a preceding repair's `Doctor complete.` line cannot prove
+lint success. Error findings still refuse validation. A child without a completion
+result reports `candidate-checks-timeout`, the check phase, and elapsed time.
 
 These deadlines belong to the invoking updater. The published 2026.9.3 and 2026.9.4 updaters
 cap their complete rehearsal at five minutes, including the snapshot, and their
