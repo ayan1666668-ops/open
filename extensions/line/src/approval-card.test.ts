@@ -88,7 +88,9 @@ describe("LINE pending approval card", () => {
       channelSecret: "secret",
     });
     expect(card).not.toBeNull();
-    expect(card?.allowedDecisions).toEqual(["allow-once", "allow-always", "deny"]);
+    expect(
+      cardPostbackData(card!).map((data) => new URLSearchParams(data).get("line.decision")),
+    ).toEqual(["allow-once", "allow-always", "deny"]);
     for (const data of cardPostbackData(card!)) {
       await resolveLineApprovalPostbackTap({
         // Cards on for exec, so the tapping approver decides.
@@ -182,7 +184,6 @@ describe("LINE pending approval card", () => {
       nowMs: NOW_MS,
       channelSecret: "secret",
     });
-    expect(card?.bodyShortened).toBe(true);
     expect(cardText(card!)).toContain("[shortened to fit LINE's card limit]");
     // The id stays reachable so the approver can still resolve it by command, once.
     expect(cardText(card!).split(`Approval ID: ${APPROVAL_ID}`)).toHaveLength(2);
@@ -198,7 +199,6 @@ describe("LINE pending approval card", () => {
       nowMs: NOW_MS,
       channelSecret: "secret",
     });
-    expect(card?.bodyShortened).toBe(false);
     expect(cardText(card!)).not.toContain("[shortened");
   });
 

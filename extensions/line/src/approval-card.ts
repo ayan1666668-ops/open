@@ -5,7 +5,6 @@ import type {
   PendingApprovalView,
 } from "openclaw/plugin-sdk/approval-handler-runtime";
 import { formatExecApprovalExpiresIn } from "openclaw/plugin-sdk/approval-reply-runtime";
-import type { ExecApprovalDecision } from "openclaw/plugin-sdk/approval-runtime";
 import { truncateUtf16Safe } from "openclaw/plugin-sdk/text-utility-runtime";
 import { buildLineApprovalPostbackData } from "./approval-postback.js";
 import { createActionCard } from "./flex-templates/basic-cards.js";
@@ -14,14 +13,8 @@ import type { CardAction, FlexBubble } from "./flex-templates/types.js";
 
 /** Native approval prompt prepared for one LINE conversation. */
 export type LinePendingApprovalCard = {
-  approvalId: string;
-  approvalKind: ChannelApprovalKind;
-  expiresAtMs: number;
   altText: string;
   bubble: FlexBubble;
-  /** True when the card body had to be shortened to fit the bubble ceiling. */
-  bodyShortened: boolean;
-  allowedDecisions: readonly ExecApprovalDecision[];
 };
 
 // Native delivery suppresses the local `/approve` prompt, and an approver reached only as an
@@ -45,10 +38,10 @@ function fitApprovalCardBody(
   buildBubble: (body: string) => FlexBubble,
   body: string,
   identityLine: string,
-): { bubble: FlexBubble; bodyShortened: boolean } {
+): FlexBubble {
   const full = buildBubble(body);
   if (fitsLineFlexBubble(full)) {
-    return { bubble: full, bodyShortened: false };
+    return full;
   }
   const tail = `\n${BODY_SHORTENED_MARKER}\n${identityLine}`;
   let low = 0;
@@ -68,7 +61,7 @@ function fitApprovalCardBody(
       high = mid - 1;
     }
   }
-  return { bubble: best, bodyShortened: true };
+  return best;
 }
 
 function resolveApprovalKindLabel(approvalKind: ChannelApprovalKind): string {
@@ -186,12 +179,8 @@ export function buildLinePendingApprovalCard(params: {
     buildApprovalMetadataText(identityLine, view.metadata),
   ].join("\n\n");
   return {
-    approvalId: view.approvalId,
-    approvalKind: view.approvalKind,
-    expiresAtMs: view.expiresAtMs,
     altText: `${title}: ${resolveApprovalSubjectSummary(view)}`,
-    allowedDecisions: view.actions.map(({ decision }) => decision),
-    ...fitApprovalCardBody(
+    bubble: fitApprovalCardBody(
       (carried) => createActionCard(title, carried, actions),
       body,
       identityLine,
