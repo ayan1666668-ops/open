@@ -10,7 +10,6 @@ import {
 } from "openclaw/plugin-sdk/agent-workspace-runtime";
 import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
 import { saveMediaBuffer } from "openclaw/plugin-sdk/media-store";
-import type { OpenClawPluginNodeHostCommandIo } from "openclaw/plugin-sdk/node-host";
 import type {
   OpenClawPluginApi,
   OpenClawPluginService,
@@ -28,21 +27,13 @@ import {
   vi,
 } from "vitest";
 import { handleDirList } from "./node-host/dir-list.js";
-import { handleFileCreate } from "./node-host/file-create.js";
 import { handleFileFetch } from "./node-host/file-fetch.js";
 import { handleFileStat } from "./node-host/file-stat.js";
 import { handleFileWrite } from "./node-host/file-write.js";
-import {
-  createWorkspaceMemoryCommand,
-  createWorkspaceSkillsCommand,
-} from "./node-host/workspace-memory.js";
 import { createFileTransferNodeInvokePolicy } from "./shared/node-invoke-policy.js";
 import { createCtx } from "./shared/node-invoke-policy.test-support.js";
-import {
-  createWorkspaceMemoryPolicy,
-  createWorkspaceSkillsPolicy,
-} from "./shared/workspace-memory-policy.js";
 import { registerNodeWorkspaces } from "./workspace-service.js";
+import { createNodeWorkspaceTestTransport } from "./workspace-service.test-support.js";
 
 vi.mock("./shared/audit.js", () => ({ appendFileTransferAudit: vi.fn() }));
 
@@ -246,7 +237,7 @@ describe("registered node workspace service", () => {
       `registry=${registry}\naudit=false\nfund=false\nupdate-notifier=false\nfetch-retries=0\n`,
     );
     nodePolicy.allowWritePaths.push(`${remote}/skills`);
-    enableAttachmentTransport();
+    openDuplex = createNodeWorkspaceTestTransport(api, remote);
     await service.start(context());
     const access = getAgentWorkspaceAccess(local)!;
     const sources = await access.loadSkills!({
@@ -306,7 +297,9 @@ describe("registered node workspace service", () => {
         nodePolicy.followSymlinks = true;
       }
       const output: Uint8Array[] = [];
-      enableAttachmentTransport(undefined, (bytes) => output.push(bytes));
+      openDuplex = createNodeWorkspaceTestTransport(api, remote, undefined, (bytes) =>
+        output.push(bytes),
+      );
       await service.start(context());
       const request = {
         sourcePlan: {
@@ -372,7 +365,9 @@ describe("registered node workspace service", () => {
         nodePolicy.followSymlinks = true;
       }
       const output: Uint8Array[] = [];
-      enableAttachmentTransport(undefined, (bytes) => output.push(bytes));
+      openDuplex = createNodeWorkspaceTestTransport(api, remote, undefined, (bytes) =>
+        output.push(bytes),
+      );
       await service.start(context());
       const reader = getAgentWorkspaceAccess(local)!.skillResources!;
       const skill = await reader.resolveExplicitSkill({
@@ -411,7 +406,9 @@ describe("registered node workspace service", () => {
       nodePolicy.followSymlinks = true;
       nodePolicy.denyPaths = [denied];
       const output: Uint8Array[] = [];
-      enableAttachmentTransport(undefined, (bytes) => output.push(bytes));
+      openDuplex = createNodeWorkspaceTestTransport(api, remote, undefined, (bytes) =>
+        output.push(bytes),
+      );
       await service.start(context());
       const access = getAgentWorkspaceAccess(local)!;
       const read = (filePath: string) =>
@@ -432,7 +429,7 @@ describe("registered node workspace service", () => {
       ...api.config.plugins!.entries!["file-transfer"]!.config,
       workspaces: { main: { nodeId: "node-1", remoteRoot: remote + suffix } },
     };
-    enableAttachmentTransport();
+    openDuplex = createNodeWorkspaceTestTransport(api, remote);
     await service.start(context());
     const access = getAgentWorkspaceAccess(local)!;
     expect(await access.skillResources!.readInstructions(path.join(remote, "AGENTS.md"), {})).toBe(
@@ -457,7 +454,9 @@ describe("registered node workspace service", () => {
       }
       await fs.writeFile(path.join(denied, "private.md"), "Private memory");
       const output: Uint8Array[] = [];
-      enableAttachmentTransport(undefined, (bytes) => output.push(bytes));
+      openDuplex = createNodeWorkspaceTestTransport(api, remote, undefined, (bytes) =>
+        output.push(bytes),
+      );
       await service.start(context());
       const memory = getAgentWorkspaceAccess(local)!.memoryFiles!;
       await expect(memory.listFiles(local, ["notes"])).resolves.toBeInstanceOf(Array);
@@ -475,7 +474,9 @@ describe("registered node workspace service", () => {
     const file = path.join(remote, "memory", "private.md");
     await fs.writeFile(file, "Private memory");
     const output: Uint8Array[] = [];
-    enableAttachmentTransport(undefined, (bytes) => output.push(bytes));
+    openDuplex = createNodeWorkspaceTestTransport(api, remote, undefined, (bytes) =>
+      output.push(bytes),
+    );
     await service.start(context());
     const memory = getAgentWorkspaceAccess(local)!.memoryFiles!;
     const request = { workspaceDir: local, relPath: "memory/private.md " };
@@ -504,7 +505,9 @@ describe("registered node workspace service", () => {
         nodePolicy.followSymlinks = true;
       }
       const output: Uint8Array[] = [];
-      enableAttachmentTransport(undefined, (bytes) => output.push(bytes));
+      openDuplex = createNodeWorkspaceTestTransport(api, remote, undefined, (bytes) =>
+        output.push(bytes),
+      );
       await service.start(context());
       const reader = getAgentWorkspaceAccess(local)!.skillResources!;
       const selection = { name: "private-tool", path: path.join(skillDir, "public.txt") };
@@ -529,7 +532,7 @@ describe("registered node workspace service", () => {
     const instructions =
       "---\nname: overlap-tool\ndescription: Overlapping roots\n---\nUse this tool.\n";
     await fs.writeFile(path.join(skillDir, "SKILL.md"), instructions);
-    enableAttachmentTransport();
+    openDuplex = createNodeWorkspaceTestTransport(api, remote);
     await service.start(context());
     const access = getAgentWorkspaceAccess(local)!;
     const sources = await access.loadSkills!({
@@ -568,7 +571,7 @@ describe("registered node workspace service", () => {
     await fs.writeFile(file, "Gateway decoy");
     await fs.writeFile(remoteFile, "Harness memory");
     nodePolicy.allowWritePaths.push(`${remote}/memory/**`);
-    enableAttachmentTransport();
+    openDuplex = createNodeWorkspaceTestTransport(api, remote);
     await service.start(context());
     const memory = getAgentWorkspaceAccess(local)!.memoryFiles!;
     expect(await memory.listFiles(local)).toContain(file);
@@ -616,7 +619,7 @@ describe("registered node workspace service", () => {
     const bytes = Buffer.alloc(32 * 1024 * 1024, 0x6d);
     await fs.writeFile(path.join(remote, "output.bin"), bytes);
     await fs.writeFile(path.join(local, "output.bin"), "Gateway decoy");
-    enableAttachmentTransport();
+    openDuplex = createNodeWorkspaceTestTransport(api, remote);
     const duplex = vi.fn(openDuplex!);
     openDuplex = duplex;
     await service.start(context());
@@ -665,7 +668,7 @@ describe("registered node workspace service", () => {
 
   it("aborts a binary outbound read when its service stops", async () => {
     await fs.writeFile(path.join(remote, "output.bin"), Buffer.alloc(17 * 1024 * 1024));
-    enableAttachmentTransport(() => {
+    openDuplex = createNodeWorkspaceTestTransport(api, remote, () => {
       void service.stop?.(context());
     });
     await service.start(context());
@@ -910,113 +913,6 @@ describe("registered node workspace service", () => {
   });
 });
 
-/** Real policy and file handlers; only the paired connection is replaced here. */
-function enableAttachmentTransport(
-  afterChunk?: () => void,
-  onOutput?: (bytes: Uint8Array) => void,
-) {
-  openDuplex = async (request) => {
-    const controller = new AbortController();
-    const signal = request.signal
-      ? AbortSignal.any([controller.signal, request.signal])
-      : controller.signal;
-    const ready = createDeferred<void>();
-    let receive: ((message: Uint8Array) => void | Promise<void>) | undefined;
-    let acknowledge: ((message: Uint8Array) => void | Promise<void>) | undefined;
-    const io: OpenClawPluginNodeHostCommandIo = {
-      signal,
-      emitChunk: async () => {},
-      onInput: () => {},
-      frames: {
-        onMessage: (listener) => {
-          receive = listener;
-          ready.resolve();
-          return () => {
-            receive = undefined;
-          };
-        },
-        send: async (message) => {
-          onOutput?.(message);
-          await acknowledge?.(message);
-        },
-      },
-    };
-    const { ctx, invokeNode } = createCtx({
-      command: request.command,
-      params: request.params as Record<string, unknown>,
-      pluginConfig: api.config.plugins!.entries!["file-transfer"]!.config,
-    });
-    invokeNode.mockImplementation(async ({ params } = {}) => {
-      request.assertCurrent?.();
-      signal.throwIfAborted();
-      if (request.command === "workspace.memory" || request.command === "workspace.skills") {
-        const nodeApi = createTestPluginApi({
-          config: { agents: { defaults: { workspace: remote } } },
-          runtime: {
-            agent: { resolveAgentWorkspaceDir: () => remote },
-          } as unknown as OpenClawPluginApi["runtime"],
-        });
-        return {
-          ok: true,
-          payload: JSON.parse(
-            await (
-              request.command === "workspace.memory"
-                ? createWorkspaceMemoryCommand(nodeApi)
-                : createWorkspaceSkillsCommand(nodeApi)
-            ).handle(JSON.stringify(params ?? request.params), io),
-          ),
-        };
-      }
-      return {
-        ok: true,
-        payload:
-          request.command === "file.fetch"
-            ? await handleFileFetch(params as Record<string, unknown>, io)
-            : await handleFileCreate(params as Record<string, unknown>, io),
-      };
-    });
-    const policy =
-      request.command === "workspace.memory"
-        ? createWorkspaceMemoryPolicy()
-        : request.command === "workspace.skills"
-          ? createWorkspaceSkillsPolicy()
-          : createFileTransferNodeInvokePolicy();
-    const closed = Promise.resolve(policy.handle(ctx)).then((result) => {
-      if (!result.ok) {
-        throw new Error(`${result.code}: ${result.message}`);
-      }
-      return result;
-    });
-    await Promise.race([
-      ready.promise,
-      closed.then(() => {
-        throw new Error("closed before upload ready");
-      }),
-    ]);
-    return {
-      send: async (message) => {
-        request.assertCurrent?.();
-        signal.throwIfAborted();
-        if (!receive) {
-          throw new Error("input receiver missing");
-        }
-        await receive(message);
-        if (message.byteLength) {
-          afterChunk?.();
-        }
-      },
-      onMessage: (listener) => {
-        acknowledge = listener;
-        return () => {
-          acknowledge = undefined;
-        };
-      },
-      close: () => controller.abort(new Error("test connection closed")),
-      closed,
-    };
-  };
-}
-
 async function attachmentInput(sizeMiB: number) {
   vi.stubEnv("OPENCLAW_STATE_DIR", path.join(local, "state"));
   const bytes = Buffer.alloc(sizeMiB * 1024 * 1024, 0x6d);
@@ -1044,7 +940,7 @@ describe("node workspace attachment caller", () => {
     "transfers %i MiB through registered access and retains Harness edits",
     async (size) => {
       const input = await attachmentInput(size);
-      enableAttachmentTransport();
+      openDuplex = createNodeWorkspaceTestTransport(api, remote);
       await service.start(context());
       const params = { workspaceDir: local, turn: input.turn, assertCurrent: () => {} };
       const original = JSON.stringify(input.turn);
@@ -1067,7 +963,7 @@ describe("node workspace attachment caller", () => {
   it("requires explicit input-path permission without widening owner document writes", async () => {
     const input = await attachmentInput(1);
     nodePolicy.allowWritePaths = [`${remote}/AGENTS.md`];
-    enableAttachmentTransport();
+    openDuplex = createNodeWorkspaceTestTransport(api, remote);
     await service.start(context());
     await expect(
       prepareAgentWorkspaceAttachments({
@@ -1082,7 +978,7 @@ describe("node workspace attachment caller", () => {
   it("revokes a turn during transfer without publishing partial input", async () => {
     const input = await attachmentInput(17);
     let current = true;
-    enableAttachmentTransport(() => {
+    openDuplex = createNodeWorkspaceTestTransport(api, remote, () => {
       current = false;
     });
     await service.start(context());

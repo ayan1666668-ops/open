@@ -14,7 +14,7 @@ export function createNodeWorkspaceSkills(options: NodeWorkspaceWorkerOptions): 
   const mapPath = (value: string) => {
     const relative = path.relative(options.workspaceDir, value);
     return relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative)
-      ? path.posix.join(options.remoteRoot, relative)
+      ? path.posix.join(options.remoteRoot, ...relative.split(path.sep))
       : value;
   };
   const mapSources = (request: Parameters<SkillsAccess["watchSkills"]>[0]) => {
