@@ -83,9 +83,6 @@ function createSharedStateWorkerOwner() {
     [...activeEntries].some((active) =>
       entry.actor ? active.actor === entry.actor : active === entry,
     );
-  const forget = (entry: Entry) => {
-    stores.delete(entry);
-  };
   const clearIdleRetirement = (entry: Entry) => {
     if (entry.idleTimer) {
       clearTimeout(entry.idleTimer);
@@ -98,7 +95,7 @@ function createSharedStateWorkerOwner() {
       hasUnclaimedSharedStateSqliteCleanup(entry.context.admission.databasePath));
   const retire = (entry: Entry) => {
     clearIdleRetirement(entry);
-    forget(entry);
+    stores.delete(entry);
     let attempt = retiring.get(entry);
     if (!attempt) {
       attempt = {};
@@ -275,7 +272,7 @@ function createSharedStateWorkerOwner() {
       if (entry.actor === actor) {
         attempt.entries.add(entry);
         clearIdleRetirement(entry);
-        forget(entry);
+        stores.delete(entry);
       }
     }
     if (attempt.pending) {
@@ -285,7 +282,7 @@ function createSharedStateWorkerOwner() {
     const complete = () => {
       for (const entry of current.entries) {
         clearIdleRetirement(entry);
-        forget(entry);
+        stores.delete(entry);
         retiring.delete(entry);
       }
       retiringActors.delete(actor);
@@ -441,7 +438,7 @@ function createSharedStateWorkerOwner() {
         let rejected: { error: unknown } | undefined;
         try {
           if (!(await entry.opening)) {
-            forget(entry);
+            stores.delete(entry);
           }
         } catch (error) {
           rejected = { error };
@@ -501,7 +498,7 @@ function createSharedStateWorkerOwner() {
         stores.add(entry);
         context.maintenanceScope?.own(entry, "shared-resources", () => retire(admitted));
         void entry.opening.catch(() => {
-          forget(admitted);
+          stores.delete(admitted);
           if (hasPendingCleanup(admitted) && !retiring.has(admitted)) {
             retiring.set(admitted, {});
           }
@@ -524,7 +521,7 @@ function createSharedStateWorkerOwner() {
       }
       assertCurrent?.();
       if (!store) {
-        forget(entry);
+        stores.delete(entry);
         return !existingOnly && entry.existingOnly
           ? this.open(context, false, assertCurrent)
           : undefined;
@@ -532,18 +529,16 @@ function createSharedStateWorkerOwner() {
       if (!stores.has(entry)) {
         return this.open(context, existingOnly, assertCurrent);
       }
-      entry.store = store;
       clearIdleRetirement(entry);
-      const actor = entry.actor;
-      const actorRetirement = actor ? retiringActors.get(actor) : undefined;
-      if (actor && actorRetirement) {
+      const actorRetirement = entry.actor ? retiringActors.get(entry.actor) : undefined;
+      if (entry.actor && actorRetirement) {
         actorRetirement.entries.add(entry);
-        forget(entry);
+        stores.delete(entry);
         await joinActorRetirement(actorRetirement);
         return this.open(context, existingOnly, assertCurrent);
       }
       if (!isSqliteWorkerStoreAvailable(store) && !hasActiveActorOperations(entry)) {
-        await (actor ? retireActor(actor, admission.identity) : retire(entry));
+        await (entry.actor ? retireActor(entry.actor, admission.identity) : retire(entry));
         return this.open(context, existingOnly, assertCurrent);
       }
       try {
@@ -563,7 +558,7 @@ function createSharedStateWorkerOwner() {
         }
         throw error;
       }
-      forget(entry);
+      stores.delete(entry);
       stores.add(entry);
       return store;
     },
