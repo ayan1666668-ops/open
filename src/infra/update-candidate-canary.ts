@@ -375,7 +375,9 @@ export async function validateUpdateCandidateCanary(params: {
             exitWarning = `Update ${phase} exit phase timed out after ${Date.now() - checksCompletedAt}ms (${elapsed}ms total); checks completed; ${running.processExited() ? "output pipes stayed open" : "process did not exit"}. Continuing with recorded check results.`;
             code =
               phase === "doctor" ||
-              (lintReport && (lintReport.ok || lintReport.advisoryOnly) && !lintReport.failureFacts.length)
+              (lintReport &&
+                (lintReport.ok || lintReport.advisoryOnly) &&
+                !lintReport.failureFacts.length)
                 ? 0
                 : 1;
           }

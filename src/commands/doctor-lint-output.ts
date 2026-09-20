@@ -1,6 +1,5 @@
 import { formatCliJsonFailure } from "../cli/failure-output.js";
 import type { HealthFinding } from "../flows/health-checks.js";
-
 import { formatUpdateDoctorLintFinding } from "../infra/update-doctor-lint.js";
 import { isUpdateDoctorLintPass } from "./doctor/shared/update-phase.js";
 

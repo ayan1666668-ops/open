@@ -9,7 +9,15 @@ import { renderUpdateRunReport, updateRunReportInputFromResult } from "./update-
 
 const dirs = useAutoCleanupTempDirTracker(afterEach);
 
-it.each(["doctor", "lint", "missing", "failed", "failed-exit", "signalled-exit"] as const)(
+it.each([
+  "doctor",
+  "lint",
+  "policy",
+  "missing",
+  "failed",
+  "failed-exit",
+  "signalled-exit",
+] as const)(
   "preserves completed checks across a real child exit stall (%s)",
   async (mode) => {
     const root = await fs.realpath(dirs.make("canary-exit-"));
@@ -34,8 +42,10 @@ if (args.includes("--fix")) {
   if (mode === "doctor") setInterval(() => {}, 1000);
 } else if (args.includes("--lint")) {
   if (mode !== "missing") console.log(JSON.stringify({
-    ok: mode !== "failed", checksRun: 1,
-    findings: mode === "failed" ? [{ checkId: "core/config", message: "Invalid configuration" }] : [],
+    ok: mode !== "failed" && mode !== "policy", checksRun: 1,
+    findings: mode === "failed" ? [{ checkId: "core/config", message: "Invalid configuration" }]
+      : mode === "policy" ? [{ checkId: "core/doctor/security", severity: "error", message: "Policy advisory" }] : [],
+    warnings: [{ checkId: "optional/check", severity: "warning", message: "Optional inspection skipped" }],
   }));
   if (mode === "failed-exit" || mode === "signalled-exit") {
     spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
@@ -84,9 +94,7 @@ if (args.includes("--fix")) {
     });
     const failedExit = mode === "failed-exit" || mode === "signalled-exit";
     const step = result.steps.find((candidate) =>
-      failedExit
-        ? candidate.name === "Checking update health"
-        : candidate.termination === "timeout",
+      failedExit ? candidate.name === "candidate-doctor-lint" : candidate.termination === "timeout",
     )!;
     expect(step).toBeDefined();
     const report = renderUpdateRunReport(
@@ -94,9 +102,11 @@ if (args.includes("--fix")) {
     ).markdown;
     if (failedExit) {
       expect(result, report).toMatchObject({ status: "error", phase: "lint" });
-      expect(step.exitCode).toBe(mode === "failed-exit" ? 7 : 1);
+      expect(step.exitCode).toBe(mode === "failed-exit" ? 7 : null);
+      expect(step.signal).toBe(mode === "signalled-exit" ? "SIGTERM" : null);
       expect(step.failureFacts).toMatchObject([{ check: "lint", code: "doctor-failed" }]);
-      expect(step.warnings).toBeUndefined();
+      expect(step.advisory).toBeUndefined();
+      expect(step.warnings).not.toContainEqual(expect.stringContaining("exit phase"));
     } else if (mode === "missing" || mode === "failed") {
       expect(result).toMatchObject({ status: "error", phase: "lint" });
       expect(step.failureFacts).toMatchObject([
@@ -110,6 +120,16 @@ if (args.includes("--fix")) {
       expect(step.failureFacts).toBeUndefined();
       expect(step.warnings?.join("\n")).toMatch(/exit phase.*\d+ms/u);
       expect(report).toContain("exit phase");
+      expect(step.advisory).toMatchObject({ kind: "recoverable-maintenance" });
+      if (mode !== "doctor") {
+        expect(report).toContain("Optional inspection skipped");
+      }
+      if (mode === "policy") {
+        expect(report).toContain("Policy advisory");
+        expect(step.doctorLintFindings).toContainEqual(
+          expect.objectContaining({ checkId: "core/doctor/security", severity: "warning" }),
+        );
+      }
       expect(result.steps.at(-1)).toMatchObject({ name: "candidate-gateway-startup", exitCode: 0 });
     }
   },
