@@ -374,12 +374,10 @@ export async function listProjectedSessions(params: {
       const row = presentation.present(record, {
         includeDerivedTitles: opts.includeDerivedTitles && includeTranscriptFields,
         includeLastMessage: opts.includeLastMessage && includeTranscriptFields,
+        includeActivitySummary: opts.includeActivitySummary === true,
       });
       if (!row) {
         return [];
-      }
-      if (!opts.includeActivitySummary) {
-        delete row.activitySummary;
       }
       if ((record.materializedSequence ?? 0) > materializedBefore) {
         materializedRowCount++;
