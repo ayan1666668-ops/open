@@ -5,13 +5,14 @@ import { PlaceBrowserState } from "./place-browser-state.ts";
 import { renderProjectChip, resolveProjectChip } from "./project-chip.ts";
 import { renderPickerTemplate } from "./where-chip.test-support.ts";
 import baseStyles from "../../styles/base.css?inline";
+import componentStyles from "../../styles/components.css?inline";
 import placementStyles from "../../styles/new-session.css?inline";
 
 let controls: HTMLDivElement;
 let styles: HTMLStyleElement;
 beforeEach(() => {
   styles = document.createElement("style");
-  styles.textContent = baseStyles + placementStyles;
+  styles.textContent = baseStyles + componentStyles + placementStyles;
   document.head.append(styles);
   controls = document.createElement("div");
   controls.className = "new-session-page__triggers";
@@ -108,6 +109,17 @@ it.each([320, 390, 560, 1440])(
     if (width <= 560) {
       expect(workspaceBox.top).toBeGreaterThanOrEqual(envBox.bottom);
       expect(workspaceBox.left).toBeCloseTo(envBox.left, 0);
+      const environmentIcon = environment
+        .querySelector<HTMLElement>(".new-session-page__target-icon")!
+        .getBoundingClientRect();
+      const workspaceIcon = workspaceTrigger
+        .querySelector<HTMLElement>(".new-session-page__target-icon")!
+        .getBoundingClientRect();
+      expect(environmentIcon.width).toBeCloseTo(workspaceIcon.width, 1);
+      expect(environmentIcon.left + environmentIcon.width / 2).toBeCloseTo(
+        workspaceIcon.left + workspaceIcon.width / 2,
+        1,
+      );
       const label = environment.querySelector<HTMLElement>(".new-session-page__trigger-label")!;
       const summary = environment.querySelector<HTMLElement>(".new-session-page__trigger-summary")!;
       expect(summary.getBoundingClientRect().top).toBeGreaterThanOrEqual(
@@ -131,6 +143,20 @@ it.each([320, 390, 560, 1440])(
       expect(box.left).toBeGreaterThanOrEqual(0);
       expect(box.right).toBeLessThanOrEqual(width);
       expect(box.height).toBeGreaterThanOrEqual(width <= 560 ? 44 : 26);
+      const chevron = trigger.querySelector<HTMLElement>(
+        width <= 560
+          ? ".new-session-page__trigger-chevron--mobile"
+          : ".new-session-page__trigger-chevron--desktop",
+      )!;
+      const labelEdge = Math.max(
+        ...Array.from(
+          trigger.querySelectorAll<HTMLElement>(
+            ".new-session-page__trigger-label, .new-session-page__trigger-summary",
+          ),
+          (label) => label.getBoundingClientRect().right,
+        ),
+      );
+      expect(chevron.getBoundingClientRect().left - labelEdge).toBeGreaterThanOrEqual(8);
       for (const label of trigger.querySelectorAll<HTMLElement>(
         ".new-session-page__trigger-label, .new-session-page__trigger-summary",
       )) {

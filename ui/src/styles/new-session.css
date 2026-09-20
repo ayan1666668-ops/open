@@ -399,7 +399,12 @@ html:is(.openclaw-native-macos, .openclaw-native-desktop) .new-session-page__inc
 
 .new-session-page__trigger-chevron {
   display: inline-flex;
-  color: inherit;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-inline-start: 2px;
+  color: var(--muted);
+  opacity: 0.8;
 }
 
 .new-session-page__trigger-chevron--mobile {
@@ -421,8 +426,34 @@ html:is(.openclaw-native-macos, .openclaw-native-desktop) .new-session-page__inc
 }
 
 .new-session-page__trigger-chevron svg {
-  width: 12px;
-  height: 12px;
+  width: 10px;
+  height: 10px;
+  stroke-width: 1.5px;
+}
+
+.new-session-page__trigger > .new-session-page__target-icon {
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 14px;
+  width: 14px;
+  height: 14px;
+}
+
+.new-session-page__trigger > .new-session-page__target-icon svg {
+  stroke-width: 1.5px;
+}
+
+.new-session-page__trigger .cloud-profile-icon {
+  align-items: center;
+  justify-content: center;
+}
+
+/* The wide AWS wordmark has generous vertical whitespace in its source art.
+   Scale its paint, not the shared leading column or the compact menu icons. */
+.new-session-page__trigger .cloud-provider-icon[data-provider-icon="aws"] {
+  width: 18px;
+  height: 18px;
+  flex-basis: 18px;
 }
 
 .session-group-defaults .exec-approval-header {
@@ -1371,20 +1402,28 @@ wa-popover.new-session-page__where-popover::part(body) {
   }
 
   .new-session-page__trigger > .new-session-page__target-icon {
+    flex-basis: 20px;
+    width: 20px;
+    height: 20px;
     margin-inline-end: 8px;
   }
 
-  .new-session-page__triggers
-    :is(.new-session-page__target-icon, .new-session-page__trigger-chevron) {
-    flex-shrink: 0;
-    color: var(--muted);
-  }
-
-  .new-session-page__triggers
-    :is(.new-session-page__target-icon, .new-session-page__trigger-chevron)
-    svg:not(.cloud-profile-icon > svg) {
+  .new-session-page__trigger > .new-session-page__target-icon svg {
+    flex: 0 0 16px;
     width: 16px;
     height: 16px;
+  }
+
+  .new-session-page__trigger .cloud-profile-icon {
+    flex-basis: 20px;
+    width: 20px;
+    height: 20px;
+  }
+
+  .new-session-page__trigger .cloud-provider-icon[data-provider-icon="aws"] {
+    flex-basis: 22px;
+    width: 22px;
+    height: 22px;
   }
 
   .new-session-page__trigger-chevron--desktop {
@@ -1393,7 +1432,7 @@ wa-popover.new-session-page__where-popover::part(body) {
 
   .new-session-page__trigger-chevron--mobile {
     display: inline-flex;
-    margin-inline-start: 4px;
+    margin-inline-start: 12px;
   }
 
   .new-session-page__trigger-chevron--mobile svg {
