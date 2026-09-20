@@ -540,8 +540,9 @@ list the approvers as LINE user IDs:
 - **With forwarding on and approvers listed**, every approver receives the card in their
   one-to-one chat for a request raised from a LINE conversation. A request raised in an
   approver's own chat shows the card there; a group, or another user's chat, gets a notice
-  that the request went to LINE DMs. Only listed approvers can then decide that approval type
-  from LINE, including with typed `/approve`. While the account's card handler is running,
+  that the request went to LINE DMs and is not told the outcome afterwards. Only listed
+  approvers can then decide that approval type from LINE, including with typed `/approve`.
+  While the account's card handler is running,
   a chat that gets the card or that notice does not also get the forwarded text prompt;
   other forwarding targets, such as an operations group, still do, and if the handler is
   not running, every forwarded prompt is delivered. Requests raised elsewhere, such as the
@@ -561,7 +562,8 @@ and their fallback text are not delivered and only the Gateway log records it.
 
 Upgrade check: a setup that already forwards `approvals.exec` or `approvals.plugin` in
 `session` or `both` mode and lists LINE user IDs in `allowFrom` turns cards on when it
-upgrades. Group members who are not listed then can no longer decide that approval type with
+upgrades. `mode` defaults to `session`, so `enabled: true` on its own is one of those
+setups. Group members who are not listed then can no longer decide that approval type with
 `/approve`. Before upgrading, list the members who should keep deciding (which also admits
 their DMs), or plan to decide those approvals from the Control UI.
 
