@@ -8,6 +8,7 @@ import {
 } from "openclaw/plugin-sdk/session-store-runtime";
 import { appendSessionTranscriptMessageByIdentity } from "openclaw/plugin-sdk/session-transcript-runtime";
 import {
+  closeOpenClawAgentDatabasesAsync,
   closeOpenClawAgentDatabasesForTest,
   appendSqliteSessionTranscriptEventForTest,
 } from "openclaw/plugin-sdk/sqlite-runtime-testing";
@@ -30,6 +31,10 @@ afterEach(async () => {
   // Fixtures point a state dir at these temp workspaces, so the shared and per-agent
   // SQLite handles stay cached and Windows fails the removal with EBUSY. The agent close
   // releases its leases through shared state and reopens it, so the store is released second.
+  // Native worker close (and its shared-state lease release) is asynchronous, so it must be
+  // awaited before the temp root is removed below -- otherwise the deferred release can stat
+  // a path that cleanup() already deleted.
+  await closeOpenClawAgentDatabasesAsync();
   closeOpenClawAgentDatabasesForTest();
   resetPluginStateStoreForTests();
   await cleanup();
