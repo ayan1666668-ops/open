@@ -180,7 +180,7 @@ describe("registered progress cards at the final channel renderer", () => {
         },
       });
       try {
-        await runRegisteredCard(markdown, progress.pushPlanProgress);
+        await runRegisteredCard(markdown, progress.pushPlanProgress.bind(progress));
         expect(previews).toHaveLength(1);
         const preview = previews[0];
         if (richMessages) {
