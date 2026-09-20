@@ -33,6 +33,7 @@ const FINAL_MARKER = "TOOL-PROGRESS-FINAL";
 const HEADLINE = "Checking the requested work";
 // Draft progress uses compact tool rows; native Slack uses task_update chunks.
 const toolRow = /🛠️ (?:Exec|Bash)\b/u;
+const nativeToolTitle = /^(?:Exec|Bash)\b/u;
 const failedToolRow = /🛠️ (?:Exec|Bash): failed\b/u;
 type WireWrite = {
   at: number;
@@ -1736,34 +1737,10 @@ describe("channel progress presentation through an isolated Gateway", () => {
         )
         .join("\n");
       expect(progressText).toContain(HEADLINE);
-      if (channel === "slack" && native) {
-        const taskUpdates = progressWrites
-          .flatMap(({ body }) => readChunks(body.chunks))
-          .filter((chunk) => chunk.type === "task_update");
-        if (tools) {
-          const startedTaskIndex = taskUpdates.findIndex(
-            (chunk) =>
-              chunk.status === "in_progress" &&
-              /^(?:Exec|Bash)\b/u.test(readStringValue(chunk.title) ?? ""),
-          );
-          expect(startedTaskIndex).toBeGreaterThanOrEqual(0);
-          const startedTask = taskUpdates[startedTaskIndex];
-          expect(startedTask).toMatchObject({
-            id: expect.stringMatching(/\S/u),
-            status: "in_progress",
-          });
-          const completedTaskIndex = taskUpdates.findIndex(
-            (chunk) => chunk.id === startedTask?.id && chunk.status === "complete",
-          );
-          expect(completedTaskIndex).toBeGreaterThan(startedTaskIndex);
-        } else {
-          expect(taskUpdates).toEqual([]);
-          expect(progressText).not.toMatch(toolRow);
-        }
-      } else if (tools) {
-        expect(progressText).toMatch(toolRow);
-      } else {
+      if (!tools) {
         expect(progressText).not.toMatch(toolRow);
+      } else if (channel !== "slack" || !native) {
+        expect(progressText).toMatch(toolRow);
       }
       if (failTool) {
         if (tools) {
@@ -1841,12 +1818,28 @@ describe("channel progress presentation through an isolated Gateway", () => {
       const tasks = writes
         .flatMap((write) => readChunks(write.body.chunks))
         .filter((chunk) => chunk.type === "task_update");
-      if (native) {
+      if (channel === "slack" && native) {
         // Detailed cards give the exec call its own task row; quiet cards keep
         // one stable summary row. Both complete with the turn.
-        expect(tasks.some((task) => toolRow.test(String(task.title)))).toBe(tools);
-        if (!tools) {
+        expect(tasks.some((task) => nativeToolTitle.test(readStringValue(task.title) ?? ""))).toBe(
+          tools,
+        );
+        if (tools) {
+          const startedTaskIndex = tasks.findIndex(
+            (task) =>
+              task.status === "in_progress" &&
+              nativeToolTitle.test(readStringValue(task.title) ?? ""),
+          );
+          expect(startedTaskIndex).toBeGreaterThanOrEqual(0);
+          const startedTask = tasks[startedTaskIndex];
+          expect(startedTask?.id).toEqual(expect.stringMatching(/\S/u));
+          const completedTaskIndex = tasks.findIndex(
+            (task) => task.id === startedTask?.id && task.status === "complete",
+          );
+          expect(completedTaskIndex).toBeGreaterThan(startedTaskIndex);
+        } else {
           expect(new Set(tasks.map((task) => task.id)).size).toBe(1);
+          expect(tasks[0]?.id).toEqual(expect.stringMatching(/\S/u));
         }
         expect(tasks.at(-1)?.status).toBe("complete");
       }
