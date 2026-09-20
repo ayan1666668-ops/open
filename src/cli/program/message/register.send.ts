@@ -42,7 +42,6 @@ export function registerMessageSendCommand(message: Command, helpers: MessageCli
           false,
         ),
     )
-    // The send action's ordered media list carries every repeated --media value.
     .action(({ media, ...opts }) =>
       helpers.runMessageAction("send", { ...opts, mediaUrls: media }),
     );
