@@ -34,6 +34,7 @@ import { canGoBackInNativeEmbed } from "./browser.ts";
 import type { ApplicationContext, ApplicationNavigationOptions } from "./context.ts";
 import { gatewayPresentationScope } from "./gateway-presentation-scope.ts";
 import {
+  APP_SIDEBAR_ELEMENT,
   isOptionalElementDefined,
   MACOS_TITLEBAR_ELEMENT,
   type OptionalCustomElement,
@@ -115,6 +116,15 @@ export function renderApplicationShell(host: ShellViewHost) {
   const overlaySnapshot = context.overlays.snapshot;
   const controlUiRefreshRequired = overlaySnapshot.controlUiRefreshRequired;
   const connectionStatus = resolveGatewayStatus(gatewaySnapshot, controlUiRefreshRequired);
+  const presentationScope = gatewayPresentationScope(context.gateway);
+  // Initial hello can paint the shell before recovery finishes. Keep that brief
+  // startup state in existing chrome rather than inserting and removing a row.
+  const initialConnection =
+    !presentationScope.readyOnce &&
+    !gatewaySnapshot.offlineStable &&
+    (connectionStatus === "connecting" ||
+      connectionStatus === "starting" ||
+      connectionStatus === "restoring");
   // The install keeps running after `update.run` answers, so the reconciliation
   // — not the request — decides how long the update surfaces stay busy.
   const updateBusy = overlaySnapshot.updateRunning || overlaySnapshot.updateReconciliationPending;
@@ -530,16 +540,19 @@ export function renderApplicationShell(host: ShellViewHost) {
           aria-disabled=${pageActionsBlocked || reloadRequired ? "true" : nothing}
           .router=${runtime.router}
           .retryContext=${context}
-          .retentionScope=${gatewayPresentationScope(context.gateway)}
+          .retentionScope=${presentationScope}
           .onNotFound=${host.recoverNotFoundRoute}
           .notFoundRecoveryReady=${gatewayConnected}
         ></openclaw-router-outlet>
       </main>
       ${
-        navigationSurfaceHidden &&
+        (navigationSurfaceHidden ||
+          (settingsTakeover
+            ? host.settingsSidebarRenderer === null
+            : !isOptionalElementDefined(APP_SIDEBAR_ELEMENT))) &&
         !nativeEmbed &&
         !onboarding &&
-        (connectionStatus || storedOutboxes?.total)
+        ((connectionStatus && !initialConnection) || storedOutboxes?.total)
           ? html`<div class="shell-connection-status">
               ${renderGatewayStatus({
                 kind: connectionStatus,

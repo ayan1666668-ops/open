@@ -250,6 +250,12 @@ export const KEYBOARD_SHORTCUTS_ELEMENT = {
   loadModule: () => import("../components/keyboard-shortcuts-dialog.ts"),
 } satisfies OptionalCustomElement;
 
+export const APP_SIDEBAR_ELEMENT = {
+  tagName: "openclaw-app-sidebar",
+  label: "openclaw-app-sidebar",
+  loadModule: () => import("../components/app-sidebar.ts"),
+} satisfies OptionalCustomElement;
+
 const MACOS_TITLEBAR_TAG = "openclaw-macos-titlebar-controls";
 
 export const MACOS_TITLEBAR_ELEMENT = {

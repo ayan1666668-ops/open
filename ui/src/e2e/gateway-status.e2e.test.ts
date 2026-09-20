@@ -2,9 +2,10 @@ import path from "node:path";
 import type { Page } from "playwright";
 import { expect, it } from "vitest";
 import { waitForControlUiGatewayReady } from "../test-helpers/control-ui-e2e-readiness.ts";
-import { installMockGateway } from "../test-helpers/control-ui-e2e.ts";
+import { controlUiSessionUrl, installMockGateway } from "../test-helpers/control-ui-e2e.ts";
 import { createControlUiE2eSuite } from "./control-ui-e2e-suite.test-support.ts";
 import { installNativeWebChrome } from "./native-nav.test-support.ts";
+import { waitForGatewayRecoveryScope } from "./new-session-page.test-support.ts";
 
 const suite = createControlUiE2eSuite({ name: "Gateway status with native account identity" });
 
@@ -26,42 +27,118 @@ async function connectionStatusOverlapsComposer(page: Page): Promise<boolean> {
 }
 
 suite.define(() => {
-  it("keeps connection recovery available when the hidden sidebar chunk fails to load", async () => {
+  it("keeps initial recovery from moving the session frame and shows later reconnect recovery", async () => {
     await suite.withPage(
       {
-        viewport: { width: 390, height: 844 },
+        viewport: { width: 390, height: 900 },
         colorScheme: "dark",
+        reducedMotion: "no-preference",
         locale: "en-US",
         serviceWorkers: "block",
       },
       async ({ page }) => {
-        let blockedSidebarRequests = 0;
-        await page.route(/\/assets\/app-sidebar-[^/]+\.js(?:\?.*)?$/u, async (route) => {
-          blockedSidebarRequests += 1;
-          await route.abort("failed");
+        const recoveryToken = "gateway-status-recovery-test";
+        await page.addInitScript((token) => {
+          const digest = crypto.subtle.digest.bind(crypto.subtle);
+          crypto.subtle.digest = async (algorithm, data) => {
+            if (new TextDecoder().decode(data) === token) {
+              await new Promise<void>((resolve) => {
+                window.addEventListener("test-release-status-recovery", () => resolve(), {
+                  once: true,
+                });
+              });
+            }
+            return digest(algorithm, data);
+          };
+        }, recoveryToken);
+        const sessionKey = "agent:main:recovery-layout";
+        const gateway = await installMockGateway(page, {
+          deviceToken: recoveryToken,
+          sessionKey,
+          sessionTranscripts: {
+            [sessionKey]: {
+              messages: Array.from({ length: 4 }, (_, index) => ({
+                role: index % 2 ? "assistant" : "user",
+                content: [{ type: "text", text: `Recovery frame ${index + 1}` }],
+              })),
+            },
+          },
+          sessions: [
+            { key: sessionKey, label: "Recovery layout", kind: "direct", updatedAt: 1000 },
+          ],
         });
-        const gateway = await installMockGateway(page);
-        await page.goto(`${suite.server.baseUrl}new`);
+        await page.goto(controlUiSessionUrl(suite.server.baseUrl, sessionKey));
         await waitForControlUiGatewayReady(page);
-        await page.locator(".new-session-page__message").waitFor({ state: "visible" });
-        await expect.poll(() => blockedSidebarRequests).toBeGreaterThan(0);
-        expect(await page.locator(".sidebar-identity-card").isVisible()).toBe(false);
-
-        await gateway.setOnline(false);
+        await waitForGatewayRecoveryScope(page, false);
+        await page.getByText("Recovery frame 4", { exact: true }).waitFor({ state: "visible" });
+        const header = page.locator(".chat-pane__header").first();
+        const initialHeaderY = await header.evaluate(
+          (element) => element.getBoundingClientRect().y,
+        );
         const connectionStatus = page.locator(".shell-connection-status");
+        expect(await connectionStatus.count()).toBe(0);
+
+        await page.evaluate(() => window.dispatchEvent(new Event("test-release-status-recovery")));
+        await waitForGatewayRecoveryScope(page);
+        expect(await connectionStatus.count()).toBe(0);
+        const readyHeaderY = await header.evaluate((element) => element.getBoundingClientRect().y);
+        expect(Math.abs(readyHeaderY - initialHeaderY)).toBeLessThanOrEqual(0.1);
+
+        const connectCount = (await gateway.getRequests("connect")).length;
+        await gateway.closeLatest(1001, "synthetic recovery");
+        await gateway.waitForRequest("connect", { after: connectCount });
+        await waitForControlUiGatewayReady(page);
+        await waitForGatewayRecoveryScope(page, false);
         await connectionStatus
           .locator(".gateway-status__label")
-          .getByText("Reconnecting…", { exact: true })
+          .getByText("Restoring…", { exact: true })
           .waitFor({ state: "visible" });
-        const socketCount = await gateway.getSocketCount();
-        await connectionStatus.getByRole("button", { name: /Retry now/ }).click();
-        await expect.poll(() => gateway.getSocketCount()).toBeGreaterThan(socketCount);
-        await gateway.setOnline(true);
-        await waitForControlUiGatewayReady(page);
+        await page.evaluate(() => window.dispatchEvent(new Event("test-release-status-recovery")));
+        await waitForGatewayRecoveryScope(page);
         await expect.poll(() => connectionStatus.count()).toBe(0);
       },
     );
   });
+
+  it.each([390, 1280])(
+    "keeps recovery available after a sidebar download failure at %ipx",
+    async (width) => {
+      await suite.withPage(
+        {
+          viewport: { width, height: 844 },
+          colorScheme: "dark",
+          locale: "en-US",
+          serviceWorkers: "block",
+        },
+        async ({ page }) => {
+          let blockedSidebarRequests = 0;
+          await page.route(/\/assets\/app-sidebar-[^/]+\.js(?:\?.*)?$/u, async (route) => {
+            blockedSidebarRequests += 1;
+            await route.abort("failed");
+          });
+          const gateway = await installMockGateway(page);
+          await page.goto(`${suite.server.baseUrl}new`);
+          await waitForControlUiGatewayReady(page);
+          await page.locator(".new-session-page__message").waitFor({ state: "visible" });
+          await expect.poll(() => blockedSidebarRequests).toBeGreaterThan(0);
+          expect(await page.locator(".sidebar-identity-card").isVisible()).toBe(false);
+
+          await gateway.setOnline(false);
+          const connectionStatus = page.locator(".shell-connection-status");
+          await connectionStatus
+            .locator(".gateway-status__label")
+            .getByText("Reconnecting…", { exact: true })
+            .waitFor({ state: "visible" });
+          const socketCount = await gateway.getSocketCount();
+          await connectionStatus.getByRole("button", { name: /Retry now/ }).click();
+          await expect.poll(() => gateway.getSocketCount()).toBeGreaterThan(socketCount);
+          await gateway.setOnline(true);
+          await waitForControlUiGatewayReady(page);
+          await expect.poll(() => connectionStatus.count()).toBe(0);
+        },
+      );
+    },
+  );
 
   it("keeps reconnect status clear of the composer in a compact native window", async () => {
     await suite.withPage(
