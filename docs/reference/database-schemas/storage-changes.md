@@ -34,6 +34,17 @@ preparation, before native execution, and at the existing transaction and commit
 grants. Cancellation before native execution joins coordinator cleanup without
 replaying the command.
 
+The broker admits up to 128 outstanding requests. Count-only overflow waits in
+FIFO order for up to 10 seconds; queued input still shares the 64 MiB byte budget.
+Byte, message, and store limits continue to refuse immediately. Oversized streamed
+inputs still require immediately available admission instead of retaining the
+complete input in the waiting queue. Admission timeout
+or host drain rejects waiting requests before dispatch; caller cancellation
+releases a waiting request, while dispatched writes retain their native outcome.
+Maintenance scopes continue to drain accepted work. A rate-limited warning reports
+admission queue depth and wait time. Node uses two to eight worker threads based
+on available CPUs; Bun retains one worker per store actor.
+
 Legacy native host writers service the same job's preparation and authority ports
 between short coordinator-lock attempts, including path aliases. This lets the
 worker finish while the host is inside a synchronous native caller. Successful
@@ -82,6 +93,14 @@ Downloads retain ticket or owner authorization and current transcript membership
 verified descriptors and post-render thumbnail checks remain in place. Inserts, message-commit
 promotion, cleanup claim/deletion transactions, Doctor imports, and native session
 metadata reads keep their existing owners and remain separate worker migrations.
+
+Delivery queue maintenance expires tombstones and reads media custody in the
+shared-state worker. Stage expiry retains its existing transaction and unfinished
+delivery inventory, including retained migration media. Gateway shutdown joins an
+accepted queue sweep through filesystem cleanup, and replacement maintenance waits
+for earlier cleanup generations. Each sweep keeps its captured state directory.
+Queue and staging formats, retention limits, writable database preparation, and
+update behavior are unchanged; send admission and settlement retain their owners.
 
 Project recents and observed checkouts prepare durable session listings through
 the existing session-transcript worker. Federation captures physical targets,
@@ -486,6 +505,16 @@ comparison methods are absent, until the minimum host guarantees them. Worker
 failures never select that compatibility path. Binding storage, revocations,
 and synchronous visibility retain their separate owners.
 
+Read-only workspace setup and attestation snapshots execute in the retained
+shared-state read worker. Alias resolution and the associated rows share one
+read transaction. Bootstrap preparation and Doctor readiness await that result;
+inspection does not create missing state or register aliases. Selected snapshots
+and artifact-preserving scopes keep their existing lifetime and cleanup owner.
+Generic composite preparation, borrowed-source backup and source-exclusion
+compatibility paths retain their native owners. Mutable workspace reads, writes,
+and Doctor alias repair keep their existing transaction owners. Schemas,
+retention, and update behavior are unchanged.
+
 Use Kysely for ordinary queries and mutations. The current
 `getNodeSqliteKysely` facade compiles queries; `executeSqliteQuerySync` runs them
 on the supplied `node:sqlite` connection. Calling Kysely's asynchronous
@@ -637,6 +666,17 @@ checks its stop signal before using it. Catalog grouping, duplicate-watcher
 suppression, ambiguous-agent filtering, and best-effort failures stay unchanged.
 Single-link reads and their immediately guarded writes retain their synchronous
 owner until their complete freshness and mutation boundary moves together.
+
+Onboarding recommendation reads use the shared read-only worker owner, preserving
+no-create behavior and independent lifetime from the Gateway's writable actor.
+All five mutations run in the shared-state worker. Each mutation retains
+its workspace key and existing compare-and-update transaction; an answered offer
+cannot be reopened by a delayed scan, and a stale checkpoint cannot overwrite a
+changed offer. The wizard awaits selected-set persistence before installation,
+checkpoints each completed skill install, and records official plugin outcomes
+only after configuration is saved. Recommendation CLI commands await persistence
+before reporting success. Each worker owner retains its pending operations through
+native cleanup; the stored format and retention rules are unchanged.
 
 Gateway user-preference RPCs and Talk appearance reads resolve merged profile IDs
 and access preferences in the shared-state worker. Preference writes keep profile
