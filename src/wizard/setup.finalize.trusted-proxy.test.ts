@@ -1,21 +1,11 @@
 // Setup finalize tests cover writing final onboarding config and artifacts.
-import fs from "node:fs/promises";
-import { expectDefined } from "@openclaw/normalization-core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createWizardPrompter as buildWizardPrompter } from "../../test/helpers/wizard-prompter.js";
-import { PreparedModelCatalogConfigReplacedError } from "../agents/prepared-model-catalog.errors.js";
 import type * as AuthChoiceModelCheck from "../commands/auth-choice.model-check.js";
 import type { OpenClawConfig } from "../config/config.js";
 import type { GatewayTlsConfig } from "../config/types.gateway.js";
 import type { PluginWebSearchProviderEntry } from "../plugins/types.js";
 import type { RuntimeEnv } from "../runtime.js";
-import { withEnvAsync } from "../test-utils/env.js";
-import {
-  expectNoteContains,
-  expectNoteTitleNotCalled,
-  withPlatform,
-  expectNoteNotContains,
-} from "./setup.finalize.test-support.js";
 
 type DefaultModelAuthStatus = ReturnType<typeof AuthChoiceModelCheck.resolveDefaultModelAuthStatus>;
 type DefaultModelCatalogFacts = ReturnType<
@@ -292,7 +282,7 @@ vi.mock("./setup.completion.js", () => ({
   setupWizardShellCompletion,
 }));
 
-import { ensureGatewayServiceForOnboarding, finalizeSetupWizard } from "./setup.finalize.js";
+import { finalizeSetupWizard } from "./setup.finalize.js";
 
 function createRuntime(): RuntimeEnv {
   return {
@@ -300,39 +290,6 @@ function createRuntime(): RuntimeEnv {
     error: vi.fn(),
     exit: vi.fn(),
   };
-}
-
-function createWebSearchProviderEntry(
-  provider: Pick<
-    PluginWebSearchProviderEntry,
-    | "id"
-    | "label"
-    | "hint"
-    | "envVars"
-    | "authProviderId"
-    | "placeholder"
-    | "signupUrl"
-    | "credentialPath"
-    | "requiresCredential"
-  >,
-): PluginWebSearchProviderEntry {
-  return {
-    pluginId: `plugin-${provider.id}`,
-    getCredentialValue: () => undefined,
-    setCredentialValue: () => {},
-    createTool: () => null,
-    ...provider,
-  };
-}
-
-function expectFirstOnboardingInstallPlanCallOmitsToken() {
-  const [firstArg] =
-    (buildGatewayInstallPlan.mock.calls[0] as unknown as [Record<string, unknown>] | undefined) ??
-    [];
-  if (!firstArg) {
-    throw new Error("expected first onboarding install plan call");
-  }
-  expect("token" in firstArg).toBe(false);
 }
 
 type FinalizeArgs = Parameters<typeof finalizeSetupWizard>[0];
@@ -347,19 +304,6 @@ function createLaterPrompter() {
     select: vi.fn(async () => "later") as never,
     confirm: vi.fn(async () => false),
   });
-}
-
-function createEnabledFirecrawlSearchConfig(): OpenClawConfig {
-  return {
-    tools: {
-      web: {
-        search: {
-          provider: "firecrawl",
-          enabled: true,
-        },
-      },
-    },
-  };
 }
 
 function createFinalizeArgs(
