@@ -21,6 +21,7 @@ const mock = vi.hoisted(() => ({
   run: vi.fn<() => Promise<OpenClawStateReadReply>>(),
   close: vi.fn<OwnedWorkerTask<OpenClawStateReadReply>["close"]>(),
   closePool: vi.fn<() => Promise<void>>(),
+  closeResources: vi.fn<(key?: string) => Promise<void>>(),
 }));
 vi.mock("./openclaw-state-worker-context.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./openclaw-state-worker-context.js")>();
@@ -37,6 +38,7 @@ vi.mock("../infra/worker-task-pool.js", async (importOriginal) => ({
       close: mock.close,
     }),
     close: mock.closePool,
+    closeResources: mock.closeResources,
   }),
 }));
 
@@ -44,6 +46,7 @@ const tempDirs = useAutoCleanupTempDirTracker((cleanup) =>
   afterEach(async () => {
     mock.close.mockResolvedValue();
     mock.closePool.mockResolvedValue();
+    mock.closeResources.mockResolvedValue();
     await closeOpenClawStateDatabaseAsync();
     cleanup();
   }),
@@ -58,6 +61,7 @@ beforeEach(() => {
   mock.run.mockReset().mockResolvedValue(reply);
   mock.close.mockReset().mockResolvedValue();
   mock.closePool.mockReset().mockResolvedValue();
+  mock.closeResources.mockReset().mockResolvedValue();
 });
 function source() {
   const root = tempDirs.make("state-read-error-phase-");

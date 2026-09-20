@@ -38,6 +38,7 @@ import {
   listManagedImageRecordEntriesInDatabase,
   listManagedImageOriginalMediaIdsInDatabase,
 } from "../gateway/managed-image-record-store.kernel.js";
+import { registerSessionGroupInDatabase } from "../gateway/session-group-registration.kernel.js";
 import { readDeferredPluginMigrations } from "../infra/deferred-plugin-migrations.js";
 import {
   countFailedDeliveryQueueEntriesInDatabase,
@@ -101,6 +102,7 @@ import {
 } from "../sessions/session-state-events.kernel.js";
 import { listWatchedSessionUpstreamLinksInDatabase } from "../sessions/session-upstream-links.kernel.js";
 import { commitSkillUploadInDatabase } from "../skills/lifecycle/upload-store-commit.js";
+import * as skillWorkshop from "../skills/workshop/store.worker.js";
 import { isTaskRegistryWorkerCommand } from "../tasks/task-registry.worker-contract.js";
 import { executeTaskRegistryCommand } from "../tasks/task-registry.worker.js";
 import { ensureMeetingTranscriptsSchema } from "../transcripts/sqlite-schema.js";
@@ -391,6 +393,9 @@ export function executeSharedStateCommand(
   if (command.type === "githubRepository.personalPending") {
     return readPendingRepositoryGitHubPublicationInDatabase(database.db, command.input);
   }
+  if (skillWorkshop.isSkillWorkshopCommand(command)) {
+    return skillWorkshop.executeSkillWorkshopCommand(command, database, context.databasePath);
+  }
   if (command.type === "deviceAuth.list") {
     return deviceAuth.readDeviceAuthTokensFromDatabase(database.db, command.input);
   }
@@ -480,6 +485,9 @@ export function executeSharedStateCommand(
     path: context.databasePath,
     env: getSqliteWorkerStateContext().environment,
   };
+  if (command.type === "sessionGroups.register") {
+    return registerSessionGroupInDatabase(database, command.input.name, writeOptions.env);
+  }
   if (command.type === "deliveryQueue.ack") {
     return executeDeliveryQueueAck(command.input, writeOptions);
   }
