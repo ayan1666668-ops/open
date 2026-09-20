@@ -266,6 +266,41 @@ describe("completeWithPreparedSimpleCompletionModel", () => {
     expect(Object.keys(options ?? {})).toEqual(["apiKey"]);
   });
 
+  it("applies configured chat_template_kwargs to openai-completions payloads, and only when configured", async () => {
+    const model = {
+      ...baseModel,
+      provider: "custom-localhost-8087",
+      id: "openclaw-utility-model",
+      name: "openclaw-utility-model",
+      api: "openai-completions",
+    } satisfies Model<"openai-completions">;
+    const cfg = {
+      agents: {
+        defaults: {
+          models: {
+            "custom-localhost-8087/openclaw-utility-model": {
+              params: { chat_template_kwargs: { enable_thinking: false } },
+            },
+          },
+        },
+      },
+    } as unknown as import("../config/types.openclaw.js").OpenClawConfig;
+    const auth = { apiKey: "test-key", source: "test", mode: "api-key" } as const;
+
+    await completeWithPreparedSimpleCompletionModel({ model, auth, cfg, context });
+    await completeWithPreparedSimpleCompletionModel({ model, auth, context });
+
+    const [withConfig, withoutConfig] = completionRequests();
+    const onPayload = (withConfig!.options as { onPayload: (payload: unknown) => unknown })
+      .onPayload;
+    expect(onPayload).toEqual(expect.any(Function));
+    expect(onPayload({ model: model.id, chat_template_kwargs: { keep: true } })).toEqual({
+      model: model.id,
+      chat_template_kwargs: { keep: true, enable_thinking: false },
+    });
+    expect(withoutConfig?.options).toEqual({ apiKey: "test-key" });
+  });
+
   it("preserves explicit off for a prepared Claude Sonnet 5 alias", async () => {
     const model = {
       provider: "anthropic",

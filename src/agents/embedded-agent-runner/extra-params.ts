@@ -612,6 +612,32 @@ function resolveExtraBodyRecord(
   return Object.keys(record).length > 0 ? record : undefined;
 }
 
+/**
+ * Resolves configured `chat_template_kwargs` / `extra_body` payload overrides from
+ * model config alone (no per-request override or agent stream context). Shared by
+ * the full-agent stream wrappers below and by isolated/simple completions so the
+ * two request paths cannot diverge on which configured payload params apply.
+ */
+export function resolveConfiguredOpenAICompletionsPayloadParams(
+  cfg: OpenClawConfig | undefined,
+  provider: string,
+  modelId: string,
+): { chatTemplateKwargs?: Record<string, unknown>; extraBody?: Record<string, unknown> } {
+  const extraParams = resolveExtraParams({ cfg, provider, modelId });
+  const chatTemplateKwargs = resolveExtraBodyRecord(
+    resolveAliasedParamValue([extraParams], "chat_template_kwargs", "chatTemplateKwargs"),
+    "chat_template_kwargs",
+  );
+  const extraBody = resolveExtraBodyRecord(
+    resolveAliasedParamValue([extraParams], "extra_body", "extraBody"),
+    "extra_body",
+  );
+  return {
+    ...(chatTemplateKwargs ? { chatTemplateKwargs } : {}),
+    ...(extraBody ? { extraBody } : {}),
+  };
+}
+
 function createOpenAICompletionsChatTemplateKwargsWrapper(params: {
   baseStreamFn: StreamFn | undefined;
   configured: Record<string, unknown>;
