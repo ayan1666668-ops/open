@@ -195,10 +195,30 @@ function resolveCredentialsForSetup(cfg: OpenClawConfig, accountId: string) {
   });
 }
 
-function hasConfiguredCredentialsForSetup(cfg: OpenClawConfig, accountId: string): boolean {
-  return hasConfiguredMSTeamsCredentials(resolveMSTeamsAccountConfig(cfg, accountId), {
-    allowEnvFallback: accountId === DEFAULT_ACCOUNT_ID,
-  });
+function hasConfiguredCredentialsForSetup(
+  cfg: OpenClawConfig,
+  accountId: string,
+  input?: MSTeamsSetupInput,
+): boolean {
+  const resolved = resolveMSTeamsAccountConfig(cfg, accountId);
+  const appId = input ? readMSTeamsSetupCredential(input, "appId")?.trim() : undefined;
+  const appPassword = input ? readMSTeamsSetupCredential(input, "appPassword")?.trim() : undefined;
+  const tenantId = input ? readMSTeamsSetupCredential(input, "tenantId")?.trim() : undefined;
+  const replacesWithSecretAuth = Boolean(
+    appId && appPassword && (tenantId || resolved.tenantId?.trim()),
+  );
+  return hasConfiguredMSTeamsCredentials(
+    {
+      ...resolved,
+      ...(appId ? { appId } : {}),
+      ...(appPassword ? { appPassword } : {}),
+      ...(tenantId ? { tenantId } : {}),
+      ...(replacesWithSecretAuth ? { authType: "secret" as const } : {}),
+    },
+    {
+      allowEnvFallback: accountId === DEFAULT_ACCOUNT_ID,
+    },
+  );
 }
 
 export const msteamsSetupAdapter: ChannelSetupAdapter<MSTeamsSetupInput> = {
@@ -238,7 +258,7 @@ export const msteamsSetupAdapter: ChannelSetupAdapter<MSTeamsSetupInput> = {
     if (
       !input.useEnv &&
       !hasCompleteExplicitCredentials &&
-      !hasConfiguredCredentialsForSetup(cfg, resolvedAccountId)
+      !hasConfiguredCredentialsForSetup(cfg, resolvedAccountId, input)
     ) {
       return "MS Teams requires appId, appPassword, and tenantId (or --use-env for the default account).";
     }
@@ -276,15 +296,18 @@ export const msteamsSetupAdapter: ChannelSetupAdapter<MSTeamsSetupInput> = {
     if (input.webhookPort !== undefined) {
       patch.webhook = { ...existing.webhook, port: input.webhookPort };
     }
-    const credentialPatch =
-      appId?.trim() && appPassword?.trim() && tenantId?.trim()
-        ? applySecretAuthCredentials(patch, existing)
-        : patch;
+    const inheritedTenantId = resolveMSTeamsAccountConfig(cfg, resolvedAccountId).tenantId?.trim();
+    const replacesWithSecretAuth = Boolean(
+      appId?.trim() && appPassword?.trim() && (tenantId?.trim() || inheritedTenantId),
+    );
+    const credentialPatch = replacesWithSecretAuth
+      ? applySecretAuthCredentials(patch, existing)
+      : patch;
     return patchMSTeamsAccountConfig({
       cfg,
       accountId: resolvedAccountId,
       // --use-env selects runtime credentials; do not replace a persisted
-      // federated mode unless the operator supplied a complete secret tuple.
+      // federated mode unless the operator supplied a complete effective secret tuple.
       patch: credentialPatch,
       scopeDefaultToAccounts: true,
     });

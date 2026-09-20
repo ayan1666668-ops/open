@@ -2666,10 +2666,6 @@ describe("scripts/test-projects changed-target routing", () => {
       "test/vitest/vitest.agents-embedded-agent-overflow-compaction.config.ts",
     ],
     [
-      "src/agents/embedded-agent-runner/run.prepared-harness-source-delivery.integration.test.ts",
-      "test/vitest/vitest.agents-embedded-agent-overflow-compaction.config.ts",
-    ],
-    [
       "src/agents/embedded-agent-runner/run/attempt.abort-race.test.ts",
       "test/vitest/vitest.agents-embedded-agent-run.config.ts",
     ],
@@ -2728,6 +2724,7 @@ describe("scripts/test-projects changed-target routing", () => {
         "src/agents/embedded-agent-runner/run/model-setup.ownership.test.ts",
         "src/agents/embedded-agent-runner/run/model-setup.selected-model.test.ts",
         "src/agents/embedded-agent-runner/run/runtime-preparation.thinking.test.ts",
+        "src/agents/embedded-agent-runner/run/run-attempt-dispatch.owner.test.ts",
       ],
     },
     {
@@ -2791,6 +2788,7 @@ describe("scripts/test-projects changed-target routing", () => {
           "src/agents/embedded-agent-runner/run/model-setup.ownership.test.ts",
           "src/agents/embedded-agent-runner/run/model-setup.selected-model.test.ts",
           "src/agents/embedded-agent-runner/run/runtime-preparation.thinking.test.ts",
+          "src/agents/embedded-agent-runner/run/run-attempt-dispatch.owner.test.ts",
         ],
         watchMode: false,
       },
@@ -2824,10 +2822,7 @@ describe("scripts/test-projects changed-target routing", () => {
         {
           config: "test/vitest/vitest.agents-embedded-agent-overflow-compaction.config.ts",
           forwardedArgs: [],
-          includePatterns: [
-            `${root}/run.overflow-compaction.test.ts`,
-            `${root}/run.prepared-harness-source-delivery.integration.test.ts`,
-          ],
+          includePatterns: [`${root}/run.overflow-compaction.test.ts`],
           watchMode: false,
         },
         {

@@ -375,6 +375,57 @@ describe("msteams setup surface", () => {
     });
   });
 
+  it("accepts new named-account credentials with an inherited root tenant", () => {
+    const cfg = {
+      channels: {
+        msteams: {
+          tenantId: "shared-tenant",
+          authType: "federated" as const,
+          certificatePath: "/secure/shared.pem",
+        },
+      },
+    };
+    const input = {
+      appId: "support-app",
+      appPassword: "support-secret",
+      webhookPort: 3979,
+    };
+    hasConfiguredMSTeamsCredentials.mockImplementation(
+      (candidate: { appId?: string; appPassword?: string; tenantId?: string }) =>
+        Boolean(candidate.appId && candidate.appPassword && candidate.tenantId),
+    );
+
+    expect(
+      msteamsSetupContract.validateInput?.({
+        cfg,
+        accountId: "support",
+        input,
+      }),
+    ).toBeNull();
+    expect(hasConfiguredMSTeamsCredentials).toHaveBeenCalledWith(
+      expect.objectContaining({
+        appId: "support-app",
+        appPassword: "support-secret",
+        tenantId: "shared-tenant",
+        authType: "secret",
+      }),
+      { allowEnvFallback: false },
+    );
+    expect(
+      msteamsSetupContract.applyAccountConfig({
+        cfg,
+        accountId: "support",
+        input,
+      }).channels?.msteams?.accounts?.support,
+    ).toEqual({
+      enabled: true,
+      appId: "support-app",
+      appPassword: "support-secret",
+      authType: "secret",
+      webhook: { port: 3979 },
+    });
+  });
+
   it("allows partial noninteractive updates for an already configured named account", () => {
     const cfg = {
       channels: {
