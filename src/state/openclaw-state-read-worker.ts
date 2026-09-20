@@ -109,6 +109,16 @@ function commandBytes(command: OpenClawStateReadRequest["command"]): number {
       (command.type === "pluginBlob.lookup" ? Buffer.byteLength(command.input.key, "utf8") : 0)
     );
   }
+  if (command.type === "sandboxRegistry.get") {
+    return bytes + Buffer.byteLength(command.containerName, "utf8");
+  }
+  if (command.type === "sandboxRegistry.runtimeIds") {
+    return (
+      bytes +
+      Buffer.byteLength(command.backendId, "utf8") +
+      Buffer.byteLength(command.scopeKey, "utf8")
+    );
+  }
   if (command.type === "fleet.get") {
     return bytes + Buffer.byteLength(command.tenantId, "utf8");
   }

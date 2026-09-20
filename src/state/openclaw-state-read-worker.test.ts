@@ -594,6 +594,8 @@ it.each([
   "workspace.snapshot",
   "pluginBlob.lookup",
   "pluginBlob.entries",
+  "sandboxRegistry.get",
+  "sandboxRegistry.runtimeIds",
 ] as const)(
   "captures and charges the retained UTF-8 selector while dispatch waits (%s)",
   async (type) => {
@@ -610,7 +612,11 @@ it.each([
               ? { type, input: { pluginId: selector, namespace: selector, key: selector } }
               : type === "pluginBlob.entries"
                 ? { type, input: { pluginId: selector, namespace: selector } }
-                : { type, workspaceDir: selector };
+                : type === "workspace.snapshot"
+                  ? { type, workspaceDir: selector }
+                  : type === "sandboxRegistry.get"
+                    ? { type, containerName: selector }
+                    : { type, backendId: selector, scopeKey: selector };
     const expected = structuredClone(command);
     const dispatch = createDeferredCore();
     const task = queueTask(dispatch.promise);
@@ -629,6 +635,11 @@ it.each([
       if (command.type === "pluginBlob.lookup") {
         command.input.key = "different key after admission";
       }
+    } else if (command.type === "sandboxRegistry.get") {
+      command.containerName = "different container after admission";
+    } else if (command.type === "sandboxRegistry.runtimeIds") {
+      command.backendId = "different backend after admission";
+      command.scopeKey = "different scope after admission";
     } else {
       command.workspaceDir = "different workspace after admission";
     }
@@ -644,20 +655,28 @@ it.each([
               ? { ok: true, type, sourceAdmitted: true, value: undefined }
               : type === "pluginBlob.entries"
                 ? { ok: true, type, sourceAdmitted: true, value: [] }
-                : {
-                    ok: true,
-                    type,
-                    sourceAdmitted: true,
-                    snapshot: {
-                      identity: createWorkspaceStateIdentity(selector),
-                      setup: { version: 1 },
-                      setupExists: false,
-                    },
-                  };
+                : type === "sandboxRegistry.get"
+                  ? { ok: true, type, sourceAdmitted: true, entry: null }
+                  : type === "sandboxRegistry.runtimeIds"
+                    ? { ok: true, type, sourceAdmitted: true, runtimeIds: [] }
+                    : {
+                        ok: true,
+                        type,
+                        sourceAdmitted: true,
+                        snapshot: {
+                          identity: createWorkspaceStateIdentity(selector),
+                          setup: { version: 1 },
+                          setupExists: false,
+                        },
+                      };
     try {
       expect(Number.isSafeInteger(submitted.inputBytes)).toBe(true);
       const selectorCount =
-        type === "pluginBlob.lookup" ? 3 : type === "pluginBlob.entries" ? 2 : 1;
+        type === "pluginBlob.lookup"
+          ? 3
+          : type === "pluginBlob.entries" || type === "sandboxRegistry.runtimeIds"
+            ? 2
+            : 1;
       expect(submitted.inputBytes).toBeGreaterThanOrEqual(
         Buffer.byteLength(selector) * selectorCount,
       );

@@ -24,6 +24,14 @@ and publishes the result. Avoid exposing a generic SQL callback to application
 code or adding an asynchronous wrapper around an existing asynchronous facade.
 The plugin KV API already has asynchronous methods over its SQLite owner.
 
+Sandbox registry lists, point lookups, backend/scope runtime IDs, and browser
+registry reads execute in the shared-state read worker. CLI management and
+runtime provisioning await the same domain APIs. Reads retain inherited snapshot
+and disposable-source scopes, preserve read-only and missing-state behavior, and
+join native reader cleanup before returning. Registry writes, runtime reservation
+and currentness callbacks, and Doctor imports retain their synchronous owners;
+their worker migration remains separate work.
+
 Shared-state operations that request host transaction or commit admission acquire
 fresh lifecycle coordinator custody on their executing SQLite worker. A live
 parent-owned maintenance or native lease still delegates its existing custody.
@@ -78,8 +86,9 @@ media cleanup and best-effort live sending. When execution may have occurred but
 result is available, recovery retains queue custody and staged media; best-effort
 sending does not fall back to an independent live send. Native settlement alone
 is not evidence that a rejected command did not commit. Random insertion without
-a media stage retains its single-statement boundary; a rejected statement without
-authoritative nonpublication evidence remains an unconfirmed outcome. Recovery
+a media stage keeps its single upsert inside the same tracked transaction, so an
+observed full rollback supplies authoritative nonpublication evidence. Other
+rejections without that evidence remain unconfirmed outcomes. Recovery
 owns terminal audit publication while custody is retained. Media preparation and
 callbacks stay on the host. Media stage creation, cancellation, pruning, stable
 preparation checkpoints, and other queue mutations retain their existing owners.
@@ -100,6 +109,16 @@ accepted queue sweep through filesystem cleanup, and replacement maintenance wai
 for earlier cleanup generations. Each sweep keeps its captured state directory.
 Queue and staging formats, retention limits, writable database preparation, and
 update behavior are unchanged; send admission and settlement retain their owners.
+
+Personal repository publication options scan receipts in the shared-state worker.
+The reader validates every matching pending receipt in the existing timestamp and
+request-ID order, retaining only the latest status. Title and body content remain
+in the worker; older corrupt receipts still fail the read. Options recheck current
+caller and session authority after waiting, then consult the shared publication
+owner. Prepared personal account status rechecks its current generation and
+account without repeating network verification. Empty repository results retain
+the non-repository workspace owner's fallback. Database-open behavior, publication
+writes, schemas, and retention are unchanged.
 
 Project recents and observed checkouts prepare durable session listings through
 the existing session-transcript worker. Federation captures physical targets,
@@ -526,6 +545,15 @@ Generic composite preparation, borrowed-source backup and source-exclusion
 compatibility paths retain their native owners. Mutable workspace reads, writes,
 and Doctor alias repair keep their existing transaction owners. Schemas,
 retention, and update behavior are unchanged.
+
+MCP grant preparation reads exec approval policy through the independent shared-state
+read worker. The policy owner captures the original database path before yielding
+and keeps legacy-file migration checks, normalization, fail-closed results, and
+warning throttling on the host. The reader preserves inherited snapshots and joins
+accepted reads before disposable source cleanup. Missing stores stay absent, and
+worker failures never retry through host SQLite. Synchronous execution-authorization
+callbacks and policy mutation, restore, and initialization keep their existing
+owners.
 
 Use Kysely for ordinary queries and mutations. The current
 `getNodeSqliteKysely` facade compiles queries; `executeSqliteQuerySync` runs them
@@ -1003,17 +1031,25 @@ before transport I/O and reconciles accepted outcomes on that same store. New
 conversation bindings reread source policy from the original store after route
 preparation and retain the destination owner through the final authority check.
 
-Board operations, board inventory reads, and widget document reads expose asynchronous
-contracts. Gateway callers await persistence before publishing board changes or replies.
-Writes carry the caller's current-authority assertion into the synchronous SQLite
-transaction. HTML widget capability actions and protected publication run in the store's immediate
+Board mutations, snapshots, and widget document reads expose asynchronous
+contracts. Ordinary disk data mutations run their existing synchronous kernels on the
+canonical per-agent worker connection, shared with other admitted domains.
+Inputs are captured before queued work, and the caller's current authority is
+checked at transaction entry and commit. Committed session changes return to the
+existing host publisher before the result is exposed; rollback publishes nothing,
+and unknown outcomes conservatively invalidate the exact original session without
+replaying the write. Gateway callers await persistence before publishing board
+changes or replies. Existing-session preflight, source-handle acquisition,
+schema/bootstrap/migration, cold `hasBoard` projection, and board reads remain native. Incognito writes retain
+their process-held connection.
+HTML widget capability actions and protected publication run in the store's immediate
 continuation after its authoritative read and current ticket, session, and grant checks.
 Database ownership is released before awaiting external work; no Promise handoff separates
 the final authorization from its use. Board and progress-card writes capture their physical
 database and state environment before joining the canonical agent writer queue. Cold opens
 use its asynchronous integrity admission, and request authority is checked again before
 schema setup and mutation. A changed route, closed request, or revoked session cannot
-publish a queued write. SQLite kernels remain synchronous inside the store, with existing
+publish a queued write. SQLite kernels remain synchronous inside their native transactions, with existing
 revision, grant, session-existence, and transaction semantics.
 
 MCP App pinning retains its existing source-interaction checks. A delayed adapter must
