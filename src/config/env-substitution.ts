@@ -178,6 +178,17 @@ export function containsEnvVarReference(value: string): boolean {
   return false;
 }
 
+type SubstituteTask = {
+  value: unknown;
+  path: string;
+  /** Slot writer; containers hand child frames a setter that fills them later. */
+  set: (resolved: unknown) => void;
+  /** Containers schedule child tasks after allocating the target container. */
+  target?: Record<string, unknown> | unknown[];
+  /** Array containers fill numeric slots with `[i]` paths instead of dotted keys. */
+  isArray?: boolean;
+};
+
 function substituteAny(
   value: unknown,
   env: NodeJS.ProcessEnv,
@@ -188,20 +199,66 @@ function substituteAny(
     return substituteString(value, env, path, opts);
   }
 
-  if (Array.isArray(value)) {
-    return value.map((item, index) => substituteAny(item, env, `${path}[${index}]`, opts));
+  const rootIsArray = Array.isArray(value);
+  if (!rootIsArray && !isPlainObject(value)) {
+    // Primitives (number, boolean, null) pass through unchanged
+    return value;
   }
 
-  if (isPlainObject(value)) {
-    const result: Record<string, unknown> = {};
-    for (const [key, val] of Object.entries(value)) {
-      result[key] = substituteAny(val, env, appendConfigPathSegment(path, key), opts);
+  // Driver loop: each pending container becomes a heap frame instead of a
+  // call frame, so document depth costs heap and previously accepted deep
+  // configs keep substituting instead of overflowing the call stack. Child
+  // tasks are pushed in reverse so the pending order matches the recursive
+  // depth-first walk, keeping warning and provenance ordering stable.
+  const stack: SubstituteTask[] = [];
+  const result: Record<string, unknown> | unknown[] = rootIsArray ? [] : {};
+  stack.push({
+    value,
+    path,
+    set: () => {},
+    target: result,
+    isArray: rootIsArray,
+  });
+  while (stack.length > 0) {
+    const task = stack.pop()!;
+    if (task.target === undefined) {
+      task.set(task.value);
+      continue;
     }
-    return result;
+    const entries = Object.entries(task.value as Record<string, unknown>);
+    for (let i = entries.length - 1; i >= 0; i -= 1) {
+      const [key, val] = entries[i];
+      const childPath = task.isArray
+        ? `${task.path}[${key}]`
+        : appendConfigPathSegment(task.path, key);
+      const childIsArray = Array.isArray(val);
+      const childIsObject = !childIsArray && isPlainObject(val);
+      if (!childIsArray && !childIsObject) {
+        const resolved =
+          typeof val === "string" ? substituteString(val, env, childPath, opts) : val;
+        if (task.isArray) {
+          (task.target as unknown[])[Number(key)] = resolved;
+        } else {
+          (task.target as Record<string, unknown>)[key] = resolved;
+        }
+        continue;
+      }
+      const child: Record<string, unknown> | unknown[] = childIsArray ? [] : {};
+      if (task.isArray) {
+        (task.target as unknown[])[Number(key)] = child;
+      } else {
+        (task.target as Record<string, unknown>)[key] = child;
+      }
+      stack.push({
+        value: val,
+        path: childPath,
+        set: () => {},
+        target: child,
+        isArray: childIsArray,
+      });
+    }
   }
-
-  // Primitives (number, boolean, null) pass through unchanged
-  return value;
+  return result;
 }
 
 /**
