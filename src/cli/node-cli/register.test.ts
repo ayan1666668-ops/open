@@ -18,6 +18,7 @@ const daemonMocks = vi.hoisted(() => ({
   },
   loadNodeHostConfig: vi.fn<LoadNodeHostConfig>(async () => null),
   runNodeHost: vi.fn(),
+  runNodeHostWorker: vi.fn(),
   runNodeDaemonInstall: vi.fn(),
   runNodeDaemonRestart: vi.fn(),
   runNodeDaemonStart: vi.fn(),
@@ -34,6 +35,10 @@ vi.mock("../../node-host/config.js", () => ({
 
 vi.mock("../../node-host/runner.js", () => ({
   runNodeHost: daemonMocks.runNodeHost,
+}));
+
+vi.mock("../../node-host/worker.js", () => ({
+  runNodeHostWorker: daemonMocks.runNodeHostWorker,
 }));
 
 vi.mock("../../runtime.js", () => ({
@@ -58,6 +63,7 @@ describe("registerNodeCli", () => {
     daemonMocks.loadNodeHostConfig.mockClear();
     daemonMocks.loadNodeHostConfig.mockResolvedValue(null);
     daemonMocks.runNodeHost.mockClear();
+    daemonMocks.runNodeHostWorker.mockClear();
     daemonMocks.runNodeDaemonInstall.mockClear();
     daemonMocks.runNodeDaemonRestart.mockClear();
     daemonMocks.runNodeDaemonStart.mockClear();
@@ -65,6 +71,20 @@ describe("registerNodeCli", () => {
     daemonMocks.runNodeDaemonStop.mockClear();
     daemonMocks.runNodeDaemonUninstall.mockClear();
   });
+
+  it.each([
+    { args: [], enabled: undefined },
+    { args: ["--desktop-sharing"], enabled: true },
+    { args: ["--no-desktop-sharing"], enabled: false },
+  ])(
+    "forwards only the private worker's explicit desktop preference: $args",
+    async ({ args, enabled }) => {
+      await createProgram().parseAsync(["node", "worker", ...args], { from: "user" });
+      expect(daemonMocks.runNodeHostWorker).toHaveBeenCalledWith({
+        desktopSharingEnabled: enabled,
+      });
+    },
+  );
 
   it.each([
     ["status", daemonMocks.runNodeDaemonStatus],

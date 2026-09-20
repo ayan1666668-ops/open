@@ -186,6 +186,35 @@ suite.define(() => {
           page.evaluate(() => (window as DeviceSettingsTestWindow).nativeDeviceSettingsMessages);
         await expect.poll(messages).toContainEqual({ type: "status" });
 
+        const sharing = devicePage.getByRole("switch", { name: "Desktop sharing", exact: true });
+        const computerControl = devicePage.getByRole("switch", {
+          name: "Allow Computer Control",
+          exact: true,
+        });
+        await expect.poll(() => sharing.isChecked()).toBe(true);
+        const sharingLabel = devicePage
+          .locator(".settings-row__title")
+          .filter({ hasText: /^Desktop sharing$/ });
+        await sharingLabel.click();
+        await expect.poll(messages).toContainEqual({
+          type: "set",
+          key: "capabilities.desktopSharingEnabled",
+          value: false,
+        });
+        snapshot.capabilities.desktopSharingEnabled = false;
+        await replyToDeviceSetting(page, snapshot);
+        await expect.poll(() => sharing.isChecked()).toBe(false);
+        expect(await computerControl.isChecked()).toBe(true);
+        await sharingLabel.click();
+        await expect.poll(messages).toContainEqual({
+          type: "set",
+          key: "capabilities.desktopSharingEnabled",
+          value: true,
+        });
+        snapshot.capabilities.desktopSharingEnabled = true;
+        await replyToDeviceSetting(page, snapshot);
+        await expect.poll(() => sharing.isChecked()).toBe(true);
+
         const iconStyle = devicePage.getByRole("combobox", { name: "Dock icon", exact: true });
         await expect.poll(() => iconStyle.inputValue()).toBe("paper");
         expect(await iconStyle.locator("option").allTextContents()).toEqual(

@@ -734,7 +734,7 @@ export const en: TranslationMap & {
       tokenAge: "Age",
       desktopOpenWindow: "Open this desktop in a new window",
       desktopEnableHint:
-        "Enable desktop.host.enabled: true in the node config and add desktop.stream to gateway.nodes.commands.allow, then restart both. The node reconnects with a pending reapproval for desktop.stream; approve it here or with openclaw nodes approve.",
+        "Desktop sharing starts enabled on desktop nodes. On a Mac, check Settings → This Mac → Capabilities → Desktop sharing. Approve any pending desktop capability request here, and check that Gateway policy does not deny desktop.stream. The node needs Screen Sharing or an authenticated local VNC server.",
       uptime: "up {time}",
       loadLabel: "load {load}",
       loadTitle: "Load averages (1 / 5 / 15 min): {averages} on {cores} cores",

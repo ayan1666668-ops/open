@@ -93,6 +93,8 @@ export const SETTINGS_SEARCH_TARGETS = {
       "configPage.deviceSettings.panels.watch": (snapshot) => snapshot.device.platform === "ios",
       "configPage.deviceSettings.computerControl": (snapshot) =>
         snapshot.capabilities?.computerControlEnabled !== undefined,
+      "configPage.deviceSettings.desktopSharing": (snapshot) =>
+        snapshot.capabilities?.desktopSharingEnabled !== undefined,
       "configPage.deviceSettings.browser": (snapshot) => snapshot.browser !== undefined,
       "configPage.deviceSettings.cookieSync": (snapshot) => snapshot.browser !== undefined,
       "configPage.deviceSettings.developer": (snapshot) =>

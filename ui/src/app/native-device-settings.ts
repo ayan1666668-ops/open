@@ -50,6 +50,7 @@ const nativeDeviceSettingsSnapshotSchema = z.object({
       healthSummaryAvailable: z.boolean().optional(),
       healthSummaryEnabled: z.boolean().optional(),
       computerControlEnabled: z.boolean().optional(),
+      desktopSharingEnabled: z.boolean().optional(),
       computerControlProvider: z.enum(["peekaboo", "cua"]).optional(),
       cuaDriverBundled: z.boolean().optional(),
       peekabooBridgeEnabled: z.boolean().optional(),
@@ -146,6 +147,7 @@ export type SettingKey =
   | "capabilities.keepAwakeEnabled"
   | "capabilities.healthSummaryEnabled"
   | "capabilities.computerControlEnabled"
+  | "capabilities.desktopSharingEnabled"
   | "capabilities.computerControlProvider"
   | "capabilities.peekabooBridgeEnabled"
   | "capabilities.activeComputerPresenceEnabled"

@@ -38,6 +38,7 @@ export function createNativeDeviceSettingsSnapshot(): MacDeviceSettingsSnapshot 
       canvasEnabled: true,
       cameraEnabled: true,
       computerControlEnabled: true,
+      desktopSharingEnabled: true,
       computerControlProvider: "peekaboo",
       cuaDriverBundled: false,
       peekabooBridgeEnabled: true,

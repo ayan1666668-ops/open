@@ -29,9 +29,11 @@ export function registerNodeCli(program: Command) {
   node
     .command("worker", { hidden: true })
     .description("Run the private macOS app node-host worker")
-    .action(async () => {
+    .option("--desktop-sharing", "Enable the app's desktop viewer capability")
+    .option("--no-desktop-sharing", "Disable the app's desktop viewer capability")
+    .action(async (opts: { desktopSharing?: boolean }) => {
       const { runNodeHostWorker } = await import("../../node-host/worker.js");
-      await runNodeHostWorker();
+      await runNodeHostWorker({ desktopSharingEnabled: opts.desktopSharing });
     });
 
   addNodeCommandOptions(node.command("run").description("Run the headless node host (foreground)"))

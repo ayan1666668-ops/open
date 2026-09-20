@@ -180,6 +180,7 @@ describe("native device settings wire contract", () => {
     ["native experience", { app: { nativeExperienceEnabled: "true" } }],
     ["iOS capability", { capabilities: { healthSummaryEnabled: "true" } }],
     ["unattended desktop toggle", { capabilities: { unattendedDesktopEnabled: "true" } }],
+    ["desktop sharing toggle", { capabilities: { desktopSharingEnabled: "true" } }],
     ...[null, {}, { state: "available" }, { state: true }].map(
       (desktopAvailability) => ["desktop availability", { desktopAvailability }] as const,
     ),

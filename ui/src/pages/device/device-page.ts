@@ -549,6 +549,7 @@ class DevicePage extends OpenClawLightDomElement {
                 ${this.toggle("capabilities.keepAwakeEnabled", capabilities.keepAwakeEnabled, "keepAwake", t("configPage.deviceSettings.keepAwakeHint"))}
                 ${capabilities.healthSummaryAvailable ? this.toggle("capabilities.healthSummaryEnabled", capabilities.healthSummaryEnabled, "healthSummary", t("configPage.deviceSettings.healthSummaryHint")) : nothing}
                 ${this.toggle("capabilities.computerControlEnabled", capabilities.computerControlEnabled, "computerControl", t("configPage.deviceSettings.computerControlHint"))}
+                ${this.toggle("capabilities.desktopSharingEnabled", capabilities.desktopSharingEnabled, "desktopSharing", t("configPage.deviceSettings.desktopSharingHint"))}
                 ${this.toggle("capabilities.unattendedDesktopEnabled", capabilities.unattendedDesktopEnabled, "unattendedDesktop", t("configPage.deviceSettings.unattendedDesktopHint"))}
                 ${
                   snapshot.desktopAvailability
