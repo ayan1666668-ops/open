@@ -10,7 +10,7 @@ export type GatewayStartupSignalOwner = {
 };
 
 /** Own SIGINT/SIGTERM across Gateway preflight and hand off to the run loop. */
-export function installGatewayStartupSignalOwner(): GatewayStartupSignalOwner {
+function installGatewayStartupSignalOwner(): GatewayStartupSignalOwner {
   const controller = new AbortController();
   let released = false;
   const onSignal = (signal: NodeJS.Signals, exitCode: number) => {

@@ -20,7 +20,6 @@ import {
   GATEWAY_BOOT_REASON_MAX_UTF16_CODE_UNITS,
   type GatewayBootLifecycleCompletion,
 } from "../../infra/gateway-boot-lifecycle.js";
-import { acquireGatewayLock } from "../../infra/gateway-lock.js";
 import { GATEWAY_SHUTDOWN_TIMEOUT_MS as SHUTDOWN_TIMEOUT_MS } from "../../infra/gateway-shutdown-budget.js";
 import { consumeGatewaySuspendHandoff } from "../../infra/gateway-suspend-coordinator.js";
 import type { GatewayRestartIntent } from "../../infra/restart-intent.js";
@@ -123,7 +122,7 @@ export async function runGatewayLoop(params: {
   // Node's signal listeners and pending promises do not retain the event loop.
   const processLifetime = params.ownsProcessLifecycle ? new MessageChannel() : undefined;
   processLifetime?.port1.ref();
-  let lock: Awaited<ReturnType<typeof acquireGatewayLock>> = null;
+  let lock: Awaited<ReturnType<typeof acquireGatewayStartupLock>> = null;
   let server: Awaited<ReturnType<typeof startGatewayServer>> | null = null;
   let hostLifecycle: ReturnType<typeof createGatewayHostLifecycle> | undefined;
   let startupOperations = createGatewayStartupOperations();
@@ -372,9 +371,8 @@ export async function runGatewayLoop(params: {
         return exitReplacedInstallation(installationReplacement);
       }
       try {
-        lock = await acquireGatewayLock({
+        lock = await acquireGatewayStartupLock({
           port: params.lockPort,
-          listenerMode: supervisorMode ? "supervised" : "foreground",
           supervisor,
         });
       } catch (err) {

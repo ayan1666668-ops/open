@@ -12,11 +12,11 @@ describe("gateway startup signal owner", () => {
     const signalModule = new URL("./startup-signal.ts", import.meta.url).href;
     const leaseModule = new URL("../../plugins/plugin-lifecycle-lease.ts", import.meta.url).href;
     const script = `
-      const { installGatewayStartupSignalOwner } = await import(${JSON.stringify(signalModule)});
+      const { installGatewayCliStartupSignalOwner } = await import(${JSON.stringify(signalModule)});
       const { withPluginLifecycleLease } = await import(${JSON.stringify(leaseModule)});
       const { DatabaseSync } = await import("node:sqlite");
       const statePath = process.env.OPENCLAW_STATE_DIR + "/state/openclaw.sqlite";
-      const owner = installGatewayStartupSignalOwner();
+      const owner = installGatewayCliStartupSignalOwner();
       const operation = withPluginLifecycleLease(
         { env: process.env, signal: owner.signal, leaseMs: 60_000, waitMs: 1_000 },
         async (lease) => {
@@ -45,6 +45,7 @@ describe("gateway startup signal owner", () => {
         leaseActive: Boolean(lease),
       }));
       owner.dispose();
+      owner.completeCleanup();
       process.exitCode = 0;
     `;
     const root = path.resolve(".");
