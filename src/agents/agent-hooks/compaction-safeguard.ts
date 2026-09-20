@@ -1182,6 +1182,7 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
           agentId: semanticAgentId,
           snapshot: activeCuration.snapshot,
           uncuratedMessages: activeCuration.uncuratedMessages,
+          omittedSegmentIds: activeCuration.omittedSegmentIds,
           summary,
           signal: semanticSignal,
           timeoutMs: semanticTimeoutMs,

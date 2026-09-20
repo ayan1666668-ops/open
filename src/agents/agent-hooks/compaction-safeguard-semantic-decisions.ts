@@ -7,6 +7,7 @@ import type {
 } from "./compaction-safeguard-semantic.js";
 
 const MAX_SEGMENTS_PER_DECISION = 64;
+const MAX_FIDELITY_EVIDENCE_CHARS = 24_000;
 const DEFAULT_SEMANTIC_TIMEOUT_MS = 750;
 const MAX_SEMANTIC_TIMEOUT_MS = 5_000;
 
@@ -159,6 +160,7 @@ export async function evaluateCompactionFidelity(params: {
   agentId?: string;
   snapshot: CompactionSemanticSnapshot;
   candidateSummary: string;
+  omittedSegmentIds?: readonly string[];
   signal: AbortSignal;
   timeoutMs?: number;
 }): Promise<CompactionFidelityResult> {
@@ -169,6 +171,29 @@ export async function evaluateCompactionFidelity(params: {
       sourceFingerprint: params.snapshot.sourceFingerprint,
       candidateFingerprint,
       reason: "no-source-backed-obligations",
+    };
+  }
+  const omittedIds = new Set(params.omittedSegmentIds ?? []);
+  const omittedEvidence = params.snapshot.segments
+    .filter((segment) => omittedIds.has(segment.id))
+    .map((segment) => ({ id: segment.id, roles: segment.roles, text: segment.text }));
+  const representedIds = new Set(omittedEvidence.map((segment) => segment.id));
+  const omittedEvidenceChars = omittedEvidence.reduce(
+    (total, segment) => total + segment.text.length,
+    0,
+  );
+  if (
+    representedIds.size !== omittedIds.size ||
+    omittedEvidenceChars > MAX_FIDELITY_EVIDENCE_CHARS
+  ) {
+    return {
+      status: "unavailable",
+      sourceFingerprint: params.snapshot.sourceFingerprint,
+      candidateFingerprint,
+      reason:
+        representedIds.size !== omittedIds.size
+          ? "omitted-evidence-stale"
+          : "omitted-evidence-too-large",
     };
   }
   const questions = Object.fromEntries(
@@ -201,6 +226,7 @@ export async function evaluateCompactionFidelity(params: {
           complete: obligation.complete,
           sourceSegmentId: obligation.sourceSegmentId ?? null,
         })),
+        omittedEvidence,
         retainedContext: params.candidateSummary,
       },
       questions,

@@ -23,6 +23,7 @@ export type ActiveCompactionCuration = {
   messages: AgentMessage[];
   snapshot?: CompactionSemanticSnapshot;
   uncuratedMessages?: AgentMessage[];
+  omittedSegmentIds?: string[];
   applied?: {
     sourceMessages: number;
     selectedMessages: number;
@@ -97,6 +98,7 @@ export async function prepareActiveCompactionCuration(params: {
     messages: projected,
     snapshot,
     uncuratedMessages: params.sourceMessages,
+    omittedSegmentIds: selection.excludedSegmentIds,
     applied: {
       sourceMessages: params.sourceMessages.length,
       selectedMessages: projected.length,
@@ -145,6 +147,7 @@ export async function resolveCuratedCompactionCandidate(params: {
   agentId?: string;
   snapshot?: CompactionSemanticSnapshot;
   uncuratedMessages?: AgentMessage[];
+  omittedSegmentIds?: readonly string[];
   summary: string;
   signal: AbortSignal;
   timeoutMs?: number;
@@ -177,6 +180,7 @@ export async function resolveCuratedCompactionCandidate(params: {
     agentId: params.agentId,
     snapshot: params.snapshot,
     candidateSummary: params.summary,
+    omittedSegmentIds: params.omittedSegmentIds,
     signal: params.signal,
     timeoutMs: params.timeoutMs,
   });

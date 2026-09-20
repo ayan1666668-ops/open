@@ -15,7 +15,7 @@ function message(value: unknown): AgentMessage {
   return value as AgentMessage;
 }
 
-function runtimeWithChoices(choices: Record<string, string>): DecisionRuntimeV1 {
+function runtimeWithChoices(choices: Record<string, string>) {
   return {
     evaluate: vi.fn<DecisionRuntimeV1["evaluate"]>(async (batch, options) => {
       options.signal.throwIfAborted();
@@ -55,7 +55,7 @@ function runtimeWithChoices(choices: Record<string, string>): DecisionRuntimeV1 
         },
       };
     }),
-  };
+  } satisfies DecisionRuntimeV1;
 }
 
 describe("compaction semantic snapshot", () => {
@@ -121,6 +121,64 @@ describe("compaction semantic snapshot", () => {
 });
 
 describe("compaction semantic decisions", () => {
+  it("includes omitted supporting evidence in the fidelity decision", async () => {
+    const latestAsk = "Deploy the current release.";
+    const supportingFact = message({
+      role: "assistant",
+      content: "The current production release is 2026.9.4.",
+    });
+    const snapshot = buildCompactionSemanticSnapshot({
+      messages: [supportingFact, message({ role: "user", content: latestAsk })],
+      latestUserAsk: latestAsk,
+    });
+    const omittedSegmentId = snapshot.segments[0]!.id;
+    const runtime = runtimeWithChoices({ [snapshot.obligations[0]!.id]: "missing" });
+
+    const result = await evaluateCompactionFidelity({
+      runtime,
+      snapshot,
+      candidateSummary: "Deploy the current release.",
+      omittedSegmentIds: [omittedSegmentId],
+      signal: new AbortController().signal,
+    });
+
+    expect(result.status).toBe("ok");
+    const evaluate = vi.mocked(runtime.evaluate);
+    expect(evaluate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        state: expect.objectContaining({
+          omittedEvidence: [
+            expect.objectContaining({
+              id: omittedSegmentId,
+              text: expect.stringContaining("2026.9.4"),
+            }),
+          ],
+        }),
+      }),
+      expect.anything(),
+    );
+  });
+
+  it("fails closed when omitted evidence cannot be represented", async () => {
+    const latestAsk = "Deploy the current release.";
+    const snapshot = buildCompactionSemanticSnapshot({
+      messages: [message({ role: "user", content: latestAsk })],
+      latestUserAsk: latestAsk,
+    });
+    const runtime = runtimeWithChoices({});
+
+    const result = await evaluateCompactionFidelity({
+      runtime,
+      snapshot,
+      candidateSummary: latestAsk,
+      omittedSegmentIds: ["missing-segment"],
+      signal: new AbortController().signal,
+    });
+
+    expect(result).toMatchObject({ status: "unavailable", reason: "omitted-evidence-stale" });
+    expect(runtime.evaluate).not.toHaveBeenCalled();
+  });
+
   it("retains an older user constraint outside the tracked obligations", async () => {
     const olderConstraint = message({ role: "user", content: "Keep all existing behavior." });
     const latestAsk = "Finish the report.";
