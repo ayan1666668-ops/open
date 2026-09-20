@@ -9,6 +9,7 @@ import {
   registerHeadlessToolSearchCatalog,
   resolveToolSearchConfig,
   TOOL_SEARCH_RAW_TOOL_NAME,
+  TOOL_SEARCH_CODE_MODE_TOOL_NAME,
 } from "./tool-search.js";
 import { jsonResult, type AnyAgentTool } from "./tools/common.js";
 
@@ -287,6 +288,68 @@ describe("Tool Search semantic ranking shadow", () => {
     expect(settled).toBe(true);
     expect(runtime.telemetry()).toMatchObject({ semanticRankingShadowCanceled: 1 });
   });
+
+  it.each(["abort", "timeout"] as const)(
+    "joins code-mode shadow provider work after %s",
+    async (reason) => {
+      let started!: () => void;
+      const startedPromise = new Promise<void>((resolve) => {
+        started = resolve;
+      });
+      let release!: () => void;
+      let providerSignal: AbortSignal | undefined;
+      const decisionRuntime: DecisionRuntimeV1 = {
+        evaluate: async (_batch, options) => {
+          providerSignal = options.signal;
+          started();
+          await new Promise<void>((resolve) => {
+            release = resolve;
+          });
+          return { status: "unavailable", reason: "deadline" };
+        },
+      };
+      const harness = makeHarness({ semanticRanking: "shadow", decisionRuntime });
+      const codeConfig = {
+        tools: {
+          toolSearch: {
+            enabled: true,
+            mode: "code" as const,
+            semanticRanking: "shadow" as const,
+            codeTimeoutMs: reason === "timeout" ? 1000 : 5000,
+          },
+        },
+      };
+      const tool = createToolSearchTools({ ...harness.ctx, config: codeConfig }).find(
+        (entry) => entry.name === TOOL_SEARCH_CODE_MODE_TOOL_NAME,
+      )!;
+      let settled = false;
+      const pending = tool.execute(
+        "shadow-code",
+        { code: 'return await openclaw.tools.search("calendar events", {limit: 2});' },
+        harness.abortController.signal,
+      );
+      const observed = pending.then(
+        (value) => {
+          settled = true;
+          return value;
+        },
+        (error: unknown) => {
+          settled = true;
+          return error;
+        },
+      );
+      await startedPromise;
+      if (reason === "abort") {
+        harness.abortController.abort(new Error("caller canceled"));
+      }
+      await vi.waitFor(() => expect(providerSignal?.aborted).toBe(true), { timeout: 5000 });
+      expect(settled).toBe(false);
+      release();
+      const result = await observed;
+      expect(settled).toBe(true);
+      expect(result instanceof Error || (result as { isError?: boolean }).isError).toBe(true);
+    },
+  );
 
   it("recomputes deterministic results when the catalog changes during shadow evaluation", async () => {
     const holder: { catalogRef?: ReturnType<typeof createToolSearchCatalogRef> } = {};
