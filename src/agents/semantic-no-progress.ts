@@ -8,7 +8,7 @@ const MAX_TRAJECTORY_ENTRIES = 8;
 const MAX_TRAJECTORY_VALUE_CHARS = 2_000;
 const MAX_GOAL_CHARS = 4_000;
 
-export type SemanticNoProgressVerdict = "progress" | "stalled" | "regressing" | "uncertain";
+type SemanticNoProgressVerdict = "progress" | "stalled" | "regressing" | "uncertain";
 
 export type SemanticNoProgressLoopEvidence = {
   detector: string;
@@ -17,7 +17,7 @@ export type SemanticNoProgressLoopEvidence = {
   pairedToolName?: string;
 };
 
-export type SemanticNoProgressOutcome = {
+type SemanticNoProgressOutcome = {
   toolName: string;
   toolParams: unknown;
   result?: unknown;
@@ -26,7 +26,7 @@ export type SemanticNoProgressOutcome = {
   evidence?: SemanticNoProgressLoopEvidence;
 };
 
-export type SemanticNoProgressJudgment = {
+type SemanticNoProgressJudgment = {
   verdict: SemanticNoProgressVerdict;
   probability?: number;
   evidence: SemanticNoProgressLoopEvidence;
@@ -35,7 +35,7 @@ export type SemanticNoProgressJudgment = {
   toolCallOrdinal?: number;
 };
 
-export type SemanticNoProgressShadowMetrics = {
+type SemanticNoProgressShadowMetrics = {
   observedOutcomes: number;
   decisionCalls: number;
   unavailableDecisions: number;

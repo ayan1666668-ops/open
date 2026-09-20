@@ -83,6 +83,9 @@ describe("semantic no-progress shadow observer", () => {
       purpose: "semantic-no-progress-shadow",
       rubricVersion: "semantic-no-progress-shadow-v1",
     });
+    if (!batch) {
+      throw new Error("Decision batch missing");
+    }
     expect(batch.state).toMatchObject({
       goal: "Finish the bounded shadow observation",
       trajectoryVersion: 2,
@@ -131,7 +134,7 @@ describe("semantic no-progress shadow observer", () => {
     const runtime: TestDecisionRuntime = {
       evaluate: vi.fn(
         () =>
-          new Promise((resolve) => {
+          new Promise<Awaited<ReturnType<TestDecisionRuntime["evaluate"]>>>((resolve) => {
             resolveDecision = () =>
               resolve({
                 status: "ok",
@@ -185,7 +188,7 @@ describe("semantic no-progress shadow observer", () => {
     const runtime: TestDecisionRuntime = {
       evaluate: vi.fn(
         () =>
-          new Promise((resolve) => {
+          new Promise<Awaited<ReturnType<TestDecisionRuntime["evaluate"]>>>((resolve) => {
             settle = () =>
               resolve({
                 status: "unavailable",
@@ -246,7 +249,7 @@ describe("semantic no-progress shadow observer", () => {
     const runtime: TestDecisionRuntime = {
       evaluate: vi.fn(
         () =>
-          new Promise((resolve) => {
+          new Promise<Awaited<ReturnType<TestDecisionRuntime["evaluate"]>>>((resolve) => {
             resolveDecision = () =>
               resolve({
                 status: "ok",

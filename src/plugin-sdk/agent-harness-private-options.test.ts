@@ -3,6 +3,8 @@ import { describe, expect, expectTypeOf, it, onTestFinished, vi } from "vitest";
 import { createOpenClawCodingTools as createCoreCodingTools } from "../agents/agent-tools.js";
 import type { EmbeddedRunAttemptParams as CoreAttempt } from "../agents/embedded-agent-runner/run/types.js";
 import * as toolSurfaceCore from "../agents/harness/tool-surface-bridge.js";
+import type { SemanticNoProgressObserver } from "../agents/semantic-no-progress.js";
+import { omitSemanticNoProgressObserver } from "../agents/tool-outcome-hooks.js";
 import type {
   AgentHarnessAttemptParams,
   AgentHarnessAttemptParamsV2,
@@ -17,7 +19,7 @@ import {
 import { createOpenClawCodingTools } from "./agent-harness.js";
 import type { createAgentHarnessHostCapabilitiesForTest } from "./plugin-test-runtime.js";
 
-type PrivateControls = "disableToolSearch" | "sessionReadScopeKey";
+type PrivateControls = "disableToolSearch" | "semanticNoProgressObserver" | "sessionReadScopeKey";
 type CodingToolsOptions = NonNullable<Parameters<typeof createOpenClawCodingTools>[0]>;
 type HostToolsOptions = Parameters<
   NonNullable<AgentHarnessAttemptParamsV2["hostCapabilities"]["createToolSurface"]>
@@ -25,7 +27,7 @@ type HostToolsOptions = Parameters<
 type HostTestAttempt = Parameters<typeof createAgentHarnessHostCapabilitiesForTest>[0]["attempt"];
 
 describe("agent harness private options", () => {
-  it("keeps Side chat controls out of every public attempt and tool-surface input", () => {
+  it("keeps run-owned controls out of every public attempt and tool-surface input", () => {
     type PublicInputs = {
       attempt: AgentHarnessAttemptParams;
       attemptV2: AgentHarnessAttemptParamsV2;
@@ -50,6 +52,7 @@ describe("agent harness private options", () => {
     >().not.toHaveProperty("prepared");
     expectTypeOf<Pick<CoreAttempt, PrivateControls>>().toEqualTypeOf<{
       disableToolSearch?: true;
+      semanticNoProgressObserver?: CoreAttempt["semanticNoProgressObserver"];
       sessionReadScopeKey?: string;
     }>();
     expectTypeOf<CodingToolsOptions>().toMatchTypeOf<
@@ -59,6 +62,14 @@ describe("agent harness private options", () => {
 
   it("keeps the public factory on the existing shared implementation", () => {
     expect(createOpenClawCodingTools).toBe(createCoreCodingTools);
+  });
+
+  it("drops a runtime-injected semantic observer from caller tool options", () => {
+    const observer = {} as SemanticNoProgressObserver;
+    const callerOptions = { agentId: "sdk-public", semanticNoProgressObserver: observer };
+    const safeOptions = omitSemanticNoProgressObserver(callerOptions);
+    expect(safeOptions).not.toHaveProperty("semanticNoProgressObserver");
+    expect(callerOptions.semanticNoProgressObserver).toBe(observer);
   });
 
   it("projects the public catalog without leaking private construction controls", () => {

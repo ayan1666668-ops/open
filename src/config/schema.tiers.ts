@@ -158,7 +158,7 @@ tools.github
 tools.fs tools.media.audio tools.media.image tools.media.video tools.message
 tools.exec.reviewer.model.primary tools.media.models.*.model
 tools.media.models.*.request.auth.token tools.profile tools.sessions
-tools.loopDetection.enabled tools.loopDetection.semanticNoProgress tools.swarm tools.swarm.enabled
+tools.loopDetection.enabled tools.swarm tools.swarm.enabled
 tools.swarm.maxConcurrent tools.swarm.maxChildrenPerGroup tools.swarm.maxTotalPerGroup
 tools.swarm.waitTimeoutSecondsMax tools.swarm.defaultAgentId
 tools.web transcripts.enabled
