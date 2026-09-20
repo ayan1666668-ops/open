@@ -15053,6 +15053,7 @@ public struct SessionRow: Codable, Sendable {
     public let estimatedcostusd: Double?
     public let model: String?
     public let modelprovider: String?
+    public let modelselectionsource: AnyCodable?
     public let activemodel: String?
     public let activemodelprovider: String?
     public let modeloverridesource: AnyCodable?
@@ -15145,6 +15146,7 @@ public struct SessionRow: Codable, Sendable {
         estimatedcostusd: Double? = nil,
         model: String? = nil,
         modelprovider: String? = nil,
+        modelselectionsource: AnyCodable? = nil,
         activemodel: String? = nil,
         activemodelprovider: String? = nil,
         modeloverridesource: AnyCodable? = nil,
@@ -15236,6 +15238,7 @@ public struct SessionRow: Codable, Sendable {
         self.estimatedcostusd = estimatedcostusd
         self.model = model
         self.modelprovider = modelprovider
+        self.modelselectionsource = modelselectionsource
         self.activemodel = activemodel
         self.activemodelprovider = activemodelprovider
         self.modeloverridesource = modeloverridesource
@@ -15329,6 +15332,7 @@ public struct SessionRow: Codable, Sendable {
         case estimatedcostusd = "estimatedCostUsd"
         case model
         case modelprovider = "modelProvider"
+        case modelselectionsource = "modelSelectionSource"
         case activemodel = "activeModel"
         case activemodelprovider = "activeModelProvider"
         case modeloverridesource = "modelOverrideSource"
