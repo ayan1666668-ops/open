@@ -548,6 +548,71 @@ describe("finalizeSetupWizard", () => {
     });
   });
 
+  it("honors the Gateway env password fallback for trusted-proxy probes", async () => {
+    const previous = process.env.OPENCLAW_GATEWAY_PASSWORD;
+    process.env.OPENCLAW_GATEWAY_PASSWORD = "env-gateway-password"; // pragma: allowlist secret
+    try {
+      await finalizeSetupWizard(
+        createFinalizeArgs("quickstart", {
+          settings: { authMode: "trusted-proxy" },
+          nextConfig: {
+            gateway: {
+              auth: {
+                mode: "trusted-proxy",
+                trustedProxy: { userHeader: "x-forwarded-user" },
+              },
+            },
+          },
+        }),
+      );
+    } finally {
+      if (previous === undefined) {
+        delete process.env.OPENCLAW_GATEWAY_PASSWORD;
+      } else {
+        process.env.OPENCLAW_GATEWAY_PASSWORD = previous;
+      }
+    }
+
+    const probeParams = requireMockArg(probeGatewayReachable) as {
+      url?: string;
+      password?: string;
+    };
+    expect(probeParams.url).toBe("ws://127.0.0.1:18789");
+    expect(probeParams.password).toBe("env-gateway-password");
+  });
+
+  it("hands trusted-proxy terminal chat the local probe endpoint and password", async () => {
+    probeGatewayReachable.mockResolvedValue({ ok: true });
+    resolveAdvertisedControlUiLinks.mockResolvedValue({
+      httpUrl: "http://192.168.1.5:18789",
+      wsUrl: "ws://192.168.1.5:18789",
+    });
+    resolveSetupSecretInputString.mockResolvedValueOnce("resolved-gateway-password");
+
+    await finalizeSetupWizard(
+      createFinalizeArgs("quickstart", {
+        settings: { authMode: "trusted-proxy" },
+        nextConfig: {
+          gateway: {
+            auth: {
+              mode: "trusted-proxy",
+              trustedProxy: { userHeader: "x-forwarded-user" },
+            },
+          },
+        },
+      }),
+    );
+
+    expect(runTui).toHaveBeenCalledWith(
+      expect.objectContaining({
+        boundGateway: {
+          url: "ws://127.0.0.1:18789",
+          password: "resolved-gateway-password",
+        },
+      }),
+    );
+  });
+
   it("waits for the served dashboard before announcing its URL", async () => {
     probeGatewayReachable.mockResolvedValue({ ok: true });
     const stop = vi.fn();

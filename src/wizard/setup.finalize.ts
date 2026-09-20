@@ -36,6 +36,7 @@ import {
   startGatewayService,
 } from "../daemon/service.js";
 import { isSystemdUserServiceAvailable } from "../daemon/systemd.js";
+import { trimToUndefined } from "../gateway/credentials.js";
 import { isContainerEnvironment } from "../infra/container-environment.js";
 import { formatErrorMessage } from "../infra/errors.js";
 import {
@@ -519,7 +520,11 @@ export async function finalizeSetupWizard(
           value: nextConfig.gateway?.auth?.password,
           path: "gateway.auth.password",
           env: process.env,
-        })) ?? "";
+        })) ??
+        // Mirror the Gateway credential owner's env fallback so an environment-only
+        // local password still authenticates loopback probes; never persisted.
+        trimToUndefined(process.env.OPENCLAW_GATEWAY_PASSWORD) ??
+        "";
     } catch (error) {
       await prompter.note(
         [
@@ -1004,11 +1009,14 @@ export async function finalizeSetupWizard(
             ? {
                 config: nextConfig,
                 boundGateway: {
-                  url: displayLinks.wsUrl,
+                  // Proxy-auth gateways accept the local password only on the direct-local
+                  // route, so hand off the loopback probe endpoint, not the advertised URL.
+                  url:
+                    settings.authMode === "trusted-proxy" ? probeLinks.wsUrl : displayLinks.wsUrl,
                   ...(settings.authMode === "token" && settings.gatewayToken
                     ? { token: settings.gatewayToken }
                     : {}),
-                  ...(settings.authMode === "password" && resolvedGatewayPassword
+                  ...(usesLocalGatewayPassword(settings.authMode) && resolvedGatewayPassword
                     ? { password: resolvedGatewayPassword }
                     : {}),
                 },
