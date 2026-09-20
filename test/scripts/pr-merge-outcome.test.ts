@@ -319,6 +319,7 @@ s.calls.push([route,...args]);save();
 if(args.some(arg=>arg.includes("{owner}")||arg.includes("{repo}"))) fail("protected unresolved repository placeholder");
 const main=()=>git(["--git-dir="+process.env.FIXTURE_REMOTE,"rev-parse","refs/heads/main"]);
 const quota=()=>{
+  if(args[0]==="pr") fail("GraphQL: API rate limit already exceeded for user ID 123.");
   out({data:null,errors:[{type:"RATE_LIMITED",message:"API rate limit exceeded for fixture-operator."}]});
   fail("gh: API rate limit exceeded for fixture-operator. (RATE_LIMITED)");
 };
