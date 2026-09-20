@@ -265,7 +265,9 @@ export class PluginInstance {
           const completion = createDeferredCore();
           closing = completion.promise.finally(release);
           try {
-            completion.resolve(this.invoke(cleanup, this.lease(false), this.disposalFailures));
+            completion.resolve(
+              this.invoke(cleanup, this.lease(false, token.registry), this.disposalFailures),
+            );
           } catch (error) {
             completion.reject(error);
           }
@@ -531,8 +533,8 @@ export class PluginInstance {
     }
     if (!this.disposal) {
       this.quiesce();
-      const work = new AsyncWorkScope();
       const terminalFailures = (this.disposalFailures = new Set<unknown>());
+      const work = new AsyncWorkScope(terminalFailures);
       // Shared state owners still join real cleanup, independently of code-file custody.
       const cleanup = trackAsyncWork(() =>
         this.runDisposalCleanup(work, terminalFailures, beforeCleanup),

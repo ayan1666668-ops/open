@@ -10,6 +10,7 @@ import {
   ContextEngineFactoryResources,
   disposeContextEngineSources,
 } from "../context-engine/registry.resources.js";
+import { trackAsyncWork } from "../shared/async-work-scope.js";
 import { createDeferredCore } from "../shared/deferred.js";
 import {
   PluginHostCleanupTimeoutError,
@@ -259,19 +260,24 @@ it.each(["plugin callback", "host prelude"] as const)(
   },
 );
 
-it.each(["plugin callback", "host hook"] as const)(
+it.each(["plugin callback", "host hook", "abort descendant"] as const)(
   "records the terminal failure of a timed-out %s before handing off resources",
   async (kind) => {
     const { value, instance } = fixture("runtime");
     const gate = createDeferredCore();
     const failure = new Error("late cleanup failed");
-    const cleanup = instance.wrap(async () => {
+    const failCleanup = async () => {
       await gate.promise;
       expect(fs.existsSync(value.filename)).toBe(true);
       throw failure;
-    });
+    };
+    const cleanup = instance.wrap(failCleanup);
     if (kind === "plugin callback") {
       instance.lifecycle.onDispose(cleanup);
+    } else if (kind === "abort descendant") {
+      instance.lifecycle.signal.addEventListener("abort", () => {
+        void trackAsyncWork(failCleanup).catch(() => {});
+      });
     }
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const retirement = instance.dispose(

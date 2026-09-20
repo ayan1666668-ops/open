@@ -1,6 +1,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { extractErrorCode } from "@openclaw/normalization-core/error-coercion";
+import { AsyncWorkScope, trackAsyncWork } from "../shared/async-work-scope.js";
 import { createDeferredCore } from "../shared/deferred.js";
 import { resolveGlobalSingleton } from "../shared/global-singleton.js";
 import type { PluginHostCleanupResult } from "./host-hook-cleanup.types.js";
@@ -74,6 +75,7 @@ const cacheRetainers = resolveGlobalSingleton(
         controller: AbortController;
         settled: ReturnType<typeof createDeferredCore<void>>;
         retirement?: Promise<PluginHostCleanupResult>;
+        beginRetirement?: (track?: typeof trackAsyncWork) => void;
       }
     >(),
 );
@@ -110,6 +112,7 @@ export function retainPluginCache(cache: PluginCache): () => void {
   return () => {
     if (retained.references.delete(reference) && retained.references.size === 0) {
       retained.settled.resolve();
+      retained.beginRetirement?.();
     }
   };
 }
@@ -361,14 +364,32 @@ export function retirePluginCache(
   }
   const completion = createDeferredCore<PluginHostCleanupResult>();
   retained.retirement = completion.promise;
+  retained.beginRetirement = (track = trackAsyncWork) => {
+    retained.beginRetirement = undefined;
+    // The final borrower owns cleanup; the original requesting scope may already be closed.
+    void track(() => beginPluginCacheRetirement(cache, beforeRetire)).then(
+      completion.resolve,
+      completion.reject,
+    );
+  };
   // Abort listeners may reenter retirement or release the final generation immediately.
   retained.controller.abort();
   materializePluginCacheError(retained.controller.signal.reason);
-  const begin = () => beginPluginCacheRetirement(cache, beforeRetire);
-  void (retained.references.size ? retained.settled.promise.then(begin) : begin()).then(
-    completion.resolve,
-    completion.reject,
-  );
+  if (retained.references.size === 0) {
+    retained.beginRetirement?.();
+  } else {
+    // Released borrowers only resolve this promise; their requesting scope may have closed.
+    void retained.settled.promise.then(() => {
+      retained.beginRetirement?.(async (run) => {
+        const work = new AsyncWorkScope();
+        try {
+          return await work.track(run);
+        } finally {
+          await work.run(() => work.drain());
+        }
+      });
+    });
+  }
   return completion.promise;
 }
 

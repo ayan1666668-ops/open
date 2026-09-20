@@ -1,7 +1,9 @@
 /** Covers plugin runtime registration API behavior and registry mutation guards. */
+import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
+import { setImmediate as nextTurn } from "node:timers/promises";
 import { beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
-import { trackAsyncWork } from "../shared/async-work-scope.js";
+import { AsyncWorkScope, trackAsyncWork } from "../shared/async-work-scope.js";
 import { createDeferredCore } from "../shared/deferred.js";
 import { resolveGlobalSingleton } from "../shared/global-singleton.js";
 import { getPluginRunContext, setPluginRunContext } from "./host-hook-runtime.js";
@@ -13,9 +15,11 @@ import {
   isPluginRegistryRetired,
 } from "./registry-lifecycle.js";
 import type { PluginHttpRouteRegistration } from "./registry-types.js";
+import { getPluginRegistryState } from "./runtime-state.js";
 import {
   captureActivePluginRegistrySnapshot,
   clearActivePluginRegistry,
+  disposePluginRegistryInstances,
   getActivePluginRegistry,
   listImportedRuntimePluginIds,
   recordImportedPluginId,
@@ -208,6 +212,52 @@ describe("setActivePluginRegistry", () => {
     expect(listImportedRuntimePluginIds()).toEqual(["broken-plugin"]);
   });
 
+  it("registers retirement before its caller drains across asynchronous initialization", async () => {
+    const owner = new AsyncWorkScope();
+    const registry = createEmptyPluginRegistry();
+    const record = createPluginRecord({ id: "closing-scope", status: "loaded" });
+    registry.plugins.push(record);
+    const instance = new PluginInstance(record.id, { record, registry });
+    const initialize = createDeferredCore();
+    const cleanupStarted = createDeferredCore();
+    const finishCleanup = createDeferredCore();
+    const cleaned = vi.fn();
+    instance.lifecycle.onDispose(async () => {
+      cleanupStarted.resolve();
+      await finishCleanup.promise;
+      cleaned();
+    });
+    let retirement: ReturnType<typeof disposePluginRegistryInstances> | undefined;
+    const request = owner.track(() => {
+      retirement = disposePluginRegistryInstances(registry, undefined, {
+        beforeDispose: () => initialize.promise,
+      });
+      void retirement.catch(() => {});
+    });
+    let closed = false;
+    const drain = owner.drain().then(() => {
+      closed = true;
+    });
+    try {
+      await request;
+      await nextTurn();
+      expect(closed).toBe(false);
+      initialize.resolve();
+      await cleanupStarted.promise;
+      await nextTurn();
+      expect(closed).toBe(false);
+      finishCleanup.resolve();
+      await expect(retirement).resolves.toMatchObject({ failures: [] });
+      await drain;
+      expect(cleaned).toHaveBeenCalledOnce();
+      expect(closed).toBe(true);
+    } finally {
+      initialize.resolve();
+      finishCleanup.resolve();
+      await Promise.allSettled([retirement, drain]);
+    }
+  });
+
   it("clears the root only after its host cleanup completes", async () => {
     let cleanupCount = 0;
     const registry = createEmptyPluginRegistry();
@@ -234,6 +284,45 @@ describe("setActivePluginRegistry", () => {
 
     expect(getActivePluginRegistry()).toBeNull();
     expect(cleanupCount).toBe(1);
+  });
+
+  it("joins a displaced cleanup scope created before package replacement", async () => {
+    const registry = createEmptyPluginRegistry();
+    const entered = createDeferredCore();
+    const finish = createDeferredCore();
+    registry.runtimeLifecycles.push({
+      pluginId: "released-scope",
+      source: "/virtual/released-scope/index.ts",
+      lifecycle: {
+        id: "held-cleanup",
+        cleanup: async () => {
+          entered.resolve();
+          await finish.promise;
+        },
+      },
+    });
+    setActivePluginRegistry(registry);
+    setActivePluginRegistry(createEmptyPluginRegistry());
+    await entered.promise;
+    const pending = [...(getPluginRegistryState()?.retiredRegistryCleanups ?? [])].find(
+      ([, cleanup]) => cleanup.registry === registry,
+    );
+    assert(pending);
+    const [settled, { work }] = pending;
+    // The retained v2026.9.5 scope has no newer prototype method.
+    Object.defineProperty(work, "isActiveHere", { value: undefined });
+    const closing = clearActivePluginRegistry();
+    void closing.catch(() => {});
+    try {
+      finish.resolve();
+      await expect(closing).resolves.toBeUndefined();
+      expect(getActivePluginRegistry()).toBeNull();
+    } finally {
+      finish.resolve();
+      await settled;
+      await closing.catch(() => {});
+      await clearActivePluginRegistry();
+    }
   });
 
   it.each(["host", "module", "module abort descendant"] as const)(
