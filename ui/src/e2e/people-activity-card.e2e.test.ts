@@ -212,9 +212,8 @@ suite.define(() => {
               await person.focus();
               const card = page.getByRole("dialog", { name: "Activity for Alice" });
               await card.waitFor({ state: "visible" });
-              await page.keyboard.press("Escape");
-              await expect.poll(() => card.count()).toBe(0);
               await page.keyboard.press("Shift+Tab");
+              await expect.poll(() => card.count()).toBe(0);
             }
             await person.tap();
           } else {
