@@ -38,17 +38,21 @@ Built-in acpx harness aliases (from the pinned `acpx` dependency):
 | `droid`      | [Factory Droid](https://www.factory.ai)                                                                |
 | `fast-agent` | [fast-agent](https://fast-agent.ai)                                                                    |
 | `gemini`     | [Gemini CLI](https://github.com/google-gemini/gemini-cli)                                              |
+| `grok-build` | Grok Build (`grok agent stdio`)                                                                        |
 | `iflow`      | [iFlow CLI](https://github.com/iflow-ai/iflow-cli)                                                     |
 | `kilocode`   | [Kilocode](https://kilocode.ai)                                                                        |
 | `kimi`       | [Kimi CLI](https://github.com/MoonshotAI/kimi-cli)                                                     |
 | `kiro`       | [Kiro CLI](https://kiro.dev)                                                                           |
+| `mcode`      | MiniMax Code (`mcode acp`; install and authenticate its CLI on the Gateway host)                       |
 | `mux`        | [Mux](https://mux.coder.com)                                                                           |
 | `opencode`   | [OpenCode](https://opencode.ai)                                                                        |
 | `openclaw`   | OpenClaw ACP bridge (native `openclaw acp`)                                                            |
 | `pi`         | [Pi Coding Agent](https://github.com/earendil-works/pi)                                                |
+| `pool`       | Pool (`pool acp`)                                                                                      |
 | `qoder`      | [Qoder CLI](https://docs.qoder.com/cli/acp)                                                            |
 | `qwen`       | [Qwen Code](https://github.com/QwenLM/qwen-code)                                                       |
 | `trae`       | [Trae CLI](https://docs.trae.cn/cli)                                                                   |
+| `zeroclaw`   | ZeroClaw (`zeroclaw acp`)                                                                              |
 
 `factory-droid` and `factorydroid` also resolve to the built-in `droid` adapter.
 
@@ -61,6 +65,31 @@ Model control is adapter-capability dependent. Codex ACP model refs are
 normalized by OpenClaw before startup. Other harnesses need ACP `models` plus
 `session/set_model` support; if a harness exposes neither that ACP capability
 nor its own startup model flag, OpenClaw/acpx cannot force a model selection.
+
+<a id="tool-profiles-for-native-chat-runtimes" />
+
+## Permissions for native chat runtimes
+
+When a native runtime cannot enforce the chat's optional OpenClaw tool, sandbox,
+or workspace restrictions, the Control UI offers **Continue for this chat** to
+an administrator. The same confirmation applies when selecting the runtime or
+sending a message with an existing selection.
+
+Confirming selects **Full access**, turns off optional sandboxing for that chat,
+and records consent for the exact native runtime. The native agent then uses its
+own permissions on the Gateway host. OpenClaw does not claim to enforce its
+optional tool restrictions inside that agent. Other chats and global settings
+stay unchanged, and tools hosted by OpenClaw retain their existing policy.
+
+Declining changes nothing. After a refused send, confirmation saves the permissions
+and retries that message once, including a chat's first message.
+Selection-only confirmation does not send the draft. Consent is not inherited by
+another chat and is cleared when the session resets or the selected runtime changes.
+Older hosts that do not recognize consent retain their previous restriction checks.
+
+Required sandboxes, required workspace boundaries, and incompatible remote
+execution placement cannot be waived by this confirmation. A restricted user
+must ask an administrator or choose a compatible runtime.
 
 ## Required config
 
@@ -291,9 +320,12 @@ openclaw config set plugins.entries.acpx.config.timeoutSeconds 180
 ```
 
 Runtime turns use OpenClaw agent/run timeouts, including `/acp timeout`.
+An interactive turn can continue beyond the plugin operation limit until its
+turn budget expires, the harness finishes, or you cancel it.
 `sessions_spawn` does not accept per-call timeout overrides; the operator path
-is `agents.defaults.subagents.runTimeoutSeconds`. Restart the gateway after
-changing `timeoutSeconds`.
+is `agents.defaults.subagents.runTimeoutSeconds`. With the default hybrid reload
+mode, changing `timeoutSeconds` automatically reloads the plugin. See
+[Config hot reload](/gateway/configuration/hot-reload).
 
 ### Health probe agent configuration
 
@@ -306,7 +338,8 @@ needs a different ACP agent for health checks, set the probe agent explicitly:
 openclaw config set plugins.entries.acpx.config.probeAgent claude
 ```
 
-Restart the gateway after changing this value.
+With the default hybrid reload mode, this change automatically reloads the plugin.
+Run `/acp doctor` to check the updated backend.
 
 ## Permission configuration
 
@@ -349,7 +382,8 @@ openclaw config set plugins.entries.acpx.config.permissionMode approve-all
 openclaw config set plugins.entries.acpx.config.nonInteractivePermissions fail
 ```
 
-Restart the gateway after changing these values.
+With the default hybrid reload mode, these changes automatically reload the plugin.
+See [Config hot reload](/gateway/configuration/hot-reload) for other reload modes.
 
 <Warning>
 OpenClaw defaults to `permissionMode=approve-reads` and `nonInteractivePermissions=fail`. In non-interactive ACP sessions, any write or exec that triggers a permission prompt can fail with `PermissionPromptUnavailableError: Permission prompt unavailable in non-interactive mode`.

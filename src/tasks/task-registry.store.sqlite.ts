@@ -4,7 +4,10 @@ import {
   executionOwnerBindingFromAdmission,
   type ExecutionOwnerBindingResult,
 } from "../audit/execution-owner-binding.js";
+import { readSqliteBusyTimeout } from "../infra/sqlite-busy-timeout.js";
+import { repairLegacyTaskIdentifiers } from "../state/openclaw-state-db-legacy-backfills.js";
 import { withExistingOpenClawStateDatabaseReadOnly } from "../state/openclaw-state-db-readonly.js";
+import { withSharedStateWriteCoordinator } from "../state/openclaw-state-db-write-coordination.js";
 import {
   closeOpenClawStateDatabase,
   openOpenClawStateDatabase,
@@ -15,16 +18,19 @@ import {
 import {
   bindTaskRunExecutionInDatabase,
   deleteTaskRowsWithDeliveryState,
-  listTaskRecordsByOwnerKeyInDatabase,
   listTaskRecordsByRuntimeSourceIdInDatabase,
   readTaskRegistrySnapshot,
+  readTaskRegistryMutationSnapshotInDatabase,
   readTaskRegistrySnapshotIfReady,
   upsertTaskDeliveryStateInDatabase,
   upsertTaskWithDeliveryStateInDatabase,
   type TaskRegistryDatabase,
   type TaskRegistryReadOnlyLoadResult,
 } from "./task-registry.store.kernel.js";
-import type { TaskRegistryStoreSnapshot } from "./task-registry.store.types.js";
+import type {
+  TaskRegistryMutationScope,
+  TaskRegistryStoreSnapshot,
+} from "./task-registry.store.types.js";
 import type { TaskDeliveryState, TaskRecord, TaskRuntime } from "./task-registry.types.js";
 
 let cachedDatabase: TaskRegistryDatabase | null = null;
@@ -55,6 +61,31 @@ export function loadTaskRegistryStateFromSqlite(): TaskRegistryStoreSnapshot {
   return readTaskRegistrySnapshot(openTaskRegistryDatabase());
 }
 
+export function repairLegacyTaskIdentifiersInSqlite(): void {
+  withWriteTransaction(({ db }) => repairLegacyTaskIdentifiers(db));
+}
+
+export function withTaskRegistrySqliteMutation<T>(operation: () => T): T {
+  const database = openTaskRegistryDatabase();
+  return withSharedStateWriteCoordinator(
+    { databasePath: database.path, existing: database.db, operationLabel: "task.mutation" },
+    operation,
+  );
+}
+
+/** A native compatibility caller joins already-granted worker writes before selecting rows. */
+export function settleTaskRegistrySqliteWrites(join: (deadlineMs: number) => void): void {
+  const deadlineMs = performance.now() + readSqliteBusyTimeout(openTaskRegistryDatabase().db);
+  runOpenClawStateWriteTransaction(() => {}, undefined, { operationLabel: "task.event.settle" });
+  join(deadlineMs);
+}
+
+export function loadTaskRegistryMutationStateFromSqlite(
+  scopes: readonly TaskRegistryMutationScope[],
+): TaskRegistryStoreSnapshot {
+  return readTaskRegistryMutationSnapshotInDatabase(openTaskRegistryDatabase().db, scopes);
+}
+
 /** Loads task records without creating or migrating shared state. */
 export function loadTaskRegistryStateFromSqliteReadOnly(): TaskRegistryStoreSnapshot {
   return loadTaskRegistryStateFromSqliteReadOnlyResult().snapshot;
@@ -68,17 +99,6 @@ export function loadTaskRegistryStateFromSqliteReadOnlyResult(): TaskRegistryRea
       snapshot: { tasks: new Map(), deliveryStates: new Map() },
     }
   );
-}
-
-export async function listTaskRegistryRecordsByOwnerKeyFromSqlite(
-  ownerKey: string,
-): Promise<TaskRecord[]> {
-  const key = ownerKey.trim();
-  if (!key) {
-    return [];
-  }
-  const { db } = openTaskRegistryDatabase();
-  return listTaskRecordsByOwnerKeyInDatabase(db, key);
 }
 
 /** Reads task rows for one runtime/source without restoring the process registry snapshot. */

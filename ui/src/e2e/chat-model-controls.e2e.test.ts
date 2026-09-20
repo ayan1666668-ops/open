@@ -2,6 +2,7 @@ import { writeFile } from "node:fs/promises";
 import { expect, it } from "vitest";
 import { createControlUiE2eArtifactDir } from "../test-helpers/control-ui-e2e-artifacts.ts";
 import { installMockGateway } from "../test-helpers/control-ui-e2e.ts";
+import { revealChatModelOption, selectChatModelOption } from "../test-helpers/select-picker-e2e.ts";
 import { createControlUiE2eSuite } from "./control-ui-e2e-suite.test-support.ts";
 
 const suite = createControlUiE2eSuite({ name: "Control UI model and effort controls" });
@@ -343,9 +344,10 @@ suite.define(() => {
         if (input === "keyboard") {
           await page.keyboard.press("Enter");
         } else {
-          const bounds = await pendingMoreTarget!.boundingBox();
-          expect(bounds).not.toBeNull();
-          await page.mouse.click(bounds!.x + bounds!.width / 2, bounds!.y + bounds!.height / 2);
+          await pendingMoreTarget!.hover();
+          expect(await pendingMoreTarget!.evaluate((row) => row.matches(":hover"))).toBe(true);
+          await page.mouse.down();
+          await page.mouse.up();
         }
         expect(await gateway.getRequests("users.listModelAccounts")).toHaveLength(
           inventoryRequests.length + 1,
@@ -387,9 +389,10 @@ suite.define(() => {
         if (input === "keyboard") {
           await page.keyboard.press("Enter");
         } else {
-          const bounds = await pendingMoreTarget!.boundingBox();
-          expect(bounds).not.toBeNull();
-          await page.mouse.click(bounds!.x + bounds!.width / 2, bounds!.y + bounds!.height / 2);
+          await pendingMoreTarget!.hover();
+          expect(await pendingMoreTarget!.evaluate((row) => row.matches(":hover"))).toBe(true);
+          await page.mouse.down();
+          await page.mouse.up();
         }
         expect(await gateway.getRequests("users.listModelAccounts")).toHaveLength(
           pageRequests.length + 1,
@@ -587,6 +590,9 @@ suite.define(() => {
           expect(
             await menu.locator("[data-chat-thinking-slider], [data-chat-speed-toggle]").count(),
           ).toBe(0);
+          await revealChatModelOption(
+            menu.locator('[data-chat-model-option="openai/gpt-5.6-luna"]'),
+          );
           await expect
             .poll(() => menu.getByRole("option", { name: new RegExp(longName) }).count())
             .toBe(1);
@@ -727,7 +733,7 @@ suite.define(() => {
             .poll(() => composer.locator("[data-chat-speed-toggle]").getAttribute("aria-checked"))
             .toBe("false");
           await model.click();
-          await composer.locator('[data-chat-model-option="example/basic"]').click();
+          await selectChatModelOption(composer.locator('[data-chat-model-option="example/basic"]'));
           await expect.poll(() => effort.count()).toBe(0);
         }
       });
@@ -856,6 +862,10 @@ suite.define(() => {
         await expect.poll(() => picker.locator("[data-chat-model-option]").count()).toBe(2);
         await expect.poll(() => trigger.getAttribute("aria-disabled")).toBe("false");
         await trigger.click();
+        await revealChatModelOption(picker.locator('[data-chat-model-option="openai/gpt-5.5"]'));
+        await revealChatModelOption(
+          picker.locator('[data-chat-model-option="anthropic/claude-sonnet-4-6"]'),
+        );
         const search = picker.locator("[data-chat-model-search]");
         await search.fill("anthropic");
         await expect.poll(() => picker.locator("[data-chat-model-option]:visible").count()).toBe(1);

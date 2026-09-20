@@ -86,6 +86,30 @@ describe("setActivePluginRegistry", () => {
     expect(getActivePluginRegistry()?.httpRoutes).toHaveLength(1);
   });
 
+  it.each(["empty", "loaded"] as const)(
+    "keeps a reactivated %s registry live after displaced cleanup",
+    async (kind) => {
+      const { withPluginCommandExecution } = await import("./command-execution-lock.js");
+      const original = createEmptyPluginRegistry();
+      if (kind === "loaded") {
+        original.plugins.push(createPluginRecord({ id: "reactivated", status: "loaded" }));
+      }
+      const temporary = createEmptyPluginRegistry();
+      onTestFinished(() => clearActivePluginRegistry());
+      setActivePluginRegistry(original);
+      setActivePluginRegistry(temporary);
+      setActivePluginRegistry(original);
+
+      await clearActivePluginRegistry(temporary);
+
+      expect(getActivePluginRegistry()).toBe(original);
+      expect(await withPluginCommandExecution(original, () => "current")).toEqual({
+        admitted: true,
+        value: "current",
+      });
+    },
+  );
+
   it("does not treat bundle-only loaded entries as imported runtime plugins", () => {
     const registry = createEmptyPluginRegistry();
     registry.plugins.push(
@@ -454,10 +478,8 @@ describe("setActivePluginRegistry", () => {
     };
     const plugin = writePlugin({
       id: "loaded-retirement",
-      body: `module.exports = { id: "loaded-retirement", register(api) {
-        const read = globalThis[Symbol.for("openclaw.test.loadedRetirementCleanup")].read;
-        api.lifecycle.registerRuntimeLifecycle({ id: "native-cleanup", cleanup: read });
-      } };`,
+      registration: `const read = globalThis[Symbol.for("openclaw.test.loadedRetirementCleanup")].read;
+      api.lifecycle.registerRuntimeLifecycle({ id: "native-cleanup", cleanup: read });`,
     });
     const options = {
       config: {

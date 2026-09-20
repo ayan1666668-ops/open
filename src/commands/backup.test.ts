@@ -19,12 +19,15 @@ import {
   createMockTarStream,
   mockStateOnlyBackupPlan,
   resetBackupTempHome,
-  tarCreateMock,
+  backupWalkMock,
 } from "./backup.test-support.js";
 import { createTestRuntime } from "./test-runtime-config-helpers.js";
 
 const { backupCreateCommand } = await import("./backup.js");
 const actualTar = await vi.importActual<typeof import("tar")>("tar");
+const { walkBackupTar } = await vi.importActual<typeof import("../infra/backup-tar-walk.js")>(
+  "../infra/backup-tar-walk.js",
+);
 
 type CapturedBackupManifest = {
   schemaVersion: 1;
@@ -65,8 +68,8 @@ describe("backup commands", () => {
 
   beforeEach(async () => {
     await resetBackupTempHome(tempHome);
-    tarCreateMock.mockReset();
-    tarCreateMock.mockImplementation(() => createMockTarStream());
+    backupWalkMock.mockReset();
+    backupWalkMock.mockImplementation(() => createMockTarStream());
     backupVerifyCommandMock.mockReset();
     backupVerifyCommandMock.mockResolvedValue({
       ok: true,
@@ -225,7 +228,7 @@ describe("backup commands", () => {
       const runtime = createTestRuntime();
 
       const nowMs = Date.UTC(2026, 2, 9, 0, 0, 0);
-      tarCreateMock.mockImplementationOnce(actualTar.c);
+      backupWalkMock.mockImplementationOnce(walkBackupTar);
       const result = await backupCreateCommand(runtime, {
         output: backupDir,
         includeWorkspace: true,
@@ -306,7 +309,7 @@ describe("backup commands", () => {
       const sessions = path.join(stateDir, "sessions");
       await fs.mkdir(sessions);
       await fs.writeFile(path.join(sessions, "s.jsonl"), "volatile\n");
-      tarCreateMock.mockImplementationOnce(actualTar.c);
+      backupWalkMock.mockImplementationOnce(walkBackupTar);
 
       const result = await backupCreateCommand(runtime, {
         output: backupDir,
@@ -353,7 +356,7 @@ describe("backup commands", () => {
     const outputPath = path.join(tempHome.home, "backups", "daily", "backup.tar.gz");
     await mockStateOnlyBackupPlan(stateDir);
 
-    tarCreateMock.mockImplementationOnce(actualTar.c);
+    backupWalkMock.mockImplementationOnce(walkBackupTar);
     const result = await backupCreateCommand(createTestRuntime(), { output: outputPath });
 
     expect(result.archivePath).toBe(outputPath);
@@ -535,16 +538,12 @@ describe("backup commands", () => {
             });
       await withInvalidWorkspaceBackupConfig(raw, async (runtime) => {
         await expect(backupCreateCommand(runtime, { dryRun: true })).rejects.toThrow(
-          /--no-include-workspace/i,
+          /ownership could not be resolved/i,
         );
 
-        const result = await backupCreateCommand(runtime, {
-          dryRun: true,
-          includeWorkspace: false,
-        });
-
-        expect(result.includeWorkspace).toBe(false);
-        expect(result.assets.map((asset) => asset.kind)).not.toContain("workspace");
+        await expect(
+          backupCreateCommand(runtime, { dryRun: true, includeWorkspace: false }),
+        ).rejects.toThrow(/ownership could not be resolved/i);
 
         const configOnly = await backupCreateCommand(runtime, {
           dryRun: true,

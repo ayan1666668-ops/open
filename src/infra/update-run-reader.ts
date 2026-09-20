@@ -1,5 +1,8 @@
 import type { DatabaseSync } from "node:sqlite";
-import type { OpenClawStateDatabaseOptions } from "../state/openclaw-state-db-contract.js";
+import type {
+  OpenClawStateDatabaseOptions,
+  OpenClawStateSchemaReadAdmission,
+} from "../state/openclaw-state-db-contract.js";
 import {
   withExistingOpenClawStateDatabaseArtifactPreservingReadOnly,
   withExistingOpenClawStateDatabaseArtifactPreservingReadOnlyAsync,
@@ -14,7 +17,11 @@ import {
 } from "./kysely-sync.js";
 import { inspectUpdateRunAbandonment } from "./update-run-activity.js";
 import { decodeRun } from "./update-run-codec.js";
-import type { UpdateFetchFailure, UpdateRunRecord } from "./update-run-record.js";
+import {
+  isAcknowledgedAbandonedUpdateRun,
+  type UpdateFetchFailure,
+  type UpdateRunRecord,
+} from "./update-run-record.js";
 import { hasStoredUpdateRecovery } from "./update-run-recovery-store.js";
 import { ABANDONED_UPDATE_RUN_MS } from "./update-run-timeouts.js";
 
@@ -27,6 +34,64 @@ export function readUpdateRunRecord(db: DatabaseSync, runId: string): UpdateRunR
   return row ? decodeRun(row) : undefined;
 }
 
+export function getUpdateRun(
+  runId: string,
+  options: OpenClawStateDatabaseOptions = {},
+): UpdateRunRecord | undefined {
+  return withExistingOpenClawStateDatabaseArtifactPreservingReadOnly(
+    ({ db }) => (tableExists(db, "update_runs") ? readUpdateRunRecord(db, runId) : undefined),
+    options,
+  );
+}
+
+export function findActiveUpdateRun(
+  options: OpenClawStateDatabaseOptions = {},
+): UpdateRunRecord | undefined {
+  return withExistingOpenClawStateDatabaseArtifactPreservingReadOnly(
+    ({ db }) => readActiveUpdateRun(db),
+    options,
+  );
+}
+
+/** Previews and acknowledged abandonment cannot replace failure or completion evidence. */
+export function readUpdateRunResolutionHistory(options: OpenClawStateDatabaseOptions = {}): {
+  failure?: UpdateRunRecord;
+  outcome?: UpdateRunRecord;
+} {
+  return (
+    withExistingOpenClawStateDatabaseArtifactPreservingReadOnly(({ db }) => {
+      if (!tableExists(db, "update_runs")) {
+        return {};
+      }
+      const latest = (failedOnly: boolean) => {
+        const query = getNodeSqliteKysely<Pick<DB, "update_runs">>(db)
+          .selectFrom("update_runs")
+          .selectAll()
+          .where("status", failedOnly ? "=" : "!=", failedOnly ? "failed" : "skipped")
+          .orderBy("created_at_ms", "desc")
+          .orderBy("run_id", "desc");
+        for (const row of iterateSqliteQuerySync(db, query)) {
+          const run = decodeRun(row);
+          if (!isAcknowledgedAbandonedUpdateRun(run)) {
+            return run;
+          }
+        }
+        return undefined;
+      };
+      return { failure: latest(true), outcome: latest(false) };
+    }, options) ?? {}
+  );
+}
+
+/** Read activity on the caller's connection so maintenance can fence its mutation. */
+export function readActiveUpdateRun(db: DatabaseSync): UpdateRunRecord | undefined {
+  return readRuns(db, { limit: 1, active: true })[0];
+}
+
+export function readLatestUpdateRun(db: DatabaseSync): UpdateRunRecord | undefined {
+  return readRuns(db, { limit: 1 })[0];
+}
+
 export async function getUpdateRunAsync(
   runId: string,
   options: OpenClawStateDatabaseOptions = {},
@@ -37,7 +102,7 @@ export async function getUpdateRunAsync(
   );
 }
 
-type ListInput = { limit?: number; active?: boolean; reason?: string };
+type ListInput = { limit?: number; active?: boolean; reason?: string; includeRunId?: string };
 
 function readRuns(db: DatabaseSync, input: ListInput): UpdateRunRecord[] {
   if (!tableExists(db, "update_runs")) {
@@ -52,23 +117,33 @@ function readRuns(db: DatabaseSync, input: ListInput): UpdateRunRecord[] {
   if (input.reason) {
     query = query.where("reason", "=", input.reason);
   }
-  return executeSqliteQuerySync(
+  const runs = executeSqliteQuerySync(
     db,
     query
       .orderBy("created_at_ms", "desc")
       .orderBy("run_id", "desc")
       .limit(Math.max(1, Math.min(100, Math.trunc(input.limit ?? 20)))),
   ).rows.map(decodeRun);
+  // Restoration must retain its captured owner even after that row becomes terminal.
+  if (input.includeRunId && !runs.some((run) => run.runId === input.includeRunId)) {
+    const captured = readUpdateRunRecord(db, input.includeRunId);
+    if (captured) {
+      runs.push(captured);
+    }
+  }
+  return runs;
 }
 
 export function listUpdateRuns(
   input: ListInput = {},
   options: OpenClawStateDatabaseOptions = {},
+  openStateSchemaReadAdmission?: OpenClawStateSchemaReadAdmission,
 ): UpdateRunRecord[] {
   return (
     withExistingOpenClawStateDatabaseArtifactPreservingReadOnly(
       ({ db }) => readRuns(db, input),
       options,
+      openStateSchemaReadAdmission,
     ) ?? []
   );
 }

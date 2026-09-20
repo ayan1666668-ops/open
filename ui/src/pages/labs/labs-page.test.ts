@@ -1,6 +1,7 @@
 /* @vitest-environment jsdom */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createDeferred as deferred } from "../../../../test/helpers/promise.js";
 import type { GatewayBrowserClient } from "../../api/gateway.ts";
 import type { ApplicationContext, ApplicationGatewaySnapshot } from "../../app/context.ts";
 import { i18n } from "../../i18n/index.ts";
@@ -22,14 +23,6 @@ type RuntimeConfigState = {
   } | null;
   lastError: string | null;
 };
-
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((nextResolve) => {
-    resolve = nextResolve;
-  });
-  return { promise, resolve };
-}
 
 function createGateway() {
   const client = {} as GatewayBrowserClient;
@@ -192,6 +185,16 @@ describe("LabsPage", () => {
       expectedPatch: { gateway: { controlUi: { experimental: { customPlugins: null } } } },
       note: "labs: update customPluginUi",
     },
+    {
+      label: "Host Desktop",
+      sourceConfig: {
+        desktop: {
+          host: { enabled: true, managed: false, port: 5908, passwordFile: "/tmp/vnc-password" },
+        },
+      },
+      expectedPatch: { desktop: { host: { enabled: false } } },
+      note: "labs: update hostDesktop",
+    },
   ])(
     "restores the default through the canonical patch flow when disabling $label",
     async (testCase) => {
@@ -304,7 +307,7 @@ describe("LabsPage", () => {
 
   it("shows default provenance", async () => {
     const inherited = await mountPage({});
-    expect(labRow(inherited.page, "Code Mode").textContent).toContain("Using default: Disabled");
+    expect(labRow(inherited.page, "Code Mode").textContent).not.toContain("Using default:");
     inherited.provider.remove();
 
     const overridden = await mountPage({

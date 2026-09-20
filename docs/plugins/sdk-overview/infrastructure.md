@@ -100,6 +100,42 @@ For stateless computation, `sharedCompute: true` also shares an aggregate
 pools in the same isolate. Dedicated ordered pools retain their own execution
 capacity and still enforce their individual admission limits.
 
+Pass static Node.js Worker settings in `workerOptions`. For per-worker settings,
+`prepareWorker()` runs once per Worker creation attempt and returns
+`{ options, temporaryDirectory? }`. Its `options` shallowly override
+`workerOptions`: properties such as `env`, `workerData`, and `resourceLimits`
+replace the whole static property rather than merging nested values.
+
+A returned `temporaryDirectory` transfers a newly allocated disposable directory
+to the pool. Preparation owns cleanup if it fails before returning. The pool
+removes the directory only after that Worker exits, including startup failure or
+cancellation, and reports deletion failures without replacing the task outcome.
+Worker exit releases execution capacity; `close()` also waits for pending file
+cleanup. Keep persistent data and files borrowed outside the Worker out of this
+directory.
+
+When native termination fails, the pool retains that worker's input custody and
+capacity. `retryFailedRetirements()` retries only those failed retirements and
+joins native exit and pending file cleanup without interrupting healthy tasks or
+waiting for them to finish. It does not replay failed work or close the pool.
+An owner that is shutting down must stop new admissions, drain healthy tasks,
+and finish with `close()`.
+
+`serveWorkerTasks` supplies a third handler argument, `WorkerTaskControl`. Await
+`control.runNativeSection(() => nativeOperation())` around each bounded native
+operation that must finish before its worker can be terminated. The fence also
+awaits a returned promise, for native libraries with asynchronous entrypoints.
+Keep unrelated work and rendering outside the fence; do not fence an entire
+document or a host request. Call `control.throwIfCancelled()` between pages or
+other units of work so cancellation cannot start another native operation.
+
+Cancellation, deadlines, pool closure, and worker retirement close native-section
+admission atomically. An unfenced worker is terminated immediately; a fenced
+worker remains charged against admission and execution capacity until its current
+native operation finishes and the worker exits. A deadline requests cancellation;
+it cannot safely interrupt a stuck native call. Native sections must therefore
+have bounded inputs and must not wait for network, user input, or unbounded work.
+
 ### SQLite worker stores
 
 Use `openSqliteWorkerStore<Operations>` from
@@ -158,8 +194,9 @@ and joins that worker before reporting `outcome-unknown`; it does the same when
 a completed reply cannot be decoded. Failed cleanup retains its original error
 while the worker is drained.
 
-The process-wide host starts lazily and permits at most four workers, 64 opening
-or live store clients (including clients sharing a database), 128 outstanding
+The process-wide host starts lazily and permits at most four shared workers. Bun
+uses up to 64 dedicated workers until its native SQLite close fix ships. The host
+permits 64 opening or live store clients (including clients sharing a database), 128 outstanding
 operations, and 64 MiB of queued input. Each input message is limited to 32 MiB
 and capacity exhaustion rejects with `code: "overloaded"`. Larger execute inputs
 arrive in 8 MiB chunks; the backend runs once after the complete command is
@@ -187,6 +224,16 @@ checks cannot protect against an uncoordinated filesystem replacement.
 Each client retains its admitted lexical and canonical pathnames through
 drainage and close. The backend's opening paths remain pinned for its native
 lifetime; released secondary aliases do not accumulate while other clients live.
+
+### Computation worker entrypoints
+
+For a plugin-owned worker, pass `package: { name, distWorkerPath }` to
+`resolveRuntimeWorkerUrl` from the same SDK subpath. Use the plugin's
+`package.json` name and a worker path relative to its `dist` directory. The
+descriptor then supports bundled and standalone installations, including renamed
+installation directories. Declare the worker's source entry in
+[`openclaw.build.workerEntries`](/plugins/dependency-resolution#native-imports-from-a-standalone-source-build)
+so package builds emit it.
 
 ### Webhook body rejection
 
@@ -219,6 +266,18 @@ requests apply input backpressure until earlier responses finish; finite pipelin
 drain in order. Use separate connections for concurrent requests. Keep the release hook returned by
 `beginWebhookRequestPipelineOrReject` in `finally`; it retains any selected
 rejection cleanup before releasing the in-flight slot.
+
+Channel webhook listeners that own their `createServer` admission serialize each
+connection with `runHttpConnectionRequest(req, run, res?)` from
+`openclaw/plugin-sdk/webhook-request-guards`. Pass the `ServerResponse` as the
+third argument: the shared owner waits for response completion (`finish` or
+`close`) before admitting the connection's next request, so a close-aware
+rejection — whose cleanup may destroy the socket within one second — can never
+overtake an earlier queued acknowledgement. Omitting the response argument
+releases the next request before the current response finishes and loses that
+guarantee; omit it only for dispatch that writes no response on the shared
+connection. Already admitted work always finishes; queued work is never
+dispatched after closure, and a closing connection cannot admit later requests.
 
 ### Post-ack webhook work
 
