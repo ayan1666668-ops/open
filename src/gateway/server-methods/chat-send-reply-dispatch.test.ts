@@ -29,6 +29,7 @@ import { withOpenClawTestState } from "../../test-utils/openclaw-test-state.js";
 import { projectChatDisplayMessage } from "../chat-display-projection.js";
 import * as sessionTranscriptReaders from "../session-transcript-readers.js";
 import { loadSessionEntry } from "../session-utils.js";
+import * as sessionUtils from "../session-utils.js";
 import {
   buildAssistantReplyContent,
   buildAssistantReplyContentFromInputs,
@@ -42,6 +43,7 @@ import {
   buildTranscriptReplyTextFromInputs,
   createChatSendReplyDispatch,
 } from "./chat-send-reply-dispatch.js";
+import * as transcriptPersistence from "./chat-transcript-persistence.js";
 
 async function createReplyTranscriptFixture() {
   const runId = "receipt-run";
@@ -759,4 +761,27 @@ describe("createChatSendReplyDispatch", () => {
       });
     },
   );
+});
+
+describe("pre-dispatch notice session authority", () => {
+  it("skips durable and fallback delivery when the live session entry is missing", async () => {
+    await withOpenClawTestState({ label: "webchat-notice-missing-session" }, async () => {
+      const { dispatch, scope } = await createReplyTranscriptFixture();
+      const current = loadSessionEntry(scope.sessionKey, { agentId: "main" });
+      const load = vi.spyOn(sessionUtils, "loadSessionEntry").mockReturnValue({
+        ...current,
+        entry: undefined,
+      });
+      const append = vi.spyOn(transcriptPersistence, "appendAssistantTranscriptMessage");
+      try {
+        expect(
+          await dispatch.onPreDispatchNotice({ text: "Routing notice", isStatusNotice: true }),
+        ).toBe(true);
+        expect(append).not.toHaveBeenCalled();
+      } finally {
+        load.mockRestore();
+        append.mockRestore();
+      }
+    });
+  });
 });

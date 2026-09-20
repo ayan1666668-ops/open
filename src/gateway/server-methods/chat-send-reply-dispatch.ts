@@ -210,17 +210,18 @@ export function createChatSendReplyDispatch(params: {
       return false;
     }
     const current = loadSessionEntry(session.sessionKey, sessionLoadOptions);
-    const sessionId = current.entry?.sessionId ?? backingSessionId;
+    const sessionId = current.entry?.sessionId;
     if (!sessionId || !current.storePath) {
       logGateway.warn("webchat pre-dispatch notice skipped: transcript identity unavailable");
-      return false;
+      // A missing live session has no authority for either durable or fallback delivery.
+      return true;
     }
     const appended = await appendAssistantTranscriptMessage({
       sessionKey: session.sessionKey,
       message: payload.text.trim(),
       sessionId,
       storePath: current.storePath,
-      ...(current.entry?.sessionId ? { expectedSessionId: current.entry.sessionId } : {}),
+      expectedSessionId: sessionId,
       ...(current.entry?.lifecycleRevision
         ? { expectedLifecycleRevision: current.entry.lifecycleRevision }
         : {}),
