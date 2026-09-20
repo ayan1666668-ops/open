@@ -17,17 +17,24 @@ describe("agent-scope-runtime compatibility", () => {
     },
   } satisfies OpenClawConfig;
 
-  it("resolves the configured system agent for ownerless shipped calls", () => {
-    expect(resolveSessionAgentIds({ config })).toEqual({
-      defaultAgentId: "beta",
-      sessionAgentId: "beta",
-    });
-    expect(resolveSessionAgentId({ config })).toBe("beta");
-  });
+  it.each([undefined, "", " \t "])(
+    "resolves the configured system agent for ownerless shipped calls with agentId %j",
+    (agentId) => {
+      expect(resolveSessionAgentIds({ config, agentId })).toEqual({
+        defaultAgentId: "beta",
+        sessionAgentId: "beta",
+      });
+      expect(resolveSessionAgentId({ config, agentId })).toBe("beta");
+    },
+  );
 
-  it("keeps strict resolution ownerless", () => {
-    expect(() => resolveSessionAgentIdsStrict({ config })).toThrow(AgentSelectionRequiredError);
-    expect(() => resolveSessionAgentIdStrict({ config })).toThrow(AgentSelectionRequiredError);
+  it.each([
+    { agentId: undefined, error: AgentSelectionRequiredError },
+    { agentId: "", error: "Invalid explicit agent id" },
+    { agentId: " \t ", error: "Invalid explicit agent id" },
+  ])("preserves strict rejection for agentId $agentId", ({ agentId, error }) => {
+    expect(() => resolveSessionAgentIdsStrict({ config, agentId })).toThrow(error);
+    expect(() => resolveSessionAgentIdStrict({ config, agentId })).toThrow(error);
   });
 
   it.each([
@@ -52,6 +59,16 @@ describe("agent-scope-runtime compatibility", () => {
     {
       name: "agent-scoped session key",
       params: { config, sessionKey: "agent:main:main" },
+      expected: "main",
+    },
+    {
+      name: "prepared fallback agent with a blank explicit ID",
+      params: { config, agentId: "", fallbackAgentId: "main" },
+      expected: "main",
+    },
+    {
+      name: "agent-scoped session key with a blank explicit ID",
+      params: { config, agentId: " \t ", sessionKey: "agent:main:main" },
       expected: "main",
     },
     {
