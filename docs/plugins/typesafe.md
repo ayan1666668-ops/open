@@ -1,15 +1,17 @@
 ---
-summary: "Use TypeSafe AI's Jev model for optional typed decisions"
+summary: "Use hosted Jev or a local System One server for typed decisions"
 title: "TypeSafe AI"
 read_when:
   - Configuring a typed decision model
   - Using the TypeSafe evaluation tool
+  - Running Kev locally through the System One API
 ---
 
 # TypeSafe AI
 
 The official external `typesafe` plugin connects OpenClaw's optional decision
-model role to TypeSafe AI's Jev models. Its models appear in the separate
+model role to TypeSafe AI's hosted Jev models or an explicitly configured local
+System One server such as [Kev](https://github.com/jaredpalmer/kev). Its models appear in the separate
 **Decision** picker, never in the conversational model picker.
 
 The adapter and decision model role were added after released OpenClaw
@@ -46,7 +48,7 @@ that does not make the packaged plugin compatible with OpenClaw `2026.9.5`.
 
 ## Enable and configure
 
-Create a protected credential in Settings → Secrets, then reference it from the
+For hosted Jev, create a protected credential in Settings → Secrets, then reference it from the
 plugin configuration. Merge this example into your existing configuration; keep
 any other entries in `plugins.allow`.
 
@@ -78,15 +80,68 @@ any other entries in `plugins.allow`.
 `agents.defaults.decisionModel`; an empty override disables decisions for that
 agent. An unset or empty global role leaves decisions off by default.
 
-The plugin reads the host's prepared SecretRef value for each request. It does
+Hosted mode reads the host's prepared SecretRef value for each request. It does
 not independently read environment credentials or cache a previous credential.
 A missing or unavailable credential makes decisions unavailable. Use the normal
 [secret refresh flow](/gateway/secrets) after changing a credential.
 
 Selecting a decision model authorizes supported, otherwise-enabled consumers to
-send their selected evidence to TypeSafe and incur its normal usage charges.
+send their selected evidence to the configured endpoint. Hosted Jev requests
+incur TypeSafe's normal usage charges.
 Consumer scheduling and publication permissions remain unchanged. Clearing the
 role or explicitly disabling the plugin prevents its use by those consumers.
+
+## Local System One server
+
+Start your System One server separately, then set `baseUrl` to its loopback
+origin and select `typesafe/kev-latest`:
+
+```json5
+{
+  plugins: {
+    allow: ["typesafe"],
+    entries: {
+      typesafe: {
+        enabled: true,
+        config: { baseUrl: "http://127.0.0.1:8009" },
+      },
+    },
+  },
+  agents: {
+    defaults: { decisionModel: "typesafe/kev-latest" },
+  },
+}
+```
+
+Merge the example with existing settings, preserving other allowed plugins.
+Omit `apiKey` for local inference. The plugin does not read or send the hosted
+credential on this path; remove a retained SecretRef if the host should also
+stop preparing it.
+
+The endpoint applies to every request from this plugin, including requests
+whose model label names Jev. Model selection does not choose between hosted and
+local endpoints. The `kev-latest` label requires `baseUrl` and is never sent to
+the hosted TypeSafe endpoint.
+
+`baseUrl` accepts HTTP or HTTPS on `localhost`, `127.0.0.1`, or `[::1]`, with an
+optional port and trailing slash. Supply the origin, without `/v1`, credentials,
+query, or fragment; the plugin appends `/v1/systemone`. LAN and remote hosts are
+not accepted. Ordinary ambient HTTP proxy variables are not used for these
+requests; explicitly enabled managed proxy policy still applies.
+
+Kev runs one checkpoint per server process. Its request model label does not
+load or switch weights. Choose the checkpoint when starting the server and
+inspect `GET /v1/models` to verify it. See Kev's [serving instructions](https://github.com/jaredpalmer/kev#quick-start)
+for installation, model selection, and hardware requirements. OpenClaw does not
+download weights or start that process. An unavailable server produces an
+unavailable decision, without automatically switching to hosted Jev.
+
+For local compatibility, omitted question instructions are sent as `null`.
+Structured Score rubric levels are encoded as text; returned legends must match
+that transmitted rubric before the original level descriptions are restored in
+tool results. Kev's optional nonnegative `latency_ms` field is validated and
+removed; all answer types, labels, probabilities, and rubric bounds retain the
+same validation as hosted results.
 
 ## Decision contract
 
@@ -115,7 +170,8 @@ not demonstrated accuracy guarantees or permission to act.
 The host owns concurrency, circuit health, deadlines, cancellation, and provider
 lifecycle. Native decisions have a ten-second maximum; shorter consumer or
 plugin timeouts still apply. The adapter shares transport and response validation
-with the tool below. Requests use the fixed TypeSafe HTTPS endpoint, reject
+with the tool below. Requests use the fixed TypeSafe HTTPS endpoint unless
+`baseUrl` selects a local server. Both paths reject
 redirects, and do not retry automatically. Consumers decide what to do with
 unavailable decisions; caller cancellation must not start fallback work.
 
@@ -127,7 +183,8 @@ It accepts shared `state`, a map of `questions`, and an optional vendor `model`
 override. Its TypeSafe-facing question names are `choice`, `score`, and `noul`.
 
 For this tool only, `plugins.entries.typesafe.config.model` supplies the default
-vendor model, initially `jev-latest`. It does not override the native
+model, initially `jev-latest` for hosted inference or `kev-latest` for local
+inference. It does not override the native
 `decisionModel` role or select a provider. Pin a model version for reproducible
 tool evaluations. `timeoutMs` limits tool requests and caps native requests at
 the shorter of this setting and the host's remaining deadline.

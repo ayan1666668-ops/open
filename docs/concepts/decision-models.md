@@ -41,9 +41,10 @@ Configure the provider plugin before selecting its model:
 - [ONNX](/plugins/onnx) runs local CPU classifiers in a persistent subprocess.
   Follow its development-checkout or compatible-package setup, then explicitly
   download the model or prepare a local export. Inference needs no hosted API credential.
-- [TypeSafe AI](/plugins/typesafe) connects to hosted Jev inference. Install and
-  enable the external plugin, then configure its protected credential.
-  Evaluations send the selected evidence to TypeSafe and incur its normal usage charges.
+- [TypeSafe AI](/plugins/typesafe) connects to hosted Jev or a local System One
+  server such as Kev. Install and enable the external plugin, then configure a
+  protected hosted credential or an explicit loopback `baseUrl`. Hosted
+  evaluations send the selected evidence to TypeSafe and incur its normal usage charges.
 
 The current plugins declare these model references:
 
@@ -58,6 +59,7 @@ The current plugins declare these model references:
 | `onnx/gliner2.5-small-v1`            | GLiNER 2.5 Small       | Download pinned ONNX artifacts                         |
 | `typesafe/jev-1.13.0`                | Jev 1.13.0             | TypeSafe credential                                    |
 | `typesafe/jev-latest`                | Jev                    | TypeSafe credential; follows the vendor's latest model |
+| `typesafe/kev-latest`                | Kev (local server)     | Running System One server and explicit loopback URL    |
 
 Both plugins are currently unpublished candidates. Their setup pages explain
 source-checkout use and the packaged host floor. The table describes the plugins' declared models,

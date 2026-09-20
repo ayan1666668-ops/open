@@ -154,7 +154,8 @@ wins; installing a tool or credential alone does not select a provider. Vendor a
 own transport and model-specific translation; no vendor is a core dependency.
 
 The [ONNX plugin](/plugins/onnx) supplies local classifiers; the
-[TypeSafe AI plugin](/plugins/typesafe) supplies a Jev adapter. Both require
+[TypeSafe AI plugin](/plugins/typesafe) supplies hosted Jev and local System One
+adapters, including Kev. Both plugins require
 separate installation, explicit setup, and role selection.
 
 ### Calling from a third-party plugin
