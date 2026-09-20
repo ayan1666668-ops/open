@@ -38,6 +38,7 @@ function createConfiguredMSTeamsCfg(): OpenClawConfig {
   return {
     channels: {
       msteams: {
+        enabled: true,
         appId: "app-id",
         appPassword: "secret",
         tenantId: "tenant-id",
@@ -206,6 +207,7 @@ describe("msteamsPlugin", () => {
     const cfg: OpenClawConfig = {
       channels: {
         msteams: {
+          enabled: true,
           appId: "app-id",
           tenantId: "tenant-id",
           authType: "federated",
@@ -274,6 +276,7 @@ describe("msteamsPlugin", () => {
     const cfg: OpenClawConfig = {
       channels: {
         msteams: {
+          enabled: true,
           tenantId: "tenant-id",
           authType: "federated",
           certificatePath: "/private/msteams-inherited-missing.pem",
@@ -300,6 +303,7 @@ describe("msteamsPlugin", () => {
     const cfg: OpenClawConfig = {
       channels: {
         msteams: {
+          enabled: true,
           appId: "app-id",
           tenantId: "tenant-id",
           authType: "federated",
@@ -692,6 +696,7 @@ describe("msteams account config", () => {
     const cfg = {
       channels: {
         msteams: {
+          enabled: true,
           tenantId: "tenant-id",
           webhook: { path: "/api/messages" },
           accounts: {
@@ -743,6 +748,7 @@ describe("msteams account config", () => {
     const cfg = {
       channels: {
         msteams: {
+          enabled: true,
           tenantId: "tenant-id",
           accounts: {
             "Support Bot": {
@@ -789,6 +795,7 @@ describe("msteams account config", () => {
     const cfg = {
       channels: {
         msteams: {
+          enabled: true,
           appId: "legacy-app-id",
           appPassword: "legacy-secret",
           tenantId: "tenant-id",

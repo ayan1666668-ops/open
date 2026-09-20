@@ -36,6 +36,21 @@ const cfg = {
   },
 } as OpenClawConfig;
 
+const cfgWithNamedDefault = {
+  channels: {
+    msteams: {
+      defaultAccount: "secondary",
+      accounts: {
+        secondary: {
+          appId: "secondary-app-id",
+          appPassword: "secondary-secret",
+          webhook: { port: 3979 },
+        },
+      },
+    },
+  },
+} as unknown as OpenClawConfig;
+
 type MSTeamsSendText = NonNullable<typeof msteamsOutbound.sendText>;
 type MSTeamsSendMedia = NonNullable<typeof msteamsOutbound.sendMedia>;
 type MSTeamsSendPayload = NonNullable<typeof msteamsOutbound.sendPayload>;
@@ -190,21 +205,6 @@ describe("msteamsOutbound cfg threading", () => {
   });
 
   it("stores polls under the configured default account when accountId is omitted", async () => {
-    const cfgWithNamedDefault = {
-      channels: {
-        msteams: {
-          defaultAccount: "secondary",
-          accounts: {
-            secondary: {
-              appId: "secondary-app-id",
-              appPassword: "secondary-secret",
-              webhook: { port: 3979 },
-            },
-          },
-        },
-      },
-    } as unknown as OpenClawConfig;
-
     await requireSendPoll()({
       cfg: cfgWithNamedDefault,
       to: "conversation:abc",
@@ -287,6 +287,25 @@ describe("msteamsOutbound cfg threading", () => {
       channel: "msteams",
       messageId: "dep-msg-1",
       target: { kind: "conversation", id: "dep-conv-1" },
+    });
+  });
+
+  it("passes the configured default account through injected text send dependencies", async () => {
+    const injected = vi.fn().mockResolvedValue({
+      messageId: "dep-msg-1",
+      conversationId: "dep-conv-1",
+    });
+
+    await requireSendText()({
+      cfg: cfgWithNamedDefault,
+      deps: { msteams: injected },
+      to: "user:secondary-user",
+      text: "hello secondary",
+    });
+
+    expect(injected).toHaveBeenCalledWith("user:secondary-user", "hello secondary", {
+      cfg: cfgWithNamedDefault,
+      accountId: "secondary",
     });
   });
 
@@ -394,6 +413,30 @@ describe("msteamsOutbound cfg threading", () => {
       channel: "msteams",
       messageId: "dep-media-1",
       target: { kind: "conversation", id: "dep-conv-1" },
+    });
+  });
+
+  it("passes the configured default account through injected media send dependencies", async () => {
+    const injected = vi.fn().mockResolvedValue({
+      messageId: "dep-media-1",
+      conversationId: "dep-conv-1",
+    });
+
+    await requireSendMedia()({
+      cfg: cfgWithNamedDefault,
+      deps: { msteams: injected },
+      to: "user:secondary-user",
+      text: "photo",
+      mediaUrl: "file:///tmp/photo.png",
+      mediaLocalRoots: ["/tmp"],
+    });
+
+    expect(injected).toHaveBeenCalledWith("user:secondary-user", "photo", {
+      mediaUrl: "file:///tmp/photo.png",
+      mediaLocalRoots: ["/tmp"],
+      mediaReadFile: undefined,
+      cfg: cfgWithNamedDefault,
+      accountId: "secondary",
     });
   });
 
@@ -575,6 +618,27 @@ describe("msteamsOutbound cfg threading", () => {
       channel: "msteams",
       messageId: "msg-1",
       target: { kind: "conversation", id: "conv-1" },
+    });
+  });
+
+  it("passes the configured default account through injected payload sends", async () => {
+    const injected = vi.fn().mockResolvedValue({
+      messageId: "dep-payload-1",
+      conversationId: "dep-conv-1",
+    });
+
+    await requireSendPayload()({
+      cfg: cfgWithNamedDefault,
+      deps: { msteams: injected },
+      to: "conversation:abc",
+      text: "hello",
+      payload: { text: "hello" },
+    });
+
+    expect(injected).toHaveBeenCalledWith("conversation:abc", "hello", {
+      cfg: cfgWithNamedDefault,
+      accountId: "secondary",
+      onDeliveryResult: undefined,
     });
   });
 

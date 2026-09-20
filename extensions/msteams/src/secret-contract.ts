@@ -63,6 +63,13 @@ export function collectRuntimeConfigAssignments(params: {
       context: params.context,
       active: enabled,
       inactiveReason: "Microsoft Teams account is disabled.",
+      owner: {
+        ownerKind: "account",
+        ownerId: `msteams:${normalizeAccountId(accountId)}`,
+        requiredForGateway: false,
+        disposition: "isolate",
+        contract: account,
+      },
       apply: (value) => {
         account.appPassword = value;
       },

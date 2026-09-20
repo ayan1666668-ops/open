@@ -13,6 +13,7 @@ async function resolveMSTeamsSecretAssignments(
   env: NodeJS.ProcessEnv,
 ): Promise<{
   config: OpenClawConfig;
+  assignments: ReturnType<typeof createResolverContext>["assignments"];
   warnings: ReturnType<typeof createResolverContext>["warnings"];
 }> {
   const resolvedConfig: OpenClawConfig = structuredClone(sourceConfig);
@@ -34,7 +35,7 @@ async function resolveMSTeamsSecretAssignments(
   );
   applyResolvedAssignments({ assignments: context.assignments, resolved });
 
-  return { config: resolvedConfig, warnings: context.warnings };
+  return { config: resolvedConfig, assignments: context.assignments, warnings: context.warnings };
 }
 
 describe("msteams secret contract", () => {
@@ -70,6 +71,14 @@ describe("msteams secret contract", () => {
     expect(resolved.config.channels?.msteams?.accounts?.support?.appPassword).toBe(
       "resolved-support-secret",
     );
+    expect(resolved.assignments).toMatchObject([
+      {
+        ownerKind: "account",
+        ownerId: "msteams:support",
+        requiredForGateway: false,
+        disposition: "isolate",
+      },
+    ]);
     expect(resolved.warnings).toStrictEqual([]);
   });
 

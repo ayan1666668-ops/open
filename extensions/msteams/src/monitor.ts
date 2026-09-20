@@ -83,7 +83,7 @@ export async function monitorMSTeamsProvider(
   const { accountId, credentials: creds } = account;
   let cfg = opts.cfg;
   let msteamsCfg = account.config;
-  if (opts.cfg.channels?.msteams?.enabled === false || msteamsCfg.enabled === false) {
+  if (opts.cfg.channels?.msteams?.enabled !== true || msteamsCfg.enabled === false) {
     log.debug?.("msteams provider disabled");
     publishMSTeamsBlocked(opts.statusSink, "Microsoft Teams provider is disabled");
     return { app: null, shutdown: async () => {} };

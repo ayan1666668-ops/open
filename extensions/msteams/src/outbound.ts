@@ -1,4 +1,4 @@
-import { normalizeAccountId } from "openclaw/plugin-sdk/account-id";
+import { DEFAULT_ACCOUNT_ID, normalizeAccountId } from "openclaw/plugin-sdk/account-id";
 import {
   resolveOutboundSendDep,
   type OutboundSendDeps,
@@ -120,6 +120,16 @@ function resolveMSTeamsThreadTarget(to: string, threadId?: string | number | nul
   return `${to};messageid=${normalizedThreadId}`;
 }
 
+function resolveMSTeamsOutboundAccountId(
+  cfg: MSTeamsSendConfig,
+  accountId?: string | null,
+): string | undefined {
+  const resolvedAccountId = normalizeAccountId(accountId ?? resolveDefaultMSTeamsAccountId(cfg));
+  return accountId == null && resolvedAccountId === DEFAULT_ACCOUNT_ID
+    ? undefined
+    : resolvedAccountId;
+}
+
 function resolveMSTeamsTextSend(params: {
   cfg: MSTeamsSendConfig;
   accountId?: string | null;
@@ -221,6 +231,7 @@ export const msteamsOutbound: ChannelOutboundAdapter = {
     onPlatformSendDispatch,
     threadId,
   }) => {
+    const effectiveAccountId = resolveMSTeamsOutboundAccountId(cfg, accountId);
     try {
       const handoff = { assertDirectAdapterHandoff, onPlatformSendDispatch };
       const deliveryTarget = resolveMSTeamsThreadTarget(to, threadId);
@@ -235,7 +246,7 @@ export const msteamsOutbound: ChannelOutboundAdapter = {
           (report) =>
             sendAdaptiveCardMSTeams({
               cfg,
-              ...(accountId ? { accountId } : {}),
+              ...(effectiveAccountId ? { accountId: effectiveAccountId } : {}),
               to: deliveryTarget,
               card: presentationCard as Record<string, unknown>,
               ...handoff,
@@ -252,7 +263,7 @@ export const msteamsOutbound: ChannelOutboundAdapter = {
         }),
       );
       if (mediaUrls.length > 0) {
-        const send = resolveMSTeamsMediaSend({ cfg, accountId, deps });
+        const send = resolveMSTeamsMediaSend({ cfg, accountId: effectiveAccountId, deps });
         const result = await sendPayloadMediaSequence<MSTeamsSendResult>({
           text,
           mediaUrls,
@@ -275,8 +286,8 @@ export const msteamsOutbound: ChannelOutboundAdapter = {
         }
       }
       if (text.trim()) {
-        const send = resolveMSTeamsTextSend({ cfg, accountId, deps });
-        const msteamsCfg = resolveMSTeamsAccountConfig(cfg, accountId);
+        const send = resolveMSTeamsTextSend({ cfg, accountId: effectiveAccountId, deps });
+        const msteamsCfg = resolveMSTeamsAccountConfig(cfg, effectiveAccountId);
         const chunks = resolveTextChunksWithFallback(
           text,
           chunkTextForOutbound(
@@ -292,7 +303,7 @@ export const msteamsOutbound: ChannelOutboundAdapter = {
                 ...handoff,
                 onDeliveryResult: report,
                 cfg,
-                ...(accountId ? { accountId } : {}),
+                ...(effectiveAccountId ? { accountId: effectiveAccountId } : {}),
               }),
             onDeliveryResult,
           );
@@ -304,7 +315,7 @@ export const msteamsOutbound: ChannelOutboundAdapter = {
       logMSTeamsOutboundFailure({
         kind: "payload send",
         to,
-        accountId,
+        accountId: effectiveAccountId,
         error,
       });
       throw error;
@@ -323,14 +334,15 @@ export const msteamsOutbound: ChannelOutboundAdapter = {
       onPlatformSendDispatch,
       onDeliveryResult,
     }) => {
+      const effectiveAccountId = resolveMSTeamsOutboundAccountId(cfg, accountId);
       try {
-        const send = resolveMSTeamsTextSend({ cfg, accountId, deps });
+        const send = resolveMSTeamsTextSend({ cfg, accountId: effectiveAccountId, deps });
         return toMSTeamsOutboundResult(
           await sendWithDeliveryResults(
             (report) =>
               send(resolveMSTeamsThreadTarget(to, threadId), text, {
                 cfg,
-                ...(accountId ? { accountId } : {}),
+                ...(effectiveAccountId ? { accountId: effectiveAccountId } : {}),
                 assertDirectAdapterHandoff,
                 onPlatformSendDispatch,
                 onDeliveryResult: report,
@@ -342,7 +354,7 @@ export const msteamsOutbound: ChannelOutboundAdapter = {
         logMSTeamsOutboundFailure({
           kind: "text send",
           to,
-          accountId,
+          accountId: effectiveAccountId,
           error,
         });
         throw error;
@@ -363,8 +375,9 @@ export const msteamsOutbound: ChannelOutboundAdapter = {
       onPlatformSendDispatch,
       onDeliveryResult,
     }) => {
+      const effectiveAccountId = resolveMSTeamsOutboundAccountId(cfg, accountId);
       try {
-        const send = resolveMSTeamsMediaSend({ cfg, accountId, deps });
+        const send = resolveMSTeamsMediaSend({ cfg, accountId: effectiveAccountId, deps });
         return toMSTeamsOutboundResult(
           await sendWithDeliveryResults(
             (report) =>
@@ -384,7 +397,7 @@ export const msteamsOutbound: ChannelOutboundAdapter = {
         logMSTeamsOutboundFailure({
           kind: "media send",
           to,
-          accountId,
+          accountId: effectiveAccountId,
           error,
         });
         throw error;

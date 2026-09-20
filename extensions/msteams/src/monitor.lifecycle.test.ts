@@ -288,6 +288,24 @@ describe("monitorMSTeamsProvider lifecycle", () => {
     expect(loadMSTeamsSdkWithAuth).not.toHaveBeenCalled();
   });
 
+  it("does not start when Teams credentials exist but enabled is omitted", async () => {
+    const result = await monitorMSTeamsProvider({
+      cfg: {
+        channels: {
+          msteams: {
+            appId: "app-id",
+            appPassword: "app-password",
+            tenantId: "tenant-id",
+          },
+        },
+      } as OpenClawConfig,
+      runtime: createRuntime(),
+    });
+
+    expect(result.app).toBeNull();
+    expect(loadMSTeamsSdkWithAuth).not.toHaveBeenCalled();
+  });
+
   it("stays active until aborted", async () => {
     const abort = new AbortController();
     const stores = createStores();
@@ -326,6 +344,7 @@ describe("monitorMSTeamsProvider lifecycle", () => {
     const cfg = {
       channels: {
         msteams: {
+          enabled: true,
           tenantId: "tenant-id",
           sso: { enabled: true, connectionName: "graph" },
           accounts: {
@@ -382,6 +401,7 @@ describe("monitorMSTeamsProvider lifecycle", () => {
     const cfg = {
       channels: {
         msteams: {
+          enabled: true,
           accounts: {
             support: {
               appId: "support-app-id",
