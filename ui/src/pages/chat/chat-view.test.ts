@@ -2777,6 +2777,7 @@ describe("chat loading skeleton", () => {
   });
 
   it("keeps multi-part run usage current when only output tokens change", () => {
+    vi.mocked(chatMessage.renderMessageGroup).mockRestore();
     const runId = "run-composed";
     const user = {
       kind: "group",
@@ -2840,7 +2841,6 @@ describe("chat loading skeleton", () => {
       reading,
     ] as ReturnType<typeof chatThread.buildCachedChatItems>);
     const container = document.createElement("div");
-    const streamPartsSpy = vi.spyOn(chatMessage, "renderStreamGroupParts");
 
     renderChatInto(container, {
       canAbort: true,
@@ -2848,7 +2848,9 @@ describe("chat loading skeleton", () => {
       runUsageById: new Map([[runId, { outputTokens: 5_500, seq: 1 }]]),
       stream: null,
     });
-    streamPartsSpy.mockClear();
+    expect(container.querySelector(".chat-working-indicator__tokens")?.textContent).toContain(
+      "5.5k",
+    );
     renderChatInto(container, {
       canAbort: true,
       runId,
@@ -2856,7 +2858,9 @@ describe("chat loading skeleton", () => {
       stream: null,
     });
 
-    expect(streamPartsSpy.mock.calls.at(-1)?.[1].runOutputTokens).toBe(7_200);
+    expect(container.querySelector(".chat-working-indicator__tokens")?.textContent).toContain(
+      "7.2k",
+    );
   });
 
   it("keeps the completed recap on one composed multi-part run", () => {
