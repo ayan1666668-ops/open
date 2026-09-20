@@ -110,7 +110,7 @@ describe("semantic turn context", () => {
     const { requests } = installDecisionFixture();
     const source = fixture();
     const tool = source.messages[2];
-    if (tool.role === "toolResult") {
+    if (tool?.role === "toolResult") {
       tool.isError = true;
     }
     const result = await observeSemanticTurnContext(source, options());
@@ -269,12 +269,12 @@ describe("semantic turn context apply", () => {
     missing.semanticCurationCandidates!.discretionaryMessageIndexes = [1];
     const failed = candidate();
     const assistant = failed.messages[1];
-    if (assistant.role === "assistant") {
+    if (assistant?.role === "assistant") {
       assistant.stopReason = "aborted";
     }
     const synthetic = candidate();
     const tool = synthetic.messages[2];
-    if (tool.role === "toolResult") {
+    if (tool?.role === "toolResult") {
       tool.isError = true;
       tool.details = { openclawSyntheticMissingToolResult: true };
     }
@@ -329,8 +329,14 @@ describe("semantic turn context apply", () => {
     async (change) => {
       const source = candidate();
       installDecisionFixture("preserved", () => {
-        if (change === "withdrawn") delete source.semanticCurationCandidates;
-        else if (source.messages[1].role === "assistant") source.messages[1].stopReason = "aborted";
+        if (change === "withdrawn") {
+          delete source.semanticCurationCandidates;
+        } else {
+          const assistant = source.messages[1];
+          if (assistant?.role === "assistant") {
+            assistant.stopReason = "aborted";
+          }
+        }
       });
       const result = await observeSemanticTurnContext(source, applyOptions());
       expect(result.messages).toBe(source.messages);
