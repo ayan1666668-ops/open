@@ -194,7 +194,14 @@ describe("Gateway matrix transcript evidence", () => {
       },
     ]);
     expect(trace.activities).toEqual([
-      { name: "matrix_invoice_export", input: {}, result: {}, isError: false, parentId: "read" },
+      {
+        name: "matrix_invoice_export",
+        input: {},
+        result: {},
+        content: [],
+        isError: false,
+        parentId: "read",
+      },
     ]);
     expect(trace.outcomes).toHaveLength(1);
     expect(expectDefined(trace.outcomes[0], "recorded tool outcome").eventIndex).toBe(4);

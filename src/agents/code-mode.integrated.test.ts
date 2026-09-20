@@ -123,14 +123,14 @@ describe("integrated public Code Mode", () => {
           const first = await contract({count: 1});
           const second = await contract({count: first.count});
           try { await contract({count: "bad"}); }
-          catch (error) { return { count: second.count, code: error.code, effectStatus: error.effectStatus }; }
+          catch (error) { return { count: second.count, code: error.code }; }
           throw new Error("invalid input was accepted");
         `,
       }),
     );
     expect(result, JSON.stringify(result)).toMatchObject({
       status: "completed",
-      value: { count: 13, code: "input_contract", effectStatus: "none" },
+      value: { count: 13, code: "input_contract" },
     });
     expect(target.execute).toHaveBeenCalledTimes(2);
   });

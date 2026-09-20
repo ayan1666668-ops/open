@@ -145,7 +145,7 @@ function createCodeModeExecDescription(
   const swarmEnabled = isCodeModeSwarmAvailable(ctx, catalog);
   const apiGuidance =
     !catalogKnown || (catalog?.length ?? 0) > 0 || swarmEnabled
-      ? " Read full types with `API.list(prefix?)` and `API.read(path)`; native tools: `tools/`. TypeScript declarations document the APIs; write executable JavaScript without type annotations."
+      ? " Read types with `API.list(prefix?)` and `API.read(path)`; native tools: `tools/`. Types are documentation; write plain JavaScript."
       : "";
   const mcpGuidance =
     !catalogKnown || hasMcp
@@ -184,7 +184,7 @@ function createCodeModeExecDescription(
     swarmGuidance +
     nodesGuidance +
     skillsGuidance +
-    " `code` must be JavaScript, never TypeScript or a shell command; do not retry failed shell source." +
+    " `code` is JavaScript, never a shell command; do not retry failed shell source." +
     (namespacePrompt ? `\n\n${namespacePrompt}` : "") +
     (catalogIndex ? `\n\n${catalogIndex}` : "")
   );

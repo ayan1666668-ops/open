@@ -89,7 +89,7 @@ describe("AgentSession runtime and transcript projections", () => {
     })),
     {
       label: "retired TypeScript option",
-      args: { code: source.replace("API_TOKEN =", "API_TOKEN: number ="), language: "typescript" },
+      args: { code: source, language: "typescript" },
       outcome: "error",
     },
     {

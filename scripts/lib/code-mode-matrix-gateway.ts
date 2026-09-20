@@ -840,10 +840,9 @@ export function evaluateGatewayMatrixTask(params: {
       trace.activities.indexOf(rejectedRead) < trace.activities.indexOf(sourceRead) &&
       activity.indexOf(sourceRead) < activity.indexOf(written) &&
       activity.indexOf(written) < activity.indexOf(readback);
-    checks.observedSource = matchesTextRead(
-      sourceRead,
-      `verification_code=${expected.verificationCode}\n`,
-    );
+    checks.observedSource =
+      typeof expected.verificationCode === "string" &&
+      matchesTextRead(sourceRead, `verification_code=${expected.verificationCode}\n`);
     checks.observedReadback = matchesTextRead(readback, expected.verificationCode);
     checks.onlyFixtureAccess =
       reads.length === 2 &&
