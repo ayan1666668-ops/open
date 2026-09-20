@@ -78,16 +78,12 @@ export function createNodeWorkspaceSkills(options: NodeWorkspaceWorkerOptions): 
         },
       );
     },
+    // Resource identities already belong to the node that discovered the Skills.
     skillResources: {
-      readInstructions: (filePath, { signal }) =>
-        call("readInstructions", { filePath: mapPath(filePath) }, signal),
-      resolveExplicitSkill: (selection) =>
-        call("resolveResource", { ...selection, path: mapPath(selection.path) }),
+      readInstructions: (filePath, { signal }) => call("readInstructions", { filePath }, signal),
+      resolveExplicitSkill: (selection) => call("resolveResource", selection),
       readSkillFiles: (skill, { allowMissingRoot }) =>
-        call("readResources", {
-          skill: { ...skill, baseDir: mapPath(skill.baseDir), filePath: mapPath(skill.filePath) },
-          allowMissingRoot,
-        }),
+        call("readResources", { skill, allowMissingRoot }),
     },
     installSkillDependencies: (request) => call("installDependencies", request),
   };

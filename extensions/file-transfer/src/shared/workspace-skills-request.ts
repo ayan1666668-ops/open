@@ -65,9 +65,19 @@ export function readWorkspaceSkillsRequest(input: unknown) {
     case "readInstructions":
       add(request.filePath);
       break;
-    case "resolveResource":
-      add(request.path);
+    case "resolveResource": {
+      const selectionPath = request.path;
+      if (
+        typeof selectionPath !== "string" ||
+        !path.posix.isAbsolute(selectionPath) ||
+        selectionPath.includes("\0")
+      ) {
+        throw new Error("Skill operation requires an absolute path");
+      }
+      // The native explicit loader selects SKILL.md, regardless of the supplied basename.
+      add(path.posix.join(path.posix.dirname(selectionPath), "SKILL.md"));
       break;
+    }
     case "readResources":
       add(asOptionalRecord(request.skill)?.baseDir);
       break;

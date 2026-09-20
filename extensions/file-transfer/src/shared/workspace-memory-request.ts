@@ -57,7 +57,8 @@ export function readWorkspaceMemoryRequest(value: unknown) {
         break;
       case "read": {
         const read = asOptionalRecord(request.params);
-        add(read?.relPath);
+        // The native Memory reader trims relPath before resolving its target.
+        add(typeof read?.relPath === "string" ? read.relPath.trim() : read?.relPath);
         extra(read?.extraPaths);
         break;
       }

@@ -384,6 +384,95 @@ describe("registered node workspace service", () => {
     },
   );
 
+  it("authorizes the trimmed Memory read target before returning any bytes", async () => {
+    await fs.mkdir(path.join(remote, "memory"));
+    const file = path.join(remote, "memory", "private.md");
+    await fs.writeFile(file, "Private memory");
+    const output: Uint8Array[] = [];
+    enableAttachmentTransport(undefined, (bytes) => output.push(bytes));
+    await service.start(context());
+    const memory = getAgentWorkspaceAccess(local)!.memoryFiles!;
+    const request = { workspaceDir: local, relPath: "memory/private.md " };
+    expect(await memory.readFile(request)).toMatchObject({ text: "Private memory" });
+    nodePolicy.denyPaths = [file];
+    for (const relPath of ["memory/private.md ", " memory/private.md", "memory/private.md\t"]) {
+      output.length = 0;
+      await expect(memory.readFile({ ...request, relPath })).rejects.toThrow(/file grant/);
+      expect(output).toEqual([]);
+    }
+  });
+
+  it.each(["file", "symlink"])(
+    "authorizes the actual explicit Skill instruction %s before returning metadata",
+    async (kind) => {
+      const skillDir = path.join(remote, "skills", "private-tool");
+      await fs.mkdir(skillDir, { recursive: true });
+      const skillFile = path.join(skillDir, "SKILL.md");
+      const actual = kind === "symlink" ? path.join(skillDir, "private.md") : skillFile;
+      await fs.writeFile(
+        actual,
+        "---\nname: private-tool\ndescription: Private metadata\n---\nPrivate instructions.\n",
+      );
+      if (kind === "symlink") {
+        await fs.symlink("private.md", skillFile);
+        nodePolicy.followSymlinks = true;
+      }
+      const output: Uint8Array[] = [];
+      enableAttachmentTransport(undefined, (bytes) => output.push(bytes));
+      await service.start(context());
+      const reader = getAgentWorkspaceAccess(local)!.skillResources!;
+      const selection = { name: "private-tool", path: path.join(skillDir, "public.txt") };
+      if (kind === "file") {
+        expect(await reader.resolveExplicitSkill(selection)).toMatchObject({
+          name: "private-tool",
+        });
+      }
+      nodePolicy.denyPaths = [actual];
+      output.length = 0;
+      await expect(reader.resolveExplicitSkill(selection)).rejects.toThrow(
+        kind === "file" ? /file grant/ : /canonical location/,
+      );
+      expect(output).toEqual([]);
+    },
+  );
+
+  it("reads discovered Skill resources when the node root is inside the Gateway path", async () => {
+    local = path.dirname(remote);
+    const skillDir = path.join(remote, "skills", "overlap-tool");
+    await fs.mkdir(skillDir, { recursive: true });
+    const instructions =
+      "---\nname: overlap-tool\ndescription: Overlapping roots\n---\nUse this tool.\n";
+    await fs.writeFile(path.join(skillDir, "SKILL.md"), instructions);
+    enableAttachmentTransport();
+    await service.start(context());
+    const access = getAgentWorkspaceAccess(local)!;
+    const sources = await access.loadSkills!({
+      sourcePlan: {
+        workspaceDir: local,
+        managedSkillsDir: path.join(local, "managed"),
+        roots: [
+          { dir: path.join(local, "skills"), source: "openclaw-workspace", tier: "workspace" },
+        ],
+        pluginSkillRoots: [],
+      },
+      limits: {
+        maxCandidatesPerRoot: 100,
+        maxSkillsLoadedPerSource: 100,
+        maxSkillFileBytes: 65536,
+      },
+      additionalBins: [],
+    });
+    const skill = sources.entries.find((entry) => entry.skill.name === "overlap-tool")!.skill;
+    const reader = access.skillResources!;
+    expect(await reader.readInstructions(skill.filePath, {})).toBe(instructions);
+    expect(
+      await reader.resolveExplicitSkill({ name: skill.name, path: skill.filePath }),
+    ).toMatchObject({ filePath: skill.filePath });
+    expect(await reader.readSkillFiles(skill, { allowMissingRoot: false })).toContainEqual(
+      expect.objectContaining({ path: "SKILL.md" }),
+    );
+  });
+
   it("reads and maintains Harness Memory through the shared client and native worker", async () => {
     vi.stubEnv("HOME", tempDirs.make("node-memory-home-"));
     await fs.mkdir(path.join(remote, "memory"));
