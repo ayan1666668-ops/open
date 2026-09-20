@@ -633,6 +633,7 @@ export async function executeMessagePlugin(
       action,
       cfg,
       params,
+      progressSnapshot: input.progressSnapshot,
       mediaAccess,
       mediaLocalRoots: mediaAccess.localRoots,
       mediaReadFile: mediaAccess.readFile,

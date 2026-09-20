@@ -22,6 +22,7 @@ import {
 import { coerceDiscordComponentParam } from "../components.js";
 import { discordInboundEventDelivery } from "../inbound-event-delivery.js";
 import { withDiscordRequestAuthority } from "../internal/request-authority.js";
+import { matchesDiscordToolContextTarget } from "../normalize.js";
 import {
   DISCORD_PRESENTATION_CAPABILITIES,
   isDiscordComponentSpecWithinMessageLimit,
@@ -78,6 +79,7 @@ type DiscordMessageActionContext = Pick<
   | "inboundEventKind"
   | "conversationReadOrigin"
   | "reply"
+  | "progressSnapshot"
   | "assertDirectAdapterHandoff"
   | "onDeliveryResult"
 >;
@@ -128,6 +130,7 @@ async function dispatchDiscordMessageAction(
             ctx.onDeliveryResult?.(toDiscordOutboundDeliveryResult(result)),
         }
       : {}),
+    ...(ctx.progressSnapshot ? { progressSnapshot: ctx.progressSnapshot } : {}),
     ...readPolicyOptions,
   } as const;
   const notifyVisibleOutbound = (
@@ -398,11 +401,20 @@ async function dispatchDiscordMessageAction(
 
   if (action === "edit" || action === "delete") {
     const messageId = readStringParam(params, "messageId", { required: true });
+    const target = readTarget();
+    const currentDmChannel =
+      action === "edit" &&
+      ctx.progressSnapshot &&
+      ctx.toolContext?.currentChatType === "direct" &&
+      parseDiscordTarget(target, { defaultKind: "channel" })?.kind === "user" &&
+      matchesDiscordToolContextTarget({ target, toolContext: ctx.toolContext })
+        ? readCurrentDiscordTarget(ctx.toolContext)
+        : undefined;
     return await handleDiscordAction(
       {
         action: action === "edit" ? "editMessage" : "deleteMessage",
         accountId: accountId ?? undefined,
-        channelId: resolveChannelId(),
+        channelId: resolveDiscordChannelId(currentDmChannel ?? target),
         messageId,
         ...(action === "edit" ? { content: params.message } : {}),
       },
