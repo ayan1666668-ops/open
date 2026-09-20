@@ -243,6 +243,8 @@ returns a forced-retirement diagnostic with the still-running call and consumer
 counts. Ordinary invocation authority closes and late successful results are
 refused. Physical cleanup continues asynchronously: captured files and module
 resolvers remain until calls, consumers, and cleanup tails actually settle.
+An explicitly retained consumer keeps its admitted turn and cleanup authority until
+its host closes or releases it. Its callbacks and late results are refused after release.
 Shared writable state stays owned until its cleanup finishes; late cleanup
 failures remain failures of the resource handoff. Web provider
 descriptors keep their registration identity; runtime projections bind their

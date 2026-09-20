@@ -5,7 +5,7 @@ import { setImmediate as nextTurn } from "node:timers/promises";
 import { beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { GatewayConnectionWork } from "../gateway/server-connection-work.js";
 import { runGatewayCloseSteps } from "../gateway/server-shutdown.js";
-import { AsyncWorkScope, trackAsyncWork } from "../shared/async-work-scope.js";
+import { trackAsyncWork } from "../shared/async-work-scope.js";
 import { createDeferredCore } from "../shared/deferred.js";
 import { resolveGlobalSingleton } from "../shared/global-singleton.js";
 import { getPluginRunContext, setPluginRunContext } from "./host-hook-runtime.js";

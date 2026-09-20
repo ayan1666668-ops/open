@@ -307,7 +307,7 @@ it.each(["plugin callback", "host hook", "abort descendant"] as const)(
   },
 );
 
-it("fences a timed-out consumer but lets its owner close and release its capture", async () => {
+it("retains an admitted consumer through the retirement deadline until its owner closes it", async () => {
   const { value, instance } = fixture("runtime");
   const consumer = instance.retainConsumer();
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
@@ -315,11 +315,12 @@ it("fences a timed-out consumer but lets its owner close and release its capture
   await vi.advanceTimersByTimeAsync(5_000);
   const timeout = forcedRetirement((await retirement).errors);
   expect(timeout.forcedRetirement).toEqual({ activeCallCount: 0, retainedConsumerCount: 1 });
-  expect(() => consumer.run(() => value.read())).toThrow("consumer is closed");
+  expect(consumer.run(() => value.read())).toBe("retained");
   expect(fs.existsSync(value.filename)).toBe(true);
   await consumer.close(() => {
     expect(value.read()).toBe("retained");
   });
+  expect(() => consumer.run(() => value.read())).toThrow("consumer is closed");
   await timeout.settled;
   expect(fs.existsSync(value.filename)).toBe(false);
 });
@@ -334,13 +335,14 @@ it("lets the context-engine owner finish cleanup after forced retirement", async
   const retirement = instance.dispose();
   await vi.advanceTimersByTimeAsync(5_000);
   const timeout = forcedRetirement((await retirement).errors);
-  expect(() => scope.run(() => value.read())).toThrow("consumer is closed");
+  expect(scope.run(() => value.read())).toBe("retained");
   const cleanup = vi.fn(() => {
     expect(value.read()).toBe("retained");
   });
   try {
     await disposeContextEngineSources(undefined, [source], cleanup);
     expect(cleanup).toHaveBeenCalledOnce();
+    expect(() => scope.run(() => value.read())).toThrow("invocation scope is closed");
     await timeout.settled;
     expect(fs.existsSync(value.filename)).toBe(false);
   } finally {

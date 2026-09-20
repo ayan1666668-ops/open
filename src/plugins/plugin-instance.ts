@@ -310,7 +310,7 @@ export class PluginInstance {
           const settled = completion.then(
             async (result) => {
               await release();
-              if (this.forcedRetirement && !cleanup) {
+              if (this.forcedRetirement && !cleanup && !this.hasToken(token)) {
                 throw new PluginInstanceUnavailableError(this.pluginId);
               }
               return result;
@@ -328,7 +328,7 @@ export class PluginInstance {
           return settled as T;
         }
         void release();
-        if (this.forcedRetirement && !cleanup) {
+        if (this.forcedRetirement && !cleanup && !this.hasToken(token)) {
           throw new PluginInstanceUnavailableError(this.pluginId);
         }
         return value;
@@ -562,9 +562,7 @@ export class PluginInstance {
               this.calls.delete(token);
             }
           }
-          for (const consumer of this.consumers.values()) {
-            consumer.active = false;
-          }
+          // Admitted consumers keep their own authority until the host closes or releases them.
           this.abortDisposal(work);
           const error = new PluginInstanceDrainTimeoutError(
             `Plugin ${this.pluginId} forced retirement after ${SHUTDOWN_TIMEOUT_MS}ms: ${fact.activeCallCount} still-running call(s), ${fact.retainedConsumerCount} retained consumer(s); resource cleanup remains pending.`,
