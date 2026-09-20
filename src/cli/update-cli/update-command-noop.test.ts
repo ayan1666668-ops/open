@@ -45,9 +45,13 @@ beforeEach(() => {
 });
 afterEach(() => vi.restoreAllMocks());
 
-it.each([undefined, "/serving/install"])(
-  "refreshes already-current policy against the admitted service root %s",
-  async (managedServiceRoot) => {
+it.each([
+  { managedServiceRoot: undefined, foreground: false },
+  { managedServiceRoot: "/serving/install", foreground: false },
+  { managedServiceRoot: "/serving/install", foreground: true },
+])(
+  "refreshes already-current policy only for native admission (root=$managedServiceRoot, foreground=$foreground)",
+  async ({ managedServiceRoot, foreground }) => {
     const root = "/target/install";
     const serviceRoot = managedServiceRoot ?? root;
     const before: PreManagedServiceStop = {
@@ -63,6 +67,7 @@ it.each([undefined, "/serving/install"])(
       },
     };
     boundary.contexts.mockResolvedValue({
+      foreground,
       service: before,
       services: new Map([[serviceRoot, before]]),
       contexts: [{ env: {}, configSnapshot: { sourceConfig: {}, config: {}, valid: true } }],
@@ -98,8 +103,8 @@ it.each([undefined, "/serving/install"])(
     });
 
     expect(refuseUpdate).not.toHaveBeenCalled();
-    expect(boundary.maintenance).toHaveBeenCalledTimes(2);
-    for (const [index, phase] of ["inspect", "refresh"].entries()) {
+    expect(boundary.maintenance).toHaveBeenCalledTimes(foreground ? 0 : 2);
+    for (const [index, phase] of (foreground ? [] : ["inspect", "refresh"]).entries()) {
       expect(boundary.maintenance).toHaveBeenNthCalledWith(
         index + 1,
         expect.objectContaining({
@@ -116,7 +121,7 @@ it.each([undefined, "/serving/install"])(
       expect.objectContaining({
         root,
         serviceRuntimeRefreshRequired: managedServiceRoot !== undefined,
-        preManagedServiceStop: before,
+        preManagedServiceStop: foreground ? undefined : before,
       }),
     );
   },

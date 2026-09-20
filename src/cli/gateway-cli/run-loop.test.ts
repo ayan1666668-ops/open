@@ -21,6 +21,7 @@ import { captureEnv, deleteTestEnvValue } from "../../test-utils/env.js";
 import type { GatewayRestartSnapshot } from "../daemon-cli/restart-health.js";
 import { registerHostedUpdateStopTests } from "./run-loop-hosted-stop.test-support.js";
 import { registerGatewayRequestTests } from "./run-loop-request.test-support.js";
+import { registerShutdownBudgetTests } from "./run-loop-shutdown-budget.test-support.js";
 import { registerGatewayStartupFailureTests } from "./run-loop-startup.test-support.js";
 import { registerUpdateRespawnTests } from "./run-loop-update-respawn.test-support.js";
 import {
@@ -36,7 +37,6 @@ import {
   registerGatewayRestartOwnershipTests,
   type UpdateRespawnResultFixture,
   setPlatform,
-  registerShutdownBudgetTests,
   waitForStart,
   waitForLoopCondition,
   withIsolatedSignals,
@@ -549,6 +549,10 @@ describe("runGatewayLoop", () => {
     restartGatewayProcessWithFreshPid,
     respawnGatewayProcessForUpdate,
     captureForegroundUpdateHandoffStop,
+    readCgroup,
+    systemctl,
+    armShutdownHardExitWatchdog,
+    cancelShutdownHardExitWatchdog,
     consumeGatewayRestartIntent,
     consumeGatewayRestartIntentPayloadSync,
     peekGatewayRestartReason,

@@ -52,8 +52,15 @@ export async function resolveGatewayShutdownBudget(
     timeoutMs,
     reserveMs,
     // Let cleanup failures reach the run loop before its native exit timer wins.
-    cleanupDeadline: (deadline: number, hardExitGraceMs: number) =>
-      deadline - Math.min(hardExitGraceMs / 2, Math.max(0, deadline - performance.now()) / 2),
+    cleanupBudget: (deadline: number | undefined, hardExitGraceMs: number) =>
+      deadline === undefined
+        ? undefined
+        : {
+            deadline:
+              deadline -
+              Math.min(hardExitGraceMs / 2, Math.max(0, deadline - performance.now()) / 2),
+            warn: (message: string) => logger.warn(message),
+          },
     log: (phase: "startup" | "shutdown") => {
       logger.info(
         `shutdown budget at ${phase}: drain=${Math.max(0, timeoutMs - GATEWAY_SHUTDOWN_RESERVE_MS)}ms shutdown=${timeoutMs}ms reserve=${reserveMs}ms exitMargin=${GATEWAY_SUPERVISOR_EXIT_MARGIN_MS}ms; source=${retained ? `startup shutdown budget=${retained.timeoutMs}ms` : `${stop.source}=${stop.timeoutMs}ms`}`,
@@ -84,7 +91,10 @@ export function resolveGatewayShutdownDrainBudget(params: {
       : drainTimeoutMs + (budget.nativeStopBudget ? budget.reserveMs : GATEWAY_SHUTDOWN_TIMEOUT_MS);
   return {
     restartDrainDeadlineAt,
-    restartTimeoutMs,
+    restartTimeoutMs: () =>
+      budget.nativeStopBudget
+        ? restartTimeoutMs(Math.max(0, (restartDrainDeadlineAt ?? Date.now()) - Date.now()))
+        : GATEWAY_SHUTDOWN_TIMEOUT_MS,
     closeDrainTimeoutMs: () =>
       restartDrainTimeoutMs === undefined
         ? GATEWAY_SHUTDOWN_TIMEOUT_MS - budget.reserveMs
