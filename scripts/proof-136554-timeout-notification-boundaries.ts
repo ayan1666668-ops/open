@@ -211,7 +211,6 @@ try {
         requesterAgentId: "main",
         triggerMessage: "process child observation",
         steerMessage: "process child observation",
-        requesterOrigin: dmOrigin,
         requesterSessionOrigin: dmOrigin,
         completionDirectOrigin: dmOrigin,
         directOrigin: dmOrigin,
