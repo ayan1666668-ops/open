@@ -12,6 +12,24 @@ stage="$root/stage.driver"
 /bin/mkdir -p "$target" "$stage"
 /usr/bin/touch "$target/previous"
 if /bin/sh "$(dirname "$0")/commit-driver-transaction.sh" \
+  "$root/missing.driver" "$target" /usr/bin/true; then
+  echo "missing staged driver unexpectedly committed" >&2
+  exit 1
+fi
+test -f "$target/previous"
+
+# Force the backup rename to fail without changing the installed driver.
+if /bin/sh -c '
+  /usr/bin/touch "$1/.OpenClawBridge.driver.rollback.$$"
+  exec /bin/sh "$2" "$3" "$4" /usr/bin/true
+' sh "$root" "$(dirname "$0")/commit-driver-transaction.sh" "$stage" "$target"; then
+  echo "failed backup unexpectedly committed" >&2
+  exit 1
+fi
+test -f "$target/previous"
+test -d "$stage"
+
+if /bin/sh "$(dirname "$0")/commit-driver-transaction.sh" \
   "$stage" "$target" /usr/bin/false; then
   echo "invalid staged driver unexpectedly committed" >&2
   exit 1
