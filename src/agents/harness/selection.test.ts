@@ -14,7 +14,6 @@ import {
   loadTranscriptEvents,
   replaceSessionEntry,
 } from "../../config/sessions/session-accessor.js";
-import type { TranscriptEntryAnchor } from "../../config/sessions/transcript-entry-anchor.js";
 import { OPENCLAW_EMBEDDED_CONTEXT_ENGINE_HOST } from "../../context-engine/host-compat.js";
 import type { ContextEngine } from "../../context-engine/types.js";
 import type { GatewayRequestContext } from "../../gateway/server-methods/types.js";
@@ -35,7 +34,6 @@ import {
 } from "../../plugins/runtime/gateway-request-scope.js";
 import { mintSecretSentinel } from "../../secrets/sentinel.js";
 import { createUserTurnTranscriptRecorder } from "../../sessions/user-turn-transcript.js";
-import type { UserTurnTranscriptRecorder } from "../../sessions/user-turn-transcript.types.js";
 import { closeOpenClawAgentDatabasesAsync } from "../../state/openclaw-agent-db.js";
 import {
   closeOpenClawStateDatabaseAsync,
@@ -99,6 +97,10 @@ import {
   selectAgentHarnessForPreparedModelProviders,
 } from "./selection.js";
 import {
+  createTranscriptAnchor,
+  createTranscriptRecorder,
+} from "./selection.transcript.test-support.js";
+import {
   buildAgentHarnessSupportContext,
   resolveAgentHarnessPreparedAuthSupport,
   resolveAgentHarnessPreparedRouteSupport,
@@ -136,30 +138,6 @@ const privateHarnessParamCases = [
   { field: "onContextAccountingEvent", value: () => undefined },
   { field: "onCompactionRequestBudget", value: () => undefined },
 ] as const;
-
-function createTranscriptRecorder(
-  admission: ReturnType<typeof createTranscriptAnchor> & {
-    logicalTurnId: string;
-    role: "user";
-  },
-): UserTurnTranscriptRecorder {
-  const message = { role: "user" as const, content: "hello", timestamp: 1 };
-  return {
-    message,
-    resolveMessage: async () => message,
-    getAdmissionReceipt: () => admission,
-    markRuntimePersistencePending: () => {},
-    markRuntimePersisted: () => {},
-    markBlocked: () => {},
-    hasPersisted: () => true,
-    isBlocked: () => false,
-    hasRuntimePersistencePending: () => false,
-    waitForRuntimePersistence: async () => {},
-    persistApproved: async () => undefined,
-    persistBlocked: async () => undefined,
-    persistFallback: async () => undefined,
-  };
-}
 
 vi.mock("./builtin-openclaw.js", () => ({
   createOpenClawAgentHarness: (): AgentHarness => {
@@ -334,24 +312,6 @@ function createAttemptResult(sessionIdUsed: string): EmbeddedRunAttemptResult {
     cloudCodeAssistFormatError: false,
     replayMetadata: { hadPotentialSideEffects: false, replaySafe: true },
     itemLifecycle: { startedCount: 0, completedCount: 0, activeCount: 0 },
-  };
-}
-
-function createTranscriptAnchor(
-  entryId: string,
-  rawSeq: number,
-  activeMessagePosition: number,
-): TranscriptEntryAnchor {
-  return {
-    agentId: "main",
-    sessionId: "session-1",
-    sessionKey: "agent:main:session-1",
-    storePath: "/tmp/openclaw-agent.sqlite",
-    generation: "generation-1",
-    entryId,
-    effectiveParentId: rawSeq === 1 ? null : "user-1",
-    rawSeq,
-    activeMessagePosition,
   };
 }
 
