@@ -328,7 +328,7 @@ export function fingerprintCompactionMessages(messages: readonly AgentMessage[])
       toolName: (message as { toolName?: unknown }).toolName,
       // SAFETY: Read only an optional unknown field across built-in and custom message roles.
       isError: (message as { isError?: unknown }).isError,
-      // Failure status participates in tool-frame protection during awaited curation.
+      // SAFETY: Read only optional unknown failure status across built-in/custom roles; it participates in awaited tool-frame protection.
       stopReason: (message as { stopReason?: unknown }).stopReason,
       // SAFETY: Read only an optional unknown field across built-in and custom message roles.
       details: (message as { details?: unknown }).details,
