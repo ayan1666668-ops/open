@@ -10,7 +10,7 @@ import { resolvePathViaExistingAncestorSync } from "../../infra/boundary-path.js
 import { resolveRuntimeWorkerUrl } from "../../infra/runtime-worker-url.js";
 import { triageTestRuntimeEntrypoints } from "../../infra/triage-runtime.test-support.js";
 import { UPDATE_RUN_ID_ENV } from "../../infra/update-control-plane-sentinel.js";
-import type { UpdateDoctorLintFinding } from "../../infra/update-doctor-lint.js";
+import type { UpdateDoctorLintFinding } from "../../infra/update-doctor-lint-schema.js";
 import { createRetainedUpdateRecovery } from "../../infra/update-retained-recovery.test-support.js";
 import * as updateRunLedger from "../../infra/update-run-ledger.js";
 import { createUpdateRun, finishUpdateRun, getUpdateRun } from "../../infra/update-run-ledger.js";

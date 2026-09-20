@@ -1,9 +1,7 @@
 import { UPDATE_POST_CORE_CONVERGENCE_ENV } from "../../commands/doctor/shared/update-phase.js";
 import { resolveGatewayInstallEntrypoint } from "../../daemon/gateway-entrypoint.js";
-import {
-  parseUpdateDoctorLintReport,
-  type UpdateDoctorLintFinding,
-} from "../../infra/update-doctor-lint.js";
+import type { UpdateDoctorLintFinding } from "../../infra/update-doctor-lint-schema.js";
+import { parseUpdateDoctorLintReport } from "../../infra/update-doctor-lint.js";
 import type { UpdateStepResult } from "../../infra/update-runner-types.js";
 import { isConfiguredPluginPathDiagnosticCode } from "../../plugins/discovery-availability.js";
 import { runUtf8CommandWithTimeout } from "../../process/exec.js";

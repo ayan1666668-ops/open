@@ -3,10 +3,8 @@ import fs from "node:fs/promises";
 import { z } from "zod";
 import { sanitizeForLog } from "../../packages/terminal-core/src/ansi.js";
 import { readFileDescriptorBounded } from "../infra/boundary-file-read.js";
-import {
-  normalizeUpdateDoctorLintFindings,
-  UpdateDoctorLintFindingSchema,
-} from "../infra/update-doctor-lint.js";
+import { UpdateDoctorLintFindingSchema } from "../infra/update-doctor-lint-schema.js";
+import { normalizeUpdateDoctorLintFindings } from "../infra/update-doctor-lint.js";
 import { normalizeUpdateFailureFacts } from "../infra/update-failure-facts.js";
 import { UpdateFailureFactSchema } from "../infra/update-run-schema.js";
 import { formatUpdateDoctorLintReceipt, isFailedUpdateStep } from "../infra/update-run-step.js";

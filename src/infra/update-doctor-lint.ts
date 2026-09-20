@@ -2,20 +2,13 @@ import { truncateUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
 import { z } from "zod";
 import { resolveStateDir } from "../config/paths.js";
 import { redactSupportDiagnosticLine } from "../logging/diagnostic-support-redaction.js";
+import {
+  UpdateDoctorLintFindingSchema,
+  type UpdateDoctorLintFinding,
+} from "./update-doctor-lint-schema.js";
 import { normalizeUpdateFailureFacts } from "./update-failure-facts.js";
 import type { UpdateStepResult } from "./update-runner-types.js";
 
-export const UpdateDoctorLintFindingSchema = z.object({
-  checkId: z.string(),
-  message: z.string(),
-  source: z.string().optional(),
-  errorCode: z.string().optional(),
-  fixHint: z.string().optional(),
-  severity: z.string().optional(),
-  path: z.string().optional(),
-  requirement: z.string().optional(),
-});
-export type UpdateDoctorLintFinding = z.infer<typeof UpdateDoctorLintFindingSchema>;
 const UpdateDoctorLintReportSchema = z.object({
   ok: z.boolean(),
   checksRun: z.number().nonnegative().refine(Number.isInteger),

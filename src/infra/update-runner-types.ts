@@ -9,7 +9,7 @@ import type {
   UpdateDoctorConfigChange,
   UpdateDoctorConfigWriteRefusal,
 } from "./update-doctor-config.js";
-import type { UpdateDoctorLintFinding } from "./update-doctor-lint.js";
+import type { UpdateDoctorLintFinding } from "./update-doctor-lint-schema.js";
 import type { PackageUpdateStepAdvisory } from "./update-doctor-result.js";
 import type { UpdateFailureFact } from "./update-failure-facts.js";
 import type { GlobalInstallManager } from "./update-global.js";
