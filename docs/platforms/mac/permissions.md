@@ -22,8 +22,7 @@ background permission polling.
 Screen Recording and Accessibility show **Not granted** until access is confirmed;
 macOS's binary checks do not distinguish a first request from a denial. Click
 **Grant** to request access before looking for OpenClaw in System Settings.
-Automation can show **Status unknown** when Terminal is not running; **Check**
-starts the native authorization flow. Permissions with a confirmed denial offer
+Permissions with a confirmed denial offer
 **Open System Settings** instead.
 
 Enabling camera access, Computer Control, Keep computer awake, the Peekaboo bridge, browser cookie
@@ -129,7 +128,6 @@ Example resets (using OpenClaw's bundle ID, `ai.openclaw.mac`):
 ```bash
 sudo tccutil reset Accessibility ai.openclaw.mac
 sudo tccutil reset ScreenCapture ai.openclaw.mac
-sudo tccutil reset AppleEvents
 ```
 
 ## Files and folders permissions (Desktop/Documents/Downloads)

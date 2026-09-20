@@ -125,7 +125,6 @@ describe("native device settings wire contract", () => {
       entries: [
         { id: "screenRecording", status: "notGranted" },
         { id: "accessibility", status: "notGranted" },
-        { id: "automation", status: "unknown" },
       ],
     },
     {

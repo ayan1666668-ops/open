@@ -160,7 +160,6 @@ struct DeviceSettingsBridgeTests {
             ("camera", .camera, .camera),
             ("speechRecognition", .speechRecognition, .speechRecognition),
             ("location", .location, .location),
-            ("automation", .automation, .appleScript),
         ]
         #expect(DeviceSettingsPermission.macOSPermissions.map(\.rawValue) == permissions.map(\.0))
         for permission in [DeviceSettingsPermission.contacts, .calendars, .reminders, .photos] {

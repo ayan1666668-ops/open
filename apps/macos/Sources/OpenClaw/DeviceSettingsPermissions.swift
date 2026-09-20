@@ -4,7 +4,7 @@ import OpenClawKit
 extension DeviceSettingsPermission {
     static let macOSPermissions: [Self] = [
         .notifications, .accessibility, .screenRecording, .microphone,
-        .camera, .speechRecognition, .location, .automation,
+        .camera, .speechRecognition, .location,
     ]
 
     var capability: Capability? {
@@ -16,7 +16,6 @@ extension DeviceSettingsPermission {
         case .camera: .camera
         case .speechRecognition: .speechRecognition
         case .location: .location
-        case .automation: .appleScript
         case .contacts, .calendars, .reminders, .photos: nil
         }
     }

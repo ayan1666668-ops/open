@@ -8,7 +8,6 @@ const permissionIdSchema = z.enum([
   "camera",
   "speechRecognition",
   "location",
-  "automation", // Swift Capability.appleScript
   "contacts",
   "calendars",
   "reminders",

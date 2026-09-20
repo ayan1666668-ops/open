@@ -747,10 +747,6 @@ const enSettings = {
           hint: "Use Apple Speech; passive Voice Wake stays on-device.",
         },
         location: { title: "Location", hint: "Share location when requested by the agent." },
-        automation: {
-          title: "Automation (Terminal)",
-          hint: "Control Terminal for automation actions; other apps request access separately.",
-        },
         contacts: { title: "Contacts", hint: "Access contacts when requested by the agent." },
         calendars: {
           title: "Calendars",
