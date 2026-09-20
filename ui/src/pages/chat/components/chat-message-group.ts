@@ -498,11 +498,8 @@ export function renderMessageGroup(group: MessageGroup, opts: RenderMessageGroup
   // Aggregate usage/cost/model across all messages in the group
   const meta = extractGroupMeta(group, opts.contextWindow ?? null);
 
-  if (
-    normalizedRole === "tool" &&
-    opts.showToolCalls === false &&
-    group.visibleContent !== "non-text"
-  ) {
+  const hideToolGroup = normalizedRole === "tool" && opts.showToolCalls === false;
+  if (hideToolGroup && group.visibleContent !== "non-text") {
     return nothing;
   }
 
