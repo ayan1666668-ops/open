@@ -69,8 +69,11 @@ export type SessionStoreSelectionOptions = {
   allAgents?: boolean;
 };
 
+type DatabasePathMatcher = (left: string, right: string) => boolean;
+
 type SessionStoreTargetReadOptions = {
   env?: NodeJS.ProcessEnv;
+  isSameDatabasePath?: DatabasePathMatcher;
   registeredDatabases?: SessionStoreRegistryRead;
   readCandidates?: readonly SessionStoreReadCandidate[];
   readPaths?: CapturedSessionStorePaths;
@@ -267,7 +270,7 @@ export type ExistingAgentSessionStoreTargetResolver = (
 /** Reuse configured fixed-store ownership only within one synchronous discovery operation. */
 export function createExistingAgentSessionStoreTargetResolver(
   cfg: OpenClawConfig,
-  params: SessionStoreTargetReadOptions,
+  params: SessionStoreTargetReadOptions & { isSameDatabasePath: DatabasePathMatcher },
 ): ExistingAgentSessionStoreTargetResolver {
   let configuredOwners: Set<string> | undefined;
   const isConfiguredTarget = (agentId: string) => {
@@ -342,6 +345,7 @@ function resolveExistingAgentSessionStoreTargets(
       env,
       registeredDatabases: params.registeredDatabases,
       readCandidates: params.readCandidates,
+      isSameDatabasePath: params.isSameDatabasePath,
     });
     if (!resolvedTarget.shared && !isSelectedTarget()) {
       return [];
