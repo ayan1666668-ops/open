@@ -59,8 +59,7 @@ export const LEGACY_CONFIG_MIGRATIONS_RUNTIME_MODELS = [
           'Legacy implicit primary model selection needs preservation before separating utility models. Run "openclaw doctor --fix"; dynamic catalog IDs need an explicit primary model.',
         // Advice may inspect resolved values; applying the migration still requires authored input.
         match: (_value, root) =>
-          materializeUtilityModelSeparation(deepCloneForMigrationProbe(root) as typeof root).changes
-            .length > 0,
+          materializeUtilityModelSeparation(deepCloneForMigrationProbe(root)).changes.length > 0,
       },
     ],
     apply: (raw, changes, context) => {

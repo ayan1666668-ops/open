@@ -181,12 +181,10 @@ export function containsEnvVarReference(value: string): boolean {
 type SubstituteTask = {
   value: unknown;
   path: string;
-  /** Slot writer; containers hand child frames a setter that fills them later. */
-  set: (resolved: unknown) => void;
-  /** Containers schedule child tasks after allocating the target container. */
-  target?: Record<string, unknown> | unknown[];
-  /** Array containers fill numeric slots with `[i]` paths instead of dotted keys. */
-  isArray?: boolean;
+  /** Output container holding this value's slot; array slots use numeric keys. */
+  slot: Record<string, unknown> | unknown[];
+  /** Key of this value's slot inside `slot`. */
+  key: string;
 };
 
 function substituteAny(
@@ -207,56 +205,76 @@ function substituteAny(
 
   // Driver loop: each pending container becomes a heap frame instead of a
   // call frame, so document depth costs heap and previously accepted deep
-  // configs keep substituting instead of overflowing the call stack. Child
-  // tasks are pushed in reverse so the pending order matches the recursive
-  // depth-first walk, keeping warning and provenance ordering stable.
-  const stack: SubstituteTask[] = [];
+  // configs keep substituting instead of overflowing the call stack. Slots
+  // are allocated while expanding the parent so object key order follows the
+  // source document, and children are pushed in reverse so leaves resolve in
+  // the same depth-first order as the recursive walk.
   const result: Record<string, unknown> | unknown[] = rootIsArray ? [] : {};
-  stack.push({
-    value,
-    path,
-    set: () => {},
-    target: result,
-    isArray: rootIsArray,
-  });
-  while (stack.length > 0) {
-    const task = stack.pop()!;
-    if (task.target === undefined) {
-      task.set(task.value);
-      continue;
+  const stack: SubstituteTask[] = [];
+
+  const writeSlot = (
+    slot: Record<string, unknown> | unknown[],
+    key: string,
+    resolved: unknown,
+  ): void => {
+    if (Array.isArray(slot)) {
+      slot[Number(key)] = resolved;
+    } else {
+      slot[key] = resolved;
     }
-    const entries = Object.entries(task.value as Record<string, unknown>);
-    for (let i = entries.length - 1; i >= 0; i -= 1) {
-      const [key, val] = entries[i];
-      const childPath = task.isArray
-        ? `${task.path}[${key}]`
-        : appendConfigPathSegment(task.path, key);
+  };
+
+  const expandContainer = (
+    source: Record<string, unknown> | unknown[],
+    containerPath: string,
+    slot: Record<string, unknown> | unknown[],
+  ): void => {
+    const sourceIsArray = Array.isArray(source);
+    const children: SubstituteTask[] = [];
+    for (const [key, val] of Object.entries(source)) {
+      const childPath = sourceIsArray
+        ? `${containerPath}[${key}]`
+        : appendConfigPathSegment(containerPath, key);
       const childIsArray = Array.isArray(val);
       const childIsObject = !childIsArray && isPlainObject(val);
-      if (!childIsArray && !childIsObject) {
-        const resolved =
-          typeof val === "string" ? substituteString(val, env, childPath, opts) : val;
-        if (task.isArray) {
-          (task.target as unknown[])[Number(key)] = resolved;
-        } else {
-          (task.target as Record<string, unknown>)[key] = resolved;
-        }
-        continue;
-      }
-      const child: Record<string, unknown> | unknown[] = childIsArray ? [] : {};
-      if (task.isArray) {
-        (task.target as unknown[])[Number(key)] = child;
+      if (childIsArray || childIsObject) {
+        const child: Record<string, unknown> | unknown[] = childIsArray ? [] : {};
+        writeSlot(slot, key, child);
+        children.push({ value: val, path: childPath, slot: child, key });
       } else {
-        (task.target as Record<string, unknown>)[key] = child;
+        // Reserve the slot now so key order matches the document; the leaf
+        // task below overwrites it with the resolved value without moving it.
+        writeSlot(slot, key, undefined);
+        children.push({ value: val, path: childPath, slot, key });
       }
-      stack.push({
-        value: val,
-        path: childPath,
-        set: () => {},
-        target: child,
-        isArray: childIsArray,
-      });
     }
+    for (const child of children.toReversed()) {
+      stack.push(child);
+    }
+  };
+
+  if (Array.isArray(value)) {
+    expandContainer(value, path, result);
+  } else if (isPlainObject(value)) {
+    expandContainer(value, path, result);
+  }
+  while (stack.length > 0) {
+    const task = stack.pop()!;
+    if (Array.isArray(task.value)) {
+      expandContainer(task.value, task.path, task.slot);
+      continue;
+    }
+    if (isPlainObject(task.value)) {
+      expandContainer(task.value, task.path, task.slot);
+      continue;
+    }
+    writeSlot(
+      task.slot,
+      task.key,
+      typeof task.value === "string"
+        ? substituteString(task.value, env, task.path, opts)
+        : task.value,
+    );
   }
   return result;
 }

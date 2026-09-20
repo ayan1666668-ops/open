@@ -541,4 +541,24 @@ describe("resolveConfigEnvVars", () => {
     }
     expect(current).toBe("leaf-ok");
   });
+  it("preserves source object key order while substituting nested documents", () => {
+    const resolved = resolveConfigEnvVars(
+      {
+        zeta: "${LAST}",
+        nested: { mid: { alpha: "${FIRST}", omega: 2 } },
+        alpha: 1,
+      },
+      { FIRST: "first", LAST: "last" },
+    ) as Record<string, unknown>;
+    // Slots must be allocated in document order: substitution writes leaves
+    // depth-first, and writing them eagerly would reverse object key order.
+    expect(Object.keys(resolved)).toEqual(["zeta", "nested", "alpha"]);
+    expect(Object.keys(resolved.nested as Record<string, unknown>)).toEqual(["mid"]);
+    expect(Object.keys(resolved.nested.mid as Record<string, unknown>)).toEqual(["alpha", "omega"]);
+    expect(resolved).toEqual({
+      zeta: "last",
+      nested: { mid: { alpha: "first", omega: 2 } },
+      alpha: 1,
+    });
+  });
 });
