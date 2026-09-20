@@ -31,8 +31,10 @@ import { stopChildProcess } from "../../../helpers/stop-child-process.js";
 const MODEL = "mock-openai/progress-fixture";
 const FINAL_MARKER = "TOOL-PROGRESS-FINAL";
 const HEADLINE = "Checking the requested work";
-// The exec tool renders as a compact tool row on every progress surface.
+// Draft progress uses compact tool rows; native Slack uses task_update chunks.
 const toolRow = /🛠️ (?:Exec|Bash)\b/u;
+const nativeToolTitle = /^(?:Exec|Bash)\b/u;
+const failedToolRow = /🛠️ (?:Exec|Bash): failed\b/u;
 type WireWrite = {
   at: number;
   method: string;
@@ -43,6 +45,34 @@ type WireWrite = {
   identityOmitted?: true;
 };
 type CrablineAdapter = Awaited<ReturnType<typeof startOpenClawCrablineAdapter>>;
+
+function createGroupOnlyGatewayConfig(adapter: CrablineAdapter): OpenClawConfig {
+  const config = adapter.createGatewayConfig() as OpenClawConfig;
+  return {
+    ...config,
+    channels: {
+      ...config.channels,
+      ...(config.channels?.discord
+        ? {
+            discord: {
+              ...config.channels.discord,
+              dm: { ...config.channels.discord.dm, enabled: false },
+              dmPolicy: "disabled" as const,
+            },
+          }
+        : {}),
+      ...(config.channels?.slack
+        ? {
+            slack: {
+              ...config.channels.slack,
+              allowFrom: [],
+              dmPolicy: "disabled" as const,
+            },
+          }
+        : {}),
+    },
+  };
+}
 
 function parseBody(text: string): Record<string, unknown> {
   try {
@@ -576,11 +606,10 @@ describe("channel progress presentation through an isolated Gateway", () => {
         configured.channels!.slack!.streaming = { mode: "partial", nativeTransport: false };
         const modelProvider = configured.models!.providers!["mock-openai"]!;
         modelProvider.api = "openai-completions";
-        modelProvider.models = modelProvider.models.map((model) => ({
-          ...model,
-          api: "openai-completions",
-          reasoning: false,
-        }));
+        for (const model of modelProvider.models) {
+          model.api = "openai-completions";
+          model.reasoning = false;
+        }
         return configured;
       },
     });
@@ -713,45 +742,40 @@ describe("channel progress presentation through an isolated Gateway", () => {
     const completions: string[] = [];
     const tasks: Array<Record<string, unknown>> = [];
     const inboundMessages: Array<Record<string, unknown>> = [];
-    const providerRequests: Array<{ model: unknown; requester: boolean; completion: boolean }> = [];
+    const providerRequests: Array<{
+      model: unknown;
+      requester: boolean;
+      completion: boolean;
+      requestText: string;
+    }> = [];
     let observerRequests = 0;
     let releaseRequester: (() => void) | undefined;
     let requesterHeld = false;
     const slowRequesterCases = new Set<string>();
     const caseNames = ["visible", "restart"] as const;
     const settledRequesterCases: string[] = [];
-    const observerFailures = () => {
-      let attempts = 0;
-      return gateway
+    const observerFailures = () =>
+      gateway
         .logs()
         .split("\n")
         .flatMap((line) => {
           try {
             const value = asRecord(JSON.parse(line));
             const message = readStringValue(value.message) ?? "";
-            if (
-              value.subsystem === "provider-transport-fetch" &&
-              message.startsWith("[model-fetch] start ") &&
-              message.includes("model=observer-failure-fixture ")
-            ) {
-              attempts += 1;
-            }
-            if (message === "session observer disabled after consecutive failures") {
-              const failure = {
-                message,
-                error: value.error,
-                runId: value.runId,
-                attempts,
-              };
-              attempts = 0;
-              return [failure];
-            }
-            return [];
+            return message === "session observer disabled after consecutive failures"
+              ? [
+                  {
+                    message,
+                    error: value.error,
+                    runId: value.runId,
+                    attempts: value.consecutiveFailures,
+                  },
+                ]
+              : [];
           } catch {
             return [];
           }
         });
-    };
     // The shared terminal fixture intentionally requests a direct fallback.
     // Supply a visible model final over HTTP to exercise automatic-final receipts.
     const proxy = createServer((request, response) => {
@@ -768,6 +792,7 @@ describe("channel progress presentation through an isolated Gateway", () => {
           model: body.model,
           requester: currentText.includes("Subagent terminal reply QA check:"),
           completion,
+          requestText: currentText.slice(0, 1_000),
         });
         if (String(parseBody(raw).model).endsWith("observer-failure-fixture")) {
           observerRequests += 1;
@@ -858,7 +883,7 @@ describe("channel progress presentation through an isolated Gateway", () => {
       transportBaseUrl: api.baseUrl,
       transport: {
         requiredPluginIds: adapter.requiredPluginIds,
-        createGatewayConfig: () => adapter.createGatewayConfig() as OpenClawConfig,
+        createGatewayConfig: () => createGroupOnlyGatewayConfig(adapter),
       },
       runtimeEnvPatch: {
         ...adapter.createProviderReadinessEnv({}),
@@ -1067,8 +1092,8 @@ describe("channel progress presentation through an isolated Gateway", () => {
         String(failure.error).includes("Isolated completion failed with stop reason error"),
       ),
     ).toBe(true);
-    // A failed connection can precede the proxy's HTTP receipt. Count starts at
-    // the transport owner so those failures cannot hide an unbounded retry.
+    // The observer warning carries its run-owned consecutive-failure count;
+    // provider transport starts from overlapping runs cannot be partitioned by warning order.
     expect(observerFailures().every((failure) => failure.attempts === 2)).toBe(true);
     expect(new Set(observerEvents.map((event) => event.runId)).size).toBeGreaterThanOrEqual(2);
     const evidenceDir = path.join(process.cwd(), ".artifacts", "channel-progress-presentation");
@@ -1251,7 +1276,7 @@ describe("channel progress presentation through an isolated Gateway", () => {
       transportBaseUrl: api.baseUrl,
       transport: {
         requiredPluginIds: adapter.requiredPluginIds,
-        createGatewayConfig: () => adapter.createGatewayConfig() as OpenClawConfig,
+        createGatewayConfig: () => createGroupOnlyGatewayConfig(adapter),
       },
       runtimeEnvPatch: {
         ...adapter.createProviderReadinessEnv({}),
@@ -1550,7 +1575,7 @@ describe("channel progress presentation through an isolated Gateway", () => {
         transportBaseUrl: api.baseUrl,
         transport: {
           requiredPluginIds: adapter.requiredPluginIds,
-          createGatewayConfig: () => adapter.createGatewayConfig() as OpenClawConfig,
+          createGatewayConfig: () => createGroupOnlyGatewayConfig(adapter),
         },
         runtimeEnvPatch: environment,
         mutateConfig: (config) => {
@@ -1712,13 +1737,18 @@ describe("channel progress presentation through an isolated Gateway", () => {
         )
         .join("\n");
       expect(progressText).toContain(HEADLINE);
-      if (tools) {
-        expect(progressText).toMatch(toolRow);
-      } else {
+      if (!tools) {
         expect(progressText).not.toMatch(toolRow);
+      } else if (channel !== "slack" || !native) {
+        expect(progressText).toMatch(toolRow);
       }
       if (failTool) {
-        expect(progressText).toContain("exit 1");
+        if (tools) {
+          expect(progressText).toMatch(failedToolRow);
+        } else {
+          expect(progressText).not.toMatch(failedToolRow);
+          expect(progressText).not.toContain("exit 1");
+        }
       }
       const reactionAdds = writes.filter((write) =>
         channel === "discord"
@@ -1788,12 +1818,28 @@ describe("channel progress presentation through an isolated Gateway", () => {
       const tasks = writes
         .flatMap((write) => readChunks(write.body.chunks))
         .filter((chunk) => chunk.type === "task_update");
-      if (native) {
+      if (channel === "slack" && native) {
         // Detailed cards give the exec call its own task row; quiet cards keep
         // one stable summary row. Both complete with the turn.
-        expect(tasks.some((task) => toolRow.test(String(task.title)))).toBe(tools);
-        if (!tools) {
+        expect(tasks.some((task) => nativeToolTitle.test(readStringValue(task.title) ?? ""))).toBe(
+          tools,
+        );
+        if (tools) {
+          const startedTaskIndex = tasks.findIndex(
+            (task) =>
+              task.status === "in_progress" &&
+              nativeToolTitle.test(readStringValue(task.title) ?? ""),
+          );
+          expect(startedTaskIndex).toBeGreaterThanOrEqual(0);
+          const startedTask = tasks[startedTaskIndex];
+          expect(startedTask?.id).toEqual(expect.stringMatching(/\S/u));
+          const completedTaskIndex = tasks.findIndex(
+            (task) => task.id === startedTask?.id && task.status === "complete",
+          );
+          expect(completedTaskIndex).toBeGreaterThan(startedTaskIndex);
+        } else {
           expect(new Set(tasks.map((task) => task.id)).size).toBe(1);
+          expect(tasks[0]?.id).toEqual(expect.stringMatching(/\S/u));
         }
         expect(tasks.at(-1)?.status).toBe("complete");
       }

@@ -22,7 +22,6 @@ import type { UpdateRunResult, UpdateRunnerOptions } from "./update-runner-types
 
 export type {
   UpdateRunResult,
-  UpdateStepAdvisory,
   UpdateStepProgress,
   UpdateStepResult,
 } from "./update-runner-types.js";
@@ -92,7 +91,7 @@ async function runGatewayUpdateInternal(opts: UpdateRunnerOptions): Promise<Upda
   });
   return {
     status: "skipped",
-    mode: "unknown",
+    mode: surface.mode,
     root: pkgRoot,
     reason:
       surface.kind === "global"

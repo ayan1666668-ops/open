@@ -47,6 +47,7 @@ extension DashboardWindowController {
                 profileName: AppProfile.current.name),
             app: .init(
                 showDockIcon: state.showDockIcon,
+                nativeExperienceEnabled: state.nativeExperienceEnabled,
                 iconStyle: .init(
                     selectedId: iconStyle.rawValue,
                     available: AppIconStyle.allCases.filter { AppIconArtwork.isAvailable($0) }
@@ -133,7 +134,7 @@ extension DashboardWindowController {
     }
 
     private static func devicePermissionEntries() async -> [DeviceSettingsSnapshot.Permissions.Entry] {
-        let monitored = await PermissionManager.authorizationStatus([.accessibility, .screenRecording, .appleScript])
+        let monitored = await PermissionManager.authorizationStatus([.accessibility, .screenRecording])
         var statuses = Dictionary(uniqueKeysWithValues: DeviceSettingsPermission.macOSPermissions.map {
             ($0, DeviceSettingsPermissionStatus($0.capability.flatMap { monitored[$0] }))
         })

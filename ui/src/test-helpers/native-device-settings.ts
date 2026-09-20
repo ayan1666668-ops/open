@@ -15,6 +15,7 @@ export function createNativeDeviceSettingsSnapshot(): MacDeviceSettingsSnapshot 
     device: { platform: "macos", appVersion: "2026.9.3", appBuild: "42", profileName: null },
     app: {
       showDockIcon: true,
+      nativeExperienceEnabled: false,
       iconStyle: {
         selectedId: "paper",
         available: [
@@ -64,7 +65,6 @@ export function createNativeDeviceSettingsSnapshot(): MacDeviceSettingsSnapshot 
         { id: "camera", status: "notDetermined" },
         { id: "speechRecognition", status: "granted" },
         { id: "location", status: "denied" },
-        { id: "automation", status: "unavailable" },
       ],
       location: { mode: "off", precise: false },
     },

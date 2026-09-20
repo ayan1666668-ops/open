@@ -11,13 +11,11 @@ import {
   type AdmittedRunContext,
   type PreparedAgentRunAdmission,
 } from "../../agents/admitted-run-context.js";
-import { createAssistantErrorTranscript } from "../../agents/assistant-error-transcript.js";
 import { testing as cliBackendsTesting } from "../../agents/cli-backends.test-support.js";
 import { resetContextWindowCacheForTest } from "../../agents/context.js";
 import { acceptCompactionSuccessor } from "../../agents/embedded-agent-runner/compaction-successor.js";
-import type { runEmbeddedAgentEntry } from "../../agents/embedded-agent-runner/run-entry.js";
-import type { EmbeddedAgentRunResult } from "../../agents/embedded-agent-runner/types.js";
 import type { ModelFallbackAttemptProvenance } from "../../agents/model-fallback.types.js";
+import { withSessionCompactionPersistence } from "../../agents/sessions/session-compaction-persistence.js";
 import { SessionManager } from "../../agents/sessions/session-manager.js";
 import { makeAssistantMessageFixture } from "../../agents/test-helpers/assistant-message-fixtures.js";
 import type { InternalSessionEntry as SessionEntry } from "../../config/sessions.js";
@@ -47,6 +45,10 @@ import {
   runMemoryFlushIfNeeded as runMemoryFlushIfNeededRaw,
   runSessionCompactionIfNeeded as runSessionCompactionIfNeededRaw,
 } from "./agent-runner-memory.js";
+import {
+  createMemoryRunEntryMockImplementation,
+  type ModelFallbackParams,
+} from "./agent-runner-memory.test-support.js";
 import {
   createTestFollowupRun,
   withTestModelContextTokens,
@@ -233,33 +235,6 @@ async function writeTestSessionTranscript(params: {
   await waitForSessionTranscriptProjection(scope);
 }
 
-type ModelFallbackParams = {
-  provider?: string;
-  model?: string;
-  abortSignal?: AbortSignal;
-  agentId?: string;
-  sessionId?: string;
-  sessionKey?: string;
-  fallbacksOverride?: unknown[];
-  requestedRouteResolution?: "raw" | "resolved";
-  userLockedAuthProfileId?: string;
-  resolveAgentHarnessRuntimeOverride?: (provider: string, model: string) => string | undefined;
-  prepareAgentHarnessRuntime?: (params: {
-    provider: string;
-    model: string;
-    agentHarnessRuntimeOverride?: string;
-  }) => Promise<void> | void;
-  run: (
-    provider: string,
-    model: string,
-    options: {
-      allowTransientCooldownProbe?: boolean;
-      isFinalFallbackAttempt?: boolean;
-      modelRoutingProvenance: ModelFallbackAttemptProvenance;
-    },
-  ) => Promise<EmbeddedAgentRunResult>;
-};
-
 function modelRoutingProvenance(
   requestedProvider: string,
   requestedModel: string,
@@ -413,6 +388,34 @@ describe("runMemoryFlushIfNeeded", () => {
     });
   }
 
+  function createRequiredPreflightParams(sessionFile: string): PreflightCompactionTestParams {
+    const sessionEntry: SessionEntry = {
+      sessionId: "session",
+      updatedAt: Date.now(),
+      totalTokens: 120,
+      totalTokensFresh: true,
+      totalTokensVersion: 1,
+    };
+    const sessionStore = { "agent:main:telegram:group:redacted": sessionEntry };
+
+    return {
+      cfg: { agents: { defaults: { compaction: { memoryFlush: {} } } } },
+      followupRun: createTestFollowupRun({
+        sessionId: "session",
+        sessionFile,
+        sessionKey: "agent:main:telegram:group:redacted",
+      }),
+      defaultModel: "anthropic/claude-opus-4-6",
+      modelContextTokens: 100,
+      sessionEntry,
+      sessionStore,
+      sessionKey: "agent:main:telegram:group:redacted",
+      storePath: path.join(rootDir, "sessions.json"),
+      isHeartbeat: false,
+      ...createCompactionLifecycle(createReplyOperation()),
+    };
+  }
+
   async function createOversizedByteCompactionFixture() {
     const storePath = path.join(rootDir, "sessions.json");
     const sessionKey = "main";
@@ -420,14 +423,10 @@ describe("runMemoryFlushIfNeeded", () => {
       rootDir,
       events: [{ type: "message", message: { role: "user", content: "x".repeat(256) } }],
     });
-    const sessionEntry: SessionEntry = {
-      sessionId: "session",
-      updatedAt: Date.now(),
+    const sessionEntry: SessionEntry = createFlushSessionEntry({
       totalTokens: 10,
-      totalTokensFresh: true,
-      totalTokensVersion: 1,
       compactionCount: 0,
-    };
+    });
     await upsertSessionEntryCore({ agentId: "main", sessionKey, storePath }, sessionEntry);
     const run = async (entry: SessionEntry, maxActiveTranscriptBytes = "10b") =>
       await runSessionCompactionIfNeeded({
@@ -456,71 +455,12 @@ describe("runMemoryFlushIfNeeded", () => {
       model,
       attempts: [],
     }));
-    runEmbeddedAgentEntryMock
-      .mockReset()
-      .mockImplementation(
-        async (params: Parameters<typeof runEmbeddedAgentEntry<EmbeddedAgentRunResult>>[0]) => {
-          const assistantErrorTranscript = createAssistantErrorTranscript({
-            runId: params.identity.runId,
-          });
-          const fallbackResult = (await runWithModelFallbackMock({
-            ...params.selection,
-            ...params.identity,
-            abortSignal: params.abortSignal,
-            resolveAgentHarnessRuntimeOverride: params.harness.resolveRuntimeOverride,
-            prepareAgentHarnessRuntime: async ({
-              provider,
-              model,
-              agentHarnessRuntimeOverride,
-            }: {
-              provider: string;
-              model: string;
-              agentHarnessRuntimeOverride?: string;
-            }) => {
-              await ensureSelectedAgentHarnessPluginMock({
-                config: params.selection.cfg,
-                provider,
-                modelId: model,
-                agentId: params.identity.agentId,
-                sessionKey: params.harness.sessionKey,
-                agentHarnessId: agentHarnessRuntimeOverride,
-                agentHarnessRuntimeOverride,
-                workspaceDir: params.harness.workspaceDir,
-              });
-            },
-            run: (
-              provider: string,
-              model: string,
-              options: Parameters<ModelFallbackParams["run"]>[2],
-            ) =>
-              params.runCandidate(provider, model, {
-                assistantErrorTranscript,
-                classifyResult: () => undefined,
-                allowTransientCooldownProbe: options.allowTransientCooldownProbe,
-                isFinalFallbackAttempt: options.isFinalFallbackAttempt,
-                isFallbackRetry: false,
-                modelRoutingProvenance: options.modelRoutingProvenance,
-                contextEngineLogicalTurnLease: {} as never,
-                onContextEngineTurnCandidate: () => {},
-              }),
-          })) as {
-            outcome?: "completed" | "exhausted";
-            result: EmbeddedAgentRunResult;
-            provider: string;
-            model: string;
-            attempts: [];
-          };
-          return {
-            ...fallbackResult,
-            outcome: fallbackResult.outcome ?? ("completed" as const),
-            terminal: {
-              outcome: { reason: "completed" as const, status: "ok" as const },
-              metadata: {},
-            },
-            settleSessionOverride: async () => undefined,
-          };
-        },
-      );
+    runEmbeddedAgentEntryMock.mockReset().mockImplementation(
+      createMemoryRunEntryMockImplementation({
+        runWithModelFallback: runWithModelFallbackMock,
+        ensureSelectedAgentHarnessPlugin: ensureSelectedAgentHarnessPluginMock,
+      }),
+    );
     compactEmbeddedAgentSessionMock.mockReset().mockResolvedValue({
       ok: true,
       compacted: true,
@@ -1017,13 +957,8 @@ describe("runMemoryFlushIfNeeded", () => {
   });
 
   it("keeps catalog-adopted sessions on Codex for memory flush turns", async () => {
-    const sessionEntry: SessionEntry = {
+    const sessionEntry: SessionEntry = createFlushSessionEntry({
       sessionId: "catalog-adopted-session",
-      updatedAt: Date.now(),
-      totalTokens: 80_000,
-      totalTokensFresh: true,
-      totalTokensVersion: 1,
-      compactionCount: 1,
       agentHarnessId: "codex",
       agentRuntimeOverride: "claude-cli",
       modelSelectionLocked: true,
@@ -1035,7 +970,7 @@ describe("runMemoryFlushIfNeeded", () => {
           },
         },
       },
-    };
+    });
 
     const result = await runMemoryFlushIfNeeded({
       cfg: {
@@ -1520,18 +1455,12 @@ describe("runMemoryFlushIfNeeded", () => {
           },
         },
       };
-      const sessionEntry: SessionEntry = {
-        sessionId: "session",
-        updatedAt: Date.now(),
-        totalTokens: 80_000,
-        totalTokensFresh: true,
-        totalTokensVersion: 1,
-        compactionCount: 1,
+      const sessionEntry: SessionEntry = createFlushSessionEntry({
         agentRuntimeOverride: "codex",
         modelSelectionLocked: pluginOwnerId !== undefined,
         pluginOwnerId,
         agentHarnessId: "openclaw",
-      };
+      });
       const runtimePolicySessionKey = "agent:main:telegram:default:direct:12345";
       runWithModelFallbackMock.mockImplementationOnce(
         async (params: { provider: string; model: string; run: ModelFallbackParams["run"] }) => ({
@@ -1604,15 +1533,9 @@ describe("runMemoryFlushIfNeeded", () => {
   );
 
   it("ignores stale runtime pins before memory-flush fallback preflight", async () => {
-    const sessionEntry: SessionEntry = {
-      sessionId: "session",
-      updatedAt: Date.now(),
-      totalTokens: 80_000,
-      totalTokensFresh: true,
-      totalTokensVersion: 1,
-      compactionCount: 1,
+    const sessionEntry: SessionEntry = createFlushSessionEntry({
       agentRuntimeOverride: "unsupported-runtime",
-    };
+    });
 
     await runMemoryFlushIfNeeded({
       cfg: { agents: { defaults: { compaction: { memoryFlush: {} } } } },
@@ -1643,14 +1566,7 @@ describe("runMemoryFlushIfNeeded", () => {
       backend: { id: "codex-cli", config: { command: "codex" } },
     });
     setActivePluginRegistry(registry);
-    const sessionEntry: SessionEntry = {
-      sessionId: "session",
-      updatedAt: Date.now(),
-      totalTokens: 80_000,
-      totalTokensFresh: true,
-      totalTokensVersion: 1,
-      compactionCount: 1,
-    };
+    const sessionEntry: SessionEntry = createFlushSessionEntry();
 
     const result = await runMemoryFlushIfNeeded({
       cfg: {},
@@ -1703,15 +1619,9 @@ describe("runMemoryFlushIfNeeded", () => {
 
   it("skips memory flush for compatible CLI session runtime pins", async () => {
     registerClaudeCliBackend();
-    const sessionEntry: SessionEntry = {
-      sessionId: "session",
-      updatedAt: Date.now(),
-      totalTokens: 80_000,
-      totalTokensFresh: true,
-      totalTokensVersion: 1,
-      compactionCount: 1,
+    const sessionEntry: SessionEntry = createFlushSessionEntry({
       agentRuntimeOverride: "claude-cli",
-    };
+    });
 
     const result = await runMemoryFlushIfNeeded({
       cfg: { agents: { defaults: { compaction: { memoryFlush: {} } } } },
@@ -1995,46 +1905,17 @@ describe("runMemoryFlushIfNeeded", () => {
         `${JSON.stringify({ message: { role: "user", content: "x".repeat(5_000) } })}\n`,
         "utf8",
       );
-      registerMemoryFlushPlanResolverForTest(() => ({
-        softThresholdTokens: 1,
-        forceFlushTranscriptBytes: 1_000_000_000,
-        reserveTokensFloor: 0,
-        prompt: "Pre-compaction memory flush.\nNO_REPLY",
-        systemPrompt: "Write memory to memory/YYYY-MM-DD.md.",
-        relativePath: "memory/2023-11-14.md",
-      }));
+      registerMemoryFlushPlanResolverForTest(() =>
+        createModifiedMemoryFlushPlan({ softThresholdTokens: 1, reserveTokensFloor: 0 }),
+      );
       compactEmbeddedAgentSessionMock.mockResolvedValueOnce({
         ok: false,
         compacted: false,
         reason,
         failure: { reason: failureReason },
       });
-      const sessionEntry: SessionEntry = {
-        sessionId: "session",
-        updatedAt: Date.now(),
-        totalTokens: 120,
-        totalTokensFresh: true,
-        totalTokensVersion: 1,
-      };
-      const sessionStore = { "agent:main:telegram:group:redacted": sessionEntry };
-
       await expect(
-        runSessionCompactionIfNeeded({
-          cfg: { agents: { defaults: { compaction: { memoryFlush: {} } } } },
-          followupRun: createTestFollowupRun({
-            sessionId: "session",
-            sessionFile,
-            sessionKey: "agent:main:telegram:group:redacted",
-          }),
-          defaultModel: "anthropic/claude-opus-4-6",
-          modelContextTokens: 100,
-          sessionEntry,
-          sessionStore,
-          sessionKey: "agent:main:telegram:group:redacted",
-          storePath: path.join(rootDir, "sessions.json"),
-          isHeartbeat: false,
-          ...createCompactionLifecycle(createReplyOperation()),
-        }),
+        runSessionCompactionIfNeeded(createRequiredPreflightParams(sessionFile)),
       ).rejects.toThrow(`Preflight compaction required but failed: ${reason}`);
 
       expect(compactEmbeddedAgentSessionMock).toHaveBeenCalledTimes(1);
@@ -2049,45 +1930,16 @@ describe("runMemoryFlushIfNeeded", () => {
       `${JSON.stringify({ message: { role: "user", content: "x".repeat(5_000) } })}\n`,
       "utf8",
     );
-    registerMemoryFlushPlanResolverForTest(() => ({
-      softThresholdTokens: 1,
-      forceFlushTranscriptBytes: 1_000_000_000,
-      reserveTokensFloor: 0,
-      prompt: "Pre-compaction memory flush.\nNO_REPLY",
-      systemPrompt: "Write memory to memory/YYYY-MM-DD.md.",
-      relativePath: "memory/2023-11-14.md",
-    }));
+    registerMemoryFlushPlanResolverForTest(() =>
+      createModifiedMemoryFlushPlan({ softThresholdTokens: 1, reserveTokensFloor: 0 }),
+    );
     compactEmbeddedAgentSessionMock.mockResolvedValueOnce({
       ok: false,
       compacted: false,
       reason: "thread not found: <codex-thread-id>",
     });
-    const sessionEntry: SessionEntry = {
-      sessionId: "session",
-      updatedAt: Date.now(),
-      totalTokens: 120,
-      totalTokensFresh: true,
-      totalTokensVersion: 1,
-    };
-    const sessionStore = { "agent:main:telegram:group:redacted": sessionEntry };
-
     await expect(
-      runSessionCompactionIfNeeded({
-        cfg: { agents: { defaults: { compaction: { memoryFlush: {} } } } },
-        followupRun: createTestFollowupRun({
-          sessionId: "session",
-          sessionFile,
-          sessionKey: "agent:main:telegram:group:redacted",
-        }),
-        defaultModel: "anthropic/claude-opus-4-6",
-        modelContextTokens: 100,
-        sessionEntry,
-        sessionStore,
-        sessionKey: "agent:main:telegram:group:redacted",
-        storePath: path.join(rootDir, "sessions.json"),
-        isHeartbeat: false,
-        ...createCompactionLifecycle(createReplyOperation()),
-      }),
+      runSessionCompactionIfNeeded(createRequiredPreflightParams(sessionFile)),
     ).rejects.toThrow(
       "Preflight compaction required but failed: thread not found: <codex-thread-id>",
     );
@@ -2103,46 +1955,17 @@ describe("runMemoryFlushIfNeeded", () => {
       `${JSON.stringify({ message: { role: "user", content: "x".repeat(5_000) } })}\n`,
       "utf8",
     );
-    registerMemoryFlushPlanResolverForTest(() => ({
-      softThresholdTokens: 1,
-      forceFlushTranscriptBytes: 1_000_000_000,
-      reserveTokensFloor: 0,
-      prompt: "Pre-compaction memory flush.\nNO_REPLY",
-      systemPrompt: "Write memory to memory/YYYY-MM-DD.md.",
-      relativePath: "memory/2023-11-14.md",
-    }));
+    registerMemoryFlushPlanResolverForTest(() =>
+      createModifiedMemoryFlushPlan({ softThresholdTokens: 1, reserveTokensFloor: 0 }),
+    );
     compactEmbeddedAgentSessionMock.mockResolvedValueOnce({
       ok: false,
       compacted: false,
       reason: "auth profile mismatch",
       failure: { reason: "auth_profile_mismatch" },
     });
-    const sessionEntry: SessionEntry = {
-      sessionId: "session",
-      updatedAt: Date.now(),
-      totalTokens: 120,
-      totalTokensFresh: true,
-      totalTokensVersion: 1,
-    };
-    const sessionStore = { "agent:main:telegram:group:redacted": sessionEntry };
-
     await expect(
-      runSessionCompactionIfNeeded({
-        cfg: { agents: { defaults: { compaction: { memoryFlush: {} } } } },
-        followupRun: createTestFollowupRun({
-          sessionId: "session",
-          sessionFile,
-          sessionKey: "agent:main:telegram:group:redacted",
-        }),
-        defaultModel: "anthropic/claude-opus-4-6",
-        modelContextTokens: 100,
-        sessionEntry,
-        sessionStore,
-        sessionKey: "agent:main:telegram:group:redacted",
-        storePath: path.join(rootDir, "sessions.json"),
-        isHeartbeat: false,
-        ...createCompactionLifecycle(createReplyOperation()),
-      }),
+      runSessionCompactionIfNeeded(createRequiredPreflightParams(sessionFile)),
     ).rejects.toThrow("Preflight compaction required but failed: auth profile mismatch");
 
     expect(compactEmbeddedAgentSessionMock).toHaveBeenCalledTimes(1);
@@ -2152,14 +1975,10 @@ describe("runMemoryFlushIfNeeded", () => {
   it.each(["user", "auto"] as const)(
     "passes resolved context budget and %s auth profile to preflight compaction",
     async (authProfileIdSource) => {
-      const sessionEntry: SessionEntry = {
-        sessionId: "session",
-        updatedAt: Date.now(),
+      const sessionEntry: SessionEntry = createFlushSessionEntry({
         totalTokens: 245_000,
-        totalTokensFresh: true,
-        totalTokensVersion: 1,
         compactionCount: 0,
-      };
+      });
 
       await runSessionCompactionIfNeeded({
         cfg: { agents: { defaults: { compaction: { memoryFlush: {} } } } },
@@ -2517,14 +2336,10 @@ describe("runMemoryFlushIfNeeded", () => {
     );
     const storePath = path.join(rootDir, "preflight-fresh-sessions.json");
     const sessionKey = "agent:main:main";
-    const sessionEntry: SessionEntry = {
-      sessionId: "session",
-      updatedAt: Date.now(),
+    const sessionEntry: SessionEntry = createFlushSessionEntry({
       totalTokens: 985,
-      totalTokensFresh: true,
-      totalTokensVersion: 1,
       compactionCount: 0,
-    };
+    });
     await upsertSessionEntryCore({ agentId: "main", sessionKey, storePath }, sessionEntry);
 
     await runDefaultPreflight(sessionEntry, {
@@ -2998,14 +2813,10 @@ describe("runMemoryFlushIfNeeded", () => {
       compacted: false,
       reason: "plugin already stored this turn",
     });
-    const sessionEntry: SessionEntry = {
-      sessionId: "session",
-      updatedAt: Date.now(),
+    const sessionEntry: SessionEntry = createFlushSessionEntry({
       totalTokens: 180_499,
-      totalTokensFresh: true,
-      totalTokensVersion: 1,
       compactionCount: 0,
-    };
+    });
     const sessionStore = { main: sessionEntry };
     const replyOperation = createReplyOperation();
 
@@ -3730,14 +3541,10 @@ describe("runMemoryFlushIfNeeded", () => {
       rootDir,
       events: [{ type: "message", message: { role: "user", content: "x".repeat(256) } }],
     });
-    const sessionEntry: SessionEntry = {
-      sessionId: "session",
-      updatedAt: Date.now(),
+    const sessionEntry: SessionEntry = createFlushSessionEntry({
       totalTokens: 10,
-      totalTokensFresh: true,
-      totalTokensVersion: 1,
       compactionCount: 0,
-    };
+    });
     const sessionStore = { main: sessionEntry };
     const replyOperation = createReplyOperation();
 
@@ -3781,14 +3588,10 @@ describe("runMemoryFlushIfNeeded", () => {
       rootDir,
       events: [{ type: "message", message: { role: "user", content: "x".repeat(256) } }],
     });
-    const sessionEntry: SessionEntry = {
-      sessionId: "session",
-      updatedAt: Date.now(),
+    const sessionEntry: SessionEntry = createFlushSessionEntry({
       totalTokens: 10,
-      totalTokensFresh: true,
-      totalTokensVersion: 1,
       compactionCount: 0,
-    };
+    });
 
     await runSessionCompactionIfNeeded({
       cfg: {
@@ -3890,16 +3693,12 @@ describe("runMemoryFlushIfNeeded", () => {
       ]);
       expect(readTranscriptStatsSync(scope).sizeBytes).toBeGreaterThan(10);
 
-      const sessionEntry: SessionEntry = {
-        sessionId: "session",
-        updatedAt: Date.now(),
+      const sessionEntry: SessionEntry = createFlushSessionEntry({
         totalTokens: 10,
-        totalTokensFresh: true,
-        totalTokensVersion: 1,
         compactionCount: 0,
         agentRuntimeOverride: "codex",
         agentHarnessId,
-      };
+      });
       const sessionStore = { [sessionKey]: sessionEntry };
       const replyOperation = createReplyOperation();
       const run = async (entry: SessionEntry | undefined) =>
@@ -4038,16 +3837,12 @@ describe("runMemoryFlushIfNeeded", () => {
     const manager = SessionManager.open(scope, rootDir);
     manager.appendMessage({ role: "user", content: "x".repeat(256), timestamp: 1 });
     const activeBytes = readSessionTranscriptActiveStats(scope).sizeBytes;
-    const sessionEntry: SessionEntry = {
-      sessionId: "session",
-      updatedAt: Date.now(),
+    const sessionEntry: SessionEntry = createFlushSessionEntry({
       totalTokens: 10,
-      totalTokensFresh: true,
-      totalTokensVersion: 1,
       compactionCount: 0,
       agentRuntimeOverride: "codex",
       agentHarnessId: "openclaw",
-    };
+    });
     const sessionStore = { [sessionKey]: sessionEntry };
     const accountingCommitted = createDeferred();
     const releaseCompactor = createDeferred();
@@ -4055,12 +3850,8 @@ describe("runMemoryFlushIfNeeded", () => {
     compactEmbeddedAgentSessionMock.mockImplementationOnce(async (_params, host) => {
       const firstKeptEntryId = manager.getLeafId();
       expect(firstKeptEntryId).toBeTruthy();
-      host?.withCompactionPersistence?.(
-        () => manager.appendCompaction("summary", firstKeptEntryId!, 100),
-        (entryId: string, appendedText: string) => {
-          const event = JSON.parse(appendedText.trim()) as { id?: string; type?: string };
-          return event.id === entryId && event.type === "compaction";
-        },
+      withSessionCompactionPersistence(manager, host?.withCompactionPersistence, () =>
+        manager.appendCompaction("summary", firstKeptEntryId!, 100),
       );
       expect(loadSessionEntry({ storePath, sessionKey })).toMatchObject({
         compactionCount: 1,
@@ -4356,16 +4147,12 @@ describe("runMemoryFlushIfNeeded", () => {
     ]);
     expect(readSessionTranscriptActiveStats(scope).sizeBytes).toBeLessThan(10 * 1024);
 
-    const sessionEntry: SessionEntry = {
-      sessionId: "session",
-      updatedAt: Date.now(),
+    const sessionEntry: SessionEntry = createFlushSessionEntry({
       totalTokens: 347_000,
-      totalTokensFresh: true,
-      totalTokensVersion: 1,
       compactionCount: 0,
       agentRuntimeOverride: "codex",
       agentHarnessId: "openclaw",
-    };
+    });
     const replyOperation = createReplyOperation();
 
     const entry = await runSessionCompactionIfNeeded({
@@ -4417,14 +4204,10 @@ describe("runMemoryFlushIfNeeded", () => {
     ]);
     expect(readTranscriptStatsSync(scope).sizeBytes).toBeGreaterThan(10);
 
-    const sessionEntry: SessionEntry = {
-      sessionId: "session",
-      updatedAt: Date.now(),
+    const sessionEntry: SessionEntry = createFlushSessionEntry({
       totalTokens: 10,
-      totalTokensFresh: true,
-      totalTokensVersion: 1,
       compactionCount: 0,
-    };
+    });
     const cfg = {
       agents: {
         defaults: {
@@ -4488,14 +4271,10 @@ describe("runMemoryFlushIfNeeded", () => {
     ]);
     expect(readTranscriptStatsSync(scope).sizeBytes).toBeGreaterThan(10);
 
-    const sessionEntry: SessionEntry = {
-      sessionId: "session",
-      updatedAt: Date.now(),
+    const sessionEntry: SessionEntry = createFlushSessionEntry({
       totalTokens: 10,
-      totalTokensFresh: true,
-      totalTokensVersion: 1,
       compactionCount: 0,
-    };
+    });
     const replyOperation = createReplyOperation();
     await fs.writeFile(
       path.join(rootDir, "AGENTS.md"),
@@ -4573,14 +4352,11 @@ describe("runMemoryFlushIfNeeded", () => {
   it("keeps incognito preflight compaction in the process-local transcript store", async () => {
     const durableStorePath = path.join(rootDir, "durable-sessions.json");
     const sessionKey = "agent:main:dashboard:incognito-preflight";
-    const sessionEntry: SessionEntry = {
+    const sessionEntry: SessionEntry = createFlushSessionEntry({
       sessionId: "incognito-session",
-      updatedAt: Date.now(),
       totalTokens: 90_000,
-      totalTokensFresh: true,
-      totalTokensVersion: 1,
       compactionCount: 0,
-    };
+    });
 
     await runSessionCompactionIfNeeded({
       cfg: { agents: { defaults: { compaction: { memoryFlush: {} } } } },
@@ -4740,14 +4516,10 @@ describe("runMemoryFlushIfNeeded", () => {
         content: "x".repeat(256),
         timestamp: 1,
       });
-      const sessionEntry: SessionEntry = {
-        sessionId: "session",
-        updatedAt: Date.now(),
+      const sessionEntry: SessionEntry = createFlushSessionEntry({
         totalTokens: 10,
-        totalTokensFresh: true,
-        totalTokensVersion: 1,
         compactionCount: 0,
-      };
+      });
       const replyOperation = createReplyOperation();
 
       const statuses: unknown[] = [];
@@ -4800,14 +4572,10 @@ describe("runMemoryFlushIfNeeded", () => {
       rootDir,
       events: [{ type: "message", message: { role: "user", content: "x".repeat(5_000) } }],
     });
-    const sessionEntry: SessionEntry = {
-      sessionId: "session",
-      updatedAt: Date.now(),
+    const sessionEntry: SessionEntry = createFlushSessionEntry({
       totalTokens: 120,
-      totalTokensFresh: true,
-      totalTokensVersion: 1,
       compactionCount: 0,
-    };
+    });
     const onCompactionNotice = vi.fn();
     compactEmbeddedAgentSessionMock.mockResolvedValueOnce({
       ok: true,
@@ -4858,14 +4626,10 @@ describe("runMemoryFlushIfNeeded", () => {
       events: [{ type: "message", message: { role: "user", content: "x".repeat(5_000) } }],
     });
     incrementCompactionCountMock.mockRejectedValueOnce(new Error("count update failed"));
-    const sessionEntry: SessionEntry = {
-      sessionId: "session",
-      updatedAt: Date.now(),
+    const sessionEntry: SessionEntry = createFlushSessionEntry({
       totalTokens: 120,
-      totalTokensFresh: true,
-      totalTokensVersion: 1,
       compactionCount: 0,
-    };
+    });
     const onCompactionNotice = vi.fn();
 
     await expect(
