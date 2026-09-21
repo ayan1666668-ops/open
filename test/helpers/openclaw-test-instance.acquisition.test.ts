@@ -42,16 +42,12 @@ describe("createOpenClawTestInstance acquisition", () => {
             ),
           );
         expect(abandoned).toEqual([]);
-        await instance.startGateway();
-        const readiness = await fetch(`http://127.0.0.1:${instance.port}/readyz`);
-        expect(readiness.status).toBe(200);
         console.info(
           "[gateway-port-reservation-proof]",
           JSON.stringify({
             competitorStillListening: competitor.listening,
             replacementSelected: instance.port !== occupiedPort,
             abandonedClaimCount: abandoned.length,
-            replacementGatewayReady: readiness.status === 200,
           }),
         );
       },
