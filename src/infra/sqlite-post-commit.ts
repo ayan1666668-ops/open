@@ -1,4 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
+import { isPromiseLike } from "@openclaw/normalization-core/promise-like";
 import { resolveGlobalSingleton } from "../shared/global-singleton.js";
 
 // One connection can cross native and transformed SDK module graphs mid-transaction.
@@ -69,6 +70,11 @@ export function withSqlitePostCommitPublications<T>(db: DatabaseSync, transactio
   let result: T;
   try {
     result = transaction();
+    if (isPromiseLike(result)) {
+      throw new Error(
+        "SQLite write transactions must be synchronous; Promise returns are not supported.",
+      );
+    }
   } catch (error) {
     publications?.splice(publicationStart);
     const rolledBackState = transactionState?.splice(stateStart) ?? [];

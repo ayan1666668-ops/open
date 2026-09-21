@@ -18,6 +18,7 @@ const synchronousTransactionCallbackIndexes = new Map([
   ["runOpenClawAgentWriteTransaction", 0],
   ["runOpenClawStateWriteTransaction", 0],
   ["runSqliteImmediateTransactionSync", 1],
+  ["withSqlitePostCommitPublications", 1],
 ]);
 
 function expressionName(expression: ts.Expression) {

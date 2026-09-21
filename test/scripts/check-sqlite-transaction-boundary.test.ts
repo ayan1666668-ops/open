@@ -91,6 +91,35 @@ describe("SQLite transaction boundary guard", () => {
     ]);
   });
 
+  it("rejects async callbacks passed to the post-commit publication scope", () => {
+    expect(
+      findSqliteTransactionBoundaryViolations(`
+        import { withSqlitePostCommitPublications } from "./sqlite-post-commit.js";
+        import { withSqlitePostCommitPublications as scoped } from "./sqlite-post-commit.js";
+        import * as postCommit from "./sqlite-post-commit.js";
+        withSqlitePostCommitPublications(db, async () => undefined);
+        scoped(db, async () => undefined);
+        postCommit.withSqlitePostCommitPublications(db, async () => undefined);
+      `),
+    ).toEqual([
+      {
+        line: 5,
+        reason:
+          'passes an async callback to synchronous SQLite transaction helper "withSqlitePostCommitPublications"',
+      },
+      {
+        line: 6,
+        reason:
+          'passes an async callback to synchronous SQLite transaction helper "withSqlitePostCommitPublications"',
+      },
+      {
+        line: 7,
+        reason:
+          'passes an async callback to synchronous SQLite transaction helper "withSqlitePostCommitPublications"',
+      },
+    ]);
+  });
+
   it("allows asynchronous preparation followed by a synchronous commit callback", () => {
     expect(
       findSqliteTransactionBoundaryViolations(`
