@@ -524,6 +524,21 @@ function isEmbeddedRunHandleAbortable(
   }
 }
 
+// Queueing fails closed on an indeterminate probe; abort selection skips that handle instead.
+function isEmbeddedRunHandleCompacting(
+  sessionId: string,
+  handle: EmbeddedAgentQueueHandle,
+): boolean {
+  try {
+    return handle.isCompacting() === true;
+  } catch (err) {
+    diag.warn(
+      `queue message failed: sessionId=${sessionId} reason=compacting_check_failed err=${String(err)}`,
+    );
+    return true;
+  }
+}
+
 function isEmbeddedRunHandleSupersedable(runId: string, handle: EmbeddedAgentQueueHandle): boolean {
   if (!isEmbeddedRunHandleAbortable(runId, handle)) {
     return false;
@@ -802,7 +817,7 @@ function prepareEmbeddedAgentQueueMessage(
     diag.debug(`queue message failed: sessionId=${sessionId} reason=stale_run`);
     return { kind: "complete", outcome: createQueueFailureOutcome(sessionId, "stale_run") };
   }
-  if (handle.isCompacting()) {
+  if (isEmbeddedRunHandleCompacting(sessionId, handle)) {
     diag.debug(`queue message failed: sessionId=${sessionId} reason=compacting`);
     return { kind: "complete", outcome: createQueueFailureOutcome(sessionId, "compacting") };
   }
@@ -936,7 +951,13 @@ export function abortEmbeddedAgentRun(
       if (params.skipSessionIds?.has(id)) {
         continue;
       }
-      if (!params.shouldAbort(handle)) {
+      let selected = false;
+      try {
+        selected = params.shouldAbort(handle);
+      } catch (err) {
+        diag.warn(`abort failed: sessionId=${id} reason=selection_check_failed err=${String(err)}`);
+      }
+      if (!selected) {
         continue;
       }
       if (!isEmbeddedRunHandleAbortable(id, handle)) {
