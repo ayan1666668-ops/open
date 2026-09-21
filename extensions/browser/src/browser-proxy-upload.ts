@@ -260,6 +260,8 @@ async function readDirectoryBytes(directory: string, signal?: AbortSignal): Prom
   try {
     entries = await fs.readdir(directory, { withFileTypes: true });
   } catch (error) {
+    // SAFETY: the caught fs.readdir rejection is a Node system error whose
+    // string `code` identifies the missing-directory case.
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       return 0;
     }
@@ -291,6 +293,8 @@ async function readOwnedStagedUploads(
   try {
     entries = await fs.readdir(stagingRoot, { withFileTypes: true });
   } catch (error) {
+    // SAFETY: the caught fs.readdir rejection is a Node system error whose
+    // string `code` identifies the missing-directory case.
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       return [];
     }
@@ -325,18 +329,17 @@ async function readOwnedStagedUploads(
   return uploads.filter((upload): upload is OwnedStagedUpload => upload !== null);
 }
 
-// Recursive mkdir succeeds on an existing staging root whose permissions still
-// block readdir, so staging proves writability, not that recovery can scan the
-// root again. Only that scan capability re-establishes an exhausted budget.
-async function stagingRootScanUsable(stagingRoot: string): Promise<boolean> {
+// Staging proves the root is writable, not that recovery can run its complete
+// scan again: a readable root can still hold a marked upload whose numbered
+// child directory blocks readdir, which only fails inside the recursive byte
+// scan. Only a complete scan re-establishes an exhausted budget; a root-only
+// probe would clear it while the original fault persists and re-arm the
+// retry loop that keeps node-update admission busy.
+async function stagingRecoveryScanCompletes(stagingRoot: string): Promise<boolean> {
   try {
-    await fs.readdir(stagingRoot);
+    await readOwnedStagedUploads(stagingRoot);
     return true;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      // readOwnedStagedUploads treats a missing root as an empty scan.
-      return true;
-    }
+  } catch {
     return false;
   }
 }
@@ -379,12 +382,32 @@ async function recoverStagedUploads(params: {
   const { uploadDir, retentionMs, nowMs, limits } = params;
   const stagingRoot = path.join(uploadDir, BROWSER_PROXY_UPLOAD_ROOT_NAME);
   const retained: OwnedStagedUpload[] = [];
+  const scannedDirectories = new Set<string>();
   for (const upload of await readOwnedStagedUploads(stagingRoot)) {
+    scannedDirectories.add(upload.directory);
     if (retentionMs - Math.max(0, nowMs - upload.mtimeMs) <= 0) {
       await removeStagedUpload(upload.directory);
     } else {
       retained.push(upload);
     }
+  }
+
+  // Partial recursive removal can unlink the ownership marker before failing
+  // on a file inside a read-only child directory, after which the marker-gated
+  // scan above can never rediscover the remnant and a repaired fault would
+  // leave it stranded forever. Directories recorded here are known to be owned
+  // from an earlier verified scan, so re-probe removal for exhausted entries
+  // the scan no longer sees; unmarked directories never recorded here stay
+  // untouched. Non-exhausted entries keep their pending retry timer, which
+  // already re-probes the recorded path directly.
+  for (const [directory, attempts] of Array.from(cleanupAttemptCounts)) {
+    if (attempts < BROWSER_PROXY_UPLOAD_RECOVERY_MAX_ATTEMPTS) {
+      continue;
+    }
+    if (scannedDirectories.has(directory) || !directory.startsWith(stagingRoot + path.sep)) {
+      continue;
+    }
+    await removeStagedUpload(directory);
   }
 
   // A restarted node has no surviving Browser request that can still own these
@@ -587,15 +610,15 @@ export async function stageBrowserProxyUploadRequest(params: {
   await fs.mkdir(stagingRoot, { recursive: true, mode: 0o700 });
   // Recursive mkdir succeeds even while an existing staging root still blocks
   // readdir, so it cannot by itself prove an earlier give-up is safe to retry.
-  // Only after a scan establishes the capability recovery needs has returned,
-  // unlatch an exhausted recovery budget and drop the cached recovery pass so
-  // exhausted cleanup removals are re-probed before quota admission; otherwise
-  // repeated uploads would restart the retry loop and keep pinning node
-  // update admission.
+  // Only a complete recovery scan proves the fault cleared: unlatch an
+  // exhausted recovery budget and drop the cached recovery pass so exhausted
+  // cleanup removals are re-probed before quota admission; otherwise repeated
+  // uploads would restart the retry loop and keep pinning node update
+  // admission.
   const resumeAfterFault =
     (recoveryAttemptCounts.get(uploadDir) ?? 0) >= BROWSER_PROXY_UPLOAD_RECOVERY_MAX_ATTEMPTS ||
     hasExhaustedCleanupAttempts(stagingRoot);
-  if (resumeAfterFault && (await stagingRootScanUsable(stagingRoot))) {
+  if (resumeAfterFault && (await stagingRecoveryScanCompletes(stagingRoot))) {
     recoveryAttemptCounts.delete(uploadDir);
     recoveryPromises.delete(uploadDir);
   }

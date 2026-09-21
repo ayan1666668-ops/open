@@ -373,3 +373,121 @@ it.skipIf(chmodFaultUnavailable)(
     }
   },
 );
+
+it.skipIf(chmodFaultUnavailable)(
+  "keeps exhaustion latched while a marked upload descendant stays unreadable",
+  async () => {
+    const root = tempDirs.make("openclaw-browser-proxy-descendant-fault-");
+    const uploadDir = path.join(root, "uploads");
+    const stagingRoot = path.join(uploadDir, ".proxy-uploads");
+    const expired = path.join(stagingRoot, "upload-expired");
+    await fs.mkdir(path.join(expired, "0"), { recursive: true });
+    await fs.writeFile(path.join(expired, "0", "f.txt"), "x");
+    await fs.writeFile(
+      path.join(expired, ".openclaw-browser-proxy-upload-v1"),
+      "openclaw-browser-proxy-upload-v1\n",
+    );
+    const past = new Date(Date.now() - 25 * 60 * 60 * 1000);
+    await fs.utimes(expired, past, past);
+    // The root stays readable; only the numbered child directory faults.
+    await fs.chmod(path.join(expired, "0"), 0o000);
+    const upload = () =>
+      stageBrowserProxyUploadRequest({
+        method: "POST",
+        path: "/hooks/file-chooser",
+        body: { ref: "e1" },
+        upload: {
+          envelope: BROWSER_PROXY_UPLOAD_ENVELOPE,
+          files: [{ name: "report.txt", contentBase64: Buffer.from("report").toString("base64") }],
+        },
+        uploadDir,
+      });
+    try {
+      probeWarns.length = 0;
+      probeErrors.length = 0;
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        await ensureBrowserProxyUploadCleanup({ uploadDir });
+      }
+      expect(recoveryWarns().length).toBe(2);
+      expect(recoveryErrors().length).toBe(1);
+      // A readable root does not prove the complete scan works: the unreadable
+      // descendant must keep the exhausted budget latched and silent instead
+      // of clearing it and re-arming the recovery retry loop.
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        await expect(upload()).rejects.toMatchObject({
+          code: expect.stringMatching(/^E(ACCES|PERM)$/),
+        });
+      }
+      expect(recoveryWarns().length).toBe(2);
+      expect(recoveryErrors().length).toBe(1);
+      await waitForReal(() => !hasBrowserProxyUploadWork());
+      // Repairing the descendant lets the next upload unlatch recovery and
+      // reclaim the expired copy.
+      await fs.chmod(path.join(expired, "0"), 0o700);
+      const staged = await upload();
+      try {
+        await expect(fs.stat(expired)).rejects.toHaveProperty("code", "ENOENT");
+      } finally {
+        await discardStagedBrowserProxyUpload(staged);
+      }
+    } finally {
+      await fs.chmod(path.join(expired, "0"), 0o700).catch(() => {});
+    }
+  },
+);
+
+it.skipIf(chmodFaultUnavailable)(
+  "reclaims a partially deleted upload that lost the ownership marker",
+  async () => {
+    const root = tempDirs.make("openclaw-browser-proxy-partial-delete-");
+    const uploadDir = path.join(root, "uploads");
+    const stagingRoot = path.join(uploadDir, ".proxy-uploads");
+    const staged = path.join(stagingRoot, "upload-x");
+    await fs.mkdir(path.join(staged, "0"), { recursive: true });
+    await fs.writeFile(path.join(staged, "0", "f.txt"), "x");
+    await fs.writeFile(
+      path.join(staged, ".openclaw-browser-proxy-upload-v1"),
+      "openclaw-browser-proxy-upload-v1\n",
+    );
+    // A never-recorded unmarked directory must survive recovery untouched.
+    const foreign = path.join(stagingRoot, "upload-foreign");
+    await fs.mkdir(foreign, { recursive: true });
+    await fs.writeFile(path.join(foreign, "keep.txt"), "keep");
+    // Block deletion of the file inside the numbered child directory; partial
+    // recursive removal can already have unlinked the ownership marker.
+    await fs.chmod(path.join(staged, "0"), 0o500);
+    try {
+      probeWarns.length = 0;
+      probeErrors.length = 0;
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        await discardStagedBrowserProxyUpload({ body: {}, directory: staged });
+      }
+      expect(cleanupErrors().length).toBe(1);
+      // Normalize the partial-deletion outcome: no ownership marker remains
+      // while the file inside the still non-writable child directory stays.
+      await fs.rm(path.join(staged, ".openclaw-browser-proxy-upload-v1"), { force: true });
+      await expect(fs.stat(path.join(staged, "0", "f.txt"))).resolves.toBeDefined();
+      // Repair the deletion fault; the recorded remnant must be reclaimed even
+      // though the marker-gated scan can no longer see it.
+      await fs.chmod(path.join(staged, "0"), 0o700);
+      const stagedRequest = await stageBrowserProxyUploadRequest({
+        method: "POST",
+        path: "/hooks/file-chooser",
+        body: { ref: "e1" },
+        upload: {
+          envelope: BROWSER_PROXY_UPLOAD_ENVELOPE,
+          files: [{ name: "report.txt", contentBase64: Buffer.from("report").toString("base64") }],
+        },
+        uploadDir,
+      });
+      try {
+        await expect(fs.stat(staged)).rejects.toHaveProperty("code", "ENOENT");
+      } finally {
+        await discardStagedBrowserProxyUpload(stagedRequest);
+      }
+      await expect(fs.stat(foreign)).resolves.toBeDefined();
+    } finally {
+      await fs.chmod(path.join(staged, "0"), 0o700).catch(() => {});
+    }
+  },
+);
