@@ -302,7 +302,7 @@ suite.define(() => {
       const runner = page.locator('[data-value="device:runner"]');
       const details = runner
         .locator("xpath=ancestor::openclaw-tooltip[1]")
-        .locator('[slot="content"]');
+        .locator(".tooltip-content");
       await runner.waitFor();
       expect(await runner.isEnabled()).toBe(true);
 
@@ -329,7 +329,7 @@ suite.define(() => {
       await expect
         .poll(() => details.textContent())
         .toContain("No worker slots are available. Wait for a slot or pick another device.");
-      expect(await runner.locator(".session-menu__description").count()).toBe(0);
+      expect(await runner.locator(".session-menu__description").textContent()).toBe("Unavailable");
       expect(await details.locator(".new-session-page__capacity-caption").count()).toBe(0);
       expect(await gateway.getRequests("node.list")).toHaveLength(0);
     } finally {
