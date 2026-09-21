@@ -309,7 +309,10 @@ describe("completeWithPreparedSimpleCompletionModel", () => {
       name: "openclaw-utility-model",
       api: "openai-completions",
     } satisfies Model<"openai-completions">;
-    const preparedModel = { ...model, api: "openclaw-provider-simple:custom-localhost-8087:openclaw-utility-model" };
+    const preparedModel = {
+      ...model,
+      api: "openclaw-provider-simple:custom-localhost-8087:openclaw-utility-model",
+    };
     mocks.prepareModel.mockReturnValueOnce(preparedModel);
     const cfg = {
       agents: {
@@ -331,8 +334,7 @@ describe("completeWithPreparedSimpleCompletionModel", () => {
     });
 
     const [request] = completionRequests();
-    const onPayload = (request!.options as { onPayload?: (payload: unknown) => unknown })
-      .onPayload;
+    const onPayload = (request!.options as { onPayload?: (payload: unknown) => unknown }).onPayload;
     expect(onPayload).toEqual(expect.any(Function));
   });
 

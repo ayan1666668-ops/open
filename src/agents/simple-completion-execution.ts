@@ -18,7 +18,7 @@ import type { AssistantMessage, Model, SimpleStreamOptions } from "../llm/types.
 import {
   resolveConfiguredOpenAICompletionsPayloadParams,
   shouldStripOpenAICompletionsStore,
-} from "./embedded-agent-runner/extra-params.js";
+} from "./embedded-agent-runner/extra-params.resolve.js";
 import type { ResolvedProviderAuth } from "./model-auth.js";
 
 type SimpleCompletionModelOptions = {
