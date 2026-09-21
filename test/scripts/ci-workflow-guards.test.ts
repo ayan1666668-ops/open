@@ -11602,6 +11602,17 @@ server.listen(0, "127.0.0.1", () => {
       expect(setup.if, context).toBe(setupCondition);
       expect(setup.with?.["package-manager-cache"], context).toBe(false);
     }
+    const ci = readCiWorkflow();
+    const manifestRuntime = expectDefined(
+      ci.jobs.preflight.steps.find(
+        (step: WorkflowStep) => step.name === "Setup manifest TypeScript runtime",
+      ),
+      "CI manifest runtime",
+    );
+    expect(manifestRuntime.with?.["node-version"]).toBe("${{ env.NODE_VERSION }}");
+    expect(isSupportedOpenClawNodeVersion(ci.env.NODE_VERSION), "CI manifest runtime pin").toBe(
+      true,
+    );
   });
 
   it("pins workflow sanity's typed Git policy after Python setup", () => {
