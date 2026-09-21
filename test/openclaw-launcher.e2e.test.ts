@@ -1644,7 +1644,7 @@ describe("openclaw launcher", () => {
       ["src/infra/node-compile-cache-env.ts", "cache-a.mjs", "resolveNodeCompileCacheEnv"],
       ["src/infra/node-compile-cache-env.ts", "cache-b.mjs", "resolveNodeCompileCacheEnv"],
       ["src/entry.compile-cache.ts", "cache-owner.mjs", "enableOpenClawCompileCache"],
-    ]) {
+    ] as const) {
       const built = await esbuild({
         bundle: true,
         metafile: true,
