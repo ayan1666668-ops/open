@@ -500,7 +500,12 @@ async function scenarioQuietSweep(): Promise<{ durationMs: number }> {
   await withBatchedSessionReferenceAnalysis(database, probeIds, async () => {
     for (const sessionId of probeIds) {
       const excluded = new Set([`agent:main:cron:job-x:run:run-x`]);
-      const served = resolveBatchedReferencedSessionIds(database.db, excluded, [sessionId]);
+      const served = resolveBatchedReferencedSessionIds(
+        database.db,
+        database.path,
+        excluded,
+        [sessionId],
+      );
       batchedAnswers.push(served ? [...served].toSorted() : null);
     }
     await Promise.resolve();
@@ -623,7 +628,7 @@ async function scenarioInvalidationRate(): Promise<void> {
     await withBatchedSessionReferenceAnalysis(database, probeIds, async () => {
       for (const sessionId of probeIds) {
         for (let question = 0; question < 2; question += 1) {
-          if (resolveBatchedReferencedSessionIds(database.db, excluded, [sessionId])) {
+          if (resolveBatchedReferencedSessionIds(database.db, database.path, excluded, [sessionId])) {
             served += 1;
           } else {
             fallback += 1;

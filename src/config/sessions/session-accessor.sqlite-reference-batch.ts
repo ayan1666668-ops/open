@@ -48,7 +48,18 @@ type SessionReferenceBatch = {
  */
 const MAX_TRACKED_OWNERS_PER_ID = 2;
 
-const activeBatches = new WeakMap<DatabaseSync, SessionReferenceBatch>();
+// Keyed by database PATH, not the DatabaseSync object: a worker-coordinated
+// operation (e.g. transcript archive publish) can release and reopen the
+// cached connection for this exact path mid-sweep, producing a new
+// DatabaseSync instance for the same logical database. Keying by the live
+// connection object silently orphans the batch the moment that happens --
+// every subsequent candidate in the same sweep sees `activeBatches.get()`
+// return undefined and falls back to a full re-scan, defeating the batching
+// this module exists to provide (confirmed empirically: identical dispatch
+// counts to the archive-publish worker on both a working and a broken tree,
+// but a `MISS (fresh open)` on the connection cache immediately follows
+// every dispatch only on the tree where the batch gets lost).
+const activeBatches = new Map<string, SessionReferenceBatch>();
 const referenceTrackerSchemaVersions = new WeakMap<DatabaseSync, number>();
 
 function ensureSessionReferenceTracker(database: DatabaseSync): void {
@@ -137,31 +148,32 @@ function createOwnerSink(): {
  */
 export async function withSessionReferenceBatch<T>(
   database: DatabaseSync,
+  path: string,
   candidateSessionIds: readonly string[],
   prime: (sink: SessionReferenceOwnerSink) => void,
   run: () => Promise<T>,
 ): Promise<T> {
-  const previous = activeBatches.get(database);
+  const previous = activeBatches.get(path);
   const { owners, sink } = createOwnerSink();
   try {
     const token = readSessionReferenceToken(database);
     prime(sink);
-    activeBatches.set(database, {
+    activeBatches.set(path, {
       candidateSessionIds: new Set(candidateSessionIds),
       ownersByCandidateSessionId: owners,
       token,
     });
   } catch {
     // A store that cannot host the tracker keeps the unbatched read path.
-    activeBatches.delete(database);
+    activeBatches.delete(path);
   }
   try {
     return await run();
   } finally {
     if (previous) {
-      activeBatches.set(database, previous);
+      activeBatches.set(path, previous);
     } else {
-      activeBatches.delete(database);
+      activeBatches.delete(path);
     }
   }
 }
@@ -173,10 +185,11 @@ export async function withSessionReferenceBatch<T>(
  */
 export function resolveBatchedReferencedSessionIds(
   database: DatabaseSync,
+  path: string,
   excludedSessionKeys: ReadonlySet<string>,
   candidateSessionIds: readonly string[],
 ): Set<string> | undefined {
-  const batch = activeBatches.get(database);
+  const batch = activeBatches.get(path);
   if (
     !batch ||
     candidateSessionIds.length === 0 ||
@@ -197,7 +210,7 @@ export function resolveBatchedReferencedSessionIds(
   ) {
     // An insert or update since the priming scan could have created a reference,
     // so the caller re-reads instead of trusting the memo.
-    activeBatches.delete(database);
+    activeBatches.delete(path);
     return undefined;
   }
   return new Set(

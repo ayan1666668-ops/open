@@ -351,7 +351,9 @@ async function sweepTombstonedCronRunRemnants(params: {
                     transactionDb.db,
                     db.deleteFrom("session_nodes").where("session_key", "=", candidate.sessionKey),
                   );
-                  publishSessionEntryCacheInvalidation(transactionDb);
+                  publishSessionEntryCacheInvalidation(transactionDb, {
+                    sessionKey: candidate.sessionKey,
+                  });
                   removed =
                     executeSqliteQuerySync(
                       transactionDb.db,
