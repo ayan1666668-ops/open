@@ -72,10 +72,12 @@ suite.define(() => {
           (element) => (element as HTMLElement & { startMs?: unknown }).startMs as number,
         );
 
-      // First attempt: move the clock five seconds past its start and read the label.
+      // First attempt: pin the clock five seconds past its start and read the
+      // label. Fixed time (not install's ticking clock) keeps the reading exact
+      // however long the harness takes to get here.
       await pollLocatorText(working).toContain("Provisioning environment…");
       const firstStartedAt = await elapsedStartMs();
-      await page.clock.setSystemTime(firstStartedAt + 5_000);
+      await page.clock.setFixedTime(firstStartedAt + 5_000);
       await pollLocatorText(elapsed).toContain("5s");
       const firstElapsed = await elapsed.textContent();
       await captureUiProof(suite, page, "01-retry-timer-before-first-attempt.png");
@@ -99,6 +101,8 @@ suite.define(() => {
         .toBe(2);
       await pollLocatorText(working).toContain("Provisioning environment…");
       const retryStartedAt = await elapsedStartMs();
+      await page.clock.setFixedTime(retryStartedAt + 1_000);
+      await pollLocatorText(elapsed).toContain("1s");
       const retryElapsed = await elapsed.textContent();
       await captureUiProof(suite, page, "02-retry-timer-after-retry.png");
 
