@@ -271,8 +271,29 @@ export async function resolveEmbeddedRunTerminal(input: {
   const replyRecoverySuppressed =
     emptyAssistantReplyIsSilent ||
     resolveSourceReplyDelivery(attempt, input.replyDeliveryState) !== "missing";
-  const nextReasoningOnlyRetryInstruction =
-    replyRecoverySuppressed || settledTurnFinalizationAttempted
+  // The subagent lane tolerates empty replies (announce handoff), but a
+  // reasoning-only terminal turn is a provider failure, not intentional
+  // silence: the model consumed output budget on thinking and delivered
+  // nothing the requester can act on. The silent classification must not
+  // suppress its bounded retry. Explicit NO_REPLY still completes silently
+  // because resolveReasoningOnlyRetryInstruction rejects any turn with
+  // visible assistant text, and a source reply that already went out keeps
+  // the turn suppressed through the delivery check below.
+  const subagentReasoningOnlyRetryAllowed =
+    runParams.lane === AGENT_LANE_SUBAGENT &&
+    !settledTurnFinalizationAttempted &&
+    resolveSourceReplyDelivery(attempt, input.replyDeliveryState) === "missing";
+  const nextReasoningOnlyRetryInstruction = subagentReasoningOnlyRetryAllowed
+    ? resolveReasoningOnlyRetryInstruction({
+        provider: input.activeErrorContext.provider,
+        modelId: input.activeErrorContext.model,
+        modelApi: input.modelApi,
+        executionContract: input.executionContract,
+        aborted: terminalAborted,
+        timedOut: terminalTimedOut,
+        attempt,
+      })
+    : replyRecoverySuppressed || settledTurnFinalizationAttempted
       ? null
       : resolveReasoningOnlyRetryInstruction({
           provider: input.activeErrorContext.provider,
@@ -405,6 +426,24 @@ export async function resolveEmbeddedRunTerminal(input: {
 
   if (reasoningOnlyRetriesExhausted && !input.finalAssistantVisibleText) {
     const incompletePayloadText = "⚠️ Agent couldn't generate a response. Please try again.";
+    // The exhausted error payload must surface even when the lane's silent
+    // contract suppressed the ordinary incomplete-turn text (subagent lane):
+    // the retry budget was spent and the turn still delivered nothing, so the
+    // requester must see a non-deliverable terminal turn, not a silent success.
+    // Fallback safety is replay evidence only; it does not depend on the
+    // suppressed incompleteTurnText. Other lanes keep the shared value, which
+    // is non-null there whenever this branch runs.
+    const exhaustedFallbackSafe =
+      runParams.lane === AGENT_LANE_SUBAGENT
+        ? Boolean(
+            !terminalInterrupted &&
+            !promptError &&
+            !attempt.lastToolError &&
+            !hasAttemptTerminalState(attempt) &&
+            !terminalAssistantError &&
+            !input.replayState.hadPotentialSideEffects,
+          )
+        : incompleteTurnFallbackSafe;
     log.warn(
       `reasoning-only retries exhausted: runId=${runParams.runId} sessionId=${runParams.sessionId} ` +
         `provider=${input.activeErrorContext.provider}/${input.activeErrorContext.model} attempts=${retryState.reasoningOnlyAttempts}/${input.maxReasoningOnlyRetryAttempts} — surfacing incomplete-turn error`,
@@ -413,7 +452,7 @@ export async function resolveEmbeddedRunTerminal(input: {
       ...input,
       incompleteTurnText: incompletePayloadText,
       payloadCount: 0,
-      incompleteTurnFallbackSafe,
+      incompleteTurnFallbackSafe: exhaustedFallbackSafe,
       terminalToolPresentation,
     });
   }
