@@ -18,5 +18,5 @@ export function getActiveMemoryEscalationProvider(
   }
   const record = registry.plugins.find((entry) => entry.id === registration.pluginId);
   const instance = record && getPluginInstance(record);
-  return instance?.wrap(registration.provider) ?? registration.provider;
+  return instance?.wrap(registration.provider);
 }

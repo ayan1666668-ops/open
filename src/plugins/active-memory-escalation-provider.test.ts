@@ -6,6 +6,7 @@ import { runPluginRegisterSyncInRegistry } from "./loader-module-runtime.js";
 import { createPluginRecord } from "./loader-records.js";
 import { getPluginInstance } from "./plugin-instance-scope.js";
 import type { ActiveMemoryEscalationProvider } from "./registry-contribution-types.js";
+import { projectPluginContributions } from "./registry-contributions.js";
 import { createTestPluginRegistry as createTestRegistry } from "./registry-runtime.test-helpers.js";
 import { resetPluginRuntimeStateForTest, setActivePluginRegistry } from "./runtime.js";
 import { getPluginRuntimeGatewayRequestScope } from "./runtime/gateway-request-scope.js";
@@ -57,6 +58,59 @@ function registerProvider(
 }
 
 describe("active memory escalation provider registry", () => {
+  it("waits for the retained owner record before exposing projected contributions", () => {
+    const source = createTestRegistry();
+    const candidate = createTestRegistry();
+    const store = createPluginRuntimeStore<string>("escalation runtime missing");
+    const value: ActiveMemoryEscalationProvider = {
+      id: "retained-intent",
+      decide: () => (store.getRuntime() === "retained runtime" ? "recall" : "skip"),
+    };
+    registerProvider(source, "retained-owner", value, () => store.setRuntime("retained runtime"));
+    const retained = expectDefined(source.registry.plugins[0], "retained owner record");
+
+    // Candidate preparation projects contributions before publishing the ordered records.
+    projectPluginContributions(source.registry, retained, candidate.registry);
+    expect(candidate.registry.activeMemoryEscalationProviders.get(value.id)?.provider).toBe(value);
+    expect(candidate.registry.plugins).not.toContain(retained);
+
+    const newcomer = createRecord("newcomer");
+    const newcomerApi = candidate.createApi(newcomer, { config: {} });
+    const newcomerInstance = expectDefined(getPluginInstance(newcomer), "newcomer instance");
+    onTestFinished(async () => {
+      await newcomerInstance.dispose();
+    });
+    runPluginRegisterSyncInRegistry(
+      () => {
+        store.setRuntime("newcomer runtime");
+        expect(getActiveMemoryEscalationProvider(value.id)).toBeUndefined();
+      },
+      newcomerApi,
+      candidate.registry,
+      newcomer.id,
+    );
+
+    candidate.registry.plugins.push(retained);
+    runPluginRegisterSyncInRegistry(
+      () => {
+        const resolved = expectDefined(
+          getActiveMemoryEscalationProvider(value.id),
+          "published retained provider",
+        );
+        expect(
+          resolved.decide({
+            message: "Continue",
+            searchQuery: "Continue",
+            signal: new AbortController().signal,
+          }),
+        ).toBe("recall");
+      },
+      newcomerApi,
+      candidate.registry,
+      newcomer.id,
+    );
+  });
+
   it("resolves the provider from the active plugin generation and revokes stale views", async () => {
     const pluginRegistry = createTestRegistry();
     const value = provider("local-intent");
