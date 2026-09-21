@@ -156,6 +156,15 @@ function hasDreamingNarrativeLead(snippet: string): boolean {
   return /\b(?:Candidate|Reflections?):/i.test(head);
 }
 
+function hasDreamingReflectionLead(snippet: string): boolean {
+  const head = truncateUtf16Safe(consumeDreamingLeadPrefix(snippet), 200);
+  // REM ("### Reflections") blocks are emitted by buildRemReflections with a
+  // markdown heading, while older/other dreamer shapes serialize a bare
+  // "Reflections:" lead. Match either so the reflection branch below is not
+  // defeated by heading punctuation.
+  return /\bReflections?:/i.test(head) || /^#{1,6}\s*Reflections\b/i.test(head);
+}
+
 export function isContaminatedDreamingSnippet(
   raw: string,
   opts: { allowTranscriptTurnSnippet?: boolean } = {},
@@ -176,11 +185,19 @@ export function isContaminatedDreamingSnippet(
     return true;
   }
 
-  const hasNarrativeLead = hasDreamingNarrativeLead(snippet);
   const hasConfidence = /\bconfidence:\s*\d/i.test(snippet);
   const hasEvidence = /\bevidence:\s*(?:memory\/\.dreams\/session-corpus\/|memory\/)/i.test(
     snippet,
   );
+  // REM self-reflection blocks carry a reflection lead plus an internal evidence
+  // reference but use `note: reflection` instead of the staged candidate's
+  // `status: staged`/`recalls: N` fields, so the AND chain below would let them
+  // through. Reflection shape is internal by construction, so the lead plus the
+  // internal evidence reference is sufficient.
+  if (hasDreamingReflectionLead(snippet) && hasEvidence) {
+    return true;
+  }
+  const hasNarrativeLead = hasDreamingNarrativeLead(snippet);
   const hasStatus = /\bstatus:\s*staged\b/i.test(snippet);
   const hasRecalls = /\brecalls:\s*\d+\b/i.test(snippet);
   return hasNarrativeLead && hasConfidence && hasEvidence && hasStatus && hasRecalls;
