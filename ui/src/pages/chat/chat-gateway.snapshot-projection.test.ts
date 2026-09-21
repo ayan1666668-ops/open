@@ -40,6 +40,13 @@ describe("chat snapshot projection boundaries", () => {
       `tool_call${" ".repeat(300)}: hidden\nVisible`,
       "Visible",
     ],
+    [
+      "punctuation-free long trace opener",
+      `🛠️${" ".repeat(300)}`,
+      "git status\nVisible",
+      `🛠️${" ".repeat(300)}git status\nVisible`,
+      "Visible",
+    ],
   ])("projects %s", (_name, previous, delta, snapshot, expected) => {
     const state = createState({ chatRunId: "run-1", chatStream: previous });
     const payload: ChatEventPayload = {

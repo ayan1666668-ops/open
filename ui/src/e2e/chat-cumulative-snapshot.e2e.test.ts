@@ -85,7 +85,7 @@ suite.define(() => {
         requireRecord(sendRequest.params).idempotencyKey,
         "chat send idempotency key",
       );
-      const prefix = `tool_call${" ".repeat(300)}`;
+      const prefix = `🛠️${" ".repeat(300)}`;
       await gateway.emitGatewayEvent("chat", {
         deltaText: prefix,
         message: {
@@ -97,7 +97,7 @@ suite.define(() => {
         sessionKey: "main",
         state: "delta",
       });
-      const completion = ": hidden\nVisible";
+      const completion = "git status\nVisible";
       await gateway.emitGatewayEvent("chat", {
         deltaText: completion,
         message: {
@@ -112,7 +112,8 @@ suite.define(() => {
 
       const transcript = page.locator(".chat-thread-inner");
       await transcript.getByText("Visible", { exact: true }).waitFor();
-      expect(await transcript.textContent()).not.toContain("tool_call");
+      expect(await transcript.textContent()).not.toContain("🛠️");
+      expect(await transcript.textContent()).not.toContain("git status");
       expect(await transcript.textContent()).not.toContain("hidden");
 
       await gateway.emitChatFinal({ runId, text: "Visible" });
