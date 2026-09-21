@@ -57,6 +57,15 @@ describe("reserved Gateway test listeners", () => {
         await expect(
           acquired.start(() => createTestTransport(transport, acquired.port)),
         ).resolves.toBe(acquired.listener);
+        expect(acquired.listener.listening).toBe(true);
+        console.info(
+          "[gateway-port-reservation-proof]",
+          JSON.stringify({
+            competitorStillListening: competitor.listening,
+            replacementSelected: acquired.port !== occupiedPort,
+            replacementListenerListening: acquired.listener.listening,
+          }),
+        );
       },
       () => allocator.mockRestore(),
       () => closeListener(competitor),
