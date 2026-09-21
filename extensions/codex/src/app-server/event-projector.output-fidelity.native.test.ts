@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import http from "node:http";
 import path from "node:path";
@@ -19,6 +20,69 @@ import { CODEX_APP_SERVER_VERSION } from "./version.js";
 
 vi.unmock("node:child_process");
 registerCodexEventProjectorTestLifecycle();
+
+// Failure logs expose fixed categories and hashes, never native text or fixture paths.
+function summarizeFidelityText(value: unknown) {
+  if (typeof value !== "string") {
+    return { present: value !== undefined, text: false };
+  }
+  const prefix = value.slice(0, 4_096);
+  return {
+    present: true,
+    text: true,
+    bytes: Buffer.byteLength(value),
+    sha256: createHash("sha256").update(value).digest("hex"),
+    execFailure: prefix.startsWith("exec_command failed:"),
+    formattedExit: /(?:^|\n)Process exited with code -?\d+/u.test(prefix),
+    outputSection: prefix.includes("\nOutput:\n"),
+    mentionsSandbox: /sandbox|seccomp|landlock|bwrap/iu.test(prefix),
+    mentionsPermission: /permission denied|operation not permitted|EACCES|EPERM/iu.test(prefix),
+    mentionsMissingFile: /no such file or directory|ENOENT/iu.test(prefix),
+    mentionsTimeout: /timed out|ETIMEDOUT/iu.test(prefix),
+  };
+}
+
+function summarizeFidelityEvents(
+  notifications: CodexServerNotification[],
+  callId: string,
+  turnId: string,
+) {
+  const events: Array<Record<string, unknown>> = [];
+  let relevantCount = 0;
+  let terminalIndex: number | undefined;
+  for (const [index, notification] of notifications.entries()) {
+    const { method, params } = notification;
+    if (
+      method !== "item/started" &&
+      method !== "item/completed" &&
+      method !== "rawResponseItem/completed" &&
+      method !== "turn/completed"
+    ) {
+      continue;
+    }
+    relevantCount++;
+    if (method === "turn/completed") {
+      terminalIndex ??= index;
+    }
+    const item = isJsonObject(params) && isJsonObject(params.item) ? params.item : undefined;
+    const turn = isJsonObject(params) && isJsonObject(params.turn) ? params.turn : undefined;
+    events.push({
+      index,
+      method,
+      itemType:
+        item?.type === "commandExecution" || item?.type === "function_call_output"
+          ? item.type
+          : "other",
+      callMatches: item?.id === callId || item?.call_id === callId,
+      turnMatches: turn?.id === turnId || (isJsonObject(params) && params.turnId === turnId),
+      terminalCompleted: turn?.status === "completed",
+    });
+    if (events.length > 24) {
+      events.shift();
+    }
+  }
+  return { notificationCount: notifications.length, relevantCount, terminalIndex, events };
+}
 
 // rust-v0.154.0: core/src/tools/context.rs reserves history serialization space
 // for exec output. core/src/session/mod.rs emits the original response item,
@@ -235,18 +299,37 @@ describe("native Codex tool response fidelity", () => {
       if (typeof output !== "string") {
         throw new Error("Expected native exec response text");
       }
-      const command = requireRecord(
-        notifications
-          .filter((notification) => notification.method === "item/completed")
-          .map((notification) =>
-            requireRecord(
-              requireRecord(notification.params, "item notification").item,
-              "completed item",
-            ),
-          )
-          .find((item) => item.type === "commandExecution" && item.id === callId),
-        "native command execution",
-      );
+      const commandItem = notifications
+        .filter((notification) => notification.method === "item/completed")
+        .map((notification) =>
+          requireRecord(
+            requireRecord(notification.params, "item notification").item,
+            "completed item",
+          ),
+        )
+        .find((item) => item.type === "commandExecution" && item.id === callId);
+      if (!commandItem) {
+        const nextResult = Array.isArray(requests[1]?.input)
+          ? requests[1].input.find(
+              (item) =>
+                isJsonObject(item) &&
+                item.type === "function_call_output" &&
+                item.call_id === callId,
+            )
+          : undefined;
+        const nextOutput = isJsonObject(nextResult) ? nextResult.output : undefined;
+        throw new Error(
+          "Expected native command execution: " +
+            JSON.stringify({
+              rawResult: summarizeFidelityText(output),
+              nextProviderResult: summarizeFidelityText(nextOutput),
+              nextResultMatchesRaw: nextOutput === output,
+              notifications: summarizeFidelityEvents(notifications, callId, turn.turn.id),
+              stderr: summarizeFidelityText(client.getStderrDiagnostic()),
+            }),
+        );
+      }
+      const command = requireRecord(commandItem, "native command execution");
       expect(command).toMatchObject({ status: "completed", exitCode: 0, aggregatedOutput: source });
       expect(output).not.toBe(command.aggregatedOutput);
       expect(output).toContain("Process exited with code 0\n");
