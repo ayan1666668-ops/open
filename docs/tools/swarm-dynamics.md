@@ -100,3 +100,7 @@ regressions, and refusal to downgrade a sandbox-required verifier.
 
 A live model-backed native collector transcript remains useful end-to-end evidence
 for the experiment and should be captured before claiming production readiness.
+
+## Related
+
+- [Liquid Software Factory](/concepts/liquid-software-factory) for the end-to-end search-to-convergence architecture.
