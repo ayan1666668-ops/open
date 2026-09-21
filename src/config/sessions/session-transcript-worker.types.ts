@@ -89,7 +89,13 @@ export type SessionTranscriptHistoryWorkerInput = {
 export type SessionPreviewWorkerInput = {
   kind: "session-preview";
   database: { agentId: string; path: string };
-  scope: SessionTranscriptReadScope;
+  target: {
+    agentId: string;
+    sessionId: string;
+    sessionKey?: string;
+    entryValidationKey?: string;
+  };
+  env?: NodeJS.ProcessEnv;
   maxItems: number;
   maxChars: number;
   admission?: UserTurnTranscriptAdmissionReceipt;
