@@ -252,13 +252,12 @@ describe("FaceTime pending dial reconciliation", () => {
     const state = await pendingDialState({ delivery: "cancelling" });
     mocks.helper.findOutgoingCall.mockResolvedValue(topologyResult(helperResults));
     const cancellation = pendingDialCancellationResult();
-    mocks.helper.cancelOutgoingCall.mockResolvedValue({
-      ...cancellation,
-      helperResults: cancellation.helperResults.map((entry) => ({
-        ...entry,
-        ...(entry.cancelled ? { call_uuid: "cancelled-call" } : {}),
-      })),
-    });
+    for (const entry of cancellation.helperResults) {
+      if (entry.cancelled) {
+        Object.assign(entry, { call_uuid: "cancelled-call" });
+      }
+    }
+    mocks.helper.cancelOutgoingCall.mockResolvedValue(cancellation);
     const runtime = await createRuntime(state);
     const deleted = observeDeletion(state);
     const cancellationPublished = deferred();

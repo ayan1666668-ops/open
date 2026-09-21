@@ -704,8 +704,10 @@ export async function createFaceTimeRuntime(params: {
       await helper.stop();
       helperStopped = true;
       // Failed carrier cleanup leaves startup waiting for closure; report that failure.
-      while (!cleanupError && pendingOperations.size > 0) {
-        await Promise.allSettled(pendingOperations);
+      if (!cleanupError) {
+        while (pendingOperations.size > 0) {
+          await Promise.allSettled(pendingOperations);
+        }
       }
       await pendingDialStore.settle();
       if (cleanupError) {
