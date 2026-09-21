@@ -18,6 +18,12 @@ export type TransportDropScenario = {
   assistant?: AssistantMessage;
   providerOwner?: PreparedProviderFailoverOwner;
   assistantTexts?: string[];
+  toolMediaUrls?: string[];
+  sourceReplyDelivered?: boolean;
+  trigger?: "cron";
+  toolResultText?: string;
+  preToolText?: string;
+  resolveReplyDelivery?: () => Promise<"missing" | "pending" | "delivered">;
   errorMessage?: string;
   errorBody?: string;
   errorCode?: string;
@@ -85,6 +91,14 @@ export async function recoverAfterTransportDrop(scenario: TransportDropScenario 
   const modelId = erroredAssistant.model;
   const messagesSnapshot = [
     { role: "user", content: "why is it unauthorized?" },
+    ...(scenario.preToolText
+      ? [
+          buildEmbeddedRunnerAssistant({
+            stopReason: "stop",
+            content: [{ type: "text", text: scenario.preToolText }],
+          }),
+        ]
+      : []),
     ...(toolCalls.length > 0 ? [toolAssistant] : []),
     ...toolCalls
       .filter((id) => !scenario.missingToolResult || id !== "call_2")
@@ -93,11 +107,16 @@ export async function recoverAfterTransportDrop(scenario: TransportDropScenario 
         toolCallId: id,
         toolName: "exec",
         isError: id === scenario.failedToolCallId,
+        ...(scenario.toolResultText
+          ? { content: [{ type: "text", text: scenario.toolResultText }] }
+          : {}),
       })),
     erroredAssistant,
   ] as never;
   const attempt = makeEmbeddedRunnerAttempt({
-    assistantTexts: scenario.assistantTexts ?? [],
+    assistantTexts: scenario.assistantTexts ?? (scenario.preToolText ? [scenario.preToolText] : []),
+    toolMediaUrls: scenario.toolMediaUrls,
+    sourceReplyDelivered: scenario.sourceReplyDelivered,
     messagesSnapshot,
     toolMetas: toolCalls.map((toolCallId) => ({
       toolCallId,
@@ -163,6 +182,8 @@ export async function recoverAfterTransportDrop(scenario: TransportDropScenario 
         runParams: {
           config: scenario.config ?? {},
           agentId: "main",
+          trigger: scenario.trigger,
+          resolveReplyDelivery: scenario.resolveReplyDelivery,
           sessionId: "session:transport-drop",
           runId: "run:transport-drop",
           onAgentEvent,
