@@ -7,6 +7,8 @@
     "../../src/channels/**/*.test.ts",
     "../../src/channels/**/*.test.tsx",
     "../../src/plugin-sdk/**/*.test.ts",
-    "../../src/plugin-sdk/**/*.test.tsx"
+    "../../src/plugin-sdk/**/*.test.tsx",
+    "../../src/plugins/contracts/**/*.test.ts",
+    "../../src/plugins/contracts/**/*.test.tsx"
   ]
 }
