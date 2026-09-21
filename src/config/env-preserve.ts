@@ -14,6 +14,7 @@ import {
   preservesAuthoredEscapedEnvRefs,
 } from "./env-preserve-authored.js";
 import { resolveConfigEnvVars } from "./env-substitution.js";
+import { settleContainerValue } from "./merge-patch.js";
 
 export { EnvRefArrayMutationError };
 
@@ -40,17 +41,7 @@ type EnvRefResolveSlot = {
 };
 
 function settleEnvRefResolveSlot(slot: EnvRefResolveSlot, value: unknown): void {
-  if (Array.isArray(slot.container)) {
-    const key = slot.key;
-    if (typeof key === "number") {
-      slot.container[key] = value;
-    }
-    return;
-  }
-  const key = slot.key;
-  if (typeof key === "string") {
-    slot.container[key] = value;
-  }
+  settleContainerValue(slot.container, slot.key, value);
 }
 
 function resolveEnvVarRefsForComparison(value: unknown, env: NodeJS.ProcessEnv): unknown {
@@ -155,17 +146,7 @@ type EnvRefRestoreFrame =
     };
 
 function settleEnvRefRestoreFrame(frame: EnvRefRestoreFrame, value: unknown): void {
-  if (Array.isArray(frame.container)) {
-    const key = frame.key;
-    if (typeof key === "number") {
-      frame.container[key] = value;
-    }
-    return;
-  }
-  const key = frame.key;
-  if (typeof key === "string") {
-    frame.container[key] = value;
-  }
+  settleContainerValue(frame.container, frame.key, value);
 }
 
 /** Restore only references owned by the matching authored/resolved planning read. */
@@ -415,17 +396,7 @@ type EnvRefMapRestoreFrame =
     };
 
 function settleEnvRefMapRestoreFrame(frame: EnvRefMapRestoreFrame, value: unknown): void {
-  if (Array.isArray(frame.container)) {
-    const key = frame.key;
-    if (typeof key === "number") {
-      frame.container[key] = value;
-    }
-    return;
-  }
-  const key = frame.key;
-  if (typeof key === "string") {
-    frame.container[key] = value;
-  }
+  settleContainerValue(frame.container, frame.key, value);
 }
 
 export function restoreEnvRefsFromMap(

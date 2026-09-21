@@ -18,23 +18,29 @@ type CloneSlot = {
   readonly key: string | number;
 };
 
-function settleCloneSlot(slot: CloneSlot, value: unknown): void {
-  if (Array.isArray(slot.container)) {
-    const key = slot.key;
+/**
+ * Settles a computed child value into a slot of a freshly built container.
+ * Array slots take numeric keys only; record slots settle an authored own
+ * `__proto__` key as inert data — assignment would invoke the inherited
+ * setter and graft the value onto the container's prototype instead, and
+ * the object-builders this replaces kept the key as an own property.
+ */
+export function settleContainerValue(
+  container: Record<string, unknown> | unknown[],
+  key: string | number,
+  value: unknown,
+): void {
+  if (Array.isArray(container)) {
     if (typeof key === "number") {
-      slot.container[key] = value;
+      container[key] = value;
     }
     return;
   }
-  const key = slot.key;
   if (typeof key !== "string") {
     return;
   }
   if (key === "__proto__") {
-    // An authored own `__proto__` key settles as inert data, exactly as the
-    // platform clone kept it; assignment would invoke the inherited setter
-    // and graft the value onto the clone's prototype instead.
-    Object.defineProperty(slot.container, key, {
+    Object.defineProperty(container, key, {
       value,
       writable: true,
       enumerable: true,
@@ -42,7 +48,11 @@ function settleCloneSlot(slot: CloneSlot, value: unknown): void {
     });
     return;
   }
-  slot.container[key] = value;
+  container[key] = value;
+}
+
+function settleCloneSlot(slot: CloneSlot, value: unknown): void {
+  settleContainerValue(slot.container, slot.key, value);
 }
 
 /**

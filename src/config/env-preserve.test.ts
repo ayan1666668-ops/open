@@ -833,6 +833,27 @@ describe("restoreEnvVarRefs", () => {
       toString: "resolved-value",
     });
   });
+
+  it("keeps an authored own __proto__ key as inert data when nothing matches", () => {
+    // JSON.parse builds the authored own key; an object literal would write
+    // the prototype instead.
+    const incoming = JSON.parse(
+      '{"apiKey":"sk-ant-new-different-key","__proto__":{"injected":true}}',
+    ) as Record<string, unknown>;
+    const parsed = JSON.parse('{"apiKey":"${ANTHROPIC_API_KEY}"}');
+    const result = restoreEnvVarRefs(incoming, parsed, env) as Record<string, unknown>;
+    expect(Object.getPrototypeOf(result)).toBe(Object.prototype);
+    expect(Object.hasOwn(result, "__proto__")).toBe(true);
+    expect(result).toEqual(incoming);
+  });
+
+  it("restores a reference under an authored own __proto__ key", () => {
+    const incoming = JSON.parse('{"__proto__":{"token":"tok-12345"}}') as Record<string, unknown>;
+    const parsed = JSON.parse('{"__proto__":{"token":"${MY_TOKEN}"}}');
+    const result = restoreEnvVarRefs(incoming, parsed, env) as Record<string, unknown>;
+    expect(Object.hasOwn(result, "__proto__")).toBe(true);
+    expect(result).toEqual(JSON.parse('{"__proto__":{"token":"${MY_TOKEN}"}}'));
+  });
 });
 
 describe("restoreEnvVarRefs with edited arrays", () => {
@@ -975,5 +996,17 @@ describe("stack-safe deep env-ref restoration", () => {
     const value = buildNestedObject(depth, { leaf: "value" });
     const result = restoreEnvRefsFromMap(value, "", new Map<string, string>(), new Set<string>());
     expect(result).toBe(value);
+  });
+
+  it("keeps an authored own __proto__ slot inert from the env-ref map", () => {
+    const value = JSON.parse('{"__proto__":{"token":"tok-12345"}}') as Record<string, unknown>;
+    const result = restoreEnvRefsFromMap(
+      value,
+      "",
+      new Map([["__proto__.token", "${MY_TOKEN}"]]),
+      new Set<string>(),
+    ) as Record<string, unknown>;
+    expect(Object.hasOwn(result, "__proto__")).toBe(true);
+    expect(result).toEqual(JSON.parse('{"__proto__":{"token":"${MY_TOKEN}"}}'));
   });
 });
