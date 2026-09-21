@@ -331,6 +331,8 @@ openclaw browser extension repair --from /path/to/old/package/dist/extensions/br
 
 Repair keeps unrelated installations, missing registrations, the stable extension
 copy, browser profiles, Store requests, and pairing credentials unchanged. It
+retains the launcher's saved state and configuration selection even when the
+repair command runs with different environment settings. It
 uses the same ownership and origin checks as explicit installation. It does not
 restart Chrome or prove a relay connection. Replacement launchers are immutable;
 the native manifest switches only after its launcher is complete, so a failed

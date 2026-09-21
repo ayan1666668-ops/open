@@ -210,7 +210,12 @@ export async function browserExtensionStatus(params: {
           chromeProductRoots(deps).map((root) => inspectRegistration(root, deps, predictedIds)),
         ).then((entries) =>
           entries.map(
-            ({ nativeHostPath: _nativeHostPath, launcherPath: _launcherPath, ...entry }) => entry,
+            ({
+              nativeHostPath: _nativeHostPath,
+              launcherPath: _launcherPath,
+              launchContext: _launchContext,
+              ...entry
+            }) => entry,
           ),
         );
   const unavailableRegistration = registrations.some((registration) => {

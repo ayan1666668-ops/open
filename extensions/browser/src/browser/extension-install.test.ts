@@ -55,6 +55,58 @@ afterEach(() => {
 });
 
 describe("native host registration", () => {
+  it.each([
+    { installedConfig: "custom config's $& path.json", callerConfig: undefined },
+    { installedConfig: "custom config's $& path.json", callerConfig: "different.json" },
+    { installedConfig: undefined, callerConfig: "different.json" },
+  ])(
+    "preserves registered configuration when repairing with $callerConfig",
+    async ({ installedConfig, callerConfig }) => {
+      const value = await fixture();
+      const deps = {
+        ...value.deps,
+        env: {
+          ...value.deps.env,
+          OPENCLAW_CONFIG_PATH: installedConfig
+            ? path.join(value.root, installedConfig)
+            : undefined,
+        },
+      };
+      const installed = await installStableChromeExtension(value.bundledDir, deps);
+      const chrome = chromeProductRoots(deps)[0]!;
+      await writeChromePreferences({
+        userDataDir: chrome.userDataDir,
+        profile: "Default",
+        entries: { [await predictedId(installed)]: { location: 4, path: installed } },
+      });
+      const initial = await installChromeExtensionBootstrap({ ...value, deps });
+      expect(initial.issues).toEqual([]);
+      const manifestPath = initial.registrations[0]!.manifestPath;
+      const oldManifest = JSON.parse(await fs.readFile(manifestPath, "utf8")) as { path: string };
+      const exportedContext = (content: string) =>
+        content.split("\n").filter((line) => line.startsWith("export OPENCLAW_"));
+      const before = exportedContext(await fs.readFile(oldManifest.path, "utf8"));
+      const nativeHostPath = path.join(value.root, "replacement-entry.js");
+      await fs.writeFile(nativeHostPath, "export {};\n", { mode: 0o600 });
+      const repaired = await repairChromeExtensionNativeHosts({
+        ...value,
+        fromNativeHostPath: value.nativeHostPath,
+        deps: {
+          ...deps,
+          nativeHostPath,
+          env: {
+            ...value.deps.env,
+            OPENCLAW_CONFIG_PATH: callerConfig ? path.join(value.root, callerConfig) : undefined,
+          },
+        },
+      });
+      expect(repaired.warnings).toEqual([]);
+      expect(repaired.changes).toHaveLength(1);
+      const current = JSON.parse(await fs.readFile(manifestPath, "utf8")) as { path: string };
+      expect(exportedContext(await fs.readFile(current.path, "utf8"))).toEqual(before);
+    },
+  );
+
   it("preserves literal replacement metacharacters in the installation path", async () => {
     const value = await fixture();
     const deps = { ...value.deps, stateDir: path.join(value.homeDir, "claw $& state's dir") };

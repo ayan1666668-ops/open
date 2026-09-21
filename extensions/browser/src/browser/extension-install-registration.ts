@@ -23,6 +23,8 @@ import { BROWSER_NATIVE_HOST_NAME } from "./extension-native-host.js";
 const OWNED_LAUNCHER_MARKER = "# OpenClaw native messaging bootstrap v1";
 const NATIVE_HOST_DESCRIPTION = "OpenClaw browser extension bootstrap";
 
+type NativeHostLaunchContext = { stateDir: string; configPath?: string };
+
 export type NativeHostRegistrationStatus = {
   product: ChromeProduct;
   browser: string;
@@ -32,6 +34,7 @@ export type NativeHostRegistrationStatus = {
   issue?: string;
   nativeHostPath?: string;
   launcherPath?: string;
+  launchContext?: NativeHostLaunchContext;
 };
 
 function nativeMessagingRoot(deps: ExtensionInstallDeps = {}): string {
@@ -123,12 +126,12 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 }
 
-function parseOwnedLauncherTargets(params: {
+function parseOwnedLauncher(params: {
   content: string;
   manifestPath: string;
   launcherPath: string;
   origins: string[];
-}): string[] | undefined {
+}): { targets: string[]; context: NativeHostLaunchContext } | undefined {
   const quotedValue = String.raw`'(?:[^'\r\n]|'"'"')*'`;
   const command = [
     `(${quotedValue})`,
@@ -143,14 +146,23 @@ function parseOwnedLauncherTargets(params: {
     ]),
   ].join(" ");
   const pattern = new RegExp(
-    `^#!/bin/sh\\n${escapeRegExp(OWNED_LAUNCHER_MARKER)}\\nexport OPENCLAW_STATE_DIR=${quotedValue}\\n(?:export OPENCLAW_CONFIG_PATH=${quotedValue}\\n)?exec ${command} "\\$@"\\n$`,
+    `^#!/bin/sh\\n${escapeRegExp(OWNED_LAUNCHER_MARKER)}\\nexport OPENCLAW_STATE_DIR=(${quotedValue})\\n(?:export OPENCLAW_CONFIG_PATH=(${quotedValue})\\n)?exec ${command} "\\$@"\\n$`,
     "u",
   );
-  // Decode only shellQuote's two target words after the entire ownership grammar matches.
-  return pattern
-    .exec(params.content)
-    ?.slice(1)
-    .map((value) => value.slice(1, -1).replaceAll(`'"'"'`, "'"));
+  const [stateDir, configPath, nodePath, nativeHostPath] =
+    pattern.exec(params.content)?.slice(1) ?? [];
+  if (stateDir === undefined || nodePath === undefined || nativeHostPath === undefined) {
+    return undefined;
+  }
+  // Decode only shellQuote's words after the entire ownership grammar matches.
+  const decode = (value: string) => value.slice(1, -1).replaceAll(`'"'"'`, "'");
+  return {
+    targets: [decode(nodePath), decode(nativeHostPath)],
+    context: {
+      stateDir: decode(stateDir),
+      configPath: configPath === undefined ? undefined : decode(configPath),
+    },
+  };
 }
 
 async function assertPrivateNativeHostFile(
@@ -182,6 +194,7 @@ async function resolveLauncherInstall(params: {
   pluginRoot: string;
   extensionIds: string[];
   deps: ExtensionInstallDeps;
+  launchContext?: NativeHostLaunchContext;
 }): Promise<{ path: string; content: string }> {
   const launcherPath = launcherPathForManifest(params.manifestPath, params.deps);
   const nodePath = await fs.realpath(params.deps.nodePath ?? process.execPath);
@@ -200,12 +213,17 @@ async function resolveLauncherInstall(params: {
       origin,
     ]),
   ];
-  const configPath = resolveInstallConfigPath(params.deps);
+  const context = params.launchContext ?? {
+    stateDir: resolveInstallStateDir(params.deps),
+    configPath: resolveInstallConfigPath(params.deps),
+  };
   const content = [
     "#!/bin/sh",
     OWNED_LAUNCHER_MARKER,
-    `export OPENCLAW_STATE_DIR=${shellQuote(resolveInstallStateDir(params.deps))}`,
-    ...(configPath ? [`export OPENCLAW_CONFIG_PATH=${shellQuote(configPath)}`] : []),
+    `export OPENCLAW_STATE_DIR=${shellQuote(context.stateDir)}`,
+    ...(context.configPath !== undefined
+      ? [`export OPENCLAW_CONFIG_PATH=${shellQuote(context.configPath)}`]
+      : []),
     `exec ${command.map(shellQuote).join(" ")} "$@"`,
     "",
   ].join("\n");
@@ -300,19 +318,19 @@ export async function inspectRegistration(
     ) {
       throw new Error("native host launcher content does not match its immutable identity");
     }
-    const launcherTargets = parseOwnedLauncherTargets({
+    const parsedLauncher = parseOwnedLauncher({
       content: launcherContent,
       manifestPath,
       launcherPath: expectedLauncher,
       origins: stringOrigins,
     });
-    if (!launcherTargets) {
+    if (!parsedLauncher) {
       throw new Error("native host launcher and manifest origins do not match");
     }
     // Removed package versions break readiness, not ownership or managed repair/removal.
     let issue: string | undefined;
     try {
-      for (const [index, target] of launcherTargets.entries()) {
+      for (const [index, target] of parsedLauncher.targets.entries()) {
         await assertNativeHostTarget(target, index === 0 ? fs.constants.X_OK : fs.constants.R_OK);
       }
     } catch {
@@ -325,8 +343,9 @@ export async function inspectRegistration(
       manifestPath,
       extensionIds: ids.toSorted(),
       state: "owned",
-      nativeHostPath: launcherTargets[1],
+      nativeHostPath: parsedLauncher.targets[1],
       launcherPath: expectedLauncher,
+      launchContext: parsedLauncher.context,
       issue,
     };
   } catch (error) {
@@ -376,6 +395,8 @@ export async function installRegistration(params: {
     pluginRoot: params.pluginRoot,
     extensionIds,
     deps,
+    // Relocation replaces package targets, never the registered profile/config selection.
+    launchContext: params.expectedNativeHostPath === undefined ? undefined : existing.launchContext,
   });
   const launcherPath = launcher.path;
   const previousManifest =
@@ -492,6 +513,7 @@ export async function repairChromeExtensionNativeHosts(params: {
           pluginRoot: params.pluginRoot,
           extensionIds,
           deps,
+          launchContext: registration.launchContext,
         });
         if (
           JSON.stringify(registration.extensionIds) !==
@@ -532,7 +554,9 @@ export async function repairChromeExtensionNativeHosts(params: {
   return {
     changes,
     warnings,
-    registrations,
+    registrations: registrations.map(
+      ({ launchContext: _launchContext, ...registration }) => registration,
+    ),
     retainedNativeHostPaths: [...retained].toSorted(),
     retentionSafe,
     manualRequired,
