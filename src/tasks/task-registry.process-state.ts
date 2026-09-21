@@ -95,6 +95,7 @@ export type TaskProgressBatch = {
   abortController: AbortController;
   lastPublishedContent?: string;
   typingStarted?: boolean;
+  finalReplyDelivered?: true;
   members: Map<string, TaskProgressMember>;
   pendingItems: Map<string, TaskProgressItem>;
   pendingPlan?: TaskProgressPlan;
@@ -111,6 +112,7 @@ export type TaskProgressBatch = {
 export type TaskRegistryEventMutations = {
   prepare: () => { consume: () => void; release: () => void } | undefined;
   pending: (taskId?: string) => boolean;
+  pendingTaskIds: () => readonly string[];
   captureReadFence: (admission: OpenClawStateDatabaseReadAdmission) => Promise<void>;
 };
 
