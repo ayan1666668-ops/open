@@ -131,7 +131,7 @@ describe("resolveFeishuMessageDedupeKey", () => {
     expect(resolveFeishuMessageDedupeKey(event)).toBe(JSON.stringify(["om_post", ...expected]));
   });
 
-  it("includes top-level post files[] in the replay key", () => {
+  it("keeps the shipped captioned-post replay identity when files[] are present", () => {
     const event: FeishuMessageEvent = {
       sender: { sender_id: { open_id: "ou-user" } },
       message: {
@@ -153,11 +153,33 @@ describe("resolveFeishuMessageDedupeKey", () => {
       },
     };
 
+    expect(resolveFeishuMessageDedupeKey(event)).toBe("om_post_files");
+  });
+
+  it("keeps inline-media post replay identity when extra top-level files[] are present", () => {
+    const event: FeishuMessageEvent = {
+      sender: { sender_id: { open_id: "ou-user" } },
+      message: {
+        message_id: "om_post",
+        chat_id: "oc-dm",
+        chat_type: "p2p",
+        message_type: "post",
+        content: JSON.stringify({
+          title: "",
+          content: [[{ tag: "img", image_key: "img_inline" }]],
+          files: [
+            {
+              file_key: "file_extra",
+              file_name: "extra.csv",
+              is_folder: false,
+            },
+          ],
+        }),
+      },
+    };
+
     expect(resolveFeishuMessageDedupeKey(event)).toBe(
-      JSON.stringify([
-        "om_post_files",
-        "file_key:file_v3_0015l_1a389bce-aabb-ccdd-eeff-1234567890ab",
-      ]),
+      JSON.stringify(["om_post", "image_key:img_inline"]),
     );
   });
 });

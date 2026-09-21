@@ -243,6 +243,8 @@ function resolvePostPayload(parsed: unknown): PostPayload | null {
 type PostParseOptions = {
   renderMediaPlaceholders?: boolean;
   emptyTextFallback?: string;
+  // Download collects top-level files[]; replay identity stays on inline media.
+  includeTopLevelFiles?: boolean;
 };
 
 export function parsePostContent(content: string, options: PostParseOptions = {}): PostParseResult {
@@ -287,9 +289,11 @@ export function renderPostContent(
       paragraphs.push(renderedParagraph);
     }
 
-    appendTopLevelPostFiles(attachments, payload.files);
-    if (isRecord(parsed)) {
-      appendTopLevelPostFiles(attachments, parsed.files);
+    if (options.includeTopLevelFiles !== false) {
+      appendTopLevelPostFiles(attachments, payload.files);
+      if (isRecord(parsed)) {
+        appendTopLevelPostFiles(attachments, parsed.files);
+      }
     }
 
     const title = escapeMarkdownText(payload.title.trim());
