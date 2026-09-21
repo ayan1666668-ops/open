@@ -16,7 +16,6 @@ import {
   isSpawnSubagentAdmissionCancelledError,
   type SpawnSubagentAdmissionAuthority,
 } from "./subagent-spawn-contract.js";
-import { getSubagentSpawnDeps } from "./subagent-spawn-deps.js";
 import { splitModelRef } from "./subagent-spawn-plan.js";
 import {
   loadSessionEntry,
@@ -104,10 +103,6 @@ function buildDirectChildSessionPatch(patch: Record<string, unknown>): Partial<S
     }
   }
   return entry;
-}
-
-export function loadSubagentConfig() {
-  return getSubagentSpawnDeps().getRuntimeConfig();
 }
 
 export async function createInitialSubagentSession(params: {

@@ -12,10 +12,7 @@ import {
   getNodeSqliteKysely,
 } from "../infra/kysely-sync.js";
 import { normalizeSqliteNumber } from "../infra/sqlite-number.js";
-import {
-  deferSqlitePostCommitPublication,
-  stageSqliteTransactionState,
-} from "../infra/sqlite-post-commit.js";
+import { stageSqliteTransactionState } from "../infra/sqlite-post-commit.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { withExistingOpenClawStateDatabaseReadOnly } from "../state/openclaw-state-db-readonly.js";
 import type { DB as OpenClawStateKyselyDatabase } from "../state/openclaw-state-db.generated.js";
@@ -251,7 +248,6 @@ export function syncTaskMirroredFlowInSqlite(
           publication.commit();
         },
       });
-      deferSqlitePostCommitPublication(db, publication.publish);
       return result;
     });
   } catch (error) {
@@ -280,7 +276,6 @@ export function updateTaskFlowRegistryRecordInSqlite(
         rollback: publication.rollback,
         commit: publication.commit,
       });
-      deferSqlitePostCommitPublication(db, publication.publish);
     }
     return result;
   });

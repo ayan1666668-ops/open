@@ -214,11 +214,19 @@ local scheduling is unchanged.
 | 16                         | 4 / 15.42 GiB       |                                3 |                         2 |
 | 32                         | 8 / 30.95 GiB       |                                8 |                         2 |
 
-Group pins can lower these ceilings. Only the measured `agentic-gateway-core-2`
-family loses its two-worker compact pin on Blacksmith and hybrid profiles;
-GitHub-hosted planning and other timing-sensitive groups retain it. Gateway
-plans still run exclusively. When core-2 shares a serial bin, its unproven
-siblings retain their two-worker caps at group scope.
+Group pins can lower these ceilings. The `agentic-gateway-core-2` family and
+whole `agentic-cli` group use measured workers on Blacksmith and hybrid profiles,
+with `fallbackMaxWorkers: 2`. Full CLI bins request
+`blacksmith-32vcpu-ubuntu-2404` after packing and retain serial execution. The
+observed eight-CPU/30.95-GiB allocation can admit eight workers; actual CPU,
+memory, and load still determine the ceiling. The shard runner applies the
+two-worker fallback on hosted, frozen, constrained, or overlapping execution,
+intersected with any lower job or group limit. The four-CPU/15.42-GiB 16-class
+allocation receives that fallback even when the workflow ceiling is three.
+GitHub-hosted planning, `agentic-cli-process`, and other timing-sensitive groups
+retain their existing pins. Gateway plans still run exclusively; unproven
+siblings sharing its serial bin retain their two-worker group caps. The CLI
+inventory, split policies, timing weights, and admission budgets are unchanged.
 
 Agents-core files share the configured worker pool, including local scheduling
 and its one-worker throttle. Compact agents-core groups retain a two-worker cap.
@@ -226,6 +234,33 @@ Their initial estimates divide serial timing history by the effective file
 workers, preserving the cost of an indivisible file. Separate parallel timing
 keys let subsequent measurements replace those estimates without being divided
 again. The file inventory and import-heavy CLI stripes remain unchanged.
+
+Tooling files use the shared worker scheduler instead of forcing one file at a
+time. Compact tooling groups retain their two-worker cap and exclusive child
+admission. Their planner estimate uses current file costs divided by the effective
+worker count, bounded below by the longest file; a single slow file cannot benefit
+from file parallelism. Historical serial group totals no longer floor those
+estimates. Docker helper fixtures retain their separate serial config, and the
+isolated tooling config keeps fresh module state without disabling file parallelism.
+Focused tooling plans defer unrelated full-suite inventory discovery and retain
+both the boundary and built TUI checks. Other precise selections and broad plans
+keep their complete canonical owners.
+
+The specialized Codex, Slack, Telegram, package-contract, and release-only plugin
+configs also inherit file scheduling from the worker ceiling. Codex, Telegram,
+package contracts, and plugins keep isolated module graphs. Slack uses file-local
+transport fixtures and the existing runner's module cleanup between files, so
+forks can reuse their prepared dependencies. Slack and the plugin runtime use
+forks for the application main-thread SQLite worker broker. Ordinary
+Telegram files share a process within each existing ten-file job envelope, while
+native Telegram database-worker files retain their one-file process lifetime.
+The plugin shard stays release-only. These changes reduce process overhead and
+allow file concurrency without expanding the job inventory or worker budgets.
+Slack and Telegram multi-file estimates conservatively discount their historical
+serial rates by 1.2 after two-worker qualification. Singleton and native-worker
+costs stay unchanged; new parallel measurements replace those serial references
+without another discount. Packing saves one Node PR row on each runner profile,
+with unchanged compact and push budgets.
 
 The [September 19 probe](https://github.com/openclaw/openclaw/actions/runs/35441442486)
 ran two predefined samples per cell on eight CPUs, 30.95 GiB, and Node 24.19.0.
