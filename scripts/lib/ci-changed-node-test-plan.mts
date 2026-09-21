@@ -783,7 +783,8 @@ export function createChangedNodeTestShards(
     ? createNodeTestShardBundles({
         changedPaths,
         includeReleaseOnlyPluginShards: false,
-        includeReleaseOnlyToolingShards: options.includeReleaseOnlyToolingShards,
+        // Explicit UI consumers retain their complete canonical host-contract rows.
+        includeReleaseOnlyToolingShards: true,
         compactMode: "pull-request",
         runnerBackend: options.runnerBackend,
       })

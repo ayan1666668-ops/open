@@ -2182,7 +2182,11 @@ describe("CI changed Node test plan", () => {
       "src/agents/live-provider-owner.ts",
       "ui/config/control-ui-boot-modules.json",
     ];
-    const options = { runnerBackend: "hybrid", dedicatedUiE2e: true };
+    const options = {
+      runnerBackend: "hybrid",
+      dedicatedUiE2e: true,
+      includeReleaseOnlyToolingShards: false,
+    };
     const shards = createChangedNodeTestShards(paths, options);
     expect(shards).not.toBeNull();
     expect(hasControlUiPerformanceAffectingChange([paths[2]!])).toBe(true);
@@ -2234,9 +2238,7 @@ describe("CI changed Node test plan", () => {
     expect(
       createChangedNodeTestShards([...paths, "package.json"], { ...options, onFallback }),
     ).toBeNull();
-    expect(onFallback).toHaveBeenCalledWith(
-      "core change reaches public SDK or extension consumers",
-    );
+    expect(onFallback).toHaveBeenCalledWith("tooling owner change requires full-family coverage");
   });
 
   it("chunks many targets into bounded parallel jobs", () => {
