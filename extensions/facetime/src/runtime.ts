@@ -232,9 +232,6 @@ export async function createFaceTimeRuntime(params: {
       }
     | undefined
   > => {
-    if (!outboundCallPending && !outboundDialInFlight) {
-      return undefined;
-    }
     const pending = outboundCallPending;
     if (!pending) {
       return undefined;
@@ -452,6 +449,11 @@ export async function createFaceTimeRuntime(params: {
         await persistOutboundCallPending();
         if (!canDispatch()) {
           throw new Error("outbound FaceTime dial was cancelled before helper dispatch");
+        }
+        if (calls.size > 0) {
+          // An incoming call can claim capacity while the initial publication waits.
+          await clearOutboundCallPending(pending.dialID);
+          throw new Error("cannot start an outbound FaceTime call while another call is active");
         }
         helperStarted = true;
         const helperResult = await helper.startCall(request, dialID, requestedAt);

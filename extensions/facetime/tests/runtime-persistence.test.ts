@@ -112,6 +112,46 @@ describe("FaceTime runtime asynchronous persistence", () => {
     }
   });
 
+  it.each([4, 1])(
+    "settles an undispatched dial when an incoming status %s takes capacity during persistence",
+    async (callStatus) => {
+      const state = emptyState();
+      const runtime = await createRuntime(state);
+      mocks.startTalk.mockResolvedValue(createTalkDriver({}));
+      mocks.helper.startCall.mockResolvedValue({
+        call_uuid: "outbound-call",
+        muted: true,
+        is_uplink_muted: true,
+        transport: incomingCall().data.transport,
+      });
+      const write = suspendNextWrite(state);
+      const dialing = runtime.dial({ handle: "owner@example.com" });
+      const outcome = dialing.then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+      try {
+        await write.entered;
+        await mocks.helperParams?.onMessage(incomingCall(callStatus));
+        expect((await runtime.status()).calls).toHaveLength(1);
+
+        write.release();
+        expect(await outcome).toEqual(
+          new Error("cannot start an outbound FaceTime call while another call is active"),
+        );
+        expect(mocks.helper.startCall).not.toHaveBeenCalled();
+        expect(mocks.helper.cancelOutgoingCall).not.toHaveBeenCalled();
+        expect((await runtime.status()).outboundCallPending).toBeUndefined();
+        expect(await state.lookup("active")).toBeUndefined();
+        expect((await runtime.status()).calls).toHaveLength(1);
+      } finally {
+        write.release();
+        await outcome;
+        await runtime.stop();
+      }
+    },
+  );
+
   it("does not promote or resurrect a dial ended while an earlier event save is suspended", async () => {
     const state = await pendingDialState();
     const runtime = await createRuntime(state);
