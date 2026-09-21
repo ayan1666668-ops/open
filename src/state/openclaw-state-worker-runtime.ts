@@ -68,6 +68,8 @@ import {
 } from "../infra/telemetry-store.kernel.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { readRemoteModelCatalog } from "../model-catalog/remote-store.js";
+import { isNodeWorkerJournalCommand } from "../node-host/node-worker-journal.worker-contract.js";
+import { executeNodeWorkerJournalCommand } from "../node-host/node-worker-journal.worker.js";
 import { isPluginStateWorkerCommand } from "../plugin-state/plugin-state-worker-contract.js";
 import { executePluginStateCommand } from "../plugin-state/plugin-state.worker.js";
 import {
@@ -460,6 +462,9 @@ export function executeSharedStateCommand(
     path: context.databasePath,
     env: getSqliteWorkerStateContext().environment,
   };
+  if (isNodeWorkerJournalCommand(command)) {
+    return executeNodeWorkerJournalCommand(command, writeOptions);
+  }
   if (command.type === "sessionGroups.register") {
     return registerSessionGroupInDatabase(database, command.input.name, writeOptions.env);
   }
