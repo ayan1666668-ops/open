@@ -21,7 +21,6 @@ vi.mock("./task-registry.js", () => ({
   getTaskById: vi.fn(),
   listTaskRecords: mocks.listTaskRecords,
   listTaskSessionActivity: mocks.listTaskSessionActivity,
-  listTasksForAgentId: vi.fn(),
   listTasksForRelatedSessionKey: vi.fn(),
 }));
 

@@ -11,10 +11,10 @@ import {
   listTaskRecordsForOwnerTree,
   listTaskRecordPage,
   listTaskSessionActivity,
-  listTasksForAgentId,
   deleteTaskRecordById,
   resetTaskRegistryForTests,
 } from "./task-registry-query.js";
+import { prepareTaskRegistryRead } from "./task-registry-read.js";
 import { markTaskTerminalById, updateTaskNotifyPolicyById } from "./task-registry-record-api.js";
 import {
   invalidateTaskRegistryProjection,
@@ -23,6 +23,7 @@ import {
   tasks as authoritativeTasks,
 } from "./task-registry-state.js";
 import { configureTaskRegistryRuntime, type TaskRegistryStore } from "./task-registry.store.js";
+import { createTaskFixture } from "./task-registry.test-support.js";
 import type { TaskRecord } from "./task-registry.types.js";
 
 afterEach(() => {
@@ -98,7 +99,7 @@ describe("listTaskSessionActivity", () => {
 });
 
 describe("listTasksForAgentId", () => {
-  it("clones only selected details from a 10000-task registry", () => {
+  it("clones only selected details from a 10000-task registry", async () => {
     const records = Array.from({ length: 10_000 }, (_, index): TaskRecord => ({
       taskId: `task-${index}`,
       runtime: "cli",
@@ -119,13 +120,13 @@ describe("listTasksForAgentId", () => {
       deliveryStates: new Map(),
     });
     configureTaskRegistryRuntime({ store });
-    getTaskById("task-0");
+    const prepared = expectDefined(await prepareTaskRegistryRead(), "prepared agent read");
     const revision = readTaskRegistryRevision();
     const read = vi.spyOn(store, "loadSnapshot");
     const write = vi.spyOn(store, "upsertTaskWithDeliveryState");
     const clone = vi.spyOn(globalThis, "structuredClone");
 
-    const selected = listTasksForAgentId(" agent-17 ");
+    const selected = prepared.listTasksForAgentId(" agent-17 ");
     const detailClones = clone.mock.calls.length;
     clone.mockRestore();
 
@@ -173,16 +174,53 @@ describe("listTasksForAgentId", () => {
       { ...task, taskId: "case-sensitive", agentId: "Worker" },
       { ...task, taskId: "requester-only", agentId: undefined, requesterAgentId: "worker" },
     ]);
-    expect(listTasksForAgentId(" worker ")).toEqual([task]);
-    expect(listTasksForAgentId("Worker").map((row) => row.taskId)).toEqual(["case-sensitive"]);
-    expect(listTasksForAgentId(" \t ")).toEqual([]);
-    expect(listTasksForAgentId("missing")).toEqual([]);
+    let prepared = expectDefined(await prepareTaskRegistryRead(), "prepared agent read");
+    expect(prepared.listTasksForAgentId(" worker ")).toEqual([task]);
+    expect(prepared.listTasksForAgentId("Worker").map((row) => row.taskId)).toEqual([
+      "case-sensitive",
+    ]);
+    expect(prepared.listTasksForAgentId(" \t ")).toEqual([]);
+    expect(prepared.listTasksForAgentId("missing")).toEqual([]);
 
     const replacement = { ...task, taskId: "replacement", detail: { version: 2 } };
     configureTaskSnapshot([replacement]);
     await reloadTaskRegistryFromStoreAsync(captureOpenClawStateWorkerContext());
-    expect(listTasksForAgentId("worker")).toEqual([replacement]);
+    prepared = expectDefined(await prepareTaskRegistryRead(), "reloaded agent read");
+    expect(prepared.listTasksForAgentId("worker")).toEqual([replacement]);
     expect(getTaskById(task.taskId)).toBeUndefined();
+  });
+  it("infers agent ids for session-scoped tasks", async () => {
+    configureTaskSnapshot([]);
+    const created = createTaskFixture("cli", {
+      ownerKey: undefined,
+      scopeKind: undefined,
+      taskKind: "video_generation",
+      sourceId: "video_generate:openai",
+      requesterSessionKey: "agent:main:discord:direct:123",
+      childSessionKey: "agent:main:discord:direct:123",
+      runId: "tool:video_generate:agent-index",
+      task: "Generate a lobster video",
+      notifyPolicy: "silent",
+    });
+
+    expect(created.agentId).toBe("main");
+    const read = expectDefined(await prepareTaskRegistryRead(), "prepared agent read");
+    expect(read.listTasksForAgentId("main").map((task) => task.taskId)).toEqual([created.taskId]);
+  });
+
+  it("uses the child session agent for cross-agent background task attribution", async () => {
+    configureTaskSnapshot([]);
+    const created = createTaskFixture("subagent", {
+      childSessionKey: "agent:worker:subagent:child",
+      runId: "run-worker-subagent",
+      task: "Inspect worker state",
+      deliveryStatus: "pending",
+    });
+
+    expect(created.agentId).toBe("worker");
+    const read = expectDefined(await prepareTaskRegistryRead(), "prepared agent read");
+    expect(read.listTasksForAgentId("worker").map((task) => task.taskId)).toEqual([created.taskId]);
+    expect(read.listTasksForAgentId("main")).toEqual([]);
   });
 });
 
