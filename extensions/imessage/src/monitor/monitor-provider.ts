@@ -92,10 +92,12 @@ import { createIMessageEchoCachingSend, deliverIMessageReply } from "./deliver.j
 import { resolveIMessageDmHistoryContext, resolveIMessageDmHistoryLimit } from "./dm-history.js";
 import { createIMessageThrottledDropDiagnosticCache } from "./drop-diagnostic-cache.js";
 import { createSentMessageCache } from "./echo-cache.js";
+import { createIMessageGroupActivationResolver } from "./group-activation.js";
 import {
   warnGroupAllowlistDropPerChatOnce,
   warnGroupAllowlistMisconfigOnce,
 } from "./group-allowlist-warnings.js";
+import { mergeIMessageGroupAllowFromWithLegacyChatTargets } from "./group-allowlist.js";
 import {
   IMESSAGE_RECOVERY_MAX_AGE_MS,
   IMESSAGE_RECOVERY_MAX_ROWS,
@@ -104,7 +106,6 @@ import {
 } from "./inbound-dedupe.js";
 import {
   buildIMessageInboundContext,
-  mergeIMessageGroupAllowFromWithLegacyChatTargets,
   rememberIMessageSkippedFromMeForSelfChatDedupe,
   resolveIMessageReactionContext,
   resolveIMessageInboundDecision,
@@ -202,18 +203,6 @@ function formatIMessageInboundMediaBody(params: {
     body: params.messageText,
     notice: `[imessage ${params.unavailableCount > 1 ? `${params.unavailableCount} attachments` : "attachment"} unavailable]`,
   });
-}
-
-// Local chat.db path to read MAX(ROWID) from for the startup since_rowid. Only
-// available when the gateway can read the DB directly (no remote bridge). On a
-// remote `cliPath`, returns undefined and the startup window relies on imsg's
-// own self-fence (see watch.subscribe comment).
-function resolveIMessageWatchSourceDbPath(params: {
-  cliPath: string;
-  dbPath?: string;
-  remoteHost?: string;
-}): string | undefined {
-  return resolveIMessageChatDbLookupPath(params);
 }
 
 const warnIfImsgUpgradeNeeded = (() => {
@@ -363,6 +352,7 @@ export async function monitorIMessageProvider(opts: MonitorIMessageOpts = {}): P
   const sentMessageCache = createSentMessageCache();
   const selfChatCache = createSelfChatCache();
   const loopRateLimiter = createLoopRateLimiter();
+  const resolveGroupActivation = createIMessageGroupActivationResolver(logVerbose);
   const textLimit = resolveTextChunkLimit(cfg, "imessage", accountInfo.accountId);
   const allowFrom = normalizeStringEntries(opts.allowFrom ?? imessageCfg.allowFrom);
   const configuredGroupAllowFrom = opts.groupAllowFrom ?? imessageCfg.groupAllowFrom;
@@ -434,7 +424,7 @@ export async function monitorIMessageProvider(opts: MonitorIMessageOpts = {}): P
   // appears). Without it (remote) the replay is uncapped and every row uses the
   // live fence, so recovery still delivers recently-missed messages and still
   // suppresses old backlog, just with the narrower live window.
-  const watchSourceDbPath = resolveIMessageWatchSourceDbPath({ cliPath, dbPath, remoteHost });
+  const watchSourceDbPath = resolveIMessageChatDbLookupPath({ cliPath, dbPath, remoteHost });
   const recoveryBoundaryRowid = watchSourceDbPath
     ? await resolveIMessageStartupRowidWatermark(watchSourceDbPath)
     : null;
@@ -766,6 +756,7 @@ export async function monitorIMessageProvider(opts: MonitorIMessageOpts = {}): P
       storeAllowFrom,
       historyLimit,
       groupHistories,
+      resolveGroupActivation,
       echoCache: sentMessageCache,
       selfChatCache,
       reactionNotifications: isQuestionReaction ? "all" : imessageCfg.reactionNotifications,
