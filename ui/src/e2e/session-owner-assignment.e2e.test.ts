@@ -344,7 +344,8 @@ suite.define(() => {
         page.getByRole("menuitemradio", { name: "Me", exact: true }),
       ).toBeFocused();
       await page.keyboard.press("Escape");
-      await expectBrowser(trigger).toHaveAttribute("aria-expanded", "false");
+      await expectBrowser(menu).toHaveCount(0);
+      await expectBrowser(trigger).toBeFocused();
       await trigger.press("Shift+F10");
       await openSessionMenuSubmenu(page, "Assign to…");
       await expectBrowser(keyboardAssignTo).toHaveAttribute("aria-expanded", "true");
