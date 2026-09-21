@@ -1,11 +1,11 @@
 import { existsSync, realpathSync } from "node:fs";
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
-import { afterEach, expect } from "vitest";
+import { afterEach, expect, vi } from "vitest";
 import { withTestTimeout } from "../../../test/helpers/promise.js";
 import { runQaGatewayFixture } from "../../../test/helpers/qa-gateway-cleanup.js";
 import { createTempDirTracker } from "../../../test/helpers/temp-dir.js";
+import { getRuntimeConfig } from "../../config/config.js";
 import {
   getRuntimeConfigSnapshot,
   setRuntimeConfigSnapshot,
@@ -41,13 +41,11 @@ const getGatewayServerHarnessModule = createLazyRuntimeModule(
 
 /** Deselect before disposal so topology publication cannot reopen a fixture store. */
 export async function releaseGatewaySessionStoreFixture(dir: string) {
-  // Transcript observers retain RPC work after the session admission releases.
-  // Join them before changing config or a delayed reader can reopen this store.
-  await expect
-    .poll(() => getActiveGatewayRootWorkCount({ excludeCurrent: true }), {
-      timeout: SESSION_WORK_ADMISSION_DRAIN_TIMEOUT_MS,
-    })
-    .toBe(0);
+  // Transcript observers outlive session admission; join before config changes can
+  // reopen the store. This also runs in suite teardown, outside expect.poll's test context.
+  await vi.waitFor(() => expect(getActiveGatewayRootWorkCount({ excludeCurrent: true })).toBe(0), {
+    timeout: SESSION_WORK_ADMISSION_DRAIN_TIMEOUT_MS,
+  });
   const root = existsSync(dir) ? realpathSync(dir) : path.resolve(dir);
   const ownsPath = (candidate: string) =>
     isPathInside(root, candidate) || isPathInside(path.resolve(dir), candidate);
@@ -104,14 +102,17 @@ export function installGatewaySessionsTestResources(
   setup?: GatewaySessionsSuiteSetup,
 ) {
   const tempDirs = createTempDirTracker();
-  const defaultAgentWorkspace = path.join(os.tmpdir(), "openclaw-gateway-test");
   let harness: GatewayServerHarness | undefined;
   let sharedSessionStoreDir: string | undefined;
 
   installGatewayTestHooks({
     scope: "suite",
     setup: async () => {
-      await fs.mkdir(defaultAgentWorkspace, { recursive: true });
+      const workspace = getRuntimeConfig().agents?.defaults?.workspace;
+      if (!workspace) {
+        throw new Error("Gateway sessions fixture requires a configured workspace");
+      }
+      await fs.mkdir(workspace, { recursive: true });
       if (startServer) {
         const { startGatewayServerHarness } = await getGatewayServerHarnessModule();
         harness = await startGatewayServerHarness();
@@ -129,7 +130,7 @@ export function installGatewaySessionsTestResources(
             return;
           }
           for (const dir of tempDirs.dirs) {
-            await closeOpenClawAgentDatabasesAsync(dir);
+            await releaseGatewaySessionStoreFixture(dir);
             closeOpenClawAgentDatabasesForTest(dir);
           }
           tempDirs.cleanup();
@@ -159,5 +160,5 @@ export function installGatewaySessionsTestResources(
     }
     return sharedSessionStoreDir;
   };
-  return { defaultAgentWorkspace, requireHarness, requireSharedSessionStoreDir };
+  return { requireHarness, requireSharedSessionStoreDir };
 }
