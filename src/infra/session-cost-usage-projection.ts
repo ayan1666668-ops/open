@@ -1,6 +1,5 @@
 import { createTimeZoneDayKeyFormatter } from "./format-time/format-datetime.js";
 import type { SessionCostUsageRollupRow } from "./session-cost-usage-cache.kernel.js";
-import type { UsageCostTranscriptFile } from "./session-cost-usage-collection.js";
 import {
   canUseUsageCostRollupForPartial,
   decodeUsageCostRollup,
@@ -16,6 +15,7 @@ import type {
   CostUsageTotals,
   SessionCostSummary,
   UsageCacheStatus,
+  UsageCostTranscriptFile,
   UsageDailyBucket,
 } from "./session-cost-usage.types.js";
 
@@ -219,7 +219,7 @@ export function projectCostUsageSummary(
     if (entry) {
       latestScan = Math.max(latestScan, entry.scannedAt);
     }
-    if (!isUsageCostRollupFresh({ stored, file })) {
+    if (!isUsageCostRollupFresh({ checkpoint: entry?.checkpoint, file })) {
       staleFiles += 1;
     }
     if (!stored || !canUseUsageCostRollupForPartial({ stored, file })) {
@@ -301,9 +301,8 @@ export function projectSessionCostSummaries(
       continue;
     }
     latestScan = Math.max(latestScan, entry.scannedAt);
-    const stored = { entry, valueJson: row.valueJson };
     for (const { index, session, file } of requests) {
-      if (!isUsageCostRollupFresh({ stored, file })) {
+      if (!isUsageCostRollupFresh({ checkpoint: entry.checkpoint, file })) {
         continue;
       }
       cachedFiles += 1;
