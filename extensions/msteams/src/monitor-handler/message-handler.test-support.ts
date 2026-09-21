@@ -22,6 +22,7 @@ type MessageHandlerDepsOptions = {
   resolveStorePath?: () => string | undefined;
   buildContext?: PluginRuntime["channel"]["inbound"]["buildContext"];
   getTeamDetails?: ReturnType<typeof vi.fn>;
+  runPrepared?: NonNullable<Parameters<typeof installMSTeamsTestRuntime>[0]>["runPrepared"];
 };
 
 export function createMessageHandlerDeps(
@@ -62,6 +63,7 @@ export function createMessageHandlerDeps(
     resolveTextChunkLimit: () => 4000,
     resolveStorePath: options.resolveStorePath ?? (() => "/tmp/test-store"),
     ...(options.buildContext ? { buildContext: options.buildContext } : {}),
+    runPrepared: options.runPrepared,
   });
 
   const conversationStore = {
