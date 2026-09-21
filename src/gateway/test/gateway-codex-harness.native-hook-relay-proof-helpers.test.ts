@@ -46,13 +46,13 @@ describe("native relay proof capture", () => {
   const command = "printf APPROVAL-CURRENT";
   const capturedCommand = `/bin/bash -lc '${command}'`;
 
-  async function captureApproval(capturedCommand: unknown, response: Record<string, unknown>) {
+  async function captureApproval(requestCommand: unknown, response: Record<string, unknown>) {
     await fs.writeFile(
       path.join(proofDir, "rpc-out.jsonl"),
       `${JSON.stringify({
         id: 17,
         method: CODEX_APPROVAL_REQUEST_METHOD,
-        params: { threadId: "thread-current", turnId: "turn-current", command: capturedCommand },
+        params: { threadId: "thread-current", turnId: "turn-current", command: requestCommand },
       })}\n`,
     );
     await fs.writeFile(path.join(proofDir, "rpc-in.jsonl"), `${JSON.stringify(response)}\n`);
@@ -65,8 +65,8 @@ describe("native relay proof capture", () => {
 
   it.each([`/bin/bash -lc 'echo ${command}'`, `/bin/bash -lc '${command}; true'`, undefined])(
     "rejects an altered or absent command: %s",
-    async (capturedCommand) => {
-      const roundTrip = await captureApproval(capturedCommand, {
+    async (invalidCommand) => {
+      const roundTrip = await captureApproval(invalidCommand, {
         id: 17,
         result: { decision: "accept" },
       });
