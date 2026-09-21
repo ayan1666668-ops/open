@@ -197,6 +197,8 @@ export type ChatItem =
       text: string;
       startedAt: number;
       isStreaming: boolean;
+      /** Explicit causal split; different send/run IDs alone do not prove steering. */
+      afterBoundaryRunId?: string;
       replyToSender?: SenderIdentity;
       runId?: string;
       boundaryId?: string;
@@ -211,6 +213,8 @@ export type ChatItem =
   | { kind: "question"; key: string; questionId: string; startedAt: number };
 
 export type ChatStreamSegment = {
+  /** Retained display occurrence when another owner removes its preceding segments. */
+  occurrenceKey?: string;
   text: string;
   ts: number;
   runId?: string;
