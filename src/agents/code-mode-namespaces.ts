@@ -467,12 +467,8 @@ function createMcpNamespaceModel(
 
 const SWARM_AGENTS_API_CONTENT = `type AgentJsonSchema = Record<string, unknown>;
 
-type DynamicsProfileId =
-  | "explorer"
-  | "builder"
-  | "critic"
-  | "independent-verifier"
-  | "glass-breaker";
+type DynamicsBoundary = "isolated" | "artifact-only" | "evidence-only" | "summary-only";
+type DynamicsRequirement = "optional" | "required";
 
 interface DynamicsHandoff {
   candidateDigest?: string;
@@ -481,7 +477,7 @@ interface DynamicsHandoff {
   summary?: string;
 }
 
-interface DynamicsCandidateManifest {
+interface DynamicsCandidate {
   version: 1;
   candidateDigest: string;
   sourceDigest: string;
@@ -490,9 +486,14 @@ interface DynamicsCandidateManifest {
 }
 
 interface DynamicsOptions {
-  profile: DynamicsProfileId;
+  boundary: DynamicsBoundary;
+  requirements?: {
+    sandbox?: "inherit" | "require";
+    candidateDigest?: DynamicsRequirement;
+    artifactRefs?: DynamicsRequirement;
+  };
   handoff?: DynamicsHandoff;
-  candidate?: DynamicsCandidateManifest;
+  candidate?: DynamicsCandidate;
 }
 
 interface AgentRunOptions {
