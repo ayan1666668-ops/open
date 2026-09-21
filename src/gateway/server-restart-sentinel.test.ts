@@ -3519,6 +3519,9 @@ describe("scheduleRestartSentinelWake", () => {
       source: "restart-sentinel",
       intent: "immediate",
       reason: "wake",
+      // The wake is agent-qualified: continuation ownership travels with the
+      // heartbeat so a replayed recipient cannot wake another agent's session.
+      agentId: "main",
       sessionKey: "agent:main:main",
     });
   });
