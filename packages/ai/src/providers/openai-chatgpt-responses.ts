@@ -79,12 +79,15 @@ import {
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.js";
 import { supportsOpenAITemperature } from "./openai-reasoning-effort.js";
 import {
+  resolveOpenAISimpleReasoningEffort,
+  resolveOpenAIRequestReasoning,
+  type OpenAIRequestReasoningEffort,
+} from "./openai-request-reasoning.js";
+import {
   applyResponsesServiceTierPricing,
   convertResponsesMessages,
   convertResponsesToolPayload,
   createResponsesAssistantOutput,
-  resolveResponsesReasoningEffort,
-  resolveResponsesRequestReasoningEffort,
 } from "./openai-responses-shared.js";
 import { buildBaseOptions } from "./simple-options.js";
 
@@ -135,7 +138,7 @@ const CODEX_RESPONSE_STATUSES = new Set<CodexResponseStatus>([
 // ============================================================================
 
 interface OpenAICodexResponsesOptions extends BaseOpenAIStreamOptions {
-  reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+  reasoningEffort?: OpenAIRequestReasoningEffort;
   reasoningSummary?: "auto" | "concise" | "detailed" | "off" | "on" | null;
   serviceTier?: ResponseCreateParamsStreaming["service_tier"];
   textVerbosity?: "low" | "medium" | "high";
@@ -653,7 +656,7 @@ export const streamSimpleOpenAICodexResponses: StreamFunction<
     ...buildBaseOptions(model, options, apiKey),
     authProfileId: (options as (SimpleStreamOptions & { authProfileId?: string }) | undefined)
       ?.authProfileId,
-    reasoningEffort: resolveResponsesReasoningEffort(model, options?.reasoning),
+    reasoningEffort: resolveOpenAISimpleReasoningEffort(model, options?.reasoning),
   } satisfies OpenAICodexResponsesOptions;
   responsesPromptObserver.copy(options, resolvedOptions);
   return streamOpenAICodexResponses(model, context, resolvedOptions);
@@ -720,11 +723,11 @@ function buildRequestBody(
   const effort =
     options?.reasoningEffort === undefined
       ? undefined
-      : resolveResponsesRequestReasoningEffort(model, options.reasoningEffort);
+      : resolveOpenAIRequestReasoning(model, options.reasoningEffort).effort;
   if (effort !== undefined) {
     body.reasoning = {
       effort,
-      summary: options?.reasoningSummary ?? "auto",
+      ...(effort === "none" ? {} : { summary: options?.reasoningSummary ?? "auto" }),
     };
   }
 
@@ -785,27 +788,22 @@ function isJsonRecord(value: unknown): value is Record<string, unknown> {
  * {@link ResponsesStreamFailure}. Only the app-server surface carries the
  * `codexErrorInfo` discriminator, so both shapes must be read here.
  */
-const RESPONSES_CYBER_POLICY_ERROR_CODE = "cyber_policy";
-
 function readCodexProviderRefusal(
   error: unknown,
 ): { category: CodexProviderRefusalCategory } | undefined {
-  if (error instanceof ResponsesStreamFailure) {
-    return error.code === RESPONSES_CYBER_POLICY_ERROR_CODE ? { category: "cyber" } : undefined;
-  }
-  if (!(error instanceof CodexApiError)) {
+  if (!(error instanceof ResponsesStreamFailure || error instanceof CodexApiError)) {
     return undefined;
   }
-  if (error.code === RESPONSES_CYBER_POLICY_ERROR_CODE) {
-    return { category: "cyber" };
-  }
-  const payload = error.payload;
+  const payload = error instanceof CodexApiError ? error.payload : undefined;
   const nested = isJsonRecord(payload?.error) ? payload.error : undefined;
   const codexErrorInfo = payload?.codexErrorInfo ?? nested?.codexErrorInfo;
-  if (codexErrorInfo === "cyberPolicy") {
+  if (error.code === "cyber_policy" || codexErrorInfo === "cyberPolicy") {
     return { category: "cyber" };
   }
-  if (codexErrorInfo === "misalignmentPolicyViolation") {
+  if (
+    error.code === "misalignment_policy_violation" ||
+    codexErrorInfo === "misalignmentPolicyViolation"
+  ) {
     return { category: "misalignment" };
   }
   const message =
@@ -1213,11 +1211,7 @@ async function acquireWebSocket(
     const socket = await connectWebSocket(url, headers, signal);
     return {
       socket,
-      release: ({ keep } = {}) => {
-        if (keep === false) {
-          closeWebSocketSilently(socket);
-          return;
-        }
+      release: () => {
         closeWebSocketSilently(socket);
       },
     };

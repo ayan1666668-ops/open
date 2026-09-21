@@ -3,16 +3,13 @@ import type { OpenClawConfig } from "../../../config/types.openclaw.js";
 import type { FastMode } from "../../../shared/fast-mode.js";
 import { resolveFastModeState } from "../../fast-mode.js";
 import {
+  type ModelRef,
   normalizeStoredOverrideModel,
   resolveDefaultModelForAgent,
   resolvePersistedSelectedModelRef,
 } from "../../model-selection.js";
 import { resolveThinkingDefault } from "../../model-thinking-default.js";
-import {
-  loadSessionEntry,
-  resolveAgentConfig,
-  resolveGatewaySessionStoreTarget,
-} from "./subagent-spawn.runtime.js";
+import { loadSessionEntry, resolveGatewaySessionStoreTarget } from "./subagent-spawn.runtime.js";
 
 type RequesterPreferencesContext = {
   cfg: OpenClawConfig;
@@ -73,28 +70,32 @@ export function readRequesterThinkingLevel(
   if (typeof entry?.thinkingLevel === "string" && entry.thinkingLevel.trim()) {
     return entry.thinkingLevel.trim();
   }
-  const requesterAgentThinking = params.requesterAgentId
-    ? resolveAgentConfig(params.cfg, params.requesterAgentId)?.thinkingDefault
-    : undefined;
-  if (requesterAgentThinking) {
-    return requesterAgentThinking;
-  }
   const { defaultModel, selectedModel } = resolveRequesterModel(params, entry);
   const model = selectedModel ?? defaultModel;
   return resolveThinkingDefault({
     cfg: params.cfg,
+    agentId: params.requesterAgentId,
     provider: model.provider,
     model: model.model,
   });
 }
 
-export function readRequesterFastMode(params: RequesterPreferencesContext): FastMode {
+export function readRequesterFastMode(
+  params: RequesterPreferencesContext & { requesterModel?: ModelRef; childModel: string },
+): FastMode | undefined {
   const entry = readRequesterSession(params);
-  const { defaultModel, selectedModel } = resolveRequesterModel(params, entry);
+  let model = params.requesterModel;
+  if (!model) {
+    const { defaultModel, selectedModel } = resolveRequesterModel(params, entry);
+    model = selectedModel ?? defaultModel;
+  }
+  if (params.childModel !== `${model.provider}/${model.model}`) {
+    return undefined;
+  }
   return resolveFastModeState({
     cfg: params.cfg,
-    provider: selectedModel?.provider ?? defaultModel.provider,
-    model: selectedModel?.model ?? defaultModel.model,
+    provider: model.provider,
+    model: model.model,
     agentId: params.requesterAgentId,
     sessionEntry: entry,
   }).mode;

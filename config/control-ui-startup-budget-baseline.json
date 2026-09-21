@@ -1,5 +1,5 @@
 {
-  "startupJsGzipBytes": 362012,
-  "reason": "Maintainer-approved 354 KiB cap after integrated scoped catalog invalidation (#147845), remote workspaces (#147773), and update-status feedback (#147883). Controlled build measured 362012 B; deferring the new workspace labels saved only 64 B and still failed the previous limit. Existing 512 B growth and 64 B build variance allowances remain unchanged.",
-  "updatedAt": "2026-09-14"
+  "startupJsGzipBytes": 369600,
+  "reason": "Portable theme branding integration measured 369,497 B on Linux CI against main baseline 366,336 B (enforcement 366,912 B). The 369,600 B baseline rounds up, and the unchanged 512 B growth and 64 B build-variance allowances give a 370,176 B enforcement limit. The measured overage is 2,585 B (0.70%) above the base limit; the enforcement limit is 3,264 B (0.89%) above it, inside the approved 1%.",
+  "updatedAt": "2026-09-21"
 }

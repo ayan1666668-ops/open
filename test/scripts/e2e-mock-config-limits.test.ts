@@ -173,7 +173,7 @@ async function withMockServer(
     },
   ) => Promise<void>,
 ) {
-  const port = env.MOCK_PORT === undefined ? await getFreePort() : Number(env.MOCK_PORT);
+  const port = Number(env.MOCK_PORT ?? "0");
   let stderr = "";
   let stdout = "";
   const child = spawn(process.execPath, [scriptPath], {
@@ -963,8 +963,7 @@ describe("mock OpenAI response markers", () => {
       };
       const first = await request();
       expect(first.output?.[0]).toMatchObject({ name: "exec", type: "function_call" });
-      expect(JSON.parse(first.output[0].arguments)).toMatchObject({
-        language: "javascript",
+      expect(JSON.parse(first.output[0].arguments)).toEqual({
         code: expect.stringContaining('MCP.fixture.lookupNote({ id: "alpha" })'),
       });
 
@@ -1148,8 +1147,9 @@ describe("mock OpenAI response markers", () => {
 });
 
 describe("e2e mock and config helper numeric limits", () => {
-  it("reports the actual OS-assigned port for MOCK_PORT=0", async () => {
-    await withMockServer(mockOpenAiPath, { MOCK_PORT: "0" }, async (baseUrl, output) => {
+  it.each([undefined, "0"])("reports the bound port for MOCK_PORT=%s", async (port) => {
+    const env: Record<string, string> = port === undefined ? {} : { MOCK_PORT: port };
+    await withMockServer(mockOpenAiPath, env, async (baseUrl, output) => {
       expect(Number(new URL(baseUrl).port)).toBeGreaterThan(0);
       expect(output.stdout()).not.toContain("mock-openai listening on 0\n");
       const response = await fetch(`${baseUrl}/v1/responses`, {
@@ -1274,6 +1274,7 @@ describe("e2e mock and config helper numeric limits", () => {
       await withMockServer(
         webSearchMockPath,
         {
+          MOCK_PORT: String(await getFreePort()),
           MOCK_REQUEST_LOG: requestLogDirectory,
           RAW_SCHEMA_ERROR: "400 schema rejected",
           SUCCESS_MARKER: "OPENCLAW_SCHEMA_E2E_OK",
