@@ -77,8 +77,13 @@ export function summarizeUpdateStepFailure(
                 lastLine
               : lastLine;
           // Recovery advice must not displace the initiating error inside this budget.
-          const causeOnly = cause.split(/(?<=\.)\s+Installation recovery is unverified;/u)[0];
-          return truncateUtf16Safe(causeOnly ?? "", 120);
+          const causeOnly = cause.split(/(?<=\.)\s+Installation recovery is unverified;/u)[0] ?? "";
+          if (index !== 1 || !diagnostics.reasonDetails || causeOnly.includes(lastLine)) {
+            return truncateUtf16Safe(causeOnly, 120);
+          }
+          // A distinct terminal outcome shares the budget, but cannot crowd out the cause.
+          const outcome = truncateUtf16Safe(lastLine, 60);
+          return [truncateUtf16Safe(causeOnly, 120 - outcome.length - 2), outcome].join("; ");
         });
   return truncateUtf16Safe(
     [step.termination ?? `Exit code: ${step.exitCode ?? "unknown"}`, ...excerpts]

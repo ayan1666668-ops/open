@@ -79,4 +79,18 @@ describe("failed update step summary", () => {
     });
     expect(bounded).toBe(`Exit code: 1; ${"y".repeat(120)}; ${"x".repeat(119)}`);
   });
+
+  it("keeps the cause and a distinct terminal outcome within the stream budget", () => {
+    const reason = `Connection refused: ${"🦞".repeat(100)}`;
+    const outcome = `checks phase timed out: ${"🦞".repeat(100)}`;
+    const summary = summarizeUpdateStepFailure({
+      ...step,
+      failureFacts: [{ check: "doctor", code: "doctor-failed", message: "Doctor failed" }],
+      stderrTail: `[openclaw] Reason: Doctor failed\n${reason}\n[openclaw] Help: openclaw --help\n${outcome}`,
+    });
+    expect(summary).toMatch(/^Exit code: 1; Connection refused:/u);
+    expect(summary).toContain("checks phase timed out:");
+    expect(summary.length).toBeLessThanOrEqual("Exit code: 1; ".length + 120);
+    expect(Buffer.from(summary).toString("utf8")).toBe(summary);
+  });
 });
