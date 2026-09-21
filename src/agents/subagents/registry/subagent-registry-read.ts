@@ -3,8 +3,10 @@
  *
  * Combines persisted snapshots with in-memory live runs for UI, announce, control, and recovery paths.
  */
+import { getAgentRunContext } from "../../../infra/agent-run-registry.js";
 import { normalizeDeliveryContext } from "../../../utils/delivery-context.shared.js";
 import type { DeliveryContext } from "../../../utils/delivery-context.types.js";
+import { deriveContinuationDelegateChildRunId } from "../../subagent-continuation-ids.js";
 import { getSubagentRunsForChildSession, subagentRuns } from "./subagent-registry-memory.js";
 import {
   buildLatestSubagentRunReadIndexFromRuns,
@@ -14,6 +16,7 @@ import {
   getLatestSubagentRunByChildSessionKeyFromRuns,
   getSubagentRunByChildSessionKeyFromRuns,
   hasDescendantRunAwaitingSettleFromRuns,
+  listAncestorSessionKeysFromRuns,
   listDescendantRunsForRequesterFromRuns,
   listRunsForControllerFromRuns,
   listRunsForRequesterFromRuns,
@@ -160,7 +163,7 @@ export function resolveRequesterForChildSession(childSessionKey: string): {
   requesterOrigin?: DeliveryContext;
 } | null {
   const resolved = resolveRequesterForChildSessionFromRuns(
-    getSubagentRunsSnapshotForChildSession(subagentRuns, childSessionKey),
+    getSubagentRunsSnapshotForRead(subagentRuns),
     childSessionKey,
   );
   if (!resolved) {
@@ -176,7 +179,7 @@ export function resolveRequesterForChildSession(childSessionKey: string): {
 /** True when post-completion announce should be skipped for a child session. */
 export function shouldIgnorePostCompletionAnnounceForSession(childSessionKey: string): boolean {
   return shouldIgnorePostCompletionAnnounceForSessionFromRuns(
-    getSubagentRunsSnapshotForChildSession(subagentRuns, childSessionKey),
+    getSubagentRunsSnapshotForRead(subagentRuns),
     childSessionKey,
   );
 }
@@ -202,6 +205,20 @@ export function listSubagentRunsForRequester(
   return listRunsForRequesterFromRuns(subagentRuns, requesterSessionKey, options);
 }
 
+/** Returns whether a continuation child was accepted before its registry row was written. */
+export function hasLiveContinuationDelegateChildRun(params: {
+  childSessionKey: string;
+  flowId: string;
+}): boolean {
+  const runContext = getAgentRunContext(deriveContinuationDelegateChildRunId(params.flowId));
+  return runContext?.sessionKey === params.childSessionKey;
+}
+
+/** Lists ancestor session keys for a session, walking the requester chain. */
+export function listAncestorSessionKeys(sessionKey: string): string[] {
+  return listAncestorSessionKeysFromRuns(getSubagentRunsSnapshotForRead(subagentRuns), sessionKey);
+}
+
 /** Whether any current or durable generation still owns this logical task, including waits/recovery. */
 export function hasSubagentTaskOwner(params: {
   taskRunId: string;
@@ -217,8 +234,6 @@ export function hasSubagentTaskOwner(params: {
       return true;
     }
   }
-  // Absence permits maintenance to settle stranded tasks. Unlike presentation
-  // snapshots, this read must propagate failures rather than treating them as absence.
   return loadSubagentRunsForChildSessionFromSqlite(params.childSessionKey).some(ownsTask);
 }
 

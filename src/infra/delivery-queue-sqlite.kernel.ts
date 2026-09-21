@@ -10,7 +10,6 @@ import {
   pruneDeliveryQueueTombstones,
   terminalizeBoundDeliveryQueueEntry,
   type DeliveryQueueDatabase,
-  type DeliveryQueueReadMode,
   type UpsertDeliveryQueueEntryParams,
   upsertBoundDeliveryQueueEntryInDatabase,
 } from "./delivery-queue-sqlite-bound.js";
@@ -190,22 +189,6 @@ export function getDeliveryQueueEntriesOwnersInDatabase(
     },
     { databaseLabel: "openclaw-state", operationLabel: "read delivery queue status" },
   );
-}
-
-export function loadDeliveryQueueEntriesInDatabase(
-  database: OpenClawStateDatabase,
-  queueName: string,
-  mode: DeliveryQueueReadMode = "pending",
-): DeliveryQueueEntryState[] {
-  const rows = executeSqliteQuerySync(
-    database.db,
-    deliveryQueueEntriesQuery(database, [queueName], mode)
-      .orderBy("enqueued_at", "asc")
-      .orderBy("id", "asc"),
-  ).rows;
-  return rows
-    .map(inflateDeliveryQueueRow)
-    .filter((entry): entry is DeliveryQueueEntryState => entry != null);
 }
 
 export function deleteDeliveryQueueEntryInDatabase(

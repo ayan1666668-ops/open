@@ -5,6 +5,7 @@ import { createSubsystemLogger } from "../logging/subsystem.js";
 import type { OpenClawStateDatabase } from "../state/openclaw-state-db-contract.js";
 import { runOpenClawStateWriteTransaction } from "../state/openclaw-state-db.js";
 import { isTaskFlowCancellationPending } from "./task-cancellation-state.js";
+import { hasUnfulfilledDurableObligation } from "./task-flow-durable-obligation.js";
 import {
   resolveTaskFlowMaintenanceAction,
   type TaskFlowMaintenanceInput,
@@ -47,6 +48,13 @@ export function maintainTaskFlowInDatabase(
             return "unchanged";
           }
           if (action.kind === "prune") {
+            // Continuation guard: upstream's policy has no durable-obligation concept,
+            // so it can return `prune` for a terminal flow that still owes durable
+            // work. This is the site that actually deletes the row, so the guard has
+            // to hold here too, not only in the caller that selected the action.
+            if (hasUnfulfilledDurableObligation(current)) {
+              return "unchanged";
+            }
             deleteTaskFlowRowInDatabase(db, current.flowId);
             return "pruned";
           }

@@ -67,6 +67,7 @@ function createMaintenanceTimerDeps() {
     logHealth: { info: vi.fn(), error: vi.fn() },
     runWorktreeGc: vi.fn<() => Promise<ManagedWorktreeGcResult | void>>(async () => undefined),
     runDeliveryQueueMediaGc: vi.fn(async () => undefined),
+    runDelegateArtifactGc: vi.fn(async () => 0),
     runManagedOutgoingMediaGc: cleanupManagedOutgoingMediaRecordsMock,
   };
 }

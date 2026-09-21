@@ -11,6 +11,12 @@ import {
 } from "../state/openclaw-state-db-cache.js";
 import { resolveOpenClawStateSqlitePath } from "../state/openclaw-state-db.paths.js";
 import type { OpenClawStateWorkerContext } from "../state/openclaw-state-worker-context.types.js";
+import {
+  createTaskFlowRegistryMutationApi,
+  type TaskFlowAtomicCreateResult,
+  type TaskFlowAtomicUpdate,
+  type TaskFlowAtomicUpdateResult,
+} from "./task-flow-registry-mutations.js";
 import { createTaskFlowRegistryReaders } from "./task-flow-registry.read.js";
 import {
   assertControllerId,
@@ -34,6 +40,7 @@ import {
   tryPersistFlowUpsert,
 } from "./task-flow-registry.store.js";
 import type {
+  TaskFlowRegistryAtomicOwnerCondition,
   TaskFlowRegistryStoreSnapshot,
   TaskFlowRegistryUpdateResult,
   TaskFlowRegistryUpdatePublication,
@@ -53,7 +60,15 @@ import { createAsyncRegistryRestore, createSyncRegistryReader } from "./task-reg
 
 export type { TaskFlowUpdateResult } from "./task-flow-registry.types.js";
 
-export type { PreparedTaskMirroredFlowSync } from "./task-flow-registry.records.js";
+export type {
+  FlowRecordPatch,
+  PreparedTaskMirroredFlowSync,
+} from "./task-flow-registry.records.js";
+export type {
+  TaskFlowAtomicCreateResult,
+  TaskFlowAtomicUpdate,
+  TaskFlowAtomicUpdateResult,
+} from "./task-flow-registry-mutations.js";
 
 const log = createSubsystemLogger("tasks/task-flow-registry");
 let flows = new Map<string, TaskFlowRecord>();
@@ -394,6 +409,30 @@ export function getTaskFlowRegistryRestoreFailure(): string | null {
   }
 }
 
+/** Sync re-read used by tests and by the atomic write path after a store-side conflict. */
+export function reloadTaskFlowRegistryFromStore(): void {
+  projectionEpoch += 1;
+  flows = new Map();
+  taskFlowRegistryRestoreState = { status: "uninitialized" };
+  ensureTaskFlowRegistryReady();
+}
+
+const taskFlowRegistryMutationApi = createTaskFlowRegistryMutationApi({
+  ensureReady: ensureTaskFlowRegistryReady,
+  getFlows: () => flows,
+  reloadFromStore: reloadTaskFlowRegistryFromStore,
+  recordWrite: (flowId) => {
+    recordFlowProjectionWrite(flowId);
+    projectionEpoch += 1;
+  },
+  // Upstream 353adfc2e6 (#154863) removed the flow observer callbacks as unused. They were
+  // unused on our side too: nothing ever called configureTaskFlowRegistryObservers, so
+  // getTaskFlowRegistryObservers() always returned null and every event was discarded.
+  // The publication seam is kept as an explicit no-op rather than threading a dead sink.
+  publishUpsert: () => {},
+  warn: (message, meta) => log.warn(message, meta),
+});
+
 function writeFlowRecord(next: TaskFlowRecord): TaskFlowRecord | null {
   if (!tryPersistFlowUpsert(next, "create")) {
     return null;
@@ -410,12 +449,35 @@ function createFlowRecord(params: CreateFlowRecordParams): TaskFlowRecord | null
   return writeFlowRecord(record);
 }
 
+// chainId is threaded through createManagedTaskFlow via FlowRecordCreateFields,
+// so flow_runs.chain_id is populated on the common managed-flow create path,
+// not just when callers bypass via createFlowRecord directly.
 export function createManagedTaskFlow(params: ManagedTaskFlowCreateFields): TaskFlowRecord | null {
   return createFlowRecord({
     ...params,
     syncMode: "managed",
     controllerId: assertControllerId(params.controllerId),
   });
+}
+
+export function createManagedTaskFlowWithAtomicUpdates(params: {
+  create: ManagedTaskFlowCreateFields;
+  updates: readonly TaskFlowAtomicUpdate[];
+  ownerCondition?: TaskFlowRegistryAtomicOwnerCondition;
+}): TaskFlowAtomicCreateResult {
+  return taskFlowRegistryMutationApi.createManagedTaskFlowWithAtomicUpdates({
+    ...params,
+    create: {
+      ...params.create,
+      controllerId: assertControllerId(params.create.controllerId),
+    },
+  });
+}
+
+export function updateTaskFlowsAtomically(
+  updates: readonly TaskFlowAtomicUpdate[],
+): TaskFlowAtomicUpdateResult {
+  return taskFlowRegistryMutationApi.updateTaskFlowsAtomically(updates);
 }
 
 export function createTaskFlowForTask(

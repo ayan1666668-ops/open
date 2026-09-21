@@ -129,6 +129,23 @@ export function setupAcceptedSubagentGatewayMock(callGatewayMock: MockImplementa
   });
 }
 
+/** Mock the common successful run-registration result. */
+export function setupCommittedSubagentRegistrationMock(registerMock: {
+  mockImplementation: (
+    implementation: (record: { runId: string; childSessionKey: string }) => unknown,
+  ) => unknown;
+}) {
+  registerMock.mockImplementation((record) => ({
+    status: "new-row-committed",
+    attempted: {
+      runId: record.runId,
+      childSessionKey: record.childSessionKey,
+      generation: 1,
+      createdAt: Date.now(),
+    },
+  }));
+}
+
 function identityDeliveryContext(value: unknown) {
   return value;
 }
@@ -202,6 +219,8 @@ export async function loadSubagentSpawnModuleForTest(params: {
   resolveContextEngineMock?: MockFn;
   resolveParentForkDecisionMock?: MockFn;
   registerSubagentRunMock?: MockFn;
+  recordAcceptedSubagentSpawnRollbackMock?: MockFn;
+  rollbackSubagentRunRegistrationMock?: MockFn;
   startQueuedSubagentRunMock?: MockFn;
   settleFailedQueuedSubagentLaunchMock?: MockFn;
   completeCollectorLaunchCleanupMock?: MockFn;
@@ -444,18 +463,31 @@ export async function loadSubagentSpawnModuleForTest(params: {
     listSwarmRunsForGroup: params.listSwarmRunsForGroup ?? vi.fn(() => []),
     registerSubagentRun: vi.fn(
       (record: RegisterSubagentRunParams, options?: RegisterSubagentRunOptions) => {
+        // Default registration outcome when a test supplies no mock. Concrete, not
+        // undefined: callers assert on `status` and `attempted`.
+        const register =
+          params.registerSubagentRunMock ??
+          ((committed: RegisterSubagentRunParams, _options?: RegisterSubagentRunOptions) => ({
+            status: "new-row-committed",
+            attempted: {
+              runId: committed.runId,
+              childSessionKey: committed.childSessionKey,
+              generation: 1,
+              createdAt: Date.now(),
+            },
+          }));
         if (!record.queued || !options?.retainOwnership) {
-          return params.registerSubagentRunMock?.(record, options);
+          return register(record, options);
         }
         let retained = false;
-        const result = params.registerSubagentRunMock?.(record, {
+        const result = register(record, {
           ...options,
           retainOwnership(scope) {
             retained = true;
             options.retainOwnership?.(scope);
           },
         } satisfies RegisterSubagentRunOptions);
-        return Promise.resolve(result).then(() => {
+        return Promise.resolve(result).then((registration) => {
           // Successful queued registration transfers custody; stricter test scopes win.
           if (!retained) {
             options.retainOwnership?.({
@@ -469,9 +501,17 @@ export async function loadSubagentSpawnModuleForTest(params: {
               },
             });
           }
+          // Return the registration result. Upstream ended this branch with
+          // `.then(() => { ... })`, which resolved to undefined and discarded the
+          // registration -- that is what turned accepted queued spawns into errors.
+          return registration;
         });
       },
     ),
+    recordAcceptedSubagentSpawnRollback:
+      params.recordAcceptedSubagentSpawnRollbackMock ?? vi.fn(() => ({ status: "persisted" })),
+    rollbackSubagentRunRegistration:
+      params.rollbackSubagentRunRegistrationMock ?? vi.fn(() => true),
     resetSubagentRegistryForTests,
     settleFailedQueuedSubagentLaunch:
       params.settleFailedQueuedSubagentLaunchMock ?? vi.fn(() => true),

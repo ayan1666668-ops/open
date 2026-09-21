@@ -14,6 +14,37 @@ function sessionChangedError(): Error {
 }
 
 describe("subagent spawn cleanup identity", () => {
+  it("returns truthful one-shot termination confirmation", async () => {
+    const confirmedGateway = vi.fn(async () => ({
+      ok: true,
+      aborted: true,
+      runIds: ["gateway-run"],
+    }));
+    await expect(
+      terminateAcceptedCollectorRun({
+        childSessionKey: "agent:main:subagent:child",
+        gatewayRunId: "gateway-run",
+        retry: false,
+        sessionCleanup: "preserve",
+        callGateway: confirmedGateway,
+      }),
+    ).resolves.toBe(true);
+
+    const unavailableGateway = vi.fn(async () => {
+      throw new Error("gateway unavailable");
+    });
+    await expect(
+      terminateAcceptedCollectorRun({
+        childSessionKey: "agent:main:subagent:child",
+        gatewayRunId: "gateway-run",
+        retry: false,
+        sessionCleanup: "preserve",
+        callGateway: unavailableGateway,
+      }),
+    ).resolves.toBe(false);
+    expect(unavailableGateway).toHaveBeenCalledOnce();
+  });
+
   it("requires both frozen session identities before deletion", async () => {
     const callGateway = vi.fn();
 
@@ -25,6 +56,37 @@ describe("subagent spawn cleanup identity", () => {
     ).resolves.toBe(false);
 
     expect(callGateway).not.toHaveBeenCalled();
+  });
+
+  // Ronan's ruling on the fourth absorb: termination is the ONLY place the live
+  // ownership predicate is consumed. When ownership flips after acceptance but before
+  // cleanup, termination makes one bounded attempt and must not delete a
+  // successor-owned session or retry.
+  it("makes one bounded attempt and deletes nothing once cleanup ownership has flipped", async () => {
+    const callGateway = vi.fn(async () => ({ ok: true, aborted: false, runIds: [] }));
+
+    await terminateAcceptedCollectorRun({
+      childSessionKey: "agent:main:subagent:child",
+      gatewayRunId: "gateway-run",
+      expectedSessionId: "session-id",
+      expectedLifecycleRevision: "session-revision",
+      isCurrent: () => false,
+      callGateway,
+    });
+
+    // No successor-owned session deletion.
+    expect(
+      callGateway.mock.calls.filter(
+        ([request]) => (request as { method?: string }).method === "sessions.delete",
+      ),
+    ).toHaveLength(0);
+    // Bounded: the conjunctive shouldRetry short-circuits on the flipped predicate,
+    // so there is no second abort attempt either.
+    expect(
+      callGateway.mock.calls.filter(
+        ([request]) => (request as { method?: string }).method === "chat.abort",
+      ).length,
+    ).toBeLessThanOrEqual(1);
   });
 
   it("accepts chat.abort only when it confirms the exact run", async () => {

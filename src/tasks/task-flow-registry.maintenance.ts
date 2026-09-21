@@ -1,10 +1,13 @@
-// Reconciles stale task-flow records with their child task state.
 import { createSqliteWorkerWriteAdmission } from "../infra/sqlite-worker-store.js";
 import { captureOpenClawStateWorkerContext } from "../state/openclaw-state-worker-context.js";
 import { runOpenClawStateWorkerOperation } from "../state/openclaw-state-worker-store.js";
 import { listTasksForFlowId } from "./runtime-internal.js";
 import { isTaskFlowCancellationPending } from "./task-cancellation-state.js";
-import { resolveTaskFlowMaintenanceAction } from "./task-flow-maintenance-policy.js";
+import { hasUnfulfilledDurableObligation } from "./task-flow-durable-obligation.js";
+import {
+  resolveTaskFlowMaintenanceAction,
+  type TaskFlowMaintenanceAction,
+} from "./task-flow-maintenance-policy.js";
 import {
   listTaskFlowAuditFindings,
   summarizeTaskFlowAuditFindings,
@@ -17,12 +20,25 @@ import {
   runTaskFlowRegistryWorkerMutation,
 } from "./task-flow-registry.js";
 import { getTaskFlowRegistryStore } from "./task-flow-registry.store.js";
+// Reconciles stale task-flow records with their child task state.
+import type { TaskFlowRecord } from "./task-flow-registry.types.js";
 import {
   prepareTaskRegistryRead,
   prepareTaskRegistryReadOwner,
   type TaskRegistryRead,
 } from "./task-registry-read.js";
 
+/**
+ * State key a controller sets to declare that a terminal row still owns an
+ * unfulfilled durable obligation and must outlive normal retention.
+ *
+ * Pruning a terminal row is normally safe because the row is only a record. It
+ * is NOT safe when the row is the last durable pointer to work the system still
+ * owes someone: continuation's terminal `continue_work` notice keeps its
+ * restart backstop here after bounded handoff retries fail. The marker is
+ * generic and read structurally so `src/tasks/` stays free of feature imports;
+ * the owning controller clears it once the obligation is handed off.
+ */
 /** Counts task-flow registry maintenance actions without exposing individual records. */
 type TaskFlowRegistryMaintenanceSummary = {
   reconciled: number;
@@ -38,6 +54,23 @@ export function assertTaskFlowRegistryMaintenanceReady(): void {
   }
 }
 
+/**
+ * Upstream's policy resolver has no durable-obligation concept, so it will return
+ * `prune` for a terminal flow that still owes durable work. Refuse that here, where
+ * the action is consumed, and leave the upstream policy module byte-identical.
+ */
+function resolveGuardedTaskFlowMaintenanceAction(
+  flow: TaskFlowRecord,
+  now: number,
+  hasPendingTasks: () => boolean,
+): TaskFlowMaintenanceAction | undefined {
+  const action = resolveTaskFlowMaintenanceAction(flow, now, hasPendingTasks);
+  if (action?.kind === "prune" && hasUnfulfilledDurableObligation(flow)) {
+    return undefined;
+  }
+  return action;
+}
+
 export function getInspectableTaskFlowAuditSummary(): TaskFlowAuditSummary {
   return summarizeTaskFlowAuditFindings(listTaskFlowAuditFindings());
 }
@@ -47,7 +80,7 @@ export function previewTaskFlowRegistryMaintenance(): TaskFlowRegistryMaintenanc
   let reconciled = 0;
   let pruned = 0;
   for (const flow of listTaskFlowRecords()) {
-    const action = resolveTaskFlowMaintenanceAction(flow, now, () =>
+    const action = resolveGuardedTaskFlowMaintenanceAction(flow, now, () =>
       listTasksForFlowId(flow.flowId).some(isTaskFlowCancellationPending),
     );
     if (action?.kind === "prune") {
@@ -89,7 +122,8 @@ export async function runTaskFlowRegistryMaintenance(): Promise<TaskFlowRegistry
       continue;
     }
     const selected = selectedRead.getTaskFlowById(flowId);
-    const selectedAction = selected && resolveTaskFlowMaintenanceAction(selected, now, () => false);
+    const selectedAction =
+      selected && resolveGuardedTaskFlowMaintenanceAction(selected, now, () => false);
     if (!selectedAction) {
       continue;
     }
@@ -112,7 +146,7 @@ export async function runTaskFlowRegistryMaintenance(): Promise<TaskFlowRegistry
       const current = read.getTaskFlowById(flowId);
       const action =
         current &&
-        resolveTaskFlowMaintenanceAction(
+        resolveGuardedTaskFlowMaintenanceAction(
           current,
           now,
           () => taskRead?.hasPendingTasksForFlow(flowId) ?? true,

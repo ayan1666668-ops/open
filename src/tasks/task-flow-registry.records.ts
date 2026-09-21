@@ -1,6 +1,11 @@
 import crypto from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
+import {
+  hasStoredDelegateAttachmentState,
+  isContinuationDelegateFlow,
+  scrubStoredDelegateAttachmentState,
+} from "./task-flow-continuation-state.js";
 import type {
   JsonValue,
   TaskFlowRecord,
@@ -63,6 +68,11 @@ export type FlowRecordPatch = Omit<
 
 type FlowRecordCreateFields = {
   ownerKey: string;
+  /**
+   * Originating continuation chain id. Optional; default NULL when
+   * undefined (legacy/disabled). Set-once at create-time; ignored on update.
+   */
+  chainId?: string | null;
   requesterOrigin?: TaskFlowRecord["requesterOrigin"];
   status?: TaskFlowStatus;
   notifyPolicy?: TaskNotifyPolicy;
@@ -306,6 +316,13 @@ function resolveTaskMirroredFlowTiming(
   return { updatedAt: endedAt, endedAt };
 }
 
+function scrubContinuationFlowState(record: TaskFlowRecord): TaskFlowRecord {
+  if (isContinuationDelegateFlow(record) && hasStoredDelegateAttachmentState(record.stateJson)) {
+    return { ...record, stateJson: scrubStoredDelegateAttachmentState(record.stateJson) };
+  }
+  return record;
+}
+
 export function buildTaskMirroredFlowCreateFields(params: {
   task: Pick<
     TaskRecord,
@@ -350,10 +367,12 @@ export function buildFlowRecord(params: CreateFlowRecordParams): TaskFlowRecord 
   const now = params.createdAt ?? Date.now();
   const syncMode = params.syncMode ?? "managed";
   const controllerId = syncMode === "managed" ? assertControllerId(params.controllerId) : undefined;
-  return {
+  const chainId = normalizeOptionalString(params.chainId);
+  return scrubContinuationFlowState({
     flowId: crypto.randomUUID(),
     syncMode,
     ownerKey: assertFlowOwnerKey(params.ownerKey),
+    ...(chainId ? { chainId } : {}),
     ...(params.requesterOrigin
       ? { requesterOrigin: cloneStructuredValue(params.requesterOrigin)! }
       : {}),
@@ -375,7 +394,7 @@ export function buildFlowRecord(params: CreateFlowRecordParams): TaskFlowRecord 
     createdAt: now,
     updatedAt: params.updatedAt ?? now,
     ...(params.endedAt != null ? { endedAt: params.endedAt } : {}),
-  };
+  });
 }
 
 export function applyFlowPatch(current: TaskFlowRecord, patch: FlowRecordPatch): TaskFlowRecord {
@@ -386,7 +405,7 @@ export function applyFlowPatch(current: TaskFlowRecord, patch: FlowRecordPatch):
   if (current.syncMode === "managed") {
     assertControllerId(controllerId);
   }
-  return {
+  return scrubContinuationFlowState({
     ...current,
     ...(patch.status ? { status: patch.status } : {}),
     ...(patch.notifyPolicy ? { notifyPolicy: patch.notifyPolicy } : {}),
@@ -414,7 +433,7 @@ export function applyFlowPatch(current: TaskFlowRecord, patch: FlowRecordPatch):
     revision: current.revision + 1,
     updatedAt: patch.updatedAt ?? Date.now(),
     endedAt: patch.endedAt === undefined ? current.endedAt : (patch.endedAt ?? undefined),
-  };
+  });
 }
 
 export function prepareTaskMirroredFlowSyncFromCurrent(

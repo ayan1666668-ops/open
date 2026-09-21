@@ -141,7 +141,19 @@ process.send?.({ type: "ingress-restart-idle" });
 
 await ingress.stop();
 releaseFirstClose();
-await secondStarted;
+let secondStartTimeout: ReturnType<typeof setTimeout> | undefined;
+try {
+  await Promise.race([
+    secondStarted,
+    new Promise<never>((_resolve, reject) => {
+      secondStartTimeout = setTimeout(() => {
+        reject(new Error("Gateway replacement generation did not start within 30 seconds"));
+      }, 30_000);
+    }),
+  ]);
+} finally {
+  clearTimeout(secondStartTimeout);
+}
 process.emit("SIGINT");
 const exitCode = await exited;
 closeOpenClawStateDatabaseForTest();

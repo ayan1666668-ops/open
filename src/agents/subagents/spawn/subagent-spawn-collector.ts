@@ -9,6 +9,7 @@ import type { AdmittedRunOperatorAuthority } from "../../admitted-run-context.js
 import { summarizeSpawnError } from "../../spawn-pipeline.js";
 import {
   completeCollectorLaunchCleanup,
+  recordAcceptedSubagentSpawnRollback,
   settleFailedQueuedSubagentLaunch,
   startQueuedSubagentRun,
 } from "../registry/subagent-registry.js";
@@ -118,14 +119,51 @@ export function createCollectorLaunchCallbacks(params: {
           throw new Error("collector registry row could not transition from queued to running");
         }
       } catch (error) {
-        await terminateAcceptedCollectorRun({
+        // Record the accepted-spawn rollback owner before terminating so the
+        // sweeper can reconcile the accepted child if termination fails or the
+        // process dies mid-cleanup.
+        const rollbackOwner = recordAcceptedSubagentSpawnRollback({
+          runId: childRunId,
           childSessionKey,
           gatewayRunId,
+          reason: summarizeSpawnError(error),
           ...provisionalSessionIdentity,
-          isCurrent: canCleanupCreatedSession,
-          ...(callCleanupGateway ? { callGateway: callCleanupGateway } : {}),
+          // Ronan's controlling ruling: the recorder stays OWNERSHIP-BLIND. Durable
+          // custody must persist even when live authority is revoked, or the accepted
+          // child is orphaned with nothing for the sweeper to reconcile. The durable
+          // row is fenced by expectedRegistration plus frozen session identity and run
+          // id; the live predicate is consumed only by terminateAcceptedCollectorRun.
         });
+        const rollbackFailures: unknown[] = [];
+        if (rollbackOwner.status === "rejected") {
+          rollbackFailures.push(
+            new Error(`Accepted collector rollback owner was rejected: ${childRunId}`),
+          );
+        } else if (rollbackOwner.status === "pending-persistence") {
+          rollbackFailures.push(rollbackOwner.error);
+        }
+        try {
+          await terminateAcceptedCollectorRun({
+            childSessionKey,
+            gatewayRunId,
+            ...provisionalSessionIdentity,
+            // Live ownership AND the cleanup gateway belong on BOTH termination
+            // sites: termination is where the live predicate is consumed.
+            isCurrent: canCleanupCreatedSession,
+            ...(callCleanupGateway ? { callGateway: callCleanupGateway } : {}),
+          });
+        } catch (terminationError) {
+          rollbackFailures.push(terminationError);
+        }
         launchTerminationConfirmed = true;
+        if (rollbackFailures.length > 0) {
+          const aggregate = new AggregateError(
+            [error, ...rollbackFailures],
+            `Accepted collector rollback incomplete: ${childRunId}`,
+          );
+          aggregate.cause = error;
+          throw aggregate;
+        }
         throw error;
       }
       await params.emitSpawnLifecycleHooks(gatewayRunId);
@@ -154,7 +192,13 @@ export function createCollectorLaunchCallbacks(params: {
       sessionCleanup.status === "fulfilled" &&
       sessionCleanup.value.attachmentsRemoved &&
       sessionCleanup.value.sessionDeleted;
-    if (cleanupComplete && canCleanupCreatedSession?.() !== false) {
+    // Ronan's ruling: `cleanupComplete` is a FACT about a finished exact-session
+    // operation -- it already requires attachmentsRemoved AND sessionDeleted, and that
+    // delete could only have happened through the identity-fenced frozen owner.
+    // Re-checking live currentness here was a TOCTOU trap: authority expiring after an
+    // authorized delete left collectorLaunchCleanupPending true forever even though the
+    // session was gone. The pre-delete gate keeps successor protection.
+    if (cleanupComplete) {
       emitSessionLifecycleEvent({
         sessionKey: childSessionKey,
         reason: "delete",
@@ -223,6 +267,13 @@ export function createCollectorLaunchCallbacks(params: {
     onRemoved: async (reason) => {
       try {
         if (reason === "cancelled" && params.operatorAuthority?.signal?.aborted) {
+          // Ronan's ruling: the scheduler has already removed the queued launch, so
+          // custody has transferred. Release the operator-source lease HERE, before
+          // awaiting settlement -- releasing only in the `finally` sequenced it after
+          // a settlement that cannot complete while the lease is held, which is the
+          // `sourceHolds: 1` / `collectorCleanupPending: true` liveness seam. Cleanup
+          // proceeds under the independent cleanup owner, never under operator
+          // authority; the `finally` release below stays as an idempotent backstop.
           if (!(await settleLaunchFailure(params.operatorAuthority.signal.reason))) {
             throw new Error("Collector source revocation settlement is pending");
           }

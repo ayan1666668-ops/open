@@ -1,4 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
+import { asNullableRecord } from "@openclaw/normalization-core/record-coerce";
+import { normalizeNullableString as migratedText } from "@openclaw/normalization-core/string-coerce";
 import { hasLegacyMemoryRecallMetadataColumns } from "../../packages/memory-host-sdk/src/host/memory-schema.js";
 import { repairCanonicalSqliteIndexes } from "../infra/sqlite-index-schema.js";
 import {
@@ -20,14 +22,15 @@ import {
 } from "./openclaw-agent-board-schema.js";
 import { withoutCanonicalSessionValidationSchema } from "./openclaw-agent-canonical-validation-schema.js";
 import {
+  AGENT_PARTICIPANT_IDENTITY_SCHEMA_VERSION,
   CANONICAL_SESSION_VALIDATION_SCHEMA_VERSION,
   OPENCLAW_AGENT_SCHEMA_VERSION,
   TRANSCRIPT_FTS_ROW_SCHEMA_VERSION,
 } from "./openclaw-agent-db-contract.js";
 import { AGENT_SCHEMA_COMPATIBILITY } from "./openclaw-agent-db-schema-compatibility.js";
 import {
-  readExistingAgentSchemaMeta,
   assertExistingAgentSchemaOwner,
+  readExistingAgentSchemaMeta,
 } from "./openclaw-agent-db-schema-read.js";
 import {
   ensureSessionAdditiveColumns,
@@ -178,7 +181,7 @@ function repairAndAssertAgentSchemaGroup(
 }
 
 const SESSION_KEY_CONTRACT_SCHEMA_START = "CREATE TABLE IF NOT EXISTS session_key_contract (";
-const SESSION_KEY_CONTRACT_SCHEMA_END = "CREATE TABLE IF NOT EXISTS session_windows (";
+const SESSION_KEY_CONTRACT_SCHEMA_END = "CREATE TABLE IF NOT EXISTS session_recipient_authority (";
 
 /** Ensure the additive session-key contract table inside the caller's transaction. */
 export function ensureSessionKeyContractSchemaInTransaction(db: DatabaseSync): void {
@@ -278,6 +281,10 @@ export function assertAgentSchemaVersion(
   db: DatabaseSync,
   options: { agentId: string; pathname: string; version: number },
   schemaSql: string,
+  participantSchema: "current" | "legacy" = options.version <
+  AGENT_PARTICIPANT_IDENTITY_SCHEMA_VERSION
+    ? "legacy"
+    : "current",
 ): void {
   const metadata = readExistingAgentSchemaMeta(db);
   assertExistingAgentSchemaOwner(metadata, options.agentId, options.pathname);
@@ -287,12 +294,7 @@ export function assertAgentSchemaVersion(
       `OpenClaw agent database ${options.pathname} did not converge on schema version ${options.version}.`,
     );
   }
-  assertOpenClawAgentSchemaContains(
-    db,
-    options.pathname,
-    schemaSql,
-    options.version < 18 ? "legacy" : "current",
-  );
+  assertOpenClawAgentSchemaContains(db, options.pathname, schemaSql, participantSchema);
 }
 
 function hasLegacyMemoryChunkProvenanceTrigger(db: DatabaseSync): boolean {
@@ -307,6 +309,40 @@ function hasLegacyMemoryChunkProvenanceTrigger(db: DatabaseSync): boolean {
 
 export function hasPendingMemoryChunkMetadataMigration(db: DatabaseSync): boolean {
   return hasLegacyMemoryRecallMetadataColumns(db) || hasLegacyMemoryChunkProvenanceTrigger(db);
+}
+
+export function migratedEntryChannel(entry: Record<string, unknown>): string | null {
+  const delivery = asNullableRecord(entry.delivery);
+  const deliveryContext =
+    asNullableRecord(delivery?.context) ?? asNullableRecord(entry.deliveryContext);
+  const origin = asNullableRecord(delivery?.origin) ?? asNullableRecord(entry.origin);
+  return (
+    migratedText(entry.channel) ??
+    migratedText(deliveryContext?.channel) ??
+    migratedText(entry.lastChannel) ??
+    migratedText(origin?.provider)
+  );
+}
+
+export function migratedEntryAccountId(entry: Record<string, unknown>): string | null {
+  const delivery = asNullableRecord(entry.delivery);
+  const deliveryContext =
+    asNullableRecord(delivery?.context) ?? asNullableRecord(entry.deliveryContext);
+  const origin = asNullableRecord(delivery?.origin) ?? asNullableRecord(entry.origin);
+  return (
+    migratedText(deliveryContext?.accountId) ??
+    migratedText(entry.lastAccountId) ??
+    migratedText(origin?.accountId)
+  );
+}
+
+export function migratedEntryDisplayName(entry: Record<string, unknown>): string | null {
+  return (
+    migratedText(entry.displayName) ??
+    migratedText(entry.label) ??
+    migratedText(entry.subject) ??
+    migratedText(entry.groupId)
+  );
 }
 
 function hasPendingSessionKeyContractSchemaMigration(db: DatabaseSync): boolean {
