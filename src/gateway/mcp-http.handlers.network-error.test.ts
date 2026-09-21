@@ -1,5 +1,6 @@
 import { createRequire } from "node:module";
 import { describe, expect, it, vi } from "vitest";
+import * as harnessHookHelpers from "../agents/harness/hook-helpers.js";
 import { ToolInputError, type AnyAgentTool } from "../agents/tools/common.js";
 import { SecretSurfaceUnavailableError } from "../secrets/runtime-degraded-state.js";
 import { handleMcpJsonRpc } from "./mcp-http.handlers.js";
@@ -168,5 +169,147 @@ describe("Gateway MCP network execution error boundary", () => {
     expect(onToolCallResult).toHaveBeenCalledWith(
       expect.objectContaining({ outcome: "unknown", result: abort }),
     );
+  });
+});
+
+describe("Gateway MCP loopback after_tool_call", () => {
+  function spyAfterToolCall() {
+    return vi
+      .spyOn(harnessHookHelpers, "runAgentHarnessAfterToolCallHook")
+      .mockResolvedValue(undefined);
+  }
+
+  function echoTool(): AnyAgentTool {
+    return {
+      name: "echo_probe",
+      label: "Echo probe",
+      description: "Echo a value",
+      parameters: { type: "object", properties: {} } as never,
+      execute: vi.fn<AnyAgentTool["execute"]>(async () => ({
+        content: [{ type: "text", text: "echoed" }],
+        details: {},
+      })),
+    };
+  }
+
+  it("dispatches after_tool_call when a loopback tool succeeds", async () => {
+    const afterToolCall = spyAfterToolCall();
+    const tool = echoTool();
+    try {
+      const response = await handleMcpJsonRpc({
+        message: {
+          jsonrpc: "2.0",
+          id: 7,
+          method: "tools/call",
+          params: { name: tool.name, arguments: { text: "hi" } },
+        },
+        tools: [tool],
+        toolSchema: [
+          { name: tool.name, description: tool.description, inputSchema: { type: "object" } },
+        ],
+        hookContext: {
+          runId: "run-1",
+          agentId: "main",
+          sessionId: "sess",
+          sessionKey: "agent:main:main",
+          channelId: "chat-1",
+        },
+      });
+      expect(response).toMatchObject({
+        result: { content: [{ type: "text", text: "echoed" }], isError: false },
+      });
+      expect(afterToolCall).toHaveBeenCalledTimes(1);
+      const event = afterToolCall.mock.calls[0]?.[0];
+      expect(event).toMatchObject({
+        toolName: "echo_probe",
+        runId: "run-1",
+        agentId: "main",
+        sessionId: "sess",
+        sessionKey: "agent:main:main",
+        channelId: "chat-1",
+        startArgs: { text: "hi" },
+        result: { content: [{ type: "text", text: "echoed" }] },
+      });
+      expect(event?.toolCallId).toMatch(/^mcp-/);
+      expect(tool.execute).toHaveBeenCalledWith(event?.toolCallId, { text: "hi" }, undefined);
+      expect(event?.error).toBeUndefined();
+      expect(typeof event?.startedAt).toBe("number");
+    } finally {
+      afterToolCall.mockRestore();
+    }
+  });
+
+  it("dispatches after_tool_call when loopback execution fails or is blocked", async () => {
+    const afterToolCall = spyAfterToolCall();
+    try {
+      const failed = await callLoopbackTool(
+        createFailingTool({ error: new Error("trusted local failure") }),
+      );
+      expect(failed.result.content[0]?.text).toBe("trusted local failure");
+      expect(afterToolCall).toHaveBeenCalledTimes(1);
+      expect(afterToolCall.mock.calls[0]?.[0]).toMatchObject({
+        toolName: "network_probe",
+        error: "trusted local failure",
+      });
+      expect(afterToolCall.mock.calls[0]?.[0]?.toolCallId).toMatch(/^mcp-/);
+      expect(afterToolCall.mock.calls[0]?.[0]?.result).toBeInstanceOf(Error);
+
+      afterToolCall.mockClear();
+      const blockedTool = echoTool();
+      const blocked = await callLoopbackTool(blockedTool, { authorizeToolCall: () => false });
+      expect(blocked.result.content[0]?.text).toBe("Tool call authorization expired");
+      expect(blockedTool.execute).not.toHaveBeenCalled();
+      expect(afterToolCall).toHaveBeenCalledTimes(1);
+      expect(afterToolCall.mock.calls[0]?.[0]).toMatchObject({
+        toolName: "echo_probe",
+        error: "Tool call authorization expired",
+      });
+      expect(afterToolCall.mock.calls[0]?.[0]?.toolCallId).toMatch(/^mcp-/);
+    } finally {
+      afterToolCall.mockRestore();
+    }
+  });
+
+  it("keeps the JSON-RPC result when after_tool_call throws or rejects", async () => {
+    const afterToolCall = spyAfterToolCall();
+    try {
+      afterToolCall.mockImplementation(() => {
+        throw new Error("observer failed");
+      });
+      const thrown = await callLoopbackTool(echoTool());
+      expect(thrown.result).toEqual({
+        content: [{ type: "text", text: "echoed" }],
+        isError: false,
+      });
+
+      afterToolCall.mockImplementation(() => Promise.reject(new Error("observer rejected")));
+      const rejected = await callLoopbackTool(echoTool());
+      expect(rejected.result).toEqual({
+        content: [{ type: "text", text: "echoed" }],
+        isError: false,
+      });
+    } finally {
+      afterToolCall.mockRestore();
+    }
+  });
+
+  it("does not dispatch after_tool_call when the tool never starts", async () => {
+    const afterToolCall = spyAfterToolCall();
+    try {
+      const response = await handleMcpJsonRpc({
+        message: {
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name: "missing", arguments: {} },
+        },
+        tools: [],
+        toolSchema: [],
+      });
+      expect(response).toMatchObject({ result: { isError: true } });
+      expect(afterToolCall).not.toHaveBeenCalled();
+    } finally {
+      afterToolCall.mockRestore();
+    }
   });
 });
