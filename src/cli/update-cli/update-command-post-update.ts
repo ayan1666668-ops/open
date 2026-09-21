@@ -8,13 +8,18 @@ import {
 import { recordUpdateRunStep } from "../../infra/update-run-ledger.js";
 import { isUpdateGatewayReadinessPending } from "../../infra/update-run-step.js";
 import type { UpdateRunResult } from "../../infra/update-runner-types.js";
+import { hasCommandProcessCleanupError } from "../../process/exec-result.js";
 import { defaultRuntime } from "../../runtime.js";
-import { classifyUpdateOutcome } from "../../shared/update-outcome.js";
+import { classifyUpdateOutcome, isVerifiedUpdateRollback } from "../../shared/update-outcome.js";
 import { convergeUpdatePlugins } from "./update-command-convergence.js";
+import { verifyUpdateFailureRecovery } from "./update-command-failure-recovery.js";
 import type { FinishUpdateParams } from "./update-command-finish-types.js";
 import { parkForegroundUpdateForActivation } from "./update-command-handoff.js";
 import { appendPluginUpdateWarnings } from "./update-command-plugins-internals.js";
-import { completePostUpdateMaintenance } from "./update-command-post-update-maintenance.js";
+import {
+  completePostUpdateMaintenance,
+  resumePostUpdateWindowsAutoStart,
+} from "./update-command-post-update-maintenance.js";
 import {
   assertUpdateCommandPackageFinalization,
   createUpdateCommandFinalizationFence,
@@ -34,12 +39,10 @@ import {
 import { rollbackFailedUpdate } from "./update-command-rollback.js";
 import type { UpdateServiceDefinitionRecovery } from "./update-command-service-context-types.js";
 import { withOwnedManagedUpdateEnv } from "./update-command-service-env.js";
-import { createWindowsTaskAutoStartGuard } from "./update-command-service-maintenance.js";
 import { GatewayServiceUpdateOwnershipError } from "./update-command-service-plan.js";
 import {
   maybeRestartService,
   maybeRestartServiceAfterFailedMutableUpdate,
-  maybeResumeWindowsTaskAutoStartAfterPackageUpdate,
   maybeStopManagedServiceBeforeMutableUpdate,
   type PreManagedServiceStop,
 } from "./update-command-service.js";
@@ -56,7 +59,6 @@ import {
   deferUpdateCommandTerminalResult,
   recordUpdatePackageCompletion,
 } from "./update-command-terminal.js";
-import { recordFailedUpdateGatewayState } from "./update-command-verification.js";
 
 export async function finishUpdate(
   params: FinishUpdateParams,
@@ -96,25 +98,8 @@ export async function finishUpdate(
   let rollbackStopState: PreManagedServiceStop | undefined;
   // Rollback can replace the suspension owner.
   const currentServiceStop = () => rollbackStopState ?? params.preManagedServiceStop;
-  const resumeWindowsAutoStart = async (result: UpdateRunResult) => {
-    const stopped = currentServiceStop();
-    await maybeResumeWindowsTaskAutoStartAfterPackageUpdate(
-      stopped,
-      true,
-      stopped
-        ? createWindowsTaskAutoStartGuard({
-            root:
-              result.recovery?.packageRollbackVerified &&
-              stopped.serviceUpdateVerdict?.kind === "owned"
-                ? stopped.serviceUpdateVerdict.root
-                : (result.root ?? params.root),
-            before: stopped,
-            timeoutMs: params.updateStepTimeoutMs,
-          })
-        : undefined,
-    );
-  };
   let rolledBack = false;
+  let originalServiceRecoveryHandled = false;
   let completedDowntimeMs: number | undefined = params.coreAlreadyCurrent ? 0 : undefined;
   let pendingRestartAtMs =
     params.preManagedServiceStop?.stoppedAtMs ??
@@ -203,6 +188,7 @@ export async function finishUpdate(
         );
       }
       result = rollback.result;
+      originalServiceRecoveryHandled = rollback.originalServiceRecovery !== undefined;
       rollbackStopState = rollback.stoppedForRollback;
       rolledBack = rollback.rolledBack;
       pendingRestartAtMs ??= rollbackStopState?.stoppedAtMs;
@@ -259,25 +245,18 @@ export async function finishUpdate(
     initialRestoreFailure?: { cause: unknown },
     notify = true,
   ): Promise<UpdateRunResult> => {
-    assertCurrent();
     const { result, recoverService } = await recoverFailedResult(
       initialResult,
       initialRecoverService,
     );
     assertCurrent();
     let restoreFailure = initialRestoreFailure;
-    const finalResult = completeUpdateCommandResult(params, {
-      ...result,
-      ...(result.status === "error" && !recoverService && !rolledBack
-        ? {
-            recovery:
-              result.recovery?.serviceRestartSafe === false ||
-              result.recovery?.packageRollbackVerified
-                ? result.recovery
-                : { serviceRestartSafe: false, reason: "runtime-verification-failed" },
-          }
-        : {}),
-    });
+    let finalResult = completeUpdateCommandResult(params, result);
+    const serviceVerdict = currentServiceStop()?.serviceUpdateVerdict;
+    let root =
+      finalResult.recovery?.packageRollbackVerified && serviceVerdict?.kind === "owned"
+        ? serviceVerdict.root
+        : (finalResult.root ?? params.root);
     pendingResult = finalResult;
     pendingNotify = notify;
     if (!restoreFailure) {
@@ -290,7 +269,7 @@ export async function finishUpdate(
         ) {
           await currentServiceStop()?.windowsTaskAutoStartRecovery?.complete(false);
         } else {
-          await resumeWindowsAutoStart(finalResult);
+          await resumePostUpdateWindowsAutoStart(params, finalResult, currentServiceStop());
         }
       } catch (cause) {
         restoreFailure = { cause };
@@ -324,13 +303,6 @@ export async function finishUpdate(
         stderrTail: formatErrorMessage(restoreFailure.cause),
       });
     }
-    assertCurrent();
-    if (finalResult.status === "error" && !rolledBack && currentServiceStop()?.stopped) {
-      await recordFailedUpdateGatewayState(
-        params.opts.run,
-        currentServiceStop()?.serviceEnv ?? process.env,
-      );
-    }
     const completedBeforeCleanup = deferredTerminal
       ? await captureUpdateCommandTerminalRecord(params, finalResult, assertCurrent)
       : undefined;
@@ -354,6 +326,7 @@ export async function finishUpdate(
         invocationCwd: params.invocationCwd,
       });
       if (service && !params.originalManagedServiceRuntime) {
+        root = serviceVerdict && "root" in serviceVerdict ? serviceVerdict.root : root;
         finalResult.recovery = { ...finalResult.recovery, service };
         if (service === "healthy" && params.shouldRestart) {
           gateway = "verify-running";
@@ -378,7 +351,23 @@ export async function finishUpdate(
     assertCurrent();
     const cleanupFailure = await recordUpdatePackageCompletion(params, finalResult, assertCurrent);
     assertCurrent();
-    pendingResult = completeUpdateCommandResult(params, cleanupFailure?.result ?? finalResult);
+    finalResult = cleanupFailure?.result ?? finalResult;
+    // Compensation of the original service is not proof of the requested installation.
+    if ((finalResult.status === "error" || cleanupFailure) && !originalServiceRecoveryHandled) {
+      finalResult = await verifyUpdateFailureRecovery({
+        result: finalResult,
+        root,
+        opts: params.opts,
+        env: currentServiceStop()?.serviceEnv ?? params.ownedManagedUpdateEnv,
+        timeoutMs: params.updateStepTimeoutMs,
+        serviceStopped: !rolledBack && currentServiceStop()?.stopped,
+        assertCurrent,
+      });
+      assertCurrent();
+      triageAllowed &&= !isUpdateGatewayReadinessPending(finalResult);
+      rolledBack &&= isVerifiedUpdateRollback(finalResult);
+    }
+    pendingResult = completeUpdateCommandResult(params, finalResult);
     terminalRecord = deferredTerminal
       ? await captureUpdateCommandTerminalRecord(params, pendingResult, assertCurrent)
       : undefined;
@@ -411,7 +400,7 @@ export async function finishUpdate(
   };
   const restoreWindowsAutoStart = async (result: UpdateRunResult) => {
     try {
-      await resumeWindowsAutoStart(result);
+      await resumePostUpdateWindowsAutoStart(params, result, currentServiceStop());
     } catch (cause) {
       // The attempted restore already failed; reporting must not attempt it again.
       await reportResult(result, false, { cause });
@@ -705,7 +694,8 @@ export async function finishUpdate(
         cause: error,
       });
     }
-    if (error instanceof UpdateCommandFailure) {
+    if (error instanceof UpdateCommandFailure || hasCommandProcessCleanupError(error)) {
+      // Unsettled commands may still change files. Keep intent/material for fenced reconciliation.
       throw error;
     }
     const { result, message } = createPostUpdateFailureResult(params, error);

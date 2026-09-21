@@ -77,6 +77,7 @@ export const legacyFinalizerBuildSources = [
   "src/daemon/gateway-entrypoint.ts",
   "src/cli/update-cli/update-command-verification.ts",
   "src/cli/update-cli/shared.ts",
+  "src/cli/update-cli/update-command-service-command.ts",
 ];
 
 // Test-only roots share the invocation generation without changing package entries.
