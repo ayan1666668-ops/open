@@ -139,25 +139,12 @@ async function createTimedMaintenanceScenario() {
   return { startGatewayMaintenanceTimers, deps, now: Date.now() };
 }
 
-async function stopMaintenanceTimers(timers: {
-  tickInterval: NodeJS.Timeout;
-  healthInterval: NodeJS.Timeout;
-  dedupeCleanup: NodeJS.Timeout;
-  startMediaCleanup: () => void;
-  stopMediaCleanup: () => Promise<"drained" | "timed-out">;
-  stopSessionColdStorageMaintenance: () => Promise<void>;
-  worktreeCleanup: NodeJS.Timeout;
-  delegateArtifactCleanup: NodeJS.Timeout;
-  skillUsageCleanup: () => void;
-}) {
-  clearInterval(timers.tickInterval);
-  clearInterval(timers.healthInterval);
-  clearInterval(timers.dedupeCleanup);
-  clearInterval(timers.worktreeCleanup);
-  clearInterval(timers.delegateArtifactCleanup);
-  await timers.stopMediaCleanup();
-  await timers.stopSessionColdStorageMaintenance();
-  timers.skillUsageCleanup();
+async function stopMaintenanceTimers(
+  timers: ReturnType<typeof import("./server-maintenance.js").startGatewayMaintenanceTimers>,
+) {
+  await timers.stopPeriodicTasks();
+  await timers.skillUsageCleanup();
+
 }
 
 describe("startGatewayMaintenanceTimers", () => {

@@ -31,6 +31,7 @@ import {
 } from "./restart-trace.js";
 import type { ChatRunState } from "./server-chat-state.js";
 import { WEBSOCKET_CLOSE_GRACE_MS } from "./server-constants.js";
+import type { GatewayMaintenanceHandles } from "./server-maintenance-lifecycle.js";
 import {
   waitForMediaCleanupDrainsToSettle,
   type MediaCleanupStopResult,
@@ -38,7 +39,6 @@ import {
 import { clearSessionTypingState } from "./server-methods/session-typing-state.js";
 import type { GatewayCloseOptions } from "./server-public.js";
 import { prepareGatewayRunShutdown, type GatewayRunShutdownParams } from "./server-run-shutdown.js";
-import type { GatewayMaintenanceHandles } from "./server-runtime-services.js";
 import {
   createGatewayShutdownTimeout as createTimeoutRace,
   recordGatewayShutdownWarning as recordShutdownWarning,
@@ -363,7 +363,21 @@ export async function prepareGatewayClose(
   }
 }
 
-export async function completeGatewayClose(
+export function completeGatewayClose(
+  params: GatewayCloseParams,
+  preparation: GatewayClosePreparation,
+): Promise<ShutdownResult> {
+  // Cleanup belongs to shutdown, not the initiating RPC's drained connection scope.
+  return preparation.cleanupWork.run(async () => {
+    try {
+      return await closeGatewayResources(params, preparation);
+    } finally {
+      await preparation.cleanupWork.drain();
+    }
+  });
+}
+
+async function closeGatewayResources(
   params: GatewayCloseParams,
   preparation: GatewayClosePreparation,
 ): Promise<ShutdownResult> {
@@ -476,23 +490,19 @@ export async function completeGatewayClose(
         }),
       ]);
     });
-    if (params.maintenance) {
-      clearInterval(params.maintenance.tickInterval);
-      clearInterval(params.maintenance.healthInterval);
-      clearInterval(params.maintenance.dedupeCleanup);
-      clearInterval(params.maintenance.worktreeCleanup);
-      clearInterval(params.maintenance.delegateArtifactCleanup);
-    }
+    // Continuation: the delegate-artifact GC interval is owned by
+    // server-runtime-handles, not by the maintenance handles, so upstream's
+    // stopPeriodicTasks() cannot reach it. Everything else this block used to
+    // clear is now inside stopPeriodicTasks / skillUsageCleanup below.
     if (params.delegateArtifactCleanup) {
       clearInterval(params.delegateArtifactCleanup);
     }
-    await shutdownStep("skill-usage", () => params.maintenance?.skillUsageCleanup(), warnings);
-    await shutdownStep("telemetry", () => params.maintenance?.stopTelemetryChecks(), warnings);
     await shutdownStep(
-      "session-cold-storage",
-      () => params.maintenance?.stopSessionColdStorageMaintenance(),
+      "periodic-maintenance",
+      () => params.maintenance?.stopPeriodicTasks(),
       warnings,
     );
+    await shutdownStep("skill-usage", () => params.maintenance?.skillUsageCleanup(), warnings);
     try {
       mediaCleanupStopResult = await params.stopMediaCleanup();
     } catch (err) {
@@ -640,7 +650,7 @@ export async function completeGatewayClose(
   } finally {
     // Grace lets independent teardown advance; raw cleanup and its descendants
     // still join before registry and shared-state retirement.
-    await cleanupWork.drain();
+    await cleanupWork.runWhenIdle(() => {});
     await pluginServicesCleanup;
     await params.finishRequestEntries?.();
     await waitForMediaCleanupDrainsToSettle();
@@ -661,6 +671,7 @@ export async function completeGatewayClose(
           await closePreparedModelRuntimeSnapshots();
           await closeSessionTranscriptReconcileWorkerPool();
           await retire();
+          await cleanupWork.runWhenIdle(() => {});
           // Releasing agent leases still writes shared state; keep its owner alive until then.
           await closeOpenClawAgentDatabasesAsync();
           if (mediaCleanupStopResult !== undefined) {
