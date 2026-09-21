@@ -500,6 +500,30 @@ describe("resolveConfigEnvVars", () => {
     it("does not treat a shell-default expression as a resolvable env var reference", () => {
       expect(containsEnvVarReference("${VAR:-x}")).toBe(false);
     });
+
+    it("never carries the fallback payload, so a secret cannot escape through either sink", () => {
+      // A fallback can hold a credential. These warnings are NOT redacted downstream:
+      // redactConfigSnapshot leaves snapshot.warnings untouched and io.load.ts logs them.
+      // Both sinks interpolate exactly two fields - expression and configPath - so keeping
+      // the payload out of those two is what keeps it out of logs and redacted snapshots.
+      const secret = "hunter2-synthetic-not-a-real-secret";
+      const { result, diagnostics } = resolveAndCollectDiagnostics(
+        { gateway: { auth: { password: `prefix-\${PASSWORD:-${secret}}` } } },
+        {},
+      );
+
+      // Assert the whole emitted shape: the warning stays actionable (name, operator and
+      // path are all there) while carrying nothing else that could hold the payload.
+      expect(diagnostics).toEqual([
+        { expression: "${PASSWORD:-...}", configPath: "gateway.auth.password" },
+      ]);
+      expect(JSON.stringify(diagnostics)).not.toContain(secret);
+      // The config value itself is untouched, secret and all - that is existing behavior
+      // and is governed by the normal redaction path, not by this warning.
+      expect(result).toEqual({
+        gateway: { auth: { password: `prefix-\${PASSWORD:-${secret}}` } },
+      });
+    });
   });
 
   describe("containsEnvVarReference", () => {

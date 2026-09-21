@@ -94,6 +94,10 @@ export type EnvSubstitutionWarning = {
 
 /** Warning emitted when a `${...}` expression uses shell parameter-expansion syntax that is not supported and is left literal. */
 export type EnvUnsupportedExpressionWarning = {
+  /**
+   * The variable name and operator only, rendered as `${NAME:-...}`. Never the authored
+   * fallback text: it can contain a secret, and consumers of this warning are not redacted.
+   */
   expression: string;
   configPath: string;
 };
@@ -168,9 +172,14 @@ function substituteString(
       const end = value.indexOf("}", start);
       if (end !== -1) {
         const inner = value.slice(start, end);
-        if (!ENV_VAR_NAME_PATTERN.test(inner) && SHELL_EXPANSION_OPERATOR_PATTERN.test(inner)) {
+        const operatorMatch = SHELL_EXPANSION_OPERATOR_PATTERN.exec(inner);
+        if (!ENV_VAR_NAME_PATTERN.test(inner) && operatorMatch) {
           opts?.onUnsupportedExpression?.({
-            expression: value.slice(i, end + 1),
+            // Report the variable name and operator only. Everything after the operator is
+            // an author-supplied fallback that can hold a secret, and these warnings are not
+            // redacted downstream: redactConfigSnapshot leaves snapshot.warnings untouched
+            // and io.load.ts logs them. Never put the fallback payload in this string.
+            expression: `\${${operatorMatch[0]}...}`,
             configPath,
           });
         }
