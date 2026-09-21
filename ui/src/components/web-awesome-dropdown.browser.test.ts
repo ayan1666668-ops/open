@@ -458,6 +458,37 @@ describe.runIf(browserMode)("Web Awesome dropdown lifecycle", () => {
     expect(document.activeElement).toBe(f.outside);
   });
 
+  it("preserves keyboard selection made during the dropdown opening animation", async () => {
+    const { userEvent } = await import("vitest/browser");
+    const f = await fixture();
+    const photo = document.createElement("wa-dropdown-item");
+    photo.value = "photo";
+    photo.textContent = "Photo";
+    f.item.after(photo);
+    await photo.updateComplete;
+    const selected: Element[] = [];
+    f.dropdown.addEventListener("wa-select", (event: WaSelectEvent) =>
+      selected.push(event.detail.item),
+    );
+    const afterShow = new Promise<void>((resolve) => {
+      f.dropdown.addEventListener("wa-after-show", () => resolve(), { once: true });
+    });
+    f.trigger.focus();
+    await duringElementAnimation(
+      f.menu,
+      "show",
+      () => userEvent.keyboard("{Enter}"),
+      async () => {
+        await userEvent.keyboard("{ArrowDown}");
+        expect(document.activeElement).toBe(photo);
+      },
+    );
+    await afterShow;
+    expect.soft(document.activeElement).toBe(photo);
+    await userEvent.keyboard("{Enter}");
+    expect(selected).toEqual([photo]);
+  });
+
   it("settles a never-connected submenu close as a public no-op", async () => {
     const item = document.createElement("wa-dropdown-item");
     let completed = false;
