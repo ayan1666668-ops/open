@@ -161,7 +161,6 @@ import { isClaudeCliBackendId, normalizeCliModel } from "./helpers.js";
 import { prepareCliHistoryBoundary } from "./history-boundary.js";
 import { cliBackendLog } from "./log.js";
 import {
-  applyCliMcpToolOverrides,
   buildCliMcpGrantContext,
   finalizeCliMcpGrant,
   normalizeOptionalMcpContextValue,
@@ -1368,10 +1367,9 @@ async function prepareCliRunContextWithinReadFence(
       },
     };
   }
-  const { tools: projectedTools, toolsAllow: sessionLoopbackToolsAllow } = applyCliMcpToolOverrides(
+  const projectedTools = applyEmbeddedAttemptToolsAllow(
     hookFilteredProjectedTools,
     params.cliToolAvailability?.openClaw,
-    params.toolOverrides,
   );
   const nodeSkillWorkshop = nodeWorkshopEnabled
     ? projectedTools.find((tool) => tool.name === "skill_workshop")
@@ -1437,7 +1435,7 @@ async function prepareCliRunContextWithinReadFence(
       : undefined;
   const mcpGrant = finalizeCliMcpGrant(
     mcpContextBase,
-    sessionLoopbackToolsAllow ?? restrictedLoopbackToolsAllow,
+    restrictedLoopbackToolsAllow,
     Boolean(projectNativeToolAuthority),
     params.assertCurrent,
   );

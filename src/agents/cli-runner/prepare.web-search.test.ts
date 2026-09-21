@@ -1,7 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import {
+  resolveMcpLoopbackPolicyTools,
+  resolveMcpLoopbackScopedTools,
+} from "../../gateway/mcp-http.runtime.js";
 import type { CliBackendPlugin } from "../../plugins/cli-backend.types.js";
 import { loadBundledPluginFacade } from "../../test-utils/bundled-plugin-public-surface.js";
+import { execSchema } from "../bash-tools.schemas.js";
 import { testing as cliBackendsTesting } from "../cli-backends.test-support.js";
 import {
   createCliRunnerPrepareFixture,
@@ -26,6 +31,42 @@ const searchTool = {
   execute: vi.fn(),
 };
 const messageTool = { ...searchTool, name: "message", label: "Message" };
+const nodeExecution = vi.fn();
+function executionTool(defaults: { host?: string; node?: string } = {}) {
+  return {
+    ...searchTool,
+    name: "exec",
+    parameters: execSchema,
+    execute: async (_id: string, params: unknown) => {
+      if (defaults.host !== "node") {
+        throw new Error("Gateway-local execution is forbidden in this node-only proof");
+      }
+      nodeExecution(defaults, params);
+      return { content: [{ type: "text", text: "node execution" }] };
+    },
+  };
+}
+vi.mock("../openclaw-tools.js", () => ({
+  createOpenClawTools: ({ config }: { config: OpenClawConfig }) =>
+    config.tools?.web?.search?.enabled === false ? [messageTool] : [searchTool, messageTool],
+}));
+vi.mock("../agent-tools.js", () => ({
+  createOpenClawCodingTools: ({ exec }: { exec?: { host?: string; node?: string } }) => [
+    executionTool(exec),
+  ],
+}));
+vi.mock("../bash-tools.js", () => ({ createExecTool: executionTool }));
+vi.mock("../tools/gateway.js", () => ({
+  callGatewayTool: async (method: string) => {
+    if (method === "node.list") {
+      return { nodes: [{ nodeId: "worker", connected: true, commands: ["system.run"] }] };
+    }
+    if (method === "computer.status") {
+      return { configured: false, available: false };
+    }
+    throw new Error(`Unexpected Gateway I/O: ${method}`);
+  },
+}));
 let fixture: ReturnType<typeof createCliRunnerPrepareFixture>;
 const captureNativeToolAuthority = vi.fn((_tools: readonly string[] | null) => true);
 const mintMcpLoopbackClientGrant = vi.fn(createTestMcpLoopbackClientGrant);
@@ -50,11 +91,8 @@ beforeEach(() => {
     bindMcpLoopbackClientGrantAdmission: () => true,
     revokeMcpLoopbackClientGrant: () => true,
     activateMcpLoopbackClientGrantCapture: () => ({ captureNativeToolAuthority }),
-    resolveMcpLoopbackPolicyTools: () => ({ agentId: "main", tools: [searchTool, messageTool] }),
-    resolveMcpLoopbackScopedTools: ({ cfg }: { cfg: OpenClawConfig }) => ({
-      agentId: "main",
-      tools: cfg.tools?.web?.search?.enabled === false ? [messageTool] : [searchTool, messageTool],
-    }),
+    resolveMcpLoopbackPolicyTools,
+    resolveMcpLoopbackScopedTools,
     resolveOpenClawReferencePaths: async () => ({ docsPath: null, sourcePath: null }),
     prepareClaudeCliSkillsPlugin: async () => ({ args: [], cleanup: async () => {} }),
     getCliLiveSessionGeneration: () => undefined,
@@ -94,7 +132,7 @@ describe("registered Claude CLI search preparation", () => {
       native: false,
       sessionSearch: false,
       managed: false,
-      openClaw: ["web_search", "message"],
+      openClaw: ["exec", "web_search", "message"],
     },
   ] satisfies Array<{
     name: string;
@@ -106,9 +144,19 @@ describe("registered Claude CLI search preparation", () => {
   }>)(
     "keeps native authority consistent with $name",
     async ({ config, native, sessionSearch, managed, openClaw }) => {
+      const cfg: OpenClawConfig = {
+        ...config,
+        plugins: { enabled: false },
+        tools: {
+          ...config.tools,
+          allow: ["exec", "web_search", "message"],
+          exec: { host: "auto", mode: "full" },
+        },
+      };
       const context = await fixture.prepare({
         provider: "claude-cli",
-        config,
+        config: cfg,
+        senderIsOwner: true,
         toolOverrides: { webSearch: sessionSearch },
         model: "fixture-model",
         ...(openClaw ? { cliToolAvailability: { native: ["Read", "WebSearch"], openClaw } } : {}),
@@ -130,10 +178,31 @@ describe("registered Claude CLI search preparation", () => {
         expect(
           context.systemPromptReport.tools.entries.some((tool) => tool.name === "message"),
         ).toBe(true);
-        if (!sessionSearch) {
-          expect(mintMcpLoopbackClientGrant.mock.calls[0]?.[0]?.context.toolsAllow).toEqual([
-            "message",
-          ]);
+        const grant = mintMcpLoopbackClientGrant.mock.calls[0]?.[0]?.context;
+        expect(grant).toBeDefined();
+        expect.soft(grant!.toolsAllow).toEqual(openClaw);
+        const tools = await resolveMcpLoopbackScopedTools({
+          cfg,
+          context: grant!,
+          isGrantCurrent: () => true,
+        });
+        expect(tools.tools.some((tool) => tool.name === "web_search")).toBe(managed);
+        const exec = tools.tools.find((tool) => tool.name === "exec");
+        expect(exec).toBeDefined();
+        if (openClaw) {
+          expect(exec!.parameters).toMatchObject({
+            properties: { host: { enum: expect.arrayContaining(["gateway"]) } },
+          });
+        } else {
+          expect.soft(exec!.parameters).toMatchObject({ properties: { host: { enum: ["node"] } } });
+          await exec!.execute(
+            "node-proof",
+            { command: "node-proof" },
+            new AbortController().signal,
+          );
+          expect(nodeExecution).toHaveBeenCalledWith(expect.objectContaining({ host: "node" }), {
+            command: "node-proof",
+          });
         }
       } finally {
         await context.preparedBackend.cleanup?.();
