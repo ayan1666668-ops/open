@@ -1,8 +1,9 @@
 # Temporary diagnostic replay for PR154905. Remove before landing.
 name: WAL recovery cohort proof
 on:
-  push:
-    branches: [test/wal-recovery-context]
+  pull_request:
+    types: [ready_for_review]
+    branches: [main]
     paths: [.github/workflows/wal-recovery-proof.yml]
 permissions:
   contents: read
@@ -11,7 +12,15 @@ concurrency:
   cancel-in-progress: false
 jobs:
   original-cohort:
-    if: github.repository == 'openclaw/openclaw'
+    if: >-
+      github.repository == 'openclaw/openclaw' &&
+      github.event_name == 'pull_request' && github.event.action == 'ready_for_review' &&
+      github.event.pull_request.number == 154905 &&
+      github.event.pull_request.state == 'open' && !github.event.pull_request.draft &&
+      github.event.pull_request.base.ref == 'main' &&
+      github.event.pull_request.base.repo.full_name == 'openclaw/openclaw' &&
+      github.event.pull_request.head.repo.full_name == 'openclaw/openclaw' &&
+      github.event.pull_request.head.ref == 'test/wal-recovery-context'
     runs-on: blacksmith-32vcpu-ubuntu-2404
     timeout-minutes: 60
     env:
@@ -25,6 +34,27 @@ jobs:
           ref: b828baa3da39e8667fa2fac0207d0e9868995287
           fetch-depth: 1
           persist-credentials: false
+      - name: Authenticate the reviewed recovery carrier before replay hydration
+        shell: bash
+        env:
+          CARRIER_SHA: ${{ github.event.pull_request.head.sha }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$CARRIER_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$WORKFLOW_SHA" =~ ^[0-9a-f]{40}$ ]]
+          git -c gc.auto=0 -c maintenance.auto=false fetch --no-tags --depth=2 --no-write-fetch-head origin "$CARRIER_SHA"
+          test "$(git show -s --format=%P "$CARRIER_SHA")" = e1e2d444f8a6d1925d0c8ac6c93d4ca294551f45
+          test "$(git rev-parse "$CARRIER_SHA^{commit}")" = "$CARRIER_SHA"
+          test "$(git rev-parse e1e2d444f8a6d1925d0c8ac6c93d4ca294551f45^{tree})" = 1ba3a70f7d70a15cf06d8f817a7b5d24c313e39e
+          test "$(git diff --name-only "$CARRIER_SHA^" "$CARRIER_SHA")" = .github/workflows/wal-recovery-proof.yml
+          git -c gc.auto=0 -c maintenance.auto=false fetch --no-tags --depth=1 --no-write-fetch-head origin "$WORKFLOW_SHA"
+          carrier_workflow_blob="$(git rev-parse --verify "$CARRIER_SHA:.github/workflows/wal-recovery-proof.yml")"
+          executing_workflow_blob="$(git rev-parse --verify "$WORKFLOW_SHA:.github/workflows/wal-recovery-proof.yml")"
+          test "$carrier_workflow_blob" = "$executing_workflow_blob"
+          test "$(git rev-parse HEAD)" = b828baa3da39e8667fa2fac0207d0e9868995287
+          test -z "$(git status --porcelain)"
+          printf 'reviewedCarrier=%s\nworkflowSource=%s\neventMerge=%s\nworkflowBlob=%s\n' "$CARRIER_SHA" "$WORKFLOW_SHA" "$GITHUB_SHA" "$executing_workflow_blob"
       - name: Authenticate source and apply only reviewed diagnostic
         shell: bash
         run: |
