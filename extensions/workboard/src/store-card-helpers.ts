@@ -361,7 +361,7 @@ export function assertCanMutateClaimedCard(
   if (
     callerSessionKey &&
     primary &&
-    callerSessionKey !== primary &&
+    !workboardSessionKeyMatches(callerSessionKey, primary) &&
     !workboardSessionKeyMatches(callerSessionKey, cardExecutionSessionKey(card) ?? "")
   ) {
     throw new Error(`card is bound to session ${primary}.`);

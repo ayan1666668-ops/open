@@ -329,6 +329,11 @@ export function workboardCardSessionKey(card: WorkboardCard): string | undefined
   return card.sessionKey ?? card.execution?.sessionKey;
 }
 
+/** Worker status and controls follow execution, not the independently selected primary chat. */
+export function workboardCardExecutionSessionKey(card: WorkboardCard): string | undefined {
+  return card.execution?.sessionKey ?? card.sessionKey;
+}
+
 export function workboardCardRunId(card: WorkboardCard): string | undefined {
-  return card.runId ?? card.execution?.runId;
+  return card.execution?.runId ?? card.runId;
 }

@@ -146,7 +146,12 @@ describe("openclaw.chat hosted lifecycle", () => {
       );
       const authority = claimAgentRunDelegatedAuthority(operationalRunInstance);
       const controller = new AbortController();
-      const broadcast = vi.fn();
+      const approvalRequested = createDeferred();
+      const broadcast = vi.fn((event: string) => {
+        if (event === "openclaw.approval.requested") {
+          approvalRequested.resolve();
+        }
+      });
       const context = {
         ...makeContext(sessions),
         systemAgentApprovalManager: manager,
@@ -208,10 +213,20 @@ describe("openclaw.chat hosted lifecycle", () => {
       let sameOwnerChat: Promise<RespondCall> | undefined;
       try {
         if (!fullPermission) {
-          await vi.waitFor(async () => expect(await manager.listPendingRecords()).toHaveLength(1));
+          // The worker-backed approval store owns completion; a short polling
+          // deadline also measures cold worker startup under shard contention.
+          await Promise.race([
+            approvalRequested.promise,
+            pendingChat.then(() => {
+              throw new Error("Delegated lifecycle replied before requesting approval");
+            }),
+          ]);
+          expect(await manager.listPendingRecords()).toHaveLength(1);
           expect(requestResponses.calls).toHaveLength(0);
           expect(getActiveGatewayRootWorkCount()).toBe(1);
-          expect(systemAgentLane()).toMatchObject({ activeCount: 0, queuedCount: 0 });
+          await vi.waitFor(() =>
+            expect(systemAgentLane()).toMatchObject({ activeCount: 0, queuedCount: 0 }),
+          );
           const proposalId = expectDefined(
             (await manager.listPendingRecords())[0],
             "pending approval",

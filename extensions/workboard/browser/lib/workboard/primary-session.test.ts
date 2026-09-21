@@ -1,7 +1,12 @@
 // @vitest-environment node
+import "../../test/host.setup.ts";
 import { GatewayProtocolRequestError as GatewayRequestError } from "@openclaw/gateway-client/browser";
 import { describe, expect, it } from "vitest";
+import { stopWorkboardCard } from "./execution.ts";
 import { getWorkboardState, saveWorkboardCardDraft, type WorkboardCard } from "./index.ts";
+import { getWorkboardLifecycle } from "./lifecycle.ts";
+import { workboardCardSessionTarget } from "./session-resolution.ts";
+import { taskMatchesCard, selectWorkboardTaskDiscoveryQueries } from "./task-links.ts";
 import {
   createWorkboardCard as makeCard,
   createWorkboardExecution,
@@ -92,5 +97,85 @@ describe("primary session draft intent", () => {
       expectedUpdatedAt: base.updatedAt,
       patch: { title: "Updated" },
     });
+  });
+});
+
+describe("distinct primary and execution browser identities", () => {
+  const primary = "agent:main:operator";
+  const worker = "agent:main:worker";
+  function runningCard() {
+    return makeCard({
+      status: "running",
+      sessionKey: primary,
+      runId: "primary-run",
+      execution: createWorkboardExecution({ sessionKey: worker, runId: "worker-run" }),
+    });
+  }
+  it("finds worker tasks and queries execution without moving primary navigation", () => {
+    const card = runningCard();
+    expect(
+      taskMatchesCard(
+        {
+          id: "worker-task",
+          taskId: "worker-task",
+          status: "running",
+          runId: "worker-run",
+          sessionKey: worker,
+        },
+        card,
+      ),
+    ).toBe(true);
+    expect(
+      taskMatchesCard(
+        {
+          id: "primary-task",
+          taskId: "primary-task",
+          status: "running",
+          runId: "worker-run",
+          sessionKey: primary,
+        },
+        card,
+      ),
+    ).toBe(false);
+    expect(selectWorkboardTaskDiscoveryQueries({}, [card], new Map(), new Set())).toEqual([
+      { sessionKey: worker },
+    ]);
+    expect(workboardCardSessionTarget(card)).toEqual({ sessionKey: primary });
+  });
+  it("uses worker completion rather than a still-running primary chat", () => {
+    const card = runningCard();
+    const sessions = [
+      { key: primary, kind: "direct" as const, status: "running" as const, hasActiveRun: true },
+      { key: worker, kind: "direct" as const, status: "done" as const, hasActiveRun: false },
+    ];
+    expect(getWorkboardLifecycle(card, sessions)).toMatchObject({
+      state: "succeeded",
+      targetStatus: "review",
+      session: sessions[1],
+    });
+  });
+  it("keeps both Stop attempts on the worker even with a stale primary target", async () => {
+    const card = runningCard();
+    const host = {};
+    const state = getWorkboardState(host);
+    state.loaded = true;
+    state.cards = [card];
+    let aborts = 0;
+    const client = createClient((method) => {
+      if (method === "chat.abort") {
+        return { aborted: ++aborts > 1 };
+      }
+      if (method === "workboard.cards.update") {
+        return { card: { ...card, status: "blocked", updatedAt: 2 } };
+      }
+      throw new Error(`Unexpected request: ${method}`);
+    });
+    await stopWorkboardCard({ host, client, card, session: { sessionKey: primary } });
+    expect(client.request.mock.calls.filter(([method]) => method === "chat.abort")).toEqual([
+      ["chat.abort", { sessionKey: worker, runId: "worker-run" }],
+      ["chat.abort", { sessionKey: worker }],
+    ]);
+    expect(state.error).toBeNull();
+    expect(state.cards[0]?.sessionKey).toBe(primary);
   });
 });

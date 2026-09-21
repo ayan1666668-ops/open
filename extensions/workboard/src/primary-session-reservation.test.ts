@@ -92,7 +92,7 @@ describe("primary session reservations through the SQLite worker", () => {
         title: "Legacy worker",
         status: "ready",
         sessionKey: binding === "primary" ? legacy : "operator-chat",
-        ...(binding === "execution" ? { execution: { sessionKey: legacy } } : {}),
+        execution: { sessionKey: binding === "execution" ? legacy : "agent:main:distinct-worker" },
       });
       await expect(
         store.claim(card.id, { ownerId: "worker" }, { callerSessionKey: "unrelated-chat" }),
@@ -106,6 +106,12 @@ describe("primary session reservations through the SQLite worker", () => {
       expect(claimed.card.sessionKey).toBe(card.sessionKey);
       expect(claimed.card.execution).toEqual(card.execution);
       expect(claimed.card.metadata?.claim?.ownerId).toBe("worker");
+      const scope = { ownerId: "worker", token: claimed.token, sessionKey: qualified };
+      const heartbeat = await store.heartbeat(card.id, scope);
+      expect(heartbeat.metadata?.claim?.ownerId).toBe("worker");
+      const completed = await store.complete(card.id, { ...scope, summary: "Done" });
+      expect(completed.status).toBe("done");
+      expect(completed.sessionKey).toBe(card.sessionKey);
     },
   );
 

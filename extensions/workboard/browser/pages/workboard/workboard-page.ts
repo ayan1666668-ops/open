@@ -10,7 +10,10 @@ import { formatUiError } from "../../lib/format-error.ts";
 import { workboardCardBoardId } from "../../lib/workboard/board-filter.ts";
 import { workboardBoardName } from "../../lib/workboard/board-presentation.ts";
 import type { WorkboardCapability } from "../../lib/workboard/capability.ts";
-import { workboardCardSessionKey } from "../../lib/workboard/card-state.ts";
+import {
+  workboardCardExecutionSessionKey,
+  workboardCardSessionKey,
+} from "../../lib/workboard/card-state.ts";
 import {
   configureWorkboardLiveRefresh,
   handleWorkboardChanged,
@@ -85,6 +88,7 @@ export function createWorkboardPage(workboard: WorkboardCapability): ControlUiVi
       });
     };
     const sessionResolver = createWorkboardSessionResolver(host, requestUpdate);
+    const primarySessionResolver = createWorkboardSessionResolver(host, requestUpdate);
     const stop = () => {
       // A paused page no longer owns shared loads started by session actions.
       if (!refreshActive) {
@@ -229,20 +233,28 @@ export function createWorkboardPage(workboard: WorkboardCapability): ControlUiVi
       const focusedCard = state.draftOpen
         ? state.cards.find((card) => card.id === state.editingCardId)
         : getVisibleDetailCard(state);
-      sessionResolver.sync(
-        focusedCard ? workboardCardSessionKey(focusedCard) : undefined,
+      const executionKey = focusedCard ? workboardCardExecutionSessionKey(focusedCard) : undefined;
+      const primaryKey = focusedCard ? workboardCardSessionKey(focusedCard) : undefined;
+      sessionResolver.sync(executionKey, connected && context.presented);
+      primarySessionResolver.sync(
+        primaryKey !== executionKey ? primaryKey : undefined,
         connected && context.presented,
       );
       const sessionResolution = sessionResolver.resolution;
-      const sessionError =
-        sessionResolution && sessionResolution.status !== "resolved"
-          ? sessionResolution.error
-          : undefined;
+      const primarySessionResolution =
+        primaryKey === executionKey ? sessionResolution : primarySessionResolver.resolution;
+      const sessionError = [sessionResolution, primarySessionResolution]
+        .flatMap((resolution) =>
+          resolution && resolution.status !== "resolved" && resolution.error
+            ? [resolution.error]
+            : [],
+        )
+        .filter((error, index, errors) => errors.indexOf(error) === index)
+        .join("\n");
       const pageError = [metadataError, sessionError].filter(Boolean).join("\n") || undefined;
-      const candidates =
-        sessionResolution?.status === "resolved"
-          ? [sessionResolution.session]
-          : (sessionResolution?.candidates ?? []);
+      const candidates = [sessionResolution, primarySessionResolution].flatMap((resolution) =>
+        resolution?.status === "resolved" ? [resolution.session] : (resolution?.candidates ?? []),
+      );
       const sessions = [
         ...new Map(
           [...host.sessions.rows, ...candidates].map((session) => [session.key, session]),
@@ -329,6 +341,7 @@ export function createWorkboardPage(workboard: WorkboardCapability): ControlUiVi
             defaultAgentId,
             sessions,
             sessionResolution,
+            primarySessionResolution,
             scopeAgentId: scope,
             onClearAgentScope: () => host.agents.setScope(null),
             showAgentFilter: false,
@@ -337,6 +350,7 @@ export function createWorkboardPage(workboard: WorkboardCapability): ControlUiVi
               automations.clear();
               void refreshMetadata();
               sessionResolver.refresh();
+              primarySessionResolver.refresh();
               void refreshWorkboard({
                 host: workboard,
                 client: connected ? client : null,
@@ -430,6 +444,7 @@ export function createWorkboardPage(workboard: WorkboardCapability): ControlUiVi
         unsubscribeEvents();
         unsubscribeCron();
         sessionResolver.dispose();
+        primarySessionResolver.dispose();
         document.removeEventListener("visibilitychange", onVisibilityChange);
         stop();
         render(nothing, container);

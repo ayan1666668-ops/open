@@ -85,6 +85,50 @@ describe("workboard gateway methods", () => {
     },
   );
 
+  it.each([false, true])(
+    "fences binding after workspace reassignment (supplied future revision=%s)",
+    async (supplied) => {
+      const { api, methods } = createGatewayMethodCapture();
+      const store = createWorkboardSqliteTestStore();
+      registerWorkboardGatewayMethods({ api, store });
+      const card = await store.create({
+        title: "Authorized snapshot",
+        workspace: { kind: "dir", path: "/workspace" },
+      });
+      const clock = vi.spyOn(Date, "now").mockReturnValue(card.updatedAt);
+      const originalGet = store.get.bind(store);
+      let moved = card;
+      vi.spyOn(store, "get").mockImplementationOnce(async (id) => {
+        const authorized = await originalGet(id);
+        moved = await store.update(id, { workspace: { kind: "dir", path: "/outside" } });
+        expect(moved.updatedAt).toBe(card.updatedAt + 1);
+        return authorized;
+      });
+      const respond = vi.fn();
+      try {
+        await methods.get("workboard.cards.bindSession")!.handler({
+          params: {
+            id: card.id,
+            action: "bind",
+            sessionKey: "agent:main:intruder",
+            ...(supplied ? { expectedUpdatedAt: card.updatedAt + 1 } : {}),
+          },
+          client: { connect: { scopes: ["operator.write"] } },
+          context: {
+            getRuntimeConfig: () => ({ agents: { defaults: { workspace: "/workspace" } } }),
+          },
+          respond,
+        } as never);
+        expect(respond.mock.calls[0]?.[0]).toBe(false);
+        expect(respond.mock.calls[0]?.[2]?.code).toBe("workboard_conflict");
+        expect(await originalGet(card.id)).toEqual(moved);
+        expect(moved.sessionKey).toBeUndefined();
+      } finally {
+        clock.mockRestore();
+      }
+    },
+  );
+
   it("registers CRUD methods with read/write scopes", async () => {
     const { api, methods } = createGatewayMethodCapture();
 

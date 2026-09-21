@@ -1,6 +1,10 @@
 import type { GatewaySessionRow } from "../../api/types.ts";
 import { normalizeSessionKeyForUiComparison } from "../sessions/session-key.ts";
-import { isFailedSessionStatus, staleSessionState, workboardCardSessionKey } from "./card-state.ts";
+import {
+  isFailedSessionStatus,
+  staleSessionState,
+  workboardCardExecutionSessionKey,
+} from "./card-state.ts";
 import { isReservedSessionKey } from "./session-links.ts";
 import type { WorkboardSessionResolution } from "./session-resolution.ts";
 import { sessionUpdatedAtValue, taskLifecycleSourceUpdatedAt } from "./task-links.ts";
@@ -11,7 +15,14 @@ export function findWorkboardSession(
   sessions: readonly GatewaySessionRow[],
   resolution?: WorkboardSessionResolution,
 ): GatewaySessionRow | null {
-  const sessionKey = workboardCardSessionKey(card);
+  return findWorkboardSessionByKey(workboardCardExecutionSessionKey(card), sessions, resolution);
+}
+
+export function findWorkboardSessionByKey(
+  sessionKey: string | undefined,
+  sessions: readonly GatewaySessionRow[],
+  resolution?: WorkboardSessionResolution,
+): GatewaySessionRow | null {
   if (!sessionKey || isReservedSessionKey(sessionKey)) {
     return null;
   }
@@ -68,12 +79,13 @@ export function getWorkboardLifecycle(
         };
     }
   }
-  if (!workboardCardSessionKey(card)) {
+  if (!workboardCardExecutionSessionKey(card)) {
     return { session: null, state: "unlinked" };
   }
   if (!session) {
     const current =
-      resolution?.key === normalizeSessionKeyForUiComparison(workboardCardSessionKey(card) ?? "");
+      resolution?.key ===
+      normalizeSessionKeyForUiComparison(workboardCardExecutionSessionKey(card) ?? "");
     return {
       session: null,
       state:

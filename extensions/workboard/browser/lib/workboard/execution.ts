@@ -7,7 +7,7 @@ import {
   normalizeString,
   replaceCard,
   workboardCardRunId,
-  workboardCardSessionKey,
+  workboardCardExecutionSessionKey,
 } from "./card-state.ts";
 import { formatError } from "./normalization-utils.ts";
 import { normalizeCardPayload } from "./normalization.ts";
@@ -17,7 +17,7 @@ import {
   workboardMutationsReady,
   type WorkboardHost,
 } from "./runtime.ts";
-import { workboardCardSessionTarget } from "./session-resolution.ts";
+import { workboardCardExecutionSessionTarget } from "./session-resolution.ts";
 import {
   isMissingTaskLookupError,
   listWorkboardTasks,
@@ -44,7 +44,7 @@ const WORKBOARD_SESSION_LABEL_MAX_CHARS = 512;
 export function canStartWorkboardCard(state: WorkboardUiState, card: WorkboardCard): boolean {
   const task = state.tasksByCardId.get(card.id);
   return (
-    !workboardCardSessionKey(card) &&
+    !workboardCardExecutionSessionKey(card) &&
     !taskIsActive(task) &&
     !(card.taskId && !task && !state.missingTaskIds.has(card.taskId))
   );
@@ -237,7 +237,7 @@ export async function startWorkboardCard(params: {
       assertCurrentCard(state, params.card);
       const card = normalizeCardPayload(payload);
       replaceCard(state, card);
-      const sessionKey = workboardCardSessionKey(card);
+      const sessionKey = workboardCardExecutionSessionKey(card);
       const runId = workboardCardRunId(card);
       const task = sessionKey
         ? await findTaskForStartedRun({ client: params.client, card, sessionKey, runId })
@@ -303,8 +303,8 @@ export async function stopWorkboardCard(params: {
   requestUpdate?: () => void;
 }) {
   const state = getWorkboardState(params.host);
-  const linkedSessionKey = workboardCardSessionKey(params.card);
-  const session = workboardCardSessionTarget(params.card, params.session);
+  const linkedSessionKey = workboardCardExecutionSessionKey(params.card);
+  const session = workboardCardExecutionSessionTarget(params.card, params.session);
   const task = state.tasksByCardId.get(params.card.id);
   const cardTaskId = normalizeString(params.card.taskId);
   const taskId = cardTaskId && !state.missingTaskIds.has(cardTaskId) ? cardTaskId : task?.taskId;
