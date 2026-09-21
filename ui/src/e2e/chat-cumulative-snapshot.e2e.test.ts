@@ -71,6 +71,58 @@ suite.define(() => {
     }
   });
 
+  it("sanitizes a long split trace and reconciles the persisted reply", async () => {
+    const context = await suite.newBrowserContext(createControlUiE2eContextOptions());
+    const page = await context.newPage();
+    const gateway = await installMockGateway(page);
+
+    try {
+      await page.goto(`${suite.server.baseUrl}chat`);
+      await page.locator(".agent-chat__composer-combobox textarea").fill("long trace proof");
+      await page.getByRole("button", { name: "Send message" }).click();
+      const sendRequest = await gateway.waitForRequest("chat.send");
+      const runId = requireString(
+        requireRecord(sendRequest.params).idempotencyKey,
+        "chat send idempotency key",
+      );
+      const prefix = `tool_call${" ".repeat(300)}`;
+      await gateway.emitGatewayEvent("chat", {
+        deltaText: prefix,
+        message: {
+          content: [{ text: prefix, type: "text" }],
+          role: "assistant",
+          timestamp: Date.now(),
+        },
+        runId,
+        sessionKey: "main",
+        state: "delta",
+      });
+      const completion = ": hidden\nVisible";
+      await gateway.emitGatewayEvent("chat", {
+        deltaText: completion,
+        message: {
+          content: [{ text: `${prefix}${completion}`, type: "text" }],
+          role: "assistant",
+          timestamp: Date.now(),
+        },
+        runId,
+        sessionKey: "main",
+        state: "delta",
+      });
+
+      const transcript = page.locator(".chat-thread-inner");
+      await transcript.getByText("Visible", { exact: true }).waitFor();
+      expect(await transcript.textContent()).not.toContain("tool_call");
+      expect(await transcript.textContent()).not.toContain("hidden");
+
+      await gateway.emitChatFinal({ runId, text: "Visible" });
+      await expect.poll(() => transcript.getByText("Visible", { exact: true }).count()).toBe(1);
+      expect(await page.locator(".chat-bubble.streaming").count()).toBe(0);
+    } finally {
+      await suite.closeBrowserContext(context);
+    }
+  });
+
   it("processes a cumulative snapshot burst through the production chat path", async () => {
     const context = await suite.newBrowserContext(createControlUiE2eContextOptions());
     const page = await context.newPage();

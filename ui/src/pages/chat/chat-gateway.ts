@@ -5,6 +5,7 @@ import {
 } from "@openclaw/gateway-client/browser";
 import { asNullableRecord as asRecord } from "@openclaw/normalization-core/record-coerce";
 import { extractAssistantPhaseText } from "../../../../src/shared/chat-message-content.js";
+import { appendedTextActivatesAssistantScaffolding } from "../../../../src/shared/text/assistant-visible-text.js";
 import { t } from "../../i18n/index.ts";
 import { accumulatedStreamText } from "../../lib/chat/chat-types.ts";
 import { isAssistantHeartbeatAckForDisplay } from "../../lib/chat/heartbeat-display.ts";
@@ -84,21 +85,12 @@ function hasSplitModelSpecialToken(currentStream: string, deltaText: string): bo
 const STREAM_PROJECTION_BOUNDARY_WINDOW = 256;
 
 function deltaCompletesHiddenAssistantSyntax(currentStream: string, deltaText: string): boolean {
-  const boundaryStarts = [Math.max(0, currentStream.length - STREAM_PROJECTION_BOUNDARY_WINDOW)];
-  if (deltaText.includes(">")) {
-    // XML-style sanitizer families accept arbitrarily long attributes. When
-    // this delta can close a tag, retain the complete suffix from the most
-    // recent opener instead of assuming a fixed lookbehind is sufficient.
-    const lastAngleOpen = currentStream.lastIndexOf("<");
-    if (lastAngleOpen >= 0) {
-      boundaryStarts.push(lastAngleOpen);
-    }
-  }
-
-  return boundaryStarts.some((boundaryStart) => {
-    const boundaryText = `${currentStream.slice(boundaryStart)}${deltaText}`;
-    return extractText({ role: "assistant", content: boundaryText }) !== boundaryText;
-  });
+  const boundaryStart = Math.max(0, currentStream.length - STREAM_PROJECTION_BOUNDARY_WINDOW);
+  const boundaryText = `${currentStream.slice(boundaryStart)}${deltaText}`;
+  return (
+    extractText({ role: "assistant", content: boundaryText }) !== boundaryText ||
+    appendedTextActivatesAssistantScaffolding(currentStream, deltaText)
+  );
 }
 
 function resolveDeltaChatStreamText(
@@ -132,9 +124,9 @@ function resolveDeltaChatStreamText(
     }
 
     // Hidden syntax can begin in the visible prefix and finish in the next
-    // delta. Probe the ordinary bounded join window plus the complete suffix
-    // from an XML opener when this delta can close it; the full cumulative
-    // projection remains authoritative when the join activates a sanitizer.
+    // delta. Probe the ordinary bounded join window plus canonical nonlocal
+    // activation points; the full cumulative projection remains authoritative
+    // whenever the append activates a sanitizer family.
     if (
       hasSplitModelSpecialToken(currentStream, deltaText) ||
       deltaCompletesHiddenAssistantSyntax(currentStream, deltaText)

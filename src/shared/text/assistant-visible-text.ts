@@ -832,6 +832,38 @@ export function stripAssistantInternalScaffolding(text: string): string {
 }
 
 /**
+ * Returns whether appending a delta can activate syntax whose opening marker
+ * predates a caller's bounded lookbehind. Keep these completion characters
+ * beside the canonical sanitizer grammar so streaming consumers do not need
+ * to duplicate its families.
+ */
+export function appendedTextActivatesAssistantScaffolding(
+  currentText: string,
+  appendedText: string,
+): boolean {
+  const candidateStarts: number[] = [];
+  if (/[=:]/.test(appendedText)) {
+    candidateStarts.push(
+      Math.max(currentText.lastIndexOf("\n"), currentText.lastIndexOf("\r")) + 1,
+    );
+  }
+  if (appendedText.includes(">")) {
+    candidateStarts.push(currentText.lastIndexOf("<"));
+  }
+  if (appendedText.includes("]")) {
+    candidateStarts.push(currentText.lastIndexOf("["));
+  }
+
+  return candidateStarts.some((start) => {
+    if (start < 0) {
+      return false;
+    }
+    const candidate = `${currentText.slice(start)}${appendedText}`;
+    return stripAssistantInternalScaffolding(candidate) !== candidate;
+  });
+}
+
+/**
  * Canonical user-visible assistant text sanitizer for delivery and history
  * extraction paths. Keeps prose, removes internal scaffolding.
  */

@@ -936,6 +936,13 @@ describe("handleChatGatewayEvent", () => {
       expected: "",
     },
     {
+      name: "projects trace syntax whose separator arrives beyond the bounded probe",
+      previous: `tool_call${" ".repeat(300)}`,
+      delta: ": hidden\nVisible",
+      snapshot: `tool_call${" ".repeat(300)}: hidden\nVisible`,
+      expected: "Visible",
+    },
+    {
       name: "replaces the stream when gateway deltaText marks a replacement",
       previous: "Alpha beta",
       delta: "Alpha",
