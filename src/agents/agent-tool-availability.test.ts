@@ -139,16 +139,22 @@ describe("execution allowlist availability", () => {
 });
 
 describe("collector tool availability", () => {
-  it("keeps provider-normalized collector fields when availability is finalized", () => {
+  it("preserves normalized collector fields across availability changes", () => {
     const source = spawnTool();
-    finalizeAgentToolAvailability([source, reader()]);
+    const wait = reader();
+    finalizeAgentToolAvailability([source, wait]);
     const normalized = normalizeToolParameters(source, { modelProvider: "google" });
+
+    finalizeAgentToolAvailability([normalized, wait]);
+    expect(normalized.parameters).toHaveProperty("properties.outputSchema.type", "object");
     expect(normalized.parameters).not.toHaveProperty("properties.outputSchema.patternProperties");
 
-    finalizeAgentToolAvailability([normalized, reader()]);
-
-    expect(normalized.parameters).toHaveProperty("properties.outputSchema");
-    expect(normalized.parameters).not.toHaveProperty("properties.outputSchema.patternProperties");
+    finalizeAgentToolAvailability([normalized]);
+    expect(normalized.parameters).not.toHaveProperty("properties.outputSchema");
+    const wrapped = wrapToolWithBeforeToolCallHook(normalized);
+    finalizeAgentToolAvailability([wrapped, wait]);
+    expect(wrapped.parameters).toHaveProperty("properties.outputSchema.type", "object");
+    expect(wrapped.parameters).not.toHaveProperty("properties.outputSchema.patternProperties");
   });
 
   it.each(["missing", "lookalike", "quarantined", "denied", "execution-denied"] as const)(
