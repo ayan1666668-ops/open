@@ -93,6 +93,53 @@ role or explicitly disabling the plugin prevents its use by those consumers.
 
 ## Local System One server
 
+### Run Kev
+
+[Kev](https://github.com/jaredpalmer/kev) is an Apache-2.0 family of decision
+models that serves the System One API through a persistent Python process.
+It supports Apple Silicon and CUDA. The Qwen3-based Kev-0.6B, Kev-4B, and
+Kev-8B checkpoints have been tested with this adapter.
+
+For a Mac, start with the Qwen3-based Kev-4B checkpoint. This example requires
+Python 3.12+ and [uv](https://docs.astral.sh/uv/), and pins the tested adapter
+revision in a local directory. The first server start also downloads its base
+model weights:
+
+```sh
+git clone https://github.com/jaredpalmer/kev.git
+cd kev
+git checkout 5f78968927069eaacc3b2bdb688586989b3933ac
+uv sync --frozen --extra serve
+uv run python - <<'PY'
+from huggingface_hub import snapshot_download
+
+snapshot_download(
+    "jaredpalmer/kev-4b",
+    revision="c4bfa11b0dc07691884f2d97f1c4c4c05c92e416",
+    local_dir="models/kev-4b-qwen3",
+)
+PY
+KEV_DTYPE=bf16 uv run --extra serve python -m kev.serve \
+  --run models/kev-4b-qwen3 --port 8009
+```
+
+The newer default Kev-4B checkpoint uses Qwen3.5; its Mac performance differs
+from the Qwen3 checkpoint above. Follow the upstream model cards when choosing
+another checkpoint. Kev-0.6B uses less memory; Kev-8B trades more memory and
+latency for decision quality. All of them use the same OpenClaw model label
+for the server you configure below.
+
+From the same Kev checkout in a second terminal, verify the loaded checkpoint
+and run Kev's API tests:
+
+```sh
+curl --fail http://127.0.0.1:8009/v1/models
+KEV_BASE_URL=http://127.0.0.1:8009 \
+  uv run --extra serve python -m pytest tests/test_api.py -q
+```
+
+### Connect OpenClaw
+
 Start your System One server separately, then set `baseUrl` to its loopback
 origin and select `typesafe/kev-latest`:
 
