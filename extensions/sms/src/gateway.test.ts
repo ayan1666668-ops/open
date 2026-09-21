@@ -255,7 +255,7 @@ describe("startSmsGatewayAccount", () => {
 
     const route = expectDefined(registerPluginHttpRoute.mock.calls[0]?.[0], "SMS webhook route");
     expect(route).toMatchObject({ path: "/webhooks/sms" });
-    expect(route?.match).toBeUndefined();
+    expect(route.match).toBeUndefined();
 
     const getReq = { method: "GET" } as IncomingMessage;
     const getRes = {} as ServerResponse;
