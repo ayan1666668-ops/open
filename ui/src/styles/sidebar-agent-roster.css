@@ -11,7 +11,7 @@ openclaw-sidebar-agent-roster {
   padding-inline-end: 0;
 }
 
-.sidebar-agent-roster__header {
+.sidebar-agent-roster__header.sidebar-recent-sessions__head {
   display: grid;
   grid-template-columns: 20px minmax(0, 1fr) auto;
   align-items: center;

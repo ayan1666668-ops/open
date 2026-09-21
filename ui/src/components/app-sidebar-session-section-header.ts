@@ -5,6 +5,8 @@ export function renderSidebarSessionSectionHeader(params: {
   sectionId: string;
   content: TemplateResult;
   draggable?: boolean;
+  className?: string;
+  writeDragData?: (dataTransfer: DataTransfer | null, id: string) => void;
   disabledReason?: string;
   onStartDrag: (sectionId: string) => void;
   onFinishDrag: () => void;
@@ -13,7 +15,7 @@ export function renderSidebarSessionSectionHeader(params: {
   const draggable = params.draggable !== false && !params.disabledReason;
   return html`
     <div
-      class="sidebar-recent-sessions__head ${
+      class="sidebar-recent-sessions__head ${params.className ?? ""} ${
         draggable ? "sidebar-recent-sessions__head--draggable" : ""
       }"
       draggable=${draggable ? "true" : "false"}
@@ -43,7 +45,10 @@ export function renderSidebarSessionSectionHeader(params: {
           return;
         }
         if (event.dataTransfer) {
-          writeSidebarSectionDragData(event.dataTransfer, params.sectionId);
+          (params.writeDragData ?? writeSidebarSectionDragData)(
+            event.dataTransfer,
+            params.sectionId,
+          );
           params.onStartDrag(params.sectionId);
         }
       }}
