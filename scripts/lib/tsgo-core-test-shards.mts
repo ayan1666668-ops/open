@@ -89,6 +89,16 @@ export const TSGO_CORE_TEST_SHARDS = [
     group: "src",
     config: "test/tsconfig/tsconfig.core.test.gateway-methods.json",
   },
+  {
+    name: "ui-chat",
+    group: "ui",
+    config: "test/tsconfig/tsconfig.core.test.ui-chat.json",
+  },
+  {
+    name: "agents-sessions",
+    group: "src",
+    config: "test/tsconfig/tsconfig.core.test.agents-sessions.json",
+  },
 ] as const;
 
 export const TSGO_CORE_GRAPHS = [

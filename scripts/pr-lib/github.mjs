@@ -1,9 +1,13 @@
-import { mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
 import { isDirectRunUrl } from "../lib/direct-run.mjs";
 import { execGhRead, execPlainGh } from "../lib/plain-gh.mjs";
-import { parseGithubResponse, rateLimitRetryGuidance } from "./gh-api-preflight.mjs";
+import {
+  isGraphqlQuotaExhausted,
+  parseGithubResponse,
+  rateLimitRetryGuidance,
+} from "./gh-api-preflight.mjs";
 
 function githubAccessFailure(error) {
   const limited = (text) =>
@@ -110,6 +114,7 @@ export function execPrGh(args, options = {}, route = "read") {
     }
     return run(args, captured);
   } catch (error) {
+    const graphqlQuotaExhausted = resourceFor(args) === "graphql" && isGraphqlQuotaExhausted(error);
     const reason = githubAccessFailure(error);
     if (!reason) {
       throw error;
@@ -123,6 +128,8 @@ export function execPrGh(args, options = {}, route = "read") {
         reason === "quota"
           ? ` ${rateLimitRetryGuidance(response)}`
           : " Check access policy before retrying.";
+    } else if (graphqlQuotaExhausted) {
+      diagnostic = "GraphQL primary quota is exhausted; the original reset time is unknown.";
     } else {
       const hostname = quotaHostname(args, inherited);
       const host = hostname ? ["--hostname", hostname] : [];
@@ -151,6 +158,7 @@ export function execPrGh(args, options = {}, route = "read") {
     );
     failure.code = "OPENCLAW_GH_ACCESS";
     failure.status = reason === "quota" ? 75 : 77;
+    failure.graphqlQuotaExhausted = graphqlQuotaExhausted;
     throw failure;
   } finally {
     if (gitPath) {
@@ -209,15 +217,11 @@ function api(repo, endpoint, route, paginate = false, options = {}) {
   );
 }
 
-function pageItems(pages, key) {
-  if (
-    !Array.isArray(pages) ||
-    pages.length === 0 ||
-    pages.some((page) => !Array.isArray(key ? page?.[key] : page))
-  ) {
+function pageItems(pages) {
+  if (!Array.isArray(pages) || pages.length === 0 || pages.some((page) => !Array.isArray(page))) {
     throw invalidMetadata("GitHub returned malformed paginated metadata.");
   }
-  return pages.flatMap((page) => (key ? page[key] : page));
+  return pages.flat();
 }
 
 function user(record) {
@@ -249,11 +253,6 @@ function readPr(repo, pr, fields, route, options = {}) {
   const record = api(repo, `repos/${repo.name}/pulls/${pr}`, route, false, options);
   if (!record || typeof record !== "object" || Array.isArray(record)) {
     throw new Error("GitHub did not return one PR JSON object.");
-  }
-  if (fields.includes("statusCheckRollup") && !/^[0-9a-f]{40}$/.test(record.head?.sha)) {
-    throw invalidMetadata(
-      `Invalid PR identity for #${pr}: expected complete base/head OIDs and refs before reading checks.`,
-    );
   }
   const result = {
     number: record.number,
@@ -310,52 +309,135 @@ function readPr(repo, pr, fields, route, options = {}) {
       changeType: file.status === "removed" ? "DELETED" : file.status?.toUpperCase(),
     }));
   }
-  if (fields.includes("statusCheckRollup")) {
-    const commit = `repos/${repo.name}/commits/${record.head.sha}`;
-    const checks = pageItems(
-      api(repo, `${commit}/check-runs?filter=latest&per_page=100`, route, true, options),
-      "check_runs",
-    );
-    const statuses = pageItems(
-      api(repo, `${commit}/status?per_page=100`, route, true, options),
-      "statuses",
-    );
-    result.statusCheckRollup = [
-      ...checks.map((check) => ({
-        __typename: "CheckRun",
-        name: check.name,
-        status: check.status?.toUpperCase(),
-        conclusion: check.conclusion?.toUpperCase(),
-        detailsUrl: check.details_url,
-        startedAt: check.started_at,
-        completedAt: check.completed_at,
-        workflowName: check.check_suite?.workflow_run?.name ?? "",
-      })),
-      ...statuses.map((check) => ({
-        __typename: "StatusContext",
-        context: check.context,
-        state: check.state?.toUpperCase(),
-        targetUrl: check.target_url,
-        startedAt: check.created_at,
-      })),
-    ];
-  }
   return selectFields(result, fields, "PR");
 }
 
-export function readPrMetadata(pr, repository, fields, readOptions = () => ({})) {
-  const repo = repositoryLocator(repository, "read", readOptions);
-  return readPr(repo, String(pr), fields, "read", { readOptions, revalidate: true });
+export function createPrMetadataReader(repository) {
+  let repo;
+  return (pr, fields, readOptions = () => ({})) => {
+    repo ??= repositoryLocator(repository, "read", readOptions);
+    return readPr(repo, String(pr), fields, "read", { readOptions, revalidate: true });
+  };
 }
 
-function main([route, ...args]) {
-  if (!["plain", "read"].includes(route)) {
+function readCommitAuthors(repository, hostname, commits, route) {
+  const oid = /^[0-9a-f]{40}$/;
+  if (
+    !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository) ||
+    !/^[A-Za-z0-9.-]+(?::[0-9]+)?$/.test(hostname) ||
+    !Array.isArray(commits) ||
+    !commits.every((commit) => oid.test(commit?.oid) && typeof commit.changesTree === "boolean") ||
+    new Set(commits.map((commit) => commit.oid)).size !== commits.length
+  ) {
+    throw invalidMetadata("Invalid source commit author request.");
+  }
+  const remaining = new Map(commits.map((commit) => [commit.oid, commit]));
+  const authors = new Map();
+  let batchSize = 100;
+  let cursor = commits.length - 1;
+  while (remaining.size > 0) {
+    while (!remaining.has(commits[cursor].oid)) {
+      cursor -= 1;
+    }
+    const head = commits[cursor].oid;
+    const limit = Math.min(batchSize, remaining.size);
+    const page = execPrGhJson(
+      ["api", "--hostname", hostname, `repos/${repository}/commits?sha=${head}&per_page=${limit}`],
+      {},
+      route,
+    );
+    if (
+      !Array.isArray(page) ||
+      page.length === 0 ||
+      page.length > limit ||
+      !page.every((commit) => oid.test(commit?.sha)) ||
+      new Set(page.map((commit) => commit.sha)).size !== page.length ||
+      !page.some((commit) => commit.sha === head)
+    ) {
+      throw invalidMetadata("Cannot establish the requested source commit author.");
+    }
+    let resolved = 0;
+    for (const commit of page) {
+      const source = remaining.get(commit.sha);
+      if (!source) {
+        continue;
+      }
+      const author = commit.commit?.author;
+      const account = commit.author;
+      if (
+        typeof author?.name !== "string" ||
+        typeof author.email !== "string" ||
+        (account !== null &&
+          (typeof account?.login !== "string" ||
+            !account.login ||
+            typeof account.type !== "string" ||
+            !account.type))
+      ) {
+        throw invalidMetadata("Cannot establish the requested source commit author.");
+      }
+      authors.set(commit.sha, {
+        name: author.name,
+        email: author.email,
+        user: account === null ? null : { login: account.login, type: account.type },
+        changesTree: source.changesTree,
+      });
+      remaining.delete(commit.sha);
+      resolved += 1;
+    }
+    // A merge can introduce unrelated ancestry. Stop expanding after the first
+    // mixed page: N source commits require at most N calls and N + 99 rows.
+    if (resolved < limit) {
+      batchSize = 1;
+    }
+  }
+  return commits.map((commit) => authors.get(commit.oid));
+}
+
+function assignReviewer(pr, reviewer) {
+  if (!/^[1-9][0-9]*$/.test(pr) || typeof reviewer !== "string" || !reviewer.trim()) {
+    throw new Error("Expected a PR number and reviewer login.");
+  }
+  const repo = repositoryLocator(undefined, "plain");
+  const result = execPrGhJson(
+    [
+      "api",
+      "--hostname",
+      repo.host,
+      `repos/${repo.name}/issues/${pr}/assignees`,
+      "--method",
+      "POST",
+      "-f",
+      `assignees[]=${reviewer}`,
+    ],
+    {},
+    "plain",
+  );
+  if (
+    !Array.isArray(result?.assignees) ||
+    !result.assignees.some((assignee) => assignee?.login === reviewer)
+  ) {
+    throw invalidMetadata("GitHub did not assign the requested reviewer.");
+  }
+}
+
+function main([requestedRoute, ...args]) {
+  if (!["plain", "read", "plain-quota"].includes(requestedRoute)) {
     throw new Error("Expected a GitHub CLI route.");
+  }
+  const route = requestedRoute === "plain-quota" ? "plain" : requestedRoute;
+  if (route === "plain" && args[0] === "assign-reviewer" && args.length === 3) {
+    assignReviewer(args[1], args[2]);
+    return;
+  }
+  if (args[0] === "commit-authors" && args.length === 3) {
+    const authors = readCommitAuthors(args[1], args[2], JSON.parse(readFileSync(0, "utf8")), route);
+    process.stdout.write(`${JSON.stringify(authors)}\n`);
+    return;
   }
   let result;
   // Keep the existing caller/artifact field contract while sourcing ordinary
-  // metadata through REST. Required-check app bindings and merge queue queries
-  // still use their explicit GraphQL owners; REST has no equivalent authority.
+  // metadata through REST. Native landing owns the narrower quota fallback for
+  // required checks and ordinary squash admission; special routes keep GraphQL.
   if (["pr", "repo"].includes(args[0]) && args[1] === "view") {
     const repo = repositoryLocator(option(args, "--repo") || option(args, "-R"), route);
     const fields = option(args, "--json")?.split(",");
@@ -388,15 +470,24 @@ if (isDirectRunUrl(process.argv[1], import.meta.url)) {
   try {
     main(process.argv.slice(2));
   } catch (error) {
-    // Quota errors contain only bounded numeric metadata, never raw response text.
-    if (error.code !== "OPENCLAW_GH_ACCESS" && error.stdout) {
-      process.stdout.write(error.stdout);
+    const args = process.argv.slice(3);
+    const query = args.find((arg) => arg.startsWith("query="));
+    const quotaRead =
+      (args[0] === "pr" && args[1] === "checks") ||
+      (args[0] === "api" && args.includes("graphql") && /^query=\s*query\b/.test(query ?? ""));
+    if (process.argv[2] === "plain-quota" && quotaRead && error.graphqlQuotaExhausted) {
+      process.stdout.write('{"graphqlQuotaExhausted":true}\n');
+    } else {
+      // Quota errors contain only bounded numeric metadata, never raw response text.
+      if (error.code !== "OPENCLAW_GH_ACCESS" && error.stdout) {
+        process.stdout.write(error.stdout);
+      }
+      console.error(
+        error.code === "OPENCLAW_GH_ACCESS"
+          ? error.message
+          : String(error.stderr || error.message).trim(),
+      );
+      process.exitCode = Number.isInteger(error.status) && error.status > 0 ? error.status : 1;
     }
-    console.error(
-      error.code === "OPENCLAW_GH_ACCESS"
-        ? error.message
-        : String(error.stderr || error.message).trim(),
-    );
-    process.exitCode = Number.isInteger(error.status) && error.status > 0 ? error.status : 1;
   }
 }
