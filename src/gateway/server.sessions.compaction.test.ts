@@ -3,7 +3,7 @@
  */
 import fs from "node:fs/promises";
 import path from "node:path";
-import { afterEach, expect, test, vi } from "vitest";
+import { expect, test, vi } from "vitest";
 import { closeGatewayTestWebSocket } from "../../test/helpers/gateway-websocket.js";
 import { createDeferred } from "../../test/helpers/promise.js";
 import type { QueuedCompactionHostOptions } from "../agents/embedded-agent-runner/compact.queued-execution.js";
@@ -31,7 +31,7 @@ import {
 } from "../config/sessions/session-accessor.js";
 import { clearAgentRunContext, registerAgentRunContext } from "../infra/agent-run-registry.js";
 import { loadPendingSessionDeliveries } from "../infra/session-delivery-queue-storage.js";
-import { peekSystemEvents, resetSystemEventsForTest } from "../infra/system-events.js";
+import { peekSystemEvents } from "../infra/system-events.js";
 import { setActivePluginRegistry } from "../plugins/runtime.js";
 import {
   enqueueCommandInLane,
@@ -69,7 +69,6 @@ const { createSessionStoreDir, openClient } = setupGatewaySessionsTestHarness();
 // Each case must first settle the work it started (see the maxLines trim case
 // below), then hand the next case an empty buffer, so no neighbour can read or
 // inherit another case's lifecycle events.
-
 
 function buildSessionTranscriptLines(sessionId: string, totalLines: number): string[] {
   const header = JSON.stringify({

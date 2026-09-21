@@ -25,9 +25,7 @@ import {
   type SettleSessionDeliveryFn,
 } from "../infra/session-delivery-queue-recovery.js";
 import { enqueueSessionDelivery } from "../infra/session-delivery-queue-storage.js";
-import {
-  type QueuedSessionDelivery,
-} from "../infra/session-delivery-queue.records.js";
+import type { QueuedSessionDelivery } from "../infra/session-delivery-queue.records.js";
 import { isPendingControlPlaneUpdateRestartSentinel } from "../infra/update-control-plane-sentinel.js";
 import { recordUpdateRunVerification } from "../infra/update-run-ledger.js";
 import { readUpdateRunReportHealth } from "../infra/update-run-report-health.js";
@@ -45,13 +43,13 @@ import {
   normalizeDeliveryContext,
 } from "../utils/delivery-context.shared.js";
 import {
-  deliverQueuedSessionDeliveryCore,
-  isRestartContinuationBusyRetry,
-} from "./server-restart-sentinel-delivery.js";
-import {
   buildQueuedRestartContinuation,
   RESTART_CONTINUATION_BUSY_MAX_ATTEMPTS,
 } from "./server-restart-sentinel-continuation-intent.js";
+import {
+  deliverQueuedSessionDeliveryCore,
+  isRestartContinuationBusyRetry,
+} from "./server-restart-sentinel-delivery.js";
 import {
   deliverRestartSentinelNotice,
   enqueueRestartSentinelNotice,
@@ -96,7 +94,6 @@ async function waitForRetry(delayMs: number) {
     timer.unref?.();
   });
 }
-
 
 export async function deliverQueuedSessionDelivery(params: {
   deps: CliDeps;
