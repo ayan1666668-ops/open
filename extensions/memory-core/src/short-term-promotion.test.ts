@@ -11,6 +11,7 @@ import * as processRuntime from "openclaw/plugin-sdk/process-runtime";
 import { afterAll, afterEach, beforeAll, describe, expect, it as baseIt, vi } from "vitest";
 import { deriveConceptTags } from "./concept-vocabulary.js";
 import { isPromotionOriginBlocked } from "./dreaming-consolidation-candidates.js";
+import { previewRemDreaming } from "./dreaming-phases.js";
 
 vi.mock("openclaw/plugin-sdk/memory-host-events", () => ({
   appendMemoryHostEvent: vi.fn(async () => {}),
@@ -1669,7 +1670,47 @@ describe("short-term promotion", () => {
     expect(ranked).toStrictEqual([]);
   });
 
-  it("does not rank a REM reflection snippet (note: reflection, no status/recalls) (#154803)", async (workspaceDir) => {
+  it("does not rank a genuinely generated REM reflection block (#154803)", async (workspaceDir) => {
+    // Build the exact bodyLines the REM phase writes via the real
+    // previewRemDreaming/buildRemReflections generator (dreaming-phases.ts),
+    // then wrap them the way writeDailyDreamingPhaseBlock wraps a managed
+    // "## REM Sleep" block. chunkMarkdown preserves raw markdown lines
+    // (heading "### Reflections", "- "/"  - " bullet markers) verbatim into
+    // the indexed snippet, so this reproduces the actual leak rather than a
+    // hand-authored string that the generator never emits.
+    const preview = previewRemDreaming({
+      entries: [
+        {
+          key: "memory:1",
+          path: "memory/2026-04-08.md",
+          startLine: 2,
+          endLine: 2,
+          source: "memory",
+          snippet: "Documented the Ollama provider setup.",
+          recallCount: 4,
+          dailyCount: 0,
+          groundedCount: 0,
+          totalScore: 3.6,
+          maxScore: 0.95,
+          firstRecalledAt: "2026-04-03T00:00:00.000Z",
+          lastRecalledAt: "2026-04-04T00:00:00.000Z",
+          queryHashes: ["a", "b"],
+          recallDays: ["2026-04-03", "2026-04-04"],
+          conceptTags: ["ollama"],
+        },
+      ],
+      limit: 20,
+      minPatternStrength: 0,
+    });
+    const managedRemBlock = [
+      "## REM Sleep",
+      "<!-- openclaw:dreaming:rem:start -->",
+      ...preview.bodyLines,
+      "<!-- openclaw:dreaming:rem:end -->",
+    ].join("\n");
+    expect(managedRemBlock).toContain("### Reflections");
+    expect(managedRemBlock).toContain("note: reflection");
+
     await testing.writeRawRecallStore(workspaceDir, {
       version: 1,
       updatedAt: "2026-04-04T00:00:00.000Z",
@@ -1680,8 +1721,7 @@ describe("short-term promotion", () => {
           startLine: 1,
           endLine: 1,
           source: "memory",
-          snippet:
-            "Reflections: Theme: assistant kept surfacing across 4 memories. confidence: 0.90 evidence: memory/2026-04-08.md:2-2 note: reflection",
+          snippet: managedRemBlock,
           recallCount: 4,
           dailyCount: 0,
           groundedCount: 0,
@@ -1691,7 +1731,7 @@ describe("short-term promotion", () => {
           lastRecalledAt: "2026-04-04T00:00:00.000Z",
           queryHashes: ["a", "b"],
           recallDays: ["2026-04-03", "2026-04-04"],
-          conceptTags: ["assistant"],
+          conceptTags: ["ollama"],
         },
       },
     });
