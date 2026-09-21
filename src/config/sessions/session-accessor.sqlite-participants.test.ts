@@ -777,9 +777,8 @@ describe("SQLite session participants", () => {
       });
       expect(
         recordSessionParticipant(scope, {
-          actor: { type: "human", id: "profile-other" },
+          identity: { type: "profile", id: "profile-other" },
           promptedAt: 2,
-          source: "profile",
         }),
       ).toBe("inserted");
       const storePath = openOpenClawAgentDatabase({ agentId: "main", env: state.env }).path;

@@ -3525,9 +3525,8 @@ describe("main-session-restart-recovery", () => {
       recordSessionParticipant(
         { sessionKey, storePath },
         {
-          actor: { type: "human", id: "profile-other" },
+          identity: { type: "profile", id: "profile-other" },
           promptedAt: cutoff - 9_000,
-          source: "profile",
         },
       ),
     ).toBe("inserted");
@@ -3542,7 +3541,8 @@ describe("main-session-restart-recovery", () => {
     expect(readStore(storePath)[sessionKey]?.abortedLastRun).toBe(true);
 
     await expect(recoverRestartAbortedMainSessions({ stateDir: tmpDir })).resolves.toEqual({
-      recovered: 1,
+      started: 1,
+      settled: 0,
       failed: 0,
       skipped: 0,
     });
@@ -3582,12 +3582,17 @@ describe("main-session-restart-recovery", () => {
 
     await expect(
       markStartupOrphanedMainSessionsForRecovery({ stateDir: tmpDir, updatedBeforeMs: cutoff }),
-    ).resolves.toEqual({ marked: 1, skipped: 0 });
+    ).resolves.toEqual({
+      marked: 1,
+      skipped: 0,
+      failedTargets: [{ agentId: "broken", storePath: brokenStorePath }],
+    });
     expect(readStore(healthyStorePath)["agent:healthy:main"]?.abortedLastRun).toBe(true);
     expect(readStore(brokenStorePath)["agent:broken:main"]?.abortedLastRun).toBeUndefined();
 
     await expect(recoverRestartAbortedMainSessions({ stateDir: tmpDir })).resolves.toEqual({
-      recovered: 1,
+      started: 1,
+      settled: 0,
       failed: 0,
       skipped: 0,
     });
