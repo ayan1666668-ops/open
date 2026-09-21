@@ -364,7 +364,19 @@ describeControlUiE2e("Control UI dashboard MCP Apps", () => {
           viewId: "retained-view",
           expiresAtMs: Date.now() + 3_600_000,
         },
-        "mcp.app.view": appViewPayload(),
+        "mcp.app.view": {
+          ...appViewPayload(),
+          html: `<!doctype html><style>
+            body{margin:0;min-height:100vh;box-sizing:border-box;padding:28px;background:#11222d;color:#dbefed;font:16px system-ui}
+            h1{font-size:36px;margin:8px 0 24px}.metrics{display:flex;gap:16px;margin:24px 0}
+            .metric{flex:1;padding:24px;background:#193746;border:1px solid #38616b;border-radius:12px}
+            strong{display:block;font-size:32px;margin-top:8px}input{display:block;margin-top:8px;padding:12px;border-radius:8px}
+          </style><output>Dashboard app</output><h1>Release overview</h1>
+          <p>A synthetic dashboard for fullscreen layout verification.</p>
+          <div class="metrics"><div class="metric">Checks passed<strong>24 / 24</strong></div>
+          <div class="metric">Median duration<strong>12m 40s</strong></div></div>
+          <label>Draft note <input aria-label="Draft note"></label>`,
+        },
         "tasks.list": { tasks: [] },
       },
     });
@@ -395,12 +407,42 @@ describeControlUiE2e("Control UI dashboard MCP Apps", () => {
 
     await focusChatSidePanel(page);
     await expectRetainedBoardPresentation(page, "expanded");
+    const frameInsets = () =>
+      page.evaluate(() => {
+        const board = document.querySelector("openclaw-board-view");
+        const body = board?.querySelector(".board-widget__body");
+        const frame = board?.querySelector("mcp-app-view")?.shadowRoot?.querySelector("iframe");
+        if (!board || !body || !frame) {
+          throw new Error("Dashboard MCP App layout is unavailable");
+        }
+        const outer = board.getBoundingClientRect();
+        const available = body.getBoundingClientRect();
+        const inner = frame.getBoundingClientRect();
+        return {
+          top: Math.round(inner.top - outer.top),
+          bottom: Math.round(outer.bottom - inner.bottom),
+          bodyHeightGap: Math.round(available.height - inner.height),
+        };
+      });
+    if (artifactDir) {
+      await appContent.waitFor();
+      await page.screenshot({ path: `${artifactDir}/fullscreen-dashboard.png` });
+    }
+    await expect.poll(frameInsets).toEqual({ top: 0, bottom: 0, bodyHeightGap: 0 });
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await expect.poll(frameInsets).toEqual({ top: 0, bottom: 0, bodyHeightGap: 0 });
+    await expectRetainedBoardPresentation(page, "expanded");
+    if (artifactDir) {
+      await page.screenshot({ path: `${artifactDir}/fullscreen-dashboard-resized.png` });
+    }
+    await page.setViewportSize({ width: 1280, height: 800 });
 
     await page
       .locator(".chat-pane__header")
       .getByRole("button", { name: "Restore split", exact: true })
       .click();
     await expectRetainedBoardPresentation(page, "split");
+    await expect.poll(async () => (await frameInsets()).bodyHeightGap).toBe(0);
     await restoreChatAsMain(page);
 
     const draftNote = page
