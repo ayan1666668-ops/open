@@ -366,15 +366,35 @@ describe("runCommandWithTimeout", () => {
     },
   );
 
-  it.runIf(process.platform !== "win32")(
-    "swallows stdin EPIPE when the child exits before input is consumed (#75438)",
+  it.runIf(process.platform !== "win32").each([
+    { admitted: false, exitCode: 0 },
+    { admitted: false, exitCode: 23 },
+    { admitted: true, exitCode: 0 },
+    { admitted: true, exitCode: 23 },
+  ])(
+    "preserves results after early stdin closure (admitted=$admitted, exit=$exitCode)",
     { timeout: 5_000 },
-    async () => {
-      const result = await runCommandWithTimeout([process.execPath, "-e", "process.exit(0)"], {
-        timeoutMs: 3_000,
-        input: "this input will EPIPE because the child ignores stdin\n",
+    async ({ admitted, exitCode }) => {
+      const beforeInput = vi.fn();
+      const result = await runCommandWithTimeout(
+        [
+          process.execPath,
+          "-e",
+          `require('node:fs').closeSync(0);process.stderr.write('stdin closed\\n');process.exitCode=${exitCode};`,
+        ],
+        {
+          timeoutMs: 3_000,
+          // Exceed the pipe buffer so early closure exercises the pending write.
+          input: "x".repeat(8 * 1024 * 1024),
+          ...(admitted ? { beforeInput } : {}),
+        },
+      );
+      expect(result).toMatchObject({
+        code: exitCode,
+        stderr: "stdin closed\n",
+        termination: "exit",
       });
-      expect(result.code).toBe(0);
+      expect(beforeInput).toHaveBeenCalledTimes(admitted ? 1 : 0);
     },
   );
 

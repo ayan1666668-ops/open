@@ -1,9 +1,11 @@
+import type { ChildProcess } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { describe, expect, it, vi } from "vitest";
 import { isPidAlive } from "../shared/pid-alive.js";
 import { withTempDir } from "../test-utils/temp-dir.js";
+import * as execSpawn from "./exec-spawn.js";
 import { runCommandWithTimeout } from "./exec.js";
 
 describe("child input admission", () => {
@@ -34,88 +36,67 @@ describe("child input admission", () => {
     });
   });
 
-  it("joins the child without delivering input when admission rejects", async () => {
-    let pid: number | undefined;
-    const refusal = new Error("authority lost before input");
-    const work = runCommandWithTimeout(
-      [
-        process.execPath,
-        "-e",
-        "process.stdin.on('data',()=>process.stdout.write('effect'));setInterval(()=>{},1000)",
-      ],
-      {
-        input: "forbidden",
-        timeoutMs: 5_000,
-        killProcessTree: true,
-        beforeInput: (childPid) => {
-          pid = childPid;
-          throw refusal;
-        },
-      },
-    );
-    await expect(work).rejects.toBe(refusal);
-    expect(refusal).toMatchObject({
-      cleanup: process.platform === "win32" ? "forced" : "cooperative",
-    });
-    expect(pid).toBeTypeOf("number");
-    expect(isPidAlive(pid!)).toBe(false);
-  });
-
-  it.runIf(process.platform !== "win32")(
-    "does not deliver EOF when admission rejects",
-    async () => {
-      await withTempDir("openclaw-exec-admission-rejection-", async (dir) => {
-        const effectPath = path.join(dir, "effect");
-        const program = [
-          "const fs=require('node:fs');",
-          "const input=fs.readFileSync(0,'utf8');",
-          `fs.writeFileSync(${JSON.stringify(effectPath)},input === '' ? 'eof' : input);`,
-        ].join("");
-        let pid: number | undefined;
-        const refusal = new Error("authority lost before input");
-        const admission = vi.fn((childPid: number) => {
-          pid = childPid;
-          throw refusal;
-        });
-        const work = runCommandWithTimeout([process.execPath, "-e", program], {
+  it.each([undefined, "EPIPE"])(
+    "joins the child without delivering input when admission rejects (%s)",
+    async (code) => {
+      let pid: number | undefined;
+      const refusal = Object.assign(new Error("authority lost before input"), { code });
+      const work = runCommandWithTimeout(
+        [
+          process.execPath,
+          "-e",
+          "process.stdin.on('data',()=>process.stdout.write('effect'));setInterval(()=>{},1000)",
+        ],
+        {
           input: "forbidden",
           timeoutMs: 5_000,
           killProcessTree: true,
-          // Keep cancellation from racing the EOF under test; escalation must
-          // still terminate the blocked child when admission is refused.
-          killSignal: "SIGCHLD",
-          beforeInput: admission,
-        });
-
-        await expect(work).rejects.toBe(refusal);
-        expect(admission).toHaveBeenCalledOnce();
-        expect(existsSync(effectPath)).toBe(false);
-        expect(refusal).toMatchObject({ cleanup: "forced" });
-        expect(pid).toBeTypeOf("number");
-        expect(isPidAlive(pid!)).toBe(false);
+          beforeInput: (childPid) => {
+            pid = childPid;
+            throw refusal;
+          },
+        },
+      );
+      await expect(work).rejects.toBe(refusal);
+      expect(refusal).toMatchObject({
+        cleanup: process.platform === "win32" ? "forced" : "cooperative",
       });
+      expect(pid).toBeTypeOf("number");
+      expect(isPidAlive(pid!)).toBe(false);
     },
   );
 
-  it("delivers admitted empty input as EOF", async () => {
-    await withTempDir("openclaw-exec-admission-empty-input-", async (dir) => {
-      const effectPath = path.join(dir, "effect");
-      const program = [
-        "const fs=require('node:fs');",
-        "const input=fs.readFileSync(0,'utf8');",
-        `fs.writeFileSync(${JSON.stringify(effectPath)},input === '' ? 'eof' : input);`,
-      ].join("");
-      const admission = vi.fn();
-      const result = await runCommandWithTimeout([process.execPath, "-e", program], {
-        input: "",
-        timeoutMs: 5_000,
-        beforeInput: admission,
+  it("cancels and joins the child after a non-EPIPE input fault", async () => {
+    const spawn = execSpawn.spawnCommandWithInvocation;
+    let child: ChildProcess | undefined;
+    const observeSpawn = vi
+      .spyOn(execSpawn, "spawnCommandWithInvocation")
+      .mockImplementation((...args) => {
+        const spawned = spawn(...args);
+        child = spawned.child.nodeChildProcess;
+        return spawned;
       });
-
-      expect(result.code).toBe(0);
-      expect(admission).toHaveBeenCalledOnce();
-      expect(readFileSync(effectPath, "utf8")).toBe("eof");
-    });
+    const failure = Object.assign(new Error("synthetic stdin failure"), { code: "EIO" });
+    const controller = new AbortController();
+    let running: ReturnType<typeof runCommandWithTimeout> | undefined;
+    try {
+      running = runCommandWithTimeout([process.execPath, "-e", "setInterval(()=>{},1000)"], {
+        input: "x".repeat(8 * 1024 * 1024),
+        beforeInput: () => {
+          queueMicrotask(() => child!.stdin!.destroy(failure));
+        },
+        signal: controller.signal,
+        killProcessTree: true,
+        timeoutMs: 3_000,
+      });
+      await expect(running).rejects.toBe(failure);
+      expect(child?.pid).toBeTypeOf("number");
+      expect(isPidAlive(child!.pid!)).toBe(false);
+    } finally {
+      controller.abort();
+      await running?.catch(() => {});
+      observeSpawn.mockRestore();
+    }
   });
 
   it("rejects asynchronous admission and drains its rejection before returning", async () => {
@@ -132,5 +113,58 @@ describe("child input admission", () => {
     );
     await expect(work).rejects.toThrow("must complete synchronously");
     expect(isPidAlive(pid!)).toBe(false);
+  });
+
+  it.runIf(process.platform !== "win32")(
+    "does not deliver EOF when admission rejects",
+    async () => {
+      await withTempDir("openclaw-exec-admission-rejection-", async (dir) => {
+        const effectPath = path.join(dir, "effect");
+        const program = [
+          "const fs=require('node:fs');",
+          "const input=fs.readFileSync(0,'utf8');",
+          `fs.writeFileSync(${JSON.stringify(effectPath)},input === '' ? 'eof' : input);`,
+        ].join("");
+        let pid: number | undefined;
+        const refusal = new Error("authority lost before input");
+        const work = runCommandWithTimeout([process.execPath, "-e", program], {
+          input: "forbidden",
+          timeoutMs: 5_000,
+          killProcessTree: true,
+          // Keep cancellation from racing the EOF under test; escalation must
+          // still terminate the blocked child when admission is refused.
+          killSignal: "SIGCHLD",
+          beforeInput: (childPid) => {
+            pid = childPid;
+            throw refusal;
+          },
+        });
+
+        await expect(work).rejects.toBe(refusal);
+        expect(existsSync(effectPath)).toBe(false);
+        expect(refusal).toMatchObject({ cleanup: "forced" });
+        expect(pid).toBeTypeOf("number");
+        expect(isPidAlive(pid!)).toBe(false);
+      });
+    },
+  );
+
+  it("delivers admitted empty input as EOF", async () => {
+    await withTempDir("openclaw-exec-admission-empty-input-", async (dir) => {
+      const effectPath = path.join(dir, "effect");
+      const program = [
+        "const fs=require('node:fs');",
+        "const input=fs.readFileSync(0,'utf8');",
+        `fs.writeFileSync(${JSON.stringify(effectPath)},input === '' ? 'eof' : input);`,
+      ].join("");
+      const result = await runCommandWithTimeout([process.execPath, "-e", program], {
+        input: "",
+        timeoutMs: 5_000,
+        beforeInput: () => {},
+      });
+
+      expect(result.code).toBe(0);
+      expect(readFileSync(effectPath, "utf8")).toBe("eof");
+    });
   });
 });
