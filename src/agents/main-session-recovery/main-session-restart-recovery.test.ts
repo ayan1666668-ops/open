@@ -4537,7 +4537,7 @@ describe("main-session-restart-recovery", () => {
   });
 
   it("tombstones when the final startup retry consumes the last charge", async ({ signal }) => {
-    const { storePath } = await makeMainSessionFixture({
+    const { storePath, sessionKey } = await makeMainSessionFixture({
       mainRestartRecovery: {
         cycleId: "cycle-final-startup-attempt",
         revision: 1,
@@ -4562,7 +4562,6 @@ describe("main-session-restart-recovery", () => {
       })
       .mockResolvedValueOnce({ runId: "run-resumed" });
 
-    const admission = observeRecoveryAdmissionSettlement("main-session:target-recovery");
     const recovery = scheduleRestartAbortedMainSessionRecovery({
       getConfig: () => ({ agents: { entries: { main: { default: true } } } }),
       delayMs: 0,
@@ -4570,31 +4569,21 @@ describe("main-session-restart-recovery", () => {
       stateDir: tmpDir,
     });
 
-    const cleanup = registerRecoveryFixtureCleanup(async () => {
-      try {
-        await recovery.stop();
-      } finally {
-        admission.restore();
-      }
+    const cleanup = registerRecoveryFixtureCleanup(() => recovery.stop());
+    const target = { sessionKey, storePath };
+    await mockRecoveryRuntime.expectFailedRecovery(2, { stop: cleanup }, signal, target);
+    expect(loadSessionEntry(target)).toMatchObject({
+      status: "failed",
+      mainRestartRecovery: { tombstone: expect.any(Object) },
     });
-    try {
-      await racePromiseWithAbortSignal(admission.settled, signal);
-      expect(loadSessionEntry({ sessionKey: "agent:main:main", storePath })).toMatchObject({
-        status: "failed",
-        mainRestartRecovery: { tombstone: expect.any(Object) },
-      });
-      expect(callGateway).toHaveBeenCalledTimes(2);
-      const freshEntry = loadSessionEntry({ sessionKey: "agent:main:fresh", storePath });
-      expect(freshEntry).toMatchObject({
-        sessionId: "fresh-session",
-        status: "running",
-        abortedLastRun: true,
-        mainRestartRecovery: { chargedAttempts: 3 },
-      });
-      expect(freshEntry?.mainRestartRecovery?.tombstone).toBeUndefined();
-    } finally {
-      await cleanup();
-    }
+    const freshEntry = loadSessionEntry({ sessionKey: "agent:main:fresh", storePath });
+    expect(freshEntry).toMatchObject({
+      sessionId: "fresh-session",
+      status: "running",
+      abortedLastRun: true,
+      mainRestartRecovery: { chargedAttempts: 3 },
+    });
+    expect(freshEntry?.mainRestartRecovery?.tombstone).toBeUndefined();
   });
 
   it("observes final exhaustion in distinct stores for the same logical session", async ({
@@ -4602,7 +4591,7 @@ describe("main-session-restart-recovery", () => {
   }) => {
     await withEnvAsync({ OPENCLAW_STATE_DIR: tmpDir }, async () => {
       const sessionKey = "agent:ops:main";
-      const targets: Parameters<typeof loadSessionEntry>[0][] = [];
+      const targets: Array<{ agentId: string; sessionKey: string; storePath: string }> = [];
       for (const [index, directory] of ["ops", " ops "].entries()) {
         const fixture = await makeMainSessionFixture({
           agentId: directory,
@@ -4623,44 +4612,28 @@ describe("main-session-restart-recovery", () => {
         }
         return { status: "timeout" };
       });
-      const admission = observeRecoveryAdmissionSettlement(
-        "main-session:target-recovery",
-        targets.length,
-      );
       const recovery = scheduleRestartAbortedMainSessionRecovery({
         getConfig: () => ({ agents: { entries: { ops: { default: true } } } }),
         delayMs: 0,
         maxRetries: 1,
         stateDir: tmpDir,
       });
-      const cleanup = registerRecoveryFixtureCleanup(async () => {
-        try {
-          await recovery.stop();
-        } finally {
-          admission.restore();
-        }
-      });
-      try {
-        await racePromiseWithAbortSignal(admission.settled, signal);
-        for (const target of targets) {
-          const entry = loadSessionEntry(target);
-          expect(entry?.mainRestartRecovery?.chargedAttempts).toBe(3);
-          expect(entry?.mainRestartRecovery?.reservation).toBeUndefined();
-        }
-        for (const [index, target] of targets.entries()) {
-          expect(loadSessionEntry(target)).toMatchObject({
-            sessionId: `ops-session-${index}`,
-            status: "failed",
-            abortedLastRun: false,
-            mainRestartRecovery: { tombstone: expect.any(Object) },
-          });
-        }
-        expect(
-          vi.mocked(callGateway).mock.calls.filter(([call]) => call.method === "agent"),
-        ).toHaveLength(2);
-      } finally {
-        await cleanup();
+      const cleanup = registerRecoveryFixtureCleanup(() => recovery.stop());
+      await mockRecoveryRuntime.expectFailedRecovery(4, { stop: cleanup }, signal, ...targets);
+      for (const [index, target] of targets.entries()) {
+        const entry = loadSessionEntry(target);
+        expect(entry?.mainRestartRecovery?.chargedAttempts).toBe(3);
+        expect(entry?.mainRestartRecovery?.reservation).toBeUndefined();
+        expect(entry).toMatchObject({
+          sessionId: `ops-session-${index}`,
+          status: "failed",
+          abortedLastRun: false,
+          mainRestartRecovery: { tombstone: expect.any(Object) },
+        });
       }
+      expect(
+        vi.mocked(callGateway).mock.calls.filter(([call]) => call.method === "agent"),
+      ).toHaveLength(2);
     });
   });
 
