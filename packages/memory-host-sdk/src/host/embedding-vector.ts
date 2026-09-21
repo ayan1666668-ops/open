@@ -9,7 +9,7 @@ export function parseEmbedding(raw: string): number[] {
 }
 
 /** Persistent vectors use IEEE-754 binary64 in little-endian order on every host. */
-export function encodeMemoryEmbedding(embedding: readonly number[]): Uint8Array {
+export function encodeMemoryEmbedding(embedding: readonly number[]): Uint8Array<ArrayBuffer> {
   const bytes = new Uint8Array(embedding.length * 8);
   const view = new DataView(bytes.buffer);
   for (let index = 0; index < embedding.length; index += 1) {

@@ -215,7 +215,6 @@ export const databaseWorkerCoreTestFiles = [
   "src/plugins/update.test.ts",
   "src/plugins/update.work-deadline.test.ts",
   "src/state/openclaw-agent-canonical-validation-schema.test.ts",
-  "src/state/openclaw-agent-transcript-fts-schema.test.ts",
   "src/state/openclaw-agent-db-maintenance.test.ts",
   "src/state/openclaw-agent-db-retired-lease-repair.test.ts",
   "src/state/openclaw-agent-db.storage-migration.test.ts",
