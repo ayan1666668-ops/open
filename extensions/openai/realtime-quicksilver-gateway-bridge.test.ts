@@ -10,10 +10,8 @@ import {
   releaseOpenAIQuicksilverSession,
   reserveOpenAIQuicksilverSession,
 } from "./realtime-quicksilver-session-limit.js";
-import {
-  connectOpenAIQuicksilverSideband,
-  type OpenAIQuicksilverSocketFactory,
-} from "./realtime-quicksilver-sideband.js";
+import { connectOpenAIQuicksilverSideband } from "./realtime-quicksilver-sideband.js";
+import type { OpenAIQuicksilverSocketFactory } from "./realtime-quicksilver-socket.shared.js";
 import {
   createCallResponse,
   emitSideband,

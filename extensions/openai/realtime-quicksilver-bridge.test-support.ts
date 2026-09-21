@@ -11,7 +11,7 @@ import { OpenAIQuicksilverVoiceBridge } from "./realtime-quicksilver-bridge.js";
 import type {
   OpenAIQuicksilverSocket,
   OpenAIQuicksilverSocketFactory,
-} from "./realtime-quicksilver-sideband.js";
+} from "./realtime-quicksilver-socket.shared.js";
 import { fakeQuicksilverMediaSocket } from "./realtime-quicksilver-socket.test-support.js";
 
 export class FakeSocket extends EventEmitter implements OpenAIQuicksilverSocket {

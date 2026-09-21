@@ -33,10 +33,10 @@ import {
   loadOpenAIQuicksilverMediaSocketFactory,
   openAIQuicksilverConnectAbortError,
   waitForOpenAIQuicksilverConnectStep,
-  type OpenAIQuicksilverSocket,
-  type OpenAIQuicksilverSocketFactory,
 } from "./realtime-quicksilver-sideband.js";
 import {
+  type OpenAIQuicksilverSocket,
+  type OpenAIQuicksilverSocketFactory,
   QuicksilverSocketAudioQueue,
   type QuicksilverMediaSocket,
   type QuicksilverMediaSocketFactory,

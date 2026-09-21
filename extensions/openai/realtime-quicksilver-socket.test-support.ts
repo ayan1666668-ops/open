@@ -1,8 +1,8 @@
 import { EventEmitter } from "node:events";
 import type { RealtimeVoiceAudioOutputPort } from "openclaw/plugin-sdk/realtime-voice";
-import type { OpenAIQuicksilverSocketFactory } from "./realtime-quicksilver-sideband.js";
 import { OpenAIQuicksilverSocketRuntime } from "./realtime-quicksilver-socket.runtime.js";
 import type {
+  OpenAIQuicksilverSocketFactory,
   QuicksilverMediaSocket,
   QuicksilverMediaSocketFactory,
 } from "./realtime-quicksilver-socket.shared.js";

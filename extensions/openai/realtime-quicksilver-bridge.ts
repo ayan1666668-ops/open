@@ -26,9 +26,9 @@ import {
   connectOpenAIQuicksilverSideband,
   loadOpenAIQuicksilverMediaSocketFactory,
   waitForOpenAIQuicksilverConnectStep,
-  type OpenAIQuicksilverSocket,
 } from "./realtime-quicksilver-sideband.js";
 import type {
+  OpenAIQuicksilverSocket,
   QuicksilverMediaSocket,
   QuicksilverMediaSocketFactory,
 } from "./realtime-quicksilver-socket.shared.js";

@@ -12,8 +12,8 @@ import {
 } from "./realtime-quicksilver-audio-buffer.js";
 import { parseOpenAIQuicksilverEvent } from "./realtime-quicksilver-events.js";
 import { buildOpenAIQuicksilverAudioAppend } from "./realtime-quicksilver-protocol.js";
-import type { OpenAIQuicksilverSocket } from "./realtime-quicksilver-sideband.js";
 import {
+  type OpenAIQuicksilverSocket,
   QUICKSILVER_SOCKET_AUDIO_BYTES,
   QUICKSILVER_SOCKET_CONTROL_BYTES,
   QUICKSILVER_SOCKET_CONTROL_LIMIT,
