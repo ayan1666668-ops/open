@@ -288,12 +288,25 @@ There is no total disk quota, and an active instance may legitimately exceed the
 one-hour cleanup grace period.
 
 Older `openclaw-plugin-build-*` directories in the system temporary directory
-have no coordinator proving whether their producer is still alive. Startup,
-Doctor (including `--fix`), and update finalization preserve them. Neither age
-nor a lock for one state directory establishes ownership of captures from other
-profiles or containers sharing that temporary directory. No legacy files are
+have no coordinator proving whether their producer is still alive. Doctor reports
+tokenless `openclaw-plugin-build-*` and `openclaw-model-catalog-*` roots under the
+state temporary directory, the current system temporary directory, `/tmp` on
+POSIX hosts, and recorded managed-service `TMPDIR` locations. It deduplicates
+directory aliases and reports each capture's path and regular-file size without
+following links inside captures.
+
+`openclaw doctor --fix` reclaims these legacy roots only while Doctor holds Gateway
+maintenance and a complete host process census finds no other OpenClaw producer.
+The rule rechecks both conditions before each removal and prints a receipt listing
+the paths removed and their sizes. A live sibling, unavailable census, or missing
+maintenance authority leaves the captures in place with an explanatory message.
+Captures created or changed during the current process and token-bearing captures
+remain untouched. On hosts without a complete process-argument census (including
+macOS, Windows, and recognized container environments), Doctor reports legacy
+captures but skips their removal. For a container sharing the host's temporary
+directory, run maintenance on the host after stopping its OpenClaw containers.
+Modern captures retain their existing custody-token cleanup; no legacy files are
 moved or adopted by the new runtime.
-Doctor lists legacy `openclaw-plugin-build-*` and `openclaw-model-catalog-*` roots under the state temporary directory, their count and total size, and a bounded removal command to run only after every Gateway, CLI process, and container using that state directory has stopped; it never executes the command.
 
 Configured Gateway agents share one model-catalog worker per plugin-inventory
 lifetime. Agent and authentication facts belong to each task; plugin registrations

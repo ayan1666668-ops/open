@@ -9,22 +9,28 @@ const { census, definitelyDead, directory, readStat } = vi.hoisted(() => ({
 vi.mock("node:child_process", () => ({ spawnSync: census }));
 vi.mock("node:fs", () => ({ readdirSync: directory, readFileSync: readStat }));
 vi.mock("../../shared/pid-alive.js", () => ({ isPidDefinitelyDead: definitelyDead }));
-import { hasLiveOwnedProcessGroupMembers } from "./service-child-group-ownership.js";
+import {
+  hasLiveOwnedProcessGroupMembers,
+  readProcessGroupMembers,
+} from "./service-child-group-ownership.js";
 
 const owner = process.pid;
 let rows: Map<number, string | Error>;
-function stat(pid: number, group: number, state = "S", name = "worker") {
-  return `${pid} (${name}) ${state} 1 ${group} 0 0`;
+let commands: Map<number, string | Error>;
+function stat(pid: number, group: number, state = "S", name = "worker", ppid = 1) {
+  return `${pid} (${name}) ${state} ${ppid} ${group} 0 0`;
 }
 
 beforeEach(() => {
   census.mockReset().mockReturnValue({ error: new Error("ps is unavailable") });
   definitelyDead.mockReset().mockReturnValue(false);
   rows = new Map([[owner, stat(owner, owner)]]);
+  commands = new Map([[owner, "openclaw-doctor\0"]]);
   directory.mockReset().mockImplementation(() => ["self", ...Array.from(rows.keys(), String)]);
   readStat.mockReset().mockImplementation((file: string) => {
-    const match = /^\/proc\/(\d+)\/stat$/.exec(file);
-    const value = match ? rows.get(Number(match[1])) : undefined;
+    const match = /^\/proc\/(\d+)\/(stat|cmdline)$/.exec(file);
+    const source = match?.[2] === "cmdline" ? commands : rows;
+    const value = match ? source.get(Number(match[1])) : undefined;
     if (value === undefined || value instanceof Error) {
       throw value ?? new Error(`Unexpected fixture read: ${file}`);
     }
@@ -135,4 +141,13 @@ it.each([false, true])("excludes only Darwin's exact inspector PID (other member
     stdout: `${owner} ${owner} S\n${owner + 1} ${owner} R\n${owner + 2} ${other ? owner : owner + 2} S\n`,
   });
   expect(hasLiveOwnedProcessGroupMembers()).toBe(other);
+});
+
+it("preserves Linux command argument boundaries and process ancestry in command mode", () => {
+  const argv = ["node", "/app with spaces/openclaw.mjs", "doctor", "--profile", "two words"];
+  rows.set(owner, stat(owner, owner + 1, "S", "worker ) (with\nname", owner + 2));
+  commands.set(owner, `${argv.join("\0")}\0`);
+  expect([...readProcessGroupMembers(1_000, true)]).toEqual([
+    { pid: owner, pgid: owner + 1, state: "S", command: { ppid: owner + 2, argv } },
+  ]);
 });

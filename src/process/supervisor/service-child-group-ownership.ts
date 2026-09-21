@@ -3,7 +3,12 @@ import { readdirSync, readFileSync } from "node:fs";
 import { extractErrorCode } from "@openclaw/normalization-core/error-coercion";
 import { isPidDefinitelyDead } from "../../shared/pid-alive.js";
 
-type GroupMember = { pid: number; pgid: number; state: string };
+type GroupMember = {
+  pid: number;
+  pgid: number;
+  state: string;
+  command?: { ppid: number; argv: string[] };
+};
 
 /** Only kernel absence, observed outside the owned group, confirms extinction. */
 export function isOwnedProcessGroupGone(pgid: number): boolean {
@@ -22,7 +27,11 @@ export function isOwnedProcessGroupGone(pgid: number): boolean {
   }
 }
 
-function* readProcessGroupMembers(timeoutMs: number): Generator<GroupMember> {
+/** Command facts are opt-in so group retirement keeps its stat-only census. */
+export function* readProcessGroupMembers(
+  timeoutMs: number,
+  includeCommand = false,
+): Generator<GroupMember> {
   if (process.platform === "linux") {
     const deadline = Date.now() + timeoutMs;
     for (const name of readdirSync("/proc")) {
@@ -34,8 +43,12 @@ function* readProcessGroupMembers(timeoutMs: number): Generator<GroupMember> {
       }
       const pid = Number(name);
       let stat: string;
+      let argv: string[] | undefined;
       try {
         stat = readFileSync(`/proc/${name}/stat`, "utf8");
+        if (includeCommand) {
+          argv = readFileSync(`/proc/${name}/cmdline`, "utf8").split("\0").filter(Boolean);
+        }
       } catch (error) {
         // Foreign processes may disappear between enumeration and their stat read.
         if (pid !== process.pid && ["ENOENT", "ESRCH"].includes(extractErrorCode(error) ?? "")) {
@@ -45,16 +58,33 @@ function* readProcessGroupMembers(timeoutMs: number): Generator<GroupMember> {
       }
       // comm can contain spaces, newlines and parentheses; pgrp follows PPID
       // after its final closing parenthesis (Linux procfs stat fields 1..5).
-      const match = /^(\d+) \([\s\S]*\) (\S) \d+ (\d+)(?:\s|$)/.exec(stat);
+      const match = /^(\d+) \([\s\S]*\) (\S) (\d+) (\d+)(?:\s|$)/.exec(stat);
       if (!match || Number(match[1]) !== pid || Date.now() >= deadline) {
         throw new Error("Process group census is unavailable");
       }
-      yield { pid, pgid: Number(match[3]), state: match[2]! };
+      if (argv?.length === 0) {
+        // Empty cmdline is normal for kernel threads, but cannot identify a live
+        // userspace process (including a zombie leader with surviving threads).
+        const flags = Number(stat.slice(stat.lastIndexOf(")") + 2).split(/\s+/)[6]);
+        const kernelThread = Number.isInteger(flags) && (flags & 0x0020_0000) !== 0;
+        if (!kernelThread && !isPidDefinitelyDead(pid)) {
+          throw new Error(`Cannot identify live process ${pid}`);
+        }
+      }
+      yield {
+        pid,
+        pgid: Number(match[4]),
+        state: match[2]!,
+        ...(argv ? { command: { ppid: Number(match[3]), argv } } : {}),
+      };
     }
     if (Date.now() >= deadline) {
       throw new Error("Process group census exceeded its deadline");
     }
     return;
+  }
+  if (includeCommand) {
+    throw new Error(`Exact process command census is unavailable on ${process.platform}.`);
   }
   const census = spawnSync("/bin/ps", ["-A", "-o", "pid=,pgid=,stat="], {
     encoding: "utf8",
