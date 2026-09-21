@@ -36,6 +36,7 @@ The generic internal contract is `DynamicsProfile`:
 - mutation budget
 - verification weight
 - information boundary
+- generic spawn requirements: sandbox mode, candidate identity, and artifact presence
 
 The five built-in names are presets over that contract, not five new security
 principals:
@@ -47,9 +48,10 @@ principals:
 - `glass-breaker`
 
 The first layer binds the resolved preset and bounded explicit handoff into the
-existing native collector launch path. The verifier preset additionally requests
-the existing sandbox owner with `sandbox: "require"`; rejection is not retried
-unsandboxed.
+existing native collector launch path. Enforcement is derived from the resolved
+generic requirements, never from a privileged profile-name branch. The verifier
+preset currently resolves to required sandbox, candidate digest, and artifact
+references; rejection is not retried unsandboxed.
 
 Implementation:
 
@@ -250,17 +252,19 @@ reusing a prior collector.
 
 ### 7. Lifetime has an owner
 
-Advisory tracking belongs to the parent run. Parent abort/failure releases that
-bookkeeping without mutating live sibling collectors.
+Advisory tracking belongs to the parent run. Parent catalog/run disposal or abort
+releases that bookkeeping without mutating live sibling collectors. Recoverable
+wait errors do not destroy the observer.
 
 Search may be highly parallel; ownership and cleanup may not be ambiguous.
 
 ### 8. Fail closed at independence boundaries
 
-The verifier asks the existing sandbox owner for `sandbox: "require"`. A failure
-is surfaced; there is no unsandboxed retry.
+The resolved profile requirements ask the existing sandbox owner for
+`sandbox: "require"` where required. A failure is surfaced; there is no
+unsandboxed retry.
 
-The profile name itself is not proof of independence.
+The preset name itself is not an authority hook or proof of independence.
 
 ## Time-scale separation
 
@@ -411,6 +415,7 @@ search-only ------------------------------------> existing effect owner
 This is the central engineering claim of Liquid Software Factory:
 
 > computation may accumulate evidence without accumulating permission.
+
 ## What this experiment does not claim
 
 It does not yet provide:
@@ -437,6 +442,12 @@ The strongest end-to-end demonstration is a real native campaign that shows:
 5. sandbox-required verifier execution
 6. rejection without an unsandboxed retry when sandboxing is unavailable
 7. replay against the same candidate identity
+
+The repository now includes an in-process native-boundary test that reaches the
+real `spawnSubagentDirect` admission path, proves prepared verifier/candidate
+guidance reaches native dispatch when sandbox admission succeeds, and proves a
+required sandbox rejects before dispatch with no downgrade. A model-backed
+collector transcript remains the strongest final proof.
 
 That demonstration is stronger than adding more mocked helper tests because it
 tests the complete native boundary while preserving the existing authority model.
