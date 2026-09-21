@@ -1,5 +1,22 @@
+import { captureChatSessionScrollPosition, type ChatSessionScrollPosition } from "../scroll.ts";
+
+export type TranscriptViewport = ChatSessionScrollPosition & {
+  height: number;
+  scrollHeight: number;
+};
+
+export function captureTranscriptViewport(element: HTMLElement): TranscriptViewport {
+  const { clientHeight, scrollHeight, scrollTop } = element;
+  return {
+    height: clientHeight,
+    scrollHeight,
+    ...captureChatSessionScrollPosition({ clientHeight, scrollHeight, scrollTop }),
+  };
+}
+
 export type TranscriptScrollObservation =
   | { type: "input"; event: Event; touching: boolean }
+  | { type: "maintenance"; before: TranscriptViewport; after: TranscriptViewport }
   | {
       type: "offset";
       delta: number;
