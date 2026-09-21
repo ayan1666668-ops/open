@@ -4,15 +4,14 @@ import type {
   readSessionEntryResetRecallCutoff,
 } from "../../../packages/memory-host-sdk/src/host/session-files.js";
 import type { PreparedSessionHistoryReadTarget } from "../../gateway/session-history-read.types.js";
-import type { SessionTitleFields } from "../../gateway/session-transcript-title-reader.js";
-import type { SessionPreviewItem } from "../../gateway/session-utils.types.js";
+import type { SessionPreviewItem, SessionTitleFields } from "../../gateway/session-utils.types.js";
 import type {
   SessionCostUsageCacheRead,
   SessionCostUsageCacheReadResult,
 } from "../../infra/session-cost-usage-cache-read.js";
 import type { SensitiveTextRedactionSnapshot } from "../../logging/redact.js";
 import type { UserTurnTranscriptAdmissionReceipt } from "../../sessions/user-turn-transcript.types.js";
-import type { resolveSessionLifecycleTimestamps } from "./lifecycle.js";
+import type { SessionLifecycleTimestamps } from "./lifecycle.types.js";
 import type {
   SessionBranchSummaryReadRequest,
   SessionBranchSummaryReadResult,
@@ -158,7 +157,7 @@ export type SessionExactEntriesWorkerInput = {
 export type SessionExactEntriesWorkerResult = {
   kind: "session-exact-entries";
   entries: SessionEntrySummary[];
-  lifecycleTimestamps: ReturnType<typeof resolveSessionLifecycleTimestamps>;
+  lifecycleTimestamps: SessionLifecycleTimestamps;
 };
 
 export type SessionStoreTargetWorkerInput = {

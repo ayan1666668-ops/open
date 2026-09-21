@@ -1,6 +1,7 @@
 // Session lifecycle timestamps prefer store metadata and fall back to transcript headers.
 import { asDateTimestampMs } from "@openclaw/normalization-core/number-coercion";
 import { resolveAgentIdFromSessionKey } from "../../routing/session-key.js";
+import type { SessionLifecycleTimestamps } from "./lifecycle.types.js";
 import { canonicalizeMainSessionAlias } from "./main-session.js";
 import { loadTranscriptHeaderSync, readTranscriptMutationStateSync } from "./session-accessor.js";
 import {
@@ -212,7 +213,7 @@ export function resolveSessionLifecycleTimestamps(params: {
   sessionKey?: string;
   storePath?: string;
   readHeader?: (sessionId: string) => unknown;
-}): { sessionStartedAt?: number; lastInteractionAt?: number } {
+}): SessionLifecycleTimestamps {
   const entry = params.entry;
   if (!entry) {
     return {};
