@@ -529,6 +529,19 @@ describe("ui.prefs.accent", () => {
   });
 });
 
+describe("ui.prefs.sidebarAgentOrder", () => {
+  it("accepts ordered IDs and an explicit reset", () => {
+    for (const sidebarAgentOrder of [["work", "main", "temporarily-missing"], []]) {
+      expect(validateConfigObject({ ui: { prefs: { sidebarAgentOrder } } }).ok).toBe(true);
+    }
+  });
+  it("rejects non-string IDs", () => {
+    expect(validateConfigObject({ ui: { prefs: { sidebarAgentOrder: ["work", 7] } } }).ok).toBe(
+      false,
+    );
+  });
+});
+
 describe("ui.prefs.sidebarEntries", () => {
   it("accepts the route and session entries synchronized by the Control UI", () => {
     const result = validateConfigObject({

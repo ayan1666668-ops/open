@@ -8,6 +8,7 @@ import { normalizeUiAppearancePreference } from "../../../packages/gateway-proto
 import { DEFAULT_SIDEBAR_ENTRIES, normalizeSidebarEntries } from "../app-navigation.ts";
 import { configuredUiDevGateway } from "../dev-gateway.ts";
 import { isSupportedLocale } from "../i18n/index.ts";
+import { normalizeSidebarAgentOrder } from "../lib/agents/sidebar-order.ts";
 import { normalizeBoardSessionViews, type BoardSessionViews } from "../lib/board/settings.ts";
 import { getSafeLocalStorage, getSafeSessionStorage } from "../local-storage.ts";
 import {
@@ -216,7 +217,8 @@ export type UiSettings = {
   sidebarAgentsMode?: "chip" | "roster";
   sidebarPreTeamScope?: string | null; // null remembers All agents; undefined means unset.
   sidebarCollapsedAgentIds?: string[];
-  sidebarEntries: string[]; // Ordered routes, plugin navigation, and pinned sessions below Home
+  sidebarEntries: string[];
+  sidebarAgentOrder?: string[]; // Ordered routes, plugin navigation, and pinned sessions below Home
   sidebarLiveActivity?: boolean; // Latest activity under running sidebar sessions (default true)
   chatMessageMaxWidth?: string; // Browser-local centered chat transcript max width
   showAdvancedSettings?: boolean; // Expand advanced schema settings (default false)
@@ -481,6 +483,7 @@ export function loadUiPreferences(
     navWidth: NAV_WIDTH_DEFAULT,
     sidebarAgentsMode: "chip",
     sidebarEntries: [...DEFAULT_SIDEBAR_ENTRIES],
+    sidebarAgentOrder: [],
     sidebarLiveActivity: UI_APPEARANCE_DEFAULTS.sidebarLiveActivity,
     showAdvancedSettings: false,
     pinnedAgentIds: [],
@@ -577,6 +580,7 @@ export function loadUiPreferences(
       sidebarAgentsMode: parsed.sidebarAgentsMode === "roster" ? "roster" : "chip",
       sidebarPreTeamScope: normalizeSidebarPreTeamScope(parsed.sidebarPreTeamScope),
       sidebarCollapsedAgentIds: normalizeUniqueTrimmedStringList(parsed.sidebarCollapsedAgentIds),
+      sidebarAgentOrder: normalizeSidebarAgentOrder(parsedRecord.sidebarAgentOrder) ?? [],
       sidebarEntries:
         normalizeSidebarEntries(parsedRecord.sidebarEntries) ??
         migratedSidebarEntries ??
@@ -746,6 +750,7 @@ function persistSettings(next: UiSettings, options: { selectGateway?: boolean } 
         }
       : {}),
     sidebarEntries: next.sidebarEntries,
+    sidebarAgentOrder: normalizeSidebarAgentOrder(next.sidebarAgentOrder) ?? [],
     ...(next.sidebarLiveActivity === false ? { sidebarLiveActivity: false } : {}),
     ...(normalizeChatMessageMaxWidth(next.chatMessageMaxWidth)
       ? { chatMessageMaxWidth: normalizeChatMessageMaxWidth(next.chatMessageMaxWidth) }

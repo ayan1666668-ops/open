@@ -186,6 +186,8 @@ export type OpenClawConfig = {
       chatFollowUpMode?: "steer" | "queue";
       /** Ordered page and pinned-session entries shown in the Control UI sidebar. */
       sidebarEntries?: string[];
+      /** Manual team-sidebar agent order; absent agents are retained, new agents follow. */
+      sidebarAgentOrder?: string[];
     };
   };
   /** Secret providers, defaults, and ref-resolution settings. */

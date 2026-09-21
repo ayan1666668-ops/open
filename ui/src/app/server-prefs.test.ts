@@ -454,6 +454,23 @@ describe("clearable pref removal from the server", () => {
   });
 });
 
+describe("agent order synced preference", () => {
+  it("normalizes saved IDs, applies explicit order and server reset", () => {
+    const onApplied = vi.fn();
+    expect(
+      extractServerUiPrefs(configWithPrefs({ sidebarAgentOrder: ["work", "work", "", "missing"] })),
+    ).toEqual({ sidebarAgentOrder: ["work", "missing"] });
+    applyServerUiPrefs(configWithPrefs({ sidebarAgentOrder: ["work", "missing"] }), { onApplied });
+    expect(loadSettings().sidebarAgentOrder).toEqual(["work", "missing"]);
+    applyServerUiPrefs(configWithPrefs({ sidebarAgentOrder: [] }), { onApplied });
+    expect(loadSettings().sidebarAgentOrder).toEqual([]);
+    const previous = loadSettings();
+    expect(changedServerUiPrefs(previous, { ...previous, sidebarAgentOrder: ["work"] })).toEqual({
+      sidebarAgentOrder: ["work"],
+    });
+  });
+});
+
 describe("pushServerUiPrefs", () => {
   const pendingKey = (scope: string) => `openclaw.control.serverPrefs.pending.v1:${scope}`;
   const lastSeenKey = (scope: string) => `openclaw.control.serverPrefs.v1:${scope}`;
@@ -1042,6 +1059,22 @@ describe("pushServerUiPrefs", () => {
     expect(request).toHaveBeenCalledTimes(12);
     expect(localStorage.getItem(pendingKey("ws://gw"))).not.toBeNull();
   });
+
+  it.each([{ sidebarAgentOrder: ["work", "main"] }, { sidebarAgentOrder: [] }])(
+    "replaces synchronized agent order including reset ($sidebarAgentOrder)",
+    async ({ sidebarAgentOrder }) => {
+      const request = vi.fn<(method: string, params?: unknown) => Promise<unknown>>(
+        async () => ({}),
+      );
+      pushServerUiPrefs(createClient(request), { sidebarAgentOrder });
+      await vi.waitFor(() => expect(request).toHaveBeenCalledOnce());
+      expect(request).toHaveBeenCalledWith("config.patch", {
+        raw: JSON.stringify({ ui: { prefs: { sidebarAgentOrder } } }),
+        replacePaths: ["ui.prefs.sidebarAgentOrder"],
+        note: "control-ui prefs sync",
+      });
+    },
+  );
 
   it("marks sidebar arrays for replacement", async () => {
     const request = vi.fn<(method: string, params?: unknown) => Promise<unknown>>(async () => ({}));
