@@ -43,7 +43,10 @@ function createPersistenceFixture(test: TestContext) {
   try {
     openOpenClawStateDatabase(options);
   } catch (error) {
-    void lifetime.track(Promise.reject(error), true);
+    void lifetime.track(
+      Promise.reject(new Error("Approval fixture initialization failed", { cause: error })),
+      true,
+    );
     throw error;
   }
   return {
