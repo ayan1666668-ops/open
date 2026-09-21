@@ -19,6 +19,14 @@ export const TSGO_CORE_TEST_SHARDS = [
     config: "test/tsconfig/tsconfig.core.test.agents-embedded.json",
   },
   {
+    // src/agents/embedded-agent-runner is 341 roots on its own and took agents-other to 704,
+    // past the same 700-root soft cap that split agents-embedded out of agents-root. It is a
+    // coherent unit, so it shards separately rather than raising the cap.
+    name: "agents-embedded-runner",
+    group: "src",
+    config: "test/tsconfig/tsconfig.core.test.agents-embedded-runner.json",
+  },
+  {
     name: "agents-tools",
     group: "src",
     config: "test/tsconfig/tsconfig.core.test.agents-tools.json",

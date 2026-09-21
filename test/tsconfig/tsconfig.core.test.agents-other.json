@@ -20,6 +20,8 @@
     "../../node_modules",
     "../../dist",
     "../../**/dist/**",
+    "../../src/agents/embedded-agent-runner/**/*.test.ts",
+    "../../src/agents/embedded-agent-runner/**/*.test.tsx",
     "../../src/agents/command/**/*.test.ts",
     "../../src/agents/command/**/*.test.tsx",
     "../../src/agents/harness/**/*.test.ts",
