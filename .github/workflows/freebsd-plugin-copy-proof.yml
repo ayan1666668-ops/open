@@ -40,7 +40,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
-          fetch-depth: 6
+          fetch-depth: 7
           persist-credentials: false
           sparse-checkout-cone-mode: false
           sparse-checkout: |
@@ -52,8 +52,9 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$CONSUMER_SHA"
-          test "$(git rev-parse HEAD^)" = "$HARNESS_SHA"
-          test "$(git rev-parse HEAD^^)" = "$SOURCE_SHA"
+          test "$(git rev-parse HEAD^)" = 0e88e731c9ed5b5a08889e5a041f479141f9d119
+          test "$(git rev-parse HEAD^^)" = "$HARNESS_SHA"
+          test "$(git rev-parse HEAD^^^)" = "$SOURCE_SHA"
           test "$(git rev-parse "$SOURCE_SHA^")" = f19eb55e515a287b35df51152118f8c010ccc00e
           test "$(git rev-parse "$SOURCE_SHA^^")" = 85038d22637e4ad00c9311529a37ce9189f346f0
           test "$(git rev-parse "$SOURCE_SHA^^^")" = "$BASE_SHA"
@@ -61,7 +62,7 @@ jobs:
           test "$(git diff --name-only "$SOURCE_SHA" HEAD)" = .github/workflows/freebsd-plugin-copy-proof.yml
           echo 'Carried producer 35558208616/a1/job106205888460: 72/72 tests, canonical build/seal; log 268491 bytes SHA256 98dee25bf3458b1ef65433f79bd008993aaf568ef335bd9e575c927caf0dd23b.'
           echo 'Carried Linux custom-plugin-siblings 35558208616/a1/job106207373580: scenario passed with six actual canary plugin executions and preserved source; log 126082 bytes SHA256 2d597ca126bf56ae51a91afcfd4991048ac8d732f0c7d568d005dd272ba2011e. Does not independently assert final updater status=ok.'
-          echo 'Prior native job106207862746 failed at Corepack pnpm bootstrap before tests; this consumer reruns only native proof using the same sealed artifact.'
+          echo 'Prior native job106207862746 failed at Corepack pnpm bootstrap before tests. Successor35559307461/a1/job106208968655 authenticated official pnpm12.4.0 but its unconfigured default store panicked on FreeBSD; log98669 bytes SHA256 a81aa7c5c093bc7a6d8be96be9440190c153eb5c010c18e2883e3dd5246200aa. No native suites or installed Doctor ran. This consumer uses the same sealed artifact and task-private configured pnpm home.'
           node --input-type=module <<'NODE'
           import assert from 'node:assert/strict';
           const response=await fetch(`https://api.github.com/repos/${process.env.PROOF_REPOSITORY}/actions/artifacts/${process.env.ARTIFACT_ID}`,{headers:{Authorization:`Bearer ${process.env.GH_TOKEN}`,Accept:'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28'},signal:AbortSignal.timeout(30000)});
@@ -161,7 +162,12 @@ jobs:
             console.log(JSON.stringify({nativePnpm:'12.4.0',platformPackage:'@pnpm/exe.freebsd-x64',registryIntegrityVerified:true,lifecycleScripts:false}));
             NODE
             export PATH="$PROOF_ROOT/pnpm/node_modules/.bin:$PATH"
+            # Use pnpm's documented private store owner, as in the repo remote bootstrap.
+            export PNPM_HOME="$PROOF_ROOT/pnpm-home"
+            mkdir "$PNPM_HOME"
             test "$(pnpm --version)" = 12.4.0
+            test "$(pnpm store path)" = "$PNPM_HOME/store/v11"
+            echo "Authenticated pnpm12.4.0 active task store: $PNPM_HOME/store/v11"
             pnpm --filter 'openclaw...' --filter '@openclaw/markdown-core...' --fail-if-no-match list --depth -1 --json > "$PROOF_ROOT/workspaces.json"
             node --input-type=module <<'NODE'
             import assert from 'node:assert/strict';import fs from 'node:fs';import path from 'node:path';
@@ -175,6 +181,7 @@ jobs:
             test ! -e dist
             cp -R "$PROOF_ROOT/package-view/package/dist" dist
             bash "$INPUT_ROOT/green.sh"
+            unset PNPM_HOME
             export OPERATOR_ROOT="$PROOF_ROOT/operator" HOME="$PROOF_ROOT/operator"
             export npm_config_prefix="$PROOF_ROOT/prefix"
             npm --version
