@@ -26,6 +26,8 @@ import {
 } from "../config/sessions/types.js";
 import type { OpenClawConfig } from "../config/types.js";
 import { listGatewayAgentsBasic } from "../gateway/agent-list.js";
+import type { SessionRowProjection } from "../gateway/session-row-projection.js";
+import { getGatewayInstallationReplacement } from "../gateway/stale-install.js";
 import { resolveHeartbeatSessionKey } from "../infra/heartbeat-runner-session.js";
 import { resolveHeartbeatSummariesForAgents } from "../infra/heartbeat-summary-projection.js";
 import { hasResolvableHeartbeatOwnerRoute } from "../infra/outbound/targets.js";
@@ -46,7 +48,7 @@ import { createLazyImportLoader } from "../shared/lazy-promise.js";
 import { createLazyRuntimeSurface } from "../shared/lazy-runtime.js";
 import { sortAndLimitBy } from "../shared/sort-and-limit.js";
 import { readOpenClawStateWalHealth } from "../state/openclaw-state-db-cache.js";
-import { deliveryContextFromSession } from "../utils/delivery-context.shared.js";
+import { deliveryContextFromSession } from "../utils/delivery-context.read.js";
 import { resolveRuntimeServiceVersion } from "../version.js";
 import { buildStatusCliProjection } from "./cli-projection.js";
 import {
@@ -361,6 +363,7 @@ export async function getStatusSummary(
     sourceConfig?: OpenClawConfig;
     hostDesktopStatus?: import("../gateway/desktop/host-source.js").HostDesktopStatus;
     sessionStores?: StatusSessionStores;
+    sessionRowProjection?: SessionRowProjection;
   } = {},
 ) {
   const { includeSensitive = true, includeChannelSummary = true } = options;
@@ -481,6 +484,7 @@ export async function getStatusSummary(
       cfg,
       agentList.agents,
       includeSensitive ? STATUS_RECENT_SESSION_LIMIT : 0,
+      options.sessionRowProjection,
     ));
   const byAgent = await Promise.all(
     sessionStores.byAgent.map(async ({ agent, path, count, recent }) => ({
@@ -534,6 +538,7 @@ export async function getStatusSummary(
     queuedSystemEvents,
     startupMigrationWarning: readStartupMigrationWarning(includeSensitive),
     startupRecoveryWarning: readStartupRecoveryWarning(includeSensitive),
+    installationReplacementWarning: getGatewayInstallationReplacement()?.message,
     secretEgressProxy: getSecretEgressCertificateStatus(),
     degradedSecretOwners: listActiveDegradedSecretOwners().map(
       ({ ownerKind, ownerId, state, degradationState, paths: ownerPaths, reason }) => {

@@ -28,7 +28,6 @@ import type {
 } from "../../state/openclaw-state-db.generated.js";
 import {
   openOpenClawStateDatabase,
-  runOpenClawStateWriteTransaction,
   type OpenClawStateDatabase,
 } from "../../state/openclaw-state-db.js";
 import type { WorkerCredentialRecord } from "./credential.js";
@@ -47,11 +46,17 @@ import {
   workerEnvironmentPreparationColumns,
 } from "./prepared-environment-store.js";
 import {
+  createWorkerEnvironmentSessionAttachmentStore,
+  hasWorkerEnvironmentSessionAttachment,
+} from "./session-attachment-store.js";
+import { WorkerSessionAlreadyAttachedError } from "./session-attachment.js";
+import {
   canTransitionWorkerEnvironment,
   parseWorkerEnvironmentState,
   workerEnvironmentStateRequiresLease,
   type WorkerEnvironmentState,
 } from "./state.js";
+import { ensureWorkerEnvironmentStoreSchema } from "./store-schema.js";
 import { createWorkerEnvironmentStoreWriter } from "./store-write.js";
 import { pruneExpiredTerminalWorkerEnvironments } from "./terminal-environment-retention.js";
 
@@ -66,14 +71,6 @@ export type {
 type WorkerEnvironmentProfileSnapshot = WorkerProfile;
 type WorkerEnvironmentSshEndpoint = WorkerSshEndpoint;
 type Ssh = WorkerEnvironmentSshEndpoint;
-export class WorkerSessionAlreadyAttachedError extends Error {
-  constructor(
-    readonly sessionId: string,
-    readonly environmentId: string,
-  ) {
-    super(`Session ${sessionId} is already attached to worker environment ${environmentId}`);
-  }
-}
 export type WorkerEnvironmentTransitionPatch = {
   leaseId?: string | null;
   nodeDeviceId?: string | null;
@@ -130,17 +127,6 @@ const TERMINAL_STATES: WorkerEnvironmentState[] = ["destroyed", "failed", "orpha
 const WORKER_BUNDLE_HASH_PATTERN = /^[a-f0-9]{64}$/u;
 const MAX_HOST_KEY_LENGTH = 16_384;
 const MAX_SSH_FALLBACK_PORTS = 10;
-const ensuredWorkerEnvironmentDatabases = new WeakSet<DatabaseSync>();
-const WORKER_ENVIRONMENT_SSH_FALLBACK_PORTS_SCHEMA_SQL = `
-CREATE TABLE IF NOT EXISTS worker_environment_ssh_fallback_ports (
-  environment_id TEXT NOT NULL,
-  position INTEGER NOT NULL CHECK (position >= 0 AND position <= 9),
-  port INTEGER NOT NULL CHECK (port >= 1 AND port <= 65535),
-  PRIMARY KEY (environment_id, position),
-  UNIQUE (environment_id, port),
-  FOREIGN KEY (environment_id) REFERENCES worker_environments(environment_id) ON DELETE CASCADE
-) STRICT;
-`;
 const WORKER_CREDENTIAL_HASH_PATTERN = /^[A-Za-z0-9_-]{43}$/u;
 const OPENSSH_HOST_KEY_TYPE_PATTERN =
   /^(?:ssh|ecdsa-sha2|sk-(?:ssh|ecdsa-sha2))-[A-Za-z0-9@._+-]+$/u;
@@ -410,7 +396,10 @@ function nextGlobalOwnerEpoch(db: DatabaseSync): number {
     Math.max(latestEnvironment?.owner_epoch ?? 0, latestTranscriptCommit?.run_epoch ?? 0),
   );
 }
-function fromRow(row: Row, fallbackPorts: readonly number[]): WorkerEnvironmentRecord {
+export function decodeWorkerEnvironmentRow(
+  row: Row,
+  fallbackPorts: readonly number[],
+): WorkerEnvironmentRecord {
   const record = {
     environmentId: row.environment_id,
     providerId: row.provider_id,
@@ -484,8 +473,10 @@ function environmentRows(db: DatabaseSync) {
     );
 }
 function recordsFromRows(rows: readonly RowWithFallbackPorts[]): WorkerEnvironmentRecord[] {
-  // SAFETY: SQLite aggregates the numeric port column; endpointFrom validates the decoded ports.
-  return rows.map((row) => fromRow(row, JSON.parse(row.ssh_fallback_ports_json) as number[]));
+  return rows.map((row) =>
+    // SAFETY: SQLite aggregates the numeric port column; endpointFrom validates the decoded ports.
+    decodeWorkerEnvironmentRow(row, JSON.parse(row.ssh_fallback_ports_json) as number[]),
+  );
 }
 function find(db: DatabaseSync, environmentId: string) {
   const rows = executeSqliteQuerySync(
@@ -727,17 +718,7 @@ export function createWorkerEnvironmentStore(
   options: { database?: OpenClawStateDatabase; now?: () => number } = {},
 ) {
   const database = options.database ?? openOpenClawStateDatabase();
-  if (!ensuredWorkerEnvironmentDatabases.has(database.db)) {
-    runOpenClawStateWriteTransaction(
-      ({ db }) => {
-        // sqlite-allow-raw -- feature-local additive schema DDL; rows use Kysely below.
-        db.exec(WORKER_ENVIRONMENT_SSH_FALLBACK_PORTS_SCHEMA_SQL);
-      },
-      { database },
-      { operationLabel: "worker-environments.ssh-fallback-ports.schema.ensure" },
-    );
-    ensuredWorkerEnvironmentDatabases.add(database.db);
-  }
+  ensureWorkerEnvironmentStoreSchema(database);
   const path = database.path;
   const now = options.now ?? Date.now;
   const read = () => openOpenClawStateDatabase({ path }).db;
@@ -839,8 +820,16 @@ export function createWorkerEnvironmentStore(
     return getRequired(db, environmentId);
   };
   const prepared = createPreparedEnvironmentStoreOps({ now, read, write, createIntent, get: find });
+  const sessionAttachments = createWorkerEnvironmentSessionAttachmentStore({
+    now,
+    read,
+    write,
+    createIntent,
+    getEnvironment: find,
+  });
   return {
     ...prepared,
+    ...sessionAttachments,
     createIntent(input: WorkerEnvironmentIntentInput): WorkerEnvironmentRecord {
       return write((db) => createIntent(db, input));
     },
@@ -960,7 +949,8 @@ export function createWorkerEnvironmentStore(
         db: read(),
         write,
         nowMs,
-        canPruneDemand: (row) => params.canPruneDemand?.(fromRow(row, []), nowMs) ?? true,
+        canPruneDemand: (row) =>
+          params.canPruneDemand?.(decodeWorkerEnvironmentRow(row, []), nowMs) ?? true,
         ...(params.limit === undefined ? {} : { limit: params.limit }),
       });
     },
@@ -1141,6 +1131,11 @@ export function createWorkerEnvironmentStore(
           throw new Error("Cannot attach worker after destroy is requested");
         }
         if (to === "attached") {
+          if (hasWorkerEnvironmentSessionAttachment(db, environmentId)) {
+            throw new Error(
+              "Conversation-attached environments cannot be adopted for session placement",
+            );
+          }
           const sessionId = patch.attachedSessionIds?.[0];
           if (current.preparation && !sessionId) {
             throw new Error("Prepared worker attachment requires its exact session");
