@@ -39,42 +39,63 @@ describe("msteams environment authentication setup", () => {
     ).toEqual(useEnv);
   });
 
-  it.each([
-    {
-      label: "certificate",
-      existing: {
-        authType: "federated" as const,
-        appId: "certificate-app",
-        tenantId: "tenant-id",
-        certificatePath: "/secure/msteams.pem",
+  it("rejects --use-env when only persisted credentials are complete", () => {
+    resolveMSTeamsCredentials.mockImplementation((config) =>
+      config
+        ? {
+            type: "secret",
+            appId: "persisted-app",
+            appPassword: "persisted-password",
+            tenantId: "persisted-tenant",
+          }
+        : undefined,
+    );
+
+    expect(
+      msteamsSetupContract.validateInput?.({
+        cfg: {
+          channels: {
+            msteams: {
+              appId: "persisted-app",
+              appPassword: "persisted-password",
+              tenantId: "persisted-tenant",
+            },
+          },
+        },
+        accountId: DEFAULT_ACCOUNT_ID,
+        input: { useEnv: true },
+      }),
+    ).toBe(
+      "MS Teams --use-env requires complete secret, certificate, or managed-identity environment credentials.",
+    );
+  });
+
+  it("selects environment credentials without changing sibling account authority", () => {
+    resolveMSTeamsCredentials.mockReturnValue({
+      type: "federated",
+      appId: "environment-app",
+      tenantId: "environment-tenant",
+      useManagedIdentity: true,
+    });
+    const cfg = {
+      channels: {
+        msteams: {
+          appId: "persisted-default-app",
+          appPassword: "persisted-default-password",
+          tenantId: "shared-tenant",
+          authType: "federated" as const,
+          certificatePath: "/secure/shared.pem",
+          webhook: { port: 3978, path: "/api/messages" },
+          accounts: {
+            sibling: {
+              appId: "sibling-app",
+              appPassword: "sibling-password",
+              webhook: { port: 3979 },
+            },
+          },
+        },
       },
-      credentials: {
-        type: "federated" as const,
-        appId: "certificate-app",
-        tenantId: "tenant-id",
-        certificatePath: "/secure/msteams.pem",
-      },
-    },
-    {
-      label: "managed identity",
-      existing: {
-        authType: "federated" as const,
-        appId: "managed-identity-app",
-        tenantId: "tenant-id",
-        useManagedIdentity: true,
-        managedIdentityClientId: "managed-identity-client",
-      },
-      credentials: {
-        type: "federated" as const,
-        appId: "managed-identity-app",
-        tenantId: "tenant-id",
-        useManagedIdentity: true,
-        managedIdentityClientId: "managed-identity-client",
-      },
-    },
-  ])("registered --use-env preserves $label authentication", ({ existing, credentials }) => {
-    resolveMSTeamsCredentials.mockReturnValue(credentials);
-    const cfg = { channels: { msteams: existing } };
+    };
     const input = { useEnv: true };
 
     expect(
@@ -86,18 +107,24 @@ describe("msteams environment authentication setup", () => {
       input,
     });
 
-    const { appId, ...rootExisting } = existing;
-    expect(result.channels?.msteams).toMatchObject({
-      ...rootExisting,
+    expect(result.channels?.msteams).toEqual({
       enabled: true,
+      webhook: { path: "/api/messages" },
       accounts: {
         default: {
-          appId,
           enabled: true,
+          webhook: { port: 3978 },
+        },
+        sibling: {
+          appId: "sibling-app",
+          appPassword: "sibling-password",
+          tenantId: "shared-tenant",
+          authType: "federated",
+          certificatePath: "/secure/shared.pem",
+          webhook: { port: 3979 },
         },
       },
     });
-    expect(result.channels?.msteams?.authType).toBe("federated");
   });
 
   it("switches to secret auth only for a complete explicit replacement", () => {

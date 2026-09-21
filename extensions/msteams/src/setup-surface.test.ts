@@ -9,9 +9,6 @@ import {
 
 const resolveMSTeamsUserAllowlist = vi.hoisted(() => vi.fn());
 const resolveMSTeamsChannelAllowlist = vi.hoisted(() => vi.fn());
-const normalizeSecretInputString = vi.hoisted(() =>
-  vi.fn((value: unknown) => (typeof value === "string" ? value.trim() || undefined : undefined)),
-);
 const hasConfiguredMSTeamsCredentials = vi.hoisted(() => vi.fn());
 const resolveMSTeamsCredentials = vi.hoisted(() => vi.fn());
 
@@ -19,10 +16,6 @@ vi.mock("./resolve-allowlist.js", () => ({
   parseMSTeamsTeamEntry: vi.fn(),
   resolveMSTeamsChannelAllowlist,
   resolveMSTeamsUserAllowlist,
-}));
-
-vi.mock("./secret-input.js", () => ({
-  normalizeSecretInputString,
 }));
 
 vi.mock("./token.js", () => ({
@@ -36,7 +29,6 @@ describe("msteams setup surface", () => {
   beforeEach(() => {
     resolveMSTeamsUserAllowlist.mockReset();
     resolveMSTeamsChannelAllowlist.mockReset();
-    normalizeSecretInputString.mockClear();
     hasConfiguredMSTeamsCredentials.mockReset();
     resolveMSTeamsCredentials.mockReset();
   });
@@ -594,11 +586,49 @@ describe("msteams setup surface", () => {
     ).resolves.toEqual(["MS Teams: needs app credentials"]);
   });
 
+  it("finalize keeps federated environment credentials when available and accepted", async () => {
+    vi.stubEnv("MSTEAMS_AUTH_TYPE", "federated");
+    vi.stubEnv("MSTEAMS_APP_ID", "env-app");
+    vi.stubEnv("MSTEAMS_TENANT_ID", "env-tenant");
+    vi.stubEnv("MSTEAMS_CERTIFICATE_PATH", "/secure/env.pem");
+    resolveMSTeamsCredentials.mockReturnValue({
+      type: "federated",
+      appId: "env-app",
+      tenantId: "env-tenant",
+      certificatePath: "/secure/env.pem",
+    });
+    hasConfiguredMSTeamsCredentials.mockReturnValue(false);
+    const confirm = vi.fn(async () => true);
+
+    const result = await msteamsSetupWizard.finalize?.({
+      cfg: { channels: { msteams: {} } },
+      prompter: {
+        confirm,
+        note: vi.fn(async () => {}),
+        text: vi.fn(),
+      },
+    } as never);
+
+    expect(confirm).toHaveBeenCalledWith({
+      message: "Microsoft Teams environment credentials detected. Use env vars?",
+      initialValue: true,
+    });
+    expect(result?.cfg?.channels?.msteams).toEqual({
+      enabled: true,
+      accounts: { default: { enabled: true } },
+    });
+  });
+
   it("finalize keeps env credentials when available and accepted", async () => {
     vi.stubEnv("MSTEAMS_APP_ID", "env-app");
     vi.stubEnv("MSTEAMS_APP_PASSWORD", "env-secret");
     vi.stubEnv("MSTEAMS_TENANT_ID", "env-tenant");
-    resolveMSTeamsCredentials.mockReturnValue(null);
+    resolveMSTeamsCredentials.mockReturnValue({
+      type: "secret",
+      appId: "env-app",
+      appPassword: "env-secret",
+      tenantId: "env-tenant",
+    });
     hasConfiguredMSTeamsCredentials.mockReturnValue(false);
     const confirm = vi.fn(async () => true);
 
@@ -612,7 +642,7 @@ describe("msteams setup surface", () => {
     } as never);
 
     expect(confirm).toHaveBeenCalledWith({
-      message: "MSTEAMS_APP_ID + MSTEAMS_APP_PASSWORD + MSTEAMS_TENANT_ID detected. Use env vars?",
+      message: "Microsoft Teams environment credentials detected. Use env vars?",
       initialValue: true,
     });
     expect(result).toEqual({
@@ -622,6 +652,7 @@ describe("msteams setup surface", () => {
           msteams: {
             existing: true,
             enabled: true,
+            accounts: { default: { enabled: true } },
           },
         },
       },

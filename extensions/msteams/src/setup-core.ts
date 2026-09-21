@@ -19,7 +19,6 @@ import {
   resolveMSTeamsAccountEntryKey,
   type MSTeamsMultiAccountConfig,
 } from "./accounts.js";
-import { normalizeSecretInputString } from "./secret-input.js";
 import { hasConfiguredMSTeamsCredentials, resolveMSTeamsCredentials } from "./token.js";
 
 const t = createSetupTranslator();
@@ -195,6 +194,69 @@ function resolveCredentialsForSetup(cfg: OpenClawConfig, accountId: string) {
   });
 }
 
+function resolveEnvironmentCredentialsForSetup() {
+  return resolveMSTeamsCredentials(undefined, { allowEnvFallback: true });
+}
+
+const MSTEAMS_SHARED_CREDENTIAL_FIELDS = [
+  "tenantId",
+  "authType",
+  "certificatePath",
+  "certificateThumbprint",
+  "useManagedIdentity",
+  "managedIdentityClientId",
+] as const satisfies readonly (keyof MSTeamsSetupAccountConfig)[];
+
+const MSTEAMS_CREDENTIAL_FIELDS = [
+  "appId",
+  "appPassword",
+  ...MSTEAMS_SHARED_CREDENTIAL_FIELDS,
+] as const satisfies readonly (keyof MSTeamsSetupAccountConfig)[];
+
+function removeMSTeamsCredentialFields<T extends MSTeamsSetupAccountConfig>(config: T): T {
+  const next = { ...config };
+  for (const field of MSTEAMS_CREDENTIAL_FIELDS) {
+    delete next[field];
+  }
+  return next;
+}
+
+function selectMSTeamsEnvironmentCredentials(cfg: OpenClawConfig): OpenClawConfig {
+  const scoped = patchMSTeamsAccountConfig({
+    cfg,
+    accountId: DEFAULT_ACCOUNT_ID,
+    patch: {},
+    scopeDefaultToAccounts: true,
+  });
+  const msteams = (scoped.channels?.msteams ?? {}) as MSTeamsMultiAccountConfig;
+  const accounts = Object.fromEntries(
+    Object.entries(msteams.accounts ?? {}).map(([key, account]) => {
+      const current = account ?? {};
+      if (normalizeAccountId(key) === DEFAULT_ACCOUNT_ID) {
+        return [key, removeMSTeamsCredentialFields(current)];
+      }
+      const inheritedCredentials = Object.fromEntries(
+        MSTEAMS_SHARED_CREDENTIAL_FIELDS.flatMap((field) =>
+          current[field] === undefined && msteams[field] !== undefined
+            ? [[field, msteams[field]]]
+            : [],
+        ),
+      ) as MSTeamsSetupAccountConfig;
+      return [key, { ...inheritedCredentials, ...current }];
+    }),
+  );
+  return {
+    ...scoped,
+    channels: {
+      ...scoped.channels,
+      msteams: {
+        ...removeMSTeamsCredentialFields(msteams),
+        accounts,
+      },
+    },
+  };
+}
+
 function hasConfiguredCredentialsForSetup(
   cfg: OpenClawConfig,
   accountId: string,
@@ -251,7 +313,7 @@ export const msteamsSetupAdapter: ChannelSetupAdapter<MSTeamsSetupInput> = {
     if (
       input.useEnv &&
       !hasCompleteExplicitCredentials &&
-      !resolveCredentialsForSetup(cfg, DEFAULT_ACCOUNT_ID)
+      !resolveEnvironmentCredentialsForSetup()
     ) {
       return "MS Teams --use-env requires complete secret, certificate, or managed-identity environment credentials.";
     }
@@ -300,14 +362,15 @@ export const msteamsSetupAdapter: ChannelSetupAdapter<MSTeamsSetupInput> = {
     const replacesWithSecretAuth = Boolean(
       appId?.trim() && appPassword?.trim() && (tenantId?.trim() || inheritedTenantId),
     );
+    if (input.useEnv && !replacesWithSecretAuth) {
+      return selectMSTeamsEnvironmentCredentials(cfg);
+    }
     const credentialPatch = replacesWithSecretAuth
       ? applySecretAuthCredentials(patch, existing)
       : patch;
     return patchMSTeamsAccountConfig({
       cfg,
       accountId: resolvedAccountId,
-      // --use-env selects runtime credentials; do not replace a persisted
-      // federated mode unless the operator supplied a complete effective secret tuple.
       patch: credentialPatch,
       scopeDefaultToAccounts: true,
     });
@@ -498,13 +561,14 @@ export function createMSTeamsSetupWizardBase(): Pick<
     finalize: async ({ cfg, accountId, prompter }) => {
       const resolvedAccountId = resolveSetupAccountId(cfg, accountId);
       const resolved = resolveCredentialsForSetup(cfg, resolvedAccountId);
-      const hasConfigCreds = hasConfiguredCredentialsForSetup(cfg, resolvedAccountId);
+      const hasConfigCreds = hasConfiguredMSTeamsCredentials(
+        resolveMSTeamsAccountConfig(cfg, resolvedAccountId),
+        { allowEnvFallback: false },
+      );
       const canUseEnv = Boolean(
         resolvedAccountId === DEFAULT_ACCOUNT_ID &&
         !hasConfigCreds &&
-        normalizeSecretInputString(process.env.MSTEAMS_APP_ID) &&
-        normalizeSecretInputString(process.env.MSTEAMS_APP_PASSWORD) &&
-        normalizeSecretInputString(process.env.MSTEAMS_TENANT_ID),
+        resolveEnvironmentCredentialsForSetup(),
       );
 
       let next: OpenClawConfig = cfg;
@@ -522,7 +586,9 @@ export function createMSTeamsSetupWizardBase(): Pick<
           initialValue: true,
         });
         if (keep) {
-          next = enableMSTeamsAccount(next, resolvedAccountId);
+          next = canUseEnv
+            ? selectMSTeamsEnvironmentCredentials(next)
+            : enableMSTeamsAccount(next, resolvedAccountId);
         } else {
           ({ appId, appPassword, tenantId } = await promptMSTeamsCredentials(prompter));
         }
