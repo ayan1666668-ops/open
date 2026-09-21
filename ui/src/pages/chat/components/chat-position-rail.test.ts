@@ -163,17 +163,18 @@ describe("conversation position rail", () => {
     "resize",
     "resize-jump",
     "composer-resize-reversal",
-    "navigation-before-composer-resize",
     "end",
     "focus",
     "focus-resize",
     "pointer",
     "reader",
+    "composer-resize-reversal-navigation",
   ] as const;
 
   it.each(railUpdateScenarios)(
     "keeps the reader's rail position through %s updates",
     (scenario) => {
+      const navigatesBeforeResize = scenario === "composer-resize-reversal-navigation";
       const flushFrame = stubAnimationFrames();
       const publishVisibility = stubRailVisibility();
       const transcript = createTestTranscript();
@@ -285,11 +286,7 @@ describe("conversation position rail", () => {
           expect(Number.parseFloat(marker(79).style.top) + 12).toBeLessThanOrEqual(
             marks.scrollTop + marks.clientHeight,
           );
-        } else if (
-          scenario === "composer-resize-reversal" ||
-          scenario === "navigation-before-composer-resize"
-        ) {
-          const navigatesBeforeResize = scenario === "navigation-before-composer-resize";
+        } else if (scenario.startsWith("composer-resize-reversal")) {
           publishVisibility(root.querySelector(".chat-bubble")!);
           flush();
           height = 512;
@@ -330,7 +327,11 @@ describe("conversation position rail", () => {
           marksHeight = 262;
           publishVisibility(root.querySelector(".chat-bubble")!);
           flush();
-          expect(marks.scrollTop).toBe(navigatesBeforeResize ? 0 : 677);
+          if (navigatesBeforeResize) {
+            expect(marks.scrollTop).toBe(0);
+            return;
+          }
+          expect(marks.scrollTop).toBe(677);
         } else if (scenario === "resize") {
           height = 554;
           marksHeight = 240;
