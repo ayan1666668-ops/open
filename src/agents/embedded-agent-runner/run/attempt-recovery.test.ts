@@ -284,7 +284,7 @@ describe("recoverEmbeddedRunAttempt", () => {
     });
   });
 
-  it.each([
+  it.each<{ label: string } & TransportDropScenario>([
     {
       label: "partial answer",
       assistant: buildEmbeddedRunnerAssistant({
@@ -305,7 +305,7 @@ describe("recoverEmbeddedRunAttempt", () => {
     { label: "voice output", preToolText: "[[audio_as_voice]]" },
     { label: "tool media", toolMediaUrls: ["https://example.com/result.png"] },
     { label: "source reply already delivered", sourceReplyDelivered: true },
-    { label: "silent cron tool result", trigger: "cron" as const, toolResultText: "NO_REPLY" },
+    { label: "silent cron tool result", trigger: "cron", toolResultText: "NO_REPLY" },
   ])("preserves $label after a length stop", async ({ label: _label, ...scenario }) => {
     const { recovery, continueFromCurrentTranscript } = await recoverAfterTransportDrop({
       ...emptyLengthScenario,
