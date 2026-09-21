@@ -85,12 +85,19 @@ function normalizeTalkProviders(value: unknown): Record<string, TalkProviderConf
   return Object.keys(providers).length > 0 ? providers : undefined;
 }
 
-function normalizeTalkRealtimeConfig(value: unknown): TalkRealtimeConfig | undefined {
+function normalizeTalkRealtimeConfig(
+  value: TalkRealtimeConfig | undefined,
+): TalkRealtimeConfig | undefined {
   if (!isRecord(value)) {
     return undefined;
   }
   const source = value;
   const normalized: TalkRealtimeConfig = {};
+  // Doctor also normalizes authored input before validation. Preserve this field untouched
+  // so the canonical schema, not normalization, diagnoses malformed policy values.
+  if (source.appLaunchPolicies !== undefined) {
+    normalized.appLaunchPolicies = source.appLaunchPolicies;
+  }
 
   const provider = normalizeOptionalString(source.provider);
   if (provider) {
@@ -226,7 +233,7 @@ export function normalizeTalkSection(value: TalkConfig | undefined): TalkConfig 
   }
 
   const providers = normalizeTalkProviders(source.providers);
-  const realtime = normalizeTalkRealtimeConfig(source.realtime);
+  const realtime = normalizeTalkRealtimeConfig(value.realtime);
   const provider = normalizeOptionalString(source.provider);
   if (providers) {
     normalized.providers = providers;

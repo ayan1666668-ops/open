@@ -35,6 +35,7 @@ import {
 } from "../infra/exec-host.js";
 import { extractShellWrapperCommand } from "../infra/exec-wrapper-resolution.js";
 import { sanitizeHostExecEnv } from "../infra/host-env-security.js";
+import { NODE_INSTALLED_APP_LAUNCH_COMMAND } from "../infra/installed-app-launch.js";
 import {
   NODE_AGENT_CLI_CLAUDE_RUN_COMMAND,
   NODE_DEVICE_APPS_COMMAND,
@@ -50,6 +51,7 @@ import {
 } from "./client.js";
 import { invokeNodeWorkerComputerCommand, type NodeWorkerComputer } from "./computer-command.js";
 import { invokeNodeDesktopStream } from "./desktop-stream-command.js";
+import { prepareInstalledAppLaunch } from "./installed-app-launch.js";
 import {
   handleClaudeCliNodeInvoke,
   type NodeHostInvokeRuntime,
@@ -749,17 +751,32 @@ async function dispatchInvoke(
     return;
   }
 
-  if (command !== "system.run") {
+  if (command !== "system.run" && command !== NODE_INSTALLED_APP_LAUNCH_COMMAND) {
     await response.error("UNAVAILABLE", "command not supported");
     return;
   }
 
   let params: SystemRunParams;
+  let installedLaunch: ReturnType<typeof prepareInstalledAppLaunch> | undefined;
   try {
-    params = resolveNodeSkillCwdParam(
-      decodeParams<SystemRunParams>(frame.paramsJSON),
-      frame.nodeId,
-    );
+    if (command === NODE_INSTALLED_APP_LAUNCH_COMMAND) {
+      installedLaunch = prepareInstalledAppLaunch({
+        io: runtime.pluginCommandIo,
+        paramsJSON: frame.paramsJSON,
+        sharingEnabled: runtime.installedAppsSharingEnabled === true,
+        platform: runtime.installedAppsPlatform ?? process.platform,
+      });
+      params = {
+        command: [installedLaunch.executable],
+        agentId: installedLaunch.agentId,
+        sessionKey: frame.sessionKey,
+      };
+    } else {
+      params = resolveNodeSkillCwdParam(
+        decodeParams<SystemRunParams>(frame.paramsJSON),
+        frame.nodeId,
+      );
+    }
   } catch (err) {
     await response.invalid(err);
     return;
@@ -781,13 +798,17 @@ async function dispatchInvoke(
     resolveExecAsk,
     isCmdExeInvocation,
     sanitizeEnv,
-    runCommand,
+    runCommand: installedLaunch?.run ?? runCommand,
     runViaMacAppExecHost,
-    sendNodeEvent,
+    // App launches retain the node exec owner's policy/audit but are not system.run event bindings.
+    // Their result and Talk effect record belong to the original app invocation.
+    sendNodeEvent: installedLaunch ? async () => {} : sendNodeEvent,
     buildExecEventPayload,
     sendInvokeResult: response.send,
     sendExecFinishedEvent: async (event) => {
-      await sendExecFinishedEvent({ ...event, client });
+      if (!installedLaunch) {
+        await sendExecFinishedEvent({ ...event, client });
+      }
     },
     preferMacAppExecHost,
   });

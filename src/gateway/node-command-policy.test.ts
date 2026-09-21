@@ -445,11 +445,13 @@ describe("gateway/node-command-policy", () => {
     });
     expect(builder.registry.diagnostics).toEqual([]);
     setActivePluginRegistry(builder.registry);
+    // Registry replacement must retain the core Linux inventory default.
     const node = { platform: "linux", deviceFamily: "Linux" };
     const allowlist = resolveNodeCommandAllowlist({}, node);
     expect([...allowlist]).toEqual([
       "system.notify",
       "computer.act",
+      "device.apps",
       "remote.policy",
       "remote.shared",
       "remote.echo",
@@ -483,13 +485,18 @@ describe("gateway/node-command-policy", () => {
     ]).toEqual([
       "system.notify",
       "computer.act",
+      "device.apps",
       "remote.policy",
       "remote.echo",
       "remote.dangerous",
     ]);
     setActivePluginRegistry(createEmptyPluginRegistry());
     expect(listDangerousPluginNodeCommands()).toEqual([]);
-    expect([...resolveNodeCommandAllowlist({}, node)]).toEqual(["system.notify", "computer.act"]);
+    expect([...resolveNodeCommandAllowlist({}, node)]).toEqual([
+      "system.notify",
+      "computer.act",
+      "device.apps",
+    ]);
   });
 
   it("does not allow connected node plugin tools without a registry default or config allowlist", () => {

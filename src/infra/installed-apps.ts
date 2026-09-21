@@ -4,6 +4,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { walkDirectory } from "@openclaw/fs-safe/walk";
 import pLimit from "p-limit";
+import { scanLinuxInstalledApps } from "./installed-apps-linux.js";
 
 const execFileAsync = promisify(execFile);
 const PLIST_READ_CONCURRENCY = 8;
@@ -26,6 +27,8 @@ const SYSTEM_APP_NAMES = new Set([
 ]);
 
 export type InstalledApp = {
+  appId?: string;
+  appRevision?: string;
   label: string;
   bundleId?: string;
   path: string;
@@ -98,6 +101,9 @@ export async function scanInstalledApps(
   options: ScanInstalledAppsOptions = {},
 ): Promise<InstalledAppsResult> {
   const platform = options.platform ?? process.platform;
+  if (platform === "linux") {
+    return { status: "ok", apps: scanLinuxInstalledApps() };
+  }
   if (platform !== "darwin") {
     return { status: "unsupported", platform, apps: [] };
   }
