@@ -1,6 +1,6 @@
 import { buildDynamicsDiagnostic } from "./dynamics-diagnostics.js";
 import { assessPopulation, buildPopulationSnapshot } from "./population-controller.js";
-import type { PopulationDecision, PopulationSnapshot } from "./population-types.js";
+import type { PopulationSnapshot } from "./population-types.js";
 
 type HostCollectorTerminalStatus = "done" | "failed" | "killed" | "timeout" | null;
 
@@ -76,18 +76,6 @@ function buildHostCollectorSnapshot(params: {
     observations,
     meanCorrelation: null,
   });
-}
-
-/**
- * Build an advisory population assessment from facts owned by the host runtime.
- * Semantic candidate signals remain unknown until a trusted producer measures them.
- */
-export function assessHostCollectorPopulation(params: {
-  groupId: string;
-  maxConcurrent: number;
-  records: readonly HostCollectorDynamicsRecord[];
-}): PopulationDecision {
-  return assessPopulation(buildHostCollectorSnapshot(params));
 }
 
 /**
