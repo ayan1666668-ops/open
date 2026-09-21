@@ -2,6 +2,7 @@
 import path from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { resetFileLockStateForTest } from "../../infra/file-lock.js";
+import { createDeferredCore } from "../../shared/deferred.js";
 import { captureEnv } from "../../test-utils/env.js";
 import { getOAuthProviderRuntimeMocks } from "./oauth-common-mocks.test-support.js";
 import "./oauth-external-auth-passthrough.test-support.js";
@@ -126,9 +127,9 @@ describe("OAuth refresh failure ownership", () => {
       expires: Date.now() + 600_000,
     };
     saveAuthProfileStore({ version: 1, profiles: { [profileId]: credential } }, agentDir);
-    const started = Promise.withResolvers<void>();
-    const release = Promise.withResolvers<OAuthCredential>();
-    const settled = Promise.withResolvers<void>();
+    const started = createDeferredCore();
+    const release = createDeferredCore<OAuthCredential>();
+    const settled = createDeferredCore();
     const refreshCredential = vi.fn(async () => {
       started.resolve();
       return await release.promise;

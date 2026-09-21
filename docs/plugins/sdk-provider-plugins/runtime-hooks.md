@@ -54,7 +54,7 @@ Credential consumers using `resolveApiKeyForProvider` from
 not the refresh owner's credential write. Preserve non-missing authentication
 errors rather than converting every failure into an absent API key.
 
-`buildTimeoutAbortSignal` from `openclaw/plugin-sdk/provider-http` combines a
+`buildTimeoutAbortSignal` from `openclaw/plugin-sdk/extension-shared` combines a
 caller signal with an operation timeout. Start it before credential preparation
 when authentication shares the request budget, and call its `cleanup` in
 `finally` to release the timer.

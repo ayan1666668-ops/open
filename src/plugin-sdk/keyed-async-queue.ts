@@ -1,4 +1,6 @@
 // Keyed async queue helpers serialize async plugin work by key while preserving parallelism.
+import { createDeferredCore } from "../shared/deferred.js";
+
 /** Optional lifecycle hooks fired around each queued task. */
 export type KeyedAsyncQueueHooks = {
   onEnqueue?: () => void;
@@ -45,7 +47,7 @@ export function enqueueKeyedTask<T>(params: {
   if (!signal) {
     return current;
   }
-  const { promise, resolve, reject } = Promise.withResolvers<T>();
+  const { promise, resolve, reject } = createDeferredCore<T>();
   const onAbort = () => {
     signal.removeEventListener("abort", onAbort);
     reject(signal.reason);

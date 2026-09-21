@@ -1,5 +1,6 @@
 // Xai provider module implements model/runtime integration.
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
+import { buildTimeoutAbortSignal } from "openclaw/plugin-sdk/extension-shared";
 import {
   coerceSecretRef,
   ensureAuthProfileStore,
@@ -9,7 +10,6 @@ import {
   isProviderAuthError,
   resolveApiKeyForProvider,
 } from "openclaw/plugin-sdk/provider-auth-runtime";
-import { buildTimeoutAbortSignal } from "openclaw/plugin-sdk/provider-http";
 import {
   DEFAULT_CACHE_TTL_MINUTES,
   formatCliCommand,
