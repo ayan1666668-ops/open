@@ -12,6 +12,7 @@ import {
   enqueuePostCompactionDelegateDelivery as enqueuePostCompactionDelegateDeliveryQueue,
   loadPendingSessionDelivery,
 } from "../../infra/session-delivery-queue-storage.js";
+import { resolveSystemEventQueueKey } from "../../infra/system-event-ownership.js";
 import { withTestDir } from "../../test-helpers/temp-dir.js";
 import type { ChainState, ContinuationRuntimeConfig } from "../continuation/types.js";
 import {
@@ -29,6 +30,10 @@ import {
 } from "./post-compaction-delegate-dispatch.js";
 import { normalizePostCompactionDelegate } from "./post-compaction-delegate-normalize.js";
 import type { FollowupRun } from "./queue/types.js";
+
+// post-compaction dispatch enqueues under the agent-qualified queue key
+// (withSystemEventOwner), so the expectations name that key, not the bare one.
+const MAIN_QUEUE_KEY = resolveSystemEventQueueKey("main", "main");
 
 const mockRegistryState = vi.hoisted(() => ({
   acceptedChildSessionKeys: new Set<string>(),
@@ -453,7 +458,7 @@ describe("post-compaction delegate dispatch extraction", () => {
     );
     expect(enqueueSystemEvent).toHaveBeenCalledWith(
       expect.stringContaining("Context evacuation read failed: workspace locked"),
-      { sessionKey: "main" },
+      { sessionKey: MAIN_QUEUE_KEY },
     );
   });
 
@@ -618,7 +623,7 @@ describe("post-compaction delegate dispatch extraction", () => {
         expect.stringContaining(
           "Failed to load persisted post-compaction delegates for this session:",
         ),
-        { sessionKey: "main" },
+        { sessionKey: MAIN_QUEUE_KEY },
       );
     });
   });
@@ -1025,7 +1030,7 @@ describe("post-compaction delegate dispatch extraction", () => {
       );
       expect(enqueueSystemEvent).toHaveBeenCalledWith(
         "[continuation:compaction-delegate-spawned] Post-compaction shard dispatched: queued delegate",
-        { sessionKey: "main" },
+        { sessionKey: MAIN_QUEUE_KEY },
       );
     });
   });

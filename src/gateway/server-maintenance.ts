@@ -360,7 +360,10 @@ export function startGatewayMaintenanceTimers(params: {
   const skillUsageCleanup = async () => {
     delegateArtifactGcCancelled = true;
     clearInterval(delegateArtifactCleanup);
-    stopSkillUsageTracking();
+    // registerSkillUsageTracking returns () => Promise<void>; awaiting it is the
+    // reason this cleanup is async, so a caller that awaits it gets a settled
+    // teardown rather than a detached one.
+    await stopSkillUsageTracking();
   };
 
   // dedupe cache cleanup

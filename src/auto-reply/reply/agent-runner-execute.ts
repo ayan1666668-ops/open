@@ -231,6 +231,7 @@ export async function executePreparedReplyAgentRun(
         await emitPersistedContextPressure({
           sessionEntry: activeSessionEntry,
           sessionKey,
+          agentId: followupRun.run.agentId,
           continuationEnabled: enabled,
           contextPressureThreshold,
           contextWindowTokens,
@@ -246,6 +247,7 @@ export async function executePreparedReplyAgentRun(
       checkContextPressure({
         sessionEntry: activeSessionEntry,
         sessionKey,
+        agentId: followupRun.run.agentId,
         contextPressureThreshold,
         contextWindowTokens,
         earlyWarningBand,

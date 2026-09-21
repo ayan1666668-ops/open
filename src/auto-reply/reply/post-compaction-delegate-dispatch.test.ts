@@ -11,6 +11,7 @@ import {
   enqueuePostCompactionDelegateDelivery as enqueuePostCompactionDelegateDeliveryQueue,
   loadPendingSessionDelivery,
 } from "../../infra/session-delivery-queue-storage.js";
+import { resolveSystemEventQueueKey } from "../../infra/system-event-ownership.js";
 import { withTestDir } from "../../test-helpers/temp-dir.js";
 import type { ChainState, ContinuationRuntimeConfig } from "../continuation/types.js";
 import {
@@ -28,6 +29,10 @@ import {
 } from "./post-compaction-delegate-dispatch.js";
 import { normalizePostCompactionDelegate } from "./post-compaction-delegate-normalize.js";
 import type { FollowupRun } from "./queue/types.js";
+
+// post-compaction dispatch enqueues under the agent-qualified queue key
+// (withSystemEventOwner), so the expectations name that key, not the bare one.
+const MAIN_QUEUE_KEY = resolveSystemEventQueueKey("main", "main");
 
 const mockRegistryState = vi.hoisted(() => ({
   acceptedChildSessionKeys: new Set<string>(),
@@ -554,13 +559,13 @@ describe("post-compaction delegate dispatch extraction", () => {
       sessionKey: "main",
     });
     expect(enqueueSystemEvent).toHaveBeenCalledWith("[context] refreshed", {
-      sessionKey: "main",
+      sessionKey: MAIN_QUEUE_KEY,
     });
     expect(enqueueSystemEvent).toHaveBeenCalledWith(
       expect.stringContaining(
         "Queued 2 post-compaction delegate(s) for delivery into the fresh session.",
       ),
-      { sessionKey: "main" },
+      { sessionKey: MAIN_QUEUE_KEY },
     );
     expect(preserve).toEqual([]);
   });
@@ -594,7 +599,7 @@ describe("post-compaction delegate dispatch extraction", () => {
     await flushMicrotasks();
 
     expect(enqueueSystemEvent).toHaveBeenCalledWith(agentsContext, {
-      sessionKey: "main",
+      sessionKey: MAIN_QUEUE_KEY,
     });
     const contextCall = enqueueSystemEvent.mock.calls.find((call) => call[0] === agentsContext);
     expect(contextCall).toBeDefined();
@@ -659,7 +664,7 @@ describe("post-compaction delegate dispatch extraction", () => {
       expect.stringContaining(
         "Queued 2 post-compaction delegate(s) for delivery into the fresh session.",
       ),
-      { sessionKey: "main", traceparent: VALID_TRACEPARENT },
+      { sessionKey: MAIN_QUEUE_KEY, traceparent: VALID_TRACEPARENT },
     );
   });
 

@@ -583,14 +583,16 @@ describe("runReplyAgent :: continuation.delegate.fire span", () => {
     });
 
     const { drainSystemEventEntries } = await import("../../infra/system-events.js");
-    drainSystemEventEntries(sessionKey);
+    const { resolveSystemEventQueueKey } = await import("../../infra/system-event-ownership.js");
+    const queueKey = resolveSystemEventQueueKey(sessionKey, "main");
+    drainSystemEventEntries(queueKey);
 
     await runDelegateTurn(run, { [sessionKey]: run.sessionEntry });
 
     const spawnArgs = spawnSubagentDirectMock.mock.calls[0]?.[0] as { task?: string };
     expect(spawnArgs.task).toContain(ROLE_MARKED_BRACKET_TASK);
 
-    const entries = drainSystemEventEntries(sessionKey);
+    const entries = drainSystemEventEntries(queueKey);
     const spawnedEvent = entries.find((e) => e.text.includes("[continuation:delegate-spawned]"));
     expect(
       spawnedEvent,

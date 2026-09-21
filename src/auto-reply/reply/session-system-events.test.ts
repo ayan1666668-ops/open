@@ -1,5 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { resolveSystemEventQueueKey } from "../../infra/system-event-ownership.js";
 import type { SystemEvent } from "../../infra/system-events.js";
+
+const MAIN_QUEUE_KEY = resolveSystemEventQueueKey("main", "main");
 
 const RECIPIENT_AUTHORITY_EPOCH = "11111111-1111-4111-8111-111111111111";
 
@@ -210,7 +213,7 @@ describe("drainFormattedSystemEvents trace context", () => {
 
     expect(prepared).toEqual({ blocks: [], managedDeliveries: [] });
     expect(mocks.ackSessionDelivery).toHaveBeenCalledWith("delivery-stale-authority", undefined);
-    expect(mocks.consumeSelectedSystemEventEntries).toHaveBeenCalledWith("main", [event]);
+    expect(mocks.consumeSelectedSystemEventEntries).toHaveBeenCalledWith(MAIN_QUEUE_KEY, [event]);
   });
 
   it("terminalizes a managed delivery before settling a stale-incarnation queue row", async () => {
@@ -322,7 +325,7 @@ describe("drainFormattedSystemEvents trace context", () => {
       isNewSession: false,
     });
 
-    expect(mocks.consumeSelectedSystemEventEntries).toHaveBeenCalledWith("main", []);
+    expect(mocks.consumeSelectedSystemEventEntries).toHaveBeenCalledWith(MAIN_QUEUE_KEY, []);
     expect(mocks.ackSessionDelivery).not.toHaveBeenCalled();
     expect(mocks.recordDelegateArtifactDeliveryBinding).not.toHaveBeenCalled();
   });
@@ -472,7 +475,7 @@ describe("drainFormattedSystemEvents trace context", () => {
       phase: "acknowledged",
     });
     expect(mocks.ackSessionDelivery).toHaveBeenCalledWith("delivery-1", undefined);
-    expect(mocks.consumeSelectedSystemEventEntries).toHaveBeenCalledWith("main", [event]);
+    expect(mocks.consumeSelectedSystemEventEntries).toHaveBeenCalledWith(MAIN_QUEUE_KEY, [event]);
   });
 
   it("binds a replayed managed delivery and its block to the same recipient authority", async () => {
@@ -542,6 +545,10 @@ describe("drainFormattedSystemEvents trace context", () => {
       throw new Error("expected stale recipient settlement");
     }
     await stale.settle();
+    // The settle path resolves its queue key from the owner scope that selected
+    // the event; without this the fix is only guarded by the fixture happening
+    // to use a bare key that throws.
+    expect(mocks.consumeSelectedSystemEventEntries).toHaveBeenCalledWith(MAIN_QUEUE_KEY, [event]);
     expect(resolveFinalSystemEventAdoption({ prepared: [prepared] })).toMatchObject({
       kind: "adopted",
       blocks: [],
@@ -683,7 +690,7 @@ describe("drainFormattedSystemEvents trace context", () => {
       phase: "acknowledged",
     });
     expect(mocks.ackSessionDelivery).toHaveBeenCalledWith("delivery-1", undefined);
-    expect(mocks.consumeSelectedSystemEventEntries).toHaveBeenCalledWith("main", [event]);
+    expect(mocks.consumeSelectedSystemEventEntries).toHaveBeenCalledWith(MAIN_QUEUE_KEY, [event]);
   });
 
   it("terminalizes a managed return that becomes unavailable during prompt refresh", async () => {

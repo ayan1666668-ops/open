@@ -4,6 +4,7 @@ import { isSessionRecipientAuthorityCurrent } from "../../config/sessions/sessio
 import type { SessionRecipientAuthority } from "../../config/sessions/session-recipient-authority-types.js";
 import { toErrorObject } from "../../infra/errors.js";
 import { ackSessionDelivery } from "../../infra/session-delivery-queue-storage.js";
+import { resolveSystemEventQueueKey } from "../../infra/system-event-ownership.js";
 import { consumeSelectedSystemEventEntries, type SystemEvent } from "../../infra/system-events.js";
 
 type PreparedAuthorityScope = { agentId: string; sessionKey: string; storePath: string };
@@ -101,6 +102,8 @@ export async function settleManagedSystemEventsAfterTurnAdoption(params: {
 export async function settleStaleSystemEventAuthority(params: {
   event: SystemEvent;
   sessionKey: string;
+  /** Owner that selected this event; omitted when sessionKey is already a queue key. */
+  ownerAgentId?: string;
 }): Promise<void> {
   if (params.event.sessionDeliveryAckId) {
     await ackSessionDelivery(
@@ -108,7 +111,13 @@ export async function settleStaleSystemEventAuthority(params: {
       params.event.sessionDeliveryAckStateDir,
     );
   }
-  consumeSelectedSystemEventEntries(params.sessionKey, [params.event]);
+  // Resolved here rather than at each call site so a third caller cannot forget:
+  // an already-qualified key resolves to itself, and a supplied owner is verified
+  // against the key instead of overriding it.
+  consumeSelectedSystemEventEntries(
+    resolveSystemEventQueueKey(params.sessionKey, params.ownerAgentId),
+    [params.event],
+  );
 }
 
 export function readPreparedSystemEventAuthorityKey(event: SystemEvent): string | undefined {
@@ -166,6 +175,7 @@ export function resolveFinalSystemEventAdoption(params: {
           await settleStaleSystemEventAuthority({
             event: entry.binding.event,
             sessionKey: entry.owner.scope.sessionKey,
+            ownerAgentId: entry.owner.scope.agentId,
           });
           entry.owner.pending.delete(entry.authorityKey);
         }
