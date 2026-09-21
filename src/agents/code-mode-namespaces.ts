@@ -481,9 +481,18 @@ interface DynamicsHandoff {
   summary?: string;
 }
 
+interface DynamicsCandidateManifest {
+  version: 1;
+  candidateDigest: string;
+  sourceDigest: string;
+  recipeDigest: string;
+  policyDigest: string;
+}
+
 interface DynamicsOptions {
   profile: DynamicsProfileId;
   handoff?: DynamicsHandoff;
+  candidate?: DynamicsCandidateManifest;
 }
 
 interface AgentRunOptions {
