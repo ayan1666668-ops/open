@@ -1,27 +1,11 @@
 import { STATE_DIR } from "../config/paths.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
-import { getGatewayProcessInstanceId } from "../gateway/process-instance.js";
 import type { GatewayPluginEventBroadcastFn } from "../gateway/server-broadcast-types.js";
-import {
-  emitTrustedDiagnosticEventWithPrivateData,
-  onTrustedInternalDiagnosticEvent,
-  waitForDiagnosticEventsDrained,
-} from "../infra/diagnostic-events.js";
-import { markTrustedOtelDiagnosticListener } from "../infra/diagnostic-otel-listener-provenance.js";
-import { registerDiagnosticTracePropagationBridge } from "../infra/diagnostic-trace-propagation.js";
+import { waitForDiagnosticEventsDrained } from "../infra/diagnostic-events.js";
 import { formatErrorMessage } from "../infra/errors.js";
-import type {
-  ProviderUsageMetricsListener,
-  ProviderUsageMetricsSnapshot,
-} from "../infra/provider-usage-metrics.types.js";
-import {
-  recordDiagnosticExporterHealth,
-  type DiagnosticExporterHealthUpdate,
-} from "../logging/diagnostic-stability.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { trackAsyncWork } from "../shared/async-work-scope.js";
 import { createDeferredCore } from "../shared/deferred.js";
-import { resolveRuntimeServiceBuildId } from "../version.js";
 import {
   createPluginRuntimeCapabilityLease,
   type PluginRuntimeCapabilityLease,
@@ -36,6 +20,10 @@ import type { PluginServiceRegistration } from "./registry-types.js";
 import type { PluginRegistry } from "./registry.js";
 import { createPluginServiceCronGetter, type PluginServiceCronHost } from "./service-cron.js";
 import { createPluginServiceHealthReporter } from "./service-health.js";
+import {
+  createTrustedExporterInternalDiagnostics,
+  type ObserveProviderUsage,
+} from "./service-internal-diagnostics.js";
 import { createPluginServiceNodeInvoker } from "./service-nodes.js";
 import { encodeStartupTraceSegment } from "./startup-trace-segment.js";
 import type { OpenClawPluginServiceContext } from "./types.js";
@@ -75,19 +63,7 @@ export function getPluginServiceCleanupSettlement(
   return { error, settled };
 }
 
-type TrustedExporterInternalDiagnostics = NonNullable<
-  OpenClawPluginServiceContext["internalDiagnostics"]
-> & {
-  reportExporterHealth: (update: DiagnosticExporterHealthUpdate) => void;
-  observeProviderUsage?: (listener: ProviderUsageMetricsListener) => Promise<() => void>;
-};
-
 type PluginServiceStopResult = { errors: readonly unknown[] };
-
-type ObserveProviderUsage = (params: {
-  isActive: () => boolean;
-  listener: (snapshot: ProviderUsageMetricsSnapshot) => void;
-}) => Promise<() => void>;
 
 export type PluginServicesHandle = {
   reload: (config: OpenClawConfig, serviceIds: ReadonlySet<string>) => Promise<void>;
@@ -532,65 +508,11 @@ async function startPreparedPluginServices({
           isStopping: () => ownedService.owner.closed || ownedService.stopRequested,
         })
       : undefined;
-    const isDiagnosticsExporter =
-      entry?.pluginId === entry?.id &&
-      (entry?.id === "diagnostics-otel" || entry?.id === "diagnostics-prometheus");
-    const isOtelExporter = isDiagnosticsExporter && entry.id === "diagnostics-otel";
-    const isPrometheusExporter = isDiagnosticsExporter && entry.id === "diagnostics-prometheus";
-    const grantsInternalDiagnostics =
-      isDiagnosticsExporter &&
-      (entry?.origin === "bundled" || entry?.trustedOfficialInstall === true);
-    const internalDiagnostics: TrustedExporterInternalDiagnostics | undefined =
-      grantsInternalDiagnostics
-        ? {
-            getRuntimeIdentity: () => {
-              lease.assertActive("runtime diagnostic identity");
-              const buildId = resolveRuntimeServiceBuildId();
-              return {
-                processInstanceId: getGatewayProcessInstanceId(),
-                ...(buildId ? { buildId } : {}),
-              };
-            },
-            emit: (event, privateData) => {
-              lease.assertActive("internal diagnostic emitter");
-              emitTrustedDiagnosticEventWithPrivateData(event, privateData);
-            },
-            onEvent: (listener, filter, options) => {
-              lease.assertActive("internal diagnostic listener");
-              const trustedListener = isOtelExporter
-                ? markTrustedOtelDiagnosticListener(listener)
-                : listener;
-              return lease.retain(
-                onTrustedInternalDiagnosticEvent(trustedListener, filter, options),
-              );
-            },
-            registerTracePropagationBridge: (bridge) => {
-              lease.assertActive("diagnostic trace propagation bridge");
-              return lease.retain(registerDiagnosticTracePropagationBridge(bridge));
-            },
-            reportExporterHealth: (update) => {
-              if (lease.isActive()) {
-                recordDiagnosticExporterHealth(entry.id, update);
-              }
-            },
-            ...(isPrometheusExporter && observeProviderUsage
-              ? {
-                  observeProviderUsage: async (listener: ProviderUsageMetricsListener) => {
-                    lease.assertActive("provider usage observer");
-                    const release = await observeProviderUsage({
-                      isActive: lease.isActive,
-                      listener: (snapshot) => {
-                        if (lease.isActive()) {
-                          listener(snapshot);
-                        }
-                      },
-                    });
-                    return lease.retain(release);
-                  },
-                }
-              : {}),
-          }
-        : undefined;
+    const internalDiagnostics = createTrustedExporterInternalDiagnostics({
+      entry,
+      lease,
+      observeProviderUsage,
+    });
 
     const scopeTraceName = (name: string) =>
       `${traceName}.${name.split(".").map(encodeStartupTraceSegment).join(".")}`;
