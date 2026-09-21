@@ -22,6 +22,25 @@ function readDeepLeaf(value: unknown, depth: number): unknown {
 }
 
 describe("projectRuntimeChangesOntoSource", () => {
+  it("keeps a retained __proto__ key as inert own data when cloning source values", () => {
+    // JSON.parse mints an own enumerable `__proto__` data property; the object
+    // literal form would set a prototype instead, so both sides parse.
+    const source = JSON.parse('{"model":{"__proto__":{"flag":true},"name":"gpt"}}') as Record<
+      string,
+      unknown
+    >;
+    const result = projectRuntimeChangesOntoSource(source, source, source) as Record<
+      string,
+      unknown
+    >;
+    const model = result.model as Record<string, unknown>;
+    expect(Object.hasOwn(model, "__proto__")).toBe(true);
+    expect(Object.getPrototypeOf(model)).toBe(Object.prototype);
+    expect(JSON.parse(JSON.stringify(model))).toEqual(
+      JSON.parse('{"__proto__":{"flag":true},"name":"gpt"}'),
+    );
+  });
+
   it("projects a deep leaf edit without a call-stack overflow", () => {
     const depth = 2_000;
     const source = buildNestedObject(depth, { leaf: "old" });

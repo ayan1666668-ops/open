@@ -23,7 +23,20 @@ function settleCloneSlot(slot: CloneSlot, value: unknown): void {
     slot.container[slot.key as number] = value;
     return;
   }
-  slot.container[slot.key as string] = value;
+  const key = slot.key as string;
+  if (key === "__proto__") {
+    // An authored own `__proto__` key settles as inert data, exactly as the
+    // platform clone kept it; assignment would invoke the inherited setter
+    // and graft the value onto the clone's prototype instead.
+    Object.defineProperty(slot.container, key, {
+      value,
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
+    return;
+  }
+  slot.container[key] = value;
 }
 
 /**

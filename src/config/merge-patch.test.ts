@@ -287,4 +287,20 @@ describe("stack-safe deep merge-patch", () => {
     const merged = applyMergePatch(base, patch) as typeof base;
     expect(readDeepLeaf(merged.plugins.entries.probe.config, depth)).toEqual({ leaf: 2 });
   });
+
+  it("keeps an authored __proto__ key as inert own data when cloning an added subtree", () => {
+    // JSON.parse mints an own enumerable `__proto__` data property; the object
+    // literal form would set a prototype instead, so both sides parse.
+    const target = JSON.parse('{"added":{"__proto__":{"flag":true},"kept":1}}') as Record<
+      string,
+      unknown
+    >;
+    const patch = createMergePatch({}, target) as Record<string, unknown>;
+    const added = patch.added as Record<string, unknown>;
+    expect(Object.hasOwn(added, "__proto__")).toBe(true);
+    expect(Object.getPrototypeOf(added)).toBe(Object.prototype);
+    expect(JSON.parse(JSON.stringify(added))).toEqual(
+      JSON.parse('{"__proto__":{"flag":true},"kept":1}'),
+    );
+  });
 });
