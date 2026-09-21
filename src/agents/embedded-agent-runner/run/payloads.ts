@@ -36,6 +36,7 @@ import {
   sanitizeAssistantFinalAnswerText,
   sanitizeAssistantVisibleText,
 } from "../../../shared/text/assistant-visible-text.js";
+import { trimTextPreservingCode } from "../../../shared/text/text-projection.js";
 import { classifyOAuthRefreshFailure } from "../../auth-profiles/oauth-refresh-failure.js";
 import {
   formatAssistantErrorText,
@@ -553,7 +554,7 @@ export function buildEmbeddedRunPayloads(params: {
           ? item.text.trim().length > 0
             ? item.text
             : undefined
-          : normalizeOptionalString(item.text),
+          : trimTextPreservingCode(item.text ?? "") || undefined,
       });
       const mediaUrl = item.mediaUrl ?? item.media?.[0];
       if (mediaUrl) {

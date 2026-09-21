@@ -30,6 +30,7 @@ import {
   getSubagentSessionListRunsSnapshotForRead,
   getSubagentSessionListRunsSnapshotForSessions,
   getSubagentRunsSnapshotForChildSession,
+  getSubagentRunsSnapshotForChildSessions,
   getSubagentRunsSnapshotForController,
   getSubagentRunsSnapshotForRead,
   getSubagentRunsSnapshotForSessions,
@@ -77,8 +78,14 @@ export function listSubagentSessionListRunsForControllers(
 }
 
 /** Builds an O(1) latest-run lookup from one persisted and in-memory snapshot. */
-export function buildLatestSubagentRunReadIndex(): LatestSubagentRunReadIndex {
-  return buildLatestSubagentRunReadIndexFromRuns(getSubagentRunsSnapshotForRead(subagentRuns));
+export function buildLatestSubagentRunReadIndex(
+  childSessionKeys?: readonly string[],
+): LatestSubagentRunReadIndex {
+  return buildLatestSubagentRunReadIndexFromRuns(
+    childSessionKeys
+      ? getSubagentRunsSnapshotForChildSessions(childSessionKeys)
+      : getSubagentRunsSnapshotForRead(subagentRuns),
+  );
 }
 
 /** Builds a reusable index from the full readable registry snapshot. */

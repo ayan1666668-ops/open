@@ -246,10 +246,6 @@ export function selectTaskFlowRecords(
     .toSorted((left, right) => right.createdAt - left.createdAt);
 }
 
-export function snapshotFlowRecords(source: ReadonlyMap<string, TaskFlowRecord>): TaskFlowRecord[] {
-  return [...source.values()].map((record) => cloneFlowRecord(record));
-}
-
 function ensureNotifyPolicy(notifyPolicy?: TaskNotifyPolicy): TaskNotifyPolicy {
   return notifyPolicy ?? "done_only";
 }
