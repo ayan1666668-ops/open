@@ -10,6 +10,7 @@ import {
   onInternalDiagnosticEvent,
   type DiagnosticEventPayload,
 } from "openclaw/plugin-sdk/diagnostic-runtime";
+import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
 import { initializeGlobalHookRunner } from "openclaw/plugin-sdk/hook-runtime";
 import {
   createMockPluginRegistry,
@@ -78,16 +79,28 @@ describe("runCodexAppServerAttempt native hook relay", () => {
     initializeGlobalHookRunner(registry);
     const sessionFile = path.join(tempDir, "session.jsonl");
     const workspaceDir = path.join(tempDir, "workspace");
-    const harness = createStartedThreadHarness();
+    const turnStarted = createDeferred<void>();
+    const harness = createStartedThreadHarness(async (method) => {
+      if (method === "turn/start") {
+        turnStarted.resolve();
+      }
+    });
     const params = createParams(sessionFile, workspaceDir);
     params.sandboxSessionKey = "agent:main:policy";
+    // Protocol events own this case; fixture I/O must not spend the execution watchdog.
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
     const run = runCodexAppServerAttempt(params, {
       nativeHookRelay: {
         enabled: true,
         events: ["post_tool_use", "before_agent_finalize"],
       },
     });
-    await harness.waitForMethod("turn/start");
+    await Promise.race([
+      turnStarted.promise,
+      run.then((result) => {
+        throw new Error("Attempt ended before turn/start", { cause: result });
+      }),
+    ]);
     const startRequest = harness.requests.find((request) => request.method === "thread/start");
     const startConfig = (startRequest?.params as { config?: Record<string, unknown> } | undefined)
       ?.config;
