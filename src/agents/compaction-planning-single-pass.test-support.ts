@@ -264,13 +264,12 @@ describe("compaction single-pass fast path", () => {
 
   it("matches each transport's output cap when the thinking budget is subminimum", () => {
     // Below Anthropic's 1024 minimum every transport disables thinking, but they
-    // disagree on the resulting cap, and the budget must follow the one that
-    // will actually execute:
-    //   - Anthropic-direct restores the visible-output cap
-    //     (clampMaxTokensToModel(model, options.maxTokens ?? model.maxTokens));
-    //   - the managed alias transport and Bedrock keep adjusted.maxTokens.
+    // disagree on the resulting cap. Because planning cannot tell whether an
+    // Anthropic-messages model will run direct or managed, it reserves the
+    // larger managed cap for every Anthropic/Bedrock model; only a model that
+    // cannot reach the managed transport keeps the direct visible cap.
     // Reviewer's boundary: reserveTokens 1000 and model.maxTokens 1536 give a
-    // 0.8*1000 = 800 visible cap and a subminimum thinking budget.
+    // 0.8*1000 = 800 direct cap and a subminimum thinking budget.
     const reserveTokens = 1_000;
     const messages = buildTranscript(4, 200);
     const baseClaude = {
@@ -297,8 +296,17 @@ describe("compaction single-pass fast path", () => {
       resolveRequestBudget(messages, { model, reserveTokens, thinkingLevel: "high" })
         .completionAllowanceTokens;
 
-    // Anthropic-direct restores the visible cap.
+    // An anthropic-messages model (even provider "anthropic") can still execute
+    // the managed transport as a standalone streamFn without its api being
+    // rewritten to the alias (embedded-agent-runner/stream-resolution.ts), so
+    // planning must reserve the larger managed cap rather than the direct one.
+    // Revision 32 flagged the earlier alias-only assumption here as under-budgeting.
     expect(allowanceFor({ ...baseClaude, api: "anthropic-messages", provider: "anthropic" })).toBe(
+      subminimum.maxTokens,
+    );
+
+    // A model that never reaches the managed transport keeps the direct visible cap.
+    expect(allowanceFor({ ...baseClaude, api: "openai-completions", provider: "openai" })).toBe(
       summaryOutputTokens,
     );
 

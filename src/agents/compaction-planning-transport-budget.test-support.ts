@@ -45,12 +45,26 @@ describe("sub-minimum thinking budget follows the executing transport", () => {
     }).completionAllowanceTokens;
   }
 
-  it("keeps the direct visible-output cap for Anthropic-direct", () => {
-    expect(allowanceFor(modelWith({}))).toBe(maxTokens);
+  it("reserves the managed cap for an unaliased anthropic-messages model that may run managed", () => {
+    // The managed Anthropic transport is selected for default / runtime-auth /
+    // proxied models and passed in as a standalone streamFn *without* rewriting
+    // model.api to the managed alias (embedded-agent-runner/stream-resolution.ts).
+    // Planning cannot rule that out, so an unaliased anthropic-messages model
+    // must reserve the larger managed cap, not the direct visible cap. Keying on
+    // the alias alone (the pre-fix behaviour) under-budgets this to `maxTokens`.
+    expect(allowanceFor(modelWith({}))).toBe(modelMaxTokens);
   });
 
   it("matches the inflated cap the managed alias transport actually sends", () => {
     expect(allowanceFor(modelWith({ api: MANAGED_ANTHROPIC_TRANSPORT_API }))).toBe(modelMaxTokens);
+  });
+
+  it("keeps the direct visible-output cap for a model that cannot reach the managed transport", () => {
+    // A non-Anthropic, non-Bedrock model never routes through the managed
+    // transport, so it keeps the direct visible-output cap.
+    expect(allowanceFor(modelWith({ api: "openai-completions", provider: "openai" }))).toBe(
+      maxTokens,
+    );
   });
 
   it("matches the inflated cap Bedrock actually sends", () => {

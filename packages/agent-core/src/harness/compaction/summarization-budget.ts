@@ -146,18 +146,25 @@ function resolveSummarizationCompletionAllowance(params: {
     return adjusted.maxTokens;
   }
   // Below the 1024 minimum each transport disables thinking, but they do not
-  // agree on the resulting output cap, so the budget must follow whichever one
-  // will actually execute:
+  // agree on the resulting output cap, so the budget must not under-reserve for
+  // whichever one will actually execute:
   //
   // - Anthropic-direct (`streamSimpleAnthropic`) restores the visible-output cap
-  //   via `clampMaxTokensToModel(model, options.maxTokens ?? model.maxTokens)`
-  //   rather than keeping the thinking-inflated limit.
-  // - The managed alias transport and Bedrock both keep `adjusted.maxTokens`.
+  //   via `clampMaxTokensToModel(model, options.maxTokens ?? model.maxTokens)`.
+  // - The managed transport and Bedrock keep the larger `adjusted.maxTokens`.
   //
-  // Assuming the direct contract everywhere understated the allowance for the
-  // other two, letting a request pass the fit check without the output headroom
-  // they actually send.
-  if (isManagedAnthropicTransportApi(params.model.api) || isClaudeBedrockModel(params.model)) {
+  // Planning cannot tell which one will run: the managed Anthropic transport is
+  // selected for default, runtime-auth-resolved and proxied models
+  // (embedded-agent-runner/stream-resolution.ts:~188) and passed in as a
+  // standalone `streamFn` *without* rewriting `model.api` to the managed alias,
+  // so keying on the alias alone misses that live combination and under-budgets
+  // it to the direct cap. Reserve the larger managed cap for every
+  // Anthropic-messages model (aliased or not) and Bedrock; only a model that
+  // cannot reach the managed transport at all keeps the direct visible cap.
+  // Over-reserving is the safe direction: it can only decline a borderline
+  // single-pass, never approve one the provider then rejects for lack of output
+  // headroom.
+  if (isAnthropicMessagesApi(params.model.api) || isClaudeBedrockModel(params.model)) {
     return adjusted.maxTokens;
   }
   return Math.min(params.maxTokens, params.model.maxTokens ?? params.maxTokens);
