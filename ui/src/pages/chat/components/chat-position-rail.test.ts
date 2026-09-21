@@ -329,10 +329,10 @@ describe("conversation position rail", () => {
           marker(60).blur();
           activeMessage.mockReturnValue("message-79");
           publishVisibility(root.querySelector(".chat-bubble")!);
-          // Tab entry must follow the published reader position before the next layout frame.
+          // Observer updates publish reader position and Tab entry in the same layout frame.
+          await flush();
           expect(marker(79).getAttribute("aria-current")).toBe("true");
           expect([...marks.querySelectorAll('[tabindex="0"]')]).toEqual([marker(79)]);
-          await flush();
           expect(marks.scrollTop).toBe(677);
         } else if (scenario === "focus-resize") {
           document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true }));

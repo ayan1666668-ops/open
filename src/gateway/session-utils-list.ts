@@ -162,11 +162,16 @@ function resolveSessionsListDefaultsAgentId(
 type RecordRow = ReturnType<SessionRowProjection["selectEntries"]>[number];
 const sentinel = (key: string) => key === "global" || key === "unknown";
 
-// One query per current owner revision. Publications release the token, so stale row graphs
-// are not retained until another list arrives. Viewer and clock facts never enter this cache.
+// Publications release the token and stale row graphs without waiting for another list.
+// Retain one broad selection per revision; keyed reads never displace it.
 const sessionRowSelections = new WeakMap<
   SessionRowProjection["state"]["revision"],
-  { key: string; entries: SessionEntryPair[]; winners: Map<string, RecordRow> }
+  {
+    scope: ReturnType<SessionRowProjection["state"]["scope"]>;
+    activeOnly: boolean;
+    winners: Map<string, RecordRow>;
+    entries: SessionEntryPair[];
+  }
 >();
 
 /** Preserve federation before caller visibility and activity filters. */
@@ -185,15 +190,10 @@ export function prepareSessionRowSelection(
     ...residentContext,
     subagentRuns: residentContext.subagentRuns.atTime(now),
   };
-  const selectionKey = JSON.stringify([
-    selectedScope.agentId,
-    opts.configuredAgentsOnly === true,
-    opts.activeOnly === true,
-    prepared?.key,
-    prepared?.sessionIdOrKey,
-  ]);
-  let selected = sessionRowSelections.get(revision);
-  if (selected?.key !== selectionKey) {
+  const keyed = prepared?.key !== undefined || prepared?.sessionIdOrKey !== undefined;
+  const activeOnly = opts.activeOnly === true;
+  let selection = keyed ? undefined : sessionRowSelections.get(revision);
+  if (!selection || selection.scope !== selectedScope || selection.activeOnly !== activeOnly) {
     const rows = projection
       .selectEntries({
         agentId: selectedScope.agentId,
@@ -239,11 +239,12 @@ export function prepareSessionRowSelection(
         entries.push([key, row.entry]);
       }
     }
-    selected = { key: selectionKey, entries, winners };
-    // Exact dirty reads can acquire a fresh row while selecting.
-    sessionRowSelections.set(projection.state.revision, selected);
+    selection = { scope: selectedScope, activeOnly, winners, entries };
+    if (!keyed) {
+      sessionRowSelections.set(projection.state.revision, selection);
+    }
   }
-  const { entries, winners } = selected;
+  const { winners, entries } = selection;
   return {
     cfg,
     opts,
@@ -323,7 +324,8 @@ export function prepareProjectedSessionList(params: {
   let candidates: SessionEntryPair[] | undefined;
   // Person references resolve against the full visible roster before candidate filtering.
   if (!opts.spawnedBy && !opts.involvingProfileId) {
-    const key = JSON.stringify([exactKey, opts]);
+    const { limit: _limit, offset: _offset, ...candidateOptions } = opts;
+    const key = JSON.stringify([exactKey, candidateOptions]);
     let cached = sessionListCandidates.get(prepared.entries);
     if (cached?.key !== key) {
       cached = {

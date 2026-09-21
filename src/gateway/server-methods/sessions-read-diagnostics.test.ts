@@ -77,7 +77,6 @@ function expectNoCpuFields(record: unknown) {
 function controlProjectionClock(afterRow?: () => void) {
   vi.spyOn(performance, "now").mockImplementation(() => clock);
   const prepare = sessionPresentation.prepareProjectedSessionPresentation;
-  // Charge work that every request performs, including those reusing physical selection.
   vi.spyOn(sessionPresentation, "prepareProjectedSessionPresentation").mockImplementation(
     (...args) => {
       try {
