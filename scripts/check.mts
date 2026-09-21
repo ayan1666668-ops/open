@@ -13,6 +13,10 @@ export const PREFLIGHT_CHECKS: CheckCommand[] = [
   { name: "max-lines suppression ratchet", args: ["check:max-lines-ratchet"] },
   { name: "assertion SAFETY comment ratchet", args: ["check:assertion-safety"] },
   { name: "changelog attributions", args: ["check:changelog-attributions"] },
+  {
+    name: "continuation guard call-sites",
+    args: ["lint:continuation:guard-callsites"],
+  },
   { name: "database-first legacy-store guard", args: ["check:database-first-legacy-stores"] },
   { name: "doctor deprecation registry", args: ["check:doctor-deprecation-registry"] },
   {

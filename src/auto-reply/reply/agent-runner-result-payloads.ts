@@ -5,7 +5,10 @@ import {
   resolveSourceReplyDelivery,
   hasVisibleOutboundDeliveryEvidence,
 } from "../../agents/embedded-agent-runner/delivery-evidence.js";
-import { resolveReplyCompletion } from "../../agents/reply-completion.js";
+import {
+  isSyntheticSourceReplyTurn,
+  resolveReplyCompletion,
+} from "../../agents/reply-completion.js";
 import { normalizeChatType } from "../../channels/chat-type.js";
 import type { ProgressContinuationState } from "../../channels/progress-continuation.js";
 import { emitAgentEvent } from "../../infra/agent-events.js";
@@ -51,10 +54,7 @@ import { attachMcpConnectChannelAction } from "./mcp-connect-channel-action.js";
 import { normalizeReplyPayload } from "./normalize-reply.js";
 import { resolveReplyOperationRunState } from "./reply-operation-run-state.js";
 import { createReplyToModeFilterForChannel } from "./reply-threading.js";
-import {
-  isSyntheticSourceReplyTurn,
-  resolveSourceReplyExpectation,
-} from "./source-reply-delivery-mode.js";
+import { resolveSourceReplyExpectation } from "./source-reply-delivery-mode.js";
 import { resolveStrandedReplyRecovery } from "./stranded-reply-recovery.js";
 import { buildWaitingStatusPayload } from "./waiting-status.js";
 type ReplyAgentAccounting = Awaited<ReturnType<typeof accountAgentTurn>>;

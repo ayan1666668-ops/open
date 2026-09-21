@@ -680,10 +680,19 @@ describe("scoped vitest configs", () => {
     ]);
   });
 
-  it("keeps the broad agents lane on shared file parallelism", () => {
-    expect(requireTestConfig(defaultAgentsConfig).fileParallelism).toBe(
-      sharedVitestConfig.test.fileParallelism,
-    );
+  it.each([1, 2, 8])("keeps agents lanes on the shared %i-worker schedule", (maxWorkers) => {
+    const original = sharedVitestConfig.test;
+    try {
+      sharedVitestConfig.test = { ...original, maxWorkers, fileParallelism: maxWorkers > 1 };
+      for (const createConfig of [createAgentsVitestConfig, createAgentsCoreVitestConfig]) {
+        expect(requireTestConfig(createConfig({}))).toMatchObject({
+          maxWorkers,
+          fileParallelism: maxWorkers > 1,
+        });
+      }
+    } finally {
+      sharedVitestConfig.test = original;
+    }
   });
 
   it("isolates agent suites with conflicting shared-module mocks", () => {
