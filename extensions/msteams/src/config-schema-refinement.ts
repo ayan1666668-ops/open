@@ -148,6 +148,11 @@ export function refineMSTeamsConfig(value: MSTeamsRefinementConfig, ctx: z.Refin
     accountsDefaultIdentityFields ||
     hasEnvironmentDefaultCredentials ||
     accountKeys.size === 0;
+  const effectiveDefaultAppId = hasConfiguredValue(accountsDefault?.appId)
+    ? accountsDefault?.appId
+    : hasConfiguredValue(value.appId)
+      ? value.appId
+      : process.env.MSTEAMS_APP_ID;
   if (rootDefaultAccountEnabled && defaultAccountConfigured) {
     const defaultPath = accountsDefault ? accountsDefaultPath : [];
     const effectiveDmPolicy = effectiveDefault.dmPolicy;
@@ -239,11 +244,6 @@ export function refineMSTeamsConfig(value: MSTeamsRefinementConfig, ctx: z.Refin
     ]);
   }
   if (rootDefaultAccountEnabled && defaultAccountConfigured) {
-    const effectiveDefaultAppId = hasConfiguredValue(accountsDefault?.appId)
-      ? accountsDefault?.appId
-      : hasConfiguredValue(value.appId)
-        ? value.appId
-        : process.env.MSTEAMS_APP_ID;
     recordAppId(effectiveDefaultAppId, ["appId"]);
   }
 
@@ -255,6 +255,15 @@ export function refineMSTeamsConfig(value: MSTeamsRefinementConfig, ctx: z.Refin
     const path = ["accounts", accountId];
     if (canonicalAccountId === DEFAULT_ACCOUNT_ID) {
       continue;
+    }
+    if (defaultAccountConfigured && effectiveDefaultAppId?.trim() === canonicalAccountId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path,
+        message:
+          `channels.msteams.accounts.${accountId} collides with the default account's ` +
+          "shipped durable inbox namespace; choose a different account id",
+      });
     }
     const accountEnabled = value.enabled !== false && account.enabled !== false;
     if (!accountEnabled) {

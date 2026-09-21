@@ -339,6 +339,24 @@ describe("monitorMSTeamsProvider lifecycle", () => {
     }
   });
 
+  it("preserves the shipped app-id ingress namespace for default-account upgrades", async () => {
+    const abort = new AbortController();
+    const stores = createStores();
+    const task = monitorMSTeamsProvider({
+      cfg: createConfig(0),
+      runtime: createRuntime(),
+      abortSignal: abort.signal,
+      conversationStore: stores.conversationStore,
+      pollStore: stores.pollStore,
+    });
+
+    await resolveStartedServer();
+    expect(getMSTeamsIngressMockState().instances.at(-1)?.options.accountId).toBe("app-id");
+
+    abort.abort();
+    await task;
+  });
+
   it("resolves named account config when only accountId is provided", async () => {
     const abort = new AbortController();
     const cfg = {

@@ -315,8 +315,12 @@ export async function monitorMSTeamsProvider(
   };
   registerMSTeamsHandlers(handler, handlerDeps);
 
+  // Root-config installs shipped with appId as the durable queue identity. Keep
+  // that namespace so pending events survive upgrade; named accounts use their
+  // logical id so sibling bots never share a queue.
+  const ingressQueueAccountId = accountId === DEFAULT_ACCOUNT_ID ? appId : accountId;
   const ingress = createMSTeamsIngress({
-    accountId,
+    accountId: ingressQueueAccountId,
     runtime,
     dispatch: async (activity, lifecycle, liveContext) => {
       // The journaled activity is the dispatch payload; the live context only
