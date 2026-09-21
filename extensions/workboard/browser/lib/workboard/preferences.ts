@@ -22,49 +22,49 @@ export interface WorkboardUiPreferences {
 
 const STORAGE_KEY = "openclaw:workboard:prefs:v1";
 
-const DEFAULT_PREFERENCES: WorkboardUiPreferences = {
-  viewMode: "board",
-  layout: "comfortable",
-  emptyColumnMode: "show",
-};
-
-export function defaultWorkboardPreferences(): WorkboardUiPreferences {
-  return { ...DEFAULT_PREFERENCES };
+function freshDefaults(): WorkboardUiPreferences {
+  return {
+    viewMode: "board",
+    layout: "comfortable",
+    emptyColumnMode: "show",
+  };
 }
 
 function isWorkboardUiPreferences(value: unknown): value is WorkboardUiPreferences {
-  if (!value || typeof value !== "object") return false;
-  const v = value as Record<string, unknown>;
+  if (value === null || typeof value !== "object") {
+    return false;
+  }
+  const viewMode = Reflect.get(value, "viewMode");
+  const layout = Reflect.get(value, "layout");
+  const emptyColumnMode = Reflect.get(value, "emptyColumnMode");
   return (
-    (v.viewMode === "board" || v.viewMode === "list") &&
-    (v.layout === "comfortable" || v.layout === "compact") &&
-    (v.emptyColumnMode === "show" ||
-      v.emptyColumnMode === "collapse" ||
-      v.emptyColumnMode === "hide")
+    (viewMode === "board" || viewMode === "list") &&
+    (layout === "comfortable" || layout === "compact") &&
+    (emptyColumnMode === "show" || emptyColumnMode === "collapse" || emptyColumnMode === "hide")
   );
 }
 
 export function loadWorkboardPreferences(): WorkboardUiPreferences {
-  if (typeof globalThis.localStorage === "undefined") {
-    return defaultWorkboardPreferences();
-  }
   try {
     const raw = globalThis.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return defaultWorkboardPreferences();
+    if (raw === null) {
+      return freshDefaults();
+    }
     const parsed: unknown = JSON.parse(raw);
-    if (!isWorkboardUiPreferences(parsed)) return defaultWorkboardPreferences();
+    if (!isWorkboardUiPreferences(parsed)) {
+      return freshDefaults();
+    }
     return {
       viewMode: parsed.viewMode,
       layout: parsed.layout,
       emptyColumnMode: parsed.emptyColumnMode,
     };
   } catch {
-    return defaultWorkboardPreferences();
+    return freshDefaults();
   }
 }
 
 export function saveWorkboardPreferences(prefs: WorkboardUiPreferences): void {
-  if (typeof globalThis.localStorage === "undefined") return;
   try {
     globalThis.localStorage.setItem(STORAGE_KEY, JSON.stringify(prefs));
   } catch {

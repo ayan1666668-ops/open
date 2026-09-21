@@ -1,13 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  defaultWorkboardPreferences,
   extractWorkboardPreferences,
   loadWorkboardPreferences,
   saveWorkboardPreferences,
   type WorkboardUiPreferences,
 } from "./preferences.ts";
 
-const STORAGE_KEY = "***";
+const STORAGE_KEY = "openclaw:workboard:prefs:v1";
+
+const DEFAULT_PREFERENCES: WorkboardUiPreferences = {
+  viewMode: "board",
+  layout: "comfortable",
+  emptyColumnMode: "show",
+};
 
 function makeLocalStorage(initial: Record<string, string> = {}): Storage {
   const store = new Map(Object.entries(initial));
@@ -35,12 +40,14 @@ function makeLocalStorage(initial: Record<string, string> = {}): Storage {
 
 describe("workboard preferences", () => {
   let storage: Storage;
+  let originalLocalStorage: PropertyDescriptor | undefined;
 
   beforeEach(() => {
     // Use Object.defineProperty to force-replace localStorage regardless of any
     // getter the host environment (happy-dom / jsdom) may install on globalThis.
     // Keep a direct reference so the test file and the module under test see the
     // exact same Storage instance.
+    originalLocalStorage = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
     storage = makeLocalStorage();
     Object.defineProperty(globalThis, "localStorage", {
       value: storage,
@@ -51,22 +58,11 @@ describe("workboard preferences", () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
-  });
-
-  describe("defaultWorkboardPreferences", () => {
-    it("returns the documented defaults", () => {
-      expect(defaultWorkboardPreferences()).toEqual({
-        viewMode: "board",
-        layout: "comfortable",
-        emptyColumnMode: "show",
-      });
-    });
-
-    it("returns a fresh object on every call (no shared mutable default)", () => {
-      const first = defaultWorkboardPreferences();
-      first.viewMode = "list";
-      expect(defaultWorkboardPreferences().viewMode).toBe("board");
-    });
+    if (originalLocalStorage) {
+      Object.defineProperty(globalThis, "localStorage", originalLocalStorage);
+    } else {
+      Reflect.deleteProperty(globalThis, "localStorage");
+    }
   });
 
   describe("saveWorkboardPreferences", () => {
@@ -107,11 +103,33 @@ describe("workboard preferences", () => {
         }),
       ).not.toThrow();
     });
+
+    it("does not throw when the localStorage getter throws", () => {
+      Object.defineProperty(globalThis, "localStorage", {
+        configurable: true,
+        get() {
+          throw new Error("localStorage blocked");
+        },
+      });
+      expect(() =>
+        saveWorkboardPreferences({
+          viewMode: "list",
+          layout: "compact",
+          emptyColumnMode: "collapse",
+        }),
+      ).not.toThrow();
+    });
   });
 
   describe("loadWorkboardPreferences", () => {
     it("returns defaults when nothing has been stored", () => {
-      expect(loadWorkboardPreferences()).toEqual(defaultWorkboardPreferences());
+      expect(loadWorkboardPreferences()).toEqual(DEFAULT_PREFERENCES);
+    });
+
+    it("returns a fresh object when nothing has been stored", () => {
+      const first = loadWorkboardPreferences();
+      first.viewMode = "list";
+      expect(loadWorkboardPreferences()).toEqual(DEFAULT_PREFERENCES);
     });
 
     it("returns stored preferences on round-trip", () => {
@@ -126,12 +144,12 @@ describe("workboard preferences", () => {
 
     it("returns defaults when stored JSON is malformed", () => {
       storage.setItem(STORAGE_KEY, "{not valid json");
-      expect(loadWorkboardPreferences()).toEqual(defaultWorkboardPreferences());
+      expect(loadWorkboardPreferences()).toEqual(DEFAULT_PREFERENCES);
     });
 
     it("returns defaults when stored payload is missing required fields", () => {
       storage.setItem(STORAGE_KEY, JSON.stringify({ viewMode: "list" }));
-      expect(loadWorkboardPreferences()).toEqual(defaultWorkboardPreferences());
+      expect(loadWorkboardPreferences()).toEqual(DEFAULT_PREFERENCES);
     });
 
     it("returns defaults when stored fields have invalid values", () => {
@@ -143,14 +161,14 @@ describe("workboard preferences", () => {
           emptyColumnMode: "collapse",
         }),
       );
-      expect(loadWorkboardPreferences()).toEqual(defaultWorkboardPreferences());
+      expect(loadWorkboardPreferences()).toEqual(DEFAULT_PREFERENCES);
     });
 
     it("returns defaults when stored payload is not an object", () => {
       storage.setItem(STORAGE_KEY, JSON.stringify("a string"));
-      expect(loadWorkboardPreferences()).toEqual(defaultWorkboardPreferences());
+      expect(loadWorkboardPreferences()).toEqual(DEFAULT_PREFERENCES);
       storage.setItem(STORAGE_KEY, JSON.stringify(null));
-      expect(loadWorkboardPreferences()).toEqual(defaultWorkboardPreferences());
+      expect(loadWorkboardPreferences()).toEqual(DEFAULT_PREFERENCES);
     });
 
     it("returns defaults when localStorage.getItem throws", () => {
@@ -164,7 +182,17 @@ describe("workboard preferences", () => {
         writable: true,
         configurable: true,
       });
-      expect(loadWorkboardPreferences()).toEqual(defaultWorkboardPreferences());
+      expect(loadWorkboardPreferences()).toEqual(DEFAULT_PREFERENCES);
+    });
+
+    it("falls back to defaults when the localStorage getter throws", () => {
+      Object.defineProperty(globalThis, "localStorage", {
+        configurable: true,
+        get() {
+          throw new Error("localStorage blocked");
+        },
+      });
+      expect(loadWorkboardPreferences()).toEqual(DEFAULT_PREFERENCES);
     });
   });
 
