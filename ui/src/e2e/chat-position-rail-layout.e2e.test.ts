@@ -110,7 +110,7 @@ suite.define(() => {
               markerInViewport: true,
             });
           await waitForChatScrollIdle(page);
-          // Resize through the real input handler, then navigate before observer delivery.
+          // Apply input and navigation in one frame, before observer delivery.
           await page
             .locator(".agent-chat__composer-combobox textarea")
             .evaluate((element, first) => {
@@ -347,6 +347,12 @@ suite.define(() => {
               }
               await page.locator(".agent-chat__goal-mode").waitFor();
               await assertAnchor(goalSamples);
+              await expect
+                .poll(() => readPositionRailGeometry(page))
+                .toMatchObject({ atEnd: true });
+              await expect
+                .poll(() => page.locator(".chat-scroll-to-bottom").getAttribute("data-visible"))
+                .toBe("false");
               await captureUiProof(
                 suite,
                 page,

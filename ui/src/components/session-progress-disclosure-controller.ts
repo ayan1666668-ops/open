@@ -205,7 +205,7 @@ class ProgressDisclosureController {
   }
 
   private readonly handleTranscriptScroll = (observation: TranscriptScrollObservation) => {
-    if (observation.type === "maintenance") {
+    if (observation.type === "resize") {
       return;
     }
     this.touching = observation.touching;

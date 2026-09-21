@@ -163,10 +163,11 @@ export function observeTranscriptOffset(
     }
   };
   owner.state.recordProgrammaticScroll = recordProgrammaticScroll;
-  const stopMaintenance = element
+  const stopCorrections = element
     ? subscribeTranscriptScroll(element, (observation) => {
-        if (observation.type === "maintenance") {
-          recordProgrammaticScroll(observation.before.scrollTop, observation.after.scrollTop, true);
+        if (observation.type === "resize" && observation.scrollCorrection) {
+          const { before, after } = observation.scrollCorrection;
+          recordProgrammaticScroll(before, after, true);
         }
       })
     : undefined;
@@ -346,7 +347,7 @@ export function observeTranscriptOffset(
       owner.state.maintenanceScrollOffset = null;
     }
     cleanup?.();
-    stopMaintenance?.();
+    stopCorrections?.();
     contactIds.clear();
     owner.state.touching = false;
     owner.state.touchScrolling = false;
