@@ -56,16 +56,28 @@ suite.define(() => {
         .click();
       const composer = page.locator(".new-session-page__message");
       await composer.fill(message);
+      // Take over the browser clock so elapsed time is set explicitly instead of
+      // slept through: a slow runner must not decide whether the timer reset. The
+      // system time moves while timers keep running, so the startup path still
+      // schedules its own work.
+      await page.clock.install({ time: Date.now() });
       await page.getByRole("button", { name: "Start session" }).click();
       await gateway.waitForRequest("sessions.dispatch");
       await waitForCommittedChatRoute(page);
 
-      // First attempt stays in provisioning long enough for the elapsed timer
-      // to show a non-zero value from the original start time.
       const working = page.locator('.chat-thread .chat-working-indicator[role="status"]');
+      const elapsed = working.locator(".chat-working-indicator__elapsed");
+      const elapsedStartMs = async (): Promise<number> =>
+        await elapsed.evaluate(
+          (element) => (element as HTMLElement & { startMs?: unknown }).startMs as number,
+        );
+
+      // First attempt: move the clock five seconds past its start and read the label.
       await pollLocatorText(working).toContain("Provisioning environment…");
-      await page.waitForTimeout(5_200);
-      const firstElapsed = await working.locator(".chat-working-indicator__elapsed").textContent();
+      const firstStartedAt = await elapsedStartMs();
+      await page.clock.setSystemTime(firstStartedAt + 5_000);
+      await pollLocatorText(elapsed).toContain("5s");
+      const firstElapsed = await elapsed.textContent();
       await captureUiProof(suite, page, "01-retry-timer-before-first-attempt.png");
 
       // The first attempt fails and surfaces the queued-message Retry action.
@@ -77,30 +89,31 @@ suite.define(() => {
       await failedGroup.waitFor({ state: "visible" });
       await expect.poll(() => working.count()).toBe(0);
 
-      // Retry starts a new attempt; hold its dispatch so the working
-      // indicator is observable again. With the fix the elapsed timer starts
-      // over (~0s) instead of continuing the failed attempt's count.
+      // Retry starts a new attempt; hold its dispatch so the working indicator is
+      // observable again. The elapsed timer must start over instead of continuing
+      // the failed attempt's count.
       await gateway.deferNext("sessions.dispatch");
       await failedGroup.getByRole("button", { name: "Retry queued message" }).click();
       await expect
         .poll(async () => (await gateway.getRequests("sessions.dispatch")).length)
         .toBe(2);
       await pollLocatorText(working).toContain("Provisioning environment…");
-      await page.waitForTimeout(1_100);
-      const retryElapsed = await working.locator(".chat-working-indicator__elapsed").textContent();
+      const retryStartedAt = await elapsedStartMs();
+      const retryElapsed = await elapsed.textContent();
       await captureUiProof(suite, page, "02-retry-timer-after-retry.png");
 
-      // The retried attempt's elapsed timer must start near zero, not from the
-      // first attempt's start time.
       const parseSeconds = (value: string | null) => {
         const match = value?.trim().match(/^(\d+)\s*s/i);
         return match ? Number(match[1]) : null;
       };
       const first = parseSeconds(firstElapsed);
       const retried = parseSeconds(retryElapsed);
-      expect(first).not.toBeNull();
-      expect(retried).not.toBeNull();
-      expect(retried!).toBeLessThan(3);
+      // The first attempt's five-second reading is exact, and the retried attempt
+      // started its own clock after that advance instead of inheriting the failed
+      // attempt's start time.
+      expect(first).toBe(5);
+      expect(retried).toBe(1);
+      expect(retryStartedAt - firstStartedAt).toBeGreaterThanOrEqual(5_000);
 
       expect(page.url()).toContain(controlUiSessionPath(sessionKey));
       await gateway.resolveDeferred("sessions.dispatch", {
