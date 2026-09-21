@@ -1,3 +1,4 @@
+import { resolveToolResultFailureKind } from "openclaw/plugin-sdk/agent-harness-runtime";
 import { isRecord } from "openclaw/plugin-sdk/string-coerce-runtime";
 import type { ResponsesInputItem, StreamEvent } from "./mock-openai-contracts.js";
 import { findNamedToolDefinition, hasToolDefinition } from "./mock-openai-directives.js";
@@ -287,10 +288,18 @@ export function unwrapScenarioCatalogOutput(
   // Keep target failures and receipt fields at the same level as direct calls.
   // Do not unwrap unrelated JSON stdout or an unmatched catalog result.
   const result = envelope.result;
-  if (extractToolOutputStructuredError(input) === true) {
+  if (
+    extractToolOutputStructuredError(input) === true ||
+    result.isError === true ||
+    resolveToolResultFailureKind(result)
+  ) {
+    const details = isRecord(result.details) ? result.details : {};
+    const content = extractToolOutput([{ type: "function_call_output", output: result.content }]);
+    const error = details.error ?? parseToolOutputJson(content)?.error;
     return stringifyScenarioToolOutput({
-      ...(isRecord(result.details) ? result.details : {}),
+      ...details,
       status: "error",
+      ...(typeof error === "string" ? { error } : {}),
     });
   }
   if (Object.hasOwn(result, "details")) {
