@@ -1,5 +1,7 @@
+import DOMPurify from "dompurify";
 import { html, nothing, render } from "lit";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createDeferred } from "../../../../../test/helpers/promise.js";
 import { markdownBlocks } from "../../../components/markdown-blocks.ts";
 import {
   handleMarkdownCodeBlockClick,
@@ -152,6 +154,196 @@ describe("streaming Markdown DOM", () => {
     expect(container.querySelector("table")).toBe(table);
     expect(container.querySelector(".markdown-table__copy svg")).toBe(icon);
     expect(table?.rows[1]?.cells[1]?.textContent).toBe("Growing cell");
+  });
+
+  it.each([true, false])(
+    "keeps copy ownership when Expand appears (settled=%s)",
+    async (settled) => {
+      const initial =
+        "```ts\n" +
+        Array.from({ length: 6 }, (_, index) => `const value${index} = ${index};`).join("\n");
+      const pending = createDeferred();
+      const clipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+      Object.defineProperty(navigator, "clipboard", {
+        configurable: true,
+        value: { writeText: vi.fn().mockReturnValue(pending.promise) },
+      });
+      const fallback = vi.spyOn(document, "execCommand").mockReturnValue(true);
+      vi.useFakeTimers();
+      container.addEventListener("click", handleMarkdownCodeBlockClick);
+      try {
+        renderReply(initial);
+        await Promise.resolve();
+        const copy = container.querySelector<HTMLButtonElement>(".code-block-copy")!;
+        const wrap = container.querySelector<HTMLButtonElement>(".code-block-wrap")!;
+        wrap.click();
+        const label = wrap.getAttribute("aria-label");
+        copy.click();
+        if (settled) {
+          pending.resolve();
+          await vi.advanceTimersByTimeAsync(0);
+          expect(copy.classList.contains("copied")).toBe(true);
+        }
+        renderReply(initial + "\nconst seventh = 7;\nconst eighth = 8;");
+        await Promise.resolve();
+        const expand = container.querySelector<HTMLButtonElement>(".code-block-expand")!;
+        expect(container.querySelector(".code-block-copy")).toBe(copy);
+        expect(container.querySelector(".code-block-wrap")).toBe(wrap);
+        expect(expand.getAttribute("aria-controls")).toBe(
+          container.querySelector(".code-block-viewport")?.id,
+        );
+        pending.reject(new Error("Native clipboard unavailable"));
+        await vi.advanceTimersByTimeAsync(2000);
+        expect(fallback).not.toHaveBeenCalled();
+        expect(wrap.getAttribute("aria-label")).toBe(label);
+        expect(wrap.getAttribute("aria-pressed")).toBe("true");
+        expect(expand.classList.contains("copied")).toBe(false);
+        expect(expand.classList.contains("copy-failed")).toBe(false);
+        expect(copy.classList.contains("copied")).toBe(false);
+      } finally {
+        vi.useRealTimers();
+        fallback.mockRestore();
+        container.removeEventListener("click", handleMarkdownCodeBlockClick);
+        if (clipboard) {
+          Object.defineProperty(navigator, "clipboard", clipboard);
+        } else {
+          Reflect.deleteProperty(navigator, "clipboard");
+        }
+      }
+    },
+  );
+
+  it.each(["completed", "resolve", "reject"])(
+    "retains control ownership when JSON controls appear after %s copy",
+    async (settlement) => {
+      const initial =
+        '- ```json\n  {\n  "nested": {\n  "a": 1,\n  "b": 2,\n  "c": 3,\n  "d": 4,\n  "value": true\n  }\n  }';
+      const pending = createDeferred();
+      const clipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+      Object.defineProperty(navigator, "clipboard", {
+        configurable: true,
+        value: { writeText: vi.fn().mockReturnValue(pending.promise) },
+      });
+      const fallback = vi.spyOn(document, "execCommand").mockReturnValue(true);
+      vi.useFakeTimers();
+      container.addEventListener("click", handleMarkdownCodeBlockClick);
+      try {
+        renderReply(initial);
+        await Promise.resolve();
+        const wrapper = container.querySelector<HTMLElement>(".code-block-wrapper")!;
+        const wrap = wrapper.querySelector<HTMLButtonElement>(".code-block-wrap")!;
+        const expand = wrapper.querySelector<HTMLButtonElement>(".code-block-expand")!;
+        const copy = wrapper.querySelector<HTMLButtonElement>(".code-block-copy")!;
+        const copyText = readMarkdownCodeBlockCopyText(copy);
+        const viewport = wrapper.querySelector(".code-block-viewport");
+        wrap.click();
+        expand.click();
+        copy.click();
+        if (settlement === "completed") {
+          pending.resolve();
+        }
+        await vi.advanceTimersByTimeAsync(0);
+        expect(copy.classList.contains("copied")).toBe(settlement === "completed");
+        const wrapLabel = wrap.getAttribute("aria-label");
+        renderReply(initial + "\n  ```\n\n- following");
+        await Promise.resolve();
+        expect(wrapper.querySelector(".code-block-json-modes")).not.toBeNull();
+        expect(container.querySelector(".code-block-wrapper")).toBe(wrapper);
+        expect(wrapper.querySelector(".code-block-wrap")).toBe(wrap);
+        expect(wrapper.querySelector(".code-block-expand")).toBe(expand);
+        expect(wrapper.querySelector(".code-block-copy")).toBe(copy);
+        expect(readMarkdownCodeBlockCopyText(copy)).toBe(copyText);
+        expect(wrapper.querySelector(".code-block-viewport")).toBe(viewport);
+        expect(wrapper.classList.contains("is-wrapped")).toBe(true);
+        expect(wrapper.classList.contains("is-expanded")).toBe(true);
+        expect(wrap.getAttribute("aria-pressed")).toBe("true");
+        expect(expand.getAttribute("aria-expanded")).toBe("true");
+        expect(wrap.classList.contains("copied")).toBe(false);
+        if (settlement === "reject") {
+          pending.reject(new Error("Native clipboard unavailable"));
+        } else {
+          pending.resolve();
+        }
+        await vi.advanceTimersByTimeAsync(1500);
+        expect(wrap.getAttribute("aria-label")).toBe(wrapLabel);
+        expect(wrap.classList.contains("copy-failed")).toBe(false);
+        expect(copy.classList.contains("copied")).toBe(false);
+        expect(fallback).toHaveBeenCalledTimes(settlement === "reject" ? 1 : 0);
+        const raw = wrapper.querySelector<HTMLButtonElement>('[data-json-mode="raw"]')!;
+        raw.click();
+        renderReply(initial + "\n  ```\n\n- following grows");
+        expect(wrapper.querySelector('[data-json-mode="raw"]')).toBe(raw);
+        expect(raw.getAttribute("aria-pressed")).toBe("true");
+        expect(wrapper.classList.contains("is-json-raw")).toBe(true);
+      } finally {
+        vi.useRealTimers();
+        fallback.mockRestore();
+        container.removeEventListener("click", handleMarkdownCodeBlockClick);
+        if (clipboard) {
+          Object.defineProperty(navigator, "clipboard", clipboard);
+        } else {
+          Reflect.deleteProperty(navigator, "clipboard");
+        }
+      }
+    },
+  );
+
+  it("keeps every sibling when sanitized identity hints are missing or duplicated", () => {
+    const draw = (items: Array<[string | null, string]>) =>
+      render(
+        renderMarkdownMedia(
+          DOMPurify.sanitize(
+            `<section>${items.map(([key, text]) => `<p${key === null ? "" : ` data-markdown-key="${key}"`}>${text}</p>`).join("")}</section>`,
+          ),
+          undefined,
+          true,
+        ),
+        container,
+      );
+    draw([
+      ["keep", "retained"],
+      ["duplicate", "first"],
+      ["duplicate", "second"],
+      [null, "missing"],
+      ["", "empty"],
+      ["3", "numeric string"],
+    ]);
+    const retained = container.querySelector("p");
+    draw([
+      [null, "new"],
+      ["duplicate", "second changes"],
+      ["keep", "retained"],
+      ["duplicate", "first changes"],
+      ["3", "numeric string"],
+      ["", "empty changes"],
+    ]);
+    expect([...container.querySelectorAll("p")].map((node) => node.textContent)).toEqual([
+      "new",
+      "second changes",
+      "retained",
+      "first changes",
+      "numeric string",
+      "empty changes",
+    ]);
+    expect(container.querySelector('[data-markdown-key="keep"]')).toBe(retained);
+    draw([
+      ["duplicate", "now unique"],
+      ["keep", "retained"],
+      [null, "missing again"],
+    ]);
+    expect([...container.querySelectorAll("p")].map((node) => node.textContent)).toEqual([
+      "now unique",
+      "retained",
+      "missing again",
+    ]);
+    expect(container.querySelector('[data-markdown-key="keep"]')).toBe(retained);
+  });
+
+  it("does not turn authored identity hints into interactive markup", () => {
+    const source = '<button data-markdown-key="copy" class="code-block-copy">Authored</button>';
+    renderReply(source);
+    expect(container.querySelector("button")).toBeNull();
+    expect(container.textContent).toContain(source);
   });
 
   it.each(["wrapped", "split"])(

@@ -1,6 +1,7 @@
 import { noChange, nothing, type ChildPart, type ElementPart } from "lit";
 import { getCommittedValue, setCommittedValue } from "lit/directive-helpers.js";
 import { Directive, directive } from "lit/directive.js";
+import { repeat } from "lit/directives/repeat.js";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import { html, unsafeStatic } from "lit/static-html.js";
 import type { ProjectedMessageContent } from "./chat-message-media.ts";
@@ -143,11 +144,32 @@ class MarkdownNodeDirective extends Directive {
     const tag = unsafeStatic(node.localName);
     return voidTags.has(node.localName)
       ? html`<${tag} ${markdownAttributes(node)}>`
-      : html`<${tag} ${markdownAttributes(node)}>${Array.from(node.childNodes, (child) => markdownNode(child, bindings))}</${tag}>`;
+      : html`<${tag} ${markdownAttributes(node)}>${renderMarkdownChildren(node, bindings)}</${tag}>`;
   }
 }
 
 const markdownNode = directive(MarkdownNodeDirective);
+
+function renderMarkdownChildren(parent: ParentNode, bindings: MarkdownBindings) {
+  const children = Array.from(parent.childNodes, (node) => ({
+    node,
+    key: node instanceof Element ? node.getAttribute("data-markdown-key") : null,
+  }));
+  const counts = new Map<string, number>();
+  for (const { key } of children) {
+    if (key) {
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+  }
+  // Producer keys keep controls with their operation/state when siblings appear.
+  // Sanitized authored HTML can carry data-* too: ambiguous keys stay positional
+  // (numeric), never colliding with unique string keys or dropping siblings.
+  return repeat(
+    children,
+    ({ key }, index) => (key && counts.get(key) === 1 ? key : index),
+    ({ node }) => markdownNode(node, bindings),
+  );
+}
 
 class MarkdownMediaDirective extends Directive {
   private source = "";
@@ -221,7 +243,7 @@ class MarkdownMediaDirective extends Directive {
       }
     }
     const bindings = { media, slots: this.slots, mediaAncestors: this.mediaAncestors, incremental };
-    return Array.from(this.template.content.childNodes, (node) => markdownNode(node, bindings));
+    return renderMarkdownChildren(this.template.content, bindings);
   }
 }
 
