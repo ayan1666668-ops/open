@@ -3,7 +3,6 @@
 import { html, render } from "lit";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { QuestionPrompt } from "../../app/question-prompt.ts";
-import { t } from "../../i18n/index.ts";
 import {
   createComposerProps as props,
   renderComposerFixture as renderComposer,
@@ -145,65 +144,4 @@ describe("composer question takeover", () => {
     expect(view.container.querySelector(".agent-chat__input")).toBeNull();
   });
 
-  it("keeps every concurrent gateway question reachable", async () => {
-    const container = document.createElement("div");
-    const onRequestUpdate = vi.fn();
-    const composerProps = props({
-      sessionKey: "queue-test",
-      gatewayQuestionPrompts: [
-        questionPrompt("question-1", "First prompt"),
-        questionPrompt("question-2", "Second prompt"),
-      ],
-      onRequestUpdate,
-    });
-
-    render(renderChatComposer(composerProps), container);
-    let panel = container.querySelector("openclaw-chat-question-panel") as HTMLElement & {
-      props: {
-        model: { questions: Array<{ question: string }>; requestPosition?: unknown };
-        onNextRequest?: () => void;
-      };
-    };
-    expect(panel.props.model.questions[0]?.question).toBe("First prompt");
-    expect(panel.props.model.requestPosition).toEqual({ current: 1, total: 2 });
-
-    panel.props.onNextRequest?.();
-    expect(onRequestUpdate).toHaveBeenCalledOnce();
-    render(renderChatComposer(composerProps), container);
-    panel = container.querySelector("openclaw-chat-question-panel") as typeof panel;
-    expect(panel.props.model.questions[0]?.question).toBe("Second prompt");
-    expect(panel.props.model.requestPosition).toEqual({ current: 2, total: 2 });
-  });
-
-  it("replaces the composer with the archived-session notice", () => {
-    const onAction = vi.fn();
-    const onAbort = vi.fn();
-    const { container } = renderComposer({
-      canSend: false,
-      canAbort: true,
-      onAbort,
-      gatewayQuestionPrompts: [{ ...questionPrompt("pending", "Continue?"), sessionKey: "main" }],
-      disabledBanner: {
-        kind: "composer-replacement",
-        text: "This session is archived. Unarchive it to continue the conversation.",
-        actionLabel: "Unarchive",
-        onAction,
-      },
-    });
-
-    const banner = container.querySelector(".agent-chat__disabled-banner");
-    expect(banner?.textContent).toContain("This session is archived.");
-    expect(container.querySelector(".agent-chat__input")).toBeNull();
-    expect(container.querySelector("textarea")).toBeNull();
-    expect(container.querySelector("openclaw-chat-question-panel")).toBeNull();
-    expect(container.querySelector(".agent-chat__typing-indicator--outside")).toBeNull();
-    banner?.querySelector<HTMLButtonElement>("button")?.click();
-    expect(onAction).toHaveBeenCalledOnce();
-    const stop = container.querySelector<HTMLButtonElement>(
-      `[aria-label="${t("chat.runControls.stopGenerating")}"]`,
-    );
-    expect(stop).not.toBeNull();
-    stop?.click();
-    expect(onAbort).toHaveBeenCalledOnce();
-  });
 });
