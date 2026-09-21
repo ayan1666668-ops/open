@@ -139,6 +139,11 @@ describe("runEmbeddedAgent before_agent_reply seam", () => {
       expect(handler).toHaveBeenCalledOnce();
       expect(mockedRunEmbeddedAttempt).not.toHaveBeenCalled();
       const transcript = await loadTranscriptEvents(session.runParams.sessionTarget);
+      const metadata = getReplyPayloadMetadata(result.payloads?.[0] ?? {});
+      expect(metadata).toMatchObject({
+        assistantTranscriptOwned: true,
+        blockSourceText: "plugin-owned source",
+      });
       if (testCase.persists) {
         expect(
           transcript.filter(
@@ -153,13 +158,12 @@ describe("runEmbeddedAgent before_agent_reply seam", () => {
             }),
           }),
         ]);
-        expect(getReplyPayloadMetadata(result.payloads?.[0] ?? {})).toMatchObject({
-          assistantTranscriptOwned: true,
+        expect(metadata).toMatchObject({
           assistantTranscriptIdempotencyKey: `before-agent-reply:${session.runParams.runId}`,
-          blockSourceText: "plugin-owned source",
         });
       } else {
         expect(transcript).toEqual([]);
+        expect(metadata?.assistantTranscriptIdempotencyKey).toBeUndefined();
       }
     } finally {
       await session.cleanup();

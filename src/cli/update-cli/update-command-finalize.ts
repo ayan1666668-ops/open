@@ -32,6 +32,7 @@ import { exitCliAfterOutput } from "../one-shot-exit.js";
 import { retainCliProcessJobUntilExit } from "../runtime-cleanup-scope.js";
 import {
   parseTimeoutMsOrExit,
+  parseUpdateTimeoutMs,
   readPackageVersion,
   resolveUpdateRoot,
   tryResolveInvocationCwd,
@@ -51,7 +52,10 @@ import {
   runUpdateFinalizationDoctorInFreshProcess,
   withPrePluginUpdateDoctorEnv,
 } from "./update-command-fresh-doctor.js";
-import { collectPostCorePluginFailureFacts } from "./update-command-plugins-internals.js";
+import {
+  collectPostCorePluginAdvisories,
+  collectPostCorePluginFailureFacts,
+} from "./update-command-plugins-internals.js";
 import {
   updatePluginsAfterCoreUpdate,
   type PostCorePluginUpdateResult,
@@ -64,7 +68,7 @@ import {
 import { completeSourceUpdateRuntime } from "./update-command-runtime.js";
 import { resolveServiceRefreshEnv, withUpdateInProgressEnv } from "./update-command-service-env.js";
 import { reportPreMutationUpdateResult } from "./update-command-terminal.js";
-import { withUpdateFailureTriage } from "./update-command-triage.js";
+import { withUpdateFailureTriage, type UpdateTriageTarget } from "./update-command-triage.js";
 import {
   UpdateFinalizationLifecycle,
   type UpdateFinalizationPhase,
@@ -131,7 +135,7 @@ export async function updateFinalizeCommand(
         recoveryRunIds === undefined ? "finalize" : "unknown",
       );
       lifecycle.root = root;
-      const target = {
+      const target: UpdateTriageTarget = {
         root,
         env: {
           ...resolveServiceRefreshEnv(process.env, invocationCwd),
@@ -154,11 +158,17 @@ export async function updateFinalizeCommand(
                   lifecycle,
                   recoveryRunIds ?? [],
                   runId,
-                  recoveryRunIds !== undefined,
+                  recoveryRunIds !== undefined || lifecycle.ownsUpdateRun,
                 );
               });
-              complete();
+              await complete();
             } catch (error) {
+              if (hasCommandProcessCleanupError(error)) {
+                throw error;
+              }
+              if (!lifecycle.completed) {
+                target.failureResult = await lifecycle.observeFailure(error);
+              }
               if (error instanceof UpdateCommandFailure) {
                 lifecycle.complete(error.exitCode);
               } else {
@@ -169,10 +179,10 @@ export async function updateFinalizeCommand(
           }),
       );
     } catch (error) {
-      if (
-        error instanceof UpdateCommandFinalizedRecoveryFailure &&
-        !hasCommandProcessCleanupError(error)
-      ) {
+      if (hasCommandProcessCleanupError(error)) {
+        throw error;
+      }
+      if (error instanceof UpdateCommandFinalizedRecoveryFailure) {
         lifecycle.complete(error.exitCode);
         exitCode = error.exitCode;
         return;
@@ -262,8 +272,8 @@ async function updateFinalizeCommandInternal(
   lifecycle: UpdateFinalizationLifecycle,
   recoveryRunIds: readonly string[],
   invokingRunId: string,
-  repair: boolean,
-): Promise<() => void> {
+  ownsMaintenance: boolean,
+): Promise<() => Promise<void>> {
   const { root, preFinalizeConfig, requestedChannel, storedChannel, effectiveChannel, channel } =
     prepared;
   let { configSnapshot } = prepared;
@@ -283,7 +293,7 @@ async function updateFinalizeCommandInternal(
     maintenance = undefined;
     await owned?.finish(cfg);
   };
-  let outcome: { complete: () => void } | { error: unknown };
+  let outcome: { complete: () => Promise<void> } | { error: unknown };
   try {
     if (prepared.installKind === "git") {
       await withPluginLifecycleLease({}, async (lease) => {
@@ -310,7 +320,7 @@ async function updateFinalizeCommandInternal(
         undefined,
         {
           enter: async () => {
-            if (!repair) {
+            if (!ownsMaintenance) {
               return;
             }
             const { beginDoctorMaintenance } = await import("../../commands/doctor-maintenance.js");
@@ -353,6 +363,7 @@ async function updateFinalizeCommandInternal(
                 json: opts.json,
                 acceptCapabilities: opts.acceptCapabilities,
                 timeoutMs: lifecycle.budget("plugins"),
+                workTimeoutMs: parseUpdateTimeoutMs(opts.timeout) ?? null,
                 pluginInstallRecords,
                 assertCurrent: phase.assertCurrent,
                 runtime: createNonExitingRuntime(),
@@ -383,15 +394,7 @@ async function updateFinalizeCommandInternal(
       { restore: (result) => restoreMaintenance(result.configSnapshot.config) },
     );
     const pluginUpdate = completedPluginUpdate.pluginUpdate;
-    lifecycle.recordWarnings(
-      (pluginUpdate.warnings ?? [])
-        .filter(
-          (warning) =>
-            warning.reason === "plugin-target-unavailable" || warning.reason === "doctor-advisory",
-        )
-        .map((warning) => warning.message),
-      "plugins",
-    );
+    lifecycle.recordWarnings(collectPostCorePluginAdvisories(pluginUpdate), "plugins");
     configSnapshot = completedPluginUpdate.configSnapshot;
     const completionBudget = lifecycle.budget("completionCache");
     // Leave shutdown time inside the phase deadline so optional cache failures can settle.
@@ -433,26 +436,42 @@ async function updateFinalizeCommandInternal(
       },
     };
     outcome = {
-      complete: () => {
+      complete: async () => {
         if (result.status !== "error" && recoveryRunIds.length) {
           // Publish successful recovery only after convergence and the ledger's
           // transactional inactivity/driver check both finish.
-          reconciledRuns.push(
-            ...reconcileAbandonedUpdateRuns({ explicit: true, runIds: recoveryRunIds }).map(
-              (run) => run.runId,
-            ),
-          );
+          reconcileAbandonedUpdateRuns({ explicit: true, runIds: recoveryRunIds });
           if (recoveryRunIds.some((runId) => getUpdateRun(runId)?.status === "running")) {
             throw new Error(
               "An update resumed while repair was running; wait for that update before retrying repair.",
             );
           }
           for (const runId of recoveryRunIds) {
-            acknowledgeAbandonedUpdateRun(runId);
+            if (acknowledgeAbandonedUpdateRun(runId)) {
+              reconciledRuns.push(runId);
+            }
           }
         }
+        const failure =
+          result.status === "error"
+            ? new UpdateCommandFailure({
+                status: "error",
+                mode: "unknown",
+                root,
+                reason: "post-update-plugins",
+                postUpdate: { plugins: pluginUpdate },
+                steps: [],
+                durationMs: Math.round(performance.now() - lifecycle.startedAt),
+              })
+            : undefined;
+        const observed = failure ? await lifecycle.observeFailure(failure) : undefined;
         if (opts.json) {
-          defaultRuntime.writeJson(result);
+          defaultRuntime.writeJson({
+            ...result,
+            ...(observed
+              ? { recovery: observed.recovery, verification: observed.verification }
+              : {}),
+          });
         } else if (result.status === "ok") {
           defaultRuntime.log(theme.muted("Update finalization completed."));
         } else if (result.status === "warning") {
@@ -461,16 +480,8 @@ async function updateFinalizeCommandInternal(
           defaultRuntime.log(theme.error("Update finalization failed."));
         }
         lifecycle.complete(result.status === "error" ? 1 : 0);
-        if (result.status === "error") {
-          throw new UpdateCommandFailure({
-            status: "error",
-            mode: "unknown",
-            root,
-            reason: "post-update-plugins",
-            postUpdate: { plugins: pluginUpdate },
-            steps: [],
-            durationMs: Math.round(performance.now() - lifecycle.startedAt),
-          });
+        if (failure) {
+          throw failure;
         }
       },
     };

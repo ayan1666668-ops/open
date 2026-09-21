@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { createDeferred } from "../../test/helpers/promise.js";
 import { buildEmbeddedRunPayloads } from "../agents/embedded-agent-runner/run/payloads.js";
 import { createHeartbeatToolResponsePayload } from "../auto-reply/heartbeat-tool-response.js";
 import { getReplyPayloadMetadata, setReplyPayloadMetadata } from "../auto-reply/reply-payload.js";
@@ -85,14 +86,6 @@ async function withTarget(
       });
     },
   );
-}
-
-function deferred() {
-  let resolve!: () => void;
-  const promise = new Promise<void>((done) => {
-    resolve = done;
-  });
-  return { promise, resolve };
 }
 
 describe("publishHeartbeatSessionReply", () => {
@@ -538,8 +531,8 @@ describe("publishHeartbeatSessionReply", () => {
     "rejects %s after asynchronous preparation without a transcript write",
     async (change) => {
       await withTarget(async ({ params, scope, entry, events }) => {
-        const entered = deferred();
-        const release = deferred();
+        const entered = createDeferred();
+        const release = createDeferred();
         const controller = new AbortController();
         let ownerActive = true;
         const publication = withOwnedSessionTranscriptWrites(

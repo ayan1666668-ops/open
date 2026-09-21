@@ -1,8 +1,8 @@
 import path from "node:path";
 import { expectDefined } from "@openclaw/normalization-core";
-import { isRecord } from "@openclaw/normalization-core/record-coerce";
 /** Tests cron before_agent_reply gating at the CLI runner entrypoint. */
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { createDeferred } from "../../test/helpers/promise.js";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import { getReplyPayloadMetadata, setReplyPayloadMetadata } from "../auto-reply/reply-payload.js";
 import { SILENT_REPLY_TOKEN } from "../auto-reply/tokens.js";
@@ -27,7 +27,11 @@ import {
   unopenedMcpConfig,
 } from "./agent-bundle-mcp-manager.test-support.js";
 import { CLAIMED_REPLY_MEDIA_CASES } from "./before-agent-reply.fixture.js";
-import { createRegisteredBeforeAgentReplyFixture } from "./before-agent-reply.test-support.js";
+import {
+  createRegisteredBeforeAgentReplyFixture,
+  expectClaimedReplyDelivered,
+  expectClaimedReplyPersisted,
+} from "./before-agent-reply.test-support.js";
 import { testing as cliBackendsTesting } from "./cli-backends.test-support.js";
 import type { CliOutput } from "./cli-output-contracts.js";
 import { CliAuthProfilePreparationError } from "./cli-runner/auth-profile-preparation-error.js";
@@ -153,6 +157,7 @@ function makeStubContext(params: typeof baseRunParams & { trigger?: string }) {
   return {
     params,
     started: Date.now(),
+    startedMonotonicMs: performance.now(),
     workspaceDir: params.workspaceDir,
     modelId: params.model,
     normalizedModel: params.model,
@@ -209,6 +214,36 @@ afterEach(() => {
 });
 
 describe("runCliAgent before_agent_reply seam", () => {
+  it("waits for execution-start work and rechecks cancellation before preparing the runtime", async () => {
+    const entered = createDeferred();
+    const release = createDeferred();
+    const abort = new AbortController();
+    const failure = new Error("run cancelled during execution-start work");
+    const operation = runCliAgent({
+      ...baseRunParams,
+      abortSignal: abort.signal,
+      onExecutionStarted: async () => {
+        entered.resolve();
+        await release.promise;
+      },
+    });
+    const outcome = operation.catch((error: unknown) => error);
+    try {
+      await entered.promise;
+      await new Promise<void>((resolve) => {
+        setImmediate(resolve);
+      });
+      expect(prepareCliRunContextMock).not.toHaveBeenCalled();
+    } finally {
+      abort.abort(failure);
+      release.resolve();
+      await outcome;
+    }
+    expect(await outcome).toBe(failure);
+    expect(prepareCliRunContextMock).not.toHaveBeenCalled();
+    expect(executePreparedCliRunMock).not.toHaveBeenCalled();
+  });
+
   it.each([
     ["claude-cli", "user"],
     ["google-gemini-cli", "cron"],
@@ -709,10 +744,16 @@ describe("runCliAgent before_agent_reply seam", () => {
     expect(executePreparedCliRunMock).toHaveBeenCalledTimes(1);
   });
 
-  it("treats empty CLI subprocess output as a failover failure, not a green cron run", async () => {
+  it("treats empty CLI subprocess output as a failover failure, not a green required cron run", async () => {
     executePreparedCliRunMock.mockResolvedValue({ text: "   " });
 
-    await expect(runCliAgent({ ...baseRunParams, trigger: "cron" })).rejects.toMatchObject({
+    await expect(
+      runCliAgent({
+        ...baseRunParams,
+        trigger: "cron",
+        terminalReplyExpectation: "required",
+      }),
+    ).rejects.toMatchObject({
       name: "FailoverError",
       reason: "empty_response",
       provider: baseRunParams.provider,
@@ -768,27 +809,12 @@ describe("runCliAgent before_agent_reply seam", () => {
       expect(hookContext).toMatchObject({ trigger: "user" });
       expect(prepareCliRunContextMock).not.toHaveBeenCalled();
       expect(executePreparedCliRunMock).not.toHaveBeenCalled();
-      const payload = expectDefined(result.payloads?.[0], "expected claimed reply payload");
-      expect(payload).toMatchObject(reply);
-      const beforeDelivery = await loadTranscriptEvents(sessionTarget);
-      const assistantMessages = beforeDelivery.filter(
-        (event) => isRecord(event) && isRecord(event.message) && event.message.role === "assistant",
-      );
-      expect(assistantMessages).toHaveLength(1);
-      expect(assistantMessages).toContainEqual(
-        expect.objectContaining({
-          message: expect.objectContaining({
-            role: "assistant",
-            content: expect.arrayContaining([
-              expect.objectContaining({ type: "text", text: transcript }),
-            ]),
-          }),
-        }),
-      );
-      expect(getReplyPayloadMetadata(payload)).toMatchObject({
-        assistantTranscriptOwned: true,
-        assistantTranscriptIdempotencyKey: `cli-assistant:${baseRunParams.runId}`,
-        heartbeatScratchProposal: "preserved plugin metadata",
+      const { payload, beforeDelivery } = await expectClaimedReplyPersisted({
+        result,
+        reply,
+        transcript,
+        sessionTarget,
+        runId: baseRunParams.runId,
       });
       const previousRegistry = getActivePluginRegistry();
       setActivePluginRegistry(registry);
@@ -804,21 +830,7 @@ describe("runCliAgent before_agent_reply seam", () => {
           mirror: getReplyPayloadMetadata(payload)?.assistantTranscriptOwned !== true,
         });
         expect(routed.ok).toBe(true);
-        const mediaUrls = reply.mediaUrls?.length
-          ? reply.mediaUrls
-          : reply.mediaUrl
-            ? [reply.mediaUrl]
-            : [];
-        if (mediaUrls.length > 0) {
-          expect(sendText).not.toHaveBeenCalled();
-          expect(sendMedia).toHaveBeenCalledTimes(mediaUrls.length);
-          expect(sendMedia.mock.calls.map(([context]) => context.mediaUrl)).toEqual(mediaUrls);
-          expect(sendMedia.mock.calls[0]?.[0].text).toBe(reply.text ?? "");
-        } else {
-          expect(sendMedia).not.toHaveBeenCalled();
-          expect(sendText).toHaveBeenCalledTimes(1);
-          expect(sendText).toHaveBeenCalledWith(expect.objectContaining({ text: reply.text }));
-        }
+        expectClaimedReplyDelivered({ reply, sendText, sendMedia });
         expect(await loadTranscriptEvents(sessionTarget)).toEqual(beforeDelivery);
       } finally {
         setActivePluginRegistry(previousRegistry ?? createEmptyPluginRegistry());

@@ -7,6 +7,7 @@ import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import { truncateUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
 import { z } from "zod";
 import { ConfigMutationConflictError } from "../config/mutation-conflict.js";
+import { collectNestedErrorCandidates } from "./error-graph-internal.js";
 import {
   resolvePreferredOpenClawTmpDir,
   type ResolvePreferredOpenClawTmpDirOptions,
@@ -79,6 +80,14 @@ export class UpdateDoctorError extends Error {
   }
 }
 
+export function collectUpdateDoctorFailureFacts(error: unknown): UpdateFailureFact[] {
+  return normalizeUpdateFailureFacts(
+    collectNestedErrorCandidates(error).flatMap((candidate) =>
+      candidate instanceof UpdateDoctorError ? candidate.failureFacts : [],
+    ),
+  );
+}
+
 /** Keep optional health diagnostics bounded across Doctor and its update parent. */
 export function normalizeUpdatePostInstallDoctorWarnings(warnings: readonly string[]): string[] {
   const normalized: string[] = [];
@@ -101,7 +110,11 @@ export type DoctorConfigCapture = {
   configChanges: UpdateDoctorConfigChange[];
   configWriteRefusal?: UpdateDoctorConfigWriteRefusal;
 };
-export type UpdateDoctorWriteAuthority = { inputHash: string; assertCurrent: () => void };
+export type UpdateDoctorWriteAuthority = {
+  inputHash: string;
+  assertCurrent: () => void;
+  postCoreSchemaRepair?: { runId: string; assertCurrent: () => void };
+};
 const doctorConfigWrites = new AsyncLocalStorage<{
   capture: DoctorConfigCapture;
   authority?: UpdateDoctorWriteAuthority;

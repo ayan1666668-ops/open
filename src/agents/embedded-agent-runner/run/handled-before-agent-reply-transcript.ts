@@ -13,6 +13,7 @@ import {
 import { runAgentHarnessBeforeMessageWriteHook } from "../../harness/hook-helpers.js";
 import type { AgentRunSessionTarget } from "../../run-session-target.js";
 import { buildAssistantMessage, buildUsageWithNoCost } from "../../stream-message-shared.js";
+import type { RunEmbeddedAgentInternalParams } from "./internal-params.js";
 
 type PersistHandledBeforeAgentReplyTranscriptParams = {
   agentId?: string;
@@ -70,7 +71,7 @@ async function persistHandledBeforeAgentReplyTranscript(
   return result.ok ? { ...result, idempotencyKey } : result;
 }
 
-export async function prepareEmbeddedHandledBeforeAgentReply(
+async function prepareEmbeddedHandledBeforeAgentReply(
   params: Omit<PersistHandledBeforeAgentReplyTranscriptParams, "text"> & {
     persist: boolean;
     reply?: ReplyPayload;
@@ -83,6 +84,9 @@ export async function prepareEmbeddedHandledBeforeAgentReply(
   const finalText = params.reply?.text ?? SILENT_REPLY_TOKEN;
   const payloads = buildHandledBeforeAgentReplyPayloads(params.reply);
   if (!params.persist) {
+    for (const payload of payloads) {
+      setReplyPayloadMetadata(payload, { assistantTranscriptOwned: true });
+    }
     return { finalText, payloads };
   }
   const transcript = await persistHandledBeforeAgentReplyTranscript({
@@ -103,5 +107,62 @@ export async function prepareEmbeddedHandledBeforeAgentReply(
     finalText,
     payloads,
     ...(!transcript.ok ? { persistenceWarning: transcript.reason } : {}),
+  };
+}
+
+type EmbeddedHandledBeforeAgentReplyRunParams = Pick<
+  RunEmbeddedAgentInternalParams,
+  | "config"
+  | "currentInboundEventKind"
+  | "prepareAssistantTranscriptMessage"
+  | "runId"
+  | "sessionId"
+  | "sessionPersistence"
+>;
+
+export async function buildEmbeddedHandledBeforeAgentReplyResult(params: {
+  agentId?: string;
+  model: string;
+  provider: string;
+  redactedSessionId: string;
+  reply?: ReplyPayload;
+  run: EmbeddedHandledBeforeAgentReplyRunParams;
+  sessionKey?: string;
+  sessionTarget: AgentRunSessionTarget;
+  startedAt: number;
+  warn: (message: string) => void;
+}) {
+  const handled = await prepareEmbeddedHandledBeforeAgentReply({
+    agentId: params.agentId,
+    config: params.run.config,
+    model: params.model,
+    persist:
+      params.run.sessionPersistence !== "detached" &&
+      params.run.currentInboundEventKind !== "room_event",
+    prepareAssistantTranscriptMessage: params.run.prepareAssistantTranscriptMessage,
+    provider: params.provider,
+    reply: params.reply,
+    runId: params.run.runId,
+    sessionId: params.run.sessionId,
+    sessionKey: params.sessionKey,
+    sessionTarget: params.sessionTarget,
+  });
+  if (handled.persistenceWarning) {
+    params.warn(
+      `before_agent_reply transcript persistence skipped: runId=${params.run.runId} sessionId=${params.redactedSessionId} reason=${handled.persistenceWarning}`,
+    );
+  }
+  return {
+    payloads: handled.payloads,
+    meta: {
+      durationMs: Date.now() - params.startedAt,
+      agentMeta: {
+        sessionId: params.run.sessionId,
+        provider: params.provider,
+        model: params.model,
+      },
+      finalAssistantVisibleText: handled.finalText,
+      finalAssistantRawText: handled.finalText,
+    },
   };
 }

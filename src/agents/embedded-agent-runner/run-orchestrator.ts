@@ -11,6 +11,7 @@ import { getRuntimeConfigSnapshot } from "../../config/config.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { revokeMessageActionTurnCapability } from "../../gateway/message-action-turn-capability.js";
 import {
+  assertAgentRunLifecycleGenerationCurrent,
   captureAgentRunLifecycleGeneration,
   getAgentEventLifecycleGeneration,
   withAgentRunLifecycleGeneration,
@@ -54,11 +55,13 @@ import {
   acquireReadOnlyPreparedModelRuntime,
 } from "../prepared-model-runtime.js";
 import { resolveProjectKey } from "../project-memory-scope.js";
+import { settleFailedRequesterRun, settleRequesterRun } from "../requester-run-settlement.js";
 import {
   applyAgentRunSessionTargetIdentity,
   resolveAgentRunSessionTarget,
 } from "../run-session-target.js";
 import { resolveAgentRunErrorLifecycleFields } from "../run-termination.js";
+import { resolveSessionPlacementTurnSettlementAssertion } from "../session-placement-forced-terminal-settlement.js";
 import {
   resolveSessionSuspensionTarget,
   suspendSession,
@@ -79,7 +82,7 @@ import {
 } from "./run/attempt-stage-timing.js";
 import { withExecutionPhaseDiagnostics } from "./run/execution-phase-diagnostics.js";
 import { buildEmbeddedFailureSuspension } from "./run/failure-suspension.js";
-import { prepareEmbeddedHandledBeforeAgentReply } from "./run/handled-before-agent-reply-transcript.js";
+import { buildEmbeddedHandledBeforeAgentReplyResult } from "./run/handled-before-agent-reply-transcript.js";
 import type {
   RunEmbeddedAgentInternalParams,
   RunEmbeddedAgentParamsWithSessionFile,
@@ -431,7 +434,9 @@ async function runEmbeddedAgentInternal(
                 sessionId: params.sessionId,
                 tracker: startupStages,
               });
-              params.onExecutionStarted?.({ lifecycleGeneration });
+              await params.onExecutionStarted?.({ lifecycleGeneration });
+              throwIfAborted();
+              assertAgentRunLifecycleGenerationCurrent(lifecycleGeneration);
               notifyExecutionPhase("runner_entered");
               const canonicalWorkspace = resolveUserPath(
                 resolveAgentWorkspaceDir(preparedModelRuntime.config, preparedAgentId),
@@ -504,39 +509,18 @@ async function runEmbeddedAgentInternal(
                   notifyExecutionPhase("runtime_plugins", { provider, model: modelId }),
               });
               if (hookResult?.handled) {
-                const handled = await prepareEmbeddedHandledBeforeAgentReply({
+                return await buildEmbeddedHandledBeforeAgentReplyResult({
                   agentId: workspaceResolution.agentId,
-                  config: params.config,
                   model: modelId,
-                  persist:
-                    params.sessionPersistence !== "detached" &&
-                    params.currentInboundEventKind !== "room_event",
-                  prepareAssistantTranscriptMessage: params.prepareAssistantTranscriptMessage,
                   provider,
+                  redactedSessionId,
                   reply: hookResult.reply,
-                  runId: params.runId,
-                  sessionId: params.sessionId,
+                  run: params,
                   sessionKey: resolvedSessionKey,
                   sessionTarget: { ...params.sessionTarget, ...runSessionTarget },
+                  startedAt: started,
+                  warn: (message) => log.warn(message),
                 });
-                if (handled.persistenceWarning) {
-                  log.warn(
-                    `before_agent_reply transcript persistence skipped: runId=${params.runId} sessionId=${redactedSessionId} reason=${handled.persistenceWarning}`,
-                  );
-                }
-                return {
-                  payloads: handled.payloads,
-                  meta: {
-                    durationMs: Date.now() - started,
-                    agentMeta: {
-                      sessionId: params.sessionId,
-                      provider,
-                      model: modelId,
-                    },
-                    finalAssistantVisibleText: handled.finalText,
-                    finalAssistantRawText: handled.finalText,
-                  },
-                };
               }
 
               assistantErrorTranscript ??=
@@ -711,6 +695,15 @@ async function runEmbeddedAgentInternal(
           }
         }
         refresh.mergeTerminalReceipt(result);
+        if (
+          result.meta.executionTrace?.runner !== "cli" &&
+          params.isFinalFallbackAttempt === undefined
+        ) {
+          settleRequesterRun(params, result, () => {
+            throwIfAborted();
+            params.preparedRunAdmission?.assertSourceCurrent();
+          });
+        }
         const error = result.meta.error?.message ?? terminal?.getDeferredError();
         terminal?.emit(error ? "error" : "end", error ? new Error(error) : result, {
           ...resolveAgentLifecycleTerminalMetadata(result.meta),
@@ -723,8 +716,20 @@ async function runEmbeddedAgentInternal(
         });
         return result;
       } catch (error) {
-        terminal?.emit("error", error);
-        throw error;
+        // A fallback candidate is not the terminal owner, even if every later
+        // candidate is skipped. The outer entry releases its children in that case.
+        const failure =
+          params.isFinalFallbackAttempt === undefined
+            ? settleFailedRequesterRun(
+                params,
+                error,
+                // Internal loop stops end inference, not the parent's authority to
+                // release its children. Parent cancellation and placement closure still fence it.
+                resolveSessionPlacementTurnSettlementAssertion(),
+              )
+            : error;
+        terminal?.emit("error", failure);
+        throw failure;
       } finally {
         refresh.close();
       }
