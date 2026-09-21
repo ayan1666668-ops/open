@@ -1,4 +1,3 @@
-import { AsyncLocalStorage } from "node:async_hooks";
 import { channel } from "node:diagnostics_channel";
 import { ensureSqliteLibrarySelected } from "../../infra/bun-sqlite-library.js";
 import { runtimeProcessEntrypoints } from "../../infra/runtime-process-entrypoints.js";
@@ -12,6 +11,7 @@ import {
 import { SQLITE_IDLE_HANDLE_TTL_MS } from "../../infra/sqlite-handle-lifecycle.js";
 import { WorkerTaskError, WorkerTaskPool } from "../../infra/worker-task-pool.js";
 import { normalizeAgentId } from "../../routing/session-key.js";
+import { runInDetachedAsyncContext } from "../../shared/async-work-scope.js";
 import type { OpenClawAgentDatabaseOptions } from "../../state/openclaw-agent-db-contract.js";
 import {
   registerOpenClawAgentDatabaseAsyncResource,
@@ -137,7 +137,6 @@ export type HistoryDatabaseResource = {
 };
 
 const historyDatabases = new Map<string, HistoryDatabaseResource>();
-const runInHistoryOwnerContext = AsyncLocalStorage.snapshot();
 const historySetTimeout = setTimeout;
 export const historyClearTimeout = clearTimeout;
 let historyGeneration = 0;
@@ -169,7 +168,7 @@ channel("openclaw.memory.critical").subscribe(() => {
       continue;
     }
     historyClearTimeout(lane.idleTimer);
-    void runInHistoryOwnerContext(() => rotateDatabaseWorkers(lane)).catch((error: unknown) => {
+    void runInDetachedAsyncContext(() => rotateDatabaseWorkers(lane)).catch((error: unknown) => {
       process.emitWarning(`${lane.name} worker retirement failed: ${String(error)}`);
     });
   }
@@ -224,7 +223,7 @@ export function armDatabaseWorkerIdleRetirement(lane: SessionDatabaseWorkerLane)
   if (lane.nativeSequence <= lane.retiredSequence || lane.pending > 0) {
     return;
   }
-  lane.idleTimer = runInHistoryOwnerContext(() =>
+  lane.idleTimer = runInDetachedAsyncContext(() =>
     historySetTimeout(() => {
       void rotateDatabaseWorkers(lane).catch((error: unknown) => {
         process.emitWarning(`${lane.name} worker retirement failed: ${String(error)}`);
