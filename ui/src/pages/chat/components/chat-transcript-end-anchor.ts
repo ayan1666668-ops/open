@@ -5,10 +5,19 @@ import type { createTranscriptOffsetState } from "./chat-transcript-offset-obser
 export class TranscriptEndAnchor {
   private offset: number | null = null;
   private followingBeforeCommit = false;
+  private offsetBeforeUpdate: number | null = null;
   private frame: number | null = null;
 
-  get isCommitPending(): boolean {
-    return this.followingBeforeCommit;
+  isResizingCommit(element: HTMLDivElement | null): boolean {
+    const max = maxTranscriptScrollOffset(element);
+    return (
+      this.followingBeforeCommit &&
+      this.offset !== null &&
+      max !== null &&
+      element !== null &&
+      Math.abs(element.scrollTop - this.offset) <= 1 &&
+      this.offset !== max
+    );
   }
 
   prepareUpdate(
@@ -16,6 +25,11 @@ export class TranscriptEndAnchor {
     canFollow: boolean,
     state: ReturnType<typeof createTranscriptOffsetState>,
   ): void {
+    // A prior commit may still await its frame when native scrolling starts.
+    // Only offsets recorded inside that commit can extend its end ownership.
+    if (element && this.offset !== null && Math.abs(element.scrollTop - this.offset) > 1) {
+      this.clear();
+    }
     if (
       !this.followingBeforeCommit &&
       element &&
@@ -35,15 +49,29 @@ export class TranscriptEndAnchor {
       // its offset before the final dock and measured rows reach the DOM.
       this.followingBeforeCommit = true;
     }
+    this.offsetBeforeUpdate = this.followingBeforeCommit ? (element?.scrollTop ?? null) : null;
   }
 
-  releaseCommit(): boolean {
-    const following = this.followingBeforeCommit;
+  commitUpdate(element: HTMLDivElement | null): void {
+    // Lit's synchronous pre/post-update hooks bracket the DOM commit. An offset
+    // changed within those hooks is its layout clamp, not a later reader task.
+    if (
+      this.followingBeforeCommit &&
+      element &&
+      this.offsetBeforeUpdate !== null &&
+      element.scrollTop !== this.offsetBeforeUpdate
+    ) {
+      this.offset = element.scrollTop;
+    }
+    this.offsetBeforeUpdate = null;
+  }
+
+  releaseCommit(): void {
     this.followingBeforeCommit = false;
-    return following;
+    this.offsetBeforeUpdate = null;
   }
 
-  scheduleReconcile(reconcile: (followingBeforeCommit: boolean) => void): void {
+  scheduleReconcile(reconcile: () => void): void {
     if (this.frame !== null) {
       return;
     }
@@ -51,7 +79,8 @@ export class TranscriptEndAnchor {
     // Coalesce end-follow after those commits using the current reader's anchor.
     this.frame = requestAnimationFrame(() => {
       this.frame = null;
-      reconcile(this.releaseCommit());
+      this.releaseCommit();
+      reconcile();
     });
   }
 
@@ -65,6 +94,7 @@ export class TranscriptEndAnchor {
   clear(): void {
     this.offset = null;
     this.followingBeforeCommit = false;
+    this.offsetBeforeUpdate = null;
   }
 
   capture(element: HTMLDivElement | null): void {
@@ -77,7 +107,6 @@ export class TranscriptEndAnchor {
     canFollow: boolean,
     suspended: boolean,
     follow: () => void,
-    followingBeforeCommit = false,
   ): void {
     // A resized viewport can clamp a reader to the end without granting follow.
     if (!canFollow) {
@@ -86,13 +115,6 @@ export class TranscriptEndAnchor {
     }
     if (suspended) {
       return;
-    }
-    if (
-      followingBeforeCommit &&
-      element &&
-      Math.abs((maxTranscriptScrollOffset(element) ?? 0) - element.scrollTop) > 1
-    ) {
-      follow();
     }
     const max = maxTranscriptScrollOffset(element);
     if (!element || max === null) {

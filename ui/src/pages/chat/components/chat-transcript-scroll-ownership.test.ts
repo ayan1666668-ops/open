@@ -37,13 +37,119 @@ describe("chat transcript scroll ownership", () => {
     const anchor = new TranscriptEndAnchor();
     anchor.capture(element);
     anchor.prepareUpdate(element, true, createTranscriptOffsetState());
-    expect(anchor.isCommitPending).toBe(true);
-    element.scrollTop = 500;
+    Object.defineProperty(element, "scrollHeight", { configurable: true, value: 1200 });
+    expect(anchor.isResizingCommit(element)).toBe(true);
     const follow = vi.fn();
 
-    anchor.reconcile(element, true, true, follow, anchor.releaseCommit());
+    anchor.releaseCommit();
+    anchor.reconcile(element, true, true, follow);
 
     expect(follow).not.toHaveBeenCalled();
+  });
+
+  it("does not override native movement during a commit with an unchanged scroll range", () => {
+    const element = document.createElement("div");
+    Object.defineProperties(element, {
+      clientHeight: { configurable: true, value: 400 },
+      scrollHeight: { configurable: true, value: 1000 },
+    });
+    element.scrollTop = 600;
+    const anchor = new TranscriptEndAnchor();
+    anchor.capture(element);
+    anchor.prepareUpdate(element, true, createTranscriptOffsetState());
+    element.scrollTop -= 8;
+    const follow = vi.fn();
+
+    anchor.releaseCommit();
+    anchor.reconcile(element, true, false, follow);
+
+    expect(follow).not.toHaveBeenCalled();
+    expect(element.scrollTop).toBe(592);
+  });
+
+  it("preserves a commit's native clamp when the footer restores the original scroll range", () => {
+    const element = document.createElement("div");
+    Object.defineProperties(element, {
+      clientHeight: { configurable: true, value: 400 },
+      scrollHeight: { configurable: true, value: 1000 },
+    });
+    element.scrollTop = 600;
+    const anchor = new TranscriptEndAnchor();
+    anchor.capture(element);
+    anchor.prepareUpdate(element, true, createTranscriptOffsetState());
+    Object.defineProperty(element, "clientHeight", { configurable: true, value: 500 });
+    element.scrollTop = 500;
+    anchor.commitUpdate(element);
+    Object.defineProperty(element, "clientHeight", { configurable: true, value: 400 });
+    const follow = vi.fn(() => {
+      element.scrollTop = 600;
+    });
+
+    expect(anchor.isResizingCommit(element)).toBe(true);
+    anchor.releaseCommit();
+    anchor.reconcile(element, true, false, follow);
+
+    expect(follow).toHaveBeenCalledOnce();
+    expect(element.scrollTop).toBe(600);
+  });
+
+  it.each(["footer", "row"] as const)(
+    "preserves native movement after an observed %s commit changes the scroll range",
+    (kind) => {
+      const element = document.createElement("div");
+      Object.defineProperties(element, {
+        clientHeight: { configurable: true, value: 400 },
+        scrollHeight: { configurable: true, value: 1000 },
+      });
+      element.scrollTop = 600;
+      const anchor = new TranscriptEndAnchor();
+      anchor.capture(element);
+      anchor.prepareUpdate(element, true, createTranscriptOffsetState());
+      if (kind === "footer") {
+        Object.defineProperty(element, "clientHeight", { configurable: true, value: 500 });
+        element.scrollTop = 500;
+      } else {
+        Object.defineProperty(element, "scrollHeight", { configurable: true, value: 1100 });
+      }
+      anchor.commitUpdate(element);
+      Object.defineProperty(element, "clientHeight", { configurable: true, value: 400 });
+      element.scrollTop -= 8;
+      const movedPosition = element.scrollTop;
+      const follow = vi.fn();
+
+      expect(anchor.isResizingCommit(element)).toBe(false);
+      anchor.releaseCommit();
+      anchor.reconcile(element, true, false, follow);
+
+      expect(follow).not.toHaveBeenCalled();
+      expect(element.scrollTop).toBe(movedPosition);
+    },
+  );
+
+  it("does not recapture native movement when another footer commit follows before reconciliation", () => {
+    const element = document.createElement("div");
+    Object.defineProperties(element, {
+      clientHeight: { configurable: true, value: 400 },
+      scrollHeight: { configurable: true, value: 1000 },
+    });
+    element.scrollTop = 600;
+    const anchor = new TranscriptEndAnchor();
+    anchor.capture(element);
+    anchor.prepareUpdate(element, true, createTranscriptOffsetState());
+    anchor.commitUpdate(element);
+    element.scrollTop -= 8;
+    anchor.prepareUpdate(element, true, createTranscriptOffsetState());
+    Object.defineProperty(element, "clientHeight", { configurable: true, value: 500 });
+    element.scrollTop = 500;
+    anchor.commitUpdate(element);
+    Object.defineProperty(element, "clientHeight", { configurable: true, value: 400 });
+    const follow = vi.fn();
+
+    anchor.releaseCommit();
+    anchor.reconcile(element, true, false, follow);
+
+    expect(follow).not.toHaveBeenCalled();
+    expect(element.scrollTop).toBe(500);
   });
 
   it("does not reacquire precommit following from a cancelled reader anchor", () => {
@@ -60,7 +166,8 @@ describe("chat transcript scroll ownership", () => {
     anchor.prepareUpdate(element, true, createTranscriptOffsetState());
     Object.defineProperty(element, "scrollHeight", { configurable: true, value: 1200 });
     const follow = vi.fn();
-    anchor.reconcile(element, true, false, follow, anchor.releaseCommit());
+    anchor.releaseCommit();
+    anchor.reconcile(element, true, false, follow);
     expect(follow).not.toHaveBeenCalled();
     expect(element.scrollTop).toBe(600);
   });
@@ -79,7 +186,12 @@ describe("chat transcript scroll ownership", () => {
     Object.defineProperty(element, "scrollHeight", { configurable: true, value: 750 });
     element.scrollTop = 350;
     anchor.prepareUpdate(element, true, createTranscriptOffsetState());
-    expect(anchor.isCommitPending).toBe(false);
+    expect(anchor.isResizingCommit(element)).toBe(false);
+    Object.defineProperty(element, "scrollHeight", { configurable: true, value: 950 });
+    const follow = vi.fn();
+    anchor.releaseCommit();
+    anchor.reconcile(element, true, false, follow);
+    expect(follow).not.toHaveBeenCalled();
   });
 
   it.each(["following", "reading", "wheel", "key", "pointer", "touch"] as const)(
@@ -131,6 +243,8 @@ describe("chat transcript scroll ownership", () => {
           clientHeight: { configurable: true, value: 600 },
           scrollHeight: { configurable: true, value: 2087 },
         });
+        // Native events arrive after the synchronous DOM commit hooks.
+        transcript.hostUpdated();
         if (intent === "wheel") {
           container.dispatchEvent(new WheelEvent("wheel", { deltaY: -100 }));
         } else if (intent === "key") {
@@ -162,7 +276,6 @@ describe("chat transcript scroll ownership", () => {
         container.dispatchEvent(new Event("scroll"));
         expect(policy.chatFollowLocked).toBe(intent !== "following");
         expect(policy.chatReadingHistory).toBe(intent !== "following");
-        transcript.hostUpdated();
         flushFrames();
         expect(policy.chatFollowLocked).toBe(intent !== "following");
         expect(policy.chatReadingHistory).toBe(intent !== "following");

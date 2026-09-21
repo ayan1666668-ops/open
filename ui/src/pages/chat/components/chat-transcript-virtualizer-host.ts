@@ -374,6 +374,7 @@ export class ChatSessionVirtualizerHost implements ReactiveControllerHost, ChatT
   }
 
   update(): void {
+    this.endAnchor.commitUpdate(this.scrollElement);
     this.entryAnimations.didCommit();
     for (const controller of this.controllers) {
       controller.hostUpdated?.();
@@ -398,7 +399,7 @@ export class ChatSessionVirtualizerHost implements ReactiveControllerHost, ChatT
       this.endAnchor.cancelReconcile();
     }
     if (!interactionResizePending && this.connected) {
-      this.endAnchor.scheduleReconcile((followingBeforeCommit) => {
+      this.endAnchor.scheduleReconcile(() => {
         if (this.connected && !this.offsetState.pendingInteractionAnchor) {
           this.reconcileImplicitEndAnchor();
           this.endAnchor.reconcile(
@@ -408,7 +409,6 @@ export class ChatSessionVirtualizerHost implements ReactiveControllerHost, ChatT
               this.offsetState.touching ||
               this.offsetState.touchScrolling,
             this.followEnd,
-            followingBeforeCommit,
           );
         }
       });
@@ -588,7 +588,7 @@ export class ChatSessionVirtualizerHost implements ReactiveControllerHost, ChatT
 
   get isMaintenanceScroll(): boolean {
     return (
-      (this.endAnchor.isCommitPending && this.canAutoFollow()) ||
+      (this.endAnchor.isResizingCommit(this.scrollElement) && this.canAutoFollow()) ||
       isTranscriptMaintenanceScroll(this.offsetState, this.scrollElement)
     );
   }

@@ -412,6 +412,7 @@ class ChatPositionRailDirective extends AsyncDirective {
       }
       this.scheduleLayout();
     }
+    this.syncTabStop();
   }
 
   private syncLayout() {
@@ -441,7 +442,6 @@ class ChatPositionRailDirective extends AsyncDirective {
     this.syncVisibilityTargets();
     // Reader offsets can move the anchor without changing any intersections.
     this.syncVisibleMarks();
-    this.syncTabStop();
     if (initialize || this.followActive) {
       this.followActive = false;
       const focused = this.markerElements.get(this.interaction.focusedId ?? "");
