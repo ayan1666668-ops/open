@@ -1423,9 +1423,19 @@ describe("CI changed Node test plan", () => {
         ),
         "measured app-server envelope",
       );
-      // Run 35490342736 measured 499.843s here; the config median hides that tail.
-      expect(fallbackGroups([appServerJob])).toHaveLength(1);
-      expect(appServerJob.predictedSeconds).toBeGreaterThanOrEqual(499);
+      // After fixture reuse, run 35537743091 measured 190.394s for 11 app-server
+      // files. The mixed config median must still not hide that native-worker tail.
+      const appServerGroup = expectDefined(
+        fallbackGroups([appServerJob]).find((group) =>
+          group.includePatterns?.includes("extensions/codex/src/app-server/run-attempt.test.ts"),
+        ),
+        "measured app-server process",
+      );
+      const files = expectDefined(appServerGroup.includePatterns, "app-server files");
+      const config = expectDefined(appServerGroup.configs[0], "app-server config");
+      expect(
+        extensionTestPlan.estimateExtensionTestCost(config, files.length, files),
+      ).toBeGreaterThanOrEqual(191);
       expect(appServerJob.runner).toBe("blacksmith-8vcpu-ubuntu-2404");
     }
     expect(shards.length).toBeGreaterThan(1);
@@ -1530,7 +1540,7 @@ describe("CI changed Node test plan", () => {
         );
         const preparedFiles = ordinaryFiles === 5 ? files.length : runtimeFiles.length;
         expect(prepared[0]?.predictedSeconds).toBe(
-          100 + Math.ceil(preparedFiles * (worker ? 46.26 : 2.567)),
+          100 + Math.ceil(preparedFiles * (worker ? 17.31 : 2.49)),
         );
         for (const group of groups) {
           expect(group.includePatterns!.length).toBeLessThanOrEqual(12);
