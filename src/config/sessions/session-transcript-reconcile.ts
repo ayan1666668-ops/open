@@ -75,6 +75,7 @@ const RECONCILE_RETRY_BACKOFF_MS: readonly number[] = [0, 50, 200, 500, 1_000];
 type RunningReconcile = {
   generation: number;
   pending: boolean;
+  signal?: AbortSignal;
   preferredSessionId?: string;
   promise?: Promise<SessionTranscriptReconcileResult>;
 };
@@ -286,7 +287,9 @@ export async function reconcileSessionTranscriptIndexes(
   return runSessionTranscriptReconcileOperation(
     prepared.generation,
     (operation) => reconcilePreparedTranscriptIndexes(prepared, operation),
-    { agentId: prepared.agentId, path: reconcileKey(prepared) },
+    isIncognitoOpenClawAgentSqlitePath(reconcileKey(prepared), prepared)
+      ? undefined
+      : { agentId: prepared.agentId, path: reconcileKey(prepared) },
   );
 }
 
@@ -543,7 +546,14 @@ async function reconcilePreparedTranscriptIndexes(
         `Transcript lease cleanup incomplete; restart OpenClaw before deleting this agent: ${toStringifiedError(error).message}`,
         { cause: error },
       );
-      operation.retainCleanupFailure(failure);
+      if (input.mode === "disk") {
+        operation.retainLeaseForCleanup({
+          mode: "release",
+          leaseId: input.leaseId,
+          stateDir: input.stateDir,
+          externallySupervised: input.externallySupervised,
+        });
+      }
       throw outcome.ok
         ? failure
         : new AggregateError([outcome.error, failure], failure.message, { cause: failure });
@@ -592,11 +602,10 @@ function startPreparedSessionTranscriptIndexReconcile(params: PreparedReconcileP
   // Capture before the first yield: disposal must revoke this scheduled owner,
   // including a later pass, before preflight can reopen its sentinel.
   const memorySource = captureMemorySource(params);
-  let operationSignal: AbortSignal | undefined;
   const pending = runSessionTranscriptReconcileOperation(
     params.generation,
     (operation) => {
-      operationSignal = operation.signal;
+      state.signal = operation.signal;
       return yieldToGateway().then(async () => {
         let reconciledSessions = 0;
         let retryCount = 0;
@@ -630,7 +639,9 @@ function startPreparedSessionTranscriptIndexReconcile(params: PreparedReconcileP
         }
       });
     },
-    { agentId: params.agentId, path: key },
+    isIncognitoOpenClawAgentSqlitePath(key, params)
+      ? undefined
+      : { agentId: params.agentId, path: key },
   ).catch(async (error: unknown) => {
     log.warn(
       `session transcript reconcile failed agent=${params.agentId} error=${error instanceof Error ? error.message : String(error)}`,
@@ -644,8 +655,8 @@ function startPreparedSessionTranscriptIndexReconcile(params: PreparedReconcileP
     // merely to retry the disposed memory owner's work.
     if (
       shouldHandoff &&
-      operationSignal &&
-      !operationSignal.aborted &&
+      state.signal &&
+      !state.signal.aborted &&
       (!memorySource || captureMemorySource(params))
     ) {
       startPreparedSessionTranscriptIndexReconcile({
@@ -695,21 +706,41 @@ export async function waitForSessionTranscriptProjection(
   abortSignal?: AbortSignal,
 ): Promise<void> {
   const resolved = resolveSqliteTranscriptReadScope(scope);
-  const databaseOptions = toDatabaseOptions(resolved);
-  while (isSessionTranscriptIndexReconcileRunning(databaseOptions)) {
-    // Poll committed metadata without superseding a pending writable admission
-    // or recreating an incognito owner disposed across an earlier polling await.
+  const databaseOptions = prepareReconcileParams(toDatabaseOptions(resolved));
+  const key = reconcileKey(databaseOptions);
+  const needsReconcile = () => {
     const pending = withOpenClawAgentDatabaseReadOnly(
       ({ db }) => sessionTranscriptIndexNeedsReconcile(db, resolved.sessionId),
       databaseOptions,
     );
-    if (!pending.found || !pending.value) {
-      break;
+    return pending.found && pending.value;
+  };
+  let running = runningReconciles.get(key);
+  while (running) {
+    // Revoked work retains its close fence until settlement. Keep waiting without
+    // admitting a reader or recreating a disposed incognito owner.
+    if (!running.signal?.aborted && !needsReconcile()) {
+      return;
     }
     await delay(
       PROJECTION_READY_POLL_MS,
       undefined,
       abortSignal ? { signal: abortSignal } : undefined,
     );
+    if (
+      !runningReconciles.has(key) &&
+      running.signal?.aborted &&
+      isSessionTranscriptReconcileGenerationCurrent(running.generation) &&
+      needsReconcile()
+    ) {
+      // This waiting caller still needs the existing disk projection after cache
+      // turnover. Re-admit through the owner without reviving a retired lifecycle.
+      startPreparedSessionTranscriptIndexReconcile({
+        ...databaseOptions,
+        generation: running.generation,
+        preferredSessionId: resolved.sessionId,
+      });
+    }
+    running = runningReconciles.get(key);
   }
 }
