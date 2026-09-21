@@ -153,7 +153,13 @@ function hasDreamingNarrativeLead(snippet: string): boolean {
   // the lead check to anywhere in the first 200 chars closes the leak without creating
   // false positives for ordinary durable notes that merely mention the word in prose.
   const head = truncateUtf16Safe(withoutPrefix, 200);
-  return /\b(?:Candidate|Reflections?):/i.test(head);
+  if (/\b(?:Candidate|Reflections?):/i.test(head)) {
+    return true;
+  }
+  // buildRemReflections (dreaming-phases.ts) emits the REM block under a
+  // markdown heading ("### Reflections"), not a colon-suffixed marker, so
+  // match that heading form too.
+  return /#{1,6}\s+Reflections?\b/i.test(head);
 }
 
 export function isContaminatedDreamingSnippet(
@@ -183,7 +189,13 @@ export function isContaminatedDreamingSnippet(
   );
   const hasStatus = /\bstatus:\s*staged\b/i.test(snippet);
   const hasRecalls = /\brecalls:\s*\d+\b/i.test(snippet);
-  return hasNarrativeLead && hasConfidence && hasEvidence && hasStatus && hasRecalls;
+  const hasReflectionNote = /\bnote:\s*reflection\b/i.test(snippet);
+  return (
+    hasNarrativeLead &&
+    hasConfidence &&
+    hasEvidence &&
+    ((hasStatus && hasRecalls) || hasReflectionNote)
+  );
 }
 
 export function normalizeMemoryPath(rawPath: string): string {

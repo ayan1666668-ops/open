@@ -1668,6 +1668,77 @@ describe("short-term promotion", () => {
     expect(ranked).toStrictEqual([]);
   });
 
+  it("does not rank a genuinely generated REM reflection block (#154803)", async (workspaceDir) => {
+    // Build the exact bodyLines the REM phase writes via the real
+    // previewRemDreaming/buildRemReflections generator (dreaming-phases.ts),
+    // then wrap them the way writeDailyDreamingPhaseBlock wraps a managed
+    // "## REM Sleep" block. chunkMarkdown preserves raw markdown lines
+    // (heading "### Reflections", "- "/"  - " bullet markers) verbatim into
+    // the indexed snippet, so this reproduces the actual leak rather than a
+    // hand-authored string that the generator never emits.
+    const preview = previewRemDreaming({
+      entries: [
+        {
+          key: "memory:1",
+          path: "memory/2026-04-08.md",
+          startLine: 2,
+          endLine: 2,
+          source: "memory",
+          snippet: "Documented the Ollama provider setup.",
+          recallCount: 4,
+          dailyCount: 0,
+          groundedCount: 0,
+          totalScore: 3.6,
+          maxScore: 0.95,
+          firstRecalledAt: "2026-04-03T00:00:00.000Z",
+          lastRecalledAt: "2026-04-04T00:00:00.000Z",
+          queryHashes: ["a", "b"],
+          recallDays: ["2026-04-03", "2026-04-04"],
+          conceptTags: ["ollama"],
+        },
+      ],
+      limit: 20,
+      minPatternStrength: 0,
+    });
+    const managedRemBlock = [
+      "## REM Sleep",
+      "<!-- openclaw:dreaming:rem:start -->",
+      ...preview.bodyLines,
+      "<!-- openclaw:dreaming:rem:end -->",
+    ].join("\n");
+    expect(managedRemBlock).toContain("### Reflections");
+    expect(managedRemBlock).toContain("note: reflection");
+
+    await testing.writeRawRecallStore(workspaceDir, {
+      version: 1,
+      updatedAt: "2026-04-04T00:00:00.000Z",
+      entries: {
+        "rem-reflection": {
+          key: "rem-reflection",
+          path: "memory/2026-04-03.md",
+          startLine: 1,
+          endLine: 1,
+          source: "memory",
+          snippet: managedRemBlock,
+          recallCount: 4,
+          dailyCount: 0,
+          groundedCount: 0,
+          totalScore: 3.6,
+          maxScore: 0.95,
+          firstRecalledAt: "2026-04-03T00:00:00.000Z",
+          lastRecalledAt: "2026-04-04T00:00:00.000Z",
+          queryHashes: ["a", "b"],
+          recallDays: ["2026-04-03", "2026-04-04"],
+          conceptTags: ["ollama"],
+        },
+      },
+    });
+
+    const ranked = await rankAllCandidates(workspaceDir);
+
+    expect(ranked).toStrictEqual([]);
+  });
+
   it("does not promote rehydrated candidates whose relocated range covers a managed dreaming fence marker line (#80613)", async (workspaceDir) => {
     // Daily note: human content + a managed Light Sleep block. The relevant
     // surface is the marker lines (5 and 8), not the fenced content between
