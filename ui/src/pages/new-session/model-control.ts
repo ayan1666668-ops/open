@@ -403,9 +403,8 @@ export class NewSessionModelControl {
     this.pendingPreference = this.initialModel ? undefined : options.preference;
     this.pendingAgent = options.agent;
     this.pendingSelectionGeneration = selectionGeneration;
-    this.restoringPreference = Boolean(
-      !this.draftAccount && hasNewSessionModelPreference(this.pendingPreference),
-    );
+    this.restoringPreference =
+      !this.draftAccount && hasNewSessionModelPreference(this.pendingPreference);
     if (this.metadataRequest) {
       this.notify();
       return;
