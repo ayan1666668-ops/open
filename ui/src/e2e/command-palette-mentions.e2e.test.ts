@@ -67,14 +67,15 @@ async function anchors(palette: Locator) {
 async function selectPerson(input: Locator, palette: Locator, index: number) {
   await input.press("@");
   const menu = palette.getByRole("listbox", { name: "Mention a person" });
-  await menu.getByRole("option").nth(9).waitFor();
+  await menu.getByRole("option").nth(9).waitFor({ state: "visible" });
   expect(await menu.getByRole("option").count()).toBe(10);
   await input.press("Home");
   for (let step = 0; step < index; step++) {
     await input.press("ArrowDown");
   }
   await input.press(index % 2 ? "Tab" : "Enter");
-  await menu.waitFor({ state: "hidden" });
+  await menu.waitFor({ state: "detached" });
+  expect(await menu.count()).toBe(0);
 }
 
 suite.define(() => {
@@ -96,7 +97,7 @@ suite.define(() => {
         const palette = page.locator("openclaw-command-palette");
         const input = palette.locator(".cmd-palette__input");
         const menu = palette.getByRole("listbox", { name: "Mention a person" });
-        await menu.getByRole("option").nth(9).waitFor();
+        await menu.getByRole("option").nth(9).waitFor({ state: "visible" });
         expect(await menu.getByRole("option").count()).toBe(10);
         expect((await gateway.waitForRequest("users.mentionable")).params).toMatchObject({
           query: "Al",
@@ -150,6 +151,7 @@ suite.define(() => {
           await input.press("@");
           const menu = palette.getByRole("listbox", { name: "Mention a person" });
           await menu.getByText(/10 people/u).waitFor();
+          expect(await menu.textContent()).toContain("10 people");
           expect(await menu.getByRole("option").count()).toBe(0);
           expect(await input.getAttribute("aria-activedescendant")).toBeNull();
           const limited = await input.inputValue();
@@ -173,76 +175,4 @@ suite.define(() => {
       );
     },
   );
-
-  it("routes people to the chosen agent and fences the previous destination's response", async () => {
-    await suite.withPage(createControlUiE2eContextOptions(), async ({ page }) => {
-      const gateway = await installMockGateway(page, mentionScenario());
-      const { palette, input, composer, url } = await openFromForeground(
-        page,
-        suite.server.baseUrl,
-      );
-      const menu = palette.getByRole("listbox", { name: "Mention a person" });
-      await gateway.deferNext("users.mentionable", { agentId: "main" });
-      await input.pressSequentially("@old");
-      const original = await gateway.waitForRequest("users.mentionable");
-      expect(original.params).toEqual({ agentId: "main", query: "old" });
-
-      const settings = palette.locator("wa-popover.palette-session-settings");
-      await palette.getByRole("button", { name: "New session settings", exact: true }).click();
-      const agent = settings.locator("openclaw-agent-select");
-      await agent.getByRole("button", { name: "Agent: Main", exact: true }).click();
-      await agent.getByRole("menuitemradio", { name: "Reviewer", exact: true }).click();
-      await agent.locator("wa-dropdown:not([open])").waitFor({ state: "attached" });
-      expect(
-        await agent.getByRole("button", { name: "Agent: Reviewer", exact: true }).isVisible(),
-      ).toBe(true);
-      await settings.locator(".palette-session-settings__workspace").press("Escape");
-      await palette
-        .locator("wa-popover.palette-session-settings:not([open])")
-        .waitFor({ state: "attached" });
-      await menu.waitFor({ state: "hidden" });
-
-      await gateway.deferNext("users.mentionable", { agentId: "reviewer" });
-      await input.focus();
-      await input.press("ControlOrMeta+A");
-      await input.pressSequentially("@new");
-      const next = await gateway.waitForRequest("users.mentionable", { after: 1 });
-      expect(next.params).toEqual({ agentId: "reviewer", query: "new" });
-      expect(await menu.locator('[aria-busy="true"]').count()).toBe(1);
-
-      await gateway.resolveDeferred("users.mentionable", { users: people, truncated: false });
-      // Observe a browser commit before asserting that the old reply did not replace this view.
-      await page.evaluate(
-        () =>
-          new Promise<void>((resolve) => {
-            requestAnimationFrame(() => resolve());
-          }),
-      );
-      expect(await menu.locator('[aria-busy="true"]').count()).toBe(1);
-      expect(await menu.getByRole("option").count()).toBe(0);
-      await gateway.resolveDeferred("users.mentionable", {
-        users: [{ profileId: "reviewer-person", displayName: "Reviewer Person", online: true }],
-        truncated: false,
-      });
-      await menu.getByRole("option").waitFor();
-      expect(await menu.getByRole("option").count()).toBe(1);
-      expect(await menu.getByRole("option").textContent()).toContain("Reviewer Person");
-      await input.press("Enter");
-      await gateway.setMethodResponse("sessions.create", {
-        key: "agent:reviewer:dashboard:palette-mentioned",
-        runStarted: true,
-        runId: "reviewer-run",
-      });
-      await input.press("ControlOrMeta+Enter");
-      expect((await gateway.waitForRequest("sessions.create")).params).toMatchObject({
-        agentId: "reviewer",
-        message: "@Reviewer Person",
-        mentions: [{ profileId: "reviewer-person", start: 0, end: 16 }],
-      });
-      await input.waitFor({ state: "hidden" });
-      await expectForegroundUnchanged(page, composer, url);
-      expect(await gateway.getRequests("chat.send")).toEqual([]);
-      expect(await gateway.getRequests("sessions.sharing.set")).toEqual([]);
-    });
-  });
 });

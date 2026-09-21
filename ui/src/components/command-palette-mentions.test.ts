@@ -44,7 +44,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-async function mount() {
+async function mount(createdSessionKey = "agent:main:dashboard:mentioned") {
   const directory = vi.fn(async (): Promise<UsersMentionableResult> => people);
   const fixture = createDraftFixture({
     request: async (method) => {
@@ -52,7 +52,7 @@ async function mount() {
         return directory();
       }
       if (method === "sessions.create") {
-        return { key: "agent:main:dashboard:mentioned", runStarted: true, runId: "mention-run" };
+        return { key: createdSessionKey, runStarted: true, runId: "mention-run" };
       }
       return {};
     },
@@ -444,10 +444,22 @@ describe("command palette people mentions", () => {
     ).not.toHaveProperty("mentions");
   });
 
-  it.each(["close", "owner", "detach", "reconnect"])(
+  it.each(["close", "owner", "detach", "reconnect", "destination"])(
     "keeps a new visible invocation authoritative after %s",
     async (change) => {
-      const f = await mount();
+      const destination = change === "destination" ? "reviewer" : "main";
+      const f = await mount(`agent:${destination}:dashboard:mentioned`);
+      const foreground = "agent:main:dashboard:foreground";
+      f.context.gateway.snapshot.sessionKey = foreground;
+      if (change === "destination") {
+        const roster = f.context.agents.state.agentsList!;
+        Object.assign(f.context.agents.state, {
+          agentsList: {
+            ...roster,
+            agents: [...roster.agents, { ...roster.agents[0], id: "reviewer", name: "Reviewer" }],
+          },
+        });
+      }
       const oldResponse = createDeferred<UsersMentionableResult>();
       const newResponse = createDeferred<UsersMentionableResult>();
       f.directory.mockReturnValueOnce(oldResponse.promise).mockReturnValueOnce(newResponse.promise);
@@ -463,6 +475,24 @@ describe("command palette people mentions", () => {
       } else if (change === "detach") {
         f.palette.remove();
         f.provider.append(f.palette);
+      } else if (change === "destination") {
+        const agent = f.palette.querySelector("openclaw-agent-select")!;
+        await agent.updateComplete;
+        expect(agent.value).toBe("main");
+        const reviewer = agent.querySelector('wa-dropdown-item[aria-label="Reviewer"]')!;
+        expect(reviewer).not.toBeNull();
+        agent.querySelector("wa-dropdown")!.dispatchEvent(
+          new CustomEvent("wa-select", {
+            bubbles: true,
+            cancelable: true,
+            detail: { item: reviewer },
+          }),
+        );
+        await f.palette.updateComplete;
+        await agent.updateComplete;
+        expect(agent.value).toBe("reviewer");
+        expect(f.context.agentSelection.state.selectedId).toBe("main");
+        expect(f.menu()).toBeNull();
       } else {
         f.context.gateway.snapshot.phase = "reconnecting";
         f.publish();
@@ -474,7 +504,7 @@ describe("command palette people mentions", () => {
         f.publish();
       }
       await f.palette.updateComplete;
-      if (change !== "reconnect") {
+      if (change !== "reconnect" && change !== "destination") {
         expect(f.palette.isOpen).toBe(false);
         f.palette.openPalette();
         await f.palette.updateComplete;
@@ -485,7 +515,7 @@ describe("command palette people mentions", () => {
       expect(f.directory).toHaveBeenCalledTimes(2);
       expect(f.directoryParams()).toEqual([
         { agentId: "main", query: "old" },
-        { agentId: "main", query: "new" },
+        { agentId: destination, query: "new" },
       ]);
       expect(f.palette.isOpen).toBe(true);
       expect(f.menu()?.querySelector('[aria-busy="true"]')).toBeTruthy();
@@ -509,10 +539,13 @@ describe("command palette people mentions", () => {
       expect(f.request).toHaveBeenCalledWith(
         "sessions.create",
         expect.objectContaining({
+          agentId: destination,
           message: "@New Person",
           mentions: [{ profileId: "new-person", start: 0, end: 11 }],
         }),
       );
+      expect(f.context.gateway.snapshot.sessionKey).toBe(foreground);
+      expect(f.context.agentSelection.state.selectedId).toBe("main");
     },
   );
 });
