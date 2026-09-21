@@ -4,7 +4,7 @@ import path from "node:path";
 import { expectDefined } from "@openclaw/normalization-core";
 import { describe, expect, it } from "vitest";
 
-const { mocks, testEnv, setupPluginInstallSuite } =
+const { mocks, testEnv, tempDirs, setupPluginInstallSuite } =
   await import("./missing-configured-plugin-install.suite.test-support.js");
 
 describe("configured plugin install health findings", () => {
@@ -138,24 +138,57 @@ describe("configured plugin install health findings", () => {
     });
   });
 
-  it("reports one finding when a configured plugin record points at a missing package", async () => {
-    const missingDiscordPath = path.resolve("/missing/discord");
-    const records = {
-      discord: {
-        source: "npm",
-        spec: "@openclaw/discord",
-        installPath: missingDiscordPath,
+  it.each([
+    {
+      name: "resolved selector takes precedence",
+      source: "clawhub",
+      spec: "clawhub:demo@latest",
+      resolvedSpec: "clawhub:demo@1.2.3",
+      installSpec: "clawhub:demo@1.2.3",
+      fixHint:
+        "Run `openclaw plugins install clawhub:demo@1.2.3 --force` to reinstall the configured plugin package.",
+    },
+    {
+      name: "resolved selector without original spec",
+      source: "clawhub",
+      resolvedSpec: "clawhub:demo@1.2.3",
+      installSpec: "clawhub:demo@1.2.3",
+      fixHint:
+        "Run `openclaw plugins install clawhub:demo@1.2.3 --force` to reinstall the configured plugin package.",
+    },
+    {
+      name: "original selector only",
+      source: "npm",
+      spec: "@example/demo@1.2.3",
+      installSpec: "@example/demo@1.2.3",
+      fixHint:
+        "Run `openclaw plugins install @example/demo@1.2.3 --force` to reinstall the configured plugin package.",
+    },
+    {
+      name: "no recorded selector",
+      source: "clawhub",
+      installSpec: undefined,
+      fixHint:
+        "Run `openclaw doctor --fix` to repair the configured plugin install. An exact reinstall command is unavailable because the install record has no package spec.",
+    },
+  ])("preserves install identity for an empty project: $name", async (fixture) => {
+    const installPath = tempDirs.make("openclaw-doctor-empty-plugin-");
+    mocks.loadInstalledPluginIndexInstallRecords.mockResolvedValue({
+      demo: {
+        source: fixture.source,
+        spec: fixture.spec,
+        resolvedSpec: fixture.resolvedSpec,
+        installPath,
+        resolvedName: "demo",
+        resolvedVersion: "1.2.3",
       },
-    };
-    mocks.loadInstalledPluginIndexInstallRecords.mockResolvedValue(records);
+    });
     mocks.listChannelPluginCatalogEntries.mockReturnValue([
       {
-        id: "discord",
-        pluginId: "discord",
-        meta: { label: "Discord" },
-        install: {
-          npmSpec: "@openclaw/discord",
-        },
+        id: "demo",
+        pluginId: "demo",
+        meta: { label: "Demo" },
+        install: { npmSpec: "@example/catalog-demo" },
       },
     ]);
 
@@ -165,34 +198,27 @@ describe("configured plugin install health findings", () => {
     } = await import("./missing-configured-plugin-install.js");
     const issues = await detectConfiguredPluginInstallHealthIssues({
       cfg: {
-        plugins: {
-          entries: {
-            discord: { enabled: true },
-          },
-        },
-        channels: {
-          discord: { enabled: true },
-        },
+        plugins: { entries: { demo: { enabled: true } } },
+        channels: { demo: { enabled: true } },
       },
       env: testEnv,
     });
 
-    expect(issues).toEqual([
-      {
-        kind: "missing-installed-payload",
-        pluginId: "discord",
-        installPath: missingDiscordPath,
-        installSpec: "@openclaw/discord",
-      },
-    ]);
     expect(
       configuredPluginInstallIssueToHealthFinding(
         expectDefined(issues[0], "missing payload issue"),
       ),
-    ).toMatchObject({
-      target: "discord",
-      fixHint:
-        "Run `openclaw plugins install @openclaw/discord --force` to reinstall the configured plugin package.",
-    });
+    ).toMatchObject({ target: "demo", source: fixture.source, fixHint: fixture.fixHint });
+    expect(issues).toEqual([
+      {
+        kind: "missing-installed-payload",
+        pluginId: "demo",
+        installPath,
+        installSpec: fixture.installSpec,
+        installSource: fixture.source,
+      },
+    ]);
+    expect(mocks.installPluginFromClawHub).not.toHaveBeenCalled();
+    expect(mocks.installPluginFromNpmSpec).not.toHaveBeenCalled();
   });
 });

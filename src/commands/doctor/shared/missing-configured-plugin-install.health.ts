@@ -26,29 +26,22 @@ type ConfiguredPluginInstallHealthIssue =
       installSpec: string;
     }
   | {
-      kind: "missing-installed-payload";
+      kind:
+        | "missing-installed-payload"
+        | "repairable-installed-plugin"
+        | "stale-version-bound-runtime";
       pluginId: string;
       installPath?: string;
       installSpec?: string;
+      installSource?: PluginInstallRecord["source"];
     }
   | {
       kind: "missing-required-dependencies";
       pluginId: string;
       installPath?: string;
       installSpec?: string;
+      installSource?: PluginInstallRecord["source"];
       missingRequired: string[];
-    }
-  | {
-      kind: "repairable-installed-plugin";
-      pluginId: string;
-      installPath?: string;
-      installSpec?: string;
-    }
-  | {
-      kind: "stale-version-bound-runtime";
-      pluginId: string;
-      installPath?: string;
-      installSpec?: string;
     }
   | {
       kind: "stale-channel-config-descriptor";
@@ -60,6 +53,13 @@ type ConfiguredPluginInstallHealthIssue =
       pluginId: string;
       installPath?: string;
     };
+
+function recordedInstallIdentity(record: PluginInstallRecord | undefined) {
+  return {
+    installSpec: record?.resolvedSpec ?? record?.spec,
+    installSource: record?.source,
+  };
+}
 
 function missingRecordedPluginIssueKind(params: {
   pluginId: string;
@@ -169,7 +169,7 @@ export async function detectConfiguredPluginInstallHealthIssues(params: {
         kind: "missing-required-dependencies",
         pluginId,
         installPath: resolveRecordInstallPath(record, env),
-        ...(record?.spec ? { installSpec: record.spec } : {}),
+        ...recordedInstallIdentity(record),
         missingRequired: missingDependencies.missingRequired,
       });
       reportedPluginIds.add(pluginId);
@@ -195,7 +195,7 @@ export async function detectConfiguredPluginInstallHealthIssues(params: {
       kind,
       pluginId,
       ...(installPath ? { installPath } : {}),
-      ...(record?.spec ? { installSpec: record.spec } : {}),
+      ...recordedInstallIdentity(record),
     });
     reportedPluginIds.add(pluginId);
   }
@@ -257,21 +257,14 @@ export async function detectConfiguredPluginInstallHealthIssues(params: {
     const installSpec = resolvePluginInstallSources(candidate)[0]?.spec;
     if (shouldReplaceBrokenOfficialInstall) {
       const installPath = resolveRecordInstallPath(record, env);
-      if (staleVersionBoundRuntimePluginIds.has(candidate.pluginId)) {
-        issues.push({
-          kind: "stale-version-bound-runtime",
-          pluginId: candidate.pluginId,
-          ...(installPath ? { installPath } : {}),
-          ...(installSpec ? { installSpec } : {}),
-        });
-      } else {
-        issues.push({
-          kind: "repairable-installed-plugin",
-          pluginId: candidate.pluginId,
-          ...(installPath ? { installPath } : {}),
-          ...(installSpec ? { installSpec } : {}),
-        });
-      }
+      issues.push({
+        kind: staleVersionBoundRuntimePluginIds.has(candidate.pluginId)
+          ? "stale-version-bound-runtime"
+          : "repairable-installed-plugin",
+        pluginId: candidate.pluginId,
+        ...(installPath ? { installPath } : {}),
+        ...recordedInstallIdentity(record),
+      });
       continue;
     }
     if (record) {
@@ -280,7 +273,7 @@ export async function detectConfiguredPluginInstallHealthIssues(params: {
         kind: "missing-installed-payload",
         pluginId: candidate.pluginId,
         ...(installPath ? { installPath } : {}),
-        ...(installSpec ? { installSpec } : {}),
+        ...recordedInstallIdentity(record),
       });
     } else if (installSpec) {
       issues.push({
@@ -366,12 +359,15 @@ export function configuredPluginInstallIssueToHealthFinding(
         ? `${detail.message(issue.pluginId)} ${issue.missingRequired.join(", ")}.`
         : detail.message(issue.pluginId),
     target: issue.pluginId,
+    ...("installSource" in issue ? { source: issue.installSource } : {}),
     ...("installPath" in issue && issue.installPath ? { path: issue.installPath } : {}),
     fixHint:
       issue.kind === "missing-install-record"
         ? `Run \`openclaw doctor --fix\` to install ${issue.installSpec}.`
         : (detail.fixHint ??
-          `Run \`openclaw plugins install ${installSpec ?? issue.pluginId} --force\` to reinstall the configured plugin package.`),
+          (installSpec
+            ? `Run \`openclaw plugins install ${installSpec} --force\` to reinstall the configured plugin package.`
+            : "Run `openclaw doctor --fix` to repair the configured plugin install. An exact reinstall command is unavailable because the install record has no package spec.")),
   };
 }
 
