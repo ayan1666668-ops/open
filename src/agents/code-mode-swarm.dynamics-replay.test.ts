@@ -6,6 +6,7 @@ import path from "node:path";
 import { stableStringify } from "@openclaw/normalization-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { clearConfigCache, clearRuntimeConfigSnapshot } from "../config/config.js";
+import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { resetGatewayWorkAdmission } from "../process/gateway-work-admission.js";
 import { captureEnv, setTestEnvValue } from "../test-utils/env.js";
 import { cleanupSessionStateForTest } from "../test-utils/session-state-cleanup.js";
@@ -73,8 +74,8 @@ function fingerprint(input: ReturnType<typeof preparedInput>): string {
   return `sha256:${createHash("sha256").update(stableStringify(input)).digest("hex")}`;
 }
 
-async function writeConfig(): Promise<Record<string, unknown>> {
-  const config = {
+async function writeConfig(): Promise<OpenClawConfig> {
+  const config: OpenClawConfig = {
     session: { mainKey: "main", scope: "per-sender" },
     tools: {
       codeMode: true,
@@ -131,8 +132,10 @@ describe("Code Mode dynamics native replay", () => {
     async () => {
       const config = await writeConfig();
       const dispatchGatewayMethodInProcess = vi.fn(
-        async <T>(_method: string, _params: Record<string, unknown>) =>
-          ({ runId: "native-replay-run", status: "accepted" }) as T,
+        async <T>(_method: string, _params: Record<string, unknown>) => {
+          // SAFETY: this fixture supplies the accepted Gateway response shape for the generic T.
+          return { runId: "native-replay-run", status: "accepted" } as T;
+        },
       );
       subagentSpawnTesting.setDepsForTest({
         hasInProcessGatewayContext: () => true,
@@ -160,13 +163,13 @@ describe("Code Mode dynamics native replay", () => {
 
       const catalogRef = createToolSearchCatalogRef();
       const spawnTool = createSessionsSpawnTool({
-        config: config as never,
+        config,
         agentSessionKey: sessionKey,
         requesterRunId: parentRunId,
       });
       const ctx: ToolSearchToolContext = {
-        config: config as never,
-        runtimeConfig: config as never,
+        config,
+        runtimeConfig: config,
         sessionKey,
         sessionId: "session-parent",
         runId: parentRunId,
@@ -177,7 +180,7 @@ describe("Code Mode dynamics native replay", () => {
       const callExactId = vi.fn(async () => {
         throw new Error("exact replay must not redispatch sessions_spawn");
       });
-      const runtime = { callExactId } as Pick<ToolSearchRuntime, "callExactId">;
+      const runtime: Pick<ToolSearchRuntime, "callExactId"> = { callExactId };
       const request = {
         id: requestId,
         method: "agentSpawn" as const,
