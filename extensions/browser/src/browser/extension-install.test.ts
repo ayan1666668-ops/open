@@ -55,6 +55,24 @@ afterEach(() => {
 });
 
 describe("native host registration", () => {
+  it("preserves literal replacement metacharacters in the installation path", async () => {
+    const value = await fixture();
+    const deps = { ...value.deps, stateDir: path.join(value.homeDir, "claw $& state's dir") };
+    const installed = await installStableChromeExtension(value.bundledDir, deps);
+    const chrome = chromeProductRoots(deps)[0]!;
+    await writeChromePreferences({
+      userDataDir: chrome.userDataDir,
+      profile: "Default",
+      entries: { [await predictedId(installed)]: { location: 4, path: installed } },
+    });
+    const installedStatus = await installChromeExtensionBootstrap({ ...value, deps });
+    expect(installedStatus.issues).toEqual([]);
+    expect(installedStatus.manualSetupRequired).toBe(false);
+    const observed = await repairChromeExtensionNativeHosts({ ...value, deps, dryRun: true });
+    expect(observed.retentionSafe).toBe(true);
+    expect(observed.retainedNativeHostPaths).toEqual([value.nativeHostPath]);
+  });
+
   it("refreshes a retired package target without reading profiles or replacing another installation", async () => {
     const value = await fixture("darwin");
     const installed = await installStableChromeExtension(value.bundledDir, value.deps);

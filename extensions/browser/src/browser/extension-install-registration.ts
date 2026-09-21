@@ -214,7 +214,7 @@ async function resolveLauncherInstall(params: {
     path: versionedPath,
     content: content.replace(
       ` '--launcher' ${shellQuote(launcherPath)}`,
-      ` '--launcher' ${shellQuote(versionedPath)}`,
+      () => ` '--launcher' ${shellQuote(versionedPath)}`,
     ),
   };
 }
@@ -290,7 +290,7 @@ export async function inspectRegistration(
     const launcherContent = await fs.readFile(expectedLauncher, "utf8");
     const canonicalContent = launcherContent.replace(
       ` '--launcher' ${shellQuote(expectedLauncher)}`,
-      ` '--launcher' ${shellQuote(baseLauncher)}`,
+      () => ` '--launcher' ${shellQuote(baseLauncher)}`,
     );
     // Existing fixed launchers migrate on install. Versioned launchers are immutable;
     // the manifest rename is the single publication point for a matching pair.
@@ -378,6 +378,12 @@ export async function installRegistration(params: {
     deps,
   });
   const launcherPath = launcher.path;
+  const previousManifest =
+    existing.state === "owned" ? await fs.readFile(manifestPath, "utf8") : undefined;
+  const previousLauncher = existing.launcherPath
+    ? { path: existing.launcherPath, content: await fs.readFile(existing.launcherPath, "utf8") }
+    : null;
+  let createdLauncher = false;
   if (await pathInfo(launcherPath)) {
     await assertOwnedPath(launcherPath, "file");
     const existingLauncher = await fs.readFile(launcherPath, "utf8");
@@ -388,6 +394,7 @@ export async function installRegistration(params: {
     }
   } else {
     await replaceFileAtomic({ filePath: launcherPath, content: launcher.content, mode: 0o700 });
+    createdLauncher = true;
   }
   if (process.platform !== "win32") {
     await fs.chmod(launcherPath, 0o700);
@@ -399,11 +406,34 @@ export async function installRegistration(params: {
     type: "stdio",
     allowed_origins: expectedOriginsForExtensionIds(extensionIds),
   };
-  await replaceFileAtomic({
-    filePath: manifestPath,
-    content: `${JSON.stringify(manifest, null, 2)}\n`,
-    mode: 0o600,
-  });
+  const manifestContent = `${JSON.stringify(manifest, null, 2)}\n`;
+  try {
+    await replaceFileAtomic({ filePath: manifestPath, content: manifestContent, mode: 0o600 });
+  } catch (error) {
+    // Remove only this attempt's unreferenced candidate. An ambiguous publication
+    // leaves it intact; the selected manifest remains the dependency authority.
+    const observedManifest = await fs
+      .readFile(manifestPath, "utf8")
+      .catch((readError) => (asNullableRecord(readError)?.code === "ENOENT" ? undefined : null));
+    if (createdLauncher && observedManifest === previousManifest) {
+      await assertPrivateNativeHostFile(launcherPath, true, deps.platform ?? process.platform);
+      await fs.unlink(launcherPath);
+    }
+    throw error;
+  }
+  if (
+    previousLauncher &&
+    previousLauncher.path !== launcherPath &&
+    (await fs.readFile(manifestPath, "utf8")) === manifestContent &&
+    (await fs.readFile(previousLauncher.path, "utf8")) === previousLauncher.content
+  ) {
+    await assertPrivateNativeHostFile(
+      previousLauncher.path,
+      true,
+      deps.platform ?? process.platform,
+    );
+    await fs.unlink(previousLauncher.path);
+  }
   return await inspectRegistration(root, deps, extensionIds);
 }
 
