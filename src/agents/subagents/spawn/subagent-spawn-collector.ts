@@ -85,7 +85,6 @@ export function createCollectorLaunchCallbacks(params: {
         await claim;
       }
       const assertLaunchCurrent = () => {
-        params.operatorAuthority?.signal?.throwIfAborted();
         params.operatorAuthority?.assertCurrent();
         if (canLaunchQueuedRegistration?.() === false) {
           throw new Error("Collector registration no longer owns this launch");
