@@ -19,6 +19,7 @@ import {
   getRegistryWorktreeProvisionedChunk,
   insertRegistryWorktreeProvisionedChunk,
 } from "./registry.js";
+import type { ExactProvisionedSnapshot } from "./snapshot-exact-state-contract.js";
 import type { ProvisionedFileState } from "./types.js";
 
 async function copyProvisionedFile(params: {
@@ -193,11 +194,6 @@ async function readProvisionedMembership(
   }
   return { ignoredUntracked, currentTracked, trackedAtHead };
 }
-
-export type ExactProvisionedSnapshot = {
-  algorithm: "sha1" | "sha256";
-  files: Array<{ path: string; mode: number | null; size: number; blob?: string }>;
-};
 
 /** Stores provisioned bytes outside Git so ignored credentials never enter its object database. */
 export async function snapshotProvisionedFiles(

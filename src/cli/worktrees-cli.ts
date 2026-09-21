@@ -18,7 +18,7 @@ async function readExactStateRequest(filename: string | undefined) {
   }
   const { readFile } = await import("node:fs/promises");
   const { exactStateRetirementSchema } =
-    await import("../agents/worktrees/snapshot-exact-state.js");
+    await import("../agents/worktrees/snapshot-exact-state-contract.js");
   return exactStateRetirementSchema.parse(JSON.parse(await readFile(filename, "utf8")));
 }
 

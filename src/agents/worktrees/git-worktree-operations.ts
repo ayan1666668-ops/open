@@ -1,5 +1,7 @@
-import type { ExactProvisionedSnapshot } from "./provisioned-files.js";
-import type { ExactStateRetirement } from "./snapshot-exact-state.js";
+import type {
+  ExactProvisionedSnapshot,
+  ExactStateRetirement,
+} from "./snapshot-exact-state-contract.js";
 import type { ProvisionedFileState } from "./types.js";
 
 export type GitWorktreeOperations = {

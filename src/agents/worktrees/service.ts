@@ -81,7 +81,10 @@ import {
   withWorktreeSource,
   type ResolvedRepository,
 } from "./service-preparation.js";
-import { exactStateRetirementSchema, type ExactStateRetirement } from "./snapshot-exact-state.js";
+import {
+  exactStateRetirementSchema,
+  type ExactStateRetirement,
+} from "./snapshot-exact-state-contract.js";
 import {
   captureManagedWorktreeSnapshot,
   retireManagedWorktreeSnapshot,

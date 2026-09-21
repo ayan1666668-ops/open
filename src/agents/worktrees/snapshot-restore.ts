@@ -35,10 +35,9 @@ import {
 import { resolveRepository, type ResolvedRepository } from "./service-preparation.js";
 import {
   exactStateRetirementSchema,
-  readExactStateSnapshot,
   type ExactStateRetirement,
-  type ExactStateSnapshot,
-} from "./snapshot-exact-state.js";
+} from "./snapshot-exact-state-contract.js";
+import { readExactStateSnapshot, type ExactStateSnapshot } from "./snapshot-exact-state.js";
 import { assertExactSnapshotRecordCurrent } from "./snapshot-host.js";
 import {
   clearExactRestoreReceipt,
@@ -473,7 +472,7 @@ async function restoreSnapshot(
     if (removed.code !== 0 || branchDeleted.code !== 0) {
       const failure =
         removed.code === 0
-          ? new Error("git branch cleanup failed")
+          ? commandError("git branch -D", branchDeleted)
           : commandError("git worktree remove", removed);
       throw new Error(`${String(error)}\nrestore cleanup failed: ${failure.message}`, {
         cause: error,

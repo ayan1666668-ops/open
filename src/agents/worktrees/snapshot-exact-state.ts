@@ -8,21 +8,10 @@ import { normalizeGitPathForFilesystem } from "../../infra/git-exec.js";
 import { requestGitWorkerEffect } from "../../infra/git-worker-context.js";
 import { checkoutPathFromGitBytes } from "./git-path-inventory.js";
 import { requireGit, requireGitBuffer, runGit } from "./git.js";
+import type { ExactStateRetirement } from "./snapshot-exact-state-contract.js";
 import { exactIndexObjects } from "./snapshot-index-objects.js";
 
 const oid = z.string().regex(/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/u);
-export const exactStateRetirementSchema = z
-  .object({
-    ownerKind: z.enum(["manual", "session", "workboard"]),
-    ownerId: z.string().optional(),
-    createdAt: z.number().finite(),
-    lastActiveAt: z.number().finite(),
-    head: oid,
-    branchHead: oid,
-    indexSha256: z.string().regex(/^[a-f0-9]{64}$/u),
-  })
-  .strict();
-export type ExactStateRetirement = z.infer<typeof exactStateRetirementSchema>;
 const entrySchema = z
   .object({
     path: z.string().regex(/^(?:[a-f0-9]{2})+$/u),

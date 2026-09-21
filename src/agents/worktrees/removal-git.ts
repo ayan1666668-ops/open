@@ -7,7 +7,8 @@ import { normalizeGitPathForFilesystem } from "../../infra/git-exec.js";
 import type { WorktreeGitPolicy } from "./checkout-git-config.js";
 import { commandError, listGitWorktrees, requireGit, runGit } from "./git.js";
 import { canonicalPathKey } from "./orphan-paths.js";
-import type { ExactStateRetirement, ExactStateSnapshot } from "./snapshot-exact-state.js";
+import type { ExactStateRetirement } from "./snapshot-exact-state-contract.js";
+import type { ExactStateSnapshot } from "./snapshot-exact-state.js";
 import type { ManagedWorktreeRecord } from "./types.js";
 
 type GitOptions = Parameters<typeof runGit>[2];

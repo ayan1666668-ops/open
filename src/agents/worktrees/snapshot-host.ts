@@ -15,7 +15,8 @@ import {
 } from "./registry.js";
 import { assertExactStateSourceIdentity } from "./removal-git.js";
 import { abortWorktreeRemoval, claimWorktreeRemoval } from "./run-lease.js";
-import { readExactStateSnapshot, type ExactStateRetirement } from "./snapshot-exact-state.js";
+import type { ExactStateRetirement } from "./snapshot-exact-state-contract.js";
+import { readExactStateSnapshot } from "./snapshot-exact-state.js";
 import { clearExactRestoreReceipt, readExactRestoreReceipt } from "./snapshot-restore-exact.js";
 import type { ManagedWorktreeRecord } from "./types.js";
 
