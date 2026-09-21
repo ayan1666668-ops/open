@@ -5,32 +5,13 @@ import { readRootJsonObjectSync } from "../infra/json-files.js";
 import type { PluginDiagnostic } from "./manifest-types.js";
 import { isPathInside, safeRealpathSync } from "./path-safety.js";
 import { auditOpenClawPeerDependencyLinkSync } from "./plugin-peer-link.js";
+import type {
+  PluginDependencyEntry,
+  PluginDependencySpecMap,
+  PluginDependencyStatus,
+} from "./status-dependencies.types.js";
 
 const MAX_DEPENDENCY_MANIFEST_BYTES = 1024 * 1024;
-
-/** Dependency name-to-version map from a plugin package manifest. */
-export type PluginDependencySpecMap = Record<string, string>;
-
-/** Installation status for one plugin dependency. */
-type PluginDependencyEntry = {
-  name: string;
-  spec: string;
-  installed: boolean;
-  optional: boolean;
-  resolvedPath?: string;
-};
-
-/** Aggregate installation status for required and optional plugin dependencies. */
-export type PluginDependencyStatus = {
-  hasDependencies: boolean;
-  installed: boolean;
-  requiredInstalled: boolean;
-  optionalInstalled: boolean;
-  missing: string[];
-  missingOptional: string[];
-  dependencies: PluginDependencyEntry[];
-  optionalDependencies: PluginDependencyEntry[];
-};
 
 export type PluginDependencyHealthRegistry = {
   plugins: Array<{
