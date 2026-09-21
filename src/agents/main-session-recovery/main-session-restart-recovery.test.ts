@@ -24,9 +24,9 @@ import {
 } from "../../config/sessions/session-accessor.js";
 import { resolveAgentRestartRecoveryExecutionIdentityAdmission } from "../../gateway/agent-turn/agent-restart-recovery-context.js";
 import { callGateway } from "../../gateway/call.js";
-import type { RestartRecoveryCandidate } from "../../gateway/chat-abort.js";
 import type { GatewayRecoveryRuntime } from "../../gateway/server-instance-runtime.types.js";
 import { persistGatewaySessionLifecycleEvent } from "../../gateway/session-lifecycle-state.js";
+import { racePromiseWithAbortSignal } from "../../infra/abort-signal.js";
 import {
   getAgentEventLifecycleGeneration,
   resetAgentEventsForTest,
@@ -99,7 +99,6 @@ import { SessionManager } from "../sessions/session-manager.js";
 import {
   createAssistantToolCallMessage,
   createSessionEntry,
-  createSessionStore,
   createSubagentRunRecord,
   type SessionEntryFixture,
   expectRecord,
@@ -109,7 +108,15 @@ import {
 import { subagentRuns } from "../subagents/registry/subagent-registry-memory.js";
 import { registerHarnessCompletionRecoveryCases } from "./main-session-harness-completion.test-harness.js";
 import * as recoveryOwnerRelease from "./main-session-recovery-owner-release.js";
-import { createRecoveryRuntimeFixture } from "./main-session-recovery-runtime.test-support.js";
+import {
+  activeRestartRun,
+  createRecoveryRuntimeFixture,
+  mainSessionEntry,
+  runningSessionEntry,
+  mainSessionStore,
+  makePendingFinalDelivery,
+  observeRecoveryAdmissionSettlement,
+} from "./main-session-recovery-runtime.test-support.js";
 import {
   claimMainSessionRecoveryOwner,
   commitMainSessionRecovery,
@@ -196,6 +203,14 @@ vi.mock("../../config/sessions/transcript.js", async (importOriginal) => {
 });
 
 let tmpDir: string;
+let recoveryFixtureCleanup: (() => Promise<void>) | undefined;
+
+function registerRecoveryFixtureCleanup(cleanup: () => Promise<void>): () => Promise<void> {
+  let completion: Promise<void> | undefined;
+  const join = () => (completion ??= cleanup());
+  recoveryFixtureCleanup = join;
+  return join;
+}
 
 function seedQueuedFinal(id: string, text: string): void {
   const entry: QueuedDelivery = {
@@ -231,6 +246,11 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  // Cancellation can enter afterEach before the test's async finally settles.
+  // Join the same scheduler cleanup before resetting admission or its storage.
+  const cleanup = recoveryFixtureCleanup;
+  recoveryFixtureCleanup = undefined;
+  await cleanup?.();
   resetGatewayWorkAdmission();
   await cleanupSessionStateForTest({ stateDir: tmpDir });
   await fs.rm(tmpDir, { recursive: true, force: true });
@@ -260,47 +280,6 @@ async function writeStore(
   await writeStorePath(path.join(sessionsDir, "sessions.json"), store);
 }
 
-function mainSessionEntry(overrides: SessionEntryFixture = {}): SessionEntry {
-  return createSessionEntry({
-    sessionId: "main-session",
-    permissionMode: "guarded",
-    updatedAt: Date.now() - 10_000,
-    status: "running",
-    abortedLastRun: true,
-    ...overrides,
-  });
-}
-
-function runningSessionEntry(sessionId: string, overrides: SessionEntryFixture = {}): SessionEntry {
-  return createSessionEntry({
-    sessionId,
-    updatedAt: Date.now() - 10_000,
-    status: "running",
-    ...overrides,
-  });
-}
-
-function activeRestartRun(
-  sessionKey = "agent:main:main",
-  sessionId = "main-session",
-  overrides: Partial<RestartRecoveryCandidate> = {},
-): RestartRecoveryCandidate {
-  return {
-    sessionKey,
-    sessionId,
-    runId: "restart-run",
-    lifecycleGeneration: getAgentEventLifecycleGeneration(),
-    ...overrides,
-  };
-}
-
-function mainSessionStore(
-  overrides: SessionEntryFixture = {},
-  sessionKey = "agent:main:main",
-): Record<string, SessionEntry> {
-  return createSessionStore(mainSessionEntry(overrides), sessionKey);
-}
-
 async function makeMainSessionFixture(
   overrides: SessionEntryFixture & { agentId?: string; sessionKey?: string } = {},
 ): Promise<{ sessionsDir: string; storePath: string; sessionKey: string }> {
@@ -311,20 +290,6 @@ async function makeMainSessionFixture(
     sessionsDir,
     storePath: path.join(sessionsDir, "sessions.json"),
     sessionKey,
-  };
-}
-
-function makePendingFinalDelivery(
-  text = "interrupted response",
-  overrides: Partial<NonNullable<SessionEntry["pendingFinalDelivery"]>> = {},
-): NonNullable<SessionEntry["pendingFinalDelivery"]> {
-  return {
-    kind: "replayable",
-    text,
-    createdAt: Date.now(),
-    intentId: "intent-prepared-default",
-    deliveries: [{ id: "delivery-prepared-default", state: "prepared" }],
-    ...overrides,
   };
 }
 
@@ -4571,7 +4536,7 @@ describe("main-session-restart-recovery", () => {
     expect(callGateway).toHaveBeenCalledTimes(2);
   });
 
-  it("tombstones when the final startup retry consumes the last charge", async () => {
+  it("tombstones when the final startup retry consumes the last charge", async ({ signal }) => {
     const { storePath } = await makeMainSessionFixture({
       mainRestartRecovery: {
         cycleId: "cycle-final-startup-attempt",
@@ -4597,31 +4562,44 @@ describe("main-session-restart-recovery", () => {
       })
       .mockResolvedValueOnce({ runId: "run-resumed" });
 
-    scheduleRestartAbortedMainSessionRecovery({
+    const admission = observeRecoveryAdmissionSettlement("main-session:target-recovery");
+    const recovery = scheduleRestartAbortedMainSessionRecovery({
       getConfig: () => ({ agents: { entries: { main: { default: true } } } }),
       delayMs: 0,
       maxRetries: 1,
       stateDir: tmpDir,
     });
 
-    await waitForFast(() => {
+    const cleanup = registerRecoveryFixtureCleanup(async () => {
+      try {
+        await recovery.stop();
+      } finally {
+        admission.restore();
+      }
+    });
+    try {
+      await racePromiseWithAbortSignal(admission.settled, signal);
       expect(loadSessionEntry({ sessionKey: "agent:main:main", storePath })).toMatchObject({
         status: "failed",
         mainRestartRecovery: { tombstone: expect.any(Object) },
       });
-    });
-    expect(callGateway).toHaveBeenCalledTimes(2);
-    const freshEntry = loadSessionEntry({ sessionKey: "agent:main:fresh", storePath });
-    expect(freshEntry).toMatchObject({
-      sessionId: "fresh-session",
-      status: "running",
-      abortedLastRun: true,
-      mainRestartRecovery: { chargedAttempts: 3 },
-    });
-    expect(freshEntry?.mainRestartRecovery?.tombstone).toBeUndefined();
+      expect(callGateway).toHaveBeenCalledTimes(2);
+      const freshEntry = loadSessionEntry({ sessionKey: "agent:main:fresh", storePath });
+      expect(freshEntry).toMatchObject({
+        sessionId: "fresh-session",
+        status: "running",
+        abortedLastRun: true,
+        mainRestartRecovery: { chargedAttempts: 3 },
+      });
+      expect(freshEntry?.mainRestartRecovery?.tombstone).toBeUndefined();
+    } finally {
+      await cleanup();
+    }
   });
 
-  it("observes final exhaustion in distinct stores for the same logical session", async () => {
+  it("observes final exhaustion in distinct stores for the same logical session", async ({
+    signal,
+  }) => {
     await withEnvAsync({ OPENCLAW_STATE_DIR: tmpDir }, async () => {
       const sessionKey = "agent:ops:main";
       const targets: Parameters<typeof loadSessionEntry>[0][] = [];
@@ -4645,40 +4623,50 @@ describe("main-session-restart-recovery", () => {
         }
         return { status: "timeout" };
       });
+      const admission = observeRecoveryAdmissionSettlement(
+        "main-session:target-recovery",
+        targets.length,
+      );
       const recovery = scheduleRestartAbortedMainSessionRecovery({
         getConfig: () => ({ agents: { entries: { ops: { default: true } } } }),
         delayMs: 0,
         maxRetries: 1,
         stateDir: tmpDir,
       });
+      const cleanup = registerRecoveryFixtureCleanup(async () => {
+        try {
+          await recovery.stop();
+        } finally {
+          admission.restore();
+        }
+      });
       try {
-        await waitForFast(() => {
-          for (const target of targets) {
-            const entry = loadSessionEntry(target);
-            expect(entry?.mainRestartRecovery?.chargedAttempts).toBe(3);
-            expect(entry?.mainRestartRecovery?.reservation).toBeUndefined();
-          }
-        });
-        await waitForFast(() => {
-          for (const [index, target] of targets.entries()) {
-            expect(loadSessionEntry(target)).toMatchObject({
-              sessionId: `ops-session-${index}`,
-              status: "failed",
-              abortedLastRun: false,
-              mainRestartRecovery: { tombstone: expect.any(Object) },
-            });
-          }
-        });
+        await racePromiseWithAbortSignal(admission.settled, signal);
+        for (const target of targets) {
+          const entry = loadSessionEntry(target);
+          expect(entry?.mainRestartRecovery?.chargedAttempts).toBe(3);
+          expect(entry?.mainRestartRecovery?.reservation).toBeUndefined();
+        }
+        for (const [index, target] of targets.entries()) {
+          expect(loadSessionEntry(target)).toMatchObject({
+            sessionId: `ops-session-${index}`,
+            status: "failed",
+            abortedLastRun: false,
+            mainRestartRecovery: { tombstone: expect.any(Object) },
+          });
+        }
         expect(
           vi.mocked(callGateway).mock.calls.filter(([call]) => call.method === "agent"),
         ).toHaveLength(2);
       } finally {
-        await recovery.stop();
+        await cleanup();
       }
     });
   });
 
-  it("stops exhaustion reconciliation while its Gateway admission is suspended", async () => {
+  it("stops exhaustion reconciliation while its Gateway admission is suspended", async ({
+    signal,
+  }) => {
     const { storePath } = await makeMainSessionFixture({
       mainRestartRecovery: {
         cycleId: "cycle-suspended-exhaustion",
@@ -4695,6 +4683,7 @@ describe("main-session-restart-recovery", () => {
       })
       .mockResolvedValueOnce({ runId: "run-resumed" });
     const warn = vi.spyOn(mainSessionRecoveryLog, "warn");
+    const admission = observeRecoveryAdmissionSettlement("main-session:startup-recovery");
     const recovery = scheduleRestartAbortedMainSessionRecovery({
       getConfig: () => ({}),
       delayMs: 0,
@@ -4702,12 +4691,20 @@ describe("main-session-restart-recovery", () => {
       stateDir: tmpDir,
     });
     let stopping: Promise<void> | undefined;
+    const cleanup = registerRecoveryFixtureCleanup(async () => {
+      suspension.lease?.rollback();
+      try {
+        await (stopping ?? recovery.stop());
+      } finally {
+        admission.restore();
+        warn.mockRestore();
+      }
+    });
     try {
-      await waitForFast(() => {
-        expect(suspension.lease).not.toBeNull();
-        expect(callGateway).toHaveBeenCalledTimes(2);
-        expect(getActiveGatewayRootWorkCount()).toBe(0);
-      });
+      await racePromiseWithAbortSignal(admission.settled, signal);
+      expect(suspension.lease).not.toBeNull();
+      expect(callGateway).toHaveBeenCalledTimes(2);
+      expect(getActiveGatewayRootWorkCount()).toBe(0);
       let stopped = false;
       stopping = recovery.stop().then(() => {
         stopped = true;
@@ -4730,9 +4727,7 @@ describe("main-session-restart-recovery", () => {
         expect.stringContaining("main-session exhaustion reconciliation failed"),
       );
     } finally {
-      suspension.lease?.rollback();
-      await (stopping ?? recovery.stop());
-      warn.mockRestore();
+      await cleanup();
     }
   });
 

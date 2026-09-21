@@ -1,9 +1,18 @@
 import { expect, onTestFinished, vi } from "vitest";
 import { createDeferred } from "../../../test/helpers/promise.js";
+import type { InternalSessionEntry as SessionEntry } from "../../config/sessions.js";
 import { loadSessionEntry } from "../../config/sessions/session-accessor.js";
 import type { callGateway } from "../../gateway/call.js";
+import type { RestartRecoveryCandidate } from "../../gateway/chat-abort.js";
 import type { GatewayRecoveryRuntime } from "../../gateway/server-instance-runtime.types.js";
+import { getAgentEventLifecycleGeneration } from "../../infra/agent-events.js";
+import * as gatewayWorkAdmission from "../../process/gateway-work-admission.js";
 import { sessionChanges } from "../../sessions/session-row-changes.js";
+import {
+  createSessionEntry,
+  createSessionStore,
+  type SessionEntryFixture,
+} from "../subagent-test-fixtures.test-helpers.js";
 
 export function createRecoveryRuntimeFixture(params: {
   callGateway: typeof callGateway;
@@ -82,5 +91,88 @@ export function createRecoveryRuntimeFixture(params: {
       return (await params.callGateway({ method: "agent.wait", params: request, timeoutMs })) as T;
     },
     sendRecoveryNotice: params.sendRecoveryNotice,
+  };
+}
+
+// Worker-backed recovery may outlast a state poll. Observe its actual admission
+// settlement; stopping the scheduler only joins cancellation, not reconciliation.
+export function observeRecoveryAdmissionSettlement(
+  origin: "main-session:startup-recovery" | "main-session:target-recovery",
+  expected = 1,
+) {
+  const settled = createDeferred();
+  let remaining = expected;
+  const admit = gatewayWorkAdmission.runWithGatewayIndependentRootWorkAdmission;
+  const spy = vi
+    .spyOn(gatewayWorkAdmission, "runWithGatewayIndependentRootWorkAdmission")
+    .mockImplementation(
+      async <T>(run: () => Promise<T>, actualOrigin?: string, signal?: AbortSignal) => {
+        try {
+          return await admit(run, actualOrigin, signal);
+        } finally {
+          if (actualOrigin === origin && --remaining === 0) {
+            settled.resolve();
+          }
+        }
+      },
+    );
+  return { settled: settled.promise, restore: () => spy.mockRestore() };
+}
+
+export function mainSessionEntry(overrides: SessionEntryFixture = {}): SessionEntry {
+  return createSessionEntry({
+    sessionId: "main-session",
+    permissionMode: "guarded",
+    updatedAt: Date.now() - 10_000,
+    status: "running",
+    abortedLastRun: true,
+    ...overrides,
+  });
+}
+
+export function runningSessionEntry(
+  sessionId: string,
+  overrides: SessionEntryFixture = {},
+): SessionEntry {
+  return createSessionEntry({
+    sessionId,
+    updatedAt: Date.now() - 10_000,
+    status: "running",
+    ...overrides,
+  });
+}
+
+export function mainSessionStore(
+  overrides: SessionEntryFixture = {},
+  sessionKey = "agent:main:main",
+): Record<string, SessionEntry> {
+  return createSessionStore(mainSessionEntry(overrides), sessionKey);
+}
+
+export function makePendingFinalDelivery(
+  text = "interrupted response",
+  overrides: Partial<NonNullable<SessionEntry["pendingFinalDelivery"]>> = {},
+): NonNullable<SessionEntry["pendingFinalDelivery"]> {
+  return {
+    kind: "replayable",
+    text,
+    createdAt: Date.now(),
+    intentId: "intent-prepared-default",
+    deliveries: [{ id: "delivery-prepared-default", state: "prepared" }],
+    ...overrides,
+  };
+}
+
+export function activeRestartRun(
+  sessionKey = "agent:main:main",
+  sessionId = "main-session",
+  overrides: Partial<RestartRecoveryCandidate> = {},
+): RestartRecoveryCandidate {
+  return {
+    sessionKey,
+    sessionId,
+    runId: "restart-run",
+    lifecycleGeneration: getAgentEventLifecycleGeneration(),
+    ...overrides,
   };
 }
