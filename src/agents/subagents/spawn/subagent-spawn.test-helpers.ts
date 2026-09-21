@@ -5,6 +5,10 @@ import { normalizeOptionalString } from "@openclaw/normalization-core/string-coe
 import { expect, vi } from "vitest";
 import { resolveLeastPrivilegeOperatorScopesForMethod } from "../../../gateway/method-scopes.js";
 import type { SubagentLifecycleHookRunner } from "../../../plugins/hooks.js";
+import type {
+  RegisterSubagentRunOptions,
+  RegisterSubagentRunParams,
+} from "../registry/subagent-registry.types.js";
 
 type MockFn = (...args: unknown[]) => unknown;
 type MockImplementationTarget = {
@@ -457,17 +461,53 @@ export async function loadSubagentSpawnModuleForTest(params: {
     completeCollectorLaunchCleanup: params.completeCollectorLaunchCleanupMock ?? vi.fn(),
     countActiveRunsForSession: params.countActiveRunsForSession ?? (() => 0),
     listSwarmRunsForGroup: params.listSwarmRunsForGroup ?? vi.fn(() => []),
-    registerSubagentRun:
-      params.registerSubagentRunMock ??
-      vi.fn((record: { runId: string; childSessionKey: string }) => ({
-        status: "new-row-committed",
-        attempted: {
-          runId: record.runId,
-          childSessionKey: record.childSessionKey,
-          generation: 1,
-          createdAt: Date.now(),
-        },
-      })),
+    registerSubagentRun: vi.fn(
+      (record: RegisterSubagentRunParams, options?: RegisterSubagentRunOptions) => {
+        // Default registration outcome when a test supplies no mock. Concrete, not
+        // undefined: callers assert on `status` and `attempted`.
+        const register =
+          params.registerSubagentRunMock ??
+          ((committed: RegisterSubagentRunParams, _options?: RegisterSubagentRunOptions) => ({
+            status: "new-row-committed",
+            attempted: {
+              runId: committed.runId,
+              childSessionKey: committed.childSessionKey,
+              generation: 1,
+              createdAt: Date.now(),
+            },
+          }));
+        if (!record.queued || !options?.retainOwnership) {
+          return register(record, options);
+        }
+        let retained = false;
+        const result = register(record, {
+          ...options,
+          retainOwnership(scope) {
+            retained = true;
+            options.retainOwnership?.(scope);
+          },
+        } satisfies RegisterSubagentRunOptions);
+        return Promise.resolve(result).then((registration) => {
+          // Successful queued registration transfers custody; stricter test scopes win.
+          if (!retained) {
+            options.retainOwnership?.({
+              canLaunch: () => true,
+              canAcceptLaunch: () => true,
+              canCleanupSession: () => true,
+              canRetireReservation: () => true,
+              waitForClaim: () => undefined,
+              settleFailedLaunch: async (error) => {
+                params.settleFailedQueuedSubagentLaunchMock?.(record.runId, error);
+              },
+            });
+          }
+          // Return the registration result. Upstream ended this branch with
+          // `.then(() => { ... })`, which resolved to undefined and discarded the
+          // registration -- that is what turned accepted queued spawns into errors.
+          return registration;
+        });
+      },
+    ),
     recordAcceptedSubagentSpawnRollback:
       params.recordAcceptedSubagentSpawnRollbackMock ?? vi.fn(() => ({ status: "persisted" })),
     rollbackSubagentRunRegistration:

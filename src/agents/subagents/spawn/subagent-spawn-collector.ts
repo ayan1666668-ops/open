@@ -1,9 +1,11 @@
 import type { GatewayContextResolver } from "../../../gateway/server-methods/types.js";
 import {
   GatewayDrainingError,
+  runWithGatewayDetachedWorkContinuation,
   runWithGatewayIndependentRootWorkContinuation,
 } from "../../../process/gateway-work-admission.js";
 import { getAsyncWorkSignal } from "../../../shared/async-work-scope.js";
+import type { AdmittedRunOperatorAuthority } from "../../admitted-run-context.js";
 import { summarizeSpawnError } from "../../spawn-pipeline.js";
 import {
   completeCollectorLaunchCleanup,
@@ -14,6 +16,7 @@ import {
 import type { SubagentRegistrationScope } from "../registry/subagent-registry.types.js";
 import type { activateSwarmRun } from "../swarm/swarm-scheduler.js";
 import {
+  type bindSubagentSpawnCleanup,
   type cleanupFailedSpawnBeforeAgentStart,
   retrySubagentCleanup,
   terminateAcceptedCollectorRun,
@@ -27,7 +30,7 @@ import { emitSessionLifecycleEvent } from "./subagent-spawn.runtime.js";
 
 type CollectorLaunchCallbacks = Pick<
   Parameters<typeof activateSwarmRun>[0],
-  "start" | "onStartFailure" | "onRemoved"
+  "start" | "onStartFailure" | "onRemoved" | "signal"
 >;
 
 /** Owns registered collector launch and settlement while the caller retains its FIFO reservation. */
@@ -36,6 +39,9 @@ export function createCollectorLaunchCallbacks(params: {
   childSessionKey: string;
   requesterSessionKey: string;
   gatewayContextResolver?: GatewayContextResolver;
+  operatorAuthority?: AdmittedRunOperatorAuthority;
+  releaseOperatorAuthority?: () => void;
+  cleanupOwner?: ReturnType<typeof bindSubagentSpawnCleanup>;
   registrationScope?: SubagentRegistrationScope;
   preparation?: PreparedContextEngineSubagentSpawn;
   provisionalSessionIdentity: {
@@ -60,7 +66,15 @@ export function createCollectorLaunchCallbacks(params: {
     provisionalSessionIdentity,
   } = params;
   const canLaunchQueuedRegistration = registrationScope?.canLaunch;
-  const canCleanupCreatedSession = registrationScope?.canCleanupSession;
+  const canCleanupCreatedSession =
+    params.cleanupOwner?.isCurrent ?? registrationScope?.canCleanupSession;
+  const callCleanupGateway = params.cleanupOwner?.callGateway;
+  let releaseOperatorAuthority = params.releaseOperatorAuthority;
+  const releaseAuthority = () => {
+    const release = releaseOperatorAuthority;
+    releaseOperatorAuthority = undefined;
+    release?.();
+  };
   let launchTerminationConfirmed = false;
   let dispatchAttempted = false;
   const startOnce = async () => {
@@ -73,6 +87,7 @@ export function createCollectorLaunchCallbacks(params: {
         await claim;
       }
       const assertLaunchCurrent = () => {
+        params.operatorAuthority?.assertCurrent();
         if (canLaunchQueuedRegistration?.() === false) {
           throw new Error("Collector registration no longer owns this launch");
         }
@@ -88,6 +103,8 @@ export function createCollectorLaunchCallbacks(params: {
           childSessionKey,
           gatewayRunId,
           ...provisionalSessionIdentity,
+          isCurrent: canCleanupCreatedSession,
+          ...(callCleanupGateway ? { callGateway: callCleanupGateway } : {}),
           sessionCleanup: "preserve",
         });
         launchTerminationConfirmed = true;
@@ -111,6 +128,11 @@ export function createCollectorLaunchCallbacks(params: {
           gatewayRunId,
           reason: summarizeSpawnError(error),
           ...provisionalSessionIdentity,
+          // Silas's ruling: the recorder takes the ownership predicate ONLY. It
+          // performs no gateway operation, so dispatch capability does not belong on
+          // a custody-recording API; the predicate is consumed at the manager's
+          // mutation boundary.
+          isCurrent: canCleanupCreatedSession,
         });
         const rollbackFailures: unknown[] = [];
         if (rollbackOwner.status === "rejected") {
@@ -144,6 +166,7 @@ export function createCollectorLaunchCallbacks(params: {
       await params.emitSpawnLifecycleHooks(gatewayRunId);
     }, "subagents:spawn");
     await preparation?.dispose().catch(() => {});
+    releaseAuthority();
   };
   // Scheduler retries repeat settlement, never the launch or admitted cleanup.
   let startAttempt: Promise<void> | undefined;
@@ -175,14 +198,17 @@ export function createCollectorLaunchCallbacks(params: {
       completeCollectorLaunchCleanup(childRunId);
     }
   };
-  return {
-    start: () => (startAttempt ??= startOnce()),
-    onStartFailure: async (error) => {
-      if (error instanceof GatewayDrainingError) {
-        return false;
-      }
+  const settleLaunchFailure = async (error: unknown) => {
+    if (error instanceof GatewayDrainingError) {
+      return false;
+    }
+    const callerSignal = getAsyncWorkSignal();
+    if (!dispatchAttempted && callerSignal?.aborted) {
+      return false;
+    }
+    return await runWithGatewayDetachedWorkContinuation(async () => {
       for (;;) {
-        if (!dispatchAttempted && getAsyncWorkSignal()?.aborted) {
+        if (!dispatchAttempted && callerSignal?.aborted) {
           return false;
         }
         const claim = registrationScope?.waitForClaim();
@@ -213,6 +239,7 @@ export function createCollectorLaunchCallbacks(params: {
         if (cleanupAttempt) {
           publishCleanupCompletion(await cleanupAttempt);
         }
+        releaseAuthority();
         return true;
       }
       const cleanup = await (cleanupAttempt ??= cleanupOnce());
@@ -220,14 +247,28 @@ export function createCollectorLaunchCallbacks(params: {
         await settleFailure();
       }
       publishCleanupCompletion(cleanup);
+      releaseAuthority();
       return true;
-    },
+    }, "subagents:spawn-cleanup");
+  };
+  return {
+    signal: params.operatorAuthority?.signal,
+    start: () => (startAttempt ??= startOnce()),
+    onStartFailure: settleLaunchFailure,
     onRemoved: async (reason) => {
-      if (reason === "shutdown" || canCleanupCreatedSession?.() === false) {
-        // Restart replays queuedLaunch without repeating its durable context preparation.
-        await preparation?.dispose();
-      } else {
-        await preparation?.rollback();
+      try {
+        if (reason === "cancelled" && params.operatorAuthority?.signal?.aborted) {
+          if (!(await settleLaunchFailure(params.operatorAuthority.signal.reason))) {
+            throw new Error("Collector source revocation settlement is pending");
+          }
+        } else if (reason === "shutdown" || canCleanupCreatedSession?.() === false) {
+          // Restart replays queuedLaunch without repeating its durable context preparation.
+          await preparation?.dispose();
+        } else {
+          await preparation?.rollback();
+        }
+      } finally {
+        releaseAuthority();
       }
     },
   };

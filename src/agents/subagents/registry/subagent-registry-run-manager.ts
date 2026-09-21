@@ -42,6 +42,15 @@ class SubagentRunManager extends SubagentLaunchManager {
     expectedSessionId?: string;
     expectedLifecycleRevision?: string;
     expectedRegistration?: SubagentRegistrationIdentity;
+    /**
+     * Live cleanup-ownership predicate. Separate axis from `expectedRegistration`,
+     * which CASes registry identity: this one asks whether the caller still owns the
+     * child right now. Consumed at the mutation boundary so the durable custody
+     * transition is never ownership-blind. Never persisted -- a function cannot
+     * survive restart, and the durable row stays fenced by `expectedRegistration`
+     * plus frozen session identity and run id.
+     */
+    isCurrent?: () => boolean;
   }):
     | { status: "persisted" }
     | { status: "pending-persistence"; error: unknown }
@@ -52,6 +61,7 @@ class SubagentRunManager extends SubagentLaunchManager {
     const entry = this.options.runs.get(runId);
     if (
       !entry ||
+      params.isCurrent?.() === false ||
       entry.childSessionKey !== params.childSessionKey ||
       !gatewayRunId ||
       (params.expectedRegistration !== undefined &&
