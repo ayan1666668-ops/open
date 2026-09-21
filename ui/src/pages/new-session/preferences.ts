@@ -75,6 +75,14 @@ export type NewSessionPreference = {
   fastMode?: FastMode;
 };
 
+export function hasNewSessionModelPreference(
+  preference: NewSessionPreference | null | undefined,
+): preference is NewSessionPreference {
+  return Boolean(
+    preference?.model || preference?.thinkingLevel || preference?.fastMode !== undefined,
+  );
+}
+
 export function resolveNewSessionFolderPreference(
   preference: NewSessionPreference | null,
   workspace: string,

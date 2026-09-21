@@ -45,7 +45,7 @@ import {
   resolveDraftThinkingDefaults,
   resolveDraftThinkingTarget,
 } from "./model-target.ts";
-import type { NewSessionPreference } from "./preferences.ts";
+import { hasNewSessionModelPreference, type NewSessionPreference } from "./preferences.ts";
 
 registerModelControlsEnglish();
 
@@ -244,9 +244,7 @@ export class NewSessionModelControl {
         if (
           !this.draftAccount &&
           this.pendingSelectionGeneration === this.selectionGeneration &&
-          (this.pendingPreference?.model ||
-            this.pendingPreference?.thinkingLevel ||
-            this.pendingPreference?.fastMode !== undefined)
+          hasNewSessionModelPreference(this.pendingPreference)
         ) {
           this.selected = this.pendingPreference.model ?? "";
           this.agentRuntime = this.pendingPreference.agentRuntime;
@@ -406,10 +404,7 @@ export class NewSessionModelControl {
     this.pendingAgent = options.agent;
     this.pendingSelectionGeneration = selectionGeneration;
     this.restoringPreference = Boolean(
-      !this.draftAccount &&
-      (this.pendingPreference?.model ||
-        this.pendingPreference?.thinkingLevel ||
-        this.pendingPreference?.fastMode !== undefined),
+      !this.draftAccount && hasNewSessionModelPreference(this.pendingPreference),
     );
     if (this.metadataRequest) {
       this.notify();
