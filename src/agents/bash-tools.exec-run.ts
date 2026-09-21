@@ -22,7 +22,10 @@ import { resolveExecSafeBinRuntimePolicy } from "../infra/exec-safe-bin-runtime-
 import { logInfo } from "../logger.js";
 import { parseAgentSessionKey, resolveAgentIdFromSessionKey } from "../routing/session-key.js";
 import { isSecretEgressProxyActive } from "../secrets/egress-proxy/registry.js";
-import type { SecretStoreExecEnvironment } from "../secrets/store/secret-store.js";
+import {
+  getSecretStoreMutationsVersion,
+  type SecretStoreExecEnvironment,
+} from "../secrets/store/secret-store.js";
 import { createDeferredCore } from "../shared/deferred.js";
 import { normalizeDeliveryContext } from "../utils/delivery-context.shared.js";
 import { captureAgentToolSourceExecutionGuard } from "./agent-tool-source-execution-guard.js";
@@ -95,16 +98,25 @@ export function createExecTool(
     resolveStoredSubagentCapabilities(defaults?.runSessionKey ?? defaults?.sessionKey, {
       cfg: defaults?.config,
     }).depth > 0;
-  // Agent runs own one tool instance, so the store is read on first exec and reused for that run.
-  // A new run constructs a new instance and observes later store mutations.
-  let storeEnvPromise: Promise<SecretStoreExecEnvironment>;
-  const resolveStoreEnv = () =>
-    (storeEnvPromise ??= import("../secrets/store/secret-store.js").then((store) =>
-      store.readSecretStoreExecEnvironment({
-        includeSecretSentinels: secretEgressEnabled,
-        excludeNames: preparedRunEnvironment.excludedStoreNames,
-      }),
-    ));
+  // Agent runs own one tool instance. The store snapshot is cached per instance but
+  // keyed on the store mutations version, so a secret stored mid-session (e.g. via
+  // the masked secrets.request flow) is observed by later exec calls instead of
+  // silently expanding to an empty variable (#152409).
+  let storeEnvPromise: Promise<SecretStoreExecEnvironment> | undefined;
+  let storeEnvVersion = -1;
+  const resolveStoreEnv = () => {
+    const version = getSecretStoreMutationsVersion();
+    if (storeEnvPromise === undefined || version !== storeEnvVersion) {
+      storeEnvVersion = version;
+      storeEnvPromise = import("../secrets/store/secret-store.js").then((store) =>
+        store.readSecretStoreExecEnvironment({
+          includeSecretSentinels: secretEgressEnabled,
+          excludeNames: preparedRunEnvironment.excludedStoreNames,
+        }),
+      );
+    }
+    return storeEnvPromise;
+  };
   const defaultBackgroundMs = clampWithDefault(
     defaults?.backgroundMs ?? readEnvInt("OPENCLAW_BASH_YIELD_MS", "PI_BASH_YIELD_MS"),
     10_000,

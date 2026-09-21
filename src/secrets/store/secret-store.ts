@@ -510,8 +510,16 @@ function writeSecretStoreEntryInternal(
   );
 }
 
+/** Monotonic counter bumped on every team-store mutation. Consumers snapshotting the
+ * exec store environment (exec tool) key their cache on it so mid-session store
+ * changes are observed instead of retained stale (#152409). */
+let secretStoreMutationsVersion = 0;
+
+export const getSecretStoreMutationsVersion = (): number => secretStoreMutationsVersion;
+
 export function writeSecretStoreEntry(params: SecretStoreWriteParams): void {
   writeSecretStoreEntryInternal(params, false);
+  secretStoreMutationsVersion += 1;
 }
 
 function rollbackSecretStoreEntryWrite(params: {
@@ -573,6 +581,7 @@ export function writeSecretStoreEntryWithRollback(params: SecretStoreWriteParams
 } {
   const writer = `${params.updatedBy ?? "secret-store"}:${randomUUID()}`;
   const previous = writeSecretStoreEntryInternal({ ...params, updatedBy: writer }, true);
+  secretStoreMutationsVersion += 1;
   let rollbackResult: boolean | undefined;
   return {
     rollback: () => {
@@ -631,6 +640,7 @@ export function updateSecretStoreAllowedHosts(params: {
     params.database,
     { operationLabel: "secrets.store.allowed-hosts" },
   );
+  secretStoreMutationsVersion += 1;
 }
 
 export function deleteSecretStoreEntry(params: {
@@ -670,6 +680,7 @@ export function deleteSecretStoreEntry(params: {
       throw error;
     }
   }
+  secretStoreMutationsVersion += 1;
 }
 
 export function purgeExpiredSecretStoreEntries(
