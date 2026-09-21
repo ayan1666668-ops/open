@@ -102,11 +102,11 @@ Keep `gh` on the Octopool shim; never disable string rewrite protection or selec
 the raw GitHub CLI to get a landing through. `review-init` resolves the repository
 with the local `gh browse` command and a child-only URL-printing launcher. Older
 Octopool versions reject this singleton command before their guarded best-effort
-path. Use a shim containing the singleton-command dispatch fix; setting an explicit
+path. Upgrade to Octopool 0.7.1 or later; setting an explicit
 host-qualified `GH_REPO=github.com/openclaw/openclaw` also avoids discovery while
 preserving the subsequent authoritative API checks.
 
-Immediate squash uses `gh api --method PUT repos/OWNER/REPO/pulls/NUMBER/merge
+Immediate REST squash uses `gh api --method PUT repos/OWNER/REPO/pulls/NUMBER/merge
 --input -` with JSON containing the full prepared 40-hex `sha`,
 `merge_method: "squash"`, and the inspected `commit_message`; an optional
 `commit_title` is accepted. Keep the explicit SHA even when newer Octopool can
