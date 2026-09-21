@@ -37,6 +37,9 @@ describe("settled tool-call rejection recovery", () => {
             details: {
               eventType: "response.completed",
               responseStatus: "completed",
+              hasRefusal: false,
+              hasError: false,
+              hasIncompleteDetails: false,
               stopReason: "toolUse",
             },
           },
@@ -85,6 +88,9 @@ describe("settled tool-call rejection recovery", () => {
   const coherentTerminal = {
     eventType: "response.completed",
     responseStatus: "completed",
+    hasRefusal: false,
+    hasError: false,
+    hasIncompleteDetails: false,
     stopReason: "stop",
   };
   const contradictoryTerminals: Array<[string, Record<string, unknown>]> = [
@@ -101,6 +107,12 @@ describe("settled tool-call rejection recovery", () => {
       String(responseStatus),
       { ...coherentTerminal, responseStatus },
     ]),
+    ...["hasRefusal", "hasError", "hasIncompleteDetails"].flatMap(
+      (fact): Array<[string, Record<string, unknown>]> => [
+        [fact, { ...coherentTerminal, [fact]: true }],
+        [`missing ${fact}`, { ...coherentTerminal, [fact]: undefined }],
+      ],
+    ),
     ["canonical error", { ...coherentTerminal, stopReason: "error" }],
     ["canonical length", { ...coherentTerminal, stopReason: "length" }],
     ["missing canonical stop", { ...coherentTerminal, stopReason: undefined }],

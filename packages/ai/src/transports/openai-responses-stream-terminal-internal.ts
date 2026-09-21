@@ -363,6 +363,8 @@ export function createResponsesTerminalController(params: {
         // The event label alone cannot distinguish a contradictory queued/failed
         // snapshot from a completed response. Preserve omitted-status compatibility.
         responseStatus: response.status === undefined ? "absent" : response.status,
+        // The tracker observes these bounded facts before output validation can throw.
+        ...params.outputs.getTerminalFacts(),
         ...(terminalEventType === "response.incomplete" || incompleteReason !== undefined
           ? {
               incompleteReason:

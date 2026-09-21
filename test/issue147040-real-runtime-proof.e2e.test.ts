@@ -88,7 +88,17 @@ function responseTurn(turn: number, rejectedResponseStatus: string): string {
       : turn === 2
         ? [call("call_failed_read", "read", JSON.stringify({ path: "missing-proof-file.txt" }))]
         : turn === 3
-          ? [call("call_rejected_edit", "edit", TRUNCATED_FRAGMENT, "incomplete")]
+          ? [
+              ...(rejectedResponseStatus === "refusal"
+                ? [
+                    {
+                      ...message(""),
+                      content: [{ type: "refusal", refusal: "Cannot fulfill this request" }],
+                    },
+                  ]
+                : []),
+              call("call_rejected_edit", "edit", TRUNCATED_FRAGMENT, "incomplete"),
+            ]
           : [message(RECOVERED_MARKER)];
   return responsesSse([
     {
@@ -96,7 +106,13 @@ function responseTurn(turn: number, rejectedResponseStatus: string): string {
       response: {
         id: "resp_proof_" + turn,
         model: MODEL_ID,
-        status: turn === 3 ? rejectedResponseStatus : "completed",
+        status:
+          turn === 3 && !["refusal", "error"].includes(rejectedResponseStatus)
+            ? rejectedResponseStatus
+            : "completed",
+        ...(turn === 3 && rejectedResponseStatus === "error"
+          ? { error: { code: "content_filter", message: "Synthetic provider rejection" } }
+          : {}),
         output,
         usage: { input_tokens: 640, output_tokens: 20, total_tokens: 660 },
       },
@@ -243,7 +259,14 @@ describe("issue #147040 real runtime proof", () => {
             observedEvents.push(event);
           }
         });
-        for (const status of ["completed", "failed", "cancelled", "incomplete"]) {
+        for (const status of [
+          "completed",
+          "failed",
+          "cancelled",
+          "incomplete",
+          "refusal",
+          "error",
+        ]) {
           await fs.rm(path.join(workspaceDir, "note.txt"), { force: true });
           rejectedResponseStatus = status;
           providerRequests.length = 0;

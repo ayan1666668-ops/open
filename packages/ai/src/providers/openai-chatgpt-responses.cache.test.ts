@@ -718,6 +718,9 @@ describe("ChatGPT Responses cached transport", () => {
             details: {
               eventType: "response.completed",
               responseStatus: "completed",
+              hasRefusal: false,
+              hasError: false,
+              hasIncompleteDetails: false,
               stopReason: "stop",
               endTurn: "absent",
             },
@@ -733,6 +736,9 @@ describe("ChatGPT Responses cached transport", () => {
           details: {
             eventType: "response.completed",
             responseStatus: "completed",
+            hasRefusal: false,
+            hasError: false,
+            hasIncompleteDetails: false,
             stopReason: "stop",
             endTurn: "absent",
           },

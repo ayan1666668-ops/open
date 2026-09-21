@@ -57,6 +57,9 @@ function isPreDispatchToolCallRejection(
         details?.eventType !== "response.completed" ||
         (details.responseStatus !== "completed" && details.responseStatus !== "absent") ||
         (details.stopReason !== "stop" && details.stopReason !== "toolUse") ||
+        details.hasRefusal !== false ||
+        details.hasError !== false ||
+        details.hasIncompleteDetails !== false ||
         details.incompleteReason !== undefined,
     )
   ) {
