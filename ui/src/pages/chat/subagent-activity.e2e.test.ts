@@ -19,22 +19,22 @@ suite.define(() => {
       await suite.withPage(
         { locale: "en-US", serviceWorkers: "block", viewport: { width, height: 800 } },
         async ({ page }) => {
-          const tasks = Array.from({ length: 3 }, (_, index) => ({
+          const makeTask = (index: number, title: string) => ({
             runtime: "subagent",
             status: "running",
             agentId: "main",
             sessionKey: "agent:main:main",
             id: `stable-child-${index}`,
             taskId: `stable-child-${index}`,
-            title: [
-              "01 · Review session ownership",
-              "02 · Check tool rendering",
-              "03 · Verify mobile layout",
-            ][index],
+            title,
             createdAt: baseTime - 10_000 + index * 1_000,
             updatedAt: baseTime - index * 1_000,
             lastActivity: "Inspecting the implementation",
-          }));
+          });
+          const oldest = makeTask(0, "01 · Review session ownership");
+          const middleTask = makeTask(1, "02 · Check tool rendering");
+          const newest = makeTask(2, "03 · Verify mobile layout");
+          const tasks = [oldest, middleTask, newest];
           const gateway = await installMockGateway(page, {
             historyMessages: [
               {
@@ -57,12 +57,12 @@ suite.define(() => {
             path: path.join(proofDir, "01-created-order.png"),
             animations: "disabled",
           });
-          const middle = activity.locator(`[data-subagent-task-id="${tasks[1].id}"]`);
+          const middle = activity.locator(`[data-subagent-task-id="${middleTask.id}"]`);
           await middle.focus();
           await page.keyboard.press("Escape");
           await expect.poll(() => activity.locator("wa-tooltip[open]").count()).toBe(0);
           const updated = {
-            ...tasks[2],
+            ...newest,
             updatedAt: baseTime + 1_000,
             lastActivity: "Mobile checks updated; row stays in place",
           };
@@ -85,7 +85,7 @@ suite.define(() => {
               deliveryStatus: "pending",
             },
           });
-          await expect.poll(order).toEqual([tasks[2].id, tasks[0].id, tasks[1].id]);
+          await expect.poll(order).toEqual([newest.id, oldest.id, middleTask.id]);
           await rows.getByText("Mobile layout verified").waitFor();
           await page.keyboard.press("Escape");
           await page.screenshot({
@@ -106,7 +106,7 @@ suite.define(() => {
           await gateway.emitGatewayEvent("task", {
             action: "upserted",
             task: {
-              ...tasks[1],
+              ...middleTask,
               status: "failed",
               endedAt: baseTime + 3_000,
               updatedAt: baseTime + 3_000,
@@ -116,7 +116,7 @@ suite.define(() => {
           await gateway.emitGatewayEvent("task", {
             action: "upserted",
             task: {
-              ...tasks[0],
+              ...oldest,
               status: "timed_out",
               endedAt: baseTime + 4_000,
               updatedAt: baseTime + 4_000,
