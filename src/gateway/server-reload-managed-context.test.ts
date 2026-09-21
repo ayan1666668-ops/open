@@ -221,23 +221,32 @@ describe("managed gateway reload context", () => {
     };
     setActivePluginRegistry(createTestRegistry([{ pluginId: "telegram", plugin, source: "test" }]));
     const writerContext = new AsyncLocalStorage<string>();
+    const staleStartupContext = new AsyncLocalStorage<string>();
     const writerWork = new AsyncWorkScope();
     const writeListenerRef: ConfigWriteListenerRef = { current: null };
-    const channelContexts: Array<[string | undefined, AbortSignal | undefined]> = [];
+    const channelContexts: Array<
+      [string | undefined, string | undefined, AbortSignal | undefined]
+    > = [];
     const logReloadError = vi.fn<(message: string) => void>();
     const startChannel = vi.fn(async () => {
-      channelContexts.push([writerContext.getStore(), getAsyncWorkSignal()]);
+      channelContexts.push([
+        writerContext.getStore(),
+        staleStartupContext.getStore(),
+        getAsyncWorkSignal(),
+      ]);
       return new Map();
     });
     const startupWork = new AsyncWorkScope();
-    const reloader = startupWork.run(() =>
-      startManagedGatewayConfigReloader({
-        initialConfig,
-        readSnapshot: async () => createValidConfigSnapshot(nextConfig, "profile-change"),
-        subscribeToWrites: captureConfigWriteListener(writeListenerRef),
-        startChannel,
-        logReload: { info: vi.fn(), warn: vi.fn(), error: logReloadError },
-      }),
+    const reloader = staleStartupContext.run("stale-owner", () =>
+      startupWork.run(() =>
+        startManagedGatewayConfigReloader({
+          initialConfig,
+          readSnapshot: async () => createValidConfigSnapshot(nextConfig, "profile-change"),
+          subscribeToWrites: captureConfigWriteListener(writeListenerRef),
+          startChannel,
+          logReload: { info: vi.fn(), warn: vi.fn(), error: logReloadError },
+        }),
+      ),
     );
     await reloader.ready;
     await startupWork.drain();
@@ -268,8 +277,9 @@ describe("managed gateway reload context", () => {
       const status = await application.result;
       expect(status, logReloadError.mock.calls.flat().join("\n")).toBe("applied");
       expect(startChannel).toHaveBeenCalled();
-      for (const [context, signal] of channelContexts) {
-        expect(context).toBeUndefined();
+      for (const [writer, startup, signal] of channelContexts) {
+        expect(writer).toBeUndefined();
+        expect(startup).toBeUndefined();
         expect(signal).toBeUndefined();
       }
     } finally {

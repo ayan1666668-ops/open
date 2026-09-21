@@ -58,12 +58,13 @@ function canAdvancePreparedModelRuntimeConfigInPlace(plan: GatewayReloadPlan): b
   return isNoopGatewayReloadPlan(plan) && !doesReloadAffectProviderAuth(plan);
 }
 
+// Config writes can originate inside channel/task turns. Deferred reloads must
+// return to a process-owned context before starting process-lifetime owners.
+const runInGatewayReloadContext = AsyncLocalStorage.snapshot();
+
 export function startManagedGatewayConfigReloader(
   params: ManagedGatewayConfigReloaderParams,
 ): ManagedGatewayConfigReloaderHandle {
-  // Config writes can originate inside channel/task turns. Deferred reloads must
-  // return to the gateway-owned context before starting process-lifetime owners.
-  const runInGatewayReloadContext = AsyncLocalStorage.snapshot();
   const lifecycle = new AbortController();
   if (params.minimalTestGateway) {
     return {
