@@ -263,3 +263,113 @@ it.skipIf(chmodFaultUnavailable)(
     }
   },
 );
+
+it.skipIf(chmodFaultUnavailable)(
+  "keeps the exhausted recovery budget silent across upload attempts during a persistent fault",
+  async () => {
+    const root = tempDirs.make("openclaw-browser-proxy-persistent-recovery-fault-");
+    const uploadDir = path.join(root, "uploads");
+    const stagingRoot = path.join(uploadDir, ".proxy-uploads");
+    await fs.mkdir(stagingRoot, { recursive: true });
+    await fs.chmod(stagingRoot, 0o000);
+    const upload = () =>
+      stageBrowserProxyUploadRequest({
+        method: "POST",
+        path: "/hooks/file-chooser",
+        body: { ref: "blocked" },
+        upload: {
+          envelope: BROWSER_PROXY_UPLOAD_ENVELOPE,
+          files: [{ name: "f.txt", contentBase64: Buffer.from("x").toString("base64") }],
+        },
+        uploadDir,
+      });
+    try {
+      probeWarns.length = 0;
+      probeErrors.length = 0;
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        await ensureBrowserProxyUploadCleanup({ uploadDir });
+      }
+      expect(recoveryWarns().length).toBe(2);
+      expect(recoveryErrors().length).toBe(1);
+      // Upload attempts while the root fault persists must not restart the
+      // exhausted budget: staging keeps failing and recovery stays silent.
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        await expect(upload()).rejects.toMatchObject({
+          code: expect.stringMatching(/^E(ACCES|PERM)$/),
+        });
+      }
+      expect(recoveryWarns().length).toBe(2);
+      expect(recoveryErrors().length).toBe(1);
+      await waitForReal(() => !hasBrowserProxyUploadWork());
+      // Once the fault clears, the preserved budget resumes on the next upload.
+      await fs.chmod(stagingRoot, 0o700);
+      const staged = await upload();
+      await discardStagedBrowserProxyUpload(staged);
+    } finally {
+      await fs.chmod(stagingRoot, 0o700).catch(() => {});
+    }
+  },
+);
+
+it.skipIf(chmodFaultUnavailable)(
+  "resumes cleanup-only exhaustion after the deletion fault clears",
+  async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    const root = tempDirs.make("openclaw-browser-proxy-cleanup-only-resume-");
+    const uploadDir = path.join(root, "uploads");
+    const stagingRoot = path.join(uploadDir, ".proxy-uploads");
+    const expired = path.join(stagingRoot, "upload-expired");
+    await fs.mkdir(expired, { recursive: true });
+    await fs.writeFile(
+      path.join(expired, ".openclaw-browser-proxy-upload-v1"),
+      "openclaw-browser-proxy-upload-v1\n",
+    );
+    const past = new Date(Date.now() - 25 * 60 * 60 * 1000);
+    await fs.utimes(expired, past, past);
+    // A read-only staging keeps recovery scans working while blocking removal.
+    await fs.chmod(expired, 0o500);
+    const upload = () =>
+      stageBrowserProxyUploadRequest({
+        method: "POST",
+        path: "/hooks/file-chooser",
+        body: { ref: "e1" },
+        upload: {
+          envelope: BROWSER_PROXY_UPLOAD_ENVELOPE,
+          files: [{ name: "report.txt", contentBase64: Buffer.from("report").toString("base64") }],
+        },
+        uploadDir,
+      });
+    try {
+      probeWarns.length = 0;
+      probeErrors.length = 0;
+      // Exhaust the cleanup budget; recovery scans keep succeeding, so the
+      // give-up is cleanup-only and never trips the recovery reset.
+      await ensureBrowserProxyUploadCleanup({ uploadDir });
+      expect(cleanupWarns().length).toBe(1);
+      await vi.advanceTimersByTimeAsync(RETRY_MS);
+      await waitForReal(() => cleanupWarns().length >= 2);
+      await vi.advanceTimersByTimeAsync(RETRY_MS);
+      await waitForReal(() => cleanupErrors().length >= 1);
+      expect(cleanupErrors().length).toBe(1);
+      await waitForReal(() => !hasBrowserProxyUploadWork());
+      // Uploads still stage (the fault only blocks deletion) and must not
+      // restart the cleanup retry loop while it persists.
+      const blocked = await upload();
+      expect(cleanupWarns().length).toBe(2);
+      expect(cleanupErrors().length).toBe(1);
+      await discardStagedBrowserProxyUpload(blocked);
+      await waitForReal(() => !hasBrowserProxyUploadWork());
+      // The fault clears; the next upload reclaims the expired copy.
+      await fs.chmod(expired, 0o700);
+      const staged = await upload();
+      try {
+        await expect(fs.stat(expired)).rejects.toHaveProperty("code", "ENOENT");
+      } finally {
+        await discardStagedBrowserProxyUpload(staged);
+      }
+    } finally {
+      vi.useRealTimers();
+      await fs.chmod(expired, 0o700).catch(() => {});
+    }
+  },
+);

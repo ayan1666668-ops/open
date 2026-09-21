@@ -28,7 +28,8 @@ const BROWSER_PROXY_UPLOAD_RETENTION_MS = 24 * 60 * 60 * 1000;
 const BROWSER_PROXY_UPLOAD_CLEANUP_RETRY_MS = 60 * 60 * 1000;
 // Recovery/cleanup retries are bounded: a persistent staging fault must not pin
 // node-host active work (which blocks tryPauseForUpdate) or spam warns. Giving
-// up loses no state; recovery re-runs at the next node start.
+// up loses no state; recovery re-runs at the next node start, and a later
+// upload re-probes an exhausted cleanup once the fault has cleared.
 const BROWSER_PROXY_UPLOAD_RECOVERY_MAX_ATTEMPTS = 3;
 const BROWSER_PROXY_UPLOAD_MAX_RETAINED_BYTES = 256 * 1024 * 1024;
 const BROWSER_PROXY_UPLOAD_MAX_RETAINED_DIRECTORIES = 64;
@@ -223,15 +224,20 @@ function clearCleanupTimer(directory: string): void {
 }
 
 async function removeStagedUpload(directory: string): Promise<void> {
-  if ((cleanupAttemptCounts.get(directory) ?? 0) >= BROWSER_PROXY_UPLOAD_RECOVERY_MAX_ATTEMPTS) {
-    return;
-  }
+  const exhausted =
+    (cleanupAttemptCounts.get(directory) ?? 0) >= BROWSER_PROXY_UPLOAD_RECOVERY_MAX_ATTEMPTS;
   activeCleanup += 1;
   clearCleanupTimer(directory);
   try {
     await fs.rm(directory, { recursive: true, force: true });
     cleanupAttemptCounts.delete(directory);
   } catch (error) {
+    if (exhausted) {
+      // Recovery re-probes exhausted cleanup whenever it next runs (node start
+      // or a later upload): a cleared fault reclaims the copy here, while a
+      // persistent fault stays silent and never re-arms a retry timer.
+      return;
+    }
     const attempts = (cleanupAttemptCounts.get(directory) ?? 0) + 1;
     cleanupAttemptCounts.set(directory, attempts);
     if (attempts >= BROWSER_PROXY_UPLOAD_RECOVERY_MAX_ATTEMPTS) {
@@ -317,6 +323,36 @@ async function readOwnedStagedUploads(
       }),
   );
   return uploads.filter((upload): upload is OwnedStagedUpload => upload !== null);
+}
+
+// Recursive mkdir succeeds on an existing staging root whose permissions still
+// block readdir, so staging proves writability, not that recovery can scan the
+// root again. Only that scan capability re-establishes an exhausted budget.
+async function stagingRootScanUsable(stagingRoot: string): Promise<boolean> {
+  try {
+    await fs.readdir(stagingRoot);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      // readOwnedStagedUploads treats a missing root as an empty scan.
+      return true;
+    }
+    return false;
+  }
+}
+
+// Exhausted cleanup attempts strand their directories until a recovery pass
+// re-probes removal; staging must notice that independent of recovery attempts.
+function hasExhaustedCleanupAttempts(stagingRoot: string): boolean {
+  for (const [directory, attempts] of cleanupAttemptCounts) {
+    if (
+      attempts >= BROWSER_PROXY_UPLOAD_RECOVERY_MAX_ATTEMPTS &&
+      directory.startsWith(stagingRoot + path.sep)
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function scheduleCleanup(directory: string, delayMs: number): void {
@@ -549,16 +585,19 @@ export async function stageBrowserProxyUploadRequest(params: {
   const uploadDir = params.uploadDir ?? DEFAULT_UPLOAD_DIR;
   const stagingRoot = path.join(uploadDir, BROWSER_PROXY_UPLOAD_ROOT_NAME);
   await fs.mkdir(stagingRoot, { recursive: true, mode: 0o700 });
-  // A writable staging root means an earlier give-up can be retried: unlatch
-  // recovery so retained uploads are re-evaluated before quota admission.
-  if ((recoveryAttemptCounts.get(uploadDir) ?? 0) >= BROWSER_PROXY_UPLOAD_RECOVERY_MAX_ATTEMPTS) {
+  // Recursive mkdir succeeds even while an existing staging root still blocks
+  // readdir, so it cannot by itself prove an earlier give-up is safe to retry.
+  // Only after a scan establishes the capability recovery needs has returned,
+  // unlatch an exhausted recovery budget and drop the cached recovery pass so
+  // exhausted cleanup removals are re-probed before quota admission; otherwise
+  // repeated uploads would restart the retry loop and keep pinning node
+  // update admission.
+  const resumeAfterFault =
+    (recoveryAttemptCounts.get(uploadDir) ?? 0) >= BROWSER_PROXY_UPLOAD_RECOVERY_MAX_ATTEMPTS ||
+    hasExhaustedCleanupAttempts(stagingRoot);
+  if (resumeAfterFault && (await stagingRootScanUsable(stagingRoot))) {
     recoveryAttemptCounts.delete(uploadDir);
     recoveryPromises.delete(uploadDir);
-    for (const directory of cleanupAttemptCounts.keys()) {
-      if (directory.startsWith(stagingRoot + path.sep)) {
-        cleanupAttemptCounts.delete(directory);
-      }
-    }
   }
   params.signal?.throwIfAborted();
   await ensureBrowserProxyUploadCleanup({ uploadDir });
