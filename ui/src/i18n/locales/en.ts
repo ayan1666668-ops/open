@@ -4587,6 +4587,7 @@ export const en: TranslationMap & {
     nl: "Nederlands (Dutch)",
     fa: "فارسی (Persian)",
     ru: "Русский (Russian)",
+    gl: "Galego (Galician)",
   },
   secretsStore: {
     name: "Name",
