@@ -41,6 +41,7 @@ import {
 import { isExclusiveCiTestConfig } from "./local-check-runtime.mts";
 import { buildPluginSdkEntrySources, publicPluginSdkEntrypoints } from "./plugin-sdk-entries.mts";
 import {
+  mergeVitestPretestBuildModes,
   resolveVitestPretestBuildMode,
   type VitestPretestBuildMode,
 } from "./vitest-build-prerequisites.mts";
@@ -435,6 +436,7 @@ function createChangedExtensionConfigShards(
     config: string;
     env?: Record<string, string>;
     includePatterns?: string[];
+    pretestBuildMode?: VitestPretestBuildMode;
     predictedSeconds: number;
   }> = [...rootsByConfig].flatMap(([config, roots]) => {
     const splitProcesses = shouldSplitExtensionTestProcesses(config);
@@ -444,7 +446,32 @@ function createChangedExtensionConfigShards(
         options.fullConfigInventory ||
         roots.some((root) => file.startsWith(`${root}/`)),
     );
-    const chunks = testFiles.length > 0 ? splitExtensionTestJobTargets(config, testFiles) : [roots];
+    const buildModes = new Map(
+      (splitProcesses ? testFiles : []).map((file) => [
+        file,
+        resolveVitestPretestBuildMode([{ includePatterns: [file] }]),
+      ]),
+    );
+    const configBuildMode = splitProcesses
+      ? undefined
+      : resolveVitestPretestBuildMode([{ configs: [config] }]);
+    let chunks = testFiles.length > 0 ? splitExtensionTestJobTargets(config, testFiles) : [roots];
+    if (
+      splitProcesses &&
+      chunks.filter((files) => files.some((file) => buildModes.get(file))).length > 1
+    ) {
+      // Explicit scopes follow the prerequisite owner even after files migrate configs.
+      // Keep build consumers together before reapplying every job/process file bound.
+      const runtimeFiles: string[] = [];
+      const otherFiles: string[] = [];
+      for (const file of testFiles) {
+        const target = buildModes.get(file) ? runtimeFiles : otherFiles;
+        target.push(file);
+      }
+      chunks = [runtimeFiles, otherFiles]
+        .filter((files) => files.length > 0)
+        .flatMap((files) => splitExtensionTestJobTargets(config, files));
+    }
     const partitionSeconds = Math.ceil(
       estimateExtensionTestCost(config, testFiles.length, testFiles) / chunks.length,
     );
@@ -452,6 +479,9 @@ function createChangedExtensionConfigShards(
       Object.assign(
         {
           config,
+          pretestBuildMode: splitProcesses
+            ? mergeVitestPretestBuildModes(includePatterns.map((file) => buildModes.get(file)))
+            : configBuildMode,
           predictedSeconds: splitProcesses
             ? estimateExtensionTestCost(config, includePatterns.length, includePatterns)
             : partitionSeconds,
@@ -472,33 +502,32 @@ function createChangedExtensionConfigShards(
       ),
     );
   });
-  return plans.map(({ config, env, includePatterns, predictedSeconds }, index) => {
-    const suffix = plans.length === 1 ? "" : `-${index + 1}`;
-    const shard: ChangedExtensionConfigShard = {
-      checkName: `checks-node-changed-extensions-config${suffix}`,
-      configs: [config],
-      // No plans overlap in this row, so CI can scale the single process's worker budget.
-      planConcurrency: 1,
-      predictedSeconds,
-      requiresDist: false,
-      runner: DEFAULT_NODE_TEST_RUNNER,
-      shardName: `changed-extensions-config${suffix}`,
-    };
-    const pretestBuildMode = resolveVitestPretestBuildMode([
-      { configs: [config], includePatterns },
-    ]);
-    if (pretestBuildMode) {
-      shard.pretestBuildMode = pretestBuildMode;
-      shard.predictedSeconds = predictedSeconds + VITEST_PRETEST_BUILD_SECONDS[pretestBuildMode];
-    }
-    if (includePatterns) {
-      shard.includePatterns = includePatterns;
-    }
-    if (env) {
-      shard.env = env;
-    }
-    return shard;
-  });
+  return plans.map(
+    ({ config, env, includePatterns, pretestBuildMode, predictedSeconds }, index) => {
+      const suffix = plans.length === 1 ? "" : `-${index + 1}`;
+      const shard: ChangedExtensionConfigShard = {
+        checkName: `checks-node-changed-extensions-config${suffix}`,
+        configs: [config],
+        // No plans overlap in this row, so CI can scale the single process's worker budget.
+        planConcurrency: 1,
+        predictedSeconds,
+        requiresDist: false,
+        runner: DEFAULT_NODE_TEST_RUNNER,
+        shardName: `changed-extensions-config${suffix}`,
+      };
+      if (pretestBuildMode) {
+        shard.pretestBuildMode = pretestBuildMode;
+        shard.predictedSeconds = predictedSeconds + VITEST_PRETEST_BUILD_SECONDS[pretestBuildMode];
+      }
+      if (includePatterns) {
+        shard.includePatterns = includePatterns;
+      }
+      if (env) {
+        shard.env = env;
+      }
+      return shard;
+    },
+  );
 }
 
 function createChangedExtensionConfigShardsForPaths(changedPaths: string[], cwd: string) {
