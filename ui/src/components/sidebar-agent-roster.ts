@@ -107,7 +107,10 @@ class SidebarAgentRoster extends AgentRosterElement {
     if (event.dataTransfer) {
       event.dataTransfer.dropEffect = "move";
     }
-    const section = event.currentTarget as HTMLElement;
+    const section = event.currentTarget;
+    if (!(section instanceof HTMLElement)) {
+      return;
+    }
     const header = section.querySelector(".sidebar-recent-sessions__head") ?? section;
     const bounds = header.getBoundingClientRect();
     this.agentDrop = {
@@ -226,7 +229,8 @@ class SidebarAgentRoster extends AgentRosterElement {
                 @dragleave=${(event: DragEvent) => {
                   if (
                     !(event.relatedTarget instanceof Node) ||
-                    !(event.currentTarget as HTMLElement).contains(event.relatedTarget)
+                    !(event.currentTarget instanceof HTMLElement) ||
+                    !event.currentTarget.contains(event.relatedTarget)
                   ) {
                     this.agentDrop = null;
                   }
