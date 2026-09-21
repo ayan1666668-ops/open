@@ -34,7 +34,7 @@ internal fun ChatHistory.withReplyMetrics(
     annotated = annotated.dropLast(1) +
       final.copy(
         // Session counters survive usage-missing runs; only this entry's run can own its tokens.
-        replyMetrics = ChatReplyMetrics(sid, final.entryId, endedAt, runtimeMs, final.runId?.let(outputTokensForRun)?.takeIf { it >= 0 }),
+        replyMetrics = ChatReplyMetrics(sid, final.entryId, endedAt, runtimeMs, outputTokensForRun(final.runId)?.takeIf { it >= 0 }),
       )
   }
   return copy(messages = annotated)

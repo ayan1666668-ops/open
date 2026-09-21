@@ -7998,7 +7998,7 @@ class ChatController internal constructor(
           "outputTokens" in obj ||
           "estimatedCostUsd" in obj,
       hasRunMetadata =
-          "status" in obj ||
+        "status" in obj ||
           "lastRunError" in obj ||
           "lastRunId" in obj ||
           "startedAt" in obj ||

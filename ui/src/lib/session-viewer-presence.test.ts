@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 import type { GatewayBrowserClient, GatewayHelloOk } from "../api/gateway.ts";
 import type { ApplicationGateway, ApplicationGatewaySnapshot } from "../app/gateway.ts";
 import { sessionViewerPresenceForGateway } from "./session-viewer-presence.ts";
@@ -73,8 +73,10 @@ async function flushSync() {
   }
 }
 
+let hasFocus: MockInstance<() => boolean>;
+
 beforeEach(() => {
-  vi.spyOn(document, "hasFocus").mockReturnValue(true);
+  hasFocus = vi.spyOn(document, "hasFocus").mockReturnValue(true);
 });
 
 afterEach(() => {
@@ -168,7 +170,7 @@ describe("session viewer presence store", () => {
     store.watch(owner, ["agent:main:visible"]);
     await flushSync();
 
-    vi.mocked(document.hasFocus).mockReturnValue(false);
+    hasFocus.mockReturnValue(false);
     document.dispatchEvent(new Event("visibilitychange"));
     await flushSync();
     expect(harness.request).toHaveBeenLastCalledWith(SESSION_VIEWERS_SET_METHOD, {
@@ -180,7 +182,7 @@ describe("session viewer presence store", () => {
     await flushSync();
     expect(harness.request).toHaveBeenCalledTimes(unfocusedCount);
 
-    vi.mocked(document.hasFocus).mockReturnValue(true);
+    hasFocus.mockReturnValue(true);
     window.dispatchEvent(new Event("focus"));
     await flushSync();
     expect(harness.request).toHaveBeenLastCalledWith(SESSION_VIEWERS_SET_METHOD, {
