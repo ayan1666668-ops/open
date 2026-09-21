@@ -84,9 +84,21 @@ function hasSplitModelSpecialToken(currentStream: string, deltaText: string): bo
 const STREAM_PROJECTION_BOUNDARY_WINDOW = 256;
 
 function deltaCompletesHiddenAssistantSyntax(currentStream: string, deltaText: string): boolean {
-  const boundaryStart = Math.max(0, currentStream.length - STREAM_PROJECTION_BOUNDARY_WINDOW);
-  const boundaryText = `${currentStream.slice(boundaryStart)}${deltaText}`;
-  return extractText({ role: "assistant", content: boundaryText }) !== boundaryText;
+  const boundaryStarts = [Math.max(0, currentStream.length - STREAM_PROJECTION_BOUNDARY_WINDOW)];
+  if (deltaText.includes(">")) {
+    // XML-style sanitizer families accept arbitrarily long attributes. When
+    // this delta can close a tag, retain the complete suffix from the most
+    // recent opener instead of assuming a fixed lookbehind is sufficient.
+    const lastAngleOpen = currentStream.lastIndexOf("<");
+    if (lastAngleOpen >= 0) {
+      boundaryStarts.push(lastAngleOpen);
+    }
+  }
+
+  return boundaryStarts.some((boundaryStart) => {
+    const boundaryText = `${currentStream.slice(boundaryStart)}${deltaText}`;
+    return extractText({ role: "assistant", content: boundaryText }) !== boundaryText;
+  });
 }
 
 function resolveDeltaChatStreamText(
@@ -103,7 +115,7 @@ function resolveDeltaChatStreamText(
 
     if (currentStream === null) {
       const snapshot = payload.message == null ? null : extractText(payload.message);
-      return typeof snapshot === "string" ? snapshot : payload.deltaText;
+      return typeof snapshot === "string" ? snapshot : deltaText;
     }
 
     if (payload.message == null) {
@@ -120,9 +132,9 @@ function resolveDeltaChatStreamText(
     }
 
     // Hidden syntax can begin in the visible prefix and finish in the next
-    // delta. Probe only a bounded join window before taking the raw-snapshot
-    // shortcut; the full cumulative projection remains the authority when the
-    // join activates any sanitizer family.
+    // delta. Probe the ordinary bounded join window plus the complete suffix
+    // from an XML opener when this delta can close it; the full cumulative
+    // projection remains authoritative when the join activates a sanitizer.
     if (
       hasSplitModelSpecialToken(currentStream, deltaText) ||
       deltaCompletesHiddenAssistantSyntax(currentStream, deltaText)

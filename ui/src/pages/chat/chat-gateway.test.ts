@@ -929,6 +929,13 @@ describe("handleChatGatewayEvent", () => {
       expected: "Visible  reply",
     },
     {
+      name: "projects hidden syntax whose opening tag predates the bounded probe",
+      previous: `<relevant-memories data-proof="${"x".repeat(300)}"`,
+      delta: ">hidden",
+      snapshot: `<relevant-memories data-proof="${"x".repeat(300)}">hidden`,
+      expected: "",
+    },
+    {
       name: "replaces the stream when gateway deltaText marks a replacement",
       previous: "Alpha beta",
       delta: "Alpha",
