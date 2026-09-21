@@ -335,7 +335,17 @@ merge_verify() {
   printf '%s\n' "$checks_json" | jq -r '.[] | "\(.bucket)\t\(.name)\t\(.state)"' || return 1
 
   local failed_required
-  failed_required=$(printf '%s\n' "$checks_json" | jq '[.[] | select(.bucket!="pass" and .bucket!="pending")] | length') || return 1
+  # gh retains the draft's skipped check beside the current CI status. Deferred
+  # admission still requires that same enforced gate to be pending or passing.
+  failed_required=$(printf '%s\n' "$checks_json" | jq --argjson deferred "$github_pending" '
+    . as $checks | [.[] |
+      select(.bucket != "pass" and .bucket != "pending") |
+      select(($deferred and .name == "openclaw/ci-gate" and
+        .bucket == "skipping" and .state == "SKIPPED" and
+        any($checks[]; .name == "openclaw/ci-gate" and
+          (.bucket == "pass" or .bucket == "pending"))) | not)
+    ] | length
+  ') || return 1
   local pending_required
   pending_required=$(printf '%s\n' "$checks_json" | jq '[.[] | select(.bucket=="pending")] | length') || return 1
 

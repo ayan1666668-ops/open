@@ -260,6 +260,9 @@ export function createMainRefreshFixture(
       | "scheduled-failure"
       | "api-error",
     requiredChecks: "pass" as "pass" | "fail" | "pending" | "api-error" | "missing-gate",
+    requiredCheckRows: undefined as
+      | Array<{ name: string; bucket: string; state: string }>
+      | undefined,
     reviewComments: [
       {
         id: 1,
@@ -453,6 +456,7 @@ if (args[0] === 'pr' && args[1] === 'view') {
     name: 'independent required check', bucket: control.requiredChecks,
     state: 'FAILURE',
   });
+  if (control.requiredCheckRows) value = control.requiredCheckRows;
 } else if (args[0] === 'repo' && args[1] === 'view') {
   value = { id: 'fixture-repo', nameWithOwner: 'fixture/repo', url: 'https://github.com/fixture/repo' };
 } else if (args[0] === 'run' && args[1] === 'view') {
