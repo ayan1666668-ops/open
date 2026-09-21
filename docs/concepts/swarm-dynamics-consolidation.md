@@ -1,43 +1,80 @@
 ---
-summary: "Experimental evidence assessments, shadow comparisons, and Swarm diagnostics"
+summary: "Search-only mixed-phase diagnostics for native Swarm collectors"
 title: "Swarm dynamics consolidation"
 status: experimental
 ---
 
 # Swarm dynamics consolidation
 
-The consolidation functions are pure assessments. They neither write memory nor
-change the live controller, tools, credentials, sandbox policy, or approvals.
+This layer turns host-owned collector facts into one operator-facing diagnostic
+projection. It does not add a second scheduler and it does not grant authority.
 
-## Evidence-aware memory
+The runtime projects facts OpenClaw already owns:
 
-The caller supplies recurrence, confirmation and contradiction counts, evidence
-strength, and freshness. Counts must be non-negative safe integers; normalized
-scalars must be finite and in range. Contradictions prevent crystallization.
+- collector identity
+- terminal completion state
+- current group concurrency pressure
+- failure/debt pressure
+- completion/progress state
 
-The caller must establish the supporting provenance and count genuinely independent
-sources. Passing a larger integer is not proof of independent observations. A
-memory-crystal assessment is a knowledge recommendation, never an authorization.
-Narrative compaction must retain evidence references and unresolved obligations;
-this library does not execute that compaction or migrate persistent memory.
+Semantic properties that the host cannot currently attest remain unknown rather
+than being guessed from model confidence.
 
-## Shadow comparison
+## One production path
 
-Shadow comparisons require distinct metric names, finite values, positive weights,
-and non-empty experiment and policy identities. Arithmetic overflow fails closed.
-Metrics must already be normalized to comparable units by the evaluator.
+The production entrypoint is `diagnoseHostCollectorPopulation`. It builds one
+snapshot, derives one search-only decision, and derives diagnostics from that
+same snapshot.
 
-The weighted delta is descriptive, not a statistical significance test. Offline
-trace comparisons cannot prove how a different live agent trajectory would behave.
-A result stays proposal-only and cannot adopt its own policy.
+There is deliberately no parallel test-only assessment API.
 
-## Diagnostics
+```text
+native collector records
+        |
+        v
+host-owned snapshot
+        |
+        +--> search-only advisory
+        |
+        +--> operator diagnostic
+```
 
-The diagnostic projection recomputes phase and pressure from supplied observations.
-It reports declared or observed replica identities, not an unverified active-run
-count. Missing evidence and pressure stay null, and unknown phases remain visible.
+The diagnostic cannot approve a tool, widen permissions, bypass sandboxing,
+publish, merge, deploy, or mutate live policy.
 
-This is a projection helper, not a completed Control UI integration. Live telemetry
-collection, authenticated evidence sources, memory persistence integration, and
-operator adoption flows require their existing OpenClaw owners and end-to-end
-qualification before production use.
+## Lifecycle ownership
+
+Dynamics tracking belongs to the parent Code Mode run that created the group.
+When the parent wait is aborted or fails, advisory state is released immediately.
+That cleanup removes only diagnostic bookkeeping; it does not cancel or mutate
+still-running sibling collectors.
+
+This is important for the Liquid model: exploration may fan out aggressively,
+but abandoned observation state must not accumulate forever in the long-lived
+Gateway process.
+
+## What this layer intentionally does not claim
+
+This implementation does not contain:
+
+- persistent memory crystallization
+- shadow-policy adoption
+- self-modifying controller policy
+- trusted verification receipts
+- effect authorization
+- a second scheduler
+- a separate persistence engine
+
+Those are future design areas, not hidden capabilities of this PR.
+
+## Philosophy
+
+Liquid Swarm separates two kinds of freedom:
+
+1. **Search freedom** — multiple temperatures, roles, hypotheses, and local
+   regimes can coexist.
+2. **Authority freedom** — none. Existing OpenClaw owners remain the only
+   components that may admit execution or authorize effects.
+
+That asymmetry is deliberate. Exploration should be rich; authority should be
+narrow.
