@@ -58,6 +58,37 @@ describe("subagent spawn cleanup identity", () => {
     expect(callGateway).not.toHaveBeenCalled();
   });
 
+  // Ronan's ruling on the fourth absorb: termination is the ONLY place the live
+  // ownership predicate is consumed. When ownership flips after acceptance but before
+  // cleanup, termination makes one bounded attempt and must not delete a
+  // successor-owned session or retry.
+  it("makes one bounded attempt and deletes nothing once cleanup ownership has flipped", async () => {
+    const callGateway = vi.fn(async () => ({ ok: true, aborted: false, runIds: [] }));
+
+    await terminateAcceptedCollectorRun({
+      childSessionKey: "agent:main:subagent:child",
+      gatewayRunId: "gateway-run",
+      expectedSessionId: "session-id",
+      expectedLifecycleRevision: "session-revision",
+      isCurrent: () => false,
+      callGateway,
+    });
+
+    // No successor-owned session deletion.
+    expect(
+      callGateway.mock.calls.filter(
+        ([request]) => (request as { method?: string }).method === "sessions.delete",
+      ),
+    ).toHaveLength(0);
+    // Bounded: the conjunctive shouldRetry short-circuits on the flipped predicate,
+    // so there is no second abort attempt either.
+    expect(
+      callGateway.mock.calls.filter(
+        ([request]) => (request as { method?: string }).method === "chat.abort",
+      ).length,
+    ).toBeLessThanOrEqual(1);
+  });
+
   it("accepts chat.abort only when it confirms the exact run", async () => {
     const callGateway = vi
       .fn()

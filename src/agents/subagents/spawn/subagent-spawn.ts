@@ -5,7 +5,10 @@
  */
 import { isExecutionIdentityCollectionEnabled } from "../../../audit/audit-config.js";
 import { resolveSessionStorePathCore } from "../../../config/sessions/paths.js";
-import { getCanonicalGatewayContextResolver } from "../../../plugins/runtime/gateway-request-scope.js";
+import {
+  getCanonicalGatewayContextResolver,
+  getPluginRuntimeGatewayRequestScope,
+} from "../../../plugins/runtime/gateway-request-scope.js";
 import { recordSessionCreated } from "../../../sessions/session-created.js";
 import { recordSessionParticipantBestEffort } from "../../../sessions/session-participant-recording.js";
 import { recordSubagentSpawned } from "../../../sessions/session-state-events.js";
@@ -35,6 +38,7 @@ import { readParentExecutionIdentity } from "./execution-identity-spawn-context.
 import { materializeSubagentAttachments } from "./subagent-attachments.js";
 import { resolveSubagentChildPlan } from "./subagent-spawn-child-plan.js";
 import {
+  bindSubagentSpawnCleanup,
   cleanupFailedSpawnBeforeAgentStart,
   cleanupProvisionalSession,
 } from "./subagent-spawn-cleanup.js";
@@ -89,7 +93,17 @@ export async function spawnSubagentDirect(
       error: "continuationChainState is required when drainsContinuationDelegateQueue is true",
     };
   }
-  const gatewayContextResolver = getGatewayToolCallerIdentity()?.gatewayContextResolver;
+  // Upstream's chain subsumes our single-source lookup; operatorAuthority is a
+  // SEPARATE gate from continuationChainState -- chain state is accounting, never
+  // authorization (Ronan's ruling on this absorb).
+  const gatewayCaller = getGatewayToolCallerIdentity();
+  const gatewayScope = getPluginRuntimeGatewayRequestScope();
+  const gatewayContextResolver =
+    gatewayCaller?.gatewayContextResolver ??
+    gatewayScope?.resolveGatewayContext ??
+    gatewayScope?.context?.resolveGatewayContext;
+  const operatorAuthority =
+    gatewayCaller?.operatorAuthority ?? gatewayScope?.client?.internal?.operatorRunAuthority;
   const requestResolution = resolveSubagentSpawnRequest(params, ctx);
   if (!requestResolution.ok) {
     return requestResolution.result;
@@ -142,10 +156,19 @@ export async function spawnSubagentDirect(
   const swarmReservation = reservationPending ? holdQueuedSwarmRun(childIdem) : undefined;
   let canCleanupCreatedSession: (() => boolean) | undefined;
   let canRetireReservation: (() => boolean) | undefined;
+  let releaseOperatorAuthority: (() => void) | undefined;
+  let provisionalCleanupOpen = true;
   let contextEnginePreparation: PreparedContextEngineSubagentSpawn | undefined;
   try {
     if (reservationPending && !swarmReservation) {
       return { status: "error", error: "Collector FIFO reservation is no longer current" };
+    }
+    if (operatorAuthority && !gatewayContextResolver) {
+      throw new Error("Operator subagent spawn requires its current Gateway binding");
+    }
+    if (params.collect && operatorAuthority) {
+      operatorAuthority.assertCurrent();
+      releaseOperatorAuthority = operatorAuthority.retain?.();
     }
     const childPlan = await resolveSubagentChildPlan({
       request: params,
@@ -215,12 +238,24 @@ export async function spawnSubagentDirect(
       expectedSessionId: initialSession.entry?.sessionId,
       expectedLifecycleRevision: initialSession.entry?.lifecycleRevision,
     };
+    const ownsCleanup = () => canCleanupCreatedSession?.() ?? provisionalCleanupOpen;
+    const cleanupOwner =
+      operatorAuthority && gatewayContextResolver
+        ? bindSubagentSpawnCleanup({
+            childSessionKey,
+            resolveGatewayContext: gatewayContextResolver,
+            isCurrent: ownsCleanup,
+            getSessionIdentity: () => provisionalSessionIdentity,
+          })
+        : undefined;
+    const isCleanupCurrent = cleanupOwner?.isCurrent ?? ownsCleanup;
     const cleanupCreatedSession = (emitLifecycleHooks = false) =>
       cleanupProvisionalSession(childSessionKey, {
         emitLifecycleHooks,
         deleteTranscript: true,
         ...provisionalSessionIdentity,
-        ...(canCleanupCreatedSession ? { isCurrent: canCleanupCreatedSession } : {}),
+        isCurrent: isCleanupCurrent,
+        ...(cleanupOwner ? { callGateway: cleanupOwner.callGateway } : {}),
       });
     const preparedSpawnContext = await prepareSubagentSessionContext({
       assertActive,
@@ -376,14 +411,17 @@ export async function spawnSubagentDirect(
         sessionKey: childSessionKey,
         storePath: resolveSessionStorePathCore(cfg.session?.store, { agentId: targetAgentId }),
       });
+    let acceptedChildRunId: string | undefined;
     const launchChildRun = async (assertDispatchCurrent?: () => void) => {
+      // Our continuation-ownership gate runs before dispatch; upstream's accepted-run
+      // binding runs after it. Independent gates, both required.
       ctx.continuationDelegateAdmission?.assertCurrent("gateway-dispatch");
       registerSubagentTraceparentHandoff({
         idempotencyKey: childIdem,
         sessionKey: childSessionKey,
         traceparent: params.traceparent,
       });
-      return await callNativeSubagentGateway(
+      const launch = await callNativeSubagentGateway(
         withSubagentGatewayExecutionIdentity(
           {
             method: "agent",
@@ -411,6 +449,9 @@ export async function spawnSubagentDirect(
         childLaunch.authorization,
         gatewayContextResolver,
       );
+      acceptedChildRunId = readGatewayRunId(launch.response) ?? childIdem;
+      cleanupOwner?.bindAcceptedRun(acceptedChildRunId);
+      return launch;
     };
 
     const emitSpawnLifecycleHooks = createSubagentSpawnLifecycleEmitter({
@@ -433,12 +474,10 @@ export async function spawnSubagentDirect(
         deleteTranscript: true,
         ...provisionalSessionIdentity,
         waitForSessionDeletion,
-        isCurrent: canCleanupCreatedSession,
+        isCurrent: isCleanupCurrent,
+        ...(cleanupOwner ? { callGateway: cleanupOwner.callGateway } : {}),
       });
     type SubagentBackendState = { contextEnginePreparation?: PreparedContextEngineSubagentSpawn };
-    // Set once the gateway accepts the child run, so a later failure can tell an
-    // accepted run apart from one that never started.
-    let acceptedChildRunId: string | undefined;
     let taskRowOwnership: "required" | "gateway_best_effort" = "required";
     const adapter: SpawnBackendAdapter<SubagentBackendState> = {
       async initialize() {
@@ -465,9 +504,8 @@ export async function spawnSubagentDirect(
         }
         const launch = await launchChildRun(assertActive);
         taskRowOwnership = launch.taskRowOwnership;
-        acceptedChildRunId = readGatewayRunId(launch.response) ?? childIdem;
         recordRequesterParticipation();
-        return { runId: acceptedChildRunId };
+        return { runId: readGatewayRunId(launch.response) ?? childIdem };
       },
       async cleanupOnFailure({ phase, state, error, registrationScope }) {
         canCleanupCreatedSession = registrationScope?.canCleanupSession;
@@ -517,7 +555,8 @@ export async function spawnSubagentDirect(
           ...provisionalSessionIdentity,
           emitLifecycleHooks,
           cleanupCreatedSession,
-          isCurrent: canCleanupCreatedSession,
+          isCurrent: isCleanupCurrent,
+          ...(cleanupOwner ? { callGateway: cleanupOwner.callGateway } : {}),
         });
       },
     };
@@ -637,6 +676,12 @@ export async function spawnSubagentDirect(
                 childSessionKey,
                 requesterSessionKey: requesterInternalKey,
                 gatewayContextResolver,
+                // Queued launch requires BOTH live operator authority and live
+                // registration/continuation ownership (Ronan's ruling). Authority is
+                // threaded here, not derived from chain state.
+                operatorAuthority,
+                releaseOperatorAuthority,
+                cleanupOwner,
                 registrationScope,
                 preparation: state.contextEnginePreparation,
                 provisionalSessionIdentity,
@@ -646,6 +691,8 @@ export async function spawnSubagentDirect(
                 cleanupFailedSpawn,
               }),
             });
+            // Activation has taken custody of the retained authority.
+            releaseOperatorAuthority = undefined;
           } else {
             if (canRetireReservation?.() !== false) {
               swarmReservation?.withdraw();
@@ -734,6 +781,8 @@ export async function spawnSubagentDirect(
     }
     throw error;
   } finally {
+    provisionalCleanupOpen = false;
+    releaseOperatorAuthority?.();
     admissionReservation?.release();
     if (swarmReservationPending && canRetireReservation?.() !== false) {
       swarmReservation?.withdraw();

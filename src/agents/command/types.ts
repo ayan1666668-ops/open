@@ -140,6 +140,8 @@ export type AgentCommandOpts = {
   abortSignal?: AbortSignal;
   /** Private source-owner fence; cancellation alone does not establish current authority. */
   assertSourceCurrent?: () => void;
+  /** Original operator restriction; host-only and never accepted from public ingress. */
+  operatorAuthority?: import("../admitted-run-context.js").AdmittedRunOperatorAuthority;
   lane?: string;
   runId?: string;
   /** Structured lifecycle metadata for internally-triggered turns. */
@@ -251,6 +253,7 @@ type AgentCommandGatewayOnlyKey =
   | "pinnedWidgetAuthoring"
   | "executionIdentityAdmission"
   | "operationalRunInstance"
+  | "operatorAuthority"
   | "skillLibraryAuthoring"
   | "cronCreatorAuthorityCapability"
   | "onAdmittedRunContext"
