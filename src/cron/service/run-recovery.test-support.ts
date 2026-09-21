@@ -6,12 +6,10 @@ import {
   claimCronRunReceiptInDatabase,
   prepareCronRunReceiptClaim,
 } from "../store/run-receipt-store.js";
+import type { CronRunRecoveryProposal } from "../store/run-recovery-read.types.js";
+import type { CronRunRecoveryResult } from "../store/run-recovery.types.js";
 import type { CronJob } from "../types.js";
-import {
-  recoverCronRunProposals,
-  type CronRunRecoveryProposal,
-  type CronRunRecoveryResult,
-} from "./run-recovery.js";
+import { recoverCronRunProposals } from "./run-recovery.js";
 import { createCronServiceState, type CronServiceState, type Logger } from "./state.js";
 
 export async function observeCronRecoveryForTest(

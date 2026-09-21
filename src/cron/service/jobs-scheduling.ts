@@ -9,6 +9,7 @@ import { coerceFiniteScheduleNumber } from "../schedule-number.js";
 import { computeNextRunAtMs, computePreviousRunAtMs } from "../schedule.js";
 import { resolveCronStaggerMs } from "../stagger.js";
 import { CRON_STUCK_RUN_MS } from "../store/run-receipt-store.js";
+import type { CronScheduleMaintenanceOptions } from "../store/runtime-worker.types.js";
 import { createCronStreamSourceIdentity, resolveCronStreamBatching } from "../stream-schedule.js";
 import type { CronJob, CronSchedule } from "../types.js";
 import { autoDisableCronJob } from "./auto-disable.js";
@@ -574,13 +575,8 @@ export function recomputeJobNextRunAtMs(params: {
 }
 
 /** Repairs schedule state while preserving due slots that have not executed. */
-export type CronMaintenanceOptions = {
-  recomputeExpired?: boolean;
-  nowMs?: number;
-  repairFutureCronNextRunAtMs?: boolean;
-  preserveExpiredPacedNextRunJobId?: string;
+type CronMaintenanceOptions = CronScheduleMaintenanceOptions & {
   deferredNotifications: DeferredCronNotifications;
-  skipScheduleErrorHandling?: boolean;
 };
 
 function isExpiredCronScheduleRepairCandidate(

@@ -1,23 +1,8 @@
 import type { CronConfig } from "../../config/types.cron.js";
-import type { ResolvedFailureAlert } from "../service/failure-alerts.js";
+import type { ResolvedFailureAlert } from "../service/notification-intents.js";
 import type { InterruptedStartupRun } from "../service/startup-run-repair.js";
 import type { DeferredCronNotifications, Logger } from "../service/state.js";
-import type { CronRunReceiptRecoveryCandidate } from "./run-receipt-store.js";
-
-export type CronRunRecoveryProposal = {
-  jobId: string;
-  queuedAtMs?: number;
-  runningAtMs?: number;
-  runningReceiptId?: string;
-  receipt?: CronRunReceiptRecoveryCandidate;
-};
-
-export type CronRunRecoveryWorkerOperations = {
-  "cron.initializeRunReceipts": {
-    input: Record<string, never>;
-    output: void;
-  };
-};
+import type { CronRunReceiptRecoveryCandidate } from "./run-receipt.types.js";
 
 export type CronRunRecoveryResult =
   | { kind: "live"; receipt: CronRunReceiptRecoveryCandidate }
@@ -28,16 +13,6 @@ export type CronRunRecoveryResult =
       notifications: DeferredCronNotifications;
       skipStartupCatchup?: boolean;
     };
-
-export type CronRunRecoveryObservation =
-  | { kind: "observed"; proposals: CronRunRecoveryProposal[] }
-  | { kind: "schema-uninitialized" };
-
-export type CronRunRecoveryReadCommand = {
-  type: "cron.observeRunRecovery";
-  storeKey: string;
-  proposals: readonly CronRunRecoveryProposal[];
-};
 
 export type CronRunRecoveryOutcome = {
   result: CronRunRecoveryResult;

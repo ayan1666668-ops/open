@@ -6,10 +6,8 @@ import {
   requestSqliteWorkerOperationAdmission,
 } from "../../infra/sqlite-worker-operation-admission.js";
 import { ownedWorkerBytes } from "../../infra/worker-transfer-bytes.js";
-import type {
-  CronRuntimeMutationContracts,
-  CronRuntimeMutationType,
-} from "./runtime-mutation.types.js";
+import type { CronRuntimeMutationContracts } from "./runtime-mutation.types.js";
+import type { CronRuntimeMutationType } from "./runtime-worker.types.js";
 
 /** Host policy is prepared only after this worker has read authoritative transaction rows. */
 export function prepareCronRuntimeMutation<Type extends CronRuntimeMutationType>(

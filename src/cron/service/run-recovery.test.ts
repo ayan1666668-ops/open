@@ -15,12 +15,12 @@ import {
   finishCronRunReceipt,
   finishCronRunReceiptInDatabase,
   releaseLocalCronRunReceiptOwnership,
-  type CronRunReceiptHandle,
 } from "../store/run-receipt-store.js";
 import {
   inspectActiveCronRunReceipt,
   makeCronRecoveryJob as makeJob,
 } from "../store/run-receipt-store.test-support.js";
+import type { CronRunReceiptHandle } from "../store/run-receipt.types.js";
 import type { CronJob } from "../types.js";
 import { start, stop } from "./ops-lifecycle.js";
 import {

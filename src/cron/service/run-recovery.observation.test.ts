@@ -10,8 +10,9 @@ import { setupCronServiceSuite, writeCronStoreSnapshot } from "../service.test-h
 import { loadCronStore } from "../store.js";
 import { releaseLocalCronRunReceiptOwnership } from "../store/run-receipt-store.js";
 import { makeCronRecoveryJob as makeJob } from "../store/run-receipt-store.test-support.js";
+import type { CronRunRecoveryProposal } from "../store/run-recovery-read.types.js";
 import { start, stop } from "./ops-lifecycle.js";
-import { recoverCronRunProposals, type CronRunRecoveryProposal } from "./run-recovery.js";
+import { recoverCronRunProposals } from "./run-recovery.js";
 import {
   claimCronRecoveryReceipt as claimReceipt,
   makeCronRecoveryState as makeState,

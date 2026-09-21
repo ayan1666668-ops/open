@@ -12,7 +12,7 @@ import type {
 import type {
   CronRunRecoveryReadCommand,
   CronRunRecoveryObservation,
-} from "../cron/store/run-recovery.types.js";
+} from "../cron/store/run-recovery-read.types.js";
 import type { FleetCellRecord } from "../fleet/registry.types.js";
 import type {
   WorkerPlacementConflictBinding,

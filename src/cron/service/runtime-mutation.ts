@@ -10,11 +10,11 @@ import type {
 } from "../../infra/sqlite-worker-operation-settlement.js";
 import type { OpenClawStateWorkerContext } from "../../state/openclaw-state-worker-context.types.js";
 import { runOpenClawStateWorkerOperation } from "../../state/openclaw-state-worker-store.js";
+import type { CronRuntimeMutationContracts } from "../store/runtime-mutation.types.js";
 import type {
-  CronRuntimeMutationContracts,
   CronRuntimeMutationType,
   CronRuntimeWorkerOperations,
-} from "../store/runtime-mutation.types.js";
+} from "../store/runtime-worker.types.js";
 
 /** One settlement owner serves typed cron mutations; callbacks and database handles stay local. */
 export async function runCronRuntimeMutation<Type extends CronRuntimeMutationType>(params: {

@@ -28,19 +28,15 @@ import { loadedCronStoreFromRows, loadCronRows } from "./row-codec.js";
 import {
   receiptFromRow,
   receiptHandle,
-  type CronRunReceipt,
   type CronRunReceiptDatabase,
-  type CronRunReceiptHandle,
-  type CronRunReceiptRecoveryCandidate,
   type CronRunReceiptRow,
-  type CronRunReceiptStatus,
 } from "./run-receipt-read.js";
-
-export type {
+import type {
+  CronRunReceipt,
   CronRunReceiptHandle,
   CronRunReceiptRecoveryCandidate,
   CronRunReceiptStatus,
-} from "./run-receipt-read.js";
+} from "./run-receipt.types.js";
 
 /**
  * Receipt/lease lifecycle (the SQLite status is `running` for the first three rows):

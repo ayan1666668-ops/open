@@ -37,6 +37,12 @@ export type CronFailureAlertRoute = {
   alternateRoute: boolean;
 };
 
+export type ResolvedFailureAlert = CronFailureAlertRoute & {
+  after: number;
+  cooldownMs: number;
+  includeSkipped: boolean;
+};
+
 export type CronNotificationIntent =
   | { kind: "auto-disabled"; job: CronNotificationJob; text: string }
   | {

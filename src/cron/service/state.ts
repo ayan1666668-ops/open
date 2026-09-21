@@ -14,7 +14,7 @@ import { toPublicCronJob } from "../public-job.js";
 import type { CronRuntimeAuthority } from "../runtime-authority.js";
 import type { CronScheduledToolPolicy } from "../scheduled-tool-policy.js";
 import type { QuarantinedCronConfigJob } from "../store.js";
-import type { CronRunReceiptHandle } from "../store/run-receipt-store.js";
+import type { CronRunReceiptHandle } from "../store/run-receipt.types.js";
 import type {
   CronCompletionStatus,
   CronTriggerEvaluationResult,
@@ -39,8 +39,11 @@ import type {
   CronToolsAllowExecTarget,
   CronToolsAllowProvenance,
 } from "../types.js";
-import type { ResolvedFailureAlert } from "./failure-alerts.js";
-import type { CronNotificationIntent, CronNotificationJob } from "./notification-intents.js";
+import type {
+  CronNotificationIntent,
+  CronNotificationJob,
+  ResolvedFailureAlert,
+} from "./notification-intents.js";
 
 /** Event payload emitted for cron lifecycle changes and completed runs. */
 export type CronEvent = {

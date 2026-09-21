@@ -9,14 +9,12 @@ import {
   loadCronRuntimeAuthorities,
   repairCronRuntimeAuthorityRows,
 } from "./runtime-authority-store.js";
-import type {
-  CronRuntimeMutationContracts,
-  CronRuntimeWorkerOperations,
-} from "./runtime-mutation.types.js";
+import type { CronRuntimeMutationContracts } from "./runtime-mutation.types.js";
 import {
   prepareCronRuntimeMutation,
   retainCronRuntimeMutationOutcome,
 } from "./runtime-mutation.worker.js";
+import type { CronRuntimeWorkerOperations } from "./runtime-worker.types.js";
 
 export function scheduleUnownedCronJobsInWorker(
   database: OpenClawStateDatabase,

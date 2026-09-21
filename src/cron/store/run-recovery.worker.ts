@@ -5,11 +5,11 @@ import type { CronJobPolicyContext, Logger } from "../service/state.js";
 import { loadedCronStoreFromRows, loadCronRows } from "./row-codec.js";
 import { repairCronRunInDatabase } from "./run-recovery.kernel.js";
 import type { CronRunRecoveryOutcome } from "./run-recovery.types.js";
-import type { CronRuntimeWorkerOperations } from "./runtime-mutation.types.js";
 import {
   prepareCronRuntimeMutation,
   retainCronRuntimeMutationOutcome,
 } from "./runtime-mutation.worker.js";
+import type { CronRuntimeWorkerOperations } from "./runtime-worker.types.js";
 
 export function repairCronRunInWorker(
   database: OpenClawStateDatabase,

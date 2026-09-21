@@ -15,10 +15,9 @@ import { loadMutableCronStoreInWorker } from "./load.worker.js";
 import {
   bindCronRunReceiptExecutionInDatabase,
   ensureCronRunReceiptSchema,
-  type CronRunReceiptHandle,
 } from "./run-receipt-store.js";
-import type { CronRunRecoveryWorkerOperations } from "./run-recovery.types.js";
-import type { CronRuntimeWorkerOperations } from "./runtime-mutation.types.js";
+import type { CronRunReceiptHandle } from "./run-receipt.types.js";
+import type { CronRuntimeWorkerOperations } from "./runtime-worker.types.js";
 import type { CronStoreSaveWorkerOperations } from "./save-worker.types.js";
 import { executeCronStoreSaveCommand } from "./save.worker.js";
 
@@ -45,9 +44,12 @@ export function prepareCronStateWorkerCommand(type: PropertyKey): Promise<void> 
 }
 
 export type CronStateWorkerOperations = CronStoreWorkerOperations &
-  CronRunRecoveryWorkerOperations &
   CronRuntimeWorkerOperations &
   CronStoreSaveWorkerOperations & {
+    "cron.initializeRunReceipts": {
+      input: Record<string, never>;
+      output: void;
+    };
     "cron.bindReceiptExecution": {
       input: { handle: CronRunReceiptHandle; binding: ExecutionOwnerBinding };
       output: ExecutionOwnerBindingResult;

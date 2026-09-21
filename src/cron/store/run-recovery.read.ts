@@ -5,7 +5,7 @@ import { readActiveCronRunReceiptsInDatabase } from "./run-receipt-read.js";
 import type {
   CronRunRecoveryObservation,
   CronRunRecoveryReadCommand,
-} from "./run-recovery.types.js";
+} from "./run-recovery-read.types.js";
 
 export function observeCronRunRecoveryInDatabase(
   database: DatabaseSync,

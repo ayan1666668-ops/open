@@ -263,8 +263,8 @@ Counts use `Q/F/S/A/R` in that order. Source locations are available in `--json`
 | **src/cron** · `src/cron/store/quarantine.ts`                                                                |         2/0/0/0/0 |         42 | Runtime/mixed candidate; main-thread reachability needs tracing                   |
 | **src/cron** · `src/cron/store/row-codec.ts`                                                                 |        12/0/0/0/0 |        219 | Runtime/mixed candidate; main-thread reachability needs tracing                   |
 | **src/cron** · `src/cron/store/run-receipt-drain.ts`                                                         |         1/0/0/0/0 |         13 | Runtime/mixed candidate; main-thread reachability needs tracing                   |
-| **src/cron** · `src/cron/store/run-receipt-read.ts`                                                          |         1/0/0/0/0 |         99 | Runtime/mixed candidate; main-thread reachability needs tracing                   |
-| **src/cron** · `src/cron/store/run-receipt-store.ts`                                                         |         7/2/1/0/0 |        155 | Runtime/mixed candidate; main-thread reachability needs tracing                   |
+| **src/cron** · `src/cron/store/run-receipt-read.ts`                                                          |         1/0/0/0/0 |         69 | Runtime/mixed candidate; main-thread reachability needs tracing                   |
+| **src/cron** · `src/cron/store/run-receipt-store.ts`                                                         |         7/2/1/0/0 |        151 | Runtime/mixed candidate; main-thread reachability needs tracing                   |
 | **src/cron** · `src/cron/store/run-receipt-trigger-state.ts`                                                 |         1/2/0/0/0 |         58 | Runtime/mixed candidate; main-thread reachability needs tracing                   |
 | **src/cron** · `src/cron/store/runtime-authority-store.ts`                                                   |         4/0/0/0/0 |         99 | Runtime/mixed candidate; main-thread reachability needs tracing                   |
 | **src/fleet** · `src/fleet/registry.kernel.ts`                                                               |         9/4/0/0/0 |         33 | Runtime/mixed candidate; main-thread reachability needs tracing                   |
@@ -540,10 +540,10 @@ Counts use `Q/F/S/A/R` in that order. Source locations are available in `--json`
 | **src/config/sessions** · `src/config/sessions/session-accessor.sqlite-mutation-worker.runtime.ts` |         0/0/0/1/0 |        383 | Worker implementation; keep SQL in this owner |
 | **src/config/sessions** · `src/config/sessions/session-entry-read.worker.ts`                       |         0/0/0/0/1 |         19 | Worker implementation; keep SQL in this owner |
 | **src/config/sessions** · `src/config/sessions/session-transcript.worker.ts`                       |         0/0/0/0/2 |        183 | Worker implementation; keep SQL in this owner |
-| **src/cron** · `src/cron/store/dispatch.worker.ts`                                                 |         0/0/2/0/0 |         97 | Worker implementation; keep SQL in this owner |
+| **src/cron** · `src/cron/store/dispatch.worker.ts`                                                 |         0/0/2/0/0 |         99 | Worker implementation; keep SQL in this owner |
 | **src/cron** · `src/cron/store/load.worker.ts`                                                     |         0/0/1/0/0 |         16 | Worker implementation; keep SQL in this owner |
 | **src/cron** · `src/cron/store/run-recovery.worker.ts`                                             |         0/0/1/0/0 |         18 | Worker implementation; keep SQL in this owner |
-| **src/cron** · `src/cron/store/runtime-maintenance.worker.ts`                                      |         0/0/2/0/0 |         25 | Worker implementation; keep SQL in this owner |
+| **src/cron** · `src/cron/store/runtime-maintenance.worker.ts`                                      |         0/0/2/0/0 |         23 | Worker implementation; keep SQL in this owner |
 | **src/cron** · `src/cron/store/save.worker.ts`                                                     |         0/0/1/0/0 |         20 | Worker implementation; keep SQL in this owner |
 | **src/infra** · `src/infra/exec-approvals-authorization.worker.ts`                                 |         0/0/1/0/0 |         70 | Worker implementation; keep SQL in this owner |
 | **src/infra** · `src/infra/promotions-feed.worker.ts`                                              |         0/0/2/0/0 |         34 | Worker implementation; keep SQL in this owner |

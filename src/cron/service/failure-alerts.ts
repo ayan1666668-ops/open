@@ -24,19 +24,13 @@ import type {
 } from "../types.js";
 import {
   cronNotificationJob,
-  type CronFailureAlertRoute,
   type CronNotificationJob,
+  type ResolvedFailureAlert,
 } from "./notification-intents.js";
 import type { CronJobPolicyContext, DeferredCronNotifications } from "./state.js";
 
 const DEFAULT_FAILURE_ALERT_AFTER = 2;
 const DEFAULT_FAILURE_ALERT_COOLDOWN_MS = 60 * 60_000; // 1 hour
-
-export type ResolvedFailureAlert = CronFailureAlertRoute & {
-  after: number;
-  cooldownMs: number;
-  includeSkipped: boolean;
-};
 
 /** Returns the last failure-notification delivery trace persisted on a cron job. */
 export function failureNotificationDeliveryFromJobState(

@@ -6,7 +6,7 @@ import {
   recomputeNextRunsForMaintenance,
 } from "./service/jobs-scheduling.js";
 import { reserveQueuedCronRun } from "./service/run-admission.js";
-import type { CronRunReceiptHandle } from "./store/run-receipt-store.js";
+import type { CronRunReceiptHandle } from "./store/run-receipt.types.js";
 import type { CronJob } from "./types.js";
 
 function createCronSystemEventJob(now: number, overrides: Partial<CronJob> = {}): CronJob {

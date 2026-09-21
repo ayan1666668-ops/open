@@ -9,19 +9,14 @@ import {
   exactCronRunReceiptMatches,
   isCronRunReceiptOwnerStale,
 } from "../store/run-receipt-store.js";
+import type { CronRunRecoveryProposal } from "../store/run-recovery-read.types.js";
 import type {
   CronRunRecoveryPreparation,
-  CronRunRecoveryProposal,
   CronRunRecoveryResult,
 } from "../store/run-recovery.types.js";
 import { resolveFailureAlert } from "./failure-alerts.js";
 import { runCronRuntimeMutation } from "./runtime-mutation.js";
 import type { CronServiceState } from "./state.js";
-
-export type {
-  CronRunRecoveryProposal,
-  CronRunRecoveryResult,
-} from "../store/run-recovery.types.js";
 
 class RetiredCronRecoveryError extends Error {
   constructor() {

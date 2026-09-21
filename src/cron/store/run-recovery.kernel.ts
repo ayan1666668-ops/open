@@ -16,7 +16,8 @@ import {
   exactCronRunReceiptMatches,
 } from "./run-receipt-store.js";
 import { isCronRunTriggerStateRetiredInDatabase } from "./run-receipt-trigger-state.js";
-import type { CronRunRecoveryProposal, CronRunRecoveryResult } from "./run-recovery.types.js";
+import type { CronRunRecoveryProposal } from "./run-recovery-read.types.js";
+import type { CronRunRecoveryResult } from "./run-recovery.types.js";
 import type { CronJobReadRow } from "./schema.js";
 
 export function repairCronRunInDatabase(params: {

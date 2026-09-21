@@ -3,7 +3,7 @@ import { isCronJobActive } from "../active-jobs.js";
 import { noteCronJobsStoreCommit } from "../store.js";
 import { cronStoreKey } from "../store/key.js";
 import type { CronRuntimeMutationContracts } from "../store/runtime-mutation.types.js";
-import type { CronMaintenanceOptions } from "./jobs-scheduling.js";
+import type { CronScheduleMaintenanceOptions } from "../store/runtime-worker.types.js";
 import { runCronRuntimeMutation } from "./runtime-mutation.js";
 import { applyCronRuntimeRowsToState } from "./runtime-store.js";
 import type { CronServiceState } from "./state.js";
@@ -14,7 +14,7 @@ type MaintenanceOutcome = CronRuntimeMutationContracts["cron.scheduleUnowned"]["
 /** Schedules authoritative rows in the worker without clearing live process ownership. */
 export async function recomputeUnownedCronSchedules(
   state: CronServiceState,
-  opts?: Omit<CronMaintenanceOptions, "deferredNotifications">,
+  opts?: CronScheduleMaintenanceOptions,
 ): Promise<MaintenanceOutcome> {
   const context = captureOpenClawStateWorkerContext();
   const generation = state.lifecycleGeneration;

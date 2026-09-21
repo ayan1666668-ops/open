@@ -6,8 +6,8 @@ import { createCronRunDiagnosticsFromError } from "../run-diagnostics.js";
 import {
   finishCronRunReceiptInDatabase,
   releaseLocalCronRunReceiptOwnership,
-  type CronRunReceiptHandle,
 } from "../store/run-receipt-store.js";
+import type { CronRunReceiptHandle } from "../store/run-receipt.types.js";
 import type {
   CronFailureNotificationDetail,
   CronJob,

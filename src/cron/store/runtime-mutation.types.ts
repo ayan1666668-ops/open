@@ -1,11 +1,7 @@
-import type { CronMaintenanceOptions } from "../service/jobs-scheduling.js";
 import type { DeferredCronNotifications } from "../service/state.js";
-import type { CronFailureNotificationDelivery, CronJob } from "../types.js";
-import type {
-  CronRunRecoveryOutcome,
-  CronRunRecoveryPreparation,
-  CronRunRecoveryProposal,
-} from "./run-recovery.types.js";
+import type { CronJob } from "../types.js";
+import type { CronRunRecoveryOutcome, CronRunRecoveryPreparation } from "./run-recovery.types.js";
+import type { CronRuntimeMutationInputs } from "./runtime-worker.types.js";
 
 type CronScheduleOwnershipFacts = {
   jobId: string;
@@ -15,16 +11,13 @@ type CronScheduleOwnershipFacts = {
 
 export type CronRuntimeMutationContracts = {
   "cron.repairRun": {
-    input: { storeKey: string; proposal: CronRunRecoveryProposal; mode: "startup" | "reclaim" };
+    input: CronRuntimeMutationInputs["cron.repairRun"];
     facts: Pick<CronJob, "id" | "delivery" | "failureAlert">;
     preparation: CronRunRecoveryPreparation;
     outcome: CronRunRecoveryOutcome;
   };
   "cron.scheduleUnowned": {
-    input: {
-      storeKey: string;
-      options?: Omit<CronMaintenanceOptions, "deferredNotifications">;
-    };
+    input: CronRuntimeMutationInputs["cron.scheduleUnowned"];
     facts: { jobIds: string[] };
     preparation: { nowMs: number; ownership: CronScheduleOwnershipFacts[] };
     outcome: {
@@ -35,24 +28,9 @@ export type CronRuntimeMutationContracts = {
     };
   };
   "cron.recordFailureAlertOutcome": {
-    input: {
-      storeKey: string;
-      jobId: string;
-      runAtMs: number | undefined;
-      alertAtMs: number | undefined;
-      notificationId: string | undefined;
-      outcome: CronFailureNotificationDelivery;
-    };
+    input: CronRuntimeMutationInputs["cron.recordFailureAlertOutcome"];
     facts: { ownsCycle: boolean };
     preparation: Record<string, never>;
     outcome: { job?: CronJob };
-  };
-};
-
-export type CronRuntimeMutationType = keyof CronRuntimeMutationContracts;
-export type CronRuntimeWorkerOperations = {
-  [Type in CronRuntimeMutationType]: {
-    input: CronRuntimeMutationContracts[Type]["input"] & { nonce: string };
-    output: { nonce: string };
   };
 };

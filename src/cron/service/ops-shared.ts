@@ -1,7 +1,7 @@
 /** Shared cron operation invariants used across lifecycle, CRUD, and manual runs. */
 import { clearCronJobActive, type CronActiveJobMarker } from "../active-jobs.js";
 import { resolveCronJobEffectiveAgentId } from "../agent-id.js";
-import type { CronRunReceiptHandle } from "../store/run-receipt-store.js";
+import type { CronRunReceiptHandle } from "../store/run-receipt.types.js";
 import { cronStreamScheduleKey } from "../stream-schedule.js";
 import type { CronJob } from "../types.js";
 import { markServiceCronJobActive } from "./run-receipts.js";

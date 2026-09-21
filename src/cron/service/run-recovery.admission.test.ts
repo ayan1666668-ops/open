@@ -17,12 +17,12 @@ import {
   claimCronRunReceiptInDatabase,
   prepareCronRunReceiptClaim,
   releaseLocalCronRunReceiptOwnership,
-  type CronRunReceiptHandle,
 } from "../store/run-receipt-store.js";
 import {
   inspectActiveCronRunReceipt,
   makeCronRecoveryJob,
 } from "../store/run-receipt-store.test-support.js";
+import type { CronRunReceiptHandle } from "../store/run-receipt.types.js";
 import * as serviceState from "./state.js";
 import { onTimer } from "./timer.test-support.js";
 
