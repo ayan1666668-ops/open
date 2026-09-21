@@ -109,9 +109,7 @@ export function groupMessages(items: ChatItem[]): Array<ChatItem | MessageGroup>
     const sender = role === "user" ? normalized.sender : undefined;
     const timestamp = normalized.timestamp || Date.now();
     const runId =
-      role === "assistant" || role === "tool"
-        ? (transcriptRunId(item.message) ?? (role === "assistant" ? item.displayRunId : undefined))
-        : undefined;
+      role === "assistant" || role === "tool" ? transcriptRunId(item.message) : undefined;
     // Independent sends own separate elapsed boundaries; consecutive steers
     // before any output keep their target run's original start. Do not stamp
     // user runIds onto groups: reply-less activity pooling uses that field.
@@ -191,11 +189,9 @@ export function coalesceStreamRuns(
     const [first] = run;
     if (first) {
       const { runId, boundaryId } = first;
-      // The working shell survives its first body; body occurrence keys own only their leaves.
-      const shell = run.find((part) => part.kind === "reading-indicator") ?? first;
       result.push({
         kind: "stream-run",
-        key: `stream-run:${shell.key}`,
+        key: `stream-run:${first.key}`,
         parts: run,
         replyToSender: run.find((part) => part.kind === "stream")?.replyToSender,
         ...(runId ? { runId } : {}),

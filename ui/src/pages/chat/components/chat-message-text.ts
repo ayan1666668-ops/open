@@ -29,7 +29,6 @@ type DuplicateSuffix = {
 type MessageTextOptions = {
   role: string;
   isStreaming: boolean;
-  markdownKey?: string;
   isForwarded?: boolean;
   isUserMessageExpanded?: (messageId: string) => boolean;
   onToggleUserMessageExpanded?: (messageId: string) => void;
@@ -254,14 +253,13 @@ export function renderMessageMarkdown(
   const recoverFullMessage =
     isAssistant || (opts.role === "user" && disclosure?.onRetryFullMessage);
   const recovered = recoverFullMessage && disclosure?.expanded;
-  const markdownKey = opts.markdownKey ?? messageKey;
   const { content: text, parts } = renderMarkdownText(
     recovered ? (disclosure.markdown ?? markdown) : markdown,
-    markdownKey,
+    messageKey,
     opts.isStreaming,
     recovered ? { ...markdownRenderOptions, mode: "document" } : markdownRenderOptions,
     duplicateSuffix,
-    isAssistant && opts.isStreaming ? markdownKey : undefined,
+    isAssistant && opts.isStreaming ? messageKey : undefined,
     media,
   );
   // Exhausted recovery keeps the preview visible and offers manual re-entry.

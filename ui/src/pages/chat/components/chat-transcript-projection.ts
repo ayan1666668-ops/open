@@ -86,11 +86,6 @@ export function projectChatTranscript(
   const asyncQuestions = props.asyncQuestions;
   const requestUpdate = props.onRequestUpdate ?? (() => {});
   const displayStream = props.stream ?? null;
-  const messageOccurrences = new Map(
-    props.projectionEntries?.flatMap((entry) =>
-      entry.occurrenceKey === undefined ? [] : [[entry.message, entry.occurrenceKey] as const],
-    ),
-  );
   const sessionHost = props.sessionHost ?? null;
   const activeSession = props.selectedSession;
   // Use unfiltered history and retained participants so searching or paging away
@@ -152,11 +147,9 @@ export function projectChatTranscript(
     sessionKey: props.sessionKey,
     archiveNotice: buildChatArchiveNotice(activeSession),
     runId: props.runId ?? null,
-    runLifecycleGeneration: props.runLifecycleGeneration,
     compactionStatus: props.compactionStatus,
     locale,
     messages: props.messages,
-    projectionEntries: props.projectionEntries,
     toolMessages: props.toolMessages,
     guardianNotices: props.guardianNotices,
     streamSegments: props.streamSegments,
@@ -473,7 +466,6 @@ export function projectChatTranscript(
         isWorkExpanded: (key) => expandedToolCards.get(key) ?? false,
         onToggleWork: toggleToolCardExpanded,
         turnRecap: turnRecapByGroupKey.get(item.key),
-        messageOccurrences,
       });
     }
     if (item.kind === "group") {
@@ -624,7 +616,6 @@ export function projectChatTranscript(
     Math.floor(Date.now() / 60_000),
     JSON.stringify([...(latestBrowserTabs ?? [])]),
     props.sessionKey,
-    props.projectionEntries,
     props.presented,
     props.transcriptVisible,
     // Invalidate settled rows when spawn metadata arrives, not on activity/title patches.

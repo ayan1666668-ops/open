@@ -180,8 +180,7 @@ describe("coalesceAgentRunFrames", () => {
       parts: [
         {
           kind: "stream",
-          key: "opaque-stream-occurrence",
-          afterBoundaryRunId: "steer-run",
+          key: "working:after:steer-run",
           text: "Large terminal response",
           startedAt: 2,
           isStreaming: true,

@@ -34,6 +34,7 @@ import {
   authoritativeHistoryAppliedForRun,
   reconcileAuthoritativeTerminalHistory,
   rememberAuthoritativeTerminal,
+  rememberLiveTerminalRun,
 } from "./terminal-message-identity.ts";
 import { createHost } from "./tool-stream.test-helpers.ts";
 import { handleAgentEvent } from "./tool-stream.ts";
@@ -3012,6 +3013,10 @@ describe("authoritative terminal history identity", () => {
       content: [{ type: "text", text: "Native terminal" }],
       __openclaw: { id: "native-terminal" },
     };
+    const liveTerminal = rememberLiveTerminalRun(
+      { role: "assistant", content: [{ type: "text", text: "Native terminal" }] },
+      "run-1",
+    );
     rememberAuthoritativeTerminal({
       event: { key: "main", runId: "run-1", hasActiveRun: false },
       host,
@@ -3021,23 +3026,25 @@ describe("authoritative terminal history identity", () => {
         messageId: "conflicting-envelope-id",
       },
       runIdBeforeApply: "run-1",
-      scope: { sessionKey: "main" },
     });
 
+    const previousMessages = [liveTerminal];
     const collided = reconcileAuthoritativeTerminalHistory({
       host,
-      scope: { sessionKey: "main" },
-      messages: [collision],
+      previousMessages,
+      sessionKey: "main",
+      visibleMessages: [collision],
     });
-    expect(collided).toBeNull();
+    expect(collided).toEqual(previousMessages);
     expect(authoritativeHistoryAppliedForRun(host, "run-1")).toBe(false);
 
     const persisted = reconcileAuthoritativeTerminalHistory({
       host,
-      scope: { sessionKey: "main" },
-      messages: [collision, nativeTerminal],
+      previousMessages,
+      sessionKey: "main",
+      visibleMessages: [collision, nativeTerminal],
     });
-    expect(persisted).toEqual({ runId: "run-1", messages: [nativeTerminal] });
+    expect(persisted).toEqual([]);
     expect(authoritativeHistoryAppliedForRun(host, "run-1")).toBe(true);
   });
 });
@@ -3982,6 +3989,45 @@ describe("loadChatHistory retry handling", () => {
     for (const index of remainingTools) {
       expect(state.toolStreamById.has(String(tools[index]?.toolCallId))).toBe(true);
     }
+  });
+  it("keeps live tool cards when only older history has a persisted tool result", async () => {
+    const olderUser = createTextChatMessage("user", "older ask", { seq: 1 });
+    const olderToolResult = {
+      role: "toolResult",
+      toolCallId: "call_old",
+      toolName: "shell",
+      content: [{ type: "text", text: "old tool output" }],
+      __openclaw: { seq: 2 },
+    };
+    const latestUser = createTextChatMessage("user", "latest ask", { seq: 3 });
+    const liveToolMessage = {
+      role: "assistant",
+      toolCallId: "call_current",
+      runId: "run-1",
+      content: [{ type: "toolcall", name: "shell", arguments: {} }],
+    };
+    const state = createLiveToolHistoryState(
+      [olderUser, olderToolResult, latestUser],
+      {
+        chatMessages: [olderUser, olderToolResult, latestUser],
+        chatRunId: "run-1",
+        chatStream: "Still answering.",
+        chatStreamStartedAt: 100,
+      },
+      [liveToolMessage],
+      [{ text: "before current tool", ts: 1 }],
+    );
+
+    await loadChatHistory(state);
+
+    expect(state.chatMessages).toEqual([olderUser, olderToolResult, latestUser]);
+    expect(state.chatRunId).toBe("run-1");
+    expect(state.chatStream).toBe("Still answering.");
+    expect(state.chatStreamStartedAt).toBe(100);
+    expect(state.chatToolMessages).toEqual([liveToolMessage]);
+    expect(state.chatStreamSegments).toEqual([{ text: "before current tool", ts: 1 }]);
+    expect(state.toolStreamById.size).toBe(1);
+    expect(state.toolStreamOrder).toEqual(["call_current"]);
   });
 
   it("clears live tool cards when history catches up with content-block tool ids", async () => {

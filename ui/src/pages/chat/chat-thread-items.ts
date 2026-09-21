@@ -369,7 +369,6 @@ function messageProjectionDigest(message: unknown): string {
 export function buildMessageItems<Message>(
   messages: Message[],
   resolveSourceKey: (message: Message) => string | null = transcriptMessageSourceKey,
-  displayRunIds?: ReadonlyMap<unknown, string | undefined>,
 ): Array<Extract<ChatItem, { kind: "message" }> & { message: Message }> {
   const sourceKeys = messages.map(resolveSourceKey);
   const sourceCounts = new Map<string, number>();
@@ -391,13 +390,10 @@ export function buildMessageItems<Message>(
     const callId = typeof record?.toolCallId === "string" ? record.toolCallId : "";
     const role = typeof record?.role === "string" ? record.role : "unknown";
     const transcriptKey = `${projectionKey}:${occurrence}`;
-    const displayRunId = displayRunIds?.get(message);
     return {
       kind: "message",
       key: callId ? `tool:${role}:${callId}:${transcriptKey}` : `msg:${transcriptKey}`,
       message,
-      // Keep receipt ownership on the item when later display enrichment clones its message.
-      ...(displayRunId ? { displayRunId } : {}),
     };
   });
 }

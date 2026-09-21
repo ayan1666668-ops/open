@@ -10,7 +10,6 @@ export {
   renderActivityGroup,
   renderMessageGroup,
   renderMessageGroupContent,
-  renderMessageGroupEntry,
 } from "./chat-message-group.ts";
 export type { MessageReplyTarget } from "./chat-message-markdown.ts";
 export {

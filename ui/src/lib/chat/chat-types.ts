@@ -166,13 +166,7 @@ export type ChatQueueItem = {
 
 /** Union type for items in the chat thread */
 export type ChatItem =
-  | {
-      kind: "message";
-      key: string;
-      message: unknown;
-      duplicateCount?: number;
-      displayRunId?: string;
-    }
+  | { kind: "message"; key: string; message: unknown; duplicateCount?: number }
   | {
       kind: "notice";
       key: string;
@@ -203,8 +197,6 @@ export type ChatItem =
       text: string;
       startedAt: number;
       isStreaming: boolean;
-      /** Explicit causal split; different send/run IDs alone do not prove steering. */
-      afterBoundaryRunId?: string;
       replyToSender?: SenderIdentity;
       runId?: string;
       boundaryId?: string;
@@ -219,8 +211,6 @@ export type ChatItem =
   | { kind: "question"; key: string; questionId: string; startedAt: number };
 
 export type ChatStreamSegment = {
-  /** Retained display occurrence when another owner removes its preceding segments. */
-  occurrenceKey?: string;
   text: string;
   ts: number;
   runId?: string;
@@ -238,22 +228,6 @@ export type ChatStreamSegment = {
   pendingCommentary?: { text: string; prefixLength: number };
   toolCallId?: string;
   itemId?: string;
-};
-
-export type VisibleAssistantStreamPart = {
-  text: string;
-  replacementText: string;
-  source: "segment" | "current";
-  timestamp: number;
-  segmentIndex?: number;
-  segmentOrdinal?: number;
-  /** Raw cumulative offset, before trimming or display sanitization. */
-  sourceStart: number;
-  itemId?: string;
-  runId?: string;
-  afterBoundaryRunId?: string;
-  boundaryRunId?: string;
-  toolCallId?: string;
 };
 
 export function streamSegmentHasItemId(segment: { itemId?: unknown }): boolean {

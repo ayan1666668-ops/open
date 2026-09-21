@@ -19,12 +19,7 @@ import {
   persistedSteerTargetRunId,
   rolloverChatStream,
 } from "./stream-causal-boundary.ts";
-import {
-  appendTerminalAssistantMessage,
-  maybeResetToolStreamRun,
-  visibleAssistantStreamParts,
-} from "./stream-reconciliation.ts";
-import { collectAssistantStreamRetirement } from "./stream-retirement.ts";
+import { maybeResetToolStreamRun } from "./stream-reconciliation.ts";
 import {
   prunePersistedAssistantStreamSegments,
   reconcilePersistedAssistantStream,
@@ -152,10 +147,6 @@ export function applySessionMessagePayload(
       ...(producerRunId ? { runId: producerRunId } : {}),
     },
   };
-  const previousEntries =
-    assistantOwnerRunId && runActive === false
-      ? getChatSessionProjection(state, scope).entries
-      : undefined;
   const projection = reduceChatSessionProjection(
     state,
     {
@@ -166,36 +157,13 @@ export function applySessionMessagePayload(
     { scope, runActive },
   );
   if (incoming.role === "assistant" && projection.messages.includes(message)) {
-    const retirement = collectAssistantStreamRetirement(state, previousEntries);
-    let messages = state.chatMessages;
-    if (previousEntries) {
-      const retained = new Set(projection.messages);
-      // The reducer owns adoption. Join its exact removed predecessors with
-      // fallback consumption so a combined body cannot inherit either source.
-      retirement.replaceMessages(
-        previousEntries
-          .filter((entry) => entry.identity?.role === "assistant" && !retained.has(entry.message))
-          .map((entry) => entry.message),
-        message,
-      );
-      messages = appendTerminalAssistantMessage(messages, message, {
-        preserveKeyedCommentary: true,
-        onReplace: (previous) => retirement.replaceMessages(previous, message),
-      });
-    }
-    prunePersistedAssistantStreamSegments(state, message, retirement.replace);
+    prunePersistedAssistantStreamSegments(state, message);
     if (assistantOwnerRunId && runActive === false) {
-      for (const part of visibleAssistantStreamParts(state, { isHiddenStreamText: () => false })) {
-        if (part.source === "current" || part.runId === assistantOwnerRunId) {
-          retirement.replace(part, [message]);
-        }
-      }
       state.chatStream = null;
       state.chatStreamStartedAt = null;
       maybeResetToolStreamRun(state, assistantOwnerRunId);
     }
-    reconcilePersistedAssistantStream(state, retirement.replace);
-    retirement.publish(messages);
+    reconcilePersistedAssistantStream(state);
   }
   const steerTargetRunId = persistedSteerTargetRunId(message);
   const currentRunId = state.chatRunId;

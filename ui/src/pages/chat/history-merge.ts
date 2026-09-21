@@ -277,40 +277,11 @@ export function getChatModelObservedRunId(
     : undefined;
 }
 
-type ChatProjectionDisplayMetadata = {
-  occurrenceKeys?: ReadonlyMap<unknown, string | undefined>;
-  displayRunIds?: ReadonlyMap<unknown, string>;
-};
-
 /** The only mutation boundary for the reducer and its rendered message array. */
 export function publishChatSessionProjection(
   owner: ChatSessionProjectionOwner,
-  nextProjection: SessionProjectionState,
-  { occurrenceKeys, displayRunIds }: ChatProjectionDisplayMetadata = {},
-): SessionProjectionState {
-  const projection =
-    occurrenceKeys?.size || displayRunIds?.size
-      ? {
-          ...nextProjection,
-          entries: nextProjection.entries.map((entry) => {
-            const key = occurrenceKeys?.get(entry.message);
-            // A retained row already owns its DOM; only an ambiguous replacement clears it.
-            const occurrenceKey =
-              occurrenceKeys?.has(entry.message) &&
-              (entry.occurrenceKey === undefined || key === undefined)
-                ? key
-                : entry.occurrenceKey;
-            const proposedRunId = displayRunIds?.get(entry.message) ?? entry.displayRunId;
-            const displayRunId =
-              !entry.identity?.runId || entry.identity.runId === proposedRunId
-                ? proposedRunId
-                : undefined;
-            return occurrenceKey === entry.occurrenceKey && displayRunId === entry.displayRunId
-              ? entry
-              : { ...entry, occurrenceKey, displayRunId };
-          }),
-        }
-      : nextProjection;
+  projection: SessionProjectionState,
+): void {
   const current = chatSessionProjections.get(owner);
   const runId = current?.runId;
   const previousScope = current?.projection?.scope;
@@ -350,7 +321,7 @@ export function publishChatSessionProjection(
   // Run-only transitions share the transcript array. Preserve their ownership
   // updates above without traversing or republishing every displayed row.
   if (current?.projection?.messages === projection.messages) {
-    return projection;
+    return;
   }
   if (
     owner.chatMessages.length !== projection.messages.length ||
@@ -358,14 +329,13 @@ export function publishChatSessionProjection(
   ) {
     owner.chatMessages = [...projection.messages];
   }
-  return projection;
 }
 
 /** Publish one exact live transcript order without dropping reducer-owned entry identity. */
 export function publishChatSessionProjectionMessages(
   owner: ChatSessionProjectionOwner,
   messages: readonly unknown[],
-  options: ChatProjectionDisplayMetadata & {
+  options: {
     event?: SessionProjectionEvent;
     scope?: SessionProjectionScope;
   } = {},
@@ -416,7 +386,8 @@ export function publishChatSessionProjectionMessages(
     entries,
     messages: acceptedMessages,
   };
-  return publishChatSessionProjection(owner, projection, options);
+  publishChatSessionProjection(owner, projection);
+  return projection;
 }
 
 /** Custody is its own display collection; only canonical user IDs can replace it. */

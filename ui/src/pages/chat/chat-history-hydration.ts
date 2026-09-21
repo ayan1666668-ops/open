@@ -11,7 +11,6 @@ import {
   isMissingOperatorReadScopeError,
 } from "../../lib/gateway-errors.ts";
 import { isSessionRunActive } from "../../lib/session-run-state.ts";
-import { resolveChatAgentId } from "./chat-agent-id.ts";
 import { requestSharedHistory } from "./chat-history-request.ts";
 import {
   type ObservedChatHistoryResult,
@@ -31,6 +30,7 @@ import {
   setChatHistoryLoad,
 } from "./chat-history-state.ts";
 import {
+  materializeVisibleAssistantStreamMessages,
   persistsChatCommentary,
   readRunProjections,
   applyHistoryRun,
@@ -43,6 +43,7 @@ import {
   readChatSessionProjectionScope,
   reduceChatSessionProjection,
   publishChatSessionProjection,
+  publishChatSessionProjectionMessages,
 } from "./history-merge.ts";
 import {
   controlUiNowMs,
@@ -59,13 +60,10 @@ import {
   visibleCurrentAssistantStreamTail,
 } from "./stream-reconciliation.ts";
 import {
-  collectAssistantStreamRetirement,
-  retireAuthoritativeTerminalHistory,
-} from "./stream-retirement.ts";
-import {
   pruneHistoryReplacedStreamSegments,
   prunePersistedToolStreamMessages,
 } from "./stream-segment-pruning.ts";
+import { reconcileAuthoritativeTerminalHistory } from "./terminal-message-identity.ts";
 import { persistedCurrentToolStreamIds } from "./tool-stream-identity.ts";
 
 function recordChatHistoryTiming(
@@ -237,6 +235,12 @@ export async function hydrateChatHistory(
     const nextPagination = resolveChatHistoryPagination(res);
     const nextSessionId = historySessionId(res);
     const visibleMessages = visibleChatHistoryMessages(messages);
+    const previousTerminalMessages = reconcileAuthoritativeTerminalHistory({
+      host: state,
+      previousMessages,
+      sessionKey,
+      visibleMessages,
+    });
     const nextDisplayedLeafEntryId = Object.hasOwn(res.sessionInfo ?? {}, "activeLeafEntryId")
       ? res.sessionInfo?.activeLeafEntryId?.trim() || null
       : (previousDisplayedLeafEntryId ?? null);
@@ -248,7 +252,7 @@ export async function hydrateChatHistory(
       nextMessages: visibleMessages,
       nextPagination,
       nextSessionId,
-      previousMessages: retainsTranscriptIdentity ? previousMessages : [],
+      previousMessages: retainsTranscriptIdentity ? previousTerminalMessages : [],
       previousPagination,
       previousSessionId,
     });
@@ -265,7 +269,6 @@ export async function hydrateChatHistory(
     // Only the pane-owned reducer proves which live and pending rows survive;
     // terminal-renderer cleanup must not reclassify them as history. A new
     // session or leaf starts empty.
-    const previousEntries = getChatSessionProjection(state).entries;
     const historyProjection = reduceChatSessionProjection(
       state,
       {
@@ -283,14 +286,6 @@ export async function hydrateChatHistory(
             : undefined,
       },
     );
-    if (retainsTranscriptIdentity) {
-      retireAuthoritativeTerminalHistory(
-        state,
-        { ...historyProjection.scope, agentId: resolveChatAgentId(state) },
-        previousEntries,
-        visibleMessages,
-      );
-    }
     if (Object.hasOwn(res.sessionInfo ?? {}, "activeLeafEntryId")) {
       state.chatDisplayedLeafEntryId = nextDisplayedLeafEntryId;
     }
@@ -314,14 +309,10 @@ export async function hydrateChatHistory(
     const activeStreamBeforeReset = state.chatRunId ? state.chatStream : null;
     const resetStream = !state.chatRunId || state.chatRunId === previousRunId;
     if (resetStream) {
-      const retirement = retainsTranscriptIdentity
-        ? collectAssistantStreamRetirement(state)
-        : undefined;
       const streamReconciliation = {
         persistCommentary: state.chatRunId ? true : persistsChatCommentary(state),
         isHiddenAssistantMessage: shouldHideAssistantChatMessage,
         isHiddenStreamText: isHiddenAssistantStreamText,
-        onReplace: retirement?.replace,
       };
       const hasVisibleStream = hasVisibleStreamParts(state, streamReconciliation);
       const historyReplacedStream = historyReplacedVisibleStream(
@@ -364,15 +355,17 @@ export async function hydrateChatHistory(
           visibleMessageCount: visibleMessages.length,
         });
       } else if (!state.chatRunId) {
-        const materialization = retirement ?? collectAssistantStreamRetirement(state);
-        materialization.publish(materialization.materialize(state.chatMessages));
+        publishChatSessionProjectionMessages(
+          state,
+          materializeVisibleAssistantStreamMessages(state.chatMessages, state),
+        );
         maybeResetToolStream(state);
         state.chatStream = null;
         state.chatStreamStartedAt = null;
       } else if (historyReplacedSomeToolStream) {
-        const materialization = retirement ?? collectAssistantStreamRetirement(state);
-        materialization.publish(
-          materialization.materialize(state.chatMessages, {
+        publishChatSessionProjectionMessages(
+          state,
+          materializeVisibleAssistantStreamMessages(state.chatMessages, state, {
             includeCurrent: false,
             requirePersistedTool: !historyReplacedToolStream,
             persistCommentary: true,
@@ -388,7 +381,6 @@ export async function hydrateChatHistory(
           prunePersistedToolStreamMessages(state, persistedToolStreamIds);
         }
       }
-      retirement?.publish();
     }
 
     applyHistoryRun({

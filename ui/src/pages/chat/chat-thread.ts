@@ -262,11 +262,9 @@ function sameChatItemsStructuralInput(
     previous.archiveNotice?.key === next.archiveNotice?.key &&
     previous.archiveNotice?.label === next.archiveNotice?.label &&
     previous.runId === next.runId &&
-    previous.runLifecycleGeneration === next.runLifecycleGeneration &&
     previous.compactionStatus === next.compactionStatus &&
     previous.locale === next.locale &&
     previous.messages === next.messages &&
-    previous.projectionEntries === next.projectionEntries &&
     previous.toolMessages === next.toolMessages &&
     previous.guardianNotices === next.guardianNotices &&
     previous.streamSegments === next.streamSegments &&
@@ -291,12 +289,7 @@ function sameChatItemsStructuralInput(
 }
 
 function liveStreamIdentity(input: BuildChatItemsProps): string {
-  return JSON.stringify([
-    input.sessionKey,
-    input.runId ?? null,
-    input.runLifecycleGeneration,
-    input.streamStartedAt,
-  ]);
+  return JSON.stringify([input.sessionKey, input.runId ?? null, input.streamStartedAt]);
 }
 
 function updateCachedLiveStream(cached: CachedChatItems, input: BuildChatItemsProps): boolean {

@@ -10,7 +10,6 @@ import {
   streamSegmentHasItemId,
   streamSegmentUsesAccumulatedText,
   type ChatStreamSegment,
-  type VisibleAssistantStreamPart,
 } from "../../lib/chat/chat-types.ts";
 import {
   streamCausalInterval,
@@ -37,10 +36,6 @@ type StreamSegmentPruningState = StreamCausalBoundaryState & {
 
 type AssistantMessageVisibility = (message: unknown) => boolean;
 type StreamVisibility = (stream: string) => boolean;
-type AssistantStreamRetirement = (
-  part: VisibleAssistantStreamPart,
-  messages: readonly unknown[],
-) => void;
 
 function pruneAccumulatedStreamSegments(
   segments: readonly ChatStreamSegment[],
@@ -77,10 +72,7 @@ export function discardStreamSegmentIndexes(
   );
 }
 
-export function reconcilePersistedAssistantStream(
-  state: StreamSegmentPruningState,
-  onReplace?: AssistantStreamRetirement,
-): void {
+export function reconcilePersistedAssistantStream(state: StreamSegmentPruningState): void {
   const runId = state.chatRunId;
   if (!runId) {
     return;
@@ -117,40 +109,7 @@ export function reconcilePersistedAssistantStream(
       !readAssistantStreamSegmentIdentity(message)
     );
   });
-  const parts = onReplace
-    ? visibleAssistantStreamParts(state, { isHiddenStreamText: () => false })
-    : [];
-  const tail = resolveCumulativeAssistantTail(
-    messages,
-    stream,
-    runId,
-    messages.length,
-    undefined,
-    onReplace
-      ? (consumed) => {
-          const end = consumed.at(-1)?.end ?? 0;
-          for (const part of parts) {
-            if (
-              part.itemId ||
-              part.runId !== runId ||
-              part.replacementText.length > end ||
-              !stream.startsWith(part.replacementText)
-            ) {
-              continue;
-            }
-            onReplace?.(
-              part,
-              consumed
-                .filter(
-                  (entry) =>
-                    entry.end > part.sourceStart && entry.start < part.replacementText.length,
-                )
-                .map((entry) => messages[entry.index]),
-            );
-          }
-        }
-      : undefined,
-  );
+  const tail = resolveCumulativeAssistantTail(messages, stream, runId);
   const prefix = stream.slice(0, stream.length - (tail?.length ?? 0));
   if (!prefix) {
     return;
@@ -352,7 +311,6 @@ export function retireCommentaryStream(
 export function prunePersistedAssistantStreamSegments(
   state: StreamCausalBoundaryState,
   message: unknown,
-  onReplace?: AssistantStreamRetirement,
 ): void {
   const identity = readAssistantStreamSegmentIdentity(message);
   if (!identity || !state.chatStreamSegments) {
@@ -365,19 +323,6 @@ export function prunePersistedAssistantStreamSegments(
     const sameRun = !identity.runId || !runId || identity.runId === runId;
     return normalizeOptionalString(segment.itemId) === identity.itemId && sameRun ? [index] : [];
   });
-  if (onReplace) {
-    for (const part of visibleAssistantStreamParts(
-      { ...state, chatStream: null, chatStreamStartedAt: null },
-      {
-        includeCurrent: false,
-        isHiddenStreamText: () => false,
-      },
-    )) {
-      if (part.segmentIndex !== undefined && replacedIndexes.includes(part.segmentIndex)) {
-        onReplace(part, [message]);
-      }
-    }
-  }
   discardStreamSegmentIndexes(state, replacedIndexes);
 }
 
@@ -388,7 +333,6 @@ export function pruneHistoryReplacedStreamSegments(
     isHiddenAssistantMessage: AssistantMessageVisibility;
     isHiddenStreamText: StreamVisibility;
     persistCommentary?: boolean;
-    onReplace?: AssistantStreamRetirement;
   },
 ): boolean {
   if (!Array.isArray(state.chatStreamSegments)) {
@@ -410,13 +354,6 @@ export function pruneHistoryReplacedStreamSegments(
         opts.isHiddenAssistantMessage,
         interval.start,
         interval.end,
-        opts.onReplace
-          ? (indexes) =>
-              opts.onReplace?.(
-                part,
-                indexes.map((index) => messages[index]),
-              )
-          : undefined,
       )
     ) {
       replacedIndexes.add(part.segmentIndex);
