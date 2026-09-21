@@ -146,20 +146,10 @@ function hasDreamingNarrativeLead(snippet: string): boolean {
   if (/^(?:Candidate|Reflections?):/i.test(withoutPrefix)) {
     return true;
   }
-  // Managed dreaming blocks occasionally serialize recall metadata (status:/confidence:/
-  // evidence:/recalls:) inline before the Candidate or Reflections marker, so the
-  // start-of-string check misses shapes like "status: staged - Candidate: User: ...".
-  // The composite detector below still requires the full signal combination, so widening
-  // the lead check to anywhere in the first 200 chars closes the leak without creating
-  // false positives for ordinary durable notes that merely mention the word in prose.
+  // Serialized metadata can precede narrative markers; bound the scan to the lead.
+  // REM uses a Markdown heading instead of the staged block's colon marker.
   const head = truncateUtf16Safe(withoutPrefix, 200);
-  if (/\b(?:Candidate|Reflections?):/i.test(head)) {
-    return true;
-  }
-  // buildRemReflections (dreaming-phases.ts) emits the REM block under a
-  // markdown heading ("### Reflections"), not a colon-suffixed marker, so
-  // match that heading form too.
-  return /#{1,6}\s+Reflections?\b/i.test(head);
+  return /\b(?:Candidate|Reflections?):/i.test(head) || /#{1,6}\s+Reflections?\b/i.test(head);
 }
 
 export function isContaminatedDreamingSnippet(
