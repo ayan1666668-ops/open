@@ -261,6 +261,14 @@ export function createCollectorLaunchCallbacks(params: {
     onRemoved: async (reason) => {
       try {
         if (reason === "cancelled" && params.operatorAuthority?.signal?.aborted) {
+          // Ronan's ruling: the scheduler has already removed the queued launch, so
+          // custody has transferred. Release the operator-source lease HERE, before
+          // awaiting settlement -- releasing only in the `finally` sequenced it after
+          // a settlement that cannot complete while the lease is held, which is the
+          // `sourceHolds: 1` / `collectorCleanupPending: true` liveness seam. Cleanup
+          // proceeds under the independent cleanup owner, never under operator
+          // authority; the `finally` release below stays as an idempotent backstop.
+          releaseAuthority();
           if (!(await settleLaunchFailure(params.operatorAuthority.signal.reason))) {
             throw new Error("Collector source revocation settlement is pending");
           }
