@@ -1,46 +1,80 @@
 ---
-summary: "Exact candidate identity and verification contracts for Swarm convergence"
+summary: "Exact candidate identity bound into native Swarm verifier launches"
 title: "Evidence-bound convergence"
 status: experimental
 ---
 
 # Evidence-bound convergence
 
-This experimental library checks consistency between an exact candidate manifest,
-a non-empty verification contract, and supplied measurement receipts. It does not
-authenticate the producer or establish that a claimed measurement really happened.
+Liquid search is intentionally permissive about *which hypotheses are explored*.
+Convergence is intentionally strict about *what exact candidate is being checked*.
 
-A candidate identity binds candidate content, source, execution recipe, policy, and
-manifest version. A receipt must match that complete identity and the contract
-digest. Changing any bound manifest component makes old receipts inapplicable.
+A candidate manifest binds:
 
-Each mandatory requirement has a unique id and a positive integer confirmation
-count. Receipts name the requirement they measured; one test receipt cannot satisfy
-a different test requirement merely because both have kind `test`. Conflicting
-receipts with the same measurement id are rejected. Identical duplicate receipts
-are idempotent, and receipt arrival order does not change the evidence digest.
-Any applicable failed receipt rejects the candidate instead of being averaged away.
+- candidate digest
+- source digest
+- execution recipe digest
+- governing policy digest
+- manifest version
+
+The canonical manifest produces a stable candidate identity. That manifest and
+identity are serialized into the verifier task before OpenClaw computes the
+existing launch fingerprint. If source, recipe, policy, or candidate bytes change,
+the launch identity changes too.
+
+```text
+many trajectories
+      |
+      v
+candidate chosen
+      |
+      v
+exact bytes + source + recipe + policy
+      |
+      v
+stable candidate identity
+      |
+      v
+verifier launch fingerprint
+```
+
+The digest proves identity of the supplied bytes. It does **not** prove that a
+test ran, that a verifier is independent, that the candidate is correct, or that
+an external effect is authorized.
 
 ## Trust boundary
 
-The caller must obtain receipts and independence keys from an appropriate trusted
-execution owner. An agent can fabricate JSON containing `passed: true` and different
-keys; this module cannot turn those claims into authentic evidence. Independent
-confirmation counts are meaningful only after provenance and isolation have been
-established outside this pure assessment function.
+Candidate identity is a data-binding primitive, not a proof system.
 
-A `verified` result means that the supplied trusted receipts satisfy the specified
-contract for the complete manifest. It does not mean universal correctness or
-permission to publish, merge, deploy, or send anything.
+The current implementation does not mint trusted measurement receipts, attest
+verifier independence, approve effects, publish artifacts, merge code, deploy,
+or grant new tools.
 
-`buildEffectRequest` retains the full manifest and rejects a mismatched verification
-binding. It creates only a request. It does not invoke a tool or mint an approval.
-The actual effect owner must still revalidate live identity, source state, policy,
-and existing OpenClaw permission and approval requirements before dispatch.
+The independent-verifier profile requires the existing sandbox owner to accept
+`sandbox: "require"`. A rejection is surfaced as an error; the bridge does not
+retry unsandboxed.
+
+## Liquid search, deterministic convergence
+
+> Increase entropy while searching; reduce ambiguity while converging.
+
+Explorers may disagree, branch, mutate, and arrive in different orders. Once a
+candidate crosses the convergence boundary, downstream verification must refer
+to the same bytes under the same source, recipe, and policy context.
 
 ## Integration status
 
-The native profile spawn path is supplied by the preceding PR. Automatic trusted
-measurement capture and attaching evidence to every effect owner are not implemented
-by this assessment library. Full repository CI and a live native Swarm proof remain
-required before claiming end-to-end qualification.
+Shipped in this experiment:
+
+- candidate manifest validation
+- deterministic candidate identity
+- manifest/identity binding into native spawn preparation
+- launch identity invalidation when candidate/source/recipe/policy changes
+- conflict rejection between explicit handoff digest and candidate manifest
+
+Deferred:
+
+- authenticated measurement receipts
+- trusted verifier-independence attestations
+- effect requests and effect authorization
+- persistent provenance beyond existing OpenClaw owners
