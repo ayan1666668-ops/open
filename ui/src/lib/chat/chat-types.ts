@@ -166,7 +166,13 @@ export type ChatQueueItem = {
 
 /** Union type for items in the chat thread */
 export type ChatItem =
-  | { kind: "message"; key: string; message: unknown; duplicateCount?: number }
+  | {
+      kind: "message";
+      key: string;
+      message: unknown;
+      duplicateCount?: number;
+      displayRunId?: string;
+    }
   | {
       kind: "notice";
       key: string;

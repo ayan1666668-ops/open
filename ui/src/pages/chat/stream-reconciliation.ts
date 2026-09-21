@@ -167,12 +167,21 @@ function unkeyedStreamFallbackMetadata(message: unknown): Record<string, unknown
 export function appendTerminalAssistantMessage(
   messages: unknown[],
   message: unknown,
-  opts?: { preserveKeyedCommentary?: boolean; onReplace?: (previous: unknown[]) => void },
+  opts?: {
+    preserveKeyedCommentary?: boolean;
+    authoritativeRunId?: string;
+    onReplace?: (previous: unknown[]) => void;
+  },
 ): unknown[] {
   const targetPresent = messages.includes(message);
   const identity = readSessionMessageIdentity(message);
   const terminalRunId =
-    (identity?.role === "assistant" ? identity.runId : null) ?? readLiveTerminalRunId(message);
+    (identity?.role === "assistant" ? identity.runId : null) ??
+    opts?.authoritativeRunId ??
+    readLiveTerminalRunId(message);
+  if (opts?.authoritativeRunId && terminalRunId !== opts.authoritativeRunId) {
+    return messages;
+  }
   let afterBoundaryRunId = readLiveTerminalAfterBoundaryRunId(message) ?? undefined;
   if (terminalRunId) {
     for (let index = messages.length - 1; index >= 0; index -= 1) {
@@ -206,7 +215,19 @@ export function appendTerminalAssistantMessage(
       continue;
     }
     const fallback = streamFallbackMetadata(existing);
+    // A receipt identifies one local run, not every body in its causal interval.
+    // Unknown/foreign fallback ownership must not be inferred from matching text.
+    if (
+      opts?.authoritativeRunId &&
+      (normalizeOptionalString(fallback?.runId) ?? readLiveTerminalRunId(existing)) !==
+        opts.authoritativeRunId
+    ) {
+      continue;
+    }
     if (!fallback) {
+      if (opts?.authoritativeRunId) {
+        removedIndexes.add(index);
+      }
       continue;
     }
     const visibleText = extractText(existing)?.trim();

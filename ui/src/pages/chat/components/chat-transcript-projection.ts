@@ -156,6 +156,7 @@ export function projectChatTranscript(
     compactionStatus: props.compactionStatus,
     locale,
     messages: props.messages,
+    projectionEntries: props.projectionEntries,
     toolMessages: props.toolMessages,
     guardianNotices: props.guardianNotices,
     streamSegments: props.streamSegments,

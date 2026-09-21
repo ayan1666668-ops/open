@@ -399,8 +399,19 @@ export function projectLiveSessionMessage(
   }
   // Tentative adoption can later restore the original beside its candidate.
   // Only definitive replacements may inherit the original occurrence.
-  if (!inferredReplacement && existing.occurrenceKey !== undefined) {
-    incoming.occurrenceKey = existing.occurrenceKey;
+  if (
+    !inferredReplacement &&
+    (existing.occurrenceKey !== undefined || existing.displayRunId !== undefined)
+  ) {
+    const exact = matches.filter((entry) =>
+      sameTranscriptIdentity(entry.identity, incoming.identity),
+    );
+    if (exact.length === 1 || (exact.length === 0 && matches.length === 1)) {
+      incoming.occurrenceKey = existing.occurrenceKey;
+      if (!incoming.identity.runId || incoming.identity.runId === existing.displayRunId) {
+        incoming.displayRunId = existing.displayRunId;
+      }
+    }
   }
   if (
     incoming.identity.sequence !== null &&
@@ -477,7 +488,7 @@ export function reconcileSessionProjectionSnapshot(
             matchedIdentity: terminalMatch.entry.identity,
           },
         };
-      } else if (current.occurrenceKey !== undefined) {
+      } else if (current.occurrenceKey !== undefined || current.displayRunId !== undefined) {
         const replacement = terminalMatch?.entry ?? uniqueMatch;
         if (replacement) {
           retainOccurrence(replacement, current);

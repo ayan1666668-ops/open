@@ -76,7 +76,7 @@ describeControlUiE2e("Control UI fenced code blocks", () => {
     await server?.close();
   });
 
-  it.each(["final-first", "persisted-first", "snapshot-first"] as const)(
+  it.each(["final-first", "persisted-first", "snapshot-first", "receipt-first"] as const)(
     "retains reader controls through promotion and %s handoff",
     async (arrival) => {
       const context = await browser.newContext({
@@ -132,15 +132,21 @@ describeControlUiE2e("Control UI fenced code blocks", () => {
           role: "assistant",
           content: [{ type: "text", text: initial + suffix }],
           stopReason: "stop",
-          __openclaw: { id: "retained-answer", seq: 2, runId, runTerminal: true },
+          __openclaw: {
+            id: "retained-answer",
+            seq: 2,
+            ...(arrival === "receipt-first" ? {} : { runId, runTerminal: true }),
+          },
         };
         const savedUser = {
           role: "user",
           content: "Show the deployment checks",
           __openclaw: { id: "retained-prompt", seq: 1, idempotencyKey: `${runId}:user`, runId },
         };
+        const savedHistory: unknown[] = [savedUser, saved];
+        let latestRunId = runId;
         const reloadHistory = async () => {
-          await gateway.setHistoryMessages(structuredClone([savedUser, saved]));
+          await gateway.setHistoryMessages(structuredClone(savedHistory));
           const beforeHistory = (await gateway.getRequests("chat.history")).length;
           await gateway.emitGatewayEvent("sessions.changed", {
             sessionKey: "agent:main:main",
@@ -151,7 +157,7 @@ describeControlUiE2e("Control UI fenced code blocks", () => {
               hasActiveRun: false,
               activeRunIds: [],
               status: "done",
-              lastRunId: runId,
+              lastRunId: latestRunId,
               updatedAt: Date.now(),
             },
           });
@@ -163,13 +169,13 @@ describeControlUiE2e("Control UI fenced code blocks", () => {
           expect(await retained?.evaluate((element) => element.className)).toContain("is-wrapped");
           expect(await retained?.evaluate((element) => element.className)).toContain("is-expanded");
         };
-        if (arrival === "persisted-first") {
+        if (arrival === "persisted-first" || arrival === "receipt-first") {
           await gateway.setHistoryMessages(structuredClone([savedUser, saved]));
           await gateway.emitGatewayEvent("session.message", {
             message: saved,
             messageId: "retained-answer",
             messageSeq: 2,
-            runId,
+            ...(arrival === "receipt-first" ? { clientRunId: runId } : { runId }),
             sessionKey: "main",
             session: {
               key: "main",
@@ -193,6 +199,63 @@ describeControlUiE2e("Control UI fenced code blocks", () => {
         expect(await retained?.evaluate((element) => element.isConnected)).toBe(true);
         for (let reload = 0; reload < 2; reload += 1) {
           await reloadHistory();
+        }
+        if (arrival === "receipt-first") {
+          // A later terminal replaces the host's latest receipt, not the earlier row's display owner.
+          await page
+            .locator(".agent-chat__composer-combobox textarea")
+            .fill("Confirm the second check");
+          const sent = (await gateway.getRequests("chat.send")).length;
+          await page.getByRole("button", { name: "Send message" }).click();
+          const second = await gateway.waitForRequest("chat.send", { after: sent });
+          latestRunId = requireString(requireRecord(second.params).idempotencyKey, "second run id");
+          const secondAnswer = {
+            role: "assistant",
+            content: "Second check complete.",
+            stopReason: "stop",
+            __openclaw: { id: "second-answer", seq: 4 },
+          };
+          savedHistory.push(
+            {
+              role: "user",
+              content: "Confirm the second check",
+              __openclaw: {
+                id: "second-prompt",
+                seq: 3,
+                idempotencyKey: `${latestRunId}:user`,
+                runId: latestRunId,
+              },
+            },
+            secondAnswer,
+          );
+          await gateway.emitGatewayEvent("chat", {
+            message: { role: "assistant", content: "Second check complete." },
+            runId: latestRunId,
+            sessionKey: "main",
+            state: "delta",
+          });
+          await gateway.setHistoryMessages(structuredClone(savedHistory));
+          await gateway.emitGatewayEvent("session.message", {
+            message: secondAnswer,
+            messageId: "second-answer",
+            messageSeq: 4,
+            clientRunId: latestRunId,
+            sessionKey: "main",
+            session: {
+              key: "main",
+              kind: "direct",
+              hasActiveRun: false,
+              activeRunIds: [],
+              status: "done",
+              lastRunId: latestRunId,
+              updatedAt: Date.now(),
+            },
+          });
+          await expect.poll(() => page.locator('[data-entry-id="second-answer"]').count()).toBe(1);
+          await gateway.emitChatFinal({ runId: latestRunId, text: "Second check complete." });
+          for (let reload = 0; reload < 2; reload += 1) {
+            await reloadHistory();
+          }
         }
         if (captureProof) {
           await page.screenshot({

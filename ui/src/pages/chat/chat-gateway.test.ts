@@ -34,7 +34,6 @@ import {
   authoritativeHistoryAppliedForRun,
   reconcileAuthoritativeTerminalHistory,
   rememberAuthoritativeTerminal,
-  rememberLiveTerminalRun,
 } from "./terminal-message-identity.ts";
 import { createHost } from "./tool-stream.test-helpers.ts";
 import { handleAgentEvent } from "./tool-stream.ts";
@@ -3013,10 +3012,6 @@ describe("authoritative terminal history identity", () => {
       content: [{ type: "text", text: "Native terminal" }],
       __openclaw: { id: "native-terminal" },
     };
-    const liveTerminal = rememberLiveTerminalRun(
-      { role: "assistant", content: [{ type: "text", text: "Native terminal" }] },
-      "run-1",
-    );
     rememberAuthoritativeTerminal({
       event: { key: "main", runId: "run-1", hasActiveRun: false },
       host,
@@ -3026,25 +3021,23 @@ describe("authoritative terminal history identity", () => {
         messageId: "conflicting-envelope-id",
       },
       runIdBeforeApply: "run-1",
+      scope: { sessionKey: "main" },
     });
 
-    const previousMessages = [liveTerminal];
     const collided = reconcileAuthoritativeTerminalHistory({
       host,
-      previousMessages,
-      sessionKey: "main",
-      visibleMessages: [collision],
+      scope: { sessionKey: "main" },
+      messages: [collision],
     });
-    expect(collided).toEqual(previousMessages);
+    expect(collided).toBeNull();
     expect(authoritativeHistoryAppliedForRun(host, "run-1")).toBe(false);
 
     const persisted = reconcileAuthoritativeTerminalHistory({
       host,
-      previousMessages,
-      sessionKey: "main",
-      visibleMessages: [collision, nativeTerminal],
+      scope: { sessionKey: "main" },
+      messages: [collision, nativeTerminal],
     });
-    expect(persisted).toEqual([]);
+    expect(persisted).toEqual({ runId: "run-1", messages: [nativeTerminal] });
     expect(authoritativeHistoryAppliedForRun(host, "run-1")).toBe(true);
   });
 });

@@ -1,4 +1,8 @@
-import type { SessionProjectionEntry } from "@openclaw/gateway-client/browser";
+import {
+  readSessionMessageIdentity,
+  type SessionProjectionEntry,
+  type SessionProjectionScope,
+} from "@openclaw/gateway-client/browser";
 import type { SessionRunStatus } from "../../api/types.ts";
 import type { VisibleAssistantStreamPart } from "../../lib/chat/chat-types.ts";
 import {
@@ -15,10 +19,14 @@ import {
   publishChatSessionProjectionMessages,
 } from "./history-merge.ts";
 import {
+  appendTerminalAssistantMessage,
   materializeVisibleStreamState,
   retainAssistantStreamSegmentOccurrences,
 } from "./stream-reconciliation.ts";
-import { rememberLiveTerminalRun } from "./terminal-message-identity.ts";
+import {
+  reconcileAuthoritativeTerminalHistory,
+  rememberLiveTerminalRun,
+} from "./terminal-message-identity.ts";
 
 type RetirementState = Parameters<typeof getChatSessionProjection>[0] &
   AssistantStreamOccurrenceState & {
@@ -108,14 +116,77 @@ export function collectAssistantStreamRetirement(
       }
       if (messages && (messages !== state.chatMessages || options.event || options.scope)) {
         publishChatSessionProjectionMessages(state, messages, { ...options, occurrenceKeys: keys });
-      } else if (keys.size) {
-        publishChatSessionProjection(state, getChatSessionProjection(state), keys);
+      } else if (keys.size || options.displayRunIds?.size) {
+        publishChatSessionProjection(state, getChatSessionProjection(state), {
+          occurrenceKeys: keys,
+          displayRunIds: options.displayRunIds,
+        });
       }
     },
   };
 }
 
 type RetiringState = Omit<RetirementState, "chatMessages"> & { chatMessages?: unknown[] };
+
+/** Apply the native message receipt to the accepted projection, not a discarded history array. */
+export function retireAuthoritativeTerminalHistory(
+  state: RetirementState,
+  scope: SessionProjectionScope,
+  previousEntries: readonly SessionProjectionEntry[],
+  snapshotMessages: readonly unknown[],
+): void {
+  const accepted = new Set(state.chatMessages);
+  const receipt = reconcileAuthoritativeTerminalHistory({
+    host: state,
+    scope,
+    messages: snapshotMessages.filter((message) => accepted.has(message)),
+  });
+  if (!receipt) {
+    return;
+  }
+  const retirement = collectAssistantStreamRetirement(state, previousEntries);
+  const previous = previousEntries.map((entry) => entry.message);
+  const candidates = [
+    ...previous,
+    ...receipt.messages.filter((message) => !previous.includes(message)),
+  ];
+  const consumed = new Set<unknown>();
+  for (const target of receipt.messages) {
+    // Every accepted target sees the same predecessors. Duplicate native IDs
+    // are ambiguous; none may inherit the first matching body's occurrence.
+    appendTerminalAssistantMessage(candidates, target, {
+      authoritativeRunId: receipt.runId,
+      preserveKeyedCommentary: true,
+      onReplace: (sources) => {
+        for (const source of sources) {
+          consumed.add(source);
+        }
+        retirement.replaceMessages(sources, target);
+      },
+    });
+    const identity = readSessionMessageIdentity(target);
+    retirement.replaceMessages(
+      previousEntries
+        .filter(
+          (entry) =>
+            entry.identity?.role === "assistant" &&
+            !entry.identity.isImported &&
+            entry.identity.id === identity?.id &&
+            (!entry.identity.runId || entry.identity.runId === receipt.runId),
+        )
+        .map((entry) => entry.message),
+      target,
+    );
+  }
+  retirement.publish(
+    state.chatMessages.filter((message) => !consumed.has(message)),
+    {
+      scope,
+      displayRunIds:
+        receipt.messages.length === 1 ? new Map([[receipt.messages[0], receipt.runId]]) : undefined,
+    },
+  );
+}
 
 function hasRetiringTranscript(state: RetiringState): state is RetirementState {
   return Array.isArray(state.chatMessages);

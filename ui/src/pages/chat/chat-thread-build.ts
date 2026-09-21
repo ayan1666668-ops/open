@@ -1,4 +1,7 @@
-import { readSessionMessageIdentity } from "@openclaw/gateway-client/browser";
+import {
+  readSessionMessageIdentity,
+  type SessionProjectionEntry,
+} from "@openclaw/gateway-client/browser";
 import { asNullableRecord as asRecord } from "@openclaw/normalization-core/record-coerce";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import type { ChatPendingInputsPage } from "../../../../packages/gateway-protocol/src/schema/logs-chat.js";
@@ -93,6 +96,7 @@ export type BuildChatItemsProps = ChatStreamProjectionProps & {
   /** Invalidates cached display copy when the active UI language changes. */
   locale?: string;
   messages: unknown[];
+  projectionEntries?: readonly SessionProjectionEntry[];
   guardianNotices?: ChatGuardianNotice[];
   initialTurnId?: string;
   pendingInputs?: ChatPendingInputsPage["items"];
@@ -145,7 +149,11 @@ export function buildChatItems(props: BuildChatItemsProps): Array<ChatItem | Mes
   const searchFiltering = props.searchOpen === true && Boolean(props.searchQuery?.trim());
   const persistedCanvasIdentities = new Set<string>();
   const normalizedHistory = history.map(safeNormalizeMessage);
-  const historyItems = buildMessageItems(history);
+  const historyItems = buildMessageItems(
+    history,
+    undefined,
+    new Map(props.projectionEntries?.map((entry) => [entry.message, entry.displayRunId])),
+  );
   let canvasTurn: {
     previews: { preview: CanvasToolPreview; item: (typeof historyItems)[number] }[];
     lastMatchingAssistantIndex: number;

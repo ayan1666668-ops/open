@@ -1,4 +1,7 @@
-import { readSessionMessageIdentity } from "@openclaw/gateway-client/browser";
+import {
+  readSessionMessageIdentity,
+  type SessionProjectionScope,
+} from "@openclaw/gateway-client/browser";
 import { asNullableRecord } from "@openclaw/normalization-core/record-coerce";
 import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
 import { areUiSessionKeysEquivalent } from "../../lib/sessions/session-key.ts";
@@ -16,7 +19,7 @@ type AuthoritativeTerminal = {
   historyApplied: boolean;
   messageId: string;
   runId: string;
-  sessionKey: string;
+  scope: SessionProjectionScope;
 };
 
 /** Associates a live terminal projection with its run without altering transcript bytes. */
@@ -69,56 +72,77 @@ export function rememberAuthoritativeTerminal(options: {
     key: string;
     runId?: string | null;
   };
-  host: object;
+  host: {
+    lastLocalTerminalReconcile?: {
+      sessionKey: string;
+      agentId?: string;
+      runId: string | null;
+    } | null;
+  };
   matchesChat: boolean;
   payload: unknown;
   runIdBeforeApply: string | null;
+  scope: SessionProjectionScope;
 }): void {
   const payload = asNullableRecord(options.payload);
   const identity = readSessionMessageIdentity(payload?.message, {
     messageId: payload?.messageId,
   });
   const messageId = identity?.role === "assistant" && !identity.isImported ? identity.id : null;
-  if (
-    !options.runIdBeforeApply ||
-    !options.matchesChat ||
-    options.event.hasActiveRun === true ||
-    !messageId
-  ) {
+  const recent = options.host.lastLocalTerminalReconcile;
+  // Shared session publication can retire the local run before this event reaches
+  // the pane. Its exact scoped tombstone is a receipt, not producer admission.
+  const receiptRunId =
+    options.runIdBeforeApply ??
+    (recent &&
+    areUiSessionKeysEquivalent(recent.sessionKey, options.scope.sessionKey) &&
+    recent.agentId === options.scope.agentId &&
+    (!options.event.runId || options.event.runId === recent.runId) &&
+    (!options.event.clientRunId || options.event.clientRunId === recent.runId)
+      ? recent.runId
+      : null);
+  if (!receiptRunId || !options.matchesChat || options.event.hasActiveRun === true || !messageId) {
     return;
   }
   authoritativeTerminals.set(options.host, {
     historyApplied: false,
     messageId,
-    runId: options.event.clientRunId ?? options.event.runId ?? options.runIdBeforeApply,
-    sessionKey: options.event.key,
+    runId: options.event.clientRunId ?? options.event.runId ?? receiptRunId,
+    scope: options.scope,
   });
 }
 
 export function reconcileAuthoritativeTerminalHistory<T>(options: {
   host: object;
-  previousMessages: T[];
-  sessionKey: string;
-  visibleMessages: T[];
-}): T[] {
+  scope: SessionProjectionScope;
+  messages: T[];
+}): { runId: string; messages: T[] } | null {
   const terminal = authoritativeTerminals.get(options.host);
-  const historyContainsTerminal = Boolean(
-    terminal &&
-    areUiSessionKeysEquivalent(terminal.sessionKey, options.sessionKey) &&
-    options.visibleMessages.some((message) => {
-      const identity = readSessionMessageIdentity(message);
-      return (
-        identity?.role === "assistant" && !identity.isImported && identity.id === terminal.messageId
-      );
-    }),
-  );
-  if (!terminal || !historyContainsTerminal) {
-    return options.previousMessages;
+  if (
+    !terminal ||
+    !terminal.scope.sessionKey ||
+    !options.scope.sessionKey ||
+    !areUiSessionKeysEquivalent(terminal.scope.sessionKey, options.scope.sessionKey) ||
+    (["agentId", "sessionId", "activeLeafEntryId", "lifecycleRevision"] as const).some(
+      (key) => terminal.scope[key] !== undefined && terminal.scope[key] !== options.scope[key],
+    )
+  ) {
+    return null;
+  }
+  const messages = options.messages.filter((message) => {
+    const identity = readSessionMessageIdentity(message);
+    return (
+      identity?.role === "assistant" &&
+      !identity.isImported &&
+      identity.id === terminal.messageId &&
+      (!identity.runId || identity.runId === terminal.runId)
+    );
+  });
+  if (!messages.length) {
+    return null;
   }
   authoritativeTerminals.set(options.host, { ...terminal, historyApplied: true });
-  return options.previousMessages.filter(
-    (message) => !isLiveTerminalForRun(message, terminal.runId),
-  );
+  return { runId: terminal.runId, messages };
 }
 
 export function authoritativeHistoryAppliedForRun(host: object, runId: string): boolean {

@@ -1,3 +1,4 @@
+import { expectDefined } from "@openclaw/normalization-core/expect";
 import { describe, expect, it } from "vitest";
 import {
   createSessionProjection,
@@ -57,6 +58,49 @@ function keys(state: SessionProjectionState) {
 }
 
 describe("session projection occurrence continuity", () => {
+  it.each(["event", "snapshot"] as const)(
+    "retains display-only ownership across %s clones independently of body continuity",
+    (arrival) => {
+      const saved = { ...final, __openclaw: { id: "answer-1", seq: 2 } };
+      let state = createSessionProjection(scope, [user, saved]);
+      expectDefined(state.entries[1], "saved entry").displayRunId = "run-1";
+      for (let reload = 0; reload < 2; reload += 1) {
+        state = reduceSessionProjection(
+          state,
+          arrival === "event"
+            ? { type: "messagePersisted", message: structuredClone(saved) }
+            : { type: "snapshotLoaded", messages: structuredClone([user, saved]) },
+        );
+        expect(state.entries[1]?.displayRunId).toBe("run-1");
+        expect(state.entries[1]?.occurrenceKey).toBeUndefined();
+      }
+      expect(JSON.stringify(state.messages)).not.toContain("displayRunId");
+      state = reduceSessionProjection(state, {
+        type: "snapshotLoaded",
+        messages: [user, { ...saved, __openclaw: { ...saved["__openclaw"], runId: "other-run" } }],
+      });
+      expect(state.entries[1]?.displayRunId).toBeUndefined();
+    },
+  );
+
+  it.each(["event", "snapshot"] as const)(
+    "does not choose display provenance among tagged and untagged duplicate %s predecessors",
+    (arrival) => {
+      const saved = { ...final, __openclaw: { id: "answer-1", seq: 2 } };
+      let state = createSessionProjection(scope, [saved, structuredClone(saved)]);
+      expectDefined(state.entries[0], "saved entry").displayRunId = "run-1";
+      expectDefined(state.entries[0], "saved entry").occurrenceKey = "body-1";
+      state = reduceSessionProjection(
+        state,
+        arrival === "event"
+          ? { type: "messagePersisted", message: structuredClone(saved) }
+          : { type: "snapshotLoaded", messages: [structuredClone(saved)] },
+      );
+      expect(state.entries.every((entry) => entry.displayRunId === undefined)).toBe(true);
+      expect(keys(state)).toEqual([]);
+      expect(state.messages).toHaveLength(arrival === "event" ? 2 : 1);
+    },
+  );
   it.each(["event", "snapshot"] as const)(
     "retains definitive %s adoption and two cloned snapshots",
     (arrival) => {
@@ -129,6 +173,7 @@ describe("session projection occurrence continuity", () => {
     { activeLeafEntryId: "leaf-2" },
   ])("retires continuity on scope change %j", (change) => {
     const previous = liveFinal();
+    expectDefined(previous.entries.at(-1), "live entry").displayRunId = "run-1";
     // A stale event cannot switch scope; the snapshot owner explicitly accepts the new scope.
     expect(
       reduceSessionProjection(previous, {
@@ -142,18 +187,22 @@ describe("session projection occurrence continuity", () => {
       ...change,
     });
     expect(keys(state)).toEqual([]);
+    expect(state.entries.every((entry) => entry.displayRunId === undefined)).toBe(true);
   });
 
   it("does not mint client occurrence keys from external message metadata", () => {
     const message = {
       ...savedFinal(),
       occurrenceKey: "forged",
+      displayRunId: "forged-run",
       __openclaw: {
         ...savedFinal()["__openclaw"],
         occurrenceKey: "also-forged",
+        displayRunId: "also-forged-run",
       },
     };
     expect(keys(createSessionProjection(scope, [message, structuredClone(message)]))).toEqual([]);
+    expect(createSessionProjection(scope, [message]).entries[0]?.displayRunId).toBeUndefined();
   });
 
   it("does not duplicate an occurrence when a snapshot repeats a durable row", () => {

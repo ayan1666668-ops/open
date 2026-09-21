@@ -193,6 +193,8 @@ export type SessionProjectionEntry = {
   identity: SessionMessageIdentity | null;
   /** Client-local occurrence continuity; never read from or written into transcript data. */
   occurrenceKey?: string;
+  /** Receipt-proven presentation ownership, independent of persisted run admission. */
+  displayRunId?: string;
   afterSequence?: number | null;
   live: boolean;
   pending: boolean;
@@ -228,10 +230,14 @@ export function retainSessionProjectionSnapshotOccurrences<Entry extends Session
     const owner = previousOwner === undefined || previousOwner === current ? current : null;
     owners.set(entry, owner);
     entry.occurrenceKey = owner?.occurrenceKey;
+    entry.displayRunId =
+      !entry.identity?.runId || entry.identity.runId === owner?.displayRunId
+        ? owner?.displayRunId
+        : undefined;
   };
   for (const current of previous) {
     const identity = occurrenceIdentity(current);
-    if (current.occurrenceKey === undefined || identity == null) {
+    if (identity == null) {
       continue;
     }
     const matches = candidates

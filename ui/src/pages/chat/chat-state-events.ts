@@ -170,7 +170,14 @@ function handleSessionMessageEvent(
     state.selectedChatSessionArchived = event.archived;
   }
   const runIdBeforeApply = state.chatRunId;
-  rememberAuthoritativeTerminal({ event, host: state, matchesChat, payload, runIdBeforeApply });
+  rememberAuthoritativeTerminal({
+    event,
+    host: state,
+    matchesChat,
+    payload,
+    runIdBeforeApply,
+    scope: readChatSessionProjectionScope(state, { agentId: resolveChatAgentId(state) }),
+  });
   const result = reconcileSessionEvent(state, payload);
   if (runIdBeforeApply && matchesChat) {
     const runId = event.clientRunId ?? event.runId ?? runIdBeforeApply;

@@ -266,6 +266,7 @@ function sameChatItemsStructuralInput(
     previous.compactionStatus === next.compactionStatus &&
     previous.locale === next.locale &&
     previous.messages === next.messages &&
+    previous.projectionEntries === next.projectionEntries &&
     previous.toolMessages === next.toolMessages &&
     previous.guardianNotices === next.guardianNotices &&
     previous.streamSegments === next.streamSegments &&
