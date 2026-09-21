@@ -54,6 +54,16 @@ function createContext(): FinalizeReplyAgentRunInput {
   return {
     activeIsNewSession: false,
     activeSessionEntry: undefined,
+    // accountAgentTurn calls continuation.resetContinuationChainForFreshTurn();
+    // FinalizeReplyAgentRunInput requires the controller, so the fixture has to
+    // supply one. These cases assert waiting-status delivery, not chain state,
+    // so the stub records nothing and returns the empty chain.
+    continuation: {
+      persistContinuationChainState: async () => ({ chainId: undefined, entry: undefined }),
+      resetContinuationChainForFreshTurn: async () => {},
+      postCompactionDelegatesToPreserve: [],
+    },
+    getActiveSessionEntry: () => undefined,
     activeSessionStore: undefined,
     blockReplyPipeline: null,
     blockStreamingEnabled: false,
