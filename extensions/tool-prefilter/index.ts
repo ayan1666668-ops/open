@@ -52,7 +52,7 @@ export default definePluginEntry({
             },
           },
           {
-            agentId: ctx.agentId,
+            agentId: ctx?.agentId,
             purpose: "tool-prefilter.semantic-gate",
             rubricVersion: "1",
             timeoutMs,
