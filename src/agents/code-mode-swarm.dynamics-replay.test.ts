@@ -137,7 +137,11 @@ describe("Code Mode dynamics native replay", () => {
     async () => {
       const config = await writeConfig();
       const dispatchGatewayMethodInProcess = vi.fn(
-        async <T>(_method: string, _params: Record<string, unknown>) => {
+        async <T>(
+        _method: string,
+        _params: Record<string, unknown>,
+        _options?: unknown,
+      ) => {
           // SAFETY: this fixture supplies the accepted Gateway response shape for the generic T.
           return { runId: "native-replay-run", status: "accepted" } as T;
         },
