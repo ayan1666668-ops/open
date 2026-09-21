@@ -56,7 +56,6 @@ describe("device placement projection", () => {
       },
     );
     expect(device?.selectable).toBe(state === "invocable");
-    expect(device?.nodeToolsAvailable).toBe(true);
     if (text) {
       expect(device?.disabledReason).toContain(text);
       expect(device?.disabledReason).not.toContain("example.exec");

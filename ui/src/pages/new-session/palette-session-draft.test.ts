@@ -9,7 +9,6 @@ import type { SessionCreateOutcome } from "../../lib/sessions/create.ts";
 import { writeSessionPlacementRecovery } from "../../lib/sessions/session-placement-recovery.ts";
 import * as toast from "../../lib/toast.ts";
 import { OpenClawLightDomElement } from "../../lit/openclaw-element.ts";
-import { DraftGatewayState } from "./draft-gateway-state.ts";
 import { NewSessionDraftPersistence } from "./draft-persistence.ts";
 import { createDraftFixture } from "./draft-submission-flow.test-support.ts";
 import { PaletteSessionDraft } from "./palette-session-draft.ts";
@@ -72,23 +71,8 @@ afterEach(() => {
 });
 
 describe("PaletteSessionDraft", () => {
-  it("keeps the focused computer when an earlier computer gains or loses a command alternative", async () => {
-    let alphaReady = true;
-    vi.spyOn(DraftGatewayState.prototype, "environments", "get").mockImplementation(() =>
-      ["alpha", "beta"].map((id) => ({
-        id: `node:${id}`,
-        type: "node",
-        label: id === "alpha" ? "Alpha computer" : "Beta computer",
-        status: "available",
-        sessionHost: true,
-        invocableCommands: ["system.run", "example.exec"],
-        requiredNodeCommand: {
-          command: "example.exec",
-          state: id === "alpha" && !alphaReady ? "undeclared" : "invocable",
-        },
-      })),
-    );
-    const { host } = await mount({
+  it("keeps unsupported computers blocked with a warning and no split alternative", async () => {
+    const { host, context } = await mount({
       scopes: ["operator.admin"],
       methods: ["sessions.create", "environments.list", "projects.list"],
       agents: [{ id: "main", workspace: "/workspace", model: { primary: "example/model" } }],
@@ -102,139 +86,70 @@ describe("PaletteSessionDraft", () => {
             agentRuntime: {
               id: "example-runtime",
               source: "model",
-              nodeToolsSupported: true,
+              devicePlacementSupported: true,
               devicePlacement: {
                 requiredNodeCommands: ["example.exec"],
                 consumesWorkerSlot: false,
+                setup: {
+                  label: "Example",
+                  missingCommandHint: "Enable the Example plugin, then reconnect.",
+                },
               },
             },
           },
         ],
       }),
       request: async (method) =>
-        method === "environments.list" ? { environments: [] } : { projects: [] },
+        method === "environments.list"
+          ? {
+              environments: [
+                {
+                  id: "node:runner",
+                  type: "node",
+                  label: "Build runner",
+                  status: "available",
+                  sessionHost: true,
+                  invocableCommands: ["system.run"],
+                  requiredNodeCommand: { command: "example.exec", state: "undeclared" },
+                },
+              ],
+            }
+          : method === "projects.list"
+            ? {
+                projects: [
+                  { id: "one", displayName: "Project one", rootPath: "/one" },
+                  { id: "two", displayName: "Project two", rootPath: "/two" },
+                ],
+              }
+            : {},
     });
     expectDefined(
       host.querySelector<HTMLButtonElement>(".palette-session-settings__workspace"),
       "workspace picker",
     ).click();
     await host.updateComplete;
-    const beta = expectDefined(
-      host.querySelector<HTMLButtonElement>('[data-machine="device:beta"]'),
-      "Beta computer",
-    );
-    await vi.waitFor(() => expect(beta.disabled).toBe(false));
-    beta.focus();
-    expect(document.activeElement).toBe(beta);
-    for (const ready of [false, true]) {
-      alphaReady = ready;
-      host.requestUpdate();
-      await host.updateComplete;
-      expect(Boolean(host.querySelector('[data-machine="node-tools:alpha"]'))).toBe(!ready);
-      expect(document.activeElement).toBe(beta);
-      expect(beta.getAttribute("data-machine")).toBe("device:beta");
-    }
-    beta.click();
-    await host.updateComplete;
-    expect(host.querySelector(".palette-session-settings__workspace")?.textContent).toContain(
-      "Beta computer",
-    );
-  });
-
-  it.each([true, false])(
-    "offers node tools only for a compatible runtime (%s)",
-    async (supported) => {
-      const { host, context } = await mount({
-        scopes: ["operator.admin"],
-        methods: ["sessions.create", "environments.list", "projects.list"],
-        agents: [{ id: "main", workspace: "/workspace", model: { primary: "example/model" } }],
-        modelCatalog: async () => ({
-          models: [
-            {
-              id: "model",
-              name: "Example model",
-              provider: "example",
-              available: true,
-              agentRuntime: {
-                id: "example-runtime",
-                nodeToolsSupported: supported,
-                source: "model",
-              },
-            },
-          ],
-        }),
-        request: async (method) =>
-          method === "environments.list"
-            ? {
-                environments: [
-                  {
-                    id: "node:runner",
-                    type: "node",
-                    label: "Build runner",
-                    status: "available",
-                    sessionHost: false,
-                    invocableCommands: ["system.run"],
-                  },
-                ],
-              }
-            : method === "projects.list"
-              ? { projects: [] }
-              : {},
-      });
-      const openPlaces = async () => {
-        expectDefined(
-          host.querySelector<HTMLButtonElement>(".palette-session-settings__workspace"),
-          "workspace picker",
-        ).click();
-        await host.updateComplete;
-      };
-      await openPlaces();
-      await vi.waitFor(() =>
-        expect(host.querySelector('[data-machine$=":runner"]')).not.toBeNull(),
-      );
-      const session = expectDefined(
-        host.querySelector<HTMLButtonElement>('[data-machine="device:runner"]'),
-        "blocked session choice",
-      );
-      expect(session.disabled).toBe(true);
-      expect(session.closest("section")?.textContent).toContain("Run session here");
-      session.click();
-      expect(session.getAttribute("aria-pressed")).toBe("false");
-      expect(context.sessions.createResult).not.toHaveBeenCalled();
-      if (!supported) {
-        expect(host.querySelector('[data-machine="node-tools:runner"]')).toBeNull();
-        return;
-      }
-      const choice = expectDefined(
-        host.querySelector<HTMLButtonElement>('[data-machine="node-tools:runner"]'),
-        "node tools choice",
-      );
-      await vi.waitFor(() => expect(choice.disabled).toBe(false));
-      choice.click();
-      await host.updateComplete;
-      expect(host.querySelector(".palette-session-settings__workspace")?.textContent).toContain(
-        "Run commands here",
-      );
-      expect(host.querySelector<HTMLButtonElement>('[role="switch"]')?.disabled).toBe(true);
-      await openPlaces();
+    await vi.waitFor(() =>
       expect(
-        host.querySelector('[data-machine="node-tools:runner"]')?.getAttribute("aria-pressed"),
-      ).toBe("true");
-      expect(host.querySelectorAll('[data-machine="node-tools:runner"]')).toHaveLength(1);
-      vi.mocked(context.sessions.createResult).mockResolvedValue({
-        status: "accepted",
-        key: "agent:main:tools",
-        initialRun: { status: "started", runId: "tools-turn" },
-      });
-      host.draft.setMessage("Check the node");
-      await host.draft.submit();
-      expect(context.sessions.createResult).toHaveBeenCalledWith(
-        expect.objectContaining({ execNode: "runner" }),
-        expect.anything(),
-      );
-      expect(vi.mocked(context.sessions.createResult).mock.calls[0]?.[0]).not.toHaveProperty("cwd");
-    },
-  );
+        host.querySelector('[data-machine="device:runner"]')?.getAttribute("aria-disabled"),
+      ).toBe("true"),
+    );
+    const row = expectDefined(
+      host.querySelector<HTMLButtonElement>('[data-machine="device:runner"]'),
+      "blocked computer",
+    );
+    await vi.waitFor(() =>
+      expect(row.getAttribute("aria-description")).toContain("Example integration unavailable."),
+    );
+    expect(row.closest("openclaw-tooltip")?.hasAttribute("open-on-click")).toBe(true);
+    expect(row.querySelector(".palette-session-settings__warning")).not.toBeNull();
+    expect(host.querySelector('[data-machine^="node-tools:"]')).toBeNull();
+    expect(host.querySelectorAll('[data-machine="device:runner"]')).toHaveLength(1);
+    expect(row.textContent).toContain("Unavailable");
+    row.click();
+    await host.updateComplete;
+    expect(row.getAttribute("aria-pressed")).toBe("false");
+    expect(context.sessions.createResult).not.toHaveBeenCalled();
+  });
 
   it.each(["connection", "account"] as const)(
     "retires a locked prompt when the %s owner changes",

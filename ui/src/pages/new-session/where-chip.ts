@@ -35,7 +35,7 @@ const connectDeviceIcon = strokeIcon(svg`<circle cx="12" cy="12" r="9" />
   <path d="M12 8v8M8 12h8" />`);
 
 type WhereChipState = Readonly<{
-  kind: "local" | "device" | "auto-device" | "cloud" | "node-tools";
+  kind: "local" | "device" | "auto-device" | "cloud";
   label: string;
   devices: readonly DevicePlacementOption[];
   cloudProfiles: readonly DraftCloudProfile[];
@@ -53,7 +53,6 @@ export function resolveWhereChip(params: {
   machineClass?: string;
   os?: string;
   deviceId: string;
-  execNode?: string;
   autoDevice?: boolean;
   devicePlacement?: DevicePlacementRequirement;
   deviceDisabledReason?: string;
@@ -91,13 +90,10 @@ export function resolveWhereChip(params: {
       autoDeviceDisabledReason,
     };
   }
-  if (params.execNode || params.deviceId) {
-    const nodeToolsDevice = devices.find((candidate) => candidate.deviceId === params.execNode);
+  if (params.deviceId) {
     return {
-      kind: params.execNode ? "node-tools" : "device",
-      label: params.execNode
-        ? (nodeToolsDevice?.label ?? params.execNode)
-        : (device?.label ?? params.deviceId),
+      kind: "device",
+      label: device?.label ?? params.deviceId,
       cloudMachines: [],
       selectedMachineId: "",
       operatingSystems: [],
@@ -177,9 +173,6 @@ export function renderWhereChip(params: {
   machineClass?: string;
   os?: string;
   deviceId: string;
-  execNode?: string;
-  nodeToolsSupported?: boolean;
-  nodeToolsDisabledReason?: (deviceId: string) => string | undefined;
   autoDevice?: boolean;
   cloudDisabledReason?: string;
   cloudProfileDisabledReason?: (profile: DraftCloudProfile) => string | undefined;
@@ -194,7 +187,6 @@ export function renderWhereChip(params: {
   onPopoverHide: () => void;
   onPopoverAfterHide: () => void;
   onSelectDevice: (deviceId: string) => void;
-  onSelectNodeTools?: (deviceId: string) => void;
   onSelectAutoDevice: () => void;
   onSelectCloudProfile: (profileId: string, useDefaults?: boolean) => void;
   onSelectCloudOs?: (osId: string) => void;
@@ -210,9 +202,7 @@ export function renderWhereChip(params: {
         : params.state.kind === "auto-device"
           ? devicePoolIcon
           : environmentDeviceIcon(
-              params.state.devices.find(
-                (device) => device.deviceId === (params.execNode || params.deviceId),
-              ),
+              params.state.devices.find((device) => device.deviceId === params.deviceId),
             );
   const localName = params.gatewayName.trim() || t("newSession.local");
   const label = params.state.kind === "local" ? localName : params.state.label;
@@ -309,19 +299,10 @@ export function renderWhereChip(params: {
         aria-label="${t("newSession.where")}: ${label}${
           configurationSummary ? `, ${configurationSummary}` : ""
         }"
-        aria-description=${
-          params.state.kind === "node-tools"
-            ? t("newSession.nodeToolsHint", {
-                device: label,
-                gateway: params.gatewayName.trim() || t("newSession.assistantHost"),
-              })
-            : nothing
-        }
         data-cloud-profile=${params.cloudProfileId || nothing}
         data-machine-class=${params.machineClass || nothing}
         data-os=${params.os || nothing}
         data-device-id=${params.deviceId || nothing}
-        data-exec-node=${params.execNode || nothing}
         data-auto-device=${params.autoDevice ? "true" : nothing}
         aria-haspopup="dialog"
         aria-expanded=${String(params.popoverOpen)}
@@ -460,7 +441,7 @@ export function renderWhereChip(params: {
                       value: "gateway",
                       label: localName,
                       icon: icons.home,
-                      description: t("newSession.sessionDeviceAction"),
+                      summary: t("newSession.runsOnGateway"),
                       compact: true,
                       checked: params.state.kind === "local",
                       onSelect: () => params.onSelectDevice(""),
@@ -473,80 +454,34 @@ export function renderWhereChip(params: {
               devices,
               (device) => device.deviceId,
               (device) => {
-                const nodeTools = Boolean(
-                  params.onSelectNodeTools &&
-                  params.isAdmin &&
-                  (params.nodeToolsSupported || params.execNode === device.deviceId) &&
-                  (!device.selectable || params.execNode === device.deviceId) &&
-                  (device.nodeToolsAvailable || params.execNode === device.deviceId),
+                return renderSessionMenuItem(
+                  {
+                    value: `device:${device.deviceId}`,
+                    label: device.label,
+                    description: device.selectable
+                      ? undefined
+                      : t("newSession.computerUnavailable"),
+                    sub: device.subtitle,
+                    icon: environmentDeviceIcon(device),
+                    platform: device.platform ? prettifyPlatform(device.platform) : undefined,
+                    capabilityLabels: environmentCapabilityLabels(device.capabilities),
+                    hideDetails: device.hideDetails,
+                    remediation: device.remediation,
+                    capacityLabel:
+                      device.selectable && device.workerSlots
+                        ? t("newSession.concurrentSessionsValue", {
+                            used: String(device.workerSlots.total - device.workerSlots.available),
+                            total: String(device.workerSlots.total),
+                          })
+                        : undefined,
+                    compact: true,
+                    checked: params.state.kind === "device" && params.deviceId === device.deviceId,
+                    disabled: !device.selectable,
+                    title: device.disabledReason,
+                    onSelect: () => params.onSelectDevice(device.deviceId),
+                  },
+                  destinationDisabled,
                 );
-                const nodeToolsDisabledReason =
-                  params.nodeToolsDisabledReason?.(device.deviceId) ??
-                  (!params.nodeToolsSupported
-                    ? t("newSession.nodeToolsRuntimeUnsupported")
-                    : undefined) ??
-                  (device.nodeToolsAvailable ? undefined : t("newSession.deviceUnavailable"));
-                return html`
-                  ${renderSessionMenuItem(
-                    {
-                      value: `device:${device.deviceId}`,
-                      label: device.label,
-                      description: t(
-                        device.selectable
-                          ? "newSession.sessionDeviceAction"
-                          : "newSession.sessionDeviceUnavailable",
-                      ),
-                      inlineHelp: device.disabledReason,
-                      sub: device.subtitle,
-                      icon: environmentDeviceIcon(device),
-                      platform: device.platform ? prettifyPlatform(device.platform) : undefined,
-                      capabilityLabels: environmentCapabilityLabels(device.capabilities),
-                      hideDetails: device.hideDetails,
-                      remediation: device.remediation,
-                      capacityLabel:
-                        device.selectable && device.workerSlots
-                          ? t("newSession.concurrentSessionsValue", {
-                              used: String(device.workerSlots.total - device.workerSlots.available),
-                              total: String(device.workerSlots.total),
-                            })
-                          : undefined,
-                      compact: true,
-                      checked:
-                        params.state.kind === "device" && params.deviceId === device.deviceId,
-                      disabled: !device.selectable,
-                      title: device.disabledReason,
-                      onSelect: () => params.onSelectDevice(device.deviceId),
-                    },
-                    destinationDisabled,
-                  )}
-                  ${
-                    nodeTools
-                      ? renderSessionMenuItem(
-                          {
-                            value: `node-tools:${device.deviceId}`,
-                            label: device.label,
-                            description: t("newSession.nodeToolsAction"),
-                            inlineHelp:
-                              nodeToolsDisabledReason ??
-                              t("newSession.nodeToolsAlternativeHint", {
-                                gateway: params.gatewayName.trim() || t("newSession.assistantHost"),
-                              }),
-                            summary: t("newSession.nodeToolsHint", {
-                              device: device.label,
-                              gateway: params.gatewayName.trim() || t("newSession.assistantHost"),
-                            }),
-                            icon: icons.terminal,
-                            compact: true,
-                            checked: params.execNode === device.deviceId,
-                            disabled: Boolean(nodeToolsDisabledReason),
-                            title: nodeToolsDisabledReason,
-                            onSelect: () => params.onSelectNodeTools?.(device.deviceId),
-                          },
-                          destinationDisabled,
-                        )
-                      : nothing
-                  }
-                `;
               },
             )}
             ${showDeviceSkeletons ? renderEnvironmentSkeletons("devices") : nothing}

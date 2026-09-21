@@ -122,19 +122,15 @@ export function projectWorkerPlacementAgentRuntime(
   cloudPlacementExecutionMode?: WorkerPlacementExecutionMode;
   devicePlacement?: NonNullable<GatewayAgentRuntime["devicePlacement"]>;
   devicePlacementSupported: boolean;
-  nodeToolsSupported: boolean;
 } {
   const { source, ...identity } = runtime;
-  const { executionMode, devicePlacement, nodeToolsSupported } = resolveWorkerPlacementCapabilities(
-    runtime.id,
-  );
+  const { executionMode, devicePlacement } = resolveWorkerPlacementCapabilities(runtime.id);
   return {
     ...identity,
     cloudPlacementSupported: executionMode !== undefined,
     ...(executionMode ? { cloudPlacementExecutionMode: executionMode } : {}),
     ...(devicePlacement ? { devicePlacement } : {}),
     devicePlacementSupported: devicePlacement !== undefined,
-    nodeToolsSupported,
     source,
   };
 }

@@ -39,7 +39,6 @@ type SessionMenuItemOptions = {
   value: string;
   label: string;
   description?: string;
-  inlineHelp?: string;
   icon?: unknown;
   sub?: string;
   facts?: readonly string[];
@@ -88,7 +87,7 @@ function detailRow(icon: TemplateResult, text: string) {
 
 export function renderSessionMenuItem(params: SessionMenuItemOptions, submitting: boolean) {
   const unavailableReason = params.disabled ? params.title || params.description : undefined;
-  const description = params.description;
+  const description = params.compact && !params.disabled ? undefined : params.description;
   const accessibleBlocker = params.compact && params.disabled && !params.hideDetails;
   const touchDetails = params.compact && !params.disabled && !params.hideDetails;
   const row = html`
@@ -98,11 +97,7 @@ export function renderSessionMenuItem(params: SessionMenuItemOptions, submitting
         description ? "session-menu__item--described" : ""
       } ${params.compact ? "new-session-page__environment-option" : ""}"
       data-suggested=${params.suggested ? "true" : nothing}
-      aria-description=${
-        [params.suggested ? t("newSession.machineDefault") : undefined, params.inlineHelp]
-          .filter(Boolean)
-          .join(" ") || nothing
-      }
+      aria-description=${unavailableReason ?? (params.suggested ? t("newSession.machineDefault") : nothing)}
       data-value=${params.value}
       data-popover=${params.keepOpen || accessibleBlocker ? nothing : "close"}
       aria-pressed=${String(params.checked)}
@@ -137,7 +132,6 @@ export function renderSessionMenuItem(params: SessionMenuItemOptions, submitting
             ? html`<span class="session-menu__description">${description}</span>`
             : nothing
         }
-        ${params.inlineHelp ? html`<span class="new-session-page__environment-help">${params.inlineHelp}</span>` : nothing}
       </span>
       ${
         !params.compact && params.facts?.length
@@ -160,8 +154,10 @@ export function renderSessionMenuItem(params: SessionMenuItemOptions, submitting
           : nothing
       }
 
-      <span class="session-menu__check" aria-hidden="true"
-        >${params.checked ? icons.check : nothing}</span
+      <span
+        class="session-menu__check ${params.compact && params.disabled ? "new-session-page__environment-warning" : ""}"
+        aria-hidden="true"
+        >${params.compact && params.disabled ? icons.alertTriangle : params.checked ? icons.check : nothing}</span
       >
       ${
         params.hasSubmenu
@@ -176,7 +172,6 @@ export function renderSessionMenuItem(params: SessionMenuItemOptions, submitting
     ? html`<openclaw-tooltip
         class="new-session-page__environment-details"
         placement="right-start"
-        .disabled=${Boolean(params.disabled && params.inlineHelp)}
         ?open-on-click=${accessibleBlocker || touchDetails}
       >
         <div class="new-session-page__environment-detail-trigger">

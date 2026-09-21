@@ -5299,7 +5299,6 @@ describe("session list selected model display", () => {
       id: "claude-cli",
       cloudPlacementSupported: false,
       devicePlacementSupported: false,
-      nodeToolsSupported: false,
       source: "model",
     });
   });

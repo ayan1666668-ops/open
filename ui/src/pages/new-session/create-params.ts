@@ -64,7 +64,6 @@ export function buildDraftSessionCreateParams(draft: {
   worktreeSource?: SessionCreateParams["worktreeSource"];
   baseRef?: string;
   worktreeName?: string;
-  execNode?: string;
   cwd?: string;
   workspace?: string;
   catalogId?: string;
@@ -74,45 +73,35 @@ export function buildDraftSessionCreateParams(draft: {
   const workspace = normalizeOptionalString(draft.workspace);
   const catalogId = normalizeOptionalString(draft.catalogId);
   const category = normalizeOptionalString(draft.category);
-  const execNode = normalizeOptionalString(draft.execNode);
   const model = normalizeOptionalString(draft.model);
   const agentRuntime = normalizeOptionalString(draft.agentRuntime);
   const contextWindow = normalizeOptionalString(draft.contextWindow);
   const thinkingLevel = normalizeOptionalString(draft.thinkingLevel);
-  const deferInitialTurn = !execNode && draft.deferInitialTurn;
-  const message = deferInitialTurn ? "" : draft.message;
+  const message = draft.deferInitialTurn ? "" : draft.message;
   const titleSource =
-    deferInitialTurn && draft.visibility !== "incognito"
+    draft.deferInitialTurn && draft.visibility !== "incognito"
       ? truncateUtf16Safe(draft.message.trim(), 1_000)
       : undefined;
-  // Direct node tools do not transfer or reinterpret a Gateway workspace on the node.
-  const emptyWorkspace = !execNode && draft.worktreeSource === "empty";
-  const repository = execNode || emptyWorkspace ? undefined : draft.repository;
+  const emptyWorkspace = draft.worktreeSource === "empty";
+  const repository = emptyWorkspace ? undefined : draft.repository;
   const projectId =
-    execNode || emptyWorkspace || repository ? undefined : normalizeOptionalString(draft.projectId);
+    emptyWorkspace || repository ? undefined : normalizeOptionalString(draft.projectId);
   const projectGitUrl =
-    !execNode &&
     !emptyWorkspace &&
     !repository &&
     !projectId &&
-    (message.trim() || (!deferInitialTurn && draft.attachments?.length))
+    (message.trim() || (!draft.deferInitialTurn && draft.attachments?.length))
       ? normalizeOptionalString(draft.projectGitUrl)
       : undefined;
   const customFolder =
-    !execNode &&
-    !emptyWorkspace &&
-    !repository &&
-    !projectId &&
-    !projectGitUrl &&
-    cwd &&
-    cwd !== workspace
+    !emptyWorkspace && !repository && !projectId && !projectGitUrl && cwd && cwd !== workspace
       ? cwd
       : undefined;
   return {
     ...(normalizeOptionalString(draft.key) ? { key: normalizeOptionalString(draft.key) } : {}),
     agentId: normalizeAgentId(draft.agentId),
     message,
-    ...(!deferInitialTurn && draft.mentions?.length
+    ...(!draft.deferInitialTurn && draft.mentions?.length
       ? { mentions: draft.mentions.map((mention) => ({ ...mention })) }
       : {}),
     ...(normalizeOptionalString(draft.displayName)
@@ -121,7 +110,9 @@ export function buildDraftSessionCreateParams(draft: {
     ...(titleSource ? { titleSource } : {}),
     ...(draft.visibility === "incognito" ? { incognito: true } : {}),
     ...(draft.visibility === "draft" ? { visibility: "draft" } : {}),
-    ...(!deferInitialTurn && draft.attachments?.length ? { attachments: draft.attachments } : {}),
+    ...(!draft.deferInitialTurn && draft.attachments?.length
+      ? { attachments: draft.attachments }
+      : {}),
     ...(catalogId ? { catalogId } : {}),
     ...(category ? { category } : {}),
     ...(!catalogId && model ? { model } : {}),
@@ -131,13 +122,12 @@ export function buildDraftSessionCreateParams(draft: {
     ...(!catalogId && draft.fastMode !== undefined ? { fastMode: draft.fastMode } : {}),
     ...(draft.toolOverrides ? { toolOverrides: draft.toolOverrides } : {}),
     ...(draft.permissionMode ? { permissionMode: draft.permissionMode } : {}),
-    ...(execNode ? { execNode } : {}),
     ...(projectId ? { projectId } : {}),
     ...(projectGitUrl ? { projectGitUrl } : {}),
     ...(repository ? { repository: { ...repository } } : {}),
     ...(customFolder ? { cwd: customFolder } : {}),
     ...(emptyWorkspace ? { worktree: true, worktreeSource: "empty" as const } : {}),
-    ...(draft.worktree && !execNode && !repository && !emptyWorkspace
+    ...(draft.worktree && !repository && !emptyWorkspace
       ? {
           worktree: true,
           // Passing the base explicitly also skips the create-time origin fetch.

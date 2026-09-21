@@ -5,6 +5,5 @@ export const UNREGISTERED_CODEX_RUNTIME = {
   id: "codex",
   cloudPlacementSupported: false,
   devicePlacementSupported: false,
-  nodeToolsSupported: false,
   source: "implicit",
 } as const satisfies GatewayAgentRuntime;

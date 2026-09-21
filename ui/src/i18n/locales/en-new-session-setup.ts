@@ -25,17 +25,7 @@ const enNewSessionSetup = {
       "Session setup was interrupted and the temporary session was cleaned up. Your prompt is kept here.",
     discardUnsavedAndReload: en.newSession.discardUnsavedAndReload,
     yourDevices: "Your devices",
-    nodeToolsAction: "Run commands here",
-    sessionDeviceAction: "Run session here",
-    sessionDeviceUnavailable: "Run session here · Unavailable",
     computerUnavailable: "Unavailable",
-    assistantHost: "the OpenClaw server",
-    nodeToolsHint:
-      "Commands run on {device}. The assistant stays on {gateway}. No files are copied automatically.",
-    nodeToolsAlternativeHint:
-      "The assistant stays on {gateway}. No files are copied automatically.",
-    nodeToolsRuntimeUnsupported:
-      "This model cannot keep the assistant on the OpenClaw server while running commands on another computer. Choose a different model or computer.",
     autoDeviceSub: "Least-busy device",
     autoDeviceSubEligible: "First eligible device",
     cloud: "Cloud",

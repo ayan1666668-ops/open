@@ -294,7 +294,6 @@ describe("models.list configured static entries", () => {
             id: "codex",
             cloudPlacementSupported: false,
             devicePlacementSupported: false,
-            nodeToolsSupported: false,
             source: "model",
           },
         }),

@@ -45,25 +45,6 @@ describe("new-session browser preferences", () => {
     expect(loadNewSessionPreference("ws://two.example", "main")).toBeNull();
   });
 
-  it("preserves direct node-tool intent separately from full device placement", () => {
-    replaceBrowserPreference("ws://one.example", "main", {
-      where: { kind: "node-tools", id: " desktop " },
-      worktree: false,
-    });
-    const preference = { where: { kind: "node-tools", id: "desktop" }, worktree: false };
-    expect(loadNewSessionPreference("ws://one.example", "main")).toEqual(preference);
-    expect(
-      decodeIdentityPreferences(
-        encodeIdentityPreferences({
-          main: {
-            where: { kind: "node-tools", id: "desktop" },
-            worktree: false,
-          },
-        }),
-      ),
-    ).toEqual({ main: preference });
-  });
-
   it("keeps a legacy cloud source after unavailable Git clears the stored worktree flag", () => {
     const gatewayUrl = "ws://one.example";
     const legacyPreference = {

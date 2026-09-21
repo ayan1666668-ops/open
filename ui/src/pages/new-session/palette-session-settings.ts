@@ -41,8 +41,6 @@ type MachineChoice = {
   id: string;
   label: string;
   remote: boolean;
-  nodeTools?: boolean;
-  sessionDevice?: boolean;
   selected: boolean;
   disabledReason?: string;
   select: () => void;
@@ -146,7 +144,6 @@ export class PaletteSessionSettings {
       cloudProfileId: place.cloudProfileId,
       ...place.cloudSelection,
       deviceId: place.deviceId,
-      execNode: place.execNode,
       autoDevice: place.autoDevice,
       devicePlacement: place.devicePlacementRuntime()?.devicePlacement,
       deviceDisabledReason:
@@ -176,41 +173,17 @@ export class PaletteSessionSettings {
         id: "local",
         label: gateway.gatewayName || t("newSession.local"),
         remote: false,
-        selected: !place.remotePlacement && !place.execNode,
+        selected: !place.remotePlacement,
         select: () => place.selectDevice(""),
       },
-      ...where.devices.flatMap((device): MachineChoice[] => {
-        const nodeTools =
-          place.isAdmin() &&
-          (place.devicePlacementRuntime()?.nodeToolsSupported === true ||
-            place.execNode === device.deviceId) &&
-          (!device.selectable || place.execNode === device.deviceId) &&
-          (device.nodeToolsAvailable || place.execNode === device.deviceId);
-        return [
-          {
-            id: "device:" + device.deviceId,
-            label: device.label,
-            sessionDevice: true,
-            remote: true,
-            selected: place.deviceId === device.deviceId,
-            disabledReason: device.disabledReason,
-            select: () => place.selectDevice(device.deviceId),
-          },
-          ...(nodeTools
-            ? [
-                {
-                  id: "node-tools:" + device.deviceId,
-                  label: device.label,
-                  remote: false,
-                  nodeTools: true,
-                  selected: place.execNode === device.deviceId,
-                  disabledReason: place.nodeToolsDisabledReason(device.deviceId),
-                  select: () => place.selectNodeTools(device.deviceId),
-                },
-              ]
-            : []),
-        ];
-      }),
+      ...where.devices.map((device) => ({
+        id: "device:" + device.deviceId,
+        label: device.label,
+        remote: true,
+        selected: place.deviceId === device.deviceId,
+        disabledReason: device.disabledReason,
+        select: () => place.selectDevice(device.deviceId),
+      })),
       ...(where.devices.length
         ? [
             {
@@ -237,43 +210,35 @@ export class PaletteSessionSettings {
         return;
       }
       machine.select();
-      if (!machine.nodeTools) {
-        if (projectId) {
-          place.selectProjectId(projectId);
-        } else if (machine.remote) {
-          place.selectNewWorkspace();
-        } else {
-          place.applyFolder(place.workspacePath());
-        }
+      if (projectId) {
+        place.selectProjectId(projectId);
+      } else if (machine.remote) {
+        place.selectNewWorkspace();
+      } else {
+        place.applyFolder(place.workspacePath());
       }
       onChange();
       void this.showPlaces(false);
     };
     const query = this.query.trim().toLocaleLowerCase();
-    const selected = (machine: MachineChoice, projectId: string) =>
-      machine.selected &&
-      (machine.nodeTools ||
-        (projectId
-          ? draft.browser.projectId === projectId
-          : !draft.browser.projectId &&
-            (machine.remote ? place.freshWorkspace : place.folder === place.workspacePath())));
     const groups = machines
       .map((machine) => ({
         machine,
-        choices: [
-          {
-            id: "",
-            label: machine.nodeTools
-              ? t("newSession.nodeToolsAction")
-              : machine.remote
-                ? t("newSession.newWorkspace")
-                : folderDisplayName(place.workspacePath()) || t("newSession.folderPlaceholder"),
-          },
-          ...(machine.nodeTools ? [] : draft.browser.projects).map((project) => ({
-            id: project.id,
-            label: project.displayName,
-          })),
-        ].filter(
+        choices: (machine.disabledReason
+          ? [{ id: "", label: t("newSession.computerUnavailable") }]
+          : [
+              {
+                id: "",
+                label: machine.remote
+                  ? t("newSession.newWorkspace")
+                  : folderDisplayName(place.workspacePath()) || t("newSession.folderPlaceholder"),
+              },
+              ...draft.browser.projects.map((project) => ({
+                id: project.id,
+                label: project.displayName,
+              })),
+            ]
+        ).filter(
           (choice) =>
             !query || (machine.label + " " + choice.label).toLocaleLowerCase().includes(query),
         ),
@@ -346,11 +311,45 @@ export class PaletteSessionSettings {
                       groups,
                       ({ machine }) => machine.id,
                       ({ machine, choices }) => html` <section aria-label=${machine.label}>
-                        <div class="palette-session-settings__machine">
-                          ${machine.label}${machine.sessionDevice ? html` · ${t("newSession.sessionDeviceAction")}` : nothing}
-                        </div>
-                        ${choices.map((choice) => html`<button type="button" class="palette-session-settings__row" data-machine=${machine.id} data-project=${choice.id} aria-pressed=${String(selected(machine, choice.id))} title=${machine.disabledReason ?? nothing} ?disabled=${locked || Boolean(machine.disabledReason)} @click=${() => choose(machine, choice.id)}><span class="palette-session-settings__icon">${machine.nodeTools ? icons.terminal : choice.id ? icons.gitBranch : icons.folder}</span><span class="palette-session-settings__label">${choice.label}</span><span class="palette-session-settings__check">${selected(machine, choice.id) ? icons.check : nothing}</span></button>`)}
-                        ${machine.disabledReason ? html`<div class="palette-session-settings__unavailable">${machine.disabledReason}</div>` : nothing}
+                        <div class="palette-session-settings__machine">${machine.label}</div>
+                        ${choices.map((choice) => {
+                          const selected =
+                            machine.selected &&
+                            (choice.id
+                              ? draft.browser.projectId === choice.id
+                              : !draft.browser.projectId &&
+                                (machine.remote
+                                  ? place.freshWorkspace
+                                  : place.folder === place.workspacePath()));
+                          const row = html`<button
+                            type="button"
+                            class="palette-session-settings__row"
+                            data-machine=${machine.id}
+                            data-project=${choice.id}
+                            aria-pressed=${String(selected)}
+                            aria-disabled=${machine.disabledReason ? "true" : nothing}
+                            aria-description=${machine.disabledReason ?? nothing}
+                            ?disabled=${locked}
+                            @click=${() => choose(machine, choice.id)}
+                          >
+                            <span class="palette-session-settings__icon" aria-hidden="true"
+                              >${choice.id ? icons.gitBranch : icons.folder}</span
+                            ><span class="palette-session-settings__label">${choice.label}</span
+                            ><span
+                              class="palette-session-settings__check ${machine.disabledReason ? "palette-session-settings__warning" : ""}"
+                              aria-hidden="true"
+                              >${machine.disabledReason ? icons.alertTriangle : selected ? icons.check : nothing}</span
+                            >
+                          </button>`;
+                          return machine.disabledReason
+                            ? html`<openclaw-tooltip
+                                .content=${machine.disabledReason}
+                                placement="right-start"
+                                open-on-click
+                                >${row}</openclaw-tooltip
+                              >`
+                            : row;
+                        })}
                       </section>`,
                     )}
                     ${!groups.length ? html`<div class="palette-session-settings__unavailable">${t("newSession.environmentSearchEmpty")}</div>` : nothing}
@@ -378,20 +377,17 @@ export class PaletteSessionSettings {
                   <button
                     class="palette-session-settings__row palette-session-settings__workspace"
                     type="button"
-                    aria-describedby=${place.execNode ? this.id + "-commands-hint" : nothing}
                     ?disabled=${locked}
                     @click=${() => this.showPlaces(true)}
                   >
                     <span class="palette-session-settings__icon">${icons.folder}</span
                     ><span class="palette-session-settings__copy"
-                      ><span class="palette-session-settings__label"
-                        >${place.execNode ? t("newSession.nodeToolsAction") : projectState.label}</span
+                      ><span class="palette-session-settings__label">${projectState.label}</span
                       ><span class="palette-session-settings__secondary"
                         >${machineLabel}${cloudSummary ? " · " + cloudSummary : ""}</span
                       ></span
                     ><span class="palette-session-settings__chevron">${icons.chevronRight}</span>
                   </button>
-                  ${place.execNode ? html`<div id=${this.id + "-commands-hint"} class="palette-session-settings__unavailable">${t("newSession.nodeToolsHint", { device: machineLabel, gateway: gateway.gatewayName.trim() || t("newSession.assistantHost") })}</div>` : nothing}
                   <button
                     class="palette-session-settings__row palette-session-settings__worktree"
                     type="button"

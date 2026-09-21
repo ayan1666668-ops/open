@@ -18,7 +18,6 @@ export function buildSelectedSessionCreateParams(
     contextWindow: place.modelControl.contextWindow,
     thinkingLevel: place.modelControl.thinkingLevel,
     fastMode: place.modelControl.fastMode,
-    execNode: place.execNode,
     projectId: place.browser.remoteProject?.projectId ?? place.browser.projectId,
     projectGitUrl: place.browser.remoteProject?.cloneUrl,
     repository: place.remoteRepository,

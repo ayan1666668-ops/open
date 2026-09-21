@@ -4,29 +4,26 @@ import { getRegisteredAgentHarness } from "../../agents/harness/registry.js";
 import type { GatewayAgentRuntime } from "../../shared/session-types.js";
 import type { WorkerPlacementExecutionMode } from "./placement-record.js";
 
-/** Returns the bounded placement and direct-node contracts of one active runtime. */
+/** Returns the bounded placement contract of one active runtime. */
 export function resolveWorkerPlacementCapabilities(runtime: string): {
   executionMode?: WorkerPlacementExecutionMode;
   devicePlacement?: NonNullable<GatewayAgentRuntime["devicePlacement"]>;
-  nodeToolsSupported: boolean;
 } {
   const runtimeId = runtime.trim();
   if (runtimeId === OPENCLAW_AGENT_RUNTIME_ID) {
     return {
       executionMode: "worker-turn",
       devicePlacement: { requiredNodeCommands: [], consumesWorkerSlot: true },
-      nodeToolsSupported: true,
     };
   }
   const harness = getRegisteredAgentHarness(runtimeId)?.harness;
-  const nodeToolsSupported = harness?.nodeToolsSupported === true;
   const placement = harness?.cloudPlacement;
   if (!placement) {
-    return { nodeToolsSupported };
+    return {};
   }
   const requirement = placement.devicePlacement;
   if (!requirement) {
-    return { executionMode: placement.mode, nodeToolsSupported };
+    return { executionMode: placement.mode };
   }
   const requiredNodeCommands = [...new Set(requirement.requiredNodeCommands)].toSorted();
   // Invalid declarations disable placement. Dropping a command would silently weaken authority.
@@ -36,7 +33,7 @@ export function resolveWorkerPlacementCapabilities(runtime: string): {
       (command) => command.length === 0 || command.length > 128 || command.trim() !== command,
     )
   ) {
-    return { executionMode: placement.mode, nodeToolsSupported };
+    return { executionMode: placement.mode };
   }
   const label = normalizeBoundedOptionalString(requirement.setup?.label, 80);
   const missingCommandHint = normalizeBoundedOptionalString(
@@ -50,6 +47,5 @@ export function resolveWorkerPlacementCapabilities(runtime: string): {
       consumesWorkerSlot: requirement.consumesWorkerSlot,
       ...(label && missingCommandHint ? { setup: { label, missingCommandHint } } : {}),
     },
-    nodeToolsSupported,
   };
 }

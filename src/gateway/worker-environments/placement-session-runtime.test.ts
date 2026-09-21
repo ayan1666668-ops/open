@@ -39,7 +39,6 @@ describe("worker placement runtime capabilities", () => {
       id: "auto",
       cloudPlacementSupported: false,
       devicePlacementSupported: false,
-      nodeToolsSupported: false,
       source: "model",
     });
   });
@@ -99,7 +98,6 @@ describe("worker placement runtime capabilities", () => {
     {
       name: "embedded worker turns support paired devices",
       runtimeId: "openclaw",
-      nodeToolsSupported: true,
       executionMode: "worker-turn",
       devicePlacementSupported: true,
       devicePlacement: { requiredNodeCommands: [], consumesWorkerSlot: true },
@@ -107,7 +105,6 @@ describe("worker placement runtime capabilities", () => {
     {
       name: "remote execution projects exact device commands without consuming a worker slot",
       runtimeId: "device-harness",
-      nodeToolsSupported: false,
       cloudPlacement: {
         mode: "remote-exec",
         devicePlacement: {
@@ -125,7 +122,6 @@ describe("worker placement runtime capabilities", () => {
     {
       name: "remote execution projects normalized plugin-owned setup guidance",
       runtimeId: "setup-harness",
-      nodeToolsSupported: false,
       cloudPlacement: {
         mode: "remote-exec",
         devicePlacement: {
@@ -151,7 +147,6 @@ describe("worker placement runtime capabilities", () => {
     {
       name: "device command requirements are deterministic and deduplicated",
       runtimeId: "ordered-harness",
-      nodeToolsSupported: false,
       cloudPlacement: {
         mode: "remote-exec",
         devicePlacement: {
@@ -169,7 +164,6 @@ describe("worker placement runtime capabilities", () => {
     {
       name: "cloud-only remote execution does not support paired devices",
       runtimeId: "cloud-harness",
-      nodeToolsSupported: false,
       cloudPlacement: { mode: "remote-exec" },
       executionMode: "remote-exec",
       devicePlacementSupported: false,
@@ -177,56 +171,40 @@ describe("worker placement runtime capabilities", () => {
     {
       name: "unknown runtimes support no placement",
       runtimeId: "missing-harness",
-      nodeToolsSupported: false,
       executionMode: undefined,
       devicePlacementSupported: false,
     },
-  ] as const)(
-    "$name",
-    ({
-      runtimeId,
-      executionMode,
-      devicePlacementSupported,
-      nodeToolsSupported,
-      ...declaration
-    }) => {
-      if ("cloudPlacement" in declaration) {
-        const harness: AgentHarness = {
-          id: runtimeId,
-          label: runtimeId,
-          cloudPlacement: declaration.cloudPlacement,
-          supports: () => ({ supported: true }),
-          async runAttempt() {
-            throw new Error("not used");
-          },
-        };
-        registerAgentHarness(harness);
-      }
-
-      expect(resolveWorkerPlacementExecutionMode(runtimeId)).toBe(executionMode);
-      expect(resolveWorkerPlacementCapabilities(runtimeId)).toEqual({
-        ...(executionMode ? { executionMode } : {}),
-        ...("devicePlacement" in declaration
-          ? { devicePlacement: declaration.devicePlacement }
-          : {}),
-        nodeToolsSupported,
-      });
-      expect(resolveWorkerPlacementCapabilities(runtimeId).devicePlacement !== undefined).toBe(
-        devicePlacementSupported,
-      );
-      expect(projectWorkerPlacementAgentRuntime({ id: runtimeId, source: "model" })).toEqual({
+  ] as const)("$name", ({ runtimeId, executionMode, devicePlacementSupported, ...declaration }) => {
+    if ("cloudPlacement" in declaration) {
+      const harness: AgentHarness = {
         id: runtimeId,
-        cloudPlacementSupported: executionMode !== undefined,
-        ...(executionMode ? { cloudPlacementExecutionMode: executionMode } : {}),
-        ...("devicePlacement" in declaration
-          ? { devicePlacement: declaration.devicePlacement }
-          : {}),
-        devicePlacementSupported,
-        nodeToolsSupported,
-        source: "model",
-      });
-    },
-  );
+        label: runtimeId,
+        cloudPlacement: declaration.cloudPlacement,
+        supports: () => ({ supported: true }),
+        async runAttempt() {
+          throw new Error("not used");
+        },
+      };
+      registerAgentHarness(harness);
+    }
+
+    expect(resolveWorkerPlacementExecutionMode(runtimeId)).toBe(executionMode);
+    expect(resolveWorkerPlacementCapabilities(runtimeId)).toEqual({
+      ...(executionMode ? { executionMode } : {}),
+      ...("devicePlacement" in declaration ? { devicePlacement: declaration.devicePlacement } : {}),
+    });
+    expect(resolveWorkerPlacementCapabilities(runtimeId).devicePlacement !== undefined).toBe(
+      devicePlacementSupported,
+    );
+    expect(projectWorkerPlacementAgentRuntime({ id: runtimeId, source: "model" })).toEqual({
+      id: runtimeId,
+      cloudPlacementSupported: executionMode !== undefined,
+      ...(executionMode ? { cloudPlacementExecutionMode: executionMode } : {}),
+      ...("devicePlacement" in declaration ? { devicePlacement: declaration.devicePlacement } : {}),
+      devicePlacementSupported,
+      source: "model",
+    });
+  });
 
   it.each([
     { label: " ", missingCommandHint: "Enable the execution plugin." },
@@ -257,7 +235,6 @@ describe("worker placement runtime capabilities", () => {
         requiredNodeCommands: ["runtime.exec-server.v1"],
         consumesWorkerSlot: false,
       },
-      nodeToolsSupported: false,
     });
   });
 
@@ -286,42 +263,9 @@ describe("worker placement runtime capabilities", () => {
       cloudPlacementSupported: true,
       cloudPlacementExecutionMode: "remote-exec",
       devicePlacementSupported: false,
-      nodeToolsSupported: false,
       source: "model",
     });
   });
-
-  it.each([undefined, false, true])(
-    "projects direct-node opt-in independently of session placement (%s)",
-    (nodeToolsSupported) => {
-      registerAgentHarness({
-        id: "tools-harness",
-        label: "tools-harness",
-        ...(nodeToolsSupported !== undefined ? { nodeToolsSupported } : {}),
-        supports: () => ({ supported: true }),
-        async runAttempt() {
-          throw new Error("not used");
-        },
-      });
-
-      expect(resolveWorkerPlacementCapabilities("tools-harness")).toEqual({
-        nodeToolsSupported: nodeToolsSupported === true,
-      });
-      expect(
-        projectWorkerPlacementAgentRuntime({
-          id: "tools-harness",
-          source: "model",
-          nodeToolsSupported: nodeToolsSupported !== true,
-        }),
-      ).toEqual({
-        id: "tools-harness",
-        cloudPlacementSupported: false,
-        devicePlacementSupported: false,
-        nodeToolsSupported: nodeToolsSupported === true,
-        source: "model",
-      });
-    },
-  );
 });
 
 describe("resolveWorkerPlacementSessionRuntimeCapabilities", () => {
@@ -363,7 +307,6 @@ describe("resolveWorkerPlacementSessionRuntimeCapabilities", () => {
     });
     expect(caps.executionMode).toBe("worker-turn");
     expect(caps.devicePlacement).toBeDefined();
-    expect(caps.nodeToolsSupported).toBe(true);
   });
 
   it("uses openclaw fallback capabilities for an undetermined (auto) runtime", () => {
@@ -386,7 +329,6 @@ describe("resolveWorkerPlacementSessionRuntimeCapabilities", () => {
     });
     expect(caps.executionMode).toBe("worker-turn");
     expect(caps.devicePlacement).toBeDefined();
-    expect(caps.nodeToolsSupported).toBe(true);
   });
 
   it("rejects a CLI-backed provider whose dispatch runs as a local process", () => {
@@ -418,7 +360,6 @@ describe("resolveWorkerPlacementSessionRuntimeCapabilities", () => {
     });
     expect(caps.executionMode).toBeUndefined();
     expect(caps.devicePlacement).toBeUndefined();
-    expect(caps.nodeToolsSupported).toBe(false);
   });
 
   it("honors a non-CLI session runtime override over a CLI-backed provider", () => {

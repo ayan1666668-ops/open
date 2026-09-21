@@ -240,12 +240,6 @@ cleanup authority according to their own lifecycle contract.
 
 ## Paired-device execution
 
-Declare `nodeToolsSupported: true` only when session `execNode` bindings route
-ordinary shell commands to a node while the agent runtime stays on the Gateway.
-This optional capability is independent of full-session placement and grants no
-node authority. Omitting it leaves **Run commands here** unavailable for that
-runtime; runtimes that move their agent process to `execNode` must not opt in.
-
 Declare `cloudPlacement.devicePlacement.requiredNodeCommands` for the exact node
 commands the harness needs to execute on a paired device. Core snapshots this
 set when it creates the selected harness's host capabilities. An admitted

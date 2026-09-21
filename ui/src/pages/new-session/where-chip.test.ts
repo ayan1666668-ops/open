@@ -4,8 +4,94 @@ import { describe, expect, it, vi } from "vitest";
 import { deviceIcons } from "../../components/icons-devices.ts";
 import { icons } from "../../components/icons.ts";
 import { readDraftCloudProfiles } from "./discovery.ts";
-import { capacityCaption, hoverDetails, renderPicker } from "./test-helpers/where-chip.ts";
-import { resolveWhereChip } from "./where-chip.ts";
+import { renderWhereChip, resolveWhereChip } from "./where-chip.ts";
+
+function hoverDetails(row: Element | null | undefined) {
+  return [
+    ...(row
+      ?.closest("openclaw-tooltip")
+      ?.querySelectorAll('[slot="content"] > div, [slot="content"] > span') ?? []),
+  ]
+    .map((detail) => detail.textContent?.trim())
+    .join(" · ");
+}
+
+function capacityCaption(row: Element | null | undefined) {
+  return row
+    ?.closest("openclaw-tooltip")
+    ?.querySelector(".new-session-page__capacity-caption")
+    ?.textContent?.trim();
+}
+
+function renderPicker(
+  isAdmin: boolean,
+  autoPlacementMode?: "least-busy" | "eligible-order",
+  selection: Partial<Parameters<typeof resolveWhereChip>[0]> = {},
+  presentation: Partial<Parameters<typeof renderWhereChip>[0]> = {},
+) {
+  const state = resolveWhereChip({
+    environments: [
+      {
+        id: "node:runner",
+        type: "node",
+        label: "Build runner",
+        status: "available",
+        sessionHost: true,
+        workerSlots: { total: 2, available: 1 },
+      },
+      {
+        id: "node:alpha-device",
+        type: "node",
+        label: "Duplicate runner",
+        status: "available",
+        sessionHost: true,
+        workerSlots: { total: 1, available: 1 },
+      },
+      {
+        id: "node:beta-device",
+        type: "node",
+        label: "Duplicate runner",
+        status: "available",
+        sessionHost: true,
+        workerSlots: { total: 1, available: 1 },
+      },
+    ],
+    cloudProfiles: [{ id: "aws", providerId: "crabbox" }],
+    cloudProfileId: "",
+    deviceId: "",
+    ...selection,
+  });
+  const container = document.createElement("div");
+  render(
+    renderWhereChip({
+      state,
+      gatewayName: "",
+      environmentQuery: "",
+      onEnvironmentQueryInput: vi.fn(),
+      cloudProfileId: selection.cloudProfileId ?? "",
+      deviceId: selection.deviceId ?? "",
+      autoDevice: selection.autoDevice,
+      submitting: false,
+      pendingPlacement: false,
+      popoverOpen: true,
+      popoverHiding: false,
+      isAdmin,
+      ...(autoPlacementMode ? { autoPlacementMode } : {}),
+      onGuardTransition: vi.fn(),
+      onPopoverShow: vi.fn(),
+      onPopoverHide: vi.fn(),
+      onPopoverAfterHide: vi.fn(),
+      onSelectDevice: vi.fn(),
+      onSelectAutoDevice: vi.fn(),
+      onSelectCloudProfile: vi.fn(),
+      onConnectMachine: vi.fn(),
+      onManageCloudWorkers: vi.fn(),
+      ...presentation,
+    }),
+    container,
+  );
+  return container;
+}
 
 describe("Where chip", () => {
   it("shows device and cloud skeletons while the catalog loads", () => {
@@ -98,9 +184,8 @@ describe("Where chip", () => {
         expect(
           container
             .querySelector('[data-value="gateway"] .session-menu__text')
-            ?.textContent?.replace(/\s+/g, " ")
-            .trim(),
-        ).toBe("Gateway Mac Studio Run session here");
+            ?.textContent?.trim(),
+        ).toBe("Gateway Mac Studio");
       }
       const expected = document.createElement("div");
       render(icon, expected);
@@ -126,7 +211,7 @@ describe("Where chip", () => {
   );
 
   it.each([
-    { query: "  openclaw server  ", expected: ["gateway"] },
+    { query: "  OpenClaw server  ", expected: ["gateway"] },
     { query: "STUDIO", expected: ["gateway"] },
     { query: "device", expected: ["device:runner", "device:alpha-device", "device:beta-device"] },
     { query: "beta-device", expected: ["device:beta-device"] },
@@ -762,10 +847,7 @@ describe("Where chip", () => {
     expect(hoverDetails(writer.querySelector('[data-value="device:beta-device"]'))).toContain(
       "beta-dev",
     );
-    expect(writer.querySelector(".session-menu__sub")).toBeNull();
-    expect(
-      writer.querySelector('[data-value="device:runner"] .session-menu__description')?.textContent,
-    ).toContain("Run session here");
+    expect(writer.querySelector(".session-menu__sub, .session-menu__description")).toBeNull();
     expect(writer.querySelector('[data-value="cloud:aws"]')).toBeNull();
     expect(writer.querySelector('[data-action="connect-machine"]')).toBeNull();
 
@@ -793,14 +875,12 @@ describe("Where chip", () => {
 
     const device = container.querySelector<HTMLButtonElement>('[data-value="device:macbook"]');
     expect(device?.matches(':disabled, [aria-disabled="true"]')).toBe(true);
-    expect(device?.querySelector(".session-menu__description")?.textContent).toContain(
+    expect(device?.querySelector(".session-menu__description")?.textContent?.trim()).toBe(
       "Unavailable",
     );
     // Unavailable cards show only the actionable reason.
     expect(capacityCaption(device)).toBeUndefined();
-    expect(device?.querySelector(".new-session-page__environment-help")?.textContent).toContain(
-      "This runtime does not support paired devices",
-    );
+    expect(hoverDetails(device)).toContain("This runtime does not support paired devices");
   });
 
   it("omits automatic placement when no devices are paired and Auto is off", () => {
@@ -940,9 +1020,7 @@ describe("Where chip", () => {
       expect(device?.matches(':disabled, [aria-disabled="true"]')).toBe(disabled);
       expect(capacityCaption(device)).toBe(disabled ? undefined : label);
       if (reason) {
-        expect(device?.querySelector(".new-session-page__environment-help")?.textContent).toContain(
-          reason,
-        );
+        expect(hoverDetails(device)).toContain(reason);
       }
     },
   );

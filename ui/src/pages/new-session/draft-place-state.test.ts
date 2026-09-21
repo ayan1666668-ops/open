@@ -21,7 +21,6 @@ function createRepositoryFixture(
   options: {
     workspaceGit?: boolean;
     unavailable?: boolean;
-    scopes?: string[];
     data?: NewSessionRouteData;
   } = {},
 ) {
@@ -44,7 +43,7 @@ function createRepositoryFixture(
           request: async (method: string) =>
             method === "models.list" ? { models: [] } : request(method),
         },
-        hello: { auth: { role: "operator", scopes: options.scopes ?? ["operator.admin"] } },
+        hello: { auth: { role: "operator", scopes: ["operator.admin"] } },
       },
     },
     agents: {
@@ -59,10 +58,9 @@ function createRepositoryFixture(
     },
     sessions: { state: { result: null } },
   } as unknown as ApplicationContext;
-  const discovery = {
+  const gateway = {
     cloudProfiles: [{ id: "aws", providerId: "crabbox" }],
     cloudProfilesReady: true,
-    deviceCatalogDisabledReason: undefined as string | undefined,
     environments: [
       {
         id: "node:desktop",
@@ -70,13 +68,11 @@ function createRepositoryFixture(
         status: "available",
         sessionHost: true,
         workerSlots: { total: 1, available: 1 },
-        invocableCommands: ["system.run"],
       },
     ],
     persistPreference,
     readPreference,
-  };
-  const gateway = discovery as unknown as DraftGatewayState;
+  } as unknown as DraftGatewayState;
   const browser = new DraftPlaceBrowser(
     new TestReactiveControllerHost(),
     gateway,
@@ -97,159 +93,8 @@ function createRepositoryFixture(
     () => ({ context, data: options.data, submitting: false, pendingPlacementSessionKey: "" }),
     { requestUpdate, onError: vi.fn(), onClearError: vi.fn() },
   );
-  return { state, browser, persistPreference, readPreference, request, requestUpdate, discovery };
+  return { state, browser, persistPreference, readPreference, request, requestUpdate };
 }
-
-describe("DraftPlaceState direct node tools", () => {
-  function createNodeToolsFixture(options: Parameters<typeof createRepositoryFixture>[0] = {}) {
-    const fixture = createRepositoryFixture(options);
-    const runtime = vi.spyOn(fixture.state.modelControl, "resolveAgentRuntime").mockReturnValue({
-      id: "openclaw",
-      source: "model",
-      nodeToolsSupported: true,
-    });
-    return { ...fixture, runtime };
-  }
-
-  it("explicitly selects shell access without requiring hosting or changing the model", () => {
-    const { state, discovery, browser } = createNodeToolsFixture();
-    discovery.environments[0]!.sessionHost = false;
-    state.adoptAgentDefaults();
-    state.modelControl.selected = "openai/test-model";
-    state.modelControl.agentRuntime = "codex";
-    state.selectRemoteProject(REMOTE_PROJECT);
-    expect(state.worktreeAvailable()).toBe(true);
-    state.selectNodeTools("desktop");
-
-    expect(state.execNode).toBe("desktop");
-    expect(state.deviceId).toBe("");
-    expect(state.remotePlacement).toBe(false);
-    expect(state.worktree).toBe(false);
-    expect(state.worktreeAvailable()).toBe(false);
-    expect(state.devicePlacementReady()).toBe(true);
-    expect(browser.remoteProject).toBeNull();
-    expect(
-      buildSelectedSessionCreateParams(state, {
-        message: "Inspect this device",
-        visibility: "normal",
-      }),
-    ).toEqual({
-      agentId: "main",
-      message: "Inspect this device",
-      model: "openai/test-model",
-      agentRuntime: "codex",
-      execNode: "desktop",
-    });
-  });
-
-  it("keeps the selected node while stale, disconnected, or no longer authorized", () => {
-    const { state, discovery } = createNodeToolsFixture();
-    state.adoptAgentDefaults();
-    state.selectNodeTools("desktop");
-    discovery.deviceCatalogDisabledReason = "Refreshing device inventory";
-    expect(state.devicePlacementReady()).toBe(false);
-    expect(state.devicePlacementDisabledReason()).toBe("Refreshing device inventory");
-    discovery.deviceCatalogDisabledReason = undefined;
-    discovery.environments[0]!.status = "unavailable";
-    expect(state.devicePlacementReady()).toBe(false);
-    discovery.environments[0]!.status = "available";
-    discovery.environments[0]!.invocableCommands = [];
-    expect(state.devicePlacementReady()).toBe(false);
-    expect(state.execNode).toBe("desktop");
-  });
-
-  it.each(["offline", "missing-command", "missing-admin", "unsupported-runtime"])(
-    "restores %s direct-node intent without silently choosing Gateway execution",
-    (unavailable) => {
-      const { state, discovery, readPreference, persistPreference, runtime } =
-        createNodeToolsFixture({
-          scopes: unavailable === "missing-admin" ? ["operator.write"] : undefined,
-        });
-      readPreference.mockReturnValue({ where: { kind: "node-tools", id: "desktop" } });
-      if (unavailable === "offline") {
-        discovery.environments[0]!.status = "unavailable";
-      } else if (unavailable === "missing-command") {
-        discovery.environments[0]!.invocableCommands = [];
-      } else if (unavailable === "unsupported-runtime") {
-        runtime.mockReturnValue({ id: "other", source: "model", nodeToolsSupported: false });
-      }
-      state.adoptAgentDefaults();
-      state.restorePreferenceSelections();
-      expect(state.placementPreferenceReady).toBe(true);
-      expect(state.execNode).toBe("desktop");
-      expect(state.devicePlacementReady()).toBe(false);
-      expect(state.devicePlacementDisabledReason()).toBeTruthy();
-      expect(persistPreference).not.toHaveBeenCalledWith(expect.anything(), expect.anything(), {
-        where: { kind: "local" },
-      });
-    },
-  );
-
-  it.each([undefined, false])("requires explicit runtime support (%s)", (nodeToolsSupported) => {
-    const { state, runtime } = createNodeToolsFixture();
-    runtime.mockReturnValue({ id: "other", source: "model", nodeToolsSupported });
-    state.adoptAgentDefaults();
-    state.selectNodeTools("desktop");
-    expect(state.execNode).toBe("");
-    expect(state.nodeToolsDisabledReason("desktop")).toBe(
-      "This model cannot keep the assistant on the OpenClaw server while running commands on another computer. Choose a different model or computer.",
-    );
-  });
-
-  it("retains direct intent and blocks submission when the selected model runtime changes", () => {
-    const { state, runtime } = createNodeToolsFixture();
-    state.adoptAgentDefaults();
-    state.selectNodeTools("desktop");
-    expect(state.devicePlacementReady()).toBe(true);
-
-    runtime.mockReturnValue({ id: "other", source: "model", nodeToolsSupported: false });
-    expect(state.execNode).toBe("desktop");
-    expect(state.devicePlacementReady()).toBe(false);
-    expect(state.devicePlacementDisabledReason()).toBe(state.nodeToolsDisabledReason("desktop"));
-    expect(state.devicePlacementDisabledReason()).toContain("Choose a different model or computer");
-    expect(state.preferenceSelection().where).toEqual({ kind: "node-tools", id: "desktop" });
-
-    runtime.mockReturnValue({ id: "openclaw", source: "model", nodeToolsSupported: true });
-    expect(state.execNode).toBe("desktop");
-    expect(state.devicePlacementReady()).toBe(true);
-  });
-
-  it.each(["local", "device", "cloud", "recovery", "reset", "gateway"])(
-    "clears direct-node binding on %s selection",
-    (next) => {
-      const { state } = createNodeToolsFixture();
-      state.adoptAgentDefaults();
-      state.selectNodeTools("desktop");
-      expect(state.execNode).toBe("desktop");
-      if (next === "local") {
-        state.selectDevice("");
-      } else if (next === "device") {
-        state.selectDevice("desktop");
-      } else if (next === "cloud") {
-        state.selectCloudProfile("aws");
-      } else if (next === "recovery") {
-        state.applyPendingPlacement({ agentId: "main", profileId: "", deviceId: "desktop" });
-      } else if (next === "reset") {
-        state.resetDraft();
-      } else {
-        state.invalidateGatewayDiscovery(true);
-      }
-      expect(state.execNode).toBe("");
-    },
-  );
-
-  it("does not select direct tools from stale inventory or without admin access", () => {
-    const fixture = createNodeToolsFixture();
-    fixture.state.adoptAgentDefaults();
-    fixture.discovery.deviceCatalogDisabledReason = "Refreshing device inventory";
-    fixture.state.selectNodeTools("desktop");
-    expect(fixture.state.execNode).toBe("");
-    const writeOnly = createNodeToolsFixture({ scopes: ["operator.write"] });
-    writeOnly.state.adoptAgentDefaults();
-    writeOnly.state.selectNodeTools("desktop");
-    expect(writeOnly.state.execNode).toBe("");
-  });
-});
 
 describe("DraftPlaceState repository selection", () => {
   it("captures pending placement preferences instead of transient discovery defaults", () => {

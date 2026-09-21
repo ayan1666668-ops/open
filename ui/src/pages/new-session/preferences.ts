@@ -42,24 +42,20 @@ export type NewSessionWhere =
   | { kind: "local" }
   | { kind: "auto-device" }
   | { kind: "device"; id: string }
-  | { kind: "node-tools"; id: string }
   | { kind: "cloud"; id: string };
 
 export function resolveNewSessionWhere(params: {
   cloudProfileId: string;
   deviceId: string;
   autoDevice: boolean;
-  execNode?: string;
 }): NewSessionWhere {
-  return params.execNode
-    ? { kind: "node-tools", id: params.execNode }
-    : params.cloudProfileId
-      ? { kind: "cloud", id: params.cloudProfileId }
-      : params.deviceId
-        ? { kind: "device", id: params.deviceId }
-        : params.autoDevice
-          ? { kind: "auto-device" }
-          : { kind: "local" };
+  return params.cloudProfileId
+    ? { kind: "cloud", id: params.cloudProfileId }
+    : params.deviceId
+      ? { kind: "device", id: params.deviceId }
+      : params.autoDevice
+        ? { kind: "auto-device" }
+        : { kind: "local" };
 }
 
 export type NewSessionPreference = {
@@ -150,7 +146,7 @@ function normalizeWhere(value: unknown): NewSessionWhere | undefined {
     return { kind: value.kind };
   }
   const id = normalizeOptionalString(value.id);
-  return id && (value.kind === "device" || value.kind === "node-tools" || value.kind === "cloud")
+  return id && (value.kind === "device" || value.kind === "cloud")
     ? { kind: value.kind, id }
     : undefined;
 }

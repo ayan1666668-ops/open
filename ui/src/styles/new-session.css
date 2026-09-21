@@ -314,15 +314,6 @@ html:is(.openclaw-native-macos, .openclaw-native-desktop) .new-session-page__inc
   box-sizing: border-box;
 }
 
-.new-session-page__node-tools-hint {
-  flex-basis: 100%;
-  grid-column: 1 / -1;
-  padding: 4px 6px;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.5;
-}
-
 .new-session-page__select {
   position: relative;
 }
@@ -850,17 +841,6 @@ wa-popover.new-session-page__where-popover::part(body) {
 .new-session-page__environment-option > .session-menu__check {
   flex: 0 0 20px;
   width: 20px;
-}
-
-.new-session-page__environment-help {
-  display: block;
-  margin-top: 4px;
-  white-space: normal;
-  overflow-wrap: anywhere;
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 400;
-  line-height: 1.5;
 }
 
 .new-session-page__environment-list--automatic .new-session-page__environment-option {
@@ -1466,15 +1446,12 @@ wa-popover.new-session-page__where-popover::part(body) {
 }
 
 .new-session-page__environment-option[aria-disabled="true"] {
-  opacity: 0.5;
+  color: var(--muted);
   cursor: default;
 }
 
-.new-session-page__environment-option[aria-disabled="true"]:has(
-    .new-session-page__environment-help
-  ) {
-  opacity: 1;
-  color: var(--muted);
+.new-session-page__environment-warning {
+  color: var(--warn);
 }
 
 .new-session-page__environment-heading {

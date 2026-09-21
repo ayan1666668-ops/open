@@ -1,6 +1,9 @@
 import { expect, it } from "vitest";
 import { selectChatModelOption } from "../test-helpers/select-picker-e2e.ts";
-import { createControlUiE2eContextOptions } from "./control-ui-e2e-suite.test-support.ts";
+import {
+  createControlUiE2eContextOptions,
+  tooltipTitleText,
+} from "./control-ui-e2e-suite.test-support.ts";
 import {
   WORKSPACE,
   captureDeviceRuntimeUiProof,
@@ -117,7 +120,7 @@ suite.define(() => {
       await whereTrigger.click();
       await device.waitFor();
       expect(await device.isDisabled()).toBe(true);
-      expect(await device.locator(".new-session-page__environment-help").textContent()).toBe(
+      expect(await tooltipTitleText(device)).toBe(
         "No worker slots are available. Wait for a slot or pick another device.",
       );
       expect(await restrictedDevice.isEnabled()).toBe(true);
@@ -136,7 +139,7 @@ suite.define(() => {
         )
         .toContainEqual({ runtimeId: "codex" });
       await expect
-        .poll(() => restrictedDevice.locator(".new-session-page__environment-help").textContent())
+        .poll(() => tooltipTitleText(restrictedDevice))
         .toBe(
           "Authorize codex.exec-server.stdio.v1 in the Gateway node command policy, or pick another device.",
         );
@@ -154,11 +157,9 @@ suite.define(() => {
       await expect.poll(() => modelSelect.textContent()).toContain("Claude Opus 4.6");
       await whereTrigger.click();
       await expect.poll(() => device.isDisabled()).toBe(true);
-      expect(await device.locator(".session-menu__description").textContent()).toBe(
-        "Run session here · Unavailable",
-      );
+      expect(await device.locator(".session-menu__description").textContent()).toBe("Unavailable");
       await expect
-        .poll(() => device.locator(".new-session-page__environment-help").textContent())
+        .poll(() => tooltipTitleText(device))
         .toBe("This runtime does not support paired devices");
       await captureDeviceRuntimeUiProof(suite, page, "03-cloud-only-device-disabled.png");
       await page.keyboard.press("Escape");
@@ -265,19 +266,19 @@ suite.define(() => {
       await row("alpha-device").hover();
       await expect.poll(() => details("alpha-device").textContent()).toContain("macOS");
       expect(await details("alpha-device").textContent()).toContain("2 of 4 session slots in use");
-      expect(await row("alpha-device").locator(".session-menu__description").textContent()).toBe(
-        "Run session here",
-      );
+      expect(await row("alpha-device").locator(".session-menu__description").count()).toBe(0);
       expect(await row("saturated").isDisabled()).toBe(true);
       await row("saturated").hover();
       await expect
-        .poll(() => row("saturated").textContent())
+        .poll(() => details("saturated").textContent())
         .toContain("No worker slots are available. Wait for a slot or pick another device.");
-      expect(await row("saturated").locator(".new-session-page__capacity-caption").count()).toBe(0);
+      expect(
+        await details("saturated").locator(".new-session-page__capacity-caption").count(),
+      ).toBe(0);
       expect(await row("missing-capacity").isDisabled()).toBe(true);
       expect(await row("offline").isDisabled()).toBe(true);
       expect(await row("offline").locator(".session-menu__description").textContent()).toBe(
-        "Run session here · Unavailable",
+        "Unavailable",
       );
       expect(
         await row("offline")

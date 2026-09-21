@@ -15,7 +15,6 @@ export type DevicePlacementOption = Readonly<
     remediation?: "enable-session-hosting" | "update-device";
     facts: readonly string[];
     selectable: boolean;
-    nodeToolsAvailable: boolean;
     disabledReason?: string;
   } & Pick<DraftEnvironment, "platform" | "workerSlots" | "capabilities" | "invocableCommands">
 >;
@@ -137,10 +136,6 @@ export function projectDevicePlacements(
           capabilities: environment.capabilities,
           invocableCommands: environment.invocableCommands,
           selectable: disabledReason === undefined,
-          // Hosted sessions and ordinary node tools have independent requirements.
-          nodeToolsAvailable:
-            environment.status === "available" &&
-            environment.invocableCommands?.includes("system.run") === true,
           ...(disabledReason ? { disabledReason } : {}),
         },
       ];

@@ -51,7 +51,6 @@ describe("Codex agent harness supports()", () => {
 
   it("publishes provider ids for lightweight auto selection", () => {
     expect(harness.autoSelection?.providerIds).toEqual(["codex", "openai"]);
-    expect(harness.nodeToolsSupported).toBe(true);
     expect(harness.cloudPlacement).toEqual({
       mode: "remote-exec",
       devicePlacement: {
