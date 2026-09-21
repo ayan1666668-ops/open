@@ -8,6 +8,7 @@ import {
 } from "../agents/tools/gateway-caller-context.js";
 import { getActivePluginRegistry } from "../plugins/runtime.js";
 import {
+  getPluginRuntimeGatewayRequestContext,
   getPluginRuntimeGatewayRequestScope,
   withPluginRuntimeGatewayRequestScope,
 } from "../plugins/runtime/gateway-request-scope.js";
@@ -581,8 +582,7 @@ export function getInProcessGatewayRequestContext(
   if (resolveGatewayContext) {
     return resolveGatewayContext();
   }
-  const scope = getPluginRuntimeGatewayRequestScope();
-  return scope?.resolveGatewayContext ? scope.resolveGatewayContext() : scope?.context;
+  return getPluginRuntimeGatewayRequestContext();
 }
 
 export async function dispatchGatewayMethodInProcess<T>(
