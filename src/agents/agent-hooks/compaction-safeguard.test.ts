@@ -2650,10 +2650,47 @@ describe("compaction-safeguard recent-turn preservation", () => {
     expect(consumeCompactionSafeguardCancellation(sessionManager)).toBeNull();
   });
 
-  it("keeps the generated split-turn context when the degraded suffix is trimmed", async () => {
+  it("logs the greppable reasonCode when the terminal helper degrades the summary", async () => {
+    mockSummarizeInStages.mockReset();
+    const latestAsk = "confirm the staging rollback finished";
+    // A summary the audit rejects (no required headings) so the terminal audit path degrades
+    // rather than regenerating. qualityGuardMaxRetries: 0 makes the first audit failure final.
+    mockSummarizeInStages.mockResolvedValue(summaryResult("Core summary without headings"));
+
+    const sessionManager = stubSessionManager();
+    setCompactionSafeguardRuntime(sessionManager, {
+      model: createAnthropicModelFixture(),
+      recentTurnsPreserve: 0,
+      qualityGuardEnabled: true,
+      qualityGuardMaxRetries: 0,
+    });
+    const event = createCompactionEvent({
+      messageText: latestAsk,
+      tokensBefore: 1_500,
+    });
+    (
+      event.preparation as { settings?: { reserveTokens: number }; isSplitTurn?: boolean }
+    ).settings = { reserveTokens: 4_000 };
+    (event.preparation as { isSplitTurn?: boolean }).isSplitTurn = false;
+
+    const { result } = await runCompactionScenario({ sessionManager, event, apiKey: "***" });
+
+    // The terminal helper commits the degraded boundary and logs the greppable marker that
+    // operators and dashboards branch on. Pinning the exact reasonCode keeps a future refactor
+    // of the helper's log contract from silently regressing it.
+    expect(result).toMatchObject({ compaction: { details: { qualityDegraded: true } } });
+    expect(compactionLogger.warn).toHaveBeenCalledWith(
+      expect.stringContaining("reasonCode=quality_guard_degraded_fallback"),
+    );
+    expect(consumeCompactionSafeguardCancellation(sessionManager)).toBeNull();
+  });
+
+  it("keeps the generated split-turn context when a terminal audit failure trims the degraded suffix", async () => {
     mockSummarizeInStages.mockReset();
     const latestAsk = "roll back the api deployment and confirm health";
     const activeTurn = "Active turn: rolled back api-7 and is waiting on the health check.";
+    // qualityGuardMaxRetries: 0 makes the audit rejection below terminal, so the degrade fires
+    // on the final-attempt audit path rather than a regeneration retry.
     // Twelve long preserved turns, the file lists and the split-turn summary each fill their
     // own cap, so the degraded suffix alone outgrows the artifact and must be trimmed.
     const files = (kind: string) =>
