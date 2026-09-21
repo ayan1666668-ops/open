@@ -62,8 +62,11 @@ function writeForwardedResponseHead(
       response.destroy();
       return false;
     }
-    // writeHead can store a reason phrase before rejecting a later field.
+    // writeHead stores the reason phrase and, for 1xx/204/304, clears _hasBody
+    // before a later field can throw. Restore a body so end() does not drop the 502.
     response.statusMessage = "";
+    (response as ServerResponse & { _hasBody?: boolean })._hasBody = true;
+    response.chunkedEncoding = false;
     try {
       sendHttpRefusal(response, 502, FORWARDED_RESPONSE_FAILURE_BODY);
     } catch {

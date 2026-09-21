@@ -1,11 +1,12 @@
 import {
+  createServer,
   IncomingMessage,
   ServerResponse,
   type ClientRequest,
   type IncomingHttpHeaders,
 } from "node:http";
 import { Agent, request as httpsRequest } from "node:https";
-import { Socket } from "node:net";
+import { connect, Socket } from "node:net";
 import { PassThrough, Writable, type Readable } from "node:stream";
 import { setImmediate } from "node:timers/promises";
 import { describe, expect, it, vi } from "vitest";
@@ -332,4 +333,130 @@ describe("secret egress forwarded response headers", () => {
       writeHead?.mockRestore();
     }
   });
+
+  // Node clears _hasBody for 1xx/204/304 before _storeHeader rejects a
+  // non-chunked Trailer. The refusal must still put its bytes on the wire and
+  // finish the connection.
+  it.each([304, 101] as const)(
+    "sends the 502 body and closes when a %s head rejects trailer Expires",
+    async (statusCode) => {
+      const refusal = "Secret egress proxy could not forward the upstream response.\n";
+      const upstreamBody = Buffer.from("UPSTREAM-BODY");
+      const upstream = new PassThrough();
+      let upstreamResponse: IncomingMessage | undefined;
+      const resources: Array<Readable | Writable> = [];
+      const uncaught: unknown[] = [];
+      const onUncaught = (error: unknown) => {
+        uncaught.push(error);
+      };
+      const agent = new Agent();
+      const openSockets = new Set<Socket>();
+      const server = createServer((request, response) => {
+        forwardSecretEgressRequest({
+          request,
+          response,
+          host: "localhost",
+          upstreamTlsAgent: agent,
+          prepareRequest: () => ({
+            target: new URL("https://localhost:1/"),
+            headers: {},
+            substituted: false,
+          }),
+          acquireBody: createSecretEgressBodyBudget(),
+          isActive: () => true,
+          ownResource: (resource) => {
+            resources.push(resource);
+            return resource;
+          },
+          releaseResponse() {},
+          resolveSentinel() {
+            return undefined;
+          },
+          audit() {},
+        });
+      });
+      server.on("connection", (socket) => {
+        openSockets.add(socket);
+        socket.once("close", () => openSockets.delete(socket));
+      });
+      process.on("uncaughtException", onUncaught);
+      vi.mocked(httpsRequest).mockImplementationOnce(((...args: unknown[]) => {
+        const callback = args.find((entry) => typeof entry === "function") as
+          | ((message: IncomingMessage) => void)
+          | undefined;
+        upstreamResponse = new IncomingMessage(new Socket());
+        upstreamResponse.statusCode = statusCode;
+        upstreamResponse.headers = { trailer: "Expires" };
+        upstreamResponse.on("error", () => {});
+        const responseMessage = upstreamResponse;
+        process.nextTick(() => {
+          callback?.(responseMessage);
+          if (!responseMessage.destroyed) {
+            responseMessage.push(upstreamBody);
+            responseMessage.push(null);
+          }
+        });
+        return upstream as unknown as ClientRequest;
+      }) as never);
+      let client: Socket | undefined;
+      try {
+        await new Promise<void>((resolve, reject) => {
+          server.once("error", reject);
+          server.listen(0, "127.0.0.1", () => {
+            server.off("error", reject);
+            resolve();
+          });
+        });
+        const address = server.address();
+        if (!address || typeof address === "string") {
+          throw new Error("forwarded-response test failed to bind");
+        }
+        const raw = await new Promise<Buffer>((resolve, reject) => {
+          const chunks: Buffer[] = [];
+          const socket = connect(address.port, "127.0.0.1");
+          client = socket;
+          socket.on("data", (chunk: Buffer) => {
+            chunks.push(chunk);
+          });
+          socket.on("error", reject);
+          socket.on("end", () => resolve(Buffer.concat(chunks)));
+          socket.on("connect", () => {
+            socket.end("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+          });
+        });
+        await setImmediate();
+        const text = raw.toString("latin1");
+        const splitAt = text.indexOf("\r\n\r\n");
+        const head = splitAt >= 0 ? text.slice(0, splitAt) : text;
+        const body = splitAt >= 0 ? text.slice(splitAt + 4) : "";
+
+        expect(uncaught).toEqual([]);
+        expect(splitAt).toBeGreaterThan(0);
+        expect(head).toMatch(/^HTTP\/1\.1 502 /);
+        expect(head.toLowerCase()).toContain(`content-length: ${Buffer.byteLength(refusal)}`);
+        expect(body).toBe(refusal);
+        expect(text).not.toContain("UPSTREAM-BODY");
+        expect(client?.readableEnded).toBe(true);
+        expect(
+          openSockets.size === 0 ||
+            [...openSockets].every((socket) => socket.destroyed || socket.writableEnded),
+        ).toBe(true);
+      } finally {
+        process.off("uncaughtException", onUncaught);
+        client?.destroy();
+        for (const socket of openSockets) {
+          socket.destroy();
+        }
+        await new Promise<void>((resolve) => {
+          server.close(() => resolve());
+        });
+        for (const resource of resources) {
+          resource.destroy();
+        }
+        upstream.destroy();
+        upstreamResponse?.destroy();
+        agent.destroy();
+      }
+    },
+  );
 });
