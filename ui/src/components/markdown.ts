@@ -86,6 +86,7 @@ const allowedTags = [
   "msubsup",
   "mtable",
   "mtd",
+  "mtext",
   "mtr",
   "munder",
   "munderover",
@@ -128,6 +129,10 @@ const allowedAttrs = [
   "aria-hidden",
   "aria-level",
   "xmlns",
+  // KaTeX MathML carries semantic variants and barless binomial fractions.
+  "mathvariant",
+  "linethickness",
+  "fence",
   "viewBox",
   "width",
   "height",

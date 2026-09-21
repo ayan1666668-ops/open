@@ -372,6 +372,42 @@ describe("toSanitizedMarkdownHtml", () => {
       expect(fragment.querySelector(".strut[style]")).not.toBeNull();
     });
 
+    it("preserves text conditions in the sanitized accessible MathML", () => {
+      const fragment = htmlFragment(toSanitizedMarkdownHtml(String.raw`$x + \text{otherwise}$`));
+      expect(fragment.querySelector(".katex-mathml math mtext")?.textContent).toBe("otherwise");
+      expect(fragment.querySelector(".katex-html[aria-hidden='true']")).not.toBeNull();
+    });
+
+    it.each([
+      [String.raw`$\mathbb{R}$`, "double-struck"],
+      [String.raw`$\mathbf{x}$`, "bold"],
+    ])("preserves the accessible symbol variant for %s", (source, variant) => {
+      const math = htmlFragment(toSanitizedMarkdownHtml(source)).querySelector(
+        ".katex-mathml math",
+      );
+      expect(math?.querySelector("mi")?.getAttribute("mathvariant")).toBe(variant);
+    });
+
+    it("preserves a binomial's barless fraction and delimiter semantics", () => {
+      const math = htmlFragment(toSanitizedMarkdownHtml(String.raw`$\binom{n}{k}$`)).querySelector(
+        ".katex-mathml math",
+      );
+      expect(math?.querySelector("mfrac")?.getAttribute("linethickness")).toBe("0px");
+      expect(
+        [...math!.querySelectorAll('mo[fence="true"]')].map((node) => node.textContent),
+      ).toEqual(["(", ")"]);
+    });
+
+    it("keeps authored MathML and active content literal", () => {
+      const fragment = htmlFragment(
+        toSanitizedMarkdownHtml(
+          '<math><mtext onclick="alert(1)"><img src=x onerror="alert(1)"></mtext></math>',
+        ),
+      );
+      expect(fragment.querySelector("math, mtext, img, [onclick], [onerror]")).toBeNull();
+      expect(fragment.textContent).toContain("<math><mtext");
+    });
+
     it("escapes authored HTML instead of granting KaTeX geometry styles", () => {
       const fragment = htmlFragment(
         toSanitizedMarkdownHtml(
