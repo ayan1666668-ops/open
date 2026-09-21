@@ -1,4 +1,12 @@
+import type { ChatSessionScrollPosition } from "../scroll.ts";
+
+export type TranscriptScrollViewport = ChatSessionScrollPosition & {
+  height: number;
+  scrollHeight: number;
+};
+
 export type TranscriptScrollObservation =
+  | { type: "resize"; viewport: TranscriptScrollViewport }
   | { type: "input"; event: Event; touching: boolean }
   | {
       type: "offset";

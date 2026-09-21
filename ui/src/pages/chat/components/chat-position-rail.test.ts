@@ -160,6 +160,8 @@ describe("conversation position rail", () => {
     "boot",
     "boot-resize",
     "resize",
+    "resize-reversal",
+    "resize-reversal-current",
     "resize-jump",
     "end",
     "focus",
@@ -171,6 +173,7 @@ describe("conversation position rail", () => {
   it.each(railUpdateScenarios)(
     "keeps the reader's rail position through %s updates",
     async (scenario) => {
+      const flushFrame = stubAnimationFrames();
       const publishVisibility = stubRailVisibility();
       const transcript = createTestTranscript();
       const container = document.body.appendChild(document.createElement("div"));
@@ -230,9 +233,8 @@ describe("conversation position rail", () => {
       root.scrollTop = startsAtTop ? 0 : 8315;
       const flush = async () => {
         marks.dispatchEvent(new Event("scroll"));
-        await new Promise<void>((resolve) => {
-          requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
-        });
+        flushFrame();
+        flushFrame();
       };
       try {
         await flush();
@@ -282,6 +284,27 @@ describe("conversation position rail", () => {
           expect(Number.parseFloat(marker(79).style.top) + 12).toBeLessThanOrEqual(
             marks.scrollTop + marks.clientHeight,
           );
+        } else if (scenario.startsWith("resize-reversal")) {
+          const expectedRailOffset = marks.scrollTop;
+          // Shortening the draft expands the transcript and clamps its end immediately.
+          height = 650;
+          marksHeight = 336;
+          root.scrollTop = scrollHeight - height;
+          publishTranscriptScroll(root, {
+            type: "resize",
+            viewport: { height, scrollHeight, scrollTop: root.scrollTop, anchorToEnd: true },
+          });
+          // Goal chrome reverses the recorded resize before the next animation frame.
+          height = 555;
+          marksHeight = 241;
+          if (scenario === "resize-reversal-current") {
+            activeMessage.mockReturnValue("message-76");
+          }
+          await flush();
+          expect(marks.scrollTop).toBe(expectedRailOffset);
+          root.scrollTop = scrollHeight - height;
+          await flush();
+          expect(marks.scrollTop).toBe(expectedRailOffset);
         } else if (scenario === "resize") {
           height = 554;
           marksHeight = 240;

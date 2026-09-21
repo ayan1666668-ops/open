@@ -1,4 +1,5 @@
 import { captureChatSessionScrollPosition } from "../scroll.ts";
+import { publishTranscriptScroll } from "./chat-transcript-scroll-events.ts";
 
 const COMPOSER_CHROME_INTERACTIVE_SELECTOR = [
   "a[href]",
@@ -151,6 +152,7 @@ export function adjustTextareaHeight(el: HTMLTextAreaElement) {
     return;
   }
   const thread = el.closest(".chat")?.querySelector<HTMLElement>(".chat-thread") ?? null;
+  const transcriptHeight = thread?.clientHeight;
   const preserveBottomAnchor = thread
     ? captureChatSessionScrollPosition(thread).anchorToEnd
     : false;
@@ -173,6 +175,17 @@ export function adjustTextareaHeight(el: HTMLTextAreaElement) {
   // resizing its viewport, so ResizeObserver has no correction to apply.
   if (thread && preserveBottomAnchor) {
     thread.scrollTop = thread.scrollHeight;
+  }
+  if (thread && thread.clientHeight !== transcriptHeight) {
+    // A mode strip can reverse this resize before observers see the intermediate viewport.
+    publishTranscriptScroll(thread, {
+      type: "resize",
+      viewport: {
+        height: thread.clientHeight,
+        scrollHeight: thread.scrollHeight,
+        ...captureChatSessionScrollPosition(thread),
+      },
+    });
   }
 }
 
