@@ -202,8 +202,11 @@ export function reconcileDraftModelSelection(params: {
         params.catalog,
       );
   const provider = (selectedTarget ?? defaultTarget)?.provider;
+  const targetEntry = selectedTarget?.entry ?? defaultTarget?.entry;
   const fastMode =
-    provider && !isChatFastModeProviderSupported(provider) ? undefined : params.fastMode;
+    (targetEntry?.supportsFastMode ?? (!provider || isChatFastModeProviderSupported(provider)))
+      ? params.fastMode
+      : undefined;
   const selection = {
     model: selected,
     ...(selected && params.agentRuntime ? { agentRuntime: params.agentRuntime } : {}),
@@ -213,7 +216,6 @@ export function reconcileDraftModelSelection(params: {
   if (!params.thinkingLevel) {
     return { ...selection, thinkingLevel: "", repaired };
   }
-  const targetEntry = selectedTarget?.entry ?? defaultTarget?.entry;
   const thinkingProfile = resolveThinkingProfileForSession(
     resolveDraftThinkingTarget(
       selectedTarget ?? defaultTarget,

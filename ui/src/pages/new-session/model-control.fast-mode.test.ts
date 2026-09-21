@@ -85,6 +85,59 @@ describe("new-session Fast Mode preferences", () => {
     control.reset();
   });
 
+  it.each([
+    { provider: "ollama", supportsFastMode: true },
+    { provider: "openai", supportsFastMode: false },
+  ])(
+    "restores Fast Mode according to catalog support $supportsFastMode for $provider",
+    async ({ provider, supportsFastMode }) => {
+      const model = `${provider}/model`;
+      const { context } = contextWith([{ id: "model", name: "Model", provider, supportsFastMode }]);
+      const onSelectionChange = vi.fn();
+      const control = new NewSessionModelControl(() => undefined, onSelectionChange);
+      control.load(context, "main", true, { preference: { model, fastMode: true } });
+      await waitForFast(() => expect(control.isRestoringPreference()).toBe(false));
+      expect(control.fastMode).toBe(supportsFastMode ? true : undefined);
+      if (supportsFastMode) {
+        expect(onSelectionChange).not.toHaveBeenCalled();
+      } else {
+        expect(onSelectionChange).toHaveBeenLastCalledWith({
+          model,
+          thinkingLevel: "",
+          fastMode: undefined,
+        });
+      }
+      control.reset();
+    },
+  );
+
+  it.each([true, false])("uses alternate runtime Fast Mode support %s", async (support) => {
+    const { context } = contextWith([
+      {
+        id: "model",
+        name: "Model",
+        provider: "openai",
+        supportsFastMode: !support,
+        agentRuntime: { id: "openclaw", source: "model" },
+        runtimeChoices: [
+          {
+            agentRuntime: { id: "codex", source: "model" },
+            supportsFastMode: support,
+            available: true,
+          },
+        ],
+      },
+    ]);
+    const control = new NewSessionModelControl(() => undefined);
+    control.load(context, "main", true, {
+      preference: { model: "openai/model", agentRuntime: "codex", fastMode: true },
+    });
+    await waitForFast(() => expect(control.isRestoringPreference()).toBe(false));
+    expect(control.agentRuntime).toBe("codex");
+    expect(control.fastMode).toBe(support ? true : undefined);
+    control.reset();
+  });
+
   it("clears Fast Mode when switching to a provider without a wire mapping", async () => {
     const { context } = contextWith([
       { id: "gpt-5.6-luna", name: "GPT-5.6 Luna", provider: "openai", reasoning: true },
