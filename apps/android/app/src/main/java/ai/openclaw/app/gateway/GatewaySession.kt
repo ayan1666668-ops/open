@@ -1871,8 +1871,15 @@ class GatewaySession(
           null
         }
 
+      val minProtocol =
+        if (options.role == "node" && client.mode == "node") {
+          GATEWAY_MIN_NODE_PROTOCOL_VERSION
+        } else {
+          GATEWAY_MIN_PROTOCOL_VERSION
+        }
+
       return buildJsonObject {
-        put("minProtocol", JsonPrimitive(GATEWAY_MIN_PROTOCOL_VERSION))
+        put("minProtocol", JsonPrimitive(minProtocol))
         put("maxProtocol", JsonPrimitive(GATEWAY_PROTOCOL_VERSION))
         put("client", clientObj)
         if (target.options.caps.isNotEmpty()) put("caps", JsonArray(target.options.caps.map(::JsonPrimitive)))

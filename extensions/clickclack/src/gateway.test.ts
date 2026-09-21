@@ -355,6 +355,44 @@ describe("ClickClack gateway", () => {
     await run;
   });
 
+  it("re-baselines a pruned reconnect cursor from the server tail", async () => {
+    const firstSocket = new FakeSocket();
+    const secondSocket = new FakeSocket();
+    mocks.client.eventPage
+      .mockResolvedValueOnce({ events: [], tailCursor: "cursor-0" })
+      .mockRejectedValueOnce(
+        new ClickClackHttpError(
+          409,
+          JSON.stringify({ code: "realtime_resync_required", tail_cursor: "cursor-tail" }),
+          new Headers(),
+        ),
+      )
+      .mockResolvedValueOnce({ events: [], tailCursor: "cursor-tail" });
+    mocks.client.websocket.mockReturnValueOnce(firstSocket).mockReturnValueOnce(secondSocket);
+    const abort = new AbortController();
+    const ctx = createGatewayContext(abort.signal);
+    const run = startClickClackGatewayAccount(ctx);
+
+    await waitForGatewayState(() => expect(mocks.client.websocket).toHaveBeenCalledTimes(1));
+    firstSocket.emit("close");
+    await waitForGatewayState(() => expect(mocks.client.websocket).toHaveBeenCalledTimes(2));
+
+    expect(mocks.client.eventPage).toHaveBeenNthCalledWith(2, "workspace-1", {
+      afterCursor: "cursor-0",
+      limit: 500,
+    });
+    expect(mocks.client.eventPage).toHaveBeenNthCalledWith(3, "workspace-1", {
+      includeTail: true,
+    });
+    expect(mocks.client.websocket).toHaveBeenLastCalledWith("workspace-1", "cursor-tail");
+    expect(ctx.log?.warn).toHaveBeenCalledWith(
+      "[default] ClickClack event cursor was pruned; resuming from server tail",
+    );
+
+    abort.abort();
+    await run;
+  });
+
   it("skips malformed websocket frames without stopping the monitor", async () => {
     const socket = new FakeSocket();
     mocks.client.websocket.mockReturnValue(socket);

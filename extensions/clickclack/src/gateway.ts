@@ -38,6 +38,14 @@ function eventCorrelationId(event: ClickClackEvent): string | undefined {
   return normalizeClickClackCorrelationId(event.payload?.correlation_id);
 }
 
+function isRealtimeResyncRequired(error: unknown): boolean {
+  return (
+    error instanceof ClickClackHttpError &&
+    error.status === 409 &&
+    error.message.includes("realtime_resync_required")
+  );
+}
+
 async function resolveEventMessage(params: {
   client: ReturnType<typeof createClickClackClient>;
   event: ClickClackEvent;
@@ -162,6 +170,30 @@ async function drainEventBacklog(params: {
   return afterCursor;
 }
 
+async function drainEventBacklogWithRecovery(params: {
+  client: ReturnType<typeof createClickClackClient>;
+  workspaceId: string;
+  afterCursor: string;
+  abortSignal: AbortSignal;
+  onEvent: (event: ClickClackEvent) => Promise<void>;
+  accountId: string;
+  log?: { warn?: (message: string) => void };
+}): Promise<string> {
+  try {
+    return await drainEventBacklog(params);
+  } catch (error) {
+    if (!isRealtimeResyncRequired(error)) {
+      throw error;
+    }
+    const page = await params.client.eventPage(params.workspaceId, { includeTail: true });
+    const tailCursor = page.tailCursor ?? page.events.at(-1)?.cursor ?? "";
+    params.log?.warn?.(
+      `[${params.accountId}] ClickClack event cursor was pruned; resuming from server tail`,
+    );
+    return tailCursor;
+  }
+}
+
 export async function startClickClackGatewayAccount(
   ctx: ChannelGatewayContext<ResolvedClickClackAccount>,
 ) {
@@ -231,12 +263,14 @@ export async function startClickClackGatewayAccount(
         }
         initialized = true;
       } else {
-        afterCursor = await drainEventBacklog({
+        afterCursor = await drainEventBacklogWithRecovery({
           client,
           workspaceId,
           afterCursor,
           abortSignal: ctx.abortSignal,
           onEvent: processIncomingEvent,
+          accountId: account.accountId,
+          log: ctx.log,
         });
       }
       if (ctx.abortSignal.aborted) {

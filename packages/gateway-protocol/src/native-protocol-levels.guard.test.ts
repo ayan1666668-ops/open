@@ -177,6 +177,24 @@ describe("native Gateway protocol levels", () => {
           "GATEWAY_PROTOCOL_VERSION",
         ),
       },
+      expectedClientLevels,
+    );
+    assertLevelsMatch(
+      androidPath,
+      {
+        min: extractInteger(
+          android,
+          /const val GATEWAY_MIN_NODE_PROTOCOL_VERSION = (\d+)/,
+          androidPath,
+          "GATEWAY_MIN_NODE_PROTOCOL_VERSION",
+        ),
+        max: extractInteger(
+          android,
+          /const val GATEWAY_PROTOCOL_VERSION = (\d+)/,
+          androidPath,
+          "GATEWAY_PROTOCOL_VERSION",
+        ),
+      },
       expectedNodeLevels,
     );
   });
@@ -253,8 +271,14 @@ describe("native Gateway protocol levels", () => {
     assertPattern(
       android,
       androidPath,
-      /put\("minProtocol", JsonPrimitive\(GATEWAY_MIN_PROTOCOL_VERSION\)\)/,
-      "connect params must advertise GATEWAY_MIN_PROTOCOL_VERSION as minProtocol.",
+      /val minProtocol =\s+if \(options\.role == "node" && client\.mode == "node"\)\s*\{\s+GATEWAY_MIN_NODE_PROTOCOL_VERSION\s+\}\s+else\s*\{\s+GATEWAY_MIN_PROTOCOL_VERSION\s+\}/,
+      "connect params must advertise the role-specific protocol floor.",
+    );
+    assertPattern(
+      android,
+      androidPath,
+      /put\("minProtocol", JsonPrimitive\(minProtocol\)\)/,
+      "connect params must use the role-specific protocol floor.",
     );
     assertPattern(
       android,

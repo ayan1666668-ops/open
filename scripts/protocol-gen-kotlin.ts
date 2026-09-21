@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { ProtocolSchemas } from "../packages/gateway-protocol/src/schema/protocol-schemas.js";
 import {
+  MIN_CLIENT_PROTOCOL_VERSION,
   MIN_NODE_PROTOCOL_VERSION,
   PROTOCOL_VERSION,
 } from "../packages/gateway-protocol/src/version.js";
@@ -432,8 +433,9 @@ async function generate(): Promise<void> {
     "import kotlinx.serialization.json.JsonElement",
     "",
     `const val GATEWAY_PROTOCOL_VERSION = ${PROTOCOL_VERSION}`,
-    // Android consumes v3 message-only chat deltas and uses the N-1 node transport.
-    `const val GATEWAY_MIN_PROTOCOL_VERSION = ${MIN_NODE_PROTOCOL_VERSION}`,
+    `const val GATEWAY_MIN_PROTOCOL_VERSION = ${MIN_CLIENT_PROTOCOL_VERSION}`,
+    // Android node sessions retain the N-1 compatibility floor.
+    `const val GATEWAY_MIN_NODE_PROTOCOL_VERSION = ${MIN_NODE_PROTOCOL_VERSION}`,
     "",
     ...emitWireModels().flatMap((model) => [model, ""]),
     emitGatewayCatalogEnum("GatewayMethod", gatewayMethods),

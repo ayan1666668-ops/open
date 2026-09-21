@@ -484,6 +484,44 @@ class GatewaySessionInvokeTest {
 
         val params = withTimeout(TEST_TIMEOUT_MS) { connectParams.await() }
         assertEquals(
+          GATEWAY_MIN_NODE_PROTOCOL_VERSION,
+          params["minProtocol"]?.jsonPrimitive?.content?.toInt(),
+        )
+        assertEquals(
+          GATEWAY_PROTOCOL_VERSION,
+          params["maxProtocol"]?.jsonPrimitive?.content?.toInt(),
+        )
+      } finally {
+        shutdownHarness(harness, server)
+      }
+    }
+
+  @Test
+  fun operatorConnectAdvertisesTheGeneralProtocolFloor() =
+    runBlocking {
+      val json = testJson()
+      val connected = CompletableDeferred<Unit>()
+      val connectParams = CompletableDeferred<JsonObject>()
+      val lastDisconnect = AtomicReference("")
+      val server =
+        startGatewayServer(json) { webSocket, id, method, frame ->
+          if (method == "connect") {
+            if (!connectParams.isCompleted) connectParams.complete(frame["params"]!!.jsonObject)
+            webSocket.send(connectResponseFrame(id))
+            webSocket.close(1000, "done")
+          }
+        }
+      val harness =
+        createNodeHarness(
+          connected = connected,
+          lastDisconnect = lastDisconnect,
+        ) { GatewaySession.InvokeResult.ok("""{"handled":true}""") }
+
+      try {
+        connectNodeSession(harness.session, server.port, role = "operator", scopes = listOf("operator.read"))
+        awaitConnectedOrThrow(connected, lastDisconnect, server)
+        val params = withTimeout(TEST_TIMEOUT_MS) { connectParams.await() }
+        assertEquals(
           GATEWAY_MIN_PROTOCOL_VERSION,
           params["minProtocol"]?.jsonPrimitive?.content?.toInt(),
         )
