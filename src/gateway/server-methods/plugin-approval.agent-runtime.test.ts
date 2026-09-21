@@ -1,8 +1,9 @@
 import fs from "node:fs";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js";
+import { afterEach, describe, expect, it, vi, type TestContext } from "vitest";
+import { createFixtureLifetime } from "../../../test/helpers/fixture-lifetime.js";
+import { createDeferred } from "../../../test/helpers/promise.js";
 import type { PluginApprovalRequestPayload } from "../../infra/plugin-approvals.js";
-import { closeOpenClawStateDatabaseByPath } from "../../state/openclaw-state-db-cache.js";
+import { closeOpenClawStateDatabaseByPathAsync } from "../../state/openclaw-state-db-cache.js";
 import {
   openOpenClawStateDatabase,
   type OpenClawStateDatabaseOptions,
@@ -14,18 +15,44 @@ import { createTestApprovalManager } from "../exec-approval-manager.test-support
 import { createPluginApprovalHandlers } from "./plugin-approval.js";
 import type { GatewayRequestHandlerOptions } from "./types.js";
 
-const tempDirs = useAutoCleanupTempDirTracker((cleanup) =>
-  afterEach(() => {
-    for (const dir of tempDirs.dirs) {
-      closeOpenClawStateDatabaseByPath(resolveOpenClawStateSqlitePath({ OPENCLAW_STATE_DIR: dir }));
-    }
-    cleanup();
-  }),
-);
-
-function databaseOptions(): OpenClawStateDatabaseOptions {
-  const stateDir = fs.realpathSync(tempDirs.make("plugin-approval-id-"));
-  return { env: { ...process.env, OPENCLAW_STATE_DIR: stateDir } };
+function createPersistenceFixture(test: TestContext) {
+  const lifetime = createFixtureLifetime();
+  const stateDir = fs.realpathSync(lifetime.createTempDir("plugin-approval-id-"));
+  const options: OpenClawStateDatabaseOptions = {
+    env: { ...process.env, OPENCLAW_STATE_DIR: stateDir },
+  };
+  const manager = new ExecApprovalManager<PluginApprovalRequestPayload>({
+    approvalKind: "plugin",
+    persistence: { runtimeEpoch: "runtime-a", databaseOptions: options },
+    validateAgentRuntimeDelegatedAuthority: () => true,
+  });
+  let body: Promise<void> | undefined;
+  let pending: Promise<void> | undefined;
+  test.onTestFinished(() => {
+    void lifetime.verifyCleanup(async () => {
+      // Retire observers before joining the fixture body, which can still await its request.
+      await manager.drain();
+      await Promise.allSettled([body, pending]);
+      await closeOpenClawStateDatabaseByPathAsync(
+        resolveOpenClawStateSqlitePath({ OPENCLAW_STATE_DIR: stateDir }),
+      );
+    });
+    return lifetime.cleanup();
+  });
+  // Match Gateway startup: initialize the real schema before request admission.
+  try {
+    openOpenClawStateDatabase(options);
+  } catch (error) {
+    void lifetime.track(Promise.reject(error), true);
+    throw error;
+  }
+  return {
+    options,
+    manager,
+    run: (run: () => Promise<void>) => (body = lifetime.run(run)),
+    request: (opts: GatewayRequestHandlerOptions) =>
+      (pending = lifetime.track(Promise.resolve(requestHandler(manager)(opts)))),
+  };
 }
 
 function executionIdentity() {
@@ -58,8 +85,9 @@ function requestOptions(params: {
   request: Record<string, unknown>;
   identity: AgentRuntimeIdentity;
   validateAuthority?: () => boolean;
-}): GatewayRequestHandlerOptions {
-  return {
+}): { options: GatewayRequestHandlerOptions; responseSent: Promise<void> } {
+  const responseSent = createDeferred();
+  const options = {
     req: { method: "plugin.approval.request", params: params.request, id: "req-1" },
     params: params.request,
     client: {
@@ -68,7 +96,7 @@ function requestOptions(params: {
       internal: { agentRuntimeIdentity: params.identity },
     },
     isWebchatConnect: () => false,
-    respond: vi.fn(),
+    respond: vi.fn(() => responseSent.resolve()),
     context: {
       broadcast: vi.fn(),
       getRuntimeConfig: () => ({ agents: { list: [{ id: "main" }] } }),
@@ -77,6 +105,7 @@ function requestOptions(params: {
       validateAgentRuntimeApprovalAuthority: params.validateAuthority ?? (() => true),
     },
   } as unknown as GatewayRequestHandlerOptions;
+  return { options, responseSent: responseSent.promise };
 }
 
 function requestHandler(
@@ -89,6 +118,26 @@ function requestHandler(
   return handler;
 }
 
+async function waitForAcceptedRequest(
+  opts: GatewayRequestHandlerOptions,
+  responseSent: Promise<void>,
+  pending: void | Promise<void>,
+) {
+  await Promise.race([responseSent, pending]);
+  expect(opts.context.broadcast).toHaveBeenCalledWith(
+    "plugin.approval.requested",
+    expect.objectContaining({ id: expect.any(String) }),
+    { dropIfSlow: true },
+  );
+  const payload = vi.mocked(opts.context.broadcast).mock.calls[0]?.[1] as { id: string };
+  expect(opts.respond).toHaveBeenCalledWith(
+    true,
+    expect.objectContaining({ status: "accepted", id: payload.id }),
+    undefined,
+  );
+  return payload.id;
+}
+
 afterEach(() => {
   vi.restoreAllMocks();
 });
@@ -99,7 +148,7 @@ describe("plugin approval signed agent runtime", () => {
       approvalKind: "plugin",
       validateAgentRuntimeDelegatedAuthority: () => false,
     });
-    const opts = requestOptions({
+    const { options: opts } = requestOptions({
       request: { title: "Sensitive action", description: "D" },
       identity: {
         ...identityWithoutExecution(),
@@ -122,7 +171,7 @@ describe("plugin approval signed agent runtime", () => {
       approvalKind: "plugin",
       validateAgentRuntimeDelegatedAuthority: () => active,
     });
-    const opts = requestOptions({
+    const { options: opts, responseSent } = requestOptions({
       request: { title: "Sensitive action", description: "D", twoPhase: true },
       identity: {
         ...identityWithoutExecution(),
@@ -131,13 +180,12 @@ describe("plugin approval signed agent runtime", () => {
       validateAuthority: () => active,
     });
     const pending = requestHandler(manager)(opts);
-    await vi.waitFor(async () => expect(await manager.listPendingRecords()).toHaveLength(1));
-    const record = (await manager.listPendingRecords())[0]!;
+    const approvalId = await waitForAcceptedRequest(opts, responseSent, pending);
     active = false;
 
-    await expect(manager.awaitDecision(record.id)).resolves.toBeNull();
+    await expect(manager.awaitDecision(approvalId)).resolves.toBeNull();
     await pending;
-    expect(await manager.getSnapshot(record.id)).toMatchObject({ status: "cancelled" });
+    expect(await manager.getSnapshot(approvalId)).toMatchObject({ status: "cancelled" });
   });
 
   it("rejects a signed runtime without a host-resolved approval owner", async (testContext) => {
@@ -145,7 +193,7 @@ describe("plugin approval signed agent runtime", () => {
       approvalKind: "plugin",
       validateAgentRuntimeDelegatedAuthority: () => true,
     });
-    const opts = requestOptions({
+    const { options: opts } = requestOptions({
       request: { pluginId: "forged", title: "Sensitive action", description: "D" },
       identity: {
         kind: "agentRuntime",
@@ -168,111 +216,100 @@ describe("plugin approval signed agent runtime", () => {
     });
   });
 
-  it("uses signed runtime owner and route instead of forged request metadata", async () => {
-    const options = databaseOptions();
-    const manager = new ExecApprovalManager<PluginApprovalRequestPayload>({
-      approvalKind: "plugin",
-      persistence: { runtimeEpoch: "runtime-a", databaseOptions: options },
-      validateAgentRuntimeDelegatedAuthority: () => true,
-    });
-    const opts = requestOptions({
-      request: {
-        pluginId: "forged-plugin",
-        title: "Sensitive action",
-        description: "D",
-        agentId: "forged-agent",
-        sessionKey: "forged-session",
-        turnSourceChannel: "forged-channel",
-        turnSourceTo: "forged-target",
-        twoPhase: true,
-      },
-      identity: {
-        kind: "agentRuntime",
-        operationalRunInstance: { instanceId: "instance-run-1", runId: "run-1" },
-        delegatedAuthority: {
-          kind: "local",
-          operationalRunInstance: { instanceId: "instance-run-1", runId: "run-1" },
-          lifecycleGeneration: "generation-1",
-          claimId: "claim-1",
+  it("uses signed runtime owner and route instead of forged request metadata", async (testContext) => {
+    const fixture = createPersistenceFixture(testContext);
+    const { options, manager } = fixture;
+    await fixture.run(async () => {
+      const { options: opts, responseSent } = requestOptions({
+        request: {
+          pluginId: "forged-plugin",
+          title: "Sensitive action",
+          description: "D",
+          agentId: "forged-agent",
+          sessionKey: "forged-session",
+          turnSourceChannel: "forged-channel",
+          turnSourceTo: "forged-target",
+          twoPhase: true,
         },
-        executionIdentity: executionIdentity(),
-        approvalOwnerPluginId: "codex",
+        identity: {
+          kind: "agentRuntime",
+          operationalRunInstance: { instanceId: "instance-run-1", runId: "run-1" },
+          delegatedAuthority: {
+            kind: "local",
+            operationalRunInstance: { instanceId: "instance-run-1", runId: "run-1" },
+            lifecycleGeneration: "generation-1",
+            claimId: "claim-1",
+          },
+          executionIdentity: executionIdentity(),
+          approvalOwnerPluginId: "codex",
+          agentId: "main",
+          sessionKey: "agent:main:session-1",
+          turnSourceChannel: "telegram",
+          turnSourceTo: "chat-1",
+          turnSourceAccountId: "default",
+          turnSourceThreadId: "thread-1",
+        },
+      });
+
+      const pending = fixture.request(opts);
+      const approvalId = await waitForAcceptedRequest(opts, responseSent, pending);
+      expect((await manager.getSnapshot(approvalId))?.request).toMatchObject({
+        pluginId: "codex",
         agentId: "main",
         sessionKey: "agent:main:session-1",
         turnSourceChannel: "telegram",
         turnSourceTo: "chat-1",
         turnSourceAccountId: "default",
         turnSourceThreadId: "thread-1",
-      },
+      });
+      expect(
+        openOpenClawStateDatabase(options)
+          .db.prepare(
+            "SELECT approval_id, source_context_id, source_execution_id FROM operator_approval_execution_identities WHERE approval_id = ?",
+          )
+          .get(approvalId),
+      ).toEqual({
+        approval_id: approvalId,
+        source_context_id: "context-1",
+        source_execution_id: "execution-1",
+      });
+      await manager.resolve(approvalId, "deny");
+      await pending;
     });
-
-    const pending = requestHandler(manager)(opts);
-    await vi.waitFor(() => expect(opts.context.broadcast).toHaveBeenCalled());
-    const broadcastPayload = vi.mocked(opts.context.broadcast).mock.calls[0]?.[1] as
-      | { id?: unknown }
-      | undefined;
-    const approvalId = String(broadcastPayload?.id);
-    expect((await manager.getSnapshot(approvalId))?.request).toMatchObject({
-      pluginId: "codex",
-      agentId: "main",
-      sessionKey: "agent:main:session-1",
-      turnSourceChannel: "telegram",
-      turnSourceTo: "chat-1",
-      turnSourceAccountId: "default",
-      turnSourceThreadId: "thread-1",
-    });
-    expect(
-      openOpenClawStateDatabase(options)
-        .db.prepare(
-          "SELECT approval_id, source_context_id, source_execution_id FROM operator_approval_execution_identities WHERE approval_id = ?",
-        )
-        .get(approvalId),
-    ).toEqual({
-      approval_id: approvalId,
-      source_context_id: "context-1",
-      source_execution_id: "execution-1",
-    });
-    await manager.resolve(approvalId, "deny");
-    await pending;
   });
 
-  it("does not create execution identity storage when collection is disabled", async () => {
-    const options = databaseOptions();
-    const manager = new ExecApprovalManager<PluginApprovalRequestPayload>({
-      approvalKind: "plugin",
-      persistence: { runtimeEpoch: "runtime-a", databaseOptions: options },
-      validateAgentRuntimeDelegatedAuthority: () => true,
-    });
-    const opts = requestOptions({
-      request: { title: "Sensitive action", description: "D", twoPhase: true },
-      identity: {
-        kind: "agentRuntime",
-        operationalRunInstance: { instanceId: "instance-run-1", runId: "run-1" },
-        delegatedAuthority: {
-          kind: "local",
+  it("does not create execution identity storage when collection is disabled", async (testContext) => {
+    const fixture = createPersistenceFixture(testContext);
+    const { options, manager } = fixture;
+    await fixture.run(async () => {
+      const { options: opts, responseSent } = requestOptions({
+        request: { title: "Sensitive action", description: "D", twoPhase: true },
+        identity: {
+          kind: "agentRuntime",
           operationalRunInstance: { instanceId: "instance-run-1", runId: "run-1" },
-          lifecycleGeneration: "generation-1",
-          claimId: "claim-1",
+          delegatedAuthority: {
+            kind: "local",
+            operationalRunInstance: { instanceId: "instance-run-1", runId: "run-1" },
+            lifecycleGeneration: "generation-1",
+            claimId: "claim-1",
+          },
+          approvalOwnerPluginId: "codex",
+          agentId: "main",
+          sessionKey: "agent:main:session-1",
         },
-        approvalOwnerPluginId: "codex",
-        agentId: "main",
-        sessionKey: "agent:main:session-1",
-      },
-    });
+      });
 
-    const pending = requestHandler(manager)(opts);
-    await vi.waitFor(() => expect(opts.context.broadcast).toHaveBeenCalled());
-    const approvalId = String(
-      (vi.mocked(opts.context.broadcast).mock.calls[0]?.[1] as { id?: unknown } | undefined)?.id,
-    );
-    expect(
-      openOpenClawStateDatabase(options)
-        .db.prepare(
-          "SELECT name FROM sqlite_schema WHERE type = 'table' AND name = 'operator_approval_execution_identities'",
-        )
-        .get(),
-    ).toBeUndefined();
-    await manager.resolve(approvalId, "deny");
-    await pending;
+      const pending = fixture.request(opts);
+      const approvalId = await waitForAcceptedRequest(opts, responseSent, pending);
+      expect(
+        openOpenClawStateDatabase(options)
+          .db.prepare(
+            "SELECT name FROM sqlite_schema WHERE type = 'table' AND name = 'operator_approval_execution_identities'",
+          )
+          .get(),
+      ).toBeUndefined();
+      await manager.resolve(approvalId, "deny");
+      await pending;
+    });
   });
 });
