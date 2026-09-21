@@ -34,8 +34,17 @@ suite.define(() => {
       { viewport: { width: 1280, height: 900 }, reducedMotion: "no-preference" },
       async ({ page }) => {
         await installMockGateway(page, { methodResponses });
+        const layoutRequests: string[] = [];
+        page.on("request", (request) => {
+          if (request.url().includes("debug-overlay-layout.runtime-")) {
+            layoutRequests.push(request.url());
+          }
+        });
         await page.goto(suite.server.baseUrl + "debug");
+        await page.getByRole("button", { name: /^Open overlay/u }).waitFor();
+        expect(layoutRequests).toHaveLength(0);
         let panel = await openCompact(page);
+        expect(layoutRequests).toHaveLength(1);
         const original = (await panel.boundingBox())!;
         const header = panel.locator(".debug-overlay__header");
         const handle = (await header.boundingBox())!;

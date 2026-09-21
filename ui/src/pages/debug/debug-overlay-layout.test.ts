@@ -17,7 +17,7 @@ function flushFrame() {
   frames.clear();
   callbacks.forEach((callback) => callback(0));
 }
-function mount(mode: "expanded" | "minimized" = "minimized", flush = true) {
+async function mount(mode: "expanded" | "minimized" = "minimized", flush = true) {
   render(
     renderDebugOverlayFrame({
       mode,
@@ -43,6 +43,7 @@ function mount(mode: "expanded" | "minimized" = "minimized", flush = true) {
   panel.hasPointerCapture = () => false;
   panel.releasePointerCapture = vi.fn();
   Object.defineProperty(panel, "animate", { configurable: true, value: animate });
+  await vi.dynamicImportSettled();
   if (flush) {
     flushFrame();
   }
@@ -94,8 +95,22 @@ afterEach(() => {
 });
 
 describe("System busyness frame layout", () => {
-  it("saves only a completed drag and restores it in a new frame", () => {
-    const panel = mount();
+  it("does not initialize controls after their frame closes during import", async () => {
+    render(
+      renderDebugOverlayFrame({
+        mode: "minimized",
+        body: html`Loading`,
+        onClose: vi.fn(),
+        onToggleMode: vi.fn(),
+      }),
+      container,
+    );
+    render(nothing, container);
+    await vi.dynamicImportSettled();
+    expect(frames.size).toBe(0);
+  });
+  it("saves only a completed drag and restores it in a new frame", async () => {
+    const panel = await mount();
     pointer(panel.querySelector("header")!, "pointerdown");
     pointer(panel, "pointermove", { clientX: 210, clientY: 160 });
     expect(panel.style.left).toBe("200px");
@@ -103,14 +118,14 @@ describe("System busyness frame layout", () => {
     pointer(panel, "pointerup", { clientX: 210, clientY: 160 });
     expect(JSON.parse(storage.getItem(key)!)).toEqual({ x: 200, y: 150 });
     render(nothing, container);
-    expect(mount().style.top).toBe("150px");
+    expect((await mount()).style.top).toBe("150px");
   });
 
   it.each(["pointercancel", "lostpointercapture"])(
     "rolls back %s and ignores unrelated pointers",
-    (ending) => {
+    async (ending) => {
       storage.setItem(key, JSON.stringify({ x: 200, y: 150 }));
-      const panel = mount();
+      const panel = await mount();
       pointer(panel.querySelector("header")!, "pointerdown");
       pointer(panel, "pointermove", { pointerId: 2, clientX: 100, clientY: 100 });
       expect(panel.style.left).toBe("200px");
@@ -123,8 +138,8 @@ describe("System busyness frame layout", () => {
     },
   );
 
-  it("leaves controls and secondary clicks alone and cleans up a removed frame", () => {
-    const panel = mount();
+  it("leaves controls and secondary clicks alone and cleans up a removed frame", async () => {
+    const panel = await mount();
     pointer(panel.querySelector("button")!, "pointerdown");
     pointer(panel.querySelector("header")!, "pointerdown", { button: 2 });
     expect(capturePointer).not.toHaveBeenCalled();
@@ -136,9 +151,9 @@ describe("System busyness frame layout", () => {
     expect(frames.size).toBe(0);
   });
 
-  it("keeps dragging usable when storage fails and rejects malformed stored coordinates", () => {
+  it("keeps dragging usable when storage fails and rejects malformed stored coordinates", async () => {
     storage.setItem(key, '{"x":"200","y":150}');
-    const panel = mount();
+    const panel = await mount();
     expect(panel.style.left).toBe("");
     vi.spyOn(storage, "setItem").mockImplementation(() => {
       throw new DOMException("Unavailable");
@@ -148,29 +163,29 @@ describe("System busyness frame layout", () => {
     expect(panel.style.left).toBe("200px");
   });
 
-  it("animates mode changes for 160ms, but not mounting or reduced motion", () => {
-    mount();
+  it("animates mode changes for 160ms, but not mounting or reduced motion", async () => {
+    await mount();
     expect(animate).not.toHaveBeenCalled();
-    mount("expanded");
+    await mount("expanded");
     expect(animate).toHaveBeenCalledWith(
       expect.any(Array),
       expect.objectContaining({ duration: 160 }),
     );
     animate.mockClear();
     reducedMotion = true;
-    mount("minimized");
+    await mount("minimized");
     expect(animate).not.toHaveBeenCalled();
   });
 
-  it("keeps a queued transition and retargets an active one across same-mode content renders", () => {
-    mount();
-    mount("expanded", false);
-    mount("expanded", false);
+  it("keeps a queued transition and retargets an active one across same-mode content renders", async () => {
+    await mount();
+    await mount("expanded", false);
+    await mount("expanded", false);
     expect(frames.size).toBe(1);
     flushFrame();
     expect(animate).toHaveBeenCalledTimes(1);
     const active = animate.mock.results[0]!.value;
-    mount("expanded");
+    await mount("expanded");
     expect(active.cancel).toHaveBeenCalledOnce();
     expect(animate).toHaveBeenCalledTimes(2);
   });
