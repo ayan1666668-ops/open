@@ -435,7 +435,9 @@ export async function installRegistration(params: {
     // leaves it intact; the selected manifest remains the dependency authority.
     const observedManifest = await fs
       .readFile(manifestPath, "utf8")
-      .catch((readError) => (asNullableRecord(readError)?.code === "ENOENT" ? undefined : null));
+      .catch((readError: unknown) =>
+        asNullableRecord(readError)?.code === "ENOENT" ? undefined : null,
+      );
     if (createdLauncher && observedManifest === previousManifest) {
       await assertPrivateNativeHostFile(launcherPath, true, deps.platform ?? process.platform);
       await fs.unlink(launcherPath);

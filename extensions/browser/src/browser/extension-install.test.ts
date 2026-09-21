@@ -165,7 +165,7 @@ describe("native host registration", () => {
     const readSpy = vi
       .spyOn(fs, "readFile")
       .mockImplementation((...args: Parameters<typeof fs.readFile>) => {
-        if (/Preferences$/u.test(String(args[0]))) {
+        if (typeof args[0] === "string" && args[0].endsWith("Preferences")) {
           throw new Error("personal profile access is denied");
         }
         return readFile(...args);
@@ -190,7 +190,9 @@ describe("native host registration", () => {
         })
       ).changes,
     ).toEqual([]);
-    expect(readSpy.mock.calls.some(([file]) => /Preferences$/u.test(String(file)))).toBe(false);
+    expect(
+      readSpy.mock.calls.some(([file]) => typeof file === "string" && file.endsWith("Preferences")),
+    ).toBe(false);
   });
 
   it("keeps the old registration usable when publishing the replacement manifest fails", async () => {
