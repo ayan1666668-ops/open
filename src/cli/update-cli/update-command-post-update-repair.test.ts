@@ -21,6 +21,7 @@ import { registerCurrentCoreRuntimeRefreshTests } from "./update-command-post-up
 import { finishUpdate } from "./update-command-post-update.js";
 import {
   registerUnverifiedDefinitionRecoveryTest,
+  successfulPluginUpdate,
   taskRecovery,
 } from "./update-command-post-update.test-support.js";
 import { revalidateManagedGatewayServiceAfterUpdate } from "./update-command-service-maintenance.js";
@@ -127,8 +128,14 @@ afterEach(() => {
 const fixture = () => createPostUpdateRepairFixture(dirs.make("post-update-repair-"));
 
 describe("post-activation failure settlement without inference", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
+    const verification = await vi.importActual<typeof import("./update-command-verification.js")>(
+      "./update-command-verification.js",
+    );
+    vi.mocked(verifyUpdatedGateway)
+      .mockReset()
+      .mockImplementation(verification.verifyUpdatedGateway);
     mocks.healthy = false;
     mocks.version = "2026.9.3";
     mocks.readService.mockResolvedValue({
@@ -426,7 +433,7 @@ describe("post-activation failure settlement without inference", () => {
             packageRollbackVerified: true,
             version: "2026.9.1",
             service: restoredHealthy ? "healthy" : "failed",
-            ...(!restoredHealthy ? { reason: "restart-unhealthy" } : {}),
+            ...(!restoredHealthy ? { reason: "readyz-unhealthy" } : {}),
           },
         });
         expect(completeRecovery).toHaveBeenCalled();
@@ -464,7 +471,10 @@ describe("post-activation failure settlement without inference", () => {
       vi.stubEnv("OPENCLAW_WINDOWS_TASK_NAME", "repair-plugin-fixture");
       run.env.OPENCLAW_WINDOWS_TASK_NAME = "repair-plugin-fixture";
       const root = await fs.realpath(dirs.make("repair-plugin-windows-candidate-"));
-      await fs.writeFile(path.join(root, "package.json"), JSON.stringify({ name: "openclaw" }));
+      await fs.writeFile(
+        path.join(root, "package.json"),
+        JSON.stringify({ name: "openclaw", version: "2026.9.3" }),
+      );
       const state: GatewayServiceState = {
         installed: true,
         loadState: { status: "loaded" },
@@ -542,6 +552,7 @@ describe("post-activation failure settlement without inference", () => {
             requireRunningService: true,
             onVerified: restart.onVerified,
           });
+          expect(verification, JSON.stringify(verification)).toMatchObject({ ok: activated });
           if (!verification.ok) {
             restart.onVerificationFailure?.(verification.summary);
           }
@@ -558,7 +569,7 @@ describe("post-activation failure settlement without inference", () => {
             return {
               resultWithPostUpdate: {
                 ...convergence.result,
-                postUpdate: { plugins: { status: "ok", changed: true } },
+                postUpdate: { plugins: { ...successfulPluginUpdate, changed: true } },
               },
               postUpdateConfigSnapshot: params.configSnapshot,
             };
