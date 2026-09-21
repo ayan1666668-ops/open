@@ -179,10 +179,36 @@ describe("drainActiveSessionsForShutdown", () => {
     expect(result.emittedSessionIds).toEqual(["sess-A"]);
   });
 
-  it("returns timedOut=true while still starting later emissions when one handler hangs", async () => {
+  it("does not redispatch a session claimed by an overlapping drain", async () => {
+    const { promise: handlerLatch, resolve: resolveHandler } = createDeferred();
+    const hookStarted = createDeferred<void>();
     runSessionEndMock.mockImplementation(async (event: SessionEndHookEvent) => {
       if (event.sessionId === "sess-A") {
-        await new Promise<void>(() => {});
+        hookStarted.resolve();
+        await handlerLatch;
+      }
+    });
+    trackSessionForShutdown({ sessionId: "sess-A" });
+    const first = drainActiveSessionsForShutdown({ reason: "shutdown", totalTimeoutMs: 5_000 });
+    await hookStarted.promise;
+    // The overlapping drain snapshots after the claim, so it must neither see
+    // nor redispatch the session; the empty snapshot returns before any timer.
+    const overlap = await drainActiveSessionsForShutdown({ reason: "shutdown" });
+    expect(overlap).toEqual({ emittedSessionIds: [], timedOut: false });
+    expect(runSessionEndMock).toHaveBeenCalledTimes(1);
+    resolveHandler?.();
+    const result = await first;
+    expect(result).toEqual({ emittedSessionIds: ["sess-A"], timedOut: false });
+    expect(listActiveSessionsForShutdown()).toEqual([]);
+  });
+
+  it("reports only settled sessions as emitted and discharges the hung session without redispatch", async () => {
+    const { promise: handlerLatch, resolve: resolveHandler } = createDeferred();
+    const lateSettled = createDeferred<void>();
+    runSessionEndMock.mockImplementation(async (event: SessionEndHookEvent) => {
+      if (event.sessionId === "sess-A") {
+        await handlerLatch;
+        lateSettled.resolve();
       }
     });
     trackSessionForShutdown({ sessionId: "sess-A" });
@@ -194,11 +220,37 @@ describe("drainActiveSessionsForShutdown", () => {
     });
 
     expect(result.timedOut).toBe(true);
-    expect(result.emittedSessionIds.toSorted()).toEqual(["sess-A", "sess-B"]);
+    // sess-A never settled, so it must not be reported as emitted.
+    expect(result.emittedSessionIds).toEqual(["sess-B"]);
     expect(runSessionEndMock).toHaveBeenCalledTimes(2);
     expect(
       runSessionEndMock.mock.calls.map(([event]) => (event as { sessionId?: string }).sessionId),
     ).toEqual(["sess-A", "sess-B"]);
+    // The interrupted session is discharged per the fail-open budget: it must
+    // not remain tracked for a later drain to redispatch.
+    expect(listActiveSessionsForShutdown()).toEqual([]);
+
+    // Late settlement must neither rewrite the verdict nor allow redispatch:
+    // await the handler's explicit completion signal, then flush continuations.
+    resolveHandler?.();
+    await lateSettled.promise;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(result.emittedSessionIds).toEqual(["sess-B"]);
+    runSessionEndMock.mockClear();
+    const retry = await drainActiveSessionsForShutdown({ reason: "shutdown" });
+    expect(retry).toEqual({ emittedSessionIds: [], timedOut: false });
+    expect(runSessionEndMock).not.toHaveBeenCalled();
+  });
+
+  it("discharges a settled-with-error session without keeping it retryable", async () => {
+    runSessionEndMock.mockRejectedValueOnce(new Error("hook failed"));
+    trackSessionForShutdown({ sessionId: "sess-A" });
+
+    const result = await drainActiveSessionsForShutdown({ reason: "shutdown" });
+
+    expect(result.timedOut).toBe(false);
+    expect(result.emittedSessionIds).toEqual(["sess-A"]);
+    expect(listActiveSessionsForShutdown()).toEqual([]);
   });
 
   it("still records the session as forgotten when no `session_end` plugins are registered", async () => {

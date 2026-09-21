@@ -19,14 +19,25 @@ export async function drainActiveSessionsForShutdown(params: {
   const emittedSessionIds: string[] = [];
   const hookRunner = getGlobalHookRunner();
   let settledEmissions = 0;
+  let timedOut = false;
   // Start all emissions before the bounded aggregate so one slow plugin cannot
   // prevent later tracked sessions from receiving session_end.
   const drain = Promise.allSettled(
     tracked.map(async (entry) => {
+      // Claim the entry before dispatch: the tracker is process-global while
+      // drains are instance-local, so an overlapping drain must not select a
+      // session whose hook is already running. Only settlement before the
+      // timeout verdict counts as emitted; interrupted sessions stay claimed
+      // and discharged per the documented fail-open budget.
+      forgetActiveSessionForShutdown(entry.sessionId);
+      const record = () => {
+        if (!timedOut) {
+          emittedSessionIds.push(entry.sessionId);
+        }
+      };
       try {
-        forgetActiveSessionForShutdown(entry.sessionId);
-        emittedSessionIds.push(entry.sessionId);
         if (!hookRunner?.hasHooks("session_end")) {
+          record();
           return;
         }
         const transcript = resolveStableSessionEndTranscript({
@@ -44,8 +55,11 @@ export async function drainActiveSessionsForShutdown(params: {
           transcriptArchived: transcript.transcriptArchived,
         });
         await hookRunner.runSessionEnd(payload.event, payload.context);
+        record();
       } catch (err) {
         logVerbose(`session_end hook failed during shutdown drain: ${String(err)}`);
+        // A settled-with-error attempt still discharges this drain's obligation.
+        record();
       } finally {
         settledEmissions++;
       }
@@ -59,6 +73,7 @@ export async function drainActiveSessionsForShutdown(params: {
   try {
     const result = await Promise.race([drain.then(() => "ok" as const), timeout]);
     if (result === "timeout") {
+      timedOut = true;
       logVerbose(
         `shutdown session-end drain timed out after ${totalTimeoutMs}ms with ${tracked.length - settledEmissions} session_end handler(s) still pending`,
       );
