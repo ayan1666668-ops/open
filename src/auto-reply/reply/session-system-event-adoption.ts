@@ -4,6 +4,7 @@ import { isSessionRecipientAuthorityCurrent } from "../../config/sessions/sessio
 import type { SessionRecipientAuthority } from "../../config/sessions/session-recipient-authority-types.js";
 import { toErrorObject } from "../../infra/errors.js";
 import { ackSessionDelivery } from "../../infra/session-delivery-queue-storage.js";
+import { resolveSystemEventQueueKey } from "../../infra/system-event-ownership.js";
 import { consumeSelectedSystemEventEntries, type SystemEvent } from "../../infra/system-events.js";
 
 type PreparedAuthorityScope = { agentId: string; sessionKey: string; storePath: string };
@@ -165,7 +166,13 @@ export function resolveFinalSystemEventAdoption(params: {
           // event; a replacement session cannot redirect it.
           await settleStaleSystemEventAuthority({
             event: entry.binding.event,
-            sessionKey: entry.owner.scope.sessionKey,
+            // The scope carries the owner that selected this event, so the
+            // queue key is resolved from it rather than re-derived; the other
+            // caller already passes an agent-qualified key.
+            sessionKey: resolveSystemEventQueueKey(
+              entry.owner.scope.sessionKey,
+              entry.owner.scope.agentId,
+            ),
           });
           entry.owner.pending.delete(entry.authorityKey);
         }
