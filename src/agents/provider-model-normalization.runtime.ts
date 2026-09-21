@@ -32,14 +32,14 @@ export function normalizeProviderModelIdWithRuntime(params: {
   }
   // Managed hooks retain their bound receiver. Plain hooks get provider fields
   // on demand, with original getter receivers and invocation-local writes.
-  const target = { pluginId: registration.pluginId, normalizeModelId };
+  const fields = { pluginId: registration.pluginId, normalizeModelId };
   let deleted: Set<string | symbol> | undefined;
   const materialize = (key: string | symbol) => {
-    if (Object.hasOwn(target, key) || deleted?.has(key) || !Object.isExtensible(target)) {
+    if (Object.hasOwn(fields, key) || deleted?.has(key) || !Object.isExtensible(fields)) {
       return;
     }
     if (Object.getOwnPropertyDescriptor(registration.provider, key)?.enumerable) {
-      Object.defineProperty(target, key, {
+      Object.defineProperty(fields, key, {
         value: Reflect.get(registration.provider, key),
         writable: true,
         enumerable: true,
@@ -58,10 +58,10 @@ export function normalizeProviderModelIdWithRuntime(params: {
     }
     return [
       ...providerKeys,
-      ...Reflect.ownKeys(target).filter((key) => !providerKeys.includes(key)),
+      ...Reflect.ownKeys(fields).filter((key) => !providerKeys.includes(key)),
     ];
   };
-  const receiver = new Proxy(target, {
+  const normalizer = new Proxy(fields, {
     get(target, key, receiver) {
       materialize(key);
       return Reflect.get(target, key, receiver);
@@ -87,5 +87,5 @@ export function normalizeProviderModelIdWithRuntime(params: {
       return Reflect.preventExtensions(target);
     },
   });
-  return normalizeOptionalString(receiver.normalizeModelId(params.context));
+  return normalizeOptionalString(normalizer.normalizeModelId(params.context));
 }
