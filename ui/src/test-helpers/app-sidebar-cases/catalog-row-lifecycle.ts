@@ -65,7 +65,7 @@ describe("AppSidebar catalog row lifecycle", () => {
     expect(row()?.style.getPropertyValue("--session-color")).toBe("");
   });
 
-  it("retargets an open menu when its row is adopted", async () => {
+  it.each(["open", "closed"])("keeps %s menu focus after row adoption", async (menuState) => {
     const adoptedKey = "agent:main:adopted-menu";
     const gateway = createGateway({} as GatewayBrowserClient);
     const { sidebar } = await mountSidebar(
@@ -80,7 +80,14 @@ describe("AppSidebar catalog row lifecycle", () => {
       await sidebar.updateComplete;
     };
     await setCatalog();
-    sidebar.querySelector<HTMLButtonElement>("[data-catalog-session-menu]")?.click();
+    const catalogMenuButton = sidebar.querySelector<HTMLButtonElement>(
+      "[data-catalog-session-menu]",
+    )!;
+    catalogMenuButton.focus();
+    expect(document.activeElement).toBe(catalogMenuButton);
+    if (menuState === "open") {
+      catalogMenuButton.click();
+    }
     await sidebar.updateComplete;
     await setCatalog(adoptedKey);
     await Promise.resolve();
@@ -92,11 +99,15 @@ describe("AppSidebar catalog row lifecycle", () => {
     const popup = sidebar.querySelector<HTMLElement & { trigger?: HTMLElement }>(
       "openclaw-catalog-session-menu",
     );
-    expect(popup).not.toBeNull();
-    expect(popup?.trigger).toBe(adoptedMenu);
-    popup?.querySelector<HTMLElement>("wa-dropdown-item")?.focus();
-    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-    await sidebar.updateComplete;
+    if (menuState === "open") {
+      expect(popup).not.toBeNull();
+      expect(popup?.trigger).toBe(adoptedMenu);
+      popup?.querySelector<HTMLElement>("wa-dropdown-item")?.focus();
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      await sidebar.updateComplete;
+    } else {
+      expect(popup).toBeNull();
+    }
     expect(document.activeElement).toBe(adoptedMenu);
   });
 

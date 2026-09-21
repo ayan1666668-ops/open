@@ -132,7 +132,10 @@ function catalogRowRef(
     if (restoreFocus) {
       queueMicrotask(() => {
         if (element.isConnected && document.activeElement === document.body) {
-          element.querySelector<HTMLElement>(selector)?.focus({ preventScroll: true });
+          (
+            element.querySelector<HTMLElement>(selector) ??
+            element.querySelector<HTMLElement>(".sidebar-recent-session__link")
+          )?.focus({ preventScroll: true });
         }
       });
     }
