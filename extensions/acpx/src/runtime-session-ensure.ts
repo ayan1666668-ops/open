@@ -1,11 +1,70 @@
+import { resolve as resolvePath } from "node:path";
+import { isDeepStrictEqual } from "node:util";
+import type { AcpSessionStore } from "acpx/runtime";
 import {
   AcpRuntimeError,
   type AcpRuntime,
   type AcpRuntimeHandle,
   type AcpRuntimeTurnResultError,
 } from "../runtime-api.js";
+import { splitCommandParts, type AcpxAgentCommand } from "./command-line.js";
+import { readAcpxProcessLeaseIdentity, withAcpxLeaseArgs } from "./process-lease.js";
+import {
+  readRecordAgentCommand,
+  readRecordCwd,
+  readRecordResetOnNextEnsure,
+} from "./runtime-session-store.js";
 
 type RuntimeEnsureInput = Parameters<AcpRuntime["ensureSession"]>[0];
+
+export async function readReusablePersistentSessionCommand(params: {
+  sessionStore: Pick<AcpSessionStore, "load">;
+  defaultCwd: string;
+  gatewayInstanceId: string | undefined;
+  sessionKey: string;
+  mode: RuntimeEnsureInput["mode"];
+  cwd: string | undefined;
+  command: AcpxAgentCommand | undefined;
+  resumeSessionId: string | undefined;
+}): Promise<AcpxAgentCommand | undefined> {
+  if (params.mode !== "persistent" || !params.command) {
+    return undefined;
+  }
+  const existing = await params.sessionStore.load(params.sessionKey);
+  if (!existing || readRecordResetOnNextEnsure(existing)) {
+    return undefined;
+  }
+  const recordCwd = readRecordCwd(existing);
+  if (
+    !recordCwd ||
+    resolvePath(recordCwd) !== resolvePath(params.cwd?.trim() || params.defaultCwd)
+  ) {
+    return undefined;
+  }
+  const recordCommand = readRecordAgentCommand(existing);
+  if (!recordCommand) {
+    return undefined;
+  }
+  const leaseIdentity = readAcpxProcessLeaseIdentity(recordCommand);
+  if (leaseIdentity && leaseIdentity.gatewayInstanceId !== params.gatewayInstanceId) {
+    return undefined;
+  }
+  const stableRecordCommand = leaseIdentity
+    ? withAcpxLeaseArgs({
+        command: params.command,
+        leaseId: leaseIdentity.leaseId,
+        gatewayInstanceId: leaseIdentity.gatewayInstanceId,
+      })
+    : params.command;
+  if (
+    !isDeepStrictEqual(splitCommandParts(recordCommand), splitCommandParts(stableRecordCommand))
+  ) {
+    return undefined;
+  }
+  return !params.resumeSessionId || existing.acpSessionId === params.resumeSessionId
+    ? recordCommand
+    : undefined;
+}
 
 const MISSING_SESSION_ID_PATTERNS = [
   /^(?:Failed to start session:\s*)?(?:session|thread)\s+["']?([^\s"']+)["']?\s+not found$/i,

@@ -5,8 +5,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
-import path, { resolve as resolvePath } from "node:path";
-import { isDeepStrictEqual } from "node:util";
+import path from "node:path";
 import {
   AcpxRuntime as BaseAcpxRuntime,
   decodeAcpxRuntimeHandleState,
@@ -61,6 +60,7 @@ import type { CompleteAcpRuntime, CompleteAcpRuntimeTurn } from "./runtime-proxy
 import {
   normalizeMissingResumeTargetError,
   prepareResumeSafeSessionInput,
+  readReusablePersistentSessionCommand,
   withResumeEnsureErrorNormalization,
   withSessionResumeCapability,
 } from "./runtime-session-ensure.js";
@@ -74,8 +74,6 @@ import {
   type GenerationHandle,
   acpxOperationScope,
   readRecordAgentCommand,
-  readRecordCwd,
-  readRecordResetOnNextEnsure,
   readOpenClawLeaseIdFromRecord,
   extractGeneratedWrapperPath,
   createResetAwareSessionStore,
@@ -655,49 +653,6 @@ export class AcpxRuntime implements CompleteAcpRuntime {
     );
   }
 
-  private async readReusablePersistentSessionCommand(params: {
-    sessionKey: string;
-    mode: Parameters<AcpRuntime["ensureSession"]>[0]["mode"];
-    cwd: string | undefined;
-    command: AcpxAgentCommand | undefined;
-    resumeSessionId: string | undefined;
-  }): Promise<AcpxAgentCommand | undefined> {
-    if (params.mode !== "persistent" || !params.command) {
-      return undefined;
-    }
-    const existing = await this.sessionStore.load(params.sessionKey);
-    if (!existing || readRecordResetOnNextEnsure(existing)) {
-      return undefined;
-    }
-    const recordCwd = readRecordCwd(existing);
-    if (!recordCwd || resolvePath(recordCwd) !== resolvePath(params.cwd?.trim() || this.cwd)) {
-      return undefined;
-    }
-    const recordCommand = readRecordAgentCommand(existing);
-    if (!recordCommand) {
-      return undefined;
-    }
-    const leaseIdentity = readAcpxProcessLeaseIdentity(recordCommand);
-    if (leaseIdentity && leaseIdentity.gatewayInstanceId !== this.gatewayInstanceId) {
-      return undefined;
-    }
-    const stableRecordCommand = leaseIdentity
-      ? withAcpxLeaseArgs({
-          command: params.command,
-          leaseId: leaseIdentity.leaseId,
-          gatewayInstanceId: leaseIdentity.gatewayInstanceId,
-        })
-      : params.command;
-    if (
-      !isDeepStrictEqual(splitCommandParts(recordCommand), splitCommandParts(stableRecordCommand))
-    ) {
-      return undefined;
-    }
-    return !params.resumeSessionId || existing.acpSessionId === params.resumeSessionId
-      ? recordCommand
-      : undefined;
-  }
-
   private async runWithLaunchLease<T>(params: {
     agent: string;
     sessionKey: string;
@@ -994,7 +949,10 @@ export class AcpxRuntime implements CompleteAcpRuntime {
       codexModelOverride && command
         ? appendCodexAcpConfigOverrides(command, codexModelOverride)
         : command;
-    const reusableCommand = await this.readReusablePersistentSessionCommand({
+    const reusableCommand = await readReusablePersistentSessionCommand({
+      sessionStore: this.sessionStore,
+      defaultCwd: this.cwd,
+      gatewayInstanceId: this.gatewayInstanceId,
       sessionKey: input.sessionKey,
       mode: ensureInput.mode,
       cwd: input.cwd,

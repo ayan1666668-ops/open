@@ -34,7 +34,7 @@ const SESSION_RESUME_REQUIRED_DETAIL_CODE = "SESSION_RESUME_REQUIRED";
  * SessionResumeRequiredError; matching the reason text missed Kiro and left the
  * thread permanently stuck (#87830).
  */
-export function isMissingManagerResumeTargetError(error: AcpRuntimeError): boolean {
+function isMissingManagerResumeTargetError(error: AcpRuntimeError): boolean {
   return (
     hasResumeDetailCode(error, SESSION_RESUME_REQUIRED_DETAIL_CODE) ||
     isConfirmedMissingManagerResumeTargetError(error)

@@ -1,6 +1,6 @@
 import { normalizeOptionalString as normalizeText } from "@openclaw/normalization-core/string-coerce";
 import type { SessionAcpIdentity, SessionAcpIdentitySource, SessionAcpMeta } from "../types.js";
-import type { AcpRuntimeHandle, AcpRuntimeStatus } from "./types.js";
+import type { AcpRuntimeHandle, AcpRuntimeSessionMode, AcpRuntimeStatus } from "./types.js";
 
 // ACP session identity merge and extraction helpers for resume-safe runtime state.
 
@@ -107,14 +107,17 @@ export function identityHasStableSessionId(identity: SessionAcpIdentity | undefi
   return Boolean(identity?.acpxSessionId || identity?.agentSessionId);
 }
 
-/** Resolve the ACP protocol session id used by session/resume, with legacy fallback. */
+/** Preserve persistent agent-ID precedence; resumable one-shots prefer the ACP protocol ID. */
 export function resolveRuntimeResumeSessionId(
   identity: SessionAcpIdentity | undefined,
+  mode: AcpRuntimeSessionMode = "persistent",
 ): string | undefined {
   if (!identity) {
     return undefined;
   }
-  return normalizeText(identity.acpxSessionId) ?? normalizeText(identity.agentSessionId);
+  return mode === "oneshot"
+    ? (normalizeText(identity.acpxSessionId) ?? normalizeText(identity.agentSessionId))
+    : (normalizeText(identity.agentSessionId) ?? normalizeText(identity.acpxSessionId));
 }
 
 /** Return true when identity is absent or still pending. */

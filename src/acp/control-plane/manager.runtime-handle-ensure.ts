@@ -134,7 +134,7 @@ export async function ensureManagerRuntimeHandle(params: {
     mode === "persistent" ||
     (previousIdentity?.sessionResumeSupported === true &&
       previousIdentity.sessionResumeReady === true)
-      ? resolveRuntimeResumeSessionId(previousIdentity)
+      ? resolveRuntimeResumeSessionId(previousIdentity, mode)
       : undefined;
   if (
     mode === "oneshot" &&
