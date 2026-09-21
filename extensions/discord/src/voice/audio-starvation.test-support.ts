@@ -26,7 +26,7 @@ export function startDiscordPacingReceiver(
       // the SDK's own 20 ms resource consumption, not a substitute test timer.
       if (packet && !packet.equals(Buffer.from([0xf8, 0xff, 0xfe]))) {
         times.push(performance.now());
-        // Enqueueing a resource does not mean the SDK has begun consuming audio.
+        // Queuing playback can precede asynchronous encoder construction.
         if (times.length === 1) {
           started();
         }
