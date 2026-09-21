@@ -8,6 +8,7 @@ import {
   type UsageCostWorkerInput,
   type UsageCostWorkerReply,
 } from "../../infra/session-cost-usage-worker.types.js";
+import { SQLITE_IDLE_HANDLE_TTL_MS } from "../../infra/sqlite-handle-lifecycle.js";
 import { WorkerTaskError, WorkerTaskPool } from "../../infra/worker-task-pool.js";
 import { normalizeAgentId } from "../../routing/session-key.js";
 import type { OpenClawAgentDatabaseOptions } from "../../state/openclaw-agent-db-contract.js";
@@ -33,29 +34,38 @@ import type {
   SessionTargetInventoryWorkerInput,
   SessionIdentityEvidenceWorkerInput,
   SessionMembersWorkerInput,
+  SessionPreviewWorkerInput,
+  SessionTitleFieldsWorkerInput,
   SessionRowPresenceWorkerInput,
   SessionTranscriptHistoryWorkerInput,
   SessionTranscriptWorkerReply,
   SessionUsageCacheWorkerInput,
+  SessionTranscriptSearchWorkerInput,
 } from "./session-transcript-worker.types.js";
 
 const workerUrl = resolveRuntimeWorkerUrl(runtimeProcessEntrypoints.sessionTranscript);
 export const historyPages = new WorkerTaskPool<
   | SessionTranscriptHistoryWorkerInput
+  | SessionPreviewWorkerInput
+  | SessionTitleFieldsWorkerInput
   | SessionRowPresenceWorkerInput
   | SessionMembersWorkerInput
   | SessionEntryListWorkerInput
   | SessionTargetInventoryWorkerInput
   | SessionIdentityEvidenceWorkerInput
-  | SessionUsageCacheWorkerInput,
+  | SessionUsageCacheWorkerInput
+  | SessionTranscriptSearchWorkerInput,
   SessionTranscriptWorkerReply<
     | "history-page"
+    | "session-preview"
+    | "session-title-fields"
     | "session-row-presence"
     | "session-members"
     | "session-entry-list"
     | "session-target-inventory"
     | "session-identity-evidence"
     | "usage-cache"
+    | "transcript-search"
   >
 >({
   workerUrl,
@@ -196,7 +206,7 @@ export function armDatabaseWorkerIdleRetirement(lane: SessionDatabaseWorkerLane)
       void rotateDatabaseWorkers(lane).catch((error: unknown) => {
         process.emitWarning(`${lane.name} worker retirement failed: ${String(error)}`);
       });
-    }, 30 * 60_000),
+    }, SQLITE_IDLE_HANDLE_TTL_MS),
   );
   lane.idleTimer.unref();
 }
@@ -356,12 +366,15 @@ export async function withSessionHistoryWorkerReadCandidates<T>(
           );
           const result = unwrapSessionTranscriptWorkerReply<
             | "history-page"
+            | "session-preview"
+            | "session-title-fields"
             | "session-row-presence"
             | "session-members"
             | "session-entry-list"
             | "session-target-inventory"
             | "session-identity-evidence"
             | "usage-cache"
+            | "transcript-search"
           >(reply);
           if (
             typeof result === "boolean" ||

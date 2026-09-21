@@ -54,6 +54,11 @@ export const runtimeProcessEntrypoints = {
     sourceWorkerName: "../state/openclaw-state.worker",
     distWorkerPath: "state/openclaw-state.worker.js",
   },
+  authProfileInlineUsage: {
+    currentModuleUrl,
+    sourceWorkerName: "../agents/auth-profiles/inline-usage.worker",
+    distWorkerPath: "agents/auth-profiles/inline-usage.worker.js",
+  },
   agentDatabaseExecution: {
     currentModuleUrl,
     sourceWorkerName: "../state/openclaw-agent-execution.worker",
@@ -128,6 +133,11 @@ export const runtimeProcessEntrypoints = {
     currentModuleUrl,
     sourceWorkerName: "update-candidate-state.worker",
     distWorkerPath: "infra/update-candidate-state.worker.js",
+  },
+  doctorLint: {
+    currentModuleUrl,
+    sourceWorkerName: "../commands/doctor-lint.worker",
+    distWorkerPath: "commands/doctor-lint.worker.js",
   },
   databaseVerify: {
     currentModuleUrl,
