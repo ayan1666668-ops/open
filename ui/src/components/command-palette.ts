@@ -297,7 +297,7 @@ export class CommandPalette extends OpenClawLightDomContentsElement {
       input.value.slice(0, input.selectionStart).lastIndexOf("@") === input.mentionTrigger
     ) {
       this.mentionMenu.syncDirectory(this.draft.mentionDirectory);
-      this.mentionMenu.update(input.value, input.selectionStart, this.requestMentionUpdate, true);
+      this.mentionMenu.update(element, this.requestMentionUpdate, "trigger");
     }
     if (input.imageFiles?.length) {
       this.draft.adoptImageFiles(input.imageFiles, input.submitRequested);
@@ -504,7 +504,6 @@ export class CommandPalette extends OpenClawLightDomContentsElement {
     const input = this.inputElement;
     if (
       !input ||
-      input.selectionStart !== input.selectionEnd ||
       this.composing ||
       event?.isComposing ||
       event?.inputType === "insertFromPaste" ||
@@ -515,10 +514,13 @@ export class CommandPalette extends OpenClawLightDomContentsElement {
       return;
     }
     this.mentionMenu.update(
-      input.value,
-      input.selectionStart,
+      input,
       this.requestMentionUpdate,
-      event?.inputType === "insertText" && event.data?.includes("@") === true,
+      !event
+        ? "selection"
+        : event.inputType === "insertText" && event.data?.includes("@") === true
+          ? "trigger"
+          : "input",
     );
   }
 

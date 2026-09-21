@@ -243,11 +243,15 @@ describe("command palette people mentions", () => {
     );
   });
 
-  it("closes suggestions when the caret leaves the invocation or selects a range", async () => {
+  it("keeps name selections but closes when the selection leaves the invocation", async () => {
     const f = await mount();
     await f.append("Review @");
     await f.search("Al");
     expect(f.directoryParams()).toEqual([{ agentId: "main", query: "Al" }]);
+    expect(f.menu()).not.toBeNull();
+    f.input.setSelectionRange(8, 10);
+    f.input.dispatchEvent(new Event("select", { bubbles: true }));
+    await f.palette.updateComplete;
     expect(f.menu()).not.toBeNull();
     f.input.setSelectionRange(0, 0);
     f.input.dispatchEvent(new Event("select", { bubbles: true }));
