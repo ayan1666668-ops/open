@@ -5,21 +5,21 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { drainFormattedSystemEvents } from "../auto-reply/reply/session-system-events.js";
 import type { OpenClawConfig } from "../config/config.js";
 import {
-  enqueueSystemEvent as enqueueSystemEventViaInfraRuntime,
-  enqueueSystemEventEntry as enqueueSystemEventEntryViaInfraRuntime,
-} from "../plugin-sdk/infra-runtime.js";
-import { createRuntimeSystem } from "../plugins/runtime/runtime-system.js";
-import {
   clearRuntimeConfigSnapshot,
   getRuntimeConfigSnapshot,
   setRuntimeConfigSnapshot,
 } from "../config/io.js";
 import { resolveMainSessionKey } from "../config/sessions/main-session.js";
 import {
+  enqueueSystemEvent as enqueueSystemEventViaInfraRuntime,
+  enqueueSystemEventEntry as enqueueSystemEventEntryViaInfraRuntime,
+} from "../plugin-sdk/infra-runtime.js";
+import {
   enqueueRoutedSystemEvent,
   enqueueSystemEvent as enqueueSdkSystemEvent,
   peekSystemEventEntries as peekSdkSystemEventEntries,
 } from "../plugin-sdk/system-event-runtime.js";
+import { createRuntimeSystem } from "../plugins/runtime/runtime-system.js";
 import { isCronSystemEvent } from "./heartbeat-events-filter.js";
 import { withSystemEventOwner } from "./system-event-ownership.js";
 import {

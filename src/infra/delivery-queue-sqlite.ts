@@ -15,10 +15,8 @@ import {
   type DeliveryQueueEntryLoadResult,
 } from "./delivery-queue-sqlite-codec.js";
 import {
-  completeDeliveryQueueEntryInDatabase,
   countPendingDeliveryQueueEntriesInDatabase,
   deleteDeliveryQueueEntryInDatabase,
-  deliveryQueueEntryNotFoundError,
   getDeliveryQueueEntryOwnersInDatabase,
   prepareDeliveryQueueTerminalEntry,
   reserveDeliveryQueueEntryAttemptInDatabase,
@@ -82,7 +80,7 @@ export function loadDeliveryQueueEntry(
 }
 
 /** Load a row without discarding corrupt JSON or its exact persisted text. */
-export function loadDeliveryQueueEntryResult(
+function loadDeliveryQueueEntryResult(
   queueName: string,
   id: string,
   stateDir?: string,
@@ -136,7 +134,7 @@ export function loadDeliveryQueueEntries(
 }
 
 /** Load rows in database order while retaining corrupt row identity and bytes. */
-export function loadDeliveryQueueEntryResults(
+function loadDeliveryQueueEntryResults(
   queueName: string,
   stateDir?: string,
   mode: DeliveryQueueReadMode = "pending",
@@ -160,16 +158,6 @@ export function deleteDeliveryQueueEntry(
   context?: DeliveryQueueStateContext,
 ): void {
   deleteDeliveryQueueEntryInDatabase(openStateDatabase(stateDir, context), queueName, id);
-}
-
-/** Retain a delivered row as a durable idempotency tombstone. */
-export function completeDeliveryQueueEntry(
-  queueName: string,
-  id: string,
-  stateDir?: string,
-  context?: DeliveryQueueStateContext,
-): void {
-  completeDeliveryQueueEntryInDatabase(openStateDatabase(stateDir, context), queueName, id);
 }
 
 /** Load, transform, and persist a pending delivery queue entry. */
@@ -256,28 +244,6 @@ export async function pruneExpiredDeliveryQueueTombstones(
     type: "deliveryQueue.pruneTombstones",
     input: undefined,
   });
-}
-
-/** Terminalize one pending row using its failure-retention ownership fact. */
-export function moveDeliveryQueueEntryToFailed(
-  queueName: string,
-  id: string,
-  stateDir?: string,
-): void {
-  const current = loadDeliveryQueueEntryResult(queueName, id, stateDir);
-  if (!current || current.status !== "loaded") {
-    throw deliveryQueueEntryNotFoundError(queueName, id);
-  }
-  const result = terminalizePendingDeliveryQueueEntry({
-    queueName,
-    id,
-    entry: current.entry,
-    expectedEntryJson: current.entryJson,
-    stateDir,
-  });
-  if (result.status !== "terminalized") {
-    throw deliveryQueueEntryNotFoundError(queueName, id);
-  }
 }
 
 function prepareContinuationTerminalEntry(

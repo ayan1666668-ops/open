@@ -144,7 +144,6 @@ async function stopMaintenanceTimers(
 ) {
   await timers.stopPeriodicTasks();
   await timers.skillUsageCleanup();
-
 }
 
 describe("startGatewayMaintenanceTimers", () => {
