@@ -1,47 +1,118 @@
 ---
-summary: "Experimental opt-in cognitive profiles for native Swarm collectors"
-title: "Swarm cognitive dynamics"
+summary: "Experimental generic dynamics contract for native Swarm collectors"
+title: "Swarm dynamics"
 status: experimental
 ---
 
-# Swarm cognitive dynamics
+# Swarm dynamics
 
-OpenClaw Code Mode can prepare a native collector with a versioned cognitive profile:
+OpenClaw Code Mode can prepare a native collector with a generic dynamics contract:
 
 ```javascript
 const result = await agents.run("Explore alternate explanations for this failure.", {
-  dynamics: { profile: "explorer" },
+  dynamics: { boundary: "isolated" },
 });
 ```
 
-This uses the existing `agents.run` to `sessions_spawn` bridge. It does not
-install a controller service, add a scheduler, change tool permissions, or add
-dependencies. Calls without `dynamics` keep their existing behavior.
+This uses the existing `agents.run` to `sessions_spawn` bridge. Core does not
+own names such as explorer, builder, critic, verifier, or glass-breaker. Those are
+recipes a caller may choose to build outside the native contract.
 
-## Profiles
+The native contract owns only mechanics that need a trusted host boundary:
 
-- `explorer`: broad search with an isolated handoff.
-- `builder`: moderate exploration with summary-only handoff coordination.
-- `critic`: evidence-oriented challenge.
-- `independent-verifier`: artifact-only explicit handoff and a required sandbox.
-- `glass-breaker`: a fresh trajectory intended for stalled search.
+- which explicit handoff fields survive
+- whether existing sandbox admission must be stricter
+- whether a candidate digest is required
+- whether artifact references are required
+- exact launch bytes for replay identity
 
-Effective temperature and mutation budget are search guidance, not model sampling
-parameters or enforced filesystem permissions. Model and thinking overrides retain
-their existing meanings.
+Calls without `dynamics` keep their existing behavior.
 
-Profiles are execution trajectories, not security principals. The native value is
-that OpenClaw can bind the trajectory into the launch, constrain explicit handoff,
-and enforce generic resolved requirements without making a preset name an authority
-hook. The verifier preset currently resolves to required sandbox, candidate digest,
-and artifact references.
+## Contract
 
-## Verifier handoff
+```typescript
+type DynamicsBoundary =
+  | "isolated"
+  | "artifact-only"
+  | "evidence-only"
+  | "summary-only";
+
+type DynamicsRequirement = "optional" | "required";
+
+type DynamicsOptions = {
+  boundary: DynamicsBoundary;
+  requirements?: {
+    sandbox?: "inherit" | "require";
+    candidateDigest?: DynamicsRequirement;
+    artifactRefs?: DynamicsRequirement;
+  };
+  handoff?: {
+    candidateDigest?: string;
+    artifactRefs?: string[];
+    evidenceRefs?: string[];
+    summary?: string;
+  };
+};
+```
+
+The contract is intentionally monotone with respect to authority: a caller may
+ask the existing owner for a stricter sandbox or require more evidence to be
+present, but the contract cannot grant tools, credentials, approvals, publication,
+merge, or deployment authority.
+
+## Liquid recipes live outside core
+
+The Liquid Software Factory philosophy still uses named trajectories, but they are
+ordinary caller-side recipes rather than permanent OpenClaw product vocabulary:
 
 ```javascript
-const review = await agents.run("Check this candidate against the stated acceptance criteria.", {
+const trajectories = {
+  explorer: {
+    boundary: "isolated",
+  },
+  builder: {
+    boundary: "summary-only",
+  },
+  critic: {
+    boundary: "evidence-only",
+  },
+  independentVerifier: {
+    boundary: "artifact-only",
+    requirements: {
+      sandbox: "require",
+      candidateDigest: "required",
+      artifactRefs: "required",
+    },
+  },
+  glassBreaker: {
+    boundary: "isolated",
+  },
+};
+
+const result = await agents.run(
+  "Explore a substantially different hypothesis and report uncertainty.",
+  { dynamics: trajectories.explorer },
+);
+```
+
+The role lives in the task and orchestration policy. Core only enforces the
+transport/admission contract.
+
+This is the architectural rule:
+
+> The physics is core; the personalities are recipes.
+
+## Artifact-only verification
+
+```javascript
+const review = await agents.run("Check this frozen candidate against the acceptance criteria.", {
   dynamics: {
-    profile: "independent-verifier",
+    boundary: "artifact-only",
+    requirements: {
+      sandbox: "require",
+      candidateDigest: "required",
+      artifactRefs: "required",
+    },
     handoff: {
       candidateDigest: "the-candidate-digest",
       artifactRefs: ["the-available-artifact-reference"],
@@ -50,64 +121,97 @@ const review = await agents.run("Check this candidate against the stated accepta
 });
 ```
 
-The bridge filters the explicit handoff, uses `context: "isolated"`, and derives
-sandbox/evidence enforcement from the resolved profile requirements. For the
-verifier preset those requirements pass `sandbox: "require"` to the existing
-native spawn owner and require candidate/artifact handoff. Missing sandbox support
-is an error; it never silently retries without a sandbox.
+The bridge filters the explicit handoff, uses `context: "isolated"`, and passes
+`sandbox: "require"` to the existing native spawn owner. Missing sandbox support
+is an error; there is no unsandboxed retry.
 
 References are caller-provided data, not fetched automatically or treated as
-authority. Each reference is limited to 512 characters, each reference array to
-32 entries, and a supplied summary to 4096 characters.
+authority.
 
-The resolved profile, handoff, exact candidate manifest when supplied, and
-host-derived run identities are serialized before the existing launch fingerprint
-is computed. Changing profile or bound candidate identity therefore changes the
-launch identity.
+## Liquid invariant
 
-## Liquid search, deterministic convergence
-
-The intended progression is:
+Search policy may be heterogeneous and stochastic:
 
 ```text
-explore broadly -> coordinate -> challenge -> freeze exact candidate -> verify
+many caller-defined trajectories
+          |
+          v
+   competing candidates
+          |
+          v
+     exact candidate
+          |
+          v
+ generic verification contract
+          |
+          v
+ existing effect authority
 ```
 
-Different lanes may occupy different phases at the same time. Diagnostics remain
-search-only. Existing admission, tool policy, sandbox, cancellation, approval,
-publication, merge, and deployment owners retain authority.
+As work approaches convergence, ambiguity must decrease. Search may be stochastic;
+launch identity, replay, sandbox requirements, and eventual effect authority must
+not be.
 
-## Lifecycle
+## Exact candidate binding
 
-Dynamics diagnostic bookkeeping is owned by the parent run through OpenClaw's
+The integrated stack accepts an optional exact candidate manifest:
+
+```typescript
+candidate?: {
+  version: 1;
+  candidateDigest: string;
+  sourceDigest: string;
+  recipeDigest: string;
+  policyDigest: string;
+};
+```
+
+The manifest and stable candidate identity participate in the prepared launch
+bytes and therefore in the existing replay fingerprint. A conflicting
+`handoff.candidateDigest` is rejected.
+
+Identity is not correctness, verification evidence, or effect authorization.
+
+## Host-observed diagnostics and lifecycle
+
+Later Liquid policy may classify local gas/liquid/critical/crystal/glass/jammed
+regimes, but those classifications are search-only assessments. The host projects
+only facts it actually owns from native collector records; missing semantic
+telemetry remains unknown.
+
+Dynamics observer bookkeeping belongs to the parent run through OpenClaw's
 existing catalog/run disposal lifetime. Parent disposal or abort releases that
-bookkeeping. Recoverable wait errors leave it intact. Cleanup does not cancel live
-sibling collectors; it only prevents abandoned advisory state from accumulating
-in the Gateway process.
+bookkeeping without cancelling live sibling collectors. Recoverable wait errors
+do not destroy the observer.
 
-## Limits and trust
+The integrated regression covers exact replay identity, host diagnostics,
+advisory lifecycle emission, and cleanup without introducing a second scheduler
+or a new authority plane.
+
+## Trust boundary
 
 Handoff filtering is not a complete independence guarantee. It does not sanitize
 the caller's original task, disable shared memory, mount candidate artifacts
 read-only, or prove that another permitted tool cannot reach sibling data.
 
-The verifier profile name describes its intended role, not an attestation. The
-runtime and operator's existing policies must establish any stronger isolation.
-
-The current implementation does not attest measurement receipts, approve effects,
-adopt policy, or automatically execute advisory population actions.
+A caller-side recipe describes intent, not an attestation. Existing OpenClaw
+admission, sandbox, policy, cancellation, and approval owners remain authoritative.
 
 ## Validation
 
-Repository tests cover profile resolution, generic requirement enforcement,
-handoff filtering, exact candidate binding, replay identity, host-owned population
-diagnostics, local mixed-phase regressions, and refusal to downgrade a
-sandbox-required verifier. The native-boundary regression reaches the real
-`spawnSubagentDirect` admission path rather than mocking it.
+Repository tests cover:
 
-A live model-backed native collector transcript remains useful end-to-end evidence
-for the experiment and should be captured before claiming production readiness.
+- unchanged calls without dynamics
+- generic boundary validation
+- boundary/requirement compatibility
+- bounded handoff filtering
+- exact launch-byte changes when the contract changes
+- required-sandbox rejection with no downgrade
+- the real `spawnSubagentDirect` admission path with substituted final dispatch
+
+Repository coverage additionally exercises exact replay binding, host diagnostics, lifecycle advisory emission, and parent-owned cleanup through production owners with substituted final provider/model execution. A model-backed collector transcript remains the strongest missing end-to-end proof.
 
 ## Related
 
-- [Liquid Software Factory](/concepts/liquid-software-factory) for the end-to-end search-to-convergence architecture.
+- [Liquid Software Factory PR stack](/concepts/liquid-software-factory-stack) for the four-layer review topology.
+- [Liquid Software Factory](/concepts/liquid-software-factory) for the full search-to-convergence model.
