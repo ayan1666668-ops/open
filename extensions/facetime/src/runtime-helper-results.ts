@@ -12,7 +12,7 @@ export const OUTBOUND_DIAL_HELPER_BUNDLES = new Set([
   "com.apple.FaceTime.FTConversationService",
 ]);
 
-export function readHelperPeers(result: HelperActionResult): FaceTimeHelperPeer[] {
+function readHelperPeers(result: HelperActionResult): FaceTimeHelperPeer[] {
   const peers: FaceTimeHelperPeer[] = [];
   for (const entry of readHelperResults(result)) {
     const peer = entry.helperPeer;
