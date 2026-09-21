@@ -1,15 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { diagnoseHostCollectorPopulation } from "./population-runtime.js";
+import { assessHostCollectorPopulation } from "./population-runtime.js";
 
 describe("host-owned collector dynamics telemetry", () => {
   it("keeps semantic candidate signals unknown for successful collectors", () => {
     expect(
-      diagnoseHostCollectorPopulation({
+      assessHostCollectorPopulation({
         groupId: "swarm:test",
         maxConcurrent: 4,
         records: [{ runId: "run-1", terminalStatus: "done" }],
       }),
-    ).decision).toMatchObject({
+    ).toMatchObject({
       authority: "search-only",
       actions: [{ kind: "hold" }],
     });
@@ -17,7 +17,7 @@ describe("host-owned collector dynamics telemetry", () => {
 
   it("turns host-observed terminal failure into advisory debt pressure", () => {
     expect(
-      diagnoseHostCollectorPopulation({
+      assessHostCollectorPopulation({
         groupId: "swarm:test",
         maxConcurrent: 4,
         records: [
@@ -25,7 +25,7 @@ describe("host-owned collector dynamics telemetry", () => {
           { runId: "run-2", terminalStatus: "done" },
         ],
       }),
-    ).decision).toMatchObject({
+    ).toMatchObject({
       authority: "search-only",
       actions: [{ kind: "drain" }],
     });
@@ -33,7 +33,7 @@ describe("host-owned collector dynamics telemetry", () => {
 
   it("treats scheduler saturation as measured pressure without inventing evidence", () => {
     expect(
-      diagnoseHostCollectorPopulation({
+      assessHostCollectorPopulation({
         groupId: "swarm:test",
         maxConcurrent: 2,
         records: [
@@ -41,7 +41,7 @@ describe("host-owned collector dynamics telemetry", () => {
           { runId: "run-2", terminalStatus: null },
         ],
       }),
-    ).decision).toMatchObject({
+    ).toMatchObject({
       actions: [{ kind: "drain" }],
     });
   });
