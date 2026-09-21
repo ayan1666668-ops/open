@@ -1154,7 +1154,9 @@ wa-popover::part(body)::-webkit-scrollbar-thumb:hover {
   *::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
+    /* A positive duration enables the default transition-property: all, even
+       on static controls. Keep reduced-motion updates immediate instead. */
+    transition-duration: 0ms !important;
     scroll-behavior: auto !important;
   }
 }

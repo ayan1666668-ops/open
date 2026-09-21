@@ -128,7 +128,22 @@ suite.define(() => {
       await expect.poll(() => result.isVisible()).toBe(true);
       expect(await picker.locator("[data-chat-model-option]:visible").count()).toBe(1);
       expect(await result.isEnabled()).toBe(true);
+      await search.clear();
+      await trigger.focus();
       await page.emulateMedia({ reducedMotion: "reduce" });
+      const reducedSearchStarted = performance.now();
+      await search.pressSequentially("Model 0999");
+      expect(await search.inputValue()).toBe("Model 0999");
+      await expect.poll(() => result.isVisible()).toBe(true);
+      expect(await picker.locator("[data-chat-model-option]:visible").count()).toBe(1);
+      console.log(
+        JSON.stringify({
+          proof: "model-catalog-reduced-motion-search",
+          route,
+          models: models.length,
+          elapsedMs: performance.now() - reducedSearchStarted,
+        }),
+      );
       expect(
         await refresh
           .locator(".btn__spinner")
@@ -148,9 +163,17 @@ suite.define(() => {
           animations: "disabled",
         });
       }
+      await refreshDetails.focus();
+      expect(await refreshDetails.evaluate((button) => button === document.activeElement)).toBe(
+        true,
+      );
       await gateway.setMethodResponse("models.list", { models });
       await gateway.emitGatewayEvent("chat.metadata.changed", {});
       await expect.poll(() => refresh.count()).toBe(0);
+      expect(await search.evaluate((input) => input === document.activeElement)).toBe(true);
+      expect(await search.inputValue()).toBe("Model 0999");
+      await search.press("ArrowDown");
+      expect(await result.getAttribute("data-chat-model-highlighted")).not.toBeNull();
       expect(await picker.locator("[data-chat-model-catalog-state]").count()).toBe(0);
       expect(await picker.getAttribute("open")).not.toBeNull();
       if (artifactDir) {
