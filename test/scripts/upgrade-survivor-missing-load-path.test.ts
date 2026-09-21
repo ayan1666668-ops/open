@@ -107,6 +107,8 @@ const convergenceRestartMessage =
 
 it.skipIf(process.platform === "win32").each([
   { mode: "ready", code: 0, launches: 1, restarted: false },
+  { mode: "published-cohort", code: 0, launches: 1, restarted: false },
+  { mode: "published-cohort-install-failure", code: 42, launches: 0, restarted: false },
   { mode: "convergence-once", code: 0, launches: 2, restarted: true },
   { mode: "convergence-repeated", code: 1, launches: 2, restarted: true },
   { mode: "unrelated", code: 1, launches: 1, restarted: false },
@@ -140,10 +142,27 @@ const env = process.env;
 const previous = fs.readFileSync(env.FIXTURE_LAUNCHES, "utf8").trim();
 const attempt = previous ? previous.split("\\n").length + 1 : 1;
 const args = process.argv.slice(2);
-assert.deepEqual(args, ["gateway", "--port", "18789", "--bind", "loopback", "--allow-unconfigured"]);
 assert.equal(env.NPM_CONFIG_REGISTRY, "https://published.example.invalid");
 assert.equal(env.npm_config_registry, env.NPM_CONFIG_REGISTRY);
 assert.equal(env.BUN_CONFIG_REGISTRY, env.NPM_CONFIG_REGISTRY);
+const cohort = ["codex", "discord", "whatsapp"];
+if (args[0] === "plugins" && args[1] === "install") {
+  if (args[2] === "--help") {
+    process.stdout.write("--accept-capabilities\\n");
+    process.exit(0);
+  }
+  const plugin = cohort.find((id) => args[2] === "@openclaw/" + id + "@2026.8.2");
+  assert.ok(plugin, "baseline installation must use its published cohort");
+  assert.deepEqual(args.slice(3), ["--force", "--accept-capabilities"]);
+  if (env.FIXTURE_MODE === "published-cohort-install-failure") process.exit(42);
+  fs.writeFileSync(path.join(env.OPENCLAW_STATE_DIR, "installed-" + plugin), args[2]);
+  process.exit(0);
+}
+assert.deepEqual(args, ["gateway", "--port", "18789", "--bind", "loopback", "--allow-unconfigured"]);
+if (env.FIXTURE_MODE.startsWith("published-cohort")) {
+  assert.ok(cohort.every((id) => fs.existsSync(path.join(env.OPENCLAW_STATE_DIR, "installed-" + id))),
+    "baseline-matched plugins must be provisioned before startup");
+}
 const prepared = path.join(env.OPENCLAW_STATE_DIR, "converged-plugin-inputs");
 if (attempt > 1) assert.equal(fs.readFileSync(prepared, "utf8"), "published convergence retained");
 fs.appendFileSync(env.FIXTURE_LAUNCHES, JSON.stringify({
@@ -196,7 +215,7 @@ if [ "$FIXTURE_MODE" = bad-clock ]; then node() { return 17; }; fi
 phase() { shift; "$@"; }
 check_gateway_probes() { [ -f "$FIXTURE_READY" ]; printf 'baseline-probes\\n'; }
 stop_gateway() { openclaw_e2e_stop_process "$gateway_pid"; gateway_pid=""; printf 'baseline-stopped\\n'; }
-baseline_version=2026.9.2
+baseline_version=${mode.startsWith("published-cohort") ? "2026.8.2" : "2026.9.2"}
 SCENARIO=base
 UPDATE_RESTART_MODE=manual
 run_missing_load_path_fixture baseline

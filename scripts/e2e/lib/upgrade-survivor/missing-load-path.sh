@@ -1,6 +1,15 @@
 #!/usr/bin/env bash
 
 start_missing_load_path_baseline() {
+  if [ "$baseline_version" = "2026.8.2" ]; then
+    # This published startup selects current plugins without accepting their capabilities.
+    # Provision its own release cohort before exercising the baseline Gateway.
+    local plugin
+    for plugin in codex discord whatsapp; do
+      openclaw_e2e_fixture_plugin_command openclaw -- \
+        plugins install "@openclaw/$plugin@$baseline_version" --force || return "$?"
+    done
+  fi
   local start_status=0 exit_status=0
   start_gateway || start_status=$?
   [ "$start_status" -eq 0 ] && return 0
