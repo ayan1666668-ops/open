@@ -75,6 +75,12 @@ type PerplexitySearchApiResponse = {
   }>;
 };
 
+export type PerplexityResearchEffort = "low" | "medium" | "high" | "xhigh";
+
+const PERPLEXITY_RESEARCH_EFFORTS = ["low", "medium", "high", "xhigh"] as const;
+
+type PerplexityAgentSelection = { preset: "fast" | PerplexityResearchEffort } | { model: string };
+
 function resolvePerplexityApiKey(perplexity?: PerplexityConfig): PerplexityAuth {
   const fromConfig = readConfiguredSecretString(
     perplexity?.apiKey,
@@ -179,9 +185,7 @@ function extractPerplexityAgentResult(data: PerplexityAgentResponse): {
   return { content: answer, citations: uniqueStrings(citations) };
 }
 
-function resolvePerplexityAgentSelection(
-  model: string,
-): { preset: "fast" | "low" | "medium" | "high" } | { model: string } {
+function resolvePerplexityAgentSelection(model: string): PerplexityAgentSelection {
   const normalized = model.replace(/^perplexity\//u, "");
   switch (normalized) {
     case "sonar":
@@ -333,16 +337,16 @@ async function runPerplexityAgentSearch(params: {
   query: string;
   apiKey: string;
   baseUrl: string;
-  model: string;
+  selection: PerplexityAgentSelection;
   timeoutSeconds: number;
   signal?: AbortSignal;
   freshness?: string;
 }): Promise<{ content: string; citations: string[] }> {
   const body: Record<string, unknown> = {
-    ...resolvePerplexityAgentSelection(params.model),
+    ...params.selection,
     input: params.query,
   };
-  if (params.freshness || "model" in body) {
+  if (params.freshness || "model" in params.selection) {
     body.tools = [
       {
         type: "web_search",
@@ -538,7 +542,7 @@ export async function executePerplexitySearch(
             query,
             apiKey: runtime.apiKey,
             baseUrl: runtime.baseUrl,
-            model: runtime.model,
+            selection: resolvePerplexityAgentSelection(runtime.model),
             timeoutSeconds,
             signal,
             freshness,
@@ -575,4 +579,54 @@ export async function executePerplexitySearch(
   signal?.throwIfAborted();
   writeCachedSearchPayload(cacheKey, payload, cacheTtlMs);
   return payload;
+}
+
+export async function executePerplexityResearch(
+  args: Record<string, unknown>,
+  searchConfig?: SearchConfigRecord,
+  signal?: AbortSignal,
+): Promise<Record<string, unknown>> {
+  const perplexityConfig = resolvePerplexityConfig(searchConfig);
+  const auth = resolvePerplexityApiKey(perplexityConfig);
+  if (!auth.apiKey || auth.source === "openrouter_env" || auth.apiKey.startsWith("sk-or-")) {
+    return {
+      error: "missing_perplexity_agent_api_key",
+      message:
+        "perplexity_research needs a direct Perplexity API key. Set PERPLEXITY_API_KEY or configure plugins.entries.perplexity.config.webSearch.apiKey with a Perplexity key.",
+      docs: "https://docs.openclaw.ai/tools/perplexity-search",
+    };
+  }
+
+  const query = readStringParam(args, "query", { required: true });
+  const rawEffort = readStringParam(args, "effort");
+  if (rawEffort && !PERPLEXITY_RESEARCH_EFFORTS.includes(rawEffort as PerplexityResearchEffort)) {
+    return {
+      error: "invalid_effort",
+      message: "effort must be low, medium, high, or xhigh.",
+    };
+  }
+  const effort = (rawEffort ?? "high") as PerplexityResearchEffort;
+  const rawFreshness = readStringParam(args, "freshness");
+  const freshness = rawFreshness ? normalizeFreshness(rawFreshness, "perplexity") : undefined;
+  if (rawFreshness && !freshness) {
+    return {
+      error: "invalid_freshness",
+      message: "freshness must be day, week, month, or year.",
+    };
+  }
+
+  const result = await runPerplexityAgentSearch({
+    query,
+    apiKey: auth.apiKey,
+    baseUrl: "https://api.perplexity.ai",
+    selection: { preset: effort },
+    timeoutSeconds: resolveSearchTimeoutSeconds(searchConfig),
+    signal,
+    freshness,
+  });
+  return {
+    effort,
+    content: wrapWebContent(result.content, "web_search"),
+    citations: result.citations,
+  };
 }

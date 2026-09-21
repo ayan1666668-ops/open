@@ -249,6 +249,29 @@ await web_search({
 - Agent API/OpenRouter compatibility returns one synthesized answer with citations, not structured result rows.
 - Results are cached for 15 minutes by default (configurable via `cacheTtlMinutes`).
 
+## Optional Agent API research tool
+
+The plugin also owns an optional `perplexity_research` tool for cited synthesis
+and deep research. It does not replace or change the `web_search` provider and
+is hidden unless explicitly allowlisted:
+
+```json5
+{
+  tools: { allow: ["perplexity_research"] },
+}
+```
+
+The tool requires a direct Perplexity API key; OpenRouter credentials continue
+to work only through the existing `web_search` compatibility path. Parameters:
+
+- `query` (required): research question or task.
+- `effort`: `low`, `medium`, `high` (default), or `xhigh`.
+- `freshness`: optional `day`, `week`, `month`, or `year` recency filter.
+
+The result includes the synthesized answer and normalized citation URLs. Choose
+`xhigh` only when maximum research depth justifies the additional latency and
+cost.
+
 ## Related
 
 <CardGroup cols={2}>

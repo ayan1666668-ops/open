@@ -13,6 +13,7 @@ vi.mock("openclaw/plugin-sdk/provider-web-search", async (importOriginal) => {
 });
 
 import { createPerplexityWebSearchProvider } from "./perplexity-web-search-provider.js";
+import { executePerplexityResearch } from "./perplexity-web-search-provider.runtime.js";
 
 const openRouterApiKeyEnv = ["OPENROUTER_API", "KEY"].join("_");
 const perplexityApiKeyEnv = ["PERPLEXITY_API", "KEY"].join("_");
@@ -712,5 +713,79 @@ describe("perplexity web search provider", () => {
         );
       },
     );
+  });
+});
+
+describe("perplexity research tool runtime", () => {
+  beforeEach(() => {
+    withTrustedWebSearchEndpointMock.mockReset();
+  });
+
+  it("defaults to high effort and returns cited Agent API synthesis", async () => {
+    mockPerplexityResponseOnce(agentResponse("Grounded research", ["https://example.test/source"]));
+
+    await expect(
+      executePerplexityResearch(
+        { query: "Research OpenClaw" },
+        { perplexity: { apiKey: directPerplexityApiKey } },
+      ),
+    ).resolves.toEqual({
+      effort: "high",
+      content: expect.stringContaining("Grounded research"),
+      citations: ["https://example.test/source"],
+    });
+
+    const [request] = withTrustedWebSearchEndpointMock.mock.calls[0] as [
+      { url: string; init: RequestInit },
+    ];
+    expect(request.url).toBe("https://api.perplexity.ai/v1/agent");
+    expect(JSON.parse(request.init.body as string)).toEqual({
+      preset: "high",
+      input: "Research OpenClaw",
+    });
+  });
+
+  it("passes explicit xhigh effort and freshness to Agent API", async () => {
+    mockPerplexityResponseOnce(agentResponse("Fresh research"));
+
+    await executePerplexityResearch(
+      { query: "Recent OpenClaw changes", effort: "xhigh", freshness: "month" },
+      { perplexity: { apiKey: directPerplexityApiKey } },
+    );
+
+    const [request] = withTrustedWebSearchEndpointMock.mock.calls[0] as [{ init: RequestInit }];
+    expect(JSON.parse(request.init.body as string)).toEqual({
+      preset: "xhigh",
+      input: "Recent OpenClaw changes",
+      tools: [
+        {
+          type: "web_search",
+          filters: { search_recency_filter: "month" },
+        },
+      ],
+    });
+  });
+
+  it("rejects OpenRouter credentials without making a request", async () => {
+    await expect(
+      executePerplexityResearch(
+        { query: "Research OpenClaw" },
+        { perplexity: { apiKey: openRouterPerplexityApiKey } },
+      ),
+    ).resolves.toMatchObject({ error: "missing_perplexity_agent_api_key" });
+    expect(withTrustedWebSearchEndpointMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects invalid effort without making a request", async () => {
+    await expect(
+      executePerplexityResearch(
+        { query: "Research OpenClaw", effort: "maximum" },
+        { perplexity: { apiKey: directPerplexityApiKey } },
+      ),
+    ).resolves.toEqual({
+      error: "invalid_effort",
+      message: "effort must be low, medium, high, or xhigh.",
+    });
+    expect(withTrustedWebSearchEndpointMock).not.toHaveBeenCalled();
   });
 });
