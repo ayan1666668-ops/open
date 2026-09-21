@@ -10,6 +10,16 @@ sidebarTitle: "Media helpers"
 
 Speech, media understanding, generation, web search, and the low-level media utilities. Part of the [Plugin runtime helpers](/plugins/sdk-runtime) reference.
 
+## FFmpeg command discovery
+
+Bundled and separately published official plugins use `resolveFfmpegBin` from
+the private `openclaw/plugin-sdk/media-ffmpeg` runtime. It resolves the same
+trusted system paths as the media runtime and throws an installation hint when
+FFmpeg is unavailable. This narrow entry point keeps media generation and agent
+runtimes out of audio worker startup. It has a JavaScript-only host export;
+its declarations are excluded from the package. Third-party plugins retain the
+existing `resolveFfmpegBin` export from `openclaw/plugin-sdk/media-runtime`.
+
 ## Media and generation namespaces
 
 <AccordionGroup>

@@ -73,6 +73,7 @@
   "keyed-async-queue",
   "llm",
   "markdown-table-runtime",
+  "media-ffmpeg",
   "media-generation-runtime",
   "meeting-page-script-runtime",
   "memory-core-host-embedding-registry",

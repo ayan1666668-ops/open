@@ -434,7 +434,8 @@
     "!dist/plugin-sdk/memory-core-host-engine-knn.d.ts",
     "!dist/plugin-sdk/memory-core-host-engine-indexing.d.ts",
     "!dist/plugin-sdk/sqlite-worker-runtime.d.ts",
-    "!dist/plugin-sdk/worker-task-server.d.ts"
+    "!dist/plugin-sdk/worker-task-server.d.ts",
+    "!dist/plugin-sdk/media-ffmpeg.d.ts"
   ],
   "type": "module",
   "main": "dist/index.js",
@@ -754,6 +755,9 @@
     "./plugin-sdk/media-mime": {
       "types": "./dist/plugin-sdk/media-mime.d.ts",
       "default": "./dist/plugin-sdk/media-mime.js"
+    },
+    "./plugin-sdk/media-ffmpeg": {
+      "default": "./dist/plugin-sdk/media-ffmpeg.js"
     },
     "./plugin-sdk/embedding-providers": {
       "default": "./dist/plugin-sdk/embedding-providers.js"
