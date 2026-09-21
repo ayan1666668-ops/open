@@ -85,6 +85,7 @@ import {
 import type { ModelsConfig, ModelProviderConfig, OpenClawConfig } from "../config/types.js";
 import {
   captureAgentRunLifecycleGeneration,
+  onAgentEventForRun,
   withAgentRunLifecycleGeneration,
 } from "../infra/agent-events.js";
 import {
@@ -1080,6 +1081,47 @@ describe("formatGatewayLiveAgentWaitFailure", () => {
       }).message,
     ).toContain(
       "anthropic prompt: agent.wait timeout for runId=run-1 (timeoutPhase=provider, providerStarted=true, stopReason=rpc)",
+    );
+  });
+
+  it("retains a redacted provider observation for drift classification", () => {
+    const failure = formatGatewayLiveAgentWaitFailure({
+      context: "opencode-go prompt",
+      providerError:
+        "400 Upstream request failed: This Go model requires Global regions. Select Global in your workspace's Privacy settings to use it.",
+      runId: "run-1",
+      result: {
+        status: "error",
+        error: "LLM request failed: provider rejected the request schema or tool payload.",
+      },
+    });
+    expect(failure.message).toContain(
+      "providerError=400 Upstream request failed: This Go model requires Global regions",
+    );
+    expect(
+      shouldSkipLiveProviderDrift({
+        error: failure,
+        allowProviderUnavailable: true,
+      }),
+    ).toEqual({ reason: "provider-unavailable", label: "provider unavailable" });
+  });
+});
+
+describe("readGatewayLiveProviderErrorObservation", () => {
+  it("prefers the bounded raw provider preview", () => {
+    expect(
+      readGatewayLiveProviderErrorObservation({
+        errorObservation: {
+          rawErrorPreview: "  raw provider detail  ",
+          providerErrorMessagePreview: "structured detail",
+        },
+      }),
+    ).toBe("raw provider detail");
+  });
+
+  it("ignores malformed observations", () => {
+    expect(readGatewayLiveProviderErrorObservation({ errorObservation: "not-an-object" })).toBe(
+      undefined,
     );
   });
 });
@@ -4044,6 +4086,7 @@ async function waitForSessionAssistantText(params: {
 
 function formatGatewayLiveAgentWaitFailure(params: {
   context: string;
+  providerError?: string;
   runId: string;
   result: unknown;
 }): Error {
@@ -4065,12 +4108,30 @@ function formatGatewayLiveAgentWaitFailure(params: {
       : undefined,
     typeof result?.stopReason === "string" ? `stopReason=${result.stopReason}` : undefined,
     typeof result?.error === "string" ? `error=${result.error}` : undefined,
+    params.providerError ? `providerError=${params.providerError}` : undefined,
   ].filter((value): value is string => Boolean(value));
   return new Error(
     `${params.context}: agent.wait ${status} for runId=${params.runId}${
       details.length > 0 ? ` (${details.join(", ")})` : ""
     }`,
   );
+}
+
+function readGatewayLiveProviderErrorObservation(
+  data: Record<string, unknown>,
+): string | undefined {
+  const observation = data.errorObservation;
+  if (!observation || typeof observation !== "object") {
+    return undefined;
+  }
+  const record = observation as Record<string, unknown>;
+  for (const key of ["rawErrorPreview", "providerErrorMessagePreview"] as const) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+  return undefined;
 }
 
 function isGatewayAgentWaitCompletedWithoutReply(result: unknown): boolean {
@@ -4088,6 +4149,7 @@ async function waitForGatewayAgentRun(params: {
   context: string;
   timeoutMs?: number;
   allowCompletedWithoutReply?: boolean;
+  getProviderError?: () => string | undefined;
 }): Promise<void> {
   const timeoutMs = params.timeoutMs ?? GATEWAY_LIVE_TRANSCRIPT_TIMEOUT_MS;
   const result = await params.client.request(
@@ -4108,6 +4170,7 @@ async function waitForGatewayAgentRun(params: {
   }
   throw formatGatewayLiveAgentWaitFailure({
     context: params.context,
+    providerError: params.getProviderError?.(),
     runId: params.runId,
     result,
   });
@@ -4130,6 +4193,21 @@ async function requestGatewayAgentText(params: {
 }) {
   const baselineMessageCount = (await readSessionMessagesForLiveProbe(params.sessionKey)).length;
   const runId = params.idempotencyKey;
+  let providerError: string | undefined;
+  let stopErrorCapture = () => {};
+  stopErrorCapture = onAgentEventForRun(runId, (event) => {
+    if (event.stream !== "lifecycle") {
+      return;
+    }
+    const phase = event.data.phase;
+    const terminal =
+      phase === "end" || (phase === "error" && event.data.fallbackExhaustedFailure === true);
+    if (!terminal) {
+      return;
+    }
+    providerError = readGatewayLiveProviderErrorObservation(event.data);
+    stopErrorCapture();
+  });
   const accepted = await withGatewayLiveProbeTimeout(
     params.client.request("agent", {
       sessionKey: params.sessionKey,
@@ -4141,8 +4219,12 @@ async function requestGatewayAgentText(params: {
       attachments: params.attachments,
     }),
     `${params.context}: agent-accept`,
-  );
+  ).catch((error: unknown) => {
+    stopErrorCapture();
+    throw error;
+  });
   if (accepted?.status !== "accepted") {
+    stopErrorCapture();
     throw new Error(`agent status=${String(accepted?.status)}`);
   }
   if (params.thinkingLevel === "ultra") {
@@ -4164,6 +4246,7 @@ async function requestGatewayAgentText(params: {
       context: `${params.context}: agent-wait`,
       timeoutMs: GATEWAY_LIVE_AGENT_WAIT_TIMEOUT_MS,
       allowCompletedWithoutReply: true,
+      getProviderError: () => providerError,
     });
     const assistantTexts = await readSessionAssistantTexts(
       params.sessionKey,
@@ -4187,6 +4270,7 @@ async function requestGatewayAgentText(params: {
     runId,
     context: `${params.context}: agent-wait`,
     timeoutMs: GATEWAY_LIVE_AGENT_WAIT_TIMEOUT_MS,
+    getProviderError: () => providerError,
   }).then(
     () => ({ kind: "agent-ok" as const }),
     (error: unknown) => ({ kind: "agent-error" as const, error }),
