@@ -329,7 +329,7 @@ describe("tool search gateway e2e lane result", () => {
     return { configPath, env, gatewayCall, tempRoot };
   }
 
-  it("preserves surrogate pairs in provider request snippets", async () => {
+  it("preserves wire-stage evidence and surrogate pairs in provider request snippets", async () => {
     const { configPath, env, gatewayCall, tempRoot } = await createLaneHarness();
     const inputPrefix = "i".repeat(499);
     const searchOutput = '{"results":[{"query":"first"}]}';
@@ -347,14 +347,14 @@ describe("tool search gateway e2e lane result", () => {
           },
           {
             body: { tools: [] },
-            plannedToolName: "tool_call",
+            plannedToolName: "fake_plugin_tool_17",
+            plannedWireToolName: "tool_call",
             raw: "{}",
             toolOutput: searchOutput,
           },
           {
             allInputText: `${inputPrefix}😀tail\n### Deferred Tool Schemas\n- fake_plugin_tool_17: Fake plugin target`,
             body: { tools: [] },
-            plannedToolName: "fake_plugin_tool_17",
             raw: "{}",
             toolOutput,
           },
@@ -370,6 +370,8 @@ describe("tool search gateway e2e lane result", () => {
       });
 
       expect(result.providerInputSnippet).toBe(inputPrefix);
+      expect(result.providerPlannedTools).toEqual(["tool_search", "tool_call"]);
+      expect(result.providerToolSearchResult).toEqual(JSON.parse(searchOutput));
       expect(result.providerToolOutputSnippet).toBe(
         `${searchOutput}\n${"o".repeat(4_000 - searchOutput.length - 1)}`,
       );
