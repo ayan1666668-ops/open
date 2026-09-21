@@ -126,7 +126,10 @@ type MergePatchFrame =
       readonly key: string;
     };
 
-function settleMergePatchFrame(frame: MergePatchFrame, value: unknown): void {
+function settleMergePatchFrame(
+  frame: Extract<MergePatchFrame, { kind: "enter" | "exit" }>,
+  value: unknown,
+): void {
   if (Array.isArray(frame.container)) {
     frame.container[frame.key as number] = value;
     return;
@@ -302,8 +305,8 @@ export function mergePatchConflicts(
     if (!baseIsObject && !currentIsObject && !deepEqualStackSafe(node.base, node.current)) {
       return true;
     }
-    const baseRecord = baseIsObject ? node.base : {};
-    const currentRecord = currentIsObject ? node.current : {};
+    const baseRecord = isRecord(node.base) ? node.base : {};
+    const currentRecord = isRecord(node.current) ? node.current : {};
     for (const [key, childPatch] of Object.entries(node.patch)) {
       pending.push({
         base: baseRecord[key],
@@ -410,7 +413,10 @@ type ApplyMergePatchFrame =
       readonly options: MergePatchOptions;
     };
 
-function settleApplyMergePatchFrame(frame: ApplyMergePatchFrame, value: unknown): void {
+function settleApplyMergePatchFrame(
+  frame: Extract<ApplyMergePatchFrame, { kind: "enter" }>,
+  value: unknown,
+): void {
   if (Array.isArray(frame.container)) {
     frame.container[frame.key as number] = value;
     return;

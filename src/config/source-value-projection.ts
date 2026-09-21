@@ -49,7 +49,10 @@ type ProjectionFrame =
 const UNCHANGED = Symbol("unchanged config value");
 const ABSENT = Symbol("absent config value");
 
-function settleProjectionFrame(frame: ProjectionFrame, value: unknown): void {
+function settleProjectionFrame(
+  frame: Extract<ProjectionFrame, { kind: "enter" | "project-exit" }>,
+  value: unknown,
+): void {
   if (Array.isArray(frame.container)) {
     frame.container[frame.key as number] = value;
     return;
