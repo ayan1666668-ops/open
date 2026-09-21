@@ -104,6 +104,32 @@ limit. Compare observed memory use alongside elapsed time before admitting more
 lanes. Compatibility evidence must use the exact fork build installed by CI;
 stock Bun results and different fork revisions are separate measurements.
 
+### Node execution and runtime compatibility
+
+Most Node test, lint, and typecheck jobs currently inherit `24.x` from
+`.github/actions/setup-node-env`; the Node shard also supplies that default
+explicitly. The composite's `ensure-node.sh` reuses a matching active or cached
+runtime before downloading one. A wildcard therefore does not guarantee the
+newest patch. Compare exact versions when measuring a toolchain change, and
+measure setup separately from the test body.
+
+CI's execution version does not define the supported user runtime matrix.
+`package.json` accepts Node 24.16+ and Node 26.1+. The full manual CI graph checks
+the Node 24.16.0 floor; `node-runtime-compat.yml` checks Node 26.1.0 weekly and on
+dispatch. Current packaged fresh-install and upgrade checks run on both
+Node 24.19.0 and Node 26.1.0, with Windows Node 24 fresh-install proof on 24.16.0.
+Both runtime variants use the same candidate package. These support cells stay
+independent of changes to the ordinary execution pin; source/build smoke alone
+does not prove an installed upgrade. See the
+[package validation matrix](/ci/release-validation/package-acceptance).
+
+No workflow or composite selects Node 22 for project execution. Runner images
+can contain unused older toolchains, and recovery bundles intentionally retain
+older syntax targets so unsupported runtimes can print upgrade diagnostics.
+Those are separate from the supported runtime and test-job versions. GitHub
+JavaScript actions also have their own runtime, independent of the `node` on
+the job's `PATH`.
+
 ### macOS Swift phases
 
 `macos-swift (tests)` builds and runs the app's complete default- and named-profile
