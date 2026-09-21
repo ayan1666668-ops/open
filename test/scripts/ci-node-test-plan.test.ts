@@ -3873,11 +3873,12 @@ describe("scripts/lib/ci-node-test-plan.mts", () => {
       [EXTRA_LARGE_NODE_TEST_RUNNER, 2],
     ]);
     const measuredFixtureFiles = new Set(fixtureFiles);
+    const shorterFixtureFiles = new Set(fixtureFiles.slice(0, 64));
     const createPlanWithInventory = async (
       includeGrowthFile: boolean,
       extraFiles: string[] = [],
       compactNodeJobCap?: number,
-      ordinaryFileSeconds = 23,
+      shortFileSeconds = 23,
     ) => {
       return createToolingFixturePlan({
         files: [
@@ -3887,13 +3888,16 @@ describe("scripts/lib/ci-node-test-plan.mts", () => {
         ],
         shards: fixtureShards,
         timings: fixtureTimings,
-        // Known files fill the admission budget; new files retain the cold fallback.
+        // Mixed file costs fill 90 jobs but leave a feasible donation at the tighter cap.
+        // New files retain the cold fallback.
         fileSeconds: (file) =>
           file === "test/scripts/write-unified-entry-dts.test.ts"
             ? 74
-            : measuredFixtureFiles.has(file)
-              ? ordinaryFileSeconds
-              : shardMetadata.estimateVitestToolingFileSeconds(file),
+            : shorterFixtureFiles.has(file)
+              ? shortFileSeconds
+              : measuredFixtureFiles.has(file)
+                ? 25
+                : shardMetadata.estimateVitestToolingFileSeconds(file),
         options: { ...options, compactNodeJobCap },
       });
     };
