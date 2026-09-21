@@ -1,19 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createFeishuTestConfig } from "./bot.test-support.js";
 
-const saveMessageResourceFeishu = vi.hoisted(() => vi.fn());
+type SaveMessageResourceFeishu = typeof import("./media.js").saveMessageResourceFeishu;
+type SavedResourceRequest = Parameters<SaveMessageResourceFeishu>[0];
+
+const saveMessageResourceFeishu = vi.hoisted(() => vi.fn<SaveMessageResourceFeishu>());
 
 vi.mock("./media.js", () => ({
   saveMessageResourceFeishu,
 }));
 
 import { resolveFeishuMediaList } from "./bot-content.js";
-
-type SavedResourceRequest = {
-  fileKey: string;
-  originalFilename?: string;
-  type: "file" | "image";
-};
 
 function savedContentType(params: SavedResourceRequest): string {
   if (params.originalFilename?.endsWith(".csv")) {
@@ -103,7 +100,7 @@ describe("resolveFeishuMediaList post files[]", () => {
     });
 
     expect(
-      saveMessageResourceFeishu.mock.calls.map(([request]: [SavedResourceRequest]) => ({
+      saveMessageResourceFeishu.mock.calls.map(([request]) => ({
         fileKey: request.fileKey,
         fileName: request.originalFilename,
         type: request.type,
