@@ -44,7 +44,12 @@ function preparedVerifier() {
   return prepareDynamicsSpawn({
     task: "Verify the frozen candidate against the acceptance criteria.",
     dynamics: {
-      profile: "independent-verifier",
+      boundary: "artifact-only",
+      requirements: {
+        sandbox: "require",
+        candidateDigest: "required",
+        artifactRefs: "required",
+      },
       handoff: {
         candidateDigest: "sha256:candidate",
         artifactRefs: ["artifact://candidate"],
@@ -120,7 +125,7 @@ describe("native dynamics spawn boundary", () => {
   });
 
   it(
-    "carries verifier guidance through the real native spawn path when sandbox admission succeeds",
+    "carries generic verification contract through the real native spawn path when sandbox admission succeeds",
     async () => {
       await writeConfig("all");
       const requests: Array<{ method: string; params: Record<string, unknown> }> = [];
@@ -141,14 +146,12 @@ describe("native dynamics spawn boundary", () => {
       expect(result).toMatchObject({ status: "accepted" });
       const launch = requests.find((request) => request.method === "agent");
       expect(launch).toBeDefined();
-      expect(launch?.params.message).toEqual(expect.stringContaining("independent-verifier"));
+      expect(launch?.params.message).toEqual(expect.stringContaining('"boundary":"artifact-only"'));
+      expect(launch?.params.message).toEqual(expect.stringContaining('"sandbox":"require"'));
       expect(launch?.params.message).toEqual(expect.stringContaining("sha256:candidate"));
       expect(launch?.params.message).toEqual(expect.stringContaining("sha256:source"));
       expect(launch?.params.message).toEqual(expect.stringContaining("sha256:recipe"));
       expect(launch?.params.message).toEqual(expect.stringContaining("sha256:policy"));
-      expect(launch?.params.message).toEqual(
-        expect.stringContaining("Check the referenced candidate without changing it"),
-      );
     },
   );
 
