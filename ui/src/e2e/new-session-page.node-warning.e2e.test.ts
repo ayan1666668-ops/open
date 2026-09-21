@@ -112,9 +112,7 @@ suite.define(() => {
             tooltip.evaluate((element) => (element as HTMLElement & { open: boolean }).open),
           )
           .toBe(true);
-        const warning = page.locator(
-          'openclaw-tooltip:has([data-value="device:build-mac"]) .new-session-page__environment-card',
-        );
+        const warning = tooltip.locator(".tooltip-content");
         expect(await warning.textContent()).toContain("Codex integration unavailable.");
         expect(await warning.textContent()).toContain("OpenClaw Codex plugin");
         expect(await warning.textContent()).not.toContain("codex.exec-server");

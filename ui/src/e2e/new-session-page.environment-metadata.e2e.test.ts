@@ -262,7 +262,9 @@ suite.define(() => {
 
       expect(await row("alpha-device").isEnabled()).toBe(true);
       const details = (id: string) =>
-        row(id).locator("xpath=ancestor::openclaw-tooltip[1]").locator('[slot="content"]');
+        row(id)
+          .locator("xpath=ancestor::openclaw-tooltip[1]")
+          .locator('[slot="content"], .tooltip-content:not(:empty)');
       await row("alpha-device").hover();
       await expect.poll(() => details("alpha-device").textContent()).toContain("macOS");
       expect(await details("alpha-device").textContent()).toContain("2 of 4 session slots in use");

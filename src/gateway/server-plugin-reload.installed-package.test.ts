@@ -13,6 +13,7 @@ import type { PluginLifecycleReason } from "../plugins/lifecycle.js";
 import { activatePluginRegistry } from "../plugins/loader-shared.js";
 import { refreshManagedPlugins } from "../plugins/management-mutations.js";
 import { resolvePluginManifestInstallOwner } from "../plugins/manifest-install-owner.js";
+import { PluginInstanceDrainTimeoutError } from "../plugins/plugin-instance-error.js";
 import { getPluginInstance } from "../plugins/plugin-instance-scope.js";
 import {
   clearPluginMetadataLifecycleCaches,
@@ -34,6 +35,7 @@ import { withEnvAsync } from "../test-utils/env.js";
 import type { GatewayRequestHandlerOptions } from "./server-methods/types.js";
 import { reloadGatewayPlugins } from "./server-plugin-reload.js";
 import { createGatewayPluginRuntimeGeneration } from "./server-plugin-runtime-generation.js";
+import { GatewayRequestEntryLifetime } from "./server-request-entry.js";
 import { createGatewaySidecarStopOwner } from "./server-sidecar-owners.js";
 
 const cleanups: Array<() => Promise<void>> = [];
@@ -79,7 +81,11 @@ async function verifyInstalledPackageRetention(
   const stopFailurePath = path.join(root, "refuse-stop");
   const registrations: string[] = [];
   const registrationEvent = `installed-retry-registration:${root}`;
-  const observeRegistration = (instance: string) => registrations.push(instance);
+  const capturedEntries = new Map<string, string>();
+  const observeRegistration = (instance: string, filename: string) => {
+    registrations.push(instance);
+    capturedEntries.set(instance, filename);
+  };
   if (cleanupRetry) {
     process.on(registrationEvent, observeRegistration);
     cleanups.push(async () => {
@@ -90,6 +96,7 @@ async function verifyInstalledPackageRetention(
     OPENCLAW_STATE_DIR: stateDir,
     OPENCLAW_BUNDLED_PLUGINS_DIR: path.join(root, "bundled"),
   };
+  fs.mkdirSync(env.OPENCLAW_BUNDLED_PLUGINS_DIR, { recursive: true });
   const writePackage = (id: string) => {
     const packageDir = writeManagedNpmPlugin({
       stateDir,
@@ -123,7 +130,7 @@ module.exports = { id: ${JSON.stringify(id)}, register(api) {
   ${
     cleanupRetry && id === "installed-probe"
       ? `const fs = require('node:fs');
-  process.emit(${JSON.stringify(registrationEvent)}, instance);
+  process.emit(${JSON.stringify(registrationEvent)}, instance, __filename);
   const resource = fs.openSync(${JSON.stringify(resourcePath)}, 'wx');
   api.lifecycle.onDispose(() => {
     fs.closeSync(resource);
@@ -171,6 +178,9 @@ module.exports = { id: ${JSON.stringify(id)}, register(api) {
       workspaceDir,
       env,
     });
+    expect(initialMetadata.manifestRegistry.plugins.map((plugin) => plugin.id).toSorted()).toEqual(
+      healthyDir ? ["healthy", "sibling"] : ["sibling"],
+    );
     const initial = bootstrap.prepareGatewayPluginLoad({
       pluginMetadataSnapshot: initialMetadata,
       cfg: initialConfig,
@@ -213,6 +223,7 @@ module.exports = { id: ${JSON.stringify(id)}, register(api) {
       }
     });
     const runtime = {
+      requestEntryLifetime: new GatewayRequestEntryLifetime(),
       pluginMetadataSnapshot: initialMetadata,
       pluginRuntime: registryOwner,
       pluginWorkspaceDir: workspaceDir,
@@ -514,7 +525,13 @@ module.exports = { id: ${JSON.stringify(id)}, register(api) {
       const entered = createDeferredCore();
       const release = createDeferredCore();
       let blockedInstance = retiredInstance;
+      let capturedEntry: string | undefined;
+      let capturedBytes: string | undefined;
       const gateDisposal = () => {
+        capturedEntry = capturedEntries.get(registrations.at(-1)!);
+        assert.ok(capturedEntry);
+        expect(capturedEntry).not.toBe(path.join(packageDir, "dist", "index.js"));
+        capturedBytes = fs.readFileSync(capturedEntry, "utf8");
         // Physical source cleanup remains owned after the caller's observation budget expires.
         blockedInstance.onModuleDispose(async () => {
           entered.resolve();
@@ -584,7 +601,10 @@ module.exports = { id: ${JSON.stringify(id)}, register(api) {
         fs.rmSync(stopFailurePath, { force: true });
         fs.writeFileSync(path.join(packageDir, "dist", "helper.cjs"), 'module.exports = "retry";');
         if (cleanupRetry !== "gateway-stop") {
-          expect(fs.existsSync(resourcePath)).toBe(true);
+          // Plugin cleanup releases its lock before module cleanup relinquishes captured code.
+          assert.ok(capturedEntry);
+          expect(fs.existsSync(resourcePath)).toBe(false);
+          expect(fs.readFileSync(capturedEntry, "utf8")).toBe(capturedBytes);
           retry = reload();
           const pendingOutcome = retry.then(
             () => ({ accepted: true as const }),
@@ -592,9 +612,15 @@ module.exports = { id: ${JSON.stringify(id)}, register(api) {
           );
           await nextTurn();
           expect(registrations).toEqual(failedRegistrations);
-          expect(fs.existsSync(resourcePath)).toBe(true);
+          expect(fs.existsSync(resourcePath)).toBe(false);
+          expect(fs.readFileSync(capturedEntry, "utf8")).toBe(capturedBytes);
           release.resolve();
-          await blockedInstance.dispose();
+          const { errors } = await blockedInstance.dispose();
+          expect(errors).toHaveLength(1);
+          const timeout = errors[0];
+          assert.ok(timeout instanceof PluginInstanceDrainTimeoutError);
+          await timeout.settled;
+          expect(fs.existsSync(capturedEntry)).toBe(false);
           // Admission may wait or reject while cleanup is pending. A subsequent
           // retry after settlement must work without a Gateway restart either way.
           const outcome = await pendingOutcome;
