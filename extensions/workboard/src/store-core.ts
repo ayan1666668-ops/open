@@ -1089,6 +1089,11 @@ export class WorkboardCoreStore extends WorkboardStoreRuntime {
       return "scheduled";
     }
     if (parents.length === 0) {
+      // No parents means there is nothing to lift. A future schedule must not
+      // override blocked; createDirect already keeps that requested status.
+      if (card.status === "blocked") {
+        return "blocked";
+      }
       if (scheduledAt && scheduledAt > now && isDependencyPromotableStatus(card.status)) {
         return "scheduled";
       }
@@ -1099,6 +1104,10 @@ export class WorkboardCoreStore extends WorkboardStoreRuntime {
       (await this.store.listCardStatuses(parentIds)).map((parent) => [parent.id, parent]),
     );
     const parentsDone = parentIds.every((id) => parentCards.get(id)?.status === "done");
+    // Parents-done lifts blocked to ready. A future schedule keeps it blocked.
+    if (card.status === "blocked") {
+      return parentsDone && !(scheduledAt && scheduledAt > now) ? "ready" : "blocked";
+    }
     if (
       !parentsDone &&
       scheduledAt &&

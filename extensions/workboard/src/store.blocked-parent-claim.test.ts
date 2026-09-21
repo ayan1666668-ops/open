@@ -62,6 +62,14 @@ describe("Workboard blocked parent claims", () => {
     await expect(store.claim(child.id, { ownerId: "main" })).rejects.toThrow(
       "card dependencies are not done.",
     );
+    expect((await store.get(child.id))?.status).toBe("blocked");
+
+    await expect(store.prepareStart(child.id)).resolves.toMatchObject({
+      id: child.id,
+      status: "blocked",
+    });
+    await store.dispatch();
+    expect((await store.get(child.id))?.status).toBe("blocked");
   });
 
   it("promotes a blocked child to ready once parents are done", async () => {
@@ -79,6 +87,25 @@ describe("Workboard blocked parent claims", () => {
       id: child.id,
       status: "ready",
     });
+  });
+
+  it("keeps a blocked card with a future schedule blocked and claimable", async () => {
+    const store = createStore();
+    const card = await store.create({
+      title: "Blocked later",
+      status: "blocked",
+      scheduledAt: Date.now() + 60_000,
+    });
+
+    expect(card.status).toBe("blocked");
+    await store.dispatch();
+    expect((await store.get(card.id))?.status).toBe("blocked");
+
+    const claimed = await store.claim(card.id, { ownerId: "main", token: "token-1" });
+
+    expect(claimed.card.status).toBe("blocked");
+    expect(claimed.card.metadata?.claim).toMatchObject({ ownerId: "main", token: "token-1" });
+    expect(claimed.card.metadata?.automation?.scheduledAt).toBeGreaterThan(Date.now());
   });
 
   it("does not re-block an already blocked exhausted card on dispatch", async () => {
