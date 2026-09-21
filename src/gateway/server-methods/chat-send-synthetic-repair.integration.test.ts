@@ -11,6 +11,7 @@ import {
   DEFAULT_MISSING_TOOL_RESULT_TEXT,
   makeMissingToolResult,
 } from "../../../packages/agent-core/src/harness/session/tool-result-pairing.js";
+import { runQaGatewayFixture } from "../../../test/helpers/qa-gateway-cleanup.js";
 import { makeUserMessage } from "../../../test/helpers/user-message.js";
 import { SessionManager } from "../../agents/sessions/session-manager.js";
 import { makeAssistantMessageFixture } from "../../agents/test-helpers/assistant-message-fixtures.js";
@@ -53,6 +54,15 @@ it("chat.send replays synthetic repairs through session history and the register
   const modelRef = `${provider}/${model}`;
   const requests: MessageCreateParamsStreaming[] = [];
   const providerWork: Promise<void>[] = [];
+  const progress = {
+    bodyStage: "startup",
+    legacy: false,
+    late: false,
+    completedScenarios: 0,
+    responseEndCalls: 0,
+    httpResponsesFinished: 0,
+    agentWaitCompleted: 0,
+  };
   const endpoint = createServer((request, response) => {
     const work = (async () => {
       expect(request.method).toBe("POST");
@@ -86,17 +96,21 @@ it("chat.send replays synthetic repairs through session history and the register
         },
         { type: "message_stop" },
       ];
+      response.once("finish", () => {
+        progress.httpResponsesFinished += 1;
+      });
       response.writeHead(200, { "content-type": "text/event-stream" });
       response.end(
         events.map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join(""),
       );
+      progress.responseEndCalls += 1;
     })();
     providerWork.push(work);
     void work.catch((error: unknown) => {
       response.destroy(error instanceof Error ? error : new Error(String(error)));
     });
   });
-  try {
+  const runFixture = async () => {
     endpoint.listen(0, "127.0.0.1");
     await once(endpoint, "listening");
     const address = endpoint.address();
@@ -153,10 +167,13 @@ it("chat.send replays synthetic repairs through session history and the register
       token,
       scopes: ["operator.admin"],
     });
-    try {
+    const replayScenarios = async () => {
       await server.startupSettled;
       for (const legacy of [false, true]) {
         for (const late of [false, true]) {
+          progress.bodyStage = "prepare";
+          progress.legacy = legacy;
+          progress.late = late;
           const scenario = `legacy=${legacy}, late=${late}`;
           const sessionId = randomUUID();
           const sessionKey = `agent:main:replay-${sessionId}`;
@@ -232,6 +249,7 @@ it("chat.send replays synthetic repairs through session history and the register
           manager.flushPendingPersistence();
           const original = readStoredRows(target.storePath, sessionId);
           const requestCount = requests.length;
+          progress.bodyStage = "chat-send";
           const started = await client.request<{ runId: string; status: string }>("chat.send", {
             sessionKey,
             message: "Summarize the health check.",
@@ -239,9 +257,12 @@ it("chat.send replays synthetic repairs through session history and the register
             deliver: false,
           });
           expect(started.status).toBe("started");
+          progress.bodyStage = "agent-wait";
           await expect(
             client.request("agent.wait", { runId: started.runId, timeoutMs: 30000 }),
           ).resolves.toMatchObject({ status: "ok" });
+          progress.agentWaitCompleted += 1;
+          progress.bodyStage = "assertions";
           expect(requests).toHaveLength(requestCount + 1);
           const request = requests[requestCount];
           assert(request, "chat.send must reach the HTTP receiver");
@@ -292,26 +313,46 @@ it("chat.send replays synthetic repairs through session history and the register
           expect(after.slice(0, original.length)).toEqual(original);
           expect(after.length).toBeGreaterThan(original.length);
           expect(after.at(-1)?.event_json).toContain("REPLAY_SETTLED");
+          progress.completedScenarios += 1;
+          progress.bodyStage = "scenario-complete";
         }
       }
-    } finally {
-      try {
-        await disconnectGatewayClient(client);
-      } finally {
-        await server.close({ reason: "Synthetic repair replay complete" });
-      }
-    }
-  } finally {
-    endpoint.closeAllConnections();
-    try {
-      if (endpoint.listening) {
-        await new Promise<void>((resolve, reject) => {
-          endpoint.close((error) => (error ? reject(error) : resolve()));
-        });
-      }
-      await Promise.all(providerWork);
-    } finally {
-      await state.cleanup();
-    }
+    };
+    // Retain a replay failure even when draining the Gateway also fails.
+    await runQaGatewayFixture(
+      replayScenarios,
+      () => disconnectGatewayClient(client),
+      () => server.close({ reason: "Synthetic repair replay complete" }),
+    );
+  };
+  try {
+    await runQaGatewayFixture(
+      runFixture,
+      async () => {
+        endpoint.closeAllConnections();
+        if (endpoint.listening) {
+          await new Promise<void>((resolve, reject) => {
+            endpoint.close((error) => (error ? reject(error) : resolve()));
+          });
+        }
+      },
+      async () => {
+        const outcomes = await Promise.allSettled(providerWork);
+        const failures = outcomes.flatMap((outcome) =>
+          outcome.status === "rejected" ? [outcome.reason] : [],
+        );
+        if (failures.length > 0) {
+          throw new AggregateError(failures, "Replay fixture provider work failed");
+        }
+      },
+      () => state.cleanup(),
+    );
+  } catch (error) {
+    // HTTP finish and agent.wait are observations, not plugin-call disposal proof.
+    console.error(
+      "SYNTHETIC_REPLAY_DIAGNOSTIC",
+      JSON.stringify({ ...progress, providerRequests: requests.length }),
+    );
+    throw error;
   }
 }, 90000);
