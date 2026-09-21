@@ -11,7 +11,12 @@ import type {
   CliToolUseStartDelta,
 } from "../cli-output-contracts.js";
 import type { ToolSummaryTrace } from "../embedded-agent-runner/types.js";
-import { sanitizeToolArgs, sanitizeToolResult } from "../embedded-agent-tool-results.js";
+import {
+  extractToolErrorMessage,
+  sanitizeToolArgs,
+  sanitizeToolResult,
+} from "../embedded-agent-tool-results.js";
+import { runAgentHarnessAfterToolCallHook } from "../harness/hook-helpers.js";
 import { applyPluginTextReplacements } from "../plugin-text-transforms.js";
 import { resolveCliToolTerminalReason } from "../run-termination.js";
 import type { CliToolTracking } from "./execute-tool-tracking.js";
@@ -45,6 +50,33 @@ export function createCliEventHandlers(params: {
   // CLI results report an outcome without repeating the request, so the terminal
   // progress event would otherwise describe the output instead of the command.
   const toolArgsByCallId = new Map<string, { args: Record<string, unknown>; tracked: boolean }>();
+  const toolStartedAtByCallId = new Map<string, number>();
+  const dispatchedAfterHookCallIds = new Set<string>();
+  const dispatchAfterToolCallHook = async (params: {
+    event: CliToolResult;
+    startArgs?: Record<string, unknown>;
+    startedAt?: number;
+  }) => {
+    if (runParams.isolatedCompletion || dispatchedAfterHookCallIds.has(params.event.toolCallId)) {
+      return;
+    }
+    dispatchedAfterHookCallIds.add(params.event.toolCallId);
+    const result = sanitizeToolResult(params.event.result);
+    await runAgentHarnessAfterToolCallHook({
+      toolName: stripOpenClawMcpToolPrefix(params.event.name),
+      toolCallId: params.event.toolCallId,
+      runId: runParams.runId,
+      ...(runParams.agentId ? { agentId: runParams.agentId } : {}),
+      sessionId: runParams.sessionId,
+      ...(runParams.sessionKey ? { sessionKey: runParams.sessionKey } : {}),
+      startArgs: params.startArgs ?? {},
+      result,
+      ...(params.event.isError
+        ? { error: extractToolErrorMessage(result) ?? String(result ?? "") }
+        : {}),
+      ...(params.startedAt != null ? { startedAt: params.startedAt } : {}),
+    });
+  };
   const emitToolEvent = (
     data: Parameters<typeof projectAgentToolActivity>[0] & {
       result?: unknown;
@@ -100,6 +132,7 @@ export function createCliEventHandlers(params: {
     observedCliActivity = true;
     // Empty arguments are meaningful: progress-card calls use {} to clear the card.
     toolArgsByCallId.set(event.toolCallId, { args: event.args, tracked });
+    toolStartedAtByCallId.set(event.toolCallId, Date.now());
     recordToolSummary(event, false);
     if (!signaledToolExecutionStarted) {
       signaledToolExecutionStarted = true;
@@ -129,14 +162,26 @@ export function createCliEventHandlers(params: {
       ? params.toolTracking.resolveCliLoopbackTerminalOutcome(event.toolCallId)
       : undefined;
     const executedArgs = tracked ? params.toolTracking.handleCliToolResult(event) : undefined;
+    const startedCall = toolArgsByCallId.get(event.toolCallId);
+    const startedAt = toolStartedAtByCallId.get(event.toolCallId);
+    const forgetStartedToolCall = () => {
+      toolArgsByCallId.delete(event.toolCallId);
+      toolStartedAtByCallId.delete(event.toolCallId);
+    };
+    if (!loopbackOutcome) {
+      void dispatchAfterToolCallHook({
+        event,
+        startArgs: executedArgs ?? startedCall?.args,
+        startedAt,
+      }).catch(() => {});
+    }
+    forgetStartedToolCall();
     if (emitLiveEvents) {
       const strippedName = stripOpenClawMcpToolPrefix(event.name);
       const resultContentSource = tracked
         ? context.resultContentSourceByToolName?.get(strippedName)
         : undefined;
-      const startedCall = toolArgsByCallId.get(event.toolCallId);
       const startedArgs = startedCall?.args;
-      toolArgsByCallId.delete(event.toolCallId);
       const planUpdate =
         tracked &&
         startedCall?.tracked &&

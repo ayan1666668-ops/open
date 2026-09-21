@@ -1,6 +1,14 @@
 // Correlated CLI tool results already carry their started args; display-only
 // results must not duplicate that potentially large payload.
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const harnessHookMocks = vi.hoisted(() => ({
+  runAgentHarnessAfterToolCallHook: vi.fn(async () => {}),
+}));
+
+vi.mock("../harness/hook-helpers.js", () => ({
+  runAgentHarnessAfterToolCallHook: harnessHookMocks.runAgentHarnessAfterToolCallHook,
+}));
 import {
   createCliToolSummaryTracker,
   runCliAgentWithLifecycle,
@@ -95,6 +103,11 @@ function collectToolEvents(runId: string): {
 }
 
 describe("cli tool result events", () => {
+  beforeEach(() => {
+    harnessHookMocks.runAgentHarnessAfterToolCallHook.mockClear();
+    harnessHookMocks.runAgentHarnessAfterToolCallHook.mockResolvedValue(undefined);
+  });
+
   it.each([
     ["poll", "kill", false],
     ["kill", "poll", true],
@@ -234,6 +247,84 @@ describe("cli tool result events", () => {
     } finally {
       dispose();
     }
+  });
+
+  it("dispatches after_tool_call once for correlated CLI results", async () => {
+    const runId = "run-cli-after-hook";
+    const handlers = createCliEventHandlers({
+      context: buildContext(runId),
+      toolTracking: buildToolTracking(),
+      getRunState: () => ({ failed: false, error: undefined }),
+    });
+
+    handlers.emitCliToolUseStart({
+      toolCallId: "cli-call",
+      name: "mcp__openclaw__process",
+      kind: "mcp_tool_use",
+      args: { action: "poll" },
+    });
+    handlers.emitCliToolResult({
+      toolCallId: "cli-call",
+      name: "mcp__openclaw__process",
+      isError: false,
+      result: { output: "done" },
+    });
+    // A repeated terminal report is transport noise, not a second execution.
+    handlers.emitCliToolResult({
+      toolCallId: "cli-call",
+      name: "mcp__openclaw__process",
+      isError: false,
+      result: { output: "done" },
+    });
+
+    expect(harnessHookMocks.runAgentHarnessAfterToolCallHook).toHaveBeenCalledTimes(1);
+    expect(harnessHookMocks.runAgentHarnessAfterToolCallHook).toHaveBeenCalledWith({
+      runId,
+      agentId: "main",
+      sessionId: "session-1",
+      sessionKey: "agent:main:main",
+      toolName: "process",
+      toolCallId: "cli-call",
+      startArgs: { action: "poll" },
+      result: { output: "done" },
+      startedAt: expect.any(Number),
+    });
+    expect(harnessHookMocks.runAgentHarnessAfterToolCallHook.mock.calls[0]).toHaveLength(1);
+  });
+
+  it("dispatches after_tool_call for untracked CLI results with their started args", async () => {
+    const runId = "run-cli-after-hook-display";
+    const handlers = createCliEventHandlers({
+      context: buildContext(runId),
+      toolTracking: buildToolTracking(),
+      getRunState: () => ({ failed: false, error: undefined }),
+    });
+
+    handlers.emitCliDisplayToolUseStart({
+      toolCallId: "display-call",
+      name: "Bash",
+      kind: "tool_use",
+      args: { command: "pwd" },
+    });
+    handlers.emitCliDisplayToolResult({
+      toolCallId: "display-call",
+      name: "Bash",
+      isError: true,
+      result: { error: "command failed" },
+    });
+
+    expect(harnessHookMocks.runAgentHarnessAfterToolCallHook).toHaveBeenCalledWith({
+      runId,
+      agentId: "main",
+      sessionId: "session-1",
+      sessionKey: "agent:main:main",
+      toolName: "Bash",
+      toolCallId: "display-call",
+      startArgs: { command: "pwd" },
+      result: { error: "command failed" },
+      error: "command failed",
+      startedAt: expect.any(Number),
+    });
   });
   it("emits canonical CLI compaction lifecycle events", () => {
     const runId = "run-compaction-events";

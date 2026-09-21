@@ -26,6 +26,7 @@ import { createProcessSessionFixture } from "../agents/bash-process-registry.tes
 import { runExecProcess } from "../agents/bash-tools.exec-runtime.js";
 import { createProcessTool } from "../agents/bash-tools.process.js";
 import { buildCliMcpGrantContext } from "../agents/cli-runner/mcp-grant-context.js";
+import type { runAgentHarnessAfterToolCallHook } from "../agents/harness/hook-helpers.js";
 import type { AnyAgentTool } from "../agents/tools/common.js";
 import { getGatewayToolCallerIdentity } from "../agents/tools/gateway-caller-context.js";
 import { createLibrarySkillWorkshopTool } from "../agents/tools/skill-workshop-tool-library.js";
@@ -99,6 +100,10 @@ const runBeforeToolCallHookMock = vi.hoisted(() =>
   })),
 );
 
+const runAfterToolCallHookMock = vi.hoisted(() =>
+  vi.fn<typeof runAgentHarnessAfterToolCallHook>(async () => {}),
+);
+
 const resolveGatewayScopedToolsMock = vi.hoisted(() =>
   vi.fn<(...args: unknown[]) => MockGatewayScopedTools>(() => ({
     agentId: "main",
@@ -159,6 +164,11 @@ vi.mock("../config/sessions/session-accessor.js", async (importOriginal) => {
 vi.mock("../agents/agent-tools.before-tool-call.js", () => ({
   runBeforeToolCallHook: (...args: Parameters<typeof runBeforeToolCallHookMock>) =>
     runBeforeToolCallHookMock(...args),
+}));
+
+vi.mock("../agents/harness/hook-helpers.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../agents/harness/hook-helpers.js")>()),
+  runAgentHarnessAfterToolCallHook: runAfterToolCallHookMock,
 }));
 
 vi.mock("../agents/node-exec-availability.js", () => ({
@@ -690,6 +700,8 @@ beforeEach(() => {
       params: args.params,
     }),
   );
+  runAfterToolCallHookMock.mockClear();
+  runAfterToolCallHookMock.mockResolvedValue(undefined);
   mockScopedTools([makeMessageTool()]);
 });
 
@@ -3423,6 +3435,100 @@ describe("mcp loopback server", () => {
     expect(hookInput.signal).toBeInstanceOf(AbortSignal);
     expect(execute).not.toHaveBeenCalled();
     expectMcpResultText(payload, "blocked by hook", true);
+  });
+
+  it("dispatches after-tool-call after a successful loopback tool execution", async () => {
+    const result = { content: [{ type: "text", text: "EXECUTED" }] };
+    const execute = vi.fn<MockGatewayTool["execute"]>(async () => result);
+    const payload = await handleMcpJsonRpc({
+      message: mcpToolCallMessage("message", { body: "hello" }),
+      tools: [makeMessageTool({ execute }) as unknown as AnyAgentTool],
+      toolSchema: buildMockMcpToolSchema([makeMessageTool({ execute })]),
+      hookContext: {
+        agentId: "main",
+        config: getRuntimeConfigMock(),
+        sessionKey: "agent:main:main",
+      },
+    });
+
+    const toolCallId = execute.mock.calls[0]?.[0];
+    expect(toolCallId).toMatch(/^mcp-/);
+    expectMcpResultText(payload as McpToolResultPayload, "EXECUTED", false);
+    await vi.waitFor(() => expect(runAfterToolCallHookMock).toHaveBeenCalledTimes(1));
+    expect(runAfterToolCallHookMock).toHaveBeenCalledWith({
+      toolName: "message",
+      toolCallId,
+      agentId: "main",
+      sessionKey: "agent:main:main",
+      startArgs: { body: "hello" },
+      result,
+      startedAt: expect.any(Number),
+    });
+    expect(runAfterToolCallHookMock.mock.calls[0]).toHaveLength(1);
+  });
+
+  it("dispatches after-tool-call when a loopback call is blocked before execution", async () => {
+    const execute = vi.fn<MockGatewayTool["execute"]>(async () => ({
+      content: [{ type: "text", text: "EXECUTED" }],
+    }));
+    runBeforeToolCallHookMock.mockResolvedValueOnce({
+      blocked: true,
+      kind: "veto",
+      reason: "blocked by hook",
+    });
+    const payload = await callMessageToolWithExecute(execute);
+
+    expectMcpResultText(payload, "blocked by hook", true);
+    await vi.waitFor(() => expect(runAfterToolCallHookMock).toHaveBeenCalledTimes(1));
+    const [event] = runAfterToolCallHookMock.mock.calls[0] ?? [];
+    expect(event).toMatchObject({
+      toolName: "message",
+      toolCallId: expect.stringMatching(/^mcp-/),
+      agentId: "main",
+      sessionKey: "agent:main:main",
+      startArgs: { body: "hello" },
+      result: "blocked by hook",
+      error: "blocked by hook",
+    });
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("dispatches after-tool-call when loopback execution fails", async () => {
+    const executionError = new Error("tool failed");
+    const execute = vi.fn<MockGatewayTool["execute"]>(async () => {
+      throw executionError;
+    });
+    const payload = await handleMcpJsonRpc({
+      message: mcpToolCallMessage("message", { body: "hello" }),
+      tools: [makeMessageTool({ execute }) as unknown as AnyAgentTool],
+      toolSchema: buildMockMcpToolSchema([makeMessageTool({ execute })]),
+      hookContext: { sessionKey: "agent:main:main" },
+    });
+
+    expectMcpResultText(payload as McpToolResultPayload, "tool failed", true);
+    await vi.waitFor(() => expect(runAfterToolCallHookMock).toHaveBeenCalledTimes(1));
+    expect(runAfterToolCallHookMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toolName: "message",
+        toolCallId: expect.stringMatching(/^mcp-/),
+        sessionKey: "agent:main:main",
+        startArgs: { body: "hello" },
+        result: executionError,
+        error: "tool failed",
+        startedAt: expect.any(Number),
+      }),
+    );
+  });
+
+  it("keeps loopback results intact when the after-tool-call observer fails", async () => {
+    const execute = vi.fn<MockGatewayTool["execute"]>(async () => ({
+      content: [{ type: "text", text: "EXECUTED" }],
+    }));
+    runAfterToolCallHookMock.mockRejectedValueOnce(new Error("observer failed"));
+    const payload = await callMessageToolWithExecute(execute);
+
+    expectMcpResultText(payload, "EXECUTED", false);
+    await vi.waitFor(() => expect(runAfterToolCallHookMock).toHaveBeenCalledTimes(1));
   });
 
   it("prepares and finalizes loopback tool params around before-tool hooks", async () => {
