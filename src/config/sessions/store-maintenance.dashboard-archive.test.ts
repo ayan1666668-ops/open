@@ -56,6 +56,7 @@ describe("archiveStaleDashboardEntries", () => {
       "agent:main:dashboard:archived": entry(1, { archivedAt }),
       "agent:main:dashboard:running": entry(1, { status: "running" }),
       "agent:main:dashboard:locked": entry(1, { modelSelectionLocked: true }),
+      "agent:main:dashboard:categorized": entry(1, { category: "Projects" }),
       "agent:main:main": entry(1),
       "agent:main:slack:channel:C1": entry(1),
       "agent:main:subagent:child": entry(1),
