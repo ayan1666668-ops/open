@@ -965,7 +965,7 @@ describe("monitorMSTeamsProvider lifecycle", () => {
   it("gates poll card votes before recording them", async () => {
     const abort = new AbortController();
     const cfg = createConfig(0);
-    const pollStore: MSTeamsPollStore = {
+    const pollStore: ReturnType<typeof createStores>["pollStore"] = {
       createPoll: vi.fn(async () => {}),
       getPoll: vi.fn(async () => ({
         id: "poll-1",
@@ -1026,7 +1026,7 @@ describe("monitorMSTeamsProvider lifecycle", () => {
   it("rejects poll card votes from the wrong conversation", async () => {
     const abort = new AbortController();
     const cfg = createConfig(0);
-    const pollStore: MSTeamsPollStore = {
+    const pollStore: ReturnType<typeof createStores>["pollStore"] = {
       createPoll: vi.fn(async () => {}),
       getPoll: vi.fn(async () => ({
         id: "poll-1",
