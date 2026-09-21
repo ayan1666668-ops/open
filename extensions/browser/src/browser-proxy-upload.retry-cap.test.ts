@@ -437,6 +437,76 @@ it.skipIf(chmodFaultUnavailable)(
 );
 
 it.skipIf(chmodFaultUnavailable)(
+  "re-probes an unexpired exhausted discard instead of restoring its retention timer",
+  async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    const root = tempDirs.make("openclaw-browser-proxy-unexpired-discard-");
+    const uploadDir = path.join(root, "uploads");
+    const stagingRoot = path.join(uploadDir, ".proxy-uploads");
+    const staged = path.join(stagingRoot, "upload-x");
+    await fs.mkdir(path.join(staged, "0"), { recursive: true });
+    await fs.writeFile(path.join(staged, "0", "f.txt"), "x");
+    await fs.writeFile(
+      path.join(staged, ".openclaw-browser-proxy-upload-v1"),
+      "openclaw-browser-proxy-upload-v1\n",
+    );
+    // A read-only directory stays readable for scans while blocking removal;
+    // its fresh mtime keeps the copy well inside its retention window.
+    await fs.chmod(staged, 0o500);
+    const upload = () =>
+      stageBrowserProxyUploadRequest({
+        method: "POST",
+        path: "/hooks/file-chooser",
+        body: { ref: "e1" },
+        upload: {
+          envelope: BROWSER_PROXY_UPLOAD_ENVELOPE,
+          files: [{ name: "report.txt", contentBase64: Buffer.from("report").toString("base64") }],
+        },
+        uploadDir,
+      });
+    try {
+      probeWarns.length = 0;
+      probeErrors.length = 0;
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        await discardStagedBrowserProxyUpload({ body: {}, directory: staged });
+      }
+      expect(cleanupWarns().length).toBe(2);
+      expect(cleanupErrors().length).toBe(1);
+      // While the deletion fault persists, the next upload re-probes the
+      // exhausted discard silently: the discarded copy must not be
+      // rescheduled as a retained upload, so no restored retention timer may
+      // pin active work and no retry loop may restart.
+      const blocked = await upload();
+      await discardStagedBrowserProxyUpload(blocked);
+      expect(cleanupWarns().length).toBe(2);
+      expect(cleanupErrors().length).toBe(1);
+      await waitForReal(() => !hasBrowserProxyUploadWork());
+      await vi.advanceTimersByTimeAsync(RETRY_MS * 2);
+      await new Promise<void>((resolve) => {
+        realSetTimeout(resolve, 100);
+      });
+      expect(cleanupWarns().length).toBe(2);
+      expect(cleanupErrors().length).toBe(1);
+      await expect(fs.stat(staged)).resolves.toBeDefined();
+      // Repairing the fault lets the next upload reclaim the discarded copy
+      // even though its retention window has not expired.
+      await fs.chmod(staged, 0o700);
+      const stagedRequest = await upload();
+      try {
+        await expect(fs.stat(staged)).rejects.toHaveProperty("code", "ENOENT");
+      } finally {
+        await discardStagedBrowserProxyUpload(stagedRequest);
+      }
+      expect(cleanupWarns().length).toBe(2);
+      expect(cleanupErrors().length).toBe(1);
+    } finally {
+      vi.useRealTimers();
+      await fs.chmod(staged, 0o700).catch(() => {});
+    }
+  },
+);
+
+it.skipIf(chmodFaultUnavailable)(
   "reclaims a partially deleted upload that lost the ownership marker",
   async () => {
     const root = tempDirs.make("openclaw-browser-proxy-partial-delete-");

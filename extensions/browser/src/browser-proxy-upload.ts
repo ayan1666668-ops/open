@@ -381,10 +381,29 @@ async function recoverStagedUploads(params: {
 }): Promise<void> {
   const { uploadDir, retentionMs, nowMs, limits } = params;
   const stagingRoot = path.join(uploadDir, BROWSER_PROXY_UPLOAD_ROOT_NAME);
+  // Exhausted cleanup attempts mark a directory as pending deletion, not as a
+  // retained upload: re-probe its removal regardless of retention age before
+  // any retention scheduling, and never let it enter the retained list below.
+  const exhaustedDiscards = new Set<string>();
+  for (const [directory, attempts] of cleanupAttemptCounts) {
+    if (
+      attempts >= BROWSER_PROXY_UPLOAD_RECOVERY_MAX_ATTEMPTS &&
+      directory.startsWith(stagingRoot + path.sep)
+    ) {
+      exhaustedDiscards.add(directory);
+    }
+  }
   const retained: OwnedStagedUpload[] = [];
   const scannedDirectories = new Set<string>();
   for (const upload of await readOwnedStagedUploads(stagingRoot)) {
     scannedDirectories.add(upload.directory);
+    if (exhaustedDiscards.has(upload.directory)) {
+      // A persistent deletion fault stays silent without re-arming a timer;
+      // a repaired one reclaims the discarded copy here, long before its
+      // retention expiry would.
+      await removeStagedUpload(upload.directory);
+      continue;
+    }
     if (retentionMs - Math.max(0, nowMs - upload.mtimeMs) <= 0) {
       await removeStagedUpload(upload.directory);
     } else {
@@ -397,9 +416,10 @@ async function recoverStagedUploads(params: {
   // scan above can never rediscover the remnant and a repaired fault would
   // leave it stranded forever. Directories recorded here are known to be owned
   // from an earlier verified scan, so re-probe removal for exhausted entries
-  // the scan no longer sees; unmarked directories never recorded here stay
-  // untouched. Non-exhausted entries keep their pending retry timer, which
-  // already re-probes the recorded path directly.
+  // the scan no longer sees; scanned entries were already re-probed above, and
+  // unmarked directories never recorded here stay untouched. Non-exhausted
+  // entries keep their pending retry timer, which already re-probes the
+  // recorded path directly.
   for (const [directory, attempts] of Array.from(cleanupAttemptCounts)) {
     if (attempts < BROWSER_PROXY_UPLOAD_RECOVERY_MAX_ATTEMPTS) {
       continue;
