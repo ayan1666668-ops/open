@@ -78,3 +78,7 @@ Liquid Swarm separates two kinds of freedom:
 
 That asymmetry is deliberate. Exploration should be rich; authority should be
 narrow.
+
+## Related
+
+- [Liquid Software Factory](/concepts/liquid-software-factory) for the end-to-end search-to-convergence architecture.
