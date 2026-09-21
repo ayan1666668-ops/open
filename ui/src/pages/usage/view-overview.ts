@@ -3,6 +3,7 @@ import { truncateUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
 // Control UI view renders usage render overview screen content.
 import { html, nothing } from "lit";
 import { ifDefined } from "lit/directives/if-defined.js";
+import { keyed } from "lit/directives/keyed.js";
 import { renderAgentRowChip } from "../../components/agent-row-chip.ts";
 import { handleCopyButton } from "../../components/copy-button.ts";
 import { renderSettingsSection, renderSettingsSegmented } from "../../components/settings-ui.ts";
@@ -661,16 +662,19 @@ function renderSessionsCard(
           </span>
         </button>
         <div class="session-bar-actions">
-          <button
-            type="button"
-            class="btn btn--sm btn--ghost"
-            @click=${(e: MouseEvent) => {
-              e.stopPropagation();
-              void handleCopyButton(e, displayLabel, t("usage.sessions.copy"));
-            }}
-          >
-            <span data-copy-label>${t("usage.sessions.copy")}</span>
-          </button>
+          ${keyed(
+            displayLabel,
+            html`<button
+              type="button"
+              class="btn btn--sm btn--ghost"
+              @click=${(e: MouseEvent) => {
+                e.stopPropagation();
+                void handleCopyButton(e, displayLabel, t("usage.sessions.copy"));
+              }}
+            >
+              <span data-copy-label>${t("usage.sessions.copy")}</span>
+            </button>`,
+          )}
           <div class="session-bar-value">
             ${isTokenMode ? formatUsageTokens(value) : formatAnalysisCost(value)}
           </div>
