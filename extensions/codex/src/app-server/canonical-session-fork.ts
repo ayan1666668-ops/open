@@ -10,7 +10,7 @@ import type { CodexSessionCatalogControl } from "../session-catalog-types.js";
 import { readCodexRolloutSnapshot } from "../session-rollout-snapshot.js";
 import { codexUpstreamBaseline } from "../session-upstream-marker.js";
 import { prepareCanonicalCodexFork } from "./canonical-fork-preparation.js";
-import { type CodexAppServerLiveThreadOwnership } from "./client-runtime-state.js";
+import type { CodexAppServerLiveThreadOwnership } from "./client-runtime-state.js";
 import { claimCodexAppServerLiveThread, hasCodexAppServerLiveThread } from "./client-runtime.js";
 import { parseCodexNativeToolCatalog } from "./native-tool-catalog.js";
 import { checkCodexThreadAppAvailability } from "./plugin-thread-attestation.js";
