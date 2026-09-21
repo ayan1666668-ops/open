@@ -234,6 +234,22 @@ export type ChatStreamSegment = {
   itemId?: string;
 };
 
+export type VisibleAssistantStreamPart = {
+  text: string;
+  replacementText: string;
+  source: "segment" | "current";
+  timestamp: number;
+  segmentIndex?: number;
+  segmentOrdinal?: number;
+  /** Raw cumulative offset, before trimming or display sanitization. */
+  sourceStart: number;
+  itemId?: string;
+  runId?: string;
+  afterBoundaryRunId?: string;
+  boundaryRunId?: string;
+  toolCallId?: string;
+};
+
 export function streamSegmentHasItemId(segment: { itemId?: unknown }): boolean {
   return typeof segment.itemId === "string" && segment.itemId.trim().length > 0;
 }

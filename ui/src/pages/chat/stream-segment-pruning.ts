@@ -10,6 +10,7 @@ import {
   streamSegmentHasItemId,
   streamSegmentUsesAccumulatedText,
   type ChatStreamSegment,
+  type VisibleAssistantStreamPart,
 } from "../../lib/chat/chat-types.ts";
 import {
   streamCausalInterval,
@@ -19,7 +20,6 @@ import {
 import {
   hasAssistantStreamPartReplacement,
   visibleAssistantStreamParts,
-  type VisibleAssistantStreamPart,
 } from "./stream-reconciliation.ts";
 import {
   extractToolMessageRefs,

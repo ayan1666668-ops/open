@@ -1,9 +1,20 @@
+import type { ChatQueueItem, ChatStreamSegment } from "../../lib/chat/chat-types.ts";
 import { assistantStreamPartOccurrence } from "./chat-progress.ts";
-import type { BuildChatItemsProps } from "./chat-thread-build.ts";
 import { visibleAssistantStreamParts } from "./stream-reconciliation.ts";
 
+export type ChatStreamProjectionProps = {
+  sessionKey: string;
+  runId?: string | null;
+  runLifecycleGeneration?: number;
+  stream: string | null;
+  streamStartedAt: number | null;
+  streamSegments: ChatStreamSegment[];
+  queue?: ChatQueueItem[];
+  toolMessages: unknown[];
+};
+
 /** Rendering uses the same raw source boundaries as retirement, before sanitizing display text. */
-export function prepareChatStreamProjection(props: BuildChatItemsProps) {
+export function prepareChatStreamProjection(props: ChatStreamProjectionProps) {
   const state = {
     sessionKey: props.sessionKey,
     chatRunId: props.runId,

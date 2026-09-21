@@ -1,5 +1,6 @@
 import type { SessionProjectionEntry } from "@openclaw/gateway-client/browser";
 import type { SessionRunStatus } from "../../api/types.ts";
+import type { VisibleAssistantStreamPart } from "../../lib/chat/chat-types.ts";
 import {
   isHiddenAssistantStreamText,
   shouldHideAssistantChatMessage,
@@ -16,7 +17,6 @@ import {
 import {
   materializeVisibleStreamState,
   retainAssistantStreamSegmentOccurrences,
-  type VisibleAssistantStreamPart,
 } from "./stream-reconciliation.ts";
 import { rememberLiveTerminalRun } from "./terminal-message-identity.ts";
 

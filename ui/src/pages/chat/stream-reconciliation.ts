@@ -14,6 +14,7 @@ import {
   streamSegmentHasItemId,
   streamSegmentUsesAccumulatedText,
   trimAccumulatedStreamPrefix,
+  type VisibleAssistantStreamPart,
 } from "../../lib/chat/chat-types.ts";
 import { extractText } from "../../lib/chat/message-extract.ts";
 import {
@@ -48,22 +49,6 @@ type ToolStreamHost = StreamReconciliationState & {
   chatToolMessages?: unknown[];
   toolStreamById?: Map<string, unknown>;
   toolStreamOrder?: unknown[];
-};
-
-export type VisibleAssistantStreamPart = {
-  text: string;
-  replacementText: string;
-  source: "segment" | "current";
-  timestamp: number;
-  segmentIndex?: number;
-  segmentOrdinal?: number;
-  /** Raw cumulative offset, before trimming or display sanitization. */
-  sourceStart: number;
-  itemId?: string;
-  runId?: string;
-  afterBoundaryRunId?: string;
-  boundaryRunId?: string;
-  toolCallId?: string;
 };
 
 type AssistantMessageVisibility = (message: unknown) => boolean;

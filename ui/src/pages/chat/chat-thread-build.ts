@@ -39,7 +39,10 @@ import {
   resolveWorkingProgress,
   shouldRenderQueuedSendInThread,
 } from "./chat-progress.ts";
-import { prepareChatStreamProjection } from "./chat-stream-projection.ts";
+import {
+  prepareChatStreamProjection,
+  type ChatStreamProjectionProps,
+} from "./chat-stream-projection.ts";
 import { groupMessages } from "./chat-thread-grouping.ts";
 import {
   appendCanvasBlockToAssistantMessage,
@@ -83,22 +86,14 @@ import {
 } from "./terminal-message-identity.ts";
 import type { CompactionStatus } from "./tool-stream-contract.ts";
 
-export type BuildChatItemsProps = {
+export type BuildChatItemsProps = ChatStreamProjectionProps & {
   paneId: string;
-  sessionKey: string;
   archiveNotice?: Extract<ChatItem, { kind: "notice" }>;
-  runId?: string | null;
-  runLifecycleGeneration?: number;
   compactionStatus?: CompactionStatus | null;
   /** Invalidates cached display copy when the active UI language changes. */
   locale?: string;
   messages: unknown[];
-  toolMessages: unknown[];
   guardianNotices?: ChatGuardianNotice[];
-  streamSegments: ChatStreamSegment[];
-  stream: string | null;
-  streamStartedAt: number | null;
-  queue?: ChatQueueItem[];
   initialTurnId?: string;
   pendingInputs?: ChatPendingInputsPage["items"];
   workspaceSyncPendingRunIds?: readonly string[];

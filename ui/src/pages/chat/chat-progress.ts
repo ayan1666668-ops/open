@@ -7,9 +7,9 @@ import type {
   ChatItem,
   ChatQueueItem,
   ChatStreamSegment,
+  VisibleAssistantStreamPart,
 } from "../../lib/chat/chat-types.ts";
 import { formatCompactTokenCount } from "../../lib/format.ts";
-import type { VisibleAssistantStreamPart } from "./stream-reconciliation.ts";
 import type { CompactionStatus, RunOutputUsage } from "./tool-stream-contract.ts";
 
 type WorkingProgress = {
