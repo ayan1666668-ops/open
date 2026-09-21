@@ -3,6 +3,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import { loadPluginManifestRegistryCore } from "./manifest-registry.js";
+import { MAX_PLUGIN_ACTIVITY_TOOL_ICONS } from "./portable-icon-paths.js";
 
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 
@@ -51,6 +52,36 @@ describe("portable plugin theme artwork", () => {
           dark: path.join(rootDir, "assets/icon-dark.png"),
         },
       });
+    },
+  );
+
+  it.each([1, MAX_PLUGIN_ACTIVITY_TOOL_ICONS + 1])(
+    "retains theme artwork alongside a directory of %i activity icons",
+    (toolCount) => {
+      const { rootDir, load } = createIconFixture();
+      for (const file of ["icon.png", "icon-light.png", "icon-dark.png", "activity.svg"]) {
+        fs.writeFileSync(path.join(rootDir, "assets", file), "presentation artwork");
+      }
+      const activityDir = path.join(rootDir, "assets/activity");
+      fs.mkdirSync(activityDir);
+      for (let index = 0; index < toolCount; index++) {
+        fs.writeFileSync(path.join(activityDir, `tool_${index}.svg`), "tool activity");
+      }
+
+      const manifest = load();
+      expect(manifest).toMatchObject({
+        iconPath: path.join(rootDir, "assets/icon.png"),
+        themeIconPaths: {
+          light: path.join(rootDir, "assets/icon-light.png"),
+          dark: path.join(rootDir, "assets/icon-dark.png"),
+        },
+        activityIconPath: path.join(rootDir, "assets/activity.svg"),
+      });
+      expect(manifest?.toolActivityIconPaths).toEqual(
+        toolCount > MAX_PLUGIN_ACTIVITY_TOOL_ICONS
+          ? undefined
+          : { tool_0: path.join(activityDir, "tool_0.svg") },
+      );
     },
   );
 

@@ -13,6 +13,7 @@ import type {
   BundledChannelConfigCollector,
   PluginManifestRecord,
 } from "./manifest-registry.types.js";
+import { loadManifestThemeDefinitions } from "./manifest-themes.js";
 import type { PluginDiagnostic } from "./manifest-types.js";
 import {
   type OpenClawPackageManifest,
@@ -140,81 +141,74 @@ function resolveManifestPluginSourcePath(params: {
   return resolvedSourcePath;
 }
 
-function resolvePortablePluginIconPath(params: {
+function resolvePortablePluginIcons(params: {
   rootDir: string;
   rejectHardlinks: boolean;
-  relativePath?: string;
-}): string | undefined {
-  const iconPath = path.resolve(params.rootDir, params.relativePath ?? PORTABLE_PLUGIN_ICON_PATH);
-  const iconStat = pluginCacheLstatSync(iconPath);
-  if (!iconStat?.isFile() || (params.rejectHardlinks && iconStat.nlink > 1)) {
-    return undefined;
-  }
-  const rootPath = path.resolve(params.rootDir);
-  const rootRealPath = pluginCacheRealpathSync(rootPath) ?? rootPath;
-  return isPluginRootPath({
-    rootPath,
-    targetPath: iconPath,
-    rootRealPath,
-    rejectHardlinks: params.rejectHardlinks,
-    targetMustExist: true,
-  })
-    ? iconPath
-    : undefined;
-}
-
-function resolvePortableIdentityIcons(params: {
-  rootDir: string;
-  rejectHardlinks: boolean;
-}): Pick<PluginManifestRecord, "iconPath" | "themeIconPaths"> {
-  const iconPath = resolvePortablePluginIconPath(params);
-  if (!iconPath) {
-    return {};
-  }
+}): Pick<
+  PluginManifestRecord,
+  "iconPath" | "themeIconPaths" | "activityIconPath" | "toolActivityIconPaths"
+> {
+  let root: { path: string; realPath: string } | undefined;
+  const resolveIcon = (relativePath: string): string | undefined => {
+    const iconPath = path.resolve(params.rootDir, relativePath);
+    const iconStat = pluginCacheLstatSync(iconPath);
+    if (!iconStat?.isFile() || (params.rejectHardlinks && iconStat.nlink > 1)) {
+      return undefined;
+    }
+    if (!root) {
+      const rootPath = path.resolve(params.rootDir);
+      root = { path: rootPath, realPath: pluginCacheRealpathSync(rootPath) ?? rootPath };
+    }
+    return isPluginRootPath({
+      rootPath: root.path,
+      targetPath: iconPath,
+      rootRealPath: root.realPath,
+      rejectHardlinks: params.rejectHardlinks,
+      targetMustExist: true,
+    })
+      ? iconPath
+      : undefined;
+  };
+  const iconPath = resolveIcon(PORTABLE_PLUGIN_ICON_PATH);
   const themeIconPaths: NonNullable<PluginManifestRecord["themeIconPaths"]> = {};
-  for (const theme of ["light", "dark"] as const) {
-    const themePath = resolvePortablePluginIconPath({
-      ...params,
-      relativePath: PORTABLE_PLUGIN_THEME_ICON_PATHS[theme],
-    });
-    if (themePath) {
-      themeIconPaths[theme] = themePath;
+  if (iconPath) {
+    for (const theme of ["light", "dark"] as const) {
+      const themePath = resolveIcon(PORTABLE_PLUGIN_THEME_ICON_PATHS[theme]);
+      if (themePath) {
+        themeIconPaths[theme] = themePath;
+      }
     }
   }
-  return {
+  const activityIconPath = resolveIcon(PLUGIN_ACTIVITY_ICON_PATH);
+  const icons = {
     iconPath,
     ...(Object.keys(themeIconPaths).length > 0 ? { themeIconPaths } : {}),
+    activityIconPath,
   };
-}
-
-function resolvePortableActivityIcons(params: {
-  rootDir: string;
-  rejectHardlinks: boolean;
-}): Pick<PluginManifestRecord, "activityIconPath" | "toolActivityIconPaths"> {
-  const activityIconPath = resolvePortablePluginIconPath({
-    ...params,
-    relativePath: PLUGIN_ACTIVITY_ICON_PATH,
-  });
   const directory = path.resolve(params.rootDir, PLUGIN_TOOL_ACTIVITY_ICON_DIR);
   if (
     !isPluginRootPath({
       rootPath: params.rootDir,
-      rootRealPath: pluginCacheRealpathSync(params.rootDir) ?? params.rootDir,
+      // Preserve the original spelling for the directory's JavaScript realpath lookup.
+      rootRealPath:
+        params.rootDir === root?.path
+          ? root.realPath
+          : (pluginCacheRealpathSync(params.rootDir) ?? params.rootDir),
       targetPath: directory,
       targetMustExist: true,
     })
   ) {
-    return { activityIconPath };
+    return icons;
   }
   let entries: ReturnType<typeof readPluginCacheDirectory>;
   try {
     entries = readPluginCacheDirectory(directory);
   } catch {
-    return { activityIconPath };
+    return icons;
   }
   // Ignore an overflowing directory as a whole; filesystem order never picks winners.
   if (entries.length > MAX_PLUGIN_ACTIVITY_TOOL_ICONS) {
-    return { activityIconPath };
+    return icons;
   }
   const paths: Array<[string, string]> = [];
   for (const name of entries.map((entry) => entry.name).toSorted()) {
@@ -222,16 +216,13 @@ function resolvePortableActivityIcons(params: {
     if (!isPluginActivityToolName(toolName)) {
       continue;
     }
-    const iconPath = resolvePortablePluginIconPath({
-      ...params,
-      relativePath: `${PLUGIN_TOOL_ACTIVITY_ICON_DIR}/${name}`,
-    });
-    if (iconPath) {
-      paths.push([toolName, iconPath]);
+    const toolIconPath = resolveIcon(`${PLUGIN_TOOL_ACTIVITY_ICON_DIR}/${name}`);
+    if (toolIconPath) {
+      paths.push([toolName, toolIconPath]);
     }
   }
   return {
-    activityIconPath,
+    ...icons,
     ...(paths.length ? { toolActivityIconPaths: Object.fromEntries(paths) } : {}),
   };
 }
@@ -436,11 +427,7 @@ export function buildPluginManifestRecord(params: {
     description:
       normalizeOptionalString(params.manifest.description) ?? params.candidate.packageDescription,
     catalog: mergeManifestCatalog(params.manifest.catalog, officialCatalogManifest?.catalog),
-    ...resolvePortableIdentityIcons({
-      rootDir: params.candidate.rootDir,
-      rejectHardlinks: params.rejectHardlinks,
-    }),
-    ...resolvePortableActivityIcons({
+    ...resolvePortablePluginIcons({
       rootDir: params.candidate.rootDir,
       rejectHardlinks: params.rejectHardlinks,
     }),
@@ -508,6 +495,14 @@ export function buildPluginManifestRecord(params: {
     qaRunners: params.manifest.qaRunners,
     dashboard: params.manifest.dashboard,
     controlUi: params.manifest.controlUi,
+    themes: params.manifest.themes,
+    themeDefinitions: loadManifestThemeDefinitions({
+      pluginId,
+      rootDir: params.candidate.rootDir,
+      themes: params.manifest.themes,
+      rejectHardlinks: params.rejectHardlinks,
+      diagnostics: params.diagnostics,
+    }),
     mcpServers: params.manifest.mcpServers,
     skills: params.manifest.skills ?? [],
     settingsFiles: [],
@@ -527,6 +522,7 @@ export function buildPluginManifestRecord(params: {
       officialCatalogManifest?.contracts,
     ),
     transcriptSources: params.manifest.transcriptSources,
+    decisionModels: params.manifest.decisionModels,
     mediaUnderstandingProviderMetadata: params.manifest.mediaUnderstandingProviderMetadata,
     imageGenerationProviderMetadata: params.manifest.imageGenerationProviderMetadata,
     videoGenerationProviderMetadata: params.manifest.videoGenerationProviderMetadata,
@@ -574,11 +570,7 @@ export function buildBundleManifestRecord(params: {
     id: params.manifest.id,
     name: normalizeOptionalString(params.manifest.name) ?? params.candidate.idHint,
     description: normalizeOptionalString(params.manifest.description),
-    ...resolvePortableIdentityIcons({
-      rootDir: params.candidate.rootDir,
-      rejectHardlinks: params.rejectHardlinks,
-    }),
-    ...resolvePortableActivityIcons({
+    ...resolvePortablePluginIcons({
       rootDir: params.candidate.rootDir,
       rejectHardlinks: params.rejectHardlinks,
     }),
