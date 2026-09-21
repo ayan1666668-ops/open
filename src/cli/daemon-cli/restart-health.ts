@@ -28,6 +28,7 @@ import {
   type GatewayReachability,
   type GatewayRestartProbeContext,
 } from "./restart-health-probe.js";
+import { finalizeGatewayRestartSnapshot } from "./restart-health-snapshot.js";
 import {
   DEFAULT_RESTART_HEALTH_ATTEMPTS,
   DEFAULT_RESTART_HEALTH_DELAY_MS,
@@ -55,47 +56,6 @@ export { terminateStaleGatewayPids } from "../../infra/restart-stale-pids.js";
 const STARTUP_MIGRATION_ACTIVITY_POLL_MS = 5_000;
 const STOPPED_FREE_EARLY_EXIT_GRACE_MS = 10_000;
 const WINDOWS_STOPPED_FREE_EARLY_EXIT_GRACE_MS = 90_000;
-
-// Both callers pass a fresh snapshot that has not escaped inspection.
-function finalizeGatewayRestartSnapshot(
-  snapshot: GatewayRestartSnapshot,
-  expectedVersion: string | undefined,
-  expectedBuildId: string | undefined,
-  requirePluginHealth: boolean,
-): GatewayRestartSnapshot {
-  if (expectedVersion) {
-    snapshot.expectedVersion = expectedVersion;
-    if (snapshot.gatewayVersion !== expectedVersion) {
-      snapshot.healthy = false;
-      if (snapshot.gatewayVersion != null) {
-        snapshot.versionMismatch = {
-          expected: expectedVersion,
-          actual: snapshot.gatewayVersion,
-        };
-      }
-    }
-  }
-  // Runtime identity remains required even with a separately configured UI root.
-  if (expectedBuildId) {
-    snapshot.expectedBuildId = expectedBuildId;
-    if (snapshot.gatewayBuildId !== expectedBuildId) {
-      snapshot.healthy = false;
-      if (snapshot.gatewayBuildId !== undefined) {
-        snapshot.buildIdMismatch = {
-          expected: expectedBuildId,
-          actual: snapshot.gatewayBuildId ?? null,
-        };
-      }
-    }
-  }
-  if (
-    (requirePluginHealth && snapshot.activatedPluginErrors?.length) ||
-    snapshot.channelProbeErrors?.length
-  ) {
-    snapshot.healthy = false;
-  }
-  return snapshot;
-}
 
 export async function inspectGatewayRestart(params: {
   service: Pick<GatewayService, "readCommand" | "readRuntime">;

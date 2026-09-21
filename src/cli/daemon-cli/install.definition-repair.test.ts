@@ -415,8 +415,8 @@ it.skipIf(process.platform === "win32")(
     expect(await fs.readFile(f.source, "utf8")).toBe(f.original);
     expect(await fs.readdir(path.dirname(f.source))).toEqual(before);
     expect(
-      native.systemctl.mock.calls.some(([, args]) =>
-        ["daemon-reload", "restart"].includes(args[0]),
+      native.systemctl.mock.calls.some(
+        ([, args]) => args[0] === "daemon-reload" || args[0] === "restart",
       ),
     ).toBe(false);
   },
