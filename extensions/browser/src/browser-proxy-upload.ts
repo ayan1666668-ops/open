@@ -26,6 +26,10 @@ const BROWSER_PROXY_UPLOAD_MARKER_NAME = ".openclaw-browser-proxy-upload-v1";
 const BROWSER_PROXY_UPLOAD_MARKER_CONTENT = "openclaw-browser-proxy-upload-v1\n";
 const BROWSER_PROXY_UPLOAD_RETENTION_MS = 24 * 60 * 60 * 1000;
 const BROWSER_PROXY_UPLOAD_CLEANUP_RETRY_MS = 60 * 60 * 1000;
+// Recovery/cleanup retries are bounded: a persistent staging fault must not pin
+// node-host active work (which blocks tryPauseForUpdate) or spam warns. Giving
+// up loses no state; recovery re-runs at the next node start.
+const BROWSER_PROXY_UPLOAD_RECOVERY_MAX_ATTEMPTS = 3;
 const BROWSER_PROXY_UPLOAD_MAX_RETAINED_BYTES = 256 * 1024 * 1024;
 const BROWSER_PROXY_UPLOAD_MAX_RETAINED_DIRECTORIES = 64;
 const BROWSER_PROXY_MAX_ENCODED_FILE_LENGTH = Math.ceil(BROWSER_PROXY_MAX_FILE_BYTES / 3) * 4;
@@ -38,6 +42,8 @@ const recoveryRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const stagingLocks = new Map<string, Promise<void>>();
 let activeCleanup = 0;
 let activeRecovery = 0;
+const recoveryAttemptCounts = new Map<string, number>();
+const cleanupAttemptCounts = new Map<string, number>();
 
 export function hasBrowserProxyUploadWork(): boolean {
   return (
@@ -207,18 +213,36 @@ function decodeUploadFile(file: BrowserProxyUploadFile, totalBytes: number): Buf
   return buffer;
 }
 
-async function removeStagedUpload(directory: string): Promise<void> {
-  activeCleanup += 1;
+function clearCleanupTimer(directory: string): void {
   const timer = cleanupTimers.get(directory);
-  if (timer) {
-    clearTimeout(timer);
-    cleanupTimers.delete(directory);
+  if (!timer) {
+    return;
   }
+  clearTimeout(timer);
+  cleanupTimers.delete(directory);
+}
+
+async function removeStagedUpload(directory: string): Promise<void> {
+  if ((cleanupAttemptCounts.get(directory) ?? 0) >= BROWSER_PROXY_UPLOAD_RECOVERY_MAX_ATTEMPTS) {
+    return;
+  }
+  activeCleanup += 1;
+  clearCleanupTimer(directory);
   try {
     await fs.rm(directory, { recursive: true, force: true });
+    cleanupAttemptCounts.delete(directory);
   } catch (error) {
-    logger.warn(`browser proxy upload cleanup failed; retrying: ${String(error)}`);
-    scheduleCleanup(directory, BROWSER_PROXY_UPLOAD_CLEANUP_RETRY_MS);
+    const attempts = (cleanupAttemptCounts.get(directory) ?? 0) + 1;
+    cleanupAttemptCounts.set(directory, attempts);
+    if (attempts >= BROWSER_PROXY_UPLOAD_RECOVERY_MAX_ATTEMPTS) {
+      clearCleanupTimer(directory);
+      logger.error(
+        `browser proxy upload cleanup gave up after ${attempts} attempts; staged uploads will be re-evaluated at the next node start: ${String(error)}`,
+      );
+    } else {
+      logger.warn(`browser proxy upload cleanup failed; retrying: ${String(error)}`);
+      scheduleCleanup(directory, BROWSER_PROXY_UPLOAD_CLEANUP_RETRY_MS);
+    }
   } finally {
     activeCleanup -= 1;
   }
@@ -373,13 +397,28 @@ async function runRecovery(params: {
   nowMs: number;
   limits: StagedUploadLimits;
 }): Promise<void> {
+  if (
+    (recoveryAttemptCounts.get(params.uploadDir) ?? 0) >= BROWSER_PROXY_UPLOAD_RECOVERY_MAX_ATTEMPTS
+  ) {
+    return;
+  }
   activeRecovery += 1;
   try {
     await recoverStagedUploads(params);
+    recoveryAttemptCounts.delete(params.uploadDir);
     clearRecoveryRetry(params.uploadDir);
   } catch (error) {
-    logger.warn(`browser proxy upload recovery failed; retrying: ${String(error)}`);
-    scheduleRecoveryRetry(params.uploadDir, params.retentionMs);
+    const attempts = (recoveryAttemptCounts.get(params.uploadDir) ?? 0) + 1;
+    recoveryAttemptCounts.set(params.uploadDir, attempts);
+    if (attempts >= BROWSER_PROXY_UPLOAD_RECOVERY_MAX_ATTEMPTS) {
+      clearRecoveryRetry(params.uploadDir);
+      logger.error(
+        `browser proxy upload recovery gave up after ${attempts} attempts; staged uploads will be re-evaluated at the next node start: ${String(error)}`,
+      );
+    } else {
+      logger.warn(`browser proxy upload recovery failed; retrying: ${String(error)}`);
+      scheduleRecoveryRetry(params.uploadDir, params.retentionMs);
+    }
   } finally {
     activeRecovery -= 1;
   }
