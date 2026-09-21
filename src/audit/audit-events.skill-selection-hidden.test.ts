@@ -183,9 +183,9 @@ describe("hidden-run skill-selection audit attribution", () => {
     ).toEqual([
       expect.objectContaining({ kind: "skill_selection", sessionKey: "agent:main:main" }),
     ]);
-    expect((await listAuditEvents({ database, limit: 10 })).events.map((event) => event.kind)).toEqual([
-      "agent_run",
-    ]);
+    expect(
+      (await listAuditEvents({ database, limit: 10 })).events.map((event) => event.kind),
+    ).toEqual(["agent_run"]);
   });
 
   it("persists hidden-run skill selection for session-filtered readback", async () => {
