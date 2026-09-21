@@ -74,9 +74,10 @@ const TURN_MAINTENANCE_TASK_KIND = "context_engine_turn_maintenance";
 
 function createBackgroundMaintenanceEngine(
   maintain: NonNullable<ContextEngine["maintain"]>,
+  id = "test",
 ): ContextEngine {
   return {
-    info: { id: "test", name: "Test Engine", turnMaintenanceMode: "background" },
+    info: { id, name: "Test Engine", turnMaintenanceMode: "background" },
     ingest: async () => ({ ingested: true }),
     assemble: async ({ messages }) => ({ messages, estimatedTokens: 0 }),
     compact: async () => ({ ok: true, compacted: false }),
@@ -813,22 +814,10 @@ describe("runContextEngineMaintenance", () => {
         const createOwnedEngine = (
           id: string,
           maintain: typeof firstMaintain | typeof secondMaintain,
-        ) =>
-          ({
-            info: {
-              id,
-              name: "Test Engine",
-              turnMaintenanceMode: "background" as const,
-            },
-            ingest: async () => ({ ingested: true }),
-            assemble: async ({ messages }: { messages: unknown[] }) => ({
-              messages,
-              estimatedTokens: 0,
-            }),
-            compact: async () => ({ ok: true, compacted: false }),
-            maintain,
-            dispose: vi.fn(async () => {}),
-          }) as NonNullable<Parameters<typeof runContextEngineMaintenance>[0]["contextEngine"]>;
+        ) => ({
+          ...createBackgroundMaintenanceEngine(maintain, id),
+          dispose: vi.fn(async () => {}),
+        });
         const firstEngine = createOwnedEngine("first", firstMaintain);
         const secondEngine = createOwnedEngine("second", secondMaintain);
         registerLegacyContextEngine();
@@ -968,20 +957,14 @@ describe("runContextEngineMaintenance", () => {
         rewrittenEntries: 0,
       }));
       const engine = {
+        ...createBackgroundMaintenanceEngine(maintain),
         info: {
           id: "queued",
           name: "Queued Engine",
           turnMaintenanceMode: "background" as const,
         },
-        ingest: async () => ({ ingested: true }),
-        assemble: async ({ messages }: { messages: unknown[] }) => ({
-          messages,
-          estimatedTokens: 0,
-        }),
-        compact: async () => ({ ok: true, compacted: false }),
-        maintain,
         dispose: vi.fn(async () => {}),
-      } as NonNullable<Parameters<typeof runContextEngineMaintenance>[0]["contextEngine"]>;
+      };
       let deferred: Promise<void> | undefined;
 
       try {
@@ -1672,19 +1655,8 @@ describe("runContextEngineMaintenance", () => {
         resetSystemEventsForTest();
 
         const sessionKey = "agent:main:session-fail";
-        const backgroundEngine = {
-          info: {
-            id: "test",
-            name: "Test Engine",
-            turnMaintenanceMode: "background" as const,
-          },
-          ingest: async () => ({ ingested: true }),
-          assemble: async ({ messages }: { messages: unknown[] }) => ({
-            messages,
-            estimatedTokens: 0,
-          }),
-          compact: async () => ({ ok: true, compacted: false }),
-          maintain: vi.fn(async (rawParams?: unknown) => {
+        const backgroundEngine = createBackgroundMaintenanceEngine(
+          vi.fn(async (rawParams?: unknown) => {
             const signal = (rawParams as { abortSignal?: AbortSignal } | undefined)?.abortSignal;
             if (!signal) {
               throw new Error("expected deferred maintenance abort signal");
@@ -1702,7 +1674,7 @@ describe("runContextEngineMaintenance", () => {
             });
             return { changed: false, bytesFreed: 0, rewrittenEntries: 0 };
           }),
-        } as NonNullable<Parameters<typeof runContextEngineMaintenance>[0]["contextEngine"]>;
+        );
 
         await runContextEngineMaintenance({
           contextEngine: backgroundEngine,
