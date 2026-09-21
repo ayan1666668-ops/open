@@ -61,9 +61,11 @@ export function parseReplyDirectives(
     text: isSilent ? "" : text,
     // Keep native path conversion outside the browser-shared parser and before reply policy.
     mediaUrls: split.mediaUrls?.map((source) => trySafeFileURLToPath(source) ?? source),
-    replyToId: replyParsed?.replyToId,
-    replyToCurrent: replyParsed?.replyToCurrent || undefined,
-    replyToTag: replyParsed?.hasReplyTag ?? false,
+    // Reply targeting is delivery metadata. A silent payload must not retain it,
+    // otherwise a reply-only shell can still be treated as deliverable content.
+    replyToId: isSilent ? undefined : replyParsed?.replyToId,
+    replyToCurrent: isSilent ? undefined : replyParsed?.replyToCurrent || undefined,
+    replyToTag: isSilent ? false : (replyParsed?.hasReplyTag ?? false),
     audioAsVoice: split.audioAsVoice,
     isSilent,
   };
