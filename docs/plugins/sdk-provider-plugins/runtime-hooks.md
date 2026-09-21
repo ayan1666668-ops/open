@@ -50,8 +50,9 @@ additive fields on the existing contract; they add no hook or user setting.
 
 Credential consumers using `resolveApiKeyForProvider` from
 `openclaw/plugin-sdk/provider-auth-runtime` should pass their request's optional
-`signal`. It cancels that lookup's queue admission and OAuth settlement wait,
-not the refresh owner's credential write. Preserve non-missing authentication
+`signal`. It ends the caller's wait for queued admission, a profile lock, or
+OAuth settlement, not an already-claimed refresh's credential write. Started lock
+acquisition remains owned through cleanup. Preserve non-missing authentication
 errors rather than converting every failure into an absent API key.
 
 `buildTimeoutAbortSignal` from `openclaw/plugin-sdk/extension-shared` combines a

@@ -135,8 +135,10 @@ admission refusals, and cleanup failures remain errors.
 
 Credential lookups through `resolveApiKeyForProvider` and
 `resolveApiKeyForProfile` also accept an optional abort signal. Cancellation
-removes the caller from queued admission or ends its pending-refresh observation;
-it does not cancel an already-claimed refresh or discard its durable settlement.
+ends the caller's wait for queued admission, a profile lock, or refresh. Queued
+tasks recheck cancellation before claiming credentials. Started lock acquisition
+retains its cleanup owner, and claimed refreshes keep their independent durable
+settlement.
 Canceled callers cannot start a later queued refresh or return its credentials.
 Callers that omit the signal retain the existing wait behavior.
 

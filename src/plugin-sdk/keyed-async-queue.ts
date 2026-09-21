@@ -1,6 +1,4 @@
 // Keyed async queue helpers serialize async plugin work by key while preserving parallelism.
-import { createDeferredCore } from "../shared/deferred.js";
-
 /** Optional lifecycle hooks fired around each queued task. */
 export type KeyedAsyncQueueHooks = {
   onEnqueue?: () => void;
@@ -13,23 +11,12 @@ export function enqueueKeyedTask<T>(params: {
   key: string;
   task: () => Promise<T>;
   hooks?: KeyedAsyncQueueHooks;
-  /** Cancels admission only; an admitted task owns its execution and settlement. */
-  signal?: AbortSignal;
 }): Promise<T> {
   params.hooks?.onEnqueue?.();
   const previous = params.tails.get(params.key) ?? Promise.resolve();
-  const signal = params.signal;
   const current = previous
     .catch(() => undefined)
-    .then(
-      signal
-        ? () => {
-            signal.removeEventListener("abort", onAbort);
-            signal.throwIfAborted();
-            return params.task();
-          }
-        : params.task,
-    )
+    .then(params.task)
     .finally(() => {
       params.hooks?.onSettle?.();
     });
@@ -44,21 +31,7 @@ export function enqueueKeyedTask<T>(params: {
     }
   };
   tail.then(cleanup, cleanup);
-  if (!signal) {
-    return current;
-  }
-  const { promise, resolve, reject } = createDeferredCore<T>();
-  const onAbort = () => {
-    signal.removeEventListener("abort", onAbort);
-    reject(signal.reason);
-  };
-  signal.addEventListener("abort", onAbort, { once: true });
-  // The queue retains the skipped entry until its predecessor settles, preserving FIFO.
-  current.then(resolve, reject);
-  if (signal.aborted) {
-    onAbort();
-  }
-  return promise;
+  return current;
 }
 
 /** Small per-key async queue wrapper for plugin runtimes that need serialized work. */
@@ -73,18 +46,12 @@ export class KeyedAsyncQueue {
     return this.tails;
   }
 
-  enqueue<T>(
-    key: string,
-    task: () => Promise<T>,
-    hooks?: KeyedAsyncQueueHooks,
-    signal?: AbortSignal,
-  ): Promise<T> {
+  enqueue<T>(key: string, task: () => Promise<T>, hooks?: KeyedAsyncQueueHooks): Promise<T> {
     return enqueueKeyedTask({
       tails: this.tails,
       key,
       task,
       ...(hooks ? { hooks } : {}),
-      ...(signal ? { signal } : {}),
     });
   }
 }

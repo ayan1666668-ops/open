@@ -6,6 +6,7 @@ import { asDateTimestampMs } from "@openclaw/normalization-core/number-coercion"
  */
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { normalizeSecretInputString } from "../../config/types.secrets.js";
+import { racePromiseWithAbortSignal } from "../../infra/abort-signal.js";
 import { formatErrorMessage, toErrorObject } from "../../infra/errors.js";
 import { KeyedAsyncQueue } from "../../plugin-sdk/keyed-async-queue.js";
 import { isUserModelAuthProfileId } from "../../state/user-model-account-id.js";
@@ -1327,25 +1328,24 @@ export function createOAuthManager(adapter: OAuthManagerAdapter) {
     }
 
     try {
-      const resolved = await refreshQueue.enqueue(
-        `${credential.provider}\u0000${params.profileId}`,
-        () =>
-          refreshOAuthTokenWithLock({
-            profileId: params.profileId,
-            provider: credential.provider,
-            agentDir: params.agentDir,
-            cfg: params.cfg,
-            signal: params.signal,
-            forceRefresh: params.forceRefresh,
-            attemptedCredential: effectiveCredential,
-            attemptedCredentials,
-            bootstrapCredential,
-            bootstrapBaseCredential: adoptedCredential,
-            validateCredential: params.validateCredential,
-          }),
-        undefined,
-        params.signal,
+      const queued = refreshQueue.enqueue(`${credential.provider}\u0000${params.profileId}`, () =>
+        refreshOAuthTokenWithLock({
+          profileId: params.profileId,
+          provider: credential.provider,
+          agentDir: params.agentDir,
+          cfg: params.cfg,
+          signal: params.signal,
+          forceRefresh: params.forceRefresh,
+          attemptedCredential: effectiveCredential,
+          attemptedCredentials,
+          bootstrapCredential,
+          bootstrapBaseCredential: adoptedCredential,
+          validateCredential: params.validateCredential,
+        }),
       );
+      // The queue retains admission and claim cleanup after this caller stops observing.
+      // Claimed refreshes transfer to durable settlement before their queue task exits.
+      const resolved = await racePromiseWithAbortSignal(queued, params.signal);
       params.signal?.throwIfAborted();
       return resolved;
     } catch (error) {
