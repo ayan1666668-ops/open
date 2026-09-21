@@ -31,6 +31,28 @@ export function createTestApprovalManager<TPayload = ExecApprovalRequestPayload>
   test: TestContext,
   options: Omit<ExecApprovalManagerOptions<TPayload>, "persistence"> = {},
 ): ExecApprovalManager<TPayload> {
+  return createApprovalFixture(test, options).manager;
+}
+
+/** Prepare real store workers before timing a Gateway request. */
+export async function createReadyTestApprovalFixture<TPayload = ExecApprovalRequestPayload>(
+  test: TestContext,
+  options: Omit<ExecApprovalManagerOptions<TPayload>, "persistence"> = {},
+) {
+  const fixture = createApprovalFixture(test, options);
+  await fixture.track(
+    operatorApprovalStore.listPendingOperatorApprovals({
+      databaseOptions: fixture.databaseOptions,
+    }),
+  );
+  test.signal.throwIfAborted();
+  return fixture;
+}
+
+function createApprovalFixture<TPayload = ExecApprovalRequestPayload>(
+  test: TestContext,
+  options: Omit<ExecApprovalManagerOptions<TPayload>, "persistence"> = {},
+) {
   test.signal.throwIfAborted();
   const restoreClock = installTestApprovalClock();
   test.onTestFinished(() => restoreClock?.());
@@ -60,7 +82,7 @@ export function createTestApprovalManager<TPayload = ExecApprovalRequestPayload>
       ...options,
       persistence: { runtimeEpoch: randomUUID(), databaseOptions },
     });
-    return manager;
+    return { manager, databaseOptions, track: fixture.track };
   } catch (error) {
     // A failed open can include failed closure of an unpublished handle.
     // Retain its inputs rather than certify cleanup from an empty cache.
