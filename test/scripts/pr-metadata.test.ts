@@ -131,7 +131,7 @@ const endpoint = args.find((arg) => arg.startsWith("repos/") || ["user", "rate_l
 if (args[0] !== "api" || !endpoint) throw new Error("Only explicit REST endpoints are supported");
 const hostFlag = args.indexOf("--hostname");
 const apiHost = hostFlag >= 0 ? args[hostFlag + 1] : defaultHost;
-const repoURL = "https://" + apiHost + "/base-owner/base-repo";
+const repoURL = "https://" + apiHost.toLowerCase() + "/base-owner/base-repo";
 if (fixture.notify) fs.writeSync(3, endpoint + "\\n");
 if (endpoint.startsWith("repos/base-owner/base-repo/commits?")) {
   const count = Number(fs.readFileSync(path.join(root, "count"), "utf8"));
@@ -167,15 +167,19 @@ if (fixture.failure && fail && (fixture.failureCount === undefined || count <= f
   if (fixture.failure === "null") out(null);
   process.exit(0);
 }
-if (endpoint === "repos/base-owner/base-repo") {
+if (endpoint === "user") {
+  process.stdout.write('HTTP/2.0 200 OK\\n\\n');
+  out({login:"contributor"});
+} else if (endpoint === "repos/base-owner/base-repo") {
   out({full_name:"base-owner/base-repo",html_url:repoURL,node_id:"R_base"});
 } else if (isPull) {
   const record = {number:42,html_url:repoURL+"/pull/42",state:"open",draft:false,
-    base:{sha:"${base}",ref:"main",repo:{id:1}},
+    base:{sha:"${base}",ref:"main",repo:{id:1,node_id:"R_base",full_name:"base-owner/base-repo",html_url:repoURL}},
     head:{sha:"${head}",ref:"topic",repo:{id:2,name:"fork-repo",full_name:"fork-owner/fork-repo",html_url:"https://"+apiHost+"/fork-owner/fork-repo",owner:{login:"fork-owner"}}},
     user:{login:"contributor"},changed_files:fixture.changedFiles === undefined ? 101 : fixture.changedFiles};
   const stale = fixture.cacheUntilRevalidated && !args.includes("Cache-Control: max-age=0");
-  out({...record,...(count === 1 || stale ? fixture.initialPatch : fixture.finalPatch)});
+  const patch = (count === 1 || stale ? fixture.initialPatch : fixture.finalPatch) || {};
+  out({...record,...patch,...(patch.base ? {base:{...record.base,...patch.base}} : {})});
 } else if (endpoint.includes("/files?")) {
   if (!args.includes("--paginate") || !args.includes("--slurp")) throw new Error("Files must be paginated");
   const count = fixture.changedFiles === undefined ? 101 : fixture.changedFiles || 0;
@@ -209,6 +213,8 @@ if (endpoint === "repos/base-owner/base-repo") {
       env: {
         ...process.env,
         FAKE_GH_FIXTURE: JSON.stringify(fixture),
+        PR_GH_WRITER_LOGIN: "untrusted-inherited-login",
+        PR_GH_WRITER_CONTEXT: "untrusted-inherited-context",
         FAKE_GH_NOTIFY: join(dir, "notify"),
         GH_REPO: fixture.ghRepo ?? "base-owner/base-repo",
         GH_HOST: fixture.ghHost,
@@ -245,6 +251,44 @@ if (endpoint === "repos/base-owner/base-repo") {
 }
 
 describe("PR metadata through REST", () => {
+  it("accepts canonical repository casing when adopting an explicit qualified observation", () => {
+    const result = readPrMetadata(
+      { ghRepo: "https://GITHUB.COM/base-owner/base-repo" },
+      'pr_observe 42; printf "%s\\n" "$PR_REPOSITORY_URL"',
+    );
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toBe("https://github.com/base-owner/base-repo\n");
+    expect(result.calls).toHaveLength(1);
+  });
+
+  it("authenticates nested worktree entries once without trusting inherited login state", () => {
+    const result = readPrMetadata(
+      {},
+      'ensure_gh_api_auth; ensure_gh_api_auth; ensure_gh_api_auth; ensure_gh_api_auth; printf "%s\\n" "$PR_GH_WRITER_LOGIN"',
+    );
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toBe("contributor\n");
+    expect(result.calls.filter((args) => args.includes("user"))).toHaveLength(1);
+  });
+
+  it("revalidates writer identity after explicit credential selection changes", () => {
+    const result = readPrMetadata(
+      {},
+      "ensure_gh_api_auth; GH_TOKEN=synthetic-replacement ensure_gh_api_auth",
+    );
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.calls.filter((args) => args.includes("user"))).toHaveLength(2);
+  });
+
+  it("does not retain a failed authentication probe", () => {
+    const result = readPrMetadata(
+      { failure: "quota", failureTarget: "user" },
+      "ensure_gh_api_auth || true; ensure_gh_api_auth",
+    );
+    expect(result.status).not.toBe(0);
+    expect(result.calls.filter((args) => args.includes("user"))).toHaveLength(2);
+  });
+
   describe("pinned source authors", () => {
     const command =
       'printf "%s\\n" "$FAKE_GH_FIXTURE" | jq .authorSources | pr_gh commit-authors base-owner/base-repo github.enterprise.invalid';
@@ -569,7 +613,7 @@ describe("PR metadata through REST", () => {
     (failure) => {
       const result = readPrMetadata(
         { failure, failureTarget: "permission" },
-        "source scripts/pr-lib/prepare-core.sh; resolve_pr_author_access_at_prepare contributor",
+        "source scripts/pr-lib/prepare-core.sh; resolve_pr_author_access_at_prepare contributor base-owner/base-repo",
       );
       expect(result.status, result.stderr).toBe(failure === "forbidden" ? 0 : 1);
       expect(result.stdout).toBe(failure === "forbidden" ? "unknown\n" : "");
@@ -628,6 +672,8 @@ describe("PR metadata through REST", () => {
     expect(result.status).toBe(0);
     expect(result.stderr).toBe("");
     expect(result.attempts).toBe(2);
+    expect(result.calls.filter((args) => args[0] === "api")).toHaveLength(3);
+    expect(result.calls.some((args) => args.includes("repos/base-owner/base-repo"))).toBe(false);
     expect(
       result.calls.every(
         (args) =>

@@ -55,7 +55,19 @@ Each PR-head observation and merge snapshot explicitly requests
 `Cache-Control: max-age=0`: the relay revalidates that read and may publish its
 result, while separate before/after observations must never reuse one cached fact.
 Writer identity uses REST `GET /user --include` through the protected selected CLI;
-included headers keep relay callers on the native writer route. Reviewer assignment
+included headers keep relay callers on the native writer route. Successful
+authentication is reused within one shell operation and its nested worktree entries;
+new processes and changed credential selection require a new probe. This private
+process state is never inherited or written to review/preparation artifacts.
+`merge_verify` takes one internal options record with explicit `replacementHead`,
+`autoMergeRequested`, and `observation` fields. A null observation requests a fresh
+read; the auto-merge flag remains independent of carried PR facts.
+Repository identity comes from the same PR observation as its head facts. Callers
+carry that observation through source acquisition and hosted gates; acquisition
+still independently rereads complete source identity after the immutable fetch.
+Publication revalidates immediately before each Git/GraphQL write, after transport
+preparation, and compares the successful publication observation before acquisition.
+Reviewer assignment
 uses REST and verifies that GitHub retained the requested assignee. The CI watcher
 polls GraphQL summaries, expanding check details only for failure analysis or
 pending checks after CI succeeds. Primary GraphQL exhaustion selects a bounded
@@ -86,6 +98,7 @@ Diagnostics never add automatic retries.
 - Ordinary non-admin admission permits main to advance while retaining its pinned tree-proof/intent base and rechecking every PR/head/lifecycle/policy fact; GitHub owns applying the pinned head to current main. Admin admission and OPEN/CLOSED/pending/uncertain reconciliation require exact full PR/main snapshot stability. Only a validated MERGED receipt may accept forward main advancement between its two observations: every PR fact must remain equal, acquire the reread's exact main commit through the same canonical trusted URL when absent locally, and prove the original observed main is its ancestor. Equal snapshots keep the fast path. Both snapshots stay pinned; never add a third reread loop. This completes an already-proven merge, never grants authority for a future merge; historical tree/source-base checks and receipt/comment/cleanup ownership remain unchanged.
 - Local object-availability probes and strict retained-record reads use command-scoped `GIT_NO_LAZY_FETCH=1`. Upstream Git 2.45 first supports this environment variable; older Git may still hydrate objects implicitly and cannot promise local-only probes. This is not a new all-command minimum or an offline workflow: explicit canonical fetches and actual tree/diff/archive/push/checkout operations remain available. Completed-receipt correctness depends on pinned facts and ancestry/tree proof, not this download avoidance.
 - Initial admission alone waits for UNKNOWN mergeability projections for at most three observations, sleeping one then two seconds, with PR and policy facts and each already-known projection pinned; full final rereads and retained-outcome reconciliation never poll. Before intent on PRs without a merge queue, ordinary merges reject gh's BLOCKED/BEHIND/DIRTY refusals and admin merges reject DIRTY; queue and auto retain their distinct admission contracts.
+- Ordinary immediate squash dispatch uses the selected writer's exact-head GraphQL mutation directly after one final explicit pre-merge revalidation. It preserves the captured body, omits the headline so GitHub retains its existing defaults, and cannot enqueue or arm auto-merge. Its initial and final public snapshots bind the source branch as well as the head; both independent post-dispatch receipt observations remain fresh. Queue, auto, admin, merge, and rebase retain native `gh pr merge` dispatch and their additional authority windows.
 - `merge-run` owns remote dispatch separately from the process lock. Before any merge/auto/queue request it records the exact repository identity, PR, main target, prepared head, observed main, method, route, and attempt in `refs/openclaw/pr-merge-outcomes/<PR>`. Private Git commits retain the required objects across worktree removal and GC. Do not delete or push these refs; process-lock recovery never clears them.
 - A failed request can already have merged. After the reported exact process-lock recovery, repeat `scripts/pr merge-run <PR>` only for reconciliation. `OPEN`, a different head, reverted/partially applied content, elapsed time, or an absent process never proves non-execution. There is no automatic clear/retry override. Inspect the PR timeline, authoritative main history, and `git show refs/openclaw/pr-merge-outcomes/<PR>:outcome.json`; unresolved uncertainty requires operator action outside this automatic path. Keep the record for that investigation. If an older wrapper left `.local/merge-output.log` without an outcome record, even an empty capture blocks a fresh dispatch; preserve it and reconcile the earlier request manually.
 - An explicit land/merge/ship request supplies standing operator authorization for investigated recovery on the same prepared head and merge method. Do not ask for renewed chat approval solely because main moved or a request failed. Investigate each retained outcome before deciding on a bounded recovery attempt; standing authorization does not establish non-execution or permit resubmission of accepted, pending, or unresolved requests.

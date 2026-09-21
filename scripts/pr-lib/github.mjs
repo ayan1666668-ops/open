@@ -267,6 +267,15 @@ function readPr(repo, pr, fields, route, options = {}) {
   if (!record || typeof record !== "object" || Array.isArray(record)) {
     throw new Error("GitHub did not return one PR JSON object.");
   }
+  if (
+    fields.includes("baseRepository") &&
+    (typeof record.base?.repo?.full_name !== "string" ||
+      typeof record.base.repo.html_url !== "string" ||
+      record.base.repo.full_name.toLowerCase() !== repo.name.toLowerCase() ||
+      record.base.repo.html_url.toLowerCase() !== `https://${repo.host}/${repo.name}`.toLowerCase())
+  ) {
+    throw invalidMetadata("GitHub PR base repository does not match the requested repository.");
+  }
   const result = {
     number: record.number,
     title: record.title,
@@ -275,6 +284,15 @@ function readPr(repo, pr, fields, route, options = {}) {
     author: user(record.user),
     baseRefName: record.base?.ref,
     baseRefOid: record.base?.sha,
+    baseRepository:
+      record.base?.repo == null
+        ? record.base?.repo
+        : {
+            id: record.base.repo.node_id,
+            databaseId: record.base.repo.id,
+            nameWithOwner: record.base.repo.full_name,
+            url: record.base.repo.html_url,
+          },
     headRefName: record.head?.ref,
     headRefOid: record.head?.sha,
     headRepository:

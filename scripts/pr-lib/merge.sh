@@ -196,7 +196,22 @@ mainline_drift_requires_sync() (
 )
 
 merge_verify() {
-  local pr="$1" replacement_head="${2:-}" auto_merge_requested="${3:-false}"
+  if [ "$#" -ne 2 ]; then
+    echo "merge_verify requires a PR number and verification options." >&2
+    return 2
+  fi
+  local pr="$1" options="$2" replacement_head auto_merge_requested json
+  if ! printf '%s\n' "$options" | jq -e '
+    type == "object" and keys == ["autoMergeRequested","observation","replacementHead"] and
+    (.replacementHead | type == "string") and (.autoMergeRequested | type == "boolean") and
+    (.observation == null or (.observation | type == "object"))
+  ' >/dev/null; then
+    echo "Invalid merge verification options: require replacementHead, autoMergeRequested, and observation." >&2
+    return 2
+  fi
+  replacement_head=$(printf '%s\n' "$options" | jq -r .replacementHead) || return 1
+  auto_merge_requested=$(printf '%s\n' "$options" | jq -r .autoMergeRequested) || return 1
+  json=$(printf '%s\n' "$options" | jq -c '.observation // empty') || return 1
   MERGE_USE_CRABBOX_ADMIN_BYPASS=false
   enter_worktree "$pr" false || return 1
 
@@ -223,8 +238,10 @@ merge_verify() {
   hosted_tree=$(pr_git rev-parse "$PREP_HEAD_SHA^{tree}") || return 1
   [ "$local_tree" = "$hosted_tree" ] || { echo "Local and hosted prepared trees differ." >&2; return 1; }
 
-  local json
-  json=$(pr_gh_plain pr view "$pr" --json state,isDraft,headRefOid) || return 1
+  if [ -z "$json" ]; then
+    pr_observe "$pr" || return 1
+    json="$PR_OBSERVATION"
+  fi
   local is_draft
   is_draft=$(printf '%s\n' "$json" | jq -r .isDraft)
   if [ "$is_draft" = "true" ]; then
@@ -240,7 +257,7 @@ merge_verify() {
     echo "Note: docs/changelog-only follow-ups reuse prior gate results automatically."
 
     mark_pr_operation_side_effects_started
-    fetch_pr_head "$pr" "$pr_head_sha" >/dev/null 2>&1 || true
+    fetch_pr_head "$pr" "$pr_head_sha" "" "$json" >/dev/null 2>&1 || true
     if GIT_NO_LAZY_FETCH=1 pr_git cat-file -e "${PREP_HEAD_SHA}^{commit}" 2>/dev/null && GIT_NO_LAZY_FETCH=1 pr_git cat-file -e "${pr_head_sha}^{commit}" 2>/dev/null; then
       echo "HEAD delta (expected...current):"
       pr_git log --oneline --left-right "${PREP_HEAD_SHA}...${pr_head_sha}" | sed 's/^/  /' || true
@@ -250,6 +267,8 @@ merge_verify() {
     exit 1
   fi
 
+  fetch_pr_head "$pr" "$PREP_HEAD_SHA" "refs/heads/pr-$pr" "$json" || return 1
+  json="$PR_HEAD_OBSERVATION"
   require_clawsweeper_review "$pr" "$pr_head_sha" \
     "${MERGE_REPO_NAME:-}" "${MERGE_REPO_HOST:-}" || return 1
   mark_pr_operation_side_effects_started || return 1
@@ -259,7 +278,7 @@ merge_verify() {
     # The stamp selects the owner, not proof. Revalidate before skipping the
     # PR-only watcher, which cannot observe accepted hosted release gates.
     derive_prepare_gate_change_plan "$PREP_HEAD_SHA" || return 1
-    run_hosted_prepare_gates "$pr" "$PREP_HEAD_SHA" "$PREPARE_GATE_CHANGELOG_ONLY" || return 1
+    run_hosted_prepare_gates "$pr" "$PREP_HEAD_SHA" "$PREPARE_GATE_CHANGELOG_ONLY" "$json" || return 1
   else
     # Local/Crabbox preparation retains the attached-CI wait. Required checks
     # below remain merge authority; optional contexts cannot stall this path.
@@ -275,11 +294,13 @@ merge_verify() {
   local checks_json
   local checks_err_file
   local checks_exit_status
+  local checks_args=(pr checks "$pr" --required --json name,bucket,state)
+  checks_args+=(--repo "$(printf '%s\n' "$json" | jq -er .baseRepository.url)")
   checks_err_file=$(mktemp)
   if [ "${MERGE_TRANSPORT:-graphql}" = rest ]; then
     checks_json=$(merge_rest checks "$pr") || { rm -f "$checks_err_file"; return 1; }
     checks_exit_status=0
-  elif checks_json=$(pr_gh_quota_read pr checks "$pr" --required --json name,bucket,state 2>"$checks_err_file"); then
+  elif checks_json=$(pr_gh_quota_read "${checks_args[@]}" 2>"$checks_err_file"); then
     checks_exit_status=0
   else
     checks_exit_status=$?
@@ -363,7 +384,6 @@ merge_verify() {
   fi
 
   refresh_main_snapshot || return 1
-  fetch_pr_head "$pr" "$PREP_HEAD_SHA" "refs/heads/pr-$pr" || return 1
   if ! pr_git merge-base --is-ancestor "$PR_MAIN_SHA" "refs/heads/pr-$pr"; then
     echo "PR branch is behind main."
     if mainline_drift_requires_sync \
@@ -506,7 +526,7 @@ merge_run() {
     return 2
   fi
   local MERGE_OUTCOME_REF MERGE_OUTCOME_OID MERGE_OUTCOME_RECORD MERGE_REPO
-  local MERGE_REPO_URL MERGE_REPO_HOST MERGE_REPO_NAME MERGE_OBSERVATION MERGE_TRANSPORT=graphql
+  local MERGE_REPO_URL MERGE_REPO_HOST MERGE_REPO_NAME MERGE_OBSERVATION MERGE_ENTRY_OBSERVATION MERGE_TRANSPORT=graphql
   merge_outcome_init "$pr" || return 1
   if [ -n "$legacy_directory" ]; then
     [ -z "$MERGE_OUTCOME_OID" ] && [ -n "$recovery_oid" ] && [ -n "$replacement_head" ] || {
@@ -579,7 +599,12 @@ merge_run() {
   fi
   validate_review_artifact_data || return 1
   require_ready_review_recommendation || return 1
-  merge_verify "$pr" "$replacement_head" "$auto_merge_requested" || return 1
+  local verify_options
+  verify_options=$(jq -cn --arg replacementHead "$replacement_head" \
+    --argjson autoMergeRequested "$auto_merge_requested" --argjson observation "$MERGE_ENTRY_OBSERVATION" \
+    '{replacementHead:$replacementHead,autoMergeRequested:$autoMergeRequested,observation:$observation}') || return 1
+  merge_verify "$pr" "$verify_options" || return 1
+  MERGE_ENTRY_OBSERVATION="$PR_HEAD_OBSERVATION"
   # shellcheck disable=SC1091
   source .local/prep.env
 
@@ -667,8 +692,10 @@ merge_run() {
       merge_outcome_stop "REST fallback supports ordinary immediate squash only; auto, queue, and admin routes require GraphQL"
       return 1
     fi
-    if ! printf '%s\n' "$MERGE_OBSERVATION" | jq -e --arg head "$PREP_HEAD_SHA" --argjson recovery "${recovery_record:-null}" '
+    if ! printf '%s\n' "$MERGE_OBSERVATION" | jq -e --arg head "$PREP_HEAD_SHA" \
+      --argjson source "$MERGE_ENTRY_OBSERVATION" --argjson recovery "${recovery_record:-null}" '
       .pr.state == "OPEN" and .pr.headRefOid == $head and .pr.baseRefName == "main" and
+      .pr.headRefName == $source.headRefName and
       .pr.isDraft == false and .pr.mergeable != "CONFLICTING" and
       .pr.autoMergeRequest == null and .pr.isInMergeQueue == false and
       ($recovery == null or .pr.id == $recovery.prId)
@@ -756,6 +783,10 @@ merge_run() {
     merge_outcome_stop "operator recovery requires current immediate admission without admin, auto, or queue routing"
     return 1
   fi
+  if [ "$route" = immediate ] && [ "$merge_method" = squash ] && [ -z "$merge_body_snapshot" ]; then
+    merge_outcome_stop "ordinary squash requires the captured merge body; queue policy changed during admission"
+    return 1
+  fi
   # gh skips local status refusals for queue-enabled PRs; admin bypasses BLOCKED/BEHIND.
   # Reject known client-side refusals before recording non-retryable intent.
   if printf '%s\n' "$MERGE_OBSERVATION" | jq -e --arg route "$route" '
@@ -783,7 +814,11 @@ merge_run() {
     recovery_actor=$(pr_gh_writer_login "$MERGE_REPO_HOST") || return 1
     [ -n "$recovery_actor" ] || { merge_outcome_stop "cannot identify the operator recovery actor"; return 1; }
   fi
-  merge_outcome_stable "$pr" || return 1
+  # Ordinary squash has one final authority observation after comment collection.
+  # Special routes retain their separate admission and admin authority windows.
+  if [ "$route" != immediate ] || [ "$merge_method" != squash ]; then
+    merge_outcome_stable "$pr" || return 1
+  fi
   if [ "$route" = admin ]; then
     verify_crabbox_admin_merge_bypass "$pr" "$PREP_HEAD_SHA" || return 1
     crabbox_final_main_sha=$(jq -er '.mainSha | select(type == "string" and test("^[0-9a-f]{40}$"))' .local/merge-crabbox-bypass.json) || return 1
@@ -866,6 +901,8 @@ merge_run() {
     exec 2>&1
     if [ "$MERGE_TRANSPORT" = rest ]; then
       merge_rest merge "$pr" "$PREP_HEAD_SHA" "$merge_body_snapshot" "$MERGE_OBSERVATION"
+    elif [ "$route" = immediate ] && [ "$merge_method" = squash ]; then
+      merge_outcome_dispatch_squash "$merge_body_snapshot"
     else
       pr_gh_plain pr merge "$pr" --repo "$MERGE_REPO_URL" "$merge_flag" "${merge_args[@]}"
     fi

@@ -102,28 +102,21 @@ merge_outcome_repo_identity() {
 }
 
 merge_outcome_init() {
-  local pr="$1" locator authority identities
+  local pr="$1" authority identities
   is_canonical_pr_number "$pr" || return 1
   MERGE_OUTCOME_REF="refs/openclaw/pr-merge-outcomes/$pr"
-  locator=$(pr_gh_plain repo view --json nameWithOwner,url) || return 1
-  locator=$(printf '%s\n' "$locator" | jq -ce '
-    . as $repo | select(
-      (.nameWithOwner | test("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")) and
-      (.url | test("^https://[A-Za-z0-9.-]+/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$") and endswith("/" + $repo.nameWithOwner))) |
-    {nameWithOwner,url}
-  ') || { merge_outcome_stop "invalid repository locator"; return 1; }
-  MERGE_REPO_URL=$(printf '%s\n' "$locator" | jq -r .url)
+  pr_observe "$pr" || return 1
+  MERGE_ENTRY_OBSERVATION="$PR_OBSERVATION"
+  authority=$(printf '%s\n' "$MERGE_ENTRY_OBSERVATION" | jq -ce '.baseRepository' |
+    merge_outcome_repo_identity) || { merge_outcome_stop "invalid authoritative repository identity"; return 1; }
+  MERGE_REPO_URL=$(printf '%s\n' "$authority" | jq -r .url)
   MERGE_REPO_HOST="${MERGE_REPO_URL#https://}"
   MERGE_REPO_HOST="${MERGE_REPO_HOST%%/*}"
-  MERGE_REPO_NAME=$(printf '%s\n' "$locator" | jq -r .nameWithOwner)
-  authority=$(pr_gh_plain api --hostname "$MERGE_REPO_HOST" "repos/$MERGE_REPO_NAME" \
-    -H 'Cache-Control: max-age=0') || return 1
-  identities=$(printf '%s\n' "$authority" | jq -ce --argjson locator "$locator" '
-    select((.id | type == "number" and . > 0 and floor == .) and
-      (.node_id | type == "string" and length > 0) and
-      .full_name == $locator.nameWithOwner and .html_url == $locator.url) |
-    [{id:.node_id,nameWithOwner:.full_name,url:.html_url},
-     {id:.id,nameWithOwner:.full_name,url:.html_url}]
+  MERGE_REPO_NAME=$(printf '%s\n' "$authority" | jq -r .nameWithOwner)
+  identities=$(printf '%s\n' "$authority" | jq -ce '
+    select((.id | type == "string" and length > 0) and
+      (.databaseId | type == "number" and . > 0 and floor == .)) |
+    [{id,nameWithOwner,url},{id:.databaseId,nameWithOwner,url}]
   ') || { merge_outcome_stop "invalid authoritative repository identity"; return 1; }
   merge_outcome_load_local "$pr" || return 1
   if [ -n "$MERGE_OUTCOME_OID" ]; then
@@ -280,6 +273,22 @@ merge_rest() {
   node "${BASH_SOURCE[0]%/*}/merge-rest.mjs" "$mode" "$repo" "$pr" "$@"
 }
 
+merge_outcome_dispatch_squash() (
+  set -o pipefail
+  local payload
+  # Match gh's noninteractive --squash --body-file payload. Omit the headline:
+  # GitHub owns the default, including repository settings and the PR suffix.
+  payload=$(printf '%s\n%s\n' "$MERGE_OUTCOME_RECORD" "$1" | jq -cse '
+    .[1] as $body | .[0] |
+    select(.phase == "intent" and .accepted == false and .method == "squash" and
+      .route == "immediate" and (.transport // "graphql") == "graphql") |
+    {query:"mutation PullRequestMerge($input:MergePullRequestInput!){mergePullRequest(input:$input){clientMutationId}}",
+     variables:{input:{pullRequestId:.prId,expectedHeadOid:.head,mergeMethod:"SQUASH",
+       commitBody:($body.base64 | @base64d)}}}
+  ') || return 1
+  printf '%s\n' "$payload" | pr_gh_plain api graphql --hostname "$MERGE_REPO_HOST" --input -
+)
+
 merge_outcome_read_remote() {
   local response
   if [ "${MERGE_TRANSPORT:-graphql}" = rest ]; then
@@ -287,7 +296,7 @@ merge_outcome_read_remote() {
   else
     response=$(pr_gh_quota_read api graphql --hostname "$MERGE_REPO_HOST" -H 'Cache-Control: max-age=0' \
     -f owner="${MERGE_REPO_NAME%/*}" -f name="${MERGE_REPO_NAME#*/}" -F number="$1" \
-    -f 'query=query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){id databaseId url nameWithOwner ref(qualifiedName:"refs/heads/main"){target{oid}} pullRequest(number:$number){id number url state headRefOid baseRefName isDraft mergeCommit{oid} autoMergeRequest{mergeMethod} isInMergeQueue isMergeQueueEnabled mergeable mergeStateStatus}}}') || return 1
+    -f 'query=query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){id databaseId url nameWithOwner ref(qualifiedName:"refs/heads/main"){target{oid}} pullRequest(number:$number){id number url state headRefOid headRefName baseRefName isDraft mergeCommit{oid} autoMergeRequest{mergeMethod} isInMergeQueue isMergeQueueEnabled mergeable mergeStateStatus}}}') || return 1
     if pr_gh_quota_exhausted "$response"; then
       response=$(merge_rest observe "$1") || return 1
     fi
@@ -300,12 +309,13 @@ merge_outcome_read_remote() {
     select(.url == $repo.url and .nameWithOwner == $repo.nameWithOwner and
       ($repo.id == .id or $repo.id == .databaseId) and (.ref.target.oid | oid)) |
     {main:.ref.target.oid, pr:(.pullRequest |
-      {id,number,url,state,headRefOid,baseRefName,isDraft,mergeCommit,autoMergeRequest,
+      {id,number,url,state,headRefOid,headRefName,baseRefName,isDraft,mergeCommit,autoMergeRequest,
        isInMergeQueue,isMergeQueueEnabled,mergeable,mergeStateStatus})} +
       (if $response.transport == "rest" then {transport:"rest",restPolicy:$response.restPolicy} else {} end) |
     select(.pr.number == $pr and (.pr.id | type == "string" and length > 0) and
       .pr.url == ($repo.url + "/pull/" + ($pr|tostring)) and
-      (.pr.headRefOid | oid) and (.pr.baseRefName | type == "string" and length > 0) and
+      (.pr.headRefOid | oid) and (.pr.headRefName | type == "string" and length > 0) and
+      (.pr.baseRefName | type == "string" and length > 0) and
       (.pr.isDraft | type == "boolean") and (.pr.isInMergeQueue | type == "boolean") and
       (.pr.isMergeQueueEnabled | type == "boolean") and
       (.pr.mergeable == "MERGEABLE" or .pr.mergeable == "CONFLICTING" or .pr.mergeable == "UNKNOWN") and
@@ -512,7 +522,7 @@ merge_outcome_require_cleanup_absent() {
 merge_complete() {
   local pr="$1" expected_oid="$2" phase body
   local MERGE_OUTCOME_REF MERGE_OUTCOME_OID MERGE_OUTCOME_RECORD MERGE_REPO
-  local MERGE_REPO_URL MERGE_REPO_HOST MERGE_REPO_NAME MERGE_OBSERVATION
+  local MERGE_REPO_URL MERGE_REPO_HOST MERGE_REPO_NAME MERGE_OBSERVATION MERGE_ENTRY_OBSERVATION
   local MERGE_HEAD_REF MERGE_HEAD_REPO MERGE_COMPLETION_COMMENT_URL
   merge_outcome_init "$pr" || return 1
   if [ "$MERGE_OUTCOME_OID" != "$expected_oid" ] ||
