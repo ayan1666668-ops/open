@@ -76,7 +76,6 @@ async function finalizeMigratedUpdate(): Promise<void> {
     chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
   }
   const text = Buffer.concat(chunks).toString("utf8");
-  pauseNonTtyStdinForCliExit();
   if (process.argv[2] === "--doctor") {
     // SAFETY: The typed parent sends this private input only after binding this child.
     return await runDelegatedDoctor(JSON.parse(text) as UpdateDoctorInput);
@@ -371,10 +370,14 @@ void (async () => {
     await finalizeMigratedUpdate();
   } finally {
     try {
-      await closeCliResources();
-      await waitForPendingCliDisposers();
+      try {
+        await closeCliResources();
+        await waitForPendingCliDisposers();
+      } finally {
+        await closeOpenClawStateDatabaseAsync();
+      }
     } finally {
-      await closeOpenClawStateDatabaseAsync();
+      pauseNonTtyStdinForCliExit();
     }
   }
 })().catch((error: unknown) => {
