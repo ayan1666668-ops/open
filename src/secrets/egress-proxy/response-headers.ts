@@ -179,11 +179,13 @@ function dispositionParameters(value: string): Array<{ name: string; value: stri
 
 function decodeExtendedFileName(value: string): string | undefined {
   const match = /^([^']*)'[^']*'(.*)$/su.exec(value);
-  if (!match || match[1].toLowerCase() !== "utf-8") {
+  const charset = match?.[1];
+  const encoded = match?.[2];
+  if (!charset || encoded === undefined || charset.toLowerCase() !== "utf-8") {
     return undefined;
   }
   try {
-    return decodeURIComponent(match[2]);
+    return decodeURIComponent(encoded);
   } catch {
     return undefined;
   }
