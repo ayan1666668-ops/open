@@ -52,6 +52,7 @@ export async function flushScheduledDispatchStep() {
 export async function waitForAcceptedRunDispatch(params: {
   respond: ReturnType<typeof vi.fn>;
   hasDispatched: () => boolean;
+  hasTerminalResult?: () => boolean;
   initialRespondCallCount: number;
 }) {
   const { respond } = params;
@@ -72,7 +73,9 @@ export async function waitForAcceptedRunDispatch(params: {
   // accepted work never settles; an unbounded microtask loop can starve the test timeout.
   for (
     let pumps = 0;
-    !params.hasDispatched() && respond.mock.calls.length <= respondCallCount;
+    !params.hasDispatched() &&
+    !params.hasTerminalResult?.() &&
+    respond.mock.calls.length <= respondCallCount;
     pumps++
   ) {
     if (pumps === 1_000) {

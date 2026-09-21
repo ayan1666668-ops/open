@@ -1,6 +1,7 @@
 // Agent method tests cover run/steer/reset/wait behavior, task/subagent state,
 // approval followups, lifecycle hooks, and emitted gateway events.
 import { expectDefined } from "@openclaw/normalization-core";
+import { asOptionalRecord } from "@openclaw/normalization-core/record-coerce";
 import { expect, vi } from "vitest";
 import type { readAcpSessionMeta } from "../../acp/runtime/session-meta.js";
 import type { AgentInternalEvent } from "../../agents/internal-events.js";
@@ -991,6 +992,7 @@ export async function invokeAgent(
   },
 ) {
   const respond = options?.respond ?? vi.fn();
+  const context = options?.context ?? makeContext();
   const initialRespondCallCount = respond.mock.calls.length;
   const commandCallCount = mocks.agentCommand.mock.calls.length;
   // Most cases only need to cross the accepted-ack timer; keep tests that own
@@ -1005,7 +1007,7 @@ export async function invokeAgent(
       {
         params,
         respond: respond as never,
-        context: options?.context ?? makeContext(),
+        context,
         req: { type: "req", id: options?.reqId ?? "agent-test-req", method: "agent" },
         client: options?.client ?? null,
         isWebchatConnect: options?.isWebchatConnect ?? (() => false),
@@ -1016,6 +1018,17 @@ export async function invokeAgent(
         respond,
         initialRespondCallCount,
         hasDispatched: () => mocks.agentCommand.mock.calls.length > commandCallCount,
+        // Cancellation can settle the accepted invocation without dispatch or another reply.
+        hasTerminalResult: () => {
+          const idempotencyKey = params.idempotencyKey;
+          if (typeof idempotencyKey !== "string") {
+            return false;
+          }
+          const payload = asOptionalRecord(context.dedupe.get(`agent:${idempotencyKey}`)?.payload);
+          return (
+            payload?.status === "ok" || payload?.status === "timeout" || payload?.status === "error"
+          );
+        },
       });
     }
   } finally {
