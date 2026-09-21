@@ -132,6 +132,14 @@ does not retire its durable settlement from observation, and a waiting model rea
 cannot cancel it. Canceling a model request ends only its settlement wait; the
 refresh owner and other waiting requests continue independently. Continued changes,
 admission refusals, and cleanup failures remain errors.
+
+Credential lookups through `resolveApiKeyForProvider` and
+`resolveApiKeyForProfile` also accept an optional abort signal. Cancellation
+removes the caller from queued admission or ends its pending-refresh observation;
+it does not cancel an already-claimed refresh or discard its durable settlement.
+Canceled callers cannot start a later queued refresh or return its credentials.
+Callers that omit the signal retain the existing wait behavior.
+
 Workers certify committed SQLite visibility before rows enter the cache. Reads
 with unpublished or trailing WAL frames return normally without being retained.
 

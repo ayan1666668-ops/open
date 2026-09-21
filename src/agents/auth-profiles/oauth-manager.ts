@@ -604,6 +604,7 @@ export function createOAuthManager(adapter: OAuthManagerAdapter) {
     provider: string;
     agentDir?: string;
     cfg?: OpenClawConfig;
+    signal?: AbortSignal;
     forceRefresh?: boolean;
     attemptedCredential: OAuthCredential;
     bootstrapCredential?: OAuthCredential | null;
@@ -627,6 +628,7 @@ export function createOAuthManager(adapter: OAuthManagerAdapter) {
       const claim = await withOAuthProfileLock<OAuthRefreshClaim>(
         { provider: params.provider, profileId: params.profileId },
         async () => {
+          params.signal?.throwIfAborted();
           const store = loadStoredOAuthRefreshStore(ownerAgentDir, params.profileId);
           const cred = store.profiles[params.profileId];
           if (!cred || cred.type !== "oauth" || cred.provider !== params.provider) {
@@ -821,6 +823,7 @@ export function createOAuthManager(adapter: OAuthManagerAdapter) {
             profileId: params.profileId,
             updater: (authoritative) => {
               const existing = authoritative.profiles[params.profileId];
+              params.signal?.throwIfAborted();
               if (
                 !isExactOAuthCredential(existing?.type === "oauth" ? existing : undefined, cred)
               ) {
@@ -953,6 +956,7 @@ export function createOAuthManager(adapter: OAuthManagerAdapter) {
     provider: string;
     agentDir?: string;
     cfg?: OpenClawConfig;
+    signal?: AbortSignal;
     forceRefresh?: boolean;
     attemptedCredential: OAuthCredential;
     attemptedCredentials?: OAuthCredential[];
@@ -960,6 +964,7 @@ export function createOAuthManager(adapter: OAuthManagerAdapter) {
     bootstrapBaseCredential?: OAuthCredential;
     validateCredential?: (credential: OAuthCredential) => void;
   }): Promise<ResolvedOAuthAccess | null> {
+    params.signal?.throwIfAborted();
     const claim = await claimOAuthRefresh(params);
     if (claim.kind === "unavailable") {
       return null;
@@ -968,6 +973,7 @@ export function createOAuthManager(adapter: OAuthManagerAdapter) {
       const observed = await observeOAuthRefreshFenceSettlement({
         label: `refreshOAuthCredential(${params.provider})`,
         timeoutMs: OAUTH_REFRESH_CALL_TIMEOUT_MS,
+        signal: params.signal,
         read: () =>
           loadStoredOAuthRefreshStore(claim.ownerAgentDir, params.profileId).profiles[
             params.profileId
@@ -1296,6 +1302,7 @@ export function createOAuthManager(adapter: OAuthManagerAdapter) {
       `refreshOAuthCredential(${claim.credential.provider})`,
       OAUTH_REFRESH_CALL_TIMEOUT_MS,
       settlement,
+      params.signal,
     );
   }
 
@@ -1305,9 +1312,11 @@ export function createOAuthManager(adapter: OAuthManagerAdapter) {
     credential: OAuthCredential;
     agentDir?: string;
     cfg?: OpenClawConfig;
+    signal?: AbortSignal;
     forceRefresh?: boolean;
     validateCredential?: (credential: OAuthCredential) => void;
   }): Promise<ResolvedOAuthAccess | null> {
+    params.signal?.throwIfAborted();
     const personalProfile = isUserModelAuthProfileId(params.profileId);
     let credential = params.credential;
     if (personalProfile) {
@@ -1366,21 +1375,29 @@ export function createOAuthManager(adapter: OAuthManagerAdapter) {
     }
 
     try {
-      return await refreshQueue.enqueue(`${credential.provider}\u0000${params.profileId}`, () =>
-        refreshOAuthTokenWithLock({
-          profileId: params.profileId,
-          provider: credential.provider,
-          agentDir: params.agentDir,
-          cfg: params.cfg,
-          forceRefresh: params.forceRefresh,
-          attemptedCredential: effectiveCredential,
-          attemptedCredentials,
-          bootstrapCredential,
-          bootstrapBaseCredential: adoptedCredential,
-          validateCredential: params.validateCredential,
-        }),
+      const resolved = await refreshQueue.enqueue(
+        `${credential.provider}\u0000${params.profileId}`,
+        () =>
+          refreshOAuthTokenWithLock({
+            profileId: params.profileId,
+            provider: credential.provider,
+            agentDir: params.agentDir,
+            cfg: params.cfg,
+            signal: params.signal,
+            forceRefresh: params.forceRefresh,
+            attemptedCredential: effectiveCredential,
+            attemptedCredentials,
+            bootstrapCredential,
+            bootstrapBaseCredential: adoptedCredential,
+            validateCredential: params.validateCredential,
+          }),
+        undefined,
+        params.signal,
       );
+      params.signal?.throwIfAborted();
+      return resolved;
     } catch (error) {
+      params.signal?.throwIfAborted();
       let refreshError: unknown = error;
       let recoveryBuildFailed =
         refreshError instanceof OAuthSettlementCredentialValidationError ||

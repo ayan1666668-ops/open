@@ -50,6 +50,7 @@ export {
   waitProviderOperationPollInterval,
 } from "../media-understanding/shared.js";
 export { openProviderWebSocket } from "../infra/net/provider-websocket.js";
+export { buildTimeoutAbortSignal } from "../utils/fetch-timeout.js";
 export type {
   ProviderOperationDeadline,
   ProviderOperationTimeoutMs,

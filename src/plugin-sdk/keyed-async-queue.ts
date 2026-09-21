@@ -11,12 +11,23 @@ export function enqueueKeyedTask<T>(params: {
   key: string;
   task: () => Promise<T>;
   hooks?: KeyedAsyncQueueHooks;
+  /** Cancels admission only; an admitted task owns its execution and settlement. */
+  signal?: AbortSignal;
 }): Promise<T> {
   params.hooks?.onEnqueue?.();
   const previous = params.tails.get(params.key) ?? Promise.resolve();
+  const signal = params.signal;
   const current = previous
     .catch(() => undefined)
-    .then(params.task)
+    .then(
+      signal
+        ? () => {
+            signal.removeEventListener("abort", onAbort);
+            signal.throwIfAborted();
+            return params.task();
+          }
+        : params.task,
+    )
     .finally(() => {
       params.hooks?.onSettle?.();
     });
@@ -31,7 +42,21 @@ export function enqueueKeyedTask<T>(params: {
     }
   };
   tail.then(cleanup, cleanup);
-  return current;
+  if (!signal) {
+    return current;
+  }
+  const { promise, resolve, reject } = Promise.withResolvers<T>();
+  const onAbort = () => {
+    signal.removeEventListener("abort", onAbort);
+    reject(signal.reason);
+  };
+  signal.addEventListener("abort", onAbort, { once: true });
+  // The queue retains the skipped entry until its predecessor settles, preserving FIFO.
+  current.then(resolve, reject);
+  if (signal.aborted) {
+    onAbort();
+  }
+  return promise;
 }
 
 /** Small per-key async queue wrapper for plugin runtimes that need serialized work. */
@@ -46,12 +71,18 @@ export class KeyedAsyncQueue {
     return this.tails;
   }
 
-  enqueue<T>(key: string, task: () => Promise<T>, hooks?: KeyedAsyncQueueHooks): Promise<T> {
+  enqueue<T>(
+    key: string,
+    task: () => Promise<T>,
+    hooks?: KeyedAsyncQueueHooks,
+    signal?: AbortSignal,
+  ): Promise<T> {
     return enqueueKeyedTask({
       tails: this.tails,
       key,
       task,
       ...(hooks ? { hooks } : {}),
+      ...(signal ? { signal } : {}),
     });
   }
 }

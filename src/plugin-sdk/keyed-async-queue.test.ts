@@ -74,6 +74,51 @@ describe("enqueueKeyedTask", () => {
     await expect(expectDefined(runs[1], "runs[1] test invariant")()).resolves.toBe("ok");
   });
 
+  it("cancels queued admission without releasing the active task or disturbing FIFO", async () => {
+    const tails = new Map<string, Promise<void>>();
+    const started = createDeferred();
+    const release = createDeferred();
+    const controller = new AbortController();
+    const reason = new Error("queued request cancelled");
+    const order: string[] = [];
+    const first = enqueueKeyedTask({
+      tails,
+      key: "shared-profile",
+      task: async () => {
+        started.resolve();
+        await release.promise;
+        order.push("owner settled");
+      },
+    });
+    await started.promise;
+    const cancelled = enqueueKeyedTask({
+      tails,
+      key: "shared-profile",
+      signal: controller.signal,
+      task: async () => {
+        order.push("cancelled task ran");
+      },
+    });
+    const last = enqueueKeyedTask({
+      tails,
+      key: "shared-profile",
+      task: async () => {
+        order.push("next admitted");
+      },
+    });
+    const rejected = expect(cancelled).rejects.toBe(reason);
+    controller.abort(reason);
+    try {
+      await rejected;
+      expect(order).toEqual([]);
+    } finally {
+      release.resolve();
+      await Promise.allSettled([first, cancelled, last]);
+    }
+    expect(order).toEqual(["owner settled", "next admitted"]);
+    expect(tails.size).toBe(0);
+  });
+
   it("does not leak unhandled rejections when a task failure is already awaited", async () => {
     const tails = new Map<string, Promise<void>>();
     const unhandled: unknown[] = [];

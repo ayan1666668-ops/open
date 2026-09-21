@@ -1,6 +1,6 @@
 // Xai tests cover web search plugin behavior.
 import { createTestWizardPrompter } from "openclaw/plugin-sdk/plugin-test-runtime";
-import { NON_ENV_SECRETREF_MARKER } from "openclaw/plugin-sdk/provider-auth-runtime";
+import { NON_ENV_SECRETREF_MARKER, requireApiKey } from "openclaw/plugin-sdk/provider-auth-runtime";
 import { createNonExitingRuntime } from "openclaw/plugin-sdk/runtime-env";
 import { withEnvAsync, withFetchPreconnect } from "openclaw/plugin-sdk/test-env";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -11,7 +11,7 @@ import { createXaiWebSearchProvider as createXaiWebSearchContractProvider } from
 import { createXaiWebSearchProvider } from "./web-search.js";
 
 const providerAuthRuntimeMocks = vi.hoisted(() => ({
-  resolveApiKeyForProvider: vi.fn(),
+  resolveApiKeyForProvider: vi.fn().mockResolvedValue({ source: "test", mode: "api-key" }),
 }));
 
 const providerAuthMocks = vi.hoisted(() => ({
@@ -193,7 +193,9 @@ afterEach(() => {
     agentDir: "",
     profileIds: [],
   });
-  providerAuthRuntimeMocks.resolveApiKeyForProvider.mockReset();
+  providerAuthRuntimeMocks.resolveApiKeyForProvider
+    .mockReset()
+    .mockResolvedValue({ source: "test", mode: "api-key" });
 });
 
 describe("xai web search config resolution", () => {
@@ -222,6 +224,95 @@ describe("xai web search config resolution", () => {
       expect(result.message).toContain("use web_fetch for a specific URL or the browser tool");
     });
   });
+
+  it("preserves credential settlement failures instead of reporting a missing API key", async () => {
+    const authError = new Error("OAuth token refresh failed for xai: refresh did not settle");
+    providerAuthRuntimeMocks.resolveApiKeyForProvider.mockRejectedValueOnce(authError);
+    const mockFetch = installXaiWebSearchFetch();
+    const tool = createAuthSearchTool();
+
+    await expect(tool.execute({ query: "search waiting for credentials" })).rejects.toBe(authError);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it("keeps configured API-key fallback when OAuth credential resolution fails", async () => {
+    providerAuthRuntimeMocks.resolveApiKeyForProvider.mockRejectedValueOnce(
+      new Error("OAuth token refresh failed for xai"),
+    );
+    const mockFetch = installXaiWebSearchFetch();
+    const tool = requireXaiWebSearchTool({
+      config: xaiPluginConfig({ webSearch: { apiKey: "configured-fallback-key" } }),
+    });
+
+    const result = await tool.execute({ query: "configured search fallback after auth failure" });
+
+    expect(result.content).toContain("Grounded Grok answer");
+    expect(fetchCallHeader(mockFetch, 0, "Authorization")).toBe("Bearer configured-fallback-key");
+  });
+
+  it("reports genuinely absent credentials as a missing API key", async () => {
+    providerAuthRuntimeMocks.resolveApiKeyForProvider.mockImplementationOnce(() =>
+      requireApiKey({ source: "test", mode: "api-key" }, "xai"),
+    );
+    const mockFetch = installXaiWebSearchFetch();
+
+    const result = await createAuthSearchTool().execute({ query: "search without credentials" });
+
+    expect(result.error).toBe("missing_xai_api_key");
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it.each(["deadline", "caller"] as const)(
+    "ends credential preparation on %s cancellation without starting a search",
+    async (cancellation) => {
+      vi.useFakeTimers();
+      const controller = new AbortController();
+      const reason = new DOMException("search cancelled by caller", "AbortError");
+      const started = Promise.withResolvers<void>();
+      let activeLookups = 0;
+      providerAuthRuntimeMocks.resolveApiKeyForProvider.mockImplementationOnce(
+        ({ signal }: { signal: AbortSignal }) => {
+          const { promise, reject } = Promise.withResolvers<never>();
+          activeLookups += 1;
+          signal.addEventListener(
+            "abort",
+            () => {
+              activeLookups -= 1;
+              reject(signal.reason);
+            },
+            { once: true },
+          );
+          started.resolve();
+          return promise;
+        },
+      );
+      const mockFetch = installXaiWebSearchFetch();
+      const searching = createAuthSearchTool().execute(
+        { query: `search credential ${cancellation} cancellation` },
+        { signal: controller.signal },
+      );
+      const rejected =
+        cancellation === "caller"
+          ? expect(searching).rejects.toBe(reason)
+          : expect(searching).rejects.toMatchObject({ code: "ETIMEDOUT" });
+      try {
+        await started.promise;
+        if (cancellation === "caller") {
+          controller.abort(reason);
+        } else {
+          await vi.advanceTimersByTimeAsync(60_000);
+        }
+        await rejected;
+        expect(activeLookups).toBe(0);
+        expect(mockFetch).not.toHaveBeenCalled();
+        expect(vi.getTimerCount()).toBe(0);
+      } finally {
+        controller.abort(reason);
+        await searching.catch(() => {});
+        vi.useRealTimers();
+      }
+    },
+  );
 
   it("uses xAI OAuth auth before API-key fallback for web search", async () => {
     providerAuthRuntimeMocks.resolveApiKeyForProvider.mockResolvedValue({
@@ -356,6 +447,27 @@ describe("xai web search config resolution", () => {
       }),
     );
     expect(fetchCallHeader(mockFetch, 1, "Authorization")).toBe("Bearer xai-env-fallback-key");
+  });
+
+  it("preserves a failed OAuth refresh when no API-key fallback can recover", async () => {
+    const authError = new Error("OAuth token refresh failed for xai: re-authenticate");
+    providerAuthRuntimeMocks.resolveApiKeyForProvider
+      .mockResolvedValueOnce({
+        apiKey: "expired-oauth-token",
+        source: "profile:xai:default",
+        mode: "oauth",
+        profileId: "xai:default",
+      })
+      .mockRejectedValueOnce(authError);
+    const mockFetch = vi.fn(async () =>
+      textResponse("expired", { status: 401, statusText: "Unauthorized" }),
+    );
+    vi.stubGlobal("fetch", withFetchPreconnect(mockFetch));
+
+    await expect(
+      createAuthSearchTool().execute({ query: "unrecoverable search OAuth refresh" }),
+    ).rejects.toBe(authError);
+    expect(mockFetch).toHaveBeenCalledOnce();
   });
 
   it("falls back to an xAI API-key auth profile when stale OAuth remains first", async () => {
@@ -620,18 +732,11 @@ describe("xai web search config resolution", () => {
     const tool = requireXaiWebSearchTool({
       config: xaiPluginConfig({ webSearch: { apiKey: "xai-test-key" } }),
     });
-    const request = () => tool.execute({ query: "OpenClaw timeout" });
-
-    await expect(request()).rejects.toThrow("xAI web search timed out after 60s");
-
-    try {
-      await request();
-    } catch (error) {
-      expect(error).toBeInstanceOf(Error);
-      expect((error as Error).name).toBe("Error");
-      expect((error as Error).cause).toBe(abort);
-      expect((error as Error & { code?: string }).code).toBe("ETIMEDOUT");
-    }
+    await expect(tool.execute({ query: "OpenClaw timeout" })).rejects.toMatchObject({
+      name: "Error",
+      cause: abort,
+      code: "ETIMEDOUT",
+    });
   });
 
   it("bounds remote xAI web-search answer text without truncating shared code execution", async () => {
