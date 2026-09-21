@@ -90,8 +90,6 @@ import type {
   StreamRunState,
 } from "./types.js";
 
-type HookRunner = ReturnType<typeof getGlobalHookRunner>;
-
 type AttemptStreamQueueHandle = EmbeddedAgentQueueHandle & {
   kind: "embedded";
   cancel: (reason?: "user_abort" | "restart" | "superseded") => void;
@@ -106,7 +104,7 @@ export function prepareEmbeddedAttemptStream(input: {
   activeSession: AgentSession;
   onModelUsage?: Parameters<typeof subscribeEmbeddedAgentSession>[0]["onModelUsage"];
   runtimeChannel?: string;
-  hookRunner: HookRunner;
+  hookRunner: ReturnType<typeof getGlobalHookRunner>;
   hookAgentId: string;
   diagnosticTrace: DiagnosticTraceContext;
   clientToolCallSlots: readonly EmbeddedAttemptClientToolCallSlot[];
@@ -141,7 +139,7 @@ export function prepareEmbeddedAttemptStream(input: {
   let activeQueueAdmissions = 0;
   const shouldRunBeforeAgentFinalize =
     attempt.operation !== "settled-tool-finalization" &&
-    input.hookRunner?.hasHooks("before_agent_finalize");
+    hookRunner?.hasHooks("before_agent_finalize");
   const onBeforeTerminalDelivery = shouldRunBeforeAgentFinalize
     ? async (event: {
         messages: AgentMessage[];
@@ -252,7 +250,7 @@ export function prepareEmbeddedAttemptStream(input: {
                 channelContext: attempt.channelContext,
               }),
             },
-            hookRunner: input.hookRunner,
+            hookRunner,
           });
           if (outcome.action !== "revise") {
             return;

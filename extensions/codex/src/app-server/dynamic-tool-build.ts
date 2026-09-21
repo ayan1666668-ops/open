@@ -285,9 +285,7 @@ export async function buildDynamicTools(
     ...(params.questionPrompt
       ? { questionPrompt: params.questionPrompt }
       : params.onToolResult
-        ? {
-            questionPrompt: { send: params.onToolResult, messageChannel: messageToolProvider },
-          }
+        ? { questionPrompt: { send: params.onToolResult, messageChannel: messageToolProvider } }
         : {}),
     inputProvenance: params.inputProvenance,
     trustedInternalHandoff: params.trustedInternalHandoff,
