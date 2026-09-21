@@ -59,7 +59,7 @@ function responsesSse(events: Record<string, unknown>[]): string {
     .join("");
 }
 
-function responseTurn(turn: number): string {
+function responseTurn(turn: number, rejectedResponseStatus: string): string {
   const call = (id: string, name: string, args: string, status = "completed") => ({
     type: "function_call",
     id: "fc_" + id,
@@ -96,7 +96,7 @@ function responseTurn(turn: number): string {
       response: {
         id: "resp_proof_" + turn,
         model: MODEL_ID,
-        status: "completed",
+        status: turn === 3 ? rejectedResponseStatus : "completed",
         output,
         usage: { input_tokens: 640, output_tokens: 20, total_tokens: 660 },
       },
@@ -134,7 +134,7 @@ describe("issue #147040 real runtime proof", () => {
   const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 
   it(
-    "continues the transcript after a tool-call rejection that follows a committed write",
+    "continues settled work only after a coherent completed response rejects a tool call",
     { timeout: 90_000 },
     async () => {
       const envSnapshot = captureEnv([...envKeys]);
@@ -145,6 +145,7 @@ describe("issue #147040 real runtime proof", () => {
       let providerServer: ReturnType<typeof createServer> | undefined;
       let gateway: Awaited<ReturnType<typeof startGatewayWithClient>> | undefined;
       const providerRequests: CapturedRequest[] = [];
+      let rejectedResponseStatus = "completed";
 
       try {
         const tempHome = tempDirs.make("openclaw-issue147040-proof-");
@@ -192,7 +193,7 @@ describe("issue #147040 real runtime proof", () => {
               "content-type": "text/event-stream; charset=utf-8",
               "cache-control": "no-cache",
             });
-            response.end(responseTurn(providerRequests.length));
+            response.end(responseTurn(providerRequests.length, rejectedResponseStatus));
           });
         });
         providerClaim = await acquireTestPortBlock({ offsets: [0] });
@@ -222,7 +223,7 @@ describe("issue #147040 real runtime proof", () => {
           models: { mode: "replace", providers: { [provider.providerId]: provider.config } },
           gateway: { auth: { mode: "token", token: TOKEN } },
         };
-        const sessionKey = "agent:main:issue147040-proof";
+
         gateway = await startGatewayWithClient({
           cfg,
           configPath,
@@ -242,77 +243,107 @@ describe("issue #147040 real runtime proof", () => {
             observedEvents.push(event);
           }
         });
-        const started = await gateway.client.request<{ runId?: string; status?: string }>(
-          "chat.send",
-          {
+        for (const status of ["completed", "failed", "cancelled", "incomplete"]) {
+          await fs.rm(path.join(workspaceDir, "note.txt"), { force: true });
+          rejectedResponseStatus = status;
+          providerRequests.length = 0;
+          toolStarts.length = 0;
+          observedEvents.length = 0;
+          const sessionKey = `agent:main:issue147040-proof-${status}`;
+          const started = await gateway.client.request<{ runId?: string; status?: string }>(
+            "chat.send",
+            {
+              sessionKey,
+              message: USER_PROMPT,
+              deliver: false,
+              idempotencyKey: `issue147040-proof-turn-${status}`,
+            },
+          );
+          expect(started.status).toBe("started");
+          const waited = await gateway.client.request<{ status?: string }>(
+            "agent.wait",
+            { runId: started.runId, timeoutMs: 30_000 },
+            { timeoutMs: 35_000 },
+          );
+          if (status === "completed") {
+            expect(
+              waited,
+              JSON.stringify({
+                requests: providerRequests.length,
+                tools: toolStarts.map((event) => event.data.name),
+                events: observedEvents.map((event) => ({ stream: event.stream, data: event.data })),
+              }),
+            ).toMatchObject({ status: "ok" });
+          } else {
+            expect.soft(waited.status, status).not.toBe("timeout");
+          }
+
+          // The committed side effect happened exactly once: the write ran, and the
+          // recovery did not replay the prompt or re-run the tool.
+          await expect(fs.readFile(path.join(workspaceDir, "note.txt"), "utf8")).resolves.toBe(
+            WRITE_CONTENT,
+          );
+
+          // The failed read is settled before the rejected edit; only sampling resumes.
+          expect(toolStarts.map((event) => event.data.name)).toEqual(["write", "read"]);
+          const settledMessages = JSON.stringify(providerRequests[2]?.messages ?? []);
+          expect(settledMessages.includes("Successfully wrote")).toBe(true);
+          expect(settledMessages.includes("call_failed_read")).toBe(true);
+          expect(countOccurrences(settledMessages, USER_PROMPT)).toBe(1);
+          if (status !== "completed") {
+            expect.soft(providerRequests.length, status).toBe(3);
+            const stoppedHistory = await gateway.client.request<{ messages?: unknown[] }>(
+              "chat.history",
+              { sessionKey, limit: 20 },
+            );
+            expect
+              .soft(
+                JSON.stringify(stoppedHistory.messages ?? []).includes(RECOVERED_MARKER),
+                status,
+              )
+              .toBe(false);
+            continue;
+          }
+          expect(
+            providerRequests.map(({ method, url, stream }) => ({ method, url, stream })),
+          ).toEqual([
+            { method: "POST", url: "/v1/responses", stream: true },
+            { method: "POST", url: "/v1/responses", stream: true },
+            { method: "POST", url: "/v1/responses", stream: true },
+            { method: "POST", url: "/v1/responses", stream: true },
+          ]);
+          // The recovery request continued the current transcript: the settled write
+          // result is still there, the prompt appears once, and nothing from the
+          // rejected call reached the provider.
+          const recoveryMessages = JSON.stringify(providerRequests[3]?.messages ?? []);
+          expect(recoveryMessages.includes(`"call_id":"${WRITE_CALL_ID}"`)).toBe(true);
+          expect(recoveryMessages.includes('"name":"write"')).toBe(true);
+          expect(recoveryMessages.includes("Successfully wrote")).toBe(true);
+          expect(recoveryMessages.includes("call_failed_read")).toBe(true);
+          const failedRead = providerRequests[3]?.messages.find(
+            (item) =>
+              isRecord(item) &&
+              item.type === "function_call_output" &&
+              item.call_id === "call_failed_read",
+          );
+          if (!isRecord(failedRead) || typeof failedRead.output !== "string") {
+            throw new Error("Recovery request omitted the settled read result");
+          }
+          expect(JSON.parse(failedRead.output)).toMatchObject({ status: "error", tool: "read" });
+          expect(countOccurrences(recoveryMessages, USER_PROMPT)).toBe(1);
+          expect(recoveryMessages.includes(TRUNCATED_FRAGMENT)).toBe(false);
+          expect(recoveryMessages.includes("malformed JSON arguments")).toBe(false);
+
+          const history = await gateway.client.request<{ messages?: unknown[] }>("chat.history", {
             sessionKey,
-            message: USER_PROMPT,
-            deliver: false,
-            idempotencyKey: "issue147040-proof-turn",
-          },
-        );
-        expect(started.status).toBe("started");
-        const waited = await gateway.client.request<{ status?: string }>(
-          "agent.wait",
-          { runId: started.runId, timeoutMs: 30_000 },
-          { timeoutMs: 35_000 },
-        );
-        expect(
-          waited,
-          JSON.stringify({
-            requests: providerRequests.length,
-            tools: toolStarts.map((event) => event.data.name),
-            events: observedEvents.map((event) => ({ stream: event.stream, data: event.data })),
-          }),
-        ).toMatchObject({ status: "ok" });
-
-        // The committed side effect happened exactly once: the write ran, and the
-        // recovery did not replay the prompt or re-run the tool.
-        await expect(fs.readFile(path.join(workspaceDir, "note.txt"), "utf8")).resolves.toBe(
-          WRITE_CONTENT,
-        );
-
-        // The failed read is settled before the rejected edit; only sampling resumes.
-        expect(toolStarts.map((event) => event.data.name)).toEqual(["write", "read"]);
-        expect(
-          providerRequests.map(({ method, url, stream }) => ({ method, url, stream })),
-        ).toEqual([
-          { method: "POST", url: "/v1/responses", stream: true },
-          { method: "POST", url: "/v1/responses", stream: true },
-          { method: "POST", url: "/v1/responses", stream: true },
-          { method: "POST", url: "/v1/responses", stream: true },
-        ]);
-        // The recovery request continued the current transcript: the settled write
-        // result is still there, the prompt appears once, and nothing from the
-        // rejected call reached the provider.
-        const recoveryMessages = JSON.stringify(providerRequests[3]?.messages ?? []);
-        expect(recoveryMessages.includes(`"call_id":"${WRITE_CALL_ID}"`)).toBe(true);
-        expect(recoveryMessages.includes('"name":"write"')).toBe(true);
-        expect(recoveryMessages.includes("Successfully wrote")).toBe(true);
-        expect(recoveryMessages.includes("call_failed_read")).toBe(true);
-        const failedRead = providerRequests[3]?.messages.find(
-          (item) =>
-            isRecord(item) &&
-            item.type === "function_call_output" &&
-            item.call_id === "call_failed_read",
-        );
-        if (!isRecord(failedRead) || typeof failedRead.output !== "string") {
-          throw new Error("Recovery request omitted the settled read result");
+            limit: 20,
+          });
+          const serialized = JSON.stringify(history.messages ?? []);
+          expect(serialized.includes(RECOVERED_MARKER)).toBe(true);
+          expect(serialized.includes("malformed JSON arguments")).toBe(false);
+          expect(serialized.includes("incomplete terminal tool call")).toBe(false);
+          expect(serialized.includes(TRUNCATED_FRAGMENT)).toBe(false);
         }
-        expect(JSON.parse(failedRead.output)).toMatchObject({ status: "error", tool: "read" });
-        expect(countOccurrences(recoveryMessages, USER_PROMPT)).toBe(1);
-        expect(recoveryMessages.includes(TRUNCATED_FRAGMENT)).toBe(false);
-        expect(recoveryMessages.includes("malformed JSON arguments")).toBe(false);
-
-        const history = await gateway.client.request<{ messages?: unknown[] }>("chat.history", {
-          sessionKey,
-          limit: 20,
-        });
-        const serialized = JSON.stringify(history.messages ?? []);
-        expect(serialized.includes(RECOVERED_MARKER)).toBe(true);
-        expect(serialized.includes("malformed JSON arguments")).toBe(false);
-        expect(serialized.includes("incomplete terminal tool call")).toBe(false);
-        expect(serialized.includes(TRUNCATED_FRAGMENT)).toBe(false);
       } finally {
         unsubscribe();
         if (gateway) {

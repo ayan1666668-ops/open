@@ -34,7 +34,11 @@ describe("settled tool-call rejection recovery", () => {
           {
             type: "openai_responses_terminal",
             timestamp: 1,
-            details: { eventType: "response.completed" },
+            details: {
+              eventType: "response.completed",
+              responseStatus: "completed",
+              stopReason: "toolUse",
+            },
           },
         ],
       },
@@ -77,6 +81,81 @@ describe("settled tool-call rejection recovery", () => {
       expect(failoverRetryController.advanceAuthProfile).not.toHaveBeenCalled();
     },
   );
+
+  const coherentTerminal = {
+    eventType: "response.completed",
+    responseStatus: "completed",
+    stopReason: "stop",
+  };
+  const contradictoryTerminals: Array<[string, Record<string, unknown>]> = [
+    ...[
+      "failed",
+      "cancelled",
+      "incomplete",
+      "queued",
+      "in_progress",
+      "unknown",
+      null,
+      undefined,
+    ].map((responseStatus): [string, Record<string, unknown>] => [
+      String(responseStatus),
+      { ...coherentTerminal, responseStatus },
+    ]),
+    ["canonical error", { ...coherentTerminal, stopReason: "error" }],
+    ["canonical length", { ...coherentTerminal, stopReason: "length" }],
+    ["missing canonical stop", { ...coherentTerminal, stopReason: undefined }],
+    ["conflicting event", { ...coherentTerminal, eventType: "response.incomplete" }],
+    ["conflicting reason", { ...coherentTerminal, incompleteReason: "max_output_tokens" }],
+  ];
+  it.each(
+    contradictoryTerminals.flatMap(([name, details]) =>
+      ["incomplete_tool_call", "malformed_tool_call_arguments", undefined].map((errorCode) => ({
+        name,
+        details,
+        errorCode,
+      })),
+    ),
+  )(
+    "preserves $name terminal facts ahead of $errorCode or legacy text",
+    async ({ details, errorCode }) => {
+      const { recovery, continueFromCurrentTranscript } = await recoverAfterTransportDrop({
+        ...rejectedToolCall,
+        errorCode,
+        diagnostics: [{ type: "openai_responses_terminal", timestamp: 1, details }],
+      });
+      expect(recovery).toEqual({ action: "proceed" });
+      expect(continueFromCurrentTranscript).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["completed", "absent"])(
+    "accepts coherent %s status evidence",
+    async (responseStatus) => {
+      const { recovery } = await recoverAfterTransportDrop({
+        ...rejectedToolCall,
+        errorCode: "incomplete_tool_call",
+        errorMessage: "Responses stream completed with an incomplete terminal tool call",
+        diagnostics: [
+          {
+            type: "openai_responses_terminal",
+            timestamp: 1,
+            details: { ...coherentTerminal, responseStatus },
+          },
+        ],
+      });
+      expect(recovery.action).toBe("retry");
+    },
+  );
+
+  it("does not let one coherent diagnostic hide contradictory terminal facts", async () => {
+    const { recovery } = await recoverAfterTransportDrop({
+      ...rejectedToolCall,
+      diagnostics: [coherentTerminal, { ...coherentTerminal, stopReason: "error" }].map(
+        (details) => ({ type: "openai_responses_terminal", timestamp: 1, details }),
+      ),
+    });
+    expect(recovery).toEqual({ action: "proceed" });
+  });
 
   it("shares the existing budget across rejection and transient recovery", async () => {
     const { recovery, recover, failoverRetryController, continueFromCurrentTranscript } =

@@ -357,7 +357,13 @@ export function createResponsesTerminalController(params: {
       timestamp: Date.now(),
       details: {
         eventType: terminalEventType,
-        ...(terminalEventType === "response.incomplete"
+        // Keep the canonical status interpretation before tool validation replaces
+        // output.stopReason with an error. Conflicting statuses cannot authorize retry.
+        stopReason: terminal.stopReason,
+        // The event label alone cannot distinguish a contradictory queued/failed
+        // snapshot from a completed response. Preserve omitted-status compatibility.
+        responseStatus: response.status === undefined ? "absent" : response.status,
+        ...(terminalEventType === "response.incomplete" || incompleteReason !== undefined
           ? {
               incompleteReason:
                 incompleteReason === "max_output_tokens" ||

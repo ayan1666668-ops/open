@@ -44,19 +44,30 @@ const SETTLED_TOOL_TERMINAL_CONTINUATION_INSTRUCTION =
 function isPreDispatchToolCallRejection(
   assistant: EmbeddedRunAttemptResult["lastAssistant"] | null | undefined,
 ): boolean {
-  return Boolean(
-    assistant &&
-    assistant.stopReason === "error" &&
-    !isTerminalAssistantError(assistant) &&
-    (assistant.errorCode === MALFORMED_TOOL_CALL_ARGUMENTS_ERROR_CODE ||
-      isPreDispatchToolCallRejectionMessage(assistant.errorMessage) ||
-      (assistant.errorCode === "incomplete_tool_call" &&
-        assistant.diagnostics?.some(
-          ({ type, details }) =>
-            type === "openai_responses_terminal" &&
-            details?.eventType === "response.completed" &&
-            details.incompleteReason === undefined,
-        ) === true)),
+  if (!assistant || assistant.stopReason !== "error" || isTerminalAssistantError(assistant)) {
+    return false;
+  }
+  const terminalFacts =
+    assistant.diagnostics?.filter(({ type }) => type === "openai_responses_terminal") ?? [];
+  // Terminal facts outrank parser codes and legacy text. Missing status metadata
+  // is not the same as an omitted wire status, which the producer records as absent.
+  if (
+    terminalFacts.some(
+      ({ details }) =>
+        details?.eventType !== "response.completed" ||
+        (details.responseStatus !== "completed" && details.responseStatus !== "absent") ||
+        (details.stopReason !== "stop" && details.stopReason !== "toolUse") ||
+        details.incompleteReason !== undefined,
+    )
+  ) {
+    return false;
+  }
+  // Malformed arguments can be rejected before a terminal event is read. An
+  // unfinished call needs positive completion evidence, not just its error code.
+  return (
+    assistant.errorCode === MALFORMED_TOOL_CALL_ARGUMENTS_ERROR_CODE ||
+    isPreDispatchToolCallRejectionMessage(assistant.errorMessage) ||
+    (assistant.errorCode === "incomplete_tool_call" && terminalFacts.length > 0)
   );
 }
 
