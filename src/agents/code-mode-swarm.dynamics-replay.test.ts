@@ -48,7 +48,12 @@ function candidate(policyDigest = "sha256:policy-a") {
 
 function dynamics(policyDigest = "sha256:policy-a") {
   return {
-    profile: "independent-verifier",
+    boundary: "artifact-only",
+    requirements: {
+      sandbox: "require",
+      candidateDigest: "required",
+      artifactRefs: "required",
+    },
     handoff: {
       candidateDigest: "sha256:candidate",
       artifactRefs: ["artifact://candidate"],
