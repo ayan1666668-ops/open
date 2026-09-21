@@ -552,17 +552,6 @@ describe("short-term promotion", () => {
 
   it("excludes staged and generated REM recalls while keeping ordinary reflections", async (workspaceDir) => {
     const ordinary = "Reflections on deployment planning: keep a verified backup before release.";
-    const generated = previewRemDreaming({
-      entries: [
-        recallStoreEntryFixture({
-          key: "source",
-          path: "memory/2026-04-03.md",
-          conceptTags: ["deployment"],
-        }),
-      ],
-      limit: 1,
-      minPatternStrength: 0.5,
-    }).bodyLines.join("\n");
     const snippets = [
       "Candidate: Default to action. confidence: 0.76 evidence: memory/.dreams/session-corpus/2026-04-08.txt:1-1 recalls: 3 status: staged",
       [
@@ -572,7 +561,17 @@ describe("short-term promotion", () => {
         "  - recalls: 3",
         "  - status: staged",
       ].join("\n"),
-      generated,
+      previewRemDreaming({
+        entries: [
+          recallStoreEntryFixture({
+            key: "source",
+            path: "memory/2026-04-03.md",
+            conceptTags: ["deployment"],
+          }),
+        ],
+        limit: 1,
+        minPatternStrength: 0.5,
+      }).bodyLines.join("\n"),
       ordinary,
     ];
     await recordMemoryRecalls(
@@ -582,8 +581,9 @@ describe("short-term promotion", () => {
         memoryRecallResult("memory/2026-04-03.md", index + 1, index + 1, 0.92, snippet),
       ),
     );
-    const ranked = await rankAllCandidates(workspaceDir);
-    expect(ranked.map((candidate) => candidate.snippet)).toEqual([ordinary]);
+    expect((await rankAllCandidates(workspaceDir)).map(({ snippet }) => snippet)).toEqual([
+      ordinary,
+    ]);
   });
 
   it("ignores raw session and transcript snippets when recording short-term recalls", async (workspaceDir) => {
