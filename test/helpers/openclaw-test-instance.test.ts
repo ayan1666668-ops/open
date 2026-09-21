@@ -30,7 +30,7 @@ import {
   type GatewayReadinessDiagnostic,
   testing,
 } from "./openclaw-test-instance.js";
-import { isProcessAlive, waitForDead, waitForFile } from "./process-wait.js";
+import { isProcessAlive, waitForDead, waitForFile, waitForFixtureFile } from "./process-wait.js";
 import { createDeferred, withTestTimeout } from "./promise.js";
 import { runQaGatewayFixture } from "./qa-gateway-cleanup.js";
 
@@ -300,6 +300,7 @@ if (kind === "cli" || kind === "cli-drain") {
   process.stderr.write("cli diagnostic\\n");
   if (argv[0] === "wait") {
     setInterval(() => {}, 1_000);
+    writeFileSync(tracePath + ".cli-ready", "ready");
     await new Promise(() => {});
   }
   if (kind === "cli-drain") {
@@ -796,15 +797,35 @@ describe("openclaw test instance", () => {
       finally { await fixture.cleanup(); }
     `;
       const runContender = async (source: string) => {
+        const args = [
+          "--experimental-test-module-mocks",
+          "--import",
+          new URL("../../scripts/tsx.mjs", import.meta.url).href,
+          "--input-type=module",
+          "-e",
+          source,
+        ];
+        const launcher = `
+          import { spawnOwnedVitestProcess } from ${JSON.stringify(new URL("../../scripts/lib/vitest-process.mts", import.meta.url).href)};
+          import { installVitestProcessGroupCleanup } from ${JSON.stringify(new URL("../../scripts/vitest-process-group.mts", import.meta.url).href)};
+          const { child, completion } = spawnOwnedVitestProcess({
+            command: process.execPath,
+            args: ${JSON.stringify(args)},
+            options: { cwd: process.cwd(), stdio: "inherit" },
+            homeMode: "tooling",
+          });
+          const cleanup = installVitestProcessGroupCleanup({ child, forceSignal: "SIGKILL" });
+          const result = await completion.finally(() => cleanup.teardown());
+          process.exitCode = result.code ?? 1;
+        `;
         const result = await promisify(execFile)(
           resolveTestNodeExecPath(),
           [
-            "--experimental-test-module-mocks",
             "--import",
             new URL("../../scripts/tsx.mjs", import.meta.url).href,
             "--input-type=module",
             "-e",
-            source,
+            launcher,
           ],
           { cwd: process.cwd(), timeout: 20_000 },
         );
@@ -829,7 +850,7 @@ describe("openclaw test instance", () => {
           causeCode: FILE_LOCK_TIMEOUT_ERROR_CODE,
         });
         const contender = await allocateContender();
-        expect(contender.tempRoot).toBe(await fs.realpath(tmpdir()));
+        expect(contender.tempRoot).not.toBe(await fs.realpath(tmpdir()));
         expect(contender.pid).not.toBe(process.pid);
         expect([instance.port, instance.port + 1]).not.toContain(contender.port);
         expect(contender.attempted.slice(0, 2)).toEqual([
@@ -1007,7 +1028,7 @@ describe("openclaw test instance", () => {
     );
     const command = trackOperation(instance.cli(["wait"], { timeoutMs: 1_000 }));
     const outcome = command.catch((error: unknown) => error);
-    await waitForFile(tracePath, 5_000);
+    await waitForFixtureFile(`${tracePath}.cli-ready`, command, "ready");
     const [attempt] = await readAttempts();
     expect(isProcessAlive(attempt!.pid)).toBe(true);
     controller.abort(new Error("instance owner cancelled during CLI"));
@@ -1235,7 +1256,17 @@ describe("openclaw test instance", () => {
         context.skip();
       }
       const { instance, readAttempts } = await createFakeGateway(`${action},ready`);
-      await expect(instance.startGateway()).rejects.toThrow("gateway exited before readiness");
+      const startup = instance.startGateway();
+      try {
+        await expect(startup).rejects.toThrow("gateway exited before readiness");
+      } catch (error) {
+        console.error(
+          `Unexpected ${action} fake Gateway startup outcome`,
+          instance.logs(),
+          await startup.catch((startupError: unknown) => startupError),
+        );
+        throw error;
+      }
       expect(await readAttempts()).toHaveLength(1);
       expect(instance.logs()).not.toContain(RESTART_MARKER);
       expect(instance.child).toBeUndefined();

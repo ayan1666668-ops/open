@@ -27,7 +27,7 @@ export type SessionStoreAliasPlan = {
   hasUnresolvedIdentity: boolean;
 };
 
-export type LegacyStateDetection = {
+export type LegacyStateDetection = Pick<MigrationMessages, "warningDisposition" | "outcome"> & {
   doctorOnlyStateMigrations?: boolean;
   targetAgentId: string;
   targetMainKey: string;
@@ -214,6 +214,8 @@ export const LEGACY_STATE_MIGRATION_PLAN_SCHEMA_VERSION =
   "openclaw.legacyStateMigrationPlan.v1" as const;
 
 export type LegacyStateMigrationMode = "automatic" | "doctor";
+
+export type LegacyStateMigrationInvocationPurpose = "startup" | "doctor";
 
 export type LegacyStateMigrationEndpoint =
   | { kind: "path"; path: string }

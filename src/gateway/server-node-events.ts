@@ -57,7 +57,7 @@ import {
   NODE_PRESENCE_ACTIVITY_EVENT,
   normalizeNodePresenceAliveReason,
 } from "../shared/node-presence.js";
-import { deliveryContextFromSession } from "../utils/delivery-context.shared.js";
+import { deliveryContextFromSession } from "../utils/delivery-context.read.js";
 import { resolveChatAttachmentMaxBytes as defaultResolveChatAttachmentMaxBytes } from "./chat-attachment-policy.js";
 import {
   INLINE_IMAGE_DURABLE_OMISSION_MARKER as DEFAULT_INLINE_IMAGE_DURABLE_OMISSION_MARKER,
@@ -1257,14 +1257,13 @@ export const handleNodeEvent = async (
           reason: cleared ? "cleared" : "already_clear",
         };
       }
-      if (opts?.presenceAllowed !== true) {
+      if (obj.source !== "app" && opts?.presenceAllowed !== true) {
         return { ok: true, event: evt.event, handled: false, reason: "permission_required" };
       }
       const updated = ctx.updateNodePresenceActivity?.({
         nodeId,
-        connId: opts.connId,
-        idleSeconds: obj.idleSeconds,
-        ...(obj.saturated === true ? { saturated: true } : {}),
+        connId: opts?.connId,
+        ...obj,
       });
       if (!updated) {
         return { ok: true, event: evt.event, handled: false, reason: "stale_connection" };

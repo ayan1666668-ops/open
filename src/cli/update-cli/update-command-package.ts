@@ -29,12 +29,11 @@ import {
 import type { UpdateRequester } from "../../infra/update-requester-authority.js";
 import type { UpdateRecoveryFence } from "../../infra/update-run-recovery.js";
 import { normalizeFallbackFailureReason } from "../../infra/update-runner-command.js";
-import { buildUpdateDoctorEnv } from "../../infra/update-runner-doctor.js";
 import {
+  buildUpdateDoctorEnv,
   resolveUpdateDoctorExecutionPolicy,
-  type UpdateRunResult,
-  type UpdateStepResult,
-} from "../../infra/update-runner.js";
+} from "../../infra/update-runner-doctor.js";
+import type { UpdateRunResult, UpdateStepResult } from "../../infra/update-runner-types.js";
 import { runCommandWithTimeout } from "../../process/exec.js";
 import { createDeferredCore } from "../../shared/deferred.js";
 import { CLI_NAME } from "../cli-name.js";
@@ -78,7 +77,8 @@ type PackageDoctorOptions = {
         requester?: Readonly<UpdateRequester>;
         inputHash: string;
         changes: UpdateDoctorConfigChange[];
-        assertRequesterCurrent: () => void;
+        assertCurrent: () => void;
+        assertBoundChildCurrent: () => void;
       }
     | undefined;
 };
@@ -91,7 +91,7 @@ export function preparePackageDoctorContext(params: {
   inputHash?: string | null;
   changes: UpdateDoctorConfigChange[];
   assertCurrent: () => void;
-  assertRequesterCurrent: () => void;
+  assertBoundChildCurrent: () => void;
 }) {
   params.assertCurrent();
   if (!params.capable) {
@@ -106,15 +106,14 @@ export function preparePackageDoctorContext(params: {
     requester: params.requester,
     inputHash: params.inputHash ?? hashConfigRaw(null),
     changes: params.changes,
-    // Delegation suspends the parent's mutation fence. Requester checks must
-    // remain usable until the child owner hands input to its bound process.
-    assertRequesterCurrent: params.assertRequesterCurrent,
+    assertCurrent: params.assertCurrent,
+    assertBoundChildCurrent: params.assertBoundChildCurrent,
   };
 }
 
 export async function runPackageUpdateDoctor(params: PackageDoctorOptions) {
   const context = params.getDoctorContext?.();
-  context?.assertRequesterCurrent();
+  context?.assertCurrent();
   const entryPath = await resolveGatewayInstallEntrypoint(params.root);
   if (!entryPath) {
     return null;
@@ -179,12 +178,13 @@ export async function runPackageUpdateDoctor(params: PackageDoctorOptions) {
     ? await withUpdateDoctorChild(
         {
           root: params.root,
-          context,
+          context: { ...context, assertRequesterCurrent: context.assertBoundChildCurrent },
           input: { configInputHash: context.inputHash, repair: doctorPolicy.fix },
         },
         runDoctor,
       )
     : await runDoctor();
+  context?.assertCurrent();
   const doctorResult = await consumeUpdatePostInstallDoctorResult(doctorResultPath);
   if (configSnapshot) {
     // Only the child writer can attribute bytes to Doctor; a later read may contain an operator save.
@@ -447,7 +447,7 @@ export async function runPackageInstallUpdate(
     packageRoot: pkgRoot,
     // Artifact equality cannot skip a method switch or retained-runtime staging.
     requirePackageReplacement:
-      params.installKind === "git" || params.requirePackageReplacement === true,
+      params.requirePackageReplacement === true || params.installKind === "git",
     runCommand: runCommandWithTimeout,
     timeoutMs: params.timeoutMs,
     ...(installEnv === undefined ? {} : { env: installEnv }),
