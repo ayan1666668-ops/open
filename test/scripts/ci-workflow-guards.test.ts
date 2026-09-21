@@ -12265,12 +12265,17 @@ printf '%s\n' "\${CURL_SUCCESS_IP:-203.0.113.7}"
     });
     const nativeSetup = prepare?.run ?? "";
     expect(nativeSetup).toContain("WindowsPrincipal");
-    expect(nativeSetup).toContain("System32\\OpenSSH\\sshd.exe");
+    expect(nativeSetup).toContain('. "$env:GITHUB_WORKSPACE/scripts/windows-testbox-openssh.ps1"');
+    expect(nativeSetup).toContain("$installation = Get-WindowsTestboxOpenSshInstallation");
+    expect(nativeSetup).toContain("$sshd = $installation.Sshd");
+    expect(
+      nativeSetup.indexOf("$installation = Get-WindowsTestboxOpenSshInstallation"),
+    ).toBeLessThan(nativeSetup.indexOf("$effectiveConfig = & $sshd"));
     expect(nativeSetup).toContain('-T -C "user=$nativeUser"');
     expect(nativeSetup).toContain(
       "authorizedkeysfile __PROGRAMDATA__/ssh/administrators_authorized_keys",
     );
-    expect(nativeSetup).toContain("System32\\OpenSSH\\ssh-keygen.exe");
+    expect(nativeSetup).toContain("$keygen = $installation.Keygen");
     expect(nativeSetup).toContain("-E sha256 -lf $env:TESTBOX_PUBLIC_KEY_PATH");
     expect(nativeSetup).toContain("[IO.File]::AppendAllText($authorizedKeys,");
     expect(nativeSetup).toContain("S-1-5-18");
