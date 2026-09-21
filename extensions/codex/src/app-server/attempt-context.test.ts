@@ -431,7 +431,7 @@ describe("Codex app-server attempt context", () => {
         expect(turn).toContain("Shared preferences");
         expect(turn.includes("Alice preferences")).toBe(profile === "alice");
         expect(turn.includes("Bob preferences")).toBe(profile === "bob");
-        expect(turn.includes("applies only to the current requester")).toBe(Boolean(profile));
+        expect(turn.includes("belongs to this session")).toBe(Boolean(profile));
         const promptWorkspace = workspaceMode === "inherited" ? workspaceDir : taskDir;
         expect(context.turnScopedDeveloperInstructionFiles).toEqual([
           { path: path.join(promptWorkspace, "USER.md"), content: "Shared preferences" },

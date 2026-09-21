@@ -19,7 +19,7 @@ describe("USER prompt context", () => {
       contextFiles: [{ path: "/srv/users/arbitrary/USER.md", content: "Shared preferences" }],
     });
     expect(prompt).toContain("Shared preferences");
-    expect(prompt).not.toContain("applies only to the current requester");
+    expect(prompt).not.toContain("belongs to this session");
   });
 
   it("keeps shared preferences before the current person's overlay", () => {
@@ -37,6 +37,6 @@ describe("USER prompt context", () => {
     expect(prompt.indexOf("Shared preferences")).toBeLessThan(
       prompt.indexOf("Personal preferences"),
     );
-    expect(prompt).toContain("applies only to the current requester");
+    expect(prompt).toContain("belongs to this session");
   });
 });

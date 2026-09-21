@@ -75,7 +75,7 @@ export function buildProjectContextSection(files: ReturnType<typeof prepareConte
   }
   if (files.some(({ file }) => file.personalUser)) {
     lines.push(
-      "The personal users/<profile-id>/USER.md applies only to the current requester and overrides conflicting shared USER.md preferences, not higher-priority rules.",
+      "The personal users/<profile-id>/USER.md belongs to this session's selected person (assigned human owner, otherwise human creator). It supplements shared USER.md and overrides conflicting shared preferences, not higher-priority rules. Other participants do not change this personal context.",
     );
   }
   lines.push("");

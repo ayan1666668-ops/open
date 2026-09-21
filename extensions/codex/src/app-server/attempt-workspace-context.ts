@@ -325,7 +325,7 @@ function renderCodexWorkspaceCollaborationDeveloperInstructions(
     preamble:
       "OpenClaw loaded these workspace instruction files from the active agent workspace. They are the canonical definitions of who you are, how you think and work, and the human you work alongside. Internalize and follow them accordingly." +
       (files.some((file) => file.personalUser === true)
-        ? " The personal users/<profile-id>/USER.md applies only to the current requester and overrides conflicting shared USER.md preferences, not higher-priority rules."
+        ? " The personal users/<profile-id>/USER.md belongs to this session's selected person (assigned human owner, otherwise human creator). It supplements shared USER.md and overrides conflicting shared preferences, not higher-priority rules. Other participants do not change this personal context."
         : ""),
     wrapperTag: "AGENT_SOUL",
   });

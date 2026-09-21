@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
+import { sessionPersonalProfileId } from "../config/sessions/session-entry-provenance.js";
 import { closeOpenClawStateDatabaseForTest } from "../state/openclaw-state-db.js";
 import { ensureProfileForEmail, linkEmail } from "../state/user-profiles.js";
 import {
@@ -30,7 +31,43 @@ afterEach(async () => {
   await state.cleanup();
 });
 describe("personal bootstrap", () => {
-  it("refreshes personal overlays without leaking between people in a shared session", async () => {
+  it("stacks only the session-selected owner or creator after shared defaults", async () => {
+    const workspaceDir = tempDirs.make("session-personal-");
+    const alice = ensureProfileForEmail("alice@example.test");
+    const bob = ensureProfileForEmail("bob@example.test");
+    const charlie = ensureProfileForEmail("charlie@example.test");
+    await fs.writeFile(path.join(workspaceDir, "USER.md"), "Shared defaults");
+    for (const { id, text } of [
+      { id: alice.id, text: "Alice preferences" },
+      { id: bob.id, text: "Bob preferences" },
+    ]) {
+      const dir = path.join(workspaceDir, "users", id);
+      await fs.mkdir(dir, { recursive: true });
+      await fs.writeFile(path.join(dir, "USER.md"), text);
+    }
+    const entry: NonNullable<Parameters<typeof sessionPersonalProfileId>[0]> = {
+      createdActor: { type: "human", source: "profile", id: alice.id },
+    };
+    const load = async () => {
+      const result = await resolveBootstrapContextForRun({
+        workspaceDir,
+        sessionKey: "agent:main:session-owned",
+        bootstrapUserProfileId: sessionPersonalProfileId(entry),
+      });
+      return result.contextFiles
+        .filter((file) => file.path.endsWith("USER.md"))
+        .map((file) => file.content);
+    };
+    expect(await load()).toEqual(["Shared defaults", "Alice preferences"]);
+    entry.owner = { actor: { type: "human", id: bob.id } };
+    expect(await load()).toEqual(["Shared defaults", "Bob preferences"]);
+    entry.owner = { actor: { type: "human", id: charlie.id } };
+    expect(await load()).toEqual(["Shared defaults"]);
+    delete entry.owner;
+    expect(await load()).toEqual(["Shared defaults", "Alice preferences"]);
+  });
+
+  it("refreshes the selected overlay without retaining a previous selection", async () => {
     const workspaceDir = path.join(tempDirs.make("bootstrap-people-"), "users", "arbitrary");
     await fs.mkdir(workspaceDir, { recursive: true });
     const alice = ensureProfileForEmail("alice@example.test");

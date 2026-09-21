@@ -182,6 +182,7 @@ export function resolveFollowupReplyAnchor(run: FollowupRun): string | undefined
 type FollowupRuntimeMetadata = Pick<
   FollowupRun,
   | "operatorAuthority"
+  | "personalBootstrapEligible"
   | "currentInboundEventKind"
   | "currentInboundAudio"
   | "currentInboundContext"
@@ -260,6 +261,9 @@ export function collectRuntimeMetadata(
   ];
   return {
     operatorAuthority: authoritySource?.operatorAuthority,
+    ...(items.length > 0 && items.every((item) => item.personalBootstrapEligible === true)
+      ? { personalBootstrapEligible: true }
+      : {}),
     currentInboundEventKind: currentTurnSource?.currentInboundEventKind,
     currentInboundAudio: currentTurnSource?.currentInboundAudio,
     currentInboundContext: collectCurrentInboundContext(items),
