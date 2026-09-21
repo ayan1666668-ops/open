@@ -32,7 +32,9 @@ their existing meanings.
 
 Profiles are execution trajectories, not security principals. The native value is
 that OpenClaw can bind the trajectory into the launch, constrain explicit handoff,
-and require the existing sandbox owner for the verifier path.
+and enforce generic resolved requirements without making a preset name an authority
+hook. The verifier preset currently resolves to required sandbox, candidate digest,
+and artifact references.
 
 ## Verifier handoff
 
@@ -48,9 +50,11 @@ const review = await agents.run("Check this candidate against the stated accepta
 });
 ```
 
-The bridge filters the explicit handoff, uses `context: "isolated"`, and passes
-`sandbox: "require"` to the existing native spawn owner for verifier profiles.
-Missing sandbox support is an error; it never silently retries without a sandbox.
+The bridge filters the explicit handoff, uses `context: "isolated"`, and derives
+sandbox/evidence enforcement from the resolved profile requirements. For the
+verifier preset those requirements pass `sandbox: "require"` to the existing
+native spawn owner and require candidate/artifact handoff. Missing sandbox support
+is an error; it never silently retries without a sandbox.
 
 References are caller-provided data, not fetched automatically or treated as
 authority. Each reference is limited to 512 characters, each reference array to
@@ -95,9 +99,11 @@ adopt policy, or automatically execute advisory population actions.
 
 ## Validation
 
-Repository tests cover profile resolution, handoff filtering, exact candidate
-binding, replay identity, host-owned population diagnostics, local mixed-phase
-regressions, and refusal to downgrade a sandbox-required verifier.
+Repository tests cover profile resolution, generic requirement enforcement,
+handoff filtering, exact candidate binding, replay identity, host-owned population
+diagnostics, local mixed-phase regressions, and refusal to downgrade a
+sandbox-required verifier. The native-boundary regression reaches the real
+`spawnSubagentDirect` admission path rather than mocking it.
 
 A live model-backed native collector transcript remains useful end-to-end evidence
 for the experiment and should be captured before claiming production readiness.
