@@ -16,8 +16,7 @@ type CronTestPage = HTMLElement & {
   render: () => typeof nothing;
   cron: CronState;
   cronModelSuggestions: string[];
-  deliveryConversations: ConversationListItem[];
-  deliveryConversationsError: string | null;
+  deliveryConversations: { conversations: ConversationListItem[]; error: string | null };
   patchForm: (patch: Partial<CronState["cronForm"]>) => void;
 };
 
@@ -218,13 +217,15 @@ describe("CronPage lifecycle", () => {
     await waitForCronPage(() => expect(page.cron.connected).toBe(true));
     page.patchForm({ deliveryMode: "announce", deliveryChannel: "telegram" });
 
-    await waitForCronPage(() => expect(page.deliveryConversations).toHaveLength(1));
+    await waitForCronPage(() => expect(page.deliveryConversations.conversations).toHaveLength(1));
     expect(request).toHaveBeenCalledWith("conversations.list", {
       agentId: "writer",
       channel: "telegram",
       limit: 100,
     });
-    expect(page.deliveryConversations.map((entry) => entry.target)).toEqual(["-1009876543210"]);
+    expect(page.deliveryConversations.conversations.map((entry) => entry.target)).toEqual([
+      "-1009876543210",
+    ]);
   });
 
   it("rejects conversation targets from an earlier channel selection", async () => {
@@ -259,7 +260,9 @@ describe("CronPage lifecycle", () => {
     page.patchForm({ deliveryMode: "announce", deliveryChannel: "telegram" });
     page.patchForm({ deliveryChannel: "discord" });
     await waitForCronPage(() =>
-      expect(page.deliveryConversations.map((entry) => entry.target)).toEqual(["channel:current"]),
+      expect(page.deliveryConversations.conversations.map((entry) => entry.target)).toEqual([
+        "channel:current",
+      ]),
     );
 
     telegram.resolve({
@@ -276,7 +279,9 @@ describe("CronPage lifecycle", () => {
       ],
     });
     await Promise.resolve();
-    expect(page.deliveryConversations.map((entry) => entry.target)).toEqual(["channel:current"]);
+    expect(page.deliveryConversations.conversations.map((entry) => entry.target)).toEqual([
+      "channel:current",
+    ]);
   });
 
   it("clears stale targets before a replacement directory request resolves", async () => {
@@ -309,13 +314,13 @@ describe("CronPage lifecycle", () => {
 
     await waitForCronPage(() => expect(page.cron.connected).toBe(true));
     page.patchForm({ deliveryMode: "announce", deliveryChannel: "telegram" });
-    await waitForCronPage(() => expect(page.deliveryConversations).toHaveLength(1));
+    await waitForCronPage(() => expect(page.deliveryConversations.conversations).toHaveLength(1));
 
     page.patchForm({ deliveryAccountId: "work" });
-    expect(page.deliveryConversations).toEqual([]);
+    expect(page.deliveryConversations.conversations).toEqual([]);
 
     replacement.resolve({ conversations: [] });
-    await waitForCronPage(() => expect(page.deliveryConversations).toEqual([]));
+    await waitForCronPage(() => expect(page.deliveryConversations.conversations).toEqual([]));
   });
 
   it("drops an in-flight directory response after administrator access is lost", async () => {
@@ -349,7 +354,7 @@ describe("CronPage lifecycle", () => {
     });
     await Promise.resolve();
 
-    expect(page.deliveryConversations).toEqual([]);
+    expect(page.deliveryConversations.conversations).toEqual([]);
   });
 
   it("retains a selected conversation's account and thread route", async () => {
@@ -378,7 +383,7 @@ describe("CronPage lifecycle", () => {
 
     await waitForCronPage(() => expect(page.cron.connected).toBe(true));
     page.patchForm({ deliveryMode: "announce", deliveryChannel: "telegram" });
-    await waitForCronPage(() => expect(page.deliveryConversations).toHaveLength(1));
+    await waitForCronPage(() => expect(page.deliveryConversations.conversations).toHaveLength(1));
 
     page.patchForm({ deliveryTo: "-1009876543210" });
 
@@ -420,7 +425,7 @@ describe("CronPage lifecycle", () => {
 
       await waitForCronPage(() => expect(page.cron.connected).toBe(true));
       page.patchForm({ deliveryMode: "announce", deliveryChannel: "telegram" });
-      await waitForCronPage(() => expect(page.deliveryConversations).toHaveLength(1));
+      await waitForCronPage(() => expect(page.deliveryConversations.conversations).toHaveLength(1));
       page.patchForm({ deliveryTo: "-1009876543210" });
       expect(page.cron.cronForm.deliveryThreadId).toBe("42");
 
@@ -456,7 +461,7 @@ describe("CronPage lifecycle", () => {
 
     await waitForCronPage(() => expect(page.cron.connected).toBe(true));
     page.patchForm({ deliveryMode: "announce", deliveryChannel: "telegram" });
-    await waitForCronPage(() => expect(page.deliveryConversations).toHaveLength(1));
+    await waitForCronPage(() => expect(page.deliveryConversations.conversations).toHaveLength(1));
 
     page.patchForm({
       deliveryAccountId: "bound-account",
@@ -493,7 +498,7 @@ describe("CronPage lifecycle", () => {
 
     await waitForCronPage(() => expect(page.cron.connected).toBe(true));
     page.patchForm({ deliveryMode: "announce", deliveryChannel: "telegram" });
-    await waitForCronPage(() => expect(page.deliveryConversations).toHaveLength(1));
+    await waitForCronPage(() => expect(page.deliveryConversations.conversations).toHaveLength(1));
     page.patchForm({ deliveryTo: "-1009876543210" });
     expect(page.cron.cronForm.deliveryThreadId).toBe("42");
 
@@ -546,7 +551,7 @@ describe("CronPage lifecycle", () => {
       expect(request).toHaveBeenCalledWith("conversations.list", expect.anything()),
     );
 
-    expect(page.deliveryConversations).toEqual([]);
+    expect(page.deliveryConversations.conversations).toEqual([]);
   });
 
   it("clears a recipient directory error after a successful retry", async () => {
@@ -579,12 +584,12 @@ describe("CronPage lifecycle", () => {
 
     await waitForCronPage(() => expect(page.cron.connected).toBe(true));
     page.patchForm({ deliveryMode: "announce", deliveryChannel: "telegram" });
-    await waitForCronPage(() => expect(page.deliveryConversationsError).toContain("temporary"));
+    await waitForCronPage(() => expect(page.deliveryConversations.error).toContain("temporary"));
 
     page.patchForm({ deliveryAccountId: "work" });
-    await waitForCronPage(() => expect(page.deliveryConversations).toHaveLength(1));
+    await waitForCronPage(() => expect(page.deliveryConversations.conversations).toHaveLength(1));
 
-    expect(page.deliveryConversationsError).toBeNull();
+    expect(page.deliveryConversations.error).toBeNull();
   });
 
   it("registers idempotently when the module is evaluated again", async () => {
