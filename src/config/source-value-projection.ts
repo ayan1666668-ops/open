@@ -54,10 +54,16 @@ function settleProjectionFrame(
   value: unknown,
 ): void {
   if (Array.isArray(frame.container)) {
-    frame.container[frame.key as number] = value;
+    const key = frame.key;
+    if (typeof key === "number") {
+      frame.container[key] = value;
+    }
     return;
   }
-  frame.container[frame.key as string] = value;
+  const key = frame.key;
+  if (typeof key === "string") {
+    frame.container[key] = value;
+  }
 }
 
 /** Projects runtime edits onto source values; only missing keys represent deletion. */
@@ -81,7 +87,10 @@ export function projectRuntimeChangesOntoSource(
     },
   ];
   while (pending.length > 0) {
-    const frame = pending.pop() as ProjectionFrame;
+    const frame = pending.pop();
+    if (frame === undefined) {
+      break;
+    }
     if (frame.kind === "project-key") {
       const slot = frame.slot;
       if (!Object.hasOwn(frame.candidate, frame.key)) {
@@ -106,7 +115,10 @@ export function projectRuntimeChangesOntoSource(
     if (frame.kind === "project-exit") {
       let changed = frame.changedByNonRecordRuntime;
       for (const [index, key] of frame.keys.entries()) {
-        const slot = frame.slots[index] as Record<string, unknown>;
+        const slot = frame.slots[index];
+        if (slot === undefined) {
+          continue;
+        }
         const value = slot.result;
         const sourceValue = Object.hasOwn(frame.source, key) ? frame.source[key] : undefined;
         if (
@@ -145,7 +157,7 @@ export function projectRuntimeChangesOntoSource(
       (frame.source === undefined || isRecord(frame.source)) &&
       Object.keys(frame.candidate).length > 0;
     const keys = [...new Set([...Object.keys(runtimeRecord), ...Object.keys(frame.candidate)])];
-    const slots = keys.map(() => ({}) as Record<string, unknown>);
+    const slots = keys.map((): Record<string, unknown> => ({}));
     pending.push({
       kind: "project-exit",
       source: sourceRecord,
@@ -162,13 +174,18 @@ export function projectRuntimeChangesOntoSource(
     });
     // Pushed in reverse so keys project in document order.
     for (let index = keys.length - 1; index >= 0; index -= 1) {
+      const slot = slots[index];
+      const key = keys[index];
+      if (slot === undefined || key === undefined) {
+        continue;
+      }
       pending.push({
         kind: "project-key",
-        slot: slots[index] as Record<string, unknown>,
+        slot,
         source: sourceRecord,
         runtime: runtimeRecord,
         candidate: frame.candidate,
-        key: keys[index] as string,
+        key,
         path: frame.path,
         pruneChildren,
       });

@@ -20,10 +20,16 @@ type CloneSlot = {
 
 function settleCloneSlot(slot: CloneSlot, value: unknown): void {
   if (Array.isArray(slot.container)) {
-    slot.container[slot.key as number] = value;
+    const key = slot.key;
+    if (typeof key === "number") {
+      slot.container[key] = value;
+    }
     return;
   }
-  const key = slot.key as string;
+  const key = slot.key;
+  if (typeof key !== "string") {
+    return;
+  }
   if (key === "__proto__") {
     // An authored own `__proto__` key settles as inert data, exactly as the
     // platform clone kept it; assignment would invoke the inherited setter
@@ -54,9 +60,12 @@ export function cloneUnknown<T>(value: T): T {
   // Cycle map fills as containers clone; a descendant that references an
   // ancestor settles onto the already-cloned container instead of re-walking.
   const seen = new Map<unknown, unknown>();
-  const pending: CloneSlot[] = [{ source: value as unknown, container: root, key: "cloned" }];
+  const pending: CloneSlot[] = [{ source: value, container: root, key: "cloned" }];
   while (pending.length > 0) {
-    const slot = pending.pop() as CloneSlot;
+    const slot = pending.pop();
+    if (slot === undefined) {
+      break;
+    }
     const source = slot.source;
     if (Array.isArray(source)) {
       const existing = seen.get(source);
@@ -83,7 +92,10 @@ export function cloneUnknown<T>(value: T): T {
       settleCloneSlot(slot, next);
       const entries = Object.entries(source);
       for (let index = entries.length - 1; index >= 0; index -= 1) {
-        const entry = entries[index] as [string, unknown];
+        const entry = entries[index];
+        if (entry === undefined) {
+          continue;
+        }
         pending.push({ source: entry[1], container: next, key: entry[0] });
       }
       continue;
@@ -96,6 +108,8 @@ export function cloneUnknown<T>(value: T): T {
     }
     settleCloneSlot(slot, source);
   }
+  // SAFETY: The root slot is first in and settles unconditionally, so
+  // `root.cloned` always holds the finished clone when the walk drains.
   return root.cloned as T;
 }
 
@@ -144,10 +158,16 @@ function settleMergePatchFrame(
   value: unknown,
 ): void {
   if (Array.isArray(frame.container)) {
-    frame.container[frame.key as number] = value;
+    const key = frame.key;
+    if (typeof key === "number") {
+      frame.container[key] = value;
+    }
     return;
   }
-  frame.container[frame.key as string] = value;
+  const key = frame.key;
+  if (typeof key === "string") {
+    frame.container[key] = value;
+  }
 }
 
 /** Builds a merge patch; ID-keyed array mode emits changed fields for upserts. */
@@ -161,7 +181,10 @@ export function createMergePatch(
     { kind: "enter", base, target, container: root, key: "patch", options, skipWhenEmpty: false },
   ];
   while (pending.length > 0) {
-    const frame = pending.pop() as MergePatchFrame;
+    const frame = pending.pop();
+    if (frame === undefined) {
+      break;
+    }
     if (frame.kind === "key") {
       const hasBase = Object.hasOwn(frame.base, frame.key);
       const hasTarget = Object.hasOwn(frame.target, frame.key);
@@ -181,7 +204,7 @@ export function createMergePatch(
         isIdKeyedArray(targetValue)
       ) {
         const baseById = new Map(baseValue.map((entry) => [entry.id, entry]));
-        const slots = targetValue.map(() => ({}) as Record<string, unknown>);
+        const slots = targetValue.map((): Record<string, unknown> => ({}));
         pending.push({
           kind: "array-exit",
           entries: targetValue,
@@ -190,13 +213,17 @@ export function createMergePatch(
           key: frame.key,
         });
         for (let index = targetValue.length - 1; index >= 0; index -= 1) {
-          const entry = targetValue[index] as PlainObject & { id: string };
+          const entry = targetValue[index];
+          const slot = slots[index];
+          if (entry === undefined || slot === undefined) {
+            continue;
+          }
           const baseEntry = baseById.get(entry.id);
           pending.push({
             kind: "enter",
             base: baseEntry,
             target: applyMergePatch(baseEntry, entry, frame.options),
-            container: slots[index] as Record<string, unknown>,
+            container: slot,
             key: "update",
             options: frame.options,
             skipWhenEmpty: true,
@@ -259,11 +286,15 @@ export function createMergePatch(
     const keyList = [...new Set([...Object.keys(frame.base), ...Object.keys(frame.target)])];
     // Pushed in reverse so keys diff (and settle into `patch`) in document order.
     for (let index = keyList.length - 1; index >= 0; index -= 1) {
+      const key = keyList[index];
+      if (key === undefined) {
+        continue;
+      }
       pending.push({
         kind: "key",
         base: frame.base,
         target: frame.target,
-        key: keyList[index] as string,
+        key,
         patch,
         options: frame.options,
       });
@@ -286,7 +317,10 @@ export function mergePatchConflicts(
     { base, current, patch },
   ];
   while (pending.length > 0) {
-    const node = pending.pop() as { base: unknown; current: unknown; patch: unknown };
+    const node = pending.pop();
+    if (node === undefined) {
+      break;
+    }
     if (
       options.mergeObjectArraysById &&
       isIdKeyedArray(node.base) &&
@@ -431,10 +465,16 @@ function settleApplyMergePatchFrame(
   value: unknown,
 ): void {
   if (Array.isArray(frame.container)) {
-    frame.container[frame.key as number] = value;
+    const key = frame.key;
+    if (typeof key === "number") {
+      frame.container[key] = value;
+    }
     return;
   }
-  frame.container[frame.key as string] = value;
+  const key = frame.key;
+  if (typeof key === "string") {
+    frame.container[key] = value;
+  }
 }
 
 /** Applies one patch key against its base value inside the result container. */
@@ -500,7 +540,10 @@ export function applyMergePatch(
     { kind: "enter", base, patch, container: root, key: "result", options },
   ];
   while (pending.length > 0) {
-    const frame = pending.pop() as ApplyMergePatchFrame;
+    const frame = pending.pop();
+    if (frame === undefined) {
+      break;
+    }
     if (frame.kind === "apply-key") {
       applyMergePatchKey(pending, frame);
       continue;
@@ -510,7 +553,10 @@ export function applyMergePatch(
     const entries = Object.entries(frame.patch);
     // Pushed in reverse so keys apply (and settle into `result`) in document order.
     for (let index = entries.length - 1; index >= 0; index -= 1) {
-      const entry = entries[index] as [string, unknown];
+      const entry = entries[index];
+      if (entry === undefined) {
+        continue;
+      }
       pending.push({
         kind: "apply-key",
         baseValue: result[entry[0]],

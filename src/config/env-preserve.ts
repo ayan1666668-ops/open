@@ -41,10 +41,16 @@ type EnvRefResolveSlot = {
 
 function settleEnvRefResolveSlot(slot: EnvRefResolveSlot, value: unknown): void {
   if (Array.isArray(slot.container)) {
-    slot.container[slot.key as number] = value;
+    const key = slot.key;
+    if (typeof key === "number") {
+      slot.container[key] = value;
+    }
     return;
   }
-  slot.container[slot.key as string] = value;
+  const key = slot.key;
+  if (typeof key === "string") {
+    slot.container[key] = value;
+  }
 }
 
 function resolveEnvVarRefsForComparison(value: unknown, env: NodeJS.ProcessEnv): unknown {
@@ -60,7 +66,10 @@ function resolveEnvVarRefsForComparison(value: unknown, env: NodeJS.ProcessEnv):
   const root: Record<string, unknown> = {};
   const pending: EnvRefResolveSlot[] = [{ source: value, container: root, key: "resolved" }];
   while (pending.length > 0) {
-    const slot = pending.pop() as EnvRefResolveSlot;
+    const slot = pending.pop();
+    if (slot === undefined) {
+      break;
+    }
     const source = slot.source;
     if (typeof source === "string") {
       settleEnvRefResolveSlot(
@@ -82,7 +91,10 @@ function resolveEnvVarRefsForComparison(value: unknown, env: NodeJS.ProcessEnv):
       settleEnvRefResolveSlot(slot, next);
       const entries = Object.entries(source);
       for (let index = entries.length - 1; index >= 0; index -= 1) {
-        const entry = entries[index] as [string, unknown];
+        const entry = entries[index];
+        if (entry === undefined) {
+          continue;
+        }
         pending.push({ source: entry[1], container: next, key: entry[0] });
       }
       continue;
@@ -144,10 +156,16 @@ type EnvRefRestoreFrame =
 
 function settleEnvRefRestoreFrame(frame: EnvRefRestoreFrame, value: unknown): void {
   if (Array.isArray(frame.container)) {
-    frame.container[frame.key as number] = value;
+    const key = frame.key;
+    if (typeof key === "number") {
+      frame.container[key] = value;
+    }
     return;
   }
-  frame.container[frame.key as string] = value;
+  const key = frame.key;
+  if (typeof key === "string") {
+    frame.container[key] = value;
+  }
 }
 
 /** Restore only references owned by the matching authored/resolved planning read. */
@@ -161,7 +179,10 @@ function restoreEnvVarRefsFromResolved(
     { kind: "enter", incoming, parsed, resolved, container: root, key: "resolved" },
   ];
   while (pending.length > 0) {
-    const frame = pending.pop() as EnvRefRestoreFrame;
+    const frame = pending.pop();
+    if (frame === undefined) {
+      break;
+    }
     if (frame.kind === "escape-check") {
       // Keep same-name real/escaped scalar reorders fail-closed: a raw `${VAR}`
       // is indistinguishable from a moved escaped literal or a newly active ref.
@@ -313,7 +334,10 @@ function restoreEnvVarRefsFromResolved(
       // and keep the caller-added value as-is.
       const entries = Object.entries(frameIncoming);
       for (let index = entries.length - 1; index >= 0; index -= 1) {
-        const entry = entries[index] as [string, unknown];
+        const entry = entries[index];
+        if (entry === undefined) {
+          continue;
+        }
         const key = entry[0];
         const hasParsedKey = Object.hasOwn(frameParsed, key);
         pending.push({
@@ -362,9 +386,10 @@ function isPathChanged(path: string, changedPaths: Set<string>): boolean {
 
 /**
  * Frames for the iterative env-ref map restoration walk. `enter` frames resolve
- * one node and schedule their children into a fresh container; `exit` frames
- * run after every child slot has settled and keep the original value in place
- * unless a slot changed, so document nesting costs heap rather than call frames.
+ * one node and schedule their children into a fresh container; the two `exit`
+ * frame kinds run after every child slot has settled and keep the original
+ * value in place unless a slot changed, so document nesting costs heap rather
+ * than call frames.
  */
 type EnvRefMapRestoreFrame =
   | {
@@ -375,19 +400,32 @@ type EnvRefMapRestoreFrame =
       readonly key: string | number;
     }
   | {
-      readonly kind: "exit";
-      readonly value: unknown;
-      readonly next: unknown;
+      readonly kind: "exit-array";
+      readonly value: readonly unknown[];
+      readonly next: readonly unknown[];
+      readonly container: Record<string, unknown> | unknown[];
+      readonly key: string | number;
+    }
+  | {
+      readonly kind: "exit-record";
+      readonly value: Record<string, unknown>;
+      readonly next: Record<string, unknown>;
       readonly container: Record<string, unknown> | unknown[];
       readonly key: string | number;
     };
 
 function settleEnvRefMapRestoreFrame(frame: EnvRefMapRestoreFrame, value: unknown): void {
   if (Array.isArray(frame.container)) {
-    frame.container[frame.key as number] = value;
+    const key = frame.key;
+    if (typeof key === "number") {
+      frame.container[key] = value;
+    }
     return;
   }
-  frame.container[frame.key as string] = value;
+  const key = frame.key;
+  if (typeof key === "string") {
+    frame.container[key] = value;
+  }
 }
 
 export function restoreEnvRefsFromMap(
@@ -402,23 +440,27 @@ export function restoreEnvRefsFromMap(
     { kind: "enter", value, path, container: root, key: "resolved" },
   ];
   while (pending.length > 0) {
-    const frame = pending.pop() as EnvRefMapRestoreFrame;
-    if (frame.kind === "exit") {
+    const frame = pending.pop();
+    if (frame === undefined) {
+      break;
+    }
+    if (frame.kind === "exit-array") {
       // Keep the original value when no child slot changed, matching the
       // recursive form's changed detection by reference comparison.
-      if (Array.isArray(frame.next)) {
-        const original = frame.value as readonly unknown[];
-        settleEnvRefMapRestoreFrame(
-          frame,
-          frame.next.some((item, index) => item !== original[index]) ? frame.next : frame.value,
-        );
-        continue;
-      }
-      const original = frame.value as Record<string, unknown>;
-      const next = frame.next as Record<string, unknown>;
       settleEnvRefMapRestoreFrame(
         frame,
-        Object.keys(original).some((key) => next[key] !== original[key]) ? next : frame.value,
+        frame.next.some((item, index) => item !== frame.value[index]) ? frame.next : frame.value,
+      );
+      continue;
+    }
+    if (frame.kind === "exit-record") {
+      // Keep the original value when no child slot changed, matching the
+      // recursive form's changed detection by reference comparison.
+      settleEnvRefMapRestoreFrame(
+        frame,
+        Object.keys(frame.value).some((key) => frame.next[key] !== frame.value[key])
+          ? frame.next
+          : frame.value,
       );
       continue;
     }
@@ -444,7 +486,7 @@ export function restoreEnvRefsFromMap(
       // Pushed in reverse so indices settle in order; the exit frame runs only
       // after every child slot has been restored.
       pending.push({
-        kind: "exit",
+        kind: "exit-array",
         value: frameValue,
         next,
         container: frame.container,
@@ -465,7 +507,7 @@ export function restoreEnvRefsFromMap(
       const next: Record<string, unknown> = {};
       settleEnvRefMapRestoreFrame(frame, next);
       pending.push({
-        kind: "exit",
+        kind: "exit-record",
         value: frameValue,
         next,
         container: frame.container,
@@ -473,7 +515,10 @@ export function restoreEnvRefsFromMap(
       });
       const entries = Object.entries(frameValue);
       for (let index = entries.length - 1; index >= 0; index -= 1) {
-        const entry = entries[index] as [string, unknown];
+        const entry = entries[index];
+        if (entry === undefined) {
+          continue;
+        }
         const key = entry[0];
         pending.push({
           kind: "enter",

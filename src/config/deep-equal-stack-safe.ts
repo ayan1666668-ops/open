@@ -8,7 +8,10 @@ import { isRecord } from "../utils.js";
 export function deepEqualStackSafe(a: unknown, b: unknown): boolean {
   const pending: Array<[unknown, unknown]> = [[a, b]];
   while (pending.length > 0) {
-    const pair = pending.pop() as [unknown, unknown];
+    const pair = pending.pop();
+    if (pair === undefined) {
+      break;
+    }
     const [left, right] = pair;
     if (Object.is(left, right)) {
       continue;
