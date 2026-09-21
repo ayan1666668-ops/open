@@ -37,6 +37,11 @@ suite.define(() => {
               devicePlacement: {
                 requiredNodeCommands: ["codex.exec-server.stdio.v1"],
                 consumesWorkerSlot: false,
+                setup: {
+                  label: "Codex",
+                  missingCommandHint:
+                    "Install or enable the OpenClaw Codex plugin in this computer's node service, then reconnect. Update OpenClaw first if the plugin requires a newer version. The model connection stays on the OpenClaw server.",
+                },
               },
               source: "model",
             },
@@ -66,7 +71,22 @@ suite.define(() => {
         await page.goto(`${suite.server.baseUrl}new`);
         await gateway.waitForRequest("environments.list");
         await openEnvironmentPicker(page);
-        const row = page.locator('[data-value$=":build-mac"]');
+        const session = page.locator('[data-value="device:build-mac"]');
+        await expect.poll(() => session.getAttribute("aria-disabled")).toBe("true");
+        expect(await session.textContent()).toContain("Run session here · Unavailable");
+        expect(await session.textContent()).toContain("Codex integration unavailable.");
+        expect(await session.textContent()).toContain("OpenClaw Codex plugin");
+        expect(await session.textContent()).not.toContain("codex.exec-server");
+        expect(await session.locator(".new-session-page__environment-help").isVisible()).toBe(true);
+        await session.focus();
+        await page.keyboard.press("Enter");
+        expect(await page.locator("#new-session-where-trigger").textContent()).not.toContain(
+          "Build Mac",
+        );
+        expect(await gateway.getRequests("sessions.create")).toHaveLength(0);
+        expect(await gateway.getRequests("sessions.dispatch")).toHaveLength(0);
+        await page.locator(".new-session-page__environment-search input").focus();
+        const row = page.locator('[data-value="node-tools:build-mac"]');
         await row.locator(".session-menu__description").getByText("Run commands here").waitFor();
         await captureDeviceRuntimeUiProof(suite, page, `node-tools-picker-${name}.png`);
         expect(await row.getAttribute("data-value")).toBe("node-tools:build-mac");

@@ -1,3 +1,4 @@
+import { normalizeBoundedOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { OPENCLAW_AGENT_RUNTIME_ID } from "../../agents/agent-runtime-id.js";
 import { getRegisteredAgentHarness } from "../../agents/harness/registry.js";
 import type { GatewayAgentRuntime } from "../../shared/session-types.js";
@@ -37,9 +38,18 @@ export function resolveWorkerPlacementCapabilities(runtime: string): {
   ) {
     return { executionMode: placement.mode, nodeToolsSupported };
   }
+  const label = normalizeBoundedOptionalString(requirement.setup?.label, 80);
+  const missingCommandHint = normalizeBoundedOptionalString(
+    requirement.setup?.missingCommandHint,
+    500,
+  );
   return {
     executionMode: placement.mode,
-    devicePlacement: { requiredNodeCommands, consumesWorkerSlot: requirement.consumesWorkerSlot },
+    devicePlacement: {
+      requiredNodeCommands,
+      consumesWorkerSlot: requirement.consumesWorkerSlot,
+      ...(label && missingCommandHint ? { setup: { label, missingCommandHint } } : {}),
+    },
     nodeToolsSupported,
   };
 }

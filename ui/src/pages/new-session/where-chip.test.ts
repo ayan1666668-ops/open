@@ -798,7 +798,9 @@ describe("Where chip", () => {
     );
     // Unavailable cards show only the actionable reason.
     expect(capacityCaption(device)).toBeUndefined();
-    expect(hoverDetails(device)).toContain("This runtime does not support paired devices");
+    expect(device?.querySelector(".new-session-page__environment-help")?.textContent).toContain(
+      "This runtime does not support paired devices",
+    );
   });
 
   it("omits automatic placement when no devices are paired and Auto is off", () => {
@@ -938,7 +940,9 @@ describe("Where chip", () => {
       expect(device?.matches(':disabled, [aria-disabled="true"]')).toBe(disabled);
       expect(capacityCaption(device)).toBe(disabled ? undefined : label);
       if (reason) {
-        expect(hoverDetails(device)).toContain(reason);
+        expect(device?.querySelector(".new-session-page__environment-help")?.textContent).toContain(
+          reason,
+        );
       }
     },
   );

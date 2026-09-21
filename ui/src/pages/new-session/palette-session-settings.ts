@@ -1,4 +1,5 @@
 import { html, nothing, svg } from "lit";
+import { repeat } from "lit/directives/repeat.js";
 import type { ApplicationContext } from "../../app/context.ts";
 import { strokeIcon } from "../../components/icons-tools.ts";
 import { icons } from "../../components/icons.ts";
@@ -41,6 +42,7 @@ type MachineChoice = {
   label: string;
   remote: boolean;
   nodeTools?: boolean;
+  sessionDevice?: boolean;
   selected: boolean;
   disabledReason?: string;
   select: () => void;
@@ -177,37 +179,37 @@ export class PaletteSessionSettings {
         selected: !place.remotePlacement && !place.execNode,
         select: () => place.selectDevice(""),
       },
-      ...where.devices.map((device): MachineChoice => {
+      ...where.devices.flatMap((device): MachineChoice[] => {
         const nodeTools =
           place.isAdmin() &&
           (place.devicePlacementRuntime()?.nodeToolsSupported === true ||
             place.execNode === device.deviceId) &&
           (!device.selectable || place.execNode === device.deviceId) &&
           (device.nodeToolsAvailable || place.execNode === device.deviceId);
-        if (nodeTools) {
-          return {
-            id: "node-tools:" + device.deviceId,
+        return [
+          {
+            id: "device:" + device.deviceId,
             label: device.label,
-            remote: false,
-            nodeTools: true,
-            selected: place.execNode === device.deviceId,
-            disabledReason: place.nodeToolsDisabledReason(device.deviceId),
-            select: () => place.selectNodeTools(device.deviceId),
-          };
-        }
-        return {
-          id: "device:" + device.deviceId,
-          label: device.label,
-          remote: true,
-          selected: place.deviceId === device.deviceId,
-          disabledReason:
-            device.disabledReason && device.nodeToolsAvailable && place.isAdmin()
-              ? [device.disabledReason, place.nodeToolsDisabledReason(device.deviceId)]
-                  .filter(Boolean)
-                  .join(" ")
-              : device.disabledReason,
-          select: () => place.selectDevice(device.deviceId),
-        };
+            sessionDevice: true,
+            remote: true,
+            selected: place.deviceId === device.deviceId,
+            disabledReason: device.disabledReason,
+            select: () => place.selectDevice(device.deviceId),
+          },
+          ...(nodeTools
+            ? [
+                {
+                  id: "node-tools:" + device.deviceId,
+                  label: device.label,
+                  remote: false,
+                  nodeTools: true,
+                  selected: place.execNode === device.deviceId,
+                  disabledReason: place.nodeToolsDisabledReason(device.deviceId),
+                  select: () => place.selectNodeTools(device.deviceId),
+                },
+              ]
+            : []),
+        ];
       }),
       ...(where.devices.length
         ? [
@@ -340,9 +342,13 @@ export class PaletteSessionSettings {
                     }}
                   />
                   <div class="palette-session-settings__choices">
-                    ${groups.map(
+                    ${repeat(
+                      groups,
+                      ({ machine }) => machine.id,
                       ({ machine, choices }) => html` <section aria-label=${machine.label}>
-                        <div class="palette-session-settings__machine">${machine.label}</div>
+                        <div class="palette-session-settings__machine">
+                          ${machine.label}${machine.sessionDevice ? html` · ${t("newSession.sessionDeviceAction")}` : nothing}
+                        </div>
                         ${choices.map((choice) => html`<button type="button" class="palette-session-settings__row" data-machine=${machine.id} data-project=${choice.id} aria-pressed=${String(selected(machine, choice.id))} title=${machine.disabledReason ?? nothing} ?disabled=${locked || Boolean(machine.disabledReason)} @click=${() => choose(machine, choice.id)}><span class="palette-session-settings__icon">${machine.nodeTools ? icons.terminal : choice.id ? icons.gitBranch : icons.folder}</span><span class="palette-session-settings__label">${choice.label}</span><span class="palette-session-settings__check">${selected(machine, choice.id) ? icons.check : nothing}</span></button>`)}
                         ${machine.disabledReason ? html`<div class="palette-session-settings__unavailable">${machine.disabledReason}</div>` : nothing}
                       </section>`,

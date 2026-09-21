@@ -39,6 +39,7 @@ type SessionMenuItemOptions = {
   value: string;
   label: string;
   description?: string;
+  inlineHelp?: string;
   icon?: unknown;
   sub?: string;
   facts?: readonly string[];
@@ -97,7 +98,11 @@ export function renderSessionMenuItem(params: SessionMenuItemOptions, submitting
         description ? "session-menu__item--described" : ""
       } ${params.compact ? "new-session-page__environment-option" : ""}"
       data-suggested=${params.suggested ? "true" : nothing}
-      aria-description=${params.suggested ? t("newSession.machineDefault") : nothing}
+      aria-description=${
+        [params.suggested ? t("newSession.machineDefault") : undefined, params.inlineHelp]
+          .filter(Boolean)
+          .join(" ") || nothing
+      }
       data-value=${params.value}
       data-popover=${params.keepOpen || accessibleBlocker ? nothing : "close"}
       aria-pressed=${String(params.checked)}
@@ -132,6 +137,7 @@ export function renderSessionMenuItem(params: SessionMenuItemOptions, submitting
             ? html`<span class="session-menu__description">${description}</span>`
             : nothing
         }
+        ${params.inlineHelp ? html`<span class="new-session-page__environment-help">${params.inlineHelp}</span>` : nothing}
       </span>
       ${
         !params.compact && params.facts?.length
@@ -170,6 +176,7 @@ export function renderSessionMenuItem(params: SessionMenuItemOptions, submitting
     ? html`<openclaw-tooltip
         class="new-session-page__environment-details"
         placement="right-start"
+        .disabled=${Boolean(params.disabled && params.inlineHelp)}
         ?open-on-click=${accessibleBlocker || touchDetails}
       >
         <div class="new-session-page__environment-detail-trigger">

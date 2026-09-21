@@ -486,54 +486,67 @@ export function renderWhereChip(params: {
                     ? t("newSession.nodeToolsRuntimeUnsupported")
                     : undefined) ??
                   (device.nodeToolsAvailable ? undefined : t("newSession.deviceUnavailable"));
-                return renderSessionMenuItem(
-                  {
-                    value: `${nodeTools ? "node-tools" : "device"}:${device.deviceId}`,
-                    label: device.label,
-                    description: t(
-                      (nodeTools ? Boolean(nodeToolsDisabledReason) : !device.selectable)
-                        ? "newSession.computerUnavailable"
-                        : nodeTools
-                          ? "newSession.nodeToolsAction"
-                          : "newSession.sessionDeviceAction",
-                    ),
-                    sub: device.subtitle,
-                    summary: nodeTools
-                      ? t("newSession.nodeToolsHint", {
-                          device: device.label,
-                          gateway: params.gatewayName.trim() || t("newSession.assistantHost"),
-                        })
-                      : !device.selectable &&
-                          device.nodeToolsAvailable &&
-                          params.isAdmin &&
-                          params.onSelectNodeTools
-                        ? nodeToolsDisabledReason
-                        : undefined,
-                    icon: environmentDeviceIcon(device),
-                    platform: device.platform ? prettifyPlatform(device.platform) : undefined,
-                    capabilityLabels: environmentCapabilityLabels(device.capabilities),
-                    hideDetails: device.hideDetails,
-                    remediation: nodeTools ? undefined : device.remediation,
-                    capacityLabel:
-                      !nodeTools && device.selectable && device.workerSlots
-                        ? t("newSession.concurrentSessionsValue", {
-                            used: String(device.workerSlots.total - device.workerSlots.available),
-                            total: String(device.workerSlots.total),
-                          })
-                        : undefined,
-                    compact: true,
-                    checked: nodeTools
-                      ? params.execNode === device.deviceId
-                      : params.state.kind === "device" && params.deviceId === device.deviceId,
-                    disabled: nodeTools ? Boolean(nodeToolsDisabledReason) : !device.selectable,
-                    title: nodeTools ? nodeToolsDisabledReason : device.disabledReason,
-                    onSelect: () =>
-                      nodeTools
-                        ? params.onSelectNodeTools?.(device.deviceId)
-                        : params.onSelectDevice(device.deviceId),
-                  },
-                  destinationDisabled,
-                );
+                return html`
+                  ${renderSessionMenuItem(
+                    {
+                      value: `device:${device.deviceId}`,
+                      label: device.label,
+                      description: t(
+                        device.selectable
+                          ? "newSession.sessionDeviceAction"
+                          : "newSession.sessionDeviceUnavailable",
+                      ),
+                      inlineHelp: device.disabledReason,
+                      sub: device.subtitle,
+                      icon: environmentDeviceIcon(device),
+                      platform: device.platform ? prettifyPlatform(device.platform) : undefined,
+                      capabilityLabels: environmentCapabilityLabels(device.capabilities),
+                      hideDetails: device.hideDetails,
+                      remediation: device.remediation,
+                      capacityLabel:
+                        device.selectable && device.workerSlots
+                          ? t("newSession.concurrentSessionsValue", {
+                              used: String(device.workerSlots.total - device.workerSlots.available),
+                              total: String(device.workerSlots.total),
+                            })
+                          : undefined,
+                      compact: true,
+                      checked:
+                        params.state.kind === "device" && params.deviceId === device.deviceId,
+                      disabled: !device.selectable,
+                      title: device.disabledReason,
+                      onSelect: () => params.onSelectDevice(device.deviceId),
+                    },
+                    destinationDisabled,
+                  )}
+                  ${
+                    nodeTools
+                      ? renderSessionMenuItem(
+                          {
+                            value: `node-tools:${device.deviceId}`,
+                            label: device.label,
+                            description: t("newSession.nodeToolsAction"),
+                            inlineHelp:
+                              nodeToolsDisabledReason ??
+                              t("newSession.nodeToolsAlternativeHint", {
+                                gateway: params.gatewayName.trim() || t("newSession.assistantHost"),
+                              }),
+                            summary: t("newSession.nodeToolsHint", {
+                              device: device.label,
+                              gateway: params.gatewayName.trim() || t("newSession.assistantHost"),
+                            }),
+                            icon: icons.terminal,
+                            compact: true,
+                            checked: params.execNode === device.deviceId,
+                            disabled: Boolean(nodeToolsDisabledReason),
+                            title: nodeToolsDisabledReason,
+                            onSelect: () => params.onSelectNodeTools?.(device.deviceId),
+                          },
+                          destinationDisabled,
+                        )
+                      : nothing
+                  }
+                `;
               },
             )}
             ${showDeviceSkeletons ? renderEnvironmentSkeletons("devices") : nothing}

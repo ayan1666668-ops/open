@@ -9,6 +9,7 @@ import type { SessionCreateOutcome } from "../../lib/sessions/create.ts";
 import { writeSessionPlacementRecovery } from "../../lib/sessions/session-placement-recovery.ts";
 import * as toast from "../../lib/toast.ts";
 import { OpenClawLightDomElement } from "../../lit/openclaw-element.ts";
+import { DraftGatewayState } from "./draft-gateway-state.ts";
 import { NewSessionDraftPersistence } from "./draft-persistence.ts";
 import { createDraftFixture } from "./draft-submission-flow.test-support.ts";
 import { PaletteSessionDraft } from "./palette-session-draft.ts";
@@ -71,6 +72,75 @@ afterEach(() => {
 });
 
 describe("PaletteSessionDraft", () => {
+  it("keeps the focused computer when an earlier computer gains or loses a command alternative", async () => {
+    let alphaReady = true;
+    vi.spyOn(DraftGatewayState.prototype, "environments", "get").mockImplementation(() =>
+      ["alpha", "beta"].map((id) => ({
+        id: `node:${id}`,
+        type: "node",
+        label: id === "alpha" ? "Alpha computer" : "Beta computer",
+        status: "available",
+        sessionHost: true,
+        invocableCommands: ["system.run", "example.exec"],
+        requiredNodeCommand: {
+          command: "example.exec",
+          state: id === "alpha" && !alphaReady ? "undeclared" : "invocable",
+        },
+      })),
+    );
+    const { host } = await mount({
+      scopes: ["operator.admin"],
+      methods: ["sessions.create", "environments.list", "projects.list"],
+      agents: [{ id: "main", workspace: "/workspace", model: { primary: "example/model" } }],
+      modelCatalog: async () => ({
+        models: [
+          {
+            id: "model",
+            name: "Example model",
+            provider: "example",
+            available: true,
+            agentRuntime: {
+              id: "example-runtime",
+              source: "model",
+              nodeToolsSupported: true,
+              devicePlacement: {
+                requiredNodeCommands: ["example.exec"],
+                consumesWorkerSlot: false,
+              },
+            },
+          },
+        ],
+      }),
+      request: async (method) =>
+        method === "environments.list" ? { environments: [] } : { projects: [] },
+    });
+    expectDefined(
+      host.querySelector<HTMLButtonElement>(".palette-session-settings__workspace"),
+      "workspace picker",
+    ).click();
+    await host.updateComplete;
+    const beta = expectDefined(
+      host.querySelector<HTMLButtonElement>('[data-machine="device:beta"]'),
+      "Beta computer",
+    );
+    await vi.waitFor(() => expect(beta.disabled).toBe(false));
+    beta.focus();
+    expect(document.activeElement).toBe(beta);
+    for (const ready of [false, true]) {
+      alphaReady = ready;
+      host.requestUpdate();
+      await host.updateComplete;
+      expect(Boolean(host.querySelector('[data-machine="node-tools:alpha"]'))).toBe(!ready);
+      expect(document.activeElement).toBe(beta);
+      expect(beta.getAttribute("data-machine")).toBe("device:beta");
+    }
+    beta.click();
+    await host.updateComplete;
+    expect(host.querySelector(".palette-session-settings__workspace")?.textContent).toContain(
+      "Beta computer",
+    );
+  });
+
   it.each([true, false])(
     "offers node tools only for a compatible runtime (%s)",
     async (supported) => {
@@ -122,6 +192,15 @@ describe("PaletteSessionDraft", () => {
       await vi.waitFor(() =>
         expect(host.querySelector('[data-machine$=":runner"]')).not.toBeNull(),
       );
+      const session = expectDefined(
+        host.querySelector<HTMLButtonElement>('[data-machine="device:runner"]'),
+        "blocked session choice",
+      );
+      expect(session.disabled).toBe(true);
+      expect(session.closest("section")?.textContent).toContain("Run session here");
+      session.click();
+      expect(session.getAttribute("aria-pressed")).toBe("false");
+      expect(context.sessions.createResult).not.toHaveBeenCalled();
       if (!supported) {
         expect(host.querySelector('[data-machine="node-tools:runner"]')).toBeNull();
         return;

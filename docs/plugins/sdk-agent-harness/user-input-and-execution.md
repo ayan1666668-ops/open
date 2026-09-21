@@ -243,7 +243,7 @@ cleanup authority according to their own lifecycle contract.
 Declare `nodeToolsSupported: true` only when session `execNode` bindings route
 ordinary shell commands to a node while the agent runtime stays on the Gateway.
 This optional capability is independent of full-session placement and grants no
-node authority. Omitting it leaves **Node tools only** unavailable for that
+node authority. Omitting it leaves **Run commands here** unavailable for that
 runtime; runtimes that move their agent process to `execNode` must not opt in.
 
 Declare `cloudPlacement.devicePlacement.requiredNodeCommands` for the exact node
@@ -254,6 +254,13 @@ policy's `invokeNodeWithSessionFull` callback; other commands owned by the same
 plugin do not inherit that permission. An absent declaration or an unlisted
 command returns `undefined`, so the policy must use its ordinary approval or
 denial path. Mutating the declaration during the attempt cannot widen authority.
+
+Optionally provide `cloudPlacement.devicePlacement.setup` with a short `label`
+(up to 80 characters) and `missingCommandHint` (up to 500 characters). The picker
+uses this plugin-owned guidance when a node does not declare a required command.
+Describe how to restore the integration without assuming the executable itself
+is missing. Core trims and bounds this presentation metadata; it never grants
+authority or changes placement eligibility.
 
 This declaration narrows authority; it does not grant it. Pairing, command
 allowlisting, hosting consent, node-local policy, and the exact live session,

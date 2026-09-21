@@ -123,6 +123,32 @@ describe("worker placement runtime capabilities", () => {
       },
     },
     {
+      name: "remote execution projects normalized plugin-owned setup guidance",
+      runtimeId: "setup-harness",
+      nodeToolsSupported: false,
+      cloudPlacement: {
+        mode: "remote-exec",
+        devicePlacement: {
+          requiredNodeCommands: ["runtime.exec-server.v1"],
+          consumesWorkerSlot: false,
+          setup: {
+            label: " Example runtime ",
+            missingCommandHint: " Enable the execution plugin on this computer. ",
+          },
+        },
+      },
+      executionMode: "remote-exec",
+      devicePlacementSupported: true,
+      devicePlacement: {
+        requiredNodeCommands: ["runtime.exec-server.v1"],
+        consumesWorkerSlot: false,
+        setup: {
+          label: "Example runtime",
+          missingCommandHint: "Enable the execution plugin on this computer.",
+        },
+      },
+    },
+    {
       name: "device command requirements are deterministic and deduplicated",
       runtimeId: "ordered-harness",
       nodeToolsSupported: false,
@@ -201,6 +227,39 @@ describe("worker placement runtime capabilities", () => {
       });
     },
   );
+
+  it.each([
+    { label: " ", missingCommandHint: "Enable the execution plugin." },
+    { label: "Example runtime", missingCommandHint: " " },
+    { label: "x".repeat(81), missingCommandHint: "Enable the execution plugin." },
+    { label: "Example runtime", missingCommandHint: "x".repeat(501) },
+  ])("omits invalid setup guidance without changing command requirements (%j)", (setup) => {
+    registerAgentHarness({
+      id: "invalid-setup-harness",
+      label: "Example runtime",
+      cloudPlacement: {
+        mode: "remote-exec",
+        devicePlacement: {
+          requiredNodeCommands: ["runtime.exec-server.v1"],
+          consumesWorkerSlot: false,
+          setup,
+        },
+      },
+      supports: () => ({ supported: true }),
+      async runAttempt() {
+        throw new Error("not used");
+      },
+    });
+
+    expect(resolveWorkerPlacementCapabilities("invalid-setup-harness")).toEqual({
+      executionMode: "remote-exec",
+      devicePlacement: {
+        requiredNodeCommands: ["runtime.exec-server.v1"],
+        consumesWorkerSlot: false,
+      },
+      nodeToolsSupported: false,
+    });
+  });
 
   it("fails closed when a harness requires more than the bounded command count", () => {
     registerAgentHarness({

@@ -122,7 +122,7 @@ visible but unavailable for full-session placement, with an actionable reason. E
 `openclaw connect --service --session-host` or the `nodeHost.workerRuns`
 setting, then restart the node host. Update-required hosts must be upgraded and
 restarted before full-session selection. Eligible devices can still offer the
-**Node tools only** alternative described below.
+**Run commands here** alternative described below.
 
 While node inventory refreshes, or if that refresh fails, the picker keeps known
 devices visible but disables remote selection and Start until fresh inventory
@@ -191,7 +191,7 @@ for the Control UI behavior and storage sources.
 
 A connected node does not need Codex to run ordinary shell commands. When the
 selected runtime cannot host a session on a device but its `system.run` command
-is authorized, administrators can choose **Node tools only** in New Session.
+is authorized, administrators can choose **Run commands here** in New Session.
 This also works when session hosting is disabled, needs an update, or has no
 free worker slots. The selected runtime must support Gateway-hosted node tools
 (Codex and OpenClaw do); other runtimes keep their full-session requirements.
@@ -208,6 +208,13 @@ uses its worker bundle and does not require Codex on the node. Codex placement
 requires the OpenClaw Codex plugin to advertise and authorize
 `codex.exec-server.stdio.v1`; installing the standalone Codex CLI alone does not
 register that command. These requirements do not disable ordinary node tools.
+
+New Session remembers the selected computer and action. Upgrading preserves
+existing saved destinations; selecting **Run commands here** saves command-only
+intent separately from full-session placement. Older releases that do not support
+this action, including v2026.9.5, cannot restore that saved destination and may
+show the OpenClaw server instead. After a rollback, check and reselect a computer
+or command target supported by that release before starting a session.
 
 ### Isolate hosted worker sessions in containers
 

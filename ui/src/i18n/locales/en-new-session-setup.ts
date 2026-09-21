@@ -27,10 +27,13 @@ const enNewSessionSetup = {
     yourDevices: "Your devices",
     nodeToolsAction: "Run commands here",
     sessionDeviceAction: "Run session here",
+    sessionDeviceUnavailable: "Run session here · Unavailable",
     computerUnavailable: "Unavailable",
     assistantHost: "the OpenClaw server",
     nodeToolsHint:
       "Commands run on {device}. The assistant stays on {gateway}. No files are copied automatically.",
+    nodeToolsAlternativeHint:
+      "The assistant stays on {gateway}. No files are copied automatically.",
     nodeToolsRuntimeUnsupported:
       "This model cannot keep the assistant on the OpenClaw server while running commands on another computer. Choose a different model or computer.",
     autoDeviceSub: "Least-busy device",
@@ -72,6 +75,11 @@ const enNewSessionSetup = {
       "Ask an administrator to approve the pending {command} request, or pick another device.",
     nodeCommandUndeclared:
       "Make {command} available on this device, then reconnect, or pick another device.",
+    nodeIntegrationUnavailable: "{integration} integration unavailable. {hint}",
+    nodeIntegrationPendingApproval:
+      "{integration} access is awaiting approval. Ask an administrator to approve this computer’s pending request.",
+    nodeIntegrationUnauthorized:
+      "{integration} remote execution is not allowed. Ask an administrator to allow it in the OpenClaw server’s node command policy.",
     nodeCommandUnauthorized:
       "Authorize {command} in the Gateway node command policy, or pick another device.",
     capabilityCamera: "Camera",

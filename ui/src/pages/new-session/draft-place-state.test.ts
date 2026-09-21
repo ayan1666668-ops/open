@@ -192,7 +192,7 @@ describe("DraftPlaceState direct node tools", () => {
     state.selectNodeTools("desktop");
     expect(state.execNode).toBe("");
     expect(state.nodeToolsDisabledReason("desktop")).toBe(
-      "This model runtime cannot use node tools from the Gateway. Choose another model runtime or use the Gateway.",
+      "This model cannot keep the assistant on the OpenClaw server while running commands on another computer. Choose a different model or computer.",
     );
   });
 
@@ -206,7 +206,7 @@ describe("DraftPlaceState direct node tools", () => {
     expect(state.execNode).toBe("desktop");
     expect(state.devicePlacementReady()).toBe(false);
     expect(state.devicePlacementDisabledReason()).toBe(state.nodeToolsDisabledReason("desktop"));
-    expect(state.devicePlacementDisabledReason()).toContain("Choose another model runtime");
+    expect(state.devicePlacementDisabledReason()).toContain("Choose a different model or computer");
     expect(state.preferenceSelection().where).toEqual({ kind: "node-tools", id: "desktop" });
 
     runtime.mockReturnValue({ id: "openclaw", source: "model", nodeToolsSupported: true });

@@ -95,7 +95,7 @@ describe("DraftSubmissionFlow direct node tools", () => {
       expect(flow.submitDisabledReason()).toBe(
         reason === "stale-inventory"
           ? "Refreshing device inventory"
-          : "This model runtime cannot use node tools from the Gateway. Choose another model runtime or use the Gateway.",
+          : "This model cannot keep the assistant on the OpenClaw server while running commands on another computer. Choose a different model or computer.",
       );
       await flow.submit();
       expect(context.sessions.createResult).not.toHaveBeenCalled();

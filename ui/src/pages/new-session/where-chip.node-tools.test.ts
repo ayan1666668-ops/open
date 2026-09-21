@@ -26,6 +26,14 @@ describe("Where chip node tools", () => {
       { onSelectNodeTools, onSelectDevice, nodeToolsSupported: true },
     );
     const row = container.querySelector<HTMLButtonElement>('[data-value="node-tools:runner"]');
+    const session = container.querySelector<HTMLButtonElement>('[data-value="device:runner"]');
+    expect(session).not.toBeNull();
+    expect(session?.getAttribute("aria-disabled")).toBe("true");
+    expect(session?.textContent).toContain("Run session here");
+    expect(session?.textContent).toContain("Make runtime.exec available");
+    session?.click();
+    expect(onSelectDevice).not.toHaveBeenCalled();
+    expect(onSelectNodeTools).not.toHaveBeenCalled();
     expect(row).not.toBeNull();
     expect(row?.textContent).toContain("Run commands here");
     expect(row?.disabled).toBe(false);
@@ -111,7 +119,9 @@ describe("Where chip node tools", () => {
     ).toContain("Commands run on Build runner.");
     const row = container.querySelector<HTMLButtonElement>('[data-value="node-tools:runner"]');
     expect(row?.getAttribute("aria-disabled")).toBe("true");
-    expect(hoverDetails(row)).toContain(reason);
+    expect(row?.querySelector(".new-session-page__environment-help")?.textContent).toContain(
+      reason,
+    );
     row?.click();
     expect(onSelectNodeTools).not.toHaveBeenCalled();
   });
