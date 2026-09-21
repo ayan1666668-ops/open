@@ -62,6 +62,7 @@ const noops = {
   registerContextEngine: () => {},
   registerCompactionProvider: () => {},
   registerActiveMemoryEscalationProvider: () => {},
+  registerDecisionProvider: () => {},
   registerAgentHarness: () => {},
   registerCodexAppServerExtensionFactory: () => {},
   registerAgentToolResultMiddleware: () => {},
