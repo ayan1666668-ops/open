@@ -919,7 +919,7 @@ suite.define(() => {
 
     try {
       await page.addInitScript(() => {
-        const originalReplace = String.prototype.replace;
+        const originalReplace = Object.getOwnPropertyDescriptor(String.prototype, "replace")!;
         const observedInputs: number[] = [];
         String.prototype.replace = function (searchValue, replaceValue) {
           const input = String(this);
@@ -930,7 +930,7 @@ suite.define(() => {
           ) {
             observedInputs.push(input.length);
           }
-          return originalReplace.call(this, searchValue, replaceValue as never);
+          return Reflect.apply(originalReplace.value, this, [searchValue, replaceValue]);
         };
         Reflect.set(window, "__openclawNormalizationInputs", observedInputs);
       });
