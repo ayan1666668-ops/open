@@ -76,7 +76,7 @@ function buildHostCollectorSnapshot(params: {
   });
 }
 
-export function assessHostCollectorPopulation(params: {
+function assessHostCollectorPopulation(params: {
   groupId: string;
   maxConcurrent: number;
   records: readonly HostCollectorDynamicsRecord[];
