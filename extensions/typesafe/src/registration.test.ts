@@ -64,6 +64,7 @@ describe("plugin ownership and configuration", () => {
     expect(manifest.contracts).toEqual({
       tools: ["typesafe_evaluate"],
       decisionProviders: ["typesafe"],
+      trustedToolPolicies: ["tool-safety"],
     });
     expect(manifest.decisionModels).toEqual([
       { provider: "typesafe", id: "jev-latest", name: "Jev" },

@@ -1,4 +1,36 @@
 import { Type } from "typebox";
+import { Check } from "typebox/value";
+
+const ToolSafetySchema = Type.Object(
+  {
+    enabled: Type.Optional(Type.Boolean({ default: false })),
+    reviewThreshold: Type.Optional(Type.Number({ minimum: 0, maximum: 1, default: 0.25 })),
+    blockThreshold: Type.Optional(Type.Number({ minimum: 0, maximum: 1, default: 0.85 })),
+    policy: Type.Optional(Type.String({ minLength: 1, maxLength: 4000 })),
+  },
+  { additionalProperties: false },
+);
+
+/** Operator policy is trusted configuration; tool arguments are evidence, never instructions. */
+export function toolSafetyConfig(config: Record<string, unknown> | undefined) {
+  const value = config?.toolSafety ?? {};
+  if (!Check(ToolSafetySchema, value)) {
+    throw new Error("Invalid TypeSafe toolSafety configuration.");
+  }
+  const reviewThreshold = value.reviewThreshold ?? 0.25;
+  const blockThreshold = value.blockThreshold ?? 0.85;
+  if (reviewThreshold >= blockThreshold) {
+    throw new Error("TypeSafe toolSafety reviewThreshold must be below blockThreshold.");
+  }
+  return {
+    enabled: value.enabled === true,
+    reviewThreshold,
+    blockThreshold,
+    policy:
+      value.policy ??
+      "Do not leak credentials, destroy important data, or weaken security controls.",
+  };
+}
 
 const DEFAULT_MODEL = "jev-latest";
 const LOCAL_BASE_URL_PATTERN =
@@ -31,6 +63,7 @@ export const ConfigSchema = Type.Object(
       }),
     ),
     timeoutMs: Type.Optional(Type.Integer({ minimum: 1000, maximum: 60000, default: 30000 })),
+    toolSafety: Type.Optional(ToolSafetySchema),
   },
   { additionalProperties: false },
 );

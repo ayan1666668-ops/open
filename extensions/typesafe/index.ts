@@ -1,9 +1,10 @@
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 import { evaluate } from "./src/client.js";
-import { ConfigSchema } from "./src/config.js";
+import { ConfigSchema, toolSafetyConfig } from "./src/config.js";
 import { resolveRuntimeConfig } from "./src/credentials.js";
 import { createDecisionProvider } from "./src/decisions.js";
 import { EvaluateInput, EvaluateOutput } from "./src/schema.js";
+import { createToolSafetyPolicy } from "./src/tool-safety.js";
 
 export default definePluginEntry({
   id: "typesafe",
@@ -11,6 +12,9 @@ export default definePluginEntry({
   description: "Explicit typed evaluations, not a conversational model provider.",
   configSchema: { jsonSchema: { ...ConfigSchema } },
   register(api) {
+    if (toolSafetyConfig(api.pluginConfig).enabled) {
+      api.registerTrustedToolPolicy(createToolSafetyPolicy(api));
+    }
     api.registerDecisionProvider(
       createDecisionProvider(() => resolveRuntimeConfig(api.runtime.config.current())),
     );
