@@ -1,8 +1,32 @@
 import { Worker } from "node:worker_threads";
 import type { TelegramNetworkConfig } from "openclaw/plugin-sdk/config-contracts";
+import {
+  resolveRuntimeWorkerArgv,
+  resolveRuntimeWorkerUrl,
+} from "openclaw/plugin-sdk/process-runtime";
 
 export const TELEGRAM_INGRESS_WORKER_RUNTIME_MARKER = "openclaw.telegram-ingress-worker";
 const TELEGRAM_INGRESS_WORKER_STOP_GRACE_MS = 2_000;
+
+// Source checkouts and plugin captures load this module as TypeScript, so the
+// sibling `.runtime.js` never exists there. Resolve through the shared owner and
+// derive the matching thread preload instead of assuming a built sibling.
+const telegramIngressWorkerEntrypoint = {
+  currentModuleUrl: import.meta.url,
+  sourceWorkerName: "telegram-ingress-worker.runtime",
+  distWorkerPath: "extensions/telegram/telegram-ingress-worker.runtime.js",
+  package: {
+    name: "@openclaw/telegram",
+    distWorkerPath: "telegram-ingress-worker.runtime.js",
+  },
+} as const;
+
+const telegramIngressWorkerUrl = resolveRuntimeWorkerUrl(telegramIngressWorkerEntrypoint);
+// Worker.execArgv carries only loader flags; the entry is supplied by the URL.
+const telegramIngressWorkerExecArgv = resolveRuntimeWorkerArgv(telegramIngressWorkerUrl).slice(
+  0,
+  -1,
+);
 
 export type TelegramIngressWorkerMessage =
   | {
@@ -115,7 +139,8 @@ async function stopTelegramIngressWorker(params: {
 
 export const createTelegramIngressWorker: TelegramIngressWorkerFactory = (options) => {
   const listeners = new Set<(message: TelegramIngressWorkerMessage) => void>();
-  const worker = new Worker(new URL("./telegram-ingress-worker.runtime.js", import.meta.url), {
+  const worker = new Worker(telegramIngressWorkerUrl, {
+    execArgv: telegramIngressWorkerExecArgv,
     workerData: { ...options, runtime: TELEGRAM_INGRESS_WORKER_RUNTIME_MARKER },
   });
   const taskPromise = new Promise<void>((resolve, reject) => {

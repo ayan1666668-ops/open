@@ -1,8 +1,11 @@
 import type { EventEmitter } from "node:events";
+import { existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const workerHarness = vi.hoisted(() => ({
   instances: [] as unknown[],
+  constructArgs: [] as unknown[][],
 }));
 
 vi.mock("node:worker_threads", async () => {
@@ -12,9 +15,10 @@ vi.mock("node:worker_threads", async () => {
       postMessage = vi.fn();
       terminate = vi.fn(async () => 1);
 
-      constructor() {
+      constructor(...args: unknown[]) {
         super();
         workerHarness.instances.push(this);
+        workerHarness.constructArgs.push(args);
       }
     },
   };
@@ -48,6 +52,7 @@ describe("stopTelegramIngressWorker", () => {
   afterEach(() => {
     vi.useRealTimers();
     workerHarness.instances.length = 0;
+    workerHarness.constructArgs.length = 0;
   });
 
   it("preserves cooperative worker shutdown", async () => {
@@ -76,5 +81,41 @@ describe("stopTelegramIngressWorker", () => {
 
     expect(worker.postMessage).toHaveBeenCalledWith({ type: "stop" });
     expect(worker.terminate).toHaveBeenCalledOnce();
+  });
+});
+
+describe("createTelegramIngressWorker module resolution", () => {
+  afterEach(() => {
+    workerHarness.instances.length = 0;
+    workerHarness.constructArgs.length = 0;
+  });
+
+  // Regression: the source checkout loads this module as TypeScript, where a
+  // hardcoded sibling `./telegram-ingress-worker.runtime.js` never exists.
+  it("resolves the worker to a module that exists on disk", () => {
+    createWorker();
+
+    const [workerUrl] = workerHarness.constructArgs.at(-1) ?? [];
+    expect(workerUrl).toBeInstanceOf(URL);
+    const url = workerUrl as URL;
+    expect(url.protocol).toBe("file:");
+
+    const entry = fileURLToPath(url);
+    // Under source mode this must land on the real .ts module, not a phantom .js.
+    expect(entry.endsWith("telegram-ingress-worker.runtime.ts")).toBe(true);
+    expect(existsSync(entry)).toBe(true);
+  });
+
+  it("passes the tsx preload so a TypeScript worker entry can load", () => {
+    createWorker();
+
+    const [, options] = workerHarness.constructArgs.at(-1) ?? [];
+    const execArgv = (options as { execArgv?: string[] } | undefined)?.execArgv ?? [];
+
+    // Worker.execArgv carries loader flags only; the entry comes from the URL.
+    expect(execArgv[0]).toBe("--import");
+    expect(execArgv).toHaveLength(2);
+    expect(execArgv[1]).toContain("tsx");
+    expect(execArgv).not.toContain(fileURLToPath(new URL(import.meta.url)));
   });
 });
