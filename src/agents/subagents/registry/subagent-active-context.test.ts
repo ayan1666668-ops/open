@@ -388,4 +388,75 @@ describe("buildActiveSubagentRuntimeContext", () => {
     expect(laterParentTurn).toContain("run-later-parent-turn");
     expect(laterParentTurn).toContain('taskName_json="summarize_inbox"');
   });
+
+  // #154834: `finalizeResumedAnnounceGiveUp` writes a terminal `failed` delivery
+  // and completes cleanup bookkeeping. `resumeSubagentRun` refuses to advance a
+  // row with `cleanupCompletedAt` set, so the entry can never be delivered and
+  // must stop rendering on every later turn.
+  it("stops re-rendering a failed delivery after cleanup bookkeeping is terminal", () => {
+    const endedAt = Date.now() - 60 * 60_000;
+    addSubagentRunForTests({
+      runId: "run-given-up-delivery",
+      childSessionKey: "agent:main:subagent:given-up-delivery",
+      controllerSessionKey: "agent:main:main",
+      requesterSessionKey: "agent:main:main",
+      requesterDisplayKey: "main",
+      task: "child task whose completion delivery gave up",
+      taskName: "failed_delivery",
+      cleanup: "keep",
+      expectsCompletionMessage: true,
+      createdAt: endedAt - 540_000,
+      startedAt: endedAt - 540_000,
+      endedAt,
+      endedReason: "subagent-error",
+      outcome: { status: "error" as const, error: "network connection error" },
+      completion: { required: true, resultText: null },
+      delivery: { status: "failed", attemptCount: 3, lastError: "message tool missing" },
+      cleanupHandled: true,
+      cleanupCompletedAt: endedAt + 60_000,
+    } satisfies SubagentRunRecordOverrides);
+
+    const firstTurn = buildActiveSubagentRuntimeContext({
+      cfg: {} as OpenClawConfig,
+      controllerSessionKey: "agent:main:main",
+    });
+    const secondTurn = buildActiveSubagentRuntimeContext({
+      cfg: {} as OpenClawConfig,
+      controllerSessionKey: "agent:main:main",
+    });
+
+    expect(firstTurn).toBeUndefined();
+    expect(secondTurn).toBeUndefined();
+  });
+
+  // Preserve the real Gateway contract in
+  // `server.subagent-prompt-recent.gateway.test-support.ts`: a failed delivery
+  // whose cleanup has not completed is still resumable and stays visible.
+  it("keeps rendering a failed delivery whose cleanup bookkeeping has not completed", () => {
+    const endedAt = Date.now() - 60 * 60_000;
+    addSubagentRunForTests({
+      runId: "run-failed-delivery-pending-cleanup",
+      childSessionKey: "agent:main:subagent:failed-delivery-pending-cleanup",
+      controllerSessionKey: "agent:main:main",
+      requesterSessionKey: "agent:main:main",
+      requesterDisplayKey: "main",
+      task: "read the retained result",
+      cleanup: "keep",
+      expectsCompletionMessage: true,
+      createdAt: endedAt - 1_000,
+      startedAt: endedAt - 1_000,
+      endedAt,
+      outcome: { status: "ok" as const },
+      completion: { required: true, resultText: "retained result" },
+      delivery: { status: "failed" },
+    } satisfies SubagentRunRecordOverrides);
+
+    const prompt = buildActiveSubagentRuntimeContext({
+      cfg: {} as OpenClawConfig,
+      controllerSessionKey: "agent:main:main",
+    });
+
+    expect(prompt).toContain("## Child results awaiting delivery");
+    expect(prompt).toContain("delivery=failed;");
+  });
 });
