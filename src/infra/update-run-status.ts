@@ -9,8 +9,10 @@ import {
   LEGACY_UPDATE_RUN_ADVISORY,
   LEGACY_UPDATE_RUN_EXPIRED_REASON,
 } from "./update-run-legacy-expiry.js";
-import { isAcknowledgedAbandonedUpdateRun } from "./update-run-record.js";
-
+import {
+  isAcknowledgedAbandonedUpdateRun,
+  UNPROTECTED_GATEWAY_UPDATE_ADVISORY,
+} from "./update-run-record.js";
 /** Status heals the bounded legacy defect while other recovery keeps its existing owner. */
 export function readUpdateRunStatus() {
   let runReconciliationError: string | undefined;
@@ -27,6 +29,8 @@ export function readUpdateRunStatus() {
     const abandonment = activeRun ? inspectUpdateRunAbandonment(activeRun) : undefined;
     const staleGuidance = activeRun ? staleUpdateRunGuidance(activeRun) : undefined;
     const expired = listUpdateRuns({ limit: 1, reason: LEGACY_UPDATE_RUN_EXPIRED_REASON })[0];
+    const currentRun = activeRun ?? lastRun;
+    const showExpired = expired && !isAcknowledgedAbandonedUpdateRun(expired);
     return {
       ...(runReconciliationError ? { runReconciliationError } : {}),
       ...(activeRun ? { activeRun } : {}),
@@ -37,18 +41,30 @@ export function readUpdateRunStatus() {
       ...(abandonment && abandonment !== LEGACY_UPDATE_RUN_EXPIRED_REASON && activeRun
         ? { abandonedRun: { runId: activeRun.runId, rule: abandonment } }
         : {}),
-      ...(expired && !isAcknowledgedAbandonedUpdateRun(expired)
+      ...(showExpired || currentRun?.origin.unprotectedGatewayUpdate
         ? {
             advisories: [
-              {
-                runId: expired.runId,
-                reason: LEGACY_UPDATE_RUN_EXPIRED_REASON,
-                // Retain historical notices without prescribing a retry for another current run.
-                message:
-                  expired.runId === (activeRun ?? lastRun)?.runId
-                    ? LEGACY_UPDATE_RUN_ADVISORY
-                    : "Historical update: a 2026.9.2-era update never progressed past admission and was treated as abandoned after 24 h.",
-              },
+              ...(showExpired
+                ? [
+                    {
+                      runId: expired.runId,
+                      reason: LEGACY_UPDATE_RUN_EXPIRED_REASON,
+                      message:
+                        expired.runId === currentRun?.runId
+                          ? LEGACY_UPDATE_RUN_ADVISORY
+                          : "Historical update: a 2026.9.2-era update never progressed past admission and was treated as abandoned after 24 h.",
+                    },
+                  ]
+                : []),
+              ...(currentRun?.origin.unprotectedGatewayUpdate
+                ? [
+                    {
+                      runId: currentRun.runId,
+                      reason: "unprotected-gateway-update",
+                      message: UNPROTECTED_GATEWAY_UPDATE_ADVISORY,
+                    },
+                  ]
+                : []),
             ],
           }
         : {}),

@@ -1,6 +1,5 @@
 // Update method tests cover update.run/status, restart sentinel metadata,
 // managed-service handoff, restart scheduling, and delivery context preservation.
-
 import path from "node:path";
 import { expectDefined } from "@openclaw/normalization-core";
 import { describe, expect, it, vi } from "vitest";
@@ -21,6 +20,8 @@ import { withEnvAsync } from "../../test-utils/env.js";
 import { INTERNAL_MESSAGE_CHANNEL } from "../../utils/message-channel.js";
 import {
   sentinelState,
+  captureUpdateRunPayload,
+  invokeUpdateRun,
   withTransferredUpdateHandoff,
   recordLatestUpdateRestartSentinelMock,
   isRestartEnabledMock,
@@ -36,11 +37,11 @@ import {
   resolveGatewayLifecycleNoticeRouteMock,
   scheduleGatewayRestartMock,
   readGatewayOwnerLeaseMock,
-  invokeUpdateRun,
-  captureUpdateRunPayload,
   mockGlobalInstallSurface,
   mockGitInstallSurface,
 } from "./update.test-harness.js";
+// Update method tests cover update.run/status, restart sentinel metadata,
+// managed-service handoff, restart scheduling, and delivery context preservation.
 
 function readCapturedPayload(): RestartSentinelPayload {
   if (!sentinelState.capturedPayload) {

@@ -45,6 +45,7 @@ import {
   type PostCorePluginUpdateResult,
   type ProducedPluginUpdateResult,
 } from "./update-command-plugins-internals.js";
+// Plugin synchronization and convergence after the core update.
 
 export type { PostCorePluginUpdateResult } from "./update-command-plugins-internals.js";
 
@@ -87,6 +88,7 @@ function isActionableSkippedPostUpdateOutcome(outcome: PluginUpdateOutcome): boo
 export async function updatePluginsAfterCoreUpdate(params: {
   root: string;
   assertCurrent?: () => void;
+  preparePersistentEffect?: () => void | Promise<void>;
   /** Requirements for this installation, supplied by its owner. Missing is not optional. */
   pluginRequirements?: Readonly<Record<string, "optional" | "required">>;
   channel: UpdateChannel;
@@ -236,6 +238,7 @@ export async function updatePluginsAfterCoreUpdate(params: {
     workspaceDir: params.root,
     externalizedBundledPluginBridges,
     beforePersistentEffect: params.assertCurrent,
+    preparePersistentEffect: params.preparePersistentEffect,
     logger: pluginLogger,
     onIntegrityDrift: onPluginIntegrityDrift,
     ...capabilityConsent,
@@ -281,6 +284,7 @@ export async function updatePluginsAfterCoreUpdate(params: {
     compatibilityHostVersion: coreVersion ?? undefined,
     baselineInstallRecords: convergenceBaselineRecords,
     beforePersistentEffect: params.assertCurrent,
+    preparePersistentEffect: params.preparePersistentEffect,
     ...capabilityConsent,
   });
   params.assertCurrent?.();
@@ -401,6 +405,8 @@ export async function updatePluginsAfterCoreUpdate(params: {
     }
     // Installed plugin metadata can own migrations that this process has not loaded yet.
     // Finalization runs fresh doctor plus strict validation before the update can complete.
+    await params.preparePersistentEffect?.();
+    params.assertCurrent?.();
     await commitPluginInstallRecordsWithConfig({
       beforePersistentEffect: params.assertCurrent,
       previousInstallRecords: pluginInstallRecords,

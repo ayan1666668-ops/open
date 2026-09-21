@@ -21,6 +21,7 @@ import * as updateRunLedger from "../../infra/update-run-ledger.js";
 import { closeOpenClawStateDatabaseForTest } from "../../state/openclaw-state-db.js";
 import * as stateOwnership from "../../state/openclaw-state-ownership.js";
 import * as shared from "./shared.js";
+import * as captureLifecycle from "./update-command-backup-lifecycle.js";
 import { inspectUpdateDatabaseContexts } from "./update-command-database-context.js";
 import { executeMutableUpdate } from "./update-command-execution.js";
 import { withUpdateCommandExecutor } from "./update-command-executor.js";
@@ -315,7 +316,7 @@ it.each(["schema", "execution", "already current"] as const)(
     } else {
       const operation =
         boundary === "schema"
-          ? preflightUpdateCommandSchemas({ ...params, refuseUpdate })
+          ? preflightUpdateCommandSchemas({ ...params, packageAlreadyCurrent: false, refuseUpdate })
           : finishAlreadyCurrentUpdate({
               ...params,
               result: successfulUpdate,
@@ -462,6 +463,17 @@ it.each([
       logTail: [],
     });
     const events: string[] = [];
+    vi.spyOn(captureLifecycle, "preflightUpdateCommandBackup").mockImplementation(async () => {
+      events.push("capture-preflight");
+    });
+    vi.spyOn(captureLifecycle, "createUpdateCommandBackup").mockImplementation(async () => {
+      events.push("capture");
+      return {
+        directory: path.join(root, "capture"),
+        manifestPath: path.join(root, "capture", "manifest.json"),
+        manifestSha256: "a".repeat(64),
+      };
+    });
     handoff.park.mockImplementation(async ({ run }) => {
       events.push("park");
       run.gatewayRestartRequired = true;
@@ -487,8 +499,15 @@ it.each([
       expect(events).toEqual(["prepare"]);
       expect(budget).not.toHaveBeenCalled();
     } else {
-      expect(result?.result.status).toBe("ok");
-      expect(events).toEqual(["prepare", "park", "prepare", "publish"]);
+      expect(result?.result.status, JSON.stringify(result)).toBe("ok");
+      expect(events).toEqual([
+        "prepare",
+        "park",
+        "prepare",
+        "capture-preflight",
+        "capture",
+        "publish",
+      ]);
       expect(mocks.prepareMutableUpdate.mock.lastCall?.[1]).toBe(
         omittedTimeout ? undefined : 1_000,
       );

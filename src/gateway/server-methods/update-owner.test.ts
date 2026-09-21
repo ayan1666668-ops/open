@@ -23,7 +23,6 @@ import {
   transferManagedServiceUpdateHandoffMock,
   type UpdateRunPayload,
 } from "./update.test-harness.js";
-
 const host = vi.hoisted(() => ({ context: undefined as GatewayRequestContext | undefined }));
 vi.mock("../../agents/tools/gateway.js", () => ({
   callGatewayTool: vi.fn(),

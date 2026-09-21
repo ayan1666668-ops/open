@@ -1,5 +1,5 @@
 ---
-summary: "Downgrading, automatic schema-neutral rollback, verified pre-update backups, and triage when an update leaves you stuck"
+summary: "Downgrading, automatic state and package rollback, verified pre-update backups, and triage when an update leaves you stuck"
 read_when:
   - Something broke after an update and you need to go back
   - You want to know when `openclaw update` can roll back automatically
@@ -19,7 +19,7 @@ supported format, the supported recovery is to restore a verified pre-update
 backup with its matching OpenClaw release.
 
 Prefer `openclaw update` for upgrades and recovery. It validates the target,
-runs required Doctor migrations, and verifies the activated Gateway. A raw
+backs up inventoried state before required Doctor migrations, and verifies the activated Gateway. A raw
 `npm i -g` replacement does not retain the previous package or run this recovery
 workflow; use `openclaw update` or [create a backup first](#before-updating-create-a-verified-backup).
 
@@ -27,7 +27,7 @@ The updater retains the previous package during activation and keeps it when
 failed recovery cannot prove a working installation. Migration recovery originals
 remain until explicit [update cleanup](/cli/update#update-cleanup). These are
 separate recovery mechanisms: cleanup does not manage package or Git runtime
-backups, and retained migration originals are not a full pre-update backup.
+backups or [update recovery sets](/cli/backup#update-recovery-sets), and retained migration originals are not a full pre-update backup.
 Preserve every recovery location named in the update report until you have
 verified the installation.
 
@@ -70,7 +70,7 @@ installation's package manager; a backup archive does not contain the package.
 A complete recovery point must cover these together:
 
 - The matching OpenClaw package version or source revision and built runtime.
-- `openclaw.json`, including `meta.lastTouchedVersion`.
+- `openclaw.json` and its `$include` files, including `meta.lastTouchedVersion`.
 - `state/openclaw.sqlite` and every `agents/<id>/agent/openclaw-agent.sqlite`,
   including databases at configured paths outside the default layout.
 - The workspaces, credentials, and retained originals needed by that installation.
@@ -106,10 +106,67 @@ openclaw update cleanup --dry-run
 
 ### Full-state recovery requires a backup
 
-`openclaw update` does not create or replay a full-state checkpoint. It can
-restore a retained package only under the compatibility checks below. It cannot
-reverse a database migration by replacing the package. Use a verified pre-update
-backup with its matching release when migration has made state incompatible.
+The current updater creates an `update-recovery` set before protected config,
+plugin, or Doctor mutations. It uses SQLite's online backup API to retain unsanitized database
+contents, plus the config, includes, and other inventoried local migration
+resources. Every file has a verified size and SHA-256. The set is stored at
+`<stateDir>.update-captures/<captureId>/` with owner-only permissions, and its
+path is recorded in the update run. The shared privacy marker excludes it from
+ordinary backups, Doctor archives, and support exports, including containing or
+nested workspace selections. [Update recovery sets](/cli/backup#update-recovery-sets)
+describes the inventory and capacity admission that precede protected mutation.
+
+The capture's own update may retire it only after durable terminal success,
+verified runtime identity and data compatibility, settled mutating children,
+and no remaining recovery dependency. There is no age, count, or disk-pressure
+pruning. Failed, restored-after-failure, and unresolved captures remain available
+until explicit recovery resolves them; deliberate backups and historical
+recovery evidence are never cleanup targets.
+
+If activation or later verification fails, the current updater restores the
+previous package and that verified set, then verifies the previous managed
+Gateway's health and identity. A schema migration alone no longer blocks this
+recovery. Config changes by another writer and package-manager ownership changes
+still require intervention. A verified rollback retains the original failure
+and exits nonzero. With `--no-restart` or no managed service, file restoration
+does not claim that a Gateway was restarted or verified.
+
+When the core is already current, config or plugin changes still receive the
+same protection. A failure restores the captured state without inventing a
+package rollback for an unchanged core. A true no-op neither captures state nor
+stops the Gateway. Standalone `openclaw update repair` also captures before its
+first mutation and can restore state after its mutating children settle. It
+never starts the Gateway, even on success, and retains its set for explicit
+Doctor resolution because it has not verified runtime health.
+
+A missing, corrupt, or unrestorable set is a hard failure. Preserve the path
+named in the report, keep an unverified Gateway stopped, and let the update and
+Doctor processes exit before running:
+
+```bash
+npx openclaw@latest doctor --fix
+```
+
+Run this on the Gateway host with the same profile, state, and config selection.
+If a compatible newer OpenClaw binary is already installed, use
+`openclaw doctor --fix`. A retained capture blocks another protected update.
+Inspect it first with `openclaw update status --json`. Doctor reconciles the
+capture with the exact update run before choosing a restore: completed updates
+and recorded restorations are stale captures, so newer live data stays intact.
+For an unresolved failed run, Doctor verifies the set and checks that the
+Gateway and recorded update owners have stopped before restoring it. Missing,
+unreadable, or ambiguous history refuses restoration. Successful explicit
+Doctor repair can resolve and retire the retained set. These commands cannot
+reconstruct a missing backup; preserve any surviving state and
+use an independent verified backup when the report says no usable set exists.
+Remote services and undeclared external plugin resources are outside this local
+inventory and need their own recovery procedure.
+
+The explicitly declared, unsupervised Git update inside a serving Gateway does
+not create a recovery capture. Its result and status warn that a terminal
+`openclaw update` is required for protection. Existing ownership, maintenance,
+and schema checks still apply; see the
+[inline Git follow-up](https://github.com/openclaw/openclaw/issues/144422).
 
 An existing pending checkpoint-recovery record blocks further mutable updates.
 The updater reports that it is unsupported and leaves its records, backups, and
@@ -118,11 +175,43 @@ status, and do not use `update finalize` to bypass the refusal. Preserve the
 reported locations for a compatible recovery implementation or an independent
 verified backup. An interrupted or refused restore is not a successful rollback.
 
+### Recovery with older updaters
+
+The target Doctor detects whether its caller supplied a verified update-recovery
+set. When an older updater supplies none, Doctor binds its capture to the one
+admitted update run and verifies the same kind of set before migrating. Missing
+or ambiguous update ownership refuses the protected mutation. If migration or verification fails within that
+Doctor invocation, it restores the set before exiting nonzero, so the older
+updater can restore package files without leaving forward-migrated databases.
+
+The published 2026.9.2 updater leaves the Gateway stopped after its package
+rollback. Once it finishes and the report confirms state restoration, stay on
+that release with:
+
+```bash
+openclaw gateway start
+openclaw gateway status --deep --json
+```
+
+Alternatively, run `npx openclaw@latest doctor --fix` to continue repair with a
+newer compatible binary. This runs Doctor without replacing the installed
+package; if repair migrates state forward, install a release that supports that
+state before starting the Gateway. The failure output names both paths and the retained
+backup. This is best-effort support for the old driver: if Doctor succeeds and
+2026.9.2 fails later, that updater has already discarded its package backups.
+The target Doctor cannot automatically roll back a failure after its invocation
+has completed. A successful old-driver Doctor records its completion on the
+parent run, but does not finalize that run or retire the capture: its success
+does not prove the whole update passed runtime verification. The retained set
+requires explicit inspection and Doctor repair before another protected update.
+
 ### Automatic schema-neutral rollback
 
-If a newly activated package fails verification, `openclaw update` compares the
-shared and affected per-agent SQLite `user_version` values with their
-pre-activation values and checks that the config file still matches the content
+When no verified update-recovery set is available, the compatibility-only
+package rollback path remains limited to unchanged database formats. If a newly
+activated package fails verification, `openclaw update` compares the
+shared and affected per-agent SQLite applied schema versions, including deferred
+content versions, with their pre-activation values and checks that the config file still matches the content
 reported by the new version’s activation Doctor writer.
 Databases first created during activation or verification are
 schema-neutral when their version matches the new version's supported version for
@@ -185,7 +274,7 @@ creation. Skipping or cancelling does not start diagnosis or submit a report.
 JSON, `--yes`, non-interactive, and managed-service handoff invocations do not
 show this menu after rollback.
 
-If the config file changed after the activation Doctor pass or the databases are
+On this compatibility-only path, if the config file changed after the activation Doctor pass or the databases are
 not schema-neutral, rollback is refused with
 `state-migrated-no-rollback`. For config edits, the next action names the file
 whose changes blocked restoration. The updater preserves the failed outcome and migrated state. Optional
@@ -207,9 +296,9 @@ A refusal before the live swap restarts the unchanged Gateway and preserves the 
 
 ### Before updating: create a verified backup
 
-`openclaw update` preserves an automatic pre-update config copy, not a full-state
-recovery point. Before a significant update, create an independent verified backup
-explicitly:
+The automatic update capture protects inventoried local migration resources
+for that update transaction. Before a significant update, also create an
+independent verified backup for long-term recovery:
 
 ```bash
 mkdir -p ~/Backups/openclaw

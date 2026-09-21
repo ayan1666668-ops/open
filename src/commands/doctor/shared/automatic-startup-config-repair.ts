@@ -24,6 +24,7 @@ import {
   validateConfigObjectRaw,
   validateConfigObjectWithPlugins,
 } from "../../../config/validation.js";
+import type { DeferredPluginMigration } from "../../../infra/deferred-plugin-migrations.js";
 import { withPluginMetadataSnapshotScope } from "../../../plugins/current-plugin-metadata-snapshot.js";
 import { withDeferredPluginDoctorMigrations } from "../../../plugins/doctor-contract-registry.js";
 import {
@@ -37,6 +38,7 @@ import { findDoctorLegacyConfigIssues } from "./legacy-config-issues.js";
 import {
   assertShippedPluginInstallConfigImportCurrent,
   importShippedPluginInstallConfigForDoctor,
+  prepareShippedPluginInstallConfigImport,
   readShippedPluginInstallConfigImportRecords,
   type ShippedPluginInstallConfigImport,
 } from "./plugin-registry-migration.js";
@@ -194,8 +196,19 @@ export function planAutomaticConfigRepair(
 }
 
 /** Validate the prospective plugin contracts before their records become durable. */
-export async function importAutomaticConfigRepairInstallRecords(snapshot: ConfigFileSnapshot) {
+export async function importAutomaticConfigRepairInstallRecords(
+  snapshot: ConfigFileSnapshot,
+  expectedPending: readonly DeferredPluginMigration[],
+) {
+  // Carry preflight's admitted debt, not its projected convergence output or a fresh generation.
+  const admittedPending = structuredClone(expectedPending);
+  const prepared = await prepareShippedPluginInstallConfigImport(snapshot);
+  if (!prepared) {
+    return undefined;
+  }
   return await importShippedPluginInstallConfigForDoctor(snapshot, {
+    prepared,
+    expectedPending: admittedPending,
     validateRecords: (installRecords) => {
       if (!planAutomaticConfigRepair(snapshot, { installRecords })) {
         throw new Error("Config cannot be repaired safely with the current plugin inventory.");

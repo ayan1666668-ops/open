@@ -126,6 +126,8 @@ export function registerRepairCustodyTests(mocks: {
       const release = vi.fn<Maintenance["release"]>().mockResolvedValue(undefined);
       const releaseState = vi.fn<Maintenance["releaseState"]>().mockResolvedValue(undefined);
       mocks.maintenance.mockResolvedValue({
+        assertCurrent: () => {},
+        closeStores: async () => {},
         run: <T>(operation: () => T): T => operation(),
         finish,
         release,

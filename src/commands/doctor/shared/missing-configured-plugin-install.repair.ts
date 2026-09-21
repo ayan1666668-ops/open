@@ -63,7 +63,6 @@ import {
   isLegacyPackageUpdateDoctorPass,
   shouldDeferConfiguredPluginInstallRepair,
 } from "./update-phase.js";
-
 type PluginInstallRepairWarning = {
   message: string;
   pluginId?: string;

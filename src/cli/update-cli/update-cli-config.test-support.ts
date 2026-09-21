@@ -120,6 +120,20 @@ export function createUpdateCliConfigFixtures({
     ...overrides,
   });
 
+  const writeConfigFixture = async (
+    config: OpenClawConfig = baseConfig,
+    configPath = resolveConfigPath(),
+  ): Promise<ConfigFileSnapshot> => {
+    const raw = `${JSON.stringify(config)}\n`;
+    await fs.mkdir(path.dirname(configPath), { recursive: true });
+    await fs.writeFile(configPath, raw, { mode: 0o600 });
+    return configSnapshot(config, {
+      path: configPath,
+      raw,
+      hash: createHash("sha256").update(raw).digest("hex"),
+    });
+  };
+
   const useFileBackedConfig = async (): Promise<void> => {
     const configPath = resolveConfigPath();
     const previous = await fs.readFile(configPath, "utf8").catch((error: unknown) => {
@@ -132,7 +146,12 @@ export function createUpdateCliConfigFixtures({
       if (previous === undefined) {
         await fs.rm(configPath, { force: true });
       } else {
-        await fs.writeFile(configPath, previous);
+        // The owning fixture may already have removed its temporary home.
+        await fs.writeFile(configPath, previous).catch((error: unknown) => {
+          if (!isMissingPathError(error)) {
+            throw error;
+          }
+        });
       }
     });
     const raw = "{}\n";
@@ -178,6 +197,7 @@ export function createUpdateCliConfigFixtures({
     mockNoopPostUpdatePluginConvergence,
     mockPostDoctorSnapshot,
     configSnapshot,
+    writeConfigFixture,
     useFileBackedConfig,
     setupPostCoreConfigFixture,
   };

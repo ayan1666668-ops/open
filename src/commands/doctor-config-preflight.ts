@@ -403,7 +403,8 @@ async function runDoctorConfigPreflightOperation(
       freshConfigGuardAllowed
     ) {
       startupMigrationLease?.heartbeat();
-      pluginInstallConfigImport = await importAutomaticConfigRepairInstallRecords(snapshot);
+      const debt = pluginMigrations.expectedPending();
+      pluginInstallConfigImport = await importAutomaticConfigRepairInstallRecords(snapshot, debt);
       // Consumers must see the imported inventory before package or plugin state migrations.
       configSnapshotRead = await readConfigSnapshotForPreflight(false);
       snapshot = configSnapshotRead.snapshot;

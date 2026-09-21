@@ -1,6 +1,5 @@
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import { truncateUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
-import { UPDATE_RUN_PHASES } from "../../packages/gateway-protocol/src/update-run-vocabulary.js";
 import { resolveStateDir } from "../config/paths.js";
 import { redactSensitiveText } from "../logging/redact.js";
 import { escapeRegExp } from "../shared/regexp.js";
@@ -9,24 +8,10 @@ import type { UpdateRuns } from "../state/openclaw-state-db.generated.js";
 import { resolveRequiredHomeDir } from "./home-dir.js";
 import { normalizeUpdateFailureFacts } from "./update-failure-facts.js";
 import { UPDATE_RUN_TEXT_LIMIT } from "./update-run-limits.js";
-import type { UpdateRunRecord } from "./update-run-record.js";
+import { isRetainedStep, type UpdateRunRecord } from "./update-run-record.js";
 import { UpdateRunRecordSchema } from "./update-run-schema.js";
 
 const JSON_BYTES = 16 * 1024;
-const RETAINED_STEP_NAMES = [
-  ...UPDATE_RUN_PHASES,
-  "notice:ack",
-  "notice:activating",
-  "notice:verifying",
-  "previous generation restoration",
-  "post-update verification",
-  "task-delivery-recovery",
-  "driver:adopted",
-  "driver:identity-unavailable",
-  "reconcile:abandoned",
-  "reconcile:superseded",
-  "reconcile:acknowledged",
-];
 export type UpdateRunLedgerOptions = OpenClawStateDatabaseOptions & {
   busyTimeoutMs?: number;
   redactPaths?: readonly string[];
@@ -47,14 +32,6 @@ function mapJsonText(value: unknown, transform: (text: string) => string): unkno
     );
   }
   return value;
-}
-
-export function isRetainedStep(item: unknown): boolean {
-  return (
-    isRecord(item) &&
-    typeof item.step === "string" &&
-    (item.step.startsWith("finalize:") || RETAINED_STEP_NAMES.some((name) => name === item.step))
-  );
 }
 
 /** Phase history, notice custody, and restoration proof survive diagnostic eviction. */
@@ -100,10 +77,33 @@ function boundedJson(input: unknown, maxBytes = JSON_BYTES): string {
 }
 
 function boundedOriginJson(origin: UpdateRunRecord["origin"]): string {
-  const { driver, previousDrivers, ...diagnostics } = origin;
-  const identities = JSON.stringify({ driver, previousDrivers });
-  const boundedDiagnostics = boundedJson(diagnostics, JSON_BYTES - Buffer.byteLength(identities));
-  return `{${[identities.slice(1, -1), boundedDiagnostics.slice(1, -1)].filter(Boolean).join(",")}}`;
+  const {
+    driver,
+    previousDrivers,
+    updateRecoveryCapture,
+    unprotectedGatewayUpdate,
+    ...diagnostics
+  } = origin;
+  // Operational receipts are not expendable diagnostics. Keep them exact inside
+  // the existing database byte budget; oversized sets fail before replacing a row.
+  const retained = JSON.stringify({
+    driver,
+    previousDrivers,
+    updateRecoveryCapture,
+    unprotectedGatewayUpdate,
+  });
+  const remainingBytes = JSON_BYTES - Buffer.byteLength(retained);
+  if (remainingBytes < 0) {
+    throw new Error("Update run recovery receipts exceed the origin byte limit");
+  }
+  // Merging removes the diagnostic braces and needs a comma only when receipts exist.
+  const diagnosticBudget = remainingBytes + 2 - (retained === "{}" ? 0 : 1);
+  const minimumDiagnostics = JSON.stringify(mapJsonText(diagnostics, () => ""));
+  if (Buffer.byteLength(minimumDiagnostics) > diagnosticBudget) {
+    return retained;
+  }
+  const boundedDiagnostics = boundedJson(diagnostics, diagnosticBudget);
+  return `{${[retained.slice(1, -1), boundedDiagnostics.slice(1, -1)].filter(Boolean).join(",")}}`;
 }
 
 export function encodeRun(input: UpdateRunRecord, options: UpdateRunLedgerOptions): UpdateRuns {
@@ -141,8 +141,14 @@ export function encodeRun(input: UpdateRunRecord, options: UpdateRunLedgerOption
         ]
       : [];
   });
-  // Process identities are exact observations, never redacted diagnostic strings.
-  const { driver, previousDrivers, ...originDiagnostics } = input.origin;
+  // Recovery receipts and process identities must remain exact, not diagnostic excerpts.
+  const {
+    driver,
+    previousDrivers,
+    updateRecoveryCapture,
+    unprotectedGatewayUpdate,
+    ...originDiagnostics
+  } = input.origin;
   const record = UpdateRunRecordSchema.parse(
     mapJsonText(
       {
@@ -168,6 +174,8 @@ export function encodeRun(input: UpdateRunRecord, options: UpdateRunLedgerOption
     ...record.origin,
     driver,
     previousDrivers,
+    updateRecoveryCapture,
+    unprotectedGatewayUpdate,
   });
   return {
     run_id: record.runId,

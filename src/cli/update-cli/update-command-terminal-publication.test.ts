@@ -66,3 +66,59 @@ it("refreshes rollback and downtime after notification without reevaluating outa
     undefined,
   );
 });
+
+it.each([
+  undefined,
+  { serviceRestartSafe: false, reason: "state-migration-started" },
+  {
+    serviceRestartSafe: true,
+    packageRollbackVerified: true,
+    version: "2026.9.3",
+    service: "healthy",
+  },
+] satisfies Array<UpdateRunResult["recovery"]>)(
+  "publishes unsafe recovery after failed settlement despite prior recovery %j",
+  async (recovery) => {
+    const pending: UpdateRunResult = { ...result, status: "error", recovery };
+    terminal.settle.mockResolvedValueOnce({ result: pending, settlementFailed: true });
+    const notify = vi.fn(async () => undefined);
+    const published = await publishSettledUpdateCommandResult(params, {
+      pendingResult: pending,
+      readReportingState: () => ({ notify, rolledBack: true, completedDowntimeMs: 40 }),
+    });
+    expect(published.recovery).toEqual({
+      serviceRestartSafe: false,
+      reason: "runtime-verification-failed",
+    });
+    expect(notify).toHaveBeenCalledWith(published);
+    expect(terminal.publish).toHaveBeenCalledWith(
+      params,
+      published,
+      { rolledBack: false, downtimeMs: undefined, captured: undefined },
+      undefined,
+    );
+    expect(pending.recovery).toEqual(recovery);
+  },
+);
+
+it("preserves verified recovery after successful settlement", async () => {
+  const recovery: UpdateRunResult["recovery"] = {
+    serviceRestartSafe: true,
+    packageRollbackVerified: true,
+    version: "2026.9.3",
+    service: "healthy",
+  };
+  const pending: UpdateRunResult = { ...result, status: "error", recovery };
+  terminal.settle.mockResolvedValueOnce({ result: pending, settlementFailed: false });
+  const published = await publishSettledUpdateCommandResult(params, {
+    pendingResult: pending,
+    readReportingState: () => ({ rolledBack: true, completedDowntimeMs: 40 }),
+  });
+  expect(published.recovery).toEqual(recovery);
+  expect(terminal.publish).toHaveBeenCalledWith(
+    params,
+    published,
+    { rolledBack: true, downtimeMs: 40, captured: undefined },
+    undefined,
+  );
+});

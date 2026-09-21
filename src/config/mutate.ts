@@ -66,6 +66,7 @@ import {
   rollbackJsonFileWriteIfUnchanged,
   writeRootBoundJsonFile,
 } from "./mutate.include-io.js";
+import { mergeConfigMutationWriteOptions } from "./mutate.write-options.js";
 import { ConfigMutationConflictError } from "./mutation-conflict.js";
 import type { ConfigMutationBase } from "./mutation-types.js";
 import { resolveConfigPath } from "./paths.js";
@@ -95,11 +96,13 @@ import {
 import type { ConfigFileSnapshot, OpenClawConfig } from "./types.js";
 import { validateConfigObjectWithPlugins } from "./validation.js";
 import { createConfigWriteAuthorityGuard } from "./write-authority.js";
+import { getConfigFileWriteCapture, recordConfigFileWrite } from "./write-capture.js";
 import {
   captureConfigWriteLockGuard,
   markActiveConfigMutationPath,
   withConfigWriteLock,
 } from "./write-lock.js";
+// Applies scoped config mutations while preserving IO and observer state.
 
 const DEFAULT_CONFIG_MUTATION_RETRY_ATTEMPTS = 5;
 
@@ -274,26 +277,6 @@ async function readConfigSnapshotForMutation(params: {
     return await io.readConfigFileSnapshotForWrite();
   }
   return await readConfigFileSnapshotForWrite(options);
-}
-
-function mergeConfigMutationWriteOptions(
-  prepared: ConfigWriteOptions,
-  caller?: ConfigWriteOptions,
-): ConfigWriteOptions {
-  const merged = copyRuntimeConfigWriteApplication(caller, { ...prepared, ...caller });
-  const capturedGuard = prepared.assertConfigPathForWrite;
-  const callerGuard = caller?.assertConfigPathForWrite;
-  // Caller authority narrows the captured destination; it must never replace
-  // that ownership check through retries and post-write validation.
-  if (capturedGuard && callerGuard && capturedGuard !== callerGuard) {
-    merged.assertConfigPathForWrite = () => {
-      capturedGuard();
-      callerGuard();
-    };
-  } else if (capturedGuard) {
-    merged.assertConfigPathForWrite = capturedGuard;
-  }
-  return merged;
 }
 
 function createConfigMutationOwnership(
@@ -739,6 +722,13 @@ async function tryWriteIncludeOwnedConfigMutation(params: {
           !hadRuntimeSnapshot &&
           !getRuntimeConfigSnapshotRefreshHandler()
         ) {
+          if (getConfigFileWriteCapture()) {
+            recordConfigFileWrite(
+              includeTarget.absolutePath,
+              previousIncludeRaw === null ? null : hashConfigRaw(previousIncludeRaw),
+              hashConfigRaw(committedIncludeRaw),
+            );
+          }
           return {
             persistedHash: null,
             persistedConfig: runtimeConfigToWrite,
@@ -824,6 +814,13 @@ async function tryWriteIncludeOwnedConfigMutation(params: {
             new Error(`runtime snapshot refresh failed: ${detail}`, { cause }),
         });
         assertPostCommitCurrent();
+        if (getConfigFileWriteCapture()) {
+          recordConfigFileWrite(
+            includeTarget.absolutePath,
+            previousIncludeRaw === null ? null : hashConfigRaw(previousIncludeRaw),
+            hashConfigRaw(committedIncludeRaw),
+          );
+        }
         return {
           persistedHash,
           persistedConfig: refreshedSnapshot.sourceConfig,

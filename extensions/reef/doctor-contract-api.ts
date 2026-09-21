@@ -47,7 +47,6 @@ import {
   resolveReefTrustStoreKey,
 } from "./src/trust-store.js";
 import type { ReefKeys } from "./src/types.js";
-
 const RETIRED_REEF_CONFIG_KEYS = ["friends", "dmPolicy", "allowFrom"] as const;
 const REEF_CONFIG_IMPORT_NAMESPACE = "peer-state-config-imports";
 const LegacyReefFriendSchema = ReefPeerTrustSchema.omit({ approvedAt: true });
@@ -152,6 +151,11 @@ export const stateMigrations: PluginDoctorStateMigration[] = [
   {
     id: "reef-keys-json-to-plugin-state",
     label: "Reef identity keys",
+    collectBackupResources(params) {
+      // Archive collision suffixes are allocated during migration. Capture the owned
+      // directory so rollback restores prior archives and removes newly created ones.
+      return [{ path: resolveLegacyReefStateDir(params), kind: "directory" }];
+    },
     async detectLegacyState(params) {
       const stateDir = resolveLegacyReefStateDir(params);
       const filePath = path.join(stateDir, "keys.json");
@@ -305,6 +309,9 @@ export const stateMigrations: PluginDoctorStateMigration[] = [
   {
     id: "reef-registration-json-to-plugin-state",
     label: "Reef registration state",
+    collectBackupResources(params) {
+      return [{ path: resolveLegacyReefStateDir(params), kind: "directory" }];
+    },
     async detectLegacyState(params) {
       const stateDir = resolveLegacyReefStateDir(params);
       const migrationStore = params.context.openPluginStateKeyedStore<ReefIdentityMigrationRecord>({
@@ -489,6 +496,7 @@ export const stateMigrations: PluginDoctorStateMigration[] = [
   {
     id: "reef-config-trust-to-plugin-state",
     label: "Reef peer trust",
+    collectBackupResources: () => [],
     async detectLegacyState({ config, context }) {
       const legacy = inspectLegacyReefFriends(config);
       const markerStore = context.openPluginStateKeyedStore<ReefConfigImportMarker>({

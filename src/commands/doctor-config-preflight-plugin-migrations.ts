@@ -189,6 +189,7 @@ export function createDoctorPluginMigrationPreparation(params: {
 
   return {
     deferred: () => deferred,
+    expectedPending: () => structuredClone(expectedPending),
     hasPending: () => previousById.size > 0,
     prepare,
     snapshotOptions: async () => {

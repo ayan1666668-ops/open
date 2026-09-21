@@ -35,6 +35,7 @@ vi.mock("../../process/exec.js", async (importOriginal) => ({
     code: 0,
     signal: null,
     killed: false,
+    cleanup: "normal",
     termination: "exit",
   }),
 }));
@@ -198,6 +199,8 @@ describe("unproved Doctor authority callers", () => {
       vi.spyOn(os, "tmpdir").mockReturnValue(state.path("phase-artifacts"));
       let restored = false;
       const maintenance = vi.spyOn(doctorMaintenance, "beginDoctorMaintenance").mockResolvedValue({
+        assertCurrent: () => {},
+        closeStores: async () => {},
         run: (operation) => operation(),
         releaseState: async () => {},
         release: async () => {},
