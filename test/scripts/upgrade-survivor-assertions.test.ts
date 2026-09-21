@@ -1845,6 +1845,44 @@ process.stdout.write(sessionDir + "\\n");
     ).toThrow(/gateway auth mode/);
   });
 
+  it.each([
+    ["anthropic", "anthropic-messages", "https://api.anthropic.com", "ANTHROPIC_API_KEY"],
+    [
+      "google",
+      "google-generative-ai",
+      "https://generativelanguage.googleapis.com/v1beta",
+      "GEMINI_API_KEY",
+    ],
+  ])(
+    "requires the configured %s provider and its env credential to survive",
+    (provider, api, baseUrl, keyEnv) => {
+      const config = {
+        models: {
+          providers: {
+            [provider]: {
+              api,
+              baseUrl,
+              apiKey: { source: "env", provider: "default", id: keyEnv },
+              models: [],
+            },
+          },
+        },
+      };
+      const acceptedIntents = [`models-${provider}`];
+      expect(() => assertConfig({ acceptedIntents, config, scenario: "base" })).not.toThrow();
+      expect(() => assertConfig({ acceptedIntents, config: {}, scenario: "base" })).toThrow(
+        `${provider} model provider missing`,
+      );
+      config.models.providers[provider]!.apiKey.id = "WRONG_API_KEY";
+      expect(() => assertConfig({ acceptedIntents, config, scenario: "base" })).toThrow(
+        `${provider} model provider env credential reference changed`,
+      );
+      expect(() =>
+        assertConfig({ acceptedIntents: [], config: {}, scenario: "base" }),
+      ).not.toThrow();
+    },
+  );
+
   it("allows token rotation and requires each reconnect to use the newest stored token", () => {
     const root = mkdtempSync(join(tmpdir(), "openclaw-mobile-pairing-evidence-"));
     const phases = ["baseline", "candidate-first", "candidate-restart", "final"];

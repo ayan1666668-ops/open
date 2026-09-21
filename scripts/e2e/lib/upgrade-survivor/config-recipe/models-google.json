@@ -1,0 +1,10 @@
+{
+  "api": "google-generative-ai",
+  "apiKey": {
+    "source": "env",
+    "provider": "default",
+    "id": "GEMINI_API_KEY"
+  },
+  "baseUrl": "https://generativelanguage.googleapis.com/v1beta",
+  "models": []
+}
