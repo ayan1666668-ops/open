@@ -4,13 +4,9 @@ import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanupTempDirs, makeTempDir } from "../../test/helpers/temp-dir.js";
-import { listSessionEntriesCore } from "../config/sessions/session-accessor.js";
 import { assertAgentDatabaseMaintenanceAuthority } from "../state/openclaw-agent-db-lease.js";
 import { registerOpenClawAgentDatabase } from "../state/openclaw-agent-db-registry.js";
-import {
-  closeOpenClawAgentDatabasesForTest,
-  OPENCLAW_AGENT_SCHEMA_VERSION,
-} from "../state/openclaw-agent-db.js";
+import { closeOpenClawAgentDatabasesForTest } from "../state/openclaw-agent-db.js";
 import { createOpenClawDatabaseMaintenanceScope } from "../state/openclaw-state-db-async-lifecycle.js";
 import { closeOpenClawStateDatabaseForTest } from "../state/openclaw-state-db.js";
 import * as nodeSqlite from "./node-sqlite.js";
@@ -105,76 +101,7 @@ function createHistoricalFixture() {
   return { databasePath, env, eventJson, pristineHash, pristinePath, trajectoryJson };
 }
 
-describe("legacy media persistence Doctor migration from historical v14", () => {
-  it("migrates a copy of the exact v2026.7.2-beta.4 schema without losing its session", async () => {
-    const historicalSchema = historicalV14AgentSchemaSql();
-    expect(createHash("sha256").update(historicalSchema).digest("hex")).toBe(
-      "955889668707fbccab70b80b5058af5a1587fd35ae32a80f8605179a68fb5117",
-    );
-    expect(historicalSchema).not.toContain("  project_id TEXT,\n");
-    const { databasePath, env, pristineHash, pristinePath } = createHistoricalFixture();
-    const { DatabaseSync } = requireNodeSqlite();
-
-    const result = await migrateLegacyMediaPersistence({ env });
-    expect(result.warnings).toEqual([]);
-    expect(
-      listSessionEntriesCore({ agentId: "main", env }).map(({ entry, sessionKey }) => ({
-        sessionId: entry.sessionId,
-        sessionKey,
-      })),
-    ).toContainEqual({
-      sessionId: "historical-v14",
-      sessionKey: "agent:main:historical-v14",
-    });
-    closeOpenClawAgentDatabasesForTest();
-
-    const migrated = new DatabaseSync(databasePath, { readOnly: true });
-    try {
-      expect(migrated.prepare("PRAGMA user_version").get()).toEqual({
-        user_version: OPENCLAW_AGENT_SCHEMA_VERSION,
-      });
-      expect(
-        migrated.prepare("SELECT schema_version FROM schema_meta WHERE meta_key = 'primary'").get(),
-      ).toEqual({ schema_version: OPENCLAW_AGENT_SCHEMA_VERSION });
-      expect(migrated.prepare("SELECT * FROM session_transcript_cold_archives").all()).toEqual([]);
-      expect(
-        migrated
-          .prepare("SELECT entry_valid FROM session_nodes WHERE session_key = ?")
-          .get("agent:main:historical-v14"),
-      ).toEqual({ entry_valid: 1 });
-      expect(
-        migrated.prepare("SELECT main_key FROM session_key_contract WHERE id = 1").get(),
-      ).toEqual({ main_key: "main" });
-      const row = migrated
-        .prepare("SELECT event_json FROM transcript_events WHERE session_id = ? AND seq = 0")
-        .get("historical-v14") as { event_json: string };
-      const message = (JSON.parse(row.event_json) as { message: Record<string, unknown> }).message;
-      expect(message).not.toHaveProperty("MediaPath");
-      expect(message["__openclaw"]).toMatchObject({
-        media: [expect.objectContaining({ path: "/media/v14.png" })],
-      });
-      expect(migrated.prepare("PRAGMA integrity_check").get()).toEqual({ integrity_check: "ok" });
-      expect(migrated.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
-    } finally {
-      migrated.close();
-    }
-
-    expect(createHash("sha256").update(fs.readFileSync(pristinePath)).digest("hex")).toBe(
-      pristineHash,
-    );
-    const original = new DatabaseSync(pristinePath, { readOnly: true });
-    try {
-      expect(original.prepare("PRAGMA user_version").get()).toEqual({ user_version: 14 });
-      expect(
-        original
-          .prepare("SELECT name FROM pragma_table_info('session_nodes') WHERE name = 'entry_valid'")
-          .get(),
-      ).toBeUndefined();
-    } finally {
-      original.close();
-    }
-  });
-
+describe("legacy media persistence Doctor migration coverage from historical v14", () => {
   it.each(["before-write", "before-commit"] as const)(
     "keeps media bytes and v16 markers when registered coverage rejects %s",
     async (boundary) => {

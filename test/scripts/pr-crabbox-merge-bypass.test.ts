@@ -379,7 +379,7 @@ const endpoint = args.find(arg => /^(?:repos\\/|orgs\\/|user$|graphql$)/u.test(a
 if (args[0] === "api" && args.includes("repos/openclaw/openclaw") &&
     JSON.stringify(args) !== JSON.stringify(["api", "--hostname", "github.com", "repos/openclaw/openclaw", "-H", "Cache-Control: max-age=0"])) fail("unexpected repository authority request");
 if (endpoint && endpoint === process.env.FAKE_DENIED) fail("protected refusal");
-if (args[0] === "browse" && args[1] === "--no-browser") out(repo.url);
+if (args[0] === "browse") out(repo.url);
 else if (args[0] === "pr" && args[1] === "checks" && args.includes("--required")) {
   // gh v2.98.0 checks.go exports JSON before applying its human-output exit codes.
   out(value.requiredChecks);
@@ -413,7 +413,7 @@ else if (endpoint === "graphql" && args.some(arg => arg.includes("repository(own
     apiOut({id:repo.id,node_id:repoNodeId,full_name:repo.nameWithOwner,html_url:repo.url});
   }
   else if (endpoint === prefix + "pulls/131091") apiOut({...value.pullRequest,html_url:pr.url,
-    base:{...value.pullRequest.base,repo:{id:repo.id,...value.pullRequest.base.repo}},
+    base:{...value.pullRequest.base,repo:{id:repo.id,node_id:repoNodeId,html_url:repo.url,...value.pullRequest.base.repo}},
     head:{...value.pullRequest.head,ref:pr.headRefName,repo:{id:repo.id,name:"openclaw",html_url:repo.url,owner:{login:"openclaw"},...value.pullRequest.head.repo}}});
   else if (endpoint === prefix + "commits?sha=" + value.headSha + "&per_page=1") out([{sha:value.headSha,commit:{author:{name:"Fixture Contributor",email:"fixture@example.com"}},author:{login:"fixture-contributor",type:"User"}}]);
   else if (endpoint === prefix + "issues/131091/comments?per_page=100") out(reviewComments);

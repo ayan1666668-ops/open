@@ -7,10 +7,10 @@ import { runSessionStartupMigration } from "../config/sessions/startup-migration
 import { requireNodeSqlite } from "../infra/node-sqlite.js";
 import { migrateHistoricalTranscriptDirectives } from "../infra/state-migrations.transcript-directives.js";
 import { flushLogger, resetLogger, setLoggerOverride } from "../logging/logger.js";
+import { OPENCLAW_AGENT_SCHEMA_VERSION } from "./openclaw-agent-db-contract.js";
 import {
   closeOpenClawAgentDatabasesAsync,
   closeOpenClawAgentDatabasesForTest,
-  OPENCLAW_AGENT_SCHEMA_VERSION,
   openOpenClawAgentDatabase,
 } from "./openclaw-agent-db.js";
 import { assertOpenClawDatabasesReady } from "./openclaw-database-preflight.js";

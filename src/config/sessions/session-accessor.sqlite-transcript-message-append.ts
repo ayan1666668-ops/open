@@ -33,11 +33,11 @@ import {
 import {
   appendTranscriptEventInTransaction,
   ensureTranscriptHeader,
-  readMessageIdempotencyKey,
   readTranscriptMessageByEventId,
   readTranscriptMessageByScopedIdempotencyKey,
   redactTranscriptMessageForStorage,
 } from "./session-accessor.sqlite-transcript-store.js";
+import { readMessageIdempotencyKey } from "./transcript-message-identity.js";
 import {
   prepareTranscriptPayloadForReuse,
   type PreparedTranscriptPayload,

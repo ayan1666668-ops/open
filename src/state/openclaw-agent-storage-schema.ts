@@ -1,6 +1,8 @@
 import { extractSqliteTableSchema } from "../infra/sqlite-schema-sql.js";
+import { TRANSCRIPT_FTS_ROW_SCHEMA_VERSION } from "./openclaw-agent-db-contract.js";
+import { withDeployedTranscriptFtsRowSchema } from "./openclaw-agent-transcript-fts-schema.js";
 
-// These schema-21 definitions remain migration input until the schema-22
+// These schema-21 definitions remain migration input until the schema-23
 // converters finish. Earlier structural/media migrations still write TEXT.
 const LEGACY_STORAGE_TABLES = {
   transcript_events: `CREATE TABLE IF NOT EXISTS transcript_events (
@@ -35,8 +37,8 @@ const LEGACY_STORAGE_TABLES = {
 ) STRICT;`,
 };
 
-/** Preserve historical storage contracts before the admitted schema-22 cutover. */
-export function withLegacyAgentStorageSchema(schema: string): string {
+/** Preserve historical storage contracts before the admitted schema-23 cutover. */
+export function withLegacyAgentStorageSchema(schema: string, version = 21): string {
   let historicalSchema = schema;
   for (const [table, legacySchema] of Object.entries(LEGACY_STORAGE_TABLES)) {
     historicalSchema = historicalSchema.replace(
@@ -53,5 +55,7 @@ export function withLegacyAgentStorageSchema(schema: string): string {
       "",
     );
   }
-  return historicalSchema;
+  return version === TRANSCRIPT_FTS_ROW_SCHEMA_VERSION
+    ? withDeployedTranscriptFtsRowSchema(historicalSchema)
+    : historicalSchema;
 }

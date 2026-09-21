@@ -23,7 +23,6 @@ const migrationLabels = {
 const logNames = [
   "baseline-install.log",
   "baseline-companion.json",
-  "candidate-cohort.json",
   "install.log",
   "update.json",
   "update.err",
@@ -1679,7 +1678,6 @@ function publishedSuccessSummary(artifactRoot, sanitize) {
         "update.json",
         "repair.json",
         "recovery-update.json",
-        ...(snapshot.scenario === "legacy-operator-state" ? ["candidate-cohort.json"] : []),
         ...(snapshot.scenario === "workshop-doctor-recovery"
           ? ["workshop-doctor-recovery.json", "baseline-doctor.log", "doctor.log"]
           : []),

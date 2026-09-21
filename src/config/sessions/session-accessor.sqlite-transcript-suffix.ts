@@ -20,7 +20,6 @@ import {
 import {
   canonicalizeTranscriptEventMedia,
   insertTranscriptRowsWithoutProjectionInTransaction,
-  readMessageIdempotencyKey,
   scheduleTranscriptProjectionReconcile,
 } from "./session-accessor.sqlite-transcript-store.js";
 import {
@@ -43,6 +42,7 @@ import {
   prepareFullTranscriptSuffixMutation,
   prepareTranscriptIndexProjection,
 } from "./session-transcript-suffix-projection.js";
+import { readMessageIdempotencyKey } from "./transcript-message-identity.js";
 import { transcriptEventJsonSql, transcriptEventNavigationSql } from "./transcript-payload.js";
 import {
   isSessionTranscriptLeafControl,

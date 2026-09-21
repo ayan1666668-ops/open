@@ -56,6 +56,7 @@ import {
   runSqliteImmediateTransactionSync,
 } from "./sqlite-transaction.js";
 import { readSqliteUserVersion } from "./sqlite-user-version.js";
+import { createSqliteWalReclamationResult } from "./sqlite-wal-reclamation.js";
 import { recoverMisplacedAgentDatabaseCopies } from "./state-migrations.agent-owner-recovery.js";
 import {
   mediaSourceDriftMessage,
@@ -99,7 +100,11 @@ function createMigrationDatabaseHandle(
     agentId,
     db: database,
     path: pathname,
-    walMaintenance: { checkpoint: () => false, close: () => false },
+    walMaintenance: {
+      checkpoint: () => false,
+      close: () => false,
+      reclaimFreePages: createSqliteWalReclamationResult,
+    },
   };
 }
 

@@ -85,7 +85,7 @@ function seedTranscriptState(storePath: string): void {
         `INSERT INTO session_transcript_index_state (
            session_id, indexed_seq, needs_rebuild, active_event_count,
            active_message_count, updated_at
-         ) VALUES (?, ?, 0, ?, ?, ?)`,
+          ) VALUES (?, ?, 0, ?, ?, ?)`,
       )
       .run(SESSION_ID, ROWS - 1, ROWS, ROWS, now);
     database.db

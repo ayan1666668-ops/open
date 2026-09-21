@@ -1,4 +1,5 @@
 // Memory Core tests cover index plugin behavior.
+import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -42,7 +43,6 @@ describe("memory index", () => {
     getFtsSessionManager,
     getPersistentManager,
     seedSessionTranscript: seedMemoryIndexSessionTranscript,
-    trackManager,
   } = fixture;
 
   it("rebuilds a missing vector table through forced sync with cached readiness", async () => {
@@ -50,7 +50,6 @@ describe("memory index", () => {
       vectorEnabled: true,
     });
     const manager = await getFreshManager(cfg);
-    trackManager(manager);
     await manager.sync({ reason: "test", force: true });
     const db = Reflect.get(manager, "db") as DatabaseSync;
     expect(db.prepare("SELECT COUNT(*) AS count FROM memory_index_chunks_vec").get()).toEqual({
@@ -767,8 +766,8 @@ describe("memory index", () => {
       await statusManager.close?.();
       statusManager = undefined;
 
-      expect(await fs.readFile(agentPath)).toEqual(databaseBefore);
-      expect(await fs.readFile(`${agentPath}-wal`)).toEqual(walBefore);
+      assert.deepStrictEqual(await fs.readFile(agentPath), databaseBefore);
+      assert.deepStrictEqual(await fs.readFile(`${agentPath}-wal`), walBefore);
     } finally {
       await statusManager?.close?.();
       writer.close();
@@ -2547,7 +2546,6 @@ describe("memory index", () => {
     });
 
     const manager = await getFreshManager(cfg, "status", true);
-    trackManager(manager);
 
     const result = manager.status();
     expect(result.dirty).toBe(true);
@@ -2592,7 +2590,6 @@ describe("memory index", () => {
     });
 
     const initial = await getFreshManager(cfg, "cli");
-    trackManager(initial);
     await initial.sync({ reason: "cli", force: true });
     await expect(
       initial.search("ORBIT-DELETE-91", { minScore: 0, sources: ["sessions"] }),
@@ -2614,12 +2611,10 @@ describe("memory index", () => {
     ).resolves.toBe(true);
 
     const statusManager = await getFreshManager(cfg, "status", true);
-    trackManager(statusManager);
     expect(statusManager.status().dirty).toBe(true);
     await statusManager.close?.();
 
     const repairManager = await getFreshManager(cfg, "cli");
-    trackManager(repairManager);
     await repairManager.sync({ reason: "cli" });
     expect(providerFixture.embedBatchCalls).toBe(0);
     const deletedResults = await repairManager.search("ORBIT-DELETE-91", {

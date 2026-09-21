@@ -34,6 +34,7 @@ import {
   AGENT_STORAGE_SCHEMA_VERSION,
   CANONICAL_SESSION_VALIDATION_SCHEMA_VERSION,
   OPENCLAW_AGENT_SCHEMA_VERSION,
+  TRANSCRIPT_FTS_ROW_SCHEMA_VERSION,
   type OpenClawAgentDatabaseOptions,
 } from "./openclaw-agent-db-contract.js";
 import * as maintenanceAuthority from "./openclaw-agent-db-lease.js";
@@ -45,6 +46,7 @@ import { persistAgentSchemaMetadata } from "./openclaw-agent-db-metadata-write.j
 import { ensureOpenClawAgentDatabasePermissions } from "./openclaw-agent-db-permissions.js";
 import { registerOpenClawAgentDatabase } from "./openclaw-agent-db-registry.js";
 import {
+  getOpenClawAgentMigrationSchema,
   assertExistingAgentSchemaOwner,
   assertOpenClawAgentCurrentRuntimeSchema,
   assertSupportedAgentSchemaVersion,
@@ -76,6 +78,7 @@ import {
 } from "./openclaw-agent-participants-migration.js";
 import { OPENCLAW_AGENT_SCHEMA_SQL } from "./openclaw-agent-schema.js";
 import { withLegacyAgentStorageSchema } from "./openclaw-agent-storage-schema.js";
+import { migrateDeployedTranscriptFtsRowsInTransaction } from "./openclaw-agent-transcript-fts-schema.js";
 import { migrateTranscriptPayloadStorageInTransaction } from "./openclaw-agent-transcript-payload-migration.js";
 import {
   canReuseOpenClawAgentIntegrityVerification,
@@ -191,9 +194,20 @@ function seedCanonicalSessionValidationPending(db: DatabaseSync): void {
   `);
 }
 
-function migrateAgentStorageInTransaction(db: DatabaseSync, schemaSql: string): void {
-  if (db.prepare("SELECT 1 FROM sqlite_schema WHERE name = ?").get("session_transcript_fts_rows")) {
-    throw new Error("Transcript FTS row map already exists before the schema-22 migration.");
+function migrateAgentStorageInTransaction(
+  db: DatabaseSync,
+  schemaSql: string,
+  previousVersion: number,
+): void {
+  maintenanceAuthority.renewAgentDatabaseMaintenanceAuthorityIfPresent();
+  if (previousVersion === TRANSCRIPT_FTS_ROW_SCHEMA_VERSION) {
+    migrateDeployedTranscriptFtsRowsInTransaction(db, schemaSql);
+  } else if (
+    db.prepare("SELECT 1 FROM sqlite_schema WHERE name = ?").get("session_transcript_fts_rows")
+  ) {
+    throw new Error(
+      "Transcript FTS row map already exists before the schema-23 storage migration.",
+    );
   }
   maintenanceAuthority.renewAgentDatabaseMaintenanceAuthorityIfPresent();
   migrateTranscriptPayloadStorageInTransaction(db);
@@ -209,10 +223,12 @@ function migrateAgentStorageInTransaction(db: DatabaseSync, schemaSql: string): 
   maintenanceAuthority.renewAgentDatabaseMaintenanceAuthorityIfPresent();
   db.exec(schemaSql);
   // Keep native 64-bit rowids, duplicate message IDs and FTS tie ordering intact.
-  db.exec(`
+  if (previousVersion !== TRANSCRIPT_FTS_ROW_SCHEMA_VERSION) {
+    db.exec(`
     INSERT INTO session_transcript_fts_rows (id, session_id, message_id)
     SELECT rowid, session_id, message_id FROM session_transcript_fts;
   `);
+  }
 }
 
 function finishAgentSchemaMigration(
@@ -242,16 +258,7 @@ function ensureAgentSchema(
   pathname: string,
   targetVersion = OPENCLAW_AGENT_SCHEMA_VERSION,
 ): void {
-  const storageSchemaSql =
-    targetVersion < AGENT_STORAGE_SCHEMA_VERSION
-      ? withLegacyAgentStorageSchema(OPENCLAW_AGENT_SCHEMA_SQL)
-      : OPENCLAW_AGENT_SCHEMA_SQL;
-  const schemaSql =
-    targetVersion < 18
-      ? withLegacySessionParticipantsSchema(storageSchemaSql)
-      : targetVersion < CANONICAL_SESSION_VALIDATION_SCHEMA_VERSION
-        ? withoutCanonicalSessionValidationSchema(storageSchemaSql)
-        : storageSchemaSql;
+  const schemaSql = getOpenClawAgentMigrationSchema(targetVersion);
   const originalVersion = readSqliteUserVersion(db);
   const schemaMigration =
     originalVersion < targetVersion &&
@@ -304,7 +311,7 @@ function ensureAgentSchema(
         previousVersion < AGENT_STORAGE_SCHEMA_VERSION &&
         targetVersion >= AGENT_STORAGE_SCHEMA_VERSION;
       const migrationSchemaSql = requiresStorageMigration
-        ? withLegacyAgentStorageSchema(schemaSql)
+        ? withLegacyAgentStorageSchema(schemaSql, previousVersion)
         : schemaSql;
       if (
         previousVersion < targetVersion &&
@@ -340,7 +347,7 @@ function ensureAgentSchema(
           seedCanonicalSessionValidationPending(db);
         }
         if (requiresStorageMigration) {
-          migrateAgentStorageInTransaction(db, schemaSql);
+          migrateAgentStorageInTransaction(db, schemaSql, previousVersion);
         }
         finishAgentSchemaMigration(
           db,
@@ -433,7 +440,7 @@ function ensureAgentSchema(
         seedCanonicalSessionValidationPending(db);
       }
       if (requiresStorageMigration) {
-        migrateAgentStorageInTransaction(db, schemaSql);
+        migrateAgentStorageInTransaction(db, schemaSql, previousVersion);
       }
       finishAgentSchemaMigration(
         db,

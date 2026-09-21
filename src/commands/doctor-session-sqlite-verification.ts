@@ -32,7 +32,8 @@ import { assertDoctorSqliteMaintenancePathsNotAliased } from "./doctor-sqlite-ma
 function verifyTranscriptEvents(
   database: DatabaseSync,
   source: { path: string; sessionId: string; originalPath: string },
-): { events: number } | undefined {
+  allowMissingSuffix = false,
+): { events: number; missingEvents: number } | undefined {
   return withSqliteSessionImportStage((stage) => {
     let seq = 0;
     const validate = createTranscriptEventReader(
@@ -59,6 +60,13 @@ function verifyTranscriptEvents(
           .where("session_id", "=", source.sessionId)
           .orderBy("seq", "asc"),
       )) {
+        if (allowMissingSuffix) {
+          stage.addSeen(event.event_json);
+          const entry: unknown = JSON.parse(event.event_json);
+          if (isRecord(entry) && typeof entry.id === "string") {
+            stage.addSeen(`id\0${entry.id}`);
+          }
+        }
         if (expected.done) {
           break;
         }
@@ -70,8 +78,23 @@ function verifyTranscriptEvents(
           }
         }
       }
+      let missingEvents = 0;
+      if (allowMissingSuffix) {
+        while (!expected.done) {
+          const entry: unknown = JSON.parse(expected.value.eventJson);
+          // Append-only import cannot insert a missing middle row or replace an existing ID.
+          if (
+            stage.contains(expected.value.eventJson) ||
+            (isRecord(entry) && typeof entry.id === "string" && stage.contains(`id\0${entry.id}`))
+          ) {
+            return undefined;
+          }
+          missingEvents += 1;
+          expected = sourceRows.next();
+        }
+      }
       validate();
-      return expected.done ? { events: seq } : undefined;
+      return expected.done ? { events: seq, missingEvents } : undefined;
     } finally {
       sourceRows.return?.();
     }
@@ -83,21 +106,25 @@ export function verifyCanonicalSessionTranscriptSources(params: {
   target: { agentId: string; sqlitePath: string };
   sources: readonly { path: string; sessionId: string; originalPath?: string }[];
   env: NodeJS.ProcessEnv;
-}): { entries: number; events: number } | undefined {
+  allowMissingSuffix?: boolean;
+}): { entries: number; events: number; missingEvents: number } | undefined {
   const verified = withOpenClawAgentDatabaseReadOnly(
     (database) => {
       let events = 0;
+      let missingEvents = 0;
       for (const source of params.sources) {
-        const verifiedSource = verifyTranscriptEvents(database.db, {
-          ...source,
-          originalPath: source.originalPath ?? source.path,
-        });
+        const verifiedSource = verifyTranscriptEvents(
+          database.db,
+          { ...source, originalPath: source.originalPath ?? source.path },
+          params.allowMissingSuffix,
+        );
         if (!verifiedSource) {
           return undefined;
         }
         events += verifiedSource.events;
+        missingEvents += verifiedSource.missingEvents;
       }
-      return { entries: params.sources.length, events };
+      return { entries: params.sources.length, events, missingEvents };
     },
     { agentId: params.target.agentId, path: params.target.sqlitePath, env: params.env },
   );

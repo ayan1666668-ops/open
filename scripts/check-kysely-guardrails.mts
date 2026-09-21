@@ -66,6 +66,7 @@ const rawSqliteAllowPathGroups = {
     "src/state/openclaw-agent-db.ts",
     // Versioned payload rebuild preserves native bytes and 64-bit physical rowids.
     "src/state/openclaw-agent-transcript-payload-migration.ts",
+    "src/state/openclaw-agent-transcript-fts-schema.ts",
     "src/state/openclaw-state-db-audit-migration.ts",
     "src/state/openclaw-state-db-delivery-queue-backfill.ts",
     "src/state/openclaw-state-db-legacy-backfills.ts",

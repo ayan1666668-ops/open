@@ -119,7 +119,12 @@ code is refused. Rollback uses the verified pre-migration backup and matching
 build, not marker changes or removal of the derived table alone. See
 [incremental canonical-session validation](/reference/database-schemas/agent-schema-history#incremental-canonical-session-validation).
 
-Agent schema 22 changes existing payload representations: transcript events can
+Agent schema 22 introduced exact transcript FTS row ownership with a nullable
+completeness count and lazy backfill. Schema 23 accepts that deployed shape as
+well as schema 21. It rebuilds the ownership map from existing FTS content,
+preserves pending reconciliation, and retires the old completeness counter.
+
+Agent schema 23 changes existing payload representations: transcript events can
 use Zstd BLOBs, memory embeddings use Float64 BLOBs, and memory full-text
 maintenance uses stable integer chunk identities. Older writers cannot preserve
 these contracts, so this requires a bump despite retaining logical event and

@@ -19,6 +19,7 @@ import { resolveOpenClawAgentSqlitePath } from "../../state/openclaw-agent-db.pa
 import type {
   LatestTranscriptAssistantMessage,
   LatestTranscriptAssistantText,
+  SessionTranscriptContextVersion,
   SessionTranscriptReadScope,
   SessionTranscriptEventRow,
   SessionTranscriptStats,
@@ -36,7 +37,6 @@ import { canRebasePreparedAssistantInTransaction } from "./session-accessor.sqli
 import {
   readTranscriptContextVersionInTransaction,
   readTranscriptMutationStateInTransaction,
-  type SessionTranscriptContextVersion,
 } from "./session-accessor.sqlite-transcript-state.js";
 import {
   readTranscriptStatsBatchFromDatabase,
@@ -217,14 +217,21 @@ export function validatePreparedAssistantAppendSync(
 export function loadTranscriptHeaderSync(scope: SessionTranscriptReadScope): unknown {
   const resolved = resolveSqliteTranscriptReadScope(scope);
   const database = openOpenClawAgentDatabase(toDatabaseOptions(resolved));
-  return readHotSessionTranscriptSnapshot(database, resolved.sessionId, "header", () => {
+  return readTranscriptHeaderFromDatabase(database, resolved.sessionId);
+}
+
+export function readTranscriptHeaderFromDatabase(
+  database: Pick<OpenClawAgentDatabase, "agentId" | "db" | "path">,
+  sessionId: string,
+): unknown {
+  return readHotSessionTranscriptSnapshot(database, sessionId, "header", () => {
     const db = getSessionKysely(database.db);
     const row = executeSqliteQueryTakeFirstSync(
       database.db,
       db
         .selectFrom("transcript_events")
         .select(transcriptEventJsonSql(database.db).as("event_json"))
-        .where("session_id", "=", resolved.sessionId)
+        .where("session_id", "=", sessionId)
         .orderBy("seq", "asc")
         .limit(1),
     );

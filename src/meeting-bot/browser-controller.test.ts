@@ -2,6 +2,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { openMeetingWithBrowser, recoverMeetingBrowserTab } from "./browser-controller.js";
 import { isMeetingBrowserTransientNavigationError } from "./browser-navigation-errors.js";
 
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 describe("meeting browser navigation errors", () => {
   it.each([
     "page.evaluate: Execution context was destroyed, most likely because of a navigation.",
@@ -17,10 +21,11 @@ describe("meeting browser navigation errors", () => {
 
 describe("meeting browser join readiness", () => {
   it("retries a platform-owned transient in-call status", async () => {
+    vi.useFakeTimers();
     const adoptionAttempts: boolean[] = [];
     const captionCaptureAttempts: boolean[] = [];
     let evaluationAttempts = 0;
-    const result = await openMeetingWithBrowser({
+    const joining = openMeetingWithBrowser({
       adapter: {
         browserLabel: "Test meeting",
         urls: {
@@ -93,6 +98,8 @@ describe("meeting browser join readiness", () => {
         url: "https://meet.test/meeting",
       },
     });
+    await vi.advanceTimersByTimeAsync(750);
+    const result = await joining;
 
     expect(evaluationAttempts).toBe(2);
     expect(adoptionAttempts).toEqual([true, false]);
@@ -105,16 +112,12 @@ describe("meeting browser join readiness", () => {
 });
 
 describe("meeting browser recovery", () => {
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
   it("retries status inspection when auto-join navigation destroys the page context", async () => {
     vi.useFakeTimers();
     const adoptionAttempts: boolean[] = [];
     let evaluationAttempts = 0;
     const evaluationTimeouts: number[] = [];
-    const pending = recoverMeetingBrowserTab({
+    const recovering = recoverMeetingBrowserTab({
       adapter: {
         browserLabel: "Test meeting",
         urls: {
@@ -182,9 +185,8 @@ describe("meeting browser recovery", () => {
       trackedMeetingUrl: "https://meet.test/meeting",
       trackedTargetId: "target-1",
     });
-
     await vi.advanceTimersByTimeAsync(250);
-    const result = await pending;
+    const result = await recovering;
 
     expect(evaluationAttempts).toBe(2);
     expect(adoptionAttempts).toEqual([true, false]);

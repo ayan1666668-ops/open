@@ -53,7 +53,10 @@ import {
   listSessionEntryRows,
   replaceSessionEntrySync,
 } from "./session-accessor.sqlite-entry.js";
-import { observeSessionMaintenanceChanges } from "./session-accessor.sqlite-maintenance.test-support.js";
+import {
+  observeSessionMaintenanceChanges,
+  observeSessionMaintenanceCompletion,
+} from "./session-accessor.sqlite-maintenance.test-support.js";
 import { forkSessionEntryFromParentTarget } from "./session-accessor.sqlite-parent-session.js";
 import { loadTranscriptEventsSync } from "./session-accessor.sqlite-read.js";
 import { replaceTranscriptEvents } from "./session-accessor.sqlite-transcript-write.js";
@@ -1571,25 +1574,21 @@ describe("sqlite session normalization", () => {
     const notify = vi.fn();
     const unsubscribe = onSessionIdentityMutation(notify);
     onTestFinished(unsubscribe);
+    const maintained = observeSessionMaintenanceCompletion(paths.sqlitePath);
     await patchSessionEntryCore(scopeFor("agent:main:active"), () => ({
       providerOverride: "openai",
     }));
-    let archivedStale: string[] = [];
-    await vi.waitFor(
-      () => {
-        expect(new Set(notify.mock.calls.map(([mutation]) => mutation.previous.sessionId))).toEqual(
-          new Set(["older-session", "stale-session"]),
-        );
-        archivedStale = fs
-          .readdirSync(paths.tempDir)
-          .filter(
-            (file) =>
-              file.startsWith("stale-session.jsonl.deleted.") && isSessionArchiveArtifactName(file),
-          );
-        expect(archivedStale).toHaveLength(1);
-      },
-      { timeout: 5_000 },
+    await maintained;
+    expect(new Set(notify.mock.calls.map(([mutation]) => mutation.previous.sessionId))).toEqual(
+      new Set(["older-session", "stale-session"]),
     );
+    const archivedStale = fs
+      .readdirSync(paths.tempDir)
+      .filter(
+        (file) =>
+          file.startsWith("stale-session.jsonl.deleted.") && isSessionArchiveArtifactName(file),
+      );
+    expect(archivedStale).toHaveLength(1);
     unsubscribe();
     expect(
       listSessionEntryRows({
@@ -1622,6 +1621,7 @@ describe("sqlite session normalization", () => {
         skipMaintenance: true,
       },
     );
+    const capped = observeSessionMaintenanceChanges(paths.sqlitePath, "agent:main:active");
     await patchSessionEntryCore(
       scopeFor("agent:main:newest"),
       () => ({ sessionId: "newest-session", updatedAt: Date.now() + 2 }),
@@ -1631,21 +1631,15 @@ describe("sqlite session normalization", () => {
       },
     );
 
-    await vi.waitFor(
-      () => {
-        expect(
-          listSessionEntryRows({
-            agentId: "main",
-            env,
-            storePath: paths.sqlitePath,
-          }).map((summary) => summary.sessionKey),
-        ).toEqual(["agent:main:active", "agent:main:newer", "agent:main:newest"]);
-        expect(loadSessionEntry(scopeFor("agent:main:active"))?.archivedAt).toEqual(
-          expect.any(Number),
-        );
-      },
-      { timeout: 5_000 },
-    );
+    await capped;
+    expect(
+      listSessionEntryRows({
+        agentId: "main",
+        env,
+        storePath: paths.sqlitePath,
+      }).map((summary) => summary.sessionKey),
+    ).toEqual(["agent:main:active", "agent:main:newer", "agent:main:newest"]);
+    expect(loadSessionEntry(scopeFor("agent:main:active"))?.archivedAt).toEqual(expect.any(Number));
   });
 
   it("commits unrelated channel sessions without invoking stored channel plugin resolvers", async () => {

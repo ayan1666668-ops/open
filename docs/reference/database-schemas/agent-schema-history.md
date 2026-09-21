@@ -29,13 +29,14 @@ title: "Agent schema history"
 | 19      | Source-qualified immutable session creators; historical ambiguity remains unknown                                                                                                                                                                      | Unreleased                                      |
 | 20      | Authoritative cold transcript archives with exact restoration metadata and self-contained backup payloads                                                                                                                                              | Unreleased                                      |
 | 21      | Incremental canonical-session validation with transactional node, window, and main-key invalidation                                                                                                                                                    | Unreleased                                      |
-| 22      | Selective transcript compression, binary memory embeddings, and stable memory full-text index identities                                                                                                                                               | Unreleased                                      |
+| 22      | Exact transcript FTS row ownership for session-local deletion and reconciliation ([#153834](https://github.com/openclaw/openclaw/pull/153834))                                                                                                         | Unreleased                                      |
+| 23      | Selective transcript compression, binary memory embeddings, and stable memory full-text index identities                                                                                                                                               | Unreleased                                      |
 
 Version 3 was an unshipped development step folded into version 4.
 
 ### Compact agent payload storage
 
-Agent schema **22** changes the transcript and memory storage representations.
+Agent schema **23** changes the transcript and memory storage representations.
 The [storage design](https://github.com/openclaw/openclaw/issues/153618) records
 the migration scope and required proof. Shared-state schema remains 17.
 
@@ -65,7 +66,14 @@ Transcript full-text search keeps its existing content and rowids. A derived row
 map indexes session/message ownership so cleanup and reconciliation delete
 selected FTS rowids without scanning the full text table. Duplicate and null
 message IDs remain valid. Migration copies existing rowids without rebuilding
-or retokenizing text.
+or retokenizing text. Both schema 21 and the deployed schema 22 migrate directly
+to schema 23. Schema 22's lazy `(session_id, fts_rowid)` map can be empty or
+incomplete, so the new `(id, session_id, message_id)` map is populated from
+existing FTS content. The migration retires `fts_row_count` after retaining its
+unknown or incomplete state as `needs_rebuild`. Clean mappings remain clean;
+existing rebuild claims, cursors, active-path rows, and canonical-validation
+pending rows are preserved. The unpublished compressed schema-22 draft is not
+a supported predecessor.
 
 The admitted migration converts one transcript record at a time, verifies each
 compressed frame against its original bytes, preserves row identities and
@@ -84,9 +92,40 @@ authority or backup coverage retains the refusal and
 [manual recovery instructions](/install/updating#updating-from-2026.9.2-across-a-schema-bump).
 Interrupted conversion rolls back its transaction. Earlier prerequisite migrations
 can already be committed; keep writers stopped and resume Doctor with the
-compatible build. Older builds refuse schema 22. Rollback requires the
+compatible build. Older builds refuse schema 23. Rollback requires the
 pre-upgrade backup and matching build; lowering markers cannot restore the old
 payload representation.
+
+### Transcript FTS row ownership
+
+Agent schema **22** adds `session_transcript_fts_rows` and the nullable
+`session_transcript_index_state.fts_row_count`. The transcript projection owner
+records every inserted FTS rowid in the same transaction as its FTS row. An index
+on `session_id` makes deletion proportional to the session's indexed rows even
+when different sessions' appends are interleaved. These are derived search facts;
+raw transcript bytes, visibility, retention and synchronous rebuild limits stay
+unchanged.
+
+Migration creates an empty mapping and marks existing index state
+`needs_rebuild = 1`, with `fts_row_count = NULL`. It does not scan or backfill FTS
+content. On the next reconcile, unknown or incomplete ownership takes the legacy
+session-filtered delete during that first rebuild and publishes exact mappings
+with their count. Worker rebuilds retain bounded delete chunks, so a legacy
+projection may need a fallback scan per chunk until that first rebuild finishes.
+Subsequent deletes use exact rowids. Synchronous and worker reconciliation,
+suffix replacement, deletion and cold restoration maintain the same ownership.
+There is no foreign-key cascade on the mapping: deletion needs those rowids even
+after the session window has been removed; the projection owner removes them
+with their FTS rows.
+
+Both schema version markers advance through the existing maintenance owner in
+the same transaction. Stop writers and take a verified WAL-aware backup before
+running the compatible build's `openclaw doctor --fix`. Older builds refuse
+schema 22 because their writes cannot maintain row ownership. Rollback requires
+the pre-migration backup and matching build; lowering version markers is unsafe.
+The existing [older-updater contract](/reference/database-schemas/versioning#schema-bumps-and-older-updaters)
+applies, including private rehearsal and verified backup coverage for supported
+2026.9.2 package updates.
 
 ### Incremental canonical-session validation
 

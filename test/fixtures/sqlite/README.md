@@ -4,7 +4,19 @@
 `v2026.7.2-beta.4`; `openclaw-agent-schema-v15.sql` is the exact DDL from
 commit `509a5f0373764`. Their media-migration tests retain the original SHA-256
 contracts. `openclaw-agent-schema-v21.sql` freezes commit
-`f69617aa3818d805889692918ee7f51bef666597` before the schema-22 storage cutover.
+`f69617aa3818d805889692918ee7f51bef666597` as an independent schema-21 migration input.
+`openclaw-agent-schema-v22.sql` freezes the deployed FTS ownership DDL from
+commit `00caa84ce72c0b4edd584cfa225bd262cd10ba49` ([#153834](https://github.com/openclaw/openclaw/pull/153834)).
+It contains `(session_id, fts_rowid)` ownership and nullable `fts_row_count`,
+not the unpublished compressed schema-22 draft.
+
+Golden source contracts:
+
+- Schema 21: 34,836 bytes; Git blob `3dda3eb4928efc3fb74ff3a37337417cc7d30e74`;
+  SHA-256 `8deb7d7000eab7c43bbee427f2e7a9b603bc549562594088a14eecf7c8cc5926`.
+- Schema 22: 35,110 bytes; Git blob `9c6c775549e92a021ea7f5b43d749718ba1189c7`;
+  SHA-256 `23f2a1e85494a512bce3f32623aed2beaf4e82bbeeb4362f6cc33d5dd3b8a6ea`.
+
 Historical fixtures read these sources without deriving old tables from current DDL.
 
 `openclaw-state-v2026.7.1-2.sqlite.gz` is a deterministic fixture for the

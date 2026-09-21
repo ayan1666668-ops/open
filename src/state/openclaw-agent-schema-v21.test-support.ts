@@ -4,7 +4,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { requireNodeSqlite } from "../infra/node-sqlite.js";
 import { resolveOpenClawAgentSqlitePath } from "./openclaw-agent-db.paths.js";
 
-// Frozen from f69617aa3818d805889692918ee7f51bef666597 before the schema-22 storage cutover.
+// Frozen from f69617aa3818d805889692918ee7f51bef666597 as the original schema-21 migration input.
 // Historical migration inputs must not inherit the current runtime's new column definitions.
 export const OPENCLAW_AGENT_SCHEMA_V21_SQL = fs.readFileSync(
   new URL("../../test/fixtures/sqlite/openclaw-agent-schema-v21.sql", import.meta.url),
@@ -36,7 +36,7 @@ export function materializeV21WorkerAgentDatabase(stateDir: string): string {
   return databasePath;
 }
 
-/** Preserve session/board setup while replacing unused schema-22 storage with its frozen old shape. */
+/** Preserve session/board setup while replacing unused compact storage with its frozen old shape. */
 export function restoreEmptyV21StorageForHistoricalFixture(database: DatabaseSync): void {
   const tables = [
     "transcript_events",
