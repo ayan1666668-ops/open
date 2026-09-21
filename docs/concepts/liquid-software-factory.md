@@ -143,6 +143,274 @@ As a result approaches effect:
 This asymmetry is deliberate: exploration freedom is wider than authority
 freedom.
 
+## Scientific model: analogy, observables, and limits
+
+The phase language is an engineering model, not a claim that agent populations
+obey equilibrium thermodynamics.
+
+The useful correspondence is:
+
+| Physical idea | Search interpretation | Current observable |
+| --- | --- | --- |
+| temperature | willingness to mutate or leave a local basin | profile `effectiveTemperature`, guidance only |
+| entropy | diversity/uncertainty of candidate state | `candidateEntropy`, caller-supplied when trusted |
+| mobility | ability to continue making distinct progress | `mobility` |
+| coherence | convergence around compatible structure | `coherence` |
+| criticality | small changes/disagreement deserve measurement | entropy transition band or verifier disagreement |
+| crystallization | a local candidate is stable enough to stop mutating | low entropy + high coherence/evidence |
+| glass | search is stuck without enough evidence | low mobility + low progress + incomplete evidence |
+| jamming | resources/context/debt dominate useful search | max resource/context/debt pressure |
+
+Unknown measurements remain `null`. The system does not turn absence of
+measurement into zero, confidence, or success.
+
+The present phase boundaries are explicit heuristics. They are intentionally
+inspectable and regression-tested, but they are not statistically calibrated
+phase-transition estimates.
+
+## Control loop
+
+The intended closed loop is:
+
+```text
+observe host facts / trusted measurements
+                 |
+                 v
+        classify local phases
+                 |
+                 v
+       build population snapshot
+                 |
+                 v
+     propose search-only action
+                 |
+                 v
+   existing execution owner decides
+                 |
+                 v
+        execute / reject / queue
+                 |
+                 v
+          record new facts
+                 |
+                 +-----------> observe again
+```
+
+The controller never closes the authority loop by itself. It proposes; the
+existing owner admits or rejects.
+
+This separation makes the control system composable with OpenClaw's current
+sandbox, policy, cancellation, and approval machinery.
+
+## Engineering invariants
+
+The implementation is built around several invariants that matter more than the
+phase names themselves.
+
+### 1. Search authority is not effect authority
+
+Every population decision is `authority: "search-only"`.
+
+A search recommendation cannot mint credentials, widen tools, bypass a sandbox,
+approve an operation, merge, publish, or deploy.
+
+### 2. Identity becomes stricter toward convergence
+
+A free-form hypothesis may mutate during search. A frozen candidate may not
+silently change underneath verification.
+
+Candidate, source, recipe, and policy digests therefore participate in one stable
+candidate identity and in the native launch fingerprint.
+
+### 3. Unknown stays unknown
+
+Missing semantic telemetry is represented as unknown rather than fabricated from
+model confidence or terminal success.
+
+This prevents an observation gap from becoming false evidence.
+
+### 4. Local failures are not averaged away
+
+Resource, context, and debt pressure use conservative maxima. One saturated lane
+can force a drain recommendation even when the population average looks healthy.
+
+Likewise, a local crystal can freeze without forcing unrelated exploratory lanes
+to stop.
+
+### 5. Critical disagreement triggers measurement
+
+Verifier disagreement is treated as information demand, not merely another
+failure score. The preferred response is to measure before widening search.
+
+### 6. Replay is idempotent and identity-bound
+
+The existing idempotency key and request fingerprint remain the execution
+boundary. A replay with different prepared bytes is rejected instead of silently
+reusing a prior collector.
+
+### 7. Lifetime has an owner
+
+Advisory tracking belongs to the parent run. Parent abort/failure releases that
+bookkeeping without mutating live sibling collectors.
+
+Search may be highly parallel; ownership and cleanup may not be ambiguous.
+
+### 8. Fail closed at independence boundaries
+
+The verifier asks the existing sandbox owner for `sandbox: "require"`. A failure
+is surfaced; there is no unsandboxed retry.
+
+The profile name itself is not proof of independence.
+
+## Time-scale separation
+
+The design intentionally has different control speeds:
+
+```text
+fast:     individual replica exploration / mutation
+medium:   population observation and search advisories
+slow:     candidate freeze, verification, promotion/effect
+```
+
+A slow authority boundary should not oscillate simply because fast exploratory
+state is noisy.
+
+The current experiment uses explicit thresholds rather than hysteresis windows.
+If automatic actuation is added later, hysteresis or dwell-time requirements
+should be considered before allowing phase transitions to drive execution.
+
+## Diversity, correlation, and effective population
+
+Raw agent count is not the same as independent search capacity.
+
+The model already carries `meanCorrelation` and replica lineage fields so future
+instrumentation can distinguish ten genuinely different trajectories from ten
+copies of the same assumption.
+
+A useful research heuristic for a roughly exchangeable population is:
+
+```text
+N_effective ~= N / (1 + (N - 1) * rho)
+```
+
+where `rho` is mean trajectory correlation.
+
+This equation is **not** currently used by the controller. It states the deeper
+design goal: spend compute on independent information, not merely more replicas.
+
+Similarly, `branchingRatio` exists as an observation field but is not yet an
+actuation rule. A future calibrated controller could test whether productive
+search tends to live near a branching regime around one:
+
+```text
+branching < 1   -> exploration dies out
+branching >> 1  -> combinatorial explosion / jam
+branching ~= 1  -> candidate critical regime to measure
+```
+
+That remains a hypothesis to validate from traces, not a current guarantee.
+
+## Causal lineage and epistemic provenance
+
+`CognitiveReplica` includes `parentReplicaId`, which is the beginning of a
+causal search graph:
+
+```text
+root
+ +-- explorer A
+ |    +-- candidate A1
+ |    +-- candidate A2
+ +-- explorer B
+      +-- candidate B1
+              |
+              v
+        frozen candidate
+              |
+              v
+           verifier
+```
+
+The current native integration does not yet persist a full lineage DAG.
+
+The deeper goal is to distinguish:
+
+- independent rediscovery from shared ancestry
+- true verifier independence from inherited assumptions
+- novel branches from duplicated work
+- reusable evidence from candidate-specific evidence
+
+This is epistemic provenance, not just process provenance.
+
+## Selection should eventually be multi-objective
+
+A mature factory should not reduce every candidate to one scalar confidence.
+
+Useful selection dimensions include:
+
+- correctness evidence
+- novelty / decorrelation
+- reproducibility
+- cost
+- latency
+- risk
+- unresolved obligations
+
+A Pareto frontier or explicitly governed selection policy is a better long-term
+fit than a single hidden model score.
+
+The current implementation stops before that layer. It freezes eligible local
+crystals and binds exact candidate identity; it does not implement a global
+winner-selection algorithm.
+
+## Candidate capsule direction
+
+The current `CandidateManifest` is deliberately small:
+
+```text
+candidate digest
+source digest
+recipe digest
+policy digest
+```
+
+A future reproducible candidate capsule could additionally bind environment
+snapshot, inputs, execution trace, logs, measurements, and lineage.
+
+That would turn:
+
+```text
+"verify candidate A"
+```
+
+into:
+
+```text
+"verify this exact reproducible computation"
+```
+
+The current manifest should be understood as the minimal identity kernel for
+that direction, not as complete provenance.
+
+## Information flow and trust flow are different
+
+The complete architecture has two simultaneous flows:
+
+```text
+INFORMATION FLOW
+
+many hypotheses -> local measurements -> candidate -> verifier evidence
+       high entropy                              low ambiguity
+
+
+TRUST / AUTHORITY FLOW
+
+search-only ------------------------------------> existing effect owner
+   no new authority is accumulated along the way
+```
+
+This is the central engineering claim of Liquid Software Factory:
+
+> computation may accumulate evidence without accumulating permission.
 ## What this experiment does not claim
 
 It does not yet provide:
