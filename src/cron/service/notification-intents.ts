@@ -28,7 +28,7 @@ export function cronNotificationJob(job: CronJob): CronNotificationJob {
   };
 }
 
-export type CronFailureAlertRoute = {
+type CronFailureAlertRoute = {
   channel: CronMessageChannel;
   to?: string;
   mode?: "announce" | "webhook";
