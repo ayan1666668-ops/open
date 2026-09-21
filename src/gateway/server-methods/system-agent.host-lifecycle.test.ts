@@ -23,6 +23,7 @@ import { createTestApprovalManager } from "../exec-approval-manager.test-support
 import { handleGatewayRequest } from "../server-methods.js";
 import type { GatewayHostLifecycle } from "../server-public.js";
 import type { WorkerSessionTurnClaim } from "../worker-environments/placement-record.js";
+import { runSystemAgentGatewayTask } from "./system-agent-execution.js";
 import { systemAgentHandlers, type SystemAgentChatSession } from "./system-agent.js";
 import {
   callChat,
@@ -146,7 +147,12 @@ describe("openclaw.chat hosted lifecycle", () => {
       );
       const authority = claimAgentRunDelegatedAuthority(operationalRunInstance);
       const controller = new AbortController();
-      const broadcast = vi.fn();
+      const approvalRequested = createDeferred();
+      const broadcast = vi.fn<GatewayRequestContext["broadcast"]>((event) => {
+        if (event === "openclaw.approval.requested") {
+          approvalRequested.resolve();
+        }
+      });
       const context = {
         ...makeContext(sessions),
         systemAgentApprovalManager: manager,
@@ -208,7 +214,11 @@ describe("openclaw.chat hosted lifecycle", () => {
       let sameOwnerChat: Promise<RespondCall> | undefined;
       try {
         if (!fullPermission) {
-          await vi.waitFor(async () => expect(await manager.listPendingRecords()).toHaveLength(1));
+          await Promise.race([approvalRequested.promise, pendingChat]);
+          // Publication follows persistence but precedes release of the task lane.
+          // Join that owner rather than racing a polling deadline or microtask count.
+          await runSystemAgentGatewayTask(async () => undefined);
+          expect(await manager.listPendingRecords()).toHaveLength(1);
           expect(requestResponses.calls).toHaveLength(0);
           expect(getActiveGatewayRootWorkCount()).toBe(1);
           expect(systemAgentLane()).toMatchObject({ activeCount: 0, queuedCount: 0 });
@@ -235,7 +245,8 @@ describe("openclaw.chat hosted lifecycle", () => {
                 delegation: { agentId: "main", sessionKey: "agent:main:main" },
               }),
             );
-            await vi.waitFor(() => expect(handle).toHaveBeenCalledTimes(2));
+            await runSystemAgentGatewayTask(async () => undefined);
+            expect(handle).toHaveBeenCalledTimes(2);
           }
           expect(await manager.resolve(proposalId, "allow-once", "operator-ui")).toBe(true);
         }

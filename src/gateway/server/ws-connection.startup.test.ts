@@ -84,6 +84,7 @@ async function attachStartupNodeConnect(params: {
 }) {
   const sent: unknown[] = [];
   const connectResponse = createDeferred<StartupConnectResponse>();
+  const setupCompleted = createDeferred();
   const clients = new Set<unknown>();
   const socket = createGatewayWsTestSocket({
     onSend: (data) => {
@@ -131,6 +132,11 @@ async function attachStartupNodeConnect(params: {
   };
   const requestContext = {
     ...createGatewayWsTestRequestContext(),
+    broadcast: vi.fn((event: string) => {
+      if (event === "device.pair.setup.completed") {
+        setupCompleted.resolve();
+      }
+    }),
     nodeRegistry,
   };
   const pendingSetup = vi.fn(params.isPendingWorkerNodeSetup);
@@ -212,31 +218,14 @@ async function attachStartupNodeConnect(params: {
       }),
     ),
   );
-  const response = async () => {
-    await vi.waitFor(() => {
-      expect(
-        sent.some(
-          (frame) =>
-            typeof frame === "object" &&
-            frame !== null &&
-            (frame as StartupConnectResponse).id === "startup-node-connect",
-        ),
-      ).toBe(true);
-    });
-    return sent.find(
-      (frame) =>
-        typeof frame === "object" &&
-        frame !== null &&
-        (frame as StartupConnectResponse).id === "startup-node-connect",
-    ) as StartupConnectResponse;
-  };
   return {
     clients,
     identity,
     nodeRegistry,
     pendingSetup,
-    response,
+    // Pairing crosses worker boundaries; the actual response owns completion, not a poll.
     responseReceived: connectResponse.promise,
+    setupCompleted: setupCompleted.promise,
     sent,
     socket,
   };
@@ -461,7 +450,7 @@ describe("attachGatewayWsConnectionHandler startup readiness", () => {
             store.hasPendingNodeEnrollmentSetup(candidateSetupId, deviceId),
         });
 
-        await expect(harness.response()).resolves.toMatchObject({
+        await expect(harness.responseReceived).resolves.toMatchObject({
           ok: true,
           payload: { type: "hello-ok", auth: { role: "node", scopes: [] } },
         });
@@ -539,7 +528,7 @@ describe("attachGatewayWsConnectionHandler startup readiness", () => {
               store.hasPendingNodeEnrollmentSetup(candidateSetupId, deviceId),
           });
 
-          const response = await harness.response();
+          const response = await harness.responseReceived;
           expect(harness.pendingSetup).toHaveBeenCalledWith(setupId, identity.deviceId);
           if (destroyRequested) {
             expect(response).toMatchObject({
@@ -557,6 +546,8 @@ describe("attachGatewayWsConnectionHandler startup readiness", () => {
             ok: true,
             payload: { type: "hello-ok", auth: { role: "node", scopes: [] } },
           });
+          // Hello delivery precedes the worker commit that confirms setup.
+          await harness.setupCompleted;
           await expect(readDevicePairSetupCompletion({ setupId })).resolves.toMatchObject({
             deviceId: identity.deviceId,
             deliveryState: "confirmed",
@@ -695,7 +686,7 @@ describe("attachGatewayWsConnectionHandler startup readiness", () => {
             store.hasPendingNodeEnrollmentSetup(candidateSetupId, deviceId),
         });
 
-        await expect(nonCloudHarness.response()).resolves.toMatchObject({
+        await expect(nonCloudHarness.responseReceived).resolves.toMatchObject({
           ok: false,
           error: {
             code: "UNAVAILABLE",
@@ -718,7 +709,7 @@ describe("attachGatewayWsConnectionHandler startup readiness", () => {
             store.hasPendingNodeEnrollmentSetup(candidateSetupId, deviceId),
         });
 
-        await expect(wrongSetupHarness.response()).resolves.toMatchObject({
+        await expect(wrongSetupHarness.responseReceived).resolves.toMatchObject({
           ok: false,
           error: {
             code: "UNAVAILABLE",
@@ -761,7 +752,7 @@ describe("attachGatewayWsConnectionHandler startup readiness", () => {
               rateLimiter,
             });
 
-            await expect(harness.response()).resolves.toMatchObject({
+            await expect(harness.responseReceived).resolves.toMatchObject({
               ok: false,
               error: {
                 code: "UNAVAILABLE",
