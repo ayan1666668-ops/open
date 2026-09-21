@@ -1329,6 +1329,7 @@ function assertCompanionPluginRecords(
         "scripts/prepublish-plugin-registry-artifact.mjs",
         join(isolatedScripts, "prepublish-plugin-registry-artifact.mjs"),
       );
+      cpSync("scripts/windows-cmd-helpers.mjs", join(isolatedScripts, "windows-cmd-helpers.mjs"));
       assertionsPath = join(isolatedLib, "upgrade-survivor", "assertions.mjs");
     }
     execFileSync(
