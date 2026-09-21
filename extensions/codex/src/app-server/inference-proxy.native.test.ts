@@ -29,7 +29,9 @@ const transport = vi.hoisted(() => ({
 vi.unmock("node:child_process");
 vi.mock("node:http", async (original) => {
   const actual = await original<typeof import("node:http")>();
-  if (process.env.OPENCLAW_LIVE_CODEX_INFERENCE === "1") return actual;
+  if (process.env.OPENCLAW_LIVE_CODEX_INFERENCE === "1") {
+    return actual;
+  }
   return {
     ...actual,
     createServer(...args: Parameters<typeof actual.createServer>) {
@@ -43,7 +45,9 @@ vi.mock("node:http", async (original) => {
           }
           socket.once("close", () => {
             transport.closedSockets.add(socket);
-            if (typeof threadId === "string") transport.closedThreads.add(threadId);
+            if (typeof threadId === "string") {
+              transport.closedThreads.add(threadId);
+            }
             transport.changed?.();
           });
           transport.changed?.();
@@ -71,7 +75,9 @@ vi.mock("openclaw/plugin-sdk/ssrf-runtime", async (original) =>
 );
 vi.mock("openclaw/plugin-sdk/websocket-runtime", async (original) => {
   const actual = await original<typeof import("openclaw/plugin-sdk/websocket-runtime")>();
-  if (process.env.OPENCLAW_LIVE_CODEX_INFERENCE === "1") return actual;
+  if (process.env.OPENCLAW_LIVE_CODEX_INFERENCE === "1") {
+    return actual;
+  }
   return {
     ...actual,
     WebSocket: class extends actual.WebSocket {
@@ -119,11 +125,15 @@ describe.skipIf(process.platform === "win32")("native inference admission", () =
       transport.changed = () => changed.emit("changed");
       const waitFor = <T>(read: () => T | undefined): Promise<T> => {
         const value = read();
-        if (value !== undefined) return Promise.resolve(value);
+        if (value !== undefined) {
+          return Promise.resolve(value);
+        }
         return new Promise((resolve) => {
           const check = () => {
             const next = read();
-            if (next === undefined) return;
+            if (next === undefined) {
+              return;
+            }
             changed.off("changed", check);
             resolve(next);
           };
@@ -141,7 +151,9 @@ describe.skipIf(process.platform === "win32")("native inference admission", () =
       const reply = (socket: WebSocket, item?: JsonObject) => {
         const id = `synthetic-${++responseSequence}`;
         socket.send(JSON.stringify({ type: "response.created", response: { id } }));
-        if (item) socket.send(JSON.stringify({ type: "response.output_item.done", item }));
+        if (item) {
+          socket.send(JSON.stringify({ type: "response.output_item.done", item }));
+        }
         socket.send(
           JSON.stringify({
             type: "response.completed",
@@ -151,7 +163,9 @@ describe.skipIf(process.platform === "win32")("native inference admission", () =
       };
       const finish = (threadId: string) => {
         const socket = held.get(threadId);
-        if (!socket) throw new Error("Fixture thread has no held response");
+        if (!socket) {
+          throw new Error("Fixture thread has no held response");
+        }
         held.delete(threadId);
         reply(socket, {
           type: "message",
@@ -163,17 +177,25 @@ describe.skipIf(process.platform === "win32")("native inference admission", () =
       };
       wss.on("connection", (socket) =>
         socket.on("message", (raw) => {
-          const body: unknown = JSON.parse(raw.toString());
-          if (!isJsonObject(body) || !isJsonObject(body.client_metadata))
+          if (!Buffer.isBuffer(raw)) {
+            throw new Error("Expected a native WebSocket text buffer");
+          }
+          const body: unknown = JSON.parse(raw.toString("utf8"));
+          if (!isJsonObject(body) || !isJsonObject(body.client_metadata)) {
             throw new Error("Native metadata missing");
+          }
           const encoded = body.client_metadata["x-codex-turn-metadata"];
-          if (typeof encoded !== "string") throw new Error("Native turn metadata missing");
+          if (typeof encoded !== "string") {
+            throw new Error("Native turn metadata missing");
+          }
           const info: unknown = JSON.parse(encoded);
-          if (!isJsonObject(info) || typeof info.thread_id !== "string")
+          if (!isJsonObject(info) || typeof info.thread_id !== "string") {
             throw new Error("Native thread identity missing");
+          }
           metadata.set(info.thread_id, info);
-          if (body.generate === false) reply(socket);
-          else if (info.thread_id === parentId) {
+          if (body.generate === false) {
+            reply(socket);
+          } else if (info.thread_id === parentId) {
             if (!spawned) {
               spawned = true;
               reply(socket, {
@@ -183,20 +205,27 @@ describe.skipIf(process.platform === "win32")("native inference admission", () =
                 name: "spawn_agent",
                 arguments: JSON.stringify({ message: "Reply synthetic child complete." }),
               });
-            } else
+            } else {
               reply(socket, {
                 type: "message",
                 role: "assistant",
                 id: "parent-answer",
                 content: [{ type: "output_text", text: "Child dispatched." }],
               });
-          } else held.set(info.thread_id, socket);
+            }
+          } else {
+            held.set(info.thread_id, socket);
+          }
           changed.emit("changed");
         }),
       );
-      await new Promise<void>((resolve) => upstream.listen(0, "127.0.0.1", resolve));
+      await new Promise<void>((resolve) => {
+        upstream.listen(0, "127.0.0.1", resolve);
+      });
       const address = upstream.address();
-      if (!address || typeof address === "string") throw new Error("Fixture listener missing");
+      if (!address || typeof address === "string") {
+        throw new Error("Fixture listener missing");
+      }
       transport.upstream = `ws://127.0.0.1:${address.port}`;
       const proxy = await createCodexInferenceProxy({
         upstream: new URL("https://api.openai.com/v1"),
@@ -205,9 +234,15 @@ describe.skipIf(process.platform === "win32")("native inference admission", () =
       context.onTestFinished(async () => {
         transport.changed = undefined;
         proxy.close();
-        for (const socket of wss.clients) socket.terminate();
-        await new Promise<void>((resolve) => wss.close(() => resolve()));
-        await new Promise<void>((resolve) => upstream.close(() => resolve()));
+        for (const socket of wss.clients) {
+          socket.terminate();
+        }
+        await new Promise<void>((resolve) => {
+          wss.close(() => resolve());
+        });
+        await new Promise<void>((resolve) => {
+          upstream.close(() => resolve());
+        });
       });
       await fs.writeFile(
         path.join(native.codexHome, "config.toml"),
@@ -263,8 +298,9 @@ describe.skipIf(process.platform === "win32")("native inference admission", () =
           typeof event.params.threadId !== "string" ||
           !isJsonObject(event.params.turn) ||
           typeof event.params.turn.status !== "string"
-        )
+        ) {
           return;
+        }
         terminals.set(event.params.threadId, event.params.turn.status);
         changed.emit("changed");
       });
@@ -273,7 +309,9 @@ describe.skipIf(process.platform === "win32")("native inference admission", () =
           cwd: native.cwd,
           experimentalRawEvents: true,
         });
-        if (parent) parentId = thread.id;
+        if (parent) {
+          parentId = thread.id;
+        }
         const controller = new AbortController();
         const registration = proxy.context.register({
           threadId: thread.id,
@@ -295,7 +333,9 @@ describe.skipIf(process.platform === "win32")("native inference admission", () =
         return { threadId: thread.id, turnId: turn.id, controller };
       };
       const roots = [];
-      for (let index = 0; index < 16; index++) roots.push(await begin());
+      for (let index = 0; index < 16; index++) {
+        roots.push(await begin());
+      }
       await waitFor(() => (held.size === 16 ? true : undefined));
       const activeDials = transport.dials;
       const cancelled = await begin();
@@ -337,9 +377,12 @@ describe.skipIf(process.platform === "win32")("native inference admission", () =
       expect(await waitFor(() => terminals.get(parent.threadId))).toBe("completed");
       expect(await waitFor(() => terminals.get(quick.threadId))).toBe("completed");
       expect(transport.rejected).toHaveLength(rejectedBeforeDrain);
-      for (const threadId of [...held.keys()]) finish(threadId);
-      for (const rootTurn of roots)
+      for (const threadId of held.keys()) {
+        finish(threadId);
+      }
+      for (const rootTurn of roots) {
         expect(await waitFor(() => terminals.get(rootTurn.threadId))).toBe("completed");
+      }
     },
   );
   it.skipIf(process.env.OPENCLAW_LIVE_CODEX_INFERENCE !== "1")(
@@ -347,7 +390,9 @@ describe.skipIf(process.platform === "win32")("native inference admission", () =
     { timeout: 90_000 },
     async (context) => {
       const apiKey = process.env.OPENAI_API_KEY?.trim();
-      if (!apiKey) throw new Error("OPENAI_API_KEY is required for real relay proof");
+      if (!apiKey) {
+        throw new Error("OPENAI_API_KEY is required for real relay proof");
+      }
       const tempDirs = useAutoCleanupTempDirTracker(context.onTestFinished);
       const root = await fs.realpath(tempDirs.make("codex-inference-live-"));
       const native = await createCodexNativeTestState(root);
@@ -420,8 +465,9 @@ describe.skipIf(process.platform === "win32")("native inference admission", () =
             event.params.threadId === thread.id &&
             isJsonObject(event.params.turn) &&
             typeof event.params.turn.status === "string"
-          )
+          ) {
             resolve(event.params.turn.status);
+          }
         });
       });
       await client.request("turn/start", {

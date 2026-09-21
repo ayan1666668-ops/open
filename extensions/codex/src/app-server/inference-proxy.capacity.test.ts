@@ -501,7 +501,9 @@ describe("inference relay capacity", () => {
       return dns.promise;
     });
     const stalled = connect();
-    const closed = new Promise<void>((resolve) => stalled.once("close", () => resolve()));
+    const closed = new Promise<void>((resolve) => {
+      stalled.once("close", () => resolve());
+    });
     await started.promise;
     await vi.advanceTimersByTimeAsync(10_000);
     await closed;
@@ -550,7 +552,9 @@ describe("inference relay capacity", () => {
         received.resolve();
       });
       const stalled = connect();
-      const closed = new Promise<void>((resolve) => stalled.once("close", () => resolve()));
+      const closed = new Promise<void>((resolve) => {
+        stalled.once("close", () => resolve());
+      });
       await received.promise;
       await vi.advanceTimersByTimeAsync(10_000);
       await Promise.all([closed, disconnected.promise]);
