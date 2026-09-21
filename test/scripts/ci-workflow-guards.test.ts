@@ -11560,7 +11560,7 @@ server.listen(0, "127.0.0.1", () => {
   });
 
   it("selects a supported Node before lightweight checks, release approval, and image wrappers", () => {
-    for (const [file, jobId, consumerName] of [
+    const cases: [file: string, jobId: string, consumerName: string, setupCondition?: string][] = [
       ["workflow-sanity.yml", "actionlint", "Disallow tracked merge conflict markers"],
       ["android-release.yml", "publish_signed_android_apk", "Validate release approval and target"],
       ["docker-channel-promote.yml", "resolve", "Resolve release channel policy"],
@@ -11580,7 +11580,9 @@ server.listen(0, "127.0.0.1", () => {
         "validate_live_models_docker_targeted",
         "Verify and load live-test image artifact",
       ],
-    ]) {
+      ["openclaw-release-publish.yml", "publish", "Record postpublish outcome", "${{ always() }}"],
+    ];
+    for (const [file, jobId, consumerName, setupCondition] of cases) {
       const workflow = parse(readFileSync(`.github/workflows/${file}`, "utf8"));
       const job = workflow.jobs[jobId];
       const steps: WorkflowStep[] = job.steps;
@@ -11597,7 +11599,7 @@ server.listen(0, "127.0.0.1", () => {
           ? (job.env?.NODE_VERSION ?? workflow.env?.NODE_VERSION)
           : version;
       expect(isSupportedOpenClawNodeVersion(resolved), context).toBe(true);
-      expect(setup.if, context).toBeUndefined();
+      expect(setup.if, context).toBe(setupCondition);
       expect(setup.with?.["package-manager-cache"], context).toBe(false);
     }
   });
@@ -18170,7 +18172,12 @@ printf '%s\n' "\${CURL_SUCCESS_IP:-203.0.113.7}"
     );
     expect(qaValidateJob.outputs.workflow_sha).toBe("${{ steps.workflow.outputs.workflow_sha }}");
     expect(qaValidateJob.outputs).not.toHaveProperty("workflow_repository");
-    const workflowIdentityStep = qaValidateJob.steps[0];
+    expect(qaValidateJob.steps[0]).toEqual({
+      name: "Setup supported Node runtime",
+      uses: "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",
+      with: { "node-version": "24.19.0", "package-manager-cache": false },
+    });
+    const workflowIdentityStep = qaValidateJob.steps[1];
     expect(workflowIdentityStep).toMatchObject({
       name: "Resolve job workflow identity",
       id: "workflow",
