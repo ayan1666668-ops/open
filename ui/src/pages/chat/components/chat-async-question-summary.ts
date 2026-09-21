@@ -93,6 +93,7 @@ export function renderAsyncQuestionSummary(
     : draft?.status === "submitted"
       ? draft.answers
       : undefined;
+  const unparsedText = queued && !answers ? queued.text : confirmed?.unparsedText;
   const archived = presentation.archived.has(questions.itemId);
   const reopening = draft?.status === "reopening";
   const dismissed = draft?.status === "skipped" || reopening;
@@ -116,8 +117,8 @@ export function renderAsyncQuestionSummary(
   const retryable = queued?.sendState === "failed" || queued?.sendState === "unconfirmed";
   return html`<div class="chat-question-summary" role="status" aria-live="polite">
     ${
-      queued && !answers
-        ? html`<div class="chat-question-summary__prompt">${queued.text}</div>`
+      unparsedText
+        ? html`<div class="chat-question-summary__prompt">${unparsedText}</div>`
         : questions.questions.map(
             (question, index) => html`<div>
               <strong>${question.title}</strong>

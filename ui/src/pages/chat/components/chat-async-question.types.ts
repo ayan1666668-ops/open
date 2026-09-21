@@ -9,6 +9,7 @@ export type AsyncQuestions = {
 
 export type AsyncQuestionDraft = {
   answers: Map<string, QuestionDraft>;
+  unparsedText?: string;
   edited?: boolean;
   signature?: string;
   status?: "submitting" | "submitted" | "skipped" | "reopening";

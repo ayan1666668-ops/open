@@ -478,21 +478,44 @@ it("restores every answer in a multi-question submission with UTF-8-bounded quot
   ).toHaveLength(1);
 });
 
-it("leaves an answer with ambiguous embedded question headings pending", () => {
-  const promptMessage = {
-    role: "assistant",
-    openclawAsyncDelivery: {
-      itemId: "ambiguous-multiline",
-      questions: [{ title: "First?" }, { title: "Second?" }],
-    },
-  };
-  const answer = {
-    ...historicalAnswer,
-    content:
-      "> First?\n\nQuote this:\n\n> Second?\n\nStill the first answer\n\n> Second?\n\nThe second answer",
-  };
-  expect(historyPresentation([promptMessage, answer]).pending).toHaveLength(1);
-});
+it.each([
+  { replyToId: undefined, edited: false, confirmed: false },
+  { replyToId: "question-source", edited: false, confirmed: true },
+  { replyToId: "unrelated-source", edited: false, confirmed: false },
+  { replyToId: "question-source", edited: true, confirmed: true },
+])(
+  "confirms unparsed saved answers only by their canonical reply: %j",
+  ({ replyToId, edited, confirmed }) => {
+    const promptMessage = {
+      role: "assistant",
+      __openclaw: { id: "question-source", seq: 1 },
+      openclawAsyncDelivery: {
+        itemId: "ambiguous-multiline",
+        questions: [{ title: "First?" }, { title: "Second?" }],
+      },
+    };
+    const answer = {
+      ...historicalAnswer,
+      __openclaw: { id: "saved-answer", seq: 2, replyToId },
+      content: edited
+        ? "Edited in the outbox: use my earlier details."
+        : "> First?\n\nQuote this:\n\n> Second?\n\nStill the first answer\n\n> Second?\n\nThe second answer",
+    };
+    for (const epoch of [1, 2]) {
+      const presentation = historyPresentation([promptMessage, answer], epoch);
+      expect(presentation.pending).toHaveLength(confirmed ? 0 : 1);
+      render(
+        renderAsyncQuestionSummary(promptMessage.openclawAsyncDelivery, presentation),
+        container,
+      );
+      expect(container.textContent?.includes("Answer sent")).toBe(confirmed);
+      if (confirmed) {
+        expect(container.textContent).toContain(answer.content);
+        expect(container.textContent).not.toContain("Awaiting delivery confirmation");
+      }
+    }
+  },
+);
 
 it("projects answer delivery from the outbox, retries its payload, and waits for canonical confirmation", () => {
   const state: Parameters<typeof createAsyncQuestionPresentation>[0] = presentationState();

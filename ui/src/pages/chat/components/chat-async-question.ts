@@ -122,7 +122,8 @@ function questionHistory(messages: readonly unknown[]) {
     ) {
       const text = extractTextCached(message);
       if (text) {
-        // Only canonical saved answers resolve a question; duplicate titles stay ambiguous.
+        // A canonical reply identifies the question even when edited text or quoted
+        // headings prevent splitting its answers. Unlinked duplicate titles stay ambiguous.
         const rawReplyToId = asNullableRecord(record?.["__openclaw"])?.replyToId;
         const replyToId = typeof rawReplyToId === "string" ? rawReplyToId.trim() : "";
         const matches = [...questions.values()]
@@ -135,10 +136,14 @@ function questionHistory(messages: readonly unknown[]) {
             question: candidate,
             answers: parseGeneratedAsyncAnswer(candidate, text),
           }))
-          .filter((match) => match.answers !== null);
+          .filter((match) => match.answers !== null || Boolean(replyToId && text.trim()));
         const match = matches.length === 1 ? matches[0] : undefined;
-        if (match?.answers) {
-          resolved.set(match.question.itemId, { status: "submitted", answers: match.answers });
+        if (match) {
+          resolved.set(match.question.itemId, {
+            status: "submitted",
+            answers: match.answers ?? new Map(),
+            ...(match.answers ? {} : { unparsedText: text }),
+          });
         }
       }
     }
@@ -423,6 +428,7 @@ export function createAsyncQuestionPresentation(
       [...archived],
       [...resolved].map(([itemId, draft]) => [
         itemId,
+        draft.unparsedText,
         [...draft.answers].map(([questionId, answer]) => [questionId, questionDraftValues(answer)]),
       ]),
       [...delivery].map(([itemId, item]) => [

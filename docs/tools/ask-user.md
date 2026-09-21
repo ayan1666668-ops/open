@@ -100,6 +100,9 @@ confirmed in saved conversation history. If delivery fails or becomes uncertain
 after reconnecting, **Retry answer** retries the existing outbox message instead
 of submitting a second answer. **Discard** removes that queued answer and reopens
 its preserved draft in the currently open panes for that conversation.
+Saved replies remain confirmed after reload, including answers edited in the
+outbox or containing quoted question headings. When those headings make individual
+answers ambiguous, the summary shows the saved reply text without splitting it.
 
 ## Timeout and no answer
 
