@@ -10,6 +10,17 @@ export function projectedRunIdentity(agentId: string, value: string): string {
   return `${normalizeAgentId(agentId)}\0${value}`;
 }
 
+/** Activity selected by a session key must belong to the agent encoded in that key. */
+export function* iterateProjectedAgentRunSessionKeys(index: ProjectedAgentRunIndex) {
+  for (const identity of index.sessionKeys.keys()) {
+    const key = identity.slice(identity.indexOf("\0") + 1);
+    const agentId = parseAgentSessionKey(key)?.agentId;
+    if (agentId && identity === projectedRunIdentity(agentId, key)) {
+      yield key;
+    }
+  }
+}
+
 export function areAgentRunModelsEqual(
   left: AgentRunModel | null | undefined,
   right: AgentRunModel | null | undefined,
@@ -40,7 +51,6 @@ export function buildAgentRunProjectionIndex(params: {
 }): ProjectedAgentRunIndex {
   const modelsBySessionId = new Map<string, AgentRunModel | null>();
   const pendingModelSessionIds = new Set<string>();
-  const progressSessionKeys = new Set<string>();
   const sessionKeys = new Map<string, ProjectedAgentRunState>();
   const sessionIds = new Map<string, ProjectedAgentRunState>();
   const ownerlessSessionKeys = new Map<string, ProjectedAgentRunState>();
@@ -94,10 +104,6 @@ export function buildAgentRunProjectionIndex(params: {
         : "capacity-wait";
     if (context.sessionKey !== undefined && agentId) {
       add(sessionKeys, projectedRunIdentity(agentId, context.sessionKey), status);
-      const sessionAgentId = parseAgentSessionKey(context.sessionKey)?.agentId;
-      if (sessionAgentId && normalizeAgentId(sessionAgentId) === normalizeAgentId(agentId)) {
-        progressSessionKeys.add(context.sessionKey);
-      }
     } else if (context.sessionKey !== undefined) {
       add(ownerlessSessionKeys, context.sessionKey, status);
     }
@@ -113,12 +119,5 @@ export function buildAgentRunProjectionIndex(params: {
       modelsBySessionId.set(key, null);
     }
   }
-  return {
-    modelsBySessionId,
-    progressSessionKeys,
-    sessionKeys,
-    sessionIds,
-    ownerlessSessionKeys,
-    ownerlessSessionIds,
-  };
+  return { modelsBySessionId, sessionKeys, sessionIds, ownerlessSessionKeys, ownerlessSessionIds };
 }
