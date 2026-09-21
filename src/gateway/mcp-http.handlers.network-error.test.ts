@@ -185,7 +185,10 @@ describe("Gateway MCP loopback after_tool_call", () => {
       label: "Echo probe",
       description: "Echo a value",
       parameters: { type: "object", properties: {} } as never,
-      execute: vi.fn(async () => ({ content: [{ type: "text", text: "echoed" }] })),
+      execute: vi.fn<AnyAgentTool["execute"]>(async () => ({
+        content: [{ type: "text", text: "echoed" }],
+        details: {},
+      })),
     };
   }
 
