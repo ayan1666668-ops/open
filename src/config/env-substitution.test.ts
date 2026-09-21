@@ -2,6 +2,7 @@
 import { describe, expect, it } from "vitest";
 import {
   type EnvSubstitutionWarning,
+  type EnvUnsupportedExpressionWarning,
   MissingEnvVarError,
   containsEnvVarReference,
   resolveConfigEnvVars,
@@ -439,6 +440,65 @@ describe("resolveConfigEnvVars", () => {
 
     it("still throws when onMissing is not set", () => {
       expect(() => resolveConfigEnvVars({ key: "${MISSING}" }, {})).toThrow(MissingEnvVarError);
+    });
+  });
+
+  describe("shell-style parameter expansion diagnostics", () => {
+    function resolveAndCollectDiagnostics(config: unknown, env: Record<string, string>) {
+      const diagnostics: EnvUnsupportedExpressionWarning[] = [];
+      const result = resolveConfigEnvVars(config, env, {
+        onUnsupportedExpression: (d) => diagnostics.push(d),
+      });
+      return { result, diagnostics };
+    }
+
+    it("warns on shell parameter-expansion operators while leaving the value literal", () => {
+      const scenarios = [
+        { name: "filed case: colon-dash default", value: "${NAUTOBOT_TIMEOUT:-60}" },
+        { name: "colon-equals assign", value: "${VAR:=d}" },
+        { name: "colon-question error", value: "${VAR:?m}" },
+        { name: "colon-plus alternate", value: "${VAR:+a}" },
+        { name: "dash without colon", value: "${VAR-d}" },
+      ];
+
+      for (const { name, value } of scenarios) {
+        const { result, diagnostics } = resolveAndCollectDiagnostics({ key: value }, {});
+        expect(result, name).toEqual({ key: value });
+        expect(diagnostics.length, name).toBeGreaterThan(0);
+      }
+    });
+
+    it("does not warn for the pinned name-shaped placeholders that stay unchanged", () => {
+      const values = ["$VAR", "${lowercase}", "${MixedCase}", "${123INVALID}"];
+
+      for (const value of values) {
+        const { diagnostics } = resolveAndCollectDiagnostics({ key: value }, {});
+        expect(diagnostics, value).toEqual([]);
+      }
+    });
+
+    it("does not warn on non-env-var placeholders from other template dialects", () => {
+      // The diagnostic is scoped to the documented uppercase env-var grammar. Config
+      // strings routinely carry other placeholder syntaxes, and this warning has no
+      // off switch, so a hyphen or a plus alone must not be enough to trigger it.
+      const values = ["${my-service}", "${host-name}", "${count+1}", "${a=b}"];
+
+      for (const value of values) {
+        const { result, diagnostics } = resolveAndCollectDiagnostics({ key: value }, {});
+        expect(diagnostics, value).toEqual([]);
+        expect(result, value).toEqual({ key: value });
+      }
+    });
+
+    it("does not warn on an escaped shell-default expression and leaves it literal", () => {
+      const value = "$${VAR:-x}";
+      const { result, diagnostics } = resolveAndCollectDiagnostics({ key: value }, {});
+      expect(diagnostics).toEqual([]);
+      expect(result).toEqual({ key: value });
+    });
+
+    it("does not treat a shell-default expression as a resolvable env var reference", () => {
+      expect(containsEnvVarReference("${VAR:-x}")).toBe(false);
     });
   });
 
