@@ -55,7 +55,10 @@ export async function readSessionEntriesFromStoreInWorker(input: {
     for (const database of native?.databases ?? []) {
       const owner = captureCanonicalSessionReaderContinuation(database);
       if (owner) {
-        continuations.push({ path: database.path, owner });
+        continuations.push({
+          path: captureSessionStoreReadCandidate(database.path).physicalPath,
+          owner,
+        });
       }
     }
     const readDatabase = async (database: { agentId: string; path: string }) => {

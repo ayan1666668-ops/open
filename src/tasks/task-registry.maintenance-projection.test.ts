@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import { setImmediate, setTimeout as sleep } from "node:timers/promises";
 import { expectDefined } from "@openclaw/normalization-core";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -12,7 +13,11 @@ import {
 } from "../state/openclaw-agent-db.js";
 import { closeOpenClawStateDatabaseAsync } from "../state/openclaw-state-db.js";
 import { captureOpenClawStateWorkerContext } from "../state/openclaw-state-worker-context.js";
-import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
+import { withEnvAsync } from "../test-utils/env.js";
+import {
+  withOpenClawTestState,
+  type OpenClawTestState,
+} from "../test-utils/openclaw-test-state.js";
 import { holdStateDatabaseCoordinator } from "../test-utils/state-database-contention.js";
 import { getDetachedTaskLifecycleRuntime } from "./detached-task-runtime.js";
 import { createRunningTaskRunCoreWithReceiptAsync } from "./task-executor-create.async.js";
@@ -44,10 +49,13 @@ import {
   resetTaskRegistryForTests,
 } from "./task-runtime.test-helpers.js";
 
-async function withMaintenanceState(prefix: string, run: () => Promise<void>) {
-  await withOpenClawTestState({ layout: "state-only", prefix }, async () => {
+async function withMaintenanceState(
+  prefix: string,
+  run: (state: OpenClawTestState) => Promise<void>,
+) {
+  await withOpenClawTestState({ layout: "state-only", prefix }, async (state) => {
     try {
-      await run();
+      await run(state);
     } finally {
       await closeOpenClawStateDatabaseAsync();
       expect(getActiveGatewayRootWorkCount()).toBe(0);
@@ -564,43 +572,52 @@ describe("task maintenance session metadata", () => {
       ).toBe(0);
     });
   });
-  it.each(["warm", "cold"] as const)(
+  it.each(["warm", "warm alias", "cold"] as const)(
     "keeps %s corrupt-row admission while reconciling healthy siblings",
     async (admission) => {
-      await withMaintenanceState("openclaw-task-maintenance-corruption-", async () => {
-        resetTaskRegistryForTests({ persist: false });
-        const staleAt = Date.now() - 45 * 60_000;
-        const tasks = ["healthy", "corrupt"].map((suffix) => {
-          const sessionKey = `agent:main:subagent:${suffix}`;
-          replaceSessionEntrySync({ sessionKey }, { sessionId: suffix, updatedAt: staleAt });
-          return createTaskFixture("subagent", {
-            task: `Check ${suffix}`,
-            runId: `maintenance-${suffix}`,
-            childSessionKey: sessionKey,
-            lastEventAt: staleAt,
-            notifyPolicy: "silent",
+      await withMaintenanceState("openclaw-task-maintenance-corruption-", async (state) => {
+        const stateDir = admission === "warm alias" ? state.path("alias") : state.stateDir;
+        if (admission === "warm alias") {
+          fs.symlinkSync(state.stateDir, stateDir, "junction");
+        }
+        await withEnvAsync({ OPENCLAW_STATE_DIR: stateDir }, async () => {
+          resetTaskRegistryForTests({ persist: false });
+          const staleAt = Date.now() - 45 * 60_000;
+          const tasks = ["healthy", "corrupt"].map((suffix) => {
+            const sessionKey = `agent:main:subagent:${suffix}`;
+            replaceSessionEntrySync({ sessionKey }, { sessionId: suffix, updatedAt: staleAt });
+            return createTaskFixture("subagent", {
+              task: `Check ${suffix}`,
+              runId: `maintenance-${suffix}`,
+              childSessionKey: sessionKey,
+              lastEventAt: staleAt,
+              notifyPolicy: "silent",
+            });
           });
-        });
-        expect(previewTaskRegistryMaintenance().reconciled).toBe(0);
-        // Existing warm listings skip malformed rows; exact reads intentionally throw.
-        openOpenClawAgentDatabase({ agentId: "main" })
-          .db.prepare("UPDATE session_nodes SET entry_json = ? WHERE session_key = ?")
-          .run("{", "agent:main:subagent:corrupt");
-        if (admission === "cold") {
-          await closeOpenClawAgentDatabaseByPathAsync(
-            openOpenClawAgentDatabase({ agentId: "main" }).path,
-          );
-          expect(() => previewTaskRegistryMaintenance()).toThrow(/canonical|repair/i);
-          await expect(runTaskRegistryMaintenance()).rejects.toThrow(/canonical|repair/i);
+          expect(previewTaskRegistryMaintenance().reconciled).toBe(0);
+          // Existing warm listings skip malformed rows; exact reads intentionally throw.
+          openOpenClawAgentDatabase({ agentId: "main" })
+            .db.prepare("UPDATE session_nodes SET entry_json = ? WHERE session_key = ?")
+            .run("{", "agent:main:subagent:corrupt");
+          if (admission === "cold") {
+            await closeOpenClawAgentDatabaseByPathAsync(
+              openOpenClawAgentDatabase({ agentId: "main" }).path,
+            );
+            expect(() => previewTaskRegistryMaintenance()).toThrow(/canonical|repair/i);
+            await expect(runTaskRegistryMaintenance()).rejects.toThrow(/canonical|repair/i);
+            expect(tasks.map((task) => getTaskById(task.taskId)?.status)).toEqual([
+              "running",
+              "running",
+            ]);
+            return;
+          }
+          expect(previewTaskRegistryMaintenance().reconciled).toBe(1);
+          expect(await runTaskRegistryMaintenance()).toMatchObject({ reconciled: 1 });
           expect(tasks.map((task) => getTaskById(task.taskId)?.status)).toEqual([
             "running",
-            "running",
+            "lost",
           ]);
-          return;
-        }
-        expect(previewTaskRegistryMaintenance().reconciled).toBe(1);
-        expect(await runTaskRegistryMaintenance()).toMatchObject({ reconciled: 1 });
-        expect(tasks.map((task) => getTaskById(task.taskId)?.status)).toEqual(["running", "lost"]);
+        });
       });
     },
   );
