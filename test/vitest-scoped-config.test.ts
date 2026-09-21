@@ -675,12 +675,24 @@ describe("scoped vitest configs", () => {
     expect(coreTestConfig.exclude).toContain("reply*.test.ts");
     expect(requireTestConfig(defaultAutoReplyTopLevelConfig).include).toEqual(["reply*.test.ts"]);
     expect(requireTestConfig(defaultAutoReplyReplyConfig).include).toEqual(["reply/**/*.test.ts"]);
-  });
-
-  it("keeps the broad agents lane on shared file parallelism", () => {
-    expect(requireTestConfig(defaultAgentsConfig).fileParallelism).toBe(
+    expect(requireTestConfig(defaultAutoReplyReplyConfig).fileParallelism).toBe(
       sharedVitestConfig.test.fileParallelism,
     );
+  });
+
+  it.each([1, 2, 8])("keeps agents lanes on the shared %i-worker schedule", (maxWorkers) => {
+    const original = sharedVitestConfig.test;
+    try {
+      sharedVitestConfig.test = { ...original, maxWorkers, fileParallelism: maxWorkers > 1 };
+      for (const createConfig of [createAgentsVitestConfig, createAgentsCoreVitestConfig]) {
+        expect(requireTestConfig(createConfig({}))).toMatchObject({
+          maxWorkers,
+          fileParallelism: maxWorkers > 1,
+        });
+      }
+    } finally {
+      sharedVitestConfig.test = original;
+    }
   });
 
   it("isolates agent suites with conflicting shared-module mocks", () => {
@@ -1249,6 +1261,8 @@ describe("scoped vitest configs", () => {
     expect(testConfig.include).toEqual(["test/**/*.test.ts", "src/scripts/**/*.test.ts"]);
     expect(testConfig.exclude).toEqual(expect.arrayContaining(toolingDockerTestFiles));
     expect(testConfig.exclude).toEqual(expect.arrayContaining(toolingIsolatedTestFiles));
+    expect(testConfig.fileParallelism).toBe(sharedVitestConfig.test.fileParallelism);
+    expect(testConfig.maxWorkers).toBe(sharedVitestConfig.test.maxWorkers);
     expect(testConfig.include).not.toContain("src/config/doc-baseline.integration.test.ts");
   });
 

@@ -55,7 +55,7 @@ it("submits the docked answer after editing its draft without unrelated chat upd
   );
 });
 
-it("selects a reopened historical question ahead of another pending request without losing its draft", async () => {
+it("selects a reopened historical question ahead of another pending request", async () => {
   installTranscriptDomMocks();
   document.body.append(container);
   const old = {
@@ -94,9 +94,6 @@ it("selects a reopened historical question ahead of another pending request with
   await vi.waitFor(() =>
     expect(container.querySelector(".chat-question-panel__other")).not.toBeNull(),
   );
-  const draft = container.querySelector<HTMLInputElement>(".chat-question-panel__other")!;
-  draft.value = "New contributors";
-  draft.dispatchEvent(new Event("input", { bubbles: true }));
   props.messages = [old, final("old-run"), latest, final("latest-run")];
   draw();
   await vi.waitFor(() =>
@@ -114,7 +111,88 @@ it("selects a reopened historical question ahead of another pending request with
       "Which audience?",
     ),
   );
-  expect(container.querySelector<HTMLInputElement>(".chat-question-panel__other")?.value).toBe(
-    "New contributors",
+  expect(container.querySelector<HTMLInputElement>(".chat-question-panel__other")?.value).toBe("");
+});
+
+it("refreshes a mounted question summary when a canonical answer appears or is replaced", () => {
+  installTranscriptDomMocks();
+  document.body.append(container);
+  const question = {
+    role: "assistant",
+    content: "Which audience?",
+    __openclaw: { id: "audience-question", seq: 1 },
+    openclawAsyncDelivery: {
+      itemId: "audience",
+      questions: [{ title: "Which audience?", options: ["Engineers", "Everyone"] }],
+    },
+  };
+  const answer = {
+    role: "user",
+    content: "> Which audience?\n\nEveryone",
+    __openclaw: { id: "audience-answer", seq: 2 },
+  };
+  const props = createChatProps({
+    sessionKey: "agent:main:main",
+    messages: [question],
+    onAsyncQuestionSubmit: vi.fn(async () => true),
+  });
+  const draw = () => render(renderChat(props), container);
+  const summary = () => container.querySelector(".chat-question-summary")?.textContent;
+  draw();
+  expect(summary()).toContain("Answer above");
+  props.messages = [question, answer];
+  draw();
+  expect(summary()).toContain("Everyone");
+  expect(summary()).not.toContain("Answer above");
+  props.messages = [question, { ...answer, content: "> Which audience?\n\nEngineers" }];
+  draw();
+  expect(summary()).toContain("Engineers");
+  expect(summary()).not.toContain("Everyone");
+  props.messages = [question];
+  draw();
+  expect(summary()).toContain("Answer above");
+  expect(summary()).not.toContain("Engineers");
+});
+
+it("keeps an edited answer visible when later work completes", async () => {
+  installTranscriptDomMocks();
+  document.body.append(container);
+  const question = {
+    role: "assistant",
+    runId: "old-run",
+    content: "Which audience?",
+    openclawAsyncDelivery: {
+      itemId: "audience",
+      questions: [{ title: "Which audience?", options: ["Everyone"] }],
+    },
+  };
+  const terminal = (runId: string) => ({
+    role: "assistant",
+    runId,
+    content: "Done.",
+    phase: "final_answer",
+    __openclaw: { runTerminal: true },
+  });
+  const props = createChatProps({
+    sessionKey: "agent:main:main",
+    messages: [question],
+    onAsyncQuestionSubmit: vi.fn(async () => true),
+    onRequestUpdate: () => render(renderChat(props), container),
+  });
+  render(renderChat(props), container);
+  await vi.waitFor(() =>
+    expect(container.querySelector(".chat-question-panel__other")).not.toBeNull(),
   );
+  const answer = container.querySelector<HTMLInputElement | HTMLTextAreaElement>(
+    ".chat-question-panel__other",
+  )!;
+  answer.value = "New contributors";
+  answer.dispatchEvent(new Event("input", { bubbles: true }));
+  props.messages = [question, terminal("old-run"), terminal("later-run")];
+  render(renderChat(props), container);
+  expect(container.querySelector(".agent-chat__question-dock")).not.toBeNull();
+  expect(
+    container.querySelector<HTMLInputElement | HTMLTextAreaElement>(".chat-question-panel__other")
+      ?.value,
+  ).toBe("New contributors");
 });

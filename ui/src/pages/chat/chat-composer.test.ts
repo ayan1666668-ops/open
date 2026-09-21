@@ -304,6 +304,8 @@ describe("renderChatComposer controls", () => {
         archived: new Map(),
         historyKey: "",
         drafts: new Map(),
+        resolved: new Map(),
+        dismiss: vi.fn(async () => {}),
         onChange: vi.fn(),
         reopen: vi.fn(),
         submit: vi.fn(async () => true),
