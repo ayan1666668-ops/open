@@ -701,6 +701,16 @@ Deferred publication or required flow work stops settlement before another task 
 admitted. The committed result survives, and the existing bounded flow-repair owner
 retains its obligation without replaying that task write.
 
+Task state-change notification acknowledgements use the same shared-state worker
+and publication owner. Direct sends and queued session events retain their producing
+task and event across preparation and transport waits. Acknowledgements preserve
+the current delivery origin and newest event watermark, with separate best-effort
+watermark and task timestamp writes. A committed acknowledgement is not replayed
+when projection publication fails; the existing read and flow owners retain recovery.
+Preparation cleanup joins any acknowledgement it already started. Terminal delivery
+status writes and native notification preparation retain their existing owners.
+Storage representation, schemas, retention, and update behavior are unchanged.
+
 Agent-event task progress uses the same shared-state worker and publication owner.
 Ingestion retains exact task, run, and backing identities without waiting for a native
 coordinator. Bounded progress batches preserve every tool-start count and the latest
@@ -887,11 +897,11 @@ cleanup retain custody. Allocation uses the existing reclamation rules.
 After acknowledged staging-process exit, the same inspector and exclusive token
 locks reconcile retirement before a replacement session releases the retained bytes.
 Artifact-preserving fixed reads over a cached native source also use that token
-owner when no source-exclusion or canonical-mutation scope is active. They retain
+owner when no source-exclusion scope is active. They retain
 the original source connection and backup owner, recheck authority around awaited
 preparation, and join token cleanup before releasing the source borrow. This moves
 token SQLite work, not the native backup or the reader's callback SQL.
-Generic composite callbacks, source-exclusion and canonical-mutation preparation,
+Generic composite callbacks, source-exclusion preparation,
 and already-open native source backups retain their existing snapshot owner.
 These preparation paths can still execute main-thread SQLite. The published SDK
 preparation helpers also retain their synchronous `cleanup()` contract.
@@ -1448,6 +1458,12 @@ before deleting archives when checkpointing is incomplete. Its outcome records
 completion, checkpoint facts, and physical bytes before and after. Budget cleanup
 remains deferred until the checkpoint owner reports completion, preserving retained
 data instead of adding writes behind a pinned WAL.
+
+Checkpoint ordering uses a private monotonic observation shared by the host and
+its workers; health timestamps remain wall-clock diagnostics. Post-commit page
+maintenance also waits for the parent's commit-settlement probe to release its
+writer lock. Child transaction settlement and parent probe release are distinct
+facts in the existing commit gate; failed release cannot acknowledge success.
 
 Queued archive pruning prepares cold connections through the same asynchronous
 admission owner while retaining its existing writer section. File-backed page

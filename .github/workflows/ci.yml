@@ -1745,12 +1745,12 @@ jobs:
                   ...changedExtensionFallbackShards,
                 ]
             : [];
-          // Grouped rows list every striped test file. Current targets pack the
-          // projected runner contract; older targets retain the same projection
-          // as legacy JSON because their shard runner predates the codec.
+          // Node rows list every striped test file. Current targets pack the
+          // projected runner contract; older targets keep their flat fields or
+          // projected legacy groups because their shard runner predates the codec.
           const nodeTestGroupsCodecPath = "./scripts/lib/ci-node-test-groups-codec.mts";
           const nodeTestGroupsCodec =
-            rawNodeTestShards.some((shard) => shard.groups) &&
+            rawNodeTestShards.length > 0 &&
             existsSync(nodeTestGroupsCodecPath)
               ? await importTargetPlan(nodeTestGroupsCodecPath)
               : null;
@@ -1765,9 +1765,10 @@ jobs:
             env,
             fallbackMaxWorkers,
             includePatterns,
+            minTotalMemoryBytes,
             shard_name,
             timing_key,
-          }) => ({ configs, env, fallbackMaxWorkers, includePatterns, shard_name, timing_key });
+          }) => ({ configs, env, fallbackMaxWorkers, includePatterns, minTotalMemoryBytes, shard_name, timing_key });
           const testRuntimePolicyPath = "./scripts/lib/ci-test-runtime.mts";
           const testRuntimePolicy = existsSync(testRuntimePolicyPath)
             ? await importTargetPlan(testRuntimePolicyPath)
@@ -1789,18 +1790,29 @@ jobs:
           const nodeTestShards = rawNodeTestShards
             .toSorted((a, b) => (b.predictedSeconds ?? 0) - (a.predictedSeconds ?? 0))
             .map((shard) => {
-              const groups = shard.groups?.map(projectNodeTestGroup);
+              const groups = shard.groups?.map(projectNodeTestGroup) ?? (
+                nodeTestGroupsCodec && shard.configs?.length && !shard.targets?.length
+                  ? [{
+                      configs: shard.configs,
+                      env: shard.env,
+                      includePatterns: shard.includePatterns,
+                      shard_name: shard.shardName,
+                    }]
+                  : undefined
+              );
+              const packedGroups = groups?.length && nodeTestGroupsCodec
+                ? encodeNodeTestGroups(groups)
+                : undefined;
               return {
                 check_name: shard.checkName,
                 test_runtime_policy: testRuntimeMode,
                 requires_bun: !shard.requiresDist && Boolean(testRuntimePolicy?.ciTestShardRequiresBun(shard, testRuntimeMode)),
                 shard_name: shard.shardName,
-                groups_gzip_base64:
-                  groups && nodeTestGroupsCodec ? encodeNodeTestGroups(groups) : undefined,
+                groups_gzip_base64: packedGroups,
                 groups: groups && !nodeTestGroupsCodec ? groups : undefined,
-                configs: shard.configs,
+                configs: packedGroups ? undefined : shard.configs,
                 env: shard.env,
-                includePatterns: shard.includePatterns,
+                includePatterns: packedGroups ? undefined : shard.includePatterns,
                 pretest_build_mode: shard.pretestBuildMode,
                 git_commits: resolveTestGitCommits(shard),
                 requires_dist: shard.requiresDist,
@@ -3075,6 +3087,7 @@ jobs:
             ui/src/e2e/provider-browser-login.real-gateway.e2e.test.ts \
             ui/src/e2e/device-alias-rename.real-gateway.e2e.test.ts \
             ui/src/e2e/device-platform-family.real-gateway.e2e.test.ts \
+            ui/src/e2e/session-pr-reader-lifetime.real-gateway.e2e.test.ts \
             ui/src/e2e/session-progress-hovercard.real-gateway.e2e.test.ts \
             ui/src/e2e/worker-initial-setup.real-gateway.e2e.test.ts \
             extensions/qa-lab/src/control-ui-media-transcript.real-gateway.e2e.test.ts \
