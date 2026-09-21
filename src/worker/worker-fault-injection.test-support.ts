@@ -40,6 +40,7 @@ import { createWorkerTranscriptCommitter } from "../gateway/worker-environments/
 import { onAgentRuntimeEvent } from "../infra/agent-events.js";
 import type { WorkerProvider, WorkerSshEndpoint } from "../plugins/types.js";
 import * as stateDb from "../state/openclaw-state-db.js";
+import { cleanupSessionStateForTest } from "../test-utils/session-state-cleanup.js";
 import { buildWorkerConnectParams, type WorkerLaunchDescriptor } from "./launch-descriptor.js";
 import { createWorkerConnection, type WorkerConnection } from "./worker-connection.js";
 import { WorkerFaultPlacementLifecycle } from "./worker-fault-placement-lifecycle.test-support.js";
@@ -472,7 +473,12 @@ export class ComposedGatewayHarness {
     await new Promise<void>((resolve) => {
       this.httpServer.close(() => resolve());
     });
-    stateDb.closeOpenClawStateDatabaseForTest();
+    // Session writes can retain maintenance workers after their request settles.
+    // Join this fixture's database owners before removing their files.
+    await cleanupSessionStateForTest({
+      stateDir: path.join(this.root, "state"),
+      rootPath: this.root,
+    });
     await fs.rm(this.root, { recursive: true, force: true });
   }
 
