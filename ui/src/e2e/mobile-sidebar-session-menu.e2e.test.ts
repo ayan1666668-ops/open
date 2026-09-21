@@ -72,7 +72,14 @@ suite.define(() => {
         expect(await row.locator("[data-sidebar-session-pin]").isVisible()).toBe(false);
         expect(await row.locator("[data-sidebar-session-archive]").isVisible()).toBe(false);
         const menuButton = row.locator("[data-sidebar-session-menu]");
-        expect(await menuButton.boundingBox()).toMatchObject({ width: 44, height: 44 });
+        const buttonBox = await menuButton.boundingBox();
+        const rowBox = await row.boundingBox();
+        if (!buttonBox || !rowBox) {
+          throw new Error("expected visible sidebar row and menu target");
+        }
+        expect(buttonBox).toMatchObject({ width: 44, height: 44 });
+        expect(buttonBox.y).toBeGreaterThanOrEqual(rowBox.y);
+        expect(buttonBox.y + buttonBox.height).toBeLessThanOrEqual(rowBox.y + rowBox.height);
         if (pointer === "coarse") {
           await menuButton.tap();
         } else {

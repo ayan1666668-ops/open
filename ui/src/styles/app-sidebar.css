@@ -40,6 +40,10 @@
     padding-right: var(--session-row-actions-reserve);
   }
 
+  > .sidebar-recent-session__aside {
+    top: 50%;
+  }
+
   /* The text container already reserves the menu slot, including on hover/focus. */
   .sidebar-recent-session__title-row {
     padding-right: 0;
