@@ -736,10 +736,7 @@ const SOURCE_TEST_TARGETS = new Map([
   ["src/plugin-sdk/persistent-dedupe.ts", ["src/plugin-sdk/memory-host-events.test.ts"]],
   [
     "extensions/browser/src/browser/chrome-mcp-options.ts",
-    [
-      "extensions/browser/src/browser/chrome-mcp.test.ts",
-      "test/scripts/ci-chrome-mcp-prewarm.test.ts",
-    ],
+    ["extensions/browser/src/browser/chrome-mcp.test.ts"],
   ],
   [
     "scripts/prepare-apple-mermaid.mjs",
@@ -945,9 +942,9 @@ const VITEST_NO_OUTPUT_TIMEOUT_ENV_KEY = "OPENCLAW_VITEST_NO_OUTPUT_TIMEOUT_MS";
 const VITEST_NO_OUTPUT_HEARTBEAT_ENV_KEY = "OPENCLAW_VITEST_NO_OUTPUT_HEARTBEAT_MS";
 const VITEST_NO_OUTPUT_RETRY_ENV_KEY = "OPENCLAW_VITEST_NO_OUTPUT_RETRY";
 /** Default no-output timeout applied to test-projects Vitest children. */
-export const DEFAULT_TEST_PROJECTS_VITEST_NO_OUTPUT_TIMEOUT_MS = String(900_000);
+const DEFAULT_TEST_PROJECTS_VITEST_NO_OUTPUT_TIMEOUT_MS = String(900_000);
 /** Default heartbeat interval applied to test-projects Vitest children. */
-export const DEFAULT_TEST_PROJECTS_VITEST_NO_OUTPUT_HEARTBEAT_MS = String(
+const DEFAULT_TEST_PROJECTS_VITEST_NO_OUTPUT_HEARTBEAT_MS = String(
   DEFAULT_VITEST_NO_OUTPUT_HEARTBEAT_MS,
 );
 
@@ -1046,10 +1043,11 @@ function listToolingFullSuiteTestTargets(cwd: string) {
       fs.existsSync(root) ? listRepoFilesRecursive(root, cwd) : [],
     ),
   )
-    // Explicit leaf targets bypass the config's live-test exclusion and produce an empty shard.
+    // Match Vitest's fixture/live exclusions before forming explicit leaf chunks.
     .filter(
       (file) =>
         file.endsWith(".test.ts") &&
+        !file.startsWith("test/fixtures/") &&
         !file.endsWith(".live.test.ts") &&
         classifyTarget(file, cwd) === "tooling",
     )
@@ -4064,16 +4062,19 @@ export function buildVitestRunPlans(
   }));
   const hasGatewayAggregateTarget = classifiedTargets.some(({ kind }) => kind === "gateway");
   const explicitConfigTargets = classifiedTargets.map(({ relative }) => relative);
+  const databaseWorkerPatterns = uniqueOrdered([
+    ...requestedTargetArgs,
+    ...activeTargetArgs,
+  ]).flatMap((targetArg) => {
+    const relative = toRepoRelativeTarget(targetArg, cwd);
+    return isTestFileTarget(relative) ||
+      isGlobTarget(relative) ||
+      isExistingDirectoryTarget(targetArg, cwd)
+      ? [toScopedIncludePattern(targetArg, cwd)]
+      : [];
+  });
   const impliedDatabaseWorkerTargets = databaseWorkerCoreTestFiles.filter((file) =>
-    [...requestedTargetArgs, ...activeTargetArgs].some((targetArg) => {
-      const relative = toRepoRelativeTarget(targetArg, cwd);
-      return (
-        (isTestFileTarget(relative) ||
-          isGlobTarget(relative) ||
-          isExistingDirectoryTarget(targetArg, cwd)) &&
-        includePatternMatchesAnyFile(toScopedIncludePattern(targetArg, cwd), [file])
-      );
-    }),
+    databaseWorkerPatterns.some((pattern) => includePatternMatchesAnyFile(pattern, [file])),
   );
   const hasPackageFileTarget = classifiedTargets.some(
     ({ kind, relative }) =>
