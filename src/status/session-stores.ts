@@ -23,13 +23,25 @@ function summarizeProjectionRows(
   agentIds: readonly string[],
   recentLimit: number,
 ): SessionStoreSummary {
-  const rows = projection
-    .selectEntries({ storePath, sortBy: null })
-    .toSorted(
-      (left, right) =>
-        (right.entry.updatedAt ?? 0) - (left.entry.updatedAt ?? 0) ||
-        (left.key < right.key ? -1 : left.key > right.key ? 1 : 0),
+  const rows = projection.selectEntries({ storePath, sortBy: null });
+  if (recentLimit === 0) {
+    const byAgent: SessionStoreSummary["byAgent"] = new Map(
+      agentIds.map((agentId) => [agentId, { count: 0, recent: [] }]),
     );
+    rows.forEach((row) => {
+      const agent = byAgent.get(row.agentId);
+      if (agent) {
+        agent.count += 1;
+      }
+    });
+    return { count: rows.length, recent: [], byAgent };
+  }
+  // The projection returns a fresh selection, independent of its resident indexes.
+  rows.sort(
+    (left, right) =>
+      (right.entry.updatedAt ?? 0) - (left.entry.updatedAt ?? 0) ||
+      (left.key < right.key ? -1 : left.key > right.key ? 1 : 0),
+  );
   const summarize = (selected: typeof rows) => ({
     count: selected.length,
     recent: selected.slice(0, recentLimit).map(({ key: sessionKey, entry }) => ({
