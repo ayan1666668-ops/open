@@ -754,11 +754,15 @@ export async function createOpenClawTestInstance(
     if (options.port !== undefined) {
       port = options.port;
     } else {
-      const claimed = await acquireTestPortBlock({ offsets: [0, 1], signal });
+      const claimed = await acquireTestPortBlock({
+        offsets: [0, 1],
+        signal,
+        reserve: async (candidate) => {
+          reservation = await reserveGatewayPort(candidate, options.verifyCleanup);
+        },
+      });
       port = claimed.port;
       releasePortClaims = claimed.release;
-      signal?.throwIfAborted();
-      reservation = await reserveGatewayPort(port, options.verifyCleanup);
     }
     signal?.throwIfAborted();
     state = await createOpenClawTestState({

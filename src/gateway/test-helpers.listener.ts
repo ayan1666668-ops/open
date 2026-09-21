@@ -81,10 +81,28 @@ let activeDispatcher:
 
 /** Retain the exact loopback listener until the real Gateway transport adopts it. */
 export async function reserveGatewayTestListener(port = 0) {
-  const claim = await acquireTestPortBlock({ offsets: [0, 1, 2, 3, 4], ...(port ? { port } : {}) });
   const listener = createServer();
   const rejectEarlyConnection = (socket: Socket) => socket.destroy();
   listener.on("connection", rejectEarlyConnection);
+  const claim = await acquireTestPortBlock({
+    offsets: [0, 1, 2, 3, 4],
+    ...(port ? { port } : {}),
+    reserve: (candidate) =>
+      new Promise<void>((resolve, reject) => {
+        const onListening = () => {
+          listener.off("error", onError);
+          resolve();
+        };
+        const onError = (error: Error) => {
+          // Node retains listen callbacks after a failed bind. A later candidate
+          // must not inherit the rejected reservation's callback.
+          listener.off("listening", onListening);
+          reject(error);
+        };
+        listener.once("error", onError);
+        listener.listen(candidate, "127.0.0.1", onListening);
+      }),
+  });
   let adopted = false;
   const closeUnadopted = async () => {
     if (!adopted && listener.listening) {
@@ -97,13 +115,6 @@ export async function reserveGatewayTestListener(port = 0) {
     }
   };
   try {
-    await new Promise<void>((resolve, reject) => {
-      listener.once("error", reject);
-      listener.listen(claim.port, "127.0.0.1", () => {
-        listener.off("error", reject);
-        resolve();
-      });
-    });
     const address = listener.address();
     assert(address && typeof address !== "string");
     return {

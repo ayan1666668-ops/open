@@ -1,3 +1,4 @@
+import { once } from "node:events";
 import fs from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
@@ -7,13 +8,52 @@ import { createVitestResourceOwner } from "../../scripts/lib/vitest-resource-own
 import { resolveGatewayPort } from "../../src/config/paths.js";
 import type { OpenClawConfig } from "../../src/config/types.openclaw.js";
 import { resolveGatewayUrlOverride } from "../../src/gateway/client-bootstrap.js";
+import { createFileLockManager } from "../../src/infra/file-lock-manager.js";
 import { captureFullEnv, withEnvAsync } from "../../src/test-utils/env.js";
+import * as ports from "../../src/test-utils/ports.js";
 import { createFixtureLifetime } from "./fixture-lifetime.js";
 import { createOpenClawTestInstance } from "./openclaw-test-instance.js";
 import { createDeferred, withTestTimeout } from "./promise.js";
 import { runQaGatewayFixture } from "./qa-gateway-cleanup.js";
 
 describe("createOpenClawTestInstance acquisition", () => {
+  it("reserves another candidate when a listener takes the probed port", async () => {
+    const competitor = net.createServer();
+    const allocatePort = ports.getDeterministicFreePortBlock;
+    let occupiedPort: number | undefined;
+    const allocator = vi
+      .spyOn(ports, "getDeterministicFreePortBlock")
+      .mockImplementationOnce(async (options) => {
+        occupiedPort = await allocatePort(options);
+        await once(competitor.listen(occupiedPort, "127.0.0.1"), "listening");
+        return occupiedPort;
+      });
+    let instance: Awaited<ReturnType<typeof createOpenClawTestInstance>> | undefined;
+    await runQaGatewayFixture(
+      async () => {
+        instance = await createOpenClawTestInstance({ name: "contested-port-acquisition" });
+        expect(instance.port).not.toBe(occupiedPort);
+        expect(competitor.listening).toBe(true);
+        const abandoned = createFileLockManager("openclaw.test-gateway-ports")
+          .heldEntries()
+          .filter((claim) =>
+            [occupiedPort!, occupiedPort! + 1].some(
+              (port) => path.basename(claim.normalizedTargetPath) === `openclaw-test-port-${port}`,
+            ),
+          );
+        expect(abandoned).toEqual([]);
+      },
+      () => allocator.mockRestore(),
+      () => instance?.cleanup(),
+      () =>
+        competitor.listening
+          ? new Promise<void>((resolve, reject) => {
+              competitor.close((error) => (error ? reject(error) : resolve()));
+            })
+          : undefined,
+    );
+  });
+
   it.skipIf(process.platform !== "linux")(
     "keeps Gateway and deferred sandbox listeners outside the kernel client-port range",
     async () => {

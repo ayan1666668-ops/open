@@ -22,6 +22,7 @@ async function claimPortBlock(
   port: number,
   offsets: number[],
   signal?: AbortSignal,
+  reserve?: (port: number) => Promise<void>,
 ): Promise<TestPortClaim> {
   signal?.throwIfAborted();
   let root = await fs.realpath(tmpdir());
@@ -57,6 +58,9 @@ async function claimPortBlock(
       );
     }
     signal?.throwIfAborted();
+    // A probe can go stale while file claims are acquired. Accept the candidate
+    // only after its listener binds; failed reservations release the whole block.
+    await reserve?.(port);
     return { port, release };
   } catch (error) {
     return runQaGatewayFixture(async (): Promise<never> => {
@@ -70,6 +74,8 @@ export async function acquireTestPortBlock(params: {
   offsets: number[];
   port?: number;
   signal?: AbortSignal;
+  /** Bind before accepting the candidate; clean up partial listeners before rejecting. */
+  reserve?: (port: number) => Promise<void>;
 }): Promise<TestPortClaim> {
   const requestedPort = params.port;
   const signal = params.signal;
@@ -87,7 +93,7 @@ export async function acquireTestPortBlock(params: {
   }
   if (requestedPort !== undefined) {
     try {
-      return await claimPortBlock(requestedPort, offsets, signal);
+      return await claimPortBlock(requestedPort, offsets, signal, params.reserve);
     } catch (error) {
       if (!hasErrnoCode(error, FILE_LOCK_TIMEOUT_ERROR_CODE)) {
         throw error;
@@ -108,9 +114,12 @@ export async function acquireTestPortBlock(params: {
     }
     seen.add(port);
     try {
-      return await claimPortBlock(port, offsets, signal);
+      return await claimPortBlock(port, offsets, signal, params.reserve);
     } catch (error) {
-      if (!hasErrnoCode(error, FILE_LOCK_TIMEOUT_ERROR_CODE)) {
+      if (
+        !hasErrnoCode(error, FILE_LOCK_TIMEOUT_ERROR_CODE) &&
+        !hasErrnoCode(error, "EADDRINUSE")
+      ) {
         throw error;
       }
     }

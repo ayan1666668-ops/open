@@ -1,6 +1,9 @@
-import type { Server } from "node:http";
+import { once } from "node:events";
+import { createServer, type Server } from "node:http";
 import { describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../test/helpers/promise.js";
+import { runQaGatewayFixture } from "../../test/helpers/qa-gateway-cleanup.js";
+import * as ports from "../test-utils/ports.js";
 import { reserveGatewayTestListener } from "./test-helpers.listener.js";
 
 vi.mock("./server-runtime-state.js", () => ({
@@ -14,20 +17,70 @@ function createTestTransport(transport: typeof import("./server-runtime-state.js
   } as Parameters<typeof transport.createGatewayHttpTransport>[0]);
 }
 
+async function closeListener(listener: Server) {
+  if (listener.listening) {
+    await new Promise<void>((resolve, reject) => {
+      listener.close((error) => (error ? reject(error) : resolve()));
+    });
+  }
+}
+
+async function closeReservation(
+  reservation: Awaited<ReturnType<typeof reserveGatewayTestListener>> | undefined,
+) {
+  if (reservation) {
+    await closeListener(reservation.listener);
+    await reservation.closeUnadopted();
+  }
+}
+
 describe("reserved Gateway test listeners", () => {
-  it("adopts a single reservation through the transport dispatcher", async () => {
+  it("adopts a reservation after another listener occupies the first candidate", async () => {
     const transport = await import("./server-runtime-state.js");
-    const reservation = await reserveGatewayTestListener();
-    try {
-      await expect(
-        reservation.start(() => createTestTransport(transport, reservation.port)),
-      ).resolves.toBe(reservation.listener);
-    } finally {
-      await new Promise<void>((resolve, reject) => {
-        reservation.listener.close((error) => (error ? reject(error) : resolve()));
+    const competitor = createServer();
+    const allocatePort = ports.getDeterministicFreePortBlock;
+    let occupiedPort: number | undefined;
+    const allocator = vi
+      .spyOn(ports, "getDeterministicFreePortBlock")
+      .mockImplementationOnce(async (options) => {
+        occupiedPort = await allocatePort(options);
+        await once(competitor.listen(occupiedPort, "127.0.0.1"), "listening");
+        return occupiedPort;
       });
-      await reservation.closeUnadopted();
-    }
+    let reservation: Awaited<ReturnType<typeof reserveGatewayTestListener>> | undefined;
+    await runQaGatewayFixture(
+      async () => {
+        const acquired = await reserveGatewayTestListener();
+        reservation = acquired;
+        expect(competitor.listening).toBe(true);
+        expect(acquired.port).not.toBe(occupiedPort);
+        await expect(
+          acquired.start(() => createTestTransport(transport, acquired.port)),
+        ).resolves.toBe(acquired.listener);
+      },
+      () => allocator.mockRestore(),
+      () => closeListener(competitor),
+      () => closeReservation(reservation),
+    );
+  });
+
+  it("rejects an occupied requested port without choosing a replacement", async () => {
+    const competitor = createServer();
+    let reservation: Awaited<ReturnType<typeof reserveGatewayTestListener>> | undefined;
+    await runQaGatewayFixture(
+      async () => {
+        const port = await ports.getDeterministicFreePortBlock({ offsets: [0, 1, 2, 3, 4] });
+        await once(competitor.listen(port, "127.0.0.1"), "listening");
+        const outcome = await reserveGatewayTestListener(port).then(
+          (acquired) => (reservation = acquired),
+          (error: unknown) => error,
+        );
+        expect(outcome).toMatchObject({ code: "EADDRINUSE" });
+        expect(competitor.listening).toBe(true);
+      },
+      () => closeListener(competitor),
+      () => closeReservation(reservation),
+    );
   });
 
   it.each(["first", "second"] as const)(
