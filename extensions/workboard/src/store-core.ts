@@ -12,7 +12,6 @@ import { normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runti
 import type {
   PersistedWorkboardAttachment,
   PersistedWorkboardBoard,
-  PersistedWorkboardCard,
   WorkboardCardStore,
   WorkboardKeyedStore,
   WorkboardSubscriptionStore,
@@ -22,7 +21,6 @@ import {
   assertCanMutateClaimedCard,
   cardBoardId,
   cardParentIds,
-  compareCards,
   isActiveDependencyTarget,
   isDependencyPromotableStatus,
   lifecycleStatusSourceUpdatedAtFromPatch,
@@ -71,6 +69,7 @@ import {
   normalizeTitle,
   trimMetadataToBudget,
 } from "./store-normalizers.js";
+import { readCards } from "./store-read.js";
 import { WorkboardStoreRuntime } from "./store-runtime.js";
 import { cardSessionKey, capturedSessionCard } from "./store-session-binding.js";
 
@@ -300,14 +299,7 @@ export class WorkboardCoreStore extends WorkboardStoreRuntime {
 
   async list(options: WorkboardListOptions = {}): Promise<WorkboardCard[]> {
     const boardId = normalizeBoardId(options.boardId);
-    const entries = await this.store.entries(boardId);
-    return entries
-      .map((entry) => entry.value)
-      .filter(
-        (entry): entry is PersistedWorkboardCard => entry?.version === 1 && Boolean(entry.card?.id),
-      )
-      .map((entry) => entry.card)
-      .toSorted(compareCards);
+    return readCards(this.store, boardId === undefined ? undefined : { kind: "board", boardId });
   }
 
   async listBoards(): Promise<{ boards: WorkboardBoardSummary[] }> {
@@ -393,7 +385,7 @@ export class WorkboardCoreStore extends WorkboardStoreRuntime {
       if (await this.store.hasCards(boardId)) {
         throw new Error("board still has cards; archive it or move/delete the cards first.");
       }
-      for (const entry of await this.subscriptionStore.entries()) {
+      for (const entry of await this.subscriptionStore.entries({ boardId })) {
         if (entry.value?.version === 1 && entry.value.subscription?.boardId === boardId) {
           await this.subscriptionStore.delete(entry.key);
         }
@@ -632,7 +624,10 @@ export class WorkboardCoreStore extends WorkboardStoreRuntime {
         throw new Error("sessionKey is required.");
       }
       const boardId = normalizeBoardId(input.boardId) ?? "default";
-      const existing = capturedSessionCard(await this.list(), sessionKey);
+      const existing = capturedSessionCard(
+        await readCards(this.store, { kind: "session", sessionKey }),
+        sessionKey,
+      );
       if (existing) {
         if (!existing.metadata?.archivedAt) {
           return existing;

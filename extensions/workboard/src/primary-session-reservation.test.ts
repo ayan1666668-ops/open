@@ -147,36 +147,39 @@ describe("primary session reservations through the SQLite worker", () => {
     expect(await store.get(duplicate.id)).toEqual(before);
     expect((await store.get(first.id))?.metadata?.claim).toBeUndefined();
   });
-  it("reopens legacy duplicates without choosing a capture winner or changing metadata", async () => {
-    const { store, dbPath } = createWorkboardSqliteTestHarness();
-    const first = await store.create({ title: "First", sessionKey: "legacy" });
-    const second = await store.create({ title: "Second" });
-    await store.close();
-    const db = new DatabaseSync(dbPath);
-    try {
-      db.prepare("UPDATE workboard_cards SET session_key = ?, archived_at = 0 WHERE id = ?").run(
-        "legacy",
-        second.id,
-      );
-    } finally {
-      db.close();
-    }
-    const sqlite = createWorkboardSqliteStores({ dbPath, workerModuleUrl });
-    const reopened = new WorkboardStore(sqlite.cards, sqlite);
-    try {
-      const before = await reopened.list();
-      await expect(
-        reopened.captureSession({ sessionKey: "legacy", title: "Capture" }),
-      ).rejects.toThrow("reserved");
-      expect(await reopened.list()).toEqual(before);
-      await reopened.bindSession(second.id, { action: "detach" });
-      await expect(
-        reopened.captureSession({ sessionKey: "legacy", title: "Capture" }),
-      ).resolves.toMatchObject({ id: first.id });
-    } finally {
-      await reopened.close();
-    }
-  });
+  it.each(["legacy", " \tlegacy\u00a0"])(
+    "reopens normalized legacy duplicates (%j) without choosing a capture winner",
+    async (legacyKey) => {
+      const { store, dbPath } = createWorkboardSqliteTestHarness();
+      const first = await store.create({ title: "First", sessionKey: "legacy" });
+      const second = await store.create({ title: "Second" });
+      await store.close();
+      const db = new DatabaseSync(dbPath);
+      try {
+        db.prepare("UPDATE workboard_cards SET session_key = ?, archived_at = 0 WHERE id = ?").run(
+          legacyKey,
+          second.id,
+        );
+      } finally {
+        db.close();
+      }
+      const sqlite = createWorkboardSqliteStores({ dbPath, workerModuleUrl });
+      const reopened = new WorkboardStore(sqlite.cards, sqlite);
+      try {
+        const before = await reopened.list();
+        await expect(
+          reopened.captureSession({ sessionKey: "legacy", title: "Capture" }),
+        ).rejects.toThrow("reserved");
+        expect(await reopened.list()).toEqual(before);
+        await reopened.bindSession(second.id, { action: "detach" });
+        await expect(
+          reopened.captureSession({ sessionKey: "legacy", title: "Capture" }),
+        ).resolves.toMatchObject({ id: first.id });
+      } finally {
+        await reopened.close();
+      }
+    },
+  );
 
   it("reserves normalized execution fallback and permits terminal/archive exemptions", async () => {
     const { store } = createWorkboardSqliteTestHarness();

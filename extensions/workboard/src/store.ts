@@ -18,6 +18,7 @@ import {
   buildWorkerContext,
   assertCanMutateClaimedCard,
   cardBoardId,
+  cardParentIds,
   cardRunId,
   closeRunningAttempts,
   computeCardDiagnostics,
@@ -44,6 +45,7 @@ import type {
 } from "./store-inputs.js";
 import { capText, normalizeBoardId, normalizeTimestamp } from "./store-normalizers.js";
 import { WorkboardNotificationStore } from "./store-notifications.js";
+import { readCards } from "./store-read.js";
 import { cardExecutionSessionKey } from "./store-session-binding.js";
 
 export type { WorkboardDispatchResult } from "./store-inputs.js";
@@ -682,7 +684,16 @@ export class WorkboardStore extends WorkboardNotificationStore {
     if (!card) {
       throw new Error(`card not found: ${id}`);
     }
-    return buildWorkerContext(card, await this.list());
+    return buildWorkerContext(
+      card,
+      await readCards(this.store, {
+        kind: "worker-context",
+        cardId: card.id,
+        boardId: cardBoardId(card),
+        agentId: card.agentId,
+        parentIds: cardParentIds(card),
+      }),
+    );
   }
 
   static openSqlite(workerModuleUrl: URL) {
