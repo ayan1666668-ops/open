@@ -399,8 +399,7 @@ export class ChatSessionVirtualizerHost implements ReactiveControllerHost, ChatT
     // Disclosure measurement owns this commit; its sizer lands on the next update.
     if (interactionResizePending) {
       this.endAnchor.cancelReconcile();
-    }
-    if (!interactionResizePending && this.connected) {
+    } else if (this.connected) {
       this.endAnchor.scheduleReconcile(() => {
         if (this.connected && !this.offsetState.pendingInteractionAnchor) {
           this.reconcileImplicitEndAnchor();
@@ -418,7 +417,7 @@ export class ChatSessionVirtualizerHost implements ReactiveControllerHost, ChatT
   }
 
   disconnect(): void {
-    this.endAnchor.releaseCommit();
+    this.endAnchor.disconnect();
     this.entryAnimations.disconnect();
     // Clear retires bodies and pending loads; replacement invalidates guarded
     // rows when this presentation reconnects with the same source messages.
@@ -431,7 +430,6 @@ export class ChatSessionVirtualizerHost implements ReactiveControllerHost, ChatT
     this.offsetState.touchScrolling = false;
     this.renderPreviousRows = null;
     this.messageReveal.clear();
-    this.endAnchor.cancelReconcile();
     if (this.pendingRowMeasureFrame !== null) {
       cancelAnimationFrame(this.pendingRowMeasureFrame);
       this.pendingRowMeasureFrame = null;

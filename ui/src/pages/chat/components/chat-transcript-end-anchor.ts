@@ -91,6 +91,11 @@ export class TranscriptEndAnchor {
     }
   }
 
+  disconnect(): void {
+    this.releaseCommit();
+    this.cancelReconcile();
+  }
+
   clear(): void {
     this.offset = null;
     this.followingBeforeCommit = false;
