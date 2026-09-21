@@ -30,7 +30,9 @@ import {
   resolveChangedTestTargetPlanForArgs,
   resolveChangedTestTargetPlan,
   resolveChangedTargetArgs,
+  resolveControlUiTestConsumers,
   resolveParallelFullSuiteConcurrency,
+  resolvePluginSdkTestConsumers,
   shouldRetryVitestNoOutputTimeout,
   withRetryNoOutputTimeout,
   writeVitestIncludeFile,
@@ -4104,9 +4106,19 @@ describe("scripts/test-projects changed-target routing", () => {
   });
 
   it.each([
-    ["ui/config/control-ui-chunking.ts", "ui/src/app/control-ui-chunking.test.ts"],
-    ["ui/config/control-ui-locales.ts", "ui/src/app/vite-config.node.test.ts"],
-  ])("routes changed ui build helper %s to its owner test", (changedPath, testPath) => {
+    {
+      changedPath: "ui/config/control-ui-chunking.ts",
+      tests: ["ui/src/app/control-ui-chunking.test.ts"],
+    },
+    {
+      changedPath: "ui/config/control-ui-locales.ts",
+      tests: ["ui/src/app/vite-config.node.test.ts"],
+    },
+    {
+      changedPath: "ui/config/control-ui-boot-modules.json",
+      tests: ["ui/src/app/control-ui-chunking.test.ts", "ui/src/app/vite-config.node.test.ts"],
+    },
+  ])("routes changed ui build helper $changedPath to its owner tests", ({ changedPath, tests }) => {
     const plans = buildVitestRunPlans(["--changed", "origin/main"], process.cwd(), () => [
       changedPath,
     ]);
@@ -4115,7 +4127,7 @@ describe("scripts/test-projects changed-target routing", () => {
       {
         config: "test/vitest/vitest.ui.config.ts",
         forwardedArgs: [],
-        includePatterns: [testPath],
+        includePatterns: tests,
         watchMode: false,
       },
     ]);
@@ -4635,6 +4647,171 @@ describe("scripts/test-projects changed-target routing", () => {
 });
 
 describe("test selector native source facts", () => {
+  it("selects SDK barrel consumers through package aliases and retains runtime plugin roots", () => {
+    withTinyGitRepo(
+      {
+        "src/owner/value.ts": "export const value = 1;\n",
+        "src/owner/value.test.ts": 'import "./value.js";\n',
+        "src/plugin-sdk/allow-from.ts": 'export { value } from "../owner/value.js";\n',
+        "src/plugin-sdk/core.ts": 'export { value } from "./allow-from.js";\n',
+        "src/plugin-sdk/qa-runtime.ts": 'export { value } from "./allow-from.js";\n',
+        "src/plugin-sdk/channel-core.ts": "export const other = true;\n",
+        "extensions/static/index.ts": 'export { value } from "openclaw/plugin-sdk/core";\n',
+        "extensions/dynamic/index.ts": 'void import("openclaw/plugin-sdk/allow-from");\n',
+        "extensions/require/index.ts": 'require("@openclaw/plugin-sdk/allow-from");\n',
+        "extensions/template/index.ts": "void import(`openclaw/plugin-sdk/qa-runtime`);\n",
+        "extensions/unrelated/index.ts": 'import "openclaw/plugin-sdk/channel-core";\n',
+        "src/static-consumer.test.ts": 'import "../extensions/static/index.js";\n',
+        "src/type-consumer.test.ts":
+          'import type { value } from "@openclaw/plugin-sdk/allow-from";\n',
+        "src/directly-changed.test.ts": "export {};\n",
+        "src/unrelated.ts": "export const other = true;\n",
+        "src/unrelated.test.ts": 'import "./unrelated.js";\n',
+        "test/scripts/vitest-worker-artifacts.prepared.test-support.ts": "export {};\n",
+        "test/scripts/compiled-sdk-consumer.test.ts":
+          'import "./vitest-worker-artifacts.prepared.test-support.js";\n',
+      },
+      (cwd) => {
+        expect(
+          resolvePluginSdkTestConsumers(
+            ["src/owner/value.ts", "src/unrelated.ts", "src/directly-changed.test.ts"],
+            cwd,
+          ),
+        ).toEqual({
+          entryPoints: [
+            "src/plugin-sdk/allow-from.ts",
+            "src/plugin-sdk/core.ts",
+            "src/plugin-sdk/qa-runtime.ts",
+          ],
+          impactedPaths: ["src/owner/value.ts"],
+          tests: [
+            "src/directly-changed.test.ts",
+            "src/owner/value.test.ts",
+            "src/static-consumer.test.ts",
+            "src/type-consumer.test.ts",
+            "test/scripts/compiled-sdk-consumer.test.ts",
+          ],
+          extensionRoots: [
+            "extensions/dynamic",
+            "extensions/require",
+            "extensions/static",
+            "extensions/template",
+          ],
+        });
+        expect(resolvePluginSdkTestConsumers(["src/unrelated.ts"], cwd)?.tests).toEqual([]);
+      },
+    );
+  });
+
+  it.each([
+    "openclaw/plugin-sdk/unknown-entry",
+    "@openclaw/plugin-sdk",
+    "openclaw/plugin-sdk/core",
+  ])("refuses incomplete SDK consumer enumeration for %s", (specifier) => {
+    withTinyGitRepo(
+      {
+        "src/plugin-sdk/allow-from.ts": "export const value = true;\n",
+        "extensions/unknown/index.ts": `import ${JSON.stringify(specifier)};\n`,
+      },
+      (cwd) => {
+        expect(resolvePluginSdkTestConsumers(["src/plugin-sdk/allow-from.ts"], cwd)).toBeNull();
+      },
+    );
+  });
+
+  it("retains negative SDK loader fixtures without treating them as production aliases", () => {
+    withTinyGitRepo(
+      {
+        "src/plugin-sdk/internal-leaf.ts": "export const value = true;\n",
+        "src/plugin-sdk/internal-leaf.test.ts": 'import "./internal-leaf.js";\n',
+        "src/plugins/negative-import.test.ts":
+          "const fixture = 'import \"openclaw/plugin-sdk/unknown-entry\";';\n",
+      },
+      (cwd) => {
+        expect(resolvePluginSdkTestConsumers(["src/plugin-sdk/internal-leaf.ts"], cwd)).toEqual({
+          entryPoints: [],
+          impactedPaths: ["src/plugin-sdk/internal-leaf.ts"],
+          tests: ["src/plugin-sdk/internal-leaf.test.ts", "src/plugins/negative-import.test.ts"],
+          extensionRoots: [],
+        });
+      },
+    );
+  });
+
+  it("keeps whole-area UI consumers and source readers across graph cache scopes", () => {
+    const pluginModule = "extensions/example/browser/view.ts";
+    const pluginConsumer = "test/plugin-browser-consumer.test.ts";
+    // This import belongs to the virtual repository, not this test's module graph.
+    const pluginImport = path.posix
+      .relative(path.posix.dirname(pluginConsumer), pluginModule)
+      .replace(/\.ts$/u, ".js");
+    withTinyGitRepo(
+      {
+        "src/owner/value.ts": "export const value = 1;\n",
+        "ui/src/presenter.ts": 'export { value } from "../../src/owner/value.js";\n',
+        "ui/src/catalog.json": '{"label":"Changed dynamically loaded data"}\n',
+        "ui/src/catalog-extra.json": '{"label":"Another dynamically loaded catalog"}\n',
+        "ui/src/presenter.test.ts": 'import { value } from "./presenter.js"; void value;\n',
+        [pluginModule]: "export const view = 1;\n",
+        "src/consumer.test.ts": 'import { value } from "../ui/src/presenter.js"; void value;\n',
+        "scripts/ui-consumer.mjs": 'export { value } from "../ui/src/presenter.js";\n',
+        "test/scripts/ui-consumer.test.ts":
+          'import { value } from "../../scripts/ui-consumer.mjs"; void value;\n',
+        [pluginConsumer]: `import { view } from ${JSON.stringify(pluginImport)}; void view;\n`,
+        "test/scripts/ui-catalog-reader.test.ts":
+          'import { readFileSync } from "node:fs"; readFileSync("ui/src/catalog.json", "utf8");\n',
+        "test/scripts/ui-extra-reader.test.ts":
+          'import { readFileSync } from "node:fs"; readFileSync("ui/src/catalog-extra.json", "utf8");\n',
+        "test/scripts/ui-shared-reader.test.ts":
+          'import { readFileSync } from "node:fs"; ["ui/src/catalog.json", "ui/src/catalog-extra.json"].map((file) => readFileSync(file, "utf8"));\n',
+        "test/ui-consumer.live.test.ts": 'import "../ui/src/presenter.js";\n',
+        "src/unrelated.test.ts": "export {};\n",
+      },
+      (cwd) => {
+        const sourcePlan = () =>
+          resolveChangedTestTargetPlan(["src/owner/value.ts"], {
+            cwd,
+            forceFullImportGraph: true,
+          });
+        const expectedSourcePlan = {
+          mode: "targets",
+          targets: ["src/consumer.test.ts", "ui/src/presenter.test.ts"],
+        };
+        expect(sourcePlan()).toEqual(expectedSourcePlan);
+        const graphConsumers = [
+          "src/consumer.test.ts",
+          "test/plugin-browser-consumer.test.ts",
+          "test/scripts/ui-consumer.test.ts",
+        ];
+        expect(resolveControlUiTestConsumers(["ui/src/catalog.json"], cwd)).toEqual([
+          ...graphConsumers,
+          "test/scripts/ui-catalog-reader.test.ts",
+          "test/scripts/ui-shared-reader.test.ts",
+        ]);
+        expect(
+          resolveControlUiTestConsumers(
+            ["ui/src/catalog.json", "ui/src/catalog-extra.json", "ui/src/catalog.json"],
+            cwd,
+          ),
+        ).toEqual([
+          ...graphConsumers,
+          "test/scripts/ui-catalog-reader.test.ts",
+          "test/scripts/ui-shared-reader.test.ts",
+          "test/scripts/ui-extra-reader.test.ts",
+        ]);
+        expect(
+          resolveControlUiTestConsumers(["ui/src/catalog-extra.json", "ui/src/catalog.json"], cwd),
+        ).toEqual([
+          ...graphConsumers,
+          "test/scripts/ui-extra-reader.test.ts",
+          "test/scripts/ui-shared-reader.test.ts",
+          "test/scripts/ui-catalog-reader.test.ts",
+        ]);
+        expect(sourcePlan()).toEqual(expectedSourcePlan);
+      },
+    );
+  });
+
   it("reads complete files without installed packages, inherited hooks, or reparsing cached imports", () => {
     withTinyFileTree(
       {

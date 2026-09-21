@@ -1260,12 +1260,18 @@ describe("CI changed Node test plan", () => {
       [["docs/guide.md"], "file", true],
       [["docs/guide.mdx"], "file", true],
       [["README.md"], "file", true],
+      [["AGENTS.md"], "file", true],
+      [["src/agents/AGENTS.md"], "file", true],
+      [["src/agents/AGENTS.md"], "missing", true],
+      [[".agents/skills/example/SKILL.md"], "file", true],
+      [["skills/example/SKILL.md"], "file", true],
       [["docs/deleted.md"], "missing", true],
       [["docs/old.md", "docs/new.md"], "rename", true],
       [["docs/reference/templates/AGENTS.md"], "file", false],
       [["docs/reference/templates/AGENTS.md"], "missing", false],
       [["src/runtime.md"], "file", false],
       [["test/fixtures/payload.md"], "file", false],
+      [["test/fixtures/AGENTS.md"], "file", false],
       [["docs/script.ts"], "file", false],
       [["src/deleted.ts", "docs/new.md"], "rename", false],
       [["docs/reference/templates/old.md", "docs/new.md"], "rename", false],
@@ -1383,20 +1389,43 @@ describe("CI changed Node test plan", () => {
         "src/channels/plugins/config-schema.test.ts",
       ],
     },
-  ])(
-    "fails safe when public contracts affect extension imports: $changedPaths",
-    ({ changedPaths }) => {
-      expect(createChangedNodeTestShards(changedPaths)).toBeNull();
-      expectAllExtensionConfigs(createChangedExtensionFallbackShards(changedPaths));
-    },
-  );
-
-  it("fails safe when a core change reaches package consumers through the public SDK", () => {
-    expect(createChangedNodeTestShards(["src/shared/text/strip-markdown.ts"])).toBeNull();
+  ])("selects enumerable public contract consumers: $changedPaths", ({ changedPaths }) => {
+    expect(createChangedNodeTestShards(changedPaths)).not.toBeNull();
+    expectAllExtensionConfigs(createChangedExtensionFallbackShards(changedPaths));
   });
 
-  it("fails safe when a core change reaches a public SDK wrapper through an import", () => {
-    expect(createChangedNodeTestShards(["src/channels/chat-meta-shared.ts"])).toBeNull();
+  it.each([
+    {
+      source: "src/shared/text/strip-markdown.ts",
+      target: "src/talk/voice-consult-transcript-race.test.ts",
+    },
+    {
+      source: "src/channels/chat-meta-shared.ts",
+      target: "src/gateway/update-run-watcher.interruption.test.ts",
+    },
+  ])("selects transitive SDK consumers of $source exactly once", ({ source, target }) => {
+    const shards = createChangedNodeTestShards([source, target]);
+    expect(shards).not.toBeNull();
+    const groups = fallbackGroups(shards ?? []);
+    for (const contract of [
+      "test/scripts/run-vitest-state-cleanup.test.ts",
+      "test/scripts/vitest-worker-artifacts.test.ts",
+    ]) {
+      expect(
+        groups.some((group) => group.includePatterns?.includes(contract)),
+        contract,
+      ).toBe(true);
+    }
+    expect(groups.filter((group) => group.includePatterns?.includes(target))).toHaveLength(1);
+    expect(shards?.flatMap((shard) => shard.targets ?? [])).not.toContain(target);
+  });
+
+  it.each([
+    "src/plugin-sdk/api-baseline.ts",
+    "scripts/lib/plugin-sdk-entrypoints.json",
+    "scripts/lib/plugin-sdk-entries.mts",
+  ])("keeps broad coverage when SDK identities change in %s", (file) => {
+    expect(createChangedNodeTestShards([file])).toBeNull();
   });
 
   it("fails safe when workspace package consumers use package imports", () => {
@@ -1680,7 +1709,7 @@ describe("CI changed Node test plan", () => {
   );
 
   it.each([
-    "src/plugin-sdk/core.ts",
+    "src/plugin-sdk/api-baseline.ts",
     ".agents/skills/openclaw-pr-maintainer/scripts/unknown-helper.sh",
   ])(
     "retains all extension configs for the hidden maintainer helper mixed with %s",
@@ -2023,6 +2052,69 @@ describe("CI changed Node test plan", () => {
     expect(
       createChangedNodeTestShards(["ui/src/app-routes.ts", "ui/src/app-navigation.ts"]),
     ).toBeNull();
+  });
+
+  it("keeps UI fallback with its complete canonical owners beside precise core changes", () => {
+    const paths = [
+      "ui/src/components/markdown-file-links.ts",
+      "src/agents/live-provider-owner.ts",
+      "ui/config/control-ui-boot-modules.json",
+    ];
+    const options = { runnerBackend: "hybrid", dedicatedUiE2e: true };
+    const shards = createChangedNodeTestShards(paths, options);
+    expect(shards).not.toBeNull();
+    expect(hasControlUiPerformanceAffectingChange([paths[2]!])).toBe(true);
+    const full = createNodeTestShardBundles({
+      compactMode: "pull-request",
+      runnerBackend: "hybrid",
+    });
+    const uiOwners = full.filter((shard) =>
+      shard.groups?.some((group) =>
+        group.configs.some((config) =>
+          /^test\/vitest\/vitest\.ui(?:-isolated|-timing)?\.config\.ts$/u.test(config),
+        ),
+      ),
+    );
+    expect(uiOwners.length).toBeGreaterThan(0);
+    for (const owner of uiOwners) {
+      expect(shards).toContainEqual({
+        ...owner,
+        configs: [],
+        checkName: `checks-node-changed-ui-${owner.shardName}`,
+        shardName: `changed-ui-${owner.shardName}`,
+      });
+    }
+    expect(shards!.length).toBeLessThan(full.length);
+    expect(new Set(shards?.map((shard) => shard.checkName)).size).toBe(shards?.length);
+    const selectedGroups = fallbackGroups(shards ?? []);
+    for (const consumer of [
+      "src/agents/live-model-filter.test.ts",
+      "test/ui.presenter-next-run.test.ts",
+      "test/talk-browser-defaults.test.ts",
+    ]) {
+      const consumerConfig = buildVitestRunPlans([consumer])[0]!.config;
+      expect(
+        shards?.some((shard) => shard.targets?.includes(consumer)) ||
+          selectedGroups.some(
+            (group) =>
+              group.configs.includes(consumerConfig) &&
+              (!group.includePatterns ||
+                group.includePatterns.some((pattern) => path.matchesGlob(consumer, pattern))),
+          ),
+        consumer,
+      ).toBe(true);
+    }
+    expect(createChangedNodeTestShards(paths)).toBeNull();
+    expect(createChangedNodeTestShards([paths[1]!, "ui/src/AGENTS.md"], options)).toEqual(
+      createChangedNodeTestShards([paths[1]!], options),
+    );
+    const onFallback = vi.fn();
+    expect(
+      createChangedNodeTestShards([...paths, "package.json"], { ...options, onFallback }),
+    ).toBeNull();
+    expect(onFallback).toHaveBeenCalledWith(
+      "core change reaches public SDK or extension consumers",
+    );
   });
 
   it("chunks many targets into bounded parallel jobs", () => {
