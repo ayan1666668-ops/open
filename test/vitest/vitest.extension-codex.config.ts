@@ -4,7 +4,9 @@ import { createExtensionVitestConfig } from "./vitest.extension-config.ts";
 
 function createExtensionCodexVitestConfig(env: Record<string, string | undefined> = process.env) {
   return createExtensionVitestConfig("codex", codexExtensionTestRoots, env, {
-    fileParallelism: false,
+    // Retire each file's mocked graph and globals before reusing the worker.
+    // Scheduling follows the shared worker budget, including one-worker hosts.
+    isolate: true,
   });
 }
 
