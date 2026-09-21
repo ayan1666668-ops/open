@@ -1,6 +1,7 @@
 // Dashboard MCP App E2E covers the real Control UI, sandbox proxy, and mocked Gateway lease flow.
 import { writeFile } from "node:fs/promises";
 import type { Server as HttpServer } from "node:http";
+import { LATEST_PROTOCOL_VERSION } from "@modelcontextprotocol/ext-apps/app-bridge";
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createSandboxHostHttpServer } from "../../../src/gateway/mcp-app-sandbox-http.js";
@@ -375,7 +376,30 @@ describeControlUiE2e("Control UI dashboard MCP Apps", () => {
           <p>A synthetic dashboard for fullscreen layout verification.</p>
           <div class="metrics"><div class="metric">Checks passed<strong>24 / 24</strong></div>
           <div class="metric">Median duration<strong>12m 40s</strong></div></div>
-          <label>Draft note <input aria-label="Draft note"></label>`,
+          <label>Draft note <input aria-label="Draft note"></label>
+          <script>
+            const send = (message) => parent.postMessage({ jsonrpc: "2.0", ...message }, "*");
+            const dimensions = (context) => {
+              if (context?.containerDimensions) {
+                document.documentElement.dataset.hostDimensions = JSON.stringify(context.containerDimensions);
+              }
+            };
+            addEventListener("message", ({ source, data }) => {
+              if (source !== parent) return;
+              if (data.id === 1 && data.result) {
+                dimensions(data.result.hostContext);
+                send({ method: "ui/notifications/initialized" });
+              } else if (data.method === "ui/notifications/host-context-changed") {
+                dimensions(data.params);
+              } else if (data.method === "ui/resource-teardown") {
+                send({ id: data.id, result: {} });
+              }
+            });
+            send({ id: 1, method: "ui/initialize", params: {
+              appInfo: { name: "Dashboard fixture", version: "1.0.0" }, appCapabilities: {},
+              protocolVersion: ${JSON.stringify(LATEST_PROTOCOL_VERSION)}
+            } });
+          </script>`,
         },
         "tasks.list": { tasks: [] },
       },
@@ -428,9 +452,29 @@ describeControlUiE2e("Control UI dashboard MCP Apps", () => {
       await appContent.waitFor();
       await page.screenshot({ path: `${artifactDir}/fullscreen-dashboard.png` });
     }
-    await expect.poll(frameInsets).toEqual({ top: 0, bottom: 0, bodyHeightGap: 0 });
+    const expectHostDimensions = async () => {
+      const frame = page.locator("mcp-app-view iframe");
+      const dimensions = await frame.evaluate((element) => {
+        const rect = element.getBoundingClientRect();
+        return { width: Math.round(rect.width), height: Math.round(rect.height) };
+      });
+      await expect
+        .poll(async () =>
+          JSON.parse(
+            (await page
+              .frameLocator("mcp-app-view iframe")
+              .frameLocator("iframe")
+              .locator("html")
+              .getAttribute("data-host-dimensions")) ?? "null",
+          ),
+        )
+        .toEqual(dimensions);
+    };
+    expect(await frameInsets()).toEqual({ top: 0, bottom: 0, bodyHeightGap: 0 });
+    await expectHostDimensions();
     await page.setViewportSize({ width: 1440, height: 1000 });
-    await expect.poll(frameInsets).toEqual({ top: 0, bottom: 0, bodyHeightGap: 0 });
+    expect(await frameInsets()).toEqual({ top: 0, bottom: 0, bodyHeightGap: 0 });
+    await expectHostDimensions();
     await expectRetainedBoardPresentation(page, "expanded");
     if (artifactDir) {
       await page.screenshot({ path: `${artifactDir}/fullscreen-dashboard-resized.png` });
@@ -442,7 +486,8 @@ describeControlUiE2e("Control UI dashboard MCP Apps", () => {
       .getByRole("button", { name: "Restore split", exact: true })
       .click();
     await expectRetainedBoardPresentation(page, "split");
-    await expect.poll(async () => (await frameInsets()).bodyHeightGap).toBe(0);
+    expect((await frameInsets()).bodyHeightGap).toBe(0);
+    await expectHostDimensions();
     await restoreChatAsMain(page);
 
     const draftNote = page
