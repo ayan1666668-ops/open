@@ -234,6 +234,8 @@ export const databaseWorkerCoreTestFiles = [
   "src/agents/worktrees/service.remove-lease.test.ts",
   "src/agents/worktrees/service.run-end-cleanup.test.ts",
   "src/agents/worktrees/service.snapshot-index.test.ts",
+  "src/agents/worktrees/service.exact-state.test.ts",
+  "src/agents/worktrees/service.exact-state-races.test.ts",
   "src/agents/worktrees/service.source-only-filters.test.ts",
   "src/agents/worktrees/service.sparse-isolation.test.ts",
   "src/agents/worktrees/service.stale-probe.test.ts",

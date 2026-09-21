@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
 import fs, { type FileHandle } from "node:fs/promises";
 import path from "node:path";
@@ -193,13 +194,22 @@ async function readProvisionedMembership(
   return { ignoredUntracked, currentTracked, trackedAtHead };
 }
 
+export type ExactProvisionedSnapshot = {
+  algorithm: "sha1" | "sha256";
+  files: Array<{ path: string; mode: number | null; size: number; blob?: string }>;
+};
+
 /** Stores provisioned bytes outside Git so ignored credentials never enter its object database. */
 export async function snapshotProvisionedFiles(
   env: NodeJS.ProcessEnv,
   worktreeId: string,
   worktreePath: string,
   provisionedPaths: readonly string[] | undefined,
-  options: { signal?: AbortSignal; assertCurrent?: () => void } = {},
+  options: {
+    signal?: AbortSignal;
+    assertCurrent?: () => void;
+    expected?: ExactProvisionedSnapshot;
+  } = {},
 ): Promise<ProvisionedFileState[]> {
   const commitGuard = () => {
     options.signal?.throwIfAborted();
@@ -208,6 +218,16 @@ export async function snapshotProvisionedFiles(
   const files = await inspectProvisionedFiles(worktreePath, provisionedPaths);
   if (files === undefined) {
     throw new Error("provisioned path ledger is unavailable");
+  }
+  const expected = options.expected
+    ? new Map(options.expected.files.map((file) => [file.path, file]))
+    : undefined;
+  if (
+    expected &&
+    (expected.size !== files.length ||
+      files.some((file) => !expected.has(file.path) || expected.get(file.path)?.mode !== file.mode))
+  ) {
+    throw new Error("provisioned exact-state membership or modes changed after capture");
   }
   if (files.every((file) => file.mode === null)) {
     commitGuard();
@@ -246,6 +266,18 @@ export async function snapshotProvisionedFiles(
       try {
         await validateDirectoryIdentities(parentIdentities);
         const before = await handle.stat();
+        const captured = expected?.get(file.path);
+        if (
+          captured &&
+          (captured.size !== before.size || captured.mode !== (before.mode & 0o7777))
+        ) {
+          throw new Error(
+            `provisioned exact-state size or mode changed after capture: ${file.path}`,
+          );
+        }
+        const digest = options.expected
+          ? createHash(options.expected.algorithm).update(`blob ${before.size}\0`)
+          : undefined;
         const buffer = Buffer.allocUnsafe(SNAPSHOT_CHUNK_BYTES);
         let chunkIndex = 0;
         let offset = 0;
@@ -259,6 +291,7 @@ export async function snapshotProvisionedFiles(
           if (bytesRead === 0) {
             throw new Error(`provisioned file changed while snapshotting: ${file.path}`);
           }
+          digest?.update(buffer.subarray(0, bytesRead));
           commitGuard();
           insertRegistryWorktreeProvisionedChunk(env, {
             worktreeId,
@@ -273,6 +306,9 @@ export async function snapshotProvisionedFiles(
         await validateDirectoryIdentities(parentIdentities);
         if (!sameFileState(before, after) || !sameFileState(before, current)) {
           throw new Error(`provisioned file changed while snapshotting: ${file.path}`);
+        }
+        if (digest && digest.digest("hex") !== captured?.blob) {
+          throw new Error(`provisioned exact-state bytes changed after capture: ${file.path}`);
         }
         states.push({ path: file.path, mode: before.mode & 0o7777, chunks: chunkIndex });
       } finally {
