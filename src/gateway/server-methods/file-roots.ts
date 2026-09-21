@@ -75,8 +75,9 @@ async function resolveFileRootScope(
   cfg: OpenClawConfig,
   respond: RespondFn,
 ): Promise<{ rootId: string; root: WorkspaceRoot; browserPath: string } | null> {
-  const config = configuredRoots(cfg)[rootId];
-  if (!config) {
+  const roots = configuredRoots(cfg);
+  const config = roots[rootId];
+  if (!Object.hasOwn(roots, rootId) || !config) {
     respond(
       false,
       undefined,

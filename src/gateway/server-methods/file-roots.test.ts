@@ -82,6 +82,16 @@ describe("file-root RPC handlers", () => {
     expect(JSON.stringify(payload)).not.toContain(root);
   });
 
+  it("treats Object.prototype root IDs as unconfigured roots", async () => {
+    const error = expectError(
+      await invokeFileRootHandler("files.root.list", { rootId: "constructor" }, config),
+    );
+    expect(error.details).toMatchObject({
+      rootId: "constructor",
+      type: "file_root_not_found",
+    });
+  });
+
   it("lists visible entries with directories first", async () => {
     const payload = expectOkPayload(
       await invokeFileRootHandler("files.root.list", { rootId: "notes" }, config),
