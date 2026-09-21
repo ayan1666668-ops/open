@@ -133,6 +133,38 @@ describe("primary session reservations through the SQLite worker", () => {
     expect(detached.execution).toEqual(card.execution);
   });
 
+  it("keeps execution authority and explicit detach through claim, heartbeat and completion", async () => {
+    const { store } = createWorkboardSqliteTestHarness();
+    const card = await store.create({
+      title: "Detached worker authority",
+      status: "ready",
+      sessionKey: "operator",
+      execution: { sessionKey: "worker" },
+    });
+    const detached = await store.bindSession(card.id, { action: "detach" });
+    await expect(
+      store.claim(card.id, { ownerId: "owner" }, { callerSessionKey: "foreign" }),
+    ).rejects.toThrow("bound to session");
+    expect(await store.get(card.id)).toEqual(detached);
+    const claimed = await store.claim(
+      card.id,
+      { ownerId: "owner" },
+      { callerSessionKey: "worker" },
+    );
+    expect(claimed.card.sessionKey).toBeUndefined();
+    expect(claimed.card.primarySessionDetached).toBe(true);
+    await expect(
+      store.heartbeat(card.id, { ownerId: "owner", token: claimed.token, sessionKey: "foreign" }),
+    ).rejects.toThrow("bound to session");
+    expect(await store.get(card.id)).toEqual(claimed.card);
+    const scope = { ownerId: "owner", token: claimed.token, sessionKey: "worker" };
+    await store.heartbeat(card.id, scope);
+    const completed = await store.complete(card.id, { ...scope, summary: "Done" });
+    expect(completed.sessionKey).toBeUndefined();
+    expect(completed.primarySessionDetached).toBe(true);
+    expect(completed.execution).toEqual(card.execution);
+  });
+
   it("rejects legacy duplicates before claim metadata or workspace adoption", async () => {
     const { store, dbPath } = createWorkboardSqliteTestHarness();
     const first = await store.create({ title: "First", status: "ready", sessionKey: "shared" });
@@ -153,34 +185,90 @@ describe("primary session reservations through the SQLite worker", () => {
     expect(await store.get(duplicate.id)).toEqual(before);
     expect((await store.get(first.id))?.metadata?.claim).toBeUndefined();
   });
-  it.each(["legacy", " \tlegacy\u00a0"])(
-    "reopens normalized legacy duplicates (%j) without choosing a capture winner",
-    async (legacyKey) => {
+  it.each([
+    { legacyKey: "legacy", mirrored: false },
+    { legacyKey: " \tlegacy\u00a0", mirrored: false },
+    { legacyKey: "legacy", mirrored: true },
+    { legacyKey: " \tlegacy\u00a0", mirrored: true },
+  ])(
+    "recovers reopened legacy duplicates ($legacyKey, mirrored=$mirrored) by explicit detach",
+    async ({ legacyKey, mirrored }) => {
       const { store, dbPath } = createWorkboardSqliteTestHarness();
-      const first = await store.create({ title: "First", sessionKey: "legacy" });
-      const second = await store.create({ title: "Second" });
+      const first = await store.create({
+        title: "First",
+        sessionKey: "legacy",
+        ...(mirrored ? { execution: { sessionKey: "legacy" } } : {}),
+      });
+      const second = await store.create({
+        title: "Second",
+        ...(mirrored ? { execution: { sessionKey: "other-worker" } } : {}),
+      });
       await store.close();
       const db = new DatabaseSync(dbPath);
       try {
-        db.prepare("UPDATE workboard_cards SET session_key = ?, archived_at = 0 WHERE id = ?").run(
-          legacyKey,
-          second.id,
-        );
+        // Reopen the pre-detach schema, not just data written by the current store.
+        db.exec("ALTER TABLE workboard_cards DROP COLUMN primary_session_detached");
+        db.prepare(
+          "UPDATE workboard_cards SET session_key = ?, execution_session_key = ?, archived_at = 0 WHERE id = ?",
+        ).run(legacyKey, mirrored ? legacyKey : null, second.id);
       } finally {
         db.close();
       }
       const sqlite = createWorkboardSqliteStores({ dbPath, workerModuleUrl });
-      const reopened = new WorkboardStore(sqlite.cards, sqlite);
+      let reopened = new WorkboardStore(sqlite.cards, sqlite);
       try {
-        const before = await reopened.list();
+        const peerSqlite = createWorkboardSqliteStores({ dbPath, workerModuleUrl });
+        const peer = new WorkboardStore(peerSqlite.cards, peerSqlite);
+        let before;
+        try {
+          const snapshots = await Promise.all([reopened.list(), peer.list()]);
+          expect(snapshots[0]).toEqual(snapshots[1]);
+          before = snapshots[0];
+        } finally {
+          await peer.close();
+        }
+        const execution = before.find((card) => card.id === second.id)?.execution;
         await expect(
           reopened.captureSession({ sessionKey: "legacy", title: "Capture" }),
         ).rejects.toThrow("reserved");
+        await expect(reopened.update(second.id, { title: "Unrelated edit" })).rejects.toThrow(
+          "reserved",
+        );
         expect(await reopened.list()).toEqual(before);
-        await reopened.bindSession(second.id, { action: "detach" });
+        const detached = await reopened.bindSession(second.id, { action: "detach" });
+        expect(detached.sessionKey).toBeUndefined();
+        expect(detached.primarySessionDetached).toBe(true);
+        expect(detached.execution).toEqual(execution);
+        expect(detached.metadata?.attempts).toEqual(
+          before.find((card) => card.id === second.id)?.metadata?.attempts,
+        );
+        await reopened.close();
+        const afterSqlite = createWorkboardSqliteStores({ dbPath, workerModuleUrl });
+        reopened = new WorkboardStore(afterSqlite.cards, afterSqlite);
+        expect(await reopened.get(second.id)).toMatchObject({
+          primarySessionDetached: true,
+          ...(execution ? { execution } : {}),
+        });
         await expect(
           reopened.captureSession({ sessionKey: "legacy", title: "Capture" }),
         ).resolves.toMatchObject({ id: first.id });
+        await expect(
+          reopened.update(first.id, { title: "Recovered owner" }),
+        ).resolves.toMatchObject({
+          sessionKey: "legacy",
+        });
+        await expect(
+          reopened.bindSession(second.id, { action: "bind", sessionKey: "legacy" }),
+        ).rejects.toThrow("already reserved");
+        const rebound = await reopened.bindSession(second.id, {
+          action: "bind",
+          sessionKey: "new-primary",
+        });
+        expect(rebound.primarySessionDetached).toBeUndefined();
+        expect(rebound.execution).toEqual(execution);
+        await expect(
+          reopened.create({ title: "Conflict", sessionKey: "new-primary" }),
+        ).rejects.toThrow("already reserved");
       } finally {
         await reopened.close();
       }

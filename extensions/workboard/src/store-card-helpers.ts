@@ -322,6 +322,7 @@ export function removeUndefinedCardFields(card: WorkboardCard): WorkboardCard {
     "notes",
     "agentId",
     "sessionKey",
+    "primarySessionDetached",
     "runId",
     "taskId",
     "sourceUrl",
@@ -357,7 +358,8 @@ export function assertCanMutateClaimedCard(
     throw new Error(`card is claimed by ${claim.ownerId}.`);
   }
   const callerSessionKey = normalizeOptionalString(scope.sessionKey);
-  const primary = cardSessionKey(card);
+  // Primary detach releases a reservation, not the worker's mutation authority.
+  const primary = cardSessionKey(card) ?? cardExecutionSessionKey(card);
   if (
     callerSessionKey &&
     primary &&

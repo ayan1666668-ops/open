@@ -5,7 +5,10 @@ import {
   configureSqliteConnectionPragmas,
   migrateSqliteSchemaToStrict,
 } from "openclaw/plugin-sdk/plugin-state-runtime";
-import { openNodeSqliteDatabase } from "openclaw/plugin-sdk/sqlite-worker-runtime";
+import {
+  openNodeSqliteDatabase,
+  runSqliteImmediateTransactionSync,
+} from "openclaw/plugin-sdk/sqlite-worker-runtime";
 const SCHEMA_VERSION = 3;
 const WORKBOARD_SQLITE_BUSY_TIMEOUT_MS = 5000;
 const WORKBOARD_SQLITE_DIR_MODE = 0o700;
@@ -21,10 +24,12 @@ function tableColumns(db: DatabaseSync, tableName: string): Set<string> {
 }
 
 function ensureColumn(db: DatabaseSync, tableName: string, columnName: string, definition: string) {
-  if (tableColumns(db, tableName).has(columnName)) {
-    return;
-  }
-  db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${definition}`);
+  // Concurrent worker opens must recheck under the same writer lock as the ALTER.
+  runSqliteImmediateTransactionSync(db, () => {
+    if (!tableColumns(db, tableName).has(columnName)) {
+      db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${definition}`);
+    }
+  });
 }
 
 const WORKBOARD_SCHEMA_SQL = `
@@ -56,6 +61,7 @@ const WORKBOARD_SCHEMA_SQL = `
       priority TEXT NOT NULL,
       agent_id TEXT,
       session_key TEXT,
+      primary_session_detached INTEGER,
       run_id TEXT,
       task_id TEXT,
       source_url TEXT,
@@ -267,6 +273,12 @@ function ensureWorkboardSchema(db: DatabaseSync): void {
     "workboard_cards",
     "lifecycle_status_source_updated_at",
     "lifecycle_status_source_updated_at INTEGER",
+  );
+  ensureColumn(
+    db,
+    "workboard_cards",
+    "primary_session_detached",
+    "primary_session_detached INTEGER",
   );
   const migrationId = `schema-${SCHEMA_VERSION}`;
   const current = db

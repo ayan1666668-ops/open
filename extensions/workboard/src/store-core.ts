@@ -797,6 +797,12 @@ export class WorkboardCoreStore extends WorkboardStoreRuntime {
           ? existing.agentId
           : normalizeOptionalString(effectivePatch.agentId),
       sessionKey,
+      primarySessionDetached:
+        effectivePatch.sessionKey === undefined
+          ? existing.primarySessionDetached
+          : sessionKey
+            ? undefined
+            : true,
       runId:
         effectivePatch.runId === undefined
           ? existing.runId
@@ -823,7 +829,11 @@ export class WorkboardCoreStore extends WorkboardStoreRuntime {
       ...(completedAt ? { completedAt } : {}),
     });
     next.metadata = trimMetadataToBudget(
-      syncExecutionAttemptMetadata(next.metadata ?? {}, execution, now),
+      // Primary edits and other unrelated writes must not synthesize or rewrite
+      // history from an unchanged legacy execution (which may share a session).
+      effectivePatch.execution === undefined
+        ? (next.metadata ?? {})
+        : syncExecutionAttemptMetadata(next.metadata ?? {}, execution, now),
       options,
     );
     next.events = appendEvent(

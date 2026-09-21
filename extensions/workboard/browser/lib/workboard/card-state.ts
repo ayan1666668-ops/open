@@ -326,7 +326,7 @@ export function staleSessionState(session: GatewaySessionRow): WorkboardStaleSta
 }
 
 export function workboardCardSessionKey(card: WorkboardCard): string | undefined {
-  return card.sessionKey ?? card.execution?.sessionKey;
+  return card.sessionKey ?? (card.primarySessionDetached ? undefined : card.execution?.sessionKey);
 }
 
 /** Worker status and controls follow execution, not the independently selected primary chat. */

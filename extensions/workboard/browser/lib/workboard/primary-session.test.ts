@@ -2,9 +2,11 @@
 import "../../test/host.setup.ts";
 import { GatewayProtocolRequestError as GatewayRequestError } from "@openclaw/gateway-client/browser";
 import { describe, expect, it } from "vitest";
+import { workboardCardExecutionSessionKey } from "./card-state.ts";
 import { stopWorkboardCard } from "./execution.ts";
 import { getWorkboardState, saveWorkboardCardDraft, type WorkboardCard } from "./index.ts";
 import { getWorkboardLifecycle } from "./lifecycle.ts";
+import { normalizeCardPayload } from "./normalization.ts";
 import { workboardCardSessionTarget } from "./session-resolution.ts";
 import { taskMatchesCard, selectWorkboardTaskDiscoveryQueries } from "./task-links.ts";
 import {
@@ -47,6 +49,17 @@ function createSequencedClient(routes: Record<string, unknown[]>) {
   });
 }
 describe("primary session draft intent", () => {
+  it("keeps explicit detach through gateway decoding without losing worker controls", () => {
+    const legacy = makeCard({
+      sessionKey: undefined,
+      execution: createWorkboardExecution({ sessionKey: "worker" }),
+    });
+    expect(workboardCardSessionTarget(legacy)).toEqual({ sessionKey: "worker" });
+    const detached = normalizeCardPayload({ card: { ...legacy, primarySessionDetached: true } });
+    expect(workboardCardSessionTarget(detached)).toBeUndefined();
+    expect(workboardCardSessionTarget(detached, { sessionKey: "worker" })).toBeUndefined();
+    expect(workboardCardExecutionSessionKey(detached)).toBe("worker");
+  });
   it("keeps A-to-B-to-A binding intent through a concurrent rebind conflict", async () => {
     const { state, openEditDraft, saveDraft } = fixture();
     const base = makeCard({ sessionKey: "A" });

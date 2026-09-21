@@ -107,13 +107,14 @@ export class WorkboardWorkflowStore extends WorkboardPromoteStore {
       const callerSessionKey = normalizeOptionalString(options.callerSessionKey);
       const boundSessionKey = cardSessionKey(existing);
       const executionSessionKey = normalizeOptionalString(existing.execution?.sessionKey);
+      const authorizedSessionKey = boundSessionKey ?? executionSessionKey;
       if (
         callerSessionKey &&
-        boundSessionKey &&
-        !workboardSessionKeyMatches(callerSessionKey, boundSessionKey) &&
+        authorizedSessionKey &&
+        !workboardSessionKeyMatches(callerSessionKey, authorizedSessionKey) &&
         !(executionSessionKey && workboardSessionKeyMatches(callerSessionKey, executionSessionKey))
       ) {
-        throw new Error(`card is bound to session ${boundSessionKey}.`);
+        throw new Error(`card is bound to session ${authorizedSessionKey}.`);
       }
       // Dependency promotion, first binding, workspace adoption and claim must
       // commit together against the row used to decide ownership.
@@ -149,7 +150,11 @@ export class WorkboardWorkflowStore extends WorkboardPromoteStore {
           ? existingClaim
           : undefined;
       if (cardParentIds(guarded).length > 0 && guarded.status !== "ready" && !activeClaim) {
-        throw new Error("card dependencies are not done.");
+        throw new Error(
+          guarded.status === "blocked"
+            ? "card is blocked; use workboard_unblock before claiming."
+            : "card dependencies are not done.",
+        );
       }
       if (guarded.status === "scheduled") {
         throw new Error("card is scheduled for later.");
@@ -164,7 +169,9 @@ export class WorkboardWorkflowStore extends WorkboardPromoteStore {
       const card = await this.updateCard(
         id,
         {
-          ...(callerSessionKey && !boundSessionKey ? { sessionKey: callerSessionKey } : {}),
+          ...(callerSessionKey && !boundSessionKey && !existing.primarySessionDetached
+            ? { sessionKey: callerSessionKey }
+            : {}),
           status:
             guarded.status === "backlog" || guarded.status === "todo" || guarded.status === "ready"
               ? "running"

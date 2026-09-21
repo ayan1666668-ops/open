@@ -4937,7 +4937,7 @@ describe("WorkboardStore", () => {
     }
   });
 
-  it.each(["reused child", "new child"] as const)(
+  it.each(["reused child", "new child", "detached primary"] as const)(
     "reverts decomposition-owned links while preserving a concurrent %s edit",
     async (target) => {
       const harness = createConcurrentSqliteHarness("openclaw-workboard-child-rollback-");
@@ -4945,12 +4945,18 @@ describe("WorkboardStore", () => {
       try {
         const parent = await operation.create({ title: "Parent" });
         const reusedChild =
-          target === "reused child"
-            ? await operation.create({ title: "Existing child", idempotencyKey: "child-key" })
+          target !== "new child"
+            ? await operation.create({
+                title: "Existing child",
+                idempotencyKey: "child-key",
+                ...(target === "detached primary"
+                  ? { sessionKey: "primary", execution: { sessionKey: "primary" } }
+                  : {}),
+              })
             : undefined;
         const pause = paused.pauseAfterMatchingWrite((_key, value) => {
           const card = value?.card;
-          if (!card || (target === "reused child" && card.id !== reusedChild?.id)) {
+          if (!card || (target !== "new child" && card.id !== reusedChild?.id)) {
             return false;
           }
           if (target === "new child" && card.title !== "New child") {
@@ -4974,7 +4980,10 @@ describe("WorkboardStore", () => {
         await pause.reached;
         const child = reusedChild ?? (await host.list()).find((card) => card.title === "New child");
         expect(child).toBeDefined();
-        await host.update(child!.id, { notes: `Concurrent ${target} edit` });
+        await host.update(child!.id, {
+          notes: `Concurrent ${target} edit`,
+          ...(target === "detached primary" ? { sessionKey: "" } : {}),
+        });
         pause.resume();
 
         await expect(decomposition).rejects.toThrow(/title is required/);
@@ -4982,12 +4991,17 @@ describe("WorkboardStore", () => {
         const rolledBackChild = await host.get(child!.id);
         expect(rolledBackChild?.notes).toBe(`Concurrent ${target} edit`);
         expect(rolledBackChild?.metadata?.links).toBeUndefined();
+        if (target === "detached primary") {
+          expect(rolledBackChild?.sessionKey).toBeUndefined();
+          expect(rolledBackChild?.primarySessionDetached).toBe(true);
+          expect(rolledBackChild?.execution).toEqual(reusedChild?.execution);
+        }
         expect(rolledBackChild?.metadata?.automation).toMatchObject(
-          target === "reused child"
-            ? { idempotencyKey: "child-key" }
-            : { createdByCardId: parent.id },
+          target !== "new child" ? { idempotencyKey: "child-key" } : { createdByCardId: parent.id },
         );
-        expect(rolledBackChild?.events?.map((event) => event.kind)).toEqual(["created", "edited"]);
+        expect(rolledBackChild?.events?.map((event) => event.kind)).toEqual(
+          target === "detached primary" ? ["created", "linked"] : ["created", "edited"],
+        );
       } finally {
         await harness.close();
       }

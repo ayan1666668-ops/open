@@ -24,7 +24,10 @@ export function workboardCardSessionTarget(
   card: WorkboardCard,
   session?: BoardGetParams,
 ): BoardGetParams | undefined {
-  return resolveWorkboardSessionTarget(workboardCardSessionKey(card), session);
+  const key = workboardCardSessionKey(card);
+  const resolved =
+    key && session && workboardSessionKeyMatches(session.sessionKey, key) ? session : undefined;
+  return key ? resolveWorkboardSessionTarget(key, resolved) : undefined;
 }
 
 export function workboardCardExecutionSessionTarget(

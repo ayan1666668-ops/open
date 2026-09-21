@@ -2,10 +2,11 @@ import type { WorkboardCard } from "@openclaw/workboard-contract";
 import { normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runtime";
 
 export function cardSessionKey(
-  card: Pick<WorkboardCard, "sessionKey" | "execution">,
+  card: Pick<WorkboardCard, "sessionKey" | "execution" | "primarySessionDetached">,
 ): string | undefined {
   return (
-    normalizeOptionalString(card.sessionKey) ?? normalizeOptionalString(card.execution?.sessionKey)
+    normalizeOptionalString(card.sessionKey) ??
+    (card.primarySessionDetached ? undefined : normalizeOptionalString(card.execution?.sessionKey))
   );
 }
 

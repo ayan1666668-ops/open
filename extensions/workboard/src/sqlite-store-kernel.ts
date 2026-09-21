@@ -63,11 +63,19 @@ export type WorkboardSqliteKernel = {
   close(this: void): void;
 };
 
+const PRIMARY_SESSION_COLUMNS = [
+  "id",
+  "session_key",
+  "primary_session_detached",
+  "execution_id",
+  "execution_session_key",
+] as const;
+
 function rowPrimarySessionKey(row: Row): string | undefined {
   // Match readExecution's absent-record rule and the public binding normalization.
   return (
     stringValue(row, "session_key")?.trim() ||
-    (stringValue(row, "execution_id")
+    (numberValue(row, "primary_session_detached") !== 1 && stringValue(row, "execution_id")
       ? stringValue(row, "execution_session_key")?.trim()
       : undefined)
   );
@@ -102,7 +110,7 @@ class WorkboardSqliteCardStore implements SyncStore<WorkboardCardStore> {
     if (sessionKey && canHoldPrimarySessionBinding(card)) {
       const query = getNodeSqliteKysely<WorkboardCardDatabase>(this.db)
         .selectFrom("workboard_cards")
-        .select(["id", "session_key", "execution_id", "execution_session_key"])
+        .select(PRIMARY_SESSION_COLUMNS)
         .where("id", "!=", card.id)
         .where("status", "not in", ["blocked", "done"])
         .where((eb) => eb.or([eb("archived_at", "is", null), eb("archived_at", "=", 0)]));
@@ -312,7 +320,7 @@ class WorkboardSqliteCardStore implements SyncStore<WorkboardCardStore> {
     } else if (scope?.kind === "session") {
       const keys = getNodeSqliteKysely<WorkboardCardDatabase>(this.db)
         .selectFrom("workboard_cards")
-        .select(["id", "session_key", "execution_id", "execution_session_key"]);
+        .select(PRIMARY_SESSION_COLUMNS);
       const ids: string[] = [];
       // SQLite trim does not match JavaScript's Unicode whitespace normalization.
       // Inspect only identity scalars; unrelated card payloads remain unhydrated.
