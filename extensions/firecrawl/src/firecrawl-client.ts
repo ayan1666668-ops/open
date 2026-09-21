@@ -1,6 +1,6 @@
 // Firecrawl plugin module implements firecrawl client behavior.
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
-import { parseFiniteNumber } from "openclaw/plugin-sdk/number-runtime";
+import { parseDateStringTimestampMs, parseFiniteNumber } from "openclaw/plugin-sdk/number-runtime";
 import {
   ProviderHttpError,
   readProviderJsonObjectResponse,
@@ -57,7 +57,7 @@ const FIRECRAWL_SCRAPE_METADATA_MAX_CHARS = 4_000;
 const FIRECRAWL_RESULT_URL_MAX_CHARS = 2_048;
 const FIRECRAWL_SCRAPE_RESPONSE_MAX_BYTES = 64 * 1024 * 1024;
 const ALLOWED_FIRECRAWL_HOSTS = new Set(["api.firecrawl.dev"]);
-const FIRECRAWL_PUBLISHED_DATE_RE = /^(\d{4})-(\d{2})-(\d{2})(?:[T ][\d:.+Z-]{0,20})?$/u;
+const FIRECRAWL_PUBLISHED_DATE_RE = /^\d{4}-\d{2}-\d{2}(?:[T ][\d:.+Z-]{0,20})?$/u;
 const FIRECRAWL_SELF_HOSTED_PRIVATE_ERROR =
   "Firecrawl custom baseUrl must target a private or internal self-hosted endpoint.";
 const FIRECRAWL_HTTP_PRIVATE_ERROR =
@@ -296,17 +296,12 @@ function normalizeFirecrawlResultUrl(value: unknown): string | undefined {
 }
 
 function isValidFirecrawlPublishedDate(value: string): boolean {
-  const match = FIRECRAWL_PUBLISHED_DATE_RE.exec(value);
-  if (!match) {
+  if (!FIRECRAWL_PUBLISHED_DATE_RE.test(value)) {
     return false;
   }
-  const year = Number(match[1]);
-  const month = Number(match[2]);
-  const day = Number(match[3]);
-  const date = new Date(Date.UTC(year, month - 1, day));
-  return (
-    date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day
-  );
+  const calendarDate = value.slice(0, 10);
+  const timestamp = parseDateStringTimestampMs(calendarDate);
+  return timestamp !== undefined && new Date(timestamp).toISOString().startsWith(calendarDate);
 }
 
 const optionalFirecrawlStringSchema = z.string().optional().catch(undefined);

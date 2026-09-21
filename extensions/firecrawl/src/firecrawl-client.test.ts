@@ -103,28 +103,28 @@ describe("Firecrawl search payloads", () => {
     expect(result[0]?.published).toBeUndefined();
   });
 
-  it("rejects calendar-invalid publication dates", () => {
-    const result = firecrawlClient.resolveSearchItems(
-      {
-        data: [
-          { url: "https://example.com/invalid-day", publishedDate: "2026-02-30" },
-          { url: "https://example.com/invalid-month", publishedDate: "2026-13-01" },
-          { url: "https://example.com/leap-day", publishedDate: "2024-02-29" },
-        ],
-      },
-      10,
-    );
+  it.each([
+    ["2026-02-30", undefined],
+    ["2026-13-01", undefined],
+    ["1900-02-29", undefined],
+    ["2000-02-29", "2000-02-29"],
+    ["0099-12-31", "0099-12-31"],
+    ["0000-02-29", "0000-02-29"],
+    ["2024-02-29T00:30:00+14:00", "2024-02-29T00:30:00+14:00"],
+    ["2026-09-21T", "2026-09-21T"],
+  ])(
+    "validates the calendar prefix of %s without dropping the result",
+    (publishedDate, published) => {
+      const result = firecrawlClient.resolveSearchItems(
+        { data: [{ url: "https://example.com/article", publishedDate }] },
+        1,
+      );
 
-    expect(result).toHaveLength(3);
-    expect(result[0]?.published).toBeUndefined();
-    expect(result[1]?.published).toBeUndefined();
-    expect(result[2]).toEqual(
-      expect.objectContaining({
-        url: "https://example.com/leap-day",
-        published: "2024-02-29",
-      }),
-    );
-  });
+      expect(result).toEqual([
+        expect.objectContaining({ url: "https://example.com/article", published }),
+      ]);
+    },
+  );
 });
 
 describe("Firecrawl scrape payloads", () => {
