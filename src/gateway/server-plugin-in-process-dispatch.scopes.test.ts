@@ -5,29 +5,19 @@ import {
   createPluginRegistryFixture,
   registerVirtualTestPlugin,
 } from "../plugin-sdk/plugin-test-contracts.js";
-import { trackAsyncWork } from "../shared/async-work-scope.js";
 import { createGatewayMethodRegistry } from "./methods/registry.js";
 import { captureGatewayOperatorRunAuthority } from "./operator-run-authority.js";
 import { dispatchGatewayRequestInProcessRaw } from "./server-in-process-dispatch.js";
-import type {
-  GatewayClient,
-  GatewayRequestContext,
-  GatewayRequestHandlerOptions,
-} from "./server-methods/types.js";
+import type { GatewayClient, GatewayRequestHandlerOptions } from "./server-methods/types.js";
 import {
   dispatchGatewayMethodInProcess,
   withOperatorToolGatewayAuthority,
 } from "./server-plugin-in-process-dispatch.js";
+import {
+  createContext,
+  createOperatorClient,
+} from "./server-plugin-in-process-dispatch.test-support.js";
 import { resetTestPluginRegistry, setTestPluginRegistry } from "./test-helpers.plugin-registry.js";
-
-function createContext(): GatewayRequestContext {
-  return {
-    trackExecution: trackAsyncWork,
-    dedupe: new Map(),
-    getRuntimeConfig: () => ({}),
-    logGateway: { error: vi.fn(), warn: vi.fn() },
-  } as unknown as GatewayRequestContext;
-}
 
 describe("synthetic operator scope attenuation", () => {
   it.each([
@@ -136,22 +126,10 @@ describe("registered plugin SDK scope attenuation", () => {
     async ({ original, scoped, effective }) => {
       const context = createContext();
       context.resolveGatewayContext = () => context;
-      const identified: GatewayClient = {
-        connId: "scope-proof-connection",
-        authenticatedUserProfile: {
-          profileId: "scope-proof-operator",
-          displayName: "Scope proof operator",
-          hasAvatar: false,
-          updatedAt: 1,
-        },
-        connect: {
-          minProtocol: 1,
-          maxProtocol: 1,
-          role: "operator",
-          scopes: [`operator.${original}`],
-          client: { id: "openclaw-control-ui", version: "test", platform: "test", mode: "webchat" },
-        },
-      };
+      const identified = createOperatorClient({
+        profileId: "scope-proof-operator",
+        scopes: [`operator.${original}`],
+      });
       const sourceController = new AbortController();
       const current = () => true;
       const source = expectDefined(
