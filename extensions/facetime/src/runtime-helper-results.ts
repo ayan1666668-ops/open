@@ -1,8 +1,10 @@
 import {
   readHelperResults,
   type FaceTimeHelperPeer,
+  type FaceTimeHelperSocketServer,
   type HelperActionResult,
 } from "./helper-rpc.js";
+import type { PendingFaceTimeDial } from "./outbound-call.js";
 import type { ActiveFaceTimeCall } from "./runtime-state.js";
 
 export const OUTBOUND_DIAL_HELPER_BUNDLES = new Set([
@@ -46,6 +48,17 @@ export function retainHelperResultPeers(
   }
 }
 
+export function retainOutboundDialHelperPeers(
+  peers: Map<number, FaceTimeHelperPeer>,
+  result: HelperActionResult,
+): void {
+  for (const peer of readHelperPeers(result)) {
+    if (OUTBOUND_DIAL_HELPER_BUNDLES.has(peer.bundleIdentifier)) {
+      peers.set(peer.processId, peer);
+    }
+  }
+}
+
 export function readOutboundCallUUID(result: HelperActionResult): string | undefined {
   return readHelperResults(result)
     .map((entry) =>
@@ -82,4 +95,54 @@ export function hasDefinitiveDialHelperAbsence(results: HelperActionResult[]): b
       entry.found === false &&
       entry.retained_outbound_dial !== true,
   );
+}
+
+export const OUTBOUND_RECONCILE_ATTEMPTS = 12;
+export const OUTBOUND_RECONCILE_INTERVAL_MS = 250;
+
+export async function findOutgoingCallDuringReconciliation(
+  helper: FaceTimeHelperSocketServer,
+  pending: PendingFaceTimeDial,
+): Promise<HelperActionResult> {
+  const { handle, callUUID, dialID, proxyIdentifier, requestedAt, mode } = pending;
+  let result: HelperActionResult = { found: false };
+  let previousAbsentTopology: number | undefined;
+  for (let attempt = 0; attempt < OUTBOUND_RECONCILE_ATTEMPTS; attempt += 1) {
+    result = await helper.findOutgoingCall(
+      handle,
+      callUUID,
+      dialID,
+      proxyIdentifier,
+      requestedAt,
+      mode,
+    );
+    if (
+      readOutboundCallUUID(result) ||
+      readHelperResults(result).some((entry) => entry.found === true)
+    ) {
+      return result;
+    }
+    const results = readHelperResults(result);
+    const topologyGeneration =
+      typeof result.topologyGeneration === "number" ? result.topologyGeneration : undefined;
+    const completeAbsence =
+      result.topologyComplete === true &&
+      results.every((entry) => entry.found === false) &&
+      hasDialHelperConfirmation(results) &&
+      hasDefinitiveDialHelperAbsence(results);
+    if (
+      completeAbsence &&
+      topologyGeneration !== undefined &&
+      topologyGeneration === previousAbsentTopology
+    ) {
+      return { ...result, stableAbsence: true };
+    }
+    previousAbsentTopology = completeAbsence ? topologyGeneration : undefined;
+    if (attempt + 1 < OUTBOUND_RECONCILE_ATTEMPTS) {
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, OUTBOUND_RECONCILE_INTERVAL_MS);
+      });
+    }
+  }
+  return result;
 }

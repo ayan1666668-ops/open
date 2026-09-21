@@ -27,7 +27,8 @@ type HelperSocketServerParams = {
   logger: RuntimeLogger;
   ipcKey: string;
   buildId: string;
-  onMessage: (message: unknown, peer: FaceTimeHelperPeer) => void;
+  // The runtime owns async settlement; IPC keeps reading replies while an event awaits them.
+  onMessage: (message: unknown, peer: FaceTimeHelperPeer) => void | Promise<void>;
   onConnect?: (bundleIdentifier: string) => void;
   onDisconnect?: (bundleIdentifier: string) => void;
   onStale?: (bundleIdentifier: string, processId: number) => void;
@@ -340,7 +341,7 @@ export class FaceTimeHelperSocketServer {
     }
     const peer = this.#socketPeers.get(socket);
     if (peer) {
-      this.params.onMessage(payload, peer);
+      void this.params.onMessage(payload, peer);
     }
   }
 

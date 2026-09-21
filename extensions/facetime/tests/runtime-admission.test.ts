@@ -54,10 +54,7 @@ describe("FaceTime runtime admission", () => {
           throw new Error("Runtime did not register its helper event handler");
         }
         const event = incomingCall(status);
-        helperParams.onMessage({ ...event, data: { ...event.data, ...data } });
-        await new Promise<void>((resolve) => {
-          setImmediate(resolve);
-        });
+        await helperParams.onMessage({ ...event, data: { ...event.data, ...data } });
 
         expect((await runtime.status()).calls).toEqual([]);
         expect(mocks.startTalk).not.toHaveBeenCalled();
