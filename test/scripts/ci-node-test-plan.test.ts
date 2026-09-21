@@ -3877,6 +3877,7 @@ describe("scripts/lib/ci-node-test-plan.mts", () => {
       includeGrowthFile: boolean,
       extraFiles: string[] = [],
       compactNodeJobCap?: number,
+      ordinaryFileSeconds = 23,
     ) => {
       return createToolingFixturePlan({
         files: [
@@ -3891,7 +3892,7 @@ describe("scripts/lib/ci-node-test-plan.mts", () => {
           file === "test/scripts/write-unified-entry-dts.test.ts"
             ? 74
             : measuredFixtureFiles.has(file)
-              ? 25
+              ? ordinaryFileSeconds
               : shardMetadata.estimateVitestToolingFileSeconds(file),
         options: { ...options, compactNodeJobCap },
       });
@@ -3924,6 +3925,12 @@ describe("scripts/lib/ci-node-test-plan.mts", () => {
         .flatMap((group) => group.includePatterns ?? [])
         .toSorted(),
     ).toEqual(toolingFiles.toSorted());
+
+    // At 25s per file, 23 tooling jobs can hold only 158 ordinary files beside
+    // the compiler. Preserve refusal of that infeasible 160-file workload.
+    await expect(createPlanWithInventory(true, [], 89, 25)).rejects.toThrow(
+      "compact github node test plan exceeds 89 jobs",
+    );
 
     for (const job of grown) {
       const hostedToolingGroups = job.groups.filter(isHostedToolingGroup);
