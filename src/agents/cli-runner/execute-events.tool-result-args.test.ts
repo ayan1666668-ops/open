@@ -8,7 +8,9 @@ import {
 import type { GetReplyOptions } from "../../auto-reply/types.js";
 import { createChannelProgressDraftCompositor } from "../../channels/progress-draft-compositor.js";
 import {
+  markMcpLoopbackToolCallFinished,
   markMcpLoopbackToolCallStarted,
+  recordMcpLoopbackToolCallResult,
   updateMcpLoopbackToolCallCapture,
 } from "../../gateway/mcp-http.loopback-runtime.js";
 import {
@@ -353,6 +355,156 @@ describe("cli tool result events", () => {
 });
 
 describe("CLI progress-card plan projection", () => {
+  it.each(["replacement", "clear", "ambiguous"] as const)(
+    "projects only unambiguous executed progress-card arguments: %s",
+    (mode) => {
+      const runId = `executed-plan-${mode}`;
+      const context = buildContext(runId);
+      const tracking = createCliToolTracking(context);
+      tracking.beginGatewayCapture(runId, () => {});
+      const handlers = createCliEventHandlers({
+        context,
+        toolTracking: tracking,
+        getRunState: () => ({ failed: false, error: undefined }),
+      });
+      const events: AgentEventRuntimePayload[] = [];
+      const dispose = onAgentEvent((event) => {
+        if (event.runId === runId) {
+          events.push(event);
+        }
+      });
+      const plan = { plan: [{ step: "Prepared checklist", status: "in_progress" }] };
+      const requested = mode === "replacement" ? {} : plan;
+      const executed = mode === "clear" ? {} : plan;
+      const name = "mcp__openclaw__progress_card";
+      try {
+        handlers.emitCliToolUseStart({
+          toolCallId: "card",
+          name,
+          kind: "mcp_tool_use",
+          args: requested,
+        });
+        if (mode === "ambiguous") {
+          handlers.emitCliToolUseStart({
+            toolCallId: "peer",
+            name,
+            kind: "mcp_tool_use",
+            args: requested,
+          });
+        }
+        const capture = markMcpLoopbackToolCallStarted({
+          captureKey: runId,
+          toolName: "progress_card",
+          args: requested,
+        });
+        if (!capture) {
+          throw new Error("Expected loopback capture");
+        }
+        updateMcpLoopbackToolCallCapture(capture, { toolName: "progress_card", args: executed });
+        recordMcpLoopbackToolCallResult({
+          captureHandle: capture,
+          toolName: "progress_card",
+          args: executed,
+          outcome: "completed",
+        });
+        markMcpLoopbackToolCallFinished(capture);
+        handlers.emitCliToolResult({ toolCallId: "card", name, isError: false });
+        const plans = events.filter((event) => event.stream === "plan");
+        if (mode === "ambiguous") {
+          expect(plans).toEqual([]);
+        } else {
+          expect(plans).toHaveLength(1);
+          expect(plans[0]?.data.steps).toEqual(mode === "clear" ? [] : plan.plan);
+        }
+        expect(
+          events.find((event) => event.stream === "tool" && event.data.phase === "result")?.data
+            .args,
+        ).toEqual(requested);
+      } finally {
+        dispose();
+        tracking.finalizeCapture(() => {});
+      }
+    },
+  );
+
+  it.each([
+    ["progress_card", false],
+    ["mcp__openclaw__progress_card", false],
+    ["progress_card", true],
+    ["mcp__openclaw__progress_card", true],
+  ] as const)(
+    "keeps parsed display-only %s clears outside tracked plan state (tracked result first: %s)",
+    (name, trackedResultFirst) => {
+      const runId = `display-clear-${name}`;
+      const tracking = buildToolTracking();
+      const handlers = createCliEventHandlers({
+        context: buildContext(runId),
+        toolTracking: tracking,
+        getRunState: () => ({ failed: false, error: undefined }),
+      });
+      const events: AgentEventRuntimePayload[] = [];
+      const dispose = onAgentEvent((event) => {
+        if (event.runId === runId) {
+          events.push(event);
+        }
+      });
+      const parser = createCliJsonlStreamingParser({
+        providerId: "claude-cli",
+        backend: { command: "claude", output: "jsonl", jsonlDialect: "claude-stream-json" },
+        onAssistantDelta: vi.fn(),
+        onToolUseStart: handlers.emitCliDisplayToolUseStart,
+        onToolResult: handlers.emitCliDisplayToolResult,
+      });
+      try {
+        handlers.emitCliToolUseStart({
+          toolCallId: "tracked-plan",
+          name,
+          kind: "mcp_tool_use",
+          args: { plan: [{ step: "Keep working", status: "in_progress" }] },
+        });
+        handlers.emitCliToolResult({ toolCallId: "tracked-plan", name, isError: false });
+        parser.push(
+          JSON.stringify({
+            type: "assistant",
+            message: { content: [{ type: "tool_use", id: "display-clear", name, input: {} }] },
+          }) + "\n",
+        );
+        if (trackedResultFirst) {
+          handlers.emitCliToolResult({ toolCallId: "display-clear", name, isError: false });
+        }
+        parser.push(
+          JSON.stringify({
+            type: "user",
+            message: {
+              content: [{ type: "tool_result", tool_use_id: "display-clear", content: "done" }],
+            },
+          }) + "\n",
+        );
+        // Neither ordering may promote a display-only start into authoritative plan state.
+        if (!trackedResultFirst) {
+          handlers.emitCliToolResult({ toolCallId: "display-clear", name, isError: false });
+        }
+        const plans = () => events.filter((event) => event.stream === "plan");
+        expect(plans()).toHaveLength(1);
+        expect(plans()[0]?.data.steps).toEqual([{ step: "Keep working", status: "in_progress" }]);
+        expect(tracking.handleCliToolUseStart).toHaveBeenCalledTimes(1);
+        expect(tracking.handleCliToolResult).toHaveBeenCalledTimes(2);
+        handlers.emitCliToolUseStart({
+          toolCallId: "tracked-clear",
+          name,
+          kind: "mcp_tool_use",
+          args: {},
+        });
+        handlers.emitCliToolResult({ toolCallId: "tracked-clear", name, isError: false });
+        expect(plans()).toHaveLength(2);
+        expect(plans()[1]?.data.steps).toEqual([]);
+        expect(handlers.getToolSummary()).toEqual({ calls: 3, tools: [name], failures: 0 });
+      } finally {
+        dispose();
+      }
+    },
+  );
+
   it.each([
     "progress_card",
     "mcp__openclaw__progress_card",
