@@ -50,6 +50,12 @@ run_missing_load_path_fixture() {
       local GATEWAY_LOG="$ARTIFACT_ROOT/missing-load-path/baseline-gateway.log"
       local HEALTHZ_JSON="$ARTIFACT_ROOT/missing-load-path/baseline-healthz.json"
       local READYZ_JSON="$ARTIFACT_ROOT/missing-load-path/baseline-readyz.json"
+      if [ "$baseline_version" = "2026.7.33" ]; then
+        # Its startup repair selects moving ClawHub metadata, which now requires a newer core.
+        phase missing-load-path-baseline-whatsapp openclaw_prepublish_plugin_registry_run_published \
+          openclaw_e2e_fixture_plugin_command openclaw -- \
+          plugins install "@openclaw/whatsapp@$baseline_version" --force
+      fi
       phase missing-load-path-baseline-start openclaw_prepublish_plugin_registry_run_published start_missing_load_path_baseline
       phase missing-load-path-baseline-ready check_gateway_probes
       phase missing-load-path-baseline-stop stop_gateway

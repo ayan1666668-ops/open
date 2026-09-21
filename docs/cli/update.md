@@ -77,6 +77,8 @@ and inspect `lastRun.origin.nextAction` and `lastRun.target` for the recorded
 reason and target. A candidate release cannot repair an installed updater that
 refuses before staging it; correct the configuration before retrying.
 
+Older updaters such as 2026.7.33 also refuse before staging with `plugins.load.paths: plugin path not found`; remove or restore the configured path, or run `openclaw doctor --fix`, then retry.
+
 Update admission recognizes orphan `task_delivery_state` rows whose parent tasks
 are missing as repairable. When it can acquire Doctor's ownership fences, it runs
 the same [preservation-first recovery](/reference/database-schemas/integrity-and-recovery#doctor-reports-orphan-task-delivery-rows)

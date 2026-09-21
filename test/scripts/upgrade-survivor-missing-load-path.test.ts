@@ -105,6 +105,47 @@ it.each(["source", "compiled"])(
 const convergenceRestartMessage =
   "OpenClaw plugin migration inputs changed during startup convergence; refusing to report the gateway ready. Restart OpenClaw so state migrations run against the final config and plugin inventory.";
 
+it.skipIf(process.platform === "win32").each(["2026.7.33", "2026.9.5"])(
+  "provisions the published WhatsApp companion before the %s baseline starts",
+  (version) => {
+    const result = spawnSync(
+      "bash",
+      [
+        "-c",
+        `set -euo pipefail
+source scripts/e2e/lib/prepublish-plugin-registry.sh
+source scripts/e2e/lib/upgrade-survivor/missing-load-path.sh
+baseline_version="$1"
+SCENARIO=base
+UPDATE_RESTART_MODE=manual
+ARTIFACT_ROOT=/unused
+OPENCLAW_PREPUBLISH_PLUGIN_REGISTRY_URL=https://candidate.example.invalid
+OPENCLAW_NPM_REGISTRY_UPSTREAM=https://published.example.invalid
+NPM_CONFIG_REGISTRY=https://candidate.example.invalid
+installed=0
+phase() { shift; "$@"; }
+openclaw_e2e_fixture_plugin_command() {
+  test "$NPM_CONFIG_REGISTRY" = https://published.example.invalid
+  test "$*" = 'openclaw -- plugins install @openclaw/whatsapp@2026.7.33 --force'
+  installed=1
+}
+start_missing_load_path_baseline() {
+  if [ "$baseline_version" = 2026.7.33 ]; then test "$installed" = 1; else test "$installed" = 0; fi
+}
+check_gateway_probes() { :; }
+stop_gateway() { :; }
+run_missing_load_path_fixture baseline
+test "$NPM_CONFIG_REGISTRY" = https://candidate.example.invalid
+`,
+        "published-whatsapp-companion",
+        version,
+      ],
+      { encoding: "utf8" },
+    );
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+  },
+);
+
 it.skipIf(process.platform === "win32").each([
   { mode: "ready", code: 0, launches: 1, restarted: false },
   { mode: "convergence-once", code: 0, launches: 2, restarted: true },

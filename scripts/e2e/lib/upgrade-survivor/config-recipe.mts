@@ -358,7 +358,11 @@ function adaptStepForBaseline(
       agents.entries.main.default = true;
       delete agents.ownership;
     }
-    if (compareReleaseVersions(baselineVersion ?? "", "2026.7.2-beta.4") === -1) {
+    // The published July extended-stable release retains the pre-keyed roster.
+    if (
+      baselineVersion === "2026.7.33" ||
+      compareReleaseVersions(baselineVersion ?? "", "2026.7.2-beta.4") === -1
+    ) {
       agents.list = Object.entries<Record<string, unknown>>(agents.entries).map(([id, entry]) =>
         Object.assign(entry, { id }),
       );
