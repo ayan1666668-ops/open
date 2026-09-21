@@ -2564,6 +2564,7 @@ describePosix("native merge outcome with real Git and supervised lock recovery",
     { auto: false, mergeStateStatus: "CLEAN", route: "immediate" },
     { auto: true, mergeStateStatus: "CLEAN", route: "immediate" },
     { auto: true, mergeStateStatus: "BEHIND", route: "auto" },
+    { auto: true, mergeStateStatus: "BLOCKED", route: "auto" },
     { auto: false, mergeStateStatus: "CLEAN", route: "immediate", statusFirst: true },
   ])(
     "settles initial UNKNOWN projections before one pinned dispatch: %j",
@@ -2654,7 +2655,7 @@ describePosix("native merge outcome with real Git and supervised lock recovery",
     "queue membership",
     "invalid receipt",
     "conflicting",
-    "known BLOCKED",
+    "known HAS_HOOKS",
     "final UNKNOWN mergeable",
     "final UNKNOWN status",
     "final changed status",
@@ -2704,8 +2705,8 @@ describePosix("native merge outcome with real Git and supervised lock recovery",
       case "conflicting":
         step.pr = { mergeable: "CONFLICTING", mergeStateStatus: "DIRTY" };
         break;
-      case "known BLOCKED":
-        step.pr = { mergeable: "MERGEABLE", mergeStateStatus: "BLOCKED" };
+      case "known HAS_HOOKS":
+        step.pr = { mergeable: "MERGEABLE", mergeStateStatus: "HAS_HOOKS" };
         break;
       case "known mergeable reverts":
         step.pr = { mergeable: "UNKNOWN" };
@@ -2791,9 +2792,9 @@ describePosix("native merge outcome with real Git and supervised lock recovery",
     if (projectionDrift) {
       expect(run.output).toContain("PR or main changed while waiting for mergeability");
     }
-    if (fault === "known BLOCKED") {
+    if (fault === "known HAS_HOOKS") {
       expect(run.output).toContain(
-        "auto-merge admission requires MERGEABLE with CLEAN or BEHIND status",
+        "auto-merge admission requires MERGEABLE with CLEAN, BEHIND, or BLOCKED status",
       );
     }
     if (fault === "conflicting") {
@@ -2984,6 +2985,7 @@ describePosix("native merge outcome with real Git and supervised lock recovery",
     { auto: false, admin: true, mergeState: "BLOCKED", route: "admin" },
     { auto: false, admin: true, mergeState: "BEHIND", route: "admin" },
     { auto: true, admin: false, mergeState: "BEHIND", route: "auto" },
+    { auto: true, admin: false, mergeState: "BLOCKED", route: "auto" },
     { auto: true, admin: false, mergeState: "CLEAN", route: "immediate" },
   ])(
     "submits verified attribution with pinned head for %j",
@@ -3445,7 +3447,7 @@ describePosix("native merge outcome with real Git and supervised lock recovery",
         next.pr.autoMergeRequest = { mergeMethod: "MERGE" };
       }
       if (gate === "auto-ineligible") {
-        next.pr.mergeStateStatus = "BLOCKED";
+        next.pr.mergeStateStatus = "HAS_HOOKS";
       }
       f.save(next);
       const run = f.run(true);
