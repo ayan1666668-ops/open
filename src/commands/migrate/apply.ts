@@ -98,6 +98,7 @@ export async function runMigrationApply(params: {
     const stateDir = resolveStateDir();
     const reportDir = buildMigrationReportDir(params.providerId, stateDir);
     const releaseCustody = beginLifecycleWriteCustody("migration");
+    let failure: unknown;
     try {
       if (!params.opts.noBackup) {
         progress?.setLabel("Preparing migration backup…");
@@ -134,8 +135,11 @@ export async function runMigrationApply(params: {
         backupPath: result.backupPath ?? backupPath,
         reportDir: result.reportDir ?? reportDir,
       };
+    } catch (error) {
+      failure = error;
+      throw error;
     } finally {
-      releaseCustody();
+      releaseCustody(failure);
     }
   };
   const withBackup = params.opts.json

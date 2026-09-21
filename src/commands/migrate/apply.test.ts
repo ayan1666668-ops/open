@@ -1,6 +1,7 @@
 // Migration apply tests cover backups, filtering, provider apply calls, and report output.
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../../test/helpers/promise.js";
+import * as lifecycleWriteCustody from "../../infra/lifecycle-write-custody.js";
 import { readLifecycleWriteCustody } from "../../infra/lifecycle-write-custody.js";
 import type { MigrationPlan, MigrationProviderPlugin } from "../../plugins/types.js";
 import { CommandProcessCleanupError } from "../../process/exec-result.js";
@@ -87,7 +88,15 @@ describe("runMigrationApply", () => {
     },
   );
 
-  it("records a completed apply even when its declared cleanup fails", async () => {
+  it("records a completed apply but retains custody when its declared cleanup is uncertain", async () => {
+    const beginCustody = lifecycleWriteCustody.beginLifecycleWriteCustody;
+    let releaseCustody: (() => void) | undefined;
+    const begin = vi
+      .spyOn(lifecycleWriteCustody, "beginLifecycleWriteCustody")
+      .mockImplementation((phase) => {
+        releaseCustody = beginCustody(phase);
+        return releaseCustody;
+      });
     const onApplyCompleted = vi.fn();
     const provider: MigrationProviderPlugin = {
       id: "fixture",
@@ -98,16 +107,22 @@ describe("runMigrationApply", () => {
         return buildEmptyPlan();
       },
     };
-    await expect(
-      runMigrationApply({
-        runtime: createNonExitingRuntime(),
-        providerId: provider.id,
-        provider,
-        opts: { json: true, noBackup: true, configOverride: {} },
-        onApplyCompleted,
-      }),
-    ).rejects.toBeInstanceOf(CommandProcessCleanupError);
-    expect(onApplyCompleted).toHaveBeenCalledOnce();
+    try {
+      await expect(
+        runMigrationApply({
+          runtime: createNonExitingRuntime(),
+          providerId: provider.id,
+          provider,
+          opts: { json: true, noBackup: true, configOverride: {} },
+          onApplyCompleted,
+        }),
+      ).rejects.toBeInstanceOf(CommandProcessCleanupError);
+      expect(onApplyCompleted).toHaveBeenCalledOnce();
+      expect(readLifecycleWriteCustody()).toEqual([{ phase: "migration", count: 1 }]);
+    } finally {
+      releaseCustody?.();
+      begin.mockRestore();
+    }
     expect(readLifecycleWriteCustody()).toEqual([]);
   });
 

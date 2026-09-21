@@ -103,6 +103,7 @@ export async function runCronCommandJob(params: {
   const releaseCustody = isScheduledBackupCommand(params.job)
     ? beginLifecycleWriteCustody("backup")
     : undefined;
+  let failure: unknown;
   try {
     const result = await withCommandProcessScope(() =>
       runCommandWithTimeout(payload.argv, {
@@ -176,6 +177,7 @@ export async function runCronCommandJob(params: {
       }),
     };
   } catch (err) {
+    failure = err;
     const error = err instanceof Error ? err.message : String(err);
     return {
       status: "error",
@@ -197,6 +199,6 @@ export async function runCronCommandJob(params: {
       },
     };
   } finally {
-    releaseCustody?.();
+    releaseCustody?.(failure);
   }
 }

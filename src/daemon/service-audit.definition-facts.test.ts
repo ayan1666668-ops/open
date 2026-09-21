@@ -99,7 +99,7 @@ it.each([
   "ambient",
   "effective",
   "managed-base",
-])("recognizes stale computed systemd policy from the managed definition: %s", async (kind) => {
+])("preserves custom systemd policy regardless of installation marker: %s", async (kind) => {
   const environment: Record<string, string> = { ...staleServiceEnvironment };
   if (kind === "current") {
     environment.OPENCLAW_SERVICE_VERSION = VERSION;
@@ -113,7 +113,10 @@ it.each([
     environment.OPENCLAW_SERVICE_KIND = "node";
   }
   const fixture = await systemdFixture(
-    (unit) => unit.replace("TimeoutStartSec=30", "TimeoutStartSec=45"),
+    (unit) =>
+      unit
+        .replace("TimeoutStartSec=30", "TimeoutStartSec=45")
+        .replace("TimeoutStopSec=330", "TimeoutStopSec=600"),
     undefined,
     kind === "ambient" ? {} : environment,
   );
@@ -136,12 +139,16 @@ it.each([
     env: { ...fixture.env, ...staleServiceEnvironment },
     platform: "linux",
   });
-  expect(result.definitionDrift).toEqual([
-    expect.objectContaining({
-      kind: kind === "stale" || kind === "managed-base" ? "outdated" : "unknown-edit",
-      key: "Service.TimeoutStartSec",
-    }),
-  ]);
+  expect(result.definitionDrift).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        kind: "unknown-edit",
+        key: "Service.TimeoutStartSec",
+      }),
+      expect.objectContaining({ kind: "unknown-edit", key: "Service.TimeoutStopSec" }),
+    ]),
+  );
+  expect(result.definitionDrift).toHaveLength(2);
 });
 
 it("reports missing systemd policy separately from unchanged legacy repair issues", async () => {
@@ -249,8 +256,8 @@ it.each(["other-source", "disappeared", "reload-pending"])(
   },
 );
 
-it.each(["missing", "custom", "stale"])(
-  "distinguishes missing launchd policy from custom and stale policy: %s",
+it.each(["missing", "custom", "stale", "legacy-1", "legacy-60"])(
+  "distinguishes missing and released launchd policy from custom policy: %s",
   async (kind) => {
     const home = dirs.make("definition-facts-launchd-");
     const env = { HOME: home, OPENCLAW_STATE_DIR: path.join(home, "state") };
@@ -259,19 +266,27 @@ it.each(["missing", "custom", "stale"])(
       programArguments: ["/usr/bin/node", "/opt/openclaw/index.js", "gateway"],
       environment: {
         PATH: "/usr/bin:/bin",
-        ...(kind === "stale" ? staleServiceEnvironment : {}),
+        ...(kind !== "custom" ? staleServiceEnvironment : {}),
       },
     };
     const { stdoutPath } = resolveGatewaySupervisorLogPaths(env, { platform: "darwin" });
+    const legacyThrottle = kind.startsWith("legacy-") ? Number(kind.slice(7)) : undefined;
     const original = buildLaunchAgentPlist({
       ...command,
       label: "ai.openclaw.gateway",
       stdoutPath,
       stderrPath: stdoutPath,
-    }).replace(
-      /<key>ExitTimeOut<\/key>\s*<integer>20<\/integer>/u,
-      kind === "missing" ? "" : "<key>ExitTimeOut</key><integer>600</integer>",
-    );
+    })
+      .replace(
+        /<key>ExitTimeOut<\/key>\s*<integer>20<\/integer>/u,
+        kind === "missing"
+          ? ""
+          : `<key>ExitTimeOut</key><integer>${legacyThrottle ? 20 : 600}</integer>`,
+      )
+      .replace(
+        /<key>ThrottleInterval<\/key>\s*<integer>10<\/integer>/u,
+        `<key>ThrottleInterval</key><integer>${legacyThrottle ?? 10}</integer>`,
+      );
     await fs.mkdir(path.dirname(sourcePath), { recursive: true });
     await fs.writeFile(sourcePath, original);
     const result = await auditGatewayServiceConfig({
@@ -283,7 +298,7 @@ it.each(["missing", "custom", "stale"])(
     expect(result.issues).toEqual([]);
     expect(result.definitionDrift).toEqual([
       expect.objectContaining(
-        kind === "custom"
+        kind === "custom" || kind === "stale"
           ? {
               kind: "unknown-edit",
               key: "ExitTimeOut",
@@ -291,13 +306,13 @@ it.each(["missing", "custom", "stale"])(
             }
           : {
               kind: "outdated",
-              key: "ExitTimeOut",
-              current: kind === "stale" ? 600 : null,
-              expected: 20,
+              key: legacyThrottle ? "ThrottleInterval" : "ExitTimeOut",
+              current: legacyThrottle ?? null,
+              expected: legacyThrottle ? 10 : 20,
             },
       ),
     ]);
-    if (kind === "custom") {
+    if (kind === "custom" || kind === "stale") {
       expect(JSON.stringify(result.definitionDrift)).not.toContain("600");
     }
     expect(await fs.readFile(sourcePath, "utf8")).toBe(original);
@@ -329,7 +344,7 @@ it.each([
     expect(result.issues).toEqual([]);
     expect(result.definitionDrift).toEqual([
       expect.objectContaining(
-        count !== "9" || stale
+        count !== "9"
           ? {
               kind: "outdated",
               key: "Settings.RestartOnFailure.Count",
@@ -600,6 +615,14 @@ it.each([
       .replace(
         "<Count>3</Count>",
         kind === "native-defaults" ? "<Count>0</Count>" : "<Count>3</Count>",
+      )
+      .replace(
+        "<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>",
+        `<ExecutionTimeLimit>${kind === "native-defaults" ? "PT72H" : "PT0S"}</ExecutionTimeLimit>`,
+      )
+      .replace(
+        "<StopOnIdleEnd>false</StopOnIdleEnd>",
+        `<StopOnIdleEnd>${kind === "native-defaults" ? "true" : "false"}</StopOnIdleEnd>`,
       ),
   });
   const result = await auditGatewayServiceConfig({
@@ -614,14 +637,29 @@ it.each([
   if (kind === "canonical" || kind === "missing-launcher" || kind === "custom-script") {
     expect(result.definitionDrift).toBeUndefined();
   } else if (kind === "native-defaults") {
-    expect(result.definitionDrift).toEqual([
-      expect.objectContaining({
-        kind: "outdated",
-        key: "Settings.RestartOnFailure.Count",
-        current: "0",
-        expected: "3",
-      }),
-    ]);
+    expect(result.definitionDrift).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "outdated",
+          key: "Settings.ExecutionTimeLimit",
+          current: "PT72H",
+          expected: "PT0S",
+        }),
+        expect.objectContaining({
+          kind: "outdated",
+          key: "Settings.IdleSettings.StopOnIdleEnd",
+          current: "true",
+          expected: "false",
+        }),
+        expect.objectContaining({
+          kind: "outdated",
+          key: "Settings.RestartOnFailure.Count",
+          current: "0",
+          expected: "3",
+        }),
+      ]),
+    );
+    expect(result.definitionDrift).toHaveLength(3);
   } else {
     expect(result.definitionDrift).toContainEqual(
       expect.objectContaining({

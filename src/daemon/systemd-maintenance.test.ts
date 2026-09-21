@@ -249,3 +249,53 @@ it.each([
   expect(await fs.readFile(dropIn, "utf8")).toBe(override);
   expect(await fs.readFile(`${f.sourcePath}.bak`, "utf8")).toBe("previous backup\n");
 });
+
+it.each([false, true])(
+  "preserves old-marked custom base policy during maintenance (stopping: %s)",
+  async (stopping) => {
+    const f = await fixture("linux");
+    f.command.environment = {
+      ...f.command.environment,
+      OPENCLAW_SERVICE_MARKER: "openclaw",
+      OPENCLAW_SERVICE_KIND: "gateway",
+      OPENCLAW_SERVICE_VERSION: "2026.7.1-2",
+      PATH: "/usr/bin:/bin",
+    };
+    const original = buildSystemdUnit(f.command)
+      .replace("TimeoutStartSec=30", "TimeoutStartSec=45")
+      .replace("TimeoutStopSec=330", "TimeoutStopSec=600")
+      .replace("KillMode=mixed\n", "");
+    await fs.writeFile(f.sourcePath, original);
+    native.identity.mockResolvedValue({
+      code: 0,
+      stdout:
+        "LoadState=loaded\nAfter=network-online.target\nWants=network-online.target\nRestartUSec=5s\nKillMode=mixed\nTimeoutStopUSec=600s\n",
+      stderr: "",
+      termination: "exit",
+    });
+    const warnings: string[] = [];
+    const result = await withGatewayServiceOperationLock(f.env, async (assertCurrent) =>
+      prepareSystemdGatewayMaintenance({
+        state: {
+          env: f.env,
+          command: f.command,
+          installed: true,
+          running: true,
+          loadState: { status: "loaded" },
+          definitionMutationCapability: { kind: "writable" },
+        },
+        root: "/old",
+        stopping,
+        assertCurrent,
+        warn: (warning) => warnings.push(warning),
+      }),
+    );
+    expect(result).toBe(false);
+    expect(await fs.readFile(f.sourcePath, "utf8")).toBe(original);
+    expect(warnings.join(" ")).toContain("Service.TimeoutStartSec");
+    expect(warnings.join(" ")).toContain("Service.TimeoutStopSec");
+    expect(native.identity.mock.calls.some(([, args]) => args.includes("daemon-reload"))).toBe(
+      false,
+    );
+  },
+);

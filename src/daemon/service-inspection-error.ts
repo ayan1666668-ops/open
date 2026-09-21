@@ -99,6 +99,13 @@ export class GatewayServiceStopUnsafeError extends Error {
   }
 }
 
+/** Native preparation can wrap a custody refusal alongside an authority or cleanup failure. */
+export function hasGatewayServiceStopUnsafeError(error: unknown): boolean {
+  return collectNestedErrorCandidates(error).some(
+    (candidate) => candidate instanceof GatewayServiceStopUnsafeError,
+  );
+}
+
 export function sanitizeServiceInspectionError(error: unknown): Error {
   return error instanceof ServiceInspectionError ||
     error instanceof ServiceDefinitionInspectionError ||

@@ -29,6 +29,7 @@ export async function backupCreateCommand(
 ): Promise<BackupCreateResult> {
   let archivePath = opts.output ?? process.cwd();
   const releaseCustody = opts.dryRun ? undefined : beginLifecycleWriteCustody("backup");
+  let failure: unknown;
   try {
     const result = await withCommandProcessScope(() =>
       createBackupArchive({
@@ -62,6 +63,7 @@ export async function backupCreateCommand(
     }
     return result;
   } catch (error) {
+    failure = error;
     if (!opts.dryRun) {
       await recordBackupOutcomeBestEffort(runtime, {
         kind: "archive",
@@ -72,6 +74,6 @@ export async function backupCreateCommand(
     }
     throw error;
   } finally {
-    releaseCustody?.();
+    releaseCustody?.(failure);
   }
 }

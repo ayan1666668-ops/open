@@ -1,7 +1,5 @@
-import { compareOpenClawVersions } from "../config/version.js";
 import { parseNodeOptionsEnvVar } from "../infra/node-options.js";
-import { VERSION } from "../version.js";
-import { isGatewayServiceEnv, resolveGatewayServiceDescription } from "./constants.js";
+import { resolveGatewayServiceDescription } from "./constants.js";
 import { readServiceHeapExecArgv, resolveGatewayHeapNodeOptions } from "./gateway-heap.js";
 import type {
   GatewayServiceCommand,
@@ -12,15 +10,6 @@ import { resolveServiceEntrypointIndex } from "./service-layout.js";
 import { readManagedServiceEnvKeysFromEnvironment } from "./service-managed-env.js";
 import { normalizeServicePathEntry } from "./service-path-policy.js";
 import { resolveManagedGatewayServiceCommand, type GatewayServiceEnv } from "./service-types.js";
-
-export function isOutdatedGatewayServiceDefinition(command: GatewayServiceCommand): boolean {
-  const environment = resolveManagedGatewayServiceCommand(command)?.environment;
-  if (!environment || !isGatewayServiceEnv(environment)) {
-    return false;
-  }
-  const comparison = compareOpenClawVersions(environment.OPENCLAW_SERVICE_VERSION, VERSION);
-  return comparison !== null && comparison < 0;
-}
 
 export function serviceDefinitionUnknown(
   key: string,

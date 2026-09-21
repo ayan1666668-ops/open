@@ -2,7 +2,9 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../test/helpers/promise.js";
+import * as lifecycleWriteCustody from "../infra/lifecycle-write-custody.js";
 import { readLifecycleWriteCustody } from "../infra/lifecycle-write-custody.js";
+import { CommandProcessCleanupError } from "../process/exec-result.js";
 import { createTestRuntime } from "./test-runtime-config-helpers.js";
 
 const mocks = vi.hoisted(() => ({
@@ -66,15 +68,27 @@ describe("Git backup command agent selection", () => {
     vi.restoreAllMocks();
   });
 
-  it.each([false, true])(
-    "retains backup custody through artifact and outcome settlement (failure: %s)",
-    async (fail) => {
+  it.each(["success", "failure", "uncertain"] as const)(
+    "retains backup custody through artifact and outcome settlement: %s",
+    async (outcome) => {
+      const beginCustody = lifecycleWriteCustody.beginLifecycleWriteCustody;
+      let releaseCustody: (() => void) | undefined;
+      vi.spyOn(lifecycleWriteCustody, "beginLifecycleWriteCustody").mockImplementation((phase) => {
+        releaseCustody = beginCustody(phase);
+        return releaseCustody;
+      });
       const entered = createDeferred();
       const settled = createDeferred();
+      const failure = new Error("backup failed", {
+        cause: new AggregateError([new CommandProcessCleanupError()], "nested cleanup"),
+      });
       mocks.createGitBackup.mockImplementation(async () => {
         entered.resolve();
         await settled.promise;
-        if (fail) {
+        if (outcome === "uncertain") {
+          throw failure;
+        }
+        if (outcome === "failure") {
           throw new Error("backup failed");
         }
         return { commit: "fixture", noChanges: false, pushed: false, warnings: [] };
@@ -89,12 +103,20 @@ describe("Git backup command agent selection", () => {
       await entered.promise;
       try {
         expect(readLifecycleWriteCustody()).toEqual([{ phase: "backup", count: 1 }]);
+        settled.resolve();
+        const result = await running;
+        expect(result instanceof Error).toBe(outcome !== "success");
+        if (outcome === "uncertain") {
+          expect(result).toBe(failure);
+        }
+        expect(readLifecycleWriteCustody()).toEqual(
+          outcome === "uncertain" ? [{ phase: "backup", count: 1 }] : [],
+        );
       } finally {
         settled.resolve();
         await running;
+        releaseCustody?.();
       }
-      const result = await running;
-      expect(result instanceof Error).toBe(fail);
       expect(readLifecycleWriteCustody()).toEqual([]);
     },
   );

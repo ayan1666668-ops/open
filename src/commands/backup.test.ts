@@ -6,7 +6,12 @@ import { expectDefined } from "@openclaw/normalization-core";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../test/helpers/promise.js";
 import { formatCliOperatorError } from "../cli/failure-output.js";
+import * as lifecycleWriteCustody from "../infra/lifecycle-write-custody.js";
 import { readLifecycleWriteCustody } from "../infra/lifecycle-write-custody.js";
+import {
+  CommandProcessCleanupError,
+  hasCommandProcessCleanupError,
+} from "../process/exec-result.js";
 import type { RuntimeEnv } from "../runtime.js";
 import { captureEnv, setTestEnvValue } from "../test-utils/env.js";
 import { createTempHomeEnv, type TempHomeEnv } from "../test-utils/temp-home.js";
@@ -92,10 +97,16 @@ describe("backup commands", () => {
     await tempHome.restore();
   });
 
-  it.each([false, true])(
-    "retains archive custody until the stream settles (failure: %s)",
-    async (fail) => {
+  it.each(["success", "failure", "uncertain"] as const)(
+    "retains archive custody until stream cleanup is confirmed: %s",
+    async (outcome) => {
       await mockStateOnlyBackupPlan(path.join(tempHome.home, ".openclaw"));
+      const beginCustody = lifecycleWriteCustody.beginLifecycleWriteCustody;
+      let releaseCustody: (() => void) | undefined;
+      vi.spyOn(lifecycleWriteCustody, "beginLifecycleWriteCustody").mockImplementation((phase) => {
+        releaseCustody = beginCustody(phase);
+        return releaseCustody;
+      });
       const entered = createDeferred();
       const settled = createDeferred();
       backupWalkMock.mockImplementation(() =>
@@ -104,7 +115,21 @@ describe("backup commands", () => {
             entered.resolve();
             await settled.promise;
           },
-          ...(fail ? { error: new Error("archive failed") } : {}),
+          ...(outcome === "success"
+            ? {}
+            : {
+                error: new Error(
+                  "archive failed",
+                  outcome === "uncertain"
+                    ? {
+                        cause: new AggregateError(
+                          [new CommandProcessCleanupError()],
+                          "nested cleanup",
+                        ),
+                      }
+                    : undefined,
+                ),
+              }),
         }),
       );
       const running = backupCreateCommand(createTestRuntime(), {
@@ -114,12 +139,18 @@ describe("backup commands", () => {
       await entered.promise;
       try {
         expect(readLifecycleWriteCustody()).toEqual([{ phase: "backup", count: 1 }]);
+        settled.resolve();
+        const result = await running;
+        expect(result instanceof Error).toBe(outcome !== "success");
+        expect(hasCommandProcessCleanupError(result)).toBe(outcome === "uncertain");
+        expect(readLifecycleWriteCustody()).toEqual(
+          outcome === "uncertain" ? [{ phase: "backup", count: 1 }] : [],
+        );
       } finally {
         settled.resolve();
         await running;
+        releaseCustody?.();
       }
-      const result = await running;
-      expect(result instanceof Error).toBe(fail);
       expect(readLifecycleWriteCustody()).toEqual([]);
     },
   );

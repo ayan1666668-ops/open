@@ -125,6 +125,7 @@ export async function backupGitCreateCommand(runtime: RuntimeEnv, options: Backu
     runtime.error(GIT_BACKUP_PUSH_CREDENTIAL_WARNING);
   }
   const releaseCustody = beginLifecycleWriteCustody("backup");
+  let failure: unknown;
   try {
     const result = await withCommandProcessScope(async () =>
       createGitBackup({
@@ -163,6 +164,7 @@ export async function backupGitCreateCommand(runtime: RuntimeEnv, options: Backu
     }
     return result;
   } catch (error) {
+    failure = error;
     await recordBackupOutcomeBestEffort(runtime, {
       kind: "git",
       archivePath: repositoryPath,
@@ -171,7 +173,7 @@ export async function backupGitCreateCommand(runtime: RuntimeEnv, options: Backu
     });
     throw error;
   } finally {
-    releaseCustody();
+    releaseCustody(failure);
   }
 }
 

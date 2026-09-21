@@ -3,10 +3,18 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../test/helpers/promise.js";
+import {
+  getGatewaySuspendStatus,
+  prepareGatewaySuspend,
+  resetGatewaySuspendCoordinatorForLifecycleRestart,
+} from "../infra/gateway-suspend-coordinator.js";
+import { inspectors } from "../infra/gateway-suspend-coordinator.test-support.js";
+import * as lifecycleWriteCustody from "../infra/lifecycle-write-custody.js";
 import { readLifecycleWriteCustody } from "../infra/lifecycle-write-custody.js";
 import type { SpawnResult } from "../process/exec-result.js";
 import * as execSpawn from "../process/exec-spawn.js";
 import * as processExecution from "../process/exec.js";
+import { resetGatewayWorkAdmission } from "../process/gateway-work-admission.js";
 import { isPidAlive } from "../shared/pid-alive.js";
 import { readPidFile, waitForPidToExit } from "../test-utils/process-tree.js";
 import { withTempDir } from "../test-utils/temp-dir.js";
@@ -79,8 +87,16 @@ describe("runCronCommandJob", () => {
   );
 
   it.each(["normal", "uncertain"] as const)(
-    "joins declared backup cleanup and releases its fact after settled %s cleanup",
+    "keeps maintenance unready until declared backup cleanup is confirmed: %s",
     async (outcome) => {
+      const beginCustody = lifecycleWriteCustody.beginLifecycleWriteCustody;
+      let releaseCustody: (() => void) | undefined;
+      const begin = vi
+        .spyOn(lifecycleWriteCustody, "beginLifecycleWriteCustody")
+        .mockImplementation((phase) => {
+          releaseCustody = beginCustody(phase);
+          return releaseCustody;
+        });
       const cleanup = createDeferred<SpawnResult["cleanup"]>();
       const response = Promise.resolve<SpawnResult>({
         code: null,
@@ -105,10 +121,39 @@ describe("runCronCommandJob", () => {
         expect(readLifecycleWriteCustody()).toEqual([{ phase: "backup", count: 1 }]);
         cleanup.resolve(outcome);
         expect((await running).status).toBe("error");
+        expect(
+          prepareGatewaySuspend({
+            requestId: "scheduled-backup-cleanup",
+            drain: true,
+            pauseScheduling: () => {},
+            resumeScheduling: () => {},
+            inspect: inspectors(),
+            createSuspensionId: () => "scheduled-backup-cleanup",
+          }),
+        ).toMatchObject(
+          outcome === "uncertain"
+            ? {
+                status: "draining",
+                activeCount: 1,
+                writeCustody: [{ phase: "backup", count: 1 }],
+              }
+            : { status: "ready", writeCustody: [] },
+        );
+        // Only the original owner can release after independent proof of settlement.
+        // This fixture has no live native process; resolving the scope did not prove that.
+        releaseCustody?.();
+        expect(getGatewaySuspendStatus("scheduled-backup-cleanup")).toMatchObject({
+          status: "ready",
+          writeCustody: [],
+        });
         expect(readLifecycleWriteCustody()).toEqual([]);
       } finally {
         cleanup.resolve("normal");
         await running;
+        releaseCustody?.();
+        resetGatewaySuspendCoordinatorForLifecycleRestart();
+        resetGatewayWorkAdmission();
+        begin.mockRestore();
         runCommand.mockRestore();
       }
     },

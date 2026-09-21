@@ -5,14 +5,19 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { stableStringify } from "@openclaw/normalization-core/stable-stringify";
 import { expect, it, vi } from "vitest";
+import * as doctorAdmission from "../../commands/doctor-maintenance-admission.js";
 import { beginDoctorMaintenance } from "../../commands/doctor-maintenance.js";
 import * as doctorServicePolicy from "../../commands/doctor-service-repair-policy.js";
 import * as schtasksExec from "../../daemon/schtasks-exec.js";
 import { readScheduledTaskRuntime } from "../../daemon/schtasks-runtime.js";
-import { ServiceInspectionError } from "../../daemon/service-inspection-error.js";
+import {
+  GatewayServiceStopUnsafeError,
+  ServiceInspectionError,
+} from "../../daemon/service-inspection-error.js";
 import { readGatewayServiceState, type GatewayService } from "../../daemon/service.js";
 import { createMockGatewayService } from "../../daemon/service.test-helpers.js";
 import { sha256Hex } from "../../infra/crypto-digest.js";
+import { collectNestedErrorCandidates } from "../../infra/error-graph-internal.js";
 import * as openClawTmp from "../../infra/tmp-openclaw-dir.js";
 import { createManagedHandoffLeaseStore } from "../../infra/update-managed-service-handoff-lease.js";
 import { createUpdateRun, getUpdateRun } from "../../infra/update-run-ledger.js";
@@ -26,6 +31,63 @@ import {
 
 const { mocks, withServiceHome } =
   await import("./update-command-service-maintenance.test-support.js");
+
+it.each(["direct", "authority-lost", "ordinary"] as const)(
+  "preserves Doctor stop guidance through native preparation failure: %s",
+  (scenario) =>
+    withServiceHome(async (home) => {
+      mockProcessPlatform("linux");
+      vi.spyOn(doctorServicePolicy, "shouldManageGatewayService").mockResolvedValue(true);
+      let current = true;
+      const lost = new Error("Doctor update admission changed during drain cleanup");
+      vi.spyOn(doctorAdmission, "resolveDoctorUpdateAdmission").mockReturnValue(() => {
+        if (!current) {
+          throw lost;
+        }
+      });
+      const service = createMockGatewayService({
+        readCommand: async () => ({
+          programArguments: [process.execPath, path.join(process.cwd(), "openclaw.mjs"), "gateway"],
+          environment: { HOME: home },
+        }),
+        readRuntime: async () => ({ status: "running", systemd: { managerUid: 2001 } }),
+        isLoaded: async () => true,
+        stop: vi.fn(),
+      });
+      mocks.service.mockReturnValue(service);
+      const refusal =
+        scenario === "ordinary"
+          ? new Error("native preparation failed")
+          : new GatewayServiceStopUnsafeError(
+              "Gateway stop refused: migration still holds write custody.",
+            );
+      mocks.drain.mockImplementationOnce(async () => {
+        // The drain awaits resume before its refusal escapes; admission may change there.
+        current = scenario !== "authority-lost";
+        throw refusal;
+      });
+      const error = await beginDoctorMaintenance({
+        root: process.cwd(),
+        options: { repair: true },
+        runtime: { log: vi.fn(), error: vi.fn(), exit: vi.fn() },
+      }).catch((reason: unknown) => reason);
+      expect(collectNestedErrorCandidates(error)).toContain(refusal);
+      if (scenario === "authority-lost") {
+        expect(collectNestedErrorCandidates(error)).toContain(lost);
+        expect(
+          collectNestedErrorCandidates(error).some(
+            (candidate) =>
+              candidate instanceof AggregateError && candidate.errors.includes(refusal),
+          ),
+        ).toBe(true);
+      }
+      expect(String(error).includes("Stop the Gateway service and other OpenClaw processes")).toBe(
+        scenario === "ordinary",
+      );
+      expect(service.stop).not.toHaveBeenCalled();
+      expect(service.restart).not.toHaveBeenCalled();
+    }),
+);
 
 it.each([
   "update",
