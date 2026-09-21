@@ -89,7 +89,6 @@ export function startGatewayCronWithLogging(params: {
   );
 }
 
-
 /** Schedules post-ready maintenance and cancels/cleans handles if shutdown wins the race. */
 export function scheduleGatewayPostReadyMaintenance(params: {
   delayMs: number;

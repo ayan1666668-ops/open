@@ -92,7 +92,6 @@ function rowToSyncMode(row: FlowRegistryRow): TaskFlowSyncMode {
   return resolveFlowSyncMode(row);
 }
 
-
 function rowToFlowRecord(row: FlowRegistryRow): TaskFlowRecord {
   const endedAt = normalizeSqliteNumber(row.ended_at);
   const cancelRequestedAt = normalizeSqliteNumber(row.cancel_requested_at);

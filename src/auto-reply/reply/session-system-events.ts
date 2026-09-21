@@ -212,10 +212,9 @@ export async function prepareFormattedSystemEvents(params: {
   // the ownership filter; our delivery-ack/session filtering runs after it.
   // Heartbeat turns pass a prepared generic selection so dedicated reminders
   // never leak into this consume window.
-  let selected = selectGenericSystemEvents(
-    params.events ?? peekSystemEventEntries(queueKey),
-    { suppressHeartbeatOwnedEvents: params.suppressHeartbeatOwnedEvents },
-  );
+  let selected = selectGenericSystemEvents(params.events ?? peekSystemEventEntries(queueKey), {
+    suppressHeartbeatOwnedEvents: params.suppressHeartbeatOwnedEvents,
+  });
   // Storage must resolve under the SAME agent the ownership filter selected for,
   // or a global-scope key under a non-default agent reads the wrong store.
   const agentId = resolveAgentIdFromSessionKey(params.sessionKey, params.agentId);

@@ -391,7 +391,10 @@ export async function dispatchPostCompactionDelegates(
   }
   const internalReleaseTraceparent = resolveContinuationTraceparent(params.releaseTraceparent);
   // Queue identity is owner-scoped; a bare session key must not enqueue into a foreign queue.
-  const ownerAgentId = deps.resolveSessionAgentId({ sessionKey: params.sessionKey, config: params.cfg });
+  const ownerAgentId = deps.resolveSessionAgentId({
+    sessionKey: params.sessionKey,
+    config: params.cfg,
+  });
   const stagedCompactionDelegates = deps.consumeStagedPostCompactionDelegates(params.sessionKey);
   // Capture the claim handles immediately: consumeStagedPostCompactionDelegates
   // now claims TaskFlow rows to `running` (not `finished`), and we finalize ONLY
