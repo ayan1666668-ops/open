@@ -110,7 +110,32 @@ function responses(installed = true) {
       catalog: detail,
       components: { ...calendarInspection.components, skills: [skill.name], skillDetails: [skill] },
     },
-    "plugins.skills.read": bundle,
+    "plugins.skills.read": {
+      cases: [
+        ...bundle.files.map((selected) => ({
+          match: { path: selected.path },
+          response: {
+            ...bundle,
+            files: bundle.files.map((file) =>
+              file.path === selected.path
+                ? file
+                : { path: file.path, sizeBytes: file.sizeBytes, status: "deferred" },
+            ),
+          },
+        })),
+        {
+          match: {},
+          response: {
+            ...bundle,
+            files: bundle.files.map((file) =>
+              file.path === "SKILL.md"
+                ? file
+                : { path: file.path, sizeBytes: file.sizeBytes, status: "deferred" },
+            ),
+          },
+        },
+      ],
+    },
   };
 }
 
@@ -143,11 +168,39 @@ describeControlUiE2e("Plugin skill bundle routes", () => {
         expect(
           (await modal.locator("summary").allTextContents()).map((text) => text.trim()),
         ).toContain("empty");
+        expect(await modal.locator(".item-meta, .chips, .state, .foot").count()).toBe(0);
+        expect(await modal.locator(".head button[aria-label='Close']").count()).toBe(1);
+        expect(await gateway.getRequests("plugins.skills.read")).toHaveLength(1);
+        await gateway.deferNext("plugins.skills.read");
         await modal.getByRole("link", { name: "Configuration", exact: true }).click();
+        const selectedRead = await gateway.waitForRequest("plugins.skills.read", { after: 1 });
+        expect(selectedRead.params).toEqual(
+          expect.objectContaining({ path: "references/config.md" }),
+        );
+        await modal
+          .locator('openclaw-panel-loading-skeleton[data-panel-skeleton="document"]')
+          .waitFor();
+        expect(await modal.locator(".item").count()).toBe(3);
+        await captureScreenshot(page, "skill-selected-skeleton.png", "viewport");
+        await gateway.resolveDeferred("plugins.skills.read", {
+          ...bundle,
+          files: bundle.files.map((file) =>
+            file.path === "references/config.md"
+              ? file
+              : { path: file.path, sizeBytes: file.sizeBytes, status: "deferred" },
+          ),
+        });
         await modal.locator('[data-path="references/config.md"][aria-current="true"]').waitFor();
-        expect(await modal.locator(".markdown").textContent()).toContain("CONFIGURATION_TAIL");
+        await expect
+          .poll(() => modal.locator(".markdown").textContent())
+          .toContain("CONFIGURATION_TAIL");
         await modal.locator('[data-path="scripts/check.sh"]').click();
-        expect(await modal.locator(".code-content").textContent()).toContain("echo calendar-check");
+        await expect
+          .poll(() => modal.locator(".code-content").textContent())
+          .toContain("echo calendar-check");
+        await modal.locator('[data-path="SKILL.md"]').click();
+        await modal.locator('[data-path="references/config.md"]').click();
+        expect(await gateway.getRequests("plugins.skills.read")).toHaveLength(3);
         if (name === "installed settings") {
           for (const width of [1440, 1174, 768, 390]) {
             await page.setViewportSize({ width, height: 1000 });
