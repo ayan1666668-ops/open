@@ -411,8 +411,8 @@ export async function listProjectedSessions(params: {
         materializedRowCount++;
       }
       if (opts.activeOnly && sentinel(record.key)) {
-        delete row.childSessions;
-        delete row.hasActiveSubagentRun;
+        row.childSessions = undefined;
+        row.hasActiveSubagentRun = undefined;
       }
       return [row];
     });
