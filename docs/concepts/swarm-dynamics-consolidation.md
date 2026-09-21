@@ -44,10 +44,11 @@ publish, merge, deploy, or mutate live policy.
 
 ## Lifecycle ownership
 
-Dynamics tracking belongs to the parent Code Mode run that created the group.
-When the parent wait is aborted or fails, advisory state is released immediately.
-That cleanup removes only diagnostic bookkeeping; it does not cancel or mutate
-still-running sibling collectors.
+Dynamics tracking belongs to the parent run that created the group. It registers
+with OpenClaw's existing catalog/run disposal lifetime and with the parent abort
+signal. Disposal removes only diagnostic bookkeeping; it does not cancel or mutate
+still-running sibling collectors. Recoverable wait errors do not tear down the
+population observer.
 
 This is important for the Liquid model: exploration may fan out aggressively,
 but abandoned observation state must not accumulate forever in the long-lived
