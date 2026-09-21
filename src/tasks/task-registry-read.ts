@@ -107,12 +107,13 @@ type TaskRegistryReadOwner = {
 };
 
 /** External readers join a fixed accepted prefix; persistence preparation must never use this fence. */
-export async function prepareTaskRegistryReadOwner(): Promise<TaskRegistryReadOwner> {
+export async function prepareTaskRegistryReadOwner(
+  pendingMutations: readonly PendingTaskRegistryMutation[] = [],
+): Promise<TaskRegistryReadOwner> {
   const context = captureOpenClawStateWorkerContext();
   const store = getTaskRegistryStore();
   const fence = captureTaskRegistryReadFence(context.admission);
-  // Capture identity-changing producers once; later metadata and mutation preparation stay independent.
-  const mutations = [...getTaskRegistryProcessState().projection.pending].flatMap((pending) => {
+  const mutations = pendingMutations.flatMap((pending) => {
     const settlement = pending.readSettlement;
     return settlement?.store === store && settlement.databaseKey === context.admission.identity.key
       ? [settlement.promise]
@@ -135,7 +136,7 @@ export async function prepareTaskRegistryReadOwner(): Promise<TaskRegistryReadOw
   return { context, store, assertCurrent };
 }
 
-/** Sequential page retries share their accepted prefix while refreshing current rows. */
+/** Page requests join their initial mutation cohort and accepted events while retries refresh rows. */
 export function createTaskRegistryReadPreparation() {
   let owner: TaskRegistryReadOwner | undefined;
   return async (): Promise<TaskRegistryRead | undefined> => {
@@ -147,7 +148,9 @@ export function createTaskRegistryReadPreparation() {
         owner = undefined;
       }
     }
-    owner ??= await prepareTaskRegistryReadOwner();
+    owner ??= await prepareTaskRegistryReadOwner([
+      ...getTaskRegistryProcessState().projection.pending,
+    ]);
     return prepareTaskRegistryRead(owner);
   };
 }

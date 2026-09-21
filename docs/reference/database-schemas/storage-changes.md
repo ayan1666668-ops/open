@@ -642,10 +642,12 @@ Inside an enclosing native transaction, consumption defers delivery until commit
 rechecks event ownership and the committed receipt. Rollback drops queued delivery;
 later row replacement, including ABA replacement, suppresses stale delivery.
 
-External task read preparation also captures identity-changing mutations already
+Task page request preparation also captures identity-changing mutations already
 admitted for its database and store before its first wait. It joins their persistence
 and publication settlement once; later mutations do not extend that wait. Failed
-mutations settle before reads revalidate canonical state.
+mutations settle before reads revalidate canonical state. Internal backing reads
+retain per-row authority checks so a pending replacement does not delay progress
+for unaffected tasks.
 
 Registered Gateway task list, get, and history reads, artifact task-ID scope resolution, plus subagent list and wait
 preparation, asynchronously join the event batches accepted before their first

@@ -15,8 +15,8 @@ import {
   isEquivalentTaskRecord,
   listTasksFromIndex,
 } from "./task-registry-records.js";
-import type { TaskRegistryStore } from "./task-registry.store.js";
 import type {
+  TaskExecutionRestoreStore,
   TaskRegistryMutationScope,
   TaskRegistryObserverEvent,
 } from "./task-registry.store.types.js";
@@ -28,7 +28,7 @@ export type PendingTaskRegistryMutation = {
   readIdentity?: "preserved";
   readSettlement?: {
     databaseKey: string;
-    store: TaskRegistryStore;
+    store: TaskExecutionRestoreStore;
     promise: Promise<void>;
   };
   published: Map<string, Omit<TaskRecord, "detail"> | undefined>;

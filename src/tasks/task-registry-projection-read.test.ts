@@ -307,7 +307,7 @@ it("settles admitted run creations before preparing a registered task page", asy
         Array.isArray(args[1]) ? snapshot : load(...args),
       );
       const entered = createDeferred();
-      const fence = taskAgentEventMutations.captureReadFence;
+      const fence = taskAgentEventMutations.captureReadFence.bind(taskAgentEventMutations);
       vi.spyOn(taskAgentEventMutations, "captureReadFence").mockImplementationOnce((admission) => {
         const result = fence(admission);
         entered.resolve();
