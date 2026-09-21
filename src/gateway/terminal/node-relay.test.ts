@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { WebSocket } from "ws";
+import { GATEWAY_CLIENT_IDS } from "../../../packages/gateway-protocol/src/client-info.js";
 import { createDeferred, withTestTimeout } from "../../../test/helpers/promise.js";
 import { NODE_DUPLEX_INVOKE_IDLE_TIMEOUT_MS } from "../../infra/node-commands.js";
 import { type NodeInvokeResult, NodeRegistry } from "../node-registry.js";
@@ -26,7 +27,12 @@ function registerNodeRelayClient(registry: NodeRegistry) {
       connect: {
         minProtocol: 1,
         maxProtocol: 1,
-        client: { id: "openclaw-node-host", version: "1.0.0", platform: "linux", mode: "node" },
+        client: {
+          id: GATEWAY_CLIENT_IDS.NODE_HOST,
+          version: "1.0.0",
+          platform: "linux",
+          mode: "node",
+        },
         device: {
           id: "node-validated",
           publicKey: "public-key",
