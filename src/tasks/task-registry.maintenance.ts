@@ -21,7 +21,6 @@ import { getAgentRunContext } from "../infra/agent-run-registry.js";
 import { getSessionBindingService } from "../infra/outbound/session-binding-service.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { sweepExpiredPluginStateEntries } from "../plugin-state/plugin-state-store.js";
-import { runWithGatewayIndependentRootWorkAdmission } from "../process/gateway-work-admission.js";
 import { parseAgentSessionKey } from "../routing/session-key.js";
 import {
   deriveSessionChatTypeFromKey,
@@ -69,6 +68,7 @@ import {
   applyTaskRegistryMaintenanceRetention,
   shouldStampCleanupAfter,
 } from "./task-registry-maintenance-retention.js";
+import { createTaskMaintenanceScheduler } from "./task-registry-maintenance-scheduler.js";
 import {
   getTaskRegistryMaintenanceSnapshot,
   getTaskRegistryMaintenanceTask,
@@ -103,11 +103,15 @@ const log = createSubsystemLogger("tasks/task-registry-maintenance");
 const TASK_RECONCILE_GRACE_MS = 5 * 60_000;
 const HARNESS_OWNED_SUBAGENT_RECONCILE_GRACE_MS = 30 * 60_000;
 const TASK_STALE_RUNNING_MS = 30 * 60_000;
-const TASK_SWEEP_INTERVAL_MS = 60_000;
-
-let sweeper: NodeJS.Timeout | null = null;
-let deferredSweep: NodeJS.Timeout | null = null;
-let scheduledSweep: Promise<void> | null = null;
+const maintenanceScheduler = createTaskMaintenanceScheduler(
+  async () => {
+    // Flow retention reads linked task activity, so reconcile the task owner first.
+    // Reversing this order can preserve phantom active work for another sweep.
+    await sweepTaskRegistry();
+    await runTaskFlowRegistryMaintenance();
+  },
+  (error) => log.warn("Task registry maintenance failed", { error }),
+);
 let configuredRuntimeAuthoritative = false;
 
 type TaskRegistryMaintenanceRuntime = TaskRegistryMaintenanceReader &
@@ -928,24 +932,6 @@ export function getTaskRegistryMaintenanceDiagnostics(): TaskRegistryMaintenance
   return { staleRunningTasks };
 }
 
-function startScheduledSweep() {
-  if (!sweeper || scheduledSweep) {
-    return;
-  }
-  scheduledSweep = runWithGatewayIndependentRootWorkAdmission(async () => {
-    // Flow retention reads linked task activity, so reconcile the task owner first.
-    // Reversing this order can preserve phantom active work for another sweep.
-    await sweepTaskRegistry();
-    await runTaskFlowRegistryMaintenance();
-  }, "tasks:maintenance")
-    .catch((error: unknown) => {
-      log.warn("Task registry maintenance failed", { error });
-    })
-    .finally(() => {
-      scheduledSweep = null;
-    });
-}
-
 export async function runTaskRegistryMaintenance(): Promise<TaskRegistryMaintenanceSummary> {
   // Load cleanup code before selecting tasks and checking live session ownership.
   let closeAcpSession: CloseAcpSession | undefined;
@@ -1081,29 +1067,11 @@ export async function sweepTaskRegistry(): Promise<TaskRegistryMaintenanceSummar
 
 export function startTaskRegistryMaintenance() {
   taskRegistryMaintenanceRuntime.ensureTaskRegistryReady();
-  if (sweeper) {
-    return;
-  }
-  deferredSweep = setTimeout(() => {
-    deferredSweep = null;
-    startScheduledSweep();
-  }, 5_000);
-  deferredSweep.unref?.();
-  sweeper = setInterval(startScheduledSweep, TASK_SWEEP_INTERVAL_MS);
-  sweeper.unref?.();
+  maintenanceScheduler.start();
 }
 
 export async function stopTaskRegistryMaintenance(): Promise<void> {
-  if (deferredSweep) {
-    clearTimeout(deferredSweep);
-    deferredSweep = null;
-  }
-  if (sweeper) {
-    clearInterval(sweeper);
-    sweeper = null;
-  }
-  // Retained work must settle before callers retire its runtime or backing state.
-  await scheduledSweep;
+  await maintenanceScheduler.stop();
 }
 
 export function setTaskRegistryMaintenanceRuntimeForTests(

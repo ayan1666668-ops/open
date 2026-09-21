@@ -28,6 +28,43 @@ afterEach(async () => {
 });
 
 describe("task-registry maintenance scheduling", () => {
+  it("stops a suspended admission without reopening or running maintenance", async () => {
+    await withTaskRegistryTempDir(async () => {
+      vi.useFakeTimers();
+      const loadCloseAcpSession = vi.fn(async () => undefined);
+      configureTaskRegistryMaintenanceRuntimeForTest({
+        currentTasks: new Map(),
+        snapshotTasks: [],
+        loadCloseAcpSession,
+      });
+      const suspension = gatewayWork.tryBeginGatewaySuspendAdmission(() => {});
+      if (!suspension || !suspension.commit()) {
+        throw new Error("Expected to suspend task admission");
+      }
+      let stopped: Promise<void> | undefined;
+      try {
+        startTaskRegistryMaintenance();
+        await vi.advanceTimersByTimeAsync(5_000);
+        expect(loadCloseAcpSession).not.toHaveBeenCalled();
+        let settled = false;
+        stopped = stopTaskRegistryMaintenance().then(() => {
+          settled = true;
+        });
+        await vi.advanceTimersByTimeAsync(0);
+        expect(settled).toBe(true);
+        expect(gatewayWork.getGatewaySuspendAdmissionPhase()).toBe("prepared");
+        expect(gatewayWork.getActiveGatewayRootWorkCount()).toBe(0);
+        suspension.release();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(loadCloseAcpSession).not.toHaveBeenCalled();
+      } finally {
+        suspension.release();
+        await stopped;
+        await stopTaskRegistryMaintenance();
+      }
+    });
+  });
+
   it("joins task cleanup and flow retention before stopping scheduled maintenance", async () => {
     await withTaskRegistryTempDir(async () => {
       vi.useFakeTimers();
