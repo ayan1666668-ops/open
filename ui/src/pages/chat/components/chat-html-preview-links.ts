@@ -35,14 +35,16 @@ export function prepareHtmlPreviewLinks(source: string, allowScripts: boolean): 
   const replacements = new Map<number, { start: number; end: number; text: string }>();
   for (const link of links) {
     // URL parsing ignores leading C0 controls and space, but not other Unicode whitespace.
-    const href = link.attrs
-      .find((attribute) => attribute.name === "href")
-      // eslint-disable-next-line no-control-regex -- URL parsing explicitly strips leading C0 controls.
-      ?.value.replace(/^[\u0000-\u0020]+/u, "");
+    const authoredHref = link.attrs.find((attribute) => attribute.name === "href")?.value ?? "";
+    let fragmentStart = 0;
+    while (fragmentStart < authoredHref.length && authoredHref.charCodeAt(fragmentStart) <= 0x20) {
+      fragmentStart += 1;
+    }
+    const href = authoredHref.slice(fragmentStart);
     const target = link.attrs.find((attribute) => attribute.name === "target")?.value ?? baseTarget;
     const location = link.sourceCodeLocation?.attrs?.href;
     if (
-      !href?.startsWith("#") ||
+      !href.startsWith("#") ||
       !location ||
       (target && target.toLowerCase() !== "_self") ||
       link.attrs.some((attribute) => attribute.name === "download")

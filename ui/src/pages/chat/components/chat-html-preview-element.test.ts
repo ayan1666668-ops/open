@@ -140,8 +140,8 @@ describe("ordinary HTML preview transport", () => {
       expected: '<b><a href="about:srcdoc#x">one</b>two',
     },
     {
-      name: "leading ASCII whitespace without treating NBSP as URL whitespace",
-      body: '<a href=" \t\n#section">Jump</a><a href="\u00a0#section">Relative URL</a>',
+      name: "leading C0 controls and ASCII whitespace without treating NBSP as URL whitespace",
+      body: '<a href="\u0001\u001f \t\n#section">Jump</a><a href="\u00a0#section">Relative URL</a>',
       expected: '<a href="about:srcdoc#section">Jump</a><a href="\u00a0#section">Relative URL</a>',
     },
     {
