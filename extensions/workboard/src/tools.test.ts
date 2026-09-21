@@ -809,4 +809,88 @@ describe("workboard tools", () => {
       /already has active Workboard work/,
     );
   });
+
+  it("rejects a token-less legacy agent-owned claim and recovers it through the operator surface", async () => {
+    // A claim persisted BEFORE the session-scoped owner change stored a bare agentId as
+    // its owner. Session-scoped tool identity no longer matches that, so the token-less
+    // owner path is refused — the accepted, documented upgrade cost. This pins that
+    // rejection as intended and proves both recovery paths the docs promise.
+    const { store, stores } = createWorkboardSqliteTestHarness();
+    const registerCard = async (id: string, title: string) => {
+      await stores.cards.register(id, {
+        version: 1,
+        card: {
+          id,
+          title,
+          status: "todo",
+          priority: "normal",
+          labels: [],
+          agentId: "main",
+          position: 1000,
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      });
+    };
+    const toolFor = (sessionKey: string, name: string) =>
+      expectDefined(
+        new Map(
+          createWorkboardTools({ store, context: { agentId: "main", sessionKey } }).map((tool) => [
+            tool.name,
+            tool,
+          ]),
+        ).get(name),
+        name,
+      );
+
+    await registerCard("card-legacy", "Legacy claim");
+    // Persist the claim the way a pre-upgrade install did: ownerId is the bare agentId.
+    const legacy = await store.claim("card-legacy", { ownerId: "main" });
+    expect(legacy.card).toMatchObject({ metadata: { claim: { ownerId: "main" } } });
+
+    // A tool session of the SAME agent, holding no token, is fenced out. The tool surface
+    // checks first and names the persisted legacy owner.
+    await expect(
+      toolFor("session-1", "workboard_heartbeat").execute("hb-legacy", { id: "card-legacy" }),
+    ).rejects.toThrow("card is claimed by main.");
+    // The store guard underneath refuses the same token-less owner mismatch directly.
+    await expect(store.heartbeat("card-legacy", { ownerId: "session-1" })).rejects.toThrow(
+      "claim owner does not match.",
+    );
+
+    // Recovery path 1: the claim token still works on a legacy claim, for heartbeat...
+    const token = legacy.token;
+    await expect(
+      toolFor("session-1", "workboard_heartbeat").execute("hb-token", {
+        id: "card-legacy",
+        token,
+      }),
+    ).resolves.toBeDefined();
+    // ...and for a terminal completion.
+    const completed = readPayload(
+      await toolFor("session-1", "workboard_complete").execute("done-token", {
+        id: "card-legacy",
+        token,
+        summary: "recovered with the claim token",
+      }),
+    );
+    expect(completed.card).toMatchObject({ status: "done" });
+
+    // Recovery path 2: the operator surface needs no token. Gateway reclaim/promote/
+    // reassign pass `scope === null`, bypassing the owner check; reclaim clears the claim.
+    await registerCard("card-legacy-2", "Legacy claim 2");
+    await store.claim("card-legacy-2", { ownerId: "main" });
+    const reclaimed = await store.reclaim("card-legacy-2", {}, null);
+    expect(reclaimed.metadata?.claim).toBeUndefined();
+    expect(reclaimed.status).toBe("ready");
+    // With the claim cleared, a session-scoped owner claims and acts normally again.
+    const reclaimedBySession = readPayload(
+      await toolFor("session-1", "workboard_claim").execute("claim-after", {
+        id: "card-legacy-2",
+      }),
+    );
+    expect(reclaimedBySession.card).toMatchObject({
+      metadata: { claim: { ownerId: "session-1" } },
+    });
+  });
 });
