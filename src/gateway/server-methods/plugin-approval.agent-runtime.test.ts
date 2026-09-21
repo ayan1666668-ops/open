@@ -3,7 +3,11 @@ import type { PluginApprovalRequestPayload } from "../../infra/plugin-approvals.
 import { openOpenClawStateDatabase } from "../../state/openclaw-state-db.js";
 import type { AgentRuntimeIdentity } from "../agent-runtime-identity-token.js";
 import type { ExecApprovalManager } from "../exec-approval-manager.js";
-import { createReadyTestApprovalFixture } from "../exec-approval-manager.test-support.js";
+import {
+  createPreparedTestApprovalManager,
+  createTestApprovalManager,
+} from "../exec-approval-manager.test-support.js";
+import { waitForApprovalRequested } from "./approval-request.test-support.js";
 import { createPluginApprovalHandlers } from "./plugin-approval.js";
 import type { GatewayRequestHandlerOptions } from "./types.js";
 
@@ -74,13 +78,10 @@ afterEach(() => {
 
 describe("plugin approval signed agent runtime", () => {
   it("rejects closed authority before creating a plugin approval", async (testContext) => {
-    const { manager, track } = await createReadyTestApprovalFixture<PluginApprovalRequestPayload>(
-      testContext,
-      {
-        approvalKind: "plugin",
-        validateAgentRuntimeDelegatedAuthority: () => false,
-      },
-    );
+    const manager = createTestApprovalManager<PluginApprovalRequestPayload>(testContext, {
+      approvalKind: "plugin",
+      validateAgentRuntimeDelegatedAuthority: () => false,
+    });
     const opts = requestOptions({
       request: { title: "Sensitive action", description: "D" },
       identity: {
@@ -90,7 +91,7 @@ describe("plugin approval signed agent runtime", () => {
       validateAuthority: () => false,
     });
 
-    await track(Promise.resolve(requestHandler(manager)(opts)));
+    await requestHandler(manager)(opts);
 
     expect(await manager.listPendingRecords()).toHaveLength(0);
     expect(vi.mocked(opts.respond).mock.calls[0]?.[2]).toMatchObject({
@@ -100,13 +101,10 @@ describe("plugin approval signed agent runtime", () => {
 
   it("cancels a plugin approval when authority closes after the handshake", async (testContext) => {
     let active = true;
-    const { manager, track } = await createReadyTestApprovalFixture<PluginApprovalRequestPayload>(
-      testContext,
-      {
-        approvalKind: "plugin",
-        validateAgentRuntimeDelegatedAuthority: () => active,
-      },
-    );
+    const manager = createTestApprovalManager<PluginApprovalRequestPayload>(testContext, {
+      approvalKind: "plugin",
+      validateAgentRuntimeDelegatedAuthority: () => active,
+    });
     const opts = requestOptions({
       request: { title: "Sensitive action", description: "D", twoPhase: true },
       identity: {
@@ -115,8 +113,9 @@ describe("plugin approval signed agent runtime", () => {
       },
       validateAuthority: () => active,
     });
-    const pending = track(Promise.resolve(requestHandler(manager)(opts)));
-    await vi.waitFor(async () => expect(await manager.listPendingRecords()).toHaveLength(1));
+    const pending = requestHandler(manager)(opts);
+    await waitForApprovalRequested(opts.context.broadcast, "plugin.approval.requested", pending);
+    expect(await manager.listPendingRecords()).toHaveLength(1);
     const record = (await manager.listPendingRecords())[0]!;
     active = false;
 
@@ -126,13 +125,10 @@ describe("plugin approval signed agent runtime", () => {
   });
 
   it("rejects a signed runtime without a host-resolved approval owner", async (testContext) => {
-    const { manager, track } = await createReadyTestApprovalFixture<PluginApprovalRequestPayload>(
-      testContext,
-      {
-        approvalKind: "plugin",
-        validateAgentRuntimeDelegatedAuthority: () => true,
-      },
-    );
+    const manager = createTestApprovalManager<PluginApprovalRequestPayload>(testContext, {
+      approvalKind: "plugin",
+      validateAgentRuntimeDelegatedAuthority: () => true,
+    });
     const opts = requestOptions({
       request: { pluginId: "forged", title: "Sensitive action", description: "D" },
       identity: {
@@ -149,7 +145,7 @@ describe("plugin approval signed agent runtime", () => {
       },
     });
 
-    await track(Promise.resolve(requestHandler(manager)(opts)));
+    await requestHandler(manager)(opts);
 
     expect(vi.mocked(opts.respond).mock.calls[0]?.[2]).toMatchObject({
       message: expect.stringContaining("signed plugin approval owner is unavailable"),
@@ -157,14 +153,11 @@ describe("plugin approval signed agent runtime", () => {
   });
 
   it("uses signed runtime owner and route instead of forged request metadata", async (testContext) => {
-    const {
-      manager,
-      databaseOptions: options,
-      track,
-    } = await createReadyTestApprovalFixture<PluginApprovalRequestPayload>(testContext, {
-      approvalKind: "plugin",
-      validateAgentRuntimeDelegatedAuthority: () => true,
-    });
+    const { manager, databaseOptions: options } =
+      await createPreparedTestApprovalManager<PluginApprovalRequestPayload>(testContext, {
+        approvalKind: "plugin",
+        validateAgentRuntimeDelegatedAuthority: () => true,
+      });
     const opts = requestOptions({
       request: {
         pluginId: "forged-plugin",
@@ -196,8 +189,9 @@ describe("plugin approval signed agent runtime", () => {
       },
     });
 
-    const pending = track(Promise.resolve(requestHandler(manager)(opts)));
-    await vi.waitFor(() => expect(opts.context.broadcast).toHaveBeenCalled());
+    const pending = requestHandler(manager)(opts);
+    await waitForApprovalRequested(opts.context.broadcast, "plugin.approval.requested", pending);
+    expect(opts.context.broadcast).toHaveBeenCalled();
     const broadcastPayload = vi.mocked(opts.context.broadcast).mock.calls[0]?.[1] as
       | { id?: unknown }
       | undefined;
@@ -227,14 +221,11 @@ describe("plugin approval signed agent runtime", () => {
   });
 
   it("does not create execution identity storage when collection is disabled", async (testContext) => {
-    const {
-      manager,
-      databaseOptions: options,
-      track,
-    } = await createReadyTestApprovalFixture<PluginApprovalRequestPayload>(testContext, {
-      approvalKind: "plugin",
-      validateAgentRuntimeDelegatedAuthority: () => true,
-    });
+    const { manager, databaseOptions: options } =
+      await createPreparedTestApprovalManager<PluginApprovalRequestPayload>(testContext, {
+        approvalKind: "plugin",
+        validateAgentRuntimeDelegatedAuthority: () => true,
+      });
     const opts = requestOptions({
       request: { title: "Sensitive action", description: "D", twoPhase: true },
       identity: {
@@ -252,8 +243,9 @@ describe("plugin approval signed agent runtime", () => {
       },
     });
 
-    const pending = track(Promise.resolve(requestHandler(manager)(opts)));
-    await vi.waitFor(() => expect(opts.context.broadcast).toHaveBeenCalled());
+    const pending = requestHandler(manager)(opts);
+    await waitForApprovalRequested(opts.context.broadcast, "plugin.approval.requested", pending);
+    expect(opts.context.broadcast).toHaveBeenCalled();
     const approvalId = String(
       (vi.mocked(opts.context.broadcast).mock.calls[0]?.[1] as { id?: unknown } | undefined)?.id,
     );

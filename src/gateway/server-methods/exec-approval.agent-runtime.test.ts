@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { openOpenClawStateDatabase } from "../../state/openclaw-state-db.js";
 import type { AgentRuntimeIdentity } from "../agent-runtime-identity-token.js";
-import { createReadyTestApprovalFixture } from "../exec-approval-manager.test-support.js";
+import { createPreparedTestApprovalManager } from "../exec-approval-manager.test-support.js";
 import { createChatRunState } from "../server-chat-state.js";
+import { waitForApprovalRequested } from "./approval-request.test-support.js";
 import { createExecApprovalHandlers } from "./exec-approval.js";
 import type { GatewayRequestHandlerOptions } from "./types.js";
 
@@ -81,13 +82,13 @@ function requestOptions(
 
 describe("exec approval signed agent runtime", () => {
   it("rejects closed authority before creating an exec approval", async (testContext) => {
-    const { manager, track } = await createReadyTestApprovalFixture(testContext, {
+    const { manager } = await createPreparedTestApprovalManager(testContext, {
       validateAgentRuntimeDelegatedAuthority: () => false,
     });
     const handler = createExecApprovalHandlers(manager)["exec.approval.request"]!;
     const opts = requestOptions(identity(false), () => false);
 
-    await track(Promise.resolve(handler(opts)));
+    await handler(opts);
 
     expect(await manager.listPendingRecords()).toHaveLength(0);
     expect(vi.mocked(opts.respond).mock.calls[0]?.[2]).toMatchObject({
@@ -96,7 +97,7 @@ describe("exec approval signed agent runtime", () => {
   });
 
   it("sanitizes display-only cwd and resolvedPath in the stored request", async (testContext) => {
-    const { manager, track } = await createReadyTestApprovalFixture(testContext, {
+    const { manager } = await createPreparedTestApprovalManager(testContext, {
       validateAgentRuntimeDelegatedAuthority: () => true,
     });
     const handler = createExecApprovalHandlers(manager)["exec.approval.request"]!;
@@ -108,8 +109,9 @@ describe("exec approval signed agent runtime", () => {
     // are closed enums (arbitrary values null out), host is escape-hardened.
     (opts.params as Record<string, unknown>).security = "full‮looks-deny";
     (opts.params as Record<string, unknown>).ask = "always​ish";
-    const pending = track(Promise.resolve(handler(opts)));
-    await vi.waitFor(async () => expect(await manager.listPendingRecords()).toHaveLength(1));
+    const pending = handler(opts);
+    await waitForApprovalRequested(opts.context.broadcast, "exec.approval.requested", pending);
+    expect(await manager.listPendingRecords()).toHaveLength(1);
     const record = (await manager.listPendingRecords())[0]!;
     expect(record.request.cwd).toBe("/tmp/safe\\u{202E}evil");
     expect(record.request.resolvedPath).toBe("/usr/bin/echo\\u{200B}x");
@@ -121,13 +123,14 @@ describe("exec approval signed agent runtime", () => {
 
   it("cancels an exec approval when authority closes after the handshake", async (testContext) => {
     let active = true;
-    const { manager, track } = await createReadyTestApprovalFixture(testContext, {
+    const { manager } = await createPreparedTestApprovalManager(testContext, {
       validateAgentRuntimeDelegatedAuthority: () => active,
     });
     const handler = createExecApprovalHandlers(manager)["exec.approval.request"]!;
     const opts = requestOptions(identity(false), () => active);
-    const pending = track(Promise.resolve(handler(opts)));
-    await vi.waitFor(async () => expect(await manager.listPendingRecords()).toHaveLength(1));
+    const pending = handler(opts);
+    await waitForApprovalRequested(opts.context.broadcast, "exec.approval.requested", pending);
+    expect(await manager.listPendingRecords()).toHaveLength(1);
     const record = (await manager.listPendingRecords())[0]!;
     active = false;
 
@@ -142,22 +145,22 @@ describe("exec approval signed agent runtime", () => {
   ] as const)(
     "uses signed runtime provenance with collection %s",
     async ([_label, enabled], testContext) => {
-      const {
-        manager,
-        databaseOptions: options,
-        track,
-      } = await createReadyTestApprovalFixture(testContext, {
-        approvalKind: "exec",
-        validateAgentRuntimeDelegatedAuthority: () => true,
-      });
+      const { manager, databaseOptions: options } = await createPreparedTestApprovalManager(
+        testContext,
+        {
+          approvalKind: "exec",
+          validateAgentRuntimeDelegatedAuthority: () => true,
+        },
+      );
       const handler = createExecApprovalHandlers(manager)["exec.approval.request"];
       if (!handler) {
         throw new Error("exec approval request handler is unavailable");
       }
       const opts = requestOptions(identity(enabled));
 
-      const pending = track(Promise.resolve(handler(opts)));
-      await vi.waitFor(() => expect(opts.context.broadcast).toHaveBeenCalled());
+      const pending = handler(opts);
+      await waitForApprovalRequested(opts.context.broadcast, "exec.approval.requested", pending);
+      expect(opts.context.broadcast).toHaveBeenCalled();
       const approvalId = String(
         (vi.mocked(opts.context.broadcast).mock.calls[0]?.[1] as { id?: unknown } | undefined)?.id,
       );
