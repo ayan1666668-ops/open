@@ -74,9 +74,10 @@ export function pruneDeliveryQueueTombstones(
   prefix?: { queueName: string; idPrefix: string },
 ): boolean {
   // Let producer-scoped cleanup use the existing queue/status indexes.
-  // sqlite-allow-raw: JSON1 and a window rank enforce authored policies in place.
-  const result = db
-    .prepare(`WITH policies AS (
+  const result =
+    // sqlite-allow-raw: JSON1 and a window rank enforce authored policies in place.
+    db
+      .prepare(`WITH policies AS (
       ${BOUNDED_DELIVERY_RECEIPTS_SQL}
       ${prefix ? "AND queue_name = @queueName AND id_prefix = @idPrefix" : ""}
     ), ranked AS (
@@ -86,7 +87,7 @@ export function pruneDeliveryQueueTombstones(
       SELECT receipt_rowid FROM ranked
       WHERE enqueued_at < @now - max_age_ms OR retention_rank > max_entries
     )`)
-    .run(prefix ? { now, ...prefix } : { now });
+      .run(prefix ? { now, ...prefix } : { now });
   const ordinaryPruned = prefix ? false : pruneOrdinaryDeliveryReceipts(db, now);
   return result.changes > 0 || ordinaryPruned;
 }
