@@ -164,14 +164,15 @@ describe("subagent registration rollback", () => {
     delivery: { status: "not_required" },
   });
 
-  // Silas's ruling on the fourth absorb: `isCurrent` is the live cleanup-ownership
-  // axis, separate from `expectedRegistration`'s registry-identity CAS, and it must
-  // be consumed at the mutation boundary. A caller-only check would leave the durable
-  // custody transition ownership-blind, and a param that is accepted but never read
-  // would be a vacuous guard.
-  it("rejects an accepted-rollback record when cleanup ownership is already lost", () => {
-    const childSessionKey = "agent:main:subagent:rollback-ownership-lost";
-    const runId = "run-rollback-ownership-lost";
+  // Ronan's controlling ruling on the fourth absorb (Silas retracted the earlier
+  // recorder-widening advice): durable custody is recorded ownership-BLIND. If the
+  // recorder refused to write the marker whenever live cleanup authority had been
+  // revoked, an accepted child would be orphaned with nothing for the sweeper to
+  // reconcile. The durable row is fenced by expectedRegistration plus frozen session
+  // identity and run id; the live predicate belongs only on termination.
+  it("persists exact-registration rollback custody even after cleanup ownership flips", () => {
+    const childSessionKey = "agent:main:subagent:rollback-custody-survives-revocation";
+    const runId = "run-rollback-custody-survives-revocation";
     addSubagentRunForTests(createAcceptedLiveRun(runId, childSessionKey));
     saveSubagentRegistryToSqlite(
       canonicalSubagentRunFixtures(
@@ -179,40 +180,13 @@ describe("subagent registration rollback", () => {
       ),
     );
 
+    // Ownership is already gone by the time the rollback is recorded.
     const result = recordAcceptedSubagentSpawnRollback({
       runId,
       childSessionKey,
       gatewayRunId: runId,
-      reason: "ownership flipped before the rollback was recorded",
-      isCurrent: () => false,
-    });
-
-    expect(result).toEqual({ status: "rejected" });
-    // Zero mutation: none of the three fields the recorder would set are present.
-    const retained = getSubagentRunByChildSessionKey(childSessionKey);
-    expect(retained?.acceptedSpawnRollback).toBeUndefined();
-    expect(retained?.suppressCompletionDelivery).toBeUndefined();
-    expect(retained?.execution.suppressSessionEffects).toBeUndefined();
-    // Zero persistence: the durable row is untouched too.
-    expect(loadSubagentRegistryFromSqlite().get(runId)?.acceptedSpawnRollback).toBeUndefined();
-  });
-
-  it("records an accepted rollback normally while cleanup ownership is still held", () => {
-    const childSessionKey = "agent:main:subagent:rollback-ownership-held";
-    const runId = "run-rollback-ownership-held";
-    addSubagentRunForTests(createAcceptedLiveRun(runId, childSessionKey));
-    saveSubagentRegistryToSqlite(
-      canonicalSubagentRunFixtures(
-        new Map([[runId, createAcceptedLiveRun(runId, childSessionKey)]]),
-      ),
-    );
-
-    const result = recordAcceptedSubagentSpawnRollback({
-      runId,
-      childSessionKey,
-      gatewayRunId: runId,
-      reason: "registration changed during launch",
-      isCurrent: () => true,
+      reason: "registration changed during launch after operator revocation",
+      expectedRegistration: { runId, childSessionKey, generation: 1, createdAt: 10 },
     });
 
     expect(result).toEqual({ status: "persisted" });
@@ -221,6 +195,29 @@ describe("subagent registration rollback", () => {
       suppressCompletionDelivery: true,
       execution: { suppressSessionEffects: true },
     });
+    // Durable, so a restart-time sweeper can still reconcile the accepted child.
+    expect(loadSubagentRegistryFromSqlite().get(runId)).toMatchObject({
+      acceptedSpawnRollback: { gatewayRunId: runId },
+      suppressCompletionDelivery: true,
+    });
+  });
+
+  it("rejects rollback custody when the registration identity no longer matches", () => {
+    const childSessionKey = "agent:main:subagent:rollback-custody-stale-identity";
+    const runId = "run-rollback-custody-stale-identity";
+    addSubagentRunForTests(createAcceptedLiveRun(runId, childSessionKey));
+
+    // expectedRegistration is the CAS axis that still guards the recorder.
+    const result = recordAcceptedSubagentSpawnRollback({
+      runId,
+      childSessionKey,
+      gatewayRunId: runId,
+      reason: "successor generation owns this child now",
+      expectedRegistration: { runId, childSessionKey, generation: 99, createdAt: 10 },
+    });
+
+    expect(result).toEqual({ status: "rejected" });
+    expect(getSubagentRunByChildSessionKey(childSessionKey)?.acceptedSpawnRollback).toBeUndefined();
   });
 
   it("restores same-id and older kill state after task registration throws", () => {

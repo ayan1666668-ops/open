@@ -128,11 +128,11 @@ export function createCollectorLaunchCallbacks(params: {
           gatewayRunId,
           reason: summarizeSpawnError(error),
           ...provisionalSessionIdentity,
-          // Silas's ruling: the recorder takes the ownership predicate ONLY. It
-          // performs no gateway operation, so dispatch capability does not belong on
-          // a custody-recording API; the predicate is consumed at the manager's
-          // mutation boundary.
-          isCurrent: canCleanupCreatedSession,
+          // Ronan's controlling ruling: the recorder stays OWNERSHIP-BLIND. Durable
+          // custody must persist even when live authority is revoked, or the accepted
+          // child is orphaned with nothing for the sweeper to reconcile. The durable
+          // row is fenced by expectedRegistration plus frozen session identity and run
+          // id; the live predicate is consumed only by terminateAcceptedCollectorRun.
         });
         const rollbackFailures: unknown[] = [];
         if (rollbackOwner.status === "rejected") {
@@ -147,7 +147,10 @@ export function createCollectorLaunchCallbacks(params: {
             childSessionKey,
             gatewayRunId,
             ...provisionalSessionIdentity,
+            // Live ownership AND the cleanup gateway belong on BOTH termination
+            // sites: termination is where the live predicate is consumed.
             isCurrent: canCleanupCreatedSession,
+            ...(callCleanupGateway ? { callGateway: callCleanupGateway } : {}),
           });
         } catch (terminationError) {
           rollbackFailures.push(terminationError);
