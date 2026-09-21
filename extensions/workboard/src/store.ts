@@ -457,7 +457,10 @@ export class WorkboardStore extends WorkboardNotificationStore {
         if (card.metadata?.archivedAt) {
           continue;
         }
-        let latest = await this.promoteDependencyReady(card.id, now);
+        let latest =
+          card.status === "blocked" && retryBudgetExhausted(card)
+            ? card
+            : await this.promoteDependencyReady(card.id, now);
         const wasPromoted = latest.status !== card.status;
         const claim = latest.metadata?.claim;
         const latestAttempt = latestRunningAttempt(latest);
@@ -506,6 +509,7 @@ export class WorkboardStore extends WorkboardNotificationStore {
         if (
           !latest.metadata?.claim &&
           retriesExhausted &&
+          latest.status !== "blocked" &&
           isDependencyPromotableStatus(latest.status)
         ) {
           latest = await this.updateCard(latest.id, {

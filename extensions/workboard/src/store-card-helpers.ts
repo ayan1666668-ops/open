@@ -651,7 +651,8 @@ export function isDependencyPromotableStatus(status: WorkboardStatus): boolean {
     status === "triage" ||
     status === "todo" ||
     status === "scheduled" ||
-    status === "ready"
+    status === "ready" ||
+    status === "blocked"
   );
 }
 
