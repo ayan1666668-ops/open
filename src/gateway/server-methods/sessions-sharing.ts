@@ -24,6 +24,7 @@ import {
   patchSessionEntryCore,
 } from "../../config/sessions/session-accessor.js";
 import { advanceSessionRecipientAuthorityInTransaction } from "../../config/sessions/session-accessor.sqlite-recipient-authority.js";
+import { sessionCreatorProfileId } from "../../config/sessions/session-entry-provenance.js";
 import { resolveSessionPublicShare } from "../../config/sessions/session-public-share.js";
 import { doesSessionVisibilityRestrictRecipientAuthority } from "../../config/sessions/session-recipient-authority-types.js";
 import { listSessionMembersInWorker } from "../../config/sessions/session-transcript-worker-runtime.js";
@@ -37,6 +38,7 @@ import {
 } from "../control-ui-public-session-token.js";
 import { bumpGatewayAccessRevision } from "../gateway-access-revision.js";
 import { getGatewayLocalUserIngress } from "../local-user-ingress.js";
+import { projectSessionActor } from "../session-identity-projection.js";
 import { resolveRequestedSessionAgentId } from "../session-request-agent.js";
 import { getSessionRowProjection } from "../session-row-projection-access.js";
 import {
@@ -326,7 +328,14 @@ function createSessionMembersListHandler(
         (left.label ?? left.id).localeCompare(right.label ?? right.id) ||
         left.id.localeCompare(right.id),
     );
-    const owner = target.entry.createdActor?.id ? target.entry.createdActor : undefined;
+    // Persisted provenance deliberately has no current profile label or avatar.
+    // Project it at the same display boundary as session rows; never change the access identity.
+    const storedOwner = target.entry.createdActor;
+    const owner = sessionCreatorProfileId(storedOwner)
+      ? projectSessionActor(storedOwner, new Map(), currentCfg)
+      : storedOwner
+        ? { type: storedOwner.type, id: storedOwner.id, label: storedOwner.label }
+        : undefined;
     const publicShareGrant = resolveSessionPublicShare(
       loadExactSessionEntryReadOnly({
         agentId: target.agentId,
@@ -347,7 +356,7 @@ function createSessionMembersListHandler(
       {
         sessionKey: target.canonicalKey,
         ...(publicShare ? { publicShare } : {}),
-        ...(owner ? { owner: { ...owner } } : {}),
+        ...(owner?.id ? { owner } : {}),
         members: projectedMembers,
         identities,
         role: resolveSessionSharingRole({ cfg: currentCfg, client, target }),

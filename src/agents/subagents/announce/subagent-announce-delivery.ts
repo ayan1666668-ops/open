@@ -151,6 +151,7 @@ export async function deliverSubagentAnnouncement(params: {
   sourceSessionKey?: string;
   sourceRunId?: string;
   sourceTool?: string;
+  settleWakeSourceSessionKeys?: readonly string[];
   isSourceSessionEffectsAllowed?: () => boolean;
   /** Additional source guard released by the accepting Gateway or injection owner. */
   isSourceSessionAdmissionAllowed?: () => boolean;
@@ -344,6 +345,7 @@ export async function deliverSubagentAnnouncement(params: {
         requesterSessionOrigin: params.requesterSessionOrigin,
         sourceSessionKey: params.sourceSessionKey,
         sourceTool: params.sourceTool,
+        settleWakeSourceSessionKeys: params.settleWakeSourceSessionKeys,
         isSourceSessionEffectsAllowed: params.isSourceSessionEffectsAllowed,
         isSourceSessionAdmissionAllowed: params.isSourceSessionAdmissionAllowed,
         isCompletionOwnedByRequesterYield: params.isCompletionOwnedByRequesterYield,

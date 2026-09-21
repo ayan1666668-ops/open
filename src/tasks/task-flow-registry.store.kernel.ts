@@ -1,11 +1,17 @@
 // Connection-bound task-flow row codecs and SQLite operations.
 import type { DatabaseSync } from "node:sqlite";
 import type { Insertable, Selectable } from "kysely";
-import { deleteExecutionOwnerLifecycleMetadata } from "../audit/execution-owner-lifecycle-binding-store.js";
+import type { ExecutionOwnerBindingResult } from "../audit/execution-owner-binding.js";
+import {
+  bindExecutionOwnerLifecycleMetadata,
+  deleteExecutionOwnerLifecycleMetadata,
+} from "../audit/execution-owner-lifecycle-binding-store.js";
 import {
   executeSqliteQuerySync,
+  executeSqliteQueryTakeFirstSync,
   getNodeSqliteKysely,
   prepareSqliteQuerySync,
+  sqliteStringSet,
 } from "../infra/kysely-sync.js";
 import { normalizeSqliteNumber } from "../infra/sqlite-number.js";
 import type { DB as OpenClawStateKyselyDatabase } from "../state/openclaw-state-db.generated.js";
@@ -59,6 +65,54 @@ function resolveFlowSyncMode(row: {
 
 function rowToSyncMode(row: FlowRegistryRow): TaskFlowSyncMode {
   return resolveFlowSyncMode(row);
+}
+
+// Restored with bindTaskFlowExecutionInDatabase below: upstream ba2fc97a917c moved
+// execution binding into the SQLite worker, whose handler imports that function from
+// this kernel. Our branch had inlined the same owner-active check in
+// task-flow-registry.store.sqlite.ts; upstream converged on identical semantics here,
+// so the producer owns the check and every caller -- worker path included -- gets it.
+function isFlowExecutionOwnerActive(row: {
+  sync_mode: string | null;
+  shape: string | null;
+  status: string;
+  cancel_requested_at: number | null;
+  ended_at: number | null;
+}): boolean {
+  const syncMode = resolveFlowSyncMode(row);
+  const status = parseTaskFlowStatus(row.status);
+  if (row.cancel_requested_at !== null || row.ended_at !== null) {
+    return false;
+  }
+  // Mirrored `blocked` is derived from a terminal task; managed `blocked`
+  // remains live while its controller waits for the blocking task.
+  return syncMode === "task_mirrored"
+    ? status === "queued" || status === "running"
+    : status === "queued" || status === "running" || status === "waiting" || status === "blocked";
+}
+
+export function bindTaskFlowExecutionInDatabase(
+  db: DatabaseSync,
+  flowId: string,
+  binding: Parameters<typeof bindExecutionOwnerLifecycleMetadata>[0]["binding"],
+): Exclude<ExecutionOwnerBindingResult, "disabled"> {
+  const kysely = getFlowRegistryKysely(db);
+  const current = executeSqliteQueryTakeFirstSync(
+    db,
+    kysely
+      .selectFrom("flow_runs")
+      .select(["flow_id", "sync_mode", "shape", "status", "cancel_requested_at", "ended_at"])
+      .where("flow_id", "=", flowId),
+  );
+  if (!current || !isFlowExecutionOwnerActive(current)) {
+    return "missing";
+  }
+  return bindExecutionOwnerLifecycleMetadata({
+    db,
+    ownerKind: "flow",
+    ownerId: current.flow_id,
+    binding,
+  });
 }
 
 function rowToFlowRecord(row: FlowRegistryRow): TaskFlowRecord {
@@ -181,13 +235,22 @@ export function listTaskFlowRecordsForOwnerReadInDatabase(
   return read(ownerKey).rows.map(rowToFlowRecord);
 }
 
-export function readTaskFlowRegistrySnapshot(db: DatabaseSync): TaskFlowRegistryStoreSnapshot {
-  const query = getFlowRegistryKysely(db)
+export function readTaskFlowRegistrySnapshot(
+  db: DatabaseSync,
+  flowIds?: readonly string[],
+): TaskFlowRegistryStoreSnapshot {
+  let query = getFlowRegistryKysely(db)
     .selectFrom("flow_runs")
     .select(FLOW_RUN_SELECT_COLUMNS)
     .orderBy("created_at", "asc")
     .orderBy("flow_id", "asc");
   const flows = new Map<string, TaskFlowRecord>();
+  if (flowIds) {
+    if (flowIds.length === 0) {
+      return { flows };
+    }
+    query = query.where("flow_id", "in", sqliteStringSet(flowIds));
+  }
   // Finish native reads before decoding so SQLite errors retain precedence.
   for (const row of executeSqliteQuerySync(db, query).rows) {
     flows.set(row.flow_id, rowToFlowRecord(row));
