@@ -5,24 +5,45 @@ import { html, nothing, render, type ReactiveController } from "lit";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { makeChatHost } from "../chat-host.test-support.ts";
 import { stubAnimationFrames } from "../chat-view.test-helpers.ts";
-import { handleChatScroll, handleChatScrollTakeover } from "../scroll.ts";
+import { handleChatScroll, handleChatScrollTakeover, lockChatScroll } from "../scroll.ts";
 import {
   configureNativeKeyTarget,
   nativeControlNavigationCases,
 } from "../test-helpers/chat-scroll-input.ts";
 import { ChatTranscriptController } from "./chat-transcript-controller.ts";
+import { TranscriptEndAnchor } from "./chat-transcript-end-anchor.ts";
+import { createTranscriptOffsetState } from "./chat-transcript-offset-observer.ts";
 import {
   installTranscriptDomMocks,
   mountTestTranscript,
   resetTranscriptTestDom,
   resizeObservers,
   transcriptDomState,
+  transcriptSize,
   type TestContentRow,
 } from "./chat-transcript.test-support.ts";
 
 describe("chat transcript scroll ownership", () => {
   beforeEach(installTranscriptDomMocks);
   afterEach(resetTranscriptTestDom);
+
+  it("does not follow a captured footer commit while end anchoring is suspended", () => {
+    const element = document.createElement("div");
+    Object.defineProperties(element, {
+      clientHeight: { configurable: true, value: 400 },
+      scrollHeight: { configurable: true, value: 1000 },
+    });
+    element.scrollTop = 600;
+    const anchor = new TranscriptEndAnchor();
+    anchor.prepareUpdate(element, true, createTranscriptOffsetState());
+    expect(anchor.isCommitPending).toBe(true);
+    element.scrollTop = 500;
+    const follow = vi.fn();
+
+    anchor.reconcile(element, true, true, follow, anchor.releaseCommit());
+
+    expect(follow).not.toHaveBeenCalled();
+  });
 
   it.each(["following", "reading", "wheel", "key", "pointer", "touch"] as const)(
     "preserves %s ownership across an intermediate footer clamp and late row growth",
@@ -112,6 +133,75 @@ describe("chat transcript scroll ownership", () => {
       }
     },
   );
+  it("cancels the active native target when a remote input locks following", async () => {
+    const flushFrames = stubAnimationFrames();
+    const policy = makeChatHost({ chatHasAutoScrolled: true });
+    const transcript = new ChatTranscriptController(
+      {
+        addController: vi.fn(),
+        removeController: vi.fn(),
+        requestUpdate: vi.fn(),
+        updateComplete: Promise.resolve(true),
+      },
+      { canFollowEnd: () => !policy.chatFollowLocked },
+    );
+    Object.assign(policy, { chatCancelScroll: () => transcript.cancelScroll() });
+    const content: TestContentRow[] = Array.from({ length: 12 }, (_, index) => ({
+      kind: "content",
+      key: `row:${index}`,
+      content: html`<div>Row</div>`,
+    }));
+    const typing: TestContentRow = {
+      kind: "content",
+      key: "presence:typing",
+      content: html`<div>Typing</div>`,
+    };
+    const { container, renderRows } = await mountTestTranscript(
+      "retired-end-index",
+      [...content, typing],
+      transcript,
+    );
+    Object.defineProperties(container, {
+      clientHeight: { configurable: true, value: 600 },
+      scrollHeight: { configurable: true, get: () => transcriptSize(container) },
+    });
+    container.scrollTo = vi.fn((options?: ScrollToOptions | number, y?: number) => {
+      container.scrollTop = typeof options === "number" ? (y ?? 0) : (options?.top ?? 0);
+    });
+    const typingRow = expectDefined(
+      container.querySelector<HTMLElement>('[data-virtual-row-key="presence:typing"]'),
+      "typing row",
+    );
+    Object.defineProperty(typingRow, "offsetHeight", { configurable: true, value: 30 });
+    for (const observer of resizeObservers) {
+      observer.emitTarget(container, 800, 600);
+      observer.emitTarget(typingRow, 800, 30);
+    }
+    renderRows([...content, typing]);
+    flushFrames();
+    try {
+      transcript.scrollToEnd({ behavior: "auto" });
+      container.dispatchEvent(new Event("scroll"));
+      lockChatScroll(policy, "remote-input");
+      expect(policy.chatFollowLocked).toBe(true);
+      const before = container.scrollTop;
+      transcriptDomState.measuredRowHeight = 120;
+      const next: TestContentRow[] = [
+        ...content,
+        { kind: "content", key: "peer", content: html`<div>Peer</div>` },
+        typing,
+      ];
+      renderRows(next);
+      await Promise.resolve();
+      renderRows(next);
+      flushFrames();
+      expect(container.scrollTop, "retired index must not follow the peer replacing typing").toBe(
+        before,
+      );
+    } finally {
+      transcript.hostDisconnected();
+    }
+  });
 
   it("preserves reader policy when row measurement clamps a positive adjustment to the end", async () => {
     transcriptDomState.measuredRowHeight = 120;

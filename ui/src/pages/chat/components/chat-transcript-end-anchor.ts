@@ -75,14 +75,6 @@ export class TranscriptEndAnchor {
     follow: () => void,
     followingBeforeCommit = false,
   ): void {
-    if (
-      followingBeforeCommit &&
-      canFollow &&
-      element &&
-      Math.abs((maxTranscriptScrollOffset(element) ?? 0) - element.scrollTop) > 1
-    ) {
-      follow();
-    }
     // A resized viewport can clamp a reader to the end without granting follow.
     if (!canFollow) {
       this.clear();
@@ -90,6 +82,13 @@ export class TranscriptEndAnchor {
     }
     if (suspended) {
       return;
+    }
+    if (
+      followingBeforeCommit &&
+      element &&
+      Math.abs((maxTranscriptScrollOffset(element) ?? 0) - element.scrollTop) > 1
+    ) {
+      follow();
     }
     const max = maxTranscriptScrollOffset(element);
     if (!element || max === null) {

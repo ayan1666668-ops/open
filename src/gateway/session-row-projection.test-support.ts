@@ -155,6 +155,8 @@ export function createSessionRowProjectionFixture(params: {
           (!query.storePath || row.storeTarget.storePath === query.storePath),
       ),
     describe,
+    // This row-only fixture cannot certify the resident owner's complete ancestry graph.
+    ancestorRows: () => undefined,
     setArchivePageSize: () => {},
     modelFacts: (row) => {
       const source = describe(row)!.materialized.source;
@@ -168,7 +170,7 @@ export function createSessionRowProjectionFixture(params: {
       const now = options?.now ?? Date.now();
       const row = presentSessionRow(record.materialized, {
         now,
-        subagentRuns: rowContext.subagentRuns.atTime(now),
+        subagentRuns: options?.subagentRuns ?? rowContext.subagentRuns.atTime(now),
         activeModel: record.fallbackModel,
         excludedChildKeys: options?.excludedChildKeys,
       });
@@ -200,6 +202,10 @@ export function createSessionRowProjectionFixture(params: {
     },
     isCurrent: (row) => rows.get(id(row))?.generation === row.generation,
     selectEntries,
+    listCreatedActors: () =>
+      selectEntries({ sortBy: null }).flatMap((row) =>
+        row.entry.createdActor ? [row.entry.createdActor] : [],
+      ),
     snapshot: (query, options) => {
       const record = describe(query);
       return record

@@ -124,7 +124,7 @@ suite.define(() => {
       await expect.poll(open).toBe(false);
       const retainedCard = await card.elementHandle();
       await gateway.setOnline(false);
-      const offline = page.locator('.agent-chat__composer-underlaps[data-tone="warn"]');
+      const offline = page.locator('.agent-chat__composer-status[data-tone="info"]');
       await offline.waitFor();
       expect(await retainedCard?.evaluate((element) => element.isConnected)).toBe(true);
       expect(await open()).toBe(false);
@@ -261,7 +261,7 @@ suite.define(() => {
           await expect.poll(open).toBe(false);
         }
         await gateway.setOnline(false);
-        await pane.locator('.agent-chat__composer-underlaps[data-tone="warn"]').waitFor();
+        await pane.locator('.agent-chat__composer-status[data-tone="info"]').waitFor();
         if (choice === "manual") {
           await card.locator("summary").press("Enter");
           expect(
@@ -274,7 +274,7 @@ suite.define(() => {
         expect(await open()).toBe(false);
         await gateway.setOnline(true);
         await pane
-          .locator('.agent-chat__composer-underlaps[data-tone="warn"]')
+          .locator('.agent-chat__composer-status[data-tone="info"]')
           .waitFor({ state: "hidden" });
         await page.screenshot({ path: path.join(artifactDir, "reconnected.png") });
         expect(await open()).toBe(false);
