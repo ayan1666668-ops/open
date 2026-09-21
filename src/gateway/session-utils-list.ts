@@ -161,6 +161,13 @@ function resolveSessionsListDefaultsAgentId(
 type RecordRow = ReturnType<SessionRowProjection["selectEntries"]>[number];
 const sentinel = (key: string) => key === "global" || key === "unknown";
 
+// One query per current owner revision. Publications release the token, so stale row graphs
+// are not retained until another list arrives. Viewer and clock facts never enter this cache.
+const sessionRowSelections = new WeakMap<
+  SessionRowProjection["state"]["revision"],
+  { key: string; entries: SessionEntryPair[]; winners: Map<string, RecordRow> }
+>();
+
 /** Preserve federation before caller visibility and activity filters. */
 export function prepareSessionRowSelection(
   projection: SessionRowProjection,
@@ -170,58 +177,72 @@ export function prepareSessionRowSelection(
     rowContext?: SessionListRowContext;
   },
 ) {
-  const { cfg, modelCatalog, scope, rowContext: residentContext } = projection.state;
+  const { cfg, modelCatalog, scope, revision, rowContext: residentContext } = projection.state;
   const selectedScope = scope(opts);
   const now = prepared?.now ?? Date.now();
   const rowContext = prepared?.rowContext ?? {
     ...residentContext,
     subagentRuns: residentContext.subagentRuns.atTime(now),
   };
-  const rows = projection
-    .selectEntries({
-      agentId: selectedScope.agentId,
-      key: prepared?.key,
-      sessionIdOrKey: prepared?.sessionIdOrKey,
-      sortBy: null,
-    })
-    .filter(
-      (row) =>
-        selectedScope.paths.has(row.storeTarget.storePath) &&
-        (!selectedScope.configuredAgentIds ||
-          isConfiguredGatewaySessionEntry(
-            cfg,
-            selectedScope.configuredAgentIds,
-            row.key,
-            row.entry,
-          )),
-    );
-  const winners = new Map<string, RecordRow>();
-  const keyFor = (row: RecordRow) =>
-    sentinel(row.key) && opts.activeOnly ? JSON.stringify([row.key, row.agentId]) : row.key;
-  for (const row of rows) {
-    const key = keyFor(row);
-    const previous = winners.get(key);
-    if (previous && !sentinel(row.key)) {
-      throw canonicalSessionKeyMigrationRequiredError(
-        `duplicate rows resolve to canonical session key ${row.key}`,
+  const selectionKey = JSON.stringify([
+    selectedScope.agentId,
+    opts.configuredAgentsOnly === true,
+    opts.activeOnly === true,
+    prepared?.key,
+    prepared?.sessionIdOrKey,
+  ]);
+  let selected = sessionRowSelections.get(revision);
+  if (selected?.key !== selectionKey) {
+    const rows = projection
+      .selectEntries({
+        agentId: selectedScope.agentId,
+        key: prepared?.key,
+        sessionIdOrKey: prepared?.sessionIdOrKey,
+        sortBy: null,
+      })
+      .filter(
+        (row) =>
+          selectedScope.paths.has(row.storeTarget.storePath) &&
+          (!selectedScope.configuredAgentIds ||
+            isConfiguredGatewaySessionEntry(
+              cfg,
+              selectedScope.configuredAgentIds,
+              row.key,
+              row.entry,
+            )),
       );
+    const winners = new Map<string, RecordRow>();
+    const keyFor = (row: RecordRow) =>
+      sentinel(row.key) && opts.activeOnly ? JSON.stringify([row.key, row.agentId]) : row.key;
+    for (const row of rows) {
+      const key = keyFor(row);
+      const previous = winners.get(key);
+      if (previous && !sentinel(row.key)) {
+        throw canonicalSessionKeyMigrationRequiredError(
+          `duplicate rows resolve to canonical session key ${row.key}`,
+        );
+      }
+      // Equal precedence retains the first resident row, as a stable sort would.
+      if (
+        !previous ||
+        selectedScope.paths.get(row.storeTarget.storePath)! <
+          selectedScope.paths.get(previous.storeTarget.storePath)!
+      ) {
+        winners.set(key, row);
+      }
     }
-    // Equal precedence retains the first resident row, as a stable sort would.
-    if (
-      !previous ||
-      selectedScope.paths.get(row.storeTarget.storePath)! <
-        selectedScope.paths.get(previous.storeTarget.storePath)!
-    ) {
-      winners.set(key, row);
+    const entries: SessionEntryPair[] = [];
+    for (const row of rows) {
+      const key = keyFor(row);
+      if (winners.get(key) === row) {
+        entries.push([key, row.entry]);
+      }
     }
+    selected = { key: selectionKey, entries, winners };
+    // Exact dirty reads can acquire a fresh row while selecting.
+    sessionRowSelections.set(projection.state.revision, selected);
   }
-  const entries: SessionEntryPair[] = [];
-  for (const row of rows) {
-    const key = keyFor(row);
-    if (winners.get(key) === row) {
-      entries.push([key, row.entry]);
-    }
-  }
+  const { entries, winners } = selected;
   return {
     cfg,
     opts,
@@ -265,8 +286,8 @@ export function filterAndSortSessionEntries(params: SessionListFilterParams): Se
 
 // One filter set per resident owner; never retain viewer decisions or time-dependent predicates.
 const sessionListCandidates = new WeakMap<
-  SessionRowProjection,
-  { revision: number; key: string; entries: SessionEntryPair[] }
+  SessionEntryPair[],
+  { key: string; entries: SessionEntryPair[] }
 >();
 
 /** Shared synchronous membership policy for list pages and full-roster transcript search. */
@@ -301,16 +322,14 @@ export function prepareProjectedSessionList(params: {
   let candidates: SessionEntryPair[] | undefined;
   // Person references resolve against the full visible roster before candidate filtering.
   if (!opts.spawnedBy && !opts.involvingProfileId) {
-    const { revision } = projection.state;
     const key = JSON.stringify([exactKey, opts]);
-    let cached = sessionListCandidates.get(projection);
-    if (cached?.revision !== revision || cached.key !== key) {
+    let cached = sessionListCandidates.get(prepared.entries);
+    if (cached?.key !== key) {
       cached = {
-        revision,
         key,
         entries: runSynchronousWork(filterSessionCandidateEntries(prepared)),
       };
-      sessionListCandidates.set(projection, cached);
+      sessionListCandidates.set(prepared.entries, cached);
     }
     candidates = cached.entries;
   }

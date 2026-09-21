@@ -240,6 +240,7 @@ test("preserves viewer pages across publications while bounding shared predicate
     const release = retainSessionListForegroundWork();
     const projection = await createSessionRowProjection({ cfg, modelCatalog: [] });
     const predicate = vi.spyOn(visibility, "isSystemCreatedSessionRow");
+    const physicalSelection = vi.spyOn(projection, "selectEntries");
     const opts = { limit: 2, ownerFirst: true, excludeSystem: true };
     const golden = [
       [
@@ -258,6 +259,7 @@ test("preserves viewer pages across publications while bounding shared predicate
         // The first viewer primes only viewer-independent membership.
         await listProjectedSessions({ projection, client: clients[0], opts });
         predicate.mockClear();
+        physicalSelection.mockClear();
         for (const [index, client] of clients.entries()) {
           const result = await listProjectedSessions({ projection, client, opts });
           const expected = golden[revision]![index]!;
@@ -279,6 +281,34 @@ test("preserves viewer pages across publications while bounding shared predicate
           );
         }
         expect.soft(predicate.mock.calls.length).toBe(0);
+        expect.soft(physicalSelection.mock.calls.length).toBe(0);
+        const page = await listProjectedSessions({
+          projection,
+          client: clients[0],
+          opts: { ...opts, ownerFirst: false, limit: 1, offset: 1 },
+        });
+        expect(page.sessions.map((row) => row.sessionId)).toEqual([revision === 0 ? "c" : "b"]);
+        const searched = await listProjectedSessions({
+          projection,
+          client: clients[0],
+          opts: { ...opts, ownerFirst: false, search: "agent:main:b" },
+        });
+        expect(searched.sessions.map((row) => row.sessionId)).toEqual(["b"]);
+        const clock = vi.spyOn(Date, "now").mockReturnValue(60_000);
+        try {
+          const recent = () =>
+            listProjectedSessions({
+              projection,
+              client: clients[0],
+              opts: { ...opts, activeMinutes: 1 },
+            });
+          expect((await recent()).totalCount).toBe(golden[revision]![0]!.total);
+          clock.mockReturnValue(120_000);
+          expect((await recent()).sessions).toEqual([]);
+        } finally {
+          clock.mockRestore();
+        }
+        expect(physicalSelection.mock.calls.length).toBe(0);
         if (revision === 0) {
           replaceSessionEntrySync(
             { agentId: "main", sessionKey: "agent:main:a" },
@@ -306,6 +336,7 @@ test("preserves viewer pages across publications while bounding shared predicate
       }
     } finally {
       predicate.mockRestore();
+      physicalSelection.mockRestore();
       projection.dispose();
       release();
     }
