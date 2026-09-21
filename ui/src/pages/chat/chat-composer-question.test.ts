@@ -143,5 +143,4 @@ describe("composer question takeover", () => {
     expect(slot.hidden).toBe(true);
     expect(view.container.querySelector(".agent-chat__input")).toBeNull();
   });
-
 });

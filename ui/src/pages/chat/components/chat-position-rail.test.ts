@@ -3,7 +3,6 @@
 import { html, nothing, render } from "lit";
 import { afterEach, assert, beforeEach, describe, expect, it, vi } from "vitest";
 import { createTestTranscript } from "../chat-view.test-helpers.ts";
-import { renderChatPositionRail } from "./chat-position-rail.ts";
 import { getTranscriptState } from "./chat-thread-interactions.ts";
 import { renderChatThread } from "./chat-thread.ts";
 import { ChatTranscriptController } from "./chat-transcript-controller.ts";
