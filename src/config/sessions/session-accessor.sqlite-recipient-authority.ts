@@ -215,5 +215,5 @@ export function isSessionRecipientAuthorityCurrent(
       readSessionRecipientAuthorityEpoch(row?.epoch),
     );
   }, toDatabaseOptions(resolved));
-  return result.found && result.value === true;
+  return result.found && result.value;
 }

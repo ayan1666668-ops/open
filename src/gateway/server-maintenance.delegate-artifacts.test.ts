@@ -113,7 +113,9 @@ describe("delegate artifact gateway maintenance", () => {
     await Promise.resolve();
     await Promise.resolve();
     expect(deps.runDelegateArtifactGc).toHaveBeenCalledTimes(1);
-    timers.skillUsageCleanup();
+    // Started, not awaited: the batch below is released while the cleanup is
+    // still in flight, which is the interleaving this case exercises.
+    void timers.skillUsageCleanup();
     releaseBatch?.(100);
     await Promise.resolve();
     await Promise.resolve();

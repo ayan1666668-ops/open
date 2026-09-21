@@ -5,8 +5,9 @@ import type {
   SubagentRegistrationOwnership,
 } from "./subagents/registry/subagent-registry-run-launch.js";
 import { registerSubagentRun } from "./subagents/registry/subagent-registry.js";
-export { summarizeSpawnError } from "./spawn-error.js";
 import type { SubagentRegistrationScope } from "./subagents/registry/subagent-registry.types.js";
+
+export { summarizeSpawnError } from "./spawn-error.js";
 
 type SpawnPipelinePhase = "initialize" | "dispatch" | "register";
 
