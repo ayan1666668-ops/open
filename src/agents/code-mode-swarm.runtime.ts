@@ -15,7 +15,7 @@ import {
 } from "./subagents/registry/subagent-registry.js";
 import type { SubagentRunRecord } from "./subagents/registry/subagent-registry.types.js";
 import { prepareDynamicsSpawn } from "./subagents/swarm/dynamics/dynamics-spawn.js";
-import { assessHostCollectorPopulation } from "./subagents/swarm/dynamics/population-runtime.js";
+import { diagnoseHostCollectorPopulation } from "./subagents/swarm/dynamics/population-runtime.js";
 import {
   SWARM_CODE_MODE_IDEMPOTENCY_KEY,
   SWARM_CODE_MODE_REQUEST_FINGERPRINT,
@@ -235,7 +235,7 @@ async function runAgentWaitBridge(params: {
   const groupId = resolveCodeModeSwarmGroupId(params.ctx);
   if (dynamicsGroups.has(groupId)) {
     const records = listSwarmRunsForGroup(groupId, requesterSessionKey, params.ctx.agentId);
-    const decision = assessHostCollectorPopulation({
+    const { decision, diagnostic } = diagnoseHostCollectorPopulation({
       groupId,
       maxConcurrent: resolveSwarmConfig(
         params.ctx.runtimeConfig ?? params.ctx.config,
@@ -248,7 +248,9 @@ async function runAgentWaitBridge(params: {
     });
     const actions = decision.actions.filter((action) => action.kind !== "hold");
     if (actions.length > 0) {
-      const advisory = `Dynamics advisory: ${actions.map((action) => action.kind).join(", ")} — ${decision.rationale.join(" ")}`;
+      const unresolved =
+        diagnostic.unresolved.length > 0 ? ` unresolved=${diagnostic.unresolved.join(",")}` : "";
+      const advisory = `Dynamics advisory: ${actions.map((action) => action.kind).join(", ")} — ${decision.rationale.join(" ")}${unresolved}`;
       if (dynamicsAdvisoryByGroup.get(groupId) !== advisory) {
         emitSessionLifecycleEvent({
           sessionKey: rawSessionKey,
