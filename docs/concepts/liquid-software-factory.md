@@ -17,46 +17,42 @@ ambiguity as work approaches verification and external effect.
 high entropy                                             low ambiguity
      |                                                        |
      v                                                        v
-trajectory presets -> mixed local phases -> exact candidate -> verification -> effect owner
-        |                    |                  |                  |              |
-    heterogeneous       search-only         immutable-ish      sandboxed      existing
-       search            advisories           identity          checking       authority
+caller recipes +  -> mixed local phases -> exact candidate -> verification -> effect owner
+generic contract        |                  |                  |              |
+       |             search-only        immutable-ish      sandboxed      existing
+heterogeneous         advisories          identity          checking       authority
 ```
 
 No layer in this experiment grants new authority. Existing OpenClaw admission,
 tool policy, sandbox, cancellation, approval, publication, merge, and deployment
 owners remain authoritative.
 
-## Layer 1: trajectory presets
+## Layer 1: generic launch contract
 
-The generic internal contract is `DynamicsProfile`:
+Core exposes a small `DynamicsContract`:
 
-- role
-- effective temperature
-- mutation budget
-- verification weight
-- information boundary
-- generic spawn requirements: sandbox mode, candidate identity, and artifact presence
+- explicit information boundary
+- monotone spawn requirements: sandbox mode, candidate identity, artifact presence
+- bounded handoff fields
+- host-owned source/target replica identities
 
-The five built-in names are presets over that contract, not five new security
-principals:
+Liquid names such as explorer, builder, critic, independent verifier, and glass
+breaker are caller-side recipes. They can choose different prompts and generic
+contract values, but OpenClaw does not adopt those names as principals or product
+vocabulary.
 
-- `explorer`
-- `builder`
-- `critic`
-- `independent-verifier`
-- `glass-breaker`
+The native value is mechanical: filter what crosses the explicit handoff, ask
+existing admission owners to become stricter where requested, and bind the exact
+prepared bytes into replay identity.
 
-The first layer binds the resolved preset and bounded explicit handoff into the
-existing native collector launch path. Enforcement is derived from the resolved
-generic requirements, never from a privileged profile-name branch. The verifier
-preset currently resolves to required sandbox, candidate digest, and artifact
-references; rejection is not retried unsandboxed.
+For example, a caller-side independent-verification recipe can choose an
+artifact-only boundary and require `sandbox: "require"`, a candidate digest, and
+artifact references. If the existing sandbox owner rejects the request, the bridge
+does not retry unsandboxed.
 
 Implementation:
 
 - `dynamics-types.ts`
-- `dynamics-profiles.ts`
 - `dynamics-handoffs.ts`
 - `dynamics-spawn.ts`
 
@@ -154,7 +150,7 @@ The useful correspondence is:
 
 | Physical idea | Search interpretation | Current observable |
 | --- | --- | --- |
-| temperature | willingness to mutate or leave a local basin | profile `effectiveTemperature`, guidance only |
+| temperature | caller-side willingness to mutate or leave a local basin | not a native control field; policy-level metaphor |
 | entropy | diversity/uncertainty of candidate state | `candidateEntropy`, caller-supplied when trusted |
 | mobility | ability to continue making distinct progress | `mobility` |
 | coherence | convergence around compatible structure | `coherence` |
@@ -260,11 +256,11 @@ Search may be highly parallel; ownership and cleanup may not be ambiguous.
 
 ### 8. Fail closed at independence boundaries
 
-The resolved profile requirements ask the existing sandbox owner for
-`sandbox: "require"` where required. A failure is surfaced; there is no
+The generic dynamics requirements ask the existing sandbox owner for
+`sandbox: "require"` where requested. A failure is surfaced; there is no
 unsandboxed retry.
 
-The preset name itself is not an authority hook or proof of independence.
+A caller-side recipe name is not an authority hook or proof of independence.
 
 ## Time-scale separation
 
@@ -435,7 +431,7 @@ Those are separate layers that need evidence and the correct enforcement owners.
 
 The strongest end-to-end demonstration is a real native campaign that shows:
 
-1. heterogeneous profile-enabled collector launches
+1. heterogeneous caller-defined trajectories using the generic launch contract
 2. multiple local outcomes
 3. host-owned phase/advisory projection
 4. selection of one exact candidate manifest
