@@ -148,6 +148,13 @@ type AgentRunOptions = {
       evidenceRefs?: string[];
       summary?: string;
     };
+    candidate?: {
+      version: 1;
+      candidateDigest: string;
+      sourceDigest: string;
+      recipeDigest: string;
+      policyDigest: string;
+    };
   };
 };
 
@@ -180,7 +187,10 @@ temperature. `independent-verifier` requires a candidate digest plus artifact
 references and asks the existing spawn owner for a required sandbox. If that sandbox
 cannot be provided, the launch fails rather than retrying unsandboxed. Handoff filtering
 only controls the explicit `dynamics.handoff` payload; it is not a security boundary for
-the original task, workspace, memory, or tool visibility.
+the original task, workspace, memory, or tool visibility. When `dynamics.candidate` is
+provided, OpenClaw hashes the complete candidate/source/recipe/policy manifest into the
+prepared task before the normal launch fingerprint is computed. That identity invalidates
+replay after any bound input changes; it is not proof that verification ran.
 
 ### Fan out in parallel with structured results
 
