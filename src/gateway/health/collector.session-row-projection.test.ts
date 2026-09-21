@@ -61,7 +61,7 @@ describe("health and status resident session summaries", () => {
           vi.spyOn(StatementSync.prototype, method),
         );
         const agents = agentIds.map((id) => ({ id }));
-        for (const limit of [-2.5, 0, 0.5, 5, 5.7, 10, Infinity, NaN]) {
+        for (const limit of [-2.5, 0, 0.5, 5, 5.7, 10, Infinity, Number.NaN]) {
           const status = await readStatusSessionStores(cfg, agents, limit, projection);
           expect(status.paths).toHaveLength(1);
           expect(status.count).toBe(24);
