@@ -288,7 +288,15 @@ describe("release-check", () => {
         writeFileSync(destination, contents);
       }
       writeFileSync(join(root, "package.json"), packageJson);
-      writeFileSync(join(root, "pnpm-workspace.yaml"), "nodeLinker: isolated\n");
+      // Match the prepared source: scripts must not reconcile its existing install.
+      expect(parse(readFileSync("pnpm-workspace.yaml", "utf8"))).toMatchObject({
+        nodeLinker: "isolated",
+        verifyDepsBeforeRun: false,
+      });
+      writeFileSync(
+        join(root, "pnpm-workspace.yaml"),
+        "nodeLinker: isolated\nverifyDepsBeforeRun: false\n",
+      );
       const changelog =
         "# Changelog\n\n## 2026.9.1\n\n- Preserve the prepared bundled runtime package and source files.\n";
       writeFileSync(join(root, "CHANGELOG.md"), changelog);
