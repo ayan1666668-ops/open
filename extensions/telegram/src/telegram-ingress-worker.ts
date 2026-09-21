@@ -8,17 +8,15 @@ import {
 export const TELEGRAM_INGRESS_WORKER_RUNTIME_MARKER = "openclaw.telegram-ingress-worker";
 const TELEGRAM_INGRESS_WORKER_STOP_GRACE_MS = 2_000;
 
-// Source checkouts and plugin captures load this module as TypeScript, so the
-// sibling `.runtime.js` never exists there. Resolve through the shared owner and
-// derive the matching thread preload instead of assuming a built sibling.
+// The sibling `.runtime.js` the old code assumed only exists in a built install,
+// and not even there: tsdown emits this worker at the package dist root
+// (`dist/telegram-ingress-worker.runtime.js`), so a hardcoded sibling was wrong
+// in every install shape - source checkout, plugin capture, and packaged build.
+// Resolve through the shared owner exactly like the core runtime workers do.
 const telegramIngressWorkerEntrypoint = {
   currentModuleUrl: import.meta.url,
   sourceWorkerName: "telegram-ingress-worker.runtime",
-  distWorkerPath: "extensions/telegram/telegram-ingress-worker.runtime.js",
-  package: {
-    name: "@openclaw/telegram",
-    distWorkerPath: "telegram-ingress-worker.runtime.js",
-  },
+  distWorkerPath: "telegram-ingress-worker.runtime.js",
 } as const;
 
 const telegramIngressWorkerUrl = resolveRuntimeWorkerUrl(telegramIngressWorkerEntrypoint);

@@ -1,6 +1,8 @@
 import type { EventEmitter } from "node:events";
 import { existsSync } from "node:fs";
+import { sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { resolveRuntimeWorkerUrl } from "openclaw/plugin-sdk/process-runtime";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const workerHarness = vi.hoisted(() => ({
@@ -117,5 +119,22 @@ describe("createTelegramIngressWorker module resolution", () => {
     expect(execArgv).toHaveLength(2);
     expect(execArgv[1]).toContain("tsx");
     expect(execArgv).not.toContain(fileURLToPath(new URL(import.meta.url)));
+  });
+
+  // Regression: the packaged install must reach the dist-root entry tsdown emits
+  // (`dist/telegram-ingress-worker.runtime.js`), not a sibling of the plugin dir.
+  // QA smoke caught the wrong shape as "Cannot find module .../dist/extensions/
+  // telegram/telegram-ingress-worker.runtime.js".
+  it("resolves the packaged entry at the package dist root", () => {
+    const distUrl = resolveRuntimeWorkerUrl({
+      currentModuleUrl: new URL("../../../dist/extensions/telegram/index.js", import.meta.url).href,
+      sourceWorkerName: "telegram-ingress-worker.runtime",
+      distWorkerPath: "telegram-ingress-worker.runtime.js",
+    });
+
+    const entry = fileURLToPath(distUrl);
+    expect(entry.endsWith(`${sep}dist${sep}telegram-ingress-worker.runtime.js`)).toBe(true);
+    // Guard the regression shape: it must not be nested under the plugin dir.
+    expect(entry).not.toContain(`${sep}dist${sep}extensions${sep}`);
   });
 });
