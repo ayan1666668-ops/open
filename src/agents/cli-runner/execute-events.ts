@@ -11,9 +11,15 @@ import type {
   CliToolUseStartDelta,
 } from "../cli-output-contracts.js";
 import type { ToolSummaryTrace } from "../embedded-agent-runner/types.js";
-import { sanitizeToolArgs, sanitizeToolResult } from "../embedded-agent-tool-results.js";
+import {
+  extractToolErrorMessage,
+  sanitizeToolArgs,
+  sanitizeToolResult,
+} from "../embedded-agent-tool-results.js";
+import { runAgentHarnessAfterToolCallHook } from "../harness/hook-helpers.js";
 import { applyPluginTextReplacements } from "../plugin-text-transforms.js";
 import { resolveCliToolTerminalReason } from "../run-termination.js";
+import { normalizeToolPolicyName } from "../tool-policy.js";
 import type { CliToolTracking } from "./execute-tool-tracking.js";
 import { stripOpenClawMcpToolPrefix } from "./tool-policy.js";
 import type { PreparedCliRunContext } from "./types.js";
@@ -27,6 +33,20 @@ type CliToolResult = {
 
 function resolveCliToolSource(name: string, kind?: CliToolUseStartDelta["kind"]): "core" | "mcp" {
   return kind === "mcp_tool_use" || name.startsWith("mcp__") ? "mcp" : "core";
+}
+
+function resolveCliObserverToolName(name: string): string {
+  return normalizeToolPolicyName(stripOpenClawMcpToolPrefix(name));
+}
+
+function resolveCliToolObserverError(isError: boolean, result: unknown): string | undefined {
+  if (!isError) {
+    return undefined;
+  }
+  if (typeof result === "string" && result.length > 0) {
+    return result;
+  }
+  return extractToolErrorMessage(result) ?? "tool execution failed";
 }
 
 export function createCliEventHandlers(params: {
@@ -44,7 +64,43 @@ export function createCliEventHandlers(params: {
   const toolSummaryById = new Map<string, { name: string; failed: boolean }>();
   // CLI results report an outcome without repeating the request, so the terminal
   // progress event would otherwise describe the output instead of the command.
-  const toolArgsByCallId = new Map<string, { args: Record<string, unknown>; tracked: boolean }>();
+  const toolArgsByCallId = new Map<
+    string,
+    { args: Record<string, unknown>; tracked: boolean; startedAt: number }
+  >();
+  const dispatchedAfterToolCallIds = new Set<string>();
+  const dispatchCliAfterToolCall = (input: {
+    toolCallId: string;
+    toolName: string;
+    startArgs: Record<string, unknown>;
+    result?: unknown;
+    error?: string;
+    startedAt?: number;
+  }) => {
+    if (dispatchedAfterToolCallIds.has(input.toolCallId)) {
+      return;
+    }
+    dispatchedAfterToolCallIds.add(input.toolCallId);
+    try {
+      void runAgentHarnessAfterToolCallHook({
+        toolName: resolveCliObserverToolName(input.toolName),
+        toolCallId: input.toolCallId,
+        runId: runParams.runId,
+        ...(runParams.agentId ? { agentId: runParams.agentId } : {}),
+        sessionId: runParams.sessionId,
+        ...(runParams.sessionKey ? { sessionKey: runParams.sessionKey } : {}),
+        ...(runParams.currentChannelId ? { channelId: runParams.currentChannelId } : {}),
+        startArgs: input.startArgs,
+        ...(input.result !== undefined ? { result: input.result } : {}),
+        ...(input.error ? { error: input.error } : {}),
+        ...(input.startedAt !== undefined ? { startedAt: input.startedAt } : {}),
+      }).catch(() => {
+        // Rejected observers must not change the CLI tool result.
+      });
+    } catch {
+      // Synchronous observer failures must not change the CLI tool result.
+    }
+  };
   const emitToolEvent = (
     data: Parameters<typeof projectAgentToolActivity>[0] & {
       result?: unknown;
@@ -96,10 +152,14 @@ export function createCliEventHandlers(params: {
     tools: toolSummaryNames.slice(),
     failures: Array.from(toolSummaryById.values()).filter((entry) => entry.failed).length,
   });
-  const emitToolUseStart = (event: CliToolUseStartDelta, tracked: boolean) => {
+  const emitToolUseStart = (
+    event: CliToolUseStartDelta,
+    tracked: boolean,
+    startedAt = Date.now(),
+  ) => {
     observedCliActivity = true;
     // Empty arguments are meaningful: progress-card calls use {} to clear the card.
-    toolArgsByCallId.set(event.toolCallId, { args: event.args, tracked });
+    toolArgsByCallId.set(event.toolCallId, { args: event.args, tracked, startedAt });
     recordToolSummary(event, false);
     if (!signaledToolExecutionStarted) {
       signaledToolExecutionStarted = true;
@@ -122,21 +182,31 @@ export function createCliEventHandlers(params: {
       });
     }
   };
-  const emitToolResult = (event: CliToolResult, tracked: boolean) => {
+  const emitToolResult = (event: CliToolResult, tracked: boolean, dispatchAfterHook = true) => {
     observedCliActivity = true;
     recordToolSummary(event, event.isError);
     const loopbackOutcome = tracked
       ? params.toolTracking.resolveCliLoopbackTerminalOutcome(event.toolCallId)
       : undefined;
     const executedArgs = tracked ? params.toolTracking.handleCliToolResult(event) : undefined;
+    const startedCall = toolArgsByCallId.get(event.toolCallId);
+    const startedArgs = startedCall?.args;
+    toolArgsByCallId.delete(event.toolCallId);
+    if (dispatchAfterHook) {
+      dispatchCliAfterToolCall({
+        toolCallId: event.toolCallId,
+        toolName: event.name,
+        startArgs: startedArgs ?? {},
+        result: event.result,
+        error: resolveCliToolObserverError(event.isError, event.result),
+        startedAt: startedCall?.startedAt,
+      });
+    }
     if (emitLiveEvents) {
       const strippedName = stripOpenClawMcpToolPrefix(event.name);
       const resultContentSource = tracked
         ? context.resultContentSourceByToolName?.get(strippedName)
         : undefined;
-      const startedCall = toolArgsByCallId.get(event.toolCallId);
-      const startedArgs = startedCall?.args;
-      toolArgsByCallId.delete(event.toolCallId);
       const planUpdate =
         tracked &&
         startedCall?.tracked &&
@@ -195,14 +265,14 @@ export function createCliEventHandlers(params: {
       toolOwner: "cli-runner",
       toolCallId: event.toolCallId,
     });
-    emitCliToolUseStart(event);
+    emitToolUseStart(event, true, startedAt);
   };
   const emitParsedToolTerminal = (event: {
     toolCallId: string;
     name: string;
     isError: boolean;
     incomplete?: boolean;
-  }) => {
+  }): boolean => {
     const activeTool = activeParsedTools.get(event.toolCallId);
     activeParsedTools.delete(event.toolCallId);
     const trustedOutcome = params.toolTracking.resolveCliLoopbackTerminalOutcome(event.toolCallId);
@@ -250,7 +320,8 @@ export function createCliEventHandlers(params: {
         errorCategory: "cli_tool_ambiguous",
         errorCode: "tool_outcome_unknown",
       });
-      return;
+      // Unknown or disconnected server-native tools are not completed calls.
+      return false;
     }
     const trustedFailure = trustedOutcome !== undefined && trustedOutcome.outcome !== "completed";
     emitTrustedDiagnosticEvent(
@@ -275,10 +346,11 @@ export function createCliEventHandlers(params: {
             }
           : { type: "tool.execution.completed", ...diagnosticBase },
     );
+    return true;
   };
   const emitParsedToolResult = (event: CliToolResult) => {
-    emitParsedToolTerminal(event);
-    emitCliToolResult(event);
+    const completed = emitParsedToolTerminal(event);
+    emitToolResult(event, true, completed);
   };
   const emitCliCompaction = (event: CliCompactionDelta) => {
     observedCliActivity = true;
@@ -295,11 +367,23 @@ export function createCliEventHandlers(params: {
   };
   const finalizeParsedTools = () => {
     for (const [toolCallId, activeTool] of Array.from(activeParsedTools)) {
-      emitParsedToolTerminal({
+      const completed = emitParsedToolTerminal({
         toolCallId,
         name: activeTool.toolName,
         isError: true,
         incomplete: true,
+      });
+      const startedCall = toolArgsByCallId.get(toolCallId);
+      toolArgsByCallId.delete(toolCallId);
+      if (!completed) {
+        continue;
+      }
+      dispatchCliAfterToolCall({
+        toolCallId,
+        toolName: activeTool.toolName,
+        startArgs: startedCall?.args ?? {},
+        error: "tool execution incomplete",
+        startedAt: startedCall?.startedAt ?? activeTool.startedAt,
       });
     }
   };

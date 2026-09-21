@@ -20,6 +20,7 @@ import {
 } from "../../infra/agent-events.js";
 import { createTestAdmittedRunContext } from "../admitted-run-context.test-support.js";
 import { createCliJsonlStreamingParser } from "../cli-output-stream.js";
+import * as harnessHookHelpers from "../harness/hook-helpers.js";
 import { createCliEventHandlers } from "./execute-events.js";
 import { createCliToolTracking, type CliToolTracking } from "./execute-tool-tracking.js";
 import type { PreparedCliRunContext } from "./types.js";
@@ -873,5 +874,126 @@ describe("CLI plan channel bridge", () => {
       text: expect.stringContaining("write failed"),
       isError: true,
     });
+  });
+});
+
+describe("cli after_tool_call dispatch", () => {
+  function handlersFor(runId: string, tracking = buildToolTracking(), failed = false) {
+    const context = buildContext(runId);
+    context.params.currentChannelId = "chat-1";
+    return createCliEventHandlers({
+      context,
+      toolTracking: tracking,
+      getRunState: () => ({ failed, error: failed ? new Error("run failed") : undefined }),
+    });
+  }
+
+  it("dispatches after_tool_call once for completed CLI tools and skips ambiguous outcomes", () => {
+    const afterToolCall = vi
+      .spyOn(harnessHookHelpers, "runAgentHarnessAfterToolCallHook")
+      .mockResolvedValue(undefined);
+    try {
+      const parsed = handlersFor("after-tool-call-parsed");
+      parsed.emitParsedToolUseStart({
+        toolCallId: "call-1",
+        name: "mcp__openclaw__process",
+        kind: "mcp_tool_use",
+        args: { action: "poll", sessionId: "job" },
+      });
+      parsed.emitParsedToolResult({
+        toolCallId: "call-1",
+        name: "mcp__openclaw__process",
+        isError: false,
+        result: { ok: true },
+      });
+      const errored = handlersFor("after-tool-call-error");
+      errored.emitCliToolUseStart({
+        toolCallId: "call-err",
+        name: "Read",
+        kind: "tool_use",
+        args: { path: "missing.txt" },
+      });
+      errored.emitCliToolResult({
+        toolCallId: "call-err",
+        name: "Read",
+        isError: true,
+        result: "missing",
+      });
+      const incomplete = handlersFor("after-tool-call-incomplete", buildToolTracking(), true);
+      incomplete.emitParsedToolUseStart({
+        toolCallId: "open",
+        name: "mcp__openclaw__process",
+        kind: "mcp_tool_use",
+        args: { action: "poll" },
+      });
+      incomplete.finalizeParsedTools();
+      incomplete.finalizeParsedTools();
+      const tracking = buildToolTracking();
+      tracking.resolveCliLoopbackTerminalOutcome = () => ({ outcome: "unknown" });
+      const ambiguous = handlersFor("after-tool-call-unknown", tracking);
+      ambiguous.emitParsedToolUseStart({
+        toolCallId: "ambiguous",
+        name: "read",
+        kind: "tool_use",
+        args: { path: "a" },
+      });
+      ambiguous.emitParsedToolResult({
+        toolCallId: "ambiguous",
+        name: "read",
+        isError: true,
+        result: "lost",
+      });
+
+      expect(afterToolCall.mock.calls.map((call) => call[0])).toEqual([
+        expect.objectContaining({
+          toolName: "process",
+          toolCallId: "call-1",
+          runId: "after-tool-call-parsed",
+          agentId: "main",
+          sessionId: "session-1",
+          sessionKey: "agent:main:main",
+          channelId: "chat-1",
+          startArgs: { action: "poll", sessionId: "job" },
+          result: { ok: true },
+        }),
+        expect.objectContaining({
+          toolName: "read",
+          toolCallId: "call-err",
+          startArgs: { path: "missing.txt" },
+          result: "missing",
+          error: "missing",
+        }),
+        expect.objectContaining({
+          toolName: "process",
+          toolCallId: "open",
+          startArgs: { action: "poll" },
+          error: "tool execution incomplete",
+        }),
+      ]);
+      expect(afterToolCall.mock.calls[0]?.[0]?.error).toBeUndefined();
+      expect(typeof afterToolCall.mock.calls[0]?.[0]?.startedAt).toBe("number");
+      afterToolCall.mockImplementation(() => {
+        throw new Error("observer failed");
+      });
+      expect(() =>
+        errored.emitCliToolResult({
+          toolCallId: "call-throw",
+          name: "Read",
+          isError: false,
+          result: "ok",
+        }),
+      ).not.toThrow();
+      afterToolCall.mockImplementation(() => Promise.reject(new Error("observer rejected")));
+      expect(() =>
+        errored.emitCliToolResult({
+          toolCallId: "call-reject",
+          name: "Read",
+          isError: false,
+          result: "ok",
+        }),
+      ).not.toThrow();
+    } finally {
+      afterToolCall.mockRestore();
+    }
   });
 });
