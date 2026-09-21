@@ -4568,6 +4568,113 @@ describe("main-session-restart-recovery", () => {
     expect(callGateway).toHaveBeenCalledTimes(2);
   });
 
+  it("tombstones when the final startup retry consumes the last charge", async () => {
+    const { storePath } = await makeMainSessionFixture({
+      mainRestartRecovery: {
+        cycleId: "cycle-final-startup-attempt",
+        revision: 1,
+        chargedAttempts: 2,
+      },
+      pendingFinalDelivery: makePendingFinalDelivery(),
+    });
+    vi.mocked(callGateway)
+      .mockImplementationOnce(async () => {
+        await replaceSessionEntry({ sessionKey: "agent:main:fresh", storePath }, {
+          sessionId: "fresh-session",
+          updatedAt: Date.now(),
+          status: "running",
+          abortedLastRun: true,
+          mainRestartRecovery: {
+            cycleId: "cycle-fresh-exhausted",
+            revision: 1,
+            chargedAttempts: 3,
+          },
+        } as SessionEntry);
+        throw new Error("final ambiguous dispatch failure");
+      })
+      .mockResolvedValueOnce({ runId: "run-resumed" });
+
+    scheduleRestartAbortedMainSessionRecovery({
+      getConfig: () => ({ agents: { entries: { main: { default: true } } } }),
+      delayMs: 0,
+      maxRetries: 1,
+      stateDir: tmpDir,
+    });
+
+    await waitForFast(() => {
+      expect(loadSessionEntry({ sessionKey: "agent:main:main", storePath })).toMatchObject({
+        status: "failed",
+        mainRestartRecovery: { tombstone: expect.any(Object) },
+      });
+    });
+    expect(callGateway).toHaveBeenCalledTimes(2);
+    const freshEntry = loadSessionEntry({ sessionKey: "agent:main:fresh", storePath });
+    expect(freshEntry).toMatchObject({
+      sessionId: "fresh-session",
+      status: "running",
+      abortedLastRun: true,
+      mainRestartRecovery: { chargedAttempts: 3 },
+    });
+    expect(freshEntry?.mainRestartRecovery?.tombstone).toBeUndefined();
+  });
+
+  it("observes final exhaustion in distinct stores for the same logical session", async () => {
+    await withEnvAsync({ OPENCLAW_STATE_DIR: tmpDir }, async () => {
+      const sessionKey = "agent:ops:main";
+      const targets: Parameters<typeof loadSessionEntry>[0][] = [];
+      for (const [index, directory] of ["ops", " ops "].entries()) {
+        const fixture = await makeMainSessionFixture({
+          agentId: directory,
+          sessionKey,
+          sessionId: `ops-session-${index}`,
+          mainRestartRecovery: {
+            cycleId: `cycle-ops-${index}`,
+            revision: 1,
+            chargedAttempts: 2,
+          },
+          pendingFinalDelivery: makePendingFinalDelivery(),
+        });
+        targets.push({ agentId: "ops", sessionKey, storePath: fixture.storePath });
+      }
+      vi.mocked(callGateway).mockImplementation(async ({ method }) => {
+        if (method === "agent") {
+          throw new Error("final ambiguous dispatch failure");
+        }
+        return { status: "timeout" };
+      });
+      const recovery = scheduleRestartAbortedMainSessionRecovery({
+        getConfig: () => ({ agents: { entries: { ops: { default: true } } } }),
+        delayMs: 0,
+        maxRetries: 1,
+        stateDir: tmpDir,
+      });
+      try {
+        await waitForFast(() => {
+          for (const target of targets) {
+            const entry = loadSessionEntry(target);
+            expect(entry?.mainRestartRecovery?.chargedAttempts).toBe(3);
+            expect(entry?.mainRestartRecovery?.reservation).toBeUndefined();
+          }
+        });
+        await waitForFast(() => {
+          for (const [index, target] of targets.entries()) {
+            expect(loadSessionEntry(target)).toMatchObject({
+              sessionId: `ops-session-${index}`,
+              status: "failed",
+              abortedLastRun: false,
+              mainRestartRecovery: { tombstone: expect.any(Object) },
+            });
+          }
+        });
+        expect(
+          vi.mocked(callGateway).mock.calls.filter(([call]) => call.method === "agent"),
+        ).toHaveLength(2);
+      } finally {
+        await recovery.stop();
+      }
+    });
+  });
+
   it("tombstones when message-tool-only authority cannot be reconstructed", async () => {
     const { sessionsDir, storePath } = await makeMainSessionFixture({
       restartRecoveryDeliveryRunId: "recovery-main",

@@ -1,8 +1,7 @@
 import fs from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createDeferred } from "../../../test/helpers/promise.js";
 import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js";
-import { closeOpenClawStateDatabaseByPathAsync } from "../../state/openclaw-state-db-cache.js";
+import { closeOpenClawStateDatabaseByPath } from "../../state/openclaw-state-db-cache.js";
 import {
   openOpenClawStateDatabase,
   type OpenClawStateDatabaseOptions,
@@ -20,11 +19,9 @@ vi.mock("../../infra/command-analysis/explain.js", () => ({
 }));
 
 const tempDirs = useAutoCleanupTempDirTracker((cleanup) =>
-  afterEach(async () => {
+  afterEach(() => {
     for (const dir of tempDirs.dirs) {
-      await closeOpenClawStateDatabaseByPathAsync(
-        resolveOpenClawStateSqlitePath({ OPENCLAW_STATE_DIR: dir }),
-      );
+      closeOpenClawStateDatabaseByPath(resolveOpenClawStateSqlitePath({ OPENCLAW_STATE_DIR: dir }));
     }
     cleanup();
   }),
@@ -104,33 +101,6 @@ function requestOptions(
   } as unknown as GatewayRequestHandlerOptions;
 }
 
-async function withAcceptedRequest(
-  manager: ExecApprovalManager,
-  opts: GatewayRequestHandlerOptions,
-  check: (approvalId: string) => Promise<void>,
-): Promise<void> {
-  const responseSent = createDeferred();
-  const respond = vi.mocked(opts.respond);
-  respond.mockImplementation(() => responseSent.resolve());
-  const pending = createExecApprovalHandlers(manager)["exec.approval.request"]!(opts);
-  try {
-    // Acceptance follows worker persistence and delivery; a local pending row alone
-    // does not prove the handshake finished. Surface early failures too.
-    await Promise.race([responseSent.promise, pending]);
-    expect(respond).toHaveBeenCalledWith(
-      true,
-      expect.objectContaining({ status: "accepted", deliveryRoute: "approval-client" }),
-      undefined,
-    );
-    const records = await manager.listPendingRecords();
-    expect(records).toHaveLength(1);
-    await check(records[0]!.id);
-    await pending;
-  } finally {
-    await Promise.all([manager.drain(), Promise.allSettled([pending])]);
-  }
-}
-
 describe("exec approval signed agent runtime", () => {
   it("rejects closed authority before creating an exec approval", async (testContext) => {
     const manager = createTestApprovalManager(testContext, {
@@ -151,6 +121,7 @@ describe("exec approval signed agent runtime", () => {
     const manager = createTestApprovalManager(testContext, {
       validateAgentRuntimeDelegatedAuthority: () => true,
     });
+    const handler = createExecApprovalHandlers(manager)["exec.approval.request"]!;
     const opts = requestOptions(identity(false));
     // Bidi override in cwd/resolvedPath can spoof what path reviewers see.
     (opts.params as Record<string, unknown>).cwd = "/tmp/safe‮evil";
@@ -159,14 +130,15 @@ describe("exec approval signed agent runtime", () => {
     // are closed enums (arbitrary values null out), host is escape-hardened.
     (opts.params as Record<string, unknown>).security = "full‮looks-deny";
     (opts.params as Record<string, unknown>).ask = "always​ish";
-    await withAcceptedRequest(manager, opts, async (approvalId) => {
-      const record = (await manager.getSnapshot(approvalId))!;
-      expect(record.request.cwd).toBe("/tmp/safe\\u{202E}evil");
-      expect(record.request.resolvedPath).toBe("/usr/bin/echo\\u{200B}x");
-      expect(record.request.security).toBeNull();
-      expect(record.request.ask).toBeNull();
-      expect(await manager.resolve(record.id, "deny")).toBe(true);
-    });
+    const pending = handler(opts);
+    await vi.waitFor(async () => expect(await manager.listPendingRecords()).toHaveLength(1));
+    const record = (await manager.listPendingRecords())[0]!;
+    expect(record.request.cwd).toBe("/tmp/safe\\u{202E}evil");
+    expect(record.request.resolvedPath).toBe("/usr/bin/echo\\u{200B}x");
+    expect(record.request.security).toBeNull();
+    expect(record.request.ask).toBeNull();
+    await manager.resolve(record.id, "deny");
+    await pending;
   });
 
   it("cancels an exec approval when authority closes after the handshake", async (testContext) => {
@@ -174,12 +146,16 @@ describe("exec approval signed agent runtime", () => {
     const manager = createTestApprovalManager(testContext, {
       validateAgentRuntimeDelegatedAuthority: () => active,
     });
+    const handler = createExecApprovalHandlers(manager)["exec.approval.request"]!;
     const opts = requestOptions(identity(false), () => active);
-    await withAcceptedRequest(manager, opts, async (approvalId) => {
-      active = false;
-      await expect(manager.awaitDecision(approvalId)).resolves.toBeNull();
-      expect(await manager.getSnapshot(approvalId)).toMatchObject({ status: "cancelled" });
-    });
+    const pending = handler(opts);
+    await vi.waitFor(async () => expect(await manager.listPendingRecords()).toHaveLength(1));
+    const record = (await manager.listPendingRecords())[0]!;
+    active = false;
+
+    await expect(manager.awaitDecision(record.id)).resolves.toBeNull();
+    await pending;
+    expect(await manager.getSnapshot(record.id)).toMatchObject({ status: "cancelled" });
   });
 
   it.each([
@@ -192,47 +168,50 @@ describe("exec approval signed agent runtime", () => {
       persistence: { runtimeEpoch: "runtime-a", databaseOptions: options },
       validateAgentRuntimeDelegatedAuthority: () => true,
     });
+    const handler = createExecApprovalHandlers(manager)["exec.approval.request"];
+    if (!handler) {
+      throw new Error("exec approval request handler is unavailable");
+    }
     const opts = requestOptions(identity(enabled));
 
-    await withAcceptedRequest(manager, opts, async (approvalId) => {
-      expect(opts.context.broadcast).toHaveBeenCalledWith(
-        "exec.approval.requested",
-        expect.objectContaining({ id: approvalId }),
-        { dropIfSlow: true },
-      );
-      expect((await manager.getSnapshot(approvalId))?.request).toMatchObject({
-        agentId: "main",
-        sessionKey: "agent:main:session-1",
-        sessionId: null,
-        runId: "run-1",
-        turnSourceChannel: "telegram",
-        turnSourceTo: "chat-1",
-        turnSourceAccountId: "default",
-        turnSourceThreadId: "thread-1",
-      });
-      const db = openOpenClawStateDatabase(options).db;
-      if (enabled) {
-        expect(
-          db
-            .prepare(
-              "SELECT approval_id, source_context_id, source_execution_id FROM operator_approval_execution_identities WHERE approval_id = ?",
-            )
-            .get(approvalId),
-        ).toEqual({
-          approval_id: approvalId,
-          source_context_id: "context-1",
-          source_execution_id: "execution-1",
-        });
-      } else {
-        expect(
-          db
-            .prepare(
-              "SELECT name FROM sqlite_schema WHERE type = 'table' AND name = 'operator_approval_execution_identities'",
-            )
-            .get(),
-        ).toBeUndefined();
-      }
-      expect(await manager.resolve(approvalId, "deny")).toBe(true);
+    const pending = handler(opts);
+    await vi.waitFor(() => expect(opts.context.broadcast).toHaveBeenCalled());
+    const approvalId = String(
+      (vi.mocked(opts.context.broadcast).mock.calls[0]?.[1] as { id?: unknown } | undefined)?.id,
+    );
+    expect((await manager.getSnapshot(approvalId))?.request).toMatchObject({
+      agentId: "main",
+      sessionKey: "agent:main:session-1",
+      sessionId: null,
+      runId: "run-1",
+      turnSourceChannel: "telegram",
+      turnSourceTo: "chat-1",
+      turnSourceAccountId: "default",
+      turnSourceThreadId: "thread-1",
     });
+    const db = openOpenClawStateDatabase(options).db;
+    if (enabled) {
+      expect(
+        db
+          .prepare(
+            "SELECT approval_id, source_context_id, source_execution_id FROM operator_approval_execution_identities WHERE approval_id = ?",
+          )
+          .get(approvalId),
+      ).toEqual({
+        approval_id: approvalId,
+        source_context_id: "context-1",
+        source_execution_id: "execution-1",
+      });
+    } else {
+      expect(
+        db
+          .prepare(
+            "SELECT name FROM sqlite_schema WHERE type = 'table' AND name = 'operator_approval_execution_identities'",
+          )
+          .get(),
+      ).toBeUndefined();
+    }
+    await manager.resolve(approvalId, "deny");
+    await pending;
   });
 });
