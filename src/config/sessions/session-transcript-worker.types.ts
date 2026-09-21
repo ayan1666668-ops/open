@@ -4,6 +4,7 @@ import type {
   readSessionEntryResetRecallCutoff,
 } from "../../../packages/memory-host-sdk/src/host/session-files.js";
 import type { PreparedSessionHistoryReadTarget } from "../../gateway/session-history-read.types.js";
+import type { SessionTitleFields } from "../../gateway/session-transcript-title-reader.js";
 import type { SessionPreviewItem } from "../../gateway/session-utils.types.js";
 import type {
   SessionCostUsageCacheRead,
@@ -84,6 +85,19 @@ export type SessionPreviewWorkerResult = {
   items: SessionPreviewItem[];
 };
 
+export type SessionTitleFieldsWorkerInput = {
+  kind: "session-title-fields";
+  database: { agentId: string; path: string };
+  scope: SessionTranscriptReadScope;
+  includeInterSession?: boolean;
+  admission?: UserTurnTranscriptAdmissionReceipt;
+};
+
+export type SessionTitleFieldsWorkerResult = {
+  kind: "session-title-fields";
+  fields: SessionTitleFields;
+};
+
 export type SessionRowPresenceWorkerInput = {
   kind: "session-row-presence";
   database: { agentId: string; path: string };
@@ -142,6 +156,7 @@ export type SessionTranscriptWorkerValues = {
   "branch-summaries": SessionBranchSummaryReadResult;
   "history-page": SessionHistoryWorkerResult;
   "session-preview": SessionPreviewWorkerResult;
+  "session-title-fields": SessionTitleFieldsWorkerResult;
   "session-row-presence": boolean;
   "session-members": SessionMember[];
   "session-entry-list": SessionEntryListWorkerResult;

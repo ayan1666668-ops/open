@@ -20,6 +20,7 @@ import {
   type SessionListFilterParams,
 } from "./session-list-filters.js";
 import { sortAndLimitSessionEntries, type SessionEntryPair } from "./session-list-order.js";
+import { bindSessionListRowRead } from "./session-list-read-result.js";
 import { prepareProjectedSessionPresentation } from "./session-row-presentation.js";
 import type { Query as SessionRowQuery } from "./session-row-projection-record.js";
 import type { SessionRowProjection } from "./session-row-projection.js";
@@ -383,6 +384,7 @@ export async function listProjectedSessions(params: {
       if (!row) {
         return [];
       }
+      bindSessionListRowRead(row, { projection, record, client });
       if ((record.materializedSequence ?? 0) > materializedBefore) {
         materializedRowCount++;
       }

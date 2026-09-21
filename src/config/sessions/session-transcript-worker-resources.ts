@@ -35,6 +35,7 @@ import type {
   SessionIdentityEvidenceWorkerInput,
   SessionMembersWorkerInput,
   SessionPreviewWorkerInput,
+  SessionTitleFieldsWorkerInput,
   SessionRowPresenceWorkerInput,
   SessionTranscriptHistoryWorkerInput,
   SessionTranscriptWorkerReply,
@@ -45,6 +46,7 @@ const workerUrl = resolveRuntimeWorkerUrl(runtimeProcessEntrypoints.sessionTrans
 export const historyPages = new WorkerTaskPool<
   | SessionTranscriptHistoryWorkerInput
   | SessionPreviewWorkerInput
+  | SessionTitleFieldsWorkerInput
   | SessionRowPresenceWorkerInput
   | SessionMembersWorkerInput
   | SessionEntryListWorkerInput
@@ -54,6 +56,7 @@ export const historyPages = new WorkerTaskPool<
   SessionTranscriptWorkerReply<
     | "history-page"
     | "session-preview"
+    | "session-title-fields"
     | "session-row-presence"
     | "session-members"
     | "session-entry-list"
@@ -361,6 +364,7 @@ export async function withSessionHistoryWorkerReadCandidates<T>(
           const result = unwrapSessionTranscriptWorkerReply<
             | "history-page"
             | "session-preview"
+            | "session-title-fields"
             | "session-row-presence"
             | "session-members"
             | "session-entry-list"

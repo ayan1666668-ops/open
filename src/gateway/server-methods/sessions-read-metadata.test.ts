@@ -6,6 +6,7 @@ import {
   replaceSessionEntrySync,
   upsertSessionEntryCore,
 } from "../../config/sessions/session-accessor.js";
+import type { GatewayOperatorRoleDefinition } from "../../config/types.gateway.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { closeOpenClawAgentDatabasesForTest } from "../../state/openclaw-agent-db.js";
 import { ensureProfileForEmail, setUserProfileRole } from "../../state/user-profiles.js";
@@ -47,7 +48,7 @@ async function seedMetadataReads(prepareProjection = false) {
       agents: "*" as const,
       scopes: ["operator.read"],
     },
-  };
+  } satisfies Record<string, GatewayOperatorRoleDefinition>;
   let cfg: OpenClawConfig = {
     agents: { list: [{ id: "main", default: true }, { id: "work" }] },
     session: { store: storePath },
