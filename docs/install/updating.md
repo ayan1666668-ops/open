@@ -59,8 +59,9 @@ replace the package, run Doctor, and restart through that same owner.
 
 Older updaters such as 2026.7.33 refuse before staging with
 `plugins.load.paths: plugin path not found` when a configured plugin path is missing.
-Remove the stale path from configuration, restore it, or run `openclaw doctor --fix`,
-then retry the update. The candidate cannot repair this before it is installed.
+Restore a missing custom plugin directory or remove its configured path, then retry.
+`openclaw doctor --fix` can repair recognized bundled-path aliases, but preserves
+unrelated custom paths. The candidate cannot repair this before it is installed.
 
 <Note>
 On macOS, the 2026.9.4 Gateway's `update.run` action or `/update` can hand off
