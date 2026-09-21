@@ -2,6 +2,7 @@
 // stopped must never be reported as a clean no-op.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import type { GatewayContextResolver } from "../gateway/server-methods/types.js";
 import { buildAnnounceIdempotencyKey } from "./announce-idempotency.js";
 import { createSubagentRunRecord } from "./subagent-test-fixtures.test-helpers.js";
 import type {
@@ -193,6 +194,37 @@ describe("wakeSubagentRunAfterDescendants", () => {
         previousRunId: wakeParams.runId,
         nextRunId: wakeDispatchId,
         expected: harness.sourceEntry,
+      }),
+    );
+  });
+
+  it("threads gateway context and the caller signal into the restricted-role wake dispatch", async () => {
+    // Upstream covered this on its own `runDescendantWake` signature, which our
+    // side renamed to `wakeSubagentRunAfterDescendants` and split into
+    // (params, deps). The rename dropped upstream's coverage of the dispatch
+    // wire, so pin it here: a restricted-role in-process wake must carry the
+    // caller's gateway-context resolver and abort signal through to the agent
+    // dispatch, not re-derive or drop them.
+    mocks.loadSessionEntryByKey.mockReturnValue({ sessionId: "sess-wake" });
+    const callGateway = vi.fn(async () => ({}));
+    const harness = createWakeHarness({ callGateway, replaced: true });
+    const resolveGatewayContext: GatewayContextResolver = () => undefined;
+    const signal = new AbortController().signal;
+
+    await expect(
+      wakeSubagentRunAfterDescendants(
+        { ...wakeParams, resolveGatewayContext, signal },
+        harness.deps,
+      ),
+    ).resolves.toBe("woke");
+    expect(harness.dispatchGatewayMethodInProcess).toHaveBeenCalledWith(
+      "agent",
+      expect.any(Object),
+      expect.objectContaining({
+        cancelOnDeadline: true,
+        operatorRoleActor: { kind: "system" },
+        resolveGatewayContext,
+        signal,
       }),
     );
   });

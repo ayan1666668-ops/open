@@ -86,6 +86,48 @@ const contracts: GuardContract[] = [
       "fallback settlement must recognise a continuation-wrapped run result rather than settling it as a bare failure",
     callers: ["src/auto-reply/reply/agent-runner-fallback-settlement.ts"],
   },
+  {
+    guard: "isWakeContinuationRun",
+    protects:
+      "a descendant-settle wake must never fire for a run that is itself a wake continuation, or the wake recurses forever. Upstream keeps this check INSIDE its wake function (`isWakeContinuation(params.runId)` in runDescendantWake); our side renamed that function to wakeSubagentRunAfterDescendants and moved the check up to the caller's gate, so the caller is now the only place it exists",
+    callers: ["src/agents/subagents/announce/subagent-announce.ts"],
+  },
+  {
+    guard: "isSpawnSubagentAdmissionCancelledError",
+    protects:
+      'an admission-cancelled spawn is a cancellation, not an error. Each call site converts it differently and losing any one silently changes observable behaviour: rollback still terminates the accepted child even when taskRowOwnership is not "required"; the session patch rethrows instead of flattening to a generic error status; spawn reports "cancelled" instead of "error"; delegate dispatch counts it rejected and drops the artifact policy instead of falling through to terminal chain-state handling',
+    callers: [
+      "src/agents/subagents/spawn/subagent-spawn-rollback.ts",
+      "src/agents/subagents/spawn/subagent-spawn-session-patch.ts",
+      "src/agents/subagents/spawn/subagent-spawn.ts",
+      "src/auto-reply/continuation/delegate-dispatch.ts",
+    ],
+  },
+  {
+    guard: "isContinuationHeartbeatEquivalent",
+    protects:
+      "only a system-injected wake (work-wake, delegate-return, subagent-return) may be forwarded as the continuation trigger of a durable generated-media handoff; any other trigger must be narrowed to undefined so a user turn is never replayed as a heartbeat-equivalent wake",
+    callers: [
+      "src/agents/subagents/announce/subagent-announce-delivery.ts",
+      "src/gateway/server-restart-sentinel-agent-delivery.ts",
+    ],
+  },
+  {
+    guard: "sanitizeTranscriptToolCallBlock",
+    protects:
+      "continuation attachment snapshots are durable handoff input, not replayable transcript content. Every canonical transcript writer must apply this projection before serializing an assistant message, or a continue_delegate attachment payload is persisted into the transcript and replayed",
+    callers: [
+      "src/agents/embedded-agent-runner/cli-backend-dispatch-transcript.ts",
+      "src/agents/session-transcript-repair.ts",
+      "src/agents/transcript-redact.ts",
+    ],
+  },
+  {
+    guard: "isTranscriptToolCallBlock",
+    protects:
+      "the selector that reaches sanitizeTranscriptToolCallBlock in the redaction walker; losing it makes the sanitizer unreachable without removing it, so the guard-callsite pin on the sanitizer alone would still pass",
+    callers: ["src/agents/transcript-redact.ts"],
+  },
 ];
 
 async function main() {
