@@ -106,6 +106,7 @@ beforeEach(() => {
     stderr.push(String(value));
     return true;
   });
+  vi.spyOn(process.stdin, "destroy").mockImplementation(() => process.stdin);
 });
 
 afterEach(() => {

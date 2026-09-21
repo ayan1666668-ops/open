@@ -16,18 +16,6 @@ export async function waitForPendingCliDisposers(): Promise<void> {
   }
 }
 
-export function pauseNonTtyStdinForCliExit(): void {
-  const stdin = process.stdin;
-  if (stdin.isTTY) {
-    return;
-  }
-  try {
-    stdin.pause();
-  } catch {
-    // Best-effort cleanup for command paths that only inspected stdin.
-  }
-}
-
 export async function runCliDisposer(
   name: string,
   dispose: () => Promise<void>,
