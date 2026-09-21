@@ -102,6 +102,29 @@ describe("Firecrawl search payloads", () => {
     expect(result[0]?.url).not.toContain(hostileControlToken);
     expect(result[0]?.published).toBeUndefined();
   });
+
+  it("rejects calendar-invalid publication dates", () => {
+    const result = firecrawlClient.resolveSearchItems(
+      {
+        data: [
+          { url: "https://example.com/invalid-day", publishedDate: "2026-02-30" },
+          { url: "https://example.com/invalid-month", publishedDate: "2026-13-01" },
+          { url: "https://example.com/leap-day", publishedDate: "2024-02-29" },
+        ],
+      },
+      10,
+    );
+
+    expect(result).toHaveLength(3);
+    expect(result[0]?.published).toBeUndefined();
+    expect(result[1]?.published).toBeUndefined();
+    expect(result[2]).toEqual(
+      expect.objectContaining({
+        url: "https://example.com/leap-day",
+        published: "2024-02-29",
+      }),
+    );
+  });
 });
 
 describe("Firecrawl scrape payloads", () => {
