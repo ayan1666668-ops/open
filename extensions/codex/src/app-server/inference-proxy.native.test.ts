@@ -304,6 +304,7 @@ describe.skipIf(process.platform === "win32")("native inference admission", () =
       });
       expect(await waitFor(() => terminals.get(cancelled.threadId))).toBe("interrupted");
       await waitFor(() => (transport.closedThreads.has(cancelled.threadId) ? true : undefined));
+      expect(transport.rejected.some((entry) => entry.threadId === cancelled.threadId)).toBe(false);
       expect(transport.dials).toBe(activeDials);
       expect(held.has(cancelled.threadId)).toBe(false);
       const waiting = await begin();

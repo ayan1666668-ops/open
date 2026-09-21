@@ -243,6 +243,7 @@ export async function createCodexInferenceProxy(params: {
       const close = () => {
         clearTimeout(idleTimer);
         clearTimeout(handshakeTimer);
+        socket.off("end", close);
         connections.delete(close);
         idleConnections.delete(close);
         controller.abort();
@@ -279,6 +280,9 @@ export async function createCodexInferenceProxy(params: {
         connections.add(close);
         socket.once("close", close);
         socket.once("error", close);
+        // Raw HTTP upgrades stay half-open after FIN until ws owns the socket.
+        // Cancel pending admission before it can dial for a disconnected caller.
+        socket.once("end", close);
         const signal = AbortSignal.any([lifetime.signal, controller.signal]);
         // Admission precedes the upstream dial. Complete the real upstream handshake
         // before local 101 so native auth errors and negotiated headers stay intact.
@@ -363,6 +367,7 @@ export async function createCodexInferenceProxy(params: {
             assertHandshakeCurrent();
             wss.handleUpgrade(req, socket, head, (accepted) => {
               clearTimeout(handshakeTimer);
+              socket.off("end", close);
               local = accepted;
               sockets.add(accepted);
               accepted.once("error", close);

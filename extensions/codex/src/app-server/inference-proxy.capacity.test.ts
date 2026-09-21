@@ -427,6 +427,23 @@ describe("inference relay capacity", () => {
     expect(transport.fetch).toHaveBeenCalledOnce();
   });
 
+  it("cancels a queued handshake on peer FIN before capacity becomes available", async () => {
+    const streams = await fillCapacity();
+    const upgrade = once(relayServer(), "upgrade");
+    const queued = connect();
+    const [, socket] = await upgrade;
+    const ended = once(socket, "end");
+    queued.terminate();
+    await ended;
+    const first = streams[0];
+    assert(first);
+    await complete(first.client, first.upstream);
+    // HTTP admission is a FIFO barrier after the cancelled handshake's slot.
+    expect((await post()).status).toBe(200);
+    expect(transport.resolve).toHaveBeenCalledTimes(16);
+    expect(socket.destroyed).toBe(true);
+  });
+
   it.each(["generation revoked", "duplicate frame"])(
     "releases queued work after %s without forwarding it or blocking the next frame",
     async (cause) => {
@@ -524,6 +541,9 @@ describe("inference relay capacity", () => {
       const disconnected = createDeferred<void>();
       server.once("upgrade", (_request, socket) => {
         socket.once("close", () => disconnected.resolve());
+        // Raw HTTP-upgrade sockets retain a writable half after peer FIN.
+        socket.once("end", () => socket.end());
+        socket.on("error", (error) => expect(error).toMatchObject({ code: "ECONNRESET" }));
         if (phase === "error body") {
           socket.write("HTTP/1.1 401 Unauthorized\r\nContent-Length: 1000\r\n\r\nx");
         }
