@@ -23,8 +23,8 @@ openclaw gateway restart
   plugin-owned SQLite state. Current hosts execute these operations in the
   shared-state worker, preserving write order and conditional dial-ID cleanup.
   Runtime startup, helper dispatch, and shutdown await the required publications.
-  Dispatch rechecks call capacity after persistence; an incoming call that already
-  claimed the slot causes the undispatched intent to be cleared before dial rejection.
+  Pending outbound calls reserve admission while persistence waits, preserving the
+  same incoming-call policy before and after durable publication.
 - `src/helper-rpc.ts` owns bounded loopback IPC with mutual authentication,
   connection-epoch message MACs, replay sequencing, and typed native
   postcondition projection.

@@ -578,6 +578,12 @@ provider or plugin runtime ownership. Kernels and their transaction callbacks
 remain synchronous. The asynchronous task and flow read facade runs these read
 kernels in the shared-state worker.
 
+Chat `/tasks` and the task section of `/status` join the task registry’s accepted-write
+fence before reading its prepared projection. Session details and agent-local
+fallback counts share that read owner, preserving visibility, ordering, and recent
+task windows. The caller revalidates the captured owner before formatting; a
+retired owner or failed preparation cannot render task data.
+
 Synchronous task creation and managed-flow worker creation share one create/reuse
 operation. Each adapter keeps its selection order and transaction boundaries.
 Filling a missing delivery origin commits before optional metadata changes; that
@@ -899,6 +905,14 @@ during orderly shutdown. Delayed results cannot overwrite newer synchronous
 writes or refreshes. Reconciliation failures leave the flow projection dirty and
 preserve the durable mutation result without replaying the write.
 
+Task restoration and its mirrored-flow retries register each discovered flow ID
+with the process registry before the worker receives permission to update it.
+Synchronous reads refresh those pending identities even while the committed
+reply is in transit. Host reconciliation still follows task snapshot installation
+and precedes restored observers; failed replies also retain settlement and
+canonical flow reconciliation. This changes no schema, update migration, or
+synchronous plugin API.
+
 Synchronous callers keep their existing transaction behavior. Native cancellation,
 child-task linkage, and compound task/subagent completion retain their existing
 owners until their complete persistence and lifecycle boundaries move together.
@@ -952,11 +966,14 @@ terminal callbacks cannot admit new speech. Summary publication checks the captu
 input revision, prior notes, and speech sequence in the same worker transaction as
 the summary write. The host retains live summary-generation, caller, and abort
 checks at transaction and commit admission; stale results preserve prior notes.
-Chronological
-list reads still use the parent process because their SQL date function observes
-its current timezone. Streamed reads, export snapshots, and session and export-state writes retain
-their existing owners until their snapshot and write-drainage lifecycles move
-together.
+Bounded transcript tool list and show
+queries execute on the same worker. Canonical UTC dates parse there; other date
+formats request the caller's native parser through retained preparation, preserving
+temporary skill timezones. A timezone change during such a read rejects the result
+instead of mixing interpretations. The query retains its ordering, payload limits,
+and synchronous statement snapshot. Streamed chronological reads, export snapshots,
+and session and export-state writes retain their existing owners until their
+snapshot and write-drainage lifecycles move together.
 
 SQLite worker transport preserves complete result values. Results within the
 64 MiB inline reply budget keep their existing reply path; larger results are
@@ -1050,6 +1067,16 @@ retain that context; SDK reconnect requests capture it before waiting for Gatewa
 admission or loading the delivery runtime. A recovery root applies to an existing
 queue entry, while fresh sends use their selected default root. This context stays
 internal and is not added to durable payloads or plugin callback inputs.
+
+Gateway lifecycle notices retain their original shared-state directory and
+supervisor mode through asynchronous modifying hooks, media staging, and queue
+publication. Immediate delivery, settlement, and retry recovery use that same
+captured context. Startup carries it through the sentinel read, revision-checked
+cleanup, enqueue, and delivery; public plugin send arguments cannot select this
+private context. Runtime retry services and delayed startup callbacks capture
+their state at registration and retain it across retries, session lookups, and
+update-ledger writes. Current configuration and delivery authority are still
+checked when each retry runs.
 
 Standalone session-delivery queue operations run in the shared-state worker.
 Producers, recovery, generated-media preparation, and the retry scheduler carry

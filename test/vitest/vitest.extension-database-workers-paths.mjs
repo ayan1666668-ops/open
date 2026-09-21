@@ -153,6 +153,7 @@ export const databaseWorkerExtensionTestFiles = [
   "extensions/facetime/tests/runtime-authority-boundary.test.ts",
   "extensions/facetime/tests/runtime-carrier-aliases.test.ts",
   "extensions/facetime/tests/runtime-persistence.test.ts",
+  "extensions/facetime/tests/runtime-reconciliation.test.ts",
   "extensions/facetime/tests/runtime.test.ts",
   "extensions/feishu/src/bot.broadcast.test.ts",
   "extensions/feishu/src/bot.test.ts",
