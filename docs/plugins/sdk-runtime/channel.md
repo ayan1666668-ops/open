@@ -45,11 +45,13 @@ Channel-specific runtime helpers, available when a channel plugin is loaded. Par
     });
     ```
 
-    Use `saveRemoteMedia(...)` when a remote URL should become OpenClaw media. Use `saveResponseMedia(...)` when the plugin already fetched a `Response` with plugin-owned auth, redirect, or allowlist handling. Use `readRemoteMediaBuffer(...)` only when the plugin needs raw bytes for inspection, transforms, decryption, or reupload. `fetchRemoteMedia(...)` remains a deprecated compatibility alias for `readRemoteMediaBuffer(...)`.
+    Use `saveRemoteMedia(...)` when a remote URL should become OpenClaw media. Use `saveResponseMedia(...)` when the plugin already fetched a `Response` with plugin-owned auth, redirect, or allowlist handling. Use `readRemoteMediaBuffer(...)` only when the plugin needs raw bytes for inspection, transforms, decryption, or reupload. `fetchRemoteMedia(...)` remains a deprecated compatibility alias for `readRemoteMediaBuffer(...)`, tracked as `plugin-runtime-api-compat-aliases` in the [compatibility registry](/plugins/compatibility#current-compatibility-areas) with a `removeAfter` date of 2026-10-01.
 
     For unsuccessful HTTP responses, media errors report the status and include a bounded body excerpt when available. A discarded error body is not reported as an empty upstream response. A successful response with no body is still rejected as empty media.
 
     Remote media options and `fetchWithSsrFGuard(...)` from `openclaw/plugin-sdk/ssrf-runtime` accept a synchronous `beforeRequest` callback for final-dispatch authorization checks. It runs after proxy, DNS, and dispatcher preparation and immediately before every physical request. Redirects invoke it once per hop; media retries invoke it again for every attempt and hop. If it throws, that request is not sent and the same error propagates. Promise or thenable results are rejected before transport dispatch.
+
+    For `saveRemoteMedia(...)`, pass a synchronous `assertCurrent` callback when a read can lose permission while its body is downloading. The media owner combines it with any enclosing read scope and rechecks it through requests, streaming, and local-file publication, cleaning up unaccepted files on failure. Forward cancellation with `requestInit.signal` as well. Omitting `assertCurrent` preserves existing behavior; `beforeRequest` remains the per-request hook rather than a file-publication guard.
 
     Guarded fetch also accepts a synchronous `resolveDispatcherPolicy(url)` override, reevaluated for each redirect. An undefined result uses `dispatcherPolicy`, or direct routing when no default policy is supplied. Providers preserving operator-configured proxy routing can use `resolveEnvHttpProxyAgentOptions` and `matchesNoProxy` from `openclaw/plugin-sdk/fetch-runtime` to select each hop. The `trusted_explicit_proxy` mode permits HTTP, HTTPS, `socks:` and `socks5:` proxy URLs and delegates target DNS to the explicitly trusted proxy; proxy-host validation and target-host policy still apply. Direct hops keep DNS pinning. Strict mode rejects SOCKS proxies, and the separate trusted-env-proxy gate remains HTTP(S)-only.
 
@@ -90,7 +92,7 @@ Channel-specific runtime helpers, available when a channel plugin is loaded. Par
 
     Use the normalized `{ facts, policy }` path for mention decisions.
 
-    Several fields under `reply`, `session`, and `inbound` carry per-field `@deprecated` notes pointing at the current channel-turn kernel or channel-outbound adapters; check the inline JSDoc on the specific helper before building new code on it.
+    Several fields under `reply`, `session`, and `inbound` carry per-field `@deprecated` notes pointing at the current channel-turn kernel or channel-outbound adapters; check the inline JSDoc on the specific helper before building new code on it. They share the same `plugin-runtime-api-compat-aliases` registry record and `removeAfter` date of 2026-10-01.
 
   </Accordion>
 </AccordionGroup>

@@ -5,11 +5,9 @@ import {
   isAdminOnlyNodeInvokeCommand,
   isBrowserProxyNodeInvokeCommand,
 } from "../infra/node-commands.js";
-import {
-  getActivePluginHttpRouteRegistry,
-  getActivePluginSessionExtensionRegistry,
-} from "../plugins/runtime.js";
+import { getPluginRegistryForContext } from "../plugins/runtime/gateway-request-scope.js";
 import { resolveReservedGatewayMethodScope } from "../shared/gateway-method-policy.js";
+import { operatorScopeSatisfied } from "../shared/operator-scope-compat.js";
 import { resolveDynamicSessionMutationRequiredScope } from "../shared/session-method-scopes.js";
 import { isAgentSessionResetCommand } from "./agent-command-policy.js";
 import {
@@ -17,7 +15,7 @@ import {
   isCoreNodeGatewayMethod,
   isDynamicOperatorGatewayMethod,
   resolveCoreOperatorGatewayMethodScope,
-} from "./methods/core-descriptors.js";
+} from "./methods/core-method-policy.js";
 import { isForbiddenBrowserProxyMutation } from "./node-browser-proxy-policy.js";
 import {
   ADMIN_SCOPE,
@@ -55,8 +53,7 @@ export const CLI_DEFAULT_OPERATOR_SCOPES: OperatorScope[] = [
 ];
 
 function resolveScopedMethod(method: string): OperatorScope | undefined {
-  // Gateway method descriptors come from the process-root registry. Node/dynamic
-  // sentinels are not operator scopes.
+  // Node/dynamic sentinels are not operator scopes.
   const explicitScope = resolveCoreOperatorGatewayMethodScope(method);
   if (explicitScope) {
     return explicitScope;
@@ -65,7 +62,7 @@ function resolveScopedMethod(method: string): OperatorScope | undefined {
   if (reservedScope) {
     return reservedScope;
   }
-  const pluginDescriptor = getActivePluginHttpRouteRegistry()?.gatewayMethodDescriptors?.find(
+  const pluginDescriptor = getPluginRegistryForContext()?.gatewayMethodDescriptors?.find(
     (descriptor) => descriptor.name === method,
   );
   const pluginScope = pluginDescriptor?.scope;
@@ -82,11 +79,6 @@ export function isNodeRoleMethod(method: string): boolean {
   return isCoreNodeGatewayMethod(method);
 }
 
-/** Resolves the required static operator scope for a gateway method, if one exists. */
-function resolveRequiredOperatorScopeForMethod(method: string): OperatorScope | undefined {
-  return resolveScopedMethod(method);
-}
-
 function resolveSessionActionRegisteredScopes(params: unknown): OperatorScope[] | undefined {
   if (!params || typeof params !== "object" || Array.isArray(params)) {
     return undefined;
@@ -96,7 +88,7 @@ function resolveSessionActionRegisteredScopes(params: unknown): OperatorScope[] 
   if (!pluginId || !actionId) {
     return undefined;
   }
-  const registration = getActivePluginSessionExtensionRegistry()?.sessionActions?.find(
+  const registration = getPluginRegistryForContext()?.sessionActions?.find(
     (entry) => entry.pluginId === pluginId && entry.action.id === actionId,
   );
   if (!registration) {
@@ -214,9 +206,7 @@ function findMissingOperatorScope(
   requiredScopes: readonly OperatorScope[],
   scopes: readonly string[],
 ): OperatorScope | undefined {
-  return requiredScopes.find(
-    (scope) => !authorizeOperatorScopesForRequiredScope(scope, scopes).allowed,
-  );
+  return requiredScopes.find((scope) => !operatorScopeSatisfied(scope, scopes));
 }
 
 /** Returns the narrowest known operator scopes needed to call a gateway method. */
@@ -227,7 +217,7 @@ export function resolveLeastPrivilegeOperatorScopesForMethod(
   if (isDynamicOperatorGatewayMethod(method)) {
     return resolveDynamicLeastPrivilegeOperatorScopesForMethod(method, params);
   }
-  const requiredScope = resolveRequiredOperatorScopeForMethod(method);
+  const requiredScope = resolveScopedMethod(method);
   if (requiredScope) {
     return [requiredScope];
   }
@@ -267,7 +257,7 @@ export function authorizeOperatorScopesForMethod(
     );
     return missingScope ? { allowed: false, missingScope } : { allowed: true };
   }
-  const requiredScope = resolveRequiredOperatorScopeForMethod(method) ?? ADMIN_SCOPE;
+  const requiredScope = resolveScopedMethod(method) ?? ADMIN_SCOPE;
   return authorizeOperatorScopesForRequiredScope(requiredScope, scopes);
 }
 
@@ -276,25 +266,9 @@ export function authorizeOperatorScopesForRequiredScope(
   requiredScope: OperatorScope,
   scopes: readonly string[],
 ): { allowed: true } | { allowed: false; missingScope: OperatorScope } {
-  if (scopes.includes(ADMIN_SCOPE)) {
-    return { allowed: true };
-  }
-  if (requiredScope === READ_SCOPE) {
-    if (scopes.includes(READ_SCOPE) || scopes.includes(WRITE_SCOPE)) {
-      return { allowed: true };
-    }
-    return { allowed: false, missingScope: READ_SCOPE };
-  }
-  if (requiredScope === TALK_SCOPE) {
-    if (scopes.includes(TALK_SCOPE) || scopes.includes(WRITE_SCOPE)) {
-      return { allowed: true };
-    }
-    return { allowed: false, missingScope: TALK_SCOPE };
-  }
-  if (scopes.includes(requiredScope)) {
-    return { allowed: true };
-  }
-  return { allowed: false, missingScope: requiredScope };
+  return operatorScopeSatisfied(requiredScope, scopes)
+    ? { allowed: true }
+    : { allowed: false, missingScope: requiredScope };
 }
 
 /** Returns true when a method has any core, node, dynamic, reserved, or plugin scope policy. */
@@ -305,8 +279,5 @@ export function isGatewayMethodClassified(method: string): boolean {
   if (isDynamicOperatorGatewayMethod(method)) {
     return true;
   }
-  return (
-    isCoreGatewayMethodClassified(method) ||
-    resolveRequiredOperatorScopeForMethod(method) !== undefined
-  );
+  return isCoreGatewayMethodClassified(method) || resolveScopedMethod(method) !== undefined;
 }

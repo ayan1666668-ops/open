@@ -11,7 +11,6 @@ export const AUTH_STORE_VERSION = 1;
 export {
   CLAUDE_CLI_PROFILE_ID,
   CODEX_CLI_PROFILE_ID,
-  OPENAI_CODEX_DEFAULT_PROFILE_ID,
   MINIMAX_CLI_PROFILE_ID,
 } from "./profile-ids.js";
 
@@ -48,3 +47,12 @@ export const EXTERNAL_CLI_SYNC_TTL_MS = 15 * 60 * 1000;
 
 /** Auth profile subsystem logger. */
 export const authProfilesLog = createSubsystemLogger("agents/auth-profiles");
+
+/** Post-commit diagnostics cannot replace an acknowledged durable result. */
+export function reportCommittedInlineAuthFailure(message: string, error: unknown): void {
+  try {
+    authProfilesLog.warn(message, { error });
+  } catch {
+    // The write is already authoritative even when a diagnostic sink fails.
+  }
+}

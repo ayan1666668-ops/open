@@ -232,8 +232,13 @@ async function isSameGatewayRunConfigSnapshot(
   return (
     (options.allowPathChange || current.path === expected.path) &&
     current.exists === expected.exists &&
+    current.valid === expected.valid &&
     (current.hash ?? current.raw) === (expected.hash ?? expected.raw) &&
-    hashRuntimeConfigValue(current.sourceConfig) === hashRuntimeConfigValue(expected.sourceConfig)
+    // Invalid snapshots have no resolved config facts. Reset admission uses
+    // their selected target and raw revision, never the valid-config hash cache.
+    (!current.valid ||
+      hashRuntimeConfigValue(current.sourceConfig) ===
+        hashRuntimeConfigValue(expected.sourceConfig))
   );
 }
 
@@ -270,7 +275,7 @@ async function guardGatewayRunSelectedConfig(
     import("../../infra/env.js"),
     import("../../config/paths.js"),
     import("../../utils.js"),
-    import("../../config/types.secrets.js"),
+    import("../../config/resolution-facts.js"),
     import("../../daemon/service-managed-env.js"),
   ]);
   const invocationDestructiveOverride = resolveInvocationDestructiveOverride();
@@ -362,12 +367,25 @@ async function guardGatewayRunSelectedConfig(
     }
     // The service marker also owns config SecretRefs. Only dotenv-absent keys with no current
     // config reference are stale; clearing the broad marker blindly would drop file-backed refs.
-    clearMissingManagedServiceEnvKeys({
-      environment: process.env,
-      managedKeys: readManagedSystemdServiceEnvKeysFromEnvironment(process.env),
-      presentKeys: trustedEnvLoad.dotenvPresentKeys,
-      preserveKeys: collectEnvSecretRefIds(trustedSnapshot.sourceConfig),
-    });
+    const managedKeys = readManagedSystemdServiceEnvKeysFromEnvironment(process.env);
+    if (managedKeys.size > 0) {
+      const preserveKeys = collectEnvSecretRefIds(trustedSnapshot.sourceConfig);
+      // Startup repair may relocate a referenced setting, which retires the recorded path along
+      // with it. The read that produced this snapshot still names every variable the config
+      // depends on, and keeping a key one boot too long only defers cleanup, while dropping a
+      // live one refuses startup outright.
+      if (trustedSnapshot.sourceConfig !== snapshot.sourceConfig) {
+        for (const key of collectEnvSecretRefIds(snapshot.sourceConfig)) {
+          preserveKeys.add(key);
+        }
+      }
+      clearMissingManagedServiceEnvKeys({
+        environment: process.env,
+        managedKeys,
+        presentKeys: trustedEnvLoad.dotenvPresentKeys,
+        preserveKeys,
+      });
+    }
     const selectionSignature = resolveGatewayConfigSelectionSignature(process.env);
     applySelectedConfigEnv(trustedSnapshot);
     // Only selection inputs survive a selection hop. Reload credentials once the final config and
