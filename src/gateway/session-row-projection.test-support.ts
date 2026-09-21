@@ -162,10 +162,10 @@ export function createSessionRowProjectionFixture(params: {
       const source = describe(row)!.materialized.source;
       return { ...source, catalogEntry: source.thinkingProjection.catalogEntry };
     },
-    withPreparedExactRows: async (_queries, consume) => ({
-      kind: "complete",
-      value: consume(projection),
-    }),
+    withPreparedExactRows: async (queries, consume) => {
+      queries(cfg);
+      return { kind: "complete", value: consume(projection) };
+    },
     present: (record, options) => {
       const now = options?.now ?? Date.now();
       const row = presentSessionRow(record.materialized, {
@@ -190,6 +190,9 @@ export function createSessionRowProjectionFixture(params: {
     dirtyRowCount: 0,
     needsMaterialization: false,
     state: {
+      get revision() {
+        return revision;
+      },
       cfg,
       modelCatalog,
       rowContext,
@@ -212,7 +215,10 @@ export function createSessionRowProjectionFixture(params: {
         ? { row: projection.present(record, options), lifecycleRunId: record.entry.lifecycleRunId }
         : { row: null };
     },
-    dispose: () => rows.clear(),
+    dispose: () => {
+      revision++;
+      rows.clear();
+    },
   };
   return Object.assign(projection, { setEntry });
 }

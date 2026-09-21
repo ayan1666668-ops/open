@@ -115,18 +115,16 @@ export async function startCodexAttemptRuntime(resources: CodexAttemptResources)
       agentWorkspaceDeveloperInstructions: context.agentWorkspaceDeveloperInstructions,
       buildFinalConfigPatch: buildNativeHookRelayFinalConfigPatch,
       nativeHookRelayRequired:
-        // Read the approval-policy-guarded relay shape, not the raw operator
-        // config: a narrowed opt-out still installs the before-tool policy relay,
-        // so managed-only attestation must stay armed for it. `enabled` is false
-        // here only when approvals are off and no before-tool policy is active,
-        // which the trailing clause would reject anyway.
-        connection.nativeHookRelay?.enabled !== false &&
-        params.pluginHarnessToolPolicyRestricted !== true &&
-        connection.nativeHookRelayEvents.includes("pre_tool_use") &&
-        (hasBeforeToolCallPolicy() ||
-          (appServer.loopDetectionPreToolUseRelay &&
-            Boolean(connection.sandboxSessionKey) &&
-            loopDetectionEnabled)),
+        // Process admission and guarded policy both require attestation on the
+        // actual client before activating callbacks, even after an opt-out.
+        Boolean(resources.nativeProcessAuthority && nativeToolSurfaceEnabled) ||
+        (connection.nativeHookRelay?.enabled !== false &&
+          params.pluginHarnessToolPolicyRestricted !== true &&
+          connection.nativeHookRelayEvents.includes("pre_tool_use") &&
+          (hasBeforeToolCallPolicy() ||
+            (appServer.loopDetectionPreToolUseRelay &&
+              Boolean(connection.sandboxSessionKey) &&
+              loopDetectionEnabled))),
       bundleMcpThreadConfig,
       configuredMcpDynamicSurface: attemptTools.configuredMcp !== undefined,
       configuredMcpOwnershipVersion: attemptTools.configuredMcpOwnershipVersion,

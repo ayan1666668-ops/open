@@ -6,7 +6,10 @@ import path from "node:path";
 import { assert, beforeAll, describe, expect, it, vi } from "vitest";
 import { listExtensionTestFilesForRoots } from "../../scripts/lib/extension-test-plan.mts";
 import { readTestSelectorSourceFacts } from "../../scripts/lib/test-selector-source-facts.mts";
-import { resolveVitestPretestBuildMode } from "../../scripts/lib/vitest-build-prerequisites.mts";
+import {
+  resolveVitestPretestBuildMode,
+  resolveVitestRuntimeConfigScopes,
+} from "../../scripts/lib/vitest-build-prerequisites.mts";
 import { resolveDefaultVitestNoOutputTimeoutMs } from "../../scripts/lib/vitest-process-env.mts";
 import { resolveVitestRuntimeCliSelections } from "../../scripts/lib/vitest-runtime-selection.mts";
 import { resolveShardTimingKey } from "../../scripts/lib/vitest-shard-metadata.mts";
@@ -44,7 +47,7 @@ import {
 } from "../vitest/vitest.startup-corpus-paths.mjs";
 
 const normalizeRepoPath = toRepoPath;
-const CODEX_TEST_PROCESS_FILE_LIMIT = 12;
+const CODEX_TEST_PROCESS_FILE_LIMIT = 24;
 const MATRIX_TEST_PROCESS_FILE_LIMIT = 40;
 const TELEGRAM_TEST_PROCESS_FILE_LIMIT = 1;
 
@@ -327,28 +330,16 @@ describe("test runtime prerequisites", () => {
     ],
     ["agents-core", ["simple-completion-runtime.plugin-scope.test.ts"], "runtime"],
     ["agents", ["simple-completion-runtime.plugin-scope.test.ts"], "runtime"],
-    [
-      "agents-core",
-      [
-        "agent-command-local.test.ts",
-        "simple-completion-runtime.plugin-scope.test.ts",
-        "prepared-model-catalog-worker.custody.integration.test.ts",
-        "prepared-model-catalog-worker.integration.test.ts",
-        "runtime-plugins.context-engine.integration.test.ts",
-      ],
-      undefined,
-    ],
-    [
-      "agents",
-      [
-        "agent-command-local.test.ts",
-        "simple-completion-runtime.plugin-scope.test.ts",
-        "prepared-model-catalog-worker.custody.integration.test.ts",
-        "prepared-model-catalog-worker.integration.test.ts",
-        "runtime-plugins.context-engine.integration.test.ts",
-      ],
-      undefined,
-    ],
+    ...(["agents-core", "agents"] as const).map(
+      (project) =>
+        [
+          project,
+          resolveVitestRuntimeConfigScopes(`test/vitest/vitest.${project}.config.ts`).map(
+            ({ file, dir }) => path.posix.relative(dir, file),
+          ),
+          undefined,
+        ] as const,
+    ),
     ["gateway-core", ["gateway-*.test.ts"], undefined],
     ["gateway-server", ["server-sidecar-retention.test.ts"], "runtime"],
     ["gateway-server", ["server.config-patch.test.ts"], "runtime"],
@@ -2207,14 +2198,16 @@ describe("scripts/test-projects changed-target routing", () => {
     },
   );
 
-  it("routes the schema-upgrade counter consumer exactly once to its broker owner", () => {
-    const testFile = "src/state/openclaw-state-db.test.ts";
-    expectSingleVitestRunPlan(buildVitestRunPlans([testFile]), {
-      config: "test/vitest/vitest.infra.config.ts",
-      includePatterns: [testFile],
-    });
-    expect(databaseWorkerCoreTestFiles.filter((file) => file === testFile)).toEqual([testFile]);
-  });
+  it.each(["src/state/openclaw-state-db.test.ts", "src/worker/worker.runtime.test.ts"])(
+    "routes native shared-state consumer %s exactly once to its broker owner",
+    (testFile) => {
+      expectSingleVitestRunPlan(buildVitestRunPlans([testFile]), {
+        config: "test/vitest/vitest.infra.config.ts",
+        includePatterns: [testFile],
+      });
+      expect(databaseWorkerCoreTestFiles.filter((file) => file === testFile)).toEqual([testFile]);
+    },
+  );
 
   it.each(databaseWorkerCoreTestFiles)(
     "routes host-owned database consumer %s to the infra fork shard",
@@ -2469,19 +2462,13 @@ describe("scripts/test-projects changed-target routing", () => {
     }
   });
 
-  const embeddedRunWorkerFiles = [
-    "src/agents/embedded-agent-runner/run/model-setup.ownership.test.ts",
-    "src/agents/embedded-agent-runner/run/model-setup.selected-model.test.ts",
-    "src/agents/embedded-agent-runner/run/runtime-preparation.thinking.test.ts",
-    "src/agents/embedded-agent-runner/run/run-attempt-dispatch.owner.test.ts",
-    "src/agents/embedded-agent-runner/run/failover-retry-controller.inline-auth.worker.test.ts",
-  ];
-
   it.each([
     {
       directory: "src/agents/embedded-agent-runner/run",
       config: "test/vitest/vitest.agents-embedded-agent-run.config.ts",
-      workerFiles: embeddedRunWorkerFiles,
+      workerFiles: databaseWorkerCoreTestFiles.filter((file) =>
+        file.startsWith("src/agents/embedded-agent-runner/run/"),
+      ),
     },
     {
       directory: "src/agents/runtime-plan",
@@ -2540,7 +2527,9 @@ describe("scripts/test-projects changed-target routing", () => {
       {
         config: "test/vitest/vitest.infra.config.ts",
         forwardedArgs: ["--sequence.shuffle", "--sequence.seed", "3"],
-        includePatterns: embeddedRunWorkerFiles,
+        includePatterns: databaseWorkerCoreTestFiles.filter((file) =>
+          file.startsWith(`${directory}/`),
+        ),
         watchMode: false,
       },
       {
@@ -5052,6 +5041,14 @@ describe("scripts/test-projects full-suite sharding", () => {
         const toolingPlans = targetedPlans("test/vitest/vitest.tooling.config.ts");
         expect(toolingPlans.length).toBeGreaterThan(1);
         expect(toolingPlans.every((plan) => plan.forwardedArgs.length <= 2)).toBe(true);
+        const toolingTargets = toolingPlans.flatMap((plan) => plan.forwardedArgs);
+        expect(toolingTargets.filter((file) => file.startsWith("test/fixtures/"))).toEqual([]);
+        expect(plans.flatMap((plan) => plan.forwardedArgs)).toEqual(
+          expect.arrayContaining([
+            "test/scripts/oxlint-boundary-guards.test.ts",
+            "test/scripts/ts-topology.test.ts",
+          ]),
+        );
         for (const plan of plans.filter((entry) => entry.forwardedArgs.length > 0)) {
           expect(plan.timingTargets).toEqual(plan.forwardedArgs);
           expect(plan.includePatterns).toBeNull();

@@ -31,7 +31,6 @@ import { createAsyncRegistryRestore, createSyncRegistryReader } from "./task-reg
 import type { TaskRegistryRestoreResult } from "./task-registry-restore.worker.js";
 import {
   createPendingTaskRegistryMutation,
-  createTaskRegistryPublicationRecovery,
   claimTaskRegistryPublication,
   publishTaskRegistryWorkerMutation,
   reconcileTaskRegistryWorkerSnapshot,
@@ -449,11 +448,18 @@ export function resetTaskRegistryRestoreState(): void {
 }
 
 const projection = taskRegistryProcessState.projection;
-const pendingMutations = projection.pending;
-const dirtyScopes = projection.dirtyScopes;
+const { pending: pendingMutations, dirtyScopes } = projection;
 
 registerOpenClawStateDatabaseLifecycleListener((event) => {
-  if (event.kind !== "opened") {
+  if (event.kind === "opened") {
+    return;
+  }
+  const admission = taskRegistryRestoreState.admission;
+  // Physical aliases share an owner; its path also covers failed or replaced opens.
+  if (
+    admission &&
+    (event.path === admission.databasePath || event.identity?.key === admission.identity.key)
+  ) {
     invalidateTaskRegistryProjection();
   }
 });
@@ -664,8 +670,9 @@ export async function runTaskRegistryWorkerMutation<T>(
   const { scope, admission, readEventTarget } = context;
   const store = getTaskRegistryStore();
   admission.assertCurrent();
-  const pending = createPendingTaskRegistryMutation(
-    scope,
+  const { pending, recovery, settle } = createPendingTaskRegistryMutation(
+    context,
+    store,
     readEventTarget
       ? () => {
           admission.assertCurrent();
@@ -676,10 +683,6 @@ export async function runTaskRegistryWorkerMutation<T>(
         }
       : undefined,
   );
-  pending.readIdentity = context.readIdentity;
-  const recovery = context.recoverPublication
-    ? createTaskRegistryPublicationRecovery(pending, context.recoverPublication)
-    : undefined;
   pendingMutations.add(pending);
   const assertOwner = () => {
     admission.assertCurrent();
@@ -734,6 +737,8 @@ export async function runTaskRegistryWorkerMutation<T>(
       }
     } finally {
       pendingMutations.delete(pending);
+      // Readers join settlement, then revalidate canonical state even when the write failed.
+      settle?.();
     }
   }
 }

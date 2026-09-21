@@ -727,7 +727,7 @@
     },
     "appServer.loopDetectionPreToolUseRelay": {
       "label": "Loop Detection Pre-tool Relay",
-      "help": "Install the Codex PreToolUse subprocess used only for OpenClaw loop detection and its no-policy marker. Disable to reduce per-tool process fan-out; before-tool and trusted policy relays remain enforced.",
+      "help": "Install the Codex PreToolUse subprocess for OpenClaw loop detection. Disable to reduce per-tool process fan-out; before-tool policy and sandbox native-process admission relays remain enforced.",
       "advanced": true
     },
     "appServer.nativeHookRelay": {
@@ -737,7 +737,7 @@
     },
     "appServer.nativeHookRelay.enabled": {
       "label": "Native Hook Relay Enabled",
-      "help": "Disable optional OpenClaw native hook callbacks to reduce relay subprocesses. If before-tool policy or prompting approvals are active, OpenClaw keeps the required PreToolUse relay and logs a warning. An honored opt-out removes OpenClaw native loop checks, post-tool middleware, and finalization checks, including checks that can stop or revise a reply. Full opt-out leaves native hook layers unchanged. Required relay events still take precedence over CLI hooks for the same events. Live incognito conversations cannot change the installed relay configuration: restore the previous setting or start a new incognito conversation.",
+      "help": "Disable optional OpenClaw native hook callbacks to reduce relay subprocesses. If before-tool policy, prompting approvals, or sandbox native-process admission require it, OpenClaw keeps the required PreToolUse relay and logs a warning. An honored opt-out removes OpenClaw native loop checks, post-tool middleware, and finalization checks, including checks that can stop or revise a reply. Full opt-out leaves native hook layers unchanged. Required relay events still take precedence over CLI hooks for the same events. Live incognito conversations cannot change the installed relay configuration: restore the previous setting or start a new incognito conversation.",
       "advanced": true
     },
     "appServer.requestTimeoutMs": {
