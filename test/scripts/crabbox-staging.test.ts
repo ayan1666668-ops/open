@@ -47,10 +47,8 @@ type Inspection = {
   elapsedMs: number;
 };
 
-async function withFixture(
-  scenario: (context: ReturnType<typeof createFixture>) => Promise<void>,
-  diagnostics?: FixtureDiagnostics,
-) {
+async function withFixture(scenario: (context: ReturnType<typeof createFixture>) => Promise<void>) {
+  const diagnostics = createFixtureDiagnostics("staging-recovery");
   const f = createFixture(diagnostics);
   let failure: Error | undefined;
   try {
@@ -468,7 +466,7 @@ describe.skipIf(process.platform === "win32")(
             recovered: false,
             reason: expect.stringContaining("invalid metadata"),
           });
-        }, createFixtureDiagnostics("staging-callbacks")),
+        }),
       120_000,
     );
 
@@ -762,26 +760,32 @@ if(!interrupted)throw new Error('fixture did not interrupt artifact publication'
       "protects FIFO receipts and keeps ordinary cleanup on unsupported fsync",
       async () =>
         withFixture(async (f) => {
+          f.stage("prepare-fifo");
           const fifo = await f.prepare(),
             receipt = join(fifo.root, "staging.json");
           rmSync(receipt);
+          f.stage("mkfifo");
           const made = await f.command("mkfifo", [receipt]);
           expect(made.status, made.stderr).toBe(0);
+          f.stage("recover-fifo");
           expect((await f.recover(fifo)).report).toMatchObject({
             recovered: false,
             reason: expect.stringContaining("invalid metadata"),
           });
           expect(lstatSync(receipt).isFIFO()).toBe(true);
           for (const kind of ["isDirectory", "isFile"]) {
+            f.stage(`prepare-unsupported-fsync-${kind}`);
             const prelude = `const originalFsync=fs.fsyncSync;fs.fsyncSync=(fd)=>{if(fs.fstatSync(fd).${kind}())throw Object.assign(new Error('fixture fsync unsupported'),{code:'EINVAL'});return originalFsync(fd);};`;
             const unsupported = await f.prepare("", { prelude });
             expect(unsupported.receipt.durable).toBe(false);
+            f.stage(`recover-unsupported-fsync-${kind}`);
             expect((await f.recover(unsupported)).report.reason).toContain(
               "durable recovery metadata is incomplete",
             );
             expect(readFileSync(join(unsupported.source, "source.txt"), "utf8")).toBe(
               "retained source\n",
             );
+            f.stage(`cleanup-unsupported-fsync-${kind}`);
             const normal = await f.program(
               "const owner=createStaging(ctx.staging,ctx.repository);fs.mkdirSync(join(owner.payload,'source'));owner.prepared({files:[],deleted:[]});owner.admitted(captureClaimNamespace(join(owner.payload,'source')));owner.settled();owner.dispose();console.log(JSON.stringify({removed:!fs.existsSync(owner.root)}));",
               prelude,
