@@ -1,5 +1,6 @@
 // Internal task-flow registry facade for runtime modules.
 export {
+  beginTaskFlowRegistryWorkerMutation,
   createTaskFlowForTask,
   createManagedTaskFlow,
   deleteTaskFlowRecordById,
