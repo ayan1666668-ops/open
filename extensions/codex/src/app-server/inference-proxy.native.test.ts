@@ -106,7 +106,9 @@ describe.skipIf(process.platform === "win32")("native inference admission", () =
       vi.stubEnv("OPENCLAW_STATE_DIR", path.join(root, "state"));
       vi.stubEnv("HOME", native.env.HOME);
       vi.stubEnv("CODEX_HOME", native.codexHome);
-      context.onTestFinished(() => vi.unstubAllEnvs());
+      context.onTestFinished(() => {
+        vi.unstubAllEnvs();
+      });
       const changed = new EventEmitter();
       changed.setMaxListeners(64);
       transport.upstream = "";
@@ -352,7 +354,9 @@ describe.skipIf(process.platform === "win32")("native inference admission", () =
       vi.stubEnv("OPENCLAW_STATE_DIR", path.join(root, "state"));
       vi.stubEnv("HOME", native.env.HOME);
       vi.stubEnv("CODEX_HOME", native.codexHome);
-      context.onTestFinished(() => vi.unstubAllEnvs());
+      context.onTestFinished(() => {
+        vi.unstubAllEnvs();
+      });
       const proxy = await createCodexInferenceProxy({
         upstream: new URL("https://api.openai.com/v1"),
         assertCurrent: () => {},
