@@ -187,7 +187,7 @@ when the optional sqlite-vec accelerator is unavailable; sqlite-vec keeps its
 separate 32-bit vector index. The keyword index uses each chunk's stable integer
 identity, so edits and deletion update the corresponding FTS rows directly.
 
-Agent schema 22 converts existing JSON vectors locally, without contacting an
+Agent schema 23 converts existing JSON vectors locally, without contacting an
 embedding provider. It preserves chunk IDs, provenance, recall metadata, and
 cache identities. Malformed legacy vectors retain their searchable text and
 mark their sources for reindexing. Unknown schema extensions that cannot be
