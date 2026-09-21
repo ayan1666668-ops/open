@@ -26,6 +26,18 @@ Update instructions at their owner instead of adding competing rules here.
 - Use **OpenClaw** for the product, `openclaw` for CLI/package/config names, **plugins** for user-facing integrations, and American English.
 - Edit canonical `AGENTS.md` files directly.
 
+## Execution discipline
+
+- Root cause deep. Proof scoped.
+- Real failing entry point first. Bypassed boundary != proof.
+- Separate product bugs from tool/fixture failures.
+- Check relevant prerequisites early. Parallelize independent work.
+- New check needs named unknown, risk, or required gate. Reuse valid proof.
+- Repeated failures or 10 min without new evidence: change approach. No blind retries.
+- Behavior proven + required gates green: finish/land. No optional proof polish or speculative scope growth.
+- Time pressure never waives gates. Report concrete blockers.
+- Visual change: inspected before/after screenshots. Behavior-only fix: direct boundary proof. No checkbox demos.
+
 ## One owner, complete cutover
 
 1. **Intent:** reproduce defects through the actual entry point before editing when feasible. Read complete affected modules, owners, callers, siblings, tests, history, and dependency contracts until the intended user outcome and violated invariant are supported by evidence. Before restoring a missing path, check why it was removed (`git log -p -S <symbol>`): isolation may be intentional, and a retired alias may be a completed migration. Record concrete reproduction gaps.
@@ -76,7 +88,7 @@ lightweight artifact, not load the plugin's execution runtime.
 - Every test spends CI time on every PR. New or changed tests state their measured cost in the PR (`pnpm test <file> --maxWorkers=1` wall, and CI seconds once the run exists) and stay within the budgets in [writing tests](docs/help/testing/writing-tests.md): no real timers, sleeps, or polling; no per-test Gateway or process boots when a suite-level fixture exists; no new serial config or worker pin; no broad barrel imports. A test that needs seconds must prove a contract that no cheaper layer can, and long end-to-end compositions belong in the release-only tier, not per-PR CI.
 - Select proof for the touched contract and complete the chosen workflow's required gates within user/host limits. Command references do not mandate unrelated suites. Reuse valid proof; rerun for changed inputs or missing coverage. Docs-only work needs docs sanity and `git diff --check`. Report unrun checks and gaps.
 - Prove user-visible behavior through the real flow when feasible; external API changes need live contract proof. A covering isolated mock-Gateway harness is valid channel boundary proof; live channel proof is stronger. State concrete capture or execution blockers.
-- **UI screenshot completion/landing gate:** For user-visible UI changes, attach inspected, sanitized before/after screenshots in the originating chat AND upload/embed them in the GitHub PR body or a PR comment linked from its body. Successful chat attachment delivery satisfies the chat requirement; do not verify rendering in the user's browser, ask the user to confirm visibility, or block landing because the agent cannot inspect the chat. Verify that the PR images render before merging or claiming completion. Local files, private inspection, chat-only delivery, logs, tests, review approval, and artifact-manifest links are not substitutes. Galleries and videos supplement, never replace, the required screenshots. Known attachment or upload failures remain delivery blockers; repair them or report the blocker. Only an explicit user waiver can exempt a destination.
+- **Visual screenshot completion/landing gate:** For changes to visual appearance or rendered UI states, attach inspected, sanitized before/after screenshots in the originating chat AND upload/embed them in the GitHub PR body or a PR comment linked from its body. Successful chat attachment delivery satisfies the chat requirement; do not verify rendering in the user's browser, ask the user to confirm visibility, or block landing because the agent cannot inspect the chat. Verify that the PR images render before merging or claiming completion. Local files, private inspection, chat-only delivery, logs, tests, review approval, and artifact-manifest links are not substitutes. Galleries and videos supplement, never replace, the required screenshots. Known attachment or upload failures remain delivery blockers; repair them or report the blocker. Only an explicit user waiver can exempt a destination.
 - Before committing or landing nontrivial code, obtain fresh review through the permitted workflow and resolve actionable findings unless the user opts out. Tests protect observable contracts; a helper test can pass while the registered entry point never calls it.
 
 ### Execution gotchas
