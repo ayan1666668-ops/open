@@ -704,4 +704,6 @@ export const CORE_GATEWAY_METHOD_SPECS = [
   ["files.roots.list", "file-roots", "operator.read", "2026.9"],
   ["files.root.list", "file-roots", "operator.read", "2026.9"],
   ["files.root.get", "file-roots", "operator.read", "2026.9"],
+  ["webSearch.status", "web-search", "operator.read", "2026.9"],
+  ["webSearch.test", "web-search", "operator.admin", "2026.9"],
 ] as const satisfies readonly CoreGatewayMethodSpecRow[];

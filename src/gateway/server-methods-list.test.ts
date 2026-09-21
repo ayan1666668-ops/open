@@ -237,6 +237,8 @@ describe("listGatewayMethods", () => {
       "files.roots.list",
       "files.root.list",
       "files.root.get",
+      "webSearch.status",
+      "webSearch.test",
     ];
     expect(listGatewayMethods().slice(-expectedSuffix.length)).toEqual(expectedSuffix);
     const methods = listGatewayMethods();
@@ -294,6 +296,8 @@ describe("listGatewayMethods", () => {
       "files.roots.list",
       "files.root.list",
       "files.root.get",
+      "webSearch.status",
+      "webSearch.test",
     ]);
   });
 
@@ -480,6 +484,8 @@ describe("listGatewayMethods", () => {
       "files.roots.list",
       "files.root.list",
       "files.root.get",
+      "webSearch.status",
+      "webSearch.test",
     ];
     expect(coreMethods.slice(-expectedCoreSuffix.length)).toEqual(expectedCoreSuffix);
     expect(methods.indexOf("approval.get")).toBeGreaterThan(methods.indexOf("tts.speak"));
