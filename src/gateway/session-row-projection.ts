@@ -25,6 +25,7 @@ import type { readSessionRowFacts } from "./server-methods/session-placement-rea
 import { yieldSessionListWork } from "./session-projection-work.js";
 import { readSessionRowModelFacts } from "./session-row-model-facts.js";
 import { withPreparedSessionRows, type SessionRowReadView } from "./session-row-prepared-read.js";
+import { readSessionRowAncestors } from "./session-row-projection-ancestors.js";
 import {
   createSessionRowProjectionArchive,
   isColdArchivedSessionRow as isCold,
@@ -76,6 +77,7 @@ export async function createSessionRowProjection(params: {
   let topologyDirty = true,
     disposed = false;
   let epoch = 0;
+  let rowRevision = 0;
   let materializedCount = 0;
   let scope: ReturnType<typeof prepareSessionRowScopes>;
   let pending: Promise<void> | undefined;
@@ -139,6 +141,7 @@ export async function createSessionRowProjection(params: {
     transcriptUpdates.remove(id);
     const row = rows.get(id);
     if (row) {
+      rowRevision++;
       markRelated(row);
       creators.update(row);
       records.index(row, indexes, true);
@@ -148,6 +151,7 @@ export async function createSessionRowProjection(params: {
     backfill.remove(id);
   }
   function put(row: records.Row) {
+    rowRevision++;
     const previous = rows.get(records.identity(row));
     creators.update(previous, row);
     if (previous) {
@@ -518,15 +522,7 @@ export async function createSessionRowProjection(params: {
           }
           markRelated(row);
           if ("current" in mutation && mutation.current.sessionKeys.includes(row.key)) {
-            put({
-              ...row,
-              entry: undefined,
-              storedEntry: undefined,
-              materialized: undefined,
-              lastMessagePreview: undefined,
-              fallbackModel: undefined,
-              generation: Symbol("row"),
-            });
+            put(records.renewGeneration(row));
             dirty.add(records.identity(row));
           } else {
             remove(records.identity(row));
@@ -579,6 +575,7 @@ export async function createSessionRowProjection(params: {
       return row;
     });
   function dispose() {
+    rowRevision++;
     disposed = true;
     catalog.dispose();
     transcriptUpdates.dispose();
@@ -648,6 +645,8 @@ export async function createSessionRowProjection(params: {
       return row?.entry?.sessionId === query.sessionId ? [row] : [];
     },
     describe,
+    ancestorRows: (record: records.MaterializedRow) =>
+      readSessionRowAncestors(record, { cfg, context: metadata.current, referenced, describe }),
     setArchivePageSize: archive.setPageSize,
     modelFacts(row: records.EntryRow) {
       return readSessionRowModelFacts({
@@ -684,6 +683,8 @@ export async function createSessionRowProjection(params: {
         metadata.prepare(epoch, cfg, matching, put);
       }
       return {
+        // Include replacements and lifecycle-only removals as well as publications/materialization.
+        revision: epoch + rowRevision + materializedCount,
         cfg,
         modelCatalog: catalog.current,
         rowContext: metadata.current,

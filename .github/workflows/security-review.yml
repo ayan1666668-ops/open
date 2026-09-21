@@ -15,6 +15,8 @@ permissions:
   actions: read
   statuses: write
 
+# Use the event's trusted default-branch checkout in both jobs. An explicit SHA
+# can be mistaken for fork code after a merge when it matches merge_commit_sha.
 jobs:
   resolve:
     if: >-
@@ -35,8 +37,13 @@ jobs:
       - name: Check out trusted workflow scripts
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.workflow_sha }}
           persist-credentials: false
+
+      - name: Setup supported Node runtime
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24.19.0"
+          package-manager-cache: false
 
       - name: Resolve current pull requests
         id: event
@@ -68,7 +75,6 @@ jobs:
       - name: Check out trusted workflow scripts
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.workflow_sha }}
           persist-credentials: false
 
       - name: Setup trusted policy runtime

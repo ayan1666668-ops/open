@@ -3,7 +3,7 @@ import type { Model } from "@openclaw/llm-core";
  * Worker-thread entrypoint for serializable compaction planning requests.
  */
 import { resolveSummarizationRequestBudget } from "../../packages/agent-core/src/harness/compaction/summarization-budget.js";
-import { serveWorkerTasks } from "../infra/worker-task-pool.js";
+import { serveWorkerTasks } from "../infra/worker-task-server.js";
 import {
   buildOversizedFallbackPlan,
   buildStageSplitPlan,

@@ -193,20 +193,8 @@ export async function maybeWakeRequesterAfterAllChildrenSettled(
   ) {
     return false;
   }
-  const requesterHasUnsettledDescendants = () =>
-    hasDescendantRunAwaitingSettle(
-      requesterSessionKey,
-      currentSettledEntry.runId,
-      requesterAgentId,
-      requesterStorePath,
-    );
-
   const frozenBatchRunIds = currentState.batchRunIds;
   const currentRearmGeneration = currentState.rearmGeneration;
-  const hasUnsettledDescendants = requesterHasUnsettledDescendants();
-  if ((!frozenBatchRunIds || frozenBatchRunIds.length === 0) && hasUnsettledDescendants) {
-    return false;
-  }
   let settledBatch: SubagentRunRecord[];
   if (frozenBatchRunIds && frozenBatchRunIds.length > 0) {
     const runsById = new Map(requesterRuns.map((entry) => [entry.runId, entry]));
@@ -244,6 +232,20 @@ export async function maybeWakeRequesterAfterAllChildrenSettled(
     return false;
   }
 
+  const batchCreatedAt = Math.min(...settledBatch.map((entry) => entry.createdAt));
+  const requesterHasUnsettledDescendants = () =>
+    hasDescendantRunAwaitingSettle(
+      requesterSessionKey,
+      currentSettledEntry.runId,
+      requesterAgentId,
+      requesterStorePath,
+      batchCreatedAt,
+    );
+  const hasUnsettledDescendants = requesterHasUnsettledDescendants();
+  if ((!frozenBatchRunIds || frozenBatchRunIds.length === 0) && hasUnsettledDescendants) {
+    return false;
+  }
+
   const resolveGatewayContext = getSharedGatewayContextResolver(settledBatch);
   const hadGatewayContext = Boolean(resolveGatewayContext?.());
   // Runtime loading may outlive the Gateway. Unavailable ownership spends no delivery budget.
@@ -251,6 +253,11 @@ export async function maybeWakeRequesterAfterAllChildrenSettled(
     return false;
   }
   const batchRunIds = settledBatch.map((entry) => entry.runId).toSorted();
+  // Scheduling is per child, but every replay of this frozen wave is one input.
+  // Retain all possible shipped sources only for exact accepted-input matching.
+  const settleWakeSourceSessionKeys = [
+    ...new Set(settledBatch.map((entry) => entry.childSessionKey)),
+  ].toSorted();
   const selectedState = readSharedBatchState(settledBatch);
   const isStoreCurrent = () =>
     settledBatch.every((entry) =>
@@ -598,7 +605,8 @@ export async function maybeWakeRequesterAfterAllChildrenSettled(
                 steerMessage: wakeMessage,
                 requesterSessionOrigin,
                 directOrigin,
-                sourceSessionKey: currentSettledEntry.childSessionKey,
+                sourceSessionKey: settleWakeSourceSessionKeys[0],
+                settleWakeSourceSessionKeys,
                 sourceTool: "subagent_settle",
                 targetRequesterSessionKey: requesterSessionKey,
                 requesterIsSubagent: requesterDepth >= 1,

@@ -15,11 +15,13 @@ import type { GatewayClient, GatewayRequestContext } from "./server-methods/type
 import { readPreparedGatewayModelCatalogMetadata } from "./server-model-catalog-view.js";
 import type { SessionListDiagnostics } from "./session-list-diagnostics.types.js";
 import {
+  filterSessionCandidateEntries,
   filterSessionEntries,
   type SessionListFilteredEntries,
   type SessionListFilterParams,
 } from "./session-list-filters.js";
 import { sortAndLimitSessionEntries, type SessionEntryPair } from "./session-list-order.js";
+import { bindSessionListRowRead } from "./session-list-read-result.js";
 import { prepareProjectedSessionPresentation } from "./session-row-presentation.js";
 import type { Query as SessionRowQuery } from "./session-row-projection-record.js";
 import type { SessionRowProjection } from "./session-row-projection.js";
@@ -261,15 +263,22 @@ export function filterAndSortSessionEntries(params: SessionListFilterParams): Se
   ).entries;
 }
 
+// One filter set per resident owner; never retain viewer decisions or time-dependent predicates.
+const sessionListCandidates = new WeakMap<
+  SessionRowProjection,
+  { revision: number; key: string; entries: SessionEntryPair[] }
+>();
+
 /** Shared synchronous membership policy for list pages and full-roster transcript search. */
 export function prepareProjectedSessionList(params: {
   projection: SessionRowProjection;
   opts: SessionsListParams;
+  key?: string;
   context?: GatewayRequestContext;
   client?: GatewayClient | null;
   now: number;
 }) {
-  const { projection, opts, context, client, now } = params;
+  const { projection, opts, key: exactKey, context, client, now } = params;
   const presentation = prepareProjectedSessionPresentation(
     projection,
     client,
@@ -282,14 +291,32 @@ export function prepareProjectedSessionList(params: {
       : undefined,
   );
   const prepared = prepareSessionRowSelection(projection, opts, {
+    key: exactKey,
     now,
     rowContext: presentation.rowContext,
   });
   const { getTarget } = prepared;
   const { active } = presentation;
   const identity = gatewayClientSessionCreator(client ?? null)?.id;
+  let candidates: SessionEntryPair[] | undefined;
+  // Person references resolve against the full visible roster before candidate filtering.
+  if (!opts.spawnedBy && !opts.involvingProfileId) {
+    const { revision } = projection.state;
+    const key = JSON.stringify([exactKey, opts]);
+    let cached = sessionListCandidates.get(projection);
+    if (cached?.revision !== revision || cached.key !== key) {
+      cached = {
+        revision,
+        key,
+        entries: runSynchronousWork(filterSessionCandidateEntries(prepared)),
+      };
+      sessionListCandidates.set(projection, cached);
+    }
+    candidates = cached.entries;
+  }
   const filters: SessionListFilterParams = {
     ...prepared,
+    ...(candidates ? { entries: candidates, candidatesPrepared: true } : {}),
     involvingActorId: opts.involvingMe ? identity : undefined,
     ownerFirstActorId: opts.ownerFirst ? identity : undefined,
     restrictProfileReferences: client !== undefined,
@@ -316,12 +343,13 @@ export function prepareProjectedSessionList(params: {
 export async function listProjectedSessions(params: {
   projection: SessionRowProjection;
   opts: SessionsListParams;
+  key?: string;
   context?: GatewayRequestContext;
   client?: GatewayClient | null;
   diagnostics?: SessionListDiagnostics;
   onResult?: (result: SessionsListResult) => void;
 }): Promise<SessionsListResult> {
-  const { projection, opts, context, client, diagnostics } = params;
+  const { projection, opts, key: exactKey, context, client, diagnostics } = params;
   const dirtyRowCount = projection.dirtyRowCount;
   const materializedBefore = projection.materializedCount;
   diagnostics?.mark("materialize");
@@ -340,6 +368,7 @@ export async function listProjectedSessions(params: {
     const { presentation, prepared, filters } = prepareProjectedSessionList({
       projection,
       opts,
+      key: exactKey,
       context,
       client,
       now,
@@ -374,19 +403,18 @@ export async function listProjectedSessions(params: {
       const row = presentation.present(record, {
         includeDerivedTitles: opts.includeDerivedTitles && includeTranscriptFields,
         includeLastMessage: opts.includeLastMessage && includeTranscriptFields,
+        includeActivitySummary: opts.includeActivitySummary === true,
       });
       if (!row) {
         return [];
       }
-      if (!opts.includeActivitySummary) {
-        delete row.activitySummary;
-      }
+      bindSessionListRowRead(row, { projection, record, client });
       if ((record.materializedSequence ?? 0) > materializedBefore) {
         materializedRowCount++;
       }
       if (opts.activeOnly && sentinel(record.key)) {
-        delete row.childSessions;
-        delete row.hasActiveSubagentRun;
+        row.childSessions = undefined;
+        row.hasActiveSubagentRun = undefined;
       }
       return [row];
     });
