@@ -7,6 +7,7 @@ import {
   fetchCatalogIconBlobUrl,
   fetchLinkFaviconBlobUrl,
   fetchPluginIconBlobUrl,
+  fetchPluginThemeArtworkBlobUrl,
 } from "./icon-loader.ts";
 
 const auth = {
@@ -113,27 +114,28 @@ describe("catalog icon loader", () => {
     expect(fetchMock.mock.calls.some(([url]) => url === iconUrl)).toBe(false);
   });
 
-  it.each(["light", "dark"] as const)(
-    "requests %s package artwork without changing catalog URLs",
-    async (theme) => {
-      vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:themed");
-      const fetchMock = vi.fn().mockImplementation(async () => imageResponse());
-      vi.stubGlobal("fetch", fetchMock);
-      const common = {
-        auth,
-        resourceBasePath: "/openclaw",
-        gatewayUrl: window.location.origin.replace(/^http/u, "ws"),
-        signal: new AbortController().signal,
-        theme,
-      };
-      await fetchPluginIconBlobUrl({ ...common, pluginId: "@example/plugin" });
-      await fetchCatalogIconBlobUrl({ ...common, iconUrl: "https://example.test/icon.png" });
-      expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
-        `/openclaw/__openclaw__/plugin-icon/%40example%2Fplugin?theme=${theme}`,
-        "/openclaw/__openclaw__/catalog-icon/https%3A%2F%2Fexample.test%2Ficon.png",
-      ]);
-    },
-  );
+  it("caches theme artwork misses by content URL and refuses non-resource URLs", async () => {
+    const fetchMock = vi.fn().mockImplementation(async () => imageResponse());
+    vi.stubGlobal("fetch", fetchMock);
+    const params = {
+      auth,
+      resourceBasePath: "/openclaw",
+      gatewayUrl: window.location.origin,
+      url: "/__openclaw__/plugin-theme-art/test/theme/hat/beret?v=miss",
+    };
+    await expect(fetchPluginThemeArtworkBlobUrl(params)).resolves.toBeNull();
+    await expect(fetchPluginThemeArtworkBlobUrl(params)).resolves.toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(`/openclaw${params.url}`);
+    await expect(
+      fetchPluginThemeArtworkBlobUrl({ ...params, url: "https://other.test/art.svg" }),
+    ).resolves.toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await expect(
+      fetchPluginThemeArtworkBlobUrl({ ...params, url: params.url.replace("miss", "new") }),
+    ).resolves.toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
 
   it("refuses proxy loading when the configured gateway is cross-origin", async () => {
     const fetchMock = vi.fn();

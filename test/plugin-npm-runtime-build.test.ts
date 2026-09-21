@@ -42,28 +42,42 @@ function expectPluginNpmRuntimeBuildPlan(
 }
 
 describe("plugin npm runtime build planning", () => {
-  it("includes optional theme artwork in the published runtime package", () => {
-    const packageDir = tempDirs.make("openclaw-plugin-theme-artwork-");
+  it("packages declared theme definitions and artwork outside conventional asset paths", () => {
+    const packageDir = tempDirs.make("openclaw-plugin-theme-package-");
     writeFileSync(
       path.join(packageDir, "package.json"),
       JSON.stringify({
-        name: "theme-artwork-fixture",
-        type: "module",
+        name: "theme-fixture",
+        version: "1.0.0",
         openclaw: { extensions: ["./index.ts"] },
       }),
     );
-    writeFileSync(path.join(packageDir, "index.ts"), "export default {};\n");
-    mkdirSync(path.join(packageDir, "assets"));
-    for (const name of ["icon.png", "icon-light.png", "icon-dark.png"]) {
-      writeFileSync(path.join(packageDir, "assets", name), name);
-    }
-
+    writeFileSync(
+      path.join(packageDir, "openclaw.plugin.json"),
+      JSON.stringify({
+        id: "theme-fixture",
+        themes: [
+          {
+            id: "workshop",
+            name: "Workshop",
+            description: "Workshop colors",
+            source: "palettes/workshop.json",
+            hats: { beret: "art/beret.svg" },
+            critters: { ferris: { source: "visitors/ferris.svg", crossMs: 9000 } },
+          },
+        ],
+      }),
+    );
     const plan = expectPluginNpmRuntimeBuildPlan(
       resolvePluginNpmRuntimeBuildPlan({ repoRoot, packageDir }),
     );
-
     expect(plan.packageFiles).toEqual(
-      expect.arrayContaining(["assets/icon.png", "assets/icon-light.png", "assets/icon-dark.png"]),
+      expect.arrayContaining([
+        "openclaw.plugin.json",
+        "palettes/workshop.json",
+        "art/beret.svg",
+        "visitors/ferris.svg",
+      ]),
     );
   });
 
