@@ -17,7 +17,7 @@ const foreignKey = "agent:main:dashboard:background-conversation";
 const baseTime = 1_900_000_000_000;
 
 type MeasuredPane = HTMLElement & {
-  state: Pick<ChatPageHost, "sessionKey" | "chatMessages">;
+  state: Pick<ChatPageHost, "sessionKey" | "chatMessages" | "chatAvatarStatus">;
   presencePayload?: PresencePayload;
   render: () => unknown;
   updateComplete: Promise<boolean>;
@@ -80,6 +80,7 @@ suite.define(() => {
       let selected = createControlUiSessionRow(selectedKey, "Foreground conversation", baseTime);
       let foreign = createControlUiSessionRow(foreignKey, "Background conversation", baseTime);
       const gateway = await installMockGateway(page, {
+        deferredMethods: ["agent.identity.get"],
         sessionKey: selectedKey,
         sessions: [selected, foreign],
         historyMessages: [
@@ -99,6 +100,22 @@ suite.define(() => {
       await page.getByText("The retained conversation is ready.", { exact: true }).waitFor();
       const backgroundRow = page.locator(`[data-session-key="${foreignKey}"]`);
       await backgroundRow.waitFor({ state: "visible" });
+      await gateway.waitForRequest("agent.identity.get");
+      expect(
+        await page.evaluate(
+          () =>
+            document.querySelector<MeasuredPane>("openclaw-chat-pane.chat-pane-cache__pane--active")
+              ?.state.chatAvatarStatus,
+        ),
+      ).toBeNull();
+      await gateway.resolveDeferred("agent.identity.get");
+      // Transcript paint precedes the idle avatar read. Its accepted status owns
+      // completion; virtual time alone cannot settle an outstanding identity request.
+      await page.waitForFunction(
+        () =>
+          document.querySelector<MeasuredPane>("openclaw-chat-pane.chat-pane-cache__pane--active")
+            ?.state.chatAvatarStatus === "none",
+      );
       await page.clock.install();
       await pauseVirtualClock(page);
       const probe = await observePaneRenders(page);
