@@ -4,7 +4,12 @@ import { assessPopulation, buildPopulationSnapshot } from "./population-controll
 
 describe("diagnostic projection", () => {
   it("does not turn missing evidence into a measured zero", () => {
-    const snapshot = buildPopulationSnapshot({ campaignId: "c", groupId: "g", replicas: [], observations: [] });
+    const snapshot = buildPopulationSnapshot({
+      campaignId: "c",
+      groupId: "g",
+      replicas: [],
+      observations: [],
+    });
     const diagnostic = buildDynamicsDiagnostic(snapshot, assessPopulation(snapshot));
     expect(diagnostic.evidenceCompleteness).toBeNull();
     expect(diagnostic.systemPressure).toBeNull();
@@ -13,7 +18,26 @@ describe("diagnostic projection", () => {
     expect(diagnostic).not.toHaveProperty("activeReplicas");
   });
   it("recomputes pressure and counts observed replicas without claiming they are active", () => {
-    const snapshot = buildPopulationSnapshot({ campaignId: "c", groupId: "g", replicas: [], observations: [{ replicaId: "a", candidateEntropy: 0.9, coherence: 0.2, mobility: 0.7, evidenceCompleteness: 0.5, verifierDisagreement: 0, resourcePressure: 0.95, contextPressure: 0.1, debtPressure: 0.1, branchingRatio: 0, progressRate: 0.5 }] });
+    const snapshot = buildPopulationSnapshot({
+      campaignId: "c",
+      groupId: "g",
+      replicas: [],
+      observations: [
+        {
+          replicaId: "a",
+          candidateEntropy: 0.9,
+          coherence: 0.2,
+          mobility: 0.7,
+          evidenceCompleteness: 0.5,
+          verifierDisagreement: 0,
+          resourcePressure: 0.95,
+          contextPressure: 0.1,
+          debtPressure: 0.1,
+          branchingRatio: 0,
+          progressRate: 0.5,
+        },
+      ],
+    });
     snapshot.resourcePressure = 0;
     snapshot.phaseMixture.jammed = 0;
     const diagnostic = buildDynamicsDiagnostic(snapshot, assessPopulation(snapshot));

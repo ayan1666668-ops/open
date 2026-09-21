@@ -19,8 +19,11 @@ export function buildDynamicsDiagnostic(
   decision: PopulationDecision,
 ): DynamicsDiagnostic {
   const snapshot = buildPopulationSnapshot(input);
-  const pressures = [snapshot.resourcePressure, snapshot.contextPressure, snapshot.debtPressure]
-    .filter((value): value is number => value !== null);
+  const pressures = [
+    snapshot.resourcePressure,
+    snapshot.contextPressure,
+    snapshot.debtPressure,
+  ].filter((value): value is number => value !== null);
   const unresolved: string[] = [];
   if (snapshot.evidenceCompleteness === null) {
     unresolved.push("evidence-unknown");

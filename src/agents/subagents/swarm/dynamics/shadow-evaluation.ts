@@ -22,7 +22,11 @@ export function evaluateShadowPolicy(params: {
   candidatePolicyDigest: string;
   metrics: readonly ShadowMetric[];
 }): ShadowEvaluation {
-  for (const value of [params.experimentId, params.baselinePolicyDigest, params.candidatePolicyDigest]) {
+  for (const value of [
+    params.experimentId,
+    params.baselinePolicyDigest,
+    params.candidatePolicyDigest,
+  ]) {
     if (typeof value !== "string" || !value.trim()) {
       throw new Error("shadow experiment and policy identities must be non-empty");
     }
@@ -38,9 +42,16 @@ export function evaluateShadowPolicy(params: {
   const names = new Set<string>();
   let totalWeight = 0;
   for (const metric of params.metrics) {
-    if (typeof metric.name !== "string" || !metric.name.trim() || names.has(metric.name) ||
-        typeof metric.higherIsBetter !== "boolean" || !Number.isFinite(metric.baseline) ||
-        !Number.isFinite(metric.candidate) || !Number.isFinite(metric.weight) || metric.weight <= 0) {
+    if (
+      typeof metric.name !== "string" ||
+      !metric.name.trim() ||
+      names.has(metric.name) ||
+      typeof metric.higherIsBetter !== "boolean" ||
+      !Number.isFinite(metric.baseline) ||
+      !Number.isFinite(metric.candidate) ||
+      !Number.isFinite(metric.weight) ||
+      metric.weight <= 0
+    ) {
       throw new Error("shadow metrics require unique names, finite values, and positive weight");
     }
     names.add(metric.name);
@@ -63,8 +74,12 @@ export function evaluateShadowPolicy(params: {
   return {
     ...params,
     weightedDelta,
-    disposition: weightedDelta > 0 ? "candidate-improvement" :
-      weightedDelta < 0 ? "candidate-regression" : "insufficient-evidence",
+    disposition:
+      weightedDelta > 0
+        ? "candidate-improvement"
+        : weightedDelta < 0
+          ? "candidate-regression"
+          : "insufficient-evidence",
     authority: "proposal-only",
   };
 }

@@ -9,7 +9,13 @@ export type CandidateManifest = {
 };
 
 export type MeasurementKind =
-  | "test" | "static-analysis" | "replay" | "performance" | "security" | "formal" | "human";
+  | "test"
+  | "static-analysis"
+  | "replay"
+  | "performance"
+  | "security"
+  | "formal"
+  | "human";
 
 /** Receipts must come from a trusted execution owner; this module cannot attest their truth. */
 export type MeasurementReceipt = {
@@ -45,14 +51,15 @@ type VerificationBinding = {
   contractDigest: string;
 };
 
-export type VerificationResult = VerificationBinding & (
-  | { status: "verified"; evidenceDigest: string; satisfiedRequirementIds: readonly string[] }
-  | {
-      status: "incomplete" | "rejected";
-      missingRequirementIds: readonly string[];
-      failedMeasurementIds: readonly string[];
-    }
-);
+export type VerificationResult = VerificationBinding &
+  (
+    | { status: "verified"; evidenceDigest: string; satisfiedRequirementIds: readonly string[] }
+    | {
+        status: "incomplete" | "rejected";
+        missingRequirementIds: readonly string[];
+        failedMeasurementIds: readonly string[];
+      }
+  );
 
 export type EffectRequest = {
   version: 1;
@@ -66,7 +73,13 @@ export type EffectRequest = {
 };
 
 const MEASUREMENT_KINDS: readonly MeasurementKind[] = [
-  "test", "static-analysis", "replay", "performance", "security", "formal", "human",
+  "test",
+  "static-analysis",
+  "replay",
+  "performance",
+  "security",
+  "formal",
+  "human",
 ];
 
 function requireText(value: unknown, name: string): asserts value is string {
@@ -102,9 +115,10 @@ function canonical(value: unknown, parents = new Set<object>()): string {
       return `[${Array.from(value, (item) => canonical(item, parents)).join(",")}]`;
     }
     const record = value as Record<string, unknown>;
-    return `{${Object.keys(record).sort().map(
-      (key) => `${JSON.stringify(key)}:${canonical(record[key], parents)}`,
-    ).join(",")}}`;
+    return `{${Object.keys(record)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonical(record[key], parents)}`)
+      .join(",")}}`;
   } finally {
     parents.delete(value);
   }
@@ -115,7 +129,11 @@ export function stableDigest(value: unknown): string {
 }
 
 export function verificationContractDigest(contract: VerificationContract): string {
-  if (contract.version !== 1 || !Array.isArray(contract.requirements) || !contract.requirements.length) {
+  if (
+    contract.version !== 1 ||
+    !Array.isArray(contract.requirements) ||
+    !contract.requirements.length
+  ) {
     throw new Error("verification requires a non-empty version-1 contract");
   }
   const ids = new Set<string>();
@@ -124,7 +142,10 @@ export function verificationContractDigest(contract: VerificationContract): stri
     if (ids.has(requirement.id) || !MEASUREMENT_KINDS.includes(requirement.kind)) {
       throw new Error("verification requirements must have unique ids and valid kinds");
     }
-    if (!Number.isSafeInteger(requirement.minIndependentConfirmations) || requirement.minIndependentConfirmations < 1) {
+    if (
+      !Number.isSafeInteger(requirement.minIndependentConfirmations) ||
+      requirement.minIndependentConfirmations < 1
+    ) {
       throw new Error("required confirmations must be positive safe integers");
     }
     ids.add(requirement.id);
@@ -149,12 +170,24 @@ export function candidateIdentity(manifest: CandidateManifest): string {
 }
 
 function validateMeasurement(measurement: MeasurementReceipt): void {
-  if (measurement.version !== 1 || typeof measurement.passed !== "boolean" || !MEASUREMENT_KINDS.includes(measurement.kind)) {
+  if (
+    measurement.version !== 1 ||
+    typeof measurement.passed !== "boolean" ||
+    !MEASUREMENT_KINDS.includes(measurement.kind)
+  ) {
     throw new Error("invalid measurement version, status, or kind");
   }
   for (const key of [
-    "measurementId", "candidateDigest", "candidateIdentity", "contractDigest", "requirementId",
-    "producerRunId", "producerReplicaId", "resultDigest", "evidenceDigest", "independenceKey",
+    "measurementId",
+    "candidateDigest",
+    "candidateIdentity",
+    "contractDigest",
+    "requirementId",
+    "producerRunId",
+    "producerReplicaId",
+    "resultDigest",
+    "evidenceDigest",
+    "independenceKey",
   ] as const) {
     requireText(measurement[key], key);
   }
@@ -174,9 +207,11 @@ export function verifyCandidate(params: {
   const byId = new Map<string, MeasurementReceipt>();
   for (const measurement of params.measurements) {
     validateMeasurement(measurement);
-    if (measurement.candidateDigest !== binding.candidateDigest ||
-        measurement.candidateIdentity !== binding.candidateIdentity ||
-        measurement.contractDigest !== binding.contractDigest) {
+    if (
+      measurement.candidateDigest !== binding.candidateDigest ||
+      measurement.candidateIdentity !== binding.candidateIdentity ||
+      measurement.contractDigest !== binding.contractDigest
+    ) {
       continue;
     }
     const requirement = requirements.get(measurement.requirementId);
@@ -190,7 +225,9 @@ export function verifyCandidate(params: {
     byId.set(measurement.measurementId, measurement);
   }
   const relevant = [...byId.keys()].sort().map((id) => byId.get(id)!);
-  const failedMeasurementIds = relevant.filter((item) => !item.passed).map((item) => item.measurementId);
+  const failedMeasurementIds = relevant
+    .filter((item) => !item.passed)
+    .map((item) => item.measurementId);
   if (failedMeasurementIds.length > 0) {
     return { ...binding, status: "rejected", missingRequirementIds: [], failedMeasurementIds };
   }
@@ -198,9 +235,11 @@ export function verifyCandidate(params: {
   const satisfiedRequirementIds: string[] = [];
   const missingRequirementIds: string[] = [];
   for (const requirement of params.contract.requirements) {
-    const keys = new Set(relevant.filter(
-      (item) => item.passed && item.requirementId === requirement.id,
-    ).map((item) => item.independenceKey));
+    const keys = new Set(
+      relevant
+        .filter((item) => item.passed && item.requirementId === requirement.id)
+        .map((item) => item.independenceKey),
+    );
     if (keys.size >= requirement.minIndependentConfirmations) {
       satisfiedRequirementIds.push(requirement.id);
     } else {
@@ -225,9 +264,11 @@ export function buildEffectRequest(params: {
   requestedEffect: string;
 }): EffectRequest {
   const identity = candidateIdentity(params.candidate);
-  if (params.verification.status !== "verified" ||
-      params.verification.candidateIdentity !== identity ||
-      params.verification.candidateDigest !== params.candidate.candidateDigest) {
+  if (
+    params.verification.status !== "verified" ||
+    params.verification.candidateIdentity !== identity ||
+    params.verification.candidateDigest !== params.candidate.candidateDigest
+  ) {
     throw new Error("verification no longer matches the complete candidate manifest");
   }
   requireText(params.verification.contractDigest, "contract digest");

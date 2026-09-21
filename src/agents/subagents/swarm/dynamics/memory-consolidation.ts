@@ -1,5 +1,9 @@
 export const MEMORY_PHASES = [
-  "observation", "trace", "correlated", "candidate-belief", "crystal",
+  "observation",
+  "trace",
+  "correlated",
+  "candidate-belief",
+  "crystal",
 ] as const;
 export type MemoryPhase = (typeof MEMORY_PHASES)[number];
 export type MemoryEvidence = {
@@ -35,8 +39,12 @@ export function assessMemoryEvidence(evidence: MemoryEvidence): MemoryAssessment
       authority: "knowledge-only",
     };
   }
-  if (evidence.independentConfirmations >= 3 && evidence.recurrence >= 0.75 &&
-      evidence.evidenceStrength >= 0.85 && evidence.freshness >= 0.6) {
+  if (
+    evidence.independentConfirmations >= 3 &&
+    evidence.recurrence >= 0.75 &&
+    evidence.evidenceStrength >= 0.85 &&
+    evidence.freshness >= 0.6
+  ) {
     return {
       phase: "crystal",
       reason: "recurring independently confirmed evidence is strong and fresh",
