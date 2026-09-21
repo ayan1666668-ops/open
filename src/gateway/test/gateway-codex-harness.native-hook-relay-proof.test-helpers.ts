@@ -558,6 +558,7 @@ function capturedApprovalCommandMatches(captured: string, command: string): bool
   return Boolean(
     argv &&
     argv.length === 3 &&
+    typeof argv[0] === "string" &&
     ["bash", "zsh", "sh"].includes(path.basename(argv[0])) &&
     (argv[1] === "-lc" || argv[1] === "-c") &&
     argv[2] === command,
