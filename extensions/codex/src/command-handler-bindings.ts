@@ -7,10 +7,10 @@ import type { PluginCommandContext, PluginCommandResult } from "openclaw/plugin-
 import { getSessionEntry, resolveStorePath } from "openclaw/plugin-sdk/session-store-runtime";
 import { closeCodexStartupClientBestEffort } from "./app-server/attempt-client-cleanup.js";
 import { normalizeCodexAppServerBindingModelProvider } from "./app-server/auth-profile.js";
+import { type CodexAppServerLiveThreadOwnership } from "./app-server/client-runtime-state.js";
 import {
   consumeCodexAppServerLiveThread,
   hasCodexAppServerLiveThread,
-  type CodexAppServerLiveThreadOwnership,
 } from "./app-server/client-runtime.js";
 import type { CodexAppServerClient } from "./app-server/client.js";
 import { isCodexFastServiceTier } from "./app-server/config.js";

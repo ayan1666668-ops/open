@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { recordCodexEphemeralThreadCreation } from "./client-runtime.js";
+import { recordCodexEphemeralThreadCreation } from "./client-runtime-state.js";
 import { resolveCodexAppServerRuntimeOptions } from "./config.js";
 import { parseCodexNativeToolCatalog, loadCodexNativeToolCatalog } from "./native-tool-catalog.js";
 import { buildCodexAppServerConnectionFingerprint } from "./plugin-app-cache-key.js";

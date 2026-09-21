@@ -39,11 +39,12 @@ import {
   withCodexThreadLifecycleBinding,
 } from "./thread-lifecycle-adoption.js";
 import { CodexThreadBindingConflictError } from "./thread-lifecycle-errors.js";
-import { resumeExistingCodexThread, startFreshCodexThread } from "./thread-lifecycle-io.js";
+import { resumeExistingCodexThread } from "./thread-lifecycle-io.js";
 import {
   prepareCodexThreadLifecyclePreflight,
   resolveCodexThreadAgentDir,
 } from "./thread-lifecycle-preflight.js";
+import { startFreshCodexThread } from "./thread-lifecycle-start.js";
 import type {
   CodexAppServerThreadLifecycleBinding,
   CodexStartOrResumeThreadParams,

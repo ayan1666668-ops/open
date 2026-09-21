@@ -7,10 +7,8 @@ import {
   isCodexAppServerUnsafeSubscriptionError,
   unsubscribeCodexThreadBestEffort,
 } from "./attempt-client-cleanup.js";
-import {
-  recordCodexEphemeralThreadCreation,
-  unsubscribeCodexAppServerLiveThread,
-} from "./client-runtime.js";
+import { recordCodexEphemeralThreadCreation } from "./client-runtime-state.js";
+import { unsubscribeCodexAppServerLiveThread } from "./client-runtime.js";
 import { CodexAppServerRpcError, type CodexAppServerClient } from "./client.js";
 import { buildCodexAppServerConnectionFingerprint } from "./plugin-app-cache-key.js";
 import {

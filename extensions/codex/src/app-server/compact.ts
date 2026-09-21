@@ -21,10 +21,10 @@ import {
 } from "./attempt-client-cleanup.js";
 import { readCodexNotificationItem } from "./attempt-notifications.js";
 import { resolveCodexBindingAppServerConnection } from "./binding-connection.js";
+import { type CodexAppServerLiveThreadOwnership } from "./client-runtime-state.js";
 import {
   consumeCodexAppServerLiveThread,
   retainCodexAppServerLiveThread,
-  type CodexAppServerLiveThreadOwnership,
 } from "./client-runtime.js";
 import {
   CodexAppServerRpcError,

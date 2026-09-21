@@ -32,3 +32,13 @@ export function expectRuntimePolicy(
 ) {
   expectFields(runtime, "runtime policy", fields);
 }
+
+export const retiredTurnIdleTimeoutKeys = [
+  "turnCompletionIdleTimeoutMs",
+  "turnAssistantCompletionIdleTimeoutMs",
+  "postToolRawAssistantCompletionIdleTimeoutMs",
+];
+
+export function envRef(id: string) {
+  return { source: "env" as const, provider: "default", id };
+}

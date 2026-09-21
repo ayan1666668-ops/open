@@ -3,11 +3,11 @@ import {
   deliverAgentHarnessTaskCompletion,
 } from "openclaw/plugin-sdk/agent-harness-task-runtime";
 import { KeyedAsyncQueue } from "openclaw/plugin-sdk/keyed-async-queue";
+import { type CodexAppServerLiveThreadOwnership } from "./client-runtime-state.js";
 import {
   claimCodexAppServerLiveThread,
   hasCodexAppServerLiveThread,
   retainCodexAppServerLiveThread,
-  type CodexAppServerLiveThreadOwnership,
 } from "./client-runtime.js";
 import type { CodexAppServerClient } from "./client.js";
 import type {

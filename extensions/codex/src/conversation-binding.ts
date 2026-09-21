@@ -12,10 +12,10 @@ import {
 } from "./app-server/attempt-client-cleanup.js";
 import { normalizeCodexAppServerBindingModelProvider } from "./app-server/auth-profile.js";
 import {
-  consumeCodexAppServerLiveThread,
   isCodexAppServerClientRuntimeLive,
   type CodexAppServerLiveThreadOwnership,
-} from "./app-server/client-runtime.js";
+} from "./app-server/client-runtime-state.js";
+import { consumeCodexAppServerLiveThread } from "./app-server/client-runtime.js";
 import {
   isCodexAppServerIndeterminateRequestCancellationError,
   isCodexAppServerOverloadError,

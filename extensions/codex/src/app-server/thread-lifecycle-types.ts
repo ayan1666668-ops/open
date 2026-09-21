@@ -1,5 +1,5 @@
 import type { EmbeddedRunAttemptParamsV2 as EmbeddedRunAttemptParams } from "openclaw/plugin-sdk/agent-harness-runtime";
-import type { CodexAppServerLiveThreadOwnership } from "./client-runtime.js";
+import type { CodexAppServerLiveThreadOwnership } from "./client-runtime-state.js";
 import type { CodexAppServerClient } from "./client.js";
 import type { CodexAppServerRuntimeOptions } from "./config.js";
 import type { CodexInferenceProxy } from "./inference-proxy.js";

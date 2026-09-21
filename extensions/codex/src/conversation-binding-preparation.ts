@@ -20,9 +20,9 @@ import {
   type resolveCodexAppServerAuthProfileIdForAgent,
   type CodexAppServerAuthProfileLookup,
 } from "./app-server/auth-profile.js";
+import { isCodexAppServerClientRuntimeLive } from "./app-server/client-runtime-state.js";
 import {
   hasCodexAppServerLiveThread,
-  isCodexAppServerClientRuntimeLive,
   isCodexAppServerLiveThreadClaimed,
   releaseCodexAppServerLiveThread,
 } from "./app-server/client-runtime.js";

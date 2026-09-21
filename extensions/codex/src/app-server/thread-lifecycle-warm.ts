@@ -7,9 +7,9 @@ import {
   isCodexAppServerUnsafeSubscriptionError,
   unsubscribeCodexThreadBestEffort,
 } from "./attempt-client-cleanup.js";
+import { isCodexAppServerClientRuntimeLive } from "./client-runtime-state.js";
 import {
   consumeCodexAppServerLiveThread,
-  isCodexAppServerClientRuntimeLive,
   isCodexAppServerLiveThreadClaimed,
   releaseCodexAppServerLiveThread,
 } from "./client-runtime.js";

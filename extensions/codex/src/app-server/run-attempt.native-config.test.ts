@@ -9,7 +9,7 @@ import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
 import { initializeGlobalHookRunner } from "openclaw/plugin-sdk/hook-runtime";
 import { createMockPluginRegistry } from "openclaw/plugin-sdk/plugin-test-runtime";
 import { describe, expect, it, vi } from "vitest";
-import { recordCodexEphemeralThreadCreation } from "./client-runtime.js";
+import { recordCodexEphemeralThreadCreation } from "./client-runtime-state.js";
 import { CodexAppServerClient } from "./client.js";
 import { resolveCodexSupervisionAppServerRuntimeOptions } from "./config.js";
 import { setCodexTestToolFactory } from "./host-capability.test-support.js";
@@ -82,7 +82,13 @@ describe("Codex native configuration", () => {
     { transport: "stdio", hasAnswer: true, nativeProvider: "copilot" },
   ])(
     "preserves supervised native model and transport/home guards over $transport (answer: $hasAnswer, provider: $nativeProvider, configured: $configuredProvider, creation catalog: $creationCatalog)",
-    async ({ transport, hasAnswer, nativeProvider, configuredProvider = nativeProvider, creationCatalog = false }) => {
+    async ({
+      transport,
+      hasAnswer,
+      nativeProvider,
+      configuredProvider = nativeProvider,
+      creationCatalog = false,
+    }) => {
       const nativeSearchEnabled =
         nativeProvider === "copilot" || configuredProvider !== nativeProvider;
       const approvalsReviewer =
@@ -182,7 +188,9 @@ describe("Codex native configuration", () => {
           } else if (message.method === "modelProvider/capabilities/read") {
             result = { webSearch: true };
           } else if (message.method === "thread/read") {
-            result = { thread: { ...nativeResponse.thread, path: creationCatalog ? null : rolloutPath } };
+            result = {
+              thread: { ...nativeResponse.thread, path: creationCatalog ? null : rolloutPath },
+            };
           } else if (message.method === "thread/resume") {
             // Native resume tears down an idle, unsubscribed thread before applying overrides.
             // A successful response alone cannot prove that its configuration changed.

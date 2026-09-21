@@ -7,12 +7,12 @@ import { patchSessionEntry, upsertSessionEntry } from "openclaw/plugin-sdk/sessi
 import { describe, expect, it, vi } from "vitest";
 import { resumeThread } from "../command-handler-bindings.js";
 import { resolveCodexCommandDeps } from "../command-handler-deps.js";
+import { readCodexNativeHookInstallation } from "./client-runtime-state.js";
 import {
   claimCodexAppServerLiveThread,
   ensureCodexAppServerClientRuntime,
   isCodexAppServerLiveThreadClaimed,
   retainCodexAppServerLiveThread,
-  readCodexNativeHookInstallation,
 } from "./client-runtime.js";
 import { CodexAppServerClient, CodexAppServerRpcError } from "./client.js";
 import { createFakeCodexAppServerClient } from "./codex-app-server.test-fixtures.js";
@@ -51,6 +51,17 @@ import {
 } from "./shared-client.js";
 import { createClientHarness } from "./test-support.js";
 import { fingerprintEnvironmentSelection } from "./thread-fingerprints.js";
+import {
+  createMessageDynamicTool,
+  createNamedDynamicTool,
+  createDeferredNamedDynamicTool,
+  createPluginAppConfigPatch,
+  createPluginAppPolicyContext,
+  createTwoPluginAppConfigPatch,
+  createTwoPluginAppPolicyContext,
+  createTwoCalendarAppConfigPatch,
+  createTwoCalendarAppPolicyContext,
+} from "./thread-lifecycle-plugin-config.test-support.js";
 import { registerThreadPolicyRefreshTests } from "./thread-lifecycle-policy-refresh.test-support.js";
 import {
   buildThreadResumeParams,
@@ -219,156 +230,6 @@ function writeCodexAppServerBinding(...args: Parameters<typeof writeRawCodexAppS
     webSearchThreadConfigFingerprint: DEFAULT_CODEX_WEB_SEARCH_THREAD_CONFIG_FINGERPRINT,
     ...binding,
   });
-}
-
-function createMessageDynamicTool(
-  description: string,
-  actions: string[] = ["send"],
-): CodexDynamicToolFunctionSpec {
-  return {
-    type: "function",
-    name: "message",
-    description,
-    inputSchema: {
-      type: "object",
-      properties: {
-        action: {
-          type: "string",
-          enum: actions,
-        },
-      },
-      required: ["action"],
-      additionalProperties: false,
-    },
-  };
-}
-
-function createNamedDynamicTool(name: string): CodexDynamicToolFunctionSpec {
-  return {
-    type: "function",
-    name,
-    description: `${name} test tool`,
-    inputSchema: {
-      type: "object",
-      properties: {},
-      additionalProperties: false,
-    },
-  };
-}
-
-function createDeferredNamedDynamicTool(
-  name: string,
-): Parameters<typeof startOrResumeThread>[0]["dynamicTools"][number] {
-  return {
-    type: "namespace",
-    name: "openclaw",
-    description: "",
-    tools: [{ ...createNamedDynamicTool(name), deferLoading: true }],
-  };
-}
-
-function createPluginAppConfigPatch(options: { approvalsReviewer?: "user" } = {}) {
-  return {
-    apps: {
-      _default: {
-        enabled: false,
-        destructive_enabled: false,
-        open_world_enabled: false,
-      },
-      "google-calendar-app": {
-        enabled: true,
-        destructive_enabled: true,
-        open_world_enabled: true,
-        default_tools_approval_mode: "auto",
-        ...(options.approvalsReviewer ? { approvals_reviewer: options.approvalsReviewer } : {}),
-      },
-    },
-  };
-}
-
-function createPluginAppPolicyContext() {
-  return {
-    fingerprint: "plugin-policy-1",
-    apps: {
-      "google-calendar-app": {
-        configKey: "google-calendar",
-        marketplaceName: "openai-curated" as const,
-        pluginName: "google-calendar",
-        allowDestructiveActions: true,
-        mcpServerNames: ["google-calendar"],
-      },
-    },
-    pluginAppIds: {
-      "google-calendar": ["google-calendar-app"],
-    },
-  };
-}
-
-function createTwoPluginAppConfigPatch() {
-  return {
-    apps: {
-      ...createPluginAppConfigPatch().apps,
-      "gmail-app": {
-        enabled: true,
-        destructive_enabled: true,
-        open_world_enabled: true,
-        default_tools_approval_mode: "auto",
-      },
-    },
-  };
-}
-
-function createTwoPluginAppPolicyContext() {
-  return {
-    fingerprint: "plugin-policy-2",
-    apps: {
-      ...createPluginAppPolicyContext().apps,
-      "gmail-app": {
-        configKey: "gmail",
-        marketplaceName: "openai-curated" as const,
-        pluginName: "gmail",
-        allowDestructiveActions: false,
-        mcpServerNames: ["gmail"],
-      },
-    },
-    pluginAppIds: {
-      ...createPluginAppPolicyContext().pluginAppIds,
-      gmail: ["gmail-app"],
-    },
-  };
-}
-
-function createTwoCalendarAppConfigPatch() {
-  return {
-    apps: {
-      ...createPluginAppConfigPatch().apps,
-      "google-calendar-secondary-app": {
-        enabled: true,
-        destructive_enabled: true,
-        open_world_enabled: true,
-        default_tools_approval_mode: "auto",
-      },
-    },
-  };
-}
-
-function createTwoCalendarAppPolicyContext() {
-  return {
-    fingerprint: "plugin-policy-calendar-2",
-    apps: {
-      ...createPluginAppPolicyContext().apps,
-      "google-calendar-secondary-app": {
-        configKey: "google-calendar",
-        marketplaceName: "openai-curated" as const,
-        pluginName: "google-calendar",
-        allowDestructiveActions: false,
-        mcpServerNames: ["google-calendar"],
-      },
-    },
-    pluginAppIds: {
-      "google-calendar": ["google-calendar-app", "google-calendar-secondary-app"],
-    },
-  };
 }
 
 async function createManualResumeFixture(

@@ -1,5 +1,5 @@
 import { AgentHarnessPreflightError } from "openclaw/plugin-sdk/agent-harness-runtime";
-import { readCodexNativeHookInstallation } from "./client-runtime.js";
+import { readCodexNativeHookInstallation } from "./client-runtime-state.js";
 import {
   isCodexAppServerOverloadError,
   isCodexAppServerPrewriteRequestCancellationError,

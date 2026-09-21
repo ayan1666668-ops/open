@@ -4,11 +4,11 @@ import {
   CodexAppServerUnsafeSubscriptionError,
   unsubscribeCodexThreadBestEffort,
 } from "./attempt-client-cleanup.js";
+import { type CodexAppServerLiveThreadOwnership } from "./client-runtime-state.js";
 import {
   isCodexAppServerLiveThreadClaimed,
   releaseCodexAppServerLiveThread,
   retainCodexAppServerLiveThread,
-  type CodexAppServerLiveThreadOwnership,
 } from "./client-runtime.js";
 import type { CodexAppServerClient } from "./client.js";
 import type {

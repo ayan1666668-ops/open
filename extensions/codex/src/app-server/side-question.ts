@@ -10,7 +10,6 @@ import {
   type AgentHarnessSideQuestionResult,
   type EmbeddedRunAttemptParamsV2,
   type NativeHookRelayEvent,
-  type registerNativeHookRelay,
 } from "openclaw/plugin-sdk/agent-harness-runtime";
 import { resolveAgentWorkspaceDir } from "openclaw/plugin-sdk/agent-runtime";
 import { resolveSessionAgentIdsStrict } from "openclaw/plugin-sdk/agent-scope-runtime";
@@ -48,7 +47,6 @@ import {
   resolveCodexModelBackedReviewerPolicyContext,
   shouldAutoApproveCodexAppServerApprovals,
   withMcpElicitationsApprovalPolicy,
-  type CodexAppServerRuntimeOptions,
 } from "./config.js";
 import {
   buildDynamicTools,
@@ -76,7 +74,6 @@ import { CodexEphemeralTurn } from "./ephemeral-turn.js";
 import { CodexNativeToolLifecycleProjector } from "./event-projector-native-tool-lifecycle.js";
 import {
   buildCodexNativeHookRelayConfig,
-  CODEX_NATIVE_HOOK_RELAY_EVENTS,
   emitCodexNativePreToolUseFailureDiagnostic,
   resolveCodexNativeHookRelayForApprovalPolicy,
   type CodexNativePreToolUseFailure,
@@ -131,6 +128,10 @@ import {
 import { cleanupCodexSideQuestion } from "./side-question-cleanup.js";
 import { SIDE_DEVELOPER_INSTRUCTIONS } from "./side-question-instructions.js";
 import {
+  resolveCodexSideNativeHookRelayEvents,
+  registerCodexSideNativeHookRelay,
+} from "./side-question-native-hook-relay.js";
+import {
   buildCodexRuntimeThreadConfig,
   CODEX_NATIVE_PERSONALITY_NONE,
   resolveCodexAppServerRequestModelSelection,
@@ -156,11 +157,6 @@ const SIDE_QUESTION_COMPLETION_TIMEOUT_MS = 600_000;
 class CodexSideQuestionTimeoutError extends Error {
   override name = "TimeoutError";
 }
-const CODEX_SIDE_NATIVE_HOOK_RELAY_MIN_TTL_MS = 30 * 60_000;
-const CODEX_SIDE_NATIVE_HOOK_RELAY_TTL_GRACE_MS = 5 * 60_000;
-const CODEX_SIDE_NATIVE_HOOK_RELAY_STARTUP_REQUEST_COUNT = 3;
-const CODEX_SIDE_NATIVE_HOOK_RELAY_EVENTS_WITH_APP_SERVER_APPROVALS =
-  CODEX_NATIVE_HOOK_RELAY_EVENTS.filter((event) => event !== "permission_request");
 export async function runCodexAppServerSideQuestion(
   params: AgentHarnessSideQuestionParamsV2,
   options: {
@@ -1011,86 +1007,6 @@ export async function runCodexAppServerSideQuestion(
       ],
     });
   }
-}
-
-function resolveCodexSideNativeHookRelayEvents(params: {
-  configuredEvents?: readonly NativeHookRelayEvent[];
-  approvalPolicy: CodexAppServerRuntimeOptions["approvalPolicy"];
-}): readonly NativeHookRelayEvent[] {
-  if (params.configuredEvents?.length) {
-    return params.configuredEvents;
-  }
-  return params.approvalPolicy === "never"
-    ? CODEX_NATIVE_HOOK_RELAY_EVENTS
-    : CODEX_SIDE_NATIVE_HOOK_RELAY_EVENTS_WITH_APP_SERVER_APPROVALS;
-}
-
-function registerCodexSideNativeHookRelay(params: {
-  options: {
-    enabled?: boolean;
-    ttlMs?: number;
-    gatewayTimeoutMs?: number;
-  };
-  events: readonly NativeHookRelayEvent[];
-  agentId: string | undefined;
-  sessionId: string;
-  sessionKey: string | undefined;
-  config: EmbeddedRunAttemptParamsV2["config"];
-  autoApproveMcpTools: boolean;
-  projectedMcpServers: Parameters<typeof registerNativeHookRelay>[0]["projectedMcpServers"];
-  runId: string;
-  channelId?: string;
-  requestTimeoutMs: number;
-  completionTimeoutMs: number;
-  loopDetectionPreToolUseRelay: boolean;
-  signal: AbortSignal;
-  hostCapabilities: EmbeddedRunAttemptParamsV2["hostCapabilities"];
-  assertCurrent: () => void;
-  onPreToolUseFailure: (failure: CodexNativePreToolUseFailure) => void;
-}): ReturnType<typeof registerNativeHookRelayForBundledRuntime> | undefined {
-  if (params.options.enabled === false) {
-    return undefined;
-  }
-  return registerNativeHookRelayForBundledRuntime({
-    provider: "codex",
-    ...(params.agentId ? { agentId: params.agentId } : {}),
-    sessionId: params.sessionId,
-    ...(params.sessionKey ? { sessionKey: params.sessionKey } : {}),
-    ...(params.config ? { config: params.config } : {}),
-    autoApproveMcpTools: params.autoApproveMcpTools,
-    projectedMcpServers: params.projectedMcpServers,
-    runId: params.runId,
-    ...(params.channelId ? { channelId: params.channelId } : {}),
-    allowedEvents: params.events,
-    preToolUseLoopDetection: params.loopDetectionPreToolUseRelay,
-    ttlMs: resolveCodexSideNativeHookRelayTtlMs({
-      explicitTtlMs: params.options.ttlMs,
-      requestTimeoutMs: params.requestTimeoutMs,
-      completionTimeoutMs: params.completionTimeoutMs,
-    }),
-    signal: params.signal,
-    runBeforeToolCall: params.hostCapabilities.runBeforeToolCall,
-    assertActive: params.assertCurrent,
-    onPreToolUseFailure: params.onPreToolUseFailure,
-    command: {
-      timeoutMs: params.options.gatewayTimeoutMs,
-    },
-  });
-}
-
-function resolveCodexSideNativeHookRelayTtlMs(params: {
-  explicitTtlMs: number | undefined;
-  requestTimeoutMs: number;
-  completionTimeoutMs: number;
-}): number {
-  if (params.explicitTtlMs !== undefined) {
-    return params.explicitTtlMs;
-  }
-  const relayBudgetMs =
-    params.requestTimeoutMs * CODEX_SIDE_NATIVE_HOOK_RELAY_STARTUP_REQUEST_COUNT +
-    params.completionTimeoutMs +
-    CODEX_SIDE_NATIVE_HOOK_RELAY_TTL_GRACE_MS;
-  return Math.max(CODEX_SIDE_NATIVE_HOOK_RELAY_MIN_TTL_MS, Math.floor(relayBudgetMs));
 }
 
 function buildSideRunAttemptParams(

@@ -1,6 +1,7 @@
 import path from "node:path";
 import { resolveCodexAppServerLocalHomeDir } from "./auth-start-options.js";
-import { readCodexClientSessionMeta, readCodexEphemeralThreadCatalog } from "./client-runtime.js";
+import { readCodexEphemeralThreadCatalog } from "./client-runtime-state.js";
+import { readCodexClientSessionMeta } from "./client-runtime.js";
 import type { CodexAppServerClient } from "./client.js";
 import type { CodexAppServerRuntimeOptions } from "./config.js";
 import { buildCodexAppServerConnectionFingerprint } from "./plugin-app-cache-key.js";
