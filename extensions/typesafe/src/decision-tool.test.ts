@@ -26,6 +26,14 @@ it("rejects malformed input without echoing evidence", () => {
   ).toThrow("provide state and a nonempty questions map");
 });
 
+it("preserves valid resource-limit input for runtime handling", () => {
+  const batch = parseDecisionEvaluateInput({
+    state: "x".repeat(1_048_577),
+    questions: { q: { type: "boolean" } },
+  });
+  expect(batch.questions.q).toMatchObject({ type: "boolean" });
+});
+
 it("changes the rubric version when nested instructions or criteria change", () => {
   const base = parseDecisionEvaluateInput({
     state: null,

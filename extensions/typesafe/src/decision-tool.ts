@@ -105,9 +105,11 @@ export function parseDecisionEvaluateInput(value: unknown): DecisionBatch {
         }),
       ) as DecisionBatch["questions"],
     };
-    if (!validateDecisionBatch(normalized)) {
-      throw new DecisionContractError();
-    }
+    // `false` is reserved for valid input that exceeds the shared runtime's
+    // resource bounds. Keep it intact so the runtime can return
+    // `unsupported-input` with bounded guidance instead of misreporting a
+    // resource-limit failure as malformed input.
+    validateDecisionBatch(normalized);
     return normalized;
   } catch {
     throw new Error(
@@ -146,6 +148,9 @@ function capabilityGuidance(capabilities: DecisionProviderCapabilities): string 
     capabilities.maxScoreLevels === undefined
       ? undefined
       : `at most ${capabilities.maxScoreLevels} Score levels`,
+    capabilities.maxInputTokens === undefined
+      ? undefined
+      : `at most ${capabilities.maxInputTokens} provider input tokens; shorten the state or rubric if exceeded`,
   ].filter((value): value is string => value !== undefined);
   const boolean = capabilities.requiresBooleanCriteria
     ? " Boolean questions require both criteria.true and criteria.false descriptions."

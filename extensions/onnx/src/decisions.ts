@@ -81,6 +81,7 @@ export function createOnnxProvider(
       maxQuestions: 32,
       maxChoiceAlternatives: 64,
       maxScoreLevels: 64,
+      maxInputTokens: 512,
       requiresBooleanCriteria: true,
     },
     async evaluate(batch: DecisionBatch, context) {

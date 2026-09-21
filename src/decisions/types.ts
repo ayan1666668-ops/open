@@ -115,6 +115,8 @@ export type DecisionProviderCapabilities = {
   readonly maxQuestions?: number;
   readonly maxChoiceAlternatives?: number;
   readonly maxScoreLevels?: number;
+  /** Maximum encoded tokens per provider input, when the provider can state it. */
+  readonly maxInputTokens?: number;
   readonly requiresBooleanCriteria?: boolean;
 };
 

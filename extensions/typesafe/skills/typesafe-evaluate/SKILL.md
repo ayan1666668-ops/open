@@ -17,18 +17,23 @@ State and descriptions accept text, JSON objects/arrays, or null. Each question
 sees the same state and is independent: it cannot read another answer in the batch.
 Put meaning in instructions and criteria, not just the question ID.
 
-- **Choice:** choose one of 2–255 named alternatives. Include a no-match alternative
-  if appropriate. Preserve the selected label, full distribution, and confidence.
-- **Score:** rate against 2–10 ordered descriptions. The answer is the fractional
-  probability-weighted zero-based position, not a normalized score or integer.
+- **Choice:** choose one of 2 or more named alternatives. Include a no-match
+  alternative if appropriate. Preserve the selected label, full distribution, and
+  confidence. The selected provider may impose a lower maximum.
+- **Score:** rate against 2 or more ordered descriptions. The answer is the
+  fractional probability-weighted zero-based position, not a normalized score or
+  integer. The selected provider may impose a lower maximum.
 - **Boolean:** probability of true, from 0 to 1, with optional `criteria.true` and
-  `criteria.false` descriptions. This is not intensity and has no confidence field.
+  `criteria.false` descriptions. This is not intensity and has no confidence field;
+  the selected provider may require both descriptions.
 
 Only send necessary evidence authorized for sharing. Never include credentials.
 Do not silently truncate evidence or split competing Choice options to fit a
-request. The plugin bounds JSON to 4 MiB, 262144 nodes, and depth 64; provider token
-limits are separate. The calling agent's configured `decisionModel` selects the
-provider and model; do not add a per-call model override.
+request. The shared runtime bounds JSON to 1 MiB, 20000 nodes, and depth 32;
+provider-specific question, label, score-level, Boolean-criteria, and encoded-token
+limits are reported as bounded guidance when they apply. The calling agent's
+configured `decisionModel` selects the provider and model; do not add a per-call
+model override.
 
 Reported probabilities may be rounded and need not sum exactly to one. Preserve the
 vendor-selected label and score; normalization or selecting the largest reported
