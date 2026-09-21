@@ -345,7 +345,7 @@ export async function requestAgentTextWithEvents(params: {
   }
 }
 
-export function extractChatFinalText(event: EventFrame, runId: string): string | undefined {
+function extractChatFinalText(event: EventFrame, runId: string): string | undefined {
   if (event.event !== "chat") {
     return undefined;
   }
