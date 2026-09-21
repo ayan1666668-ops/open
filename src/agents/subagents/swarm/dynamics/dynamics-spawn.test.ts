@@ -57,6 +57,45 @@ describe("native dynamics spawn preparation", () => {
     expect(() => prepareDynamicsSpawn({ ...base, dynamics })).toThrow();
   });
 
+  it("binds the complete candidate manifest before fingerprinting", () => {
+    const candidate = {
+      version: 1 as const,
+      candidateDigest: "candidate:a",
+      sourceDigest: "source:a",
+      recipeDigest: "recipe:a",
+      policyDigest: "policy:a",
+    };
+    const first = prepareDynamicsSpawn({
+      ...base,
+      dynamics: {
+        profile: "independent-verifier",
+        handoff: { candidateDigest: "candidate:a", artifactRefs: ["artifact:a"] },
+        candidate,
+      },
+    });
+    expect(first.task).toContain("Exact candidate binding");
+    expect(first.task).not.toBe(
+      prepareDynamicsSpawn({
+        ...base,
+        dynamics: {
+          profile: "independent-verifier",
+          handoff: { candidateDigest: "candidate:a", artifactRefs: ["artifact:a"] },
+          candidate: { ...candidate, policyDigest: "policy:b" },
+        },
+      }).task,
+    );
+    expect(() =>
+      prepareDynamicsSpawn({
+        ...base,
+        dynamics: {
+          profile: "independent-verifier",
+          handoff: { candidateDigest: "candidate:b", artifactRefs: ["artifact:a"] },
+          candidate,
+        },
+      }),
+    ).toThrow("does not match the explicit handoff");
+  });
+
   it("bounds handoffs and snapshots their content before returning", () => {
     expect(() =>
       prepareDynamicsSpawn({
