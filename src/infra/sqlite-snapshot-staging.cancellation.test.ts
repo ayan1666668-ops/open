@@ -11,7 +11,7 @@ import {
   closeOpenClawStateDatabaseForTest,
   openOpenClawStateDatabase,
 } from "../state/openclaw-state-db.js";
-import { requireNodeSqlite } from "./node-sqlite.js";
+import { openNodeSqliteDatabase, requireNodeSqlite } from "./node-sqlite.js";
 import { SQLITE_READONLY_CHILD_ARG } from "./runtime-process-entrypoints.js";
 import * as workerUrls from "./runtime-worker-url.js";
 import { withSqliteReadOnlyWorkerScope } from "./sqlite-readonly-worker.js";
@@ -190,7 +190,8 @@ function fixture(count = 3, payloadBytes = 4096) {
 async function readSnapshot(source: string, signal?: AbortSignal): Promise<void> {
   const prepared = await prepareSqliteReadOnlyLocation(source, { signal });
   try {
-    const db = new (requireNodeSqlite().DatabaseSync)(prepared.location, { readOnly: true });
+    // Windows test homes can put the prepared snapshot at the native path limit.
+    const db = openNodeSqliteDatabase(prepared.location, { readOnly: true });
     try {
       expect(db.prepare("SELECT value FROM probe").get()).toEqual({ value: "preserved" });
     } finally {
@@ -224,6 +225,13 @@ it("keeps caller cancellation independent of idle reclamation", async () => {
     const reclamation = reclaimAbandonedSqliteSnapshotsAsync(f.cache);
     const entered = await f.entered;
     const ownedSetupReady = owned ? createDeferredCore() : undefined;
+    // Establish the native owner before measuring cancellation of its snapshot.
+    if (owned) {
+      vi.stubEnv("XDG_CACHE_HOME", owned.bootstrapCache);
+    }
+    const owner = owned
+      ? await acquireOpenClawStateDatabaseFileExclusion(owned.options.path)
+      : undefined;
     const operation = withSqliteReadOnlyWorkerScope(async () => {
       if (mode === "snapshot") {
         await readSnapshot(f.source, controller.signal);
@@ -234,12 +242,11 @@ it("keeps caller cancellation independent of idle reclamation", async () => {
           signal: controller.signal,
         });
       } else {
-        if (!owned) {
+        if (!owned || !owner) {
           throw new Error("Owned database fixture is unavailable");
         }
         // Cold-open repair must not consume the backlog reserved for the owned snapshot.
         vi.stubEnv("XDG_CACHE_HOME", owned.bootstrapCache);
-        const owner = await acquireOpenClawStateDatabaseFileExclusion(owned.options.path);
         try {
           await owner.mutate(owner.assertCurrent, async () => {
             openOpenClawStateDatabase(owned.options);
