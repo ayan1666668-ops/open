@@ -1,3 +1,6 @@
+import { mkdtempSync, rmdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import type { DecisionOutcome, DecisionRuntimeV1 } from "openclaw/plugin-sdk/decisions";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/plugin-entry";
 import { createTestPluginApi } from "openclaw/plugin-sdk/plugin-test-api";
@@ -145,30 +148,47 @@ describe("registered TypeSafe tool safety policy", () => {
     expect(fixture.evaluate).not.toHaveBeenCalled();
   });
 
-  it("shows the complete redacted call for approval without changing the original arguments", async () => {
-    const fixture = register();
-    fixture.evaluate.mockResolvedValue(judgment({ needs_review: 0.9 }));
-    const params = {
-      command: "inspect service settings",
-      apiKey: "synthetic-api-credential-for-redaction-test",
-      nested: { password: "synthetic-password-for-redaction-test" },
-    };
-    const original = structuredClone(params);
-    const result = await fixture.policy().evaluate(toolCall(params), context());
-    const submitted = JSON.stringify(fixture.evaluate.mock.calls[0]?.[0]);
-    expect(submitted).toContain(params.command);
-    expect(submitted).not.toContain(params.apiKey);
-    expect(submitted).not.toContain(params.nested.password);
-    expect(params).toEqual(original);
-    if (!result || !("requireApproval" in result) || !result.requireApproval) {
-      throw new Error("Expected review for a call that fits the approval display");
+  it("preserves configured and built-in redaction in provider and approval evidence even with logging redaction off", async () => {
+    const directory = mkdtempSync(path.join(tmpdir(), "openclaw-typesafe-redaction-"));
+    const configPath = path.join(directory, "openclaw.json");
+    writeFileSync(
+      configPath,
+      JSON.stringify({ logging: { redactSensitive: "off", redactPatterns: ["/internal-\\d+/g"] } }),
+    );
+    vi.stubEnv("OPENCLAW_CONFIG_PATH", configPath);
+    try {
+      const fixture = register({
+        toolSafety: { enabled: true, policy: "Protect internal-12345." },
+      });
+      fixture.evaluate.mockResolvedValue(judgment({ needs_review: 0.9 }));
+      const params = {
+        command: "inspect internal-12345 settings",
+        apiKey: "synthetic-api-credential-for-redaction-test",
+        nested: { password: "synthetic-password-for-redaction-test" },
+      };
+      const original = structuredClone(params);
+      const result = await fixture.policy().evaluate(toolCall(params), context());
+      const submitted = JSON.stringify(fixture.evaluate.mock.calls[0]?.[0]);
+      expect(submitted).toContain("inspect");
+      expect(submitted).not.toContain("internal-12345");
+      expect(submitted).not.toContain(params.apiKey);
+      expect(submitted).not.toContain(params.nested.password);
+      expect(params).toEqual(original);
+      if (!result || !("requireApproval" in result) || !result.requireApproval) {
+        throw new Error("Expected review for a call that fits the approval display");
+      }
+      const description = result.requireApproval.description;
+      expect(description).toContain("exec");
+      expect(description).toContain("inspect");
+      expect(description).not.toContain("internal-12345");
+      expect(description).not.toContain(params.apiKey);
+      expect(description).not.toContain(params.nested.password);
+      expect(description.length).toBeLessThanOrEqual(512);
+    } finally {
+      vi.unstubAllEnvs();
+      unlinkSync(configPath);
+      rmdirSync(directory);
     }
-    const description = result.requireApproval.description;
-    expect(description).toContain("exec");
-    expect(description).toContain(params.command);
-    expect(description).not.toContain(params.apiKey);
-    expect(description).not.toContain(params.nested.password);
-    expect(description.length).toBeLessThanOrEqual(512);
   });
 
   it("blocks review when the full call cannot fit the approval display", async () => {

@@ -144,7 +144,8 @@ measured accuracy guarantees; validate them against your workload.
 
 Screening sends the tool name, tool kind, input kind, operator policy, and
 serialized arguments to the configured decision endpoint. OpenClaw's credential
-redactor runs before transmission, even when log redaction is disabled. Arguments
+redactor runs before transmission, honoring `logging.redactPatterns` together with
+built-in protections even when log redaction is disabled. Arguments
 can still contain private content that credential redaction does not identify.
 No conversation history, session identifiers, or requester identity is included.
 Use a local System One endpoint if that evidence must remain on the host. Hosted

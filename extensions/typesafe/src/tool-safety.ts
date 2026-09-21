@@ -122,20 +122,18 @@ export function createToolSafetyPolicy(
       }
 
       // Keep credential redaction out of plugin discovery and disabled-policy startup.
-      const { redactSensitiveFieldValue, redactSensitiveText } =
+      const { redactSensitiveFieldValue, redactToolPayloadText } =
         await import("openclaw/plugin-sdk/logging-core");
       signal.throwIfAborted();
       const evidence = JSON.stringify(JSON.parse(serialized), (key, value: unknown) =>
-        typeof value === "string"
-          ? redactSensitiveFieldValue(key, value, { mode: "tools" })
-          : value,
+        typeof value === "string" ? redactSensitiveFieldValue(key, value) : value,
       );
       const state = {
-        operatorPolicy: redactSensitiveText(config.policy, { mode: "tools" }),
+        operatorPolicy: redactToolPayloadText(config.policy),
         toolName: event.toolName,
         toolKind: event.toolKind ?? "unspecified",
         toolInputKind: event.toolInputKind ?? "unspecified",
-        arguments: redactSensitiveText(evidence, { mode: "tools" }),
+        arguments: redactToolPayloadText(evidence),
         context:
           "Proposed call only. No user request or authorization evidence is supplied. Redacted values may hide relevant details.",
       };
