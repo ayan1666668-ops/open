@@ -4,6 +4,7 @@ import { cpSync, lstatSync, mkdirSync, readFileSync, rmSync, writeFileSync } fro
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { resolveNpmRunner } from "../../scripts/npm-runner.mts";
 import { resolvePnpmRunner } from "../../scripts/pnpm-runner.mts";
 import { listFilesRecursively, withTarball } from "./package-tarball-fixture.js";
 
@@ -43,15 +44,17 @@ function sourceRoot() {
 
 function installPatchedMcp(packageRoot: string) {
   const fixtureRoot = dirname(packageRoot);
-  const packed = spawnSync(
-    "npm",
-    ["pack", "--offline", "--ignore-scripts", "--json", "--pack-destination", fixtureRoot],
-    {
-      cwd: sourceRoot(),
-      encoding: "utf8",
-      timeout: 30_000,
-    },
-  );
+  const npm = resolveNpmRunner({
+    npmArgs: ["pack", "--offline", "--ignore-scripts", "--json", "--pack-destination", fixtureRoot],
+  });
+  const packed = spawnSync(npm.command, npm.args, {
+    cwd: sourceRoot(),
+    encoding: "utf8",
+    env: npm.env,
+    shell: npm.shell,
+    windowsVerbatimArguments: npm.windowsVerbatimArguments,
+    timeout: 30_000,
+  });
   expect(packed.status, packed.stderr).toBe(0);
   // A local override supplies real pnpm metadata without registry or host-cache access.
   writeFileSync(
@@ -102,9 +105,8 @@ describe("bundled browser MCP package", () => {
             join(consumer, "package.json"),
             '{"name":"browser-bundle-consumer","private":true}',
           );
-          const installed = spawnSync(
-            "npm",
-            [
+          const npm = resolveNpmRunner({
+            npmArgs: [
               "install",
               "--offline",
               "--ignore-scripts",
@@ -115,8 +117,15 @@ describe("bundled browser MCP package", () => {
               "--no-fund",
               tarball,
             ],
-            { cwd: consumer, encoding: "utf8", timeout: 30_000 },
-          );
+          });
+          const installed = spawnSync(npm.command, npm.args, {
+            cwd: consumer,
+            encoding: "utf8",
+            env: npm.env,
+            shell: npm.shell,
+            windowsVerbatimArguments: npm.windowsVerbatimArguments,
+            timeout: 30_000,
+          });
           expect(installed.status, installed.stderr).toBe(0);
           const consumerRequire = createRequire(
             join(consumer, "node_modules/openclaw/package.json"),

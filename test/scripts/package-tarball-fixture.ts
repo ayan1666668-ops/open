@@ -9,6 +9,7 @@ import {
   PACKAGE_LIFECYCLE_PENDING_RELATIVE_PATH,
 } from "../../scripts/lib/package-lifecycle-marker.mjs";
 import { WORKSPACE_TEMPLATE_PACK_PATHS } from "../../scripts/lib/workspace-bootstrap-smoke.mts";
+import { resolveNpmRunner } from "../../scripts/npm-runner.mts";
 import { resolvePnpmRunner } from "../../scripts/pnpm-runner.mts";
 
 export const CODE_MODE_WORKER_PATH = "dist/agents/code-mode.worker.js";
@@ -164,51 +165,52 @@ export function withTarball(
     const tarball = options.pack
       ? join(root, `openclaw-${version}.tgz`)
       : join(root, process.platform === "win32" ? "openclaw.tgz" : "openclaw:local.tgz");
-    const pnpm =
+    const packRunner =
       options.pack === "pnpm"
-        ? resolvePnpmRunner({
-            cwd: packageRoot,
-            pnpmArgs: [
-              "pack",
-              "--config.ignore-scripts=true",
-              "--config.node-linker=hoisted",
-              "--pack-destination",
-              root,
-            ],
-          })
-        : undefined;
-    const pack = pnpm
-      ? spawnSync(pnpm.command, pnpm.args, {
+        ? {
+            ...resolvePnpmRunner({
+              cwd: packageRoot,
+              pnpmArgs: [
+                "pack",
+                "--config.ignore-scripts=true",
+                "--config.node-linker=hoisted",
+                "--pack-destination",
+                root,
+              ],
+            }),
+            env: process.env,
+          }
+        : options.pack === "npm"
+          ? resolveNpmRunner({
+              npmArgs: ["pack", "--ignore-scripts", "--json", "--pack-destination", root],
+            })
+          : undefined;
+    const pack = packRunner
+      ? spawnSync(packRunner.command, packRunner.args, {
           cwd: packageRoot,
           encoding: "utf8",
-          env: process.env,
-          shell: pnpm.shell,
+          env: packRunner.env,
+          shell: packRunner.shell,
           timeout: 30_000,
-          windowsVerbatimArguments: pnpm.windowsVerbatimArguments,
+          windowsVerbatimArguments: packRunner.windowsVerbatimArguments,
         })
-      : options.pack === "npm"
-        ? spawnSync("npm", ["pack", "--ignore-scripts", "--json", "--pack-destination", root], {
-            cwd: packageRoot,
+      : spawnSync(
+          "tar",
+          [
+            "-czf",
+            `./${basename(tarball)}`,
+            ...(options.filesOnlyArchive
+              ? listFilesRecursively(packageRoot).map(
+                  (relativePath) => `package/${relativePath.replaceAll("\\", "/")}`,
+                )
+              : ["package"]),
+          ],
+          {
+            cwd: root,
             encoding: "utf8",
-            timeout: 30_000,
-          })
-        : spawnSync(
-            "tar",
-            [
-              "-czf",
-              `./${basename(tarball)}`,
-              ...(options.filesOnlyArchive
-                ? listFilesRecursively(packageRoot).map(
-                    (relativePath) => `package/${relativePath.replaceAll("\\", "/")}`,
-                  )
-                : ["package"]),
-            ],
-            {
-              cwd: root,
-              encoding: "utf8",
-              env: { ...process.env, COPYFILE_DISABLE: "1" },
-            },
-          );
+            env: { ...process.env, COPYFILE_DISABLE: "1" },
+          },
+        );
     expect(pack.status, pack.stderr || pack.error?.message).toBe(0);
     testBody(tarball, root, packageRoot);
   } finally {
