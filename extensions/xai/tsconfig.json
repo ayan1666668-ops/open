@@ -923,6 +923,9 @@
       ],
       "openclaw/plugin-sdk/worker-task-server": [
         "../../packages/plugin-sdk/dist/src/plugin-sdk/worker-task-server.d.ts"
+      ],
+      "openclaw/plugin-sdk/active-memory-escalation-runtime": [
+        "../../packages/plugin-sdk/dist/src/plugin-sdk/active-memory-escalation-runtime.d.ts"
       ]
     }
   }
