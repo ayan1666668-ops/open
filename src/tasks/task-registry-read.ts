@@ -111,7 +111,18 @@ export async function prepareTaskRegistryReadOwner(): Promise<TaskRegistryReadOw
   const context = captureOpenClawStateWorkerContext();
   const store = getTaskRegistryStore();
   const fence = captureTaskRegistryReadFence(context.admission);
-  const settled = await Promise.allSettled([ensureTaskRegistryReadyAsync(context), fence]);
+  // Capture identity-changing producers once; later metadata and mutation preparation stay independent.
+  const mutations = [...getTaskRegistryProcessState().projection.pending].flatMap((pending) => {
+    const settlement = pending.readSettlement;
+    return settlement?.store === store && settlement.databaseKey === context.admission.identity.key
+      ? [settlement.promise]
+      : [];
+  });
+  const settled = await Promise.allSettled([
+    ensureTaskRegistryReadyAsync(context),
+    fence,
+    ...mutations,
+  ]);
   const errors = settled.flatMap((result) => (result.status === "rejected" ? [result.reason] : []));
   if (errors.length === 1) {
     throw errors[0];

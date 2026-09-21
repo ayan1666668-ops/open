@@ -4,6 +4,8 @@ import { emitAgentEvent } from "../infra/agent-events.js";
 import { captureOpenClawStateWorkerContext } from "../state/openclaw-state-worker-context.js";
 import * as workerStore from "../state/openclaw-state-worker-store.js";
 import * as taskRuntime from "./runtime-internal.js";
+import { createRunningTaskRunCoreWithReceiptAsync } from "./task-executor-create.async.js";
+import { taskAgentEventMutations } from "./task-registry-agent-events.js";
 import { updateTask } from "./task-registry-mutation.js";
 import { prepareTaskRegistryRead } from "./task-registry-read.js";
 import {
@@ -250,5 +252,86 @@ describe("registered task list read fence", () => {
         lastToolName: "later-tool",
       });
     });
+  });
+});
+
+it("settles admitted run creations before preparing a registered task page", async () => {
+  await withReadState(async () => {
+    const originals = Array.from({ length: 4 }, (_, index) =>
+      createReadTask(`admitted-creation-${index}`),
+    );
+    const first = originals[0]!;
+    const store = await prepareTaskFixtureRead(first);
+    await requestTasks(first.ownerKey);
+    const context = captureOpenClawStateWorkerContext();
+    const mutate = store.runInitialMutationAsync.bind(store);
+    const load = store.loadMutationSnapshotAsync.bind(store);
+    const committed = createDeferred();
+    const release = createDeferred();
+    let committedCount = 0;
+    vi.spyOn(store, "runInitialMutationAsync").mockImplementation(async (...args) => {
+      const result = await mutate(...args);
+      if (args[1].type === "tasks.createRecord") {
+        committedCount += 1;
+        if (committedCount === originals.length) {
+          committed.resolve();
+        }
+        await release.promise;
+      }
+      return result;
+    });
+    const creations = originals.map((task) =>
+      createRunningTaskRunCoreWithReceiptAsync({
+        runtime: task.runtime,
+        runId: task.runId!,
+        task: task.task,
+        ownerKey: task.ownerKey,
+        scopeKind: task.scopeKind,
+        requesterSessionKey: task.requesterSessionKey,
+        notifyPolicy: "silent",
+        deliveryStatus: "not_applicable",
+        detail: { historyGeneration: "replacement" },
+      }),
+    );
+    const settled = Promise.allSettled(creations);
+    let reading: ReturnType<typeof requestTasks> | undefined;
+    try {
+      await withTestTimeout(committed.promise, 5_000, "Run creations committed before publication");
+      const snapshot = await load(
+        context,
+        originals.map((task) => ({ taskId: task.taskId, runId: task.runId })),
+      );
+      // Read-only snapshots may finish before the creation owners publish their committed rows.
+      // Keep those canonical rows fixed while producer readbacks retain their real worker path.
+      vi.spyOn(store, "loadMutationSnapshotAsync").mockImplementation(async (...args) =>
+        Array.isArray(args[1]) ? snapshot : load(...args),
+      );
+      const entered = createDeferred();
+      const fence = taskAgentEventMutations.captureReadFence;
+      vi.spyOn(taskAgentEventMutations, "captureReadFence").mockImplementationOnce((admission) => {
+        const result = fence(admission);
+        entered.resolve();
+        return result;
+      });
+      const respond = vi.fn();
+      reading = requestTasks(first.ownerKey, respond);
+      await withTestTimeout(entered.promise, 5_000, "Registered read captured its admitted work");
+      release.resolve();
+      await withTestTimeout(reading, 5_000, "Registered read joined run creation publication");
+      await Promise.all(creations);
+      expect(respond).toHaveBeenCalledOnce();
+      expect(respond.mock.calls[0]).toMatchObject([
+        true,
+        {
+          tasks: expect.arrayContaining(
+            originals.map((task) => expect.objectContaining({ id: task.taskId })),
+          ),
+        },
+      ]);
+    } finally {
+      release.resolve();
+      await settled;
+      await reading?.catch(() => {});
+    }
   });
 });
