@@ -78,7 +78,7 @@ export async function createSessionRowProjection(params: {
     disposed = false;
   let epoch = 0;
   // Releasing the token also releases weakly held list selections from the previous revision.
-  let revision: object | undefined;
+  let revisionToken: object | undefined;
   let materializedCount = 0;
   let scope: ReturnType<typeof prepareSessionRowScopes>;
   let pending: Promise<void> | undefined;
@@ -90,7 +90,7 @@ export async function createSessionRowProjection(params: {
       if (changed) {
         // Rows served during renewal need new materializations only when their model facts changed.
         epoch++;
-        revision = undefined;
+        revisionToken = undefined;
         metadata.invalidate({ all: true, scope: "catalog" });
         archive.invalidateRows({ all: true, scope: "catalog" }, rows.values());
       }
@@ -143,7 +143,7 @@ export async function createSessionRowProjection(params: {
     transcriptUpdates.remove(id);
     const row = rows.get(id);
     if (row) {
-      revision = undefined;
+      revisionToken = undefined;
       markRelated(row);
       creators.update(row);
       records.index(row, indexes, true);
@@ -153,7 +153,7 @@ export async function createSessionRowProjection(params: {
     backfill.remove(id);
   }
   function put(row: records.Row) {
-    revision = undefined;
+    revisionToken = undefined;
     const previous = rows.get(records.identity(row));
     creators.update(previous, row);
     if (previous) {
@@ -294,7 +294,7 @@ export async function createSessionRowProjection(params: {
   }
   function mark(change: SessionRowChange) {
     epoch++;
-    revision = undefined;
+    revisionToken = undefined;
     const presentationOnly = metadata.invalidate(change);
     if ("all" in change) {
       topologyDirty ||= change.scope === "stores" || change.scope === "config";
@@ -410,7 +410,7 @@ export async function createSessionRowProjection(params: {
     if (!isIncognitoSessionKey(row.key) && rows.get(records.identity(row)) !== row) {
       return false;
     }
-    revision = undefined;
+    revisionToken = undefined;
     Object.assign(row, prepared, {
       materializedSequence: ++materializedCount,
       ...metadata.materializedRevisions,
@@ -509,7 +509,7 @@ export async function createSessionRowProjection(params: {
         return;
       }
       epoch++;
-      revision = undefined;
+      revisionToken = undefined;
       dirty.add(id);
       backfill.enqueue(id);
       void ensureMaterialized().catch(() => {});
@@ -583,7 +583,7 @@ export async function createSessionRowProjection(params: {
       return row;
     });
   function dispose() {
-    revision = undefined;
+    revisionToken = undefined;
     disposed = true;
     catalog.dispose();
     transcriptUpdates.dispose();
@@ -685,7 +685,7 @@ export async function createSessionRowProjection(params: {
       }
       return {
         // Include replacements and lifecycle-only removals as well as publications/materialization.
-        revision: (revision ??= {}),
+        revision: (revisionToken ??= {}),
         cfg,
         modelCatalog: catalog.current,
         rowContext: metadata.current,
