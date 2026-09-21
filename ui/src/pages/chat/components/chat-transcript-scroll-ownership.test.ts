@@ -35,6 +35,7 @@ describe("chat transcript scroll ownership", () => {
     });
     element.scrollTop = 600;
     const anchor = new TranscriptEndAnchor();
+    anchor.capture(element);
     anchor.prepareUpdate(element, true, createTranscriptOffsetState());
     expect(anchor.isCommitPending).toBe(true);
     element.scrollTop = 500;
@@ -43,6 +44,42 @@ describe("chat transcript scroll ownership", () => {
     anchor.reconcile(element, true, true, follow, anchor.releaseCommit());
 
     expect(follow).not.toHaveBeenCalled();
+  });
+
+  it("does not reacquire precommit following from a cancelled reader anchor", () => {
+    const element = document.createElement("div");
+    Object.defineProperties(element, {
+      clientHeight: { configurable: true, value: 400 },
+      scrollHeight: { configurable: true, value: 1000 },
+    });
+    element.scrollTop = 600;
+    const anchor = new TranscriptEndAnchor();
+    anchor.capture(element);
+    // Wheel/keyboard input can precede its native offset change and the Lit update.
+    anchor.clear();
+    anchor.prepareUpdate(element, true, createTranscriptOffsetState());
+    Object.defineProperty(element, "scrollHeight", { configurable: true, value: 1200 });
+    const follow = vi.fn();
+    anchor.reconcile(element, true, false, follow, anchor.releaseCommit());
+    expect(follow).not.toHaveBeenCalled();
+    expect(element.scrollTop).toBe(600);
+  });
+
+  it("does not treat a native end clamp as an observed precommit follower", () => {
+    const element = document.createElement("div");
+    Object.defineProperties(element, {
+      clientHeight: { configurable: true, value: 400 },
+      scrollHeight: { configurable: true, value: 1000 },
+    });
+    element.scrollTop = 600;
+    const anchor = new TranscriptEndAnchor();
+    anchor.capture(element);
+    element.scrollTop = 400;
+    anchor.reconcile(element, true, false, vi.fn());
+    Object.defineProperty(element, "scrollHeight", { configurable: true, value: 750 });
+    element.scrollTop = 350;
+    anchor.prepareUpdate(element, true, createTranscriptOffsetState());
+    expect(anchor.isCommitPending).toBe(false);
   });
 
   it.each(["following", "reading", "wheel", "key", "pointer", "touch"] as const)(
@@ -79,6 +116,7 @@ describe("chat transcript scroll ownership", () => {
         policy.chatIsProgrammaticScroll = () => transcript.isProgrammaticScroll;
         policy.chatIsMaintenanceScroll = () => transcript.isMaintenanceScroll;
         container.addEventListener("scroll", (event) => handleChatScroll(policy, event));
+        transcript.scrollToEnd({ behavior: "auto" });
         if (intent === "reading") {
           policy.chatFollowLocked = true;
           policy.chatReadingHistory = true;

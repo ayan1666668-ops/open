@@ -20,6 +20,8 @@ export class TranscriptEndAnchor {
       !this.followingBeforeCommit &&
       element &&
       canFollow &&
+      this.offset !== null &&
+      Math.abs(this.offset - element.scrollTop) <= 1 &&
       !state.pendingScrollOffset &&
       (!state.scrollCommand || state.scrollCommand.target === "end") &&
       !state.pendingInteractionAnchor &&
@@ -27,6 +29,8 @@ export class TranscriptEndAnchor {
       !state.touchScrolling &&
       Math.abs((maxTranscriptScrollOffset(element) ?? 0) - element.scrollTop) <= 1
     ) {
+      // Only extend an observed end anchor. Physical end geometry alone can
+      // come from a native clamp or persist just after reader input cancelled follow.
       // Nested footer commits can temporarily enlarge the viewport and clamp
       // its offset before the final dock and measured rows reach the DOM.
       this.followingBeforeCommit = true;
