@@ -785,7 +785,7 @@ export const zh_CN = {
       delegatedAuthTitle: "MS Teams delegated auth",
       delegatedOAuthProgress: "MSTeams Delegated OAuth",
       enterAtLeastOneUser: "至少输入一个用户。",
-      envPrompt: "检测到 MSTEAMS_APP_ID + MSTEAMS_APP_PASSWORD + MSTEAMS_TENANT_ID。使用环境变量？",
+      envPrompt: "检测到 Microsoft Teams 环境凭据。使用环境变量？",
       examples: "示例：",
       graphLookupUnavailable: "Graph 查找不可用。请只使用用户 ID。",
       helpAzureBot: "1) Azure Bot registration -> 获取 App ID + Tenant ID",
@@ -796,6 +796,8 @@ export const zh_CN = {
       resolvedTeams: "已解析团队：{entries}",
       tenantIdPrompt: "输入 MS Teams Tenant ID",
       unresolvedKept: "未解析（保留原始输入）：{entries}",
+      webhookPortInvalid: "请输入 1 到 65535 之间的 TCP 端口",
+      webhookPortPrompt: "输入 MS Teams webhook 端口",
     },
     whatsapp: {
       allowedSenderNumbers: "允许的发送者号码（逗号分隔，E.164）",

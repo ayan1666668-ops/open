@@ -29,7 +29,8 @@ type MSTeamsTestRuntimeOptions = {
   createInboundDebouncer?: PluginRuntime["channel"]["debounce"]["createInboundDebouncer"];
   resolveInboundDebounceMs?: PluginRuntime["channel"]["debounce"]["resolveInboundDebounceMs"];
   resolveTextChunkLimit?: () => number;
-  resolveStorePath?: () => string;
+  resolveStorePath?: () => string | undefined;
+  buildContext?: PluginRuntime["channel"]["inbound"]["buildContext"];
   runPrepared?: typeof runPreparedInboundReply;
 };
 
@@ -185,7 +186,7 @@ export function installMSTeamsTestRuntime(options: MSTeamsTestRuntimeOptions = {
         resolveStorePath,
       },
       inbound: {
-        buildContext: buildChannelInboundEventContext,
+        buildContext: options.buildContext ?? buildChannelInboundEventContext,
         run: run as unknown as PluginRuntime["channel"]["inbound"]["run"],
       },
     },
@@ -240,6 +241,7 @@ export function createMSTeamsMessageHandlerDeps(params?: {
   return {
     cfg: params?.cfg ?? {},
     runtime: (params?.runtime ?? { error: vi.fn() }) as RuntimeEnv,
+    accountId: "default",
     appId: "test-app-id",
     app,
     tokenProvider: {

@@ -27,6 +27,8 @@ type MSTeamsInboundDispatchResult =
 
 export async function dispatchMSTeamsInboundTurn(params: {
   cfg: MSTeamsMessageHandlerDeps["cfg"];
+  accountPolicyCfg: MSTeamsMessageHandlerDeps["cfg"];
+  listenerAccountId: string;
   runtime: RuntimeEnv;
   appId: string;
   app: MSTeamsMessageHandlerDeps["app"];
@@ -76,6 +78,7 @@ export async function dispatchMSTeamsInboundTurn(params: {
     groupPolicy,
     commandAuthorized,
     effectiveGroupAllowFrom,
+    msteamsCfg,
   } = admission;
   const { route } = routing;
   const { agentBody, inboundMedia } = content;
@@ -141,9 +144,14 @@ export async function dispatchMSTeamsInboundTurn(params: {
   // Teams channel actions need both the AAD group and Graph channel ids.
   const nativeChannelId =
     isChannel && teamAadGroupId ? `${teamAadGroupId}/${graphChannelId}` : undefined;
+  // The listener config is intentionally account-scoped. If routing ever crosses
+  // accounts, re-read policy from the full config or sibling authorization can leak.
+  const senderAccessCfg =
+    route.accountId === params.listenerAccountId ? cfg : params.accountPolicyCfg;
   // Thread routing owns the final session key, so mint the bound result at dispatch preparation.
   const boundIngress = await resolveMSTeamsSenderAccess({
-    cfg,
+    cfg: senderAccessCfg,
+    accountId: route.accountId,
     activity,
     hasControlCommand: admission.isControlCommand,
     conversationThreadId: facts.threadId,
@@ -256,11 +264,11 @@ export async function dispatchMSTeamsInboundTurn(params: {
     textLimit,
     onSentMessageIds: (ids) => {
       for (const id of ids) {
-        recordMSTeamsSentMessage(conversationId, id);
+        recordMSTeamsSentMessage(conversationId, id, { accountId: route.accountId });
       }
     },
     tokenProvider,
-    sharePointSiteId: cfg.channels?.msteams?.sharePointSiteId,
+    sharePointSiteId: msteamsCfg?.sharePointSiteId,
   });
 
   const activityClientInfo = activity.entities?.find((entity) => entity.type === "clientInfo") as
