@@ -7187,6 +7187,8 @@ describe("update-cli", () => {
         expect(
           record?.steps.filter((step) => step.step.startsWith("warning:snapshot-space-preflight")),
         ).toEqual([]);
+        expect(record?.steps.map(({ detail }) => detail).join("\n")).toContain("SQLite family");
+        expect(record?.steps.map(({ detail }) => detail).join("\n")).toContain("openclaw.sqlite");
         expect(getErrorOutput()).not.toContain("SQLite family");
         expect(getErrorOutput()).not.toContain("Snapshot capacity estimate incomplete");
       }

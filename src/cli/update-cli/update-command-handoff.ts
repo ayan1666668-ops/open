@@ -190,7 +190,7 @@ export async function handoffUpdateFromGateway(params: {
   if (started.status === "joined") {
     throw new UpdatePreMutationError(
       "managed-service-handoff-already-running",
-      "Another managed update is already running. Inspect `openclaw status --all` before retrying.",
+      "Another managed update is already running. Check progress with `openclaw update status`.",
     );
   }
   const identity = {

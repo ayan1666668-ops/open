@@ -157,7 +157,7 @@ export async function assessInitialUpdateSnapshotCapacity(
       ...step,
       durationMs: Date.now() - started,
       exitCode: 0,
-      stdoutTail: diagnostics.join("\n"),
+      diagnostics,
     };
   } catch {
     return {
