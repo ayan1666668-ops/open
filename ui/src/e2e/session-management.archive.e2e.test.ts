@@ -1,5 +1,6 @@
 import path from "node:path";
 import { expect, it } from "vitest";
+import { composerContentValue } from "../test-helpers/composer-editor.ts";
 import { createControlUiSessionRow as sessionRow } from "../test-helpers/control-ui-session-fixtures.ts";
 import { expectRequestCountStable } from "./chat-flow.test-support.ts";
 import { createControlUiE2eContextOptions } from "./control-ui-e2e-suite.test-support.ts";
@@ -49,7 +50,9 @@ suite.define(() => {
     try {
       await page.goto(controlUiSessionUrl(suite.server.baseUrl, target.key));
       const pane = page.locator("openclaw-chat-pane.chat-pane-cache__pane--active");
-      const composer = pane.locator(".agent-chat__composer-combobox > textarea");
+      const composer = pane.locator(
+        ".agent-chat__composer-combobox > openclaw-composer-editor .cm-content",
+      );
       await composer.fill("Preserve this unsent draft");
       for (const row of others) {
         await page
@@ -86,7 +89,7 @@ suite.define(() => {
         gateway,
         (params) => params.key === target.key && params.archived === false,
       );
-      await expect.poll(() => composer.inputValue()).toBe("Preserve this unsent draft");
+      await expect.poll(() => composerContentValue(composer)).toBe("Preserve this unsent draft");
       const archiveRequests = (await gateway.getRequests("sessions.patch")).filter(
         (request) => typeof requireRecord(request.params).archived === "boolean",
       );
@@ -95,12 +98,18 @@ suite.define(() => {
 
       await captureUiProof(suite, page, "direct-new-session-before.png");
       await composer.press(`${modifier}+Shift+O`);
-      const newComposer = page.locator("openclaw-new-session-page .new-session-page__message");
+      const newComposer = page.locator(
+        "openclaw-new-session-page .new-session-page__message .cm-content",
+      );
       await newComposer.waitFor({ state: "visible" });
       await expect
-        .poll(() => newComposer.evaluate((element) => element === document.activeElement))
+        .poll(() =>
+          newComposer.evaluate(
+            (element) => element === (element.getRootNode() as ShadowRoot).activeElement,
+          ),
+        )
         .toBe(true);
-      expect(await newComposer.inputValue()).toBe("");
+      expect(await composerContentValue(newComposer)).toBe("");
       expect(await gateway.getRequests("sessions.create")).toEqual([]);
       expect(await gateway.getRequests("chat.send")).toEqual([]);
       await captureUiProof(suite, page, "direct-new-session-after.png");
@@ -109,7 +118,7 @@ suite.define(() => {
       await captureUiProof(suite, page, "direct-session-shortcuts-help.png");
       await page.keyboard.press("Escape");
       await page.goBack();
-      await expect.poll(() => composer.inputValue()).toBe("Preserve this unsent draft");
+      await expect.poll(() => composerContentValue(composer)).toBe("Preserve this unsent draft");
     } finally {
       await context.close();
     }
@@ -594,7 +603,9 @@ suite.define(() => {
       await rowFor(selected.key).waitFor({ state: "visible", timeout: 10_000 });
       await rowFor(selected.key).locator("a").first().click();
       await assertSelectedRoute();
-      await activePane.locator(".agent-chat__input textarea").waitFor({ state: "visible" });
+      await activePane
+        .locator(".agent-chat__input openclaw-composer-editor")
+        .waitFor({ state: "visible" });
       const replyPreview = activePane.locator(".chat-reply-preview", {
         hasText: "Replying to current message",
       });
@@ -807,7 +818,9 @@ suite.define(() => {
       await archivedNotice.waitFor({ state: "detached", timeout: 10_000 });
       await archiveEvent.waitFor({ state: "detached", timeout: 10_000 });
       await selectedRow.waitFor({ state: "visible", timeout: 10_000 });
-      await activePane.locator(".agent-chat__input textarea").waitFor({ state: "visible" });
+      await activePane
+        .locator(".agent-chat__input openclaw-composer-editor")
+        .waitFor({ state: "visible" });
       await progressCard.waitFor({ state: "visible" });
       await expect
         .poll(() =>
@@ -949,7 +962,7 @@ suite.define(() => {
       await page.goto(controlUiSessionUrl(suite.server.baseUrl, deletedKey));
       const activePane = page.locator("openclaw-chat-pane.chat-pane-cache__pane--active");
       await activePane
-        .locator(".agent-chat__input textarea")
+        .locator(".agent-chat__input openclaw-composer-editor")
         .waitFor({ state: "visible", timeout: 10_000 });
 
       const requestsBeforeDeletion = (await gateway.getRequests("sessions.list", rosterMatch))
@@ -973,7 +986,7 @@ suite.define(() => {
         )
         .toBe(mainKey);
       await activePane
-        .locator(".agent-chat__input textarea")
+        .locator(".agent-chat__input openclaw-composer-editor")
         .waitFor({ state: "visible", timeout: 10_000 });
       await expect
         .poll(async () => (await gateway.getRequests("sessions.list", rosterMatch)).length)

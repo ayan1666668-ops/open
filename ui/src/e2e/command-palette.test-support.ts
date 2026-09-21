@@ -1,5 +1,7 @@
 import type { Locator, Page } from "playwright";
 import { expect } from "vitest";
+import type { ComposerEditor } from "../components/composer-editor.ts";
+import { composerContentValue } from "../test-helpers/composer-editor.ts";
 import type { ControlUiMockGatewayScenario } from "../test-helpers/control-ui-e2e.ts";
 import { createControlUiSessionRow } from "../test-helpers/control-ui-session-fixtures.ts";
 import { controlUiSessionUrl } from "./new-session-page.test-support.ts";
@@ -102,11 +104,14 @@ export function scenario(
 
 export async function openFromForeground(page: Page, baseUrl: string) {
   await page.goto(controlUiSessionUrl(baseUrl, foregroundKey));
-  const composer = page.locator(".agent-chat__composer-combobox textarea:visible");
+  const composer = page.locator(
+    ".agent-chat__composer-combobox openclaw-composer-editor .cm-content:visible",
+  );
   await composer.fill(foregroundDraft);
-  await composer.evaluate((element: HTMLTextAreaElement, offset) => {
-    element.focus();
-    element.setSelectionRange(offset, offset);
+  await composer.evaluate((element, offset) => {
+    const editor = (element.getRootNode() as ShadowRoot).host as ComposerEditor;
+    editor.focus();
+    editor.setSelectionRange(offset, offset);
   }, caret);
   const url = page.url();
   await page.keyboard.press("ControlOrMeta+K");
@@ -121,14 +126,17 @@ export async function openFromForeground(page: Page, baseUrl: string) {
 
 export async function expectForegroundUnchanged(page: Page, composer: Locator, url: string) {
   expect(page.url()).toBe(url);
-  expect(await composer.inputValue()).toBe(foregroundDraft);
+  expect(await composerContentValue(composer)).toBe(foregroundDraft);
   await expect
     .poll(() =>
-      composer.evaluate((element: HTMLTextAreaElement) => ({
-        focused: document.activeElement === element,
-        start: element.selectionStart,
-        end: element.selectionEnd,
-      })),
+      composer.evaluate((element) => {
+        const editor = (element.getRootNode() as ShadowRoot).host as ComposerEditor;
+        return {
+          focused: editor.shadowRoot?.activeElement === element,
+          start: editor.selectionStart,
+          end: editor.selectionEnd,
+        };
+      }),
     )
     .toEqual({ focused: true, start: caret, end: caret });
 }

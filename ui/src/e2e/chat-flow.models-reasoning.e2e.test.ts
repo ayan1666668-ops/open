@@ -1,9 +1,7 @@
-import { writeFile } from "node:fs/promises";
-import type { Locator } from "playwright";
 import { expect, it } from "vitest";
 import type { ChatPaneElement } from "../pages/chat/route-draft-focus-handoff.ts";
+import { fillComposer } from "../test-helpers/composer-editor.ts";
 import { createControlUiE2eArtifactDir } from "../test-helpers/control-ui-e2e-artifacts.ts";
-import { takeControlUiViewportScreenshot } from "../test-helpers/control-ui-e2e-screenshot.ts";
 import type { ControlUiMockGateway } from "../test-helpers/control-ui-e2e.ts";
 import { revealChatModelOption, selectChatModelOption } from "../test-helpers/select-picker-e2e.ts";
 import {
@@ -18,29 +16,9 @@ import {
 import { createControlUiE2eContextOptions } from "./control-ui-e2e-suite.test-support.ts";
 
 const suite = createChatFlowE2eSuite();
-const rosterMatch = { includeGlobal: true };
+import { createReasoningProofPage } from "./chat-flow.models-reasoning.test-support.ts";
 
-async function createReasoningProofPage(scope: string) {
-  const parent = process.env.OPENCLAW_UI_E2E_ARTIFACT_DIR?.trim();
-  const artifactDir = parent ? createControlUiE2eArtifactDir(scope, parent) : undefined;
-  const viewport = { height: 900, width: 1280 };
-  const context = await suite.newBrowserContext({
-    locale: "en-US",
-    serviceWorkers: "block",
-    viewport,
-    ...(artifactDir ? { recordVideo: { dir: artifactDir, size: viewport } } : {}),
-  });
-  const page = await context.newPage();
-  const capture = async (fileName: string, surface: Locator, content: Locator) => {
-    if (artifactDir) {
-      await writeFile(
-        `${artifactDir}/${fileName}.png`,
-        await takeControlUiViewportScreenshot(page, surface, [content]),
-      );
-    }
-  };
-  return { context, page, capture };
-}
+const rosterMatch = { includeGlobal: true };
 
 suite.define(() => {
   it("patches a selectable Claude CLI context window", async () => {
@@ -355,7 +333,10 @@ suite.define(() => {
       await page.goto(`${suite.server.baseUrl}chat`);
 
       const command = "/model openai/gpt-5.6-luna --runtime codex continue with the selected model";
-      await page.locator(".agent-chat__composer-combobox textarea").fill(command);
+      await fillComposer(
+        page.locator(".agent-chat__composer-combobox openclaw-composer-editor"),
+        command,
+      );
       await page.getByRole("button", { name: "Send message" }).click();
 
       const sendRequest = await gateway.waitForRequest("chat.send");
@@ -710,7 +691,10 @@ suite.define(() => {
   });
 
   it("shows one canonical default model with matching inherited reasoning", async () => {
-    const { context, page, capture } = await createReasoningProofPage("chat-flow.models-reasoning");
+    const { context, page, capture } = await createReasoningProofPage(
+      suite,
+      "chat-flow.models-reasoning",
+    );
     const thinkingLevels = ["off", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"].map(
       (id) => ({ id, label: id }),
     );
@@ -835,6 +819,7 @@ suite.define(() => {
 
   it("does not reuse catalog reasoning for a different session runtime", async () => {
     const { context, page, capture } = await createReasoningProofPage(
+      suite,
       "chat-flow.runtime-reasoning",
     );
     const sessionKey = "agent:main:codex-luna";
@@ -945,7 +930,10 @@ suite.define(() => {
       });
 
       const prompt = `send while the ${setting.label} save is pending`;
-      await page.locator(".agent-chat__composer-combobox textarea").fill(prompt);
+      await fillComposer(
+        page.locator(".agent-chat__composer-combobox openclaw-composer-editor"),
+        prompt,
+      );
       await page.getByRole("button", { name: "Send message" }).click();
 
       await page.locator(".chat-queue").getByText("Applying chat settings").waitFor({

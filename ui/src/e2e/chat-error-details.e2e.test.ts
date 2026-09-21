@@ -2,6 +2,7 @@ import path from "node:path";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import type { Page } from "playwright";
 import { assert, expect, it } from "vitest";
+import { fillComposer } from "../test-helpers/composer-editor.ts";
 import { controlUiSessionUrl, installMockGateway } from "../test-helpers/control-ui-e2e.ts";
 import { createControlUiE2eSuite } from "./control-ui-e2e-suite.test-support.ts";
 
@@ -197,9 +198,10 @@ suite.define(() => {
           });
           await currentPage.goto(controlUiSessionUrl(suite.server.baseUrl, sessionKey));
           if (source === "live") {
-            await currentPage
-              .locator(".agent-chat__input textarea")
-              .fill("Inspect the project skills");
+            await fillComposer(
+              currentPage.locator(".agent-chat__input openclaw-composer-editor"),
+              "Inspect the project skills",
+            );
             await currentPage.getByRole("button", { name: "Send message" }).click();
             const send = await gateway.waitForRequest("chat.send");
             expect(send.params).toMatchObject({ sessionKey, idempotencyKey: expect.any(String) });

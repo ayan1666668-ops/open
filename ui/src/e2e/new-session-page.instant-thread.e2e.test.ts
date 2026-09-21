@@ -1,6 +1,7 @@
 import { Buffer } from "node:buffer";
 import { expect, it } from "vitest";
 import type { ApplicationContext } from "../app/context.ts";
+import { composerValue, fillComposer } from "../test-helpers/composer-editor.ts";
 import { selectChatModelOption } from "../test-helpers/select-picker-e2e.ts";
 import {
   ONE_PIXEL_PNG_B64,
@@ -38,7 +39,10 @@ suite.define(() => {
         if (incognito) {
           await page.getByRole("switch", { name: "Incognito" }).click();
         }
-        await page.locator(".new-session-page__message").fill("start the synthetic thread");
+        await fillComposer(
+          page.locator(".new-session-page__message"),
+          "start the synthetic thread",
+        );
         const originalUrl = page.url();
         const historyLength = await page.evaluate(() => history.length);
         await captureUiProof(suite, page, `instant-${incognito}-before.png`);
@@ -160,7 +164,7 @@ suite.define(() => {
         const requestedAgent = crossAgent ? "research" : "main";
         await page.goto(`${suite.server.baseUrl}new?agent=${requestedAgent}#keep-exact-fragment`);
         const composer = page.locator(".new-session-page__message");
-        await composer.fill("  preserve my full draft  ");
+        await fillComposer(composer, "  preserve my full draft  ");
         await page.locator(".agent-chat__photo-input").setInputFiles({
           name: "synthetic-pixel.png",
           mimeType: "image/png",
@@ -200,7 +204,7 @@ suite.define(() => {
           code: "UNAVAILABLE",
           message: "Synthetic admission refused",
         });
-        await expect.poll(() => composer.inputValue()).toBe("  preserve my full draft  ");
+        await expect.poll(() => composerValue(composer)).toBe("  preserve my full draft  ");
         await expect
           .poll(() => page.locator("openclaw-new-session-page").textContent())
           .toContain("Synthetic admission refused");
@@ -235,7 +239,7 @@ suite.define(() => {
         await gateway.resolveDeferred("sessions.create", { key: secondKey });
         await waitForCommittedChatRoute(page);
         await navigateInApp(page, "new-session", "?agent=main");
-        await expect.poll(() => composer.inputValue()).toBe("");
+        await expect.poll(() => composerValue(composer)).toBe("");
       } finally {
         await browser.close();
       }
@@ -248,14 +252,14 @@ suite.define(() => {
       const page = await browser.newPage();
       const gateway = await installMockGateway(page);
       await page.goto(`${suite.server.baseUrl}new?agent=main`);
-      await page.locator(".new-session-page__message").fill("old submitted text");
+      await fillComposer(page.locator(".new-session-page__message"), "old submitted text");
       await gateway.deferNext("sessions.create");
       await page.getByRole("button", { name: "Start session", exact: true }).click();
       const first = createParams(await gateway.waitForRequest("sessions.create"));
       await expect.poll(() => page.locator("openclaw-chat-page").count()).toBe(1);
       await navigateInApp(page, "new-session", "?agent=main");
       const composer = page.locator(".new-session-page__message");
-      await composer.fill("new draft must win");
+      await fillComposer(composer, "new draft must win");
       const newerUrl = page.url();
       await gateway.resolveDeferred("sessions.create", {
         key: first.key,
@@ -263,7 +267,7 @@ suite.define(() => {
         runId: "late-old-run",
       });
       await gateway.waitForRequest("sessions.list");
-      expect(await composer.inputValue()).toBe("new draft must win");
+      expect(await composerValue(composer)).toBe("new draft must win");
       expect(page.url()).toBe(newerUrl);
       await gateway.deferNext("sessions.create");
       await page.getByRole("button", { name: "Start session", exact: true }).click();
@@ -271,7 +275,7 @@ suite.define(() => {
       expect(second.message).toBe("new draft must win");
       expect(second.key).not.toBe(first.key);
       await gateway.rejectDeferred("sessions.create", { message: "New admission refused" });
-      await expect.poll(() => composer.inputValue()).toBe("new draft must win");
+      await expect.poll(() => composerValue(composer)).toBe("new draft must win");
       expect(page.url()).toBe(newerUrl);
     } finally {
       await browser.close();
@@ -284,7 +288,7 @@ suite.define(() => {
       const page = await browser.newPage();
       const gateway = await installMockGateway(page);
       await page.goto(`${suite.server.baseUrl}new?agent=main#reconnect`);
-      await page.locator(".new-session-page__message").fill("resume exactly once");
+      await fillComposer(page.locator(".new-session-page__message"), "resume exactly once");
       await gateway.deferNext("sessions.create");
       await page.getByRole("button", { name: "Start session", exact: true }).click();
       const first = createParams(await gateway.waitForRequest("sessions.create"));
@@ -319,7 +323,7 @@ suite.define(() => {
       const gateway = await installMockGateway(page);
       await page.goto(`${suite.server.baseUrl}new?agent=main`);
       await page.getByRole("switch", { name: "Incognito" }).click();
-      await page.locator(".new-session-page__message").fill("private old-identity text");
+      await fillComposer(page.locator(".new-session-page__message"), "private old-identity text");
       await gateway.deferNext("sessions.create");
       await page.getByRole("button", { name: "Start session", exact: true }).click();
       await gateway.waitForRequest("sessions.create");
@@ -334,7 +338,7 @@ suite.define(() => {
         });
       });
       await expect.poll(() => page.locator("openclaw-new-session-page").count()).toBe(1);
-      await expect.poll(() => page.locator(".new-session-page__message").inputValue()).toBe("");
+      await expect.poll(() => composerValue(page.locator(".new-session-page__message"))).toBe("");
       expect(await page.locator("openclaw-new-session-page").textContent()).not.toContain(
         "private old-identity text",
       );
@@ -348,7 +352,7 @@ suite.define(() => {
       const page = await browser.newPage();
       const gateway = await installMockGateway(page);
       await page.goto(`${suite.server.baseUrl}new?agent=main`);
-      await page.locator(".new-session-page__message").fill("old admission");
+      await fillComposer(page.locator(".new-session-page__message"), "old admission");
       await gateway.deferNext("sessions.create");
       await page.evaluate(() => {
         const app = document.querySelector("openclaw-app") as HTMLElement & {
@@ -385,7 +389,7 @@ suite.define(() => {
       );
       await navigateInApp(page, "new-session", "?agent=main");
       const composer = page.locator(".new-session-page__message");
-      await composer.fill("newer during pending readiness");
+      await fillComposer(composer, "newer during pending readiness");
       const newerUrl = page.url();
       await page.evaluate(() =>
         (
@@ -398,7 +402,7 @@ suite.define(() => {
       const second = createParams(await gateway.waitForRequest("sessions.create", { after: 1 }));
       expect(second.message).toBe("newer during pending readiness");
       await gateway.rejectDeferred("sessions.create", { message: "Return the newer draft" });
-      await expect.poll(() => composer.inputValue()).toBe("newer during pending readiness");
+      await expect.poll(() => composerValue(composer)).toBe("newer during pending readiness");
       expect(page.url()).toBe(newerUrl);
     } finally {
       await browser.close();
@@ -412,7 +416,7 @@ suite.define(() => {
       const gateway = await installMockGateway(page);
       await page.goto(`${suite.server.baseUrl}new?agent=main`);
       await page.getByRole("switch", { name: "Incognito" }).click();
-      await page.locator(".new-session-page__message").fill("private first principal");
+      await fillComposer(page.locator(".new-session-page__message"), "private first principal");
       const hello = await page.evaluate(() => {
         const app = document.querySelector("openclaw-app") as HTMLElement & {
           runtime: { context: ApplicationContext };
@@ -431,7 +435,7 @@ suite.define(() => {
       expect(await page.locator("openclaw-new-session-page").count()).toBe(0);
       await gateway.setOnline(true);
       await expect.poll(() => page.locator("openclaw-new-session-page").count()).toBe(1);
-      await expect.poll(() => page.locator(".new-session-page__message").inputValue()).toBe("");
+      await expect.poll(() => composerValue(page.locator(".new-session-page__message"))).toBe("");
       expect(await gateway.getRequests("sessions.create")).toHaveLength(1);
     } finally {
       await browser.close();
@@ -444,7 +448,10 @@ suite.define(() => {
       const page = await browser.newPage();
       const gateway = await installMockGateway(page);
       await page.goto(`${suite.server.baseUrl}new?agent=main#boot`);
-      await page.locator(".new-session-page__message").fill("do not duplicate this admission");
+      await fillComposer(
+        page.locator(".new-session-page__message"),
+        "do not duplicate this admission",
+      );
       const originalUrl = page.url();
       await gateway.deferNext("sessions.create");
       await page.getByRole("button", { name: "Start session", exact: true }).click();
@@ -457,7 +464,7 @@ suite.define(() => {
         .getByRole("alert")
         .filter({ hasText: "The Gateway changed while this session was starting" })
         .waitFor();
-      expect(await page.locator(".new-session-page__message").inputValue()).toBe(
+      expect(await composerValue(page.locator(".new-session-page__message"))).toBe(
         "do not duplicate this admission",
       );
       expect(
@@ -492,7 +499,7 @@ suite.define(() => {
           methodResponses: { "chat.send": { runId: "synthetic-retry", status: "started" } },
         });
         await page.goto(`${suite.server.baseUrl}new?agent=main`);
-        await page.locator(".new-session-page__message").fill("retry this first turn");
+        await fillComposer(page.locator(".new-session-page__message"), "retry this first turn");
         await page.locator(".agent-chat__photo-input").setInputFiles({
           name: "synthetic-pixel.png",
           mimeType: "image/png",
@@ -532,7 +539,10 @@ suite.define(() => {
       const page = await browser.newPage();
       const gateway = await installMockGateway(page);
       await page.goto(`${suite.server.baseUrl}new?agent=main#navigation-error`);
-      await page.locator(".new-session-page__message").fill("create this session only once");
+      await fillComposer(
+        page.locator(".new-session-page__message"),
+        "create this session only once",
+      );
       await gateway.deferNext("sessions.create");
       await page.getByRole("button", { name: "Start session", exact: true }).click();
       const params = createParams(await gateway.waitForRequest("sessions.create"));
@@ -577,7 +587,7 @@ suite.define(() => {
       const page = await browser.newPage();
       const gateway = await installMockGateway(page);
       await page.goto(`${suite.server.baseUrl}new?agent=main`);
-      await page.locator(".new-session-page__message").fill("legacy scope still starts");
+      await fillComposer(page.locator(".new-session-page__message"), "legacy scope still starts");
       const hello = await page.evaluate(() => {
         const app = document.querySelector("openclaw-app") as HTMLElement & {
           runtime: { context: ApplicationContext };
@@ -598,7 +608,7 @@ suite.define(() => {
         return snapshot.phase === "connected" && !snapshot.hello?.auth?.recoveryScope;
       });
       const composer = page.locator(".new-session-page__message");
-      await composer.fill("legacy scope still starts");
+      await fillComposer(composer, "legacy scope still starts");
       await gateway.deferNext("sessions.create");
       await page.getByRole("button", { name: "Start session", exact: true }).click();
       await gateway.waitForRequest("sessions.create");
@@ -618,7 +628,7 @@ suite.define(() => {
       const page = await browser.newPage();
       const gateway = await installMockGateway(page);
       await page.goto(`${suite.server.baseUrl}new?agent=main`);
-      await page.locator(".new-session-page__message").fill("keep the confirmed creation");
+      await fillComposer(page.locator(".new-session-page__message"), "keep the confirmed creation");
       await page.evaluate(() => {
         const app = document.querySelector("openclaw-app") as HTMLElement & {
           runtime: { context: ApplicationContext };

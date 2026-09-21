@@ -1,6 +1,7 @@
 import path from "node:path";
 import type { Page } from "playwright";
 import { expect, it } from "vitest";
+import { composerContentValue } from "../test-helpers/composer-editor.ts";
 import { waitForControlUiGatewayReady } from "../test-helpers/control-ui-e2e-readiness.ts";
 import { controlUiSessionUrl, installMockGateway } from "../test-helpers/control-ui-e2e.ts";
 import { createControlUiE2eSuite } from "./control-ui-e2e-suite.test-support.ts";
@@ -152,7 +153,9 @@ suite.define(() => {
         const gateway = await installMockGateway(page);
         await page.goto(`${suite.server.baseUrl}chat`);
         await waitForControlUiGatewayReady(page);
-        await page.locator(".agent-chat__composer-combobox textarea").waitFor({ state: "visible" });
+        await page
+          .locator(".agent-chat__composer-combobox openclaw-composer-editor .cm-content")
+          .waitFor({ state: "visible" });
         await gateway.emitGatewayEvent("ui.command", {
           command: { kind: "sidebar", visible: false },
         });
@@ -204,13 +207,15 @@ suite.define(() => {
         await page.goto(`${suite.server.baseUrl}chat`);
         await waitForControlUiGatewayReady(page);
         expect((await gateway.getRequests("connect")).length).toBeGreaterThan(0);
-        const composer = page.locator(".agent-chat__composer-combobox textarea");
+        const composer = page.locator(
+          ".agent-chat__composer-combobox openclaw-composer-editor .cm-content",
+        );
         await composer.waitFor({ state: "visible" });
         await gateway.setOnline(false);
         for (const message of ["First synthetic draft", "Second synthetic draft"]) {
           await composer.fill(message);
           await page.getByRole("button", { name: "Send message", exact: true }).click();
-          await expect.poll(() => composer.inputValue()).toBe("");
+          await expect.poll(() => composerContentValue(composer)).toBe("");
         }
         const footer = page.locator(".sidebar-footer-bar");
         await expect.poll(() => page.locator(".chat-queue__item").count()).toBe(2);

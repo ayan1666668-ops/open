@@ -2,6 +2,7 @@
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import { beforeEach, expect, it } from "vitest";
+import { fillComposer } from "../test-helpers/composer-editor.ts";
 import { createControlUiE2eArtifactDir } from "../test-helpers/control-ui-e2e-artifacts.ts";
 import {
   takeControlUiElementScreenshot,
@@ -16,23 +17,13 @@ beforeEach(() => {
     : undefined;
 });
 import { controlUiSessionUrl, installMockGateway } from "../test-helpers/control-ui-e2e.ts";
-import { registerItemOnlyOutcomeTest } from "./chat-tool-item-outcomes.test-support.ts";
+import { failedTool, registerItemOnlyOutcomeTest } from "./chat-tool-item-outcomes.test-support.ts";
 import { createControlUiE2eSuite } from "./control-ui-e2e-suite.test-support.ts";
 
 const suite = createControlUiE2eSuite({
   name: "Control UI autonomous tool-turn outcomes",
   startServerBeforeBrowser: true,
 });
-
-function failedTool(timestamp: number) {
-  return {
-    role: "toolResult",
-    toolName: "shell",
-    content: JSON.stringify({ status: "failed", exitCode: 1, error: "Command could not finish" }),
-    isError: true,
-    timestamp,
-  };
-}
 
 async function captureToolActivityProof(page: import("playwright").Page, name: string) {
   if (!artifactDir) {
@@ -684,7 +675,10 @@ suite.define(() => {
 
     await page.goto(`${suite.server.baseUrl}chat`);
     await page.getByText("Ready for the running tool wave proof.").waitFor();
-    await page.locator(".agent-chat__input textarea").fill("run a long command");
+    await fillComposer(
+      page.locator(".agent-chat__input openclaw-composer-editor"),
+      "run a long command",
+    );
     await page.getByRole("button", { name: "Send message" }).click();
     const send = await gateway.waitForRequest("chat.send");
     const runId = (send.params as { idempotencyKey?: string }).idempotencyKey as string;
@@ -899,7 +893,10 @@ suite.define(() => {
       });
 
       await page.goto(`${suite.server.baseUrl}chat`);
-      await page.locator(".agent-chat__input textarea").fill("run the reviewed command");
+      await fillComposer(
+        page.locator(".agent-chat__input openclaw-composer-editor"),
+        "run the reviewed command",
+      );
       await page.getByRole("button", { name: "Send message" }).click();
       const send = await gateway.waitForRequest("chat.send");
       const runId = (send.params as { idempotencyKey?: string }).idempotencyKey as string;

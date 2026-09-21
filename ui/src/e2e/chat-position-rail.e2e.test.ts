@@ -1,5 +1,6 @@
 import { expect, it } from "vitest";
 import { SIDEBAR_GEOMETRY_COMMIT_EVENT } from "../pages/chat/sidebar-layout.ts";
+import { fillComposer } from "../test-helpers/composer-editor.ts";
 import {
   controlUiBundledSettingsStorageKey,
   createControlUiMockSameOriginGatewayScript,
@@ -357,8 +358,8 @@ suite.define(() => {
           await expect.poll(currentMarkerIndex).toBeLessThan(10);
           await expect.poll(currentIsVisible).toBe(true);
 
-          const composer = page.locator(".agent-chat__composer-combobox textarea");
-          await composer.focus();
+          const composer = page.locator(".agent-chat__composer-combobox openclaw-composer-editor");
+          await composer.locator(".cm-content").focus();
           const strokeColors = () =>
             markers.evaluateAll((items) =>
               items.map(
@@ -750,7 +751,9 @@ suite.define(() => {
                 element.closest(".chat-thread")!.getBoundingClientRect().top,
             ),
           ).toBe(true);
-          const composerInput = page.locator(".agent-chat__composer-combobox textarea");
+          const composerInput = page.locator(
+            ".agent-chat__composer-combobox openclaw-composer-editor",
+          );
           const markerFits = () =>
             runMarker.evaluate((element) => {
               const marker = element.getBoundingClientRect();
@@ -789,7 +792,7 @@ suite.define(() => {
             .toBeGreaterThan(readerOffset);
           await expect.poll(() => runMarker.getAttribute("aria-current")).toBe("true");
           await expect.poll(markerFits).toBe(true);
-          await composerInput.fill("");
+          await fillComposer(composerInput, "");
           await captureUiProof(
             suite,
             page,

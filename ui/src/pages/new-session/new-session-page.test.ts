@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { ComposerEditor } from "../../components/composer-editor.ts";
 import { t } from "../../i18n/index.ts";
 import { NewSessionDictationControl } from "./composer-dictation-control.ts";
 import type { NewSessionRouteData } from "./location.ts";
@@ -36,7 +37,7 @@ async function settle(page: NewSessionElement) {
 }
 
 async function enterMessage(page: NewSessionElement, value: string) {
-  const textarea = page.querySelector<HTMLTextAreaElement>(".new-session-page__message");
+  const textarea = page.querySelector<ComposerEditor>(".new-session-page__message");
   expect(textarea).not.toBeNull();
   if (!textarea) {
     return;
@@ -47,7 +48,7 @@ async function enterMessage(page: NewSessionElement, value: string) {
 }
 
 function message(page: NewSessionElement): string {
-  return page.querySelector<HTMLTextAreaElement>(".new-session-page__message")?.value ?? "";
+  return page.querySelector<ComposerEditor>(".new-session-page__message")?.value ?? "";
 }
 
 afterEach(() => {
@@ -61,7 +62,7 @@ afterEach(() => {
 describe("new session draft route ownership", () => {
   it("focuses an opened draft and refocuses without changing its message", async () => {
     const page = await mount(routeData("research"));
-    const textarea = page.querySelector<HTMLTextAreaElement>(".new-session-page__message");
+    const textarea = page.querySelector<ComposerEditor>(".new-session-page__message");
     expect(document.activeElement).toBe(textarea);
     await enterMessage(page, "Keep this draft; do not submit it");
     const other = document.body.appendChild(document.createElement("button"));
@@ -105,7 +106,7 @@ describe("new session draft route ownership", () => {
       Object.defineProperty(paste, "clipboardData", {
         value: { items: [], getData: () => original },
       });
-      page.querySelector("textarea")?.dispatchEvent(paste);
+      page.querySelector("openclaw-composer-editor")?.dispatchEvent(paste);
       expect(paste.defaultPrevented).toBe(true);
       await settle(page);
       await expect
@@ -115,7 +116,7 @@ describe("new session draft route ownership", () => {
         dictating = true;
         page.requestUpdate();
         await settle(page);
-        expect(page.querySelector<HTMLTextAreaElement>("textarea")?.readOnly).toBe(true);
+        expect(page.querySelector<ComposerEditor>("openclaw-composer-editor")?.readOnly).toBe(true);
       }
       page.querySelector<HTMLElement>("openclaw-chat-pasted-text [role=button]")?.click();
       await expect.poll(() => page.querySelector("openclaw-chat-detail-panel")).not.toBeNull();
@@ -167,7 +168,7 @@ describe("new session draft route ownership", () => {
 
   it("routes every focus-surface and key-class pair by the shared contract", async () => {
     const page = await mount(routeData("research"));
-    const textarea = page.querySelector<HTMLTextAreaElement>(".new-session-page__message");
+    const textarea = page.querySelector<ComposerEditor>(".new-session-page__message");
     expect(textarea).not.toBeNull();
     if (!textarea) {
       return;
@@ -295,7 +296,7 @@ describe("new session draft route ownership", () => {
 
   it("labels the message input independently of its placeholder", async () => {
     const page = await mount(routeData("research"));
-    const textarea = page.querySelector<HTMLTextAreaElement>(".new-session-page__message");
+    const textarea = page.querySelector<ComposerEditor>(".new-session-page__message");
 
     expect(textarea?.getAttribute("aria-label")).toBe(t("newSession.messagePlaceholder"));
   });

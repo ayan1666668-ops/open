@@ -4,6 +4,12 @@ import { expect, it } from "vitest";
 import type { ApplicationContext } from "../app/context.ts";
 import { sessionPlacementRecoveryExactStorageKey } from "../lib/sessions/session-placement-recovery-storage-key.ts";
 import type { SessionPlacementPausedRecovery } from "../lib/sessions/session-placement-recovery.ts";
+import {
+  composerDisabled,
+  composerEnabled,
+  composerValue,
+  fillComposer,
+} from "../test-helpers/composer-editor.ts";
 import { takeControlUiViewportScreenshot } from "../test-helpers/control-ui-e2e-screenshot.ts";
 import { createControlUiE2eContextOptions } from "./control-ui-e2e-suite.test-support.ts";
 import {
@@ -67,8 +73,8 @@ suite.define(() => {
         },
       });
       await page.goto(controlUiSessionUrl(suite.server.baseUrl, sessionKey));
-      const composer = page.locator(".agent-chat__composer-combobox textarea");
-      await expect.poll(() => composer.isDisabled()).toBe(false);
+      const composer = page.locator(".agent-chat__composer-combobox openclaw-composer-editor");
+      await expect.poll(() => composerDisabled(composer)).toBe(false);
       // Pending history permits editing before the authenticated recovery scope is ready.
       await waitForGatewayRecoveryScope(page);
       const owner = await page.evaluate(() => {
@@ -111,7 +117,7 @@ suite.define(() => {
       const alert = page.getByRole("alert").filter({ hasText: diagnostic });
       await alert.waitFor({ state: "visible" });
       await pollLocatorText(alert).toContain("startup needs attention");
-      expect(await composer.isDisabled()).toBe(true);
+      expect(await composerDisabled(composer)).toBe(true);
       expect(await gateway.getRequests("sessions.send")).toHaveLength(0);
       if (captureUiProof) {
         await alert.locator("summary").click();
@@ -130,9 +136,9 @@ suite.define(() => {
         .toBeNull();
       await expect.poll(() => alert.count()).toBe(0);
       await expect.poll(() => retry.count()).toBe(0);
-      await expect.poll(() => composer.isDisabled()).toBe(false);
-      await composer.fill("Follow-up after recovery");
-      expect(await composer.inputValue()).toBe("Follow-up after recovery");
+      await expect.poll(() => composerDisabled(composer)).toBe(false);
+      await fillComposer(composer, "Follow-up after recovery");
+      expect(await composerValue(composer)).toBe("Follow-up after recovery");
       expect(await initialTurn.count()).toBe(1);
       expect(await gateway.getRequests("sessions.send")).toHaveLength(1);
       for (const method of [
@@ -273,7 +279,7 @@ suite.define(() => {
       await expect
         .poll(() => page.locator("#new-session-where-trigger").getAttribute("data-machine-class"))
         .toBe("fast");
-      await page.locator(".new-session-page__message").fill(message);
+      await fillComposer(page.locator(".new-session-page__message"), message);
       await pastePng(page.locator(".new-session-page__message"));
       await page.locator('[data-chat-model-select="true"]').click();
       const picker = page.locator("[data-chat-account-selection]");
@@ -310,7 +316,7 @@ suite.define(() => {
       await page.reload();
       await gateway.waitForRequest("environments.list");
       await expect
-        .poll(() => page.locator(".new-session-page__message").inputValue())
+        .poll(() => composerValue(page.locator(".new-session-page__message")))
         .toBe(message);
       await pollLocatorText(
         page.locator("#new-session-where-trigger .new-session-page__trigger-label"),
@@ -411,7 +417,7 @@ suite.define(() => {
         .locator("wa-popover.new-session-page__where-popover")
         .getByRole("button", { name: "aws", exact: true })
         .click();
-      await page.locator(".new-session-page__message").fill(message);
+      await fillComposer(page.locator(".new-session-page__message"), message);
       await page.getByRole("button", { name: "Start session" }).click();
       const create = await gateway.waitForRequest("sessions.create");
       const sessionKey = (create.params as { key: string }).key;
@@ -535,7 +541,7 @@ suite.define(() => {
           .getByRole("button", { name: "aws", exact: true })
           .click();
         const composer = page.locator(".new-session-page__message");
-        await composer.fill(message);
+        await fillComposer(composer, message);
         const start = page.getByRole("button", { name: "Start session" });
         await start.click();
         const firstCreate = await gateway.waitForRequest("sessions.create");
@@ -547,7 +553,7 @@ suite.define(() => {
         });
         const interrupted = page.getByRole("alert").filter({ hasText: "interrupted" });
         await interrupted.waitFor();
-        await expect.poll(() => composer.isDisabled()).toBe(true);
+        await expect.poll(() => composerDisabled(composer)).toBe(true);
         await expect.poll(() => start.isDisabled()).toBe(true);
         if (captureUiProof) {
           await mkdir(path.join(suite.artifactDir, "cloud-session-recovery"), { recursive: true });
@@ -561,8 +567,8 @@ suite.define(() => {
         await reset.click();
 
         await expect.poll(() => interrupted.count()).toBe(0);
-        await expect.poll(() => composer.isEnabled()).toBe(true);
-        await expect.poll(() => composer.inputValue()).toBe(message);
+        await expect.poll(() => composerEnabled(composer)).toBe(true);
+        await expect.poll(() => composerValue(composer)).toBe(message);
         await expect.poll(() => start.isEnabled()).toBe(true);
         expect(await readRecovery()).toBeNull();
         if (captureUiProof) {
@@ -721,7 +727,7 @@ suite.define(() => {
           throw new DOMException("composer storage disabled", "SecurityError");
         };
       });
-      await page.locator(".new-session-page__message").fill(message);
+      await fillComposer(page.locator(".new-session-page__message"), message);
       await pastePng(page.locator(".new-session-page__message"));
       await page.getByRole("button", { name: "Start session" }).click();
       const firstSend = await gateway.waitForRequest("sessions.send");
@@ -758,7 +764,9 @@ suite.define(() => {
       await pollLocatorText(page.getByRole("alert")).toContain("No matching user message");
       await expectPastedPngImage(retainedTurn.locator("img.chat-message-image"));
       await expect
-        .poll(() => page.locator(".agent-chat__composer-combobox textarea").isDisabled())
+        .poll(() =>
+          composerDisabled(page.locator(".agent-chat__composer-combobox openclaw-composer-editor")),
+        )
         .toBe(true);
       const recovery = await page.evaluate(() => {
         const key = Object.keys(sessionStorage).find((candidate) =>

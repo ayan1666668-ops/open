@@ -2,6 +2,7 @@
 
 import { expectDefined } from "@openclaw/normalization-core";
 import { afterEach, beforeEach, expect, it, onTestFinished, vi } from "vitest";
+import type { ComposerEditor } from "../../components/composer-editor.ts";
 import type { ChatAttachment } from "../../lib/chat/chat-types.ts";
 import { waitForFast } from "../../test-helpers/wait-for.ts";
 import { releaseChatAttachmentPayloads } from "./attachment-payload-store.ts";
@@ -37,7 +38,9 @@ it("opens a pasted text excerpt in the side panel with the text-field action", a
     },
   );
   const textarea = expectDefined(
-    container.querySelector<HTMLTextAreaElement>(".agent-chat__composer-combobox > textarea"),
+    container.querySelector<ComposerEditor>(
+      ".agent-chat__composer-combobox > openclaw-composer-editor",
+    ),
     "composer textarea",
   );
   const text = `First words from a long pasted note ${"x".repeat(1100)}`;

@@ -1,4 +1,6 @@
 import { expect, it } from "vitest";
+import type { ComposerEditor } from "../components/composer-editor.ts";
+import { composerContentValue } from "../test-helpers/composer-editor.ts";
 import { controlUiSessionUrl, installMockGateway } from "../test-helpers/control-ui-e2e.ts";
 import {
   createControlUiE2eSuite,
@@ -36,7 +38,9 @@ suite.define(() => {
       );
       try {
         await page.goto(controlUiSessionUrl(suite.server.baseUrl, sessionKey));
-        const composer = page.locator(".agent-chat__composer-combobox textarea:visible");
+        const composer = page.locator(
+          ".agent-chat__composer-combobox openclaw-composer-editor .cm-content:visible",
+        );
         await composer.fill(foregroundDraft);
         await expect.poll(paletteModule.requests).toBe(1);
         expect(await page.locator(".cmd-palette").count()).toBe(0);
@@ -52,7 +56,7 @@ suite.define(() => {
           .toBe(true);
         await page.keyboard.type("appearance");
         expect(await input.inputValue()).toBe("appearance");
-        expect(await composer.inputValue()).toBe(foregroundDraft);
+        expect(await composerContentValue(composer)).toBe(foregroundDraft);
         expect(paletteModule.requests()).toBe(1);
       } finally {
         paletteModule.release();
@@ -72,11 +76,17 @@ suite.define(() => {
         );
         try {
           await page.goto(controlUiSessionUrl(suite.server.baseUrl, sessionKey));
-          const composer = page.locator(".agent-chat__composer-combobox textarea:visible");
+          const composer = page.locator(
+            ".agent-chat__composer-combobox openclaw-composer-editor .cm-content:visible",
+          );
           const foregroundDraft = "Foreground text must remain unchanged";
           await composer.fill(foregroundDraft);
-          await composer.evaluate((element: HTMLTextAreaElement) =>
-            element.setSelectionRange(3, 12, "backward"),
+          await composer.evaluate((element) =>
+            ((element.getRootNode() as ShadowRoot).host as ComposerEditor).setSelectionRange(
+              3,
+              12,
+              "backward",
+            ),
           );
           await page.keyboard.press("ControlOrMeta+K");
           const input = page.locator(".cmd-palette__input");
@@ -128,20 +138,27 @@ suite.define(() => {
               end: element.selectionEnd,
             })),
           ).toEqual({ focused: true, start: typed.length, end: typed.length });
-          expect(await composer.inputValue()).toBe(foregroundDraft);
+          expect(await composerContentValue(composer)).toBe(foregroundDraft);
           await cdp.send("Emulation.setCPUThrottlingRate", { rate: 1 });
           await page.keyboard.press("Escape");
           await expect
-            .poll(() => composer.evaluate((element) => document.activeElement === element))
+            .poll(() =>
+              composer.evaluate(
+                (element) => (element.getRootNode() as ShadowRoot).activeElement === element,
+              ),
+            )
             .toBe(true);
           expect(
-            await composer.evaluate((element: HTMLTextAreaElement) => ({
-              start: element.selectionStart,
-              end: element.selectionEnd,
-              direction: element.selectionDirection,
-            })),
+            await composer.evaluate((element) => {
+              const editor = (element.getRootNode() as ShadowRoot).host as ComposerEditor;
+              return {
+                start: editor.selectionStart,
+                end: editor.selectionEnd,
+                direction: editor.selectionDirection,
+              };
+            }),
           ).toEqual({ start: 3, end: 12, direction: "backward" });
-          expect(await composer.inputValue()).toBe(foregroundDraft);
+          expect(await composerContentValue(composer)).toBe(foregroundDraft);
           expect(page.url()).toBe(controlUiSessionUrl(suite.server.baseUrl, sessionKey));
           expect(
             await page.evaluate(() =>
@@ -233,7 +250,9 @@ suite.define(() => {
       );
       try {
         await page.goto(controlUiSessionUrl(suite.server.baseUrl, sessionKey));
-        const composer = page.locator(".agent-chat__composer-combobox textarea:visible");
+        const composer = page.locator(
+          ".agent-chat__composer-combobox openclaw-composer-editor .cm-content:visible",
+        );
         await composer.fill("Foreground draft");
         await page.keyboard.press("ControlOrMeta+K");
         const input = page.locator(".cmd-palette__input");
@@ -247,7 +266,11 @@ suite.define(() => {
         await page.keyboard.press("ControlOrMeta+K");
         await expect.poll(() => page.locator(".cmd-palette").count()).toBe(0);
         await expect
-          .poll(() => composer.evaluate((element) => document.activeElement === element))
+          .poll(() =>
+            composer.evaluate(
+              (element) => (element.getRootNode() as ShadowRoot).activeElement === element,
+            ),
+          )
           .toBe(true);
         paletteModule.release();
         await page.waitForFunction(() => customElements.get("openclaw-command-palette"));
@@ -256,7 +279,7 @@ suite.define(() => {
         const loaded = page.locator("openclaw-command-palette .cmd-palette__input");
         await loaded.waitFor({ state: "visible" });
         expect(await loaded.inputValue()).toBe("");
-        expect(await composer.inputValue()).toBe("Foreground draft");
+        expect(await composerContentValue(composer)).toBe("Foreground draft");
       } finally {
         paletteModule.release();
       }

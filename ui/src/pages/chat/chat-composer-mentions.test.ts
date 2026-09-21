@@ -78,9 +78,11 @@ describe.each(["chat", "new-session"] as const)("%s human mentions", (kind) => {
       const options = view.container.querySelectorAll('[role="option"]');
       const selected = view.container.querySelector('[role="option"][aria-selected="true"]');
       expect(selected).toBe(options[selectedIndex]);
-      expect(view.container.querySelector("textarea")?.getAttribute("aria-activedescendant")).toBe(
-        selected?.id,
-      );
+      expect(
+        view.container
+          .querySelector("openclaw-composer-editor")
+          ?.getAttribute("aria-activedescendant"),
+      ).toBe(selected?.id);
     }
     for (const key of ["Home", "End"]) {
       for (const modifier of ["shiftKey", "altKey", "ctrlKey", "metaKey"]) {

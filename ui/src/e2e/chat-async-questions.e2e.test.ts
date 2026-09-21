@@ -1,6 +1,11 @@
 import path from "node:path";
 import { expect as expectBrowser } from "playwright/test";
 import { expect, it } from "vitest";
+import {
+  composerValue,
+  fillComposer,
+  composerContentValue,
+} from "../test-helpers/composer-editor.ts";
 import { createControlUiE2eArtifactDir } from "../test-helpers/control-ui-e2e-artifacts.ts";
 import { defaultControlUiFeatureMethods } from "../test-helpers/control-ui-e2e.ts";
 import {
@@ -136,8 +141,8 @@ suite.define(() => {
           has: page.getByRole("button", { name: "Cancel reply" }),
         });
         await expect.poll(() => composerReply.textContent()).toContain(replyMessage.content);
-        const composer = page.locator(".agent-chat__composer-combobox textarea");
-        await composer.fill("Keep this separate composer draft.");
+        const composer = page.locator(".agent-chat__composer-combobox openclaw-composer-editor");
+        await fillComposer(composer, "Keep this separate composer draft.");
         const custom = card.getByRole("textbox", { name: `Your own answer for ${title}` });
         await custom.fill("/stop is an example for the whole team");
         expect(
@@ -203,7 +208,7 @@ suite.define(() => {
         );
         expect(params.queueMode).toBe(active ? "steer" : undefined);
         expect(params).not.toHaveProperty("replyToId");
-        expect(await composer.inputValue()).toBe("Keep this separate composer draft.");
+        expect(await composerValue(composer)).toBe("Keep this separate composer draft.");
         expect(await composerReply.textContent()).toContain(replyMessage.content);
         expect(await gateway.getRequests("chat.abort")).toHaveLength(0);
         expect(await gateway.getRequests("question.resolve")).toHaveLength(0);
@@ -249,7 +254,9 @@ suite.define(() => {
     });
     try {
       await page.goto(`${suite.server.baseUrl}chat`);
-      const composer = page.locator(".agent-chat__composer-combobox textarea");
+      const composer = page.locator(
+        ".agent-chat__composer-combobox openclaw-composer-editor .cm-content",
+      );
       await composer.fill("Continue researching while I decide.");
       const card = page.locator(".agent-chat__question-dock openclaw-chat-question-panel");
       const messages: unknown[] = [initial];
@@ -269,8 +276,12 @@ suite.define(() => {
       };
       await arrive(questionMessage, 2);
       await card.getByText(title, { exact: true }).waitFor();
-      expect(await composer.evaluate((element) => element === document.activeElement)).toBe(true);
-      expect(await composer.inputValue()).toBe("Continue researching while I decide.");
+      expect(
+        await composer.evaluate(
+          (element) => element === (element.getRootNode() as ShadowRoot).activeElement,
+        ),
+      ).toBe(true);
+      expect(await composerContentValue(composer)).toBe("Continue researching while I decide.");
       const custom = card.getByRole("textbox", { name: `Your own answer for ${title}` });
       await custom.fill("Readers new to the project");
       await card.getByRole("button", { name: "Collapse question", exact: true }).click();
@@ -280,7 +291,11 @@ suite.define(() => {
       await expect.poll(() => expand.textContent()).toContain("2 unanswered questions");
       expect(await expand.textContent()).toContain(title);
       expect(await card.getByRole("textbox").count()).toBe(0);
-      expect(await composer.evaluate((element) => element === document.activeElement)).toBe(true);
+      expect(
+        await composer.evaluate(
+          (element) => element === (element.getRootNode() as ShadowRoot).activeElement,
+        ),
+      ).toBe(true);
 
       const blockingTitle = "Where should I save the completed summary?";
       const createdAtMs = Date.now();
@@ -324,7 +339,7 @@ suite.define(() => {
       expect(await custom.inputValue()).toBe("Readers new to the project");
       await card.getByRole("button", { name: "Skip", exact: true }).click();
       await card.waitFor({ state: "detached" });
-      expect(await composer.inputValue()).toBe("Continue researching while I decide.");
+      expect(await composerContentValue(composer)).toBe("Continue researching while I decide.");
       const skipped = page.locator(".chat-thread .chat-question-summary");
       expect(await skipped.filter({ hasText: title }).textContent()).toContain("Skipped");
       expect(await skipped.filter({ hasText: secondTitle }).textContent()).toContain("Skipped");

@@ -2,6 +2,7 @@ import type { UsersMentionableResult } from "@openclaw/gateway-protocol";
 import { nothing, render } from "lit";
 import { onTestFinished, vi } from "vitest";
 import { GatewayBrowserClient } from "../../api/gateway.ts";
+import type { ComposerEditor } from "../../components/composer-editor.ts";
 import type { HumanMention } from "../../lib/chat/chat-types.ts";
 import { updateHumanMentions } from "../../lib/chat/human-mentions.ts";
 /* @vitest-environment jsdom */
@@ -107,7 +108,7 @@ export function composerFixture(
     );
   };
   renderCurrent();
-  const textarea = container.querySelector<HTMLTextAreaElement>("textarea")!;
+  const textarea = container.querySelector<ComposerEditor>("openclaw-composer-editor")!;
   const edit = (
     next: string,
     options: { start?: number; end?: number; inputType?: string; data?: string | null } = {},

@@ -1,5 +1,6 @@
 import path from "node:path";
 import { expect, it } from "vitest";
+import { composerContentValue } from "../test-helpers/composer-editor.ts";
 import { createControlUiE2eArtifactDir } from "../test-helpers/control-ui-e2e-artifacts.ts";
 import { defaultControlUiFeatureMethods } from "../test-helpers/control-ui-e2e.ts";
 import {
@@ -38,7 +39,9 @@ suite.define(() => {
           methodResponses: { "users.mentionable": { users: people, truncated: false } },
         });
         await page.goto(suite.server.baseUrl + "chat", { waitUntil: "domcontentloaded" });
-        const input = page.locator(".agent-chat__composer-combobox textarea");
+        const input = page.locator(
+          ".agent-chat__composer-combobox openclaw-composer-editor .cm-content",
+        );
         const menu = page.getByRole("listbox", { name: "Mention a person" });
         await input.fill("@h");
         await expect.poll(() => menu.getByRole("option").count()).toBe(2);
@@ -68,7 +71,7 @@ suite.define(() => {
         await expect.poll(() => menu.textContent()).toContain("Hazel");
         await page.screenshot({ path: path.join(artifacts, "refreshed.png") });
         await input.press("Enter");
-        expect(await input.inputValue()).toBe("Again @Henry ");
+        expect(await composerContentValue(input)).toBe("Again @Henry ");
       });
     },
   );

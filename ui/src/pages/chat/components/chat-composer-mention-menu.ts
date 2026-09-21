@@ -6,6 +6,7 @@ import {
   resolveGatewayErrorDetailCode,
   type GatewayBrowserClient,
 } from "../../../api/gateway.ts";
+import type { ComposerEditor } from "../../../components/composer-editor.ts";
 import {
   handleComposerMenuKeydown,
   renderComposerMenu,
@@ -28,7 +29,7 @@ export type HumanMentionMenuHost = {
   paneId: string;
   getDraft: () => string;
   getMentions: () => readonly HumanMention[];
-  getTextarea: () => HTMLTextAreaElement | null;
+  getTextarea: () => ComposerEditor | null;
   commitDraft: (value: string, mentions: readonly HumanMention[]) => void;
 };
 

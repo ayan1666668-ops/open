@@ -49,7 +49,9 @@ suite.define(() => {
         });
         await page.goto(`${suite.server.baseUrl}chat/main`);
         await page.getByRole("button", { name: "Edit goal", exact: true }).click();
-        const objective = page.locator(".agent-chat__composer-combobox textarea");
+        const objective = page.locator(
+          ".agent-chat__composer-combobox openclaw-composer-editor .cm-content",
+        );
         const save = page.getByRole("button", { name: "Save goal", exact: true });
         const invalid = page.getByText(
           "Goal update is invalid. Check the objective and try again.",

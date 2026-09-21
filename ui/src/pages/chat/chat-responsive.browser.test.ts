@@ -12,8 +12,10 @@ import {
   type PlaybackMediaFixtureFormat,
 } from "../../../../test/fixtures/media-playback.js";
 import { readStyleSheet } from "../../../../test/helpers/ui-style-fixtures.js";
+import type { ComposerEditor } from "../../components/composer-editor.ts";
 import { finishElementAnimations } from "../../test-helpers/animations.ts";
 import { closeBrowserPage, withBrowserPage } from "../../test-helpers/browser-page.ts";
+import { fillComposer } from "../../test-helpers/composer-editor.ts";
 import {
   captureControlUiE2eFailureDiagnostics,
   installMockGateway,
@@ -34,6 +36,12 @@ import {
   waitForLayoutSettled,
   type ControlRect,
 } from "./chat-layout.browser.test-support.ts";
+import {
+  getTextContentRect,
+  expectNoHorizontalOverflow,
+  openComposerLayoutFixture,
+  syncFixtureComposerPopoverAnchor,
+} from "./chat-responsive.fixture.test-support.ts";
 
 const VIEWPORTS = [
   [320, 568],
@@ -717,7 +725,7 @@ function chatHtml(opts: ChatFixtureOptions = {}, mobileNavLayout = false) {
                   </div>
                   <div class="agent-chat__composer-input-row">
                     <div class="agent-chat__composer-combobox">
-                      <textarea rows="1">Queued follow-up for the active operator session</textarea>
+                      <openclaw-composer-editor placeholder="Message"></openclaw-composer-editor>
                     </div>
                   </div>
                   <div class="agent-chat__composer-footer">
@@ -777,66 +785,15 @@ function chatHtml(opts: ChatFixtureOptions = {}, mobileNavLayout = false) {
   `;
 }
 
-async function syncFixtureComposerPopoverAnchor(page: Page) {
-  // The session companion runs the same composer surface, so the pane's own
-  // composer is named by its shell rather than by the shared surface class.
-  await page.locator(".agent-chat__composer-shell > .agent-chat__input").evaluate((node) => {
-    const viewport = window.visualViewport;
-    const viewportTop = viewport?.offsetTop ?? 0;
-    const layoutViewportHeight = document.documentElement.clientHeight || window.innerHeight;
-    const composerTop = node.getBoundingClientRect().top;
-    node.style.setProperty(
-      "--chat-composer-popover-bottom",
-      `${layoutViewportHeight - composerTop + 6}px`,
-    );
-    node.style.setProperty(
-      "--chat-composer-popover-max-height",
-      `${Math.max(0, composerTop - viewportTop - 28)}px`,
-    );
-  });
-}
-
 async function openFixture(width: number, height: number, opts: ChatFixtureOptions = {}) {
-  const page = await openBrowserPage(width, height);
-  try {
-    await page.setContent(
-      `<!doctype html><html><head><style>${readUiCss()}</style></head><body>${chatHtml(opts, width <= 1100)}</body></html>`,
-    );
-    await syncFixtureComposerPopoverAnchor(page);
-    return page;
-  } catch (error) {
-    await closeBrowserPage(page);
-    throw error;
+  if (!realChatServer) {
+    throw new Error("Expected the Control UI server to be ready");
   }
-}
-
-async function getTextContentRect(page: Page, selector: string) {
-  const rect = await page.locator(selector).evaluate((node) => {
-    const range = document.createRange();
-    range.selectNodeContents(node);
-    const bounds = range.getBoundingClientRect();
-    range.detach();
-    return {
-      left: bounds.left,
-      right: bounds.right,
-      top: bounds.top,
-      bottom: bounds.bottom,
-      width: bounds.width,
-      height: bounds.height,
-    };
-  });
-  expectFiniteRect({ x: rect.left, y: rect.top, width: rect.width, height: rect.height });
-  return rect;
-}
-
-async function expectNoHorizontalOverflow(page: Page) {
-  const metrics = await page.evaluate(() => ({
-    body: document.body.scrollWidth,
-    html: document.documentElement.scrollWidth,
-    viewport: window.innerWidth,
-  }));
-  expect(metrics.html).toBeLessThanOrEqual(metrics.viewport + 1);
-  expect(metrics.body).toBeLessThanOrEqual(metrics.viewport + 1);
+  return openComposerLayoutFixture(
+    await openBrowserPage(width, height),
+    realChatServer.baseUrl,
+    chatHtml(opts, width <= 1100),
+  );
 }
 
 describeBrowserLayout.concurrent("chat responsive browser layout", () => {
@@ -2204,20 +2161,24 @@ describeBrowserLayout.concurrent("chat responsive browser layout", () => {
       const errorStart = sharedAppPageErrors.length;
       try {
         await page.setViewportSize({ width: 900, height: 800 });
-        const textarea = page.locator(".agent-chat__composer-combobox > textarea");
+        const textarea = page.locator(".agent-chat__composer-combobox > openclaw-composer-editor");
         await textarea.waitFor({ timeout: APP_FIRST_RENDER_TIMEOUT_MS });
-        await textarea.fill(
+        await fillComposer(
+          textarea,
           "Resize this populated draft across a narrow pane so its wrapped lines change height without waiting for another input event. ".repeat(
             2,
           ),
         );
-        await waitForLayoutSettled(page, ".agent-chat__composer-combobox > textarea");
+        await waitForLayoutSettled(
+          page,
+          ".agent-chat__composer-combobox > openclaw-composer-editor",
+        );
         const wideHeight = (await textarea.boundingBox())?.height ?? 0;
 
         await page.setViewportSize({ width: 430, height: 800 });
         await page.waitForFunction((previousHeight) => {
-          const element = document.querySelector<HTMLTextAreaElement>(
-            ".agent-chat__composer-combobox > textarea",
+          const element = document.querySelector<ComposerEditor>(
+            ".agent-chat__composer-combobox > openclaw-composer-editor",
           );
           return element !== null && element.getBoundingClientRect().height > previousHeight + 1;
         }, wideHeight);
@@ -2226,8 +2187,8 @@ describeBrowserLayout.concurrent("chat responsive browser layout", () => {
 
         await page.setViewportSize({ width: 900, height: 800 });
         await page.waitForFunction((previousHeight) => {
-          const element = document.querySelector<HTMLTextAreaElement>(
-            ".agent-chat__composer-combobox > textarea",
+          const element = document.querySelector<ComposerEditor>(
+            ".agent-chat__composer-combobox > openclaw-composer-editor",
           );
           return element !== null && element.getBoundingClientRect().height < previousHeight - 1;
         }, narrowHeight);
@@ -2237,7 +2198,10 @@ describeBrowserLayout.concurrent("chat responsive browser layout", () => {
             .filter((message) => message.includes("ResizeObserver loop")),
         ).toEqual([]);
       } finally {
-        await page.locator(".agent-chat__composer-combobox > textarea").fill("");
+        await fillComposer(
+          page.locator(".agent-chat__composer-combobox > openclaw-composer-editor"),
+          "",
+        );
         await page.setViewportSize({ width: 1366, height: 900 });
       }
     },
@@ -2689,7 +2653,7 @@ describeBrowserLayout.concurrent("chat responsive browser layout", () => {
           bubble: styleFor(".chat-group.user .chat-bubble:first-child"),
           composer: styleFor(".agent-chat__composer-shell > .agent-chat__input"),
           footer: styleFor(".agent-chat__composer-footer"),
-          textarea: styleFor(".agent-chat__composer-combobox > textarea"),
+          textarea: styleFor(".agent-chat__composer-combobox > openclaw-composer-editor"),
         };
       });
 
@@ -2754,7 +2718,7 @@ describeBrowserLayout.concurrent("chat responsive browser layout", () => {
         };
         return {
           surface: rectFor(".agent-chat__composer-shell > .agent-chat__input"),
-          editor: rectFor(".agent-chat__composer-combobox > textarea"),
+          editor: rectFor(".agent-chat__composer-combobox > openclaw-composer-editor"),
           actionRow: rectFor(".agent-chat__composer-footer"),
         };
       });
@@ -2968,7 +2932,6 @@ describeBrowserLayout.concurrent("chat responsive browser layout", () => {
           permissionTrigger: radius(".chat-controls__permission-trigger"),
         };
       });
-
       expect(radii.permissionOption).toBe(radii.modelOption);
       expect(radii.permissionTrigger).toBe(radii.modelTrigger);
       expect(radii.attachTrigger).toBe(radii.modelTrigger);
@@ -3057,16 +3020,17 @@ describeBrowserLayout.concurrent("chat responsive browser layout", () => {
 
   it("keeps the expanded mobile composer inset, scrollable, and flush with the thread", async () => {
     await withBrowserPage(openFixture(393, 852), async (page) => {
-      const textarea = page.locator(".agent-chat__composer-combobox > textarea");
+      const textarea = page.locator(".agent-chat__composer-combobox > openclaw-composer-editor");
       // Comfortably past a quarter of the tallest viewport this case runs at,
       // so the assertion below proves the cap and the scroll, not the draft.
-      await textarea.fill(
+      await fillComposer(
+        textarea,
         Array.from({ length: 16 }, (_value, index) => `Mobile composer line ${index + 1}`).join(
           "\n",
         ),
       );
       await textarea.evaluate((node) => {
-        const textareaNode = node as HTMLTextAreaElement;
+        const textareaNode = node as ComposerEditor;
         textareaNode.style.height = `${textareaNode.scrollHeight}px`;
       });
       await page.waitForTimeout(220);
@@ -3085,11 +3049,11 @@ describeBrowserLayout.concurrent("chat responsive browser layout", () => {
             height: rect.height,
           };
         };
-        const textareaNode = document.querySelector<HTMLTextAreaElement>(
-          ".agent-chat__composer-combobox > textarea",
+        const textareaNode = document.querySelector<ComposerEditor>(
+          ".agent-chat__composer-combobox > openclaw-composer-editor",
         );
         const textareaStyle = textareaNode ? getComputedStyle(textareaNode) : null;
-        const textareaRect = rectFor(".agent-chat__composer-combobox > textarea");
+        const textareaRect = rectFor(".agent-chat__composer-combobox > openclaw-composer-editor");
         return {
           attach: rectFor('.agent-chat__input-btn[aria-label="Add attachment"]'),
           attachIcon: rectFor('.agent-chat__input-btn[aria-label="Add attachment"] svg'),
@@ -3348,7 +3312,7 @@ describeBrowserLayout.concurrent("chat responsive browser layout", () => {
             input: rectFor(".agent-chat__composer-shell > .agent-chat__input"),
             thread: rectFor(".chat-thread"),
             footer: rectFor(".agent-chat__composer-footer"),
-            textarea: rectFor(".agent-chat__composer-combobox > textarea"),
+            textarea: rectFor(".agent-chat__composer-combobox > openclaw-composer-editor"),
             meta: rectFor(".agent-chat__composer-meta"),
             model: rectFor(".chat-composer-model-control"),
             modelSettings: rectFor(".chat-controls__model-trigger"),
@@ -3411,8 +3375,8 @@ describeBrowserLayout.concurrent("chat responsive browser layout", () => {
           Math.abs(context.y + context.height / 2 - (model.y + model.height / 2)),
         ).toBeLessThanOrEqual(2);
         const composerFontSizes = await page.evaluate(() => {
-          const textareaNode = document.querySelector<HTMLTextAreaElement>(
-            ".agent-chat__composer-combobox > textarea",
+          const textareaNode = document.querySelector<ComposerEditor>(
+            ".agent-chat__composer-combobox > openclaw-composer-editor",
           );
           const selectors = [
             ".chat-controls__permission-trigger .chat-controls__inline-select-label",
@@ -3422,8 +3386,13 @@ describeBrowserLayout.concurrent("chat responsive browser layout", () => {
           if (!textareaNode) {
             throw new Error("Missing composer textarea");
           }
-          const fontSize = (node: Element, pseudo?: string) =>
-            Number.parseFloat(getComputedStyle(node, pseudo).fontSize);
+          const fontSize = (node: Element) => Number.parseFloat(getComputedStyle(node).fontSize);
+          const draft = textareaNode.value;
+          textareaNode.value = "";
+          const placeholderSize = fontSize(
+            textareaNode.shadowRoot!.querySelector(".cm-placeholder")!,
+          );
+          textareaNode.value = draft;
           return {
             labels: selectors.map((selector) => {
               const label = document.querySelector(selector);
@@ -3432,7 +3401,7 @@ describeBrowserLayout.concurrent("chat responsive browser layout", () => {
               }
               return fontSize(label);
             }),
-            placeholder: fontSize(textareaNode, "::placeholder"),
+            placeholder: placeholderSize,
             textarea: fontSize(textareaNode),
           };
         });
@@ -3503,7 +3472,7 @@ describeBrowserLayout.concurrent("chat responsive browser layout", () => {
       const readPosition = () => shell.evaluate((node) => getComputedStyle(node).marginBottom);
       const unfocused = await readPosition();
 
-      await page.locator(".agent-chat__composer-combobox > textarea").focus();
+      await page.locator(".agent-chat__composer-combobox > openclaw-composer-editor").focus();
       const focused = await readPosition();
 
       expect(focused).toBe(unfocused);
@@ -3548,7 +3517,9 @@ describeBrowserLayout.concurrent("chat responsive browser layout", () => {
               };
               const removeNode = elementFor(".chat-attachment-remove");
               const removeRect = rectFor(".chat-attachment-remove");
-              const textarea = elementFor(".agent-chat__composer-combobox > textarea");
+              const textarea = elementFor(
+                ".agent-chat__composer-combobox > openclaw-composer-editor",
+              );
               return {
                 input: rectFor(".agent-chat__composer-shell > .agent-chat__input"),
                 preview: rectFor(".chat-attachments-preview"),
@@ -3696,15 +3667,14 @@ describeBrowserLayout.concurrent("chat responsive browser layout", () => {
     await withBrowserPage(
       openFixture(568, 320, { composerAttachment: true, goalMode: true }),
       async (page) => {
-        await page
-          .locator(".agent-chat__composer-combobox > textarea")
-          .fill(
-            Array.from(
-              { length: 10 },
-              (_value, index) =>
-                `Landscape proof line ${index + 1}: keep transcript visible while this long draft scrolls inside the bounded composer.`,
-            ).join("\n"),
-          );
+        await fillComposer(
+          page.locator(".agent-chat__composer-combobox > openclaw-composer-editor"),
+          Array.from(
+            { length: 10 },
+            (_value, index) =>
+              `Landscape proof line ${index + 1}: keep transcript visible while this long draft scrolls inside the bounded composer.`,
+          ).join("\n"),
+        );
 
         const initial = await page.evaluate(() => {
           const rectFor = (selector: string) => {
@@ -3726,7 +3696,7 @@ describeBrowserLayout.concurrent("chat responsive browser layout", () => {
           return {
             input: rectFor(".agent-chat__composer-shell > .agent-chat__input"),
             thread: rectFor(".chat-thread"),
-            textarea: rectFor(".agent-chat__composer-combobox > textarea"),
+            textarea: rectFor(".agent-chat__composer-combobox > openclaw-composer-editor"),
           };
         });
 
@@ -3851,7 +3821,10 @@ describeBrowserLayout.concurrent("chat responsive browser layout", () => {
         slashMenu: true,
       }),
       async (page) => {
-        await page.locator(".agent-chat__composer-combobox > textarea").fill("/review");
+        await fillComposer(
+          page.locator(".agent-chat__composer-combobox > openclaw-composer-editor"),
+          "/review",
+        );
 
         const initial = await page.evaluate(() => {
           const rectFor = (selector: string) => {
@@ -3873,7 +3846,7 @@ describeBrowserLayout.concurrent("chat responsive browser layout", () => {
           return {
             input: rectFor(".agent-chat__composer-shell > .agent-chat__input"),
             menu: rectFor(".slash-menu"),
-            textarea: rectFor(".agent-chat__composer-combobox > textarea"),
+            textarea: rectFor(".agent-chat__composer-combobox > openclaw-composer-editor"),
             footer: rectFor(".agent-chat__composer-footer"),
           };
         });
@@ -4598,8 +4571,8 @@ describeBrowserLayout.concurrent("chat responsive browser layout", () => {
       page = await getSharedAppPage();
       await page.setViewportSize({ width: 568, height: 320 });
       await page.getByText(SHARED_APP_SLASH_TEXT).waitFor({ timeout: APP_FIRST_RENDER_TIMEOUT_MS });
-      const textarea = page.locator(".agent-chat__composer-combobox > textarea");
-      await textarea.fill("/");
+      const textarea = page.locator(".agent-chat__composer-combobox > openclaw-composer-editor");
+      await fillComposer(textarea, "/");
       await textarea.focus();
     });
 
@@ -4607,7 +4580,10 @@ describeBrowserLayout.concurrent("chat responsive browser layout", () => {
       if (!page) {
         return;
       }
-      await page.locator(".agent-chat__composer-combobox > textarea").fill("");
+      await fillComposer(
+        page.locator(".agent-chat__composer-combobox > openclaw-composer-editor"),
+        "",
+      );
       await page.setViewportSize({ width: 1366, height: 900 });
     });
 
@@ -4640,8 +4616,8 @@ describeBrowserLayout.concurrent("chat responsive browser layout", () => {
         await page.keyboard.press("ArrowDown");
       }
       await page.waitForFunction((expectedId) => {
-        const input = document.querySelector<HTMLTextAreaElement>(
-          ".agent-chat__composer-combobox > textarea",
+        const input = document.querySelector<ComposerEditor>(
+          ".agent-chat__composer-combobox > openclaw-composer-editor",
         );
         return input?.getAttribute("aria-activedescendant") === expectedId;
       }, initiallyHidden.id);
@@ -4657,8 +4633,8 @@ describeBrowserLayout.concurrent("chat responsive browser layout", () => {
       }, initiallyHidden.id);
 
       const result = await page.evaluate(() => {
-        const input = document.querySelector<HTMLTextAreaElement>(
-          ".agent-chat__composer-combobox > textarea",
+        const input = document.querySelector<ComposerEditor>(
+          ".agent-chat__composer-combobox > openclaw-composer-editor",
         );
         const scrollRegion = document.querySelector<HTMLElement>(".slash-menu__scroll");
         const active = document.querySelector<HTMLElement>(".slash-menu-item--active");
@@ -4669,13 +4645,16 @@ describeBrowserLayout.concurrent("chat responsive browser layout", () => {
         const activeRect = active.getBoundingClientRect();
         return {
           activeDescendant: input.getAttribute("aria-activedescendant"),
-          focusedTag: document.activeElement?.tagName,
+          composerFocused:
+            document.activeElement === input &&
+            input.shadowRoot?.activeElement ===
+              input.shadowRoot?.querySelector("[contenteditable=true]"),
           scrollTop: scrollRegion.scrollTop,
           visible: activeRect.top >= menuRect.top - 1 && activeRect.bottom <= menuRect.bottom + 1,
         };
       });
 
-      expect(result.focusedTag).toBe("TEXTAREA");
+      expect(result.composerFocused).toBe(true);
       expect(result.activeDescendant).toBe(initiallyHidden.id);
       expect(result.scrollTop).toBeGreaterThan(0);
       expect(result.visible).toBe(true);

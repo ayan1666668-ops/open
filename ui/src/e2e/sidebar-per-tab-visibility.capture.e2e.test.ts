@@ -1,5 +1,6 @@
 import { expect, it } from "vitest";
 import { CONTROL_UI_BOOTSTRAP_CONFIG_PATH } from "../../../src/gateway/control-ui-bootstrap-contract.js";
+import { composerContentValue } from "../test-helpers/composer-editor.ts";
 import {
   createControlUiMockBootstrapConfig,
   createControlUiMockGatewayInitScript,
@@ -142,7 +143,9 @@ suite.define(() => {
       const page = await context.newPage();
       try {
         await page.goto(controlUiSessionUrl(suite.server.baseUrl, MAIN_KEY));
-        const composer = page.locator(".agent-chat__composer-combobox > textarea");
+        const composer = page.locator(
+          ".agent-chat__composer-combobox > openclaw-composer-editor .cm-content",
+        );
         await composer.fill("Keep this unsent draft in the original tab");
         const originalUrl = page.url();
         const link = page.locator(
@@ -160,7 +163,9 @@ suite.define(() => {
             ? link.click({ button: "middle" })
             : link.click({ modifiers: ["ControlOrMeta"] }),
         ]);
-        const tabComposer = sessionTab.locator(".agent-chat__composer-combobox > textarea");
+        const tabComposer = sessionTab.locator(
+          ".agent-chat__composer-combobox > openclaw-composer-editor .cm-content",
+        );
         await tabComposer.waitFor({ state: "visible", timeout: 10_000 });
         if (catalog) {
           await sessionTab.getByText("Catalog transcript loaded", { exact: true }).waitFor();
@@ -193,7 +198,9 @@ suite.define(() => {
         expect(targetUrl.searchParams.has("nav")).toBe(false);
         expect(sessionTab.url()).toBe(targetUrl.href);
         expect(page.url()).toBe(originalUrl);
-        expect(await composer.inputValue()).toBe("Keep this unsent draft in the original tab");
+        expect(await composerContentValue(composer)).toBe(
+          "Keep this unsent draft in the original tab",
+        );
 
         await sessionTab.keyboard.press("ControlOrMeta+B");
         await expect.poll(() => sidebar.isVisible()).toBe(false);

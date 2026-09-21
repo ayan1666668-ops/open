@@ -5,6 +5,7 @@ import { gatewayOriginScope } from "@openclaw/gateway-client/browser";
 import { expect, it } from "vitest";
 import type { ModelCatalogEntry } from "../api/types.ts";
 import { finishElementAnimations } from "../test-helpers/animations.ts";
+import { fillComposer } from "../test-helpers/composer-editor.ts";
 import { takeControlUiViewportScreenshot } from "../test-helpers/control-ui-e2e-screenshot.ts";
 import { controlUiBundledGatewayUrl } from "../test-helpers/control-ui-e2e.ts";
 import { revealChatModelOption, selectChatModelOption } from "../test-helpers/select-picker-e2e.ts";
@@ -444,7 +445,10 @@ suite.define(() => {
     });
     try {
       await page.goto(`${suite.server.baseUrl}new?agent=main`);
-      await page.locator(".new-session-page__message").fill("Start with this saved account");
+      await fillComposer(
+        page.locator(".new-session-page__message"),
+        "Start with this saved account",
+      );
       const start = page.getByRole("button", { name: "Start session" });
       const startHint = start.locator("..");
       await expect.poll(() => start.getAttribute("aria-disabled")).toBe("true");
@@ -541,9 +545,10 @@ suite.define(() => {
       await expect.poll(() => modelTrigger.textContent()).toContain("gpt-5.6-luna");
       expect(await modelTrigger.getAttribute("aria-busy")).toBe("false");
       expect(await page.locator(".chat-controls__model-trigger-skeleton").count()).toBe(0);
-      await page
-        .locator(".new-session-page__message")
-        .fill("Start without waiting for the catalog");
+      await fillComposer(
+        page.locator(".new-session-page__message"),
+        "Start without waiting for the catalog",
+      );
       await expect
         .poll(() =>
           page.getByRole("button", { name: "Start session" }).getAttribute("aria-disabled"),
@@ -630,7 +635,7 @@ suite.define(() => {
         .poll(() => page.locator("[data-chat-model-context-badge]").textContent())
         .toContain("200K");
 
-      await page.locator(".new-session-page__message").fill("use the smaller window");
+      await fillComposer(page.locator(".new-session-page__message"), "use the smaller window");
       await page.getByRole("button", { name: "Start session" }).click();
       const create = await gateway.waitForRequest("sessions.create");
       expect(create.params).toMatchObject({

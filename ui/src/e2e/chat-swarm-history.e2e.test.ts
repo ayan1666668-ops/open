@@ -96,11 +96,16 @@ suite.define(() => {
       await expect.poll(() => outcome.isVisible()).toBe(true);
       // Finish compaction after the other pane replaces the primary session page.
       await gateway.deferNext("sessions.compact");
-      const composer = research.locator(".agent-chat__composer-combobox textarea");
+      const composer = research.locator(
+        ".agent-chat__composer-combobox openclaw-composer-editor .cm-content",
+      );
       await composer.fill("/compact ");
       await composer.press("Enter");
       await gateway.waitForRequest("sessions.compact");
-      await cells.last().locator(".agent-chat__composer-combobox textarea").focus();
+      await cells
+        .last()
+        .locator(".agent-chat__composer-combobox openclaw-composer-editor .cm-content")
+        .focus();
       await expect.poll(() => page.url()).toBe(controlUiSessionUrl(suite.server.baseUrl, otherKey));
 
       await gateway.setMethodResponse("sessions.list", {

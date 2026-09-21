@@ -409,7 +409,9 @@ suite.define(() => {
           };
           await senderGateway.deferNext("chat.send");
           const prompt = "Please also check the shared components.";
-          await sender.locator(".agent-chat__composer-combobox textarea").fill(prompt);
+          await sender
+            .locator(".agent-chat__composer-combobox openclaw-composer-editor .cm-content")
+            .fill(prompt);
           await sender.getByRole("button", { name: /^(Send|Queue) message$/ }).click();
           const request = requireRecord((await senderGateway.waitForRequest("chat.send")).params);
           expect(request.message).toBe(prompt);

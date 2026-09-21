@@ -114,7 +114,9 @@ suite.define(() => {
         await gateway.emitGatewayEvent("progressCard.changed", { sessionKey, revision: 2 });
         expect((await gateway.getRequests("progressCard.get")).length).toBe(reads);
         await page.reload();
-        await page.locator(".agent-chat__composer-combobox textarea").waitFor({ state: "visible" });
+        await page
+          .locator(".agent-chat__composer-combobox openclaw-composer-editor .cm-content")
+          .waitFor({ state: "visible" });
         expect(await page.locator(".agent-chat__progress-float").count()).toBe(0);
         // The page-owned mock request log restarts on reload.
         expect(await gateway.getRequests("progressCard.get")).toHaveLength(0);

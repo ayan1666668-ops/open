@@ -1,5 +1,6 @@
 import type { Page } from "playwright";
 import { expect, it } from "vitest";
+import { fillComposer } from "../test-helpers/composer-editor.ts";
 import {
   controlUiBundledSettingsStorageKey,
   defaultControlUiFeatureMethods,
@@ -109,13 +110,16 @@ suite.define(() => {
           });
         await waitForChatScrollIdle(page);
         // Resize through the real input handler, then navigate before observer delivery.
-        await page.locator(".agent-chat__composer-combobox textarea").evaluate((element) => {
-          const textarea = element as HTMLTextAreaElement;
-          textarea.value = "Keep the review notes available.\n".repeat(6);
-          textarea.dispatchEvent(new Event("input", { bubbles: true }));
-          const thread = document.querySelector(".chat-thread")!;
-          thread.scrollTop = thread.scrollHeight;
-        });
+        await page
+          .locator(".agent-chat__composer-combobox openclaw-composer-editor .cm-content")
+          .evaluate((element) => {
+            const editor = (element.getRootNode() as ShadowRoot)
+              .host as import("../components/composer-editor.ts").ComposerEditor;
+            editor.value = "Keep the review notes available.\n".repeat(6);
+            editor.dispatchEvent(new Event("input", { bubbles: true }));
+            const thread = document.querySelector(".chat-thread")!;
+            thread.scrollTop = thread.scrollHeight;
+          });
         await waitForChatScrollIdle(page);
         await captureUiProof(suite, page, "rail-resize-navigation", "settled.png");
         await expectPositionRailAtEnd(page);
@@ -291,14 +295,13 @@ suite.define(() => {
           }
           const expandedHeight = (await marks.boundingBox())!.height;
           const textareaSamples = sampleAnchor();
-          await page
-            .locator(".agent-chat__composer-combobox textarea")
-            .fill(
-              Array.from(
-                { length: 6 },
-                (_, index) => `Review note ${index + 1}: keep navigation visible.`,
-              ).join("\n"),
-            );
+          await fillComposer(
+            page.locator(".agent-chat__composer-combobox openclaw-composer-editor"),
+            Array.from(
+              { length: 6 },
+              (_, index) => `Review note ${index + 1}: keep navigation visible.`,
+            ).join("\n"),
+          );
           await expect
             .poll(async () => (await composer.boundingBox())!.height)
             .toBeGreaterThan(collapsedComposer.height + 180);
@@ -312,9 +315,11 @@ suite.define(() => {
             ).toBe(true);
           }
           if (count === 80 && direction === "ltr") {
-            const textarea = page.locator(".agent-chat__composer-combobox textarea");
+            const textarea = page.locator(
+              ".agent-chat__composer-combobox openclaw-composer-editor",
+            );
             const goalSamples = sampleAnchor();
-            await textarea.fill("/goal");
+            await fillComposer(textarea, "/goal");
             await textarea.press("Enter");
             await page.locator(".agent-chat__goal-mode").waitFor();
             await assertAnchor(goalSamples);
@@ -328,7 +333,7 @@ suite.define(() => {
             const queuedTexts = ["Review the next checkpoint", "Check the supporting notes"];
             for (const text of queuedTexts) {
               const queueSamples = sampleAnchor();
-              await textarea.fill(text);
+              await fillComposer(textarea, text);
               await textarea.press("Enter");
               await page.locator(".chat-queue__item", { hasText: text }).waitFor();
               await assertAnchor(queueSamples, true);

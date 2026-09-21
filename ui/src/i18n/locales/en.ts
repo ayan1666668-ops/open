@@ -4148,6 +4148,8 @@ export const en: TranslationMap & {
       badge: "Expired",
     },
     composer: {
+      skillChip: "skill: {name}",
+      mentionChip: "mention: {name}",
       composerInput: "Chat composer",
       emojiSuggestions: "Emoji suggestions",
       placeholder: "Message {name}",

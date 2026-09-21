@@ -2,6 +2,7 @@ import type { Question, QuestionRecord, QuestionResolveResult } from "@openclaw/
 import type { Page } from "playwright";
 import { expect, it } from "vitest";
 import { CONTROL_UI_SESSION_PULL_REQUESTS_CHANGED_EVENT } from "../../../src/gateway/control-ui-contract.js";
+import { composerContentValue } from "../test-helpers/composer-editor.ts";
 import type { MockGatewayControls } from "../test-helpers/control-ui-e2e.ts";
 import { requireRecord, requireString } from "./chat-flow.test-support.ts";
 import { waitForWatchedSessionKey } from "./chat-github-publication.test-support.ts";
@@ -30,7 +31,9 @@ export function defineQuestionFooterTests({
     async ({ height, screenshotName, width }) => {
       const { gateway, page } = await openQuestionPage({ height, width }, true);
       const composer = page.locator(".agent-chat__input");
-      const draft = composer.locator(".agent-chat__composer-combobox > textarea");
+      const draft = composer.locator(
+        ".agent-chat__composer-combobox > openclaw-composer-editor .cm-content",
+      );
       await draft.fill("Review the footer controls");
       await draft.press("Enter");
       const sent = requireRecord((await gateway.waitForRequest("chat.send")).params);
@@ -82,7 +85,7 @@ export function defineQuestionFooterTests({
       await panel.getByText(prompt, { exact: true }).waitFor();
       await panel.locator(".chat-question-panel__collapse").tap();
       await composer.waitFor();
-      expect(await draft.inputValue()).toBe("Keep this follow-up draft");
+      expect(await composerContentValue(draft)).toBe("Keep this follow-up draft");
 
       const shell = page.locator(".agent-chat__composer-shell");
       const expand = panel.locator(".chat-question-panel__collapsed-button");
@@ -150,7 +153,7 @@ export function defineQuestionFooterTests({
       });
       await expect.poll(() => panel.count()).toBe(0);
       await composer.waitFor();
-      expect(await draft.inputValue()).toBe("Keep this follow-up draft");
+      expect(await composerContentValue(draft)).toBe("Keep this follow-up draft");
       await pullRequest.click({ trial: true });
     },
   );

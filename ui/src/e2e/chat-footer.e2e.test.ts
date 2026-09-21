@@ -4,6 +4,7 @@ import { expect, it } from "vitest";
 import { CONTROL_UI_SESSION_PULL_REQUESTS_CHANGED_EVENT } from "../../../src/gateway/control-ui-contract.js";
 import { SESSION_PULL_REQUESTS_SUBSCRIBE_METHOD } from "../lib/session-pull-requests.ts";
 import { CHAT_TRANSCRIPT_END_THRESHOLD_PX } from "../pages/chat/scroll.ts";
+import { composerContentValue } from "../test-helpers/composer-editor.ts";
 import { createControlUiE2eArtifactDir } from "../test-helpers/control-ui-e2e-artifacts.ts";
 import { installMockGateway } from "../test-helpers/control-ui-e2e.ts";
 import {
@@ -288,7 +289,9 @@ suite.define(() => {
           await gateway.setOnline(false);
           await gateway.closeLatest();
           await page.locator(".agent-chat__input--offline").waitFor();
-          const composer = page.locator(".agent-chat__composer-combobox textarea");
+          const composer = page.locator(
+            ".agent-chat__composer-combobox openclaw-composer-editor .cm-content",
+          );
           for (const message of queuedMessages) {
             await composer.fill(message);
             await composer.press("Enter");
@@ -352,7 +355,7 @@ suite.define(() => {
             .locator(".chat-queue__remove");
           await activate(remove, touch);
           await expect.poll(() => page.locator(".chat-queue__item").count()).toBe(2);
-          expect(await composer.inputValue()).toBe(draft);
+          expect(await composerContentValue(composer)).toBe(draft);
           await expectInputReachable(page);
           await capture("05-context-scrolled");
           await waitForChatScrollIdle(page);

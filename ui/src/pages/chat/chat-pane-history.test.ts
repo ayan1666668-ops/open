@@ -1,10 +1,10 @@
-/* @vitest-environment jsdom */
-
 import type { UsersMentionableResult } from "@openclaw/gateway-protocol";
+/* @vitest-environment jsdom */
 import { nothing, render } from "lit";
 import { describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../../../test/helpers/promise.js";
 import type { GatewayBrowserClient } from "../../api/gateway.ts";
+import type { ComposerEditor } from "../../components/composer-editor.ts";
 import { extractText } from "../../lib/chat/message-extract.ts";
 import "./chat-pane.ts";
 import { handleChatGatewayEvent } from "./chat-gateway.ts";
@@ -96,7 +96,7 @@ describe("chat pane native history pagination", () => {
 
       try {
         renderCurrent();
-        const textarea = container.querySelector<HTMLTextAreaElement>("textarea")!;
+        const textarea = container.querySelector<ComposerEditor>("openclaw-composer-editor")!;
         for (const character of "@Bo") {
           textarea.dispatchEvent(
             new InputEvent("beforeinput", {

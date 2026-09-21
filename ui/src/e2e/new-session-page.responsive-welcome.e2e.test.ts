@@ -1,5 +1,6 @@
 import { expect, it } from "vitest";
 import { waitForLayoutSettled } from "../pages/chat/chat-layout.browser.test-support.ts";
+import { composerValue } from "../test-helpers/composer-editor.ts";
 import { waitForControlUiRoute } from "../test-helpers/control-ui-e2e.ts";
 import {
   captureNewSessionComposerUiProof,
@@ -250,7 +251,7 @@ suite.define(() => {
 
       await remove.click();
       await expect.poll(() => preview.count()).toBe(0);
-      expect(await textarea.inputValue()).toBe("@Bob ");
+      expect(await composerValue(textarea)).toBe("@Bob ");
       await captureNewSessionComposerUiProof(suite, page, "cold-mention-removed.png");
     });
   });
