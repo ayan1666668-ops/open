@@ -31,12 +31,12 @@ import {
   waitForGatewayRestartFenceSettlement,
 } from "../process/gateway-work-admission.js";
 import { resolveGatewayStartupPluginActivationConfig } from "./plugin-activation-runtime-config.js";
-import { observeGatewayProviderUsageMetrics } from "./provider-usage-metrics-observer.js";
 import {
   indexPluginNodeCapabilitySurfaces,
   prepareClientPluginNodeCapabilities,
   reconcileClientPluginNodeCapabilities,
 } from "./plugin-node-capability.js";
+import { observeGatewayProviderUsageMetrics } from "./provider-usage-metrics-observer.js";
 import type { prepareGatewayLifecycle } from "./server-lifecycle.js";
 import type { prepareGatewayPluginLoad } from "./server-plugin-bootstrap.js";
 import { createPluginReloadChannels } from "./server-plugin-reload-channels.js";

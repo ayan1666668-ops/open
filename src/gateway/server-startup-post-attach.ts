@@ -31,6 +31,7 @@ import { createDeferredCore } from "../shared/deferred.js";
 import { createLazyRuntimeModule } from "../shared/lazy-runtime.js";
 import { hasSameTranscriptCaptureIntent } from "../transcripts/config-reload.js";
 import { resolveTranscriptsConfig } from "../transcripts/config.js";
+import { observeGatewayProviderUsageMetrics } from "./provider-usage-metrics-observer.js";
 import type { GatewayBroadcastToConnIdsFn } from "./server-broadcast-types.js";
 import type { GatewayControlUiRootLifecycle } from "./server-control-ui-root.js";
 import type { GatewayRecoveryRuntime } from "./server-instance-runtime.types.js";
@@ -58,7 +59,6 @@ import {
   type GatewayPostReadySidecarHandle,
 } from "./server-startup-sidecar-scheduler.js";
 import { measureStartup, type GatewayStartupTrace } from "./server-startup-trace.js";
-import { observeGatewayProviderUsageMetrics } from "./provider-usage-metrics-observer.js";
 import { createDeferredGatewayUpdateCheck } from "./server-startup-update-check.js";
 import type { ReadinessChecker } from "./server/readiness.js";
 import {
@@ -517,6 +517,7 @@ export async function startGatewaySidecars(params: {
           startupTrace: params.startupTrace,
           broadcastPluginEvent: params.broadcastPluginEvent,
           getCronService: params.getCronService,
+          observeProviderUsage: observeGatewayProviderUsageMetrics,
           onHandle: (handle) => {
             ownedPluginServices.resolve(handle);
             // Transfer the pending owner to the real service handle before startup yields.

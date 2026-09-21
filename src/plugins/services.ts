@@ -10,6 +10,10 @@ import {
 import { markTrustedOtelDiagnosticListener } from "../infra/diagnostic-otel-listener-provenance.js";
 import { registerDiagnosticTracePropagationBridge } from "../infra/diagnostic-trace-propagation.js";
 import { formatErrorMessage } from "../infra/errors.js";
+import type {
+  ProviderUsageMetricsListener,
+  ProviderUsageMetricsSnapshot,
+} from "../infra/provider-usage-metrics.types.js";
 import {
   recordDiagnosticExporterHealth,
   type DiagnosticExporterHealthUpdate,
@@ -75,9 +79,15 @@ type TrustedExporterInternalDiagnostics = NonNullable<
   OpenClawPluginServiceContext["internalDiagnostics"]
 > & {
   reportExporterHealth: (update: DiagnosticExporterHealthUpdate) => void;
+  observeProviderUsage?: (listener: ProviderUsageMetricsListener) => Promise<() => void>;
 };
 
 type PluginServiceStopResult = { errors: readonly unknown[] };
+
+type ObserveProviderUsage = (params: {
+  isActive: () => boolean;
+  listener: (snapshot: ProviderUsageMetricsSnapshot) => void;
+}) => Promise<() => void>;
 
 export type PluginServicesHandle = {
   reload: (config: OpenClawConfig, serviceIds: ReadonlySet<string>) => Promise<void>;

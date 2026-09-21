@@ -10,6 +10,7 @@ function createRegistry(pluginId: string, service: OpenClawPluginService) {
   registry.services = [
     {
       pluginId,
+      id: service.id,
       service,
       source: "test",
       origin: "bundled",
