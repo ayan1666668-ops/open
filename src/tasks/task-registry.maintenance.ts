@@ -107,7 +107,7 @@ const TASK_SWEEP_INTERVAL_MS = 60_000;
 
 let sweeper: NodeJS.Timeout | null = null;
 let deferredSweep: NodeJS.Timeout | null = null;
-let sweepInProgress = false;
+let scheduledSweep: Promise<void> | null = null;
 let configuredRuntimeAuthoritative = false;
 
 type TaskRegistryMaintenanceRuntime = TaskRegistryMaintenanceReader &
@@ -929,22 +929,21 @@ export function getTaskRegistryMaintenanceDiagnostics(): TaskRegistryMaintenance
 }
 
 function startScheduledSweep() {
-  if (sweepInProgress) {
+  if (!sweeper || scheduledSweep) {
     return;
   }
-  sweepInProgress = true;
-  const clearSweepInProgress = () => {
-    sweepInProgress = false;
-  };
-  void runWithGatewayIndependentRootWorkAdmission(async () => {
+  scheduledSweep = runWithGatewayIndependentRootWorkAdmission(async () => {
     // Flow retention reads linked task activity, so reconcile the task owner first.
     // Reversing this order can preserve phantom active work for another sweep.
     await sweepTaskRegistry();
     await runTaskFlowRegistryMaintenance();
-  }, "tasks:maintenance").then(clearSweepInProgress, (error: unknown) => {
-    clearSweepInProgress();
-    log.warn("Task registry maintenance failed", { error });
-  });
+  }, "tasks:maintenance")
+    .catch((error: unknown) => {
+      log.warn("Task registry maintenance failed", { error });
+    })
+    .finally(() => {
+      scheduledSweep = null;
+    });
 }
 
 export async function runTaskRegistryMaintenance(): Promise<TaskRegistryMaintenanceSummary> {
@@ -1082,19 +1081,19 @@ export async function sweepTaskRegistry(): Promise<TaskRegistryMaintenanceSummar
 
 export function startTaskRegistryMaintenance() {
   taskRegistryMaintenanceRuntime.ensureTaskRegistryReady();
+  if (sweeper) {
+    return;
+  }
   deferredSweep = setTimeout(() => {
     deferredSweep = null;
     startScheduledSweep();
   }, 5_000);
   deferredSweep.unref?.();
-  if (sweeper) {
-    return;
-  }
   sweeper = setInterval(startScheduledSweep, TASK_SWEEP_INTERVAL_MS);
   sweeper.unref?.();
 }
 
-export function stopTaskRegistryMaintenance() {
+export async function stopTaskRegistryMaintenance(): Promise<void> {
   if (deferredSweep) {
     clearTimeout(deferredSweep);
     deferredSweep = null;
@@ -1103,7 +1102,8 @@ export function stopTaskRegistryMaintenance() {
     clearInterval(sweeper);
     sweeper = null;
   }
-  sweepInProgress = false;
+  // Retained work must settle before callers retire its runtime or backing state.
+  await scheduledSweep;
 }
 
 export function setTaskRegistryMaintenanceRuntimeForTests(

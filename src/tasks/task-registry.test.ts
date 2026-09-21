@@ -3548,7 +3548,7 @@ describe("task-registry", () => {
       });
 
       startTaskRegistryMaintenance();
-      stopTaskRegistryMaintenance();
+      await stopTaskRegistryMaintenance();
 
       await vi.advanceTimersByTimeAsync(5_000);
       await flushAsyncWork();
@@ -3581,7 +3581,7 @@ describe("task-registry", () => {
           await vi.advanceTimersByTimeAsync(5_000);
           await waitForFast(() => expect(getTaskFlowById(flow.flowId)).toBeUndefined());
         } finally {
-          stopTaskRegistryMaintenance();
+          await stopTaskRegistryMaintenance();
         }
       },
       { durableStore: true },
@@ -3607,7 +3607,7 @@ describe("task-registry", () => {
 
       releaseInspection([]);
       await waitForFast(() => expect(getActiveGatewayRootWorkCount()).toBe(0));
-      stopTaskRegistryMaintenance();
+      await stopTaskRegistryMaintenance();
     });
   });
 
