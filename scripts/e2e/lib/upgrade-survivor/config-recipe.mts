@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import {
+  classifyReleaseTrain,
   compareReleaseVersions,
   parsePinnedReleaseVersion,
   parseReleaseVersion,
@@ -358,9 +359,12 @@ function adaptStepForBaseline(
       agents.entries.main.default = true;
       delete agents.ownership;
     }
-    // The published July extended-stable release retains the pre-keyed roster.
+    // July's extended-stable line branched before keyed rosters shipped.
+    const baselineRelease = parseReleaseVersion(baselineVersion ?? "");
     if (
-      baselineVersion === "2026.7.33" ||
+      (baselineRelease?.year === 2026 &&
+        baselineRelease.month === 7 &&
+        classifyReleaseTrain(baselineRelease) === "extended-stable") ||
       compareReleaseVersions(baselineVersion ?? "", "2026.7.2-beta.4") === -1
     ) {
       agents.list = Object.entries<Record<string, unknown>>(agents.entries).map(([id, entry]) =>

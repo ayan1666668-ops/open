@@ -50,11 +50,19 @@ run_missing_load_path_fixture() {
       local GATEWAY_LOG="$ARTIFACT_ROOT/missing-load-path/baseline-gateway.log"
       local HEALTHZ_JSON="$ARTIFACT_ROOT/missing-load-path/baseline-healthz.json"
       local READYZ_JSON="$ARTIFACT_ROOT/missing-load-path/baseline-readyz.json"
-      if [ "$baseline_version" = "2026.7.33" ]; then
-        # Its startup repair selects moving ClawHub metadata, which now requires a newer core.
-        phase missing-load-path-baseline-whatsapp openclaw_prepublish_plugin_registry_run_published \
-          openclaw_e2e_fixture_plugin_command openclaw -- \
-          plugins install "@openclaw/whatsapp@$baseline_version" --force
+      local provision_companions plugin
+      provision_companions="$(node --input-type=module -e '
+        import { compareReleaseVersions } from "./scripts/lib/release-version.mjs";
+        process.stdout.write(String(compareReleaseVersions(process.argv[1], "2026.9.1") === -1));
+      ' "$baseline_version")" || return "$?"
+      if [ "$provision_companions" = true ]; then
+        # 2026.9.1 first exempts verified official plugins from capability consent.
+        # Older startup repairs need their own published cohort, not moving metadata.
+        for plugin in codex discord whatsapp; do
+          phase "missing-load-path-baseline-$plugin" openclaw_prepublish_plugin_registry_run_published \
+            openclaw_e2e_fixture_plugin_command openclaw -- \
+            plugins install "@openclaw/$plugin@$baseline_version" --force || return "$?"
+        done
       fi
       phase missing-load-path-baseline-start openclaw_prepublish_plugin_registry_run_published start_missing_load_path_baseline
       phase missing-load-path-baseline-ready check_gateway_probes

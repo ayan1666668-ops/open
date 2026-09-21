@@ -105,9 +105,20 @@ it.each(["source", "compiled"])(
 const convergenceRestartMessage =
   "OpenClaw plugin migration inputs changed during startup convergence; refusing to report the gateway ready. Restart OpenClaw so state migrations run against the final config and plugin inventory.";
 
-it.skipIf(process.platform === "win32").each(["2026.7.33", "2026.9.5"])(
-  "provisions the published WhatsApp companion before the %s baseline starts",
-  (version) => {
+it.skipIf(process.platform === "win32").each([
+  { version: "2026.6.35", provision: true, installExit: 0 },
+  { version: "2026.7.33", provision: true, installExit: 0 },
+  { version: "2026.7.35", provision: true, installExit: 0 },
+  { version: "2026.8.1", provision: true, installExit: 0 },
+  { version: "2026.8.2", provision: true, installExit: 0 },
+  { version: "2026.9.1-beta.1", provision: true, installExit: 0 },
+  { version: "2026.9.1", provision: false, installExit: 0 },
+  { version: "2026.9.4", provision: false, installExit: 0 },
+  { version: "2026.9.5", provision: false, installExit: 0 },
+  { version: "2026.8.2", provision: true, installExit: 42 },
+])(
+  "provisions the published companion cohort for $version (install exit $installExit)",
+  ({ version, provision, installExit }) => {
     const result = spawnSync(
       "bash",
       [
@@ -122,27 +133,31 @@ ARTIFACT_ROOT=/unused
 OPENCLAW_PREPUBLISH_PLUGIN_REGISTRY_URL=https://candidate.example.invalid
 OPENCLAW_NPM_REGISTRY_UPSTREAM=https://published.example.invalid
 NPM_CONFIG_REGISTRY=https://candidate.example.invalid
-installed=0
 phase() { shift; "$@"; }
 openclaw_e2e_fixture_plugin_command() {
-  test "$NPM_CONFIG_REGISTRY" = https://published.example.invalid
-  test "$*" = 'openclaw -- plugins install @openclaw/whatsapp@2026.7.33 --force'
-  installed=1
+  test "$NPM_CONFIG_REGISTRY" = https://published.example.invalid || return 90
+  printf 'install:%s\\n' "$*"
+  return ${installExit}
 }
-start_missing_load_path_baseline() {
-  if [ "$baseline_version" = 2026.7.33 ]; then test "$installed" = 1; else test "$installed" = 0; fi
-}
+start_missing_load_path_baseline() { printf 'start\\n'; }
 check_gateway_probes() { :; }
 stop_gateway() { :; }
 run_missing_load_path_fixture baseline
 test "$NPM_CONFIG_REGISTRY" = https://candidate.example.invalid
 `,
-        "published-whatsapp-companion",
+        "published-companion-cohort",
         version,
       ],
       { encoding: "utf8" },
     );
-    expect(result.status, result.stdout + result.stderr).toBe(0);
+    expect(result.status, result.stdout + result.stderr).toBe(installExit);
+    const plugins = provision ? (installExit ? ["codex"] : ["codex", "discord", "whatsapp"]) : [];
+    expect(result.stdout.trim().split("\n")).toEqual([
+      ...plugins.map(
+        (plugin) => `install:openclaw -- plugins install @openclaw/${plugin}@${version} --force`,
+      ),
+      ...(installExit ? [] : ["start"]),
+    ]);
   },
 );
 
