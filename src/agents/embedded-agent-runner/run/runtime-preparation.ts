@@ -82,6 +82,7 @@ export async function prepareEmbeddedRunRuntime(input: {
   const {
     requestedModelId,
     modelSelectionChangedByHook,
+    reasoningEffortOverride,
     requestStreamTransportOverrides,
     expectedHarnessArtifact,
     pinnedHarnessId,
@@ -224,7 +225,9 @@ export async function prepareEmbeddedRunRuntime(input: {
     ? activePreparedAuthPlan.forwardedAuthProfileId
     : undefined;
   const requestedThinkLevel = resolveInitialThinkLevel({
-    requested: params.thinkLevel,
+    requested: params.thinkLevelExplicit
+      ? params.thinkLevel
+      : (reasoningEffortOverride ?? params.thinkLevel),
     config: params.config,
     agentId: params.agentId,
     provider,

@@ -180,6 +180,10 @@ export async function buildEmbeddedRunBaseParams(params: {
     modelFallbacksOverride,
     ...params.authProfile,
     thinkLevel: params.run.thinkLevel,
+    // "default" clears a turn override; it must leave the effective baseline
+    // eligible for hook/automatic effort selection.
+    thinkLevelExplicit:
+      params.run.thinkLevelOverride !== undefined && params.run.thinkLevelOverride !== "default",
     fastMode: params.run.fastMode,
     fastModeAutoOnSeconds: params.run.fastModeAutoOnSeconds,
     verboseLevel: params.run.verboseLevel,

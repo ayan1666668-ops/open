@@ -29,6 +29,7 @@ import {
   claudeCliSessionTranscriptHasContent,
   claudeCliSessionTranscriptHasOrphanedToolUse,
   createAcpVisibleTextAccumulator,
+  resolveAttemptThinkingParams,
   resolveFallbackRetryPrompt,
   sessionTranscriptHasContent,
 } from "./attempt-execution.helpers.js";
@@ -37,6 +38,19 @@ import {
   formatClaudeCliFallbackPrelude,
 } from "./attempt-execution.helpers.test-support.js";
 import { resolveClaudeCliProjectDirForWorkspace } from "./claude-cli-project-dir.js";
+
+describe("resolveAttemptThinkingParams", () => {
+  it.each([
+    { options: {}, expected: false },
+    { options: { thinking: "high" }, expected: true },
+    { options: { thinkingOnce: "low" }, expected: true },
+  ])("marks explicit command thinking: $expected", ({ options, expected }) => {
+    expect(resolveAttemptThinkingParams("medium", options)).toEqual({
+      thinkLevel: "medium",
+      thinkLevelExplicit: expected,
+    });
+  });
+});
 
 describe("resolveFallbackRetryPrompt", () => {
   const originalBody = "Summarize the quarterly earnings report and highlight key trends.";

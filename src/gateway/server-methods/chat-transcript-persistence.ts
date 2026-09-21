@@ -359,6 +359,7 @@ async function transcriptExists(scope: SessionTranscriptWriteScope): Promise<boo
 export async function appendAssistantTranscriptMessage(params: {
   expectedSessionId?: string;
   expectedLifecycleRevision?: SessionLifecycleRevisionExpectation;
+  assertCommitAllowed?: () => void;
   sessionKey: string;
   message: string;
   label?: string;
@@ -389,6 +390,7 @@ export async function appendAssistantTranscriptMessage(params: {
   const appended = await appendInjectedAssistantMessageToTranscript({
     expectedSessionId: params.expectedSessionId,
     expectedLifecycleRevision: params.expectedLifecycleRevision,
+    assertCommitAllowed: params.assertCommitAllowed,
     sessionKey: params.sessionKey,
     sessionId: params.sessionId,
     storePath: params.storePath,
