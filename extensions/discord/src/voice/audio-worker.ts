@@ -199,6 +199,9 @@ export class DiscordAudioWorker {
       case "continuous-clear":
         this.continuous.get(command.id)?.clear();
         break;
+      case "continuous-flush":
+        this.continuous.get(command.id)?.flush(command.marker);
+        break;
       case "continuous-close":
         this.continuous.get(command.id)?.close();
         this.continuous.delete(command.id);

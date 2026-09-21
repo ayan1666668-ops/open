@@ -36,6 +36,11 @@ export const DISCORD_AUDIO_CLOCK_BYTES = 24;
 export const DISCORD_AUDIO_PLAYED_BYTES = 0;
 export const DISCORD_AUDIO_OUTPUT_STATUS = 1;
 export const DISCORD_AUDIO_STARTED = 2;
+export const DISCORD_CONTINUOUS_CLOCK_BYTES = 24;
+export const DISCORD_CONTINUOUS_ACTIVE = 0;
+export const DISCORD_CONTINUOUS_SOURCE_BYTES = 1;
+// Main arms +epoch, the worker claims -epoch at playback start, and main retires to zero.
+export const DISCORD_CONTINUOUS_EXACT_SPEECH = 2;
 export const DiscordAudioOutputStatus = {
   Buffering: 0n,
   Playing: 1n,
@@ -57,6 +62,7 @@ export type DiscordAudioCommand =
       clock: SharedArrayBuffer;
     }
   | { type: "continuous-clear"; id: number }
+  | { type: "continuous-flush"; id: number; marker: number }
   | { type: "continuous-activate"; id: number }
   | { type: "continuous-close"; id: number }
   | { type: "capture"; id: number; userId: string; recordingEpoch: SharedArrayBuffer }
@@ -80,8 +86,9 @@ export type DiscordAudioEvent =
   | { type: "gateway-send"; payload: import("discord-api-types/v10").GatewaySendPayload }
   | { type: "gateway-destroy" }
   | { type: "ready" }
-  | { type: "continuous-start"; id: number }
-  | { type: "continuous-idle"; id: number }
+  | { type: "continuous-start"; id: number; speechEpoch: bigint }
+  | { type: "continuous-idle"; id: number; speechEpoch: bigint }
+  | { type: "continuous-flushed"; id: number; marker: number }
   | { type: "continuous-error"; id: number; error: DiscordAudioError }
   | { type: "stopped" }
   | { type: "connection"; status: string }

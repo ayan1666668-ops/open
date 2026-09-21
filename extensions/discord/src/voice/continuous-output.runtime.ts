@@ -6,14 +6,14 @@ import {
 } from "openclaw/plugin-sdk/realtime-voice";
 import {
   DISCORD_AUDIO_CLOCK_BYTES,
+  DISCORD_CONTINUOUS_ACTIVE,
+  DISCORD_CONTINUOUS_SOURCE_BYTES,
+  DISCORD_CONTINUOUS_EXACT_SPEECH,
   serializeDiscordAudioError,
   type DiscordAudioEvent,
 } from "./audio-worker-protocol.js";
 import { DiscordRealtimeOutput } from "./realtime-output.runtime.js";
 import type { DiscordRealtimePlayer } from "./realtime-player.runtime.js";
-
-const DISCORD_CONTINUOUS_ACTIVE = 0;
-const DISCORD_CONTINUOUS_SOURCE_BYTES = 1;
 
 /** A transferred endpoint is owned by one already-admitted provider generation.
  * No socket, response policy, credential, or speaker admission crosses this port. */
@@ -38,7 +38,14 @@ export class DiscordContinuousOutput {
     this.enabled = params.enabled;
     params.port.on("message", (message: RealtimeVoiceAudioOutputMessage) => {
       try {
-        if (this.closed || !this.enabled || Atomics.load(params.state, 0) !== 0) {
+        if (this.closed || Atomics.load(params.state, 0) !== 0) {
+          return;
+        }
+        if (message.type === "flushed") {
+          params.post({ type: "continuous-flushed", id: params.id, marker: message.marker });
+          return;
+        }
+        if (!this.enabled) {
           return;
         }
         if (message.type === "audio") {
@@ -80,13 +87,36 @@ export class DiscordContinuousOutput {
       throw new Error("Discord realtime direct audio backlog exceeded.");
     }
     if (!this.generating) {
+      const latch = Atomics.load(this.params.clock, DISCORD_CONTINUOUS_EXACT_SPEECH);
+      const speechEpoch = latch < 0n ? -latch : latch;
       const output = new DiscordRealtimeOutput({
         player: this.params.player,
         clock: new BigInt64Array(new SharedArrayBuffer(DISCORD_AUDIO_CLOCK_BYTES)),
         continuous: true,
         logContext: this.params.logContext,
-        isOpen: () => !this.closed && this.enabled && Atomics.load(this.params.state, 0) === 0,
-        onStart: () => this.params.post({ type: "continuous-start", id: this.params.id }),
+        isOpen: () => {
+          const current = Atomics.load(this.params.clock, DISCORD_CONTINUOUS_EXACT_SPEECH);
+          return (
+            !this.closed &&
+            this.enabled &&
+            Atomics.load(this.params.state, 0) === 0 &&
+            (current === speechEpoch || current === -speechEpoch)
+          );
+        },
+        onStart: () => {
+          // Capture ownership when the output is created, never from a delayed start callback.
+          const current = Atomics.compareExchange(
+            this.params.clock,
+            DISCORD_CONTINUOUS_EXACT_SPEECH,
+            speechEpoch,
+            -speechEpoch,
+          );
+          if (current !== speechEpoch && current !== -speechEpoch) {
+            output.close("exact-speech-retired");
+            return;
+          }
+          this.params.post({ type: "continuous-start", id: this.params.id, speechEpoch });
+        },
         onClose: (closed) => {
           this.outputs.delete(closed);
           if (this.generating === closed) {
@@ -95,7 +125,7 @@ export class DiscordContinuousOutput {
           Atomics.store(this.params.clock, DISCORD_CONTINUOUS_ACTIVE, BigInt(this.outputs.size));
           if (this.outputs.size === 0) {
             Atomics.store(this.params.clock, DISCORD_CONTINUOUS_SOURCE_BYTES, 0n);
-            this.params.post({ type: "continuous-idle", id: this.params.id });
+            this.params.post({ type: "continuous-idle", id: this.params.id, speechEpoch });
           }
         },
         onError: (error) => this.fail(error),
@@ -110,6 +140,12 @@ export class DiscordContinuousOutput {
 
   activate(): void {
     this.enabled = true;
+  }
+
+  flush(marker: number): void {
+    if (!this.closed) {
+      this.params.port.postMessage({ type: "flush", marker }, []);
+    }
   }
 
   clear(): void {

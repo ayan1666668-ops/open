@@ -1,4 +1,5 @@
 import { isMainThread, parentPort, workerData, type MessagePort } from "node:worker_threads";
+import { DISCORD_CONTINUOUS_CLOCK_BYTES } from "./audio-worker-protocol.js";
 import { DiscordContinuousOutput } from "./continuous-output.runtime.js";
 import { DiscordRealtimePlayer } from "./realtime-player.runtime.js";
 import { loadDiscordVoiceSdk } from "./sdk-runtime.js";
@@ -34,7 +35,7 @@ export function startDiscordPacingReceiver(
     enabled: true,
     port,
     state: new Int32Array(state),
-    clock: new BigInt64Array(new SharedArrayBuffer(16)),
+    clock: new BigInt64Array(new SharedArrayBuffer(DISCORD_CONTINUOUS_CLOCK_BYTES)),
     player: room,
     logContext: "synthetic-starvation-proof",
     post: (event) => {

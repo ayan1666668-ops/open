@@ -272,7 +272,13 @@ Register each capability inside `register(api)` alongside your existing
     `onClearAudio`; keep transcripts, delegation, and lifecycle callbacks on
     the host. `createRealtimeVoiceAudioPortSender` provides a bounded queue,
     copied buffer ownership, one outstanding audio message, and ordered
-    clears. The receiver acknowledges audio with `{ type: "ack" }`, checks
+    clears. A receiver may send `{ type: "flush", marker }`; the sender replies
+    with `{ type: "flushed", marker }` only after its queued and outstanding
+    PCM has been acknowledged, including when there was no audio. A newer flush
+    marker supersedes an older pending marker. This is local sink admission,
+    not proof of audible playback or future provider silence. Consumers use it
+    to order control-plane completion behind already-submitted media.
+    The receiver acknowledges audio with `{ type: "ack" }`, checks
     the fence before accepting audio, and closes its playback resources when
     the port closes. Do not use this path to bypass host response or
     wake-name admission. The sink owner revokes the fence before asynchronous

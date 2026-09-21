@@ -8,7 +8,8 @@ import { createRealtimeVoiceAudioQueue } from "./realtime-session-lifecycle.js";
 export type RealtimeVoiceAudioOutputPort = { port: MessagePort; state: SharedArrayBuffer };
 export type RealtimeVoiceAudioOutputMessage =
   | { type: "audio"; audio: Uint8Array }
-  | { type: "clear" };
+  | { type: "clear" }
+  | { type: "flushed"; marker: number };
 
 /** Keeps continuous media off the control event loop with one outstanding PCM message. */
 export function createRealtimeVoiceAudioPortSender(output: RealtimeVoiceAudioOutputPort) {
@@ -16,6 +17,7 @@ export function createRealtimeVoiceAudioPortSender(output: RealtimeVoiceAudioOut
   const queue = createRealtimeVoiceAudioQueue("drop-oldest");
   let closed = false;
   let inFlight = false;
+  let pendingFlush: number | undefined;
   const live = () => !closed && Atomics.load(fence, 0) === 0;
   const flush = () => {
     if (!live() || inFlight) {
@@ -23,6 +25,14 @@ export function createRealtimeVoiceAudioPortSender(output: RealtimeVoiceAudioOut
     }
     const audio = queue.dequeue();
     if (!audio) {
+      if (pendingFlush !== undefined) {
+        const marker = pendingFlush;
+        pendingFlush = undefined;
+        output.port.postMessage(
+          { type: "flushed", marker } satisfies RealtimeVoiceAudioOutputMessage,
+          [],
+        );
+      }
       return;
     }
     // Never transfer Buffer pool storage or detach a view retained by a caller.
@@ -34,11 +44,18 @@ export function createRealtimeVoiceAudioPortSender(output: RealtimeVoiceAudioOut
       [bytes.buffer],
     );
   };
-  const acknowledge = (message: { type: "ack" }) => {
-    if (message.type !== "ack" || !live()) {
+  const acknowledge = (message: { type: "ack" } | { type: "flush"; marker: number }) => {
+    if (!live()) {
       return;
     }
-    inFlight = false;
+    if (message.type === "flush") {
+      // The sink keeps one completion decision; a newer marker supersedes its old request.
+      pendingFlush = message.marker;
+    } else if (message.type === "ack") {
+      inFlight = false;
+    } else {
+      return;
+    }
     flush();
   };
   const close = () => {
@@ -48,6 +65,7 @@ export function createRealtimeVoiceAudioPortSender(output: RealtimeVoiceAudioOut
     closed = true;
     Atomics.store(fence, 0, 1);
     queue.clear();
+    pendingFlush = undefined;
     output.port.off("message", acknowledge);
     output.port.off("close", close);
     output.port.close();

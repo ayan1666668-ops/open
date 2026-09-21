@@ -187,9 +187,9 @@ export function createRealtimePlaybackFixture(
       stopTerminally,
       sendUserMessage,
       acknowledgeMark,
-      close() {
+      close(this: void, preserveUnplayedSpeech = false) {
         closed = true;
-        playback.close();
+        playback.close(preserveUnplayedSpeech);
         harness.close();
         // The synthetic provider closes synchronously, including reentrant player callbacks.
         void bridge?.close();
@@ -209,6 +209,7 @@ export function createRealtimePlaybackFixture(
     voiceSdk,
     player,
     ...firstLane,
+    closeSpeaker: firstLane.close,
     createLane,
     roomPlayer,
     stopPlayer,

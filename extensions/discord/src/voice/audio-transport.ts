@@ -351,6 +351,7 @@ export class DiscordAudioTransport extends EventEmitter<{
         break;
       case "continuous-start":
       case "continuous-idle":
+      case "continuous-flushed":
       case "continuous-error":
       case "output-start":
       case "output-close":
