@@ -134,7 +134,20 @@ export class WorkboardWorkflowStore extends WorkboardPromoteStore {
         const unfinished = parentIds
           .filter((parentId) => parentCards.get(parentId)?.status !== "done")
           .map((parentId) => `${parentId} is ${parentCards.get(parentId)?.status ?? "missing"}`);
-        throw new Error(`card dependencies are not done: ${unfinished.join(", ")}.`);
+        if (unfinished.length > 0) {
+          throw new Error(`card dependencies are not done: ${unfinished.join(", ")}.`);
+        }
+        // Every parent is done, so this is not a dependency failure: reporting an
+        // empty list here would be the misdiagnosis this PR removes. A promotable
+        // card in this state was held back by its own future schedule (see
+        // dependencyTargetStatus), so name the time instead. Any other status
+        // falls through to the guards below, which report the real reason.
+        const scheduledAt = guarded.metadata?.automation?.scheduledAt;
+        if (guarded.status === "scheduled" && scheduledAt && scheduledAt > now) {
+          throw new Error(
+            `card is scheduled for ${new Date(scheduledAt).toISOString()}; claim after that time.`,
+          );
+        }
       }
       if (guarded.status === "scheduled") {
         throw new Error("card is scheduled for later.");

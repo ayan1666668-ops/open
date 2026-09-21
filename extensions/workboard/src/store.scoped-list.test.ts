@@ -718,4 +718,22 @@ describe("Workboard dependency status reads", () => {
     expect(claimed.card.status).toBe("running");
     expect(claimed.card.metadata?.claim?.ownerId).toBe("main");
   });
+
+  it("reports the schedule instead of an empty dependency list when every parent is done", async () => {
+    const { store } = createWorkboardSqliteTestHarness();
+    const scheduledAt = Date.now() + 60 * 60_000;
+    const parent = await store.create({ title: "Parent", status: "done" });
+    const child = await store.create({ title: "Child", parents: [parent.id] });
+    await store.update(child.id, { status: "scheduled", scheduledAt });
+
+    const error = await store.claim(child.id, { ownerId: "main" }).then(
+      () => undefined,
+      (caught: unknown) => caught as Error,
+    );
+    expect(error?.message).toBe(
+      `card is scheduled for ${new Date(scheduledAt).toISOString()}; claim after that time.`,
+    );
+    // The old formatter rendered "card dependencies are not done: ." here.
+    expect(error?.message).not.toContain("dependencies are not done");
+  });
 });
