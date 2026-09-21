@@ -395,9 +395,11 @@ openclaw models auth list|add|login|paste-api-key|paste-token|setup-token|order
 
 <AccordionGroup>
   <Accordion title="Scanning (OpenRouter free models)">
-    `openclaw models scan` inspects OpenRouter's public free-model catalog and can probe candidates for tool and image support live. The catalog itself is public, so metadata-only scans (`--no-probe`) need no key. Live probing and `--set-default`/`--set-image` require an OpenRouter API key (auth profile or `OPENROUTER_API_KEY`). Without one they fail closed to metadata-only output.
+    `openclaw models scan` inspects OpenRouter's public free-model catalog and can probe candidates for tool and image support live. The catalog itself is public, so metadata-only scans (`--no-probe`) need no key. `--no-probe` skips live probes and does not write config. Live probing requires an OpenRouter API key (auth profile or `OPENROUTER_API_KEY`). Without a key, probing fails closed to metadata-only output and skips the config write. `--set-default` and `--set-image` require that live probe.
 
-    Results rank by: image support, then tool latency, then context size, then parameter count. In a TTY, probed results prompt an interactive fallback selection. Non-interactive mode needs `--yes` to accept defaults.
+    A probed scan that selects models replaces `agents.defaults.model.fallbacks` with the selected list. When image-capable models are selected, it also replaces `agents.defaults.imageModel.fallbacks`. `--set-default` only sets `agents.defaults.model.primary` to the first selected model. `--set-image` only sets `agents.defaults.imageModel.primary` to the first selected image model.
+
+    Results rank by: image support, then tool latency, then context size, then parameter count. In a TTY, probed results prompt an interactive fallback selection, then write the chosen lists. `--yes` accepts the default selection without prompting and still writes those fallbacks. `--json` is not a dry run: it writes that default selection, then prints JSON. In a non-interactive shell, pass `--yes`, `--no-input`, or `--json`.
 
   </Accordion>
 </AccordionGroup>

@@ -220,11 +220,11 @@ exposes the configured default, the first configured provider/model is used.
 
 `models scan` reads OpenRouter's public `:free` catalog and ranks candidates for fallback use. The catalog itself is public, so metadata-only scans do not need an OpenRouter key.
 
-By default OpenClaw tries to probe tool and image support with live model calls. If no OpenRouter key is configured, the command falls back to metadata-only output and explains that `:free` models still require `OPENROUTER_API_KEY` for probes and inference.
+By default OpenClaw tries to probe tool and image support with live model calls. If no OpenRouter key is configured, the command falls back to metadata-only output and does not write config. It explains that `:free` models still require `OPENROUTER_API_KEY` for probes and inference.
 
 Options:
 
-- `--no-probe` (metadata only; no config/secrets lookup)
+- `--no-probe` (metadata only; no live probes, no config write, and no config/secrets lookup)
 - `--min-params <b>`
 - `--max-age-days <days>`
 - `--provider <name>`
@@ -239,7 +239,9 @@ Options:
 
 Numeric scan options reject empty and whitespace-only values. Omit a flag to retain its default behavior.
 
-`--set-default` and `--set-image` require live probes; metadata-only scan results are informational and are not applied to config.
+A probed scan that selects models replaces `agents.defaults.model.fallbacks` with the selected list. When image-capable models are selected, it also replaces `agents.defaults.imageModel.fallbacks`. `--set-default` only sets `agents.defaults.model.primary` to the first selected model. `--set-image` only sets `agents.defaults.imageModel.primary` to the first selected image model. Both flags require live probes. Metadata-only results, including `--no-probe` and a scan with no OpenRouter key, are informational and are not applied to config.
+
+`--yes` accepts the default selection without prompting. On a probed scan that acceptance still replaces the fallback lists. `--json` is not a dry run: it applies the same default selection, writes config, then prints JSON. In a non-interactive shell, pass `--yes`, `--no-input`, or `--json`; otherwise the command exits before writing and asks for `--yes`.
 
 ## Aliases
 
