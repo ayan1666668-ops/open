@@ -135,6 +135,65 @@ async function activeGatewayIdentity(page: Page) {
 }
 
 suite.define(() => {
+  it.each([
+    { width: 1000, hasTouch: false },
+    { width: 1000, hasTouch: true },
+    { width: 1440, hasTouch: false },
+    { width: 390, hasTouch: true },
+  ])(
+    "keeps row actions inside the table at $width px (touch: $hasTouch)",
+    async ({ width, hasTouch }) => {
+      await suite.withPage({ viewport: { width, height: 900 }, hasTouch }, async ({ page }) => {
+        await installMockGateway(page, {
+          featureMethods: ["secrets.store.list", "secrets.store.set", "secrets.store.delete"],
+          methodResponses: {
+            "secrets.store.list": { entries: [secretEntry] },
+          },
+        });
+        await page.goto(`${suite.server.baseUrl}settings/secrets`);
+        const row = page.getByRole("row", { name: secretEntry.name });
+        const trigger = row.getByRole("button", { name: `Actions: ${secretEntry.name}` });
+        await trigger.waitFor({ state: "visible" });
+        await row.hover();
+        await page.evaluate(() => document.fonts.ready);
+        await capture(page, `row-actions-${width}-${hasTouch ? "touch" : "mouse"}.png`);
+        const layout = await trigger.evaluate((button) => {
+          const cell = button.closest("td");
+          const wrapper = button.closest(".secrets-store__table-wrap");
+          if (!cell || !wrapper) {
+            throw new Error("Missing actions cell or table wrapper");
+          }
+          const buttonBox = button.getBoundingClientRect();
+          const cellBox = cell.getBoundingClientRect();
+          const wrapperBox = wrapper.getBoundingClientRect();
+          return {
+            left: buttonBox.left,
+            right: buttonBox.right,
+            cellLeft: cellBox.left,
+            cellRight: cellBox.right,
+            wrapperLeft: wrapperBox.left,
+            wrapperRight: wrapperBox.right,
+            width: buttonBox.width,
+            height: buttonBox.height,
+          };
+        });
+        expect(layout.left).toBeGreaterThanOrEqual(layout.cellLeft);
+        expect(layout.right).toBeLessThanOrEqual(layout.cellRight);
+        expect(layout.left).toBeGreaterThanOrEqual(layout.wrapperLeft);
+        expect(layout.right).toBeLessThanOrEqual(layout.wrapperRight);
+        if (hasTouch) {
+          expect(layout.width).toBeGreaterThanOrEqual(44);
+          expect(layout.height).toBeGreaterThanOrEqual(44);
+        }
+        await trigger.focus();
+        await page.keyboard.press("Enter");
+        await page
+          .getByRole("menuitem", { name: "Edit", exact: true })
+          .waitFor({ state: "visible" });
+      });
+    },
+  );
+
   it("keeps long secret names inside the Name column", async () => {
     await suite.withPage(
       {
