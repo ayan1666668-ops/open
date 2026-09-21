@@ -12,13 +12,13 @@ import type {
   WorkboardStaleState,
   WorkboardStatus,
 } from "@openclaw/workboard-contract";
+import { normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { createWorkboardSqliteStores } from "./sqlite-store.js";
 import {
   buildWorkerContext,
   assertCanMutateClaimedCard,
   cardBoardId,
   cardRunId,
-  cardSessionKey,
   closeRunningAttempts,
   computeCardDiagnostics,
   isDependencyPromotableStatus,
@@ -40,9 +40,11 @@ import type {
   WorkboardDispatchOptions,
   WorkboardDispatchResult,
   WorkboardMutationScope,
+  WorkboardSessionBindingInput,
 } from "./store-inputs.js";
 import { capText, normalizeBoardId, normalizeTimestamp } from "./store-normalizers.js";
 import { WorkboardNotificationStore } from "./store-notifications.js";
+import { cardExecutionSessionKey } from "./store-session-binding.js";
 
 export type { WorkboardDispatchResult } from "./store-inputs.js";
 export { WorkboardCardConflictError } from "./store-core.js";
@@ -76,7 +78,6 @@ function preparedLaunchMatchesCard(
     launch.requestedSessionKey === expected.requestedSessionKey &&
     launch.provisionalRunId === expected.provisionalRunId &&
     launch.preparedAt === expected.preparedAt &&
-    card.sessionKey === expected.requestedSessionKey &&
     card.runId === expected.provisionalRunId &&
     card.execution?.sessionKey === expected.requestedSessionKey &&
     card.execution?.runId === expected.provisionalRunId
@@ -123,7 +124,7 @@ function executionAssociationPatch(
   input: WorkboardExecutionAssociationPatchInput,
 ): WorkboardExecutionAssociationPatch | undefined {
   if (
-    cardSessionKey(card) !== input.expectedSessionKey ||
+    cardExecutionSessionKey(card) !== input.expectedSessionKey ||
     cardRunId(card) !== input.expectedRunId
   ) {
     return undefined;
@@ -159,7 +160,6 @@ function executionAssociationPatch(
         }
       : undefined;
   return {
-    sessionKey: input.sessionKey,
     ...(input.runId ? { runId: input.runId } : {}),
     execution: input.execution,
     ...(metadata ? { metadata } : {}),
@@ -190,6 +190,46 @@ function lifecycleExecution(params: {
 
 // Capability layers split review boundaries only; the core still owns persistence and mutation order.
 export class WorkboardStore extends WorkboardNotificationStore {
+  async bindSession(
+    id: string,
+    input: WorkboardSessionBindingInput,
+    scope?: WorkboardMutationScope,
+    options: { expectedUpdatedAt?: number } = {},
+  ): Promise<WorkboardCard> {
+    return await this.enqueueMutation(async () => {
+      const existing = await this.get(id);
+      if (!existing) {
+        throw new Error(`card not found: ${id}`);
+      }
+      assertCanMutateClaimedCard(existing, scope);
+      const current = normalizeOptionalString(existing.sessionKey);
+      const requested = normalizeOptionalString(input.sessionKey);
+      const action = normalizeOptionalString(input.action) ?? (current ? "rebind" : "bind");
+      if (action !== "bind" && action !== "rebind" && action !== "detach") {
+        throw new Error("session binding action must be bind, rebind, or detach.");
+      }
+      if (action === "detach" && requested) {
+        throw new Error("detach must not include a session key.");
+      }
+      if (action !== "detach" && !requested) {
+        throw new Error(`${action} requires a session key.`);
+      }
+      if (action === "bind" && current && current !== requested) {
+        throw new Error("card is already bound; use rebind to change its session.");
+      }
+      if (action === "rebind" && !current) {
+        throw new Error("card is not bound; use bind to set its first session.");
+      }
+      return await this.updateCard(
+        id,
+        { sessionKey: action === "detach" ? "" : requested },
+        {
+          expectedUpdatedAt: options.expectedUpdatedAt ?? existing.updatedAt,
+        },
+      );
+    });
+  }
+
   async prepareExecutionLaunch(
     id: string,
     input: {
@@ -211,7 +251,6 @@ export class WorkboardStore extends WorkboardNotificationStore {
             preparedAt: card.updatedAt,
           };
           return {
-            sessionKey: input.requestedSessionKey,
             runId: provisionalRunId,
             execution: {
               id: card.execution?.id ?? `${card.id}:agent-session`,
@@ -338,7 +377,7 @@ export class WorkboardStore extends WorkboardNotificationStore {
               (launch?.phase !== "prepared" ||
                 (input.association.acceptedAt !== undefined &&
                   input.association.acceptedAt >= launch.preparedAt)) &&
-              cardSessionKey(card) === input.association.expectedSessionKey &&
+              cardExecutionSessionKey(card) === input.association.expectedSessionKey &&
               cardRunId(card) === input.association.expectedRunId);
           // Recompute from the latest row after every cross-host CAS conflict.
           if (
@@ -354,8 +393,7 @@ export class WorkboardStore extends WorkboardNotificationStore {
             : undefined;
           const associationNeedsUpdate =
             input.association &&
-            (card.sessionKey !== input.association.sessionKey ||
-              (input.association.runId !== undefined && card.runId !== input.association.runId) ||
+            ((input.association.runId !== undefined && card.runId !== input.association.runId) ||
               !card.execution ||
               card.execution.sessionKey !== input.association.sessionKey ||
               (input.association.runId !== undefined &&

@@ -22,7 +22,6 @@ import {
   assertCanMutateClaimedCard,
   cardBoardId,
   cardParentIds,
-  cardSessionKey,
   compareCards,
   isActiveDependencyTarget,
   isDependencyPromotableStatus,
@@ -70,10 +69,10 @@ import {
   normalizeTemplateId,
   normalizeTimestamp,
   normalizeTitle,
-  syncExecutionSessionKey,
   trimMetadataToBudget,
 } from "./store-normalizers.js";
 import { WorkboardStoreRuntime } from "./store-runtime.js";
+import { cardSessionKey, capturedSessionCard } from "./store-session-binding.js";
 
 type WorkboardUpdateCardOptions = {
   allowAutomationLaunch?: boolean;
@@ -633,12 +632,7 @@ export class WorkboardCoreStore extends WorkboardStoreRuntime {
         throw new Error("sessionKey is required.");
       }
       const boardId = normalizeBoardId(input.boardId) ?? "default";
-      const matches = (await this.list())
-        .filter((card) => cardSessionKey(card) === sessionKey)
-        .toSorted((left, right) => right.updatedAt - left.updatedAt);
-      const existing =
-        matches.find((card) => !card.metadata?.archivedAt) ??
-        matches.find((card) => Boolean(card.metadata?.archivedAt));
+      const existing = capturedSessionCard(await this.list(), sessionKey);
       if (existing) {
         if (!existing.metadata?.archivedAt) {
           return existing;
@@ -750,9 +744,7 @@ export class WorkboardCoreStore extends WorkboardStoreRuntime {
         : normalizeOptionalString(effectivePatch.sessionKey);
     const execution =
       effectivePatch.execution === undefined
-        ? effectivePatch.sessionKey === undefined
-          ? existing.execution
-          : syncExecutionSessionKey(existing.execution, sessionKey)
+        ? existing.execution
         : normalizeExecution(effectivePatch.execution);
     let metadata = normalizeMetadata(effectivePatch.metadata, existing.metadata, {
       allowAutomationLaunch: options.allowAutomationLaunch,
@@ -1090,7 +1082,10 @@ export class WorkboardCoreStore extends WorkboardStoreRuntime {
     return await this.promoteDependencyReady(nextChild.id);
   }
 
-  private async dependencyTargetStatus(card: WorkboardCard, now: number): Promise<WorkboardStatus> {
+  protected async dependencyTargetStatus(
+    card: WorkboardCard,
+    now: number,
+  ): Promise<WorkboardStatus> {
     const scheduledAt = card.metadata?.automation?.scheduledAt;
     const parents = cardParentIds(card);
     if (card.status === "scheduled" && !scheduledAt) {

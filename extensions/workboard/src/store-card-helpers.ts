@@ -28,6 +28,11 @@ import {
   normalizeTimestamp,
   removeUndefinedMetadataFields,
 } from "./store-normalizers.js";
+import {
+  cardSessionKey,
+  cardExecutionSessionKey,
+  workboardSessionKeyMatches,
+} from "./store-session-binding.js";
 
 export function compareCards(left: WorkboardCard, right: WorkboardCard): number {
   if (left.status !== right.status) {
@@ -37,10 +42,6 @@ export function compareCards(left: WorkboardCard, right: WorkboardCard): number 
     return left.position - right.position;
   }
   return left.createdAt - right.createdAt;
-}
-
-export function cardSessionKey(card: WorkboardCard): string | undefined {
-  return card.sessionKey ?? card.execution?.sessionKey;
 }
 
 export function cardRunId(card: WorkboardCard): string | undefined {
@@ -352,6 +353,16 @@ export function assertCanMutateClaimedCard(
   const token = normalizeOptionalString(scope.token);
   if (claim.ownerId !== ownerId && !safeEqualSecret(token, claim.token)) {
     throw new Error(`card is claimed by ${claim.ownerId}.`);
+  }
+  const callerSessionKey = normalizeOptionalString(scope.sessionKey);
+  const primary = cardSessionKey(card);
+  if (
+    callerSessionKey &&
+    primary &&
+    callerSessionKey !== primary &&
+    !workboardSessionKeyMatches(callerSessionKey, cardExecutionSessionKey(card) ?? "")
+  ) {
+    throw new Error(`card is bound to session ${primary}.`);
   }
 }
 

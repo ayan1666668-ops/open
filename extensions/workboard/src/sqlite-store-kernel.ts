@@ -42,6 +42,7 @@ import {
 import { createWorkboardDatabase } from "./sqlite-store-schema.js";
 import { bindNull, insertCard } from "./sqlite-store-write.js";
 import { workboardCardConsumesOwnerSlot, workboardCardSlotOwner } from "./store-constants.js";
+import { cardSessionKey, canHoldPrimarySessionBinding } from "./store-session-binding.js";
 
 type SyncStore<T> = {
   [K in keyof T]: T[K] extends (...args: infer A) => Promise<infer R> ? (...args: A) => R : never;
@@ -79,9 +80,34 @@ class WorkboardSqliteCardStore implements SyncStore<WorkboardCardStore> {
     }
   }
 
+  private insertReservedCard(card: WorkboardCard): void {
+    const sessionKey = cardSessionKey(card);
+    if (sessionKey && canHoldPrimarySessionBinding(card)) {
+      const query = getNodeSqliteKysely<WorkboardCardDatabase>(this.db)
+        .selectFrom("workboard_cards")
+        .select(["id", "session_key", "execution_session_key"])
+        .where("id", "!=", card.id)
+        .where("status", "not in", ["blocked", "done"])
+        .where((eb) => eb.or([eb("archived_at", "is", null), eb("archived_at", "=", 0)]));
+      // Share JavaScript normalization with callers, including legacy blank keys.
+      // All writers invoke this inside their existing BEGIN IMMEDIATE transaction.
+      for (const row of iterateSqliteQuerySync(this.db, query)) {
+        const reserved =
+          stringValue(row, "session_key")?.trim() ||
+          stringValue(row, "execution_session_key")?.trim();
+        if (reserved === sessionKey) {
+          throw new Error(
+            `session ${sessionKey} is already reserved by card ${requiredString(row, "id")}.`,
+          );
+        }
+      }
+    }
+    insertCard(this.db, card);
+  }
+
   register(key: string, value: PersistedWorkboardCard): void {
     this.validatePayload(key, value);
-    runSqliteImmediateTransactionSync(this.db, () => insertCard(this.db, value.card));
+    runSqliteImmediateTransactionSync(this.db, () => this.insertReservedCard(value.card));
   }
 
   registerIfAbsent(key: string, value: PersistedWorkboardCard): boolean {
@@ -90,7 +116,7 @@ class WorkboardSqliteCardStore implements SyncStore<WorkboardCardStore> {
       if (this.db.prepare("SELECT 1 FROM workboard_cards WHERE id = ?").get(key)) {
         return false;
       }
-      insertCard(this.db, value.card);
+      this.insertReservedCard(value.card);
       return true;
     });
   }
@@ -105,7 +131,7 @@ class WorkboardSqliteCardStore implements SyncStore<WorkboardCardStore> {
       if (!this.matchesUpdatedAt(key, expectedUpdatedAt)) {
         return false;
       }
-      insertCard(this.db, value.card);
+      this.insertReservedCard(value.card);
       return true;
     });
   }
@@ -166,7 +192,7 @@ class WorkboardSqliteCardStore implements SyncStore<WorkboardCardStore> {
       // Validate the target's stored tree before replacing it, without decoding
       // unrelated cards as an incidental prerequisite for claiming this one.
       readCard(this.db, current);
-      insertCard(this.db, value.card);
+      this.insertReservedCard(value.card);
       return "updated";
     });
   }

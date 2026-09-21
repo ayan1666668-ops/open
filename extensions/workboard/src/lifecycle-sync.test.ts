@@ -702,7 +702,7 @@ describe("Workboard gateway lifecycle sync", () => {
 
     await expect(store.get(card.id)).resolves.toMatchObject({
       status: "review",
-      sessionKey: canonicalSessionKey,
+      sessionKey: acceptedSessionKey,
       runId: "provisional-run",
       execution: {
         sessionKey: canonicalSessionKey,
@@ -736,7 +736,7 @@ describe("Workboard gateway lifecycle sync", () => {
     const recovered = await store.get(card.id);
     expect(recovered).toMatchObject({
       status: "review",
-      sessionKey: canonicalSessionKey,
+      sessionKey: provisionalSessionKey,
       runId: "accepted-run",
       execution: {
         sessionKey: canonicalSessionKey,

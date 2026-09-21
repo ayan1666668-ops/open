@@ -73,6 +73,7 @@
       "workboard_link",
       "workboard_read",
       "workboard_claim",
+      "workboard_session_bind",
       "workboard_heartbeat",
       "workboard_complete",
       "workboard_attachment_add",
@@ -123,6 +124,7 @@
     "workboard_read": {
       "optional": true
     },
+    "workboard_session_bind": { "optional": true },
     "workboard_claim": {
       "optional": true
     },

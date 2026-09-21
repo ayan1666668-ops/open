@@ -803,9 +803,12 @@ describe("dispatchAndStartWorkboardCards", () => {
     expect(run.mock.calls[0]?.[0]?.message).not.toContain("ownerId and token");
     await expect(store.get(first.id)).resolves.toMatchObject({
       status: "running",
-      sessionKey: `agent:codex-main:subagent:workboard-default-${first.id}`,
       runId: "run-first",
-      execution: { status: "running", runId: "run-first" },
+      execution: {
+        status: "running",
+        runId: "run-first",
+        sessionKey: `agent:codex-main:subagent:workboard-default-${first.id}`,
+      },
       metadata: {
         claim: { ownerId: "codex-main" },
         workerLogs: [expect.objectContaining({ message: expect.stringContaining("run-first") })],

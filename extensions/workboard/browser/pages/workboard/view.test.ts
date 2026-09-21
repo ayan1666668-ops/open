@@ -15,7 +15,6 @@ import { getWorkboardState, stopWorkboardLifecycleRefresh } from "../../lib/work
 import {
   createGatewaySession,
   createWorkboardCard,
-  createWorkboardExecution,
   createWorkboardTestClient,
 } from "../../lib/workboard/test/index-helpers.ts";
 import { workboardTestHost } from "../../test/host.setup.ts";
@@ -3761,75 +3760,6 @@ describe("renderWorkboard", () => {
     expect(container.querySelector('button[aria-label="Stop session"]')).not.toBeNull();
   });
 
-  it.each([
-    {
-      scenario: "an execution-owned linked session",
-      sessionKey: "agent:main:execution-linked-session",
-      topLevelSessionKey: undefined,
-    },
-    {
-      scenario: "the authoritative top-level session",
-      sessionKey: "agent:main:top-level-linked-session",
-      topLevelSessionKey: "agent:main:top-level-linked-session",
-    },
-  ])("preserves $scenario when editing a Workboard card", async (testCase) => {
-    const card = createWorkboardCard({
-      title: "Keep my linked session",
-      ...(testCase.topLevelSessionKey ? { sessionKey: testCase.topLevelSessionKey } : {}),
-      execution: createWorkboardExecution({
-        sessionKey: "agent:main:execution-linked-session",
-      }),
-    });
-    const request = vi.fn(async () => ({
-      card: { ...card, title: "Renamed without unlinking", updatedAt: 2 },
-    }));
-    const { state, container, renderView } = createWorkboardView({
-      client: { request } as unknown as GatewayBrowserClient,
-      onRequestUpdate: () => undefined,
-      sessions: [
-        {
-          key: testCase.sessionKey,
-          kind: "direct",
-          displayName: "Active linked session",
-          updatedAt: 1,
-          status: "running",
-        },
-      ],
-    });
-    state.cards = [card];
-    state.detailCardId = card.id;
-
-    renderView();
-    const editButton = buttonByLabel(container, "Edit card");
-    expect(editButton).not.toBeNull();
-    editButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    renderView();
-
-    expect(state.draftSessionKey).toBe(testCase.sessionKey);
-    expect(sessionPicker(container).value).toBe(testCase.sessionKey);
-
-    const title = container.querySelector<HTMLInputElement>(".workboard-draft__title");
-    expect(title).not.toBeNull();
-    title!.value = "Renamed without unlinking";
-    title!.dispatchEvent(new InputEvent("input", { bubbles: true }));
-    container
-      .querySelector<HTMLFormElement>(".workboard-draft")
-      ?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
-    await Promise.resolve();
-    await Promise.resolve();
-
-    expect(request).toHaveBeenCalledWith("workboard.cards.update", {
-      id: card.id,
-      expectedUpdatedAt: card.updatedAt,
-      patch: { title: "Renamed without unlinking" },
-    });
-    expect(state.cards[0]?.execution?.sessionKey).toBe("agent:main:execution-linked-session");
-    renderView();
-    state.detailTab = "session";
-    renderView();
-    expect(container.querySelector("[data-test-session-summary]")).not.toBeNull();
-  });
-
   it.each(["title", "notes", "labels"] as const)(
     "preserves an inline %s draft through lost connectivity and client availability",
     async (field) => {
@@ -3969,7 +3899,6 @@ describe("renderWorkboard", () => {
       expect(client.request).not.toHaveBeenCalled();
     },
   );
-
   it("resumes dirty labels after light dismissal and clears them only on explicit cancel", async () => {
     const card = createWorkboardCard({ labels: ["original"] });
     const { state, container, renderView } = createWorkboardView({

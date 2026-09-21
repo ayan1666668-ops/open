@@ -27,7 +27,7 @@ function createGatewayMethodCapture() {
 }
 
 describe("workboard gateway methods", () => {
-  it.each(["move", "archive", "delete"] as const)(
+  it.each(["move", "archive", "delete", "bindSession"] as const)(
     "returns a redacted conflict for stale %s requests",
     async (action) => {
       type Handler = Parameters<OpenClawPluginApi["registerGatewayMethod"]>[1];
@@ -47,6 +47,8 @@ describe("workboard gateway methods", () => {
         params: {
           id: base.id,
           status: "blocked",
+          action: "bind",
+          sessionKey: "trusted",
           position: 2000,
           archived: true,
           expectedUpdatedAt: base.updatedAt,
@@ -93,6 +95,7 @@ describe("workboard gateway methods", () => {
       "workboard.cards.list",
       "workboard.cards.create",
       "workboard.cards.captureSession",
+      "workboard.cards.bindSession",
       "workboard.cards.update",
       "workboard.cards.start",
       "workboard.cards.move",
@@ -145,6 +148,7 @@ describe("workboard gateway methods", () => {
     });
     expect(methods.get("workboard.cards.export")?.opts).toEqual({ scope: "operator.read" });
     expect(methods.get("workboard.cards.create")?.opts).toEqual({ scope: "operator.write" });
+    expect(methods.get("workboard.cards.bindSession")?.opts).toEqual({ scope: "operator.write" });
     expect(methods.get("workboard.cards.runs")?.opts).toEqual({ scope: "operator.read" });
     expect(methods.get("workboard.cards.attachments.get")?.opts).toEqual({
       scope: "operator.read",
@@ -229,6 +233,33 @@ describe("workboard gateway methods", () => {
     } as never);
     expect(eventsRespond.mock.calls[0]?.[0]).toBe(false);
     expect(eventsRespond.mock.calls[0]?.[2]?.message).toContain("workboard.notifications.advance");
+  });
+
+  it("authorizes session binding against the stored workspace, not caller-supplied paths", async () => {
+    const { api, methods } = createGatewayMethodCapture();
+    const store = createWorkboardSqliteTestStore();
+    registerWorkboardGatewayMethods({ api, store });
+    const card = await store.create({
+      title: "Outside",
+      workspace: { kind: "dir", path: "/outside/repo" },
+    });
+    const respond = vi.fn();
+    const handler = methods.get("workboard.cards.bindSession")!.handler;
+    await handler({
+      params: {
+        id: card.id,
+        action: "bind",
+        sessionKey: "trusted",
+        workspace: { kind: "dir", path: "/workspace" },
+        workspaceAccess: { unrestricted: true },
+      },
+      client: { connect: { scopes: ["operator.write"] } },
+      context: { getRuntimeConfig: () => ({ agents: { defaults: { workspace: "/workspace" } } }) },
+      respond,
+    } as never);
+    expect(respond.mock.calls[0]?.[0]).toBe(false);
+    expect(respond.mock.calls[0]?.[2]?.message).toContain("outside the caller");
+    expect(await store.get(card.id)).toEqual(card);
   });
 
   it("applies connected client workspace access when accepting card paths", async () => {

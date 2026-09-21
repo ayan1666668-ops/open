@@ -1,3 +1,4 @@
+import fs from "node:fs";
 // Workboard tests cover tools plugin behavior.
 import { expectDefined } from "@openclaw/normalization-core";
 import { isToolResultError } from "openclaw/plugin-sdk/agent-harness-runtime";
@@ -8,13 +9,68 @@ import {
   createWorkboardSqliteTestStore,
 } from "./test/sqlite-store.js";
 import { createWorkboardTools } from "./tools.js";
-import { guardWorkboardToolsForWorkspaceAccess } from "./workspace-access.js";
+import { WORKBOARD_TOOL_NAMES, guardWorkboardToolsForWorkspaceAccess } from "./workspace-access.js";
 
 function readPayload(result: unknown): Record<string, unknown> {
   return (result as { details?: Record<string, unknown> }).details ?? {};
 }
 
 describe("workboard tools", () => {
+  it("declares the complete runtime tool set including session recovery", () => {
+    const store = createWorkboardSqliteTestStore();
+    const names = createWorkboardTools({ store }).map((tool) => tool.name);
+    const manifest = JSON.parse(
+      fs.readFileSync(new URL("../openclaw.plugin.json", import.meta.url), "utf8"),
+    );
+    expect(new Set(names)).toEqual(new Set(WORKBOARD_TOOL_NAMES));
+    expect(new Set(manifest.contracts.tools)).toEqual(new Set(names));
+    expect(manifest.toolMetadata.workboard_session_bind).toEqual({ optional: true });
+  });
+
+  it("requires trusted current-session binding and rejects foreign claims/workspaces", async () => {
+    const store = createWorkboardSqliteTestStore();
+    const card = await store.create({ title: "Binding" });
+    const toolFor = (context: Parameters<typeof createWorkboardTools>[0]["context"]) =>
+      createWorkboardTools({ store, context }).find(
+        (tool) => tool.name === "workboard_session_bind",
+      )!;
+    await expect(
+      toolFor({ agentId: "main" }).execute("untrusted", {
+        id: card.id,
+        action: "bind",
+        sessionKey: "model-picked",
+      }),
+    ).rejects.toThrow("trusted current chat session");
+    const tool = toolFor({ agentId: "main", sessionKey: "trusted" });
+    await expect(
+      tool.execute("mismatch", { id: card.id, action: "bind", sessionKey: "foreign" }),
+    ).rejects.toThrow("must target the current chat session");
+    await tool.execute("bind", { id: card.id, action: "bind" });
+    expect((await store.get(card.id))?.sessionKey).toBe("trusted");
+    await tool.execute("detach", { id: card.id, action: "detach" });
+    expect((await store.get(card.id))?.sessionKey).toBeUndefined();
+    await store.claim(card.id, { ownerId: "foreign" });
+    const before = await store.get(card.id);
+    await expect(tool.execute("foreign-claim", { id: card.id, action: "bind" })).rejects.toThrow(
+      "claimed by foreign",
+    );
+    expect(await store.get(card.id)).toEqual(before);
+    const outside = await store.create({
+      title: "Outside",
+      workspace: { kind: "dir", path: "/outside/repo" },
+    });
+    const restricted = toolFor({
+      agentId: "main",
+      sessionKey: "trusted",
+      workspaceDir: "/workspace",
+      fsPolicy: { workspaceOnly: true },
+    });
+    await expect(restricted.execute("outside", { id: outside.id, action: "bind" })).rejects.toThrow(
+      "outside the caller",
+    );
+    expect((await store.get(outside.id))?.sessionKey).toBeUndefined();
+  });
+
   it("inherits the active tool filesystem boundary for workspace metadata", async () => {
     const store = createWorkboardSqliteTestStore();
     const restrictedContext = {

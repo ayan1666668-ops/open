@@ -79,6 +79,31 @@ export function registerWorkboardWorkspaceCardMethods(params: WorkspaceGatewayMe
   );
 
   api.registerGatewayMethod(
+    "workboard.cards.bindSession",
+    async (request) => {
+      const { params: input, respond } = request;
+      try {
+        const card = await store.get(readId(input));
+        if (!card) {
+          throw new Error(`card not found: ${readId(input)}`);
+        }
+        await resolveGatewayWorkspaceMutationAccess(request, {
+          workspace: card.metadata?.automation?.workspace,
+        });
+        const expectedUpdatedAt = readExpectedUpdatedAt(input) ?? card.updatedAt;
+        respond(true, {
+          card: redactCard(
+            await store.bindSession(card.id, input, undefined, { expectedUpdatedAt }),
+          ),
+        });
+      } catch (error) {
+        respondError(respond, error);
+      }
+    },
+    { scope: WRITE_SCOPE },
+  );
+
+  api.registerGatewayMethod(
     "workboard.cards.update",
     async (request) => {
       const { params: requestParams, respond } = request;

@@ -17,7 +17,6 @@ import {
   cardChildIds,
   cardParentIds,
   cardRunId,
-  cardSessionKey,
   closeRunningAttempts,
   retryBudgetExhausted,
 } from "./store-card-helpers.js";
@@ -59,8 +58,13 @@ import {
   removeUndefinedMetadataFields,
 } from "./store-normalizers.js";
 import { WorkboardPromoteStore } from "./store-promote.js";
+import { cardSessionKey, workboardSessionKeyMatches } from "./store-session-binding.js";
 
-function assertClaimIdentity(claim: WorkboardClaim, input: WorkboardHeartbeatInput): void {
+function assertClaimIdentity(
+  claim: WorkboardClaim,
+  input: WorkboardHeartbeatInput,
+  card: WorkboardCard,
+): void {
   const token = normalizeOptionalString(input.token);
   const ownerId = normalizeOptionalString(input.ownerId);
   if (token && !safeEqualSecret(token, claim.token)) {
@@ -68,6 +72,9 @@ function assertClaimIdentity(claim: WorkboardClaim, input: WorkboardHeartbeatInp
   }
   if (!token && ownerId && ownerId !== claim.ownerId) {
     throw new Error("claim owner does not match.");
+  }
+  if (input.sessionKey) {
+    assertCanMutateClaimedCard(card, { ownerId, token, sessionKey: input.sessionKey });
   }
 }
 
@@ -93,7 +100,25 @@ export class WorkboardWorkflowStore extends WorkboardPromoteStore {
         now,
         ttlSeconds ? secondsToDurationMs(ttlSeconds) : DEFAULT_CLAIM_TTL_MS,
       );
-      const guarded = await this.promoteDependencyReady(id, now);
+      const existing = await this.get(id);
+      if (!existing) {
+        throw new Error(`card not found: ${id}`);
+      }
+      const callerSessionKey = normalizeOptionalString(options.callerSessionKey);
+      const boundSessionKey = cardSessionKey(existing);
+      const executionSessionKey = normalizeOptionalString(existing.execution?.sessionKey);
+      if (
+        callerSessionKey &&
+        boundSessionKey &&
+        !workboardSessionKeyMatches(callerSessionKey, boundSessionKey) &&
+        !(executionSessionKey && workboardSessionKeyMatches(callerSessionKey, executionSessionKey))
+      ) {
+        throw new Error(`card is bound to session ${boundSessionKey}.`);
+      }
+      // Dependency promotion, first binding, workspace adoption and claim must
+      // commit together against the row used to decide ownership.
+      const status = await this.dependencyTargetStatus(existing, now);
+      const guarded = { ...existing, status };
       if (guarded.metadata?.archivedAt) {
         throw new Error("card is archived.");
       }
@@ -139,6 +164,7 @@ export class WorkboardWorkflowStore extends WorkboardPromoteStore {
       const card = await this.updateCard(
         id,
         {
+          ...(callerSessionKey && !boundSessionKey ? { sessionKey: callerSessionKey } : {}),
           status:
             guarded.status === "backlog" || guarded.status === "todo" || guarded.status === "ready"
               ? "running"
@@ -168,7 +194,7 @@ export class WorkboardWorkflowStore extends WorkboardPromoteStore {
         throw new Error("card is not claimed.");
       }
       const now = Math.max(Date.now(), claim.lastHeartbeatAt + 1);
-      assertClaimIdentity(claim, input);
+      assertClaimIdentity(claim, input, existing);
       const nextClaim = {
         ...claim,
         lastHeartbeatAt: now,
@@ -213,7 +239,7 @@ export class WorkboardWorkflowStore extends WorkboardPromoteStore {
           : normalizeStatus(input.status, existing.status);
       const claim = existing.metadata?.claim;
       if (claim) {
-        assertClaimIdentity(claim, input);
+        assertClaimIdentity(claim, input, existing);
       }
       return await this.updateCard(
         id,
@@ -351,7 +377,7 @@ export class WorkboardWorkflowStore extends WorkboardPromoteStore {
     return {
       status: "blocked",
       ...(options.clearExecutionAssociation
-        ? { sessionKey: null, runId: null, execution: null }
+        ? { runId: null, execution: null }
         : execution
           ? { execution }
           : {}),

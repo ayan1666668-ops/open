@@ -9,7 +9,6 @@ import type { PersistedWorkboardAttachment } from "./persistence-types.js";
 import {
   assertCanMutateClaimedCard,
   cardRunId,
-  cardSessionKey,
   closeRunningAttempts,
 } from "./store-card-helpers.js";
 import {
@@ -36,6 +35,7 @@ import {
   normalizeBoundedString,
   normalizeProofInput,
 } from "./store-normalizers.js";
+import { cardSessionKey } from "./store-session-binding.js";
 
 export class WorkboardEnrichmentStore extends WorkboardCoreStore {
   async addProof(

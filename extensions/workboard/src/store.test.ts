@@ -700,9 +700,9 @@ describe("WorkboardStore", () => {
   it("reuses the active captured session across boards and archived duplicates", async () => {
     const store = createWorkboardSqliteTestStore();
     const sessionKey = "agent:main:dashboard:captured";
-    const active = await store.create({ title: "Active", sessionKey, boardId: "default" });
     const historical = await store.create({ title: "Historical", sessionKey, boardId: "ops" });
     await store.archive(historical.id, true);
+    const active = await store.create({ title: "Active", sessionKey, boardId: "default" });
 
     const captured = await store.captureSession({
       title: "Duplicate",
@@ -1746,40 +1746,6 @@ describe("WorkboardStore", () => {
     });
     expect(staleLifecycle.status).toBe("running");
     expect(staleLifecycle.metadata?.lifecycleStatusSourceUpdatedAt).toBeUndefined();
-  });
-
-  it("keeps execution session links aligned with edited card links", async () => {
-    const store = createWorkboardSqliteTestStore();
-    const card = await store.create({
-      title: "Relink me",
-      sessionKey: "agent:main:dashboard:1",
-      execution: {
-        id: "exec-1",
-        kind: "agent-session",
-        engine: "codex",
-        mode: "autonomous",
-        status: "running",
-        model: "openai/gpt-5.5",
-        sessionKey: "agent:main:dashboard:1",
-        startedAt: 10,
-        updatedAt: 10,
-      },
-    });
-
-    const relinked = await store.update(card.id, { sessionKey: "agent:main:dashboard:2" });
-    expect(relinked.sessionKey).toBe("agent:main:dashboard:2");
-    expect(relinked.execution?.sessionKey).toBe("agent:main:dashboard:2");
-    expect(relinked.events?.at(-1)).toMatchObject({
-      kind: "linked",
-      sessionKey: "agent:main:dashboard:2",
-    });
-
-    const unlinked = await store.update(card.id, { sessionKey: "" });
-    expect(unlinked.sessionKey).toBeUndefined();
-    expect(unlinked.execution?.sessionKey).toBeUndefined();
-
-    const cleared = await store.update(card.id, { execution: null });
-    expect(cleared.execution).toBeUndefined();
   });
 
   it("tracks execution attempts as card metadata", async () => {
@@ -4315,6 +4281,7 @@ describe("WorkboardStore", () => {
     });
     await store.create({
       title: "Card-scoped failed notification",
+      status: "blocked",
       boardId: "ops",
       sessionKey: "session-1",
       runId: "run-1",

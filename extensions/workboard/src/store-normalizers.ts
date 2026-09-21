@@ -1208,30 +1208,6 @@ export function normalizeExecution(value: unknown): WorkboardExecution | undefin
   };
 }
 
-export function syncExecutionSessionKey(
-  execution: WorkboardExecution | undefined,
-  sessionKey: string | undefined,
-): WorkboardExecution | undefined {
-  if (!execution) {
-    return undefined;
-  }
-  return removeUndefinedExecutionFields({
-    ...execution,
-    sessionKey,
-    updatedAt: Date.now(),
-  });
-}
-
-function removeUndefinedExecutionFields(execution: WorkboardExecution): WorkboardExecution {
-  const next = { ...execution };
-  for (const key of ["engine", "model", "sessionKey", "runId"] as const) {
-    if (next[key] === undefined) {
-      delete next[key];
-    }
-  }
-  return next;
-}
-
 function removeUndefinedAutomationFields(automation: WorkboardAutomation): WorkboardAutomation {
   const next = { ...automation };
   for (const key of [

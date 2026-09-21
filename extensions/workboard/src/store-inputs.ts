@@ -86,6 +86,8 @@ export type WorkboardClaimInput = {
   ttlSeconds?: unknown;
 };
 export type WorkboardClaimOptions = {
+  /** Trusted tool-context session; never read from model-supplied claim arguments. */
+  callerSessionKey?: string;
   /** Trusted dispatcher guard; never accepted from public tool or gateway input. */
   expectedAuthority?: {
     boardId: string;
@@ -98,6 +100,7 @@ export type WorkboardClaimOptions = {
   adoptWorkspaceAccess?: WorkboardWorkspaceAccess;
 };
 export type WorkboardHeartbeatInput = {
+  sessionKey?: string;
   token?: unknown;
   ownerId?: unknown;
   note?: unknown;
@@ -191,7 +194,9 @@ export type WorkboardNotificationEventsInput = WorkboardNotificationListOptions 
   subscriptionId?: unknown;
   limit?: unknown;
 };
+export type WorkboardSessionBindingInput = { action?: unknown; sessionKey?: unknown };
 export type WorkboardMutationScope = {
+  sessionKey?: string;
   ownerId?: unknown;
   token?: unknown;
 };

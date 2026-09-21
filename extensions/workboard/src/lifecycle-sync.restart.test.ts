@@ -109,9 +109,12 @@ describe("Workboard prepared launch restart recovery", () => {
 
       await expect(interrupted.replacementStore.get(interrupted.card.id)).resolves.toMatchObject({
         status: "running",
-        sessionKey: interrupted.prepared.sessionKey,
         runId: interrupted.prepared.provisionalRunId,
-        execution: { status: "running", runId: interrupted.prepared.provisionalRunId },
+        execution: {
+          sessionKey: interrupted.prepared.sessionKey,
+          status: "running",
+          runId: interrupted.prepared.provisionalRunId,
+        },
         metadata: {
           claim: { ownerId: "workboard-dispatcher" },
           attempts: [{ status: "running", runId: interrupted.prepared.provisionalRunId }],
@@ -228,7 +231,7 @@ describe("Workboard prepared launch restart recovery", () => {
       const accepted = await interrupted.replacementStore.get(interrupted.card.id);
       expect(accepted).toMatchObject({
         status: "running",
-        sessionKey: canonicalSessionKey,
+        execution: { sessionKey: canonicalSessionKey },
         runId: interrupted.prepared.provisionalRunId,
         metadata: {
           claim: { ownerId: "workboard-dispatcher" },
@@ -260,7 +263,7 @@ describe("Workboard prepared launch restart recovery", () => {
       const terminal = await interrupted.replacementStore.get(interrupted.card.id);
       expect(terminal).toMatchObject({
         status: "review",
-        sessionKey: canonicalSessionKey,
+        execution: { sessionKey: canonicalSessionKey },
         runId: "accepted-run",
         metadata: {
           automation: { launch: { phase: "accepted", acceptedRunId: "accepted-run" } },
@@ -318,7 +321,7 @@ describe("Workboard prepared launch restart recovery", () => {
 
       await expect(interrupted.replacementStore.get(interrupted.card.id)).resolves.toMatchObject({
         status: "review",
-        sessionKey: canonicalSessionKey,
+        execution: { sessionKey: canonicalSessionKey },
         metadata: {
           automation: {
             launch: { phase: "accepted", acceptedSessionKey: canonicalSessionKey },
@@ -386,7 +389,7 @@ describe("Workboard prepared launch restart recovery", () => {
       });
       await expect(interrupted.replacementStore.get(interrupted.card.id)).resolves.toMatchObject({
         status: "running",
-        sessionKey: interrupted.prepared.sessionKey,
+        execution: { sessionKey: interrupted.prepared.sessionKey },
         runId: interrupted.prepared.provisionalRunId,
         metadata: {
           claim: { ownerId: "workboard-dispatcher" },
