@@ -5,9 +5,12 @@ import {
 import {
   DISCORD_AUDIO_CLOCK_BYTES,
   DISCORD_AUDIO_PLAYED_BYTES,
-  DISCORD_AUDIO_OUTPUT_STATUS,
   DISCORD_AUDIO_STARTED,
   DiscordAudioOutputStatus,
+  admitDiscordAudioInput,
+  getDiscordAudioOutputStatus,
+  releaseDiscordAudioInput,
+  setDiscordAudioOutputStatus,
   restoreDiscordAudioError,
   type DiscordAudioEvent,
 } from "./audio-worker-protocol.js";
@@ -68,6 +71,7 @@ export class DiscordRealtimeOutput {
       case "capture-frame":
       case "continuous-error":
       case "continuous-idle":
+      case "continuous-flushed":
       case "continuous-start":
       case "file-end":
       case "stream-drain":
@@ -117,7 +121,7 @@ export class DiscordRealtimeOutput {
     return (
       !this.closed &&
       !this.activity.snapshot().streamEnding &&
-      Atomics.load(this.clock, DISCORD_AUDIO_OUTPUT_STATUS) < DiscordAudioOutputStatus.Retiring
+      getDiscordAudioOutputStatus(this.clock) < DiscordAudioOutputStatus.Retiring
     );
   }
   playbackItems(): RealtimeVoicePlaybackItem[] {
@@ -139,9 +143,29 @@ export class DiscordRealtimeOutput {
     this.marks.set(markId, acknowledge);
     this.params.player.audio.send({ type: "output-mark", id: this.id, markId });
   }
-  append(audio: Buffer, audible: boolean, item?: RealtimeVoicePlaybackItem): void {
+  append(
+    audio: Buffer,
+    audible: boolean,
+    item: RealtimeVoicePlaybackItem | undefined,
+    onAccepted: () => void,
+  ): boolean {
+    if (
+      this.closed ||
+      this.activity.snapshot().streamEnding ||
+      !admitDiscordAudioInput(this.clock)
+    ) {
+      return false;
+    }
+    try {
+      onAccepted();
+    } catch (error) {
+      releaseDiscordAudioInput(this.clock);
+      throw error;
+    }
+    // Observers may cancel synchronously after admission, before publication.
     if (this.closed) {
-      return;
+      releaseDiscordAudioInput(this.clock);
+      return true;
     }
     const previous = this.activity.snapshot();
     const sinkBytes = Math.floor((previous.sourceAudioBytes + audio.length) / 2) * 8;
@@ -160,12 +184,16 @@ export class DiscordRealtimeOutput {
       sinkAudioBytes: sinkBytes - previous.sinkAudioBytes,
     });
     this.params.player.audio.send({ type: "output-audio", id: this.id, audio, audible });
+    return true;
   }
   finish(reason: string, playBuffered: boolean): void {
     if (this.closed) {
       return;
     }
     this.activity.markStreamEnding();
+    if (!playBuffered) {
+      setDiscordAudioOutputStatus(this.clock, DiscordAudioOutputStatus.Closed);
+    }
     this.params.player.audio.send({ type: "output-finish", id: this.id, reason, playBuffered });
     if (!playBuffered) {
       this.retire(reason);
@@ -175,6 +203,7 @@ export class DiscordRealtimeOutput {
     if (this.closed) {
       return;
     }
+    setDiscordAudioOutputStatus(this.clock, DiscordAudioOutputStatus.Closed);
     this.params.player.audio.send({ type: "output-close", id: this.id, reason });
     this.retire(reason);
   }

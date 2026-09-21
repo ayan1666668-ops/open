@@ -4,9 +4,12 @@ import { createSubsystemLogger } from "openclaw/plugin-sdk/runtime-env";
 import { formatErrorMessage } from "openclaw/plugin-sdk/ssrf-runtime";
 import {
   DISCORD_AUDIO_PLAYED_BYTES,
-  DISCORD_AUDIO_OUTPUT_STATUS,
   DISCORD_AUDIO_STARTED,
   DiscordAudioOutputStatus,
+  getDiscordAudioOutputStatus,
+  releaseDiscordAudioInput,
+  retireDiscordAudioOutput,
+  setDiscordAudioOutputStatus,
 } from "./audio-worker-protocol.js";
 import { createDiscordOpusEncodeStream, createRealtimePcmToDiscordConverter } from "./audio.js";
 import {
@@ -76,6 +79,7 @@ export class DiscordRealtimeOutput {
   isAcceptingAudio(): boolean {
     return (
       !this.closed &&
+      getDiscordAudioOutputStatus(this.params.clock) < DiscordAudioOutputStatus.Retiring &&
       !this.activity.snapshot().streamEnding &&
       (!this.request || !this.params.player.isRetiring(this.request))
     );
@@ -125,6 +129,14 @@ export class DiscordRealtimeOutput {
         this.startPlayback();
       }, DISCORD_CONTINUOUS_START_DEADLINE_MS);
       this.startupTimer.unref?.();
+    }
+  }
+
+  appendAdmitted(sourcePcm: Buffer, audible: boolean): void {
+    try {
+      this.append(sourcePcm, audible);
+    } finally {
+      releaseDiscordAudioInput(this.params.clock);
     }
   }
 
@@ -184,7 +196,7 @@ export class DiscordRealtimeOutput {
     const lostPlaybackMarks =
       playbackRetirement && this.playbackMarks.some((mark) => mark.endBytes > this.playedPcmBytes);
     this.closed = true;
-    Atomics.store(this.params.clock, DISCORD_AUDIO_OUTPUT_STATUS, DiscordAudioOutputStatus.Closed);
+    setDiscordAudioOutputStatus(this.params.clock, DiscordAudioOutputStatus.Closed);
     this.clearSilenceTimer();
     clearTimeout(this.startupTimer);
     this.startupTimer = undefined;
@@ -239,11 +251,7 @@ export class DiscordRealtimeOutput {
 
   private publishRetiring(): void {
     if (!this.closed) {
-      Atomics.store(
-        this.params.clock,
-        DISCORD_AUDIO_OUTPUT_STATUS,
-        DiscordAudioOutputStatus.Retiring,
-      );
+      setDiscordAudioOutputStatus(this.params.clock, DiscordAudioOutputStatus.Retiring);
     }
   }
 
@@ -253,9 +261,8 @@ export class DiscordRealtimeOutput {
       createResource: () => this.createResource(),
       onStart: () => {
         this.activity.markPlaybackStarted();
-        Atomics.store(
+        setDiscordAudioOutputStatus(
           this.params.clock,
-          DISCORD_AUDIO_OUTPUT_STATUS,
           this.activity.snapshot().streamEnding
             ? DiscordAudioOutputStatus.Retiring
             : DiscordAudioOutputStatus.Playing,
@@ -269,7 +276,9 @@ export class DiscordRealtimeOutput {
           }
         }
       },
-      onRetiring: () => this.publishRetiring(),
+      onRetiring: () =>
+        this.activity.snapshot().sinkAudioBytes <= this.playedPcmBytes &&
+        retireDiscordAudioOutput(this.params.clock),
       onIdle: () => this.close(this.failed ? "output-pipeline-error" : "player-idle"),
       onError: this.params.onError,
     };
@@ -311,7 +320,10 @@ export class DiscordRealtimeOutput {
     });
     const read = resource.read.bind(resource);
     resource.read = () => {
-      if (this.params.isOpen?.() === false) {
+      if (
+        this.params.isOpen?.() === false ||
+        getDiscordAudioOutputStatus(this.params.clock) === DiscordAudioOutputStatus.Closed
+      ) {
         this.close("port-closed");
         return null;
       }
@@ -390,7 +402,8 @@ export class DiscordRealtimeOutput {
         if (
           !this.closed &&
           !this.activity.snapshot().streamEnding &&
-          !this.hasUnplayedAudibleAudio()
+          !this.hasUnplayedAudibleAudio() &&
+          retireDiscordAudioOutput(this.params.clock)
         ) {
           this.finish("continuous-idle", true);
         }

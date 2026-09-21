@@ -7,7 +7,7 @@ export type DiscordRealtimePlayerRequest = {
   isReady: () => boolean;
   createResource: () => AudioResource;
   onStart: () => void;
-  onRetiring: () => void;
+  onRetiring: () => boolean;
   onIdle: () => void;
   onError: (error: unknown) => void;
 };
@@ -34,14 +34,14 @@ export class DiscordRealtimePlayer {
 
   constructor(private readonly player: AudioPlayer) {
     const stop = player.stop.bind(player);
-    // SDK stop(false) starts padding without emitting stateChange. Publish that
-    // nonaccepting state before another thread can append to the retiring output.
+    // Commit natural retirement before SDK padding, or keep the resource open
+    // until already admitted main-to-worker PCM commands have arrived.
     player.stop = (force) => {
       const request = this.current;
-      const stopped = stop(force);
-      if (request && this.isRetiring(request)) {
-        request.onRetiring();
+      if (request && !force && !request.onRetiring()) {
+        return false;
       }
+      const stopped = stop(force);
       return stopped;
     };
     player.on(loadDiscordVoiceSdk().AudioPlayerStatus.Idle, this.onIdle);

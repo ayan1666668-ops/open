@@ -350,8 +350,11 @@ export class DiscordRealtimePlayback<TState> {
       }
     }
     // Observers may interrupt synchronously; publish ownership before notifying them.
-    this.params.harness.recordOutputAudio(realtimePcm24kMono, activity);
-    output.append(realtimePcm24kMono, audible, item);
+    const onAccepted = () => this.params.harness.recordOutputAudio(realtimePcm24kMono, activity);
+    if (!output.append(realtimePcm24kMono, audible, item, onAccepted)) {
+      this.generatingOutput = undefined;
+      this.sendOutputAudio(realtimePcm24kMono, metadata);
+    }
   }
 
   clearOutputAudio(reason = "clear"): void {
