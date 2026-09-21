@@ -440,3 +440,7 @@ The strongest end-to-end demonstration is a real native campaign that shows:
 
 That demonstration is stronger than adding more mocked helper tests because it
 tests the complete native boundary while preserving the existing authority model.
+
+## Related
+
+- [Liquid Software Factory PR stack](/concepts/liquid-software-factory-stack) for the four-layer review topology.
