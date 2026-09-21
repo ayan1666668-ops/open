@@ -33,6 +33,7 @@ import { prepareMSTeamsThreadRouting, resolveMSTeamsThreadContext } from "./thre
 export function createMSTeamsMessageHandler(deps: MSTeamsMessageHandlerDeps) {
   const {
     cfg,
+    accountPolicyCfg = cfg,
     accountId,
     runtime,
     appId,
@@ -280,6 +281,8 @@ export function createMSTeamsMessageHandler(deps: MSTeamsMessageHandlerDeps) {
 
     await dispatchMSTeamsInboundTurn({
       cfg,
+      accountPolicyCfg,
+      listenerAccountId: accountId,
       runtime,
       appId,
       app,

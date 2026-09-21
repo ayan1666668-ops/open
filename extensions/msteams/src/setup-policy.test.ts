@@ -12,6 +12,56 @@ vi.mock("./resolve-allowlist.js", () => ({
 }));
 
 describe("msteamsSetupWizard account-scoped policies", () => {
+  it("re-enables a legacy default when group policy is configured", () => {
+    const next = msteamsSetupWizard.groupAccess!.setPolicy({
+      cfg: {
+        channels: {
+          msteams: {
+            enabled: false,
+            groupPolicy: "disabled",
+          },
+        },
+      },
+      accountId: "default",
+      policy: "allowlist",
+    });
+
+    expect(next.channels?.msteams).toMatchObject({
+      enabled: true,
+      groupPolicy: "allowlist",
+    });
+  });
+
+  it("re-enables the selected named account when group policy is configured", () => {
+    const next = msteamsSetupWizard.groupAccess!.setPolicy({
+      cfg: {
+        channels: {
+          msteams: {
+            enabled: false,
+            accounts: {
+              support: {
+                enabled: false,
+                groupPolicy: "disabled",
+              },
+            },
+          },
+        },
+      },
+      accountId: "support",
+      policy: "allowlist",
+    });
+
+    expect(next.channels?.msteams).toMatchObject({
+      enabled: true,
+      accounts: {
+        support: {
+          enabled: true,
+          groupPolicy: "allowlist",
+        },
+      },
+    });
+  });
+
   it("keeps legacy default policy writes at the channel root", () => {
     const cfg = {
       channels: {

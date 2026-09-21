@@ -81,7 +81,8 @@ export async function monitorMSTeamsProvider(
   const log = core.logging.getChildLogger({ name: "msteams" });
   const account = resolveMSTeamsRuntimeAccount(opts);
   const { accountId, credentials: creds } = account;
-  let cfg = opts.cfg;
+  const accountPolicyCfg = opts.cfg;
+  let cfg = accountPolicyCfg;
   let msteamsCfg = account.config;
   if (opts.cfg.channels?.msteams?.enabled !== true || msteamsCfg.enabled === false) {
     log.debug?.("msteams provider disabled");
@@ -300,6 +301,7 @@ export async function monitorMSTeamsProvider(
   const handler = buildActivityHandler();
   const handlerDeps: MSTeamsMessageHandlerDeps = {
     cfg,
+    accountPolicyCfg,
     accountId,
     runtime,
     appId,
@@ -314,7 +316,7 @@ export async function monitorMSTeamsProvider(
   registerMSTeamsHandlers(handler, handlerDeps);
 
   const ingress = createMSTeamsIngress({
-    accountId: appId,
+    accountId,
     runtime,
     dispatch: async (activity, lifecycle, liveContext) => {
       // The journaled activity is the dispatch payload; the live context only

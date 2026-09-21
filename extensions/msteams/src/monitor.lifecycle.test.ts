@@ -377,13 +377,19 @@ describe("monitorMSTeamsProvider lifecycle", () => {
       },
       expect.objectContaining({ cloud: "Public", oauthDefaultConnectionName: "graph" }),
     );
-    expect(registerMSTeamsHandlers.mock.calls.at(-1)?.[1].cfg.channels?.msteams).toMatchObject({
+    const handlerDeps = registerMSTeamsHandlers.mock.calls.at(-1)?.[1];
+    expect(handlerDeps?.cfg.channels?.msteams).toMatchObject({
       defaultAccount: "support",
       appId: "support-app-id",
       appPassword: "support-app-password",
       tenantId: "tenant-id",
       webhook: { port: 0, path: "/api/messages" },
     });
+    expect(handlerDeps?.accountPolicyCfg?.channels?.msteams?.accounts?.support).toMatchObject({
+      appId: "support-app-id",
+      appPassword: "support-app-password",
+    });
+    expect(getMSTeamsIngressMockState().instances.at(-1)?.options.accountId).toBe("support");
 
     abort.abort();
     const result = await task;

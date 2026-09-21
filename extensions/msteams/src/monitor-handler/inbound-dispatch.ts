@@ -27,6 +27,8 @@ type MSTeamsInboundDispatchResult =
 
 export async function dispatchMSTeamsInboundTurn(params: {
   cfg: MSTeamsMessageHandlerDeps["cfg"];
+  accountPolicyCfg: MSTeamsMessageHandlerDeps["cfg"];
+  listenerAccountId: string;
   runtime: RuntimeEnv;
   appId: string;
   app: MSTeamsMessageHandlerDeps["app"];
@@ -142,9 +144,13 @@ export async function dispatchMSTeamsInboundTurn(params: {
   // Teams channel actions need both the AAD group and Graph channel ids.
   const nativeChannelId =
     isChannel && teamAadGroupId ? `${teamAadGroupId}/${graphChannelId}` : undefined;
+  // The listener config is intentionally account-scoped. If routing ever crosses
+  // accounts, re-read policy from the full config or sibling authorization can leak.
+  const senderAccessCfg =
+    route.accountId === params.listenerAccountId ? cfg : params.accountPolicyCfg;
   // Thread routing owns the final session key, so mint the bound result at dispatch preparation.
   const boundIngress = await resolveMSTeamsSenderAccess({
-    cfg,
+    cfg: senderAccessCfg,
     accountId: route.accountId,
     activity,
     hasControlCommand: admission.isControlCommand,

@@ -7,6 +7,8 @@ import type { MSTeamsApp } from "./sdk.js";
 
 export type MSTeamsMessageHandlerDeps = {
   cfg: OpenClawConfig;
+  /** Full channel config retained for a fail-closed cross-account route recheck. */
+  accountPolicyCfg?: OpenClawConfig;
   accountId: string;
   runtime: RuntimeEnv;
   appId: string;

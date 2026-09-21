@@ -3,7 +3,6 @@ import {
   createChannelSecretTargetRegistryEntries,
   getChannelSurface,
   hasOwnProperty,
-  isBaseFieldActiveForChannelSurface,
   type ResolverContext,
   type SecretDefaults,
 } from "openclaw/plugin-sdk/channel-secret-basic-runtime";
@@ -32,9 +31,7 @@ export function collectRuntimeConfigAssignments(params: {
     expected: "string",
     defaults: params.defaults,
     context: params.context,
-    active:
-      isBaseFieldActiveForChannelSurface(surface, "appPassword") ||
-      isRootDefaultIdentityActive(msteams, surface),
+    active: isRootDefaultIdentityActive(msteams, surface),
     inactiveReason: "no enabled account inherits this top-level Microsoft Teams appPassword.",
     owner: {
       ownerKind: "account",

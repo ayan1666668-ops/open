@@ -481,7 +481,18 @@ describe("msteams monitor handler authz", () => {
         },
       },
     } as OpenClawConfig;
-    const { deps } = createMessageHandlerDeps(cfg, {
+    const scopedCfg = {
+      ...cfg,
+      channels: {
+        ...cfg.channels,
+        msteams: {
+          dmPolicy: "allowlist",
+          allowFrom: ["owner-aad"],
+          defaultAccount: "jimmy",
+        },
+      },
+    } as OpenClawConfig;
+    const { deps } = createMessageHandlerDeps(scopedCfg, {
       buildContext,
       resolveAgentRoute: vi.fn(() => ({
         sessionKey: "msteams:direct:owner-aad",
@@ -489,6 +500,7 @@ describe("msteams monitor handler authz", () => {
         accountId: "jimmy",
       })),
     });
+    deps.accountPolicyCfg = cfg;
     deps.accountId = "jimmy";
     const handler = createMSTeamsMessageHandler(deps);
 
@@ -531,7 +543,18 @@ describe("msteams monitor handler authz", () => {
         },
       },
     } as OpenClawConfig;
-    const { deps } = createMessageHandlerDeps(cfg, {
+    const scopedCfg = {
+      ...cfg,
+      channels: {
+        ...cfg.channels,
+        msteams: {
+          dmPolicy: "allowlist",
+          allowFrom: ["owner-aad"],
+          defaultAccount: "jimmy",
+        },
+      },
+    } as OpenClawConfig;
+    const { deps } = createMessageHandlerDeps(scopedCfg, {
       buildContext,
       resolveAgentRoute: vi.fn(() => ({
         sessionKey: "msteams:direct:owner-aad",
@@ -539,6 +562,7 @@ describe("msteams monitor handler authz", () => {
         accountId: "david",
       })),
     });
+    deps.accountPolicyCfg = cfg;
     deps.accountId = "jimmy";
     const handler = createMSTeamsMessageHandler(deps);
 
