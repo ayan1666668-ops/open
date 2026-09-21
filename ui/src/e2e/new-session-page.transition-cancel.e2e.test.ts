@@ -13,27 +13,29 @@ suite.define(() => {
     await suite.withPage(
       { ...createControlUiE2eContextOptions(), reducedMotion: "no-preference" },
       async ({ page }) => {
-        await page.addInitScript(() => {
+        const gateway = await installMockGateway(page);
+        await page.goto(`${suite.server.baseUrl}new`);
+        await page.locator(".new-session-page__message").fill("leave this session entrance");
+        await page.evaluate(() => {
+          const outlet = document.querySelector("openclaw-router-outlet");
+          if (!(outlet instanceof HTMLElement)) {
+            throw new Error("Expected the application router outlet");
+          }
           let resolve!: (animation: Animation) => void;
           const ready = new Promise<Animation>((next) => {
             resolve = next;
           });
           Reflect.set(globalThis, "__routeEntranceAnimation", ready);
-          const animate = Element.prototype.animate;
-          Element.prototype.animate = function (keyframes, options) {
-            const animation = animate.call(this, keyframes, options);
-            if (this.localName === "openclaw-router-outlet") {
-              // Hold the actual animation at a deterministic point in its 180 ms lifetime.
-              animation.pause();
-              animation.currentTime = 0;
-              resolve(animation);
-            }
+          const animate = outlet.animate.bind(outlet);
+          outlet.animate = (keyframes, options) => {
+            const animation = animate(keyframes, options);
+            // Hold the actual animation at a deterministic point in its 180 ms lifetime.
+            animation.pause();
+            animation.currentTime = 0;
+            resolve(animation);
             return animation;
           };
         });
-        const gateway = await installMockGateway(page);
-        await page.goto(`${suite.server.baseUrl}new`);
-        await page.locator(".new-session-page__message").fill("leave this session entrance");
         await page.getByRole("button", { name: "Start session" }).click();
         await gateway.waitForRequest("sessions.create");
         expect(
