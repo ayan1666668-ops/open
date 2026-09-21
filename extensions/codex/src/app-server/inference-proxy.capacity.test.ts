@@ -1,5 +1,7 @@
+import assert from "node:assert/strict";
 import { once } from "node:events";
 import { createServer, request } from "node:http";
+import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
 import {
   type ClientOptions,
   WebSocket,
@@ -216,20 +218,22 @@ describe("inference relay capacity", () => {
         error: { code: "inference_relay_busy" },
       });
       expect(streams.every(({ client }) => client.readyState === WebSocket.OPEN)).toBe(true);
+      const first = streams[0];
+      assert(first);
       await complete(
-        streams[0].client,
-        streams[0].upstream,
+        first.client,
+        first.upstream,
         JSON.stringify({ type, response: { id: "synthetic" } }),
       );
       expect((await post()).status).toBe(200);
-      await send(streams[0].client, streams[0].upstream);
-      await complete(streams[0].client, streams[0].upstream);
+      await send(first.client, first.upstream);
+      await complete(first.client, first.upstream);
     },
   );
 
   it("shares the request budget with streaming HTTP and releases it at response completion", async () => {
     const streams: ReadableStreamDefaultController<Uint8Array>[] = [];
-    const admitted = Promise.withResolvers<void>();
+    const admitted = createDeferred<void>();
     transport.fetch.mockImplementation(async () => ({
       response: new Response(
         new ReadableStream<Uint8Array>({
@@ -250,8 +254,12 @@ describe("inference relay capacity", () => {
     const error = once(rejected.client, "message");
     rejected.client.send(JSON.stringify(child));
     expect(JSON.parse((await error)[0].toString()).status).toBe(503);
-    streams[0].close();
-    expect((await responses[0]).status).toBe(200);
+    const firstStream = streams[0];
+    const firstResponse = responses[0];
+    assert(firstStream);
+    assert(firstResponse);
+    firstStream.close();
+    expect((await firstResponse).status).toBe(200);
     const replacement = await open();
     await send(replacement.client, replacement.upstream);
     await complete(replacement.client, replacement.upstream);
@@ -265,7 +273,9 @@ describe("inference relay capacity", () => {
     for (let index = 0; index < 64; index++) {
       await open();
     }
-    const closed = once(clients[0], "close");
+    const oldest = clients[0];
+    assert(oldest);
+    const closed = once(oldest, "close");
     const replacement = await open();
     await closed;
     await send(replacement.client, replacement.upstream);
@@ -278,6 +288,7 @@ describe("inference relay capacity", () => {
     const active = await open();
     await send(active.client, active.upstream);
     const downstream = transport.downstreams[0];
+    assert(downstream);
     const nativeSend = downstream.send.bind(downstream);
     let drained: (() => void) | undefined;
     vi.spyOn(downstream, "send").mockImplementation((data, options, callback) => {
@@ -289,9 +300,11 @@ describe("inference relay capacity", () => {
     for (let index = 0; index < 63; index++) {
       await open();
     }
+    const oldestIdle = clients[1];
+    assert(oldestIdle);
     const evicted = Promise.race([
       once(active.client, "close").then(() => "active"),
-      once(clients[1], "close").then(() => "idle"),
+      once(oldestIdle, "close").then(() => "idle"),
     ]);
     await open();
     expect(await evicted).toBe("idle");
@@ -302,7 +315,7 @@ describe("inference relay capacity", () => {
 
   it("bounds pending handshakes with a retryable rejection while preserving HTTP fallback", async () => {
     const pending: (() => void)[] = [];
-    const admitted = Promise.withResolvers<void>();
+    const admitted = createDeferred<void>();
     transport.resolve.mockImplementation(
       () =>
         new Promise((resolve) => {
