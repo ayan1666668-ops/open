@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import pluginEntry from "./index.js";
+import pluginEntry, { isRestrictiveToolPolicySupported } from "./index.js";
 
 describe("tool-prefilter plugin", () => {
   it("registers before_prompt_build hook", () => {
@@ -263,5 +263,241 @@ describe("tool-prefilter plugin", () => {
     expect(mockApi.logger.warn).toHaveBeenCalledWith(
       expect.stringContaining("Decision check failed, failing open"),
     );
+  });
+
+  describe("isRestrictiveToolPolicySupported helper", () => {
+    it("returns true for default/embedded agent contexts", () => {
+      expect(isRestrictiveToolPolicySupported()).toBe(true);
+      expect(isRestrictiveToolPolicySupported({ agentId: "agent-1" })).toBe(true);
+      expect(
+        isRestrictiveToolPolicySupported({ agentId: "agent-1" }, {
+          agents: { entries: { "agent-1": { agentRuntime: { id: "openclaw" } } } },
+        } as any),
+      ).toBe(true);
+    });
+
+    it("returns true for copilot harness", () => {
+      expect(
+        isRestrictiveToolPolicySupported({ agentId: "agent-1" }, {
+          agents: { entries: { "agent-1": { agentRuntime: { id: "copilot" } } } },
+        } as any),
+      ).toBe(true);
+      expect(isRestrictiveToolPolicySupported({ agentRuntimeId: "copilot" })).toBe(true);
+    });
+
+    it("returns false when modelProviderId is codex or acpx", () => {
+      expect(isRestrictiveToolPolicySupported({ modelProviderId: "codex" })).toBe(false);
+      expect(isRestrictiveToolPolicySupported({ modelProviderId: "CODEX" })).toBe(false);
+      expect(isRestrictiveToolPolicySupported({ modelProviderId: "acpx" })).toBe(false);
+    });
+
+    it("returns false when modelId references codex", () => {
+      expect(isRestrictiveToolPolicySupported({ modelId: "gpt-5.4-codex" })).toBe(false);
+      expect(isRestrictiveToolPolicySupported({ modelId: "codex/standard" })).toBe(false);
+    });
+
+    it("returns false when sessionKey indicates codex or acpx harness", () => {
+      expect(
+        isRestrictiveToolPolicySupported({
+          sessionKey: "agent:main:harness:codex:node-session:123",
+        }),
+      ).toBe(false);
+      expect(
+        isRestrictiveToolPolicySupported({
+          sessionKey: "agent:alpha:harness:codex:supervision:abc",
+        }),
+      ).toBe(false);
+      expect(
+        isRestrictiveToolPolicySupported({
+          sessionKey: "harness:acpx:turn:1",
+        }),
+      ).toBe(false);
+    });
+
+    it("returns false when agent config specifies codex runtime", () => {
+      const config = {
+        agents: {
+          entries: {
+            "codex-agent": {
+              agentRuntime: { id: "codex" },
+            },
+          },
+        },
+      } as any;
+      expect(isRestrictiveToolPolicySupported({ agentId: "codex-agent" }, config)).toBe(false);
+    });
+
+    it("returns false when global defaults specify codex runtime", () => {
+      const config = {
+        agents: {
+          defaults: {
+            agentRuntime: { id: "codex" },
+          },
+        },
+      } as any;
+      expect(isRestrictiveToolPolicySupported({ agentId: "some-agent" }, config)).toBe(false);
+    });
+
+    it("returns false when explicit context specifies codex harness", () => {
+      expect(isRestrictiveToolPolicySupported({ harnessId: "codex" })).toBe(false);
+      expect(isRestrictiveToolPolicySupported({ agentHarnessId: "codex-app-server" })).toBe(false);
+    });
+  });
+
+  describe("unsupported harness safety in before_prompt_build", () => {
+    it("preserves tools (returns undefined) when pure conversation is detected on a Codex harness", async () => {
+      let hookHandler: Function = () => {};
+      const mockEvaluate = vi.fn().mockResolvedValue({
+        status: "ok",
+        result: {
+          model: "typesafe-ai/jev",
+          answers: {
+            any_tool_needed: {
+              type: "boolean",
+              probabilityTrue: 0.05, // Pure conversation
+            },
+          },
+        },
+      });
+
+      const mockApi = {
+        pluginConfig: { enabled: true, thresholdAnyTool: 0.35 },
+        runtime: {
+          decisions: {
+            evaluate: mockEvaluate,
+          },
+        },
+        on: vi.fn((_name: string, handler: Function) => {
+          hookHandler = handler;
+        }),
+        logger: {
+          info: vi.fn(),
+          warn: vi.fn(),
+        },
+      };
+
+      pluginEntry.register(mockApi as any);
+
+      // A Codex-backed turn: e.g. modelProviderId: "codex"
+      const event = { currentUserMessage: "What is the capital of France?" };
+      const ctx = {
+        agentId: "agent-codex",
+        modelProviderId: "codex",
+        sessionKey: "agent:main:harness:codex:node-session:123",
+      };
+
+      const result = await hookHandler(event, ctx);
+
+      expect(mockEvaluate).toHaveBeenCalledTimes(1);
+      expect(result).toBeUndefined(); // MUST NOT return { toolsAllow: [] }
+      expect(mockApi.logger.info).toHaveBeenCalledWith(
+        expect.stringContaining("active harness does not support turn-scoped tool pruning"),
+      );
+    });
+
+    it("preserves tools when pure conversation is detected for an agent configured with codex runtime", async () => {
+      let hookHandler: Function = () => {};
+      const mockEvaluate = vi.fn().mockResolvedValue({
+        status: "ok",
+        result: {
+          model: "typesafe-ai/jev",
+          answers: {
+            any_tool_needed: {
+              type: "boolean",
+              probabilityTrue: 0.02,
+            },
+          },
+        },
+      });
+
+      const mockApi = {
+        pluginConfig: { enabled: true, thresholdAnyTool: 0.35 },
+        config: {
+          agents: {
+            entries: {
+              "codex-agent": {
+                agentRuntime: { id: "codex" },
+              },
+            },
+          },
+        },
+        runtime: {
+          decisions: {
+            evaluate: mockEvaluate,
+          },
+        },
+        on: vi.fn((_name: string, handler: Function) => {
+          hookHandler = handler;
+        }),
+        logger: {
+          info: vi.fn(),
+          warn: vi.fn(),
+        },
+      };
+
+      pluginEntry.register(mockApi as any);
+
+      const event = { currentUserMessage: "Just saying hello" };
+      const ctx = { agentId: "codex-agent" };
+
+      const result = await hookHandler(event, ctx);
+
+      expect(mockEvaluate).toHaveBeenCalledTimes(1);
+      expect(result).toBeUndefined();
+      expect(mockApi.logger.info).toHaveBeenCalledWith(
+        expect.stringContaining("active harness does not support turn-scoped tool pruning"),
+      );
+    });
+
+    it("still prunes tools on supported copilot harness when pure conversation is detected", async () => {
+      let hookHandler: Function = () => {};
+      const mockEvaluate = vi.fn().mockResolvedValue({
+        status: "ok",
+        result: {
+          model: "typesafe-ai/jev",
+          answers: {
+            any_tool_needed: {
+              type: "boolean",
+              probabilityTrue: 0.05,
+            },
+          },
+        },
+      });
+
+      const mockApi = {
+        pluginConfig: { enabled: true, thresholdAnyTool: 0.35 },
+        config: {
+          agents: {
+            entries: {
+              "copilot-agent": {
+                agentRuntime: { id: "copilot" },
+              },
+            },
+          },
+        },
+        runtime: {
+          decisions: {
+            evaluate: mockEvaluate,
+          },
+        },
+        on: vi.fn((_name: string, handler: Function) => {
+          hookHandler = handler;
+        }),
+        logger: {
+          info: vi.fn(),
+          warn: vi.fn(),
+        },
+      };
+
+      pluginEntry.register(mockApi as any);
+
+      const event = { currentUserMessage: "Just saying hello" };
+      const ctx = { agentId: "copilot-agent" };
+
+      const result = await hookHandler(event, ctx);
+
+      expect(mockEvaluate).toHaveBeenCalledTimes(1);
+      expect(result).toEqual({ toolsAllow: [] });
+    });
   });
 });
