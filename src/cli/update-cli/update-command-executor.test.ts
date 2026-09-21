@@ -344,12 +344,9 @@ describe("live update executor", () => {
                   process.execPath,
                   "--input-type=module",
                   "-e",
-                  `import {withDelegatedUpdateCommandExecutor,captureUpdateCommandExecutorAuthority} from ${JSON.stringify(resolveRuntimeWorkerUrl(updateExecutorNativeEntrypoints.executor).href)};
-               const chunks=[];
-               for await (const chunk of process.stdin) {
-                 chunks.push(Buffer.isBuffer(chunk)?chunk:Buffer.from(chunk));
-               }
-               const grant=JSON.parse(Buffer.concat(chunks).toString("utf8"));
+                  `import {json} from "node:stream/consumers";
+               import {withDelegatedUpdateCommandExecutor,captureUpdateCommandExecutorAuthority} from ${JSON.stringify(resolveRuntimeWorkerUrl(updateExecutorNativeEntrypoints.executor).href)};
+               const grant=await json(process.stdin);
                await withDelegatedUpdateCommandExecutor(grant,grant.runId,grant.root,async(fence)=>{
                  fence.assertCurrent(); process.stdout.write(JSON.stringify(captureUpdateCommandExecutorAuthority(fence)));
                });`,
@@ -690,12 +687,9 @@ describe("candidate executor delegation", () => {
     import {spawn} from "node:child_process";
     import {once} from "node:events";
     import {setTimeout} from "node:timers/promises";
+    import {json} from "node:stream/consumers";
     import {withDelegatedUpdateCommandExecutor} from ${JSON.stringify(moduleUrl)};
-    const chunks=[];
-    for await (const chunk of process.stdin) {
-      chunks.push(Buffer.isBuffer(chunk)?chunk:Buffer.from(chunk));
-    }
-    const input=JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    const input=await json(process.stdin);
     await withDelegatedUpdateCommandExecutor(input.grant,input.grant.runId,input.root,async (fence)=>{
       process.stdout.write("admitted\\n");
       while(!input.staleSpawnerAfterAdmission && !fs.existsSync(input.proceed)) await setTimeout(10);
