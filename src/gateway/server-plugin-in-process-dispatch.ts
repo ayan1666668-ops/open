@@ -164,16 +164,13 @@ export async function runWithOperatorToolGatewayContinuationContext<T>(
   if (!getInProcessGatewayRequestContext(resolveGatewayContext)) {
     return await runWithOperatorToolGatewayCleanupContext(run);
   }
-  const invocation = operatorToolGatewayAuthority.getStore();
-  const scopes =
-    caller?.operatorAuthority?.scopes ?? invocation?.scopes ?? scope?.client?.connect.scopes;
   // Use the normal dispatch owner to intersect scopes and validate the live caller
   // before transferring its source. A cleanup scope alone retains request lifetime.
   const resolved = resolveInProcessGatewayDispatch("agent", undefined, {
     forceSyntheticClient: true,
     operatorRoleActor: { kind: "system" },
     resolveGatewayContext,
-    ...(scopes ? { syntheticScopes: [...scopes] } : {}),
+    syntheticScopeMode: "exact",
   });
   const captured = captureGatewayOperatorRunAuthority({
     client: resolved.operatorSourceClient,
@@ -233,7 +230,7 @@ type DispatchGatewayMethodInProcessOptions = {
   sessionCreation?: TrustedSessionCreation;
   requireScopedClient?: boolean;
   syntheticScopes?: string[];
-  /** Built-in adapters distinguish method minima from explicit scope restrictions. */
+  /** Built-in adapters distinguish method minima from explicit or retained scope ceilings. */
   syntheticScopeMode?: "minimum" | "exact";
   timeoutMs?: number;
   signal?: AbortSignal;
@@ -395,7 +392,12 @@ function resolveInProcessGatewayDispatch(
     scopedSystemScopes && sourceScopes
       ? intersectOperatorScopes(sourceScopes, scopedSystemScopes)
       : (scopedSystemScopes ?? sourceScopes);
-  const requestedSyntheticScopes = (options?.syntheticScopes ?? [WRITE_SCOPE]).map((requested) => {
+  const requestedSyntheticScopes = (
+    options?.syntheticScopes ??
+    (options?.syntheticScopeMode === "exact"
+      ? (operatorScopes ?? scope?.client?.connect.scopes)
+      : undefined) ?? [WRITE_SCOPE]
+  ).map((requested) => {
     const broad =
       requested === SESSION_READ_SCOPE
         ? READ_SCOPE
@@ -428,7 +430,9 @@ function resolveInProcessGatewayDispatch(
           allowedScopes: operatorScopes,
           ...(isOperatorScope(registeredScope) ? { requiredScope: registeredScope } : {}),
         })
-    : options?.syntheticScopes;
+    : options?.syntheticScopeMode === "exact"
+      ? requestedSyntheticScopes
+      : options?.syntheticScopes;
   if (
     options?.syntheticScopeMode !== "exact" &&
     operatorScopes?.includes(ADMIN_SCOPE) &&
