@@ -1,5 +1,6 @@
 import { uniqueStrings } from "@openclaw/normalization-core/string-normalization";
 import { canonicalizeMainSessionAlias } from "../../config/sessions/main-session.js";
+import type { SessionToolOverrides } from "../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import type { McpLoopbackRequestContext } from "../../gateway/mcp-grant-store.js";
 import { resolveGatewayMessageChannel } from "../../utils/message-channel.js";
@@ -8,10 +9,25 @@ import {
   captureCronRequesterGrantIssuer,
 } from "../cron-creator-authority-context.js";
 import type { DelegationCapability } from "../delegation-capability.js";
+import { applyEmbeddedAttemptToolsAllow } from "../embedded-agent-runner/run/attempt-tool-construction-plan.js";
 import { SESSION_PERMISSION_BY_EXEC_MODE } from "../session-permission-exec-mode.js";
 import type { RunCliAgentParams } from "./types.js";
 
 const cliMcpDelegationCapability = Symbol("cliMcpDelegationCapability");
+
+/** Keep session-disabled tools out of both the prompt and the exact loopback grant. */
+export function applyCliMcpToolOverrides<T extends { name: string }>(
+  tools: T[],
+  toolsAllow?: string[],
+  overrides?: SessionToolOverrides,
+): { tools: T[]; toolsAllow?: string[] } {
+  const allowed = applyEmbeddedAttemptToolsAllow(tools, toolsAllow);
+  if (overrides?.webSearch !== false) {
+    return { tools: allowed };
+  }
+  const selected = allowed.filter((tool) => tool.name !== "web_search");
+  return { tools: selected, toolsAllow: selected.map((tool) => tool.name) };
+}
 
 /** Final tool projection and host-only requester capture share the prepared CLI turn. */
 export function finalizeCliMcpGrant(

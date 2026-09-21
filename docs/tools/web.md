@@ -370,6 +370,8 @@ selection is represented by an omitted provider, not the strings `"auto"` or
 `tools.web.search.enabled: false` disables search even when a session has a
 stale enable override. Changing the native search setting updates the CLI
 session fingerprint so a resumed process cannot keep the old search policy.
+Turning search off for a session also removes it from OpenClaw's MCP tool list
+and invocation grant, while leaving unrelated tools available.
 
 Other external harnesses own their native tool behavior; configuring OpenClaw's
 managed provider does not establish that a third-party harness uses it.

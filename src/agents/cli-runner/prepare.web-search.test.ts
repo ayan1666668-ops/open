@@ -25,6 +25,7 @@ const searchTool = {
   parameters: { type: "object", properties: {} },
   execute: vi.fn(),
 };
+const messageTool = { ...searchTool, name: "message", label: "Message" };
 let fixture: ReturnType<typeof createCliRunnerPrepareFixture>;
 const captureNativeToolAuthority = vi.fn((_tools: readonly string[] | null) => true);
 const mintMcpLoopbackClientGrant = vi.fn(createTestMcpLoopbackClientGrant);
@@ -49,8 +50,11 @@ beforeEach(() => {
     bindMcpLoopbackClientGrantAdmission: () => true,
     revokeMcpLoopbackClientGrant: () => true,
     activateMcpLoopbackClientGrantCapture: () => ({ captureNativeToolAuthority }),
-    resolveMcpLoopbackPolicyTools: () => ({ agentId: "main", tools: [searchTool] }),
-    resolveMcpLoopbackScopedTools: () => ({ agentId: "main", tools: [searchTool] }),
+    resolveMcpLoopbackPolicyTools: () => ({ agentId: "main", tools: [searchTool, messageTool] }),
+    resolveMcpLoopbackScopedTools: ({ cfg }: { cfg: OpenClawConfig }) => ({
+      agentId: "main",
+      tools: cfg.tools?.web?.search?.enabled === false ? [messageTool] : [searchTool, messageTool],
+    }),
     resolveOpenClawReferencePaths: async () => ({ docsPath: null, sourcePath: null }),
     prepareClaudeCliSkillsPlugin: async () => ({ args: [], cleanup: async () => {} }),
     getCliLiveSessionGeneration: () => undefined,
@@ -68,25 +72,46 @@ afterEach(async () => {
 
 describe("registered Claude CLI search preparation", () => {
   it.each([
-    { name: "automatic", config: {}, native: true },
+    { name: "automatic", config: {}, native: true, sessionSearch: true, managed: true },
     {
       name: "pinned provider",
       config: { tools: { web: { search: { provider: "brave" } } } },
       native: false,
+      sessionSearch: true,
+      managed: true,
     },
     {
       name: "global off with stale session enable",
       config: { tools: { web: { search: { enabled: false } } } },
       native: false,
+      sessionSearch: true,
+      managed: false,
     },
-  ] satisfies Array<{ name: string; config: OpenClawConfig; native: boolean }>)(
+    { name: "session off", config: {}, native: false, sessionSearch: false, managed: false },
+    {
+      name: "session off overrides an explicit tool allowlist",
+      config: {},
+      native: false,
+      sessionSearch: false,
+      managed: false,
+      openClaw: ["web_search", "message"],
+    },
+  ] satisfies Array<{
+    name: string;
+    config: OpenClawConfig;
+    native: boolean;
+    sessionSearch: boolean;
+    managed: boolean;
+    openClaw?: string[];
+  }>)(
     "keeps native authority consistent with $name",
-    async ({ config, native }) => {
+    async ({ config, native, sessionSearch, managed, openClaw }) => {
       const context = await fixture.prepare({
         provider: "claude-cli",
         config,
-        toolOverrides: { webSearch: true },
+        toolOverrides: { webSearch: sessionSearch },
         model: "fixture-model",
+        ...(openClaw ? { cliToolAvailability: { native: ["Read", "WebSearch"], openClaw } } : {}),
       });
       try {
         const capture = context.preparedBackend.mcpClientGrantCapture;
@@ -99,10 +124,16 @@ describe("registered Claude CLI search preparation", () => {
         const argv = context.preparedBackend.backend.args ?? [];
         const denied = argv[argv.indexOf("--disallowedTools") + 1] ?? "";
         expect(denied.split(",").includes("WebSearch")).toBe(!native);
-        if (config.tools?.web?.search?.provider) {
-          expect(
-            context.systemPromptReport.tools.entries.some((tool) => tool.name === "web_search"),
-          ).toBe(true);
+        expect
+          .soft(context.systemPromptReport.tools.entries.some((tool) => tool.name === "web_search"))
+          .toBe(managed);
+        expect(
+          context.systemPromptReport.tools.entries.some((tool) => tool.name === "message"),
+        ).toBe(true);
+        if (!sessionSearch) {
+          expect(mintMcpLoopbackClientGrant.mock.calls[0]?.[0]?.context.toolsAllow).toEqual([
+            "message",
+          ]);
         }
       } finally {
         await context.preparedBackend.cleanup?.();
