@@ -1,5 +1,6 @@
+import { buildDynamicsDiagnostic } from "./dynamics-diagnostics.js";
 import { assessPopulation, buildPopulationSnapshot } from "./population-controller.js";
-import type { PopulationDecision } from "./population-types.js";
+import type { PopulationDecision, PopulationSnapshot } from "./population-types.js";
 
 type HostCollectorTerminalStatus = "done" | "failed" | "killed" | "timeout" | null;
 
@@ -30,15 +31,11 @@ function terminalProgress(status: HostCollectorTerminalStatus): number | null {
   return status === "done" ? 1 : 0;
 }
 
-/**
- * Build an advisory population assessment from facts owned by the host runtime.
- * Semantic candidate signals remain unknown until a trusted producer measures them.
- */
-export function assessHostCollectorPopulation(params: {
+function buildHostCollectorSnapshot(params: {
   groupId: string;
   maxConcurrent: number;
   records: readonly HostCollectorDynamicsRecord[];
-}): PopulationDecision {
+}): PopulationSnapshot {
   const groupId = requireNonEmptyText(params.groupId, "group id");
   if (!Number.isSafeInteger(params.maxConcurrent) || params.maxConcurrent < 1) {
     throw new Error("maxConcurrent must be a positive safe integer");
@@ -72,13 +69,40 @@ export function assessHostCollectorPopulation(params: {
     progressRate: terminalProgress(record.terminalStatus),
   }));
 
-  return assessPopulation(
-    buildPopulationSnapshot({
-      campaignId: groupId,
-      groupId,
-      replicas: [],
-      observations,
-      meanCorrelation: null,
-    }),
-  );
+  return buildPopulationSnapshot({
+    campaignId: groupId,
+    groupId,
+    replicas: [],
+    observations,
+    meanCorrelation: null,
+  });
+}
+
+/**
+ * Build an advisory population assessment from facts owned by the host runtime.
+ * Semantic candidate signals remain unknown until a trusted producer measures them.
+ */
+export function assessHostCollectorPopulation(params: {
+  groupId: string;
+  maxConcurrent: number;
+  records: readonly HostCollectorDynamicsRecord[];
+}): PopulationDecision {
+  return assessPopulation(buildHostCollectorSnapshot(params));
+}
+
+/**
+ * Project the same host-owned snapshot into both a search-only decision and
+ * diagnostics. Diagnostics are observations for operators, never permissions.
+ */
+export function diagnoseHostCollectorPopulation(params: {
+  groupId: string;
+  maxConcurrent: number;
+  records: readonly HostCollectorDynamicsRecord[];
+}) {
+  const snapshot = buildHostCollectorSnapshot(params);
+  const decision = assessPopulation(snapshot);
+  return {
+    decision,
+    diagnostic: buildDynamicsDiagnostic(snapshot, decision),
+  };
 }
