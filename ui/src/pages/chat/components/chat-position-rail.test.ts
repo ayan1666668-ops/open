@@ -163,6 +163,7 @@ describe("conversation position rail", () => {
     "resize",
     "resize-jump",
     "composer-resize-reversal",
+    "navigation-before-composer-resize",
     "end",
     "focus",
     "focus-resize",
@@ -284,7 +285,11 @@ describe("conversation position rail", () => {
           expect(Number.parseFloat(marker(79).style.top) + 12).toBeLessThanOrEqual(
             marks.scrollTop + marks.clientHeight,
           );
-        } else if (scenario === "composer-resize-reversal") {
+        } else if (
+          scenario === "composer-resize-reversal" ||
+          scenario === "navigation-before-composer-resize"
+        ) {
+          const navigatesBeforeResize = scenario === "navigation-before-composer-resize";
           publishVisibility(root.querySelector(".chat-bubble")!);
           flush();
           height = 512;
@@ -314,14 +319,18 @@ describe("conversation position rail", () => {
               },
             },
           });
+          if (navigatesBeforeResize) {
+            root.scrollTop = 0;
+            activeMessage.mockReturnValue("message-0");
+          }
           adjustTextareaHeight(textarea);
-          expect(root.scrollTop).toBe(8315);
+          expect(root.scrollTop).toBe(navigatesBeforeResize ? 0 : 8315);
           // The goal header regrows the composer before any observer or frame runs.
           height = 576;
           marksHeight = 262;
           publishVisibility(root.querySelector(".chat-bubble")!);
           flush();
-          expect(marks.scrollTop).toBe(677);
+          expect(marks.scrollTop).toBe(navigatesBeforeResize ? 0 : 677);
         } else if (scenario === "resize") {
           height = 554;
           marksHeight = 240;
