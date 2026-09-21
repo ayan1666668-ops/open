@@ -50,23 +50,19 @@ This gives the architecture its central split:
 
 > Search can be stochastic. Promotion cannot be accidental.
 
-## Profiles are trajectories, not permissions
+## Recipes are policy, not permissions
 
-The built-in profiles are deliberately different execution trajectories:
+Liquid orchestration may use caller-side labels such as explorer, builder, critic,
+independent verifier, or glass breaker to describe intentionally different search
+trajectories. Those names are recipes outside the native API.
 
-- `explorer`
-- `builder`
-- `critic`
-- `independent-verifier`
-- `glass-breaker`
+Core owns only mechanics that require a trusted host boundary: bounded handoff
+filtering, explicit information boundaries, stricter existing admission
+requirements, and replay identity.
 
-They tune search guidance and explicit handoff shape. They do not grant tools,
-credentials, sandbox exemptions, approvals, or effect authority.
-
-That distinction is why a native profile can be useful beyond prompt wording:
-the bridge can bind profile identity into replay, filter explicit handoff data,
-and require the existing sandbox owner for a verifier without creating a new
-permission system.
+A caller-side verification recipe can therefore request an artifact-only handoff
+and a required sandbox without turning the recipe name into a principal,
+permission, or attestation.
 
 ## Search-only controller
 
