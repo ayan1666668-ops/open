@@ -19,8 +19,8 @@ import { shouldAutoApproveCodexAppServerApprovals } from "./config.js";
 import { resolveCodexToolAbortTerminalReason } from "./dynamic-tool-execution.js";
 import { CodexAppServerEventProjector } from "./event-projector.js";
 import { buildCodexHookRequester } from "./hook-requester.js";
+import { buildCodexNativeHookRelayCommandPlan } from "./native-hook-relay-command.js";
 import {
-  buildCodexNativeHookRelayCommandPlan,
   buildCodexNativeHookRelayDisabledConfig,
   buildCodexNativeHookRelayConfig,
   CODEX_NATIVE_HOOK_RELAY_TTL_GRACE_MS,

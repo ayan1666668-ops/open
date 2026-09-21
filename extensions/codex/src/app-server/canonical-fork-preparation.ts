@@ -23,10 +23,10 @@ import {
   resolveCodexSupervisionAppServerRuntimeOptions,
 } from "./config.js";
 import { resolveCodexNativeExecutionPolicy } from "./native-execution-policy.js";
+import { buildCodexNativeHookRelayId } from "./native-hook-relay-command.js";
 import {
   assertCodexNativeHookRelayAllowed,
   buildCodexNativeHookRelayConfig,
-  buildCodexNativeHookRelayId,
   resolveCodexNativeHookRelayEvents,
   resolveCodexNativeHookRelayForApprovalPolicy,
 } from "./native-hook-relay.js";

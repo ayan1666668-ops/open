@@ -16,10 +16,7 @@ import {
 import { emitTrustedDiagnosticEvent } from "openclaw/plugin-sdk/diagnostic-runtime";
 import { toErrorObject } from "openclaw/plugin-sdk/error-runtime";
 import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
-import {
-  buildNativeHookRelayCommandPlan,
-  registerNativeHookRelayForBundledRuntime,
-} from "openclaw/plugin-sdk/native-hook-relay-runtime";
+import { registerNativeHookRelayForBundledRuntime } from "openclaw/plugin-sdk/native-hook-relay-runtime";
 import type { NativeHookRelayCommandPlan } from "openclaw/plugin-sdk/native-hook-relay-runtime";
 import {
   addTimerTimeoutGraceMs,
@@ -29,8 +26,12 @@ import type { PluginHookToolContext } from "openclaw/plugin-sdk/types";
 import type { CodexAppServerClient } from "./client.js";
 import type { CodexAppServerRuntimeOptions } from "./config.js";
 import { resolveCodexToolAbortTerminalReason } from "./dynamic-tool-execution.js";
+import {
+  buildCodexNativeHookRelayCommandInputs,
+  CODEX_NATIVE_PROCESS_ADMISSION_TOOLS,
+  type CodexNativeHookRelayCommandParams,
+} from "./native-hook-relay-command.js";
 import { nativeHookRelayUnregisterQueue } from "./native-hook-relay-state.js";
-import type { CodexNativeProcessAuthority } from "./native-process-authority.js";
 import { isJsonObject, type JsonObject, type JsonValue } from "./protocol.js";
 
 /** Codex hook events that can be registered through OpenClaw's native relay. */
@@ -54,7 +55,6 @@ const CODEX_NATIVE_HOOK_RELAY_DEFAULT_TIMEOUT_SEC = 10;
 const CODEX_NATIVE_HOOK_RELAY_UNREGISTER_GRACE_MS = 10_000;
 const CODEX_NATIVE_HOOK_RELAY_UNREGISTER_EXTRA_GRACE_MS = 5_000;
 const MAX_PENDING_DIRECT_CHILD_ADMISSIONS = 32;
-const CODEX_NATIVE_PROCESS_ADMISSION_TOOLS = ["exec"] as const;
 
 const CODEX_HOOK_MATCHER_NAMES_BY_TOOL_ID: Readonly<Record<string, readonly string[]>> = {
   exec: ["Bash", "exec", "exec_command"],
@@ -185,21 +185,9 @@ export function emitCodexNativePreToolUseFailureDiagnostic(params: {
   });
 }
 
-type CodexNativeHookRelayParams = {
-  options:
-    | {
-        enabled?: boolean;
-        ttlMs?: number;
-        gatewayTimeoutMs?: number;
-      }
-    | undefined;
-  generation?: string;
+type CodexNativeHookRelayParams = CodexNativeHookRelayCommandParams & {
   generationMismatchGraceMs?: number;
   events: readonly NativeHookRelayEvent[];
-  agentId: string | undefined;
-  sessionId: string;
-  sessionKey: string | undefined;
-  config: EmbeddedRunAttemptParams["config"];
   autoApproveMcpTools?: boolean;
   projectedMcpServers?: Parameters<typeof registerNativeHookRelay>[0]["projectedMcpServers"];
   runId: string;
@@ -209,60 +197,11 @@ type CodexNativeHookRelayParams = {
   attemptTimeoutMs: number;
   startupTimeoutMs: number;
   turnStartTimeoutMs: number;
-  loopDetectionPreToolUseRelay: boolean;
   signal: AbortSignal;
   hostCapabilities: EmbeddedRunAttemptParams["hostCapabilities"];
-  nativeProcessAuthority?: {
-    owner: CodexNativeProcessAuthority;
-    client: () => CodexAppServerClient;
-  };
   assertCurrent?: () => void;
   onPreToolUseFailure: (failure: CodexNativePreToolUseFailure) => void | Promise<void>;
 };
-
-type CodexNativeHookRelayCommandParams = Pick<
-  CodexNativeHookRelayParams,
-  | "options"
-  | "generation"
-  | "agentId"
-  | "sessionId"
-  | "sessionKey"
-  | "config"
-  | "loopDetectionPreToolUseRelay"
-  | "nativeProcessAuthority"
->;
-
-function buildCodexNativeHookRelayCommandInputs(params: CodexNativeHookRelayCommandParams) {
-  return {
-    provider: "codex" as const,
-    relayId: buildCodexNativeHookRelayId(params),
-    generation: params.generation,
-    agentId: params.agentId,
-    sessionKey: params.sessionKey,
-    config: params.config,
-    preToolUseLoopDetection: params.loopDetectionPreToolUseRelay,
-    // Planning must advertise the same required matcher that activation owns.
-    executionAdmissionToolNames: params.nativeProcessAuthority
-      ? CODEX_NATIVE_PROCESS_ADMISSION_TOOLS
-      : undefined,
-    command: {
-      // Preparing and registering a relay must keep the same priority and deadline.
-      // Niced callbacks leave CPU available for the active reply turn.
-      nice: 10,
-      timeoutMs: params.options?.gatewayTimeoutMs,
-    },
-  };
-}
-
-/** Prepare the same command inputs that activation registers, without live callbacks. */
-export function buildCodexNativeHookRelayCommandPlan(
-  params: CodexNativeHookRelayCommandParams & { generation: string },
-): NativeHookRelayCommandPlan {
-  return buildNativeHookRelayCommandPlan({
-    ...buildCodexNativeHookRelayCommandInputs(params),
-    generation: params.generation,
-  });
-}
 
 /** Registers an OpenClaw native hook relay for a Codex app-server turn. */
 export function createCodexNativeHookRelay(
@@ -604,21 +543,6 @@ export function resolveCodexNativeHookRelayTtlMs(params: {
     params.turnStartTimeoutMs +
     CODEX_NATIVE_HOOK_RELAY_TTL_GRACE_MS;
   return Math.max(CODEX_NATIVE_HOOK_RELAY_MIN_TTL_MS, Math.floor(relayBudgetMs));
-}
-
-/** Builds a stable relay id scoped to the agent and session identity. */
-export function buildCodexNativeHookRelayId(params: {
-  agentId: string | undefined;
-  sessionId: string;
-  sessionKey: string | undefined;
-}): string {
-  const hash = createHash("sha256");
-  hash.update("openclaw:codex:native-hook-relay:v1");
-  hash.update("\0");
-  hash.update(params.agentId?.trim() || "");
-  hash.update("\0");
-  hash.update(params.sessionKey?.trim() || params.sessionId);
-  return `codex-${hash.digest("hex").slice(0, 40)}`;
 }
 
 const CODEX_HOOK_EVENT_BY_NATIVE_EVENT: Record<NativeHookRelayEvent, CodexHookEventName> = {

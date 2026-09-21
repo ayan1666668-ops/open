@@ -13,10 +13,8 @@ import {
   createCodexTestHostCapabilities,
   setCodexTestToolFactory,
 } from "./host-capability.test-support.js";
-import {
-  buildCodexNativeHookRelayConfig,
-  buildCodexNativeHookRelayId,
-} from "./native-hook-relay.js";
+import { buildCodexNativeHookRelayId } from "./native-hook-relay-command.js";
+import { buildCodexNativeHookRelayConfig } from "./native-hook-relay.js";
 import * as nativeHookRelay from "./native-hook-relay.js";
 import {
   flattenCodexDynamicToolFunctions,
