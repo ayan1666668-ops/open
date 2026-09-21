@@ -94,6 +94,7 @@ describe("chat transcript invalidation", () => {
         await flushDeferredRowPrune();
         expect(container.textContent).toContain(ownMessage.content);
         expect(ownName()).toBeNull();
+        expect(container.querySelector(".chat-group.user h2")?.textContent).toBe("Alex");
         expect(container.querySelector(".chat-message-source")).toBeNull();
 
         if (peerSource === "session participants") {
@@ -389,6 +390,14 @@ describe("chat transcript invalidation", () => {
         expect(container.querySelector(".chat-bubble.streaming")?.textContent).toContain(
           props.stream,
         );
+        const headings = [...container.querySelectorAll("h2")];
+        expect(headings).toHaveLength(4);
+        expect(headings.map((heading) => heading.textContent)).toEqual([
+          "You",
+          props.assistantName,
+          "You",
+          props.assistantName,
+        ]);
         const renderGroup = vi.spyOn(chatMessage, "renderMessageGroup");
         if (update === "stream-only") {
           props.stream = "Advanced next reply";
@@ -400,6 +409,7 @@ describe("chat transcript invalidation", () => {
         );
         expect(container.querySelector('[data-entry-id="settled-final"]')).toBe(finalBubble);
         expect(finalBubble.textContent).toContain("Workspace checked");
+        expect([...container.querySelectorAll("h2")]).toEqual(headings);
         expect(workToggle.getAttribute("aria-expanded")).toBe("false");
         expect(renderGroup.mock.calls.filter(([group]) => group.runId === completedRunId)).toEqual(
           [],
