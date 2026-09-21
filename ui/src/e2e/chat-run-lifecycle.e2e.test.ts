@@ -164,6 +164,8 @@ suite.define(() => {
     // the live terminal projection or its retained local timestamps.
     const completedSession = {
       key: sessionKey,
+      sessionId: `session:${sessionKey}`,
+      kind: "direct",
       hasActiveRun: false,
       activeRunIds: [],
       status: "done",
@@ -173,6 +175,9 @@ suite.define(() => {
       runtimeMs: 13_000,
       updatedAt: firstStartedAt + 994_000,
     };
+    // Commit the same lifecycle facts to the fixture owner before publishing.
+    // Otherwise a later list/describe read replaces the event-only duration.
+    await gateway.setSessionsListResponse({ sessions: [completedSession] });
     await gateway.setMethodResponse("chat.history", {
       ...prepareChatHistoryFixture(messages),
       sessionId: `session:${sessionKey}`,
