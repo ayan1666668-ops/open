@@ -277,6 +277,32 @@ describe("voice consult ask_user Telegram round trip", () => {
                   },
                 );
                 const controller = new AbortController();
+                const warn = vi.fn();
+                // A consult that ends without asking must say what it saw instead.
+                const describeEarlyFinish = (result: { text: string }) => {
+                  const toolOutputs = model.requests.flatMap((entry) => {
+                    try {
+                      const input = (JSON.parse(entry.body) as { input?: unknown }).input;
+                      return (Array.isArray(input) ? input : [])
+                        .filter((item) => item?.type === "function_call_output")
+                        .map((item) => String(item.output).slice(0, 600));
+                    } catch {
+                      return [];
+                    }
+                  });
+                  return new Error(
+                    `consult finished before the Telegram prompt was sent: ${JSON.stringify({
+                      consultText: result.text,
+                      modelRequests: model.requests.map((entry) => entry.url),
+                      toolOutputs,
+                      telegramRequests: telegram.requests.map((entry) =>
+                        entry.url.split("/").pop(),
+                      ),
+                      gatewayMethods: gateway.requests.map((frame) => frame.method),
+                      warnings: warn.mock.calls.map((call) => String(call[0])),
+                    })}`,
+                  );
+                };
                 // The Voice Call plugin runs its consult inside its own plugin runtime scope.
                 const consult = withPluginRuntimeGatewayRequestScope(
                   {
@@ -288,7 +314,7 @@ describe("voice consult ask_user Telegram round trip", () => {
                     consultRealtimeVoiceAgent({
                       cfg,
                       agentRuntime,
-                      logger: { warn: vi.fn() },
+                      logger: { warn },
                       agentId: "main",
                       sessionKey: consultSessionKey,
                       spawnedBy: requesterSessionKey,
@@ -325,8 +351,8 @@ describe("voice consult ask_user Telegram round trip", () => {
                   async () => {
                     const prompt = await Promise.race([
                       telegram.prompt,
-                      consult.then(() => {
-                        throw new Error("consult finished before the Telegram prompt was sent");
+                      consult.then((result) => {
+                        throw describeEarlyFinish(result);
                       }),
                     ]);
                     expect(prompt.body).toContain(question);
