@@ -831,10 +831,7 @@ describe("buildPluginRegistrySnapshotReport", () => {
     });
     const presentDependencyDir = path.join(rootDir, "node_modules", "present-required");
     fs.mkdirSync(presentDependencyDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(presentDependencyDir, "package.json"),
-      JSON.stringify({ name: "present-required", version: "1.0.0" }),
-    );
+    fs.writeFileSync(path.join(presentDependencyDir, "package.json"), "{}");
 
     const report = buildPluginRegistrySnapshotReport({
       config: {
