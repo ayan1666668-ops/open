@@ -325,29 +325,6 @@ async function markOrphanedMainSessionStore(
   const resolveActiveSessionKeys = () =>
     providedActiveSessionKeys ?? normalizeStringSet(listActiveEmbeddedRunSessionKeys());
 
-async function markOrphanedMainSessionStore(
-  params: OrphanMarkParams & {
-    target: RestartRecoveryStoreTarget & { sessionKey?: string };
-    expectedSessionId?: string;
-    expectedLifecycleRevision?: string;
-    assertCommitAllowed?: () => void;
-  },
-): Promise<{ marked: number; skipped: number }> {
-  const providedActiveSessionIds =
-    params.activeSessionIds === undefined ? undefined : normalizeStringSet(params.activeSessionIds);
-  const providedActiveSessionKeys =
-    params.activeSessionKeys === undefined
-      ? undefined
-      : normalizeStringSet(params.activeSessionKeys);
-  const updatedBeforeMs = normalizeFiniteTimestamp(params.updatedBeforeMs);
-  // Lifecycle rotation synchronously evicts stale owners, so this same registry
-  // view drives both operational routing and recovery suppression. Re-read it at
-  // each check so a newer owner can still fence an older async recovery scan.
-  const resolveActiveSessionIds = () =>
-    providedActiveSessionIds ?? normalizeStringSet(listActiveEmbeddedRunSessionIds());
-  const resolveActiveSessionKeys = () =>
-    providedActiveSessionKeys ?? normalizeStringSet(listActiveEmbeddedRunSessionKeys());
-
   const orphanChecks: Array<() => boolean> = [];
   return await markRecoveryStore({
     ...params.target,
@@ -486,14 +463,6 @@ export async function markStartupOrphanedMainSessionsForRecovery(params: {
       );
     }
   }
-
-  if (result.marked > 0) {
-    mainSessionRecoveryLog.warn(
-      `marked ${result.marked} startup-orphaned main session(s) for restart recovery`,
-    );
-  }
-  return { ...result, ...(failedTargets.length > 0 ? { failedTargets } : {}) };
-}
 
   if (result.marked > 0) {
     mainSessionRecoveryLog.warn(

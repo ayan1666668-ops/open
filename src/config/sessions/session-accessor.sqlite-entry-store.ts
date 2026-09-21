@@ -33,15 +33,7 @@ import {
   deleteSessionDeliveryArtifacts,
   deleteSessionNodeArtifacts,
 } from "./session-accessor.sqlite-node-artifacts.js";
-import {
-  hasSqliteSessionOwnerColumns,
-  projectSqliteSessionOwner,
-  type SqliteSessionOwnerRow,
-} from "./session-accessor.sqlite-owner-projection.js";
-import {
-  projectSqliteSessionParticipants,
-  projectSqliteSessionParticipantsBatch,
-} from "./session-accessor.sqlite-participant-projection.js";
+import { hasSqliteSessionOwnerColumns } from "./session-accessor.sqlite-owner-projection.js";
 import { resolveSessionEntryProvenanceRow } from "./session-accessor.sqlite-provenance.js";
 import { collectSessionStateIdsForEntry } from "./session-accessor.sqlite-references.js";
 import { getSessionKysely, normalizeSqliteSessionKey } from "./session-accessor.sqlite-scope.js";
@@ -150,55 +142,6 @@ export function readUnchangedLifecycleTargetSnapshot(
       .orderBy("session_key", "asc"),
   ).rows;
   return isDeepStrictEqual(rows, persisted.rows) ? prepared : undefined;
-}
-
-export function readSessionEntryStore(
-  database: OpenClawAgentDatabase,
-  options: { allowCanonicalRepair?: boolean } = {},
-): Record<string, SessionEntry> {
-  if (options.allowCanonicalRepair !== true) {
-    assertCanonicalSqliteSessionKeysCurrent(database);
-  }
-  const db = getSessionKysely(database.db);
-  const rows = executeSqliteQuerySync(
-    database.db,
-    db
-      .selectFrom("session_nodes")
-      .select(["current_session_id", "entry_json", "session_key", "updated_at"])
-      .orderBy("session_key"),
-  ).rows;
-  const parsed = new Map<string, SessionEntry>();
-  for (const row of rows) {
-    // Doctor lifecycle projection supplies its separately hydrated expected entry for rejected
-    // raw rows; ordinary exact reads still fail loud before a write can replace one.
-    const entry = parseSessionEntryRow(row);
-    if (entry) {
-      parsed.set(row.session_key, entry);
-    }
-  }
-  // Same shared participant projection the exact-row read applies; whole-store snapshots feed
-  // whole-entry revalidation, so any projection gap here fails every write deterministically.
-  return Object.fromEntries(projectSqliteSessionParticipantsBatch(database.db, parsed));
-}
-
-export function readSessionEntryCount(database: OpenClawAgentDatabase): number {
-  const db = getSessionKysely(database.db);
-  const rows = executeSqliteQuerySync(
-    database.db,
-    db.selectFrom("session_nodes").select("entry_json"),
-  ).rows;
-  return rows.reduce((count, row) => count + (parseSessionEntryRow(row) ? 1 : 0), 0);
-}
-
-export function readSessionEntryKeys(database: OpenClawAgentDatabaseReader): string[] {
-  const db = getSessionKysely(database.db);
-  return executeSqliteQuerySync(
-    database.db,
-    db
-      .selectFrom("session_nodes")
-      .select(["entry_json", "session_key"])
-      .orderBy("session_key", "asc"),
-  ).rows.flatMap((row) => (parseSessionEntryRow(row) ? [row.session_key] : []));
 }
 
 export function resolveLifecyclePrimaryEntry(

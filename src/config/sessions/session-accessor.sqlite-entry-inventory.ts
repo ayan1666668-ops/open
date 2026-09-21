@@ -1,6 +1,7 @@
 import type { CompiledQuery } from "kysely";
 import { iterateSqliteQuerySync, sqliteStringSet } from "../../infra/kysely-sync.js";
 import type { OpenClawAgentDatabase } from "../../state/openclaw-agent-db.js";
+import { projectSqliteSessionParticipantsBatch } from "./session-accessor.sqlite-participant-projection.js";
 import { getSessionKysely } from "./session-accessor.sqlite-scope.js";
 import {
   parseSessionEntryJson,
@@ -34,16 +35,18 @@ export function readSessionEntryStore(
       : query
     ).orderBy("session_key"),
   );
-  const store: Record<string, SessionEntry> = {};
+  const parsed = new Map<string, SessionEntry>();
   for (const row of rows) {
     // Doctor lifecycle projection supplies its separately hydrated expected entry for rejected
     // raw rows; ordinary exact reads still fail loud before a write can replace one.
     const entry = parseSessionEntryJson(row);
     if (entry) {
-      store[row.session_key] = entry;
+      parsed.set(row.session_key, entry);
     }
   }
-  return store;
+  // Same shared participant projection the exact-row read applies; whole-store snapshots feed
+  // whole-entry revalidation, so any projection gap here fails every write deterministically.
+  return Object.fromEntries(projectSqliteSessionParticipantsBatch(database.db, parsed));
 }
 
 type SessionEntryCountRow = { count: number; entry_json: string | null };
