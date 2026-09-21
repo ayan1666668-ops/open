@@ -25,8 +25,8 @@ import {
   OUTBOUND_DELIVERY_PREPARATION_QUEUE_NAME,
   OUTBOUND_DELIVERY_QUEUE_NAME,
 } from "./delivery-queue-media-staging.js";
+import { findDeliveryIntentOwnersInDatabase } from "./delivery-queue-ownership.kernel.js";
 import { findDeliveryIntentOwner } from "./delivery-queue-storage.js";
-import { findDeliveryIntentOwnersInDatabase } from "./delivery-queue-storage.kernel.js";
 
 describe("outbound delivery namespace ownership", () => {
   let rootDir: string;

@@ -8,11 +8,11 @@ import type {
   prepareDeliveryQueueTerminalEntry,
 } from "./delivery-queue-sqlite.kernel.js";
 import type { loadDeliveryQueueMediaRetentionSnapshotInDatabase } from "./outbound/delivery-queue-media-staging.kernel.js";
+import type { findDeliveryIntentOwnersInDatabase } from "./outbound/delivery-queue-ownership.kernel.js";
 import type {
   AckDeliveryOptions,
   FailPendingDeliveryResult,
 } from "./outbound/delivery-queue-settlement.types.js";
-import type { findDeliveryIntentOwnersInDatabase } from "./outbound/delivery-queue-storage.kernel.js";
 
 export type DeliveryQueueWorkerOperations = {
   "deliveryQueue.findIntentOwners": {

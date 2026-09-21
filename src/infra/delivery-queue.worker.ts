@@ -7,9 +7,9 @@ import type { DeliveryQueueWorkerOperations } from "./delivery-queue.worker-cont
 import { executeDeliveryQueueAck } from "./outbound/delivery-queue-ack.worker.js";
 import { executeDeliveryQueueEnqueue } from "./outbound/delivery-queue-enqueue.worker.js";
 import { loadDeliveryQueueMediaRetentionSnapshotInDatabase } from "./outbound/delivery-queue-media-staging.kernel.js";
+import { findDeliveryIntentOwnersInDatabase } from "./outbound/delivery-queue-ownership.kernel.js";
 import { executePendingDeliveryFailure } from "./outbound/delivery-queue-pending-failure.worker.js";
 import { executeDeliveryQueuePlatformLeaseCommand } from "./outbound/delivery-queue-platform-lease.worker.js";
-import { findDeliveryIntentOwnersInDatabase } from "./outbound/delivery-queue-storage.kernel.js";
 import type { SqliteWorkerCommand } from "./sqlite-worker-contract.js";
 
 export function isDeliveryQueueCommand(command: {
