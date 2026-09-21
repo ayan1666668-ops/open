@@ -545,6 +545,10 @@ describe("drainFormattedSystemEvents trace context", () => {
       throw new Error("expected stale recipient settlement");
     }
     await stale.settle();
+    // The settle path resolves its queue key from the owner scope that selected
+    // the event; without this the fix is only guarded by the fixture happening
+    // to use a bare key that throws.
+    expect(mocks.consumeSelectedSystemEventEntries).toHaveBeenCalledWith(MAIN_QUEUE_KEY, [event]);
     expect(resolveFinalSystemEventAdoption({ prepared: [prepared] })).toMatchObject({
       kind: "adopted",
       blocks: [],

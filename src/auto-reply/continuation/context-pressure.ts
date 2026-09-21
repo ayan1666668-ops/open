@@ -16,9 +16,9 @@
 
 import type { SessionEntry } from "../../config/sessions.js";
 import { patchSessionEntryCore } from "../../config/sessions/session-accessor.js";
+import { resolveSystemEventQueueKey } from "../../infra/system-event-ownership.js";
 import { enqueueSystemEvent } from "../../infra/system-events.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
-import { withContinuationOwner } from "./system-event-ownership.js";
 
 const log = createSubsystemLogger("continuation/context-pressure");
 
@@ -203,7 +203,7 @@ function evaluateSessionContextPressure(
 }
 
 function publishSessionContextPressure(
-  params: Pick<CheckSessionContextPressureParams, "sessionEntry" | "sessionKey"> & {
+  params: Pick<CheckSessionContextPressureParams, "sessionEntry" | "sessionKey" | "agentId"> & {
     expectedSessionId?: string;
   },
   evaluation: SessionContextPressureEvaluation,
@@ -212,17 +212,16 @@ function publishSessionContextPressure(
     return { fired: false, band: evaluation.band };
   }
   log[evaluation.logLevel ?? "warn"](evaluation.logMessage);
-  enqueueSystemEvent(
-    evaluation.eventText,
-    withContinuationOwner(
-      {
-        sessionKey: params.sessionKey,
-        trusted: true,
-        ...(params.expectedSessionId ? { expectedSessionId: params.expectedSessionId } : {}),
-      },
-      params.agentId,
-    ),
-  );
+  enqueueSystemEvent(evaluation.eventText, {
+    // The owner is optional here because the recovery path may not carry one
+    // (embedded-agent-runner/run/recovery-context-pressure.ts leaves agentId
+    // unguarded). resolveSystemEventQueueKey takes the owner when supplied and
+    // verifies it matches, and otherwise reads it off an already-qualified
+    // session key, so a missing agentId is only fatal for a genuinely bare key.
+    sessionKey: resolveSystemEventQueueKey(params.sessionKey, params.agentId),
+    trusted: true,
+    ...(params.expectedSessionId ? { expectedSessionId: params.expectedSessionId } : {}),
+  });
   params.sessionEntry.lastContextPressureBand = evaluation.band;
   return { fired: true, band: evaluation.band };
 }

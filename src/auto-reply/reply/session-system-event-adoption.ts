@@ -102,6 +102,8 @@ export async function settleManagedSystemEventsAfterTurnAdoption(params: {
 export async function settleStaleSystemEventAuthority(params: {
   event: SystemEvent;
   sessionKey: string;
+  /** Owner that selected this event; omitted when sessionKey is already a queue key. */
+  ownerAgentId?: string;
 }): Promise<void> {
   if (params.event.sessionDeliveryAckId) {
     await ackSessionDelivery(
@@ -109,7 +111,13 @@ export async function settleStaleSystemEventAuthority(params: {
       params.event.sessionDeliveryAckStateDir,
     );
   }
-  consumeSelectedSystemEventEntries(params.sessionKey, [params.event]);
+  // Resolved here rather than at each call site so a third caller cannot forget:
+  // an already-qualified key resolves to itself, and a supplied owner is verified
+  // against the key instead of overriding it.
+  consumeSelectedSystemEventEntries(
+    resolveSystemEventQueueKey(params.sessionKey, params.ownerAgentId),
+    [params.event],
+  );
 }
 
 export function readPreparedSystemEventAuthorityKey(event: SystemEvent): string | undefined {
@@ -166,13 +174,8 @@ export function resolveFinalSystemEventAdoption(params: {
           // event; a replacement session cannot redirect it.
           await settleStaleSystemEventAuthority({
             event: entry.binding.event,
-            // The scope carries the owner that selected this event, so the
-            // queue key is resolved from it rather than re-derived; the other
-            // caller already passes an agent-qualified key.
-            sessionKey: resolveSystemEventQueueKey(
-              entry.owner.scope.sessionKey,
-              entry.owner.scope.agentId,
-            ),
+            sessionKey: entry.owner.scope.sessionKey,
+            ownerAgentId: entry.owner.scope.agentId,
           });
           entry.owner.pending.delete(entry.authorityKey);
         }

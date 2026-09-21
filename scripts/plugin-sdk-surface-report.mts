@@ -559,7 +559,9 @@ export function readPluginSdkSurfaceBudgets(env: NodeJS.ProcessEnv = process.env
       // +1: approved host workspace Skill resource reader.
       // +1: approved terminal-reply classifier for A2A task completion.
       // -1: absorb of upstream main ff004d3605 nets one fewer public callable
-      //     export across 93 changed plugin-sdk files.
+      //     export across 93 changed plugin-sdk files. The SystemEvent facade
+      //     change above is type-only and cannot move this count; the callable
+      //     that left has not been isolated.
       2677,
       env,
     ),

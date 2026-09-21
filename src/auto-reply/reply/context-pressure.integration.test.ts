@@ -12,7 +12,8 @@ import { peekSystemEventEntries, drainSystemEventEntries } from "../../infra/sys
 import { checkContextPressure } from "../continuation/context-pressure.js";
 
 const TEST_SESSION_KEY = "phase2-integration-test";
-const TEST_QUEUE_KEY = resolveSystemEventQueueKey(TEST_SESSION_KEY, "main");
+const OWNER_AGENT_ID = "main";
+const TEST_QUEUE_KEY = resolveSystemEventQueueKey(TEST_SESSION_KEY, OWNER_AGENT_ID);
 
 /** Helper: partial SessionEntry for testing */
 function makeEntry(overrides: Partial<SessionEntry> = {}): SessionEntry {
@@ -36,6 +37,7 @@ describe("Phase 2 integration: context-pressure → event queue → drain orderi
     const { fired, band } = checkContextPressure({
       sessionEntry: entry,
       sessionKey: TEST_SESSION_KEY,
+      agentId: OWNER_AGENT_ID,
       contextPressureThreshold: 0.8,
       contextWindowTokens: 10000,
     });
@@ -70,6 +72,7 @@ describe("Phase 2 integration: context-pressure → event queue → drain orderi
     checkContextPressure({
       sessionEntry: entry,
       sessionKey: TEST_SESSION_KEY,
+      agentId: OWNER_AGENT_ID,
       contextPressureThreshold: 0.8,
       contextWindowTokens: 10000,
     });
@@ -81,6 +84,7 @@ describe("Phase 2 integration: context-pressure → event queue → drain orderi
     checkContextPressure({
       sessionEntry: entry,
       sessionKey: TEST_SESSION_KEY,
+      agentId: OWNER_AGENT_ID,
       contextPressureThreshold: 0.8,
       contextWindowTokens: 10000,
     });
@@ -92,6 +96,7 @@ describe("Phase 2 integration: context-pressure → event queue → drain orderi
     checkContextPressure({
       sessionEntry: entry,
       sessionKey: TEST_SESSION_KEY,
+      agentId: OWNER_AGENT_ID,
       contextPressureThreshold: 0.8,
       contextWindowTokens: 10000,
     });
@@ -107,6 +112,7 @@ describe("Phase 2 integration: context-pressure → event queue → drain orderi
     const r1 = checkContextPressure({
       sessionEntry: entry,
       sessionKey: TEST_SESSION_KEY,
+      agentId: OWNER_AGENT_ID,
       contextPressureThreshold: 0.8,
       contextWindowTokens: 10000,
     });
@@ -117,6 +123,7 @@ describe("Phase 2 integration: context-pressure → event queue → drain orderi
     const r2 = checkContextPressure({
       sessionEntry: entry,
       sessionKey: TEST_SESSION_KEY,
+      agentId: OWNER_AGENT_ID,
       contextPressureThreshold: 0.8,
       contextWindowTokens: 10000,
     });
@@ -133,6 +140,7 @@ describe("Phase 2 integration: context-pressure → event queue → drain orderi
     const { fired, band } = checkContextPressure({
       sessionEntry: entry,
       sessionKey: TEST_SESSION_KEY,
+      agentId: OWNER_AGENT_ID,
       contextPressureThreshold: 0.1,
       contextWindowTokens: 10000,
     });
@@ -152,6 +160,7 @@ describe("Phase 2 integration: context-pressure → event queue → drain orderi
     const { fired } = checkContextPressure({
       sessionEntry: entry,
       sessionKey: TEST_SESSION_KEY,
+      agentId: OWNER_AGENT_ID,
       contextPressureThreshold: undefined,
       contextWindowTokens: 10000,
     });

@@ -364,12 +364,16 @@ export async function handleContinuationSignal(context: {
               };
             } catch (err) {
               bracketTokensAccumulated = false;
+              // Log before enqueueing: the enqueue can throw on an ownership
+              // fault, and if it ran first it would discard `err` -- the
+              // persistence failure this catch exists to report. The sibling
+              // catches below already log first.
+              defaultRuntime.log(
+                `[continuation] Skipping continue_work scheduling after chain-state persistence failure for session ${sessionKey}: ${String(err)}`,
+              );
               enqueueSystemEvent(
                 "[continuation] continue_work election(s) were not scheduled because chain state could not be persisted.",
                 withContinuationOwner({ sessionKey, trusted: true }, followupRun.run.agentId),
-              );
-              defaultRuntime.log(
-                `[continuation] Skipping continue_work scheduling after chain-state persistence failure for session ${sessionKey}: ${String(err)}`,
               );
             }
             if (reservation) {
