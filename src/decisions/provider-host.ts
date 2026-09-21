@@ -179,6 +179,19 @@ export class DecisionProviderHost {
       config.plugins?.entries?.[this.record.id]?.enabled !== false;
     const admitted = !this.retired && !this.reloadPause && instance?.acceptingCalls === true;
     const credentialReady = admitted && instance.run(() => this.ready());
+    const blocker: UnavailableReason | undefined = !admitted
+      ? "retiring"
+      : !configured
+        ? "not-configured"
+        : !enabled
+          ? "disabled"
+          : !credentialReady
+            ? "credentials-unavailable"
+            : health.authFailed || health.openUntil > performance.now() || health.trial
+              ? "circuit-open"
+              : this.pending.size >= MAX_CONCURRENT
+                ? "overloaded"
+                : undefined;
     return {
       providerId: this.provider.id,
       pluginId: this.record.id,
@@ -199,6 +212,7 @@ export class DecisionProviderHost {
       totalLatencyMs: this.totalLatencyMs,
       usage: { inputTokens: this.inputTokens, outputTokens: this.outputTokens },
       reasons: { ...this.reasons },
+      blocker,
     };
   }
 

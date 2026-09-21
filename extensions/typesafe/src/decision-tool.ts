@@ -1,5 +1,10 @@
 import { createHash } from "node:crypto";
-import type { DecisionBatch, DecisionOutcome } from "openclaw/plugin-sdk/decisions";
+import type {
+  DecisionBatch,
+  DecisionInspection,
+  DecisionOutcome,
+  DecisionProviderCapabilities,
+} from "openclaw/plugin-sdk/decisions";
 import { DecisionContractError, validateDecisionBatch } from "openclaw/plugin-sdk/decisions";
 import { Type } from "typebox";
 
@@ -70,6 +75,7 @@ export const DecisionEvaluateOutput = Type.Unsafe({
     status: { enum: ["ok", "unavailable"] },
     result: { type: "object" },
     reason: { type: "string" },
+    guidance: { type: "string" },
   },
 });
 
@@ -111,13 +117,52 @@ export function parseDecisionEvaluateInput(value: unknown): DecisionBatch {
 }
 
 export function rubricVersion(batch: DecisionBatch): string {
-  const canonical = JSON.stringify(batch.questions, Object.keys(batch.questions).toSorted());
+  const canonical = JSON.stringify(canonicalize(batch.questions));
   return `decision-v1-${createHash("sha256").update(canonical).digest("hex").slice(0, 24)}`;
 }
 
-export function decisionToolResult(outcome: DecisionOutcome) {
+function canonicalize(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(canonicalize);
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value)
+        .toSorted(([left], [right]) => left.localeCompare(right))
+        .map(([key, nested]) => [key, canonicalize(nested)]),
+    );
+  }
+  return value;
+}
+
+function capabilityGuidance(capabilities: DecisionProviderCapabilities): string {
+  const limits = [
+    capabilities.maxQuestions === undefined
+      ? undefined
+      : `at most ${capabilities.maxQuestions} questions`,
+    capabilities.maxChoiceAlternatives === undefined
+      ? undefined
+      : `at most ${capabilities.maxChoiceAlternatives} Choice alternatives`,
+    capabilities.maxScoreLevels === undefined
+      ? undefined
+      : `at most ${capabilities.maxScoreLevels} Score levels`,
+  ].filter((value): value is string => value !== undefined);
+  const boolean = capabilities.requiresBooleanCriteria
+    ? " Boolean questions require both criteria.true and criteria.false descriptions."
+    : "";
+  return `The selected provider supports ${capabilities.questionTypes.join(", ")} questions.${limits.length ? ` Limits: ${limits.join(", ")}.` : ""}${boolean}`;
+}
+
+export function decisionToolResult(outcome: DecisionOutcome, inspection?: DecisionInspection) {
+  const guidance =
+    outcome.status === "unavailable" &&
+    outcome.reason === "unsupported-input" &&
+    inspection?.provider?.capabilities
+      ? capabilityGuidance(inspection.provider.capabilities)
+      : undefined;
+  const details = guidance ? { ...outcome, guidance } : outcome;
   return {
-    content: [{ type: "text" as const, text: JSON.stringify(outcome) }],
-    details: outcome,
+    content: [{ type: "text" as const, text: JSON.stringify(details) }],
+    details,
   };
 }

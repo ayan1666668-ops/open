@@ -59,6 +59,7 @@ export default definePluginEntry({
             throw new Error("decision_evaluate requires trusted agent context.");
           }
           const batch = parseDecisionEvaluateInput(params);
+          const inspection = api.runtime.decisions.inspect({ agentId: ctx.agentId });
           const operationSignal = signal ?? new AbortController().signal;
           operationSignal.throwIfAborted();
           const outcome = await api.runtime.decisions.evaluate(batch, {
@@ -69,7 +70,7 @@ export default definePluginEntry({
             signal: operationSignal,
           });
           operationSignal.throwIfAborted();
-          return decisionToolResult(outcome);
+          return decisionToolResult(outcome, inspection);
         },
       }),
       { optional: true },

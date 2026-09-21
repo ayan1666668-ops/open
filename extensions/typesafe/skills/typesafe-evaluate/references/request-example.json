@@ -46,7 +46,7 @@
       ]
     },
     "actionable": {
-      "type": "noul",
+      "type": "boolean",
       "instructions": "Does ticket.text request a concrete action or answer?",
       "criteria": {
         "true": {

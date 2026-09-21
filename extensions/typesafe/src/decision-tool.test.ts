@@ -25,3 +25,34 @@ it("rejects malformed input without echoing evidence", () => {
     }),
   ).toThrow("provide state and a nonempty questions map");
 });
+
+it("changes the rubric version when nested instructions or criteria change", () => {
+  const base = parseDecisionEvaluateInput({
+    state: null,
+    questions: {
+      q: { type: "choice", instructions: { prompt: "Choose" }, criteria: { yes: "Yes", no: "No" } },
+    },
+  });
+  const changed = parseDecisionEvaluateInput({
+    state: null,
+    questions: {
+      q: {
+        type: "choice",
+        instructions: { prompt: "Choose carefully" },
+        criteria: { yes: "Yes", no: "No" },
+      },
+    },
+  });
+  const changedCriteria = parseDecisionEvaluateInput({
+    state: null,
+    questions: {
+      q: {
+        type: "choice",
+        instructions: { prompt: "Choose" },
+        criteria: { yes: "Keep", no: "No" },
+      },
+    },
+  });
+  expect(rubricVersion(base)).not.toBe(rubricVersion(changed));
+  expect(rubricVersion(base)).not.toBe(rubricVersion(changedCriteria));
+});

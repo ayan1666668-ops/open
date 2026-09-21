@@ -1,5 +1,8 @@
 import { resolveAgentConfig } from "../agents/agent-scope-config.js";
-import { resolveDecisionModelSetting } from "../agents/decision-model-setting.js";
+import {
+  resolveDecisionModelSetting,
+  resolveRawDecisionModelSetting,
+} from "../agents/decision-model-setting.js";
 import { getRuntimeConfig } from "../config/config.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { withPluginHostCleanupTimeout } from "../plugins/host-hook-cleanup-timeout.js";
@@ -115,9 +118,7 @@ export function inspectDecisionInRegistry(
   agentId?: string,
 ): DecisionInspection {
   const agentConfig = agentId ? resolveAgentConfig(config, agentId) : undefined;
-  const rawSelection = agentId
-    ? agentConfig?.decisionModel
-    : config.agents?.defaults?.decisionModel;
+  const rawSelection = resolveRawDecisionModelSetting(config, agentId);
   const origin: "agent-override" | "default" =
     agentId && agentConfig?.decisionModel !== undefined ? "agent-override" : "default";
   const selection = resolveDecisionModelSetting(config, agentId);
@@ -176,15 +177,14 @@ export function inspectDecisionInRegistry(
         pluginId: entry.pluginId,
         capabilities: entry.host.capabilities(),
       },
-      availability: { status: "blocked", reason: "credentials-unavailable" },
+      availability: {
+        status: "blocked",
+        reason: host.blocker ?? "credentials-unavailable",
+      },
     };
   }
   if (!host.callable) {
-    const reason = host.reasons["circuit-open"]
-      ? "circuit-open"
-      : host.activeRequests >= 4
-        ? "overloaded"
-        : "retiring";
+    const reason = host.blocker ?? "retiring";
     return {
       selection: selected,
       provider: {

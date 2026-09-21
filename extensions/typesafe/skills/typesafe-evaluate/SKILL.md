@@ -26,10 +26,9 @@ Put meaning in instructions and criteria, not just the question ID.
 
 Only send necessary evidence authorized for sharing. Never include credentials.
 Do not silently truncate evidence or split competing Choice options to fit a
-request. The plugin bounds JSON to 4 MiB, 262144 nodes, and depth 64; vendor token
-limits are separate. A model override is optional; pin a version when comparing runs.
-For local Kev, the server's loaded checkpoint determines the model; an override
-only labels the request and does not change the checkpoint.
+request. The plugin bounds JSON to 4 MiB, 262144 nodes, and depth 64; provider token
+limits are separate. The calling agent's configured `decisionModel` selects the
+provider and model; do not add a per-call model override.
 
 Reported probabilities may be rounded and need not sum exactly to one. Preserve the
 vendor-selected label and score; normalization or selecting the largest reported
