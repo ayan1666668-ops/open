@@ -723,7 +723,7 @@ index 593bac0b7708fc0e908f9f8de650e45f8b3610ec..66e09365025b0e593e38d8410c8019d6
    }
  };
 diff --git a/dist/chunks/chunk.KZJTFPDQ.js b/dist/chunks/chunk.KZJTFPDQ.js
-index 11de1ac9d650dc1e2db6922f8fb6cd217bc13a4d..67433fc3fd6ea25d560360105296d4da5a6bb653 100644
+index 11de1ac9d650dc1e2db6922f8fb6cd217bc13a4d..6f4a0984d142114f8fa8eb94f0b1c97d78dbe0fc 100644
 --- a/dist/chunks/chunk.KZJTFPDQ.js
 +++ b/dist/chunks/chunk.KZJTFPDQ.js
 @@ -58,17 +58,16 @@ var openDropdowns = /* @__PURE__ */ new Set();
@@ -910,7 +910,7 @@ index 11de1ac9d650dc1e2db6922f8fb6cd217bc13a4d..67433fc3fd6ea25d560360105296d4da
      }
      if (changedProperties.has("size")) {
        this.syncItemSizes();
-@@ -300,104 +265,83 @@ var WaDropdown = class extends WebAwesomeElement {
+@@ -300,104 +265,98 @@ var WaDropdown = class extends WebAwesomeElement {
      );
      items.forEach((item) => item.size = this.size);
    }
@@ -931,7 +931,8 @@ index 11de1ac9d650dc1e2db6922f8fb6cd217bc13a4d..67433fc3fd6ea25d560360105296d4da
 +  /** Gets the current active submenu item. */
    getCurrentSubmenuItem() {
 -    return this.openSubmenuStack.length > 0 ? this.openSubmenuStack[this.openSubmenuStack.length - 1] : void 0;
--  }
++    return this.activeSubmenus.at(-1)?.item;
+   }
 -  /** Closes all submenus in the dropdown. */
 -  closeAllSubmenus() {
 -    const items = this.getItems(true);
@@ -939,8 +940,7 @@ index 11de1ac9d650dc1e2db6922f8fb6cd217bc13a4d..67433fc3fd6ea25d560360105296d4da
 -      item.submenuOpen = false;
 -    });
 -    this.openSubmenuStack = [];
-+    return this.activeSubmenus.at(-1)?.item;
-   }
+-  }
 -  /** Closes sibling submenus at the same level as the specified item. */
 -  closeSiblingSubmenus(item) {
 -    const parentDropdownItem = item.closest('wa-dropdown-item:not([slot="submenu"])');
@@ -1035,6 +1035,21 @@ index 11de1ac9d650dc1e2db6922f8fb6cd217bc13a4d..67433fc3fd6ea25d560360105296d4da
 +    if (open) {
 +      await this.popup.updateComplete;
 +      if (!isCurrent()) return;
++      // A newly mounted popup resolves its anchor after rendering. Join that
++      // owner before focusing: updateComplete alone can leave the popover hidden.
++      if (!this.popup.anchorEl) {
++        await new Promise((resolve) => {
++          const done = (event) => {
++            if (event.type === "wa-reposition" && event.target !== this.popup) return;
++            this.popup.removeEventListener("wa-reposition", done);
++            signal.removeEventListener("abort", done);
++            resolve();
++          };
++          this.popup.addEventListener("wa-reposition", done);
++          signal.addEventListener("abort", done, { once: true });
++        });
++        if (!isCurrent()) return;
++      }
 +      if ([...activeElements()].pop() === focused) {
 +        const items = this.getItems();
 +        items.forEach((item, index) => item.active = index === 0);
@@ -1078,7 +1093,7 @@ index 11de1ac9d650dc1e2db6922f8fb6cd217bc13a4d..67433fc3fd6ea25d560360105296d4da
    }
    /** Handles clicks on the menu. */
    handleMenuClick(event) {
-@@ -405,8 +349,6 @@ var WaDropdown = class extends WebAwesomeElement {
+@@ -405,8 +364,6 @@ var WaDropdown = class extends WebAwesomeElement {
      if (!item || item.disabled) return;
      if (item.hasSubmenu) {
        if (!item.submenuOpen) {
@@ -1087,7 +1102,7 @@ index 11de1ac9d650dc1e2db6922f8fb6cd217bc13a4d..67433fc3fd6ea25d560360105296d4da
          item.submenuOpen = true;
        }
        event.stopPropagation();
-@@ -433,60 +375,57 @@ var WaDropdown = class extends WebAwesomeElement {
+@@ -433,60 +390,57 @@ var WaDropdown = class extends WebAwesomeElement {
    handleTriggerClick() {
      this.open = !this.open;
    }
@@ -1187,7 +1202,7 @@ index 11de1ac9d650dc1e2db6922f8fb6cd217bc13a4d..67433fc3fd6ea25d560360105296d4da
      if (!item.submenuElement) return;
      const isRtl = this.localize.dir() === "rtl";
      const placement = isRtl ? "left-start" : "right-start";
-@@ -506,6 +445,7 @@ var WaDropdown = class extends WebAwesomeElement {
+@@ -506,6 +460,7 @@ var WaDropdown = class extends WebAwesomeElement {
          })
        ]
      }).then(({ x, y, placement: placement2 }) => {
@@ -1508,7 +1523,7 @@ index bedb1923179f2a73be2eaf24e8c1a3c35718683d..04dc1c15097ad58de31a8670e2c870d3
  /** Parses a CSS duration and returns the number of milliseconds. */
  export declare function parseDuration(duration: number | string): number;
 diff --git a/dist-cdn/chunks/chunk.63RYV7SI.js b/dist-cdn/chunks/chunk.63RYV7SI.js
-index 886b0e05a9d51bbe6636d1e394d49ef4edfb84fc..8d8a4c07c419eba8bb52639c86136659977f7c23 100644
+index 886b0e05a9d51bbe6636d1e394d49ef4edfb84fc..a17d7fb69e5811c583d4d033460b1fdc811ff231 100644
 --- a/dist-cdn/chunks/chunk.63RYV7SI.js
 +++ b/dist-cdn/chunks/chunk.63RYV7SI.js
 @@ -68,17 +68,16 @@ var openDropdowns = /* @__PURE__ */ new Set();
@@ -1695,7 +1710,7 @@ index 886b0e05a9d51bbe6636d1e394d49ef4edfb84fc..8d8a4c07c419eba8bb52639c86136659
      }
      if (changedProperties.has("size")) {
        this.syncItemSizes();
-@@ -310,104 +275,83 @@ var WaDropdown = class extends WebAwesomeElement {
+@@ -310,104 +275,98 @@ var WaDropdown = class extends WebAwesomeElement {
      );
      items.forEach((item) => item.size = this.size);
    }
@@ -1716,7 +1731,8 @@ index 886b0e05a9d51bbe6636d1e394d49ef4edfb84fc..8d8a4c07c419eba8bb52639c86136659
 +  /** Gets the current active submenu item. */
    getCurrentSubmenuItem() {
 -    return this.openSubmenuStack.length > 0 ? this.openSubmenuStack[this.openSubmenuStack.length - 1] : void 0;
--  }
++    return this.activeSubmenus.at(-1)?.item;
+   }
 -  /** Closes all submenus in the dropdown. */
 -  closeAllSubmenus() {
 -    const items = this.getItems(true);
@@ -1724,8 +1740,7 @@ index 886b0e05a9d51bbe6636d1e394d49ef4edfb84fc..8d8a4c07c419eba8bb52639c86136659
 -      item.submenuOpen = false;
 -    });
 -    this.openSubmenuStack = [];
-+    return this.activeSubmenus.at(-1)?.item;
-   }
+-  }
 -  /** Closes sibling submenus at the same level as the specified item. */
 -  closeSiblingSubmenus(item) {
 -    const parentDropdownItem = item.closest('wa-dropdown-item:not([slot="submenu"])');
@@ -1820,6 +1835,21 @@ index 886b0e05a9d51bbe6636d1e394d49ef4edfb84fc..8d8a4c07c419eba8bb52639c86136659
 +    if (open) {
 +      await this.popup.updateComplete;
 +      if (!isCurrent()) return;
++      // A newly mounted popup resolves its anchor after rendering. Join that
++      // owner before focusing: updateComplete alone can leave the popover hidden.
++      if (!this.popup.anchorEl) {
++        await new Promise((resolve) => {
++          const done = (event) => {
++            if (event.type === "wa-reposition" && event.target !== this.popup) return;
++            this.popup.removeEventListener("wa-reposition", done);
++            signal.removeEventListener("abort", done);
++            resolve();
++          };
++          this.popup.addEventListener("wa-reposition", done);
++          signal.addEventListener("abort", done, { once: true });
++        });
++        if (!isCurrent()) return;
++      }
 +      if ([...activeElements()].pop() === focused) {
 +        const items = this.getItems();
 +        items.forEach((item, index) => item.active = index === 0);
@@ -1863,7 +1893,7 @@ index 886b0e05a9d51bbe6636d1e394d49ef4edfb84fc..8d8a4c07c419eba8bb52639c86136659
    }
    /** Handles clicks on the menu. */
    handleMenuClick(event) {
-@@ -415,8 +359,6 @@ var WaDropdown = class extends WebAwesomeElement {
+@@ -415,8 +374,6 @@ var WaDropdown = class extends WebAwesomeElement {
      if (!item || item.disabled) return;
      if (item.hasSubmenu) {
        if (!item.submenuOpen) {
@@ -1872,7 +1902,7 @@ index 886b0e05a9d51bbe6636d1e394d49ef4edfb84fc..8d8a4c07c419eba8bb52639c86136659
          item.submenuOpen = true;
        }
        event.stopPropagation();
-@@ -443,60 +385,57 @@ var WaDropdown = class extends WebAwesomeElement {
+@@ -443,60 +400,57 @@ var WaDropdown = class extends WebAwesomeElement {
    handleTriggerClick() {
      this.open = !this.open;
    }
@@ -1972,7 +2002,7 @@ index 886b0e05a9d51bbe6636d1e394d49ef4edfb84fc..8d8a4c07c419eba8bb52639c86136659
      if (!item.submenuElement) return;
      const isRtl = this.localize.dir() === "rtl";
      const placement = isRtl ? "left-start" : "right-start";
-@@ -516,6 +455,7 @@ var WaDropdown = class extends WebAwesomeElement {
+@@ -516,6 +470,7 @@ var WaDropdown = class extends WebAwesomeElement {
          })
        ]
      }).then(({ x: x2, y, placement: placement2 }) => {

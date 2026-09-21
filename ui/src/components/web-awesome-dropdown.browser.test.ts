@@ -703,6 +703,7 @@ describe.runIf(browserMode)("Web Awesome dropdown lifecycle", () => {
     const { userEvent } = await import("vitest/browser");
     const f = await fixture(true);
     await expect.poll(() => count(f, "wa-after-show")).toBe(1);
+    expect(document.activeElement).toBe(f.item);
     await userEvent.keyboard("{Escape}");
     await closed(f);
     expect(document.activeElement).toBe(f.trigger);
