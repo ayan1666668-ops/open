@@ -546,6 +546,11 @@ function isProtectedSessionMaintenanceEntry(
   if (isPrimarySessionMaintenanceKey(sessionKey)) {
     return true;
   }
+  // Assigning a custom sidebar category is an explicit organization action. Keep categorized
+  // sessions visible until the operator removes the category or archives them manually.
+  if (entry?.category?.trim()) {
+    return true;
+  }
   if (parseThreadSessionSuffix(sessionKey).threadId) {
     return true;
   }

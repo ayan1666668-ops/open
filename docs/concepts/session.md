@@ -283,8 +283,9 @@ the cap. Existing explicit limits remain unchanged.
 When pressure exceeds the cap, cleanup archives the oldest eligible ordinary
 sessions instead of deleting their transcripts. Synthetic runtime sessions such
 as cron, hooks, heartbeat, ACP, and sub-agents remain disposable and may be
-removed. Pinned root sessions, active or admitted work, model-locked sessions, and
-durable external conversation pointers are protected; the unarchived total can
+removed. Pinned root sessions, active or admitted work, model-locked sessions,
+sessions assigned to custom sidebar groups, and durable external conversation
+pointers are protected; the unarchived total can
 therefore remain above the cap when protected rows alone exceed it.
 
 Root sessions and sessions auto-parented to the agent's Home root can be pinned;
@@ -312,11 +313,12 @@ model-run, cron, hook, heartbeat, ACP, and sub-agent sessions remain eligible
 for bounded cleanup. Protection can temporarily keep the store above its entry
 or disk target; it expires after the configured inactivity window.
 
-Recent-session protection does not change managed-worktree garbage collection;
-durable dashboard sessions auto-archive after 7 days of inactivity by default,
-and `pruneAfter` archives other eligible durable sessions in place after 30 days
-by default, preserving their session ids and transcript generations. Disposable
-automation rows still delete at their age cutoff.
+Recent-session protection does not change managed-worktree garbage collection.
+Ungrouped durable dashboard sessions auto-archive after 7 days of inactivity by
+default, and `pruneAfter` archives other eligible durable sessions in place after
+30 days by default, preserving their session ids and transcript generations.
+Sessions assigned to custom sidebar groups remain visible until they are ungrouped
+or archived manually. Disposable automation rows still delete at their age cutoff.
 
 Pinned sessions and manual, legacy, age-retention, stale-dashboard, or recovery
 archives are user-protected and exempt from automatic maintenance. Sessions archived because

@@ -37,6 +37,40 @@ function installThrowingConversationResolver() {
 
 describe("recent session maintenance preservation", () => {
   it.each(["classification", "pruning", "capping"] as const)(
+    "preserves custom sidebar groups during %s",
+    (boundary) => {
+      const groupedKey = "agent:main:dashboard:grouped";
+      const ungroupedKey = "agent:main:dashboard:ungrouped";
+      const updatedAt = Date.now() - 31 * DAY_MS;
+      const store: Record<string, SessionEntry> = {
+        [groupedKey]: { sessionId: "grouped", updatedAt, category: "Projects" },
+        [ungroupedKey]: { sessionId: "ungrouped", updatedAt },
+      };
+
+      if (boundary === "classification") {
+        expect(shouldPreserveMaintenanceEntry({ key: groupedKey, entry: store[groupedKey] })).toBe(
+          true,
+        );
+        expect(
+          shouldPreserveMaintenanceEntry({ key: ungroupedKey, entry: store[ungroupedKey] }),
+        ).toBe(false);
+      } else if (boundary === "pruning") {
+        expect(pruneStaleEntries(store, 30 * DAY_MS, { log: false })).toBe(0);
+        expect(store[ungroupedKey]?.archiveReason).toBe("age-retention");
+      } else {
+        expect(capEntryCount(store, 1, { log: false })).toBe(1);
+        expect(store[ungroupedKey]?.archiveReason).toBe("active-session-cap");
+      }
+
+      expect(store[groupedKey]).toEqual({
+        sessionId: "grouped",
+        updatedAt,
+        category: "Projects",
+      });
+    },
+  );
+
+  it.each(["classification", "pruning", "capping"] as const)(
     "preserves external conversations during %s without invoking channel plugins",
     (boundary) => {
       const resolveSessionConversation = installThrowingConversationResolver();

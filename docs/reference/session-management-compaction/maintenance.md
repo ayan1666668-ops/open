@@ -14,7 +14,7 @@ title: "Store maintenance and retention"
 | ----------------------- | --------------------- | ------------------------------------------------------------------------------------------------- |
 | `mode`                  | `"enforce"`           | or `"warn"` (report age, count, and disk-budget policies without applying them)                   |
 | `pruneAfter`            | `"30d"`               | stale-entry age cutoff                                                                            |
-| `archiveDashboardAfter` | `"7d"`                | dashboard archiving cutoff; `false` or `0` disables only this trigger                             |
+| `archiveDashboardAfter` | `"7d"`                | ungrouped dashboard archiving cutoff; `false` or `0` disables only this trigger                   |
 | `maxEntries`            | `5000`                | cap on unarchived session rows when protection permits                                            |
 | `preserveRecent`        | disabled              | inactivity window protecting interactive sessions and their history generations; `false` disables |
 | `resetArchiveRetention` | keep (no age cutoff)  | age cutoff for `*.reset.*`/`*.deleted.*` transcript archives; a duration opts into deletion       |
@@ -64,7 +64,7 @@ openclaw sessions cleanup --dry-run
 openclaw sessions cleanup --enforce
 ```
 
-`maxEntries` counts unarchived session rows; archived rows do not consume the cap. Cleanup archives the oldest eligible ordinary sessions until the unarchived total reaches `maxEntries` or no eligible victims remain. Pinned sessions, active or admitted work, model-locked sessions, and durable external conversation pointers such as group sessions and thread-scoped chat sessions remain protected, so protected rows can keep the unarchived total above the cap. Synthetic runtime entries (cron, hooks, heartbeat, ACP, sub-agents) remain disposable and can still be removed once they exceed the configured age, count, or disk budget. Isolated cron runs use a separate `cron.sessionRetention` control, independent of model-run probe retention.
+`maxEntries` counts unarchived session rows; archived rows do not consume the cap. Cleanup archives the oldest eligible ordinary sessions until the unarchived total reaches `maxEntries` or no eligible victims remain. Pinned sessions, active or admitted work, model-locked sessions, sessions assigned to custom sidebar groups, and durable external conversation pointers such as group sessions and thread-scoped chat sessions remain protected, so protected rows can keep the unarchived total above the cap. Synthetic runtime entries (cron, hooks, heartbeat, ACP, sub-agents) remain disposable and can still be removed once they exceed the configured age, count, or disk budget. Isolated cron runs use a separate `cron.sessionRetention` control, independent of model-run probe retention.
 
 Every new archive records a structured reason automatically. Explicit archive actions record `manual`; count-cap and stale-dashboard maintenance record their respective causes; `pruneAfter` archives eligible durable sessions with `age-retention` while deleting disposable automation; recovery archives record `restart-recovery`. The Control UI renders a human-readable explanation. Missing or unrecognized reasons are treated as protected legacy state rather than inferred.
 
