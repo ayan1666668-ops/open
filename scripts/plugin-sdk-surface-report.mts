@@ -397,10 +397,13 @@ export function readPluginSdkSurfaceBudgets(env: NodeJS.ProcessEnv = process.env
       // +2: prepare admitted input attachments and bind a workspace transfer adapter.
       // +1: approved host workspace Skill resource reader.
       // +1: approved terminal-reply classifier for A2A task completion.
-      // -1: absorb of upstream main ff004d3605 nets one fewer public export
-      //     across 93 changed plugin-sdk files; SystemEvent now reaches the SDK
-      //     only through the plugins/runtime facade instead of a second raw
-      //     infra/system-events re-export.
+      // -1: re-tightened to the measured surface after the absorb of upstream
+      //     main ff004d3605 (93 changed plugin-sdk files). The absorb ADDED
+      //     exports -- 4500 -> 4546 -- so this cap is not tracking a removal;
+      //     it carried 47 of slack and is now pinned to reality again. The one
+      //     name that did leave is removeSystemEvents, which upstream d69a4fa9ca
+      //     (#151652) stopped re-exporting from this deprecated barrel so every
+      //     SDK subpath goes through the plugins/runtime facade.
       4546,
       env,
     ),
@@ -558,10 +561,10 @@ export function readPluginSdkSurfaceBudgets(env: NodeJS.ProcessEnv = process.env
       // +2: prepare admitted input attachments and bind a workspace transfer adapter.
       // +1: approved host workspace Skill resource reader.
       // +1: approved terminal-reply classifier for A2A task completion.
-      // -1: absorb of upstream main ff004d3605 nets one fewer public callable
-      //     export across 93 changed plugin-sdk files. The SystemEvent facade
-      //     change above is type-only and cannot move this count; the callable
-      //     that left has not been isolated.
+      // -1: re-tightened to the measured surface, as above. The absorb ADDED
+      //     callables -- 2652 -> 2677 -- so this is slack being reclaimed, not
+      //     a net loss. The single callable that left is removeSystemEvents,
+      //     withdrawn from the public barrel by upstream d69a4fa9ca (#151652).
       2677,
       env,
     ),

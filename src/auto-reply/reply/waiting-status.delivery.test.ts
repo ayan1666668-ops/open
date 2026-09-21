@@ -54,10 +54,11 @@ function createContext(): FinalizeReplyAgentRunInput {
   return {
     activeIsNewSession: false,
     activeSessionEntry: undefined,
-    // accountAgentTurn calls continuation.resetContinuationChainForFreshTurn();
-    // FinalizeReplyAgentRunInput requires the controller, so the fixture has to
-    // supply one. These cases assert waiting-status delivery, not chain state,
-    // so the stub records nothing and returns the empty chain.
+    // accountAgentTurn calls continuation.resetContinuationChainForFreshTurn()
+    // and then getActiveSessionEntry(); FinalizeReplyAgentRunInput requires both,
+    // so the fixture supplies the controller stub and the accessor below. These
+    // cases assert waiting-status delivery, not chain state, so the stub records
+    // nothing and returns the empty chain.
     continuation: {
       persistContinuationChainState: async () => ({ chainId: undefined, entry: undefined }),
       resetContinuationChainForFreshTurn: async () => {},
