@@ -96,7 +96,11 @@ with its scheduler-owned continuation.
   IDs, and yield generation.
 - **Bounded delivery.** Existing limits remain: three attempts, three ambiguous
   transport replays, and ten stale deferrals. Active descendants do not consume
-  the stale-deferral budget. A private handoff's observation timeout does not
+  the stale-deferral budget. Delivery bookkeeping for executions that ended
+  before the current batch's earliest child was created cannot block its
+  continuation. Active descendants and delivery settlement overlapping that
+  batch still hold the wake; historical failure records remain available.
+  A private handoff's observation timeout does not
   cancel the underlying Gateway turn. When the Gateway reports that turn as
   in flight, settlement observes the same request without spending failure
   attempts or discarding the child results. Gateway admission and execution
@@ -131,6 +135,12 @@ terminal outcomes within the channel's line budget. Public commentary and tool
 details follow the shared compositor and redaction policy; private prompts,
 reasoning, and raw child results are not progress content. An admitted requester
 continuation can update the retained checklist.
+
+After the requester confirms delivery of its final answer and its current child
+batch is terminal, core waits for pending edits and deletes the adopted message
+on channels with guarded deletion support. Silent private consumption, failed or
+uncertain final delivery, and another delegation wave do not trigger this cleanup.
+The final answer remains separate; a cleanup failure never retries that answer.
 
 Progress does not start a requester turn or credit completion delivery.
 Cancellation, reset, replacement, silence, and Gateway shutdown invalidate stale
