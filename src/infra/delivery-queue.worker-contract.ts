@@ -12,8 +12,13 @@ import type {
   AckDeliveryOptions,
   FailPendingDeliveryResult,
 } from "./outbound/delivery-queue-settlement.types.js";
+import type { findDeliveryIntentOwnersInDatabase } from "./outbound/delivery-queue-storage.kernel.js";
 
 export type DeliveryQueueWorkerOperations = {
+  "deliveryQueue.findIntentOwners": {
+    input: Parameters<typeof findDeliveryIntentOwnersInDatabase>[1];
+    output: ReturnType<typeof findDeliveryIntentOwnersInDatabase>;
+  };
   "deliveryQueue.claimPlatformSend": {
     input: Parameters<typeof claimDeliveryQueueEntryPlatformSendInDatabase>[1] & {
       claimId: string;

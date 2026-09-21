@@ -9,6 +9,7 @@ import { executeDeliveryQueueEnqueue } from "./outbound/delivery-queue-enqueue.w
 import { loadDeliveryQueueMediaRetentionSnapshotInDatabase } from "./outbound/delivery-queue-media-staging.kernel.js";
 import { executePendingDeliveryFailure } from "./outbound/delivery-queue-pending-failure.worker.js";
 import { executeDeliveryQueuePlatformLeaseCommand } from "./outbound/delivery-queue-platform-lease.worker.js";
+import { findDeliveryIntentOwnersInDatabase } from "./outbound/delivery-queue-storage.kernel.js";
 import type { SqliteWorkerCommand } from "./sqlite-worker-contract.js";
 
 export function isDeliveryQueueCommand(command: {
@@ -21,6 +22,7 @@ export function isDeliveryQueueCommand(command: {
     command.type === "deliveryQueue.enqueue" ||
     command.type === "deliveryQueue.failPending" ||
     command.type === "deliveryQueue.countFailed" ||
+    command.type === "deliveryQueue.findIntentOwners" ||
     command.type === "deliveryQueue.pruneTombstones" ||
     command.type === "deliveryQueue.mediaRetentionSnapshot"
   );
@@ -40,6 +42,8 @@ export function executeDeliveryQueueCommand(
       return executeDeliveryQueueEnqueue(command.input, options);
     case "deliveryQueue.failPending":
       return executePendingDeliveryFailure(command.input, options);
+    case "deliveryQueue.findIntentOwners":
+      return findDeliveryIntentOwnersInDatabase(options.database, command.input);
     case "deliveryQueue.countFailed":
       return countFailedDeliveryQueueEntriesInDatabase(options.database);
     case "deliveryQueue.pruneTombstones":
