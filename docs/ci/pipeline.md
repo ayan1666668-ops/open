@@ -260,6 +260,12 @@ This prevents an earlier evaluation from leaving a stale failed job after automa
 reevaluation clears the status. Evaluation errors still fail the job and keep the
 required status closed.
 
+If the PR head changes before or during evaluation, the obsolete run stops
+successfully without publishing approval for the replacement commit. The new
+head's automatic event owns its evaluation. Changes to approval-relevant metadata
+on the same head and real evaluation errors still fail; supersession does not hide
+an earlier guard error.
+
 When GitHub returns a rate-limit response, the resolver and review scripts stop
 API requests, honor `Retry-After` and exhausted-quota reset times, and restart
 with fresh PR, approval, role, and CI data. Each script permits up to three restarts
@@ -273,6 +279,12 @@ quota exhaustion can also prevent a new status from being published. Ordinary
 permission errors, uncertain writes, and other evaluation errors are not retried.
 Checkout, runtime setup, and separately minted autoscrub token expiry are outside
 this recovery mechanism.
+
+If GitHub's changed-file count and file list disagree, the guards retry the complete
+file-list read after one, two, and four seconds. Each retry rereads PR metadata;
+changes to the head, target branch, or author still invalidate the evaluation.
+Both guards share the validated result and retry budget. A persistent mismatch
+fails the review and reports the expected, returned, and current file counts.
 
 The **Security Sensitive Guard** publishes `openclaw/security-sensitive-review`.
 Its inventory in `.github/security-review-policy.yml` covers Gateway
