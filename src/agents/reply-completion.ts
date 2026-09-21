@@ -1,3 +1,5 @@
+import { isSyntheticSourceReplyTurn } from "../auto-reply/reply/source-reply-delivery-mode.js";
+import type { InputProvenance } from "../sessions/input-provenance.js";
 import type { EmbeddedRunTrigger } from "./run-trigger.js";
 
 export type ReplyExpectation = "required" | "optional";
@@ -23,11 +25,13 @@ export function resolveReplyExpectation(params: {
   terminalReplyExpectation?: ReplyExpectation;
   allowEmptyAssistantReplyAsSilent?: boolean;
   trigger?: EmbeddedRunTrigger;
+  inputProvenance?: InputProvenance;
 }): ReplyExpectation {
   return (
     params.terminalReplyExpectation ??
-    ((params.allowEmptyAssistantReplyAsSilent ??
-    (params.trigger !== undefined && params.trigger !== "user" && params.trigger !== "manual"))
+    (isSyntheticSourceReplyTurn(params) ||
+    (params.allowEmptyAssistantReplyAsSilent ??
+      (params.trigger !== undefined && params.trigger !== "user" && params.trigger !== "manual"))
       ? "optional"
       : "required")
   );
