@@ -71,7 +71,7 @@ const GatewayFileRootSchema = z.strictObject({
   /** Operator-facing label shown to clients; the host path is never returned. */
   label: z.string().trim().min(1).max(64),
   /** Absolute filesystem path on the Gateway host. */
-  path: z.string().trim().min(1),
+  path: z.string().refine((value) => value.trim().length > 0, "path must not be blank"),
   /** The first file-root API is intentionally read-only. */
   readOnly: z.literal(true).optional(),
 });

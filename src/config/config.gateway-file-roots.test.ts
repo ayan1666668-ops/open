@@ -16,6 +16,17 @@ describe("gateway.fileRoots", () => {
     });
   });
 
+  it("preserves significant boundary whitespace in a nonblank root path", () => {
+    const path = "/srv/notes ";
+    const parsed = GatewayConfigSchema.safeParse({
+      fileRoots: {
+        notes: { label: "Notes", path },
+      },
+    });
+    expect(parsed.success).toBe(true);
+    expect(parsed.success && parsed.data.fileRoots?.notes.path).toBe(path);
+  });
+
   it.each(["Obsidian", "obsidian.root", "obsidian root", "1vault"])(
     "rejects invalid root id %s",
     (id) => {
