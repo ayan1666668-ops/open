@@ -110,8 +110,8 @@ The final layer projects operator diagnostics from the same host-owned snapshot
 used by the search-only population decision. It does not create another
 scheduler or another authority plane.
 
-Dynamics tracking is owned by the parent run. A failed or aborted parent wait
-releases advisory bookkeeping without cancelling still-live sibling collectors.
+Dynamics tracking is owned by the parent run. Parent catalog/run disposal or
+abort releases advisory bookkeeping without cancelling still-live sibling collectors.
 
 The folding regression checks the intended progression across heterogeneous
 phases and exact-candidate identity.
