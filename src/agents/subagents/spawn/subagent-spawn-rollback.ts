@@ -21,6 +21,14 @@ export async function cleanupAcceptedSubagentSpawnFailure(params: {
   cleanupCreatedSession: (emitLifecycleHooks: boolean) => Promise<unknown>;
   /** Retained queued-registration ownership; false means another owner holds the child now. */
   isCurrent?: () => boolean;
+  /**
+   * Retained cleanup dispatch capability from the frozen cleanup owner, which was
+   * created specifically to outlive the operator. After source revocation the default
+   * gateway path is no longer reliable cleanup authority, so termination goes
+   * unconfirmed without this. Threading it grants cleanup capability, never operator
+   * authority.
+   */
+  callGateway?: Parameters<typeof terminateAcceptedCollectorRun>[0]["callGateway"];
 }): Promise<void> {
   const cleanupFailures: unknown[] = [];
   const ownsChild = params.isCurrent?.() !== false;
@@ -36,6 +44,8 @@ export async function cleanupAcceptedSubagentSpawnFailure(params: {
         gatewayRunId: params.acceptedChildRunId,
         expectedSessionId: params.expectedSessionId,
         expectedLifecycleRevision: params.expectedLifecycleRevision,
+        isCurrent: params.isCurrent,
+        ...(params.callGateway ? { callGateway: params.callGateway } : {}),
         retry: false,
       });
       if (!terminated) {

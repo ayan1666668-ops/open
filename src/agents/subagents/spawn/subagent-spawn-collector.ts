@@ -201,17 +201,32 @@ export function createCollectorLaunchCallbacks(params: {
       completeCollectorLaunchCleanup(childRunId);
     }
   };
-  const settleLaunchFailure = async (error: unknown) => {
+  /**
+   * `allowClosedCaller` is set ONLY by the scheduler-removal path. `onRemoved` is
+   * invoked through `bindSwarmLaunchWork` after `finalizeRemovedRun` installed
+   * `item.removal`, so the wrapper has already `beginClose()`d its callback
+   * AsyncWorkScope. `getAsyncWorkSignal()` therefore reports aborted, and the
+   * caller-abandoned guards below would refuse the very settlement `onRemoved` exists
+   * to perform -- self-cancellation, which is what left the killed row terminal/error
+   * with `collectorLaunchCleanupPending: true`. The removal path is already the
+   * durable owner and runs inside detached cleanup continuation.
+   *
+   * The guards are NOT removed globally: `onStartFailure` still needs them so an
+   * abandoned caller's work is never revived.
+   */
+  const settleLaunchFailure = async (error: unknown, options?: { allowClosedCaller?: boolean }) => {
     if (error instanceof GatewayDrainingError) {
       return false;
     }
     const callerSignal = getAsyncWorkSignal();
-    if (!dispatchAttempted && callerSignal?.aborted) {
+    const callerAbandoned = () =>
+      options?.allowClosedCaller !== true && !dispatchAttempted && callerSignal?.aborted === true;
+    if (callerAbandoned()) {
       return false;
     }
     return await runWithGatewayDetachedWorkContinuation(async () => {
       for (;;) {
-        if (!dispatchAttempted && callerSignal?.aborted) {
+        if (callerAbandoned()) {
           return false;
         }
         const claim = registrationScope?.waitForClaim();
@@ -269,7 +284,11 @@ export function createCollectorLaunchCallbacks(params: {
           // proceeds under the independent cleanup owner, never under operator
           // authority; the `finally` release below stays as an idempotent backstop.
           releaseAuthority();
-          if (!(await settleLaunchFailure(params.operatorAuthority.signal.reason))) {
+          if (
+            !(await settleLaunchFailure(params.operatorAuthority.signal.reason, {
+              allowClosedCaller: true,
+            }))
+          ) {
             throw new Error("Collector source revocation settlement is pending");
           }
         } else if (reason === "shutdown" || canCleanupCreatedSession?.() === false) {

@@ -555,7 +555,8 @@ export async function spawnSubagentDirect(
           ...provisionalSessionIdentity,
           emitLifecycleHooks,
           cleanupCreatedSession,
-          isCurrent: canCleanupCreatedSession,
+          isCurrent: isCleanupCurrent,
+          ...(cleanupOwner ? { callGateway: cleanupOwner.callGateway } : {}),
         });
       },
     };
