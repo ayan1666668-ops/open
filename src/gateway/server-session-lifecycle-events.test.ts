@@ -74,7 +74,12 @@ describe("createLifecycleEventBroadcastHandler", () => {
     const projection = {
       state: { rowContext: { projectedAgentRuns: undefined } },
       capture: () => current,
-      ensureMaterialized: () => prepared.promise,
+      ensureMaterialized: async () => {},
+      withPreparedExactRows: (async (queries, consume) => {
+        queries({});
+        await prepared.promise;
+        return { kind: "complete", value: consume(projection) };
+      }) satisfies SessionRowProjection["withPreparedExactRows"],
       isCurrent: (record: typeof original) => record === current,
       snapshot,
     } as unknown as SessionRowProjection;
@@ -288,12 +293,12 @@ describe("createLifecycleEventBroadcastHandler", () => {
       chatAbortControllers: new Map(),
     });
 
-    await handler({ sessionKey: "global", reason: "updated" });
+    await handler({ sessionKey: "global", reason: "patch", catalogChanged: true });
 
     expect(loadGatewaySessionRowMock).not.toHaveBeenCalled();
     expect(broadcastToConnIds).toHaveBeenCalledWith(
       "sessions.changed",
-      expect.objectContaining({ sessionKey: "global", reason: "updated" }),
+      expect.objectContaining({ sessionKey: "global", reason: "patch", catalogChanged: true }),
       new Set(["conn-events"]),
       {
         agentId: "ops",

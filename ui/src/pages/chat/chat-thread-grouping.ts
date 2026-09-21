@@ -5,6 +5,7 @@ import {
   extractAssistantTextForPhase,
   resolveAssistantMessagePhase,
 } from "../../../../src/shared/chat-message-content.js";
+import type { GatewaySessionRow } from "../../api/types.ts";
 import type { ChatItem, MessageGroup } from "../../lib/chat/chat-types.ts";
 import { resolveMessageDisplayMarkdown } from "../../lib/chat/message-display.ts";
 import { normalizeRoleForGrouping } from "../../lib/chat/message-normalizer.ts";
@@ -57,6 +58,11 @@ function stampReplyAttribution(
   let latestUserSender: MessageGroup["sender"];
   let latestUserMessage: MessageGroup["replyToMessage"];
   for (const item of items) {
+    if (item.kind === "stream") {
+      item.replyToSender = latestUserSender;
+      item.replyToMessage = latestUserMessage;
+      continue;
+    }
     if (item.kind !== "group") {
       continue;
     }
@@ -183,6 +189,8 @@ export type StreamRunRenderItem = {
   key: string;
   runId?: string;
   boundaryId?: string;
+  replyToSender?: MessageGroup["replyToSender"];
+  replyToMessage?: MessageGroup["replyToMessage"];
   parts: Array<Extract<ChatItem, { kind: "stream" | "reading-indicator" }>>;
 };
 export function coalesceStreamRuns(
@@ -198,6 +206,8 @@ export function coalesceStreamRuns(
         kind: "stream-run",
         key: `stream-run:${first.key}`,
         parts: run,
+        replyToSender: run.find((part) => part.kind === "stream")?.replyToSender,
+        replyToMessage: run.find((part) => part.kind === "stream")?.replyToMessage,
         ...(runId ? { runId } : {}),
         ...(boundaryId ? { boundaryId } : {}),
       });
@@ -301,7 +311,12 @@ function turnUserMessages(turn: TurnRenderItem[]): unknown[] {
  */
 export function collapseCompletedTurnWork(
   items: TurnRenderItem[],
-  opts: { sessionKey: string; runWorking: boolean; searchActive?: boolean },
+  opts: {
+    sessionKey: string;
+    runWorking: boolean;
+    searchActive?: boolean;
+    session?: Pick<GatewaySessionRow, "key" | "lastRunId" | "status" | "runtimeMs">;
+  },
 ): Array<TurnRenderItem | WorkGroupRenderItem> {
   const [scope, agentId, kind, sessionId, ...extraParts] = normalizeLowercaseStringOrEmpty(
     opts.sessionKey,
@@ -433,20 +448,24 @@ export function collapseCompletedTurnWork(
       result.push(...turn);
       continue;
     }
-    const boundary = turn[0];
-    const boundaryTimestamp =
-      boundary &&
-      boundary.kind !== "stream-run" &&
-      chatItemStartsUserTurn(boundary) &&
-      "timestamp" in boundary
-        ? boundary.timestamp
+    // Message timestamps describe creation, not completion of the final model
+    // request. Only the lifecycle owner can supply elapsed time for this run.
+    // Older history without matching lifecycle facts keeps an untimed disclosure.
+    const session = opts.session;
+    const runtimeMs = session?.runtimeMs;
+    const durationMs =
+      session?.key === opts.sessionKey &&
+      terminalReply.runId !== undefined &&
+      session.lastRunId === terminalReply.runId &&
+      (session.status === "done" ||
+        session.status === "failed" ||
+        session.status === "timeout" ||
+        session.status === "killed") &&
+      typeof runtimeMs === "number" &&
+      Number.isFinite(runtimeMs) &&
+      runtimeMs >= 0
+        ? runtimeMs
         : null;
-    const startTimestamp = boundaryTimestamp == null ? firstGroup.timestamp : boundaryTimestamp;
-    const endTimestamp = groups.reduce(
-      (latest, group) => Math.max(latest, group.timestamp),
-      terminalReply.timestamp,
-    );
-    const durationMs = endTimestamp > startTimestamp ? endTimestamp - startTimestamp : null;
     const continuationBoundary = turns[continuationTurnIndexes.get(turnIndex) ?? -1]?.[0];
     result.push(...turn.slice(0, segmentStart));
     result.push({

@@ -50,12 +50,14 @@ export function isSourceCheckoutRoot(packageRoot: string): boolean {
 }
 
 export function shouldTrustTestBundledPluginsDirOverride(env: NodeJS.ProcessEnv): boolean {
-  const isVitestProcess = isVitestRuntimeEnv(env) || isVitestRuntimeEnv(process.env);
-  return (
-    isVitestProcess &&
-    (isTruthyEnvValue(env[TEST_TRUST_BUNDLED_PLUGINS_DIR_ENV]) ||
-      isTruthyEnvValue(process.env[TEST_TRUST_BUNDLED_PLUGINS_DIR_ENV]))
-  );
+  const separateEnv = env !== process.env;
+  if (
+    !isTruthyEnvValue(env[TEST_TRUST_BUNDLED_PLUGINS_DIR_ENV]) &&
+    !(separateEnv && isTruthyEnvValue(process.env[TEST_TRUST_BUNDLED_PLUGINS_DIR_ENV]))
+  ) {
+    return false;
+  }
+  return isVitestRuntimeEnv(env) || (separateEnv && isVitestRuntimeEnv(process.env));
 }
 
 export function hasUsableBundledPluginTree(pluginsDir: string): boolean {
@@ -166,6 +168,46 @@ export function isPluginInPackageBundledRoots(params: {
         isPathInside(realPackageRoot, trustedRoot) &&
         isPathInside(trustedRoot, realPluginRoot),
     );
+}
+
+/** Recognizes compiled bundle ownership only; this never confers plugin trust. */
+export function isForeignBundledPluginRoot(
+  rootDir: string,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  const realRootDir = safeRealpathSync(rootDir);
+  if (!realRootDir) {
+    return false;
+  }
+  const extensionsDir = path.dirname(realRootDir);
+  const compiledDir = path.dirname(extensionsDir);
+  if (
+    path.basename(extensionsDir) !== "extensions" ||
+    !["dist", "dist-runtime"].includes(path.basename(compiledDir))
+  ) {
+    // Source extensions remain the documented plugins install --link target.
+    return false;
+  }
+  const packageRoot = path.dirname(compiledDir);
+  if (
+    resolveOpenClawPackageRootSync({ cwd: packageRoot }) !== packageRoot ||
+    !isPluginInPackageBundledRoots({ rootDir: realRootDir, packageRoot })
+  ) {
+    return false;
+  }
+  const activeBundledDir = resolveBundledPluginsDir(env);
+  const realActiveDir = activeBundledDir ? safeRealpathSync(activeBundledDir) : null;
+  if (realActiveDir && isPathInside(realActiveDir, realRootDir)) {
+    return false;
+  }
+  const runningRoots = resolvePackageRootsForBundledPlugins();
+  // Unknown roots (e.g. compiled sibling layouts) cannot establish foreign ownership.
+  return (
+    runningRoots.length > 0 &&
+    !runningRoots.some((runningRoot) =>
+      isPluginInPackageBundledRoots({ rootDir: realRootDir, packageRoot: runningRoot }),
+    )
+  );
 }
 
 export function resolveBundledDirFromPackageRoot(packageRoot: string): string | undefined {
