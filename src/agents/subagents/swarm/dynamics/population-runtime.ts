@@ -1,4 +1,3 @@
-import { buildDynamicsDiagnostic } from "./dynamics-diagnostics.js";
 import { assessPopulation, buildPopulationSnapshot } from "./population-controller.js";
 import type { PopulationDecision } from "./population-types.js";
 
@@ -35,15 +34,16 @@ function terminalProgress(status: HostCollectorTerminalStatus): number | null {
  * Build an advisory population assessment from facts owned by the host runtime.
  * Semantic candidate signals remain unknown until a trusted producer measures them.
  */
-function buildHostCollectorSnapshot(params: {
+export function assessHostCollectorPopulation(params: {
   groupId: string;
   maxConcurrent: number;
   records: readonly HostCollectorDynamicsRecord[];
-}) {
+}): PopulationDecision {
   const groupId = requireNonEmptyText(params.groupId, "group id");
   if (!Number.isSafeInteger(params.maxConcurrent) || params.maxConcurrent < 1) {
     throw new Error("maxConcurrent must be a positive safe integer");
   }
+
   const runIds = new Set<string>();
   const records = params.records.map((record) => {
     const runId = requireNonEmptyText(record.runId, "collector run id");
@@ -53,46 +53,32 @@ function buildHostCollectorSnapshot(params: {
     runIds.add(runId);
     return { runId, terminalStatus: record.terminalStatus };
   });
-  const activeCount = records.filter((record) => record.terminalStatus === null).length;
+
+  const activeCount = records.filter(
+    (record) => record.terminalStatus === null,
+  ).length;
   const resourcePressure = Math.min(1, activeCount / params.maxConcurrent);
-  return buildPopulationSnapshot({
-    campaignId: groupId,
-    groupId,
-    replicas: [],
-    observations: records.map((record) => ({
-      replicaId: record.runId,
-      candidateEntropy: null,
-      coherence: null,
-      mobility: null,
-      evidenceCompleteness: null,
-      verifierDisagreement: null,
-      resourcePressure,
-      contextPressure: null,
-      debtPressure: terminalDebt(record.terminalStatus),
-      branchingRatio: null,
-      progressRate: terminalProgress(record.terminalStatus),
-    })),
-    meanCorrelation: null,
-  });
-}
+  const observations = records.map((record) => ({
+    replicaId: record.runId,
+    candidateEntropy: null,
+    coherence: null,
+    mobility: null,
+    evidenceCompleteness: null,
+    verifierDisagreement: null,
+    resourcePressure,
+    contextPressure: null,
+    debtPressure: terminalDebt(record.terminalStatus),
+    branchingRatio: null,
+    progressRate: terminalProgress(record.terminalStatus),
+  }));
 
-function assessHostCollectorPopulation(params: {
-  groupId: string;
-  maxConcurrent: number;
-  records: readonly HostCollectorDynamicsRecord[];
-}): PopulationDecision {
-  return assessPopulation(buildHostCollectorSnapshot(params));
-}
-
-export function diagnoseHostCollectorPopulation(params: {
-  groupId: string;
-  maxConcurrent: number;
-  records: readonly HostCollectorDynamicsRecord[];
-}) {
-  const snapshot = buildHostCollectorSnapshot(params);
-  const decision = assessPopulation(snapshot);
-  return {
-    decision,
-    diagnostic: buildDynamicsDiagnostic(snapshot, decision),
-  };
+  return assessPopulation(
+    buildPopulationSnapshot({
+      campaignId: groupId,
+      groupId,
+      replicas: [],
+      observations,
+      meanCorrelation: null,
+    }),
+  );
 }
