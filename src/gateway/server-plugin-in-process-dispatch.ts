@@ -13,7 +13,7 @@ import {
 } from "../plugins/runtime/gateway-request-scope.js";
 import type { PluginSubagentRequesterContext } from "../plugins/runtime/subagent-requester-context.js";
 import type { RuntimePluginToolGrant } from "../plugins/runtime/tool-grant.js";
-import { intersectOperatorScopes } from "../shared/operator-scope-compat.js";
+import { intersectOperatorScopes, roleScopesAllow } from "../shared/operator-scope-compat.js";
 import type { RequesterSettleWakeReplay } from "./agent-turn/internal-facade.types.js";
 import { readInProcessAgentRuntimeIdentity } from "./in-process-agent-runtime-identity.js";
 import {
@@ -26,7 +26,14 @@ import {
   resolveGatewayOperatorRoleActor,
 } from "./operator-role-policy.js";
 import { captureGatewayOperatorRunAuthority } from "./operator-run-authority.js";
-import { ADMIN_SCOPE, WRITE_SCOPE, isOperatorScope } from "./operator-scopes.js";
+import {
+  ADMIN_SCOPE,
+  READ_SCOPE,
+  SESSION_READ_SCOPE,
+  SESSION_WRITE_SCOPE,
+  WRITE_SCOPE,
+  isOperatorScope,
+} from "./operator-scopes.js";
 import {
   dispatchGatewayRequestInProcessRaw,
   type GatewayMethodDispatchResponse,
@@ -226,6 +233,8 @@ type DispatchGatewayMethodInProcessOptions = {
   sessionCreation?: TrustedSessionCreation;
   requireScopedClient?: boolean;
   syntheticScopes?: string[];
+  /** Built-in adapters distinguish method minima from explicit scope restrictions. */
+  syntheticScopeMode?: "minimum" | "exact";
   timeoutMs?: number;
   signal?: AbortSignal;
   hasCurrentClientAuthority?: GatewayRequestOptions["hasCurrentClientAuthority"];
@@ -366,26 +375,65 @@ function resolveInProcessGatewayDispatch(
   const delegatedToolPolicyHandoffId = options?.delegatedToolPolicyHandoff
     ? registerSubagentCompletionToolHandoff(options.delegatedToolPolicyHandoff)
     : undefined;
-  const requestedSyntheticScopes = options?.syntheticScopes ?? [WRITE_SCOPE];
-  const operatorScopes =
+  // Built-in requests retain the explicit ceiling of a positively scoped System caller.
+  const scopedSystemScopes =
+    options?.syntheticScopeMode !== undefined && scopedActor?.kind === "system"
+      ? (scope?.client?.connect.scopes ?? [])
+      : undefined;
+  const sourceScopes =
     operatorRunAuthority && scope?.client && matchesOperatorSource
       ? intersectOperatorScopes(operatorRunAuthority.scopes, scope.client.connect.scopes ?? [])
       : (operatorRunAuthority?.scopes ??
         operatorAuthority?.scopes ??
+        (options?.syntheticScopeMode !== undefined
+          ? inheritedOperatorAuthority?.scopes
+          : undefined) ??
         (operatorRoleActor?.kind === "operator"
           ? (verifiedOperatorAuthority?.scopes ?? scope?.client?.connect.scopes ?? [])
           : undefined));
+  const operatorScopes =
+    scopedSystemScopes && sourceScopes
+      ? intersectOperatorScopes(sourceScopes, scopedSystemScopes)
+      : (scopedSystemScopes ?? sourceScopes);
+  const requestedSyntheticScopes = (options?.syntheticScopes ?? [WRITE_SCOPE]).map((requested) => {
+    const broad =
+      requested === SESSION_READ_SCOPE
+        ? READ_SCOPE
+        : requested === SESSION_WRITE_SCOPE
+          ? WRITE_SCOPE
+          : undefined;
+    return options?.syntheticScopeMode === "minimum" &&
+      broad &&
+      operatorScopes &&
+      roleScopesAllow({ role: "operator", requestedScopes: [broad], allowedScopes: operatorScopes })
+      ? broad
+      : requested;
+  });
+  // Narrow by authority, not literal membership: write also authorizes reads
+  // and Talk, including tools called by a synthetic continuation.
   const registeredScope = context.getGatewayMethodRegistry?.().getScope(method);
   const syntheticScopes = operatorScopes
-    ? projectOperatorScopesForMethod({
-        method,
-        requestParams: params,
-        requestedScopes: requestedSyntheticScopes,
-        allowedScopes: operatorScopes,
-        ...(isOperatorScope(registeredScope) ? { requiredScope: registeredScope } : {}),
-      })
+    ? options?.syntheticScopeMode === "exact"
+      ? requestedSyntheticScopes.filter((requestedScope) =>
+          roleScopesAllow({
+            role: "operator",
+            requestedScopes: [requestedScope],
+            allowedScopes: operatorScopes,
+          }),
+        )
+      : projectOperatorScopesForMethod({
+          method,
+          requestParams: params,
+          requestedScopes: requestedSyntheticScopes,
+          allowedScopes: operatorScopes,
+          ...(isOperatorScope(registeredScope) ? { requiredScope: registeredScope } : {}),
+        })
     : options?.syntheticScopes;
-  if (operatorScopes?.includes(ADMIN_SCOPE) && !syntheticScopes?.includes(ADMIN_SCOPE)) {
+  if (
+    options?.syntheticScopeMode !== "exact" &&
+    operatorScopes?.includes(ADMIN_SCOPE) &&
+    !syntheticScopes?.includes(ADMIN_SCOPE)
+  ) {
     syntheticScopes?.push(ADMIN_SCOPE);
   }
   const baseSyntheticClient = createSyntheticPluginRuntimeClient({
