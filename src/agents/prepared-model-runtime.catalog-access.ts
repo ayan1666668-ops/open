@@ -20,6 +20,7 @@ import {
 import { createPreparedModelCatalogAuthLoader } from "./prepared-model-runtime.catalog-auth.js";
 import type { PreparedModelRuntimeCatalogAccessParams } from "./prepared-model-runtime.catalog-contract.js";
 import { createPreparedModelCatalogProjection } from "./prepared-model-runtime.catalog-projection.js";
+import { createPreparedModelCatalogGenerationRecoveryHandler } from "./prepared-model-runtime.catalog-recovery-handler.js";
 import {
   preparedProviderCatalogCredentials,
   preparedProviderCatalogSource,
@@ -103,6 +104,7 @@ export function createFullModelCatalogAccess(
     { key: inventoryKey, pluginFingerprint, credentials: params.agentFacts.credentials },
     params.isCurrent,
   );
+  const recoverCatalogGeneration = createPreparedModelCatalogGenerationRecoveryHandler(params);
   const eligibleProviders = [
     ...new Set(
       [...params.agentFacts.providerIds, ...Object.keys(params.agentFacts.credentials)].map(
@@ -359,14 +361,16 @@ export function createFullModelCatalogAccess(
             runtimeModels,
             providerExpiries,
             configuredProviderModelIds,
-          } = await worker.loadCatalog(
-            providerIds,
-            (providerIds ?? providers).some((provider) =>
-              published.inventory?.providers.has(provider),
-            )
-              ? (error) => fail(error, providerIds, "provider")
-              : undefined,
-          );
+          } = await worker.loadCatalog(providerIds, (error) => {
+            if (
+              (providerIds ?? providers).some((provider) =>
+                published.inventory?.providers.has(provider),
+              )
+            ) {
+              fail(error, providerIds, "provider");
+            }
+            recoverCatalogGeneration(error);
+          });
           assertCurrent();
           const scope = new Set(
             (
@@ -549,7 +553,7 @@ export function createFullModelCatalogAccess(
         const auth = getPreparedModelFullCatalogAuth(current) ?? currentAuth;
         const nativeAuth =
           nativeDiscoveryCompleted && discoveredProviders.length
-            ? await worker.loadAuth({ providerIds: discoveredProviders })
+            ? await worker.loadAuth({ providerIds: discoveredProviders }, recoverCatalogGeneration)
             : undefined;
         assertCurrent();
         const retainOther = <T>(values: Readonly<Record<string, T>>) => {
@@ -640,7 +644,12 @@ export function createFullModelCatalogAccess(
   return {
     isCurrent: params.isCurrent,
     withRefreshStatus: attempt.withRefreshStatus,
-    loadAuth: createPreparedModelCatalogAuthLoader({ ...params, assertCurrent, worker }),
+    loadAuth: createPreparedModelCatalogAuthLoader({
+      ...params,
+      assertCurrent,
+      worker,
+      onGenerationMismatch: recoverCatalogGeneration,
+    }),
     readFullModelCatalog: () => {
       assertCurrent();
       refreshExpiredCatalog();

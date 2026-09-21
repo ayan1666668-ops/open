@@ -15,6 +15,7 @@ export function createPreparedModelCatalogAuthLoader(params: {
   pluginGeneration: PreparedModelRuntimePluginGeneration;
   assertCurrent: () => void;
   worker: Pick<ReturnType<typeof createPreparedModelCatalogWorker>, "loadAuth">;
+  onGenerationMismatch?: (error: Error) => void;
 }) {
   let pendingAuth: { key: string; promise: Promise<PreparedModelRuntimeAuth> } | undefined;
   return async ({
@@ -35,7 +36,10 @@ export function createPreparedModelCatalogAuthLoader(params: {
         [Symbol.asyncDispose]: retainPreparedPluginGeneration(params.pluginGeneration),
       };
       return await params.worker
-        .loadAuth({ providerIds, ...(profileIds?.length ? { profileIds } : {}) })
+        .loadAuth(
+          { providerIds, ...(profileIds?.length ? { profileIds } : {}) },
+          params.onGenerationMismatch,
+        )
         .then((refreshed) => {
           const authModes = {
             ...resolveUsableAgentCredentialModes(params.agentFacts.credentials),

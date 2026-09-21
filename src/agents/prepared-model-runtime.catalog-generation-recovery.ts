@@ -1,0 +1,139 @@
+import { toStringifiedError } from "@openclaw/normalization-core/error-coercion";
+import { createPreparedModelRuntimeReplacement } from "./prepared-model-runtime.lifecycle.js";
+import {
+  ownerKey,
+  publishPreparedModelRuntimeOwnerBatch,
+  resolveConfiguredOwner,
+  resolvePreparedModelRuntimeOwnerBySnapshot,
+  type PreparedModelRuntimeOwner,
+  type PreparedModelRuntimeReplacement,
+  type PreparedModelRuntimeSnapshot,
+} from "./prepared-model-runtime.owner.js";
+import { notifyPreparedModelRuntimePublication } from "./prepared-model-runtime.publication-events.js";
+
+type RecoveryDependencies = {
+  owners: Map<string, PreparedModelRuntimeOwner>;
+  agentBuildCompletions: Map<string, Promise<void>>;
+  buildTimeoutMs: number;
+  getPendingReplacement: () => PreparedModelRuntimeReplacement | undefined;
+  setPendingReplacement: (replacement: PreparedModelRuntimeReplacement | undefined) => void;
+  adoptAuthPublication: (replacement: PreparedModelRuntimeReplacement) => void;
+  commitReplacement: (replacement: PreparedModelRuntimeReplacement) => void;
+  rejectAuthPublication: (replacement: PreparedModelRuntimeReplacement, error: Error) => void;
+  removeReplyDispatch: (agentIds: ReadonlySet<string>) => void;
+  enqueuePublication: (task: () => Promise<void>) => Promise<void>;
+  drainPendingAuthMutations: (
+    commit: () => void,
+    requiredOwner: PreparedModelRuntimeOwner,
+    requiredError?: unknown,
+  ) => Promise<void>;
+};
+
+export class PreparedModelCatalogGenerationRecoveryOwner {
+  #recoveries = new WeakMap<PreparedModelRuntimeOwner, Promise<void>>();
+
+  reset(): void {
+    this.#recoveries = new WeakMap();
+  }
+
+  async replace(
+    snapshot: PreparedModelRuntimeSnapshot,
+    dependencies: RecoveryDependencies,
+  ): Promise<boolean> {
+    const owner = resolvePreparedModelRuntimeOwnerBySnapshot(snapshot);
+    if (!owner) {
+      const replacement = resolveConfiguredOwner(dependencies.owners, snapshot);
+      return Boolean(
+        replacement?.snapshot &&
+        replacement.snapshot !== snapshot &&
+        !replacement.needsRefresh &&
+        !replacement.pending,
+      );
+    }
+    if (
+      dependencies.owners.get(ownerKey(owner.input)) !== owner ||
+      owner.provenance !== "configured"
+    ) {
+      return false;
+    }
+    const activeRecovery = this.#recoveries.get(owner);
+    if (activeRecovery) {
+      await activeRecovery;
+      return true;
+    }
+    const pendingReplacement = dependencies.getPendingReplacement();
+    if (pendingReplacement) {
+      await pendingReplacement.promise;
+      return true;
+    }
+
+    const replacement = createPreparedModelRuntimeReplacement();
+    const isReplacementCurrent = () => dependencies.getPendingReplacement() === replacement;
+    dependencies.setPendingReplacement(replacement);
+    dependencies.adoptAuthPublication(replacement);
+    const staleError = new Error(
+      `prepared model runtime catalog generation was invalid for ${owner.input.agentDir}`,
+    );
+    owner.generation += 1;
+    owner.needsRefresh = true;
+    owner.refreshError = staleError;
+    owner.pluginGeneration = undefined;
+    if (owner.input.agentId) {
+      dependencies.removeReplyDispatch(new Set([owner.input.agentId]));
+    }
+    notifyPreparedModelRuntimePublication({ phase: "invalidated" });
+
+    const recovery = dependencies.enqueuePublication(async () => {
+      if (!isReplacementCurrent() || dependencies.owners.get(ownerKey(owner.input)) !== owner) {
+        return;
+      }
+      let recoveryError: Error | undefined;
+      try {
+        await publishPreparedModelRuntimeOwnerBatch({
+          ownersToPublish: [owner],
+          owners: dependencies.owners,
+          agentBuildCompletions: dependencies.agentBuildCompletions,
+          buildTimeoutMs: dependencies.buildTimeoutMs,
+          isPublicationCurrent: isReplacementCurrent,
+          isBuildCurrent: isReplacementCurrent,
+        });
+      } catch (error) {
+        if (!isReplacementCurrent()) {
+          return;
+        }
+        recoveryError = toStringifiedError(error);
+      }
+      if (!isReplacementCurrent()) {
+        return;
+      }
+      await dependencies.drainPendingAuthMutations(
+        () => {
+          if (isReplacementCurrent()) {
+            dependencies.commitReplacement(replacement);
+          }
+        },
+        owner,
+        recoveryError,
+      );
+    });
+    this.#recoveries.set(owner, recovery);
+    try {
+      await recovery;
+    } catch (error) {
+      const refreshError = toStringifiedError(error);
+      if (!isReplacementCurrent()) {
+        return true;
+      }
+      dependencies.setPendingReplacement(undefined);
+      dependencies.rejectAuthPublication(replacement, refreshError);
+      replacement.resolve();
+      notifyPreparedModelRuntimePublication({ phase: "failed", error: refreshError });
+      throw refreshError;
+    } finally {
+      if (this.#recoveries.get(owner) === recovery) {
+        this.#recoveries.delete(owner);
+      }
+    }
+    return true;
+  }
+}
