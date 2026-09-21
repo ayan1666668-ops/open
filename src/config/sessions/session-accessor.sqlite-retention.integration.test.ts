@@ -82,7 +82,8 @@ it("expires a real deleted archive and SQLite recovery row while retaining a res
       throw new Error("expected a published deleted archive row");
     }
 
-    const oldStamp = formatSessionArchiveTimestamp(1);
+    const equalAgeMs = Date.now() - 24 * 60 * 60 * 1_000;
+    const oldStamp = formatSessionArchiveTimestamp(equalAgeMs);
     const oldArchiveName = archiveRow.archive_name.replace(
       /\.deleted\..+$/,
       `.deleted.${oldStamp}`,
@@ -91,11 +92,11 @@ it("expires a real deleted archive and SQLite recovery row while retaining a res
     fs.renameSync(originalArchivePath, oldArchivePath);
     database.db
       .prepare(
-        "UPDATE session_transcript_archives SET archive_name = ?, created_at = 1 WHERE session_id = ? AND reason = 'deleted'",
+        "UPDATE session_transcript_archives SET archive_name = ?, created_at = ? WHERE session_id = ? AND reason = 'deleted'",
       )
-      .run(oldArchiveName, deletedSession.sessionId);
+      .run(oldArchiveName, equalAgeMs, deletedSession.sessionId);
 
-    const resetArchiveName = `integration-reset.jsonl.reset.${formatSessionArchiveTimestamp(Date.now())}`;
+    const resetArchiveName = `integration-reset.jsonl.reset.${formatSessionArchiveTimestamp(equalAgeMs)}`;
     const resetArchivePath = path.join(path.dirname(storePath), resetArchiveName);
     fs.writeFileSync(resetArchivePath, "reset history\n");
     const liveSessionKey = "agent:main:integration-live";
@@ -127,6 +128,7 @@ it("expires a real deleted archive and SQLite recovery row while retaining a res
       JSON.stringify({
         configuredFreshStore: true,
         configuredExistingStore: true,
+        equalArchiveAgeMs: equalAgeMs,
         deletedArchiveFile: false,
         deletedArchiveRow: false,
         resetArchiveFile: true,
