@@ -186,7 +186,7 @@ describe.each(["write-default", "trusted-operator"] as const)(
                   readAllowed: expectedScopes.some((scope) =>
                     ["operator.read", "operator.write", "operator.admin"].includes(scope),
                   ),
-                  adminAllowed: expectedScopes.includes("operator.admin"),
+                  adminAllowed: expectedScopes.some((scope) => scope === "operator.admin"),
                   writeAllowed: expectedScopes.some(
                     (scope) => scope === "operator.write" || scope === "operator.admin",
                   ),

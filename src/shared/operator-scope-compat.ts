@@ -20,6 +20,15 @@ export function operatorScopeSatisfied(
   );
 }
 
+/** Returns true when a role grant satisfies requested scopes, including operator implications. */
+export function roleScopesAllow(params: {
+  role: string;
+  requestedScopes: readonly string[];
+  allowedScopes: readonly string[];
+}): boolean {
+  return resolveMissingRequestedScope(params) === null;
+}
+
 /** Keeps only permissions shared by both ceilings, including implied operator scopes. */
 export function intersectOperatorScopes(
   scopes: readonly string[],
@@ -33,15 +42,6 @@ export function intersectOperatorScopes(
       roleScopesAllow({ role: "operator", requestedScopes: [scope], allowedScopes: scopes }) &&
       roleScopesAllow({ role: "operator", requestedScopes: [scope], allowedScopes: ceiling }),
   );
-}
-
-/** Returns true when a role grant satisfies requested scopes, including operator implications. */
-export function roleScopesAllow(params: {
-  role: string;
-  requestedScopes: readonly string[];
-  allowedScopes: readonly string[];
-}): boolean {
-  return resolveMissingRequestedScope(params) === null;
 }
 
 /** Returns the original first requested scope not covered by the role's allowed scopes. */
