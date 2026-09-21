@@ -180,55 +180,71 @@ describe("node worker supervisor", () => {
     const second = launchInput(workspaceDir, "capacity-b", "wait");
     const third = launchInput(workspaceDir, "capacity-c", "wait");
     const fourth = launchInput(workspaceDir, "capacity-d", "wait");
-    const store = new NodeWorkerLaunchStore(new NodeWorkerJournalWorker({ env }));
+    const journal = new NodeWorkerJournalWorker({ env });
+    const store = new NodeWorkerLaunchStore(journal);
+    let admissionsSettled: Promise<unknown> | undefined;
 
-    await supervisor.launch(first, TEST_WORKER_ENDPOINT);
-    await supervisor.launch(second, TEST_WORKER_ENDPOINT);
-    await expect(supervisor.launch(first, TEST_WORKER_ENDPOINT)).resolves.toMatchObject({
-      launchId: first.launchId,
-      state: "running",
-    });
-    expect(capacitySnapshots).toEqual([
-      { total: 2, available: 0 },
-      { total: 2, available: 2 },
-      { total: 2, available: 1 },
-      { total: 2, available: 0 },
-    ]);
+    try {
+      await supervisor.launch(first, TEST_WORKER_ENDPOINT);
+      await supervisor.launch(second, TEST_WORKER_ENDPOINT);
+      await expect(supervisor.launch(first, TEST_WORKER_ENDPOINT)).resolves.toMatchObject({
+        launchId: first.launchId,
+        state: "running",
+      });
+      expect(capacitySnapshots).toEqual([
+        { total: 2, available: 0 },
+        { total: 2, available: 2 },
+        { total: 2, available: 1 },
+        { total: 2, available: 0 },
+      ]);
 
-    const thirdAdmission = supervisor.launch(third, TEST_WORKER_ENDPOINT);
-    const fourthAdmission = supervisor.launch(fourth, TEST_WORKER_ENDPOINT);
-    await vi.waitFor(async () => {
-      expect(await store.get(third.launchId)).toBeUndefined();
-      expect(await store.get(fourth.launchId)).toBeUndefined();
-    });
+      const thirdAdmission = supervisor.launch(third, TEST_WORKER_ENDPOINT);
+      const fourthAdmission = supervisor.launch(fourth, TEST_WORKER_ENDPOINT);
+      admissionsSettled = Promise.allSettled([thirdAdmission, fourthAdmission]);
+      await vi.waitFor(async () => {
+        expect(await store.get(third.launchId)).toBeUndefined();
+        expect(await store.get(fourth.launchId)).toBeUndefined();
+      });
 
-    await supervisor.cancel(testNodeWorkerLaunchIdentity(first));
-    await vi.waitFor(async () => {
-      const receipts = await Promise.all([third, fourth].map((input) => store.get(input.launchId)));
-      expect(receipts.filter(Boolean)).toHaveLength(1);
-    });
-    const thirdAdmittedFirst = Boolean(await store.get(third.launchId));
-    await expect(thirdAdmittedFirst ? thirdAdmission : fourthAdmission).resolves.toMatchObject({
-      state: "running",
-    });
-    expect(await store.get(thirdAdmittedFirst ? fourth.launchId : third.launchId)).toBeUndefined();
+      await supervisor.cancel(testNodeWorkerLaunchIdentity(first));
+      // Turn cancellation can settle before physical cleanup releases the next slot.
+      await Promise.race([thirdAdmission, fourthAdmission]);
+      await vi.waitFor(async () => {
+        const receipts = await Promise.all(
+          [third, fourth].map((input) => store.get(input.launchId)),
+        );
+        expect(receipts.filter(Boolean)).toHaveLength(1);
+      });
+      const thirdAdmittedFirst = Boolean(await store.get(third.launchId));
+      await expect(thirdAdmittedFirst ? thirdAdmission : fourthAdmission).resolves.toMatchObject({
+        state: "running",
+      });
+      expect(
+        await store.get(thirdAdmittedFirst ? fourth.launchId : third.launchId),
+      ).toBeUndefined();
 
-    await supervisor.cancel(testNodeWorkerLaunchIdentity(second));
-    await expect(thirdAdmittedFirst ? fourthAdmission : thirdAdmission).resolves.toMatchObject({
-      state: "running",
-    });
-    expect(capacitySnapshots).toEqual([
-      { total: 2, available: 0 },
-      { total: 2, available: 2 },
-      { total: 2, available: 1 },
-      { total: 2, available: 0 },
-      { total: 2, available: 1 },
-      { total: 2, available: 0 },
-      { total: 2, available: 1 },
-      { total: 2, available: 0 },
-    ]);
-
-    await supervisor.close();
+      await supervisor.cancel(testNodeWorkerLaunchIdentity(second));
+      await expect(thirdAdmittedFirst ? fourthAdmission : thirdAdmission).resolves.toMatchObject({
+        state: "running",
+      });
+      expect(capacitySnapshots).toEqual([
+        { total: 2, available: 0 },
+        { total: 2, available: 2 },
+        { total: 2, available: 1 },
+        { total: 2, available: 0 },
+        { total: 2, available: 1 },
+        { total: 2, available: 0 },
+        { total: 2, available: 1 },
+        { total: 2, available: 0 },
+      ]);
+    } finally {
+      try {
+        await supervisor.close();
+      } finally {
+        await admissionsSettled;
+        await journal.drain();
+      }
+    }
   });
 
   it("times out saturated admission without creating a launch row", async () => {
