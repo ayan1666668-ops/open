@@ -194,10 +194,10 @@ export class AgentSelect extends OpenClawLightDomElement {
               class="agent-select__option"
               data-agent-option
               ?data-selected=${selected}
-              ?autofocus=${selected && !this.disabled && !option.disabled}
               aria-label=${accessibleLabel}
               .value=${option.value}
               ?disabled=${this.disabled || option.disabled}
+              ?autofocus=${selected && !this.disabled && !option.disabled}
               ${ref((element) => syncDropdownItemRadio(element, selected))}
             >
               <span slot="icon">${this.renderAvatar(option)}</span>
