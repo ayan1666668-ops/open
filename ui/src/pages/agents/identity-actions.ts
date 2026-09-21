@@ -4,8 +4,13 @@ import type { ApplicationContext, ApplicationNavigationPreferences } from "../..
 import { t } from "../../i18n/index.ts";
 import { updateAgentIdentity } from "../../lib/agents/index.ts";
 import { formatUiError } from "../../lib/format-error.ts";
-import { fileToAvatarDataUrl } from "./avatar-image.ts";
+import { fileToAvatarDataUrl, type AvatarDataUrlResult } from "./avatar-image.ts";
 import type { AgentIdentityDraft } from "./panels-overview.ts";
+
+const AVATAR_REJECTION_MESSAGE_KEYS = {
+  unusable: "agents.identity.imageUnusable",
+  "too-detailed": "agents.identity.imageTooDetailed",
+} as const satisfies Record<Extract<AvatarDataUrlResult, { ok: false }>["reason"], string>;
 
 type AgentIdentityEditorHost = {
   identityDraft: AgentIdentityDraft;
@@ -47,11 +52,7 @@ export function selectIdentityAvatar(host: AgentIdentityEditorHost, file: File) 
       host.identityDraft = { ...host.identityDraft, avatar: result.dataUrl };
       host.identityError = null;
     } else {
-      host.identityError = t(
-        result.reason === "too-detailed"
-          ? "agents.identity.imageTooDetailed"
-          : "agents.identity.imageUnusable",
-      );
+      host.identityError = t(AVATAR_REJECTION_MESSAGE_KEYS[result.reason]);
     }
   });
 }

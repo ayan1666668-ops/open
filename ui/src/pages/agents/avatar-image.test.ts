@@ -5,9 +5,10 @@ import { fileToAvatarDataUrl } from "./avatar-image.ts";
 
 const pngFile = () => new File([new Uint8Array([1, 2, 3])], "avatar.png", { type: "image/png" });
 
-/** Fakes a canvas whose encoder ignores WebP (as WebKit does) and whose PNG
-    output length scales with the canvas edge, like detailed artwork. */
-function stubCanvasWithoutWebp(options: { opaque: boolean; pngCharsPerEdgePixel: number }) {
+/** Fakes a canvas whose encoder ignores WebP unless `webp` is set (WebKit
+    ignores it) and whose PNG output length scales with the canvas edge, like
+    detailed artwork. */
+function stubCanvas(options: { opaque: boolean; pngCharsPerEdgePixel: number; webp?: boolean }) {
   vi.stubGlobal(
     "createImageBitmap",
     vi.fn().mockResolvedValue({ width: 512, height: 512, close: vi.fn() }),
@@ -27,6 +28,9 @@ function stubCanvasWithoutWebp(options: { opaque: boolean; pngCharsPerEdgePixel:
     this: HTMLCanvasElement,
     type?: string,
   ) {
+    if (options.webp && type === "image/webp") {
+      return `data:image/webp;base64,${"A".repeat(4_000)}`;
+    }
     const mime = type === "image/jpeg" ? "image/jpeg" : "image/png";
     encodings.push({ mime, width: this.width });
     const payloadLength = mime === "image/jpeg" ? 4_000 : this.width * options.pngCharsPerEdgePixel;
@@ -41,7 +45,7 @@ describe("fileToAvatarDataUrl", () => {
     vi.restoreAllMocks();
   });
 
-  it("rejects fallback encodings that would consume the identity bootstrap budget", async () => {
+  it("reports unscaled fallback encodings over the identity budget as too detailed", async () => {
     vi.stubGlobal("createImageBitmap", vi.fn().mockRejectedValue(new Error("unsupported")));
     const file = new File([new Uint8Array(20_000)], "avatar.png", { type: "image/png" });
 
@@ -59,6 +63,14 @@ describe("fileToAvatarDataUrl", () => {
     expect(result.ok && result.dataUrl).toMatch(/^data:image\/png;base64,/u);
   });
 
+  it("keeps WebP encodings when the canvas supports them", async () => {
+    stubCanvas({ opaque: false, pngCharsPerEdgePixel: 1_000, webp: true });
+
+    const result = await fileToAvatarDataUrl(pngFile());
+
+    expect(result.ok && result.dataUrl).toMatch(/^data:image\/webp;base64,/u);
+  });
+
   it("rejects non-image files as unusable", async () => {
     const file = new File(["hello"], "notes.txt", { type: "text/plain" });
 
@@ -67,7 +79,7 @@ describe("fileToAvatarDataUrl", () => {
 
   it("steps transparent images down in size when only PNG encoding is available", async () => {
     // 96px and 64px PNGs exceed the 16K budget at this density; 48px fits.
-    const encodings = stubCanvasWithoutWebp({ opaque: false, pngCharsPerEdgePixel: 300 });
+    const encodings = stubCanvas({ opaque: false, pngCharsPerEdgePixel: 300 });
 
     const result = await fileToAvatarDataUrl(pngFile());
 
@@ -77,7 +89,7 @@ describe("fileToAvatarDataUrl", () => {
   });
 
   it("uses JPEG for opaque images when WebP encoding is unavailable", async () => {
-    stubCanvasWithoutWebp({ opaque: true, pngCharsPerEdgePixel: 1_000 });
+    stubCanvas({ opaque: true, pngCharsPerEdgePixel: 1_000 });
 
     const result = await fileToAvatarDataUrl(pngFile());
 
@@ -85,7 +97,7 @@ describe("fileToAvatarDataUrl", () => {
   });
 
   it("reports images that stay too large at every fallback size as too detailed", async () => {
-    stubCanvasWithoutWebp({ opaque: false, pngCharsPerEdgePixel: 1_000 });
+    stubCanvas({ opaque: false, pngCharsPerEdgePixel: 1_000 });
 
     await expect(fileToAvatarDataUrl(pngFile())).resolves.toEqual({
       ok: false,

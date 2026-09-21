@@ -36,7 +36,7 @@ function readFileAsDataUrl(file: File): Promise<AvatarDataUrlResult> {
   });
 }
 
-function fitsEditorBudget(value: string, mime: string): boolean {
+function fitsEditorBudget(value: string, mime: "image/jpeg" | "image/png"): boolean {
   return value.startsWith(`data:${mime}`) && value.length <= AVATAR_EDITOR_MAX_DATA_URL_CHARS;
 }
 

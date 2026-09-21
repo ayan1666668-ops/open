@@ -39,6 +39,6 @@ export const identity = {
   replaceImage: "Replace image…",
   imageUnusable: "That image can't be used. Pick an image file up to 2 MB.",
   imageTooDetailed:
-    "That image is too detailed to store as an avatar, even after resizing. Try a simpler image, or set an image file path with openclaw agents set-identity --avatar.",
+    "That image is too detailed to store as an avatar, even after resizing. Try a simpler image, or set a workspace image path with openclaw agents set-identity --agent <id> --avatar <path>.",
   fileHint: "Saving mirrors identity fields to IDENTITY.md; configured values take precedence.",
 };
