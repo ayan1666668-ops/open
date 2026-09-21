@@ -284,7 +284,7 @@ export function createWorkboardTools(params: {
       name: "workboard_link",
       label: "Workboard Link",
       description:
-        "Link a parent card to a child card so the child becomes ready only after parents are done.",
+        "Link a parent card to a child card so an unblocked child becomes ready only after parents are done. Blocked children stay blocked until claim or unblock.",
       parameters: strictObject({
         parentId: Type.String({ description: "Parent card id." }),
         childId: Type.String({ description: "Child card id." }),
@@ -325,7 +325,7 @@ export function createWorkboardTools(params: {
       name: "workboard_claim",
       label: "Workboard Claim",
       description:
-        "Claim a Workboard card for this agent and move backlog/todo cards into running. Returns a claim token for heartbeats and release.",
+        "Claim a Workboard card for this agent and move backlog/todo cards into running. A blocked card whose parents are done also moves to running; other blocked cards stay blocked. Returns a claim token for heartbeats and release.",
       parameters: strictObject({
         id: cardIdField(),
         ttlSeconds: Type.Optional(Type.Number({ description: "Claim TTL in seconds." })),

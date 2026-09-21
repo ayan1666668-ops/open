@@ -30,6 +30,7 @@ import {
   MAX_CARD_NOTIFICATIONS,
   secondsToDurationMs,
 } from "./store-constants.js";
+import { dependencyParentsAreDone } from "./store-dependencies.js";
 import type {
   WorkboardBlockInput,
   WorkboardCardPatch,
@@ -123,7 +124,20 @@ export class WorkboardWorkflowStore extends WorkboardPromoteStore {
           (guarded.status === "running" && !isWorkboardClaimReclaimable(existingClaim, now)))
           ? existingClaim
           : undefined;
-      if (cardParentIds(guarded).length > 0 && guarded.status !== "ready" && !activeClaim) {
+      const parentIds = cardParentIds(guarded);
+      // Blocked stays blocked through promoteDependencyReady. An explicit claim
+      // recovers that hold only when every parent is done and the card is not
+      // waiting on a future schedule. Unfinished parents still fail the dependency check.
+      let releaseBlockedHold = false;
+      if (guarded.status === "blocked" && parentIds.length > 0 && !activeClaim) {
+        if (
+          !(await dependencyParentsAreDone(parentIds, (ids) => this.store.listCardStatuses(ids)))
+        ) {
+          throw new Error("card dependencies are not done.");
+        }
+        const scheduledAt = guarded.metadata?.automation?.scheduledAt;
+        releaseBlockedHold = !(scheduledAt && scheduledAt > now);
+      } else if (parentIds.length > 0 && guarded.status !== "ready" && !activeClaim) {
         throw new Error("card dependencies are not done.");
       }
       if (guarded.status === "scheduled") {
@@ -140,7 +154,10 @@ export class WorkboardWorkflowStore extends WorkboardPromoteStore {
         id,
         {
           status:
-            guarded.status === "backlog" || guarded.status === "todo" || guarded.status === "ready"
+            releaseBlockedHold ||
+            guarded.status === "backlog" ||
+            guarded.status === "todo" ||
+            guarded.status === "ready"
               ? "running"
               : guarded.status,
           ...(options.adoptWorkspaceAccess && !guarded.metadata?.automation?.workspaceAccess

@@ -22,8 +22,6 @@ import {
   cardBoardId,
   cardParentIds,
   cardSessionKey,
-  isActiveDependencyTarget,
-  isDependencyPromotableStatus,
   lifecycleStatusSourceUpdatedAtFromPatch,
   removeUndefinedCardFields,
   shouldSkipPersistedLifecycleStatusUpdate,
@@ -37,6 +35,11 @@ import {
   sameWorkboardCardState,
 } from "./store-compensation.js";
 import { MAX_CARD_COMMENTS, MAX_CARD_WORKER_LOGS, POSITION_STEP } from "./store-constants.js";
+import {
+  linkDependencyCards,
+  promoteDependencyReady as promoteDependencyReadyCard,
+  type WorkboardDependencyHost,
+} from "./store-dependencies.js";
 import type {
   WorkboardBoardInput,
   WorkboardBoardSummary,
@@ -1009,142 +1012,22 @@ export class WorkboardCoreStore extends WorkboardStoreRuntime {
     );
   }
 
+  private dependencyHost(): WorkboardDependencyHost {
+    return {
+      get: (id) => this.get(id),
+      list: () => this.list(),
+      updateCard: (id, patch, options) => this.updateCard(id, patch, options),
+      listCardStatuses: (ids) => this.store.listCardStatuses(ids),
+    };
+  }
+
   protected async linkCardsDirect(
     parentId: string,
     childId: string,
     now = Date.now(),
     options: { allowStatusOnlyActiveChild?: boolean; scope?: WorkboardMutationScope } = {},
   ): Promise<WorkboardCard> {
-    if (parentId.trim() === childId.trim()) {
-      throw new Error("parent and child cards must differ.");
-    }
-    const parent = await this.get(parentId);
-    const child = await this.get(childId);
-    if (!parent) {
-      throw new Error(`card not found: ${parentId}`);
-    }
-    if (!child) {
-      throw new Error(`card not found: ${childId}`);
-    }
-    assertCanMutateClaimedCard(parent, options.scope);
-    assertCanMutateClaimedCard(child, options.scope);
-    if (child.status === "done" || child.status === "blocked") {
-      const parentIds = [...cardParentIds(child), parent.id].filter(
-        (id, index, ids) => ids.indexOf(id) === index,
-      );
-      const cardsById = new Map(
-        (await this.store.listCardStatuses(parentIds)).map((card) => [card.id, card]),
-      );
-      if (parentIds.some((id) => cardsById.get(id)?.status !== "done")) {
-        throw new Error("terminal child cards cannot gain incomplete parent dependencies.");
-      }
-    }
-    if (isActiveDependencyTarget(child, { allowStatusOnly: options.allowStatusOnlyActiveChild })) {
-      throw new Error("active child cards cannot gain parent dependencies.");
-    }
-    if (await this.dependsOn(parent.id, child.id)) {
-      throw new Error("dependency link would create a cycle.");
-    }
-    const parentLinks = parent.metadata?.links ?? [];
-    const childLinks = child.metadata?.links ?? [];
-    const nextParentLinks = parentLinks.some(
-      (link) => link.type === "child" && link.targetCardId === child.id,
-    )
-      ? parentLinks
-      : appendLinkPreservingDependencies(parentLinks, {
-          id: randomUUID(),
-          type: "child" as const,
-          targetCardId: child.id,
-          createdAt: now,
-        });
-    const nextChildLinks = childLinks.some(
-      (link) => link.type === "parent" && link.targetCardId === parent.id,
-    )
-      ? childLinks
-      : appendLinkPreservingDependencies(childLinks, {
-          id: randomUUID(),
-          type: "parent" as const,
-          targetCardId: parent.id,
-          createdAt: now,
-        });
-    await this.updateCard(
-      parent.id,
-      {
-        metadata: { ...parent.metadata, links: nextParentLinks },
-      },
-      { expectedUpdatedAt: parent.updatedAt },
-    );
-    const nextChild = await this.updateCard(
-      child.id,
-      { metadata: { ...child.metadata, links: nextChildLinks } },
-      { expectedUpdatedAt: child.updatedAt },
-    );
-    return await this.promoteDependencyReady(nextChild.id);
-  }
-
-  private async dependencyTargetStatus(card: WorkboardCard, now: number): Promise<WorkboardStatus> {
-    const scheduledAt = card.metadata?.automation?.scheduledAt;
-    const parents = cardParentIds(card);
-    if (card.status === "scheduled" && !scheduledAt) {
-      return "scheduled";
-    }
-    if (parents.length === 0) {
-      // No parents means there is nothing to lift. A future schedule must not
-      // override blocked; createDirect already keeps that requested status.
-      if (card.status === "blocked") {
-        return "blocked";
-      }
-      if (scheduledAt && scheduledAt > now && isDependencyPromotableStatus(card.status)) {
-        return "scheduled";
-      }
-      return card.status === "scheduled" ? "ready" : card.status;
-    }
-    const parentIds = parents.map((parentId) => parentId.trim());
-    const parentCards = new Map(
-      (await this.store.listCardStatuses(parentIds)).map((parent) => [parent.id, parent]),
-    );
-    const parentsDone = parentIds.every((id) => parentCards.get(id)?.status === "done");
-    // Parents-done lifts blocked to ready. A future schedule keeps it blocked.
-    if (card.status === "blocked") {
-      return parentsDone && !(scheduledAt && scheduledAt > now) ? "ready" : "blocked";
-    }
-    if (
-      !parentsDone &&
-      scheduledAt &&
-      scheduledAt > now &&
-      isDependencyPromotableStatus(card.status)
-    ) {
-      return "scheduled";
-    }
-    if (!parentsDone && isDependencyPromotableStatus(card.status)) {
-      return "todo";
-    }
-    if (
-      parentsDone &&
-      scheduledAt &&
-      scheduledAt > now &&
-      isDependencyPromotableStatus(card.status)
-    ) {
-      return "scheduled";
-    }
-    return parentsDone && isDependencyPromotableStatus(card.status) ? "ready" : card.status;
-  }
-
-  private async dependsOn(cardId: string, targetParentId: string): Promise<boolean> {
-    const cards = new Map((await this.list()).map((entry) => [entry.id, entry]));
-    const seen = new Set<string>();
-    const visit = (id: string): boolean => {
-      if (id === targetParentId) {
-        return true;
-      }
-      if (seen.has(id)) {
-        return false;
-      }
-      seen.add(id);
-      const card = cards.get(id);
-      return Boolean(card && cardParentIds(card).some(visit));
-    };
-    return visit(cardId);
+    return await linkDependencyCards(this.dependencyHost(), parentId, childId, now, options);
   }
 
   protected async recordOrchestrationCandidate(
@@ -1175,18 +1058,7 @@ export class WorkboardCoreStore extends WorkboardStoreRuntime {
   }
 
   protected async promoteDependencyReady(id: string, now = Date.now()): Promise<WorkboardCard> {
-    const card = await this.get(id);
-    if (!card) {
-      throw new Error(`card not found: ${id}`);
-    }
-    if (card.metadata?.archivedAt) {
-      return card;
-    }
-    const target = await this.dependencyTargetStatus(card, now);
-    if (target === card.status) {
-      return card;
-    }
-    return await this.updateCard(card.id, { status: target });
+    return await promoteDependencyReadyCard(this.dependencyHost(), id, now);
   }
 }
 
