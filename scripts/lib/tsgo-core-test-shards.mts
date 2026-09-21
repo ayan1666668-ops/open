@@ -12,9 +12,23 @@ export const TSGO_CORE_TEST_SHARDS = [
     config: "test/tsconfig/tsconfig.core.test.agents-other.json",
   },
   {
+    // The embedded-agent-* family alone is ~80 roots and pushed agents-root past
+    // the budget; it is a coherent unit, so it shards on its own.
+    name: "agents-embedded",
+    group: "src",
+    config: "test/tsconfig/tsconfig.core.test.agents-embedded.json",
+  },
+  {
     name: "agents-tools",
     group: "src",
     config: "test/tsconfig/tsconfig.core.test.agents-tools.json",
+  },
+  {
+    // src/security and src/secrets are their own domain, not agent tooling; they
+    // were sharing the agents-tools shard and pushed it past the root budget.
+    name: "security-secrets",
+    group: "src",
+    config: "test/tsconfig/tsconfig.core.test.security-secrets.json",
   },
   {
     name: "gateway-root",

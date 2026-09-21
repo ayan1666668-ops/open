@@ -28,6 +28,8 @@
     "../../src/agents/workspace-access.test.ts",
     "../../src/agents/workspace-bootstrap-policy.test.ts",
     "../../src/agents/workspace-input-attachments.test.ts",
-    "../../src/agents/workspace-memory-client.test.ts"
+    "../../src/agents/workspace-memory-client.test.ts",
+    "../../src/agents/embedded-agent-*.test.ts",
+    "../../src/agents/embedded-agent-*.test.tsx"
   ]
 }
