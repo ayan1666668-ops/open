@@ -653,10 +653,16 @@ requirements; otherwise it uses the thread reviewer. A model-specific
 requirement for automatic review takes precedence. Strict automatic review
 can also require review when a tool's mode would otherwise skip it.
 
-OpenClaw currently writes `default_tools_approval_mode: "auto"` on every
-admitted app. This replaces a saved app default such as `"prompt"`; a native
-per-tool or account-link mode can still take precedence. Do not rely on a
-saved app default alone to require read approvals with this adapter behavior.
+Unless OpenClaw policy is explicitly `"ask"`, admitted apps retain their
+native approval mode and reviewer, including app defaults and saved account-link
+or tool overrides. This also applies when resuming a thread or asking a `/btw`
+side question. With no native approval setting, Codex falls back to `"auto"`.
+
+Use OpenClaw `allow_destructive_actions: "auto"` to route native human approval
+requests through OpenClaw consent. Native `"prompt"` with the `"auto_review"`
+reviewer stays in Codex's automatic review flow. OpenClaw `true` preserves the
+native mode too, but auto-accepts supported approval requests that reach the
+bridge, as described below.
 
 OpenClaw `"ask"` also overlays saved approval fields for current non-read-only
 tool names/aliases and connected accounts, selecting native `"auto"` and a
@@ -665,11 +671,12 @@ are unavailable, it targets all saved tool approval entries. Thus `"ask"`
 requires one-shot consent for the actions Codex sends for approval; it does
 not mean native `"prompt"` for every read. Other apps retain their reviewer.
 
-On ordinary native-plugin turns, OpenClaw enables MCP elicitation delegation
-even when the general `appServer.approvalPolicy` is `"never"`; this does not
-enable unrelated shell approval categories. The app mode, reviewer, and bridge
-response still determine the outcome. General approval policy is not a
-replacement for the per-app/tool settings above.
+On ordinary native-plugin turns and `/btw` side questions with bound apps,
+OpenClaw enables MCP elicitation delegation even when the general
+`appServer.approvalPolicy` is `"never"`; this does not enable unrelated shell
+approval categories. The app mode, reviewer, and bridge response still
+determine the outcome. General approval policy is not a replacement for the
+per-app/tool settings above.
 
 ## Destructive action policy
 
@@ -679,9 +686,12 @@ plugins, while unsafe schemas and ambiguous ownership fail closed:
 - Global `allow_destructive_actions` defaults to `true`.
 - Per-plugin `allow_destructive_actions` overrides the global policy for
   that plugin.
-- `false`: OpenClaw returns a deterministic decline for plugin approval
-  elicitations, including one for a native read tool. The bridge currently
-  applies this value without distinguishing reads from destructive calls.
+- `false`: OpenClaw sets native `destructive_enabled: false`; tool eligibility
+  follows the native defaults and explicit exceptions described above. Approval
+  requests for eligible hosted app tools still go through OpenClaw consent,
+  including permitted reads and `/btw` side questions. The bridge does not
+  classify tools again or blanket-decline their requests. Plugin-provided MCP
+  server approval requests still receive a deterministic decline.
 - `true`: OpenClaw auto-accepts only safe schemas it can map to an approval
   response, such as a boolean approve field.
 - `"auto"`: OpenClaw exposes destructive plugin actions to Codex, then
@@ -705,20 +715,25 @@ configuration and prevent app admission; move those app settings to a supported
 user or project configuration layer. Native administrative requirements remain
 authoritative.
 
-### Examples and current limits
+### Approval examples
 
 Assume an admitted, authenticated app, no conflicting managed requirement,
 and a human reviewer for calls that need approval. The read tools below declare
 `readOnlyHint: true` and `destructiveHint: false`:
 
-| Configuration                                                                                       | Observable result on an ordinary turn                                                                                                                               |
-| --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| OpenClaw shared `false`, per-plugin `"auto"`                                                        | The plugin override wins. Destructive tools are eligible; approval elicitations that reach OpenClaw request consent.                                                |
-| OpenClaw `"auto"`, saved native app default `"prompt"`, no tool/link override, non-destructive read | OpenClaw's app-level `"auto"` replaces `"prompt"`; the read does not request approval.                                                                              |
-| OpenClaw `"auto"`, native read-tool `approval_mode: "prompt"`                                       | The per-tool mode survives. The read requests consent; Allow once permits the call and Deny blocks it.                                                              |
-| OpenClaw `false`, native read-tool `approval_mode: "prompt"`                                        | Native eligibility can allow the read, but OpenClaw declines its approval elicitation without asking the user.                                                      |
-| OpenClaw `false`, destructive tool explicitly `enabled: true` and `approval_mode: "approve"`        | The native tool exception bypasses the category default and requires no tool approval request. The bridge's decline path is not an execution-time category ceiling. |
-| OpenClaw `"ask"`, saved non-read-only tool approval `"approve"`                                     | The thread overlay replaces that saved approval with native `"auto"`; calls needing approval use one-shot consent.                                                  |
+| Configuration                                                                                 | Observable result on an ordinary turn                                                                                                                               |
+| --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| OpenClaw shared `false`, per-plugin `"auto"`                                                  | The plugin override wins. Destructive tools are eligible; approval elicitations that reach OpenClaw request consent.                                                |
+| OpenClaw `"auto"`, native app default `"prompt"`, no tool/link override, non-destructive read | Native `"prompt"` survives. The read requests consent; Allow once permits the call and Deny blocks it.                                                              |
+| OpenClaw `"auto"`, native read-tool `approval_mode: "prompt"`                                 | The per-tool mode survives. The read requests consent; Allow once permits the call and Deny blocks it.                                                              |
+| OpenClaw `false`, native app default `"prompt"`, no tool/link override, non-destructive read  | Native eligibility allows the read, and OpenClaw requests consent. Allow once permits the call and Deny blocks it.                                                  |
+| OpenClaw `false`, destructive tool explicitly `enabled: true` and `approval_mode: "approve"`  | The native tool exception bypasses the category default and requires no tool approval request. The bridge's decline path is not an execution-time category ceiling. |
+| OpenClaw `"ask"`, saved non-read-only tool approval `"approve"`                               | The thread overlay replaces that saved approval with native `"auto"`; calls needing approval use one-shot consent.                                                  |
+
+If the reviewer in the native `"prompt"` examples is `"auto_review"` instead
+of `"user"`, Codex performs automatic review rather than displaying an
+OpenClaw consent prompt. Neither reviewer choice enables a tool that failed
+the eligibility check.
 
 Remembered approval and explicit enablement are different settings. Codex's
 persistent app-tool approval writes `approval_mode: "approve"`, not
