@@ -1,17 +1,21 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { mockProcessPlatform } from "../test-utils/vitest-spies.js";
 
-const { census, directory, read, definitelyDead, container } = vi.hoisted(() => ({
+const { census, directory, read, definitelyDead, container, darwinCommand } = vi.hoisted(() => ({
   census: vi.fn(),
   directory: vi.fn(),
   read: vi.fn(),
   definitelyDead: vi.fn(),
   container: vi.fn(),
+  darwinCommand: vi.fn(),
 }));
 vi.mock("node:child_process", () => ({ spawnSync: census }));
 vi.mock("node:fs", () => ({ readdirSync: directory, readFileSync: read }));
 vi.mock("../shared/pid-alive.js", () => ({ isPidDefinitelyDead: definitelyDead }));
 vi.mock("./container-environment.js", () => ({ isContainerEnvironment: container }));
+vi.mock("../process/supervisor/darwin-process-command.js", () => ({
+  readDarwinProcessCommand: darwinCommand,
+}));
 import { inspectOtherOpenClawProcesses } from "./openclaw-process-census.js";
 
 const self = process.pid;
@@ -30,6 +34,7 @@ beforeEach(() => {
   definitelyDead.mockReset().mockReturnValue(false);
   container.mockReset().mockReturnValue(false);
   census.mockReset();
+  darwinCommand.mockReset();
   directory.mockReset().mockImplementation(() => Array.from(rows.keys(), String));
   read.mockReset().mockImplementation((file: string) => {
     const match = /^\/proc\/(\d+)\/(stat|cmdline)$/.exec(file);
@@ -142,13 +147,33 @@ it.each([false, true])(
   },
 );
 
-it.each(["darwin", "win32"] as const)(
-  "does not authorize cleanup without exact argv inspection on %s",
-  (platform) => {
-    mockProcessPlatform(platform);
-    expect(inspectOtherOpenClawProcesses()).toEqual({
-      error: expect.stringContaining(`Exact process command census is unavailable on ${platform}`),
-    });
-    expect(census).not.toHaveBeenCalled();
-  },
-);
+it("uses native Darwin arguments and explicit foreign system-service facts", () => {
+  mockProcessPlatform("darwin");
+  rows.set(peer, { ppid: 1, argv: ["node", "/app with spaces/openclaw.mjs", "status"] });
+  census.mockImplementation(() => ({
+    status: 0,
+    stdout: [...rows].map(([pid, row]) => `${pid} ${self} S ${row.ppid} 501`).join("\n"),
+  }));
+  darwinCommand.mockImplementation((pid: number) =>
+    pid === 1
+      ? { argvUnavailable: true, executable: "/sbin/launchd", uid: 0 }
+      : { argv: rows.get(pid)!.argv },
+  );
+  expect(inspectOtherOpenClawProcesses()).toEqual({ pids: [peer] });
+  rows.delete(peer);
+  expect(inspectOtherOpenClawProcesses()).toEqual({ pids: [] });
+  darwinCommand.mockImplementation(() => {
+    throw new Error("unreadable live process");
+  });
+  expect(inspectOtherOpenClawProcesses()).toEqual({
+    error: expect.stringContaining("unreadable live process"),
+  });
+});
+
+it("does not authorize cleanup without exact argv inspection on win32", () => {
+  mockProcessPlatform("win32");
+  expect(inspectOtherOpenClawProcesses()).toEqual({
+    error: expect.stringContaining("Exact process command census is unavailable on win32"),
+  });
+  expect(census).not.toHaveBeenCalled();
+});

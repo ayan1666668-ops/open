@@ -264,10 +264,14 @@ load a preserved source package from within that subtree.
 
 This follows the native lifetime-token pattern used for
 [interrupted SQLite snapshots](/reference/database-schemas/integrity-and-recovery).
-Executable CLI commands release captures through their existing invocation
-resource scope; Gateway captures remain with metadata retirement. Snapshot
+Executable CLI commands retire their plugin inventory through the existing invocation
+resource scope on success and failure. Inventory adopted by Gateway publication
+remains with Gateway metadata retirement. At process exit, the capture owner
+synchronously retires any remaining instance that holds this process's native
+custody, including explicit exits and CLI-handled signals. Forced termination
+still relies on startup reclamation. Snapshot
 cleanup owns SQLite staging files, while plugin cleanup owns this capture subtree.
-Neither adds a second process-shutdown owner. Reclamation removes captured
+Reclamation removes captured
 payload before its coordinator so a partial deletion remains retryable.
 
 Startup and hourly cleanup inspect only this owned subtree. An instance becomes
@@ -290,7 +294,8 @@ one-hour cleanup grace period.
 Older `openclaw-plugin-build-*` directories in the system temporary directory
 have no coordinator proving whether their producer is still alive. Doctor reports
 tokenless `openclaw-plugin-build-*` and `openclaw-model-catalog-*` roots under the
-state temporary directory, the current system temporary directory, `/tmp` on
+state temporary directory, `~/.openclaw/tmp` even when another state directory is
+selected, the current system temporary directory, `/tmp` on
 POSIX hosts, and recorded managed-service `TMPDIR` locations. It deduplicates
 directory aliases and reports each capture's path and regular-file size without
 following links inside captures.
@@ -301,8 +306,12 @@ The rule rechecks both conditions before each removal and prints a receipt listi
 the paths removed and their sizes. A live sibling, unavailable census, or missing
 maintenance authority leaves the captures in place with an explanatory message.
 Captures created or changed during the current process and token-bearing captures
-remain untouched. On hosts without a complete process-argument census (including
-macOS, Windows, and recognized container environments), Doctor reports legacy
+remain untouched. Linux and macOS preserve native argument boundaries when
+inspecting processes. macOS can also identify native system services
+under another user by their kernel executable path and valid Apple platform signature; unavailable arguments for
+other live processes keep cleanup blocked with a reason.
+On hosts without a complete process census (including
+Windows and recognized container environments), Doctor reports legacy
 captures but skips their removal. For a container sharing the host's temporary
 directory, run maintenance on the host after stopping its OpenClaw containers.
 Modern captures retain their existing custody-token cleanup; no legacy files are

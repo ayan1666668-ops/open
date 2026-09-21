@@ -68,6 +68,8 @@ async function runCaptureReport(repair = false, update = false) {
   expect(contribution, "capture cleanup must be registered with Doctor").toBeDefined();
   const ctx = createDoctorHealthFlowContext({
     env: {
+      HOME: parent,
+      OPENCLAW_HOME: parent,
       OPENCLAW_STATE_DIR: stateDir,
       ...(update ? { OPENCLAW_UPDATE_IN_PROGRESS: "1" } : {}),
     },
@@ -115,11 +117,13 @@ it.each([false, true])(
     write(environmentTmp, "openclaw-plugin-build-env/source.cjs", "abc");
     write(systemTmp, "openclaw-plugin-build-system/source.cjs", "12345");
     write(serviceTmp, "openclaw-plugin-build-service/source.cjs", "1234567");
+    const homeTmp = path.join(parent, ".openclaw", "tmp");
+    write(homeTmp, "openclaw-plugin-build-home/source.cjs", "ab");
     readCommand.mockResolvedValue({ programArguments: [], environment: { TMPDIR: serviceTmp } });
 
     const output = await runCaptureReport(false, update);
-    expect(output).toContain("3 legacy plugin capture root(s), 15 B");
-    for (const directory of [environmentTmp, systemTmp, serviceTmp]) {
+    expect(output).toContain("4 legacy plugin capture root(s), 17 B");
+    for (const directory of [environmentTmp, systemTmp, serviceTmp, homeTmp]) {
       expect(output).toContain(directory);
     }
     expect(output).toContain("They will be reclaimed at the next maintenance.");

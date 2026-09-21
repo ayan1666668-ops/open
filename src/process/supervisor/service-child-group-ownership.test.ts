@@ -1,10 +1,11 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { mockProcessPlatform } from "../../test-utils/vitest-spies.js";
-const { census, definitelyDead, directory, readStat } = vi.hoisted(() => ({
+const { census, definitelyDead, directory, readStat, darwinCommand } = vi.hoisted(() => ({
   census: vi.fn(),
   definitelyDead: vi.fn(),
   directory: vi.fn(),
   readStat: vi.fn(),
+  darwinCommand: vi.fn(),
 }));
 vi.mock("node:child_process", () => ({ spawnSync: census }));
 vi.mock("node:fs", () => ({ readdirSync: directory, readFileSync: readStat }));
@@ -24,6 +25,7 @@ function stat(pid: number, group: number, state = "S", name = "worker", ppid = 1
 beforeEach(() => {
   census.mockReset().mockReturnValue({ error: new Error("ps is unavailable") });
   definitelyDead.mockReset().mockReturnValue(false);
+  darwinCommand.mockReset();
   rows = new Map([[owner, stat(owner, owner)]]);
   commands = new Map([[owner, "openclaw-doctor\0"]]);
   directory.mockReset().mockImplementation(() => ["self", ...Array.from(rows.keys(), String)]);
@@ -147,7 +149,49 @@ it("preserves Linux command argument boundaries and process ancestry in command 
   const argv = ["node", "/app with spaces/openclaw.mjs", "doctor", "--profile", "two words"];
   rows.set(owner, stat(owner, owner + 1, "S", "worker ) (with\nname", owner + 2));
   commands.set(owner, `${argv.join("\0")}\0`);
-  expect([...readProcessGroupMembers(1_000, true)]).toEqual([
+  expect([...readProcessGroupMembers(1_000, { readDarwinCommand: darwinCommand })]).toEqual([
     { pid: owner, pgid: owner + 1, state: "S", command: { ppid: owner + 2, argv } },
+  ]);
+});
+
+it("joins Darwin numeric ancestry to exact native command facts", () => {
+  mockProcessPlatform("darwin");
+  const argv = ["node", "/app with spaces/openclaw.mjs", "doctor"];
+  const foreign = { argvUnavailable: true, executable: "/sbin/launchd", uid: 0 };
+  census.mockReturnValue({
+    pid: owner + 3,
+    status: 0,
+    stdout: `${owner} ${owner} S 1 501\n1 1 S 0 0\n${owner + 1} ${owner} S 1 501\n${owner + 3} ${owner} R ${owner} 501\n`,
+  });
+  darwinCommand.mockImplementation((pid: number) =>
+    pid === owner ? { argv } : pid === 1 ? foreign : undefined,
+  );
+  expect([...readProcessGroupMembers(1_000, { readDarwinCommand: darwinCommand })]).toEqual([
+    { pid: owner, pgid: owner, state: "S", command: { ppid: 1, argv } },
+    { pid: 1, pgid: 1, state: "S", command: { ppid: 0, ...foreign } },
+  ]);
+});
+
+it("does not turn native Darwin inspection failures into an empty census", () => {
+  mockProcessPlatform("darwin");
+  census.mockReturnValue({ status: 0, stdout: `${owner} ${owner} S 1 501\n` });
+  darwinCommand.mockImplementation(() => {
+    throw new Error("native process inspection unavailable");
+  });
+  expect(() => [...readProcessGroupMembers(1_000, { readDarwinCommand: darwinCommand })]).toThrow(
+    "native process inspection unavailable",
+  );
+});
+
+it("preserves Darwin's nobody ownership when ps renders the unsigned UID as -2", () => {
+  mockProcessPlatform("darwin");
+  census.mockReturnValue({ status: 0, stdout: `${owner} ${owner} S 1 -2\n` });
+  darwinCommand.mockImplementation((_pid: number, uid: number) => ({
+    argvUnavailable: true,
+    executable: "/usr/libexec/native-service",
+    uid,
+  }));
+  expect([...readProcessGroupMembers(1_000, { readDarwinCommand: darwinCommand })]).toMatchObject([
+    { command: { ppid: 1, uid: 4_294_967_294, argvUnavailable: true } },
   ]);
 });

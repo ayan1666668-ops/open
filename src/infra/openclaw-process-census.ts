@@ -1,5 +1,6 @@
 import path from "node:path";
 import { isLegacyPluginSourceCaptureName } from "../plugins/plugin-source-capture-path.js";
+import { readDarwinProcessCommand } from "../process/supervisor/darwin-process-command.js";
 import { readProcessGroupMembers } from "../process/supervisor/service-child-group-ownership.js";
 import { isPidDefinitelyDead } from "../shared/pid-alive.js";
 import { getRootOptionAwareCommandPath } from "./cli-root-options.js";
@@ -41,7 +42,9 @@ export function inspectOtherOpenClawProcesses(): { pids: number[] } | { error: s
         "Host process visibility cannot be established from this container. Run Doctor on the host after stopping OpenClaw containers that share its temporary directory.",
       );
     }
-    const processes = [...readProcessGroupMembers(1_000, true)];
+    const processes = [
+      ...readProcessGroupMembers(1_000, { readDarwinCommand: readDarwinProcessCommand }),
+    ];
     const byPid = new Map(processes.map((entry) => [entry.pid, entry]));
     const current = byPid.get(process.pid);
     if (!current?.command || processes.some((entry) => !entry.command)) {
@@ -56,7 +59,7 @@ export function inspectOtherOpenClawProcesses(): { pids: number[] } | { error: s
         throw new Error("OpenClaw process ancestry is incomplete.");
       }
       ancestors.add(parentPid);
-      if (isDoctorLauncher(parent.command.argv)) {
+      if ("argv" in parent.command && isDoctorLauncher(parent.command.argv)) {
         launchers.add(parentPid);
       }
       parentPid = parent.command.ppid;
@@ -69,7 +72,7 @@ export function inspectOtherOpenClawProcesses(): { pids: number[] } | { error: s
         if (state.startsWith("Z") && isPidDefinitelyDead(pid)) {
           return false;
         }
-        return isOpenClawProcess(command!.argv);
+        return command && "argv" in command ? isOpenClawProcess(command.argv) : false;
       })
       .map(({ pid }) => pid);
     return { pids };

@@ -1,7 +1,8 @@
 import path from "node:path";
 import { note } from "../../packages/terminal-core/src/note.js";
 import { quoteCliArg } from "../cli/quote-cli-arg.js";
-import { resolveStateDir } from "../config/state-dir.js";
+import { resolveNewStateDir, resolveStateDir } from "../config/state-dir.js";
+import { resolveRequiredHomeDir } from "../infra/home-dir.js";
 import { inspectOtherOpenClawProcesses } from "../infra/openclaw-process-census.js";
 import {
   inspectLegacyPluginSourceCaptureRoots,
@@ -16,6 +17,12 @@ export async function noteLegacyPluginSourceCaptures(
 ): Promise<void> {
   const temporaryDirectories = [env.TMPDIR, env.TMP, env.TEMP].filter(
     (directory): directory is string => Boolean(directory?.trim()),
+  );
+  temporaryDirectories.push(
+    path.join(
+      resolveNewStateDir(() => resolveRequiredHomeDir(env)),
+      "tmp",
+    ),
   );
   const warnings: string[] = [];
   try {
