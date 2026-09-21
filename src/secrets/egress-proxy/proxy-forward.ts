@@ -62,10 +62,12 @@ function writeForwardedResponseHead(
       response.destroy();
       return false;
     }
-    // writeHead stores the reason phrase and, for 1xx/204/304, clears _hasBody
-    // before a later field can throw. Restore a body so end() does not drop the 502.
+    // writeHead stores the reason phrase and, for 1xx/204/304, clears the
+    // private body flag before a later field can throw. HEAD responses are
+    // created bodyless and must stay that way; other methods need the flag
+    // restored so end() keeps the 502 bytes.
     response.statusMessage = "";
-    (response as ServerResponse & { _hasBody?: boolean })._hasBody = true;
+    Reflect.set(response, "_hasBody", response.req.method !== "HEAD");
     response.chunkedEncoding = false;
     try {
       sendHttpRefusal(response, 502, FORWARDED_RESPONSE_FAILURE_BODY);

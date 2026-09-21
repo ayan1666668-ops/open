@@ -334,12 +334,17 @@ describe("secret egress forwarded response headers", () => {
     }
   });
 
-  // Node clears _hasBody for 1xx/204/304 before _storeHeader rejects a
-  // non-chunked Trailer. The refusal must still put its bytes on the wire and
-  // finish the connection.
-  it.each([304, 101] as const)(
-    "sends the 502 body and closes when a %s head rejects trailer Expires",
-    async (statusCode) => {
+  // Node clears the private body flag for 1xx/204/304 before _storeHeader
+  // rejects a non-chunked Trailer. GET recovery must still put the 502 bytes
+  // on the wire. HEAD already suppressed the body, so the same failure must
+  // finish as headers only.
+  it.each([
+    ["GET", 304, true],
+    ["GET", 101, true],
+    ["HEAD", 304, false],
+  ] as const)(
+    "recovers a %s %s head that rejects trailer Expires (body: %s)",
+    async (method, statusCode, expectBody) => {
       const refusal = "Secret egress proxy could not forward the upstream response.\n";
       const upstreamBody = Buffer.from("UPSTREAM-BODY");
       const upstream = new PassThrough();
@@ -421,7 +426,7 @@ describe("secret egress forwarded response headers", () => {
           socket.on("error", reject);
           socket.on("end", () => resolve(Buffer.concat(chunks)));
           socket.on("connect", () => {
-            socket.end("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+            socket.end(`${method} / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n`);
           });
         });
         await setImmediate();
@@ -434,7 +439,7 @@ describe("secret egress forwarded response headers", () => {
         expect(splitAt).toBeGreaterThan(0);
         expect(head).toMatch(/^HTTP\/1\.1 502 /);
         expect(head.toLowerCase()).toContain(`content-length: ${Buffer.byteLength(refusal)}`);
-        expect(body).toBe(refusal);
+        expect(body).toBe(expectBody ? refusal : "");
         expect(text).not.toContain("UPSTREAM-BODY");
         expect(client?.readableEnded).toBe(true);
         expect(
