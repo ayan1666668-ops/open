@@ -29,6 +29,7 @@ import {
   resolvePolicyTestTargets,
   type NodeTestShardGroup,
 } from "./ci-node-test-plan.mts";
+import { isCiProofTestFile } from "./ci-proof-test-inventory.mts";
 import {
   DATABASE_WORKER_CONFIG,
   DATABASE_WORKER_TEST_JOB_FILE_LIMIT,
@@ -362,7 +363,11 @@ function resolvePreciseChangedTargets(
   }));
   if (
     targetPlans.some(
-      ({ plans }) => plans.length === 0 || plans.some((targetPlan) => !targetPlan.includePatterns),
+      ({ target, plans }) =>
+        plans.length === 0 ||
+        // E2E's canonical owner uses CLI filters instead of include files.
+        // Named deferred proofs need resolution, but no PR execution envelope.
+        (!isCiProofTestFile(target) && plans.some((targetPlan) => !targetPlan.includePatterns)),
     )
   ) {
     return null;
@@ -442,9 +447,10 @@ function createChangedExtensionConfigShards(
     const splitProcesses = shouldSplitExtensionTestProcesses(config);
     const testFiles = (filesByConfig.get(config) ?? []).filter(
       (file) =>
-        !splitProcesses ||
-        options.fullConfigInventory ||
-        roots.some((root) => file.startsWith(`${root}/`)),
+        !isCiProofTestFile(file) &&
+        (!splitProcesses ||
+          options.fullConfigInventory ||
+          roots.some((root) => file.startsWith(`${root}/`))),
     );
     const buildModes = new Map(
       (splitProcesses ? testFiles : []).map((file) => [
@@ -743,7 +749,11 @@ export function createChangedNodeTestShards(
   if (targetPlans === null) {
     return null;
   }
-  const canonicalTargets = targetPlans
+  // Resolve every changed source first, then defer only named complete proofs.
+  // Filtering inputs earlier would hide an unresolved companion or helper.
+  const prTargetPlans = targetPlans.filter(({ target }) => !isCiProofTestFile(target));
+  const onlyDeferredProofTargets = targetPlans.length > 0 && prTargetPlans.length === 0;
+  const canonicalTargets = prTargetPlans
     .filter(({ plans }) =>
       plans.some(({ config }) => configsRequiringCanonicalMetadata.has(config)),
     )
@@ -761,13 +771,14 @@ export function createChangedNodeTestShards(
     return null;
   }
   const boundaryShards =
-    hasBuildArtifactAffectingChange(changedPaths) ||
-    canonicalShards.some((shard) => shard.requiresDist)
+    !onlyDeferredProofTargets &&
+    (hasBuildArtifactAffectingChange(changedPaths) ||
+      canonicalShards.some((shard) => shard.requiresDist))
       ? []
       : [createBoundaryShard()];
   // CI supplies the suite owners it emits. Validate every changed path first,
   // then subtract covered plans; local runs and unselected owners keep their targets.
-  const targets = targetPlans
+  const targets = prTargetPlans
     .filter(({ target }) => !canonicalTargets.includes(target))
     .filter(
       ({ plans }) =>
