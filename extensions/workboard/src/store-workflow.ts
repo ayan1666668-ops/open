@@ -124,11 +124,17 @@ export class WorkboardWorkflowStore extends WorkboardPromoteStore {
           ? existingClaim
           : undefined;
       if (cardParentIds(guarded).length > 0 && guarded.status !== "ready" && !activeClaim) {
-        throw new Error(
-          guarded.status === "blocked"
-            ? "card is blocked; use workboard_unblock before claiming."
-            : "card dependencies are not done.",
+        if (guarded.status === "blocked") {
+          throw new Error("card is blocked; use workboard_unblock before claiming.");
+        }
+        const parentIds = cardParentIds(guarded).map((parentId) => parentId.trim());
+        const parentCards = new Map(
+          (await this.store.listCardStatuses(parentIds)).map((parent) => [parent.id, parent]),
         );
+        const unfinished = parentIds
+          .filter((parentId) => parentCards.get(parentId)?.status !== "done")
+          .map((parentId) => `${parentId} is ${parentCards.get(parentId)?.status ?? "missing"}`);
+        throw new Error(`card dependencies are not done: ${unfinished.join(", ")}.`);
       }
       if (guarded.status === "scheduled") {
         throw new Error("card is scheduled for later.");
