@@ -72,31 +72,37 @@ export async function withOperatorToolGatewayAuthority<T>(
   const lifetime = new AbortController();
   const scope = getPluginRuntimeGatewayRequestScope();
   const context = scope?.resolveGatewayContext ? scope.resolveGatewayContext() : scope?.context;
-  const captured = context
-    ? captureGatewayOperatorRunAuthority({
-        client:
-          scope?.client ??
-          createSyntheticPluginRuntimeClient({
-            authenticatedUserProfile: authority.authenticatedUserProfile,
-            operatorRoleActor: authority.operatorRoleActor,
-            scopes: [...authority.scopes],
-          }),
-        context,
-        hasCurrentClientAuthority: scope?.hasCurrentClientAuthority,
-      })
-    : undefined;
+  const captured =
+    context && (authority.operatorRunAuthority || authority.operatorRoleActor?.kind !== "system")
+      ? captureGatewayOperatorRunAuthority({
+          client:
+            scope?.client && !authority.operatorRunAuthority
+              ? scope.client
+              : createSyntheticPluginRuntimeClient({
+                  authenticatedUserProfile: authority.authenticatedUserProfile,
+                  operatorRoleActor: authority.operatorRoleActor,
+                  operatorRunAuthority: authority.operatorRunAuthority,
+                  scopes: [...authority.scopes],
+                }),
+          context,
+          hasCurrentClientAuthority: scope?.hasCurrentClientAuthority,
+        })
+      : undefined;
   try {
     return await operatorToolGatewayAuthority.run(
-      { ...authority, operatorRunAuthority: captured?.authority, signal: lifetime.signal },
+      {
+        ...authority,
+        operatorRunAuthority: captured?.authority ?? authority.operatorRunAuthority,
+        signal: lifetime.signal,
+      },
       () =>
         captured && scope?.client
           ? withPluginRuntimeGatewayRequestScope(
               {
                 ...scope,
-                client: {
-                  ...scope.client,
-                  internal: { ...scope.client.internal, operatorRunAuthority: captured.authority },
-                },
+                client: mergePluginRuntimeClientInternal(scope.client, {
+                  operatorRunAuthority: captured.authority,
+                }),
               },
               run,
             )
@@ -190,7 +196,13 @@ function resolveInProcessGatewayDispatch(
     getGatewayToolCallerIdentity()?.operatorAuthority ??
     inheritedOperatorAuthority?.operatorRunAuthority ??
     scope?.client?.internal?.operatorRunAuthority;
-  const isHostOwnedAgentRun = method === "agent" && Boolean(options?.agentRunTracking);
+  // A registered settle cohort owns its wake after the spawning tool has finished.
+  // Qualify that live owner before replacing the tool lifetime at admission.
+  const assertSettleWakeCurrent =
+    method === "agent" ? options?.settleWakeReplay?.assertCurrent : undefined;
+  assertSettleWakeCurrent?.();
+  const isHostOwnedAgentRun =
+    method === "agent" && Boolean(options?.agentRunTracking || assertSettleWakeCurrent);
   const assertCallerCurrent = captureGatewayToolCallerAssertion();
   if (!isHostOwnedAgentRun || !operatorRunAuthority) {
     inheritedOperatorAuthority?.signal.throwIfAborted();
@@ -388,16 +400,11 @@ function resolveInProcessGatewayDispatch(
     options?.forceSyntheticClient !== true && scopedClient && matchesOperatorSource;
   const client = useScopedClient
     ? operatorRunAuthority
-      ? {
-          ...scopedClient,
-          connect: {
-            ...scopedClient.connect,
-            scopes: intersectOperatorScopes(
-              scopedClient.connect.scopes ?? [],
-              operatorRunAuthority.scopes,
-            ),
-          },
-        }
+      ? mergePluginRuntimeClientInternal(
+          scopedClient,
+          undefined,
+          intersectOperatorScopes(scopedClient.connect.scopes ?? [], operatorRunAuthority.scopes),
+        )
       : scopedClient
     : syntheticClient;
   const resume = readInProcessSubagentResume(options);
@@ -513,10 +520,9 @@ async function withInProcessGatewayDispatch<T>(
     });
     if (captured) {
       releaseOperatorAuthority = captured.release;
-      resolved.client = {
-        ...resolved.client,
-        internal: { ...resolved.client.internal, operatorRunAuthority: captured.authority },
-      };
+      resolved.client = mergePluginRuntimeClientInternal(resolved.client, {
+        operatorRunAuthority: captured.authority,
+      });
       const assertContextCurrent = resolved.assertContextCurrent;
       resolved.assertContextCurrent = () => {
         assertContextCurrent();

@@ -114,6 +114,9 @@ export function createGatewayAuthenticatedRequestDispatcher(params: {
       return;
     }
     const req = parsed;
+    if (closeInvalidatedClient(client, req.method)) {
+      return;
+    }
     const diagnostics = createGatewayRpcDiagnostics(req.method, getMethodRegistry, extraHandlers);
     logWs("in", "req", { connId, id: req.id, method: req.method });
     const context = buildRequestContext();

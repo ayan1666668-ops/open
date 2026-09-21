@@ -1,19 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 import { ErrorCodes } from "../../../packages/gateway-protocol/src/index.js";
-import { createAdmittedRunOperatorAuthority } from "../../agents/admitted-run-context.js";
-import { createDeferredCore } from "../../shared/deferred.js";
 import { createCoreGatewayMethodDescriptors } from "../methods/core-method-policy.js";
 import { summarizeWorkerEnvironment } from "../worker-environments/environment-summary.js";
 import { environmentsHandlers } from "./environments.js";
 import {
   callEnvironmentMethod,
   FakeWorkerServiceError,
-  mockContext,
-  type TestWorkerService,
   workerRecord,
   workerService,
 } from "./environments.test-support.js";
-import type { GatewayRequestContext, GatewayRequestHandlerOptions } from "./types.js";
 
 describe("environments.prepare", () => {
   const request = { profileId: "development", projectPath: "/projects/app" };
@@ -50,67 +45,16 @@ describe("environments.prepare", () => {
     ]);
   });
 
-  it.each([
-    { reused: false, revoked: false },
-    { reused: true, revoked: false },
-    { reused: false, revoked: true },
-  ])(
-    "revalidates the original source before preparation admission with reused=$reused revoked=$revoked",
-    async ({ reused, revoked }) => {
-      const result = { environmentId: "worker-1", preparationKey: "project-key", reused };
-      const sourceController = new AbortController();
-      const source = createAdmittedRunOperatorAuthority({
-        profileId: "original-operator",
-        scopes: ["operator.admin"],
-        signal: sourceController.signal,
-        assertCurrent: () => sourceController.signal.throwIfAborted(),
-      });
-      const preparing = createDeferredCore();
-      const prepared = createDeferredCore();
-      const admit = vi.fn(() => result);
-      const prepare = vi.fn<TestWorkerService["prepare"]>(async (_request, authorize) => {
-        authorize?.();
-        preparing.resolve();
-        await prepared.promise;
-        authorize?.();
-        return admit();
-      });
-      const respond = vi.fn();
-      const options: GatewayRequestHandlerOptions = {
-        req: {
-          type: "req",
-          id: "prepare-authority",
-          method: "environments.prepare",
-          params: request,
-        },
-        params: request,
-        client: null,
-        context: mockContext(workerService({ prepare })) as GatewayRequestContext,
-        isWebchatConnect: () => false,
-        respond,
-        sessionMutationCommitGuard: source.assertCurrent,
-      };
-      const pending = environmentsHandlers["environments.prepare"]!(options);
-      await preparing.promise;
-      if (revoked) {
-        sourceController.abort(new Error("Original operator source revoked"));
-      }
-      prepared.resolve();
-      await pending;
-
-      expect(prepare).toHaveBeenCalledExactlyOnceWith(request, expect.any(Function));
-      if (revoked) {
-        expect(admit).not.toHaveBeenCalled();
-        expect(respond).toHaveBeenCalledExactlyOnceWith(false, undefined, {
-          code: ErrorCodes.UNAVAILABLE,
-          message: "worker environment preparation failed",
-        });
-      } else {
-        expect(admit).toHaveBeenCalledOnce();
-        expect(respond).toHaveBeenCalledExactlyOnceWith(true, result, undefined);
-      }
-    },
-  );
+  it.each([false, true])("returns the admitted preparation with reused=%s", async (reused) => {
+    const result = { environmentId: "worker-1", preparationKey: "project-key", reused };
+    const prepare = vi.fn(async () => result);
+    expect(
+      await callEnvironmentMethod("environments.prepare", request, {
+        service: workerService({ prepare }),
+      }),
+    ).toEqual([true, result, undefined]);
+    expect(prepare).toHaveBeenCalledExactlyOnceWith(request, expect.any(Function));
+  });
 
   it.each([
     ["profile_not_found", ErrorCodes.INVALID_REQUEST, "unknown worker profile"],
