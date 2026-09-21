@@ -130,6 +130,7 @@ it.each([
         ? "agent:main:main"
         : "agent:main:dashboard:missed-completion-event";
     const history = createDeferred<ChatHistoryResult>();
+    const historyRequested = createDeferred();
     const activity: Pick<GatewaySessionRow, "status" | "hasActiveRun"> = missingActivity
       ? {}
       : { status: "done", hasActiveRun: false };
@@ -143,7 +144,10 @@ it.each([
     };
     const request = makeRequestMock({
       "sessions.list": () => sessionsResult([listed], listed.updatedAt ?? 0),
-      "chat.history": () => history.promise,
+      "chat.history": () => {
+        historyRequested.resolve();
+        return history.promise;
+      },
       "chat.send": { runId: "next-run", status: "started", messageSeq: 1 },
     });
     const client = createTestGatewayClient(request);
@@ -210,9 +214,8 @@ it.each([
 
       const runGeneration = host.chatRunLifecycleGeneration;
       draining = resumeStoredChatOutboxes(host);
-      await vi.waitFor(() =>
-        expect(request).toHaveBeenCalledWith("chat.history", expect.anything()),
-      );
+      await historyRequested.promise;
+      expect(request).toHaveBeenCalledWith("chat.history", expect.anything());
       if (mainKeyChanged || unqualified) {
         expect(request).toHaveBeenCalledWith(
           "chat.history",
