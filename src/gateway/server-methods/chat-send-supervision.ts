@@ -3,6 +3,7 @@ import { appendAssistantMessageToSessionTranscript } from "../../config/sessions
 import { getAgentEventLifecycleGeneration } from "../../infra/agent-events.js";
 import { clearAgentRunContext } from "../../infra/agent-run-registry.js";
 import type { UserTurnTranscriptRecorder } from "../../sessions/user-turn-transcript.js";
+import type { GatewayChatUserTurnPersist } from "./chat-user-turn-recorder.js";
 import type { SupervisedRootDisposition } from "../../tasks/supervised-task.admission.js";
 import { bindSupervisedRootSource } from "../../tasks/supervised-task.root-source.js";
 import { readSupervisedSourceHandoff } from "../../tasks/supervised-task.source.js";
@@ -58,7 +59,7 @@ export async function handoffSupervisedChatRoot(
     context: GatewayRequestHandlerOptions["context"];
     respond: GatewayRequestHandlerOptions["respond"];
     recorder: UserTurnTranscriptRecorder;
-    persistUserTurn: UserTurnTranscriptRecorder["persistFallback"];
+    persistUserTurn: GatewayChatUserTurnPersist;
     terminalizeRestartSafeAdmission: (state: RestartSafeChatTerminalState) => Promise<boolean>;
   },
 ): Promise<boolean> {

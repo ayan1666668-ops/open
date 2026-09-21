@@ -440,7 +440,7 @@ export async function prepareCodexAttemptConnection({ params, options }: CodexRu
       bindingStore,
       identity: bindingIdentity,
       agentDir,
-      codexHome: appServer.start.env?.CODEX_HOME,
+      codexHome: appServer.start.codexHome ?? appServer.start.env?.CODEX_HOME,
       config: params.config,
       contextEngineActive: Boolean(activeContextEngine),
       expectedSessionRuntimeOwnership: params.expectedSessionRuntimeOwnership,

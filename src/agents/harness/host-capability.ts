@@ -183,6 +183,7 @@ export function createAgentHarnessHostCapabilities(params: {
   runWithScope: <T>(run: () => Promise<T>) => Promise<T>;
 } {
   const attempt = params.attempt;
+  const githubPublicationAvailable = attempt.githubPublicationAvailable;
   const workSignal = getAsyncWorkSignal();
   const attemptSignal = attempt.abortSignal;
   const installationTarget = getInstallationTarget();
@@ -516,6 +517,8 @@ export function createAgentHarnessHostCapabilities(params: {
             createOpenClawCodingToolsInternal(
               {
                 ...options,
+                // Availability belongs to this prepared host, not mutable plugin inputs.
+                githubPublicationAvailable,
                 skillsSnapshot: options?.skillsSnapshot ?? skillsSnapshot,
                 skillUsagePaths: options?.skillUsagePaths ?? skillUsagePaths,
                 operationalRunInstance,
