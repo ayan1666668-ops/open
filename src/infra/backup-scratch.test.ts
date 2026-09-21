@@ -8,10 +8,73 @@ import {
   finishBackupScratch,
   maintainBackupScratch,
 } from "./backup-scratch.js";
+import * as fsSafe from "./fs-safe.js";
 import * as stagingToken from "./sqlite-staging-token.js";
 
 const dirs = useAutoCleanupTempDirTracker(afterEach);
 afterEach(() => vi.restoreAllMocks());
+
+it.each(["lstat", "boundary", "cleanup"] as const)(
+  "records scratch reclaimed before %s as an intentional non-outcome",
+  async (phase) => {
+    const root = dirs.make("backup-scratch-vanished-");
+    const directory = path.join(root, "openclaw-backup-retired-Gone01");
+    await fs.mkdir(directory);
+    let removed = false;
+    const reclaim = async (target: unknown) => {
+      if (target === directory && !removed) {
+        removed = true;
+        await fs.rm(directory, { recursive: true });
+      }
+    };
+    if (phase === "boundary") {
+      const createRoot = fsSafe.root;
+      vi.spyOn(fsSafe, "root").mockImplementation(async (...args) => {
+        await reclaim(args[0]);
+        return createRoot(...args);
+      });
+    } else if (phase === "lstat") {
+      const lstat = fs.lstat;
+      vi.spyOn(fs, "lstat").mockImplementation(async (...args) => {
+        await reclaim(args[0]);
+        return lstat(...args);
+      });
+    } else {
+      const rmdir = fs.rmdir;
+      vi.spyOn(fs, "rmdir").mockImplementation(async (...args) => {
+        await reclaim(args[0]);
+        return rmdir(...args);
+      });
+    }
+    const log = vi.fn();
+    const report = await maintainBackupScratch({ roots: [root], repair: true, log });
+    expect(removed).toBe(true);
+    expect(report.warnings).toEqual([]);
+    expect(report.reclaimed).toEqual([]);
+    expect(report.alreadyReclaimed).toEqual([directory]);
+    expect(log).toHaveBeenCalledWith(`Backup scratch already reclaimed: ${directory}`);
+  },
+);
+
+it("does not report remaining scratch as reclaimed when only a payload vanishes", async () => {
+  const root = dirs.make("backup-scratch-payload-vanished-");
+  const directory = path.join(root, "openclaw-backup-retired-Gone02");
+  await fs.mkdir(directory);
+  const payload = path.join(directory, "config-0");
+  await fs.writeFile(payload, "synthetic config");
+  const lstat = fs.lstat;
+  vi.spyOn(fs, "lstat").mockImplementation(async (...args) => {
+    if (args[0] === payload) {
+      await fs.rm(payload, { force: true });
+    }
+    return lstat(...args);
+  });
+  const report = await maintainBackupScratch({ roots: [root], repair: true, log: () => {} });
+  expect(report.reclaimed).toEqual([]);
+  expect(report.alreadyReclaimed).toEqual([]);
+  expect(report.warnings).toEqual([expect.stringContaining(directory)]);
+  await expect(fs.stat(directory)).resolves.toBeDefined();
+});
 
 it("preserves a symlink target when scratch is replaced after transaction retirement", async () => {
   const parent = dirs.make("backup-scratch-replaced-");

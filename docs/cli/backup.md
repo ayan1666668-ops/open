@@ -450,6 +450,8 @@ Archive creation holds a SQLite lifetime transaction for its temporary
 scratch only after acquiring exclusive custody; a running backup keeps its
 scratch even when it is old. Cleanup failures preserve the published archive
 and appear as warnings with the scratch path in both text and JSON output.
+Scratch observed by the scan that disappears before cleanup is recorded as
+already reclaimed, without a warning or a claim that this pass removed it.
 
 `openclaw doctor` reports scratch in the active temporary directory and recorded
 archive destination directories. `openclaw doctor --fix` removes recognized

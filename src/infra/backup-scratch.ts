@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { getChildLogger } from "../logging/logger.js";
+import { isMissingPathError } from "./errno.js";
 import { formatErrorMessage, hasErrnoCode } from "./errors.js";
 import { sameFileIdentity } from "./fs-safe-advanced.js";
 import { root as createRoot, type Root } from "./fs-safe.js";
@@ -23,6 +24,7 @@ export type BackupScratch = { directory: string; release: SqliteStagingToken; bo
 
 export type BackupScratchReport = {
   reclaimed: string[];
+  alreadyReclaimed: string[];
   active: string[];
   unchecked: string[];
   warnings: string[];
@@ -58,19 +60,35 @@ export async function createBackupScratchDirectory(root: string): Promise<Backup
   }
 }
 
-function reportWarning(warning: string, log?: (message: string) => void): void {
+function reportScratchMessage(
+  message: string,
+  log?: (message: string) => void,
+  level: "warn" | "info" = "warn",
+): void {
   try {
     if (log) {
-      log(warning);
+      log(message);
       return;
     }
   } catch {
     // A caller's output failure must not replace the backup's own outcome.
   }
   try {
-    getChildLogger({ subsystem: "infra/backup" }).warn(warning);
+    getChildLogger({ subsystem: "infra/backup" })[level](message);
   } catch {
     // The caller also retains the warning in its structured result.
+  }
+}
+
+async function wasScratchReclaimed(directory: string, error: unknown): Promise<boolean> {
+  if (!isMissingPathError(error)) {
+    return false;
+  }
+  try {
+    await fs.lstat(directory);
+    return false;
+  } catch (inspectionError) {
+    return isMissingPathError(inspectionError);
   }
 }
 
@@ -121,7 +139,11 @@ async function cleanupBackupScratchDirectory(
   initialDirectory: string,
   initialBoundary: Root | undefined,
   log?: (message: string) => void,
-): Promise<string | undefined> {
+): Promise<
+  | { status: "reclaimed" }
+  | { status: "already-reclaimed"; directory: string }
+  | { status: "failed"; warning: string }
+> {
   let directory = initialDirectory;
   let boundary = initialBoundary;
   try {
@@ -176,14 +198,14 @@ async function cleanupBackupScratchDirectory(
     }
     // rmdir never follows a substituted final symlink or removes new payloads.
     await fs.rmdir(directory);
-    return undefined;
+    return { status: "reclaimed" };
   } catch (error) {
-    if (hasErrnoCode(error, "ENOENT")) {
-      return undefined;
+    if (await wasScratchReclaimed(directory, error)) {
+      return { status: "already-reclaimed", directory };
     }
     const warning = `Backup scratch cleanup failed at ${directory}: ${formatErrorMessage(error)}. Run \`openclaw doctor --fix\` to retry cleanup.`;
-    reportWarning(warning, log);
-    return warning;
+    reportScratchMessage(warning, log);
+    return { status: "failed", warning };
   }
 }
 
@@ -204,10 +226,14 @@ export async function finishBackupScratch(
   }
   if (retirementFailure) {
     const warning = `Backup scratch retirement failed at ${scratch.directory}: ${formatErrorMessage(retirementFailure)}. Scratch was preserved.`;
-    reportWarning(warning, log);
+    reportScratchMessage(warning, log);
     return warning;
   }
-  return cleanupBackupScratchDirectory(scratch.directory, scratch.boundary, log);
+  const cleanup = await cleanupBackupScratchDirectory(scratch.directory, scratch.boundary, log);
+  if (cleanup.status === "already-reclaimed") {
+    reportScratchMessage(`Backup scratch already reclaimed: ${cleanup.directory}`, log, "info");
+  }
+  return cleanup.status === "failed" ? cleanup.warning : undefined;
 }
 
 /** The transaction, not age or a successful archive record, fences live scratch. */
@@ -218,6 +244,7 @@ export async function maintainBackupScratch(params: {
 }): Promise<BackupScratchReport> {
   const report: BackupScratchReport = {
     reclaimed: [],
+    alreadyReclaimed: [],
     active: [],
     unchecked: [],
     warnings: [],
@@ -286,16 +313,20 @@ export async function maintainBackupScratch(params: {
           }
           await inspectScratchPayload(directory);
           release?.(true);
-          const warning = await cleanupBackupScratchDirectory(directory, boundary, () => {});
-          if (warning) {
-            report.warnings.push(warning);
+          const cleanup = await cleanupBackupScratchDirectory(directory, boundary, () => {});
+          if (cleanup.status === "failed") {
+            report.warnings.push(cleanup.warning);
+          } else if (cleanup.status === "already-reclaimed") {
+            report.alreadyReclaimed.push(cleanup.directory);
           } else {
             report.reclaimed.push(directory);
           }
         } catch (error) {
           if (isSqliteLockError(error)) {
             report.active.push(directory);
-          } else if (!hasErrnoCode(error, "ENOENT")) {
+          } else if (await wasScratchReclaimed(directory, error)) {
+            report.alreadyReclaimed.push(directory);
+          } else {
             report.warnings.push(
               `Backup scratch preserved at ${directory}: ${formatErrorMessage(error)}`,
             );
@@ -317,7 +348,10 @@ export async function maintainBackupScratch(params: {
     }
   }
   for (const warning of report.warnings) {
-    reportWarning(warning, params.log);
+    reportScratchMessage(warning, params.log);
+  }
+  for (const directory of report.alreadyReclaimed) {
+    reportScratchMessage(`Backup scratch already reclaimed: ${directory}`, params.log, "info");
   }
   return report;
 }

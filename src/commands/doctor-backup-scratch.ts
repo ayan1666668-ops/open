@@ -24,6 +24,7 @@ export async function noteBackupScratchHealth(
         `Backup scratch awaiting lifecycle check: ${directory}. Run \`openclaw doctor --fix\` to remove it if abandoned.`,
     ),
     ...report.reclaimed.map((directory) => `Removed abandoned backup scratch: ${directory}`),
+    ...report.alreadyReclaimed.map((directory) => `Backup scratch already reclaimed: ${directory}`),
     ...report.active.map((directory) => `Kept active backup scratch: ${directory}`),
     ...report.warnings,
   ];

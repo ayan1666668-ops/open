@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import { createBackupScratchDirectory, finishBackupScratch } from "../infra/backup-scratch.js";
+import * as fsSafe from "../infra/fs-safe.js";
 import { noteBackupScratchHealth } from "./doctor-backup-scratch.js";
 
 const mocks = vi.hoisted(() => ({ note: vi.fn(), directories: vi.fn<() => string[]>() }));
@@ -33,6 +34,15 @@ it("reports without mutation and fixes abandoned scratch at recorded archive loc
       "Backup scratch",
     );
     mocks.note.mockClear();
+    const reclaimed = path.join(root, "openclaw-backup-retired-Gone01");
+    await fs.mkdir(reclaimed);
+    const createRoot = fsSafe.root;
+    vi.spyOn(fsSafe, "root").mockImplementation(async (...args) => {
+      if (args[0] === reclaimed) {
+        await fs.rmdir(reclaimed);
+      }
+      return createRoot(...args);
+    });
     await noteBackupScratchHealth({}, true);
     await expect(fs.stat(stale.directory)).rejects.toMatchObject({ code: "ENOENT" });
     await expect(fs.stat(live.directory)).resolves.toBeDefined();
@@ -42,6 +52,10 @@ it("reports without mutation and fixes abandoned scratch at recorded archive loc
     );
     expect(mocks.note).toHaveBeenCalledWith(
       expect.stringContaining(`Kept active backup scratch: ${live.directory}`),
+      "Backup scratch",
+    );
+    expect(mocks.note).toHaveBeenCalledWith(
+      expect.stringContaining(`Backup scratch already reclaimed: ${reclaimed}`),
       "Backup scratch",
     );
   } finally {
