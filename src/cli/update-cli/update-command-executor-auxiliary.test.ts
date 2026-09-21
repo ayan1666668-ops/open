@@ -345,11 +345,21 @@ it.each([
       assert(typeof options.input === "string");
       // Corrupt only the private input, retaining real admission, process custody and payload.
       let input: string | Uint8Array = options.input;
-      if (frame === "empty") input = "";
-      if (frame === "truncated") input = input.slice(0, -1);
-      if (frame === "extra") input += " ";
-      if (frame === "malformed") input = "{" + input.slice(1);
-      if (frame === "invalid-entry") input = input.replace("NODE_OPTIONS", "_ODE_OPTIONS");
+      if (frame === "empty") {
+        input = "";
+      }
+      if (frame === "truncated") {
+        input = input.slice(0, -1);
+      }
+      if (frame === "extra") {
+        input += " ";
+      }
+      if (frame === "malformed") {
+        input = "{" + input.slice(1);
+      }
+      if (frame === "invalid-entry") {
+        input = input.replace("NODE_OPTIONS", "_ODE_OPTIONS");
+      }
       if (frame === "invalid-utf8") {
         const bytes = Buffer.from(input);
         const index = bytes.indexOf(Buffer.from("é"));
