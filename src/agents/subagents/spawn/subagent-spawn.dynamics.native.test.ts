@@ -1,7 +1,9 @@
 import "./subagent-spawn-model.mocks.shared.js";
+import { createHash } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { stableStringify } from "@openclaw/normalization-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { clearConfigCache, clearRuntimeConfigSnapshot } from "../../../config/config.js";
 import { resetGatewayWorkAdmission } from "../../../process/gateway-work-admission.js";
@@ -47,6 +49,13 @@ function preparedVerifier() {
         candidateDigest: "sha256:candidate",
         artifactRefs: ["artifact://candidate"],
       },
+      candidate: {
+        version: 1,
+        candidateDigest: "sha256:candidate",
+        sourceDigest: "sha256:source",
+        recipeDigest: "sha256:recipe",
+        policyDigest: "sha256:policy",
+      },
     },
     sourceReplicaId: "swarm:agent:main:main:parent-run",
     targetReplicaId: "code-run:bridge:1",
@@ -55,14 +64,19 @@ function preparedVerifier() {
 
 async function launchPreparedVerifier() {
   const prepared = preparedVerifier();
+  const input = {
+    ...prepared,
+    collect: true,
+    groupId: "swarm:agent:main:main:parent-run",
+  };
+  const fingerprint = `sha256:${createHash("sha256")
+    .update(stableStringify(input))
+    .digest("hex")}`;
   return await spawnSubagentDirect(
     {
-      ...prepared,
-      collect: true,
-      groupId: "swarm:agent:main:main:parent-run",
+      ...input,
       swarmLaunchReplayKey: "code-run:bridge:1",
-      swarmLaunchRequestFingerprint:
-        "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      swarmLaunchRequestFingerprint: fingerprint,
     },
     {
       agentSessionKey: "agent:main:main",
@@ -128,6 +142,9 @@ describe("native dynamics spawn boundary", () => {
       expect(launch).toBeDefined();
       expect(launch?.params.message).toEqual(expect.stringContaining("independent-verifier"));
       expect(launch?.params.message).toEqual(expect.stringContaining("sha256:candidate"));
+      expect(launch?.params.message).toEqual(expect.stringContaining("sha256:source"));
+      expect(launch?.params.message).toEqual(expect.stringContaining("sha256:recipe"));
+      expect(launch?.params.message).toEqual(expect.stringContaining("sha256:policy"));
       expect(launch?.params.message).toEqual(
         expect.stringContaining("Check the referenced candidate without changing it"),
       );
