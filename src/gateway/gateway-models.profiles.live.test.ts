@@ -85,6 +85,7 @@ import {
 import type { ModelsConfig, ModelProviderConfig, OpenClawConfig } from "../config/types.js";
 import {
   captureAgentRunLifecycleGeneration,
+  emitAgentEvent,
   onAgentEventForRun,
   withAgentRunLifecycleGeneration,
 } from "../infra/agent-events.js";
@@ -1111,18 +1112,55 @@ describe("readGatewayLiveProviderErrorObservation", () => {
   it("prefers the bounded raw provider preview", () => {
     expect(
       readGatewayLiveProviderErrorObservation({
-        errorObservation: {
-          rawErrorPreview: "  raw provider detail  ",
-          providerErrorMessagePreview: "structured detail",
-        },
+        rawErrorPreview: "  raw provider detail  ",
+        providerErrorMessagePreview: "structured detail",
       }),
     ).toBe("raw provider detail");
   });
 
   it("ignores malformed observations", () => {
-    expect(readGatewayLiveProviderErrorObservation({ errorObservation: "not-an-object" })).toBe(
-      undefined,
-    );
+    expect(readGatewayLiveProviderErrorObservation("not-an-object")).toBe(undefined);
+  });
+});
+
+describe("withGatewayLiveProviderErrorCapture", () => {
+  it("retains an attempt error until fallback settlement", async () => {
+    const runId = "run-provider-attempt-error";
+    await withGatewayLiveProviderErrorCapture({
+      runId,
+      run: async (getProviderError) => {
+        emitAgentEvent({
+          runId,
+          stream: "lifecycle",
+          providerErrorObservation: { rawErrorPreview: "attempt provider detail" },
+          data: { phase: "error" },
+        });
+        expect(getProviderError()).toBe("attempt provider detail");
+      },
+    });
+  });
+
+  it("releases the run listener when the probe fails before a terminal event", async () => {
+    const runId = "run-provider-capture-cleanup";
+    let readCapturedError = () => undefined as string | undefined;
+
+    await expect(
+      withGatewayLiveProviderErrorCapture({
+        runId,
+        run: async (getProviderError) => {
+          readCapturedError = getProviderError;
+          throw new Error("fixture disconnect");
+        },
+      }),
+    ).rejects.toThrow("fixture disconnect");
+
+    emitAgentEvent({
+      runId,
+      stream: "lifecycle",
+      providerErrorObservation: { rawErrorPreview: "late provider detail" },
+      data: { phase: "error", fallbackExhaustedFailure: true },
+    });
+    expect(readCapturedError()).toBeUndefined();
   });
 });
 
@@ -4117,10 +4155,7 @@ function formatGatewayLiveAgentWaitFailure(params: {
   );
 }
 
-function readGatewayLiveProviderErrorObservation(
-  data: Record<string, unknown>,
-): string | undefined {
-  const observation = data.errorObservation;
+function readGatewayLiveProviderErrorObservation(observation: unknown): string | undefined {
   if (!observation || typeof observation !== "object") {
     return undefined;
   }
@@ -4132,6 +4167,27 @@ function readGatewayLiveProviderErrorObservation(
     }
   }
   return undefined;
+}
+
+async function withGatewayLiveProviderErrorCapture<T>(params: {
+  runId: string;
+  run: (getProviderError: () => string | undefined) => Promise<T>;
+}): Promise<T> {
+  let providerError: string | undefined;
+  const stop = onAgentEventForRun(params.runId, (event) => {
+    if (event.stream !== "lifecycle") {
+      return;
+    }
+    const observed = readGatewayLiveProviderErrorObservation(event.providerErrorObservation);
+    if (observed) {
+      providerError = observed;
+    }
+  });
+  try {
+    return await params.run(() => providerError);
+  } finally {
+    stop();
+  }
 }
 
 function isGatewayAgentWaitCompletedWithoutReply(result: unknown): boolean {
@@ -4193,124 +4249,110 @@ async function requestGatewayAgentText(params: {
 }) {
   const baselineMessageCount = (await readSessionMessagesForLiveProbe(params.sessionKey)).length;
   const runId = params.idempotencyKey;
-  let providerError: string | undefined;
-  let stopErrorCapture = () => {};
-  stopErrorCapture = onAgentEventForRun(runId, (event) => {
-    if (event.stream !== "lifecycle") {
-      return;
-    }
-    const phase = event.data.phase;
-    const terminal =
-      phase === "end" || (phase === "error" && event.data.fallbackExhaustedFailure === true);
-    if (!terminal) {
-      return;
-    }
-    providerError = readGatewayLiveProviderErrorObservation(event.data);
-    stopErrorCapture();
-  });
-  const accepted = await withGatewayLiveProbeTimeout(
-    params.client.request("agent", {
-      sessionKey: params.sessionKey,
-      idempotencyKey: runId,
-      message: params.message,
-      thinking: params.thinkingLevel,
-      deliver: false,
-      timeout: Math.ceil(GATEWAY_LIVE_AGENT_RUN_TIMEOUT_MS / 1_000),
-      attachments: params.attachments,
-    }),
-    `${params.context}: agent-accept`,
-  ).catch((error: unknown) => {
-    stopErrorCapture();
-    throw error;
-  });
-  if (accepted?.status !== "accepted") {
-    stopErrorCapture();
-    throw new Error(`agent status=${String(accepted?.status)}`);
-  }
-  if (params.thinkingLevel === "ultra") {
-    expect(accepted.runId, "Ultra probe must retain its accepted run identity").toBe(runId);
-    expect(accepted.sessionKey, "Ultra probe must retain its accepted session").toBe(
-      params.sessionKey,
-    );
-    recordOpenAIUltraAdmission(params.client, runId, params.sessionKey);
-    logProgress(
-      `[ultra] accepted=${JSON.stringify({ runId, sessionKey: params.sessionKey, purpose: params.context })}`,
-    );
-  }
-  if (params.assistantText === "optional") {
-    // Tool-only turns intentionally may not append assistant text. Their
-    // contract is terminal completion; the following turn proves tool state.
-    await waitForGatewayAgentRun({
-      client: params.client,
-      runId,
-      context: `${params.context}: agent-wait`,
-      timeoutMs: GATEWAY_LIVE_AGENT_WAIT_TIMEOUT_MS,
-      allowCompletedWithoutReply: true,
-      getProviderError: () => providerError,
-    });
-    const assistantTexts = await readSessionAssistantTexts(
-      params.sessionKey,
-      params.modelKey,
-      baselineMessageCount,
-      params.message,
-    );
-    return assistantTexts.at(-1) ?? "";
-  }
-  const transcriptPromise = waitForSessionAssistantText({
-    sessionKey: params.sessionKey,
-    baselineMessageCount,
-    expectedUserText: params.message,
-    context: `${params.context}: transcript-final`,
-    modelKey: params.modelKey,
-    timeoutLabel: "model",
-    timeoutMs: GATEWAY_LIVE_TRANSCRIPT_TIMEOUT_MS,
-  }).then((text) => ({ kind: "transcript" as const, text }));
-  const agentWaitPromise = waitForGatewayAgentRun({
-    client: params.client,
+  return await withGatewayLiveProviderErrorCapture({
     runId,
-    context: `${params.context}: agent-wait`,
-    timeoutMs: GATEWAY_LIVE_AGENT_WAIT_TIMEOUT_MS,
-    getProviderError: () => providerError,
-  }).then(
-    () => ({ kind: "agent-ok" as const }),
-    (error: unknown) => ({ kind: "agent-error" as const, error }),
-  );
-  const first = await Promise.race([transcriptPromise, agentWaitPromise]);
-  if (first.kind === "transcript") {
-    // Do not start the next live probe while this run is still cleaning up.
-    // The transcript can be visible before the embedded attempt reacquires and
-    // releases its session lock, and back-to-back probes on the same session
-    // can otherwise trip the takeover fence.
-    const waitResult = await agentWaitPromise;
-    if (waitResult.kind === "agent-error") {
-      throw waitResult.error instanceof Error
-        ? waitResult.error
-        : new Error(String(waitResult.error));
-    }
-    return await waitForSessionAssistantText({
-      sessionKey: params.sessionKey,
-      baselineMessageCount,
-      expectedUserText: params.message,
-      context: `${params.context}: transcript-terminal`,
-      modelKey: params.modelKey,
-      terminalOnly: true,
-      timeoutLabel: "terminal",
-      timeoutMs: GATEWAY_LIVE_PROBE_TIMEOUT_MS,
-    });
-  }
-  void transcriptPromise.catch(() => undefined);
-  if (first.kind === "agent-error") {
-    throw first.error instanceof Error ? first.error : new Error(String(first.error));
-  }
-  return await waitForSessionAssistantText({
-    sessionKey: params.sessionKey,
-    baselineMessageCount,
-    expectedUserText: params.message,
-    context: `${params.context}: transcript-after-agent-wait`,
-    modelKey: params.modelKey,
-    terminalOnly: true,
-    timeoutLabel: "terminal",
-    timeoutMs: GATEWAY_LIVE_PROBE_TIMEOUT_MS,
+    run: async (getProviderError) => {
+      const accepted = await withGatewayLiveProbeTimeout(
+        params.client.request("agent", {
+          sessionKey: params.sessionKey,
+          idempotencyKey: runId,
+          message: params.message,
+          thinking: params.thinkingLevel,
+          deliver: false,
+          timeout: Math.ceil(GATEWAY_LIVE_AGENT_RUN_TIMEOUT_MS / 1_000),
+          attachments: params.attachments,
+        }),
+        `${params.context}: agent-accept`,
+      );
+      if (accepted?.status !== "accepted") {
+        throw new Error(`agent status=${String(accepted?.status)}`);
+      }
+      if (params.thinkingLevel === "ultra") {
+        expect(accepted.runId, "Ultra probe must retain its accepted run identity").toBe(runId);
+        expect(accepted.sessionKey, "Ultra probe must retain its accepted session").toBe(
+          params.sessionKey,
+        );
+        recordOpenAIUltraAdmission(params.client, runId, params.sessionKey);
+        logProgress(
+          `[ultra] accepted=${JSON.stringify({ runId, sessionKey: params.sessionKey, purpose: params.context })}`,
+        );
+      }
+      if (params.assistantText === "optional") {
+        // Tool-only turns intentionally may not append assistant text. Their
+        // contract is terminal completion; the following turn proves tool state.
+        await waitForGatewayAgentRun({
+          client: params.client,
+          runId,
+          context: `${params.context}: agent-wait`,
+          timeoutMs: GATEWAY_LIVE_AGENT_WAIT_TIMEOUT_MS,
+          allowCompletedWithoutReply: true,
+          getProviderError,
+        });
+        const assistantTexts = await readSessionAssistantTexts(
+          params.sessionKey,
+          params.modelKey,
+          baselineMessageCount,
+          params.message,
+        );
+        return assistantTexts.at(-1) ?? "";
+      }
+      const transcriptPromise = waitForSessionAssistantText({
+        sessionKey: params.sessionKey,
+        baselineMessageCount,
+        expectedUserText: params.message,
+        context: `${params.context}: transcript-final`,
+        modelKey: params.modelKey,
+        timeoutLabel: "model",
+        timeoutMs: GATEWAY_LIVE_TRANSCRIPT_TIMEOUT_MS,
+      }).then((text) => ({ kind: "transcript" as const, text }));
+      const agentWaitPromise = waitForGatewayAgentRun({
+        client: params.client,
+        runId,
+        context: `${params.context}: agent-wait`,
+        timeoutMs: GATEWAY_LIVE_AGENT_WAIT_TIMEOUT_MS,
+        getProviderError,
+      }).then(
+        () => ({ kind: "agent-ok" as const }),
+        (error: unknown) => ({ kind: "agent-error" as const, error }),
+      );
+      const first = await Promise.race([transcriptPromise, agentWaitPromise]);
+      if (first.kind === "transcript") {
+        // Do not start the next live probe while this run is still cleaning up.
+        // The transcript can be visible before the embedded attempt reacquires and
+        // releases its session lock, and back-to-back probes on the same session
+        // can otherwise trip the takeover fence.
+        const waitResult = await agentWaitPromise;
+        if (waitResult.kind === "agent-error") {
+          throw waitResult.error instanceof Error
+            ? waitResult.error
+            : new Error(String(waitResult.error));
+        }
+        return await waitForSessionAssistantText({
+          sessionKey: params.sessionKey,
+          baselineMessageCount,
+          expectedUserText: params.message,
+          context: `${params.context}: transcript-terminal`,
+          modelKey: params.modelKey,
+          terminalOnly: true,
+          timeoutLabel: "terminal",
+          timeoutMs: GATEWAY_LIVE_PROBE_TIMEOUT_MS,
+        });
+      }
+      void transcriptPromise.catch(() => undefined);
+      if (first.kind === "agent-error") {
+        throw first.error instanceof Error ? first.error : new Error(String(first.error));
+      }
+      return await waitForSessionAssistantText({
+        sessionKey: params.sessionKey,
+        baselineMessageCount,
+        expectedUserText: params.message,
+        context: `${params.context}: transcript-after-agent-wait`,
+        modelKey: params.modelKey,
+        terminalOnly: true,
+        timeoutLabel: "terminal",
+        timeoutMs: GATEWAY_LIVE_PROBE_TIMEOUT_MS,
+      });
+    },
   });
 }
 
