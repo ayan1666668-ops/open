@@ -72,6 +72,7 @@ describe("release-check", () => {
   });
 
   it("loads sparse release tooling and checks the target worker contract", async ({ command }) => {
+    const diagnostics = command.enableDiagnostics("release-check-target");
     await command.lifetime.run(async () => {
       const root = command.createTempDir("openclaw-release-check-target-");
       const toolingRoot = join(root, "tooling");
@@ -80,6 +81,7 @@ describe("release-check", () => {
         (step: { name?: string }) => step.name === "Checkout trusted Plugin SDK API tooling",
       );
       const sparseRoots = checkout.with["sparse-checkout"].trim().split(/\s+/u) as string[];
+      diagnostics.stage("sparse-inventory");
       const tracked = await command.run(
         "git",
         ["ls-files", "-z", "--", ":(top,glob)*", ...sparseRoots],
@@ -88,6 +90,7 @@ describe("release-check", () => {
       expect(tracked.error, "sparse tooling file inventory").toBeUndefined();
       expect(tracked.status, tracked.stderr).toBe(0);
       const trackedPaths = tracked.stdout.split("\0").filter(Boolean);
+      diagnostics.stage("runtime-import-closure");
       // Preserve the workflow's sparse boundary without copying the whole source tree.
       const requiredPaths = new Set([
         ...collectRuntimeImportClosure(process.cwd(), [
@@ -107,6 +110,7 @@ describe("release-check", () => {
         [...requiredPaths].filter((file) => !sparsePaths.has(file)),
         "release tooling dependencies must belong to the workflow sparse checkout",
       ).toEqual([]);
+      diagnostics.stage("sparse-copy");
       for (const relativePath of trackedPaths.filter(
         (file) => !file.includes("/") || requiredPaths.has(file),
       )) {
@@ -142,6 +146,7 @@ describe("release-check", () => {
         // npm runs its notifier separately from the offline tarball inspection.
         npm_config_update_notifier: "false",
       };
+      diagnostics.stage("sparse-import-probe");
       const probe = await command.run(
         process.execPath,
         [
@@ -175,6 +180,7 @@ describe("release-check", () => {
         ),
       });
 
+      diagnostics.stage("packed-fixture-setup");
       copyFileSync("appcast.xml", join(root, "appcast.xml"));
       mkdirSync(join(root, "src/shared"), { recursive: true });
       mkdirSync(join(root, "src/worker"), { recursive: true });
@@ -276,6 +282,7 @@ describe("release-check", () => {
         includesLocator,
         expected,
       } of cases) {
+        diagnostics.stage(name);
         const packedWorkerRoot = join(packedRoot, "dist/worker");
         rmSync(packedWorkerRoot, { recursive: true, force: true });
         mkdirSync(packedWorkerRoot);
@@ -355,7 +362,8 @@ describe("release-check", () => {
             "release-check: target worker producer is missing WORKER_BUNDLE_*_PATH declarations.",
         },
       ];
-      for (const { source, expected } of invalidContracts) {
+      for (const [index, { source, expected }] of invalidContracts.entries()) {
+        diagnostics.stage(`invalid-worker-contract-${index}`);
         writeFileSync(join(root, "src/shared/worker-bundle-hash.ts"), source);
         const result = await command.run(
           process.execPath,
@@ -373,6 +381,7 @@ describe("release-check", () => {
 
       // Shared worker helpers predate the deploy producer and cannot define the
       // package contract for those historical frozen targets.
+      diagnostics.stage("target-without-worker-producer");
       writeFileSync(
         join(root, "src/shared/worker-bundle-hash.ts"),
         "export const WORKER_BUNDLE_ARTIFACT_PATHS = [];\n",
@@ -401,6 +410,7 @@ describe("release-check", () => {
         "release-check: packed dist/plugin-sdk directory not found.",
       );
       expect(noWorkerResult.stderr).not.toContain("Worker deploy artifact");
+      diagnostics.stage("assertions-complete");
     });
   });
 

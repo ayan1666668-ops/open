@@ -19,6 +19,10 @@ import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { hasUnjoinedWork, runManagedCommand } from "../../scripts/lib/managed-child-process.mts";
+import {
+  createFixtureDiagnostics,
+  type FixtureDiagnostics,
+} from "../helpers/fixture-diagnostics.js";
 import { createNestedGitEnv } from "../helpers/temp-repo.js";
 
 const repository = fileURLToPath(new URL("../../", import.meta.url));
@@ -43,8 +47,11 @@ type Inspection = {
   elapsedMs: number;
 };
 
-async function withFixture(scenario: (context: ReturnType<typeof createFixture>) => Promise<void>) {
-  const f = createFixture();
+async function withFixture(
+  scenario: (context: ReturnType<typeof createFixture>) => Promise<void>,
+  diagnostics?: FixtureDiagnostics,
+) {
+  const f = createFixture(diagnostics);
   let failure: Error | undefined;
   try {
     await scenario(f);
@@ -53,8 +60,9 @@ async function withFixture(scenario: (context: ReturnType<typeof createFixture>)
       error instanceof Error ? error : new Error("Recovery scenario failed", { cause: error });
   }
   try {
-    await f.close();
+    await f.close(Boolean(failure));
   } catch (error) {
+    diagnostics?.report("failure");
     throw failure
       ? new AggregateError([failure, error], "Recovery assertion and fixture cleanup failed", {
           cause: error,
@@ -66,7 +74,7 @@ async function withFixture(scenario: (context: ReturnType<typeof createFixture>)
   }
 }
 
-function createFixture() {
+function createFixture(diagnostics?: FixtureDiagnostics) {
   // openclaw-temp-dir: allow retain input ownership when a child cannot be joined
   const root = mkdtempSync(join(tmpdir(), "openclaw-crabbox-recovery-"));
   const source = join(root, "source"),
@@ -149,7 +157,9 @@ if (plan.gate) {
     args: string[],
     override: NodeJS.ProcessEnv = {},
     timeoutMs = 30_000,
+    role = "command",
   ) => {
+    const observation = diagnostics?.command(role);
     const controller = new AbortController();
     controllers.add(controller);
     const task = (async () => {
@@ -157,6 +167,7 @@ if (plan.gate) {
         stderr = "",
         signal: NodeJS.Signals | null = null,
         tooLarge = false;
+      let failure: unknown;
       try {
         const status = await runManagedCommand({
           bin: binary,
@@ -169,6 +180,7 @@ if (plan.gate) {
           signal: controller.signal,
           onReady(child) {
             const capture = (chunk: Buffer, output: "stdout" | "stderr") => {
+              observation?.output(output, chunk.byteLength);
               if (tooLarge) {
                 return;
               }
@@ -186,14 +198,17 @@ if (plan.gate) {
             child.once("exit", (_code, received) => {
               signal = received;
             });
+            observation?.ready(child);
           },
         });
         expect(tooLarge).toBe(false);
         return { status, signal, stdout, stderr };
       } catch (error) {
+        failure = error;
         unjoined ||= hasUnjoinedWork(error);
         throw error;
       } finally {
+        observation?.settled(failure);
         controllers.delete(controller);
       }
     })();
@@ -204,7 +219,7 @@ if (plan.gate) {
     );
     return task;
   };
-  const program = (body: string, prelude = "", timeoutMs = 30_000) =>
+  const program = (body: string, prelude = "", timeoutMs = 30_000, role = "program") =>
     command(
       process.execPath,
       [
@@ -228,6 +243,7 @@ ${body}`,
       ],
       {},
       timeoutMs,
+      role,
     );
   const prepare = async (
     after = "",
@@ -246,6 +262,7 @@ fs.writeSync(1,JSON.stringify({root:cap.staging.root,source:cap.directory,receip
 process.kill(process.pid,'SIGKILL');`,
       options.prelude,
       options.before ? 120_000 : 30_000,
+      "prepare",
     );
     expect(result.signal, result.stderr).toBe("SIGKILL");
     return JSON.parse(result.stdout) as Stage;
@@ -255,6 +272,8 @@ process.kill(process.pid,'SIGKILL');`,
       process.execPath,
       [resolve(repository, "scripts/crabbox-wrapper.mjs"), "staging", ...args],
       override,
+      undefined,
+      "wrapper",
     );
   const recover = async (stage: Stage, args: string[] = [], override: NodeJS.ProcessEnv = {}) => {
     const result = await wrapper(["recover", stage.receipt.id, ...args], override);
@@ -295,11 +314,15 @@ process.kill(process.pid,'SIGKILL');`,
     git: (...args: string[]) => gitAt(source, ...args),
     gitAt,
     waitFor,
+    stage: (value: string) => diagnostics?.stage(value),
     receipt: (stage: Stage) =>
       JSON.parse(readFileSync(join(stage.root, "staging.json"), "utf8")) as Receipt,
-    async close() {
+    async close(failed = false) {
       for (const controller of controllers) {
         controller.abort();
+      }
+      if (failed) {
+        diagnostics?.report("failure");
       }
       await Promise.allSettled(pending);
       if (unjoined) {
@@ -370,13 +393,16 @@ describe.skipIf(process.platform === "win32")(
             ['filter "fixture"', "process"],
             ["diff", "external"],
           ] as const) {
+            f.stage(`${section}.${key}`);
             const bytes = `[${section}]\n${key} = ${JSON.stringify(callback)}\n`;
             writeFileSync(config, bytes);
             if (section.startsWith("filter ")) {
+              f.stage("filter.process-unused");
               const unused = await f.prepare();
               expect(unused.receipt.hold).toBeUndefined();
               expect((await f.recover(unused)).report.recovered).toBe(true);
               writeFileSync(join(f.source, ".gitattributes"), "source.txt filter=fixture\n");
+              f.stage("filter.process-used");
             }
             const stage = await f.prepare(
               admit +
@@ -395,6 +421,7 @@ describe.skipIf(process.platform === "win32")(
             });
             expect(readFileSync(config, "utf8")).toBe(bytes);
             if (section.startsWith("filter ")) {
+              f.stage("filter.process-deleted-source");
               const sourceFile = join(f.source, "source.txt");
               const retained = readFileSync(sourceFile);
               rmSync(sourceFile);
@@ -410,6 +437,7 @@ describe.skipIf(process.platform === "win32")(
             rmSync(join(f.source, ".gitattributes"), { force: true });
           }
           for (const driver of ["unset", "unspecified"]) {
+            f.stage(`filter-${driver}`);
             writeFileSync(config, `[filter "${driver}"]\nprocess = ${JSON.stringify(callback)}\n`);
             writeFileSync(join(f.source, ".gitattributes"), `source.txt filter=${driver}\n`);
             expect(f.git("check-attr", "filter", "--", "source.txt")).toBe(
@@ -420,14 +448,17 @@ describe.skipIf(process.platform === "win32")(
             expect((await f.recover(ambiguous)).report.recovered).toBe(false);
           }
           rmSync(join(f.source, ".gitattributes"));
+          f.stage("fsmonitor-disabled");
           writeFileSync(config, "[core]\nfsmonitor = false\n");
           expect((await f.recover(first!)).report.recovered).toBe(false);
           const disabled = await f.prepare();
           expect(disabled.receipt.hold).toBeUndefined();
           expect((await f.recover(disabled)).report.recovered).toBe(true);
+          f.stage("additional-git-workspace");
           const additional = await f.prepare("", { localGitSeed: true });
           expect(additional.receipt.hold).toBe("writers");
           expect((await f.recover(additional)).report.recovered).toBe(false);
+          f.stage("old-receipt");
           const earlier = await f.prepare();
           writeFileSync(
             join(earlier.root, "staging.json"),
@@ -437,7 +468,7 @@ describe.skipIf(process.platform === "win32")(
             recovered: false,
             reason: expect.stringContaining("invalid metadata"),
           });
-        }),
+        }, createFixtureDiagnostics("staging-callbacks")),
       120_000,
     );
 
