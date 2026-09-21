@@ -3908,6 +3908,12 @@ export const en: TranslationMap & {
       archived: "No longer pending",
       archivedReason: "The conversation moved on. You can still answer this question.",
       sendFailed: "Could not send your answer. Your draft is preserved.",
+      queued: "Answer queued",
+      sending: "Sending answer…",
+      sent: "Answer sent",
+      failed: "Answer not sent",
+      awaitingConfirmation: "Awaiting delivery confirmation",
+      retry: "Retry answer",
       draftStorageFailed:
         "This answer is not saved on this device. Keep this page open or copy your answer.",
       draftConflict: "This question was edited in another tab. Copy your answer before reloading.",
