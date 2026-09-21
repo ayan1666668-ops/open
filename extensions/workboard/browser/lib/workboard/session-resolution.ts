@@ -7,7 +7,7 @@ import type {
 import type { GatewaySessionRow } from "../../api/types.ts";
 import { formatUiError } from "../format-error.ts";
 import { normalizeSessionKeyForUiComparison } from "../sessions/session-key.ts";
-import { workboardCardSessionKey } from "./card-state.ts";
+import { workboardCardExecutionSessionKey, workboardCardSessionKey } from "./card-state.ts";
 import { isReservedSessionKey, workboardSessionKeyMatches } from "./session-links.ts";
 import type { WorkboardCard } from "./types.ts";
 
@@ -24,7 +24,28 @@ export function workboardCardSessionTarget(
   card: WorkboardCard,
   session?: BoardGetParams,
 ): BoardGetParams | undefined {
-  const key = session?.sessionKey ?? workboardCardSessionKey(card);
+  const key = workboardCardSessionKey(card);
+  const resolved =
+    key && session && workboardSessionKeyMatches(session.sessionKey, key) ? session : undefined;
+  return key ? resolveWorkboardSessionTarget(key, resolved) : undefined;
+}
+
+export function workboardCardExecutionSessionTarget(
+  card: WorkboardCard,
+  session?: BoardGetParams,
+): BoardGetParams | undefined {
+  const key = workboardCardExecutionSessionKey(card);
+  // A cached primary/session resolution cannot redirect worker controls.
+  const resolved =
+    key && session && workboardSessionKeyMatches(session.sessionKey, key) ? session : undefined;
+  return resolveWorkboardSessionTarget(key, resolved);
+}
+
+function resolveWorkboardSessionTarget(
+  linkedKey: string | undefined,
+  session?: BoardGetParams,
+): BoardGetParams | undefined {
+  const key = session?.sessionKey ?? linkedKey;
   // Provisional links need a resolved key; reserved keys also need an explicit owner.
   // The card's current assignee does not identify the original execution.
   if (

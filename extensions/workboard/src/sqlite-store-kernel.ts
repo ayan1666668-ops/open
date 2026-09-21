@@ -49,6 +49,7 @@ import {
   workboardCardConsumesOwnerSlot,
   workboardCardSlotOwner,
 } from "./store-constants.js";
+import { cardSessionKey, canHoldPrimarySessionBinding } from "./store-session-binding.js";
 
 type SyncStore<T> = {
   [K in keyof T]: T[K] extends (...args: infer A) => Promise<infer R> ? (...args: A) => R : never;
@@ -61,6 +62,24 @@ export type WorkboardSqliteKernel = {
   dataVersion(this: void): number;
   close(this: void): void;
 };
+
+const PRIMARY_SESSION_COLUMNS = [
+  "id",
+  "session_key",
+  "primary_session_detached",
+  "execution_id",
+  "execution_session_key",
+] as const;
+
+function rowPrimarySessionKey(row: Row): string | undefined {
+  // Match readExecution's absent-record rule and the public binding normalization.
+  return (
+    stringValue(row, "session_key")?.trim() ||
+    (numberValue(row, "primary_session_detached") !== 1 && stringValue(row, "execution_id")
+      ? stringValue(row, "execution_session_key")?.trim()
+      : undefined)
+  );
+}
 
 class WorkboardSqliteCardStore implements SyncStore<WorkboardCardStore> {
   constructor(private readonly db: DatabaseSync) {}
@@ -86,9 +105,32 @@ class WorkboardSqliteCardStore implements SyncStore<WorkboardCardStore> {
     }
   }
 
+  private insertReservedCard(card: WorkboardCard): void {
+    const sessionKey = cardSessionKey(card);
+    if (sessionKey && canHoldPrimarySessionBinding(card)) {
+      const query = getNodeSqliteKysely<WorkboardCardDatabase>(this.db)
+        .selectFrom("workboard_cards")
+        .select(PRIMARY_SESSION_COLUMNS)
+        .where("id", "!=", card.id)
+        .where("status", "not in", ["blocked", "done"])
+        .where((eb) => eb.or([eb("archived_at", "is", null), eb("archived_at", "=", 0)]));
+      // Share JavaScript normalization with callers, including legacy blank keys.
+      // All writers invoke this inside their existing BEGIN IMMEDIATE transaction.
+      for (const row of iterateSqliteQuerySync(this.db, query)) {
+        const reserved = rowPrimarySessionKey(row);
+        if (reserved === sessionKey) {
+          throw new Error(
+            `session ${sessionKey} is already reserved by card ${requiredString(row, "id")}.`,
+          );
+        }
+      }
+    }
+    insertCard(this.db, card);
+  }
+
   register(key: string, value: PersistedWorkboardCard): void {
     this.validatePayload(key, value);
-    runSqliteImmediateTransactionSync(this.db, () => insertCard(this.db, value.card));
+    runSqliteImmediateTransactionSync(this.db, () => this.insertReservedCard(value.card));
   }
 
   registerIfAbsent(key: string, value: PersistedWorkboardCard): boolean {
@@ -97,7 +139,7 @@ class WorkboardSqliteCardStore implements SyncStore<WorkboardCardStore> {
       if (this.db.prepare("SELECT 1 FROM workboard_cards WHERE id = ?").get(key)) {
         return false;
       }
-      insertCard(this.db, value.card);
+      this.insertReservedCard(value.card);
       return true;
     });
   }
@@ -112,7 +154,7 @@ class WorkboardSqliteCardStore implements SyncStore<WorkboardCardStore> {
       if (!this.matchesUpdatedAt(key, expectedUpdatedAt)) {
         return false;
       }
-      insertCard(this.db, value.card);
+      this.insertReservedCard(value.card);
       return true;
     });
   }
@@ -173,7 +215,7 @@ class WorkboardSqliteCardStore implements SyncStore<WorkboardCardStore> {
       // Validate the target's stored tree before replacing it, without decoding
       // unrelated cards as an incidental prerequisite for claiming this one.
       readCard(this.db, current);
-      insertCard(this.db, value.card);
+      this.insertReservedCard(value.card);
       return "updated";
     });
   }
@@ -259,8 +301,8 @@ class WorkboardSqliteCardStore implements SyncStore<WorkboardCardStore> {
   }
 
   entries(scope?: WorkboardCardReadScope): Array<{ key: string; value: PersistedWorkboardCard }> {
-    // Selection and hydration must agree if another connection changes a parent or sibling.
-    return scope?.kind === "worker-context"
+    // Selection and hydration must agree if another connection changes matching cards.
+    return scope?.kind === "worker-context" || scope?.kind === "session"
       ? runSqliteDeferredTransactionSync(this.db, () => this.readEntries(scope))
       : this.readEntries(scope);
   }
@@ -276,17 +318,21 @@ class WorkboardSqliteCardStore implements SyncStore<WorkboardCardStore> {
     if (scope?.kind === "board") {
       query = query.where("board_id", "=", scope.boardId);
     } else if (scope?.kind === "session") {
-      // Empty direct keys decode as absent; execution keys require an execution record.
-      query = query.where((eb) =>
-        eb.or([
-          eb("session_key", "=", scope.sessionKey),
-          eb.and([
-            eb.or([eb("session_key", "is", null), eb("session_key", "=", "")]),
-            eb("execution_id", "!=", ""),
-            eb("execution_session_key", "=", scope.sessionKey),
-          ]),
-        ]),
-      );
+      const keys = getNodeSqliteKysely<WorkboardCardDatabase>(this.db)
+        .selectFrom("workboard_cards")
+        .select(PRIMARY_SESSION_COLUMNS);
+      const ids: string[] = [];
+      // SQLite trim does not match JavaScript's Unicode whitespace normalization.
+      // Inspect only identity scalars; unrelated card payloads remain unhydrated.
+      for (const row of iterateSqliteQuerySync(this.db, keys)) {
+        if (rowPrimarySessionKey(row) === scope.sessionKey) {
+          ids.push(requiredString(row, "id"));
+        }
+      }
+      if (ids.length === 0) {
+        return [];
+      }
+      query = query.where("id", "in", sqliteStringSet(ids));
     } else if (scope?.kind === "worker-context") {
       const ids = this.workerContextCardIds(scope);
       if (ids.length === 0) {

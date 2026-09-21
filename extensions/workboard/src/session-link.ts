@@ -1,5 +1,6 @@
 import type { WorkboardCard } from "@openclaw/workboard-contract";
-import { cardBoardId, cardRunId, cardSessionKey } from "./store-card-helpers.js";
+import { cardBoardId, cardRunId } from "./store-card-helpers.js";
+import { cardExecutionSessionKey, workboardSessionKeyMatches } from "./store-session-binding.js";
 
 function sanitizeSessionSegment(value: string | undefined, fallback: string): string {
   const sanitized = (value ?? fallback)
@@ -17,23 +18,16 @@ export function workboardSessionKeyForCard(card: WorkboardCard): string {
   return card.agentId ? `agent:${sanitizeSessionSegment(card.agentId, "agent")}:${suffix}` : suffix;
 }
 
-function sessionKeyMatchesCard(candidate: string, cardKey: string): boolean {
-  return (
-    candidate === cardKey ||
-    (cardKey.startsWith("subagent:workboard-") && candidate.endsWith(`:${cardKey}`))
-  );
-}
-
 export function workboardCardMatchesLifecycleLink(
   card: WorkboardCard,
   source: { sessionKey?: string; runId?: string },
 ): boolean {
-  const linkedSessionKey = cardSessionKey(card);
+  const linkedSessionKey = cardExecutionSessionKey(card);
   const sessionMatches = Boolean(
     source.sessionKey &&
     (linkedSessionKey
-      ? sessionKeyMatchesCard(source.sessionKey, linkedSessionKey)
-      : sessionKeyMatchesCard(source.sessionKey, workboardSessionKeyForCard(card))),
+      ? workboardSessionKeyMatches(source.sessionKey, linkedSessionKey)
+      : workboardSessionKeyMatches(source.sessionKey, workboardSessionKeyForCard(card))),
   );
   const linkedRunId = cardRunId(card);
   if (linkedRunId && source.runId) {
@@ -46,5 +40,5 @@ export function workboardCardMatchesLifecycleLink(
 }
 
 export function workboardCardSessionLookupKey(card: WorkboardCard): string {
-  return cardSessionKey(card) ?? workboardSessionKeyForCard(card);
+  return cardExecutionSessionKey(card) ?? workboardSessionKeyForCard(card);
 }

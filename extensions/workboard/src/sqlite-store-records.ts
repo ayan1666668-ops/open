@@ -532,6 +532,9 @@ export function readCard(db: DatabaseSync, row: Row, preloaded?: CardChildRows):
     ...(stringValue(row, "notes") ? { notes: stringValue(row, "notes") } : {}),
     ...(stringValue(row, "agent_id") ? { agentId: stringValue(row, "agent_id") } : {}),
     ...(stringValue(row, "session_key") ? { sessionKey: stringValue(row, "session_key") } : {}),
+    ...(numberValue(row, "primary_session_detached") === 1
+      ? { primarySessionDetached: true as const }
+      : {}),
     ...(stringValue(row, "run_id") ? { runId: stringValue(row, "run_id") } : {}),
     ...(stringValue(row, "task_id") ? { taskId: stringValue(row, "task_id") } : {}),
     ...(stringValue(row, "source_url") ? { sourceUrl: stringValue(row, "source_url") } : {}),

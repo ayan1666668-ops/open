@@ -73,6 +73,7 @@
       "workboard_link",
       "workboard_read",
       "workboard_claim",
+      "workboard_session_bind",
       "workboard_heartbeat",
       "workboard_complete",
       "workboard_attachment_add",
@@ -121,6 +122,9 @@
       "optional": true
     },
     "workboard_read": {
+      "optional": true
+    },
+    "workboard_session_bind": {
       "optional": true
     },
     "workboard_claim": {
@@ -223,9 +227,9 @@
     "properties": {}
   },
   "controlUi": {
-    "entry": "dist/control-ui/13b6bea13c6ab02980e511c6ede160d1f15d9c27521a6af50c78f5a89ff40fd7/index.js",
+    "entry": "dist/control-ui/1397fe8883557b97dc77f8a50843882c26ff160cadc0da642297d2f2a980d80e/index.js",
     "styles": [
-      "dist/control-ui/13b6bea13c6ab02980e511c6ede160d1f15d9c27521a6af50c78f5a89ff40fd7/index.css"
+      "dist/control-ui/1397fe8883557b97dc77f8a50843882c26ff160cadc0da642297d2f2a980d80e/index.css"
     ]
   }
 }

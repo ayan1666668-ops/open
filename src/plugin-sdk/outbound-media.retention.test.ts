@@ -22,6 +22,10 @@ function prepare(store: ReturnType<typeof createHostedOutboundMediaStore>) {
 }
 
 describe("hosted outbound media post-expiry retention", () => {
+  // SQLite workers use real time, independently of this fake logical media clock.
+  // Keep physical rows alive while advancing logical expiry and grace explicitly.
+  const ttlMs = 60_000;
+  const postExpiryRetentionMs = 60_000;
   beforeEach(() => {
     resetPluginStateStoreForTests();
     vi.restoreAllMocks();
@@ -50,9 +54,9 @@ describe("hosted outbound media post-expiry retention", () => {
     const store = createHostedOutboundMediaStore({
       metadataStore,
       chunkStore,
-      ttlMs: 100,
-      postExpiryRetentionMs: 100,
-      resolveExpiresAtMs: (ttlMs) => Date.now() + ttlMs,
+      ttlMs,
+      postExpiryRetentionMs,
+      resolveExpiresAtMs: (durationMs) => Date.now() + durationMs,
       createId: () => MEDIA_ID,
       createToken: () => "token123",
       rawChunkBytes: 4,
@@ -61,13 +65,13 @@ describe("hosted outbound media post-expiry retention", () => {
     });
 
     await prepare(store);
-    vi.setSystemTime(1_101);
+    vi.setSystemTime(1_000 + ttlMs + 1);
     await expect(store.readMetadata(MEDIA_ID)).resolves.toBeNull();
     await store.cleanupExpired();
     expect(await metadataStore.entries()).toHaveLength(1);
     expect(await chunkStore.entries()).toHaveLength(3);
 
-    vi.setSystemTime(1_201);
+    vi.setSystemTime(1_000 + ttlMs + postExpiryRetentionMs + 1);
     await store.cleanupExpired();
     expect(await metadataStore.entries()).toEqual([]);
     expect(await chunkStore.entries()).toEqual([]);
@@ -91,9 +95,9 @@ describe("hosted outbound media post-expiry retention", () => {
         maxEntries: 10,
         overflowPolicy: "reject-new",
       }),
-      ttlMs: 100,
-      postExpiryRetentionMs: 100,
-      resolveExpiresAtMs: (ttlMs) => Date.now() + ttlMs,
+      ttlMs,
+      postExpiryRetentionMs,
+      resolveExpiresAtMs: (durationMs) => Date.now() + durationMs,
       createId: () => ids[idIndex++] ?? "444444444444444444444444",
       createToken: () => "token123",
       rawChunkBytes: 4,
@@ -103,10 +107,10 @@ describe("hosted outbound media post-expiry retention", () => {
     });
 
     await expect(prepare(store)).resolves.toContain(ids[0]);
-    vi.setSystemTime(1_101);
+    vi.setSystemTime(1_000 + ttlMs + 1);
     await expect(prepare(store)).rejects.toThrow("capacity is full");
 
-    vi.setSystemTime(1_201);
+    vi.setSystemTime(1_000 + ttlMs + postExpiryRetentionMs + 1);
     await expect(prepare(store)).resolves.toContain(ids[2]);
   });
 });

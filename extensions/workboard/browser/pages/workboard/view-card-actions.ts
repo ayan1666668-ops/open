@@ -21,7 +21,11 @@ import {
   type WorkboardExecutionMode,
   type WorkboardStatus,
 } from "../../lib/workboard/index.ts";
-import { workboardCardSessionTarget } from "../../lib/workboard/session-resolution.ts";
+import { findWorkboardSessionByKey } from "../../lib/workboard/lifecycle.ts";
+import {
+  workboardCardExecutionSessionTarget,
+  workboardCardSessionTarget,
+} from "../../lib/workboard/session-resolution.ts";
 import { openEditModal } from "./view-card-modal.ts";
 import {
   canMutate,
@@ -128,7 +132,21 @@ export function getCardActionState(props: WorkboardProps, card: WorkboardCard) {
   const task = state.tasksByCardId.get(card.id);
   const session = findWorkboardSession(card, props.sessions, props.sessionResolution);
   const linkedSessionKey = workboardCardSessionKey(card);
+  const primarySession = findWorkboardSessionByKey(
+    linkedSessionKey,
+    props.sessions,
+    props.primarySessionResolution ?? props.sessionResolution,
+  );
   const sessionTarget = workboardCardSessionTarget(
+    card,
+    primarySession
+      ? {
+          sessionKey: primarySession.key,
+          ...(primarySession.agentId ? { agentId: primarySession.agentId } : {}),
+        }
+      : undefined,
+  );
+  const executionSessionTarget = workboardCardExecutionSessionTarget(
     card,
     session
       ? { sessionKey: session.key, ...(session.agentId ? { agentId: session.agentId } : {}) }
@@ -150,6 +168,7 @@ export function getCardActionState(props: WorkboardProps, card: WorkboardCard) {
     live,
     linkedSessionKey,
     sessionTarget,
+    executionSessionTarget,
     writable,
     showStartControls: writable && canStartWorkboardCard(state, card),
     archived: Boolean(card.metadata?.archivedAt),
@@ -278,7 +297,7 @@ export function renderStopCardAction(
         host: props.host,
         client: props.client,
         card,
-        session: getCardActionState(props, card).sessionTarget,
+        session: getCardActionState(props, card).executionSessionTarget,
         requestUpdate: props.onRequestUpdate,
       });
     },

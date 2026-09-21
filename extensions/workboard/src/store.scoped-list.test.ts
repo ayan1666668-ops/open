@@ -260,6 +260,7 @@ describe("Workboard context and session-scoped reads", () => {
     const nullFallback = fixtureCard("null-fallback", { execution: execution("null-session") });
     const emptyFallback = fixtureCard("empty-fallback", { execution: execution("empty-session") });
     const absentExecution = fixtureCard("absent-execution", {
+      status: "todo",
       execution: execution("absent-session"),
     });
     for (const card of [direct, nullFallback, emptyFallback, absentExecution]) {

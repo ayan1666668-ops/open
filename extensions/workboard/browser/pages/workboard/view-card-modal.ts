@@ -8,11 +8,7 @@ import {
 import { icons } from "../../components/icons.ts";
 import { renderWorkboardToast } from "../../components/toast.ts";
 import { t } from "../../i18n/index.ts";
-import {
-  changedDraftPayload,
-  draftPayload,
-  workboardCardSessionKey,
-} from "../../lib/workboard/card-state.ts";
+import { changedDraftPayload, draftPayload } from "../../lib/workboard/card-state.ts";
 import {
   addWorkboardCardComment,
   getWorkboardState,
@@ -135,7 +131,8 @@ export function openEditModal(state: WorkboardUiState, card: WorkboardCard) {
   state.draftPriority = card.priority;
   state.draftLabels = card.labels.join(", ");
   state.draftAgentId = card.agentId ?? "";
-  state.draftSessionKey = workboardCardSessionKey(card) ?? "";
+  state.draftSessionKey = card.sessionKey ?? "";
+  state.draftSessionKeyDirty = false;
   state.draftTemplateId = card.metadata?.templateId ?? "";
   state.draftCommentBody = "";
 }
@@ -420,6 +417,7 @@ export function renderCardModal(props: WorkboardProps) {
                   searchable: true,
                   onSelect: (value) => {
                     state.draftSessionKey = value;
+                    state.draftSessionKeyDirty = true;
                     props.onRequestUpdate?.();
                   },
                   disabled: draftActionsBusy,

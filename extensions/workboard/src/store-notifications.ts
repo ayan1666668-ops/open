@@ -3,12 +3,7 @@ import type {
   WorkboardNotificationSubscription,
 } from "@openclaw/workboard-contract";
 import type { PersistedWorkboardNotificationSubscription } from "./persistence-types.js";
-import {
-  cardRunId,
-  cardSessionKey,
-  compareNotifications,
-  notificationSequence,
-} from "./store-card-helpers.js";
+import { cardRunId, compareNotifications, notificationSequence } from "./store-card-helpers.js";
 import type {
   WorkboardNotificationEventsInput,
   WorkboardNotificationListOptions,
@@ -19,6 +14,7 @@ import {
   normalizeBoundedString,
   normalizeNotificationSubscription,
 } from "./store-normalizers.js";
+import { cardSessionKey } from "./store-session-binding.js";
 import { WorkboardWorkflowStore } from "./store-workflow.js";
 
 export class WorkboardNotificationStore extends WorkboardWorkflowStore {

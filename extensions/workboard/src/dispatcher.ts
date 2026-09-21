@@ -528,7 +528,6 @@ async function runWorkboardDispatch(
       });
       const acceptedCard = {
         ...launched,
-        sessionKey: acceptedSessionKey,
         runId: run.runId,
         execution: acceptedExecution,
       };

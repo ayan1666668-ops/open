@@ -190,6 +190,7 @@ export function resetDraftState(state: WorkboardUiState) {
   state.draftLabels = "";
   state.draftAgentId = "";
   state.draftSessionKey = "";
+  state.draftSessionKeyDirty = false;
   state.draftTemplateId = "";
   state.draftCommentBody = "";
   if (resolveStaleEdit) {
@@ -243,7 +244,7 @@ function cardDraftPayload(card: WorkboardCard): WorkboardCardDraft {
     priority: card.priority,
     labels: card.labels,
     agentId: card.agentId ?? "",
-    sessionKey: workboardCardSessionKey(card) ?? "",
+    sessionKey: card.sessionKey ?? "",
     templateId: card.metadata?.templateId ?? "",
   };
 }
@@ -260,7 +261,10 @@ export function changedDraftPayload(state: WorkboardUiState): Record<string, unk
   const previous: Record<string, unknown> = cardDraftPayload(base);
   const patch: Record<string, unknown> = {};
   for (const key of Object.keys(draft)) {
-    if (JSON.stringify(draft[key]) !== JSON.stringify(previous[key])) {
+    if (
+      (key === "sessionKey" && state.draftSessionKeyDirty) ||
+      JSON.stringify(draft[key]) !== JSON.stringify(previous[key])
+    ) {
       patch[key] = key === "templateId" && draft[key] === "" ? null : draft[key];
     }
   }
@@ -322,9 +326,14 @@ export function staleSessionState(session: GatewaySessionRow): WorkboardStaleSta
 }
 
 export function workboardCardSessionKey(card: WorkboardCard): string | undefined {
-  return card.sessionKey ?? card.execution?.sessionKey;
+  return card.sessionKey ?? (card.primarySessionDetached ? undefined : card.execution?.sessionKey);
+}
+
+/** Worker status and controls follow execution, not the independently selected primary chat. */
+export function workboardCardExecutionSessionKey(card: WorkboardCard): string | undefined {
+  return card.execution?.sessionKey ?? card.sessionKey;
 }
 
 export function workboardCardRunId(card: WorkboardCard): string | undefined {
-  return card.runId ?? card.execution?.runId;
+  return card.execution?.runId ?? card.runId;
 }

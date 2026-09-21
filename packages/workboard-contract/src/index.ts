@@ -376,6 +376,8 @@ export type WorkboardCard = {
   labels: string[];
   agentId?: string;
   sessionKey?: string;
+  /** Explicit primary detach; legacy cards without this retain execution fallback. */
+  primarySessionDetached?: true;
   runId?: string;
   taskId?: string;
   sourceUrl?: string;

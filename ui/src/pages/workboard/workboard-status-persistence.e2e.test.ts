@@ -222,7 +222,117 @@ describeControlUiE2e("Control UI Workboard status persistence E2E", () => {
     await server?.close();
   });
 
-  it("preserves an execution-owned session when editing a linked Workboard card", async () => {
+  it.each(["title only", "detach", "A-B-A"] as const)(
+    "preserves %s intent while rebasing a concurrent primary-session change",
+    async (intent) => {
+      const primaryA = linkedSessionKey;
+      const primaryB = "agent:main:chat:primary-b";
+      const current: WorkboardCard = {
+        ...initialCard,
+        sessionKey: primaryB,
+        updatedAt: editedAt,
+        execution: {
+          id: "worker-execution",
+          kind: "agent-session",
+          mode: "autonomous",
+          sessionKey: "agent:main:subagent:worker",
+          status: "running",
+          startedAt: 900,
+          updatedAt: manualTodoAt,
+        },
+      };
+      const patch =
+        intent === "title only"
+          ? { title: "My unsaved title" }
+          : { sessionKey: intent === "detach" ? "" : primaryA };
+      const saved = { ...current, ...patch, updatedAt: editedAt + 1 };
+      const context = await browser.newContext({ serviceWorkers: "block" });
+      const page = await context.newPage();
+      const gateway = await installMockGateway(page, {
+        ...workboardUi,
+        methodResponses: {
+          "config.get": {
+            config: { plugins: { entries: { workboard: { enabled: true } } } },
+            hash: "primary-session-conflict",
+          },
+          "tasks.list": { nextCursor: null, tasks: [] },
+          "sessions.list": {
+            count: 2,
+            sessions: [primaryA, primaryB].map((key, index) => ({
+              key,
+              label: `Primary ${index === 0 ? "A" : "B"}`,
+              kind: "direct",
+              updatedAt: manualTodoAt,
+              totalTokens: 0,
+            })),
+          },
+          "workboard.cards.list": { cards: [initialCard] },
+          "workboard.cards.update": {
+            cases: [
+              {
+                match: { expectedUpdatedAt: initialCard.updatedAt },
+                response: {
+                  __mockError: {
+                    code: "workboard_conflict",
+                    message: "Card changed while you were editing.",
+                    details: { type: "workboard_card_conflict", card: current },
+                  },
+                },
+              },
+              { match: { expectedUpdatedAt: current.updatedAt }, response: { card: saved } },
+            ],
+          },
+        },
+      });
+      try {
+        await page.goto(`${server.baseUrl}workboard`);
+        const card = page.locator(".workboard-card", { hasText: initialCard.title });
+        await card.waitFor();
+        await openCardEditor(card);
+        const editor = page.locator(".workboard-card-draft");
+        await editor.waitFor();
+        const selectSession = async (name: string) => {
+          await editor.getByRole("button", { name: /^Session:/u }).click();
+          await editor.getByRole("option", { name: new RegExp(`^${name}`, "u") }).click();
+        };
+        if (intent === "title only") {
+          await editor.getByLabel("Title").fill("My unsaved title");
+        } else if (intent === "detach") {
+          await selectSession("No linked session");
+        } else {
+          await selectSession("Primary B");
+          await selectSession("Primary A");
+        }
+        await editor.getByRole("button", { name: "Save", exact: true }).click();
+        const notice = page
+          .getByRole("alert")
+          .filter({ hasText: "Your unsaved edits remain in the form." });
+        await notice.waitFor({ state: "visible", timeout: 5000 });
+        const expectedLabel =
+          intent === "title only"
+            ? "Primary B"
+            : intent === "detach"
+              ? "No linked session"
+              : "Primary A";
+        expect(
+          await editor
+            .getByRole("button", { name: `Session: ${expectedLabel}`, exact: true })
+            .isVisible(),
+        ).toBe(true);
+        await editor.getByRole("button", { name: "Save", exact: true }).click();
+        await editor.waitFor({ state: "detached" });
+        const requests = await waitForRequestCount(gateway, "workboard.cards.update", 2);
+        expect(requests.map(requestParams)).toEqual([
+          { id: initialCard.id, expectedUpdatedAt: initialCard.updatedAt, patch },
+          { id: current.id, expectedUpdatedAt: current.updatedAt, patch },
+        ]);
+      } finally {
+        await context.close();
+      }
+    },
+  );
+
+  it("keeps an execution-owned session out of primary edits and preserves it on save", async () => {
     const executionLinkedCard: WorkboardCard = {
       ...initialCard,
       title: "Keep my execution-linked session",
@@ -245,8 +355,14 @@ describeControlUiE2e("Control UI Workboard status persistence E2E", () => {
       title: "Renamed without unlinking the execution",
       updatedAt: editedAt,
     };
+    const artifactDir = captureUiProofEnabled
+      ? createControlUiE2eArtifactDir("workboard-primary-session", artifactParent)
+      : "";
     const context = await browser.newContext({
       locale: "en-US",
+      recordVideo: captureUiProofEnabled
+        ? { dir: artifactDir, size: { height: 900, width: 1280 } }
+        : undefined,
       serviceWorkers: "block",
       viewport: { height: 900, width: 1280 },
     });
@@ -319,11 +435,18 @@ describeControlUiE2e("Control UI Workboard status persistence E2E", () => {
       await openCardEditor(executionCard);
       const editDialog = page.getByRole("dialog", { name: "Edit card" });
       await editDialog.waitFor({ timeout: 10_000 });
+      if (captureUiProofEnabled) {
+        await writeFile(
+          path.join(artifactDir, "primary-editor.png"),
+          await takeControlUiViewportScreenshot(page, editDialog, [page.getByLabel("Title")]),
+        );
+      }
+
       await expect
         .poll(() =>
           page
             .locator(".workboard-card-draft")
-            .getByRole("button", { name: "Session: Execution linked session", exact: true })
+            .getByRole("button", { name: "Session: No linked session", exact: true })
             .isVisible(),
         )
         .toBe(true);

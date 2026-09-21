@@ -4,10 +4,42 @@ import {
   createWorkboardSqliteTestHarness,
   createWorkboardSqliteTestStore,
 } from "./test/sqlite-store.js";
+import { createWorkboardTools } from "./tools.js";
 
 const CLAIM_RECLAIM_MS = 5 * 60 * 1000;
 
 describe("Workboard dispatcher ownership", () => {
+  it("preserves operator primary binding while the accepted execution completes", async () => {
+    const store = createWorkboardSqliteTestStore();
+    const card = await store.create({
+      title: "Primary",
+      status: "ready",
+      sessionKey: "operator",
+      workspaceAccess: { unrestricted: true },
+    });
+    const run = vi.fn().mockResolvedValue({ runId: "accepted", sessionKey: "worker" });
+    const result = await dispatchAndStartWorkboardCards({
+      store,
+      subagent: { run },
+      options: { maxStarts: 1 },
+    });
+    expect(result.started).toHaveLength(1);
+    const running = await store.get(card.id);
+    expect(running).toMatchObject({
+      sessionKey: "operator",
+      execution: { sessionKey: "worker", runId: "accepted" },
+    });
+    await expect(store.create({ title: "Competing", sessionKey: "operator" })).rejects.toThrow(
+      "already reserved by card",
+    );
+    const claim = running!.metadata!.claim!;
+    await store.complete(
+      card.id,
+      { summary: "Done" },
+      { ownerId: claim.ownerId, token: claim.token, sessionKey: "worker" },
+    );
+    expect(await store.get(card.id)).toMatchObject({ sessionKey: "operator", status: "done" });
+  });
   it("dispatches a card whose create input tried to inject archivedAt", async () => {
     const store = createWorkboardSqliteTestStore();
     const now = 10;
@@ -607,6 +639,7 @@ describe("Workboard dispatcher ownership", () => {
       const card = await store.create({
         title: "Worker with unavailable execution persistence",
         status: "ready",
+        sessionKey: "operator-primary",
         workspaceAccess: { unrestricted: true },
       });
       vi.spyOn(store, "acceptExecutionLaunch").mockRejectedValue(
@@ -614,12 +647,18 @@ describe("Workboard dispatcher ownership", () => {
       );
       let provisionalRunId = "";
       const canonicalSessionKey = `agent:worker:subagent:workboard-default-${card.id}`;
+      const workerTools = new Map(
+        createWorkboardTools({
+          store,
+          context: { agentId: "workboard-dispatcher", sessionKey: canonicalSessionKey },
+        }).map((tool) => [tool.name, tool]),
+      );
       const run = vi.fn().mockImplementation(async (input) => {
         provisionalRunId = input.idempotencyKey;
         const persisted = await store.get(card.id);
         expect(persisted).toMatchObject({
           status: "running",
-          sessionKey: input.sessionKey,
+          sessionKey: "operator-primary",
           runId: provisionalRunId,
           execution: {
             status: "running",
@@ -636,6 +675,9 @@ describe("Workboard dispatcher ownership", () => {
             },
           },
         });
+        await workerTools
+          .get("workboard_heartbeat")!
+          .execute("immediate-heartbeat", { id: card.id });
         return { sessionKey: canonicalSessionKey, runId: "accepted-run" };
       });
 
@@ -657,7 +699,7 @@ describe("Workboard dispatcher ownership", () => {
           ...(origin === "dashboard exact-card start"
             ? {
                 card: expect.objectContaining({
-                  sessionKey: canonicalSessionKey,
+                  sessionKey: "operator-primary",
                   runId: "accepted-run",
                 }),
               }
@@ -676,7 +718,10 @@ describe("Workboard dispatcher ownership", () => {
         },
       });
       await expect(
-        store.heartbeat(card.id, { ownerId: "workboard-dispatcher" }),
+        store.heartbeat(card.id, {
+          ownerId: "workboard-dispatcher",
+          sessionKey: canonicalSessionKey,
+        }),
       ).resolves.toMatchObject({
         status: "running",
         metadata: { claim: { ownerId: "workboard-dispatcher" } },
@@ -691,6 +736,13 @@ describe("Workboard dispatcher ownership", () => {
       expect(retry.started).toEqual([]);
       expect(retry.startFailures).toEqual([]);
       expect(run).toHaveBeenCalledOnce();
+      await workerTools
+        .get("workboard_complete")!
+        .execute("complete-after-enrichment-failure", { id: card.id, summary: "Done" });
+      expect(await store.get(card.id)).toMatchObject({
+        status: "done",
+        sessionKey: "operator-primary",
+      });
     },
   );
 
@@ -706,7 +758,7 @@ describe("Workboard dispatcher ownership", () => {
     const run = vi.fn().mockImplementation(async (input) => {
       provisionalRunId = input.idempotencyKey;
       await expect(store.get(card.id)).resolves.toMatchObject({
-        sessionKey: input.sessionKey,
+        execution: { sessionKey: input.sessionKey },
         runId: provisionalRunId,
         metadata: {
           automation: {
@@ -728,7 +780,7 @@ describe("Workboard dispatcher ownership", () => {
     });
 
     await expect(store.get(card.id)).resolves.toMatchObject({
-      sessionKey: canonicalSessionKey,
+      execution: { sessionKey: canonicalSessionKey },
       runId: "accepted-run",
       metadata: {
         automation: {

@@ -5,14 +5,21 @@ import type { AnyAgentTool, OpenClawPluginToolContext } from "openclaw/plugin-sd
 import { safeEqualSecret } from "openclaw/plugin-sdk/security-runtime";
 import { Type } from "typebox";
 import { redactClaimToken } from "./card-redaction.js";
+import { assertCanMutateClaimedCard } from "./store-card-helpers.js";
 import type { WorkboardStore } from "./store.js";
 import {
   cardIdField,
   claimTokenField,
   createWorkboardMoveTool,
+  createWorkboardSessionBindTool,
   strictObject,
 } from "./tools-card-mutations.js";
 import { createWorkboardOrchestrationTools } from "./tools-orchestration.js";
+import {
+  assertWorkboardWorkspaceMutationAccess,
+  canonicalizeWorkboardWorkspaceAccess,
+  resolveToolWorkboardWorkspaceAccess,
+} from "./workspace-access.js";
 
 function contextOwner(ctx: OpenClawPluginToolContext | undefined): string {
   const record = (ctx ?? {}) as Record<string, unknown>;
@@ -117,10 +124,11 @@ function summarizeCard(card: WorkboardCard) {
 }
 
 type WorkboardToolCardParams = {
+  card: WorkboardCard;
   record: Record<string, unknown>;
   id: string;
   token?: string;
-  scope: { ownerId: string; token?: string };
+  scope: { ownerId: string; token?: string; sessionKey?: string };
 };
 type WorkboardToolCardParamsReader = (rawParams: unknown) => Promise<WorkboardToolCardParams>;
 type WorkboardCardMutation = (
@@ -131,7 +139,11 @@ type WorkboardCardMutation = (
 
 const ScopedClaimTokenField = claimTokenField("Claim token for claimed cards.");
 
-function readCardToolParams(rawParams: unknown, ownerId: string): WorkboardToolCardParams {
+function readCardToolParams(
+  rawParams: unknown,
+  ownerId: string,
+  sessionKey?: string,
+): Omit<WorkboardToolCardParams, "card"> {
   const record = rawParams as Record<string, unknown>;
   const id = readStringParam(record, "id", { required: true });
   const token = record.token as string | undefined;
@@ -139,7 +151,7 @@ function readCardToolParams(rawParams: unknown, ownerId: string): WorkboardToolC
     record,
     id,
     token,
-    scope: { ownerId, token },
+    scope: { ownerId, token, sessionKey },
   };
 }
 
@@ -169,20 +181,24 @@ const CardIdSchema = strictObject({
 export function createWorkboardTools(params: {
   context?: OpenClawPluginToolContext;
   store: WorkboardStore;
+  resolveSandboxWorkspaceAuthority?: Parameters<typeof resolveToolWorkboardWorkspaceAccess>[1];
 }): AnyAgentTool[] {
   const { store } = params;
   const ownerId = contextOwner(params.context);
+  const callerSessionKey = params.context?.sessionKey?.trim() || undefined;
   const readScopedCardToolParams = async (rawParams: unknown): Promise<WorkboardToolCardParams> => {
-    const input = readCardToolParams(rawParams, ownerId);
-    await requireScopedCard(store, input.id, ownerId, input.token);
-    return input;
+    const input = readCardToolParams(rawParams, ownerId, callerSessionKey);
+    const card = await requireScopedCard(store, input.id, ownerId, input.token);
+    assertCanMutateClaimedCard(card, input.scope);
+    return { ...input, card };
   };
   const readClaimedCardToolParams = async (
     rawParams: unknown,
   ): Promise<WorkboardToolCardParams> => {
-    const input = readCardToolParams(rawParams, ownerId);
-    await requireClaimedCard(store, input.id, ownerId, input.token);
-    return input;
+    const input = readCardToolParams(rawParams, ownerId, callerSessionKey);
+    const card = await requireClaimedCard(store, input.id, ownerId, input.token);
+    assertCanMutateClaimedCard(card, input.scope);
+    return { ...input, card };
   };
   const runCardMutation = async (
     rawParams: unknown,
@@ -333,10 +349,14 @@ export function createWorkboardTools(params: {
       execute: async (_toolCallId, rawParams) => {
         const record = rawParams as Record<string, unknown>;
         const id = readStringParam(record, "id", { required: true });
-        const claimed = await store.claim(id, {
-          ownerId,
-          ttlSeconds: record.ttlSeconds,
-        });
+        const claimed = await store.claim(
+          id,
+          {
+            ownerId,
+            ttlSeconds: record.ttlSeconds,
+          },
+          { callerSessionKey },
+        );
         return jsonResult({ ...claimed, card: redactClaimToken(claimed.card) });
       },
     },
@@ -553,6 +573,24 @@ export function createWorkboardTools(params: {
       },
     },
     createWorkboardMoveTool({ store, readScopedCardToolParams, redactedCardResult }),
+    createWorkboardSessionBindTool({
+      store,
+      callerSessionKey,
+      authorizeCard: async (card) => {
+        const access = await canonicalizeWorkboardWorkspaceAccess(
+          resolveToolWorkboardWorkspaceAccess(
+            params.context,
+            params.resolveSandboxWorkspaceAuthority,
+          ),
+        );
+        await assertWorkboardWorkspaceMutationAccess(
+          { workspace: card.metadata?.automation?.workspace },
+          access,
+        );
+      },
+      readScopedCardToolParams,
+      redactedCardResult,
+    }),
     ...createWorkboardOrchestrationTools({
       store,
       ownerId,

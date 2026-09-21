@@ -694,9 +694,9 @@ describe("WorkboardStore", () => {
   it("reuses the active captured session across boards and archived duplicates", async () => {
     const store = createWorkboardSqliteTestStore({ createStores: createKernelStores });
     const sessionKey = "agent:main:dashboard:captured";
-    const active = await store.create({ title: "Active", sessionKey, boardId: "default" });
     const historical = await store.create({ title: "Historical", sessionKey, boardId: "ops" });
     await store.archive(historical.id, true);
+    const active = await store.create({ title: "Active", sessionKey, boardId: "default" });
 
     const captured = await store.captureSession({
       title: "Duplicate",
@@ -1744,40 +1744,6 @@ describe("WorkboardStore", () => {
     });
     expect(staleLifecycle.status).toBe("running");
     expect(staleLifecycle.metadata?.lifecycleStatusSourceUpdatedAt).toBeUndefined();
-  });
-
-  it("keeps execution session links aligned with edited card links", async () => {
-    const store = createWorkboardSqliteTestStore({ createStores: createKernelStores });
-    const card = await store.create({
-      title: "Relink me",
-      sessionKey: "agent:main:dashboard:1",
-      execution: {
-        id: "exec-1",
-        kind: "agent-session",
-        engine: "codex",
-        mode: "autonomous",
-        status: "running",
-        model: "openai/gpt-5.5",
-        sessionKey: "agent:main:dashboard:1",
-        startedAt: 10,
-        updatedAt: 10,
-      },
-    });
-
-    const relinked = await store.update(card.id, { sessionKey: "agent:main:dashboard:2" });
-    expect(relinked.sessionKey).toBe("agent:main:dashboard:2");
-    expect(relinked.execution?.sessionKey).toBe("agent:main:dashboard:2");
-    expect(relinked.events?.at(-1)).toMatchObject({
-      kind: "linked",
-      sessionKey: "agent:main:dashboard:2",
-    });
-
-    const unlinked = await store.update(card.id, { sessionKey: "" });
-    expect(unlinked.sessionKey).toBeUndefined();
-    expect(unlinked.execution?.sessionKey).toBeUndefined();
-
-    const cleared = await store.update(card.id, { execution: null });
-    expect(cleared.execution).toBeUndefined();
   });
 
   it("tracks execution attempts as card metadata", async () => {
@@ -4313,6 +4279,7 @@ describe("WorkboardStore", () => {
     });
     await store.create({
       title: "Card-scoped failed notification",
+      status: "blocked",
       boardId: "ops",
       sessionKey: "session-1",
       runId: "run-1",
@@ -4970,7 +4937,7 @@ describe("WorkboardStore", () => {
     }
   });
 
-  it.each(["reused child", "new child"] as const)(
+  it.each(["reused child", "new child", "detached primary"] as const)(
     "reverts decomposition-owned links while preserving a concurrent %s edit",
     async (target) => {
       const harness = createConcurrentSqliteHarness("openclaw-workboard-child-rollback-");
@@ -4978,12 +4945,18 @@ describe("WorkboardStore", () => {
       try {
         const parent = await operation.create({ title: "Parent" });
         const reusedChild =
-          target === "reused child"
-            ? await operation.create({ title: "Existing child", idempotencyKey: "child-key" })
+          target !== "new child"
+            ? await operation.create({
+                title: "Existing child",
+                idempotencyKey: "child-key",
+                ...(target === "detached primary"
+                  ? { sessionKey: "primary", execution: { sessionKey: "primary" } }
+                  : {}),
+              })
             : undefined;
         const pause = paused.pauseAfterMatchingWrite((_key, value) => {
           const card = value?.card;
-          if (!card || (target === "reused child" && card.id !== reusedChild?.id)) {
+          if (!card || (target !== "new child" && card.id !== reusedChild?.id)) {
             return false;
           }
           if (target === "new child" && card.title !== "New child") {
@@ -5007,7 +4980,10 @@ describe("WorkboardStore", () => {
         await pause.reached;
         const child = reusedChild ?? (await host.list()).find((card) => card.title === "New child");
         expect(child).toBeDefined();
-        await host.update(child!.id, { notes: `Concurrent ${target} edit` });
+        await host.update(child!.id, {
+          notes: `Concurrent ${target} edit`,
+          ...(target === "detached primary" ? { sessionKey: "" } : {}),
+        });
         pause.resume();
 
         await expect(decomposition).rejects.toThrow(/title is required/);
@@ -5015,12 +4991,17 @@ describe("WorkboardStore", () => {
         const rolledBackChild = await host.get(child!.id);
         expect(rolledBackChild?.notes).toBe(`Concurrent ${target} edit`);
         expect(rolledBackChild?.metadata?.links).toBeUndefined();
+        if (target === "detached primary") {
+          expect(rolledBackChild?.sessionKey).toBeUndefined();
+          expect(rolledBackChild?.primarySessionDetached).toBe(true);
+          expect(rolledBackChild?.execution).toEqual(reusedChild?.execution);
+        }
         expect(rolledBackChild?.metadata?.automation).toMatchObject(
-          target === "reused child"
-            ? { idempotencyKey: "child-key" }
-            : { createdByCardId: parent.id },
+          target !== "new child" ? { idempotencyKey: "child-key" } : { createdByCardId: parent.id },
         );
-        expect(rolledBackChild?.events?.map((event) => event.kind)).toEqual(["created", "edited"]);
+        expect(rolledBackChild?.events?.map((event) => event.kind)).toEqual(
+          target === "detached primary" ? ["created", "linked"] : ["created", "edited"],
+        );
       } finally {
         await harness.close();
       }

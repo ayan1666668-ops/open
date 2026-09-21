@@ -9,7 +9,7 @@ import {
   resolveGatewayWorkboardWorkspaceAccess,
   type GatewayMethodContext,
 } from "./gateway-helpers.js";
-import type { WorkboardStore } from "./store.js";
+import { WorkboardCardConflictError, type WorkboardStore } from "./store.js";
 import {
   assertWorkboardWorkspaceMutationAccess,
   canonicalizeWorkboardWorkspaceAccess,
@@ -64,6 +64,31 @@ export function registerWorkboardWorkspaceCardMethods(params: WorkspaceGatewayMe
         const access = await resolveGatewayWorkspaceMutationAccess(request, input);
         return {
           card: redactCard(await store.captureSession(withWorkboardWorkspaceAccess(input, access))),
+        };
+      },
+    ],
+    [
+      "workboard.cards.bindSession",
+      WRITE_SCOPE,
+      async (request) => {
+        const input = request.params;
+        const card = await store.get(readId(input));
+        if (!card) {
+          throw new Error(`card not found: ${readId(input)}`);
+        }
+        await resolveGatewayWorkspaceMutationAccess(request, {
+          workspace: card.metadata?.automation?.workspace,
+        });
+        const expectedUpdatedAt = readExpectedUpdatedAt(input);
+        if (expectedUpdatedAt !== undefined && expectedUpdatedAt !== card.updatedAt) {
+          throw new WorkboardCardConflictError(card);
+        }
+        return {
+          card: redactCard(
+            await store.bindSession(card.id, input, undefined, {
+              expectedUpdatedAt: card.updatedAt,
+            }),
+          ),
         };
       },
     ],

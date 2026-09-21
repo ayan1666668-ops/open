@@ -1,5 +1,9 @@
 import type { GatewayBrowserClient } from "../../api/gateway.ts";
-import { isActiveWorkboardCard, normalizeString, workboardCardSessionKey } from "./card-state.ts";
+import {
+  isActiveWorkboardCard,
+  normalizeString,
+  workboardCardExecutionSessionKey,
+} from "./card-state.ts";
 import { WORKBOARD_STATUSES, type WorkboardTaskLinkState, type WorkboardUiState } from "./types.ts";
 
 export type WorkboardHost = object;
@@ -346,6 +350,7 @@ function createDefaultState(): WorkboardUiState {
     draftLabels: "",
     draftAgentId: "",
     draftSessionKey: "",
+    draftSessionKeyDirty: false,
     draftTemplateId: "",
     draftCommentBody: "",
     detailCardId: null,
@@ -430,7 +435,7 @@ export function shouldRefreshWorkboardTasksForLifecycle(state: WorkboardTaskLink
       (card) =>
         isActiveWorkboardCard(card) &&
         card.status === "running" &&
-        Boolean(workboardCardSessionKey(card)),
+        Boolean(workboardCardExecutionSessionKey(card)),
     )
   );
 }
@@ -450,7 +455,7 @@ export function workboardTaskLinksReadyForLifecycle(
     return (
       !options.requireRunningTaskDiscovery ||
       card.status !== "running" ||
-      !workboardCardSessionKey(card) ||
+      !workboardCardExecutionSessionKey(card) ||
       state.tasksByCardId.has(card.id)
     );
   });

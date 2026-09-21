@@ -88,6 +88,7 @@ function normalizeCard(value: unknown): WorkboardCard | null {
     ...(typeof value.notes === "string" ? { notes: value.notes } : {}),
     ...(typeof value.agentId === "string" ? { agentId: value.agentId } : {}),
     ...(typeof value.sessionKey === "string" ? { sessionKey: value.sessionKey } : {}),
+    ...(value.primarySessionDetached === true ? { primarySessionDetached: true as const } : {}),
     ...(typeof value.runId === "string" ? { runId: value.runId } : {}),
     ...(typeof value.taskId === "string" ? { taskId: value.taskId } : {}),
     ...(typeof value.sourceUrl === "string" ? { sourceUrl: value.sourceUrl } : {}),

@@ -6,6 +6,7 @@ import type { WorkboardMutationScope } from "./store-inputs.js";
 import type { WorkboardStore } from "./store.js";
 
 type ScopedMoveParams = {
+  card: WorkboardCard;
   record: Record<string, unknown>;
   id: string;
   scope: WorkboardMutationScope;
@@ -47,6 +48,49 @@ export function createWorkboardMoveTool(params: {
       const { record, id, scope } = await params.readScopedCardToolParams(rawParams);
       return params.redactedCardResult(
         await params.store.move(id, record.status, undefined, scope),
+      );
+    },
+  };
+}
+
+export function createWorkboardSessionBindTool(params: {
+  store: WorkboardStore;
+  callerSessionKey?: string;
+  authorizeCard: (card: WorkboardCard) => Promise<void>;
+  readScopedCardToolParams: (rawParams: unknown) => Promise<ScopedMoveParams>;
+  redactedCardResult: (card: WorkboardCard) => AgentToolResult<{ card: WorkboardCard }>;
+}): AnyAgentTool {
+  return {
+    name: "workboard_session_bind",
+    label: "Workboard Session Bind",
+    description:
+      "Bind, rebind, or detach a card's primary chat session without changing its worker execution. Bind/rebind targets the trusted current chat; use explicit detach or rebind to resolve legacy duplicates.",
+    parameters: strictObject({
+      id: cardIdField(),
+      action: Type.String({ enum: ["bind", "rebind", "detach"] }),
+      token: claimTokenField(),
+    }),
+    execute: async (_toolCallId, rawParams) => {
+      const { record, id, scope, card } = await params.readScopedCardToolParams(rawParams);
+      await params.authorizeCard(card);
+      if (!params.callerSessionKey) {
+        throw new Error("session binding requires a trusted current chat session.");
+      }
+      if (Object.hasOwn(record, "sessionKey")) {
+        throw new Error(
+          "session binding must target the current chat session; do not supply sessionKey.",
+        );
+      }
+      return params.redactedCardResult(
+        await params.store.bindSession(
+          id,
+          {
+            action: record.action,
+            sessionKey: record.action === "detach" ? undefined : params.callerSessionKey,
+          },
+          scope,
+          { expectedUpdatedAt: card.updatedAt },
+        ),
       );
     },
   };

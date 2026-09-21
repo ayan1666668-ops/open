@@ -47,6 +47,7 @@ export type WorkboardProps = {
   defaultAgentId?: string | null;
   sessions: GatewaySessionRow[];
   sessionResolution?: WorkboardSessionResolution;
+  primarySessionResolution?: WorkboardSessionResolution;
   scopeAgentId?: string | null;
   onClearAgentScope?: () => void;
   showAgentFilter?: boolean;

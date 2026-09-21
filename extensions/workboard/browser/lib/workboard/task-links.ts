@@ -8,13 +8,13 @@ import {
   isActiveWorkboardCard,
   normalizeString,
   workboardCardRunId,
-  workboardCardSessionKey,
+  workboardCardExecutionSessionKey,
 } from "./card-state.ts";
 import { formatError } from "./normalization-utils.ts";
 import { normalizeTasksPage } from "./normalization.ts";
 import { getWorkboardRuntime, type WorkboardHost } from "./runtime.ts";
 import { workboardSessionKeyMatches, workboardSessionLookupKeys } from "./session-links.ts";
-import { workboardCardSessionTarget } from "./session-resolution.ts";
+import { workboardCardExecutionSessionTarget } from "./session-resolution.ts";
 import type { WorkboardCard, WorkboardTaskLinkState, WorkboardTaskSummary } from "./types.ts";
 
 const WORKBOARD_TASKS_LIST_LIMIT = 500;
@@ -82,7 +82,7 @@ export function taskMatchesCard(task: WorkboardTaskSummary, card: WorkboardCard)
   if (cardTaskId && (task.taskId === cardTaskId || task.id === cardTaskId)) {
     return true;
   }
-  const cardSessionKey = workboardCardSessionKey(card);
+  const cardSessionKey = workboardCardExecutionSessionKey(card);
   const taskSessionMatches = cardSessionKey
     ? [task.sessionKey, task.childSessionKey, task.ownerKey].some((taskSessionKey) =>
         workboardSessionKeyMatches(taskSessionKey, cardSessionKey),
@@ -94,7 +94,7 @@ export function taskMatchesCard(task: WorkboardTaskSummary, card: WorkboardCard)
   }
   // Task pages cannot prove a provisional link's owner. Only an exact task/run
   // identity or an already canonical session link can establish this association.
-  return Boolean(workboardCardSessionTarget(card)) && taskSessionMatches;
+  return Boolean(workboardCardExecutionSessionTarget(card)) && taskSessionMatches;
 }
 
 function taskMatchesCanonicalCardLink(task: WorkboardTaskSummary, card: WorkboardCard): boolean {
@@ -196,7 +196,7 @@ export function selectWorkboardTaskDiscoveryQueries(
     const hasCanonicalTask =
       Boolean(cardTaskId && !missingTaskIds.has(cardTaskId)) ||
       (previousTask ? taskMatchesTrackedCardLink(previousTask, card, missingTaskIds) : false);
-    const sessionKey = workboardCardSessionKey(card);
+    const sessionKey = workboardCardExecutionSessionKey(card);
     if (card.status !== "running" || hasCanonicalTask || !sessionKey) {
       continue;
     }
@@ -366,7 +366,9 @@ function findLatestTaskForCard(
   };
   addCandidates(index.byRunId.get(workboardCardRunId(card) ?? ""));
   addCandidates(
-    index.bySessionKey.get(normalizeSessionKeyForUiComparison(workboardCardSessionKey(card) ?? "")),
+    index.bySessionKey.get(
+      normalizeSessionKeyForUiComparison(workboardCardExecutionSessionKey(card) ?? ""),
+    ),
   );
   let latest: WorkboardTaskSummary | null = null;
   for (const task of candidates) {

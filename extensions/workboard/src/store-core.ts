@@ -21,7 +21,6 @@ import {
   assertCanMutateClaimedCard,
   cardBoardId,
   cardParentIds,
-  cardSessionKey,
   isActiveDependencyTarget,
   isDependencyPromotableStatus,
   lifecycleStatusSourceUpdatedAtFromPatch,
@@ -68,11 +67,15 @@ import {
   normalizeTemplateId,
   normalizeTimestamp,
   normalizeTitle,
-  syncExecutionSessionKey,
   trimMetadataToBudget,
 } from "./store-normalizers.js";
 import { readCards } from "./store-read.js";
 import { WorkboardStoreRuntime } from "./store-runtime.js";
+import {
+  cardSessionKey,
+  capturedSessionCard,
+  patchedPrimarySessionFields,
+} from "./store-session-binding.js";
 
 type WorkboardUpdateCardOptions = {
   allowAutomationLaunch?: boolean;
@@ -625,12 +628,10 @@ export class WorkboardCoreStore extends WorkboardStoreRuntime {
         throw new Error("sessionKey is required.");
       }
       const boardId = normalizeBoardId(input.boardId) ?? "default";
-      const matches = (await readCards(this.store, { kind: "session", sessionKey }))
-        .filter((card) => cardSessionKey(card) === sessionKey)
-        .toSorted((left, right) => right.updatedAt - left.updatedAt);
-      const existing =
-        matches.find((card) => !card.metadata?.archivedAt) ??
-        matches.find((card) => Boolean(card.metadata?.archivedAt));
+      const existing = capturedSessionCard(
+        await readCards(this.store, { kind: "session", sessionKey }),
+        sessionKey,
+      );
       if (existing) {
         if (!existing.metadata?.archivedAt) {
           return existing;
@@ -736,15 +737,9 @@ export class WorkboardCoreStore extends WorkboardStoreRuntime {
           ? (existing.completedAt ?? now)
           : undefined
         : normalizeTimestamp(effectivePatch.completedAt, 0) || undefined;
-    const sessionKey =
-      effectivePatch.sessionKey === undefined
-        ? existing.sessionKey
-        : normalizeOptionalString(effectivePatch.sessionKey);
     const execution =
       effectivePatch.execution === undefined
-        ? effectivePatch.sessionKey === undefined
-          ? existing.execution
-          : syncExecutionSessionKey(existing.execution, sessionKey)
+        ? existing.execution
         : normalizeExecution(effectivePatch.execution);
     let metadata = normalizeMetadata(effectivePatch.metadata, existing.metadata, {
       allowAutomationLaunch: options.allowAutomationLaunch,
@@ -801,7 +796,7 @@ export class WorkboardCoreStore extends WorkboardStoreRuntime {
         effectivePatch.agentId === undefined
           ? existing.agentId
           : normalizeOptionalString(effectivePatch.agentId),
-      sessionKey,
+      ...patchedPrimarySessionFields(existing, effectivePatch.sessionKey),
       runId:
         effectivePatch.runId === undefined
           ? existing.runId
@@ -828,7 +823,11 @@ export class WorkboardCoreStore extends WorkboardStoreRuntime {
       ...(completedAt ? { completedAt } : {}),
     });
     next.metadata = trimMetadataToBudget(
-      syncExecutionAttemptMetadata(next.metadata ?? {}, execution, now),
+      // Primary edits and other unrelated writes must not synthesize or rewrite
+      // history from an unchanged legacy execution (which may share a session).
+      effectivePatch.execution === undefined
+        ? (next.metadata ?? {})
+        : syncExecutionAttemptMetadata(next.metadata ?? {}, execution, now),
       options,
     );
     next.events = appendEvent(
@@ -1082,7 +1081,10 @@ export class WorkboardCoreStore extends WorkboardStoreRuntime {
     return await this.promoteDependencyReady(nextChild.id);
   }
 
-  private async dependencyTargetStatus(card: WorkboardCard, now: number): Promise<WorkboardStatus> {
+  protected async dependencyTargetStatus(
+    card: WorkboardCard,
+    now: number,
+  ): Promise<WorkboardStatus> {
     const scheduledAt = card.metadata?.automation?.scheduledAt;
     const parents = cardParentIds(card);
     if (card.status === "scheduled" && !scheduledAt) {

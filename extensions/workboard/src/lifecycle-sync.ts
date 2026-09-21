@@ -15,8 +15,9 @@ import {
   workboardCardMatchesLifecycleLink,
   workboardCardSessionLookupKey,
 } from "./session-link.js";
-import { cardRunId, cardSessionKey } from "./store-card-helpers.js";
+import { cardRunId } from "./store-card-helpers.js";
 import { DEFAULT_WORKBOARD_DISPATCH_OWNER } from "./store-constants.js";
+import { cardExecutionSessionKey } from "./store-session-binding.js";
 import type { WorkboardStore } from "./store.js";
 
 const WORKBOARD_LIFECYCLE_SWEEP_MS = 60_000;
@@ -157,7 +158,9 @@ async function syncWorkboardLifecycleEvent(params: {
           ...(params.source.sessionKey
             ? {
                 association: {
-                  ...(cardSessionKey(card) ? { expectedSessionKey: cardSessionKey(card) } : {}),
+                  ...(cardExecutionSessionKey(card)
+                    ? { expectedSessionKey: cardExecutionSessionKey(card) }
+                    : {}),
                   ...(cardRunId(card) ? { expectedRunId: cardRunId(card) } : {}),
                   sessionKey: params.source.sessionKey,
                   ...(params.source.runId ? { runId: params.source.runId } : {}),
@@ -311,7 +314,7 @@ async function syncWorkboardLifecycleSessions(params: {
     }
     const lookupKey = workboardCardSessionLookupKey(card);
     const suffixIndex = lookupKey.lastIndexOf("subagent:workboard-");
-    const linkedSessionKey = cardSessionKey(card);
+    const linkedSessionKey = cardExecutionSessionKey(card);
     const canUseAgentlessFallback =
       linkedSessionKey?.startsWith("subagent:workboard-") === true ||
       (!linkedSessionKey &&
@@ -359,7 +362,9 @@ async function syncWorkboardLifecycleSessions(params: {
         observation,
         now,
         association: {
-          ...(cardSessionKey(card) ? { expectedSessionKey: cardSessionKey(card) } : {}),
+          ...(cardExecutionSessionKey(card)
+            ? { expectedSessionKey: cardExecutionSessionKey(card) }
+            : {}),
           ...(cardRunId(card) ? { expectedRunId: cardRunId(card) } : {}),
           sessionKey: session.key,
           ...(preparedAcceptanceAt === undefined ? {} : { acceptedAt: preparedAcceptanceAt }),
@@ -518,7 +523,8 @@ export function createWorkboardLifecycleService(params: {
               try {
                 const snapshot = await params.readSessions({
                   includeUnknown: cards.some(
-                    (card) => !card.metadata?.archivedAt && cardSessionKey(card) === "unknown",
+                    (card) =>
+                      !card.metadata?.archivedAt && cardExecutionSessionKey(card) === "unknown",
                   ),
                 });
                 if (generation !== owner) {

@@ -137,6 +137,33 @@ operator-owned automation job.
 Cards are stored in the plugin's own Gateway state and move with the rest of
 that Gateway's OpenClaw state (see [Storage](#storage)).
 
+## Primary session bindings
+
+A card's primary session is its conversation link. Its execution session identifies
+its worker; editing or detaching the primary does not move or stop that worker.
+Worker status and Stop controls continue to target the execution session.
+
+A normalized session can be reserved by only one non-archived card outside
+`blocked` and `done`. Reservation checks and the card write share one SQLite
+transaction. Older cards with no primary use their execution session as the
+legacy primary until an operator explicitly detaches or binds them.
+
+Existing duplicates are not assigned an automatic winner. Capture and writes to
+conflicting cards fail without changing metadata, including ordinary edits and
+claim heartbeats. Resolve the conflict before resuming work: use **Edit card** to
+clear the primary session on each unwanted duplicate, or select a different
+session. The `workboard.cards.bindSession` RPC also accepts `action: "detach"`,
+`"bind"`, or `"rebind"` with the card's observed `expectedUpdatedAt`. If it reports
+a version conflict, reread the card before retrying.
+
+Explicit detach persists across restarts, even if the execution still names the
+old primary. A later bind clears that detached state. Existing data is upgraded
+in place by the Workboard database worker with a nullable
+`primary_session_detached` column; missing values retain legacy behavior. No
+cards, execution identities, or schema-version markers are rewritten. Older
+builds ignore the column and can restore legacy execution fallback, so resolve
+mirrored duplicates by rebinding or archiving them before downgrading.
+
 ## Starting work from a card
 
 Unlinked cards without an active or unresolved task association can start work directly:
