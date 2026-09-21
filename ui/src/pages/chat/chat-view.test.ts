@@ -3548,7 +3548,7 @@ describe("chat composer sizing", () => {
   });
 
   it("shows the textarea scrollbar only when the draft overflows", () => {
-    const container = renderChatView({});
+    const container = renderChatView({ draft: "A short draft" });
     const textarea = getComposerTextarea(container);
     let scrollHeight = 42;
     let clientHeight = 42;
@@ -3611,7 +3611,7 @@ describe("chat composer sizing", () => {
       toJSON: () => ({}),
     }));
 
-    const container = renderChatView({});
+    const container = renderChatView({ draft: "A short draft" });
     const textarea = getComposerTextarea(container);
     Object.defineProperties(textarea, {
       scrollHeight: { configurable: true, get: () => scrollHeight },

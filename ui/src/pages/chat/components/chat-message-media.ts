@@ -70,8 +70,11 @@ export type AttachmentItem = Extract<MessageContentItem, { type: "attachment" }>
 type AttachmentFailureItem = Extract<MessageContentItem, { type: "attachment_error" }>;
 export type AssistantAttachmentItem = AttachmentItem | AttachmentFailureItem;
 export type ProjectedMessageContent =
+  | { type: "boundary" }
   | { type: "text"; text: string }
   | { type: "image"; image: ImageBlock }
+  | { type: "expired_pairing_qr" }
+  | Extract<MessageContentItem, { type: "omitted_media" }>
   | AssistantAttachmentItem;
 
 type ChatMediaResourceKind =
@@ -558,14 +561,18 @@ export function projectMessageMedia(
     }
     if (item.type === "omitted_media") {
       inlineIndex += 1;
+      orderedContent.push(item);
       continue;
     }
     if (item.type !== "image") {
+      // Other renderers own these blocks, but they still separate image sets.
+      orderedContent.push({ type: "boundary" });
       continue;
     }
     if (item.expiresAtMs !== undefined) {
       if (item.expiresAtMs <= nowMs) {
         expiredPairingQrCount += 1;
+        orderedContent.push({ type: "expired_pairing_qr" });
         continue;
       }
       nextPairingQrExpiresAt = Math.min(

@@ -56,15 +56,27 @@ export function measureConnectedTranscriptRows(
   }
   // Width changes and retired smooth commands can have undelivered sizes.
   // Ordinary row refs stay on TanStack's observer path; never clear its cache.
+  // Read one layout snapshot before compensation writes scroll offsets and
+  // invalidates skipped-row geometry for the remaining measurements.
+  const measurements = Array.from(
+    scrollElement.querySelectorAll<HTMLElement>(".chat-virtual-row"),
+    (row) => {
+      const index = virtualizer.indexFromElement(row);
+      // Rows are border-boxes; read fractional layout height without transforms.
+      const height = Number.parseFloat(getComputedStyle(row).height);
+      return { index, height: Number.isFinite(height) ? height : row.offsetHeight };
+    },
+  );
   let changed = false;
-  for (const row of scrollElement.querySelectorAll<HTMLElement>(".chat-virtual-row")) {
-    const index = virtualizer.indexFromElement(row);
-    // Rows are border-boxes; read their fractional layout height, not a scaled
-    // client rect when a containing board or sidebar is transitioning.
-    const height = Number.parseFloat(getComputedStyle(row).height);
+  for (const { index, height } of measurements) {
     const key = virtualizer.options.getItemKey(index);
     const previousSize = virtualizer.itemSizeCache.get(key);
-    virtualizer.resizeItem(index, Number.isFinite(height) ? height : row.offsetHeight);
+    // CSSOM rounds used heights more coarsely than ResizeObserver. Keep its
+    // fractional measurement instead of repeatedly compensating the same box.
+    if (previousSize !== undefined && Math.abs(previousSize - height) < 0.01) {
+      continue;
+    }
+    virtualizer.resizeItem(index, height);
     changed ||= virtualizer.itemSizeCache.get(key) !== previousSize;
   }
   return changed;
@@ -161,5 +173,91 @@ export class PositionRailGutterController implements ReactiveController {
     // Reserve room for the compact left rail and breathing space, including
     // when a saved width fills the pane.
     viewport.toggleAttribute("data-position-rail-gutter", gutter >= 68);
+  }
+}
+
+/** Stable row refs and deferred pruning share one measurement lifecycle. */
+export class TranscriptRowMeasurements {
+  private readonly refs = new Map<string, (element?: Element) => void>();
+  private pruneQueued = false;
+  private frame: number | null = null;
+
+  constructor(
+    private readonly host: {
+      root(): HTMLElement | null;
+      viewport(): HTMLElement | null;
+      measureConnected(): void;
+      virtualizer(): Virtualizer<HTMLDivElement, HTMLElement>;
+      hasKey(key: string): boolean;
+      mounted(key: string): void;
+    },
+  ) {}
+
+  refFor = (key: string): ((element?: Element) => void) => {
+    let callback = this.refs.get(key);
+    if (!callback) {
+      callback = (element?: Element) => {
+        if (element instanceof HTMLElement) {
+          this.host.mounted(key);
+          // Nested message refs finish preview clamps after Lit connects rows.
+          queueMicrotask(() =>
+            queueMicrotask(() => {
+              if (
+                element.isConnected &&
+                this.host.root()?.contains(element) &&
+                element.dataset.virtualRowKey === key &&
+                this.host.hasKey(key)
+              ) {
+                this.host.virtualizer().measureElement(element);
+              }
+            }),
+          );
+          return;
+        }
+        // Lit re-stamps refs as (undefined, element) while rows are detached.
+        // Pruning synchronously would unobserve the newly registered siblings.
+        if (!this.pruneQueued) {
+          this.pruneQueued = true;
+          queueMicrotask(() => {
+            this.pruneQueued = false;
+            this.host.virtualizer().measureElement(null);
+          });
+        }
+      };
+      this.refs.set(key, callback);
+    }
+    return callback;
+  };
+
+  retain(keys: ReadonlyMap<string, number>): void {
+    for (const key of this.refs.keys()) {
+      if (!keys.has(key)) {
+        this.refs.delete(key);
+      }
+    }
+  }
+
+  queueConnectedMeasure(): void {
+    if (this.frame !== null) {
+      return;
+    }
+    const element = this.host.viewport();
+    this.frame = requestAnimationFrame(() => {
+      this.frame = null;
+      if (element === this.host.viewport()) {
+        this.host.measureConnected();
+      }
+    });
+  }
+
+  disconnect(): void {
+    if (this.frame !== null) {
+      cancelAnimationFrame(this.frame);
+      this.frame = null;
+    }
+  }
+
+  clear(): void {
+    this.refs.clear();
   }
 }

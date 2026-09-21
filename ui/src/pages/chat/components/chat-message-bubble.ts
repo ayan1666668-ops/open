@@ -367,10 +367,9 @@ export function renderGroupedMessage(
   const bodyMarkdown = standaloneToolPayload ? null : markdown;
   const renderInOrder =
     normalizedRole === "assistant" &&
-    Boolean(markdown) &&
     !asyncQuestions &&
     (!disclosure?.expanded || Boolean(disclosure.message)) &&
-    orderedContent.some((item) => item.type !== "text");
+    orderedContent.some((item) => item.type !== "text" && item.type !== "boundary");
   // One expanded card already closes with its own outcome line; every other
   // shape renders inline rows only, so the message body records the failure.
   const expandsSingleToolCard =
@@ -485,8 +484,14 @@ export function renderGroupedMessage(
           : nothing;
   const renderOrderedContent = () => {
     const prepared = prepareMarkdownMedia(orderedContent, (item) => {
-      if (item.type === "image") {
-        return renderMessageImages([item.image], imageRenderOptions);
+      if (item.type === "images") {
+        return renderMessageImages(item.images, imageRenderOptions);
+      }
+      if (item.type === "omitted_media") {
+        return renderOmittedMedia([item]);
+      }
+      if (item.type === "expired_pairing_qr") {
+        return renderPairingQrExpiryNotices(1);
       }
       return renderAssistantAttachments(
         [item],
@@ -505,6 +510,9 @@ export function renderGroupedMessage(
       {
         ...opts,
         role: normalizedRole,
+        // Keep the ordered-media DOM stable when text arrives, without applying
+        // the forwarded text clamp to an image-only reply.
+        isForwarded: opts.isForwarded && Boolean(bodyMarkdown),
         assistantMessageDisclosure: disclosure ? { ...disclosure, markdown: text } : undefined,
       },
       markdownRenderOptions,
@@ -526,7 +534,7 @@ export function renderGroupedMessage(
           )
         : nothing
     }
-    ${renderPairingQrExpiryNotices(expiredPairingQrCount)}
+    ${renderInOrder ? nothing : renderPairingQrExpiryNotices(expiredPairingQrCount)}
     ${renderMessageImages(
       renderInOrder ? supplementalImages : images,
       imageRenderOptions,
@@ -538,7 +546,7 @@ export function renderGroupedMessage(
         `,
       ),
     )}
-    ${renderOmittedMedia(omittedMedia)}
+    ${renderInOrder ? nothing : renderOmittedMedia(omittedMedia)}
     ${renderAssistantAttachments(
       renderInOrder ? supplementalAttachments : cardAttachments,
       imageRenderOptions,
