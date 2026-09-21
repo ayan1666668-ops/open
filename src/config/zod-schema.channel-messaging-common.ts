@@ -183,14 +183,19 @@ export const ChannelDangerouslyAllowNameMatchingSchema = z.boolean().optional();
 export const ChannelSendReadReceiptsSchema = z.boolean().optional();
 
 /** Build the shared allowBots leaf without widening boolean-only channels. */
-export function buildChannelAllowBotsSchema(): z.ZodOptional<z.ZodBoolean>;
-export function buildChannelAllowBotsSchema(options: {
-  allowMentions: true;
-}): z.ZodOptional<z.ZodUnion<readonly [z.ZodBoolean, z.ZodLiteral<"mentions">]>>;
-export function buildChannelAllowBotsSchema(options?: { allowMentions?: boolean }) {
-  return options?.allowMentions
+type ChannelAllowBotsSchema<TAllowMentions extends boolean | undefined> =
+  TAllowMentions extends true
+    ? z.ZodOptional<z.ZodUnion<readonly [z.ZodBoolean, z.ZodLiteral<"mentions">]>>
+    : z.ZodOptional<z.ZodBoolean>;
+
+export function buildChannelAllowBotsSchema<
+  const TAllowMentions extends boolean | undefined = undefined,
+>(options?: { allowMentions?: TAllowMentions }): ChannelAllowBotsSchema<TAllowMentions> {
+  const schema = options?.allowMentions
     ? z.union([z.boolean(), z.literal("mentions")]).optional()
     : z.boolean().optional();
+  // SAFETY: the runtime branch and conditional return type share the allowMentions discriminator.
+  return schema as ChannelAllowBotsSchema<TAllowMentions>;
 }
 
 /** Build native exec-approval routing with channel-specific approver ids and extras. */
@@ -224,24 +229,18 @@ type EnumSchema<TValues extends StringEnumValues> = z.ZodEnum<{
   [TValue in TValues[number]]: TValue;
 }>;
 
-type ChannelReactionShape<TOptions extends ChannelReactionShapeOptions> = (TOptions extends {
-  notificationModes: infer TValues extends StringEnumValues;
-}
-  ? { reactionNotifications: z.ZodOptional<EnumSchema<TValues>> }
-  : unknown) &
-  (TOptions extends { reactionLevels: infer TValues extends StringEnumValues }
-    ? { reactionLevel: z.ZodOptional<EnumSchema<TValues>> }
-    : unknown) &
-  (TOptions extends { reactionAllowlist: true }
-    ? {
-        reactionAllowlist: z.ZodOptional<
-          z.ZodArray<z.ZodUnion<readonly [z.ZodString, z.ZodNumber]>>
-        >;
-      }
-    : unknown) &
-  (TOptions extends { ackReaction: infer TSchema extends ZodTypeAny }
-    ? { ackReaction: TSchema }
-    : unknown);
+type EnumShape<TValues, TKey extends string> = TValues extends StringEnumValues
+  ? { [TResultKey in TKey]: z.ZodOptional<EnumSchema<TValues>> }
+  : Record<never, never>;
+type ChannelReactionShape<TOptions extends ChannelReactionShapeOptions> = ZodRawShape &
+  EnumShape<TOptions["notificationModes"], "reactionNotifications"> &
+  EnumShape<TOptions["reactionLevels"], "reactionLevel"> &
+  (TOptions["reactionAllowlist"] extends true
+    ? { reactionAllowlist: z.ZodOptional<z.ZodArray<z.ZodUnion<[z.ZodString, z.ZodNumber]>>> }
+    : Record<never, never>) &
+  (TOptions["ackReaction"] extends ZodTypeAny
+    ? { ackReaction: TOptions["ackReaction"] }
+    : Record<never, never>);
 
 /** Build the repeated reaction leaves while retaining each channel's exact enum. */
 export function buildChannelReactionShape<const TOptions extends ChannelReactionShapeOptions>(
