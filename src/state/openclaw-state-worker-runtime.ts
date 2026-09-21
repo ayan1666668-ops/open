@@ -43,6 +43,8 @@ import { registerSessionGroupInDatabase } from "../gateway/session-group-registr
 import { readDeferredPluginMigrations } from "../infra/deferred-plugin-migrations.js";
 import * as deliveryQueue from "../infra/delivery-queue.worker.js";
 import * as deviceAuth from "../infra/device-auth-store.kernel.js";
+import { commitExecAuthorizationsInWorker } from "../infra/exec-approvals-authorization.worker.js";
+import { executeCurrentConversationBindingCommand } from "../infra/outbound/current-conversation-bindings.worker.js";
 import { executePromotionCommand } from "../infra/promotions-feed.worker.js";
 import {
   readApnsRegistrationFromDatabase,
@@ -68,6 +70,8 @@ import {
 } from "../infra/telemetry-store.kernel.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { readRemoteModelCatalog } from "../model-catalog/remote-store.js";
+import { isNodeWorkerJournalCommand } from "../node-host/node-worker-journal.worker-contract.js";
+import { executeNodeWorkerJournalCommand } from "../node-host/node-worker-journal.worker.js";
 import { executePluginBlobCommand } from "../plugin-state/plugin-blob-store.worker.js";
 import { isPluginBlobWorkerCommand } from "../plugin-state/plugin-blob-worker-contract.js";
 import { isPluginStateWorkerCommand } from "../plugin-state/plugin-state-worker-contract.js";
@@ -145,6 +149,13 @@ export function executeSharedStateCommand(
   open: () => OpenClawStateDatabase,
   hasNativeDatabase: boolean,
 ): Operations[keyof Operations]["output"] {
+  if (command.type === "execApprovals.commitAuthorizations") {
+    return commitExecAuthorizationsInWorker(command.input, {
+      database: open(),
+      path: context.databasePath,
+      env: getSqliteWorkerStateContext().environment,
+    });
+  }
   if (command.type === "agentDatabases.releaseExitedLease") {
     return executeAgentDatabaseCleanupCommand(
       command,
@@ -341,6 +352,7 @@ export function executeSharedStateCommand(
   if (
     command.type === "userProfiles.list" ||
     command.type === "userProfiles.directory" ||
+    command.type === "userProfiles.email.ensure" ||
     command.type === "userProfiles.avatar.inspect" ||
     command.type === "userProfiles.avatar.adopt"
   ) {
@@ -401,6 +413,10 @@ export function executeSharedStateCommand(
     return executeTranscriptWrite(command, { database, path: context.databasePath });
   }
   switch (command.type) {
+    case "transcripts.readEntries":
+    case "transcripts.exportOwnership":
+    case "transcripts.exportPathCollisions":
+    case "transcripts.exportPathOwners":
     case "transcripts.sessionEntries":
     case "transcripts.matches":
     case "transcripts.session":
@@ -465,6 +481,15 @@ export function executeSharedStateCommand(
     path: context.databasePath,
     env: getSqliteWorkerStateContext().environment,
   };
+  if (
+    command.type === "conversationBindings.resolve" ||
+    command.type === "conversationBindings.touch"
+  ) {
+    return executeCurrentConversationBindingCommand(command, writeOptions);
+  }
+  if (isNodeWorkerJournalCommand(command)) {
+    return executeNodeWorkerJournalCommand(command, writeOptions);
+  }
   if (command.type === "sessionGroups.register") {
     return registerSessionGroupInDatabase(database, command.input.name, writeOptions.env);
   }
