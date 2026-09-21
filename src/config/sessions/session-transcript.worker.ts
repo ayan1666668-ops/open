@@ -20,6 +20,8 @@ import type {
   SessionTargetInventoryWorkerInput,
   SessionIdentityEvidenceWorkerInput,
   SessionMembersWorkerInput,
+  SessionPreviewWorkerInput,
+  SessionTitleFieldsWorkerInput,
   SessionModelContextWorkerInput,
   SessionRowPresenceWorkerInput,
   SessionTranscriptHistoryWorkerInput,
@@ -93,6 +95,8 @@ serveWorkerTasks(
       | SessionTargetInventoryWorkerInput
       | SessionIdentityEvidenceWorkerInput
       | SessionTranscriptHistoryWorkerInput
+      | SessionPreviewWorkerInput
+      | SessionTitleFieldsWorkerInput
       | SessionRowPresenceWorkerInput
       | SessionMembersWorkerInput
       | SessionUsageCacheWorkerInput
@@ -235,6 +239,37 @@ serveWorkerTasks(
       return await runWithSessionTranscriptReadFence(
         request.admission,
         async (): Promise<SessionTranscriptWorkerReply<keyof SessionTranscriptWorkerValues>> => {
+          if (request.kind === "session-title-fields") {
+            const { readSessionTitleFieldsFromTranscript } =
+              await import("../../gateway/session-transcript-title-reader.js");
+            return {
+              ok: true,
+              ...(await withHistoryDatabase(request.database, () => ({
+                kind: "session-title-fields" as const,
+                fields: readSessionTitleFieldsFromTranscript(request.scope, {
+                  includeInterSession: request.includeInterSession,
+                  readOnly: true,
+                }),
+              }))),
+            };
+          }
+          if (request.kind === "session-preview") {
+            const { readSessionPreviewItemsFromTranscript } =
+              await import("../../gateway/session-transcript-preview.js");
+            return {
+              ok: true,
+              ...(await withHistoryDatabase(request.database, () => ({
+                kind: "session-preview" as const,
+                items: readSessionPreviewItemsFromTranscript(
+                  request.scope,
+                  request.maxItems,
+                  request.maxChars,
+                  "display",
+                  { readOnly: true },
+                ),
+              }))),
+            };
+          }
           if (request.kind === "model-context") {
             const { readSessionTranscriptModelContext } =
               await import("./session-accessor.sqlite-model-context.js");
