@@ -50,9 +50,10 @@ The current implementation does not mint trusted measurement receipts, attest
 verifier independence, approve effects, publish artifacts, merge code, deploy,
 or grant new tools.
 
-The independent-verifier profile requires the existing sandbox owner to accept
-`sandbox: "require"`. A rejection is surfaced as an error; the bridge does not
-retry unsandboxed.
+A caller-side verification recipe can use the generic artifact-only boundary and
+require the existing sandbox owner to accept `sandbox: "require"`, along with
+candidate identity and artifact references. A rejection is surfaced as an error;
+the bridge does not retry unsandboxed.
 
 ## Liquid search, deterministic convergence
 
