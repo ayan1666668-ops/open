@@ -15,6 +15,7 @@ type LegacyWhatsAppConfig = Pick<CommonChannelMessagingConfig, "dms" | "heartbea
 
 type WhatsAppGroupSchemaInput = NonNullable<NonNullable<WhatsAppSchemaInput["groups"]>[string]>;
 export type WhatsAppGroupConfig = Omit<WhatsAppGroupSchemaInput, "toolsBySender"> & {
+  systemPrompt?: string;
   toolsBySender?: GroupToolPolicyBySenderConfig;
 };
 export type WhatsAppDirectConfig = NonNullable<NonNullable<WhatsAppSchemaInput["direct"]>[string]>;
