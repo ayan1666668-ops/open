@@ -1653,7 +1653,6 @@
   "ui/src/lib/sessions/session-archive-reason.ts",
   "ui/src/lib/sessions/session-archive-state.ts",
   "ui/src/lib/sessions/session-deletions.ts",
-  "ui/src/lib/sessions/session-event-observation.ts",
   "ui/src/lib/sessions/session-event-subscription.ts",
   "ui/src/lib/sessions/session-github-publication.ts",
   "ui/src/lib/sessions/session-group-catalog.ts",

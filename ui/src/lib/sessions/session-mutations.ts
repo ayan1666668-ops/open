@@ -9,7 +9,6 @@ import {
   requestSessionCreate,
   resolveSessionCreateParams,
   type SessionCreateParams,
-  type SessionCreateOutcome,
 } from "./create.ts";
 import type { SessionPatch, SessionPatchOptions, SessionPatchResult } from "./patch.ts";
 import { projectSessionResultRows } from "./reconcile.ts";
@@ -25,16 +24,13 @@ import {
   createSessionMutationRefresh,
   isRejectedSessionMutation,
 } from "./session-mutation-refresh.ts";
+import type { SessionMutationsHost } from "./session-mutations-host.ts";
 import { projectSessionPatchRowFields } from "./session-patch-row-facts.ts";
 import {
   createOptimisticRowPatches,
-  createOptimisticSettingsPatches,
   resolvePendingConversation,
   resolvePendingRowTarget,
   pendingRowIdentity,
-  type PendingRowHost,
-  type PendingRowTarget,
-  type SessionPatchRowFact,
   type SessionPinFields,
 } from "./session-pending-rows.ts";
 import type { SessionPermissionClaim } from "./session-permission-projection.ts";
@@ -43,36 +39,7 @@ import {
   requestSessionPatchMany,
   requestSessionReset,
 } from "./session-requests.ts";
-import {
-  createSessionRowLocalPatch,
-  type SessionRowLocalPatchHost,
-} from "./session-row-local-patch.ts";
-import type { createSessionRowProvenance } from "./session-row-provenance.ts";
-
-type SessionMutationsHost = PendingRowHost &
-  SessionRowLocalPatchHost & {
-    capturePatchFields: (
-      target: Pick<PendingRowTarget, "key" | "agentId" | "sessionId">,
-    ) => (fact: SessionPatchRowFact) => void;
-    reconcileMutation: (
-      agentId?: string | null,
-      isErrorCurrent?: () => boolean,
-    ) => Promise<SessionRefreshOutcome>;
-    publishedRow: (key: string) => GatewaySessionRow | undefined;
-    archiveFields: Pick<
-      ReturnType<typeof createSessionRowProvenance>,
-      "fieldObservation" | "observeFields" | "inheritRow" | "mergeRow"
-    >;
-    readRevision: () => number;
-    notifyCreated: (key: string, entry?: SessionCreateOutcome["entry"], agentId?: string) => void;
-    clearThink: (key: string, agentId?: string | null) => void;
-    claimPermissionProjection: (
-      key: string,
-      agentId?: string | null,
-      expectedSessionId?: string,
-    ) => SessionPermissionClaim;
-    retirePullRequestSummary: (key: string) => void;
-  };
+import { createSessionRowLocalPatch } from "./session-row-local-patch.ts";
 
 export function createSessionMutations(host: SessionMutationsHost) {
   const pendingModelPatches = new Map<
@@ -129,14 +96,6 @@ export function createSessionMutations(host: SessionMutationsHost) {
 
   const patchRowLocal = createSessionRowLocalPatch(host);
 
-  // The Gateway derives `pinned` from `pinnedAt` and both row comparators order
-  // by `pinnedAt` inside each pin group, so an optimistic write has to move the
-  // pair or the row lands in a slot the Gateway would never produce.
-  const pinRowFields = (pinned: boolean, pinnedAt: number | undefined): SessionPinFields =>
-    pinned
-      ? { pinned: true, pinnedAt: pinnedAt ?? Date.now() }
-      : { pinned: false, pinnedAt: undefined };
-
   const optimisticPins = createOptimisticRowPatches(host, {
     read: (row): SessionPinFields => ({ pinned: row.pinned === true, pinnedAt: row.pinnedAt }),
     // Once the Gateway agrees on `pinned`, its own timestamp wins again.
@@ -146,28 +105,51 @@ export function createSessionMutations(host: SessionMutationsHost) {
       pinnedAt: names.includes("pinnedAt") ? row.pinnedAt : previous.pinnedAt,
     }),
   });
-  const optimisticCategories = createOptimisticRowPatches(host, {
-    read: (row) => row.category,
-    write: (row, category) => (row.category === category ? row : host.copyRow(row, { category })),
-    observe: (previous, row, names) => (names.includes("category") ? row.category : previous),
-  });
+  const createTextRowPatches = (field: "category" | "thinkingLevel" | "contextWindow") =>
+    createOptimisticRowPatches(host, {
+      read: (row) => row[field],
+      write: (row, next) => (row[field] === next ? row : host.copyRow(row, { [field]: next })),
+      observe: (previous, row, names) => (names.includes(field) ? row[field] : previous),
+    });
+  const optimisticCategories = createTextRowPatches("category");
   const optimisticUnread = createOptimisticRowPatches(host, {
     read: (row) => row.unread,
     write: (row, unread) => (row.unread === unread ? row : host.copyRow(row, { unread })),
     observe: (previous, row, names) => (names.includes("unread") ? row.unread : previous),
   });
-  const settingsPatches = createOptimisticSettingsPatches(host);
+  const optimisticThinking = createTextRowPatches("thinkingLevel");
+  const optimisticFastMode = createOptimisticRowPatches(host, {
+    read: (row): Pick<GatewaySessionRow, "fastMode" | "effectiveFastMode"> => ({
+      fastMode: row.fastMode,
+      effectiveFastMode: row.effectiveFastMode,
+    }),
+    // An override ACK does not confirm the preview's effective mode.
+    canonical: (previous, next) => ({ ...previous, fastMode: next.fastMode }),
+    write: (row, next) =>
+      row.fastMode === next.fastMode && row.effectiveFastMode === next.effectiveFastMode
+        ? row
+        : host.copyRow(row, next),
+    observe: (previous, row, names) => ({
+      fastMode: names.includes("fastMode") ? row.fastMode : previous.fastMode,
+      effectiveFastMode: names.includes("effectiveFastMode")
+        ? row.effectiveFastMode
+        : previous.effectiveFastMode,
+    }),
+  });
+  const optimisticContextWindow = createTextRowPatches("contextWindow");
+  const rowPatches = [
+    optimisticPins,
+    optimisticUnread,
+    optimisticCategories,
+    optimisticThinking,
+    optimisticFastMode,
+    optimisticContextWindow,
+  ];
   const applyPendingRow = (
     row: GatewaySessionRow,
     sourceAgentId?: string | null,
   ): GatewaySessionRow =>
-    settingsPatches.applyRow(
-      optimisticCategories.applyRow(
-        optimisticUnread.applyRow(optimisticPins.applyRow(row, sourceAgentId), sourceAgentId),
-        sourceAgentId,
-      ),
-      sourceAgentId,
-    );
+    rowPatches.reduce((current, owner) => owner.applyRow(current, sourceAgentId), row);
 
   const retireModelOverride = (key: string) => {
     const normalizedKey = key.trim();
@@ -246,7 +228,10 @@ export function createSessionMutations(host: SessionMutationsHost) {
       return null;
     }
     const managesModelOverride = Object.hasOwn(patchParams, "model");
-    const hasSettingsPatch = settingsPatches.hasFields(patchParams);
+    const hasSettingsPatch =
+      patchParams.thinkingLevel !== undefined ||
+      patchParams.fastMode !== undefined ||
+      patchParams.contextWindow !== undefined;
     const normalizedKey = key.trim();
     const patchSnapshot = host.snapshot();
     const pendingConversation =
@@ -265,7 +250,28 @@ export function createSessionMutations(host: SessionMutationsHost) {
       pendingConversation,
       options.expectedSessionId,
     );
-    const settleSettings = settingsPatches.start(pendingTarget, patchParams);
+    // Claim settings before queued dispatch so the newest choice remains visible.
+    const thinkingPatchToken =
+      pendingTarget && patchParams.thinkingLevel !== undefined
+        ? optimisticThinking.start(
+            pendingTarget,
+            () => patchParams.thinkingLevel?.trim() || undefined,
+          )
+        : null;
+    const fastModePatchToken =
+      pendingTarget && patchParams.fastMode !== undefined
+        ? optimisticFastMode.start(pendingTarget, () => ({
+            fastMode: patchParams.fastMode ?? undefined,
+            effectiveFastMode: patchParams.fastMode ?? undefined,
+          }))
+        : null;
+    const contextWindowPatchToken =
+      pendingTarget && patchParams.contextWindow !== undefined
+        ? optimisticContextWindow.start(
+            pendingTarget,
+            () => patchParams.contextWindow?.trim() || undefined,
+          )
+        : null;
     let rowPatchConfirmed = false;
     let writeConfirmed = false;
     let modelPatchStarted = false;
@@ -292,27 +298,7 @@ export function createSessionMutations(host: SessionMutationsHost) {
     };
     const nextPinned = patchParams.pinned === true;
     let pinPatchToken: symbol | null = null;
-    // Sidebar rows read `pinned` straight off the snapshot, so a pin/unpin has
-    // no visible outcome until this flip; the Gateway patch and its list
-    // refresh confirm it afterwards.
-    const startPinPatch = () => {
-      if (patchParams.pinned === undefined || pinPatchToken || !pendingTarget) {
-        return;
-      }
-      pinPatchToken = optimisticPins.start(pendingTarget, (row) =>
-        pinRowFields(nextPinned, row.pinnedAt),
-      );
-    };
     let unreadPatchToken: symbol | null = null;
-    const startUnreadPatch = () => {
-      // Mark-unread needs the Gateway-issued marker before an active pane can
-      // distinguish the explicit reminder from new activity. Reads are safe
-      // to project immediately because their observed marker remains attached.
-      if (patchParams.unread !== false || unreadPatchToken || !pendingTarget) {
-        return;
-      }
-      unreadPatchToken = optimisticUnread.start(pendingTarget, () => false);
-    };
     let categoryPatchToken: symbol | null = null;
     const startOptimisticPatch = () => {
       if (patchParams.category !== undefined && !categoryPatchToken && pendingTarget) {
@@ -322,8 +308,22 @@ export function createSessionMutations(host: SessionMutationsHost) {
         );
       }
       startModelPatch();
-      startPinPatch();
-      startUnreadPatch();
+      // Sidebar rows read `pinned` straight off the snapshot, so a pin/unpin has
+      // no visible outcome until this flip; the Gateway patch and its list
+      // refresh confirm it afterwards.
+      if (patchParams.pinned !== undefined && !pinPatchToken && pendingTarget) {
+        // The Gateway derives pinned from pinnedAt; keep both fields together.
+        pinPatchToken = optimisticPins.start(pendingTarget, (row) => ({
+          pinned: nextPinned,
+          pinnedAt: nextPinned ? (row.pinnedAt ?? Date.now()) : undefined,
+        }));
+      }
+      // Mark-unread needs the Gateway-issued marker before an active pane can
+      // distinguish the explicit reminder from new activity. Reads are safe
+      // to project immediately because their observed marker remains attached.
+      if (patchParams.unread === false && !unreadPatchToken && pendingTarget) {
+        unreadPatchToken = optimisticUnread.start(pendingTarget, () => false);
+      }
     };
     if (!options.waitFor) {
       startOptimisticPatch();
@@ -365,39 +365,27 @@ export function createSessionMutations(host: SessionMutationsHost) {
         }
       }
     };
-    const settlePinPatch = (completed: boolean) => {
-      if (pinPatchToken && pendingTarget) {
-        optimisticPins.settle(
-          pendingTarget,
-          pinPatchToken,
-          completed && rowPatchConfirmed,
-          host.connection.isCurrent(scope),
-        );
-      }
-    };
-    const settleUnreadPatch = (completed: boolean) => {
-      if (unreadPatchToken && pendingTarget) {
-        optimisticUnread.settle(
-          pendingTarget,
-          unreadPatchToken,
-          completed && rowPatchConfirmed,
-          host.connection.isCurrent(scope),
-        );
-      }
-    };
     const settleOptimisticPatch = (completed: boolean) => {
       settleModelOverride(completed);
-      settlePinPatch(completed);
-      settleUnreadPatch(completed);
-      if (categoryPatchToken && pendingTarget) {
-        optimisticCategories.settle(
-          pendingTarget,
-          categoryPatchToken,
-          completed && rowPatchConfirmed,
-          host.connection.isCurrent(scope),
-        );
+      if (pendingTarget) {
+        for (const [owner, token] of [
+          [optimisticPins, pinPatchToken],
+          [optimisticUnread, unreadPatchToken],
+          [optimisticCategories, categoryPatchToken],
+          [optimisticThinking, thinkingPatchToken],
+          [optimisticFastMode, fastModePatchToken],
+          [optimisticContextWindow, contextWindowPatchToken],
+        ] as const) {
+          if (token) {
+            owner.settle(
+              pendingTarget,
+              token,
+              completed && rowPatchConfirmed,
+              host.connection.isCurrent(scope),
+            );
+          }
+        }
       }
-      settleSettings?.(completed && rowPatchConfirmed, host.connection.isCurrent(scope));
     };
     try {
       if (options.waitFor) {
@@ -663,10 +651,9 @@ export function createSessionMutations(host: SessionMutationsHost) {
   const dispose = () => {
     pendingCreatedModelOverrides.clear();
     pendingModelPatches.clear();
-    optimisticCategories.clear();
-    optimisticPins.clear();
-    optimisticUnread.clear();
-    settingsPatches.clear();
+    for (const owner of rowPatches) {
+      owner.clear();
+    }
     archiveState.clearAll();
     preparedWorkSessionKeys.clear();
   };
@@ -695,22 +682,15 @@ export function createSessionMutations(host: SessionMutationsHost) {
       names: readonly string[],
       sourceAgentId?: string | null,
     ) {
-      optimisticCategories.observe(row, names, sourceAgentId);
-      optimisticPins.observe(row, names, sourceAgentId);
-      optimisticUnread.observe(row, names, sourceAgentId);
-      settingsPatches.observe(row, names, sourceAgentId);
+      for (const owner of rowPatches) {
+        owner.observe(row, names, sourceAgentId);
+      }
     },
     applyPendingRows(
       result: SessionsListResult | null,
       sourceAgentId?: string | null,
     ): SessionsListResult | null {
-      if (
-        !result ||
-        (!optimisticPins.hasPending() &&
-          !optimisticUnread.hasPending() &&
-          !optimisticCategories.hasPending() &&
-          !settingsPatches.hasPending())
-      ) {
+      if (!result || !rowPatches.some((owner) => owner.hasPending())) {
         return result;
       }
       return projectSessionResultRows(

@@ -23,6 +23,7 @@ import {
   type SessionRefreshTarget,
   type SessionScopeHost,
 } from "../../lib/sessions/index.ts";
+import type { SessionPatch } from "../../lib/sessions/patch.ts";
 import {
   areUiSessionKeysEquivalent,
   isUiSelectedGlobalSessionKey,
@@ -184,6 +185,36 @@ function captureChatSettingsTarget(
   };
 }
 
+async function applyChatSetting(
+  host: ChatModelSettingsHost,
+  sessionKey: string,
+  captured: ReturnType<typeof captureChatSettingsTarget>,
+  patch: Pick<SessionPatch, "fastMode" | "thinkingLevel" | "contextWindow">,
+  setting: string,
+  synchronize?: () => void,
+): Promise<boolean> {
+  setChatError(host, null, true);
+  try {
+    if (!captured.isCurrent()) {
+      return false;
+    }
+    const pending = patchChatSessionSettings(host, sessionKey, patch, {
+      ...captured.agentParams,
+      expectedSessionId: captured.target?.sessionId,
+      reconcile: async () => refreshCurrentChatSessionList(host),
+    });
+    synchronize?.();
+    return (await pending) !== null;
+  } catch (err) {
+    if (captured.isCurrent()) {
+      setChatError(host, `Failed to set ${setting}: ${formatUiError(err)}`, true);
+    }
+    return false;
+  } finally {
+    synchronize?.();
+  }
+}
+
 export function switchChatFastMode(
   host: ChatModelSettingsHost,
   nextFastMode: "" | "on" | "off" | "auto",
@@ -201,30 +232,7 @@ export function switchChatFastMode(
   if (activeRow?.fastMode === next) {
     return Promise.resolve(true);
   }
-  setChatError(host, null, true);
-  return (async () => {
-    try {
-      if (!captured.isCurrent()) {
-        return false;
-      }
-      const patched = await patchChatSessionSettings(
-        host,
-        targetSessionKey,
-        { fastMode: next ?? null },
-        {
-          ...captured.agentParams,
-          expectedSessionId: captured.target?.sessionId,
-          reconcile: async () => refreshCurrentChatSessionList(host),
-        },
-      );
-      return patched !== null;
-    } catch (err) {
-      if (captured.isCurrent()) {
-        setChatError(host, `Failed to set speed: ${formatUiError(err)}`, true);
-      }
-      return false;
-    }
-  })();
+  return applyChatSetting(host, targetSessionKey, captured, { fastMode: next ?? null }, "speed");
 }
 
 type ChatModelSelection = {
@@ -562,33 +570,14 @@ export function switchChatThinkingLevel(
       host.chatThinkingLevel = captured.row()?.thinkingLevel ?? null;
     }
   };
-  setChatError(host, null, true);
-  return (async () => {
-    try {
-      if (!captured.isCurrent()) {
-        return false;
-      }
-      const pending = patchChatSessionSettings(
-        host,
-        targetSessionKey,
-        { thinkingLevel: normalizedNext ?? null },
-        {
-          ...captured.agentParams,
-          expectedSessionId: captured.target?.sessionId,
-          reconcile: async () => refreshCurrentChatSessionList(host),
-        },
-      );
-      synchronizeThinking();
-      return (await pending) !== null;
-    } catch (err) {
-      if (captured.isCurrent()) {
-        setChatError(host, `Failed to set thinking level: ${formatUiError(err)}`, true);
-      }
-      return false;
-    } finally {
-      synchronizeThinking();
-    }
-  })();
+  return applyChatSetting(
+    host,
+    targetSessionKey,
+    captured,
+    { thinkingLevel: normalizedNext ?? null },
+    "thinking level",
+    synchronizeThinking,
+  );
 }
 
 export function switchChatContextWindow(
@@ -607,28 +596,11 @@ export function switchChatContextWindow(
   if ((activeRow?.contextWindow ?? "") === (next ?? "")) {
     return Promise.resolve(true);
   }
-  setChatError(host, null, true);
-  return (async () => {
-    try {
-      if (!captured.isCurrent()) {
-        return false;
-      }
-      const patched = await patchChatSessionSettings(
-        host,
-        targetSessionKey,
-        { contextWindow: next ?? null },
-        {
-          ...captured.agentParams,
-          expectedSessionId: captured.target?.sessionId,
-          reconcile: async () => refreshCurrentChatSessionList(host),
-        },
-      );
-      return patched !== null;
-    } catch (err) {
-      if (captured.isCurrent()) {
-        setChatError(host, `Failed to set context window: ${formatUiError(err)}`, true);
-      }
-      return false;
-    }
-  })();
+  return applyChatSetting(
+    host,
+    targetSessionKey,
+    captured,
+    { contextWindow: next ?? null },
+    "context window",
+  );
 }
