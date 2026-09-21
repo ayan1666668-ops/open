@@ -30,28 +30,15 @@ import {
   isSessionTranscriptIndexReconcileRunning,
   startSessionTranscriptIndexReconcile,
 } from "./session-transcript-reconcile.js";
+import type {
+  SessionTranscriptSearchParams,
+  SessionTranscriptSearchResult,
+} from "./session-transcript-search.types.js";
 import { withSessionHistoryWorkerDatabase } from "./session-transcript-worker-runtime.js";
 
 const SEARCH_SNIPPET_MAX_CHARS = 500;
 const SEARCH_LIMIT_MAX = 25;
 const SEARCH_QUERY_MAX_CHARS = 4096;
-
-type SessionTranscriptSearchHit = {
-  sessionKey: string;
-  sessionId: string;
-  messageId: string;
-  role: "assistant" | "user";
-  timestamp: number;
-  snippet: string;
-  score: number;
-};
-
-export type SessionTranscriptSearchResult = {
-  hits: SessionTranscriptSearchHit[];
-  indexing: boolean;
-  truncated: boolean;
-  archivedTranscriptsExcluded?: number;
-};
 
 function toFtsQuery(query: string): string {
   return query
@@ -118,19 +105,6 @@ export function readSessionTranscriptSearchVersion(params: {
   }, toDatabaseOptions(scope));
   return result.found ? result.value : null;
 }
-
-export type SessionTranscriptSearchParams = {
-  agentId: string;
-  env?: NodeJS.ProcessEnv;
-  limit?: number;
-  query: string;
-  role?: "assistant" | "user";
-  sessionId?: string;
-  sessionKeys?: string[];
-  order?: "relevance" | "recent";
-  storePath?: string;
-  sessionKey?: string;
-};
 
 /** Query a captured disk owner off-thread; reconciliation remains host-owned. */
 export async function searchSessionTranscripts(
@@ -303,7 +277,7 @@ export function searchSessionTranscriptsReadOnlySync(
               )
               .limit(limit + 1),
           ).rows;
-          const hits = rows.flatMap((row): SessionTranscriptSearchHit[] => {
+          const hits = rows.flatMap((row): SessionTranscriptSearchResult["hits"] => {
             if (
               typeof row.session_key !== "string" ||
               typeof row.session_id !== "string" ||

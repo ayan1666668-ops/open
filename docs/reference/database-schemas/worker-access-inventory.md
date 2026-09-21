@@ -10,7 +10,7 @@ title: "Database worker migration inventory"
 
 This snapshot contains **470 non-test files and 2482 call expressions** for the five primitives below. The campaign previously reported 404 files; that is a historical estimate, not a fixed target or a count of call expressions. This inventory follows current source and excludes import-only matches, comments, tests, fixtures, and test support. Its scan scope and exclusions are explicit below.
 
-Regenerate with `node scripts/database-worker-inventory.mjs --write`; verify with `node scripts/database-worker-inventory.mjs --check`. `--json` emits every call's primitive, line, column, file owner, tier, and classification evidence. The script uses the repository's TypeScript parser and `rg`; it does not load application code or open a database.
+Regenerate with `pnpm db:worker-inventory:gen`; verify with `pnpm db:worker-inventory:check`. `node scripts/database-worker-inventory.mjs --json` emits every call's primitive, line, column, file owner, tier, and classification evidence. The script uses the repository's TypeScript parser and `rg`; it does not load application code or open a database.
 
 ## Scope and interpretation
 
@@ -78,7 +78,7 @@ Counts use `Q/F/S/A/R` in that order. Source locations are available in `--json`
 | **src/config/sessions** · `src/config/sessions/session-accessor.sqlite-entry-read.ts`                        |         2/1/0/0/0 |        127 | Session-entry read kernel; inspect each caller's execution context                |
 | **src/gateway** · `src/gateway/session-row-projection-materialize.ts`                                        |         0/0/0/0/1 |        121 | Session-list row entries and membership; process-held incognito path              |
 | **src/gateway** · `src/gateway/session-row-projection.ts`                                                    |         0/0/0/0/1 |        217 | Resident list owner; hydration, dirty/archived rows and process-held reads remain |
-| **src/config/sessions** · `src/config/sessions/session-transcript-search.ts`                                 |         1/2/0/0/2 |         73 | Async durable search uses worker; process-held incognito remains native           |
+| **src/config/sessions** · `src/config/sessions/session-transcript-search.ts`                                 |         1/2/0/0/2 |         60 | Async durable search uses worker; process-held incognito remains native           |
 | **src/tasks** · `src/tasks/task-flow-registry.store.kernel.ts`                                               |         3/1/0/0/0 |        223 | Kernel shared by native and worker callers                                        |
 | **src/tasks** · `src/tasks/task-flow-registry.store.sqlite.ts`                                               |         0/0/3/0/0 |         68 | Mixed native mutations and worker-backed read facade                              |
 | **src/tasks** · `src/tasks/task-registry.store.kernel.ts`                                                    |         9/1/0/0/0 |        290 | Kernel shared by native and worker callers                                        |

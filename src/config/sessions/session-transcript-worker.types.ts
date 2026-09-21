@@ -41,7 +41,7 @@ import type {
 import type {
   SessionTranscriptSearchParams,
   SessionTranscriptSearchResult,
-} from "./session-transcript-search.js";
+} from "./session-transcript-search.types.js";
 import type { TranscriptEntryAnchor } from "./transcript-entry-anchor.js";
 
 export type SessionTranscriptSearchWorkerInput = {
