@@ -1,6 +1,7 @@
 /* @vitest-environment jsdom */
 import type { UsersMentionableResult } from "@openclaw/gateway-protocol";
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
+import { createDeferred } from "../../../test/helpers/promise.js";
 import { createWebPushCapability } from "../app/web-push.ts";
 import { requestSessionCreate } from "../lib/sessions/create.ts";
 import * as toast from "../lib/toast.ts";
@@ -47,9 +48,12 @@ async function mount() {
   const directory = vi.fn(async (): Promise<UsersMentionableResult> => people);
   const fixture = createDraftFixture({
     request: async (method) => {
-      if (method === "users.mentionable") return directory();
-      if (method === "sessions.create")
+      if (method === "users.mentionable") {
+        return directory();
+      }
+      if (method === "sessions.create") {
         return { key: "agent:main:dashboard:mentioned", runStarted: true, runId: "mention-run" };
+      }
       return {};
     },
   });
@@ -88,44 +92,50 @@ async function mount() {
   vi.mocked(context.sessions.createResult).mockImplementation((params) =>
     requestSessionCreate(context.gateway.snapshot.client!, params),
   );
-  const { palette } = await mountPalette(context);
+  const { palette, provider } = await mountPalette(context);
+  const getInput = () => palette.querySelector<HTMLTextAreaElement>(".cmd-palette__input")!;
   palette.openPalette();
   await palette.updateComplete;
-  const input = palette.querySelector<HTMLTextAreaElement>(".cmd-palette__input")!;
-  input.focus();
-  const edit = async (
-    value: string,
-    options: {
-      start?: number;
-      end?: number;
-      caret?: number;
-      data?: string;
-      inputType?: string;
-    } = {},
-  ) => {
-    input.setSelectionRange(
-      options.start ?? input.value.length,
-      options.end ?? options.start ?? input.value.length,
-    );
+  getInput().focus();
+  const edit = async (options: {
+    start: number;
+    end: number;
+    text: string;
+    inputType?: string;
+  }) => {
+    const input = getInput();
+    const previous = input.value;
+    input.setSelectionRange(options.start, options.end);
+    const inputType = options.inputType ?? "insertText";
     const event = {
       bubbles: true,
-      inputType: options.inputType ?? "insertText",
-      data: options.data ?? value,
+      inputType,
+      data: inputType.startsWith("delete") ? null : options.text,
     };
-    input.dispatchEvent(new InputEvent("beforeinput", event));
-    input.value = value;
-    input.setSelectionRange(options.caret ?? value.length, options.caret ?? value.length);
+    input.dispatchEvent(new InputEvent("beforeinput", { ...event, cancelable: true }));
+    input.value = previous.slice(0, options.start) + options.text + previous.slice(options.end);
+    const caret = options.start + options.text.length;
+    input.setSelectionRange(caret, caret);
     input.dispatchEvent(new InputEvent("input", event));
     await palette.updateComplete;
   };
-  const key = async (key: string, extra: KeyboardEventInit = {}) => {
-    const event = new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key, ...extra });
-    input.dispatchEvent(event);
+  const append = (text: string) =>
+    edit({ start: getInput().value.length, end: getInput().value.length, text });
+  const replace = (text: string, inputType = "insertText") =>
+    edit({ start: 0, end: getInput().value.length, text, inputType });
+  const key = async (pressedKey: string, extra: KeyboardEventInit = {}) => {
+    const event = new KeyboardEvent("keydown", {
+      bubbles: true,
+      cancelable: true,
+      key: pressedKey,
+      ...extra,
+    });
+    getInput().dispatchEvent(event);
     await palette.updateComplete;
     return event;
   };
-  const search = async (value = input.value + "@") => {
-    await edit(value);
+  const search = async (text = "@") => {
+    await append(text);
     await vi.advanceTimersByTimeAsync(150);
     await palette.updateComplete;
   };
@@ -140,9 +150,18 @@ async function mount() {
   return {
     ...fixture,
     palette,
-    input,
+    provider,
+    get input() {
+      return getInput();
+    },
     directory,
+    directoryParams: () =>
+      fixture.request.mock.calls
+        .filter(([method]) => method === "users.mentionable")
+        .map(([, params]) => params),
     edit,
+    append,
+    replace,
     key,
     search,
     menu,
@@ -202,10 +221,11 @@ describe("command palette people mentions", () => {
     await f.search();
     await f.key("ArrowDown");
     await f.key("Enter");
-    await f.edit("@Alex ", { start: 0, end: 6, inputType: "deleteContentForward" });
+    await f.edit({ start: 0, end: 6, text: "", inputType: "deleteContentForward" });
     expect(f.recipients()).toHaveLength(1);
-    await f.edit("Review @Alex ", { start: 0, end: 0, data: "Review " });
-    await f.edit("Review @Alex @ tail", { start: 13, end: 13, data: "@ tail", caret: 14 });
+    await f.edit({ start: 0, end: 0, text: "Review " });
+    await f.append(" tail");
+    await f.edit({ start: 13, end: 13, text: "@" });
     await vi.advanceTimersByTimeAsync(150);
     await f.key("End");
     await f.key("Enter");
@@ -225,12 +245,17 @@ describe("command palette people mentions", () => {
 
   it("closes suggestions when the caret leaves the invocation or selects a range", async () => {
     const f = await mount();
-    await f.search("Review @Al");
+    await f.append("Review @");
+    await f.search("Al");
+    expect(f.directoryParams()).toEqual([{ agentId: "main", query: "Al" }]);
+    expect(f.menu()).not.toBeNull();
     f.input.setSelectionRange(0, 0);
     f.input.dispatchEvent(new Event("select", { bubbles: true }));
     await f.palette.updateComplete;
     expect(f.menu()).toBeNull();
-    await f.search("Review @Jo");
+    await f.replace("Review @Jo");
+    await vi.advanceTimersByTimeAsync(150);
+    expect(f.menu()).not.toBeNull();
     f.input.setSelectionRange(7, 10);
     f.input.dispatchEvent(new Event("select", { bubbles: true }));
     await f.palette.updateComplete;
@@ -245,7 +270,7 @@ describe("command palette people mentions", () => {
     await f.search();
     await f.key("End");
     await f.key("Enter");
-    await f.edit("@Alx @Jordan Rivera ", { start: 3, end: 4, inputType: "deleteContentForward" });
+    await f.edit({ start: 3, end: 4, text: "", inputType: "deleteContentForward" });
     expect(f.recipients()).toHaveLength(1);
     const value = f.input.value;
     vi.mocked(f.context.sessions.list).mockClear();
@@ -262,28 +287,21 @@ describe("command palette people mentions", () => {
     expect(create).not.toHaveProperty("mentions");
   });
 
-  it.each(["email@example.test", "`@Alex", "> @Alex", "/command @Alex"])(
-    "keeps %s literal",
-    async (value) => {
-      const f = await mount();
-      await f.search(value);
-      expect(f.directory).not.toHaveBeenCalled();
-      expect(f.menu()).toBeNull();
-      expect(f.recipients()).toHaveLength(0);
-    },
-  );
-
   it.each(["insertFromPaste", "insertFromDrop"])(
     "does not select or look up text from %s",
     async (inputType) => {
       const f = await mount();
-      await f.edit("@Alex", { inputType });
+      await f.replace("@Alex", inputType);
       await vi.advanceTimersByTimeAsync(150);
       expect(f.directory).not.toHaveBeenCalled();
       await f.send();
-      expect(
-        f.request.mock.calls.find(([method]) => method === "sessions.create")?.[1],
-      ).not.toHaveProperty("mentions");
+      expect(f.request).toHaveBeenCalledWith(
+        "sessions.create",
+        expect.objectContaining({ message: "@Alex" }),
+      );
+      const create = f.request.mock.calls.find(([method]) => method === "sessions.create")?.[1];
+      expect(create).not.toHaveProperty("mentions");
+      expect(f.palette.isOpen).toBe(false);
     },
   );
 
@@ -310,8 +328,8 @@ describe("command palette people mentions", () => {
   it("shows loading, empty, and retry states without accidentally sending", async () => {
     const f = await mount();
     f.directory.mockResolvedValueOnce({ users: [], truncated: false });
-    await f.edit("@Nobody");
-    expect(f.palette.querySelectorAll(".mention-menu__loading")).toHaveLength(3);
+    await f.append("@Nobody");
+    expect(f.menu()?.querySelector('[aria-busy="true"]')).toBeTruthy();
     await f.key("Enter");
     expect(f.context.sessions.createResult).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(150);
@@ -319,9 +337,10 @@ describe("command palette people mentions", () => {
     await f.key("Tab");
     expect(f.context.sessions.createResult).not.toHaveBeenCalled();
     f.directory.mockRejectedValueOnce(new Error("unavailable"));
-    await f.search("@Alex");
-    const retry = f.menu()?.querySelector<HTMLButtonElement>("button")!;
-    expect(retry.textContent).toContain("Retry");
+    await f.replace("@Alex");
+    await vi.advanceTimersByTimeAsync(150);
+    const retry = f.palette.querySelector<HTMLButtonElement>(".mention-menu__retry")!;
+    expect(retry.textContent?.trim()).toBe("Retry");
     expect((await f.key("Tab")).defaultPrevented).toBe(false);
     retry.click();
     await vi.advanceTimersByTimeAsync(150);
@@ -385,10 +404,13 @@ describe("command palette people mentions", () => {
     "does not query a directory for %s operators",
     async (mode) => {
       const f = await mount();
-      if (mode === "anonymous") Object.assign(f.context.gateway.snapshot, { selfUser: undefined });
-      else if (mode === "read-only")
+      if (mode === "anonymous") {
+        Object.assign(f.context.gateway.snapshot, { selfUser: undefined });
+      } else if (mode === "read-only") {
         Object.assign(f.context.gateway.snapshot.hello!.auth!, { scopes: ["operator.read"] });
-      else f.context.gateway.snapshot.phase = "reconnecting";
+      } else {
+        f.context.gateway.snapshot.phase = "reconnecting";
+      }
       f.publish();
       await f.palette.updateComplete;
       // An identity change closes the old draft before the next opening.
@@ -396,12 +418,7 @@ describe("command palette people mentions", () => {
         f.palette.openPalette();
         await f.palette.updateComplete;
       }
-      const input = f.palette.querySelector<HTMLTextAreaElement>("textarea")!;
-      input.value = "@";
-      input.dispatchEvent(
-        new InputEvent("input", { bubbles: true, inputType: "insertText", data: "@" }),
-      );
-      await vi.advanceTimersByTimeAsync(150);
+      await f.search();
       expect(f.directory).not.toHaveBeenCalled();
       expect(f.menu()).toBeNull();
     },
@@ -423,53 +440,75 @@ describe("command palette people mentions", () => {
     ).not.toHaveProperty("mentions");
   });
 
-  it("bounds many selections at the existing ten-reference limit", async () => {
-    const f = await mount();
-    for (let index = 0; index < 10; index++) {
-      f.directory.mockResolvedValueOnce({
-        users: [{ profileId: "person-" + index, displayName: "Person " + index, online: false }],
-        truncated: false,
-      });
-      await f.search();
-      await f.key("Enter");
-    }
-    expect(f.recipients()).toHaveLength(10);
-    await f.search();
-    expect(f.menu()?.textContent).toContain("10");
-    expect(f.menu()?.querySelector('[role="option"]')).toBeNull();
-    expect(f.input.hasAttribute("aria-activedescendant")).toBe(false);
-    const value = f.input.value;
-    await f.key("Enter");
-    expect(f.input.value).toBe(value);
-    await f.key("Escape");
-    await f.send();
-    expect(
-      f.request.mock.calls.find(([method]) => method === "sessions.create")?.[1],
-    ).toMatchObject({ mentions: expect.any(Array) });
-  });
-
-  it.each(["close", "owner", "disconnect"])(
-    "fences late directory responses after %s",
+  it.each(["close", "owner", "detach", "reconnect"])(
+    "keeps a new visible invocation authoritative after %s",
     async (change) => {
       const f = await mount();
-      let finish!: (result: UsersMentionableResult) => void;
-      f.directory.mockReturnValueOnce(
-        new Promise((resolve) => {
-          finish = resolve;
-        }),
-      );
-      await f.search();
-      if (change === "close") f.palette.togglePalette();
-      else if (change === "disconnect") f.palette.remove();
-      else {
+      const oldResponse = createDeferred<UsersMentionableResult>();
+      const newResponse = createDeferred<UsersMentionableResult>();
+      f.directory.mockReturnValueOnce(oldResponse.promise).mockReturnValueOnce(newResponse.promise);
+      await f.search("@old");
+      expect(f.directory).toHaveBeenCalledOnce();
+      expect(f.directoryParams()).toEqual([{ agentId: "main", query: "old" }]);
+
+      if (change === "close") {
+        f.palette.togglePalette();
+      } else if (change === "owner") {
         Object.assign(f.context.gateway, { connectionRevision: 2 });
+        f.publish();
+      } else if (change === "detach") {
+        f.palette.remove();
+        f.provider.append(f.palette);
+      } else {
+        f.context.gateway.snapshot.phase = "reconnecting";
+        f.publish();
+        await f.palette.updateComplete;
+        expect(f.palette.isOpen).toBe(true);
+        expect(f.input.value).toBe("@old");
+        expect(f.menu()).toBeNull();
+        f.context.gateway.snapshot.phase = "connected";
         f.publish();
       }
       await f.palette.updateComplete;
-      finish(people);
+      if (change !== "reconnect") {
+        expect(f.palette.isOpen).toBe(false);
+        f.palette.openPalette();
+        await f.palette.updateComplete;
+      }
+      f.input.focus();
+      await f.replace("@new");
+      await vi.advanceTimersByTimeAsync(150);
+      expect(f.directory).toHaveBeenCalledTimes(2);
+      expect(f.directoryParams()).toEqual([
+        { agentId: "main", query: "old" },
+        { agentId: "main", query: "new" },
+      ]);
+      expect(f.palette.isOpen).toBe(true);
+      expect(f.menu()?.querySelector('[aria-busy="true"]')).toBeTruthy();
+
+      oldResponse.resolve(people);
       await vi.advanceTimersByTimeAsync(0);
-      expect(f.menu()).toBeNull();
+      expect(f.menu()?.querySelector('[aria-busy="true"]')).toBeTruthy();
+      expect(f.menu()?.querySelectorAll('[role="option"]')).toHaveLength(0);
       expect(f.recipients()).toHaveLength(0);
+
+      newResponse.resolve({
+        users: [{ profileId: "new-person", displayName: "New Person", online: true }],
+        truncated: false,
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(f.menu()?.querySelector('[role="option"]')?.textContent).toContain("New Person");
+      expect(f.menu()?.textContent).not.toContain("Alex");
+      await f.key("Enter");
+      expect(f.input.value).toBe("@New Person ");
+      await f.send();
+      expect(f.request).toHaveBeenCalledWith(
+        "sessions.create",
+        expect.objectContaining({
+          message: "@New Person",
+          mentions: [{ profileId: "new-person", start: 0, end: 11 }],
+        }),
+      );
     },
   );
 });

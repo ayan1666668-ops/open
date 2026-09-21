@@ -197,7 +197,12 @@ export class CommandPaletteLoadingState {
       return;
     }
     const input = this.#input;
-    if (!this.#composing && event?.inputType === "insertText" && event.data?.includes("@")) {
+    if (
+      !this.#composing &&
+      !event?.isComposing &&
+      event?.inputType === "insertText" &&
+      event.data?.includes("@")
+    ) {
       this.#mentionTrigger = input.selectionStart - event.data.length + event.data.lastIndexOf("@");
     } else if (this.#mentionTrigger !== undefined) {
       // A pasted/replaced token is ordinary text; only continuation of the typed

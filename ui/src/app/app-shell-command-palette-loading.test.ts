@@ -48,19 +48,30 @@ function type(input: HTMLTextAreaElement, value: string) {
 }
 
 describe("cold command palette input custody", () => {
-  it.each(["typed", "pasted", "replaced", "dropped"])(
+  it.each(["typed", "pasted", "replaced", "dropped", "composing"])(
     "preserves only a typed mention trigger: %s",
     (mode) => {
       const { state, input } = mountLoader();
       const edit = (value: string, inputType: string, data: string) => {
         input.value = value;
         input.setSelectionRange(value.length, value.length);
-        input.dispatchEvent(new InputEvent("input", { bubbles: true, inputType, data }));
+        input.dispatchEvent(
+          new InputEvent("input", {
+            bubbles: true,
+            inputType,
+            data,
+            isComposing: mode === "composing",
+          }),
+        );
       };
       edit("Ask @", mode === "pasted" ? "insertFromPaste" : "insertText", "Ask @");
       edit("Ask @Al", "insertText", "Al");
-      if (mode === "replaced") edit("Ask @Alex", "insertFromPaste", "@Alex");
-      if (mode === "dropped") edit("Ask @Alex", "insertFromDrop", "ex");
+      if (mode === "replaced") {
+        edit("Ask @Alex", "insertFromPaste", "@Alex");
+      }
+      if (mode === "dropped") {
+        edit("Ask @Alex", "insertFromDrop", "ex");
+      }
       expect(state.captureHandoff()()?.mentionTrigger).toBe(mode === "typed" ? 4 : undefined);
       state.begin();
       expect(state.captureHandoff()()?.mentionTrigger).toBeUndefined();
