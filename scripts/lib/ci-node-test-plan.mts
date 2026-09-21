@@ -1312,6 +1312,7 @@ function resolveCommandShardName(file: string): string {
     }
     if (
       [
+        "doctor-session-sqlite.active-settlement.test.ts",
         "doctor-session-sqlite.receipt-recovery.test.ts",
         "doctor-session-transcripts.missing-index.test.ts",
       ].includes(name)
