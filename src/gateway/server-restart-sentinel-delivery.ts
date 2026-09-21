@@ -189,7 +189,12 @@ async function deliverResolvedQueuedSessionDelivery(params: {
   }
   const { cfg, agentId, entry, storePath, canonicalKey } = loadSessionEntry(
     params.entry.sessionKey,
-    recipientAgentId ? { agentId: recipientAgentId } : undefined,
+    {
+      // Ported from upstream ba2fc97a917c, which added the queue context's env
+      // to this lookup in the inline body this module was extracted from.
+      env: params.queueContext.environment,
+      ...(recipientAgentId ? { agentId: recipientAgentId } : {}),
+    },
   );
   if (
     isContinuationReturn &&

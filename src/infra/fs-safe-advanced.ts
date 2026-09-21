@@ -13,6 +13,7 @@ export {
   readFileHandleBounded,
   resolvePathPrefixSync,
   type FileIdentityStat,
+  sameFileContentsSync,
   sameFileIdentity,
   sanitizeUntrustedFileName,
   tempFile,

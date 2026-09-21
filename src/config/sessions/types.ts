@@ -158,34 +158,6 @@ type AcpSessionBinding = {
   agentSessionId: string;
 };
 
-export type SessionCompactionCheckpointReason =
-  | "manual"
-  | "auto-threshold"
-  | "overflow-retry"
-  | "timeout-retry";
-
-type SessionCompactionTranscriptReference = {
-  sessionId: string;
-  sessionFile?: string;
-  leafId?: string;
-  entryId?: string;
-};
-
-export type SessionCompactionCheckpoint = {
-  checkpointId: string;
-  sessionKey: string;
-  sessionId: string;
-  createdAt: number;
-  reason: SessionCompactionCheckpointReason;
-  tokensBefore?: number;
-  tokensAfter?: number;
-  tokensVersion?: typeof SESSION_TOTAL_TOKENS_VERSION;
-  summary?: string;
-  firstKeptEntryId?: string;
-  preCompaction: SessionCompactionTranscriptReference;
-  postCompaction: SessionCompactionTranscriptReference;
-};
-
 type SessionContextBudgetStatusRoute =
   | "fits"
   | "compact_only"
@@ -633,7 +605,6 @@ type SessionEntryCore = SessionRestartRecoveryState &
      */
     lastContextPressureBand?: number;
     compactionCount?: number;
-    compactionCheckpoints?: SessionCompactionCheckpoint[];
     memoryFlush?: MemoryFlushState;
     cliSessionIds?: Record<string, string>;
     cliSessionBindings?: Record<string, CliSessionBinding>;

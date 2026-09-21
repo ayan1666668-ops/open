@@ -44,12 +44,9 @@ import { resolveActiveProviderThinkingProfile } from "../plugins/provider-thinki
 import { normalizeAccountId } from "../routing/account-id.js";
 import { resolveNormalizedAccountEntry } from "../routing/account-lookup.js";
 import { createLazyPromise } from "../shared/lazy-runtime.js";
+import { readTaskStatusSnapshots } from "../tasks/task-status-access.js";
 import {
-  listTasksForAgentIdForStatus,
-  listTasksForSessionKeyForStatus,
-} from "../tasks/task-status-access.js";
-import {
-  buildTaskStatusSnapshot,
+  type buildTaskStatusSnapshot,
   formatTaskStatus,
   formatTaskStatusDetail,
   formatTaskStatusTitle,
@@ -155,8 +152,9 @@ function shouldLoadUsageSummary(params: {
   );
 }
 
-function formatSessionTaskLine(sessionKey: string, agentId: string): string | undefined {
-  const snapshot = buildTaskStatusSnapshot(listTasksForSessionKeyForStatus(sessionKey, agentId));
+function formatSessionTaskLine(
+  snapshot: ReturnType<typeof buildTaskStatusSnapshot>,
+): string | undefined {
   const task = snapshot.focus;
   if (!task) {
     return undefined;
@@ -241,9 +239,10 @@ function resolveStatusRuntimeProvider(params: {
   return params.provider;
 }
 
-function formatAgentTaskCountsLine(agentId: string): string | undefined {
-  const snapshot = buildTaskStatusSnapshot(listTasksForAgentIdForStatus(agentId));
-  if (snapshot.totalCount === 0) {
+function formatAgentTaskCountsLine(
+  snapshot: ReturnType<typeof buildTaskStatusSnapshot> | undefined,
+): string | undefined {
+  if (!snapshot || snapshot.totalCount === 0) {
     return undefined;
   }
   return `📌 Tasks: ${snapshot.activeCount} active · ${snapshot.totalCount} total · agent-local`;
@@ -507,11 +506,15 @@ export async function buildStatusReplyParts(
     const requesterKey = resolveInternalSessionKey({ key: sessionKey, alias, mainKey });
     // Task/subagent status should follow the internal session key alias used by
     // runtime registries, not necessarily the external key passed to the command.
-    taskLine = params.skipDefaultTaskLookup
-      ? params.taskLineOverride
-      : (params.taskLineOverride ?? formatSessionTaskLine(requesterKey, statusAgentId));
-    if (!taskLine && !params.skipDefaultTaskLookup) {
-      taskLine = formatAgentTaskCountsLine(statusAgentId);
+    taskLine = params.taskLineOverride;
+    if (!params.skipDefaultTaskLookup && !taskLine) {
+      const snapshots = await readTaskStatusSnapshots({
+        sessionKey: taskLine === undefined ? requesterKey : undefined,
+        agentId: statusAgentId,
+      });
+      snapshots.assertCurrent();
+      taskLine ??= formatSessionTaskLine(snapshots.session);
+      taskLine ||= formatAgentTaskCountsLine(snapshots.agent);
     }
     const { buildControlledSubagentRunsReadContext, buildSubagentsStatusLine } =
       await loadStatusSubagentsRuntime();
