@@ -404,7 +404,7 @@ jobs:
           export PATH="$NODE_BIN:$PATH"
           # Match the real installer deadline plus owner cleanup, only for this live proof.
           OPENCLAW_VITEST_NO_OUTPUT_TIMEOUT_MS=1920000 pnpm test:live src/cli/update-cli/update-command-node-runtime.live.test.ts
-          node scripts/run-vitest.mjs src/cli/update-cli/update-command-executor-auxiliary.test.ts -t 'preserves direct preflight release through a healthy installer child and active drain|never starts Node provisioning without released authorization input|refuses Node provisioning after'
+          node scripts/run-vitest.mjs src/cli/update-cli/update-command-executor-auxiliary.test.ts -t 'preserves direct preflight release through a healthy installer child and active drain|never starts Node provisioning without released authorization input|refuses Node provisioning after|preserves native-gate environment precedence|preserves absent or empty native payload options'
 
       - name: Prove installed benchmark lifecycle
         if: ${{ inputs.installed_startup_package != '' }}

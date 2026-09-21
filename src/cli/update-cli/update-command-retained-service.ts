@@ -11,7 +11,7 @@ import {
   captureUpdateCommandExecutorAuthority,
   withUpdateCommandExecutorChild,
 } from "./update-command-executor.js";
-import { updateCommandNativeGate } from "./update-command-native-gate.js";
+import { prepareUpdateCommandNativeGate } from "./update-command-native-gate.js";
 import { UpdateCommandRecoveryPendingError } from "./update-command-recovery.js";
 
 /** Real retained admission plus native-controller custody, never service health. */
@@ -56,22 +56,21 @@ export async function withRetainedUpdateServiceAuthority<T>(
       executor,
       candidateRoot,
       async (_grant, bind) => {
+        const gate = prepareUpdateCommandNativeGate(ticket, [
+          nativeOptions.baseEnv,
+          nativeOptions.env,
+        ]);
         const nativeResult = await runCommandWithTimeout(
-          [
-            process.execPath,
-            "--input-type=module",
-            "-e",
-            updateCommandNativeGate,
-            "--",
-            ...command,
-          ],
+          [process.execPath, "--input-type=module", "-e", gate.source, "--", ...command],
           {
             ...nativeOptions,
+            baseEnv: {},
+            env: gate.env,
             signal:
               signal && nativeOptions.signal
                 ? AbortSignal.any([signal, nativeOptions.signal])
                 : (signal ?? nativeOptions.signal),
-            input: ticket,
+            input: gate.input,
             beforeInput: (pid) => {
               signal?.throwIfAborted();
               // The parent fence is suspended. bind checks the same original A/B

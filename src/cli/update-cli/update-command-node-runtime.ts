@@ -13,7 +13,7 @@ import {
   withUpdateCommandExecutorChild,
   type UpdateCommandExecutor,
 } from "./update-command-executor.js";
-import { updateCommandNativeGate } from "./update-command-native-gate.js";
+import { prepareUpdateCommandNativeGate } from "./update-command-native-gate.js";
 import type { PackageRuntimeRecovery } from "./update-command-node-runtime-resolution.js";
 import type { PreManagedServiceStop } from "./update-command-service-context-types.js";
 import {
@@ -41,21 +41,22 @@ export function createPackageRuntimeRecovery(params: {
               params.root,
               async (_grant, bindChild) => {
                 authority.assertRequesterCurrent();
+                const gate = prepareUpdateCommandNativeGate(randomUUID(), [env]);
                 const result = await runCommandWithTimeout(
                   [
                     process.execPath,
                     "--input-type=module",
                     "-e",
-                    updateCommandNativeGate,
+                    gate.source,
                     "--",
                     command,
                     ...args,
                   ],
                   {
                     baseEnv: {},
-                    env,
+                    env: gate.env,
                     cwd: params.root,
-                    input: randomUUID(),
+                    input: gate.input,
                     beforeInput: (pid, argv) => {
                       authority.assertRequesterCurrent();
                       bindChild(pid, argv);
