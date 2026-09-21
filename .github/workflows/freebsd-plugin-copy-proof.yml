@@ -1,0 +1,227 @@
+# Temporary qualification for PR 154354; remove before landing.
+name: Temporary plugin copy proof
+
+on:
+  push:
+    branches: [fix/freebsd-plugin-snapshot-copy]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: freebsd-plugin-copy-154354
+  cancel-in-progress: false
+
+env:
+  SOURCE_SHA: 741bf904182cffc95352676d91f3b1da0eba374b
+  SOURCE_TREE: 9a48369e91b205e3765c86c785d26e9f406c87cf
+  BASE_SHA: 868ad470d0ecf287c077643e3163b0ef7004f4e2
+  HARNESS_SHA: ${{ github.sha }}
+  SOURCE_PINS: '{"package.json":"613cd8f382929a55899a69ba2bedc2266d02c228edcc7928ec610c65aa900bd9","pnpm-lock.yaml":"e83f31e46d43cd3c0e3c5668307b0ccaebfc18036e1e01522cb89aeb9efa8f25","pnpm-workspace.yaml":"d1b8fb6ba7cea512a8a4183562a961605becb8b8735b48e34af04acec6ec43b6",".npmrc":"f1d021e2abdf8817d83e35feb1f5d604e8c985aa0553bec3d417cf6f93e9c09c","packages/ai/package.json":"61eefcb38095a41de445f781c738cb1f89c960ddf6c56f39c6d61970d8db277b","packages/markdown-core/package.json":"eb934f4829a87292edff90480e2c060e636afdd75d35a3ffc02a55581e37a548","packages/model-catalog-core/package.json":"0cef9224746d0eed66278f729b6edf4d6e7cdf31fd35b16af62bae0aa4635331","packages/normalization-core/package.json":"2bfc2ae79211db8023b168e8dd6c5f378dd64e0890b32ae9a043d38c867683a5","packages/session-url-contract/package.json":"ce05f27abdafc0ff033aadf0d0944f8c48681d5eebcd5dec7485e64215abe827","src/infra/update-candidate-plugin-tree.ts":"060022e39079e54588f263364c37145115d514dfc108ca67f9443a438027822b","src/infra/update-candidate-plugin-tree.test.ts":"d3a558a42bf56b44996438a38fb2263b38137ad1ab1a2e7efe4485d305ab63e5","src/infra/update-candidate-plugin-repair.ts":"2e23d5e676d91d486a145236d0a36804efe9c81e59e64b7e2267a296d06ad114","src/infra/update-candidate-plugin-repair.test.ts":"a4b751210bba8d9f8ca91c40536e0bef06c30b1f67a25a740469b8fbe4ee5256","src/infra/update-candidate-plugin-sources.test.ts":"6ef2ff6ecf1e43d1373f2b895fda6bdcd24527fcbdaf52379cdc1900e808f574","src/infra/update-candidate-state.inventory.test.ts":"9c0c618be0168ae91c88cd6cef3f019e2f6bf7be3ea9e37099dfc0bef38e7984","src/infra/update-candidate-state.cleanup.test.ts":"56cb92f80680c90e0b004899fda92e68a3e45786e89d69d63c8c45adaf912d43","src/infra/update-candidate-snapshot.ts":"a36fbba2f5925599498821f1704e2154cab9050001e3d831fe1b7ac6ece43614","src/infra/update-candidate-state.ts":"3bd94c4d798769e28176071df5a583b18a2deef8b64c23b16ac3d36c861ced9e","src/infra/update-candidate-state.worker.ts":"98528b867ad9ba6afd731b347cbe0b9d37c364c9e51a29a673ea1b57e9fbee08","src/infra/update-candidate-plugins.ts":"da960f5b2465dfa286dc40be8d42fbc83800fea6143b66d19f28d25376eb7092","src/process/exec-runner.ts":"89780a8903a7bb6fce44e193ae3bd9cda33b145ae3a8668f1f0034088d3af77f","src/process/exec-result.ts":"8bcacfd0b9fa8c69c5e659d7076b111ec83ac7fd2885ade9204e85e0c69ce7f8","src/process/exec-termination.ts":"f2d789806f347701d73fddff08eb196df4911138fdc4bd48de256b5337b5a13c","scripts/e2e/lib/upgrade-survivor/custom-plugin-siblings.mjs":"2f42c2159cf737d0f9e9dcb8abaad308a266ebfbf684bdde42a3fa101340d81e","scripts/install-smoke-candidate-payload.mts":"5f4de9d36236a4f23d769e0972a0f0904864711ff664ba3fad362137dc3902ac","scripts/run-vitest.mjs":"c3590ff935f53512a6faf3455da5e02f914fc9cbf94c5fdc962d40fbe7f5a459","scripts/lib/vitest-report-capture.mts":"efed891ab104940d6342fa902306809dc714083be53b73a1970d22a12a10a2a2","scripts/lib/vitest-worker-compiler.mts":"955b187167c3a97734a218b2a01f1c4a7c2202d9c1efd50a1b751204babff377","scripts/lib/vitest-worker-run.mts":"0144339d75a27d6b8a9643fa22a46dcc346f4ee387c96b4039b2ee22bd0a1433","scripts/lib/vitest-worker-artifacts.mts":"b8f30e2869db28ef1ba76139434e674fdd6381caafefb7396384ad5e82a5cefc","scripts/package-openclaw-for-docker.mjs":"5003f1184068eca72e5c9cc9fffd9e7354cf31c0e8aebe64a6ebec357721121e","scripts/e2e/upgrade-survivor-docker.sh":"979ea2643968b0b889e0337fa757b305117aa5858445dfed15e2119fc3c364b9","scripts/e2e/lib/upgrade-survivor/run.sh":"d5fb884bdb2a9e151437b0470dcf8a113cefa9b2ef5279f34f0b2f5b563d215b","scripts/e2e/lib/upgrade-survivor/assertions.mjs":"278057470a91f5ac9b5b48282431d36b5f40a9f1820758a7034a81e55143501e","scripts/lib/upgrade-survivor-policy.mjs":"6b495b5e2a036b4e63571e41be420e3ea1faac6a91972014fe6784cb282e0487",".github/actions/setup-node-env/action.yml":"2c6d1c51ef263316262a33f455b5c7243f4a3b1189bd30b2c12a65aa82395dc2","patches/chrome-devtools-mcp@1.8.0.patch":"c9e9590160eb099415e7ff6e705b0e0f725e364419f91153a0207e31a71f8547","src/state/openclaw-agent-db-contract.ts":"25c4e1bc1a28b401a6daf91a6059545c31e3ae5d5c00b4a6cb5cde27a8575fa5","src/state/openclaw-agent-transcript-fts-schema.ts":"3b0465e02da3afa997117d5250bbda6aa6f987d96c99eddd300a52a66ab7a439"}'
+
+jobs:
+  package:
+    if: github.repository == 'openclaw/openclaw' && github.ref == 'refs/heads/fix/freebsd-plugin-snapshot-copy'
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 120
+    env:
+      NODE_OPTIONS: --max-old-space-size=8192
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+      artifact_digest: ${{ steps.upload.outputs.artifact-digest }}
+      manifest_sha: ${{ steps.seal.outputs.manifest_sha }}
+      archive_sha: ${{ steps.seal.outputs.archive_sha }}
+      package_version: ${{ steps.seal.outputs.package_version }}
+      index_sha: ${{ steps.seal.outputs.index_sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 4
+          persist-credentials: false
+      - name: Bind the workflow child to the reviewed source
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$HARNESS_SHA"
+          test "$(git rev-parse HEAD^)" = "$SOURCE_SHA"
+          test "$(git rev-parse "$SOURCE_SHA^")" = 055778d1a70299713fd2d9fab265386724471de4
+          test "$(git rev-parse "$SOURCE_SHA^^2")" = "$BASE_SHA"
+          git merge-base --is-ancestor "$BASE_SHA" "$SOURCE_SHA"
+          test "$(git diff --name-only "$BASE_SHA" "$SOURCE_SHA")" = "$(printf '%s\n' src/infra/update-candidate-plugin-tree.test.ts src/infra/update-candidate-plugin-tree.ts)"
+          test "$(git rev-parse "$SOURCE_SHA^{tree}")" = "$SOURCE_TREE"
+          test "$(git diff --name-only "$SOURCE_SHA" HEAD)" = .github/workflows/freebsd-plugin-copy-proof.yml
+          git switch --detach "$SOURCE_SHA"
+          git diff --exit-code
+      - uses: ./.github/actions/setup-node-env
+        with:
+          node-version: "24.x"
+          install-bun: "false"
+          cache-mode: "off"
+      - name: Prepare bounded source and package assertions
+        run: |
+          set -euo pipefail
+          mkdir "$RUNNER_TEMP/plugin-proof"
+          export INPUT_ROOT="$RUNNER_TEMP/plugin-proof"
+          cat > "$INPUT_ROOT/source-check.mjs" <<'NODE'
+          import assert from 'node:assert/strict';
+          import fs from 'node:fs';
+          import path from 'node:path';
+          import { createHash } from 'node:crypto';
+          export const hash = file => createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+          const root = process.env.SOURCE_ROOT;
+          for (const [file, digest] of Object.entries(JSON.parse(process.env.SOURCE_PINS))) {
+            assert.equal(hash(path.join(root, file)), digest, file);
+          }
+          const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json')));
+          assert.equal(pkg.dependencies['@openclaw/fs-safe'], '0.17.0');
+          assert.deepEqual(pkg.openclaw.schemaVersions, {state:17,agent:22});
+          assert.match(pkg.packageManager, /^pnpm@12\.4\.0\+/);
+          console.log(JSON.stringify({source:process.env.SOURCE_SHA, sourcePins:Object.keys(JSON.parse(process.env.SOURCE_PINS)).length, fsSafe:'0.17.0', pnpm:'12.4.0'}));
+          NODE
+      - name: Verify the five current copier suites without skips
+        run: |
+          set -euo pipefail
+          export INPUT_ROOT="$RUNNER_TEMP/plugin-proof" SOURCE_ROOT="$PWD"
+          mkdir "$INPUT_ROOT/reports"
+          node "$INPUT_ROOT/source-check.mjs"
+          test "$(pnpm --version)" = 12.4.0
+          node scripts/run-vitest.mjs run --config test/vitest/vitest.infra.config.ts \
+            src/infra/update-candidate-plugin-tree.test.ts \
+            src/infra/update-candidate-plugin-repair.test.ts \
+            src/infra/update-candidate-plugin-sources.test.ts \
+            src/infra/update-candidate-state.inventory.test.ts \
+            src/infra/update-candidate-state.cleanup.test.ts \
+            --reporter=default --reporter=json --reporter="$SOURCE_ROOT/scripts/lib/vitest-report-capture.mts" \
+            --outputFile.json="$INPUT_ROOT/reports/green.json"
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import fs from 'node:fs';
+          import path from 'node:path';
+          const file=path.join(process.env.INPUT_ROOT,'reports/green.json');
+          const r=JSON.parse(fs.readFileSync(file)), c=JSON.parse(fs.readFileSync(`${file}.capture.json`));
+          assert.equal(c.processTimedOut,false); assert.equal(c.ignoreUnhandledErrors,false);
+          assert.equal(c.ended.unhandledErrors,0); assert.equal(c.ended.suiteErrors,0); assert.equal(c.ended.failedModules,0);
+          assert.equal(r.success,true); assert.equal(r.numFailedTests,0); assert.equal(r.numPassedTests,72);
+          assert.equal(r.numPendingTests,0); assert.equal(r.numTodoTests,0);
+          const expected={'update-candidate-plugin-tree.test.ts':6,'update-candidate-plugin-repair.test.ts':27,'update-candidate-plugin-sources.test.ts':8,'update-candidate-state.inventory.test.ts':5,'update-candidate-state.cleanup.test.ts':26};
+          assert.deepEqual(c.modules.map(m=>path.basename(m.file)).sort(),Object.keys(expected).sort());
+          assert.deepEqual(r.testResults.map(m=>path.basename(m.name)).sort(),Object.keys(expected).sort());
+          for(const module of r.testResults) {
+            assert.equal(module.assertionResults.length,expected[path.basename(module.name)]);
+            assert(module.assertionResults.every(t=>t.status==='passed'));
+          }
+          const owner=r.testResults.find(m=>m.name.endsWith('/update-candidate-plugin-tree.test.ts'));
+          assert(owner.assertionResults.some(t=>t.title==='copies a nonempty plugin without native support or sharing its source inode'));
+          console.log(JSON.stringify({platform:process.platform,arch:process.arch,source:process.env.SOURCE_SHA,modules:expected,passed:72,skipped:0,newOwnerCases:6}));
+          NODE
+          node "$INPUT_ROOT/source-check.mjs"
+          git diff --exit-code
+      - name: Build and seal one current candidate
+        id: seal
+        run: |
+          set -euo pipefail
+          export INPUT_ROOT="$RUNNER_TEMP/plugin-proof" SOURCE_ROOT="$PWD"
+          node "$INPUT_ROOT/source-check.mjs"
+          test "$(pnpm --version)" = 12.4.0
+          git archive --format=tar.gz --prefix=openclaw/ "$SOURCE_SHA" > "$INPUT_ROOT/source.tar.gz"
+          node scripts/package-openclaw-for-docker.mjs --allow-unreleased-changelog \
+            --output-dir "$RUNNER_TEMP/candidate-package" --output-name candidate.tgz \
+            --pack-json "$RUNNER_TEMP/candidate-pack.json"
+          node "$INPUT_ROOT/source-check.mjs"
+          git diff --exit-code
+          node scripts/install-smoke-candidate-payload.mts seal \
+            --archive "$INPUT_ROOT/source.tar.gz" --package-dir "$RUNNER_TEMP/candidate-package" --output-dir "$INPUT_ROOT/payload" \
+            --repository "$GITHUB_REPOSITORY" --target-sha "$SOURCE_SHA" \
+            --harness-repository "$GITHUB_REPOSITORY" --harness-sha "$HARNESS_SHA" \
+            --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT"
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';import fs from 'node:fs';import path from 'node:path';import {createHash} from 'node:crypto';
+          const root=process.env.INPUT_ROOT, hash=f=>createHash('sha256').update(fs.readFileSync(f)).digest('hex');
+          const manifestFile=path.join(root,'payload/install-smoke-candidate-payload.json'),manifest=JSON.parse(fs.readFileSync(manifestFile));
+          const files=[];
+          function walk(relative=''){for(const name of fs.readdirSync(path.join(root,relative)).sort()){const file=path.join(relative,name),stat=fs.lstatSync(path.join(root,file));if(stat.isDirectory())walk(file);else{assert(stat.isFile());files.push({file,size:stat.size,sha256:hash(path.join(root,file))});}}}
+          walk();assert(files.length<=12);assert(files.reduce((n,f)=>n+f.size,0)<256*1024*1024);
+          const index=path.join(root,'proof-index.json');fs.writeFileSync(index,JSON.stringify({source:process.env.SOURCE_SHA,harness:process.env.HARNESS_SHA,files}),{flag:'wx'});
+          fs.appendFileSync(process.env.GITHUB_OUTPUT,`manifest_sha=${hash(manifestFile)}\narchive_sha=${manifest.sourceArchiveSha256}\npackage_version=${manifest.packageVersion}\nindex_sha=${hash(index)}\n`);
+          console.log(JSON.stringify({source:process.env.SOURCE_SHA,harness:process.env.HARNESS_SHA,manifestSha256:hash(manifestFile),archiveSha256:manifest.sourceArchiveSha256,indexSha256:hash(index),files}));
+          NODE
+      - name: Retain the immutable source, candidate and proof inputs
+        id: upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: plugin-copy-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/plugin-proof
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+  linux-survivor:
+    needs: package
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 75
+    env:
+      INDEX_SHA: ${{ needs.package.outputs.index_sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: ./.github/actions/setup-node-env
+        with:
+          node-version: "24.x"
+          install-bun: "false"
+          cache-mode: "off"
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          artifact-ids: ${{ needs.package.outputs.artifact_id }}
+          path: proof-input
+          merge-multiple: true
+      - name: Authenticate every proof input
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';import fs from 'node:fs';import path from 'node:path';import {createHash} from 'node:crypto';
+          const hash=f=>createHash('sha256').update(fs.readFileSync(f)).digest('hex');
+          assert.equal(hash('proof-input/proof-index.json'),process.env.INDEX_SHA);
+          const index=JSON.parse(fs.readFileSync('proof-input/proof-index.json'));
+          assert.equal(index.source,process.env.SOURCE_SHA);assert.equal(index.harness,process.env.HARNESS_SHA);
+          for(const {file,size,sha256} of index.files){assert(!path.isAbsolute(file)&&!file.split('/').includes('..'));const p=path.join('proof-input',file),s=fs.lstatSync(p);assert(s.isFile());assert.equal(s.size,size);assert.equal(hash(p),sha256);}
+          console.log(JSON.stringify({source:index.source,harness:index.harness,indexSha256:process.env.INDEX_SHA,files:index.files.length}));
+          NODE
+      - name: Published-driver custom plugin sibling survivor
+        env:
+          OPENCLAW_UPGRADE_SURVIVOR_PUBLISHED_BASELINE: "1"
+          OPENCLAW_UPGRADE_SURVIVOR_BASELINE_SPEC: openclaw@2026.9.4
+          OPENCLAW_UPGRADE_SURVIVOR_SCENARIO: custom-plugin-siblings
+        run: |
+          set -euo pipefail
+          export SOURCE_ROOT="$PWD" INPUT_ROOT="$PWD/proof-input"
+          node "$INPUT_ROOT/source-check.mjs"
+          # This canonical scenario exercises the released 9.4 driver's omitted sibling projection.
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          const response=await fetch('https://registry.npmjs.org/openclaw/2026.9.4',{signal:AbortSignal.timeout(30000)});
+          assert(response.ok);const published=await response.json();
+          assert.equal(published.name,'openclaw');assert.equal(published.version,'2026.9.4');
+          assert.equal(published.dist.tarball,'https://registry.npmjs.org/openclaw/-/openclaw-2026.9.4.tgz');
+          assert.equal(published.dist.integrity,'sha512-lTQpEEe1Xm3u2PCHaPEr+vP8paGk1vLdHuzdItsNToaLI6hAqRVvgJYg+GxukJhETJp4tPy/S1Gftl4KuB8n7A==');
+          console.log(JSON.stringify({publishedRegistryMetadata:{name:published.name,version:published.version,tarball:published.dist.tarball,integrity:published.dist.integrity}}));
+          NODE
+          export OPENCLAW_CURRENT_PACKAGE_TGZ="$INPUT_ROOT/payload/candidate.tgz"
+          export OPENCLAW_UPGRADE_SURVIVOR_ARTIFACT_DIR="$RUNNER_TEMP/plugin-survivor"
+          bash scripts/e2e/upgrade-survivor-docker.sh
+          node "$INPUT_ROOT/source-check.mjs"
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';import fs from 'node:fs';import path from 'node:path';
+          const file=path.join(process.env.OPENCLAW_UPGRADE_SURVIVOR_ARTIFACT_DIR,'summary.json');
+          const stat=fs.lstatSync(file);assert(stat.isFile());assert(stat.size<1024*1024);
+          const summary=JSON.parse(fs.readFileSync(file));
+          assert.equal(summary.status,'passed');assert.equal(summary.scenario,'custom-plugin-siblings');
+          assert.equal(summary.baseline.version,'2026.9.4');
+          assert(['success','recoverable'].includes(summary.updateOutcome));
+          const manifest=JSON.parse(fs.readFileSync(path.join(process.env.INPUT_ROOT,'payload/install-smoke-candidate-payload.json')));
+          assert.equal(summary.candidate.version,manifest.packageVersion);assert.equal(summary.installedVersion,manifest.packageVersion);
+          console.log(JSON.stringify({source:process.env.SOURCE_SHA,scenario:summary.scenario,status:summary.status,baseline:summary.baseline.version,candidate:summary.candidate.version,installedVersion:summary.installedVersion,updateOutcome:summary.updateOutcome,updateRecovery:summary.updateRecovery,agentSchemaMigration:'not-claimed',nativeProof:'historical-unchanged-owner-only'}));
+          NODE
