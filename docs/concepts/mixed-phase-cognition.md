@@ -80,3 +80,7 @@ still decide what can actually execute.
 
 A phase is descriptive telemetry. A control action is a recommendation. Neither
 is authority.
+
+## Related
+
+- [Liquid Software Factory](/concepts/liquid-software-factory) for the end-to-end search-to-convergence architecture.
