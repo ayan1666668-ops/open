@@ -2513,18 +2513,16 @@ describe("Claude session catalog", () => {
       "workspace",
       "local_metadata-cache.json",
     );
-    const indexedPath = path.join(projectDir, "indexed-session.jsonl");
-    const desktopTranscriptPath = path.join(projectDir, "desktop-session.jsonl");
     const entries = [
       {
         sessionId: "indexed-session",
-        fullPath: indexedPath,
+        fullPath: path.join(projectDir, "indexed-session.jsonl"),
         summary: "Indexed before",
         isSidechain: false,
       },
       {
         sessionId: "desktop-session",
-        fullPath: desktopTranscriptPath,
+        fullPath: path.join(projectDir, "desktop-session.jsonl"),
         summary: "Desktop index",
         isSidechain: false,
       },
@@ -3103,13 +3101,15 @@ describe("Claude session catalog", () => {
       waitUntil: publication.resolve,
       listNodes: () => nodes.promise,
     });
-    await publication.promise.finally(async () => {
+    try {
+      await publication.promise;
+      expect(onHost).toHaveBeenCalledWith(
+        expect.objectContaining({ hostId: "gateway:local", canStartTerminal: true, sessions: [] }),
+      );
+    } finally {
       nodes.reject(new Error("node registry down"));
       await pending;
-    });
-    expect(onHost).toHaveBeenCalledWith(
-      expect.objectContaining({ hostId: "gateway:local", canStartTerminal: true, sessions: [] }),
-    );
+    }
     expect(await pending).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ hostId: "gateway:local", canStartTerminal: true }),
