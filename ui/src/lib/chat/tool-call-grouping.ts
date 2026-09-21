@@ -3,9 +3,7 @@
  * "Ran 13 commands, read 6 files, edited 9 files, created a file".
  */
 
-import { flattenMarkdownToPlainText } from "@openclaw/normalization-core/markdown-plain-text";
 import { asOptionalRecord } from "@openclaw/normalization-core/record-coerce";
-import { truncateWithMarker } from "@openclaw/normalization-core/utf16-slice";
 import { Value } from "typebox/value";
 import {
   AgentActivityItemSchema,
@@ -14,7 +12,6 @@ import {
 import { summarizeAgentActivity } from "../../../../src/agents/agent-activity-presentation.js";
 import { t } from "../../i18n/index.ts";
 import type { ToolCard } from "./chat-types.ts";
-import { resolveToolDisplay } from "./tool-display.ts";
 
 export type ToolCardGroup<Card = ToolCard> = {
   card: Card;
@@ -88,27 +85,36 @@ export function readPreparedActivity(message: unknown): AgentActivityItem[] {
     : [];
 }
 
+export function describeToolGroup(items: readonly AgentActivityItem[]) {
+  const summary = summarizeAgentActivity(items);
+  const label = Object.entries(summary.counts)
+    .filter(([, count]) => count > 0)
+    .map(([kind, count]) =>
+      t(`chat.toolCards.activity.${kind}${count === 1 ? "One" : "Many"}`, { count: String(count) }),
+    )
+    .join(" · ");
+  const outcomes = Object.entries(summary.outcomes)
+    .filter(([, count]) => count > 0)
+    .map(([kind, count]) => ({
+      kind,
+      label: t(`chat.toolCards.activity.${kind}`, { count: String(count) }),
+    }));
+  return { total: summary.total, label, outcomes };
+}
+
 export function summarizeToolGroup(
   items: readonly AgentActivityItem[],
-  options: { full?: boolean } = {},
+  options: { includeFailureCount?: boolean } = {},
 ): string {
-  // Command-derived titles describe details, not distinct kinds of Exec work.
-  // Keep unknown outcomes verbatim; the producer owns their explanation.
-  const summary =
-    summarizeAgentActivity(
-      options.full
-        ? items
-        : items.map((item) =>
-            item.name?.toLowerCase() === "exec" && item.status
-              ? { ...item, title: resolveToolDisplay({ name: item.name }).title }
-              : item,
-          ),
-    ) || t("chat.toolCards.rawDetails");
-  return options.full
-    ? summary
-    : truncateWithMarker(flattenMarkdownToPlainText(summary), 40, {
-        marker: "…",
-        reserve: 1,
-        trimEnd: true,
-      });
+  const summary = describeToolGroup(items);
+  return (
+    [
+      summary.label,
+      ...summary.outcomes
+        .filter(({ kind }) => options.includeFailureCount !== false || kind !== "failed")
+        .map(({ label }) => label),
+    ]
+      .filter(Boolean)
+      .join(" · ") || t("chat.toolCards.rawDetails")
+  );
 }

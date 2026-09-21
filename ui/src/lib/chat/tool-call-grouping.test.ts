@@ -115,14 +115,14 @@ describe("summarizeToolGroup", () => {
     ...extra,
   });
 
-  it("uses prepared titles, preserves order, and groups repeated work", () => {
+  it("counts prepared operations without copying their free-form titles", () => {
     expect(
       summarizeToolGroup([
         prepared("first", "Check samples", { name: "custom_tool" }),
-        prepared("second", "Edit report"),
+        prepared("second", "Edit report", { name: "edit" }),
         prepared("third", "Check samples"),
       ]),
-    ).toBe("Check samples ×2, Edit report");
+    ).toBe("1 edit · 2 other operations");
   });
 
   it("replaces running state with the same operation's outcome without counting suppressed siblings", () => {
@@ -132,21 +132,18 @@ describe("summarizeToolGroup", () => {
         prepared("tool:call", "Inspect", { toolCallId: "call", status: "failed" }),
         prepared("command:call", "Command", { toolCallId: "call", suppressChannelProgress: true }),
       ]),
-    ).toBe("Inspect (failed)");
+    ).toBe("1 other operation · 1 failed");
   });
 
   it("keeps failure, approval, and unknown outcomes while quiet work stays out", () => {
     expect(
-      summarizeToolGroup(
-        [
-          prepared("quiet", "Wait", { hideFromChannelProgress: true }),
-          prepared("failure", "Check process", { status: "failed" }),
-          prepared("approval", "Write report", { status: "blocked" }),
-          prepared("unknown", "Outcome unknown", { status: undefined }),
-        ],
-        { full: true },
-      ),
-    ).toBe("Check process (failed), Write report (blocked), Outcome unknown");
+      summarizeToolGroup([
+        prepared("quiet", "Wait", { hideFromChannelProgress: true }),
+        prepared("failure", "Check process", { status: "failed" }),
+        prepared("approval", "Write report", { status: "blocked" }),
+        prepared("unknown", "Outcome unknown", { status: undefined }),
+      ]),
+    ).toBe("3 other operations · 1 failed · 1 blocked · 1 unknown");
   });
 
   it("keeps the diagnostic disclosure label when all prepared work is quiet", () => {
@@ -156,50 +153,18 @@ describe("summarizeToolGroup", () => {
     expect(summarizeToolGroup([])).not.toBe("");
   });
 
-  it.each([1, 2, 3, 10])("counts %i exec calls independently of their command titles", (count) => {
-    const titles = [
-      "Exec",
-      "Exec run pwd",
-      'Exec run pnpm docs:list → search "Take photo|takePhoto|photoInput|accept=.?image/|Photo"',
-      "Exec run echo 'café 日本語 🚀'",
-    ];
-    const items = Array.from({ length: count }, (_, index) =>
-      prepared(`exec-${index}`, titles[(index + 2) % titles.length]!, { name: "exec" }),
+  it("bounds dense summaries independently of command, title, and custom-name length", () => {
+    const items = Array.from({ length: 500 }, (_, index) =>
+      prepared(`call-${index}`, `print text → ${"/workspace/deep/path ".repeat(100)}`, {
+        name: index % 2 === 0 ? "exec" : `custom_${"long".repeat(100)}_${index}`,
+      }),
     );
-
-    expect(summarizeToolGroup(items)).toBe(count === 1 ? "Exec" : `Exec ×${count}`);
-    expect(summarizeToolGroup(items, { full: true })).toContain(titles[2]);
-  });
-
-  it("keeps mixed tools, outcomes, and call reconciliation in the compact count", () => {
-    const items = [
-      prepared("first", "Exec run pwd", { name: "exec", status: "running", toolCallId: "a" }),
-      prepared("read", "Read"),
-      prepared("second", "Exec run git status", { name: "exec" }),
-      prepared("first", "Exec run pwd", { name: "exec", toolCallId: "a" }),
-      prepared("failed", "Exec run check", { name: "exec", status: "failed" }),
-      prepared("quiet", "Exec", { name: "exec", suppressChannelProgress: true }),
-    ];
-    expect(summarizeToolGroup(items)).toBe("Exec ×2, Read, Exec (failed)");
-    expect(
-      summarizeToolGroup([
-        prepared("blocked", "Exec run write", { name: "exec", status: "blocked" }),
-      ]),
-    ).toBe("Exec (blocked)");
-    expect(
-      summarizeToolGroup([
-        prepared("unknown", "Exec — outcome unknown", { name: "exec", status: undefined }),
-      ]),
-    ).toBe("Exec — outcome unknown");
-  });
-
-  it("bounds plain-text labels without splitting Unicode and retains the full title", () => {
-    const title = `**${"a".repeat(38)}🚀 日本語**\ncontinued`;
-    const items = [prepared("long", title)];
-    expect(summarizeToolGroup(items)).toBe(`${"a".repeat(38)}…`);
-    expect(summarizeToolGroup(items, { full: true })).toBe(title);
-    expect(summarizeToolGroup([prepared("unicode", "**Read café 日本語 🚀**")])).toBe(
-      "Read café 日本語 🚀",
+    expect(summarizeToolGroup(items)).toBe("250 commands · 250 other operations");
+    expect(summarizeToolGroup([prepared("custom", "constructor", { name: "constructor" })])).toBe(
+      "1 other operation",
     );
+    expect(
+      summarizeToolGroup([prepared("command", "Native command", { commandBearing: true })]),
+    ).toBe("1 command");
   });
 });

@@ -9,58 +9,72 @@ import {
 } from "./chat-message.test-support.ts";
 import { renderActivityGroup, renderWorkGroupSummary } from "./chat-message.ts";
 
-describe("tool group disclosures", () => {
-  it("keeps full command titles accessible without repeating the work and activity labels", () => {
+describe("quiet completed-work disclosure", () => {
+  it("keeps the heading quiet while expanded details retain failed commands and output", () => {
     const container = document.createElement("div");
-    const command = `pnpm docs:list | rg 'Take photo|takePhoto|photoInput|accept=.?image/|Photo'`;
-    const fullTitle = `Exec run ${command}`;
+    const command = "pnpm test ui/src/pages/chat/chat-thread.test.ts";
     const group = createToolGroup("exec-group", [
       createMessageEntry(
         "exec-message",
         createAssistantMessage(
-          [0, 1, 2].flatMap((index) => [
-            createToolCall(`exec-${index}`, "exec", { command: index === 2 ? command : "pwd" }),
-            createToolResultBlock(`exec-${index}`, "exec", "Done", { isError: false }),
-          ]),
+          [
+            createToolCall("exec-one", "exec", { command }),
+            createToolResultBlock("exec-one", "exec", "Test output remains inspectable", {
+              isError: true,
+            }),
+          ],
           {
-            activity: [0, 1, 2].map((index) => ({
-              itemId: `exec-${index}`,
-              toolCallId: `exec-${index}`,
-              kind: "tool",
-              name: "exec",
-              phase: "end",
-              status: "completed",
-              title: index === 2 ? fullTitle : "Exec",
-            })),
+            activity: [
+              {
+                itemId: "exec-one",
+                toolCallId: "exec-one",
+                kind: "tool",
+                name: "exec",
+                phase: "end",
+                status: "failed",
+                title: "Run chat tests",
+              },
+            ],
           },
         ),
       ),
     ]);
     const onToggle = vi.fn();
-    const work = { key: "work-exec", durationMs: 22_000, groups: [group] };
-    render(renderWorkGroupSummary(work, { expanded: false, onToggle }), container);
-    expect(container.querySelector(".chat-activity-group__label")?.textContent).toBe(
-      "Worked for 22s",
-    );
-    expect(container.querySelector("button")?.textContent?.replace(/\s+/g, " ").trim()).toBe(
-      "Worked for 22s",
-    );
-    const summary = container.querySelector("button")!;
-    expect(summary.getAttribute("aria-description")).toContain(fullTitle);
-    expect(summary.getAttribute("aria-description")).toContain("22s");
-    summary.click();
-    expect(onToggle).toHaveBeenCalledOnce();
+    const work = { key: "work-exec", durationMs: 1_726_000, groups: [group] };
+    for (const expanded of [false, true]) {
+      render(
+        html`${renderWorkGroupSummary(work, { expanded, onToggle })}
+        ${expanded ? renderActivityGroup([group], { showReasoning: false, showToolCalls: true, isToolMessageExpanded: () => true, isToolExpanded: () => true }) : ""}`,
+        container,
+      );
+      const header = container.querySelector<HTMLButtonElement>(".chat-work-group button")!;
+      expect(header.textContent?.trim()).toBe("Worked for 28m 46s");
+      expect(header.getAttribute("aria-expanded")).toBe(String(expanded));
+      expect(header.hasAttribute("aria-description")).toBe(false);
+      expect(header.hasAttribute("title")).toBe(false);
+      expect(header.querySelector("[title], [data-tooltip], .chat-tool-failure")).toBeNull();
+      header.click();
+      if (expanded) {
+        expect(container.textContent).toContain(command);
+        expect(container.textContent).toContain("Test output remains inspectable");
+        expect(container.textContent).toContain("1 failed");
+      } else {
+        expect(container.textContent).not.toContain(command);
+        expect(container.textContent).not.toContain("failed");
+      }
+    }
+    expect(onToggle).toHaveBeenCalledTimes(2);
+  });
 
+  it.each([null, 0])("does not invent elapsed time when the duration is %s", (durationMs) => {
+    const container = document.createElement("div");
     render(
-      html`${renderWorkGroupSummary(work, { expanded: true, onToggle })}
-      ${renderActivityGroup([group], { showReasoning: false, showToolCalls: true })}`,
+      renderWorkGroupSummary(
+        { key: "unknown", durationMs, groups: [] },
+        { expanded: false, onToggle: () => {} },
+      ),
       container,
     );
-    const labels = [...container.querySelectorAll(".chat-activity-group__label")];
-    expect(labels.map((label) => label.textContent)).toEqual(["Worked for 22s", "Exec ×3"]);
-    expect(labels[1]?.getAttribute("title")).toBe(`Exec ×2, ${fullTitle}`);
-    expect(
-      container.querySelectorAll('[aria-expanded="false"]')[0]?.getAttribute("aria-description"),
-    ).toBe(`Exec ×2, ${fullTitle}`);
+    expect(container.querySelector("button")?.textContent?.trim()).toBe("Worked");
   });
 });
