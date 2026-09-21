@@ -335,10 +335,10 @@ export function createSqliteWorkerBackend(_input, { databasePath }) {
   // a present-but-incomplete closure fails before the app is signed.
   await proveServiceChildRuntime(home);
   await proveGitWorkerRuntime(home);
-  for (const { nativeFirst, desktopSharingEnabled } of [false, true].flatMap((nativeFirst) =>
-    [undefined, true, false].map((desktopSharingEnabled) => ({
-      nativeFirst,
-      desktopSharingEnabled,
+  for (const { nativeFirst, desktopSharingEnabled } of [false, true].flatMap((nativeFirstEnabled) =>
+    [undefined, true, false].map((sharingEnabled) => ({
+      nativeFirst: nativeFirstEnabled,
+      desktopSharingEnabled: sharingEnabled,
     })),
   )) {
     const appGatedComputer = !nativeFirst;
