@@ -1,6 +1,7 @@
 import { html, nothing, render } from "lit";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { page } from "vitest/browser";
+import "@awesome.me/webawesome/dist/styles/themes/default.css";
 import type { SessionGoal } from "../../api/types.ts";
 import { renderComposerMenu } from "../../components/composer-menu.ts";
 import { createComposerProps } from "./chat-composer.test-support.ts";
@@ -51,6 +52,82 @@ describe("composer overflow presentation", () => {
     styles.remove();
     resetChatComposerState();
   });
+
+  it.each([390, 2048])(
+    "keeps skill labels and dependency notes inside scrollable menu rows at %ipx",
+    async (width) => {
+      await page.viewport(width, 1000);
+      container.className = "";
+      container.style.cssText = `position: fixed; bottom: 24px; left: 16px; width: ${Math.min(width - 32, 760)}px`;
+      const props = createComposerProps({
+        onRequestUpdate: () => render(renderChatComposer(props), container),
+        capabilityMenu: {
+          basePath: "",
+          skills: [
+            "apple-notes",
+            "apple-reminders",
+            "bear-notes",
+            "A skill with a long descriptive name that wraps across multiple lines",
+            ...Array.from({ length: 12 }, (_, index) => `fixture-skill-${index}`),
+          ].map((name) => ({
+            key: name,
+            name,
+            enabled: false,
+            baseEnabled: false,
+            missingDeps: true,
+          })),
+          skillsLoading: false,
+          skillsError: false,
+          mcpServers: [],
+          toolsEffectiveResult: null,
+          toolsEffectiveLoading: false,
+          toolsEffectiveError: false,
+          toolAccessMutationBlockedReason: null,
+          webSearchBaseEnabled: true,
+          mutationBlockedReason: null,
+          canAdmin: true,
+          adminBlockedReason: null,
+          onLoadSkills: vi.fn(),
+          onPatchToolOverrides: vi.fn(),
+          onNavigate: vi.fn(),
+        },
+      });
+      render(renderChatComposer(props), container);
+      await page
+        .elementLocator(
+          container.querySelector<HTMLElement>('.agent-chat__attach-menu > [slot="trigger"]')!,
+        )
+        .click();
+      await page
+        .elementLocator(container.querySelector<HTMLElement>('[value="open-skills"]')!)
+        .click();
+      await afterLayout();
+      const dropdown = container.querySelector<HTMLElement>(".agent-chat__capability-menu")!;
+      const menu = dropdown.shadowRoot!.querySelector<HTMLElement>('[part="menu"]')!;
+      expect(menu.scrollHeight).toBeGreaterThan(menu.clientHeight);
+      const rows = [...dropdown.querySelectorAll<HTMLElement>('[value^="skill:"]')];
+      expect(rows).toHaveLength(16);
+
+      for (const row of rows) {
+        const box = row.getBoundingClientRect();
+        const label = row
+          .querySelector<HTMLElement>(".agent-chat__capability-menu-label")!
+          .getBoundingClientRect();
+        expect(label.top).toBeGreaterThanOrEqual(box.top);
+        expect(label.bottom).toBeLessThanOrEqual(box.bottom);
+        expect(label.left).toBeGreaterThanOrEqual(box.left);
+        expect(label.right).toBeLessThanOrEqual(box.right);
+      }
+      const name = rows[1]!.querySelector<HTMLElement>(
+        ".agent-chat__capability-menu-label > span",
+      )!;
+      expect(name.getBoundingClientRect().height).toBeLessThan(
+        2 * Number.parseFloat(getComputedStyle(name).lineHeight),
+      );
+      expect(menu.scrollWidth).toBeLessThanOrEqual(menu.clientWidth);
+      expect(menu.getBoundingClientRect().right).toBeLessThanOrEqual(width);
+    },
+  );
 
   function drawAttachments(count: number) {
     return render(renderAttachmentPreview({ attachments: attachments.slice(0, count) }), container);
