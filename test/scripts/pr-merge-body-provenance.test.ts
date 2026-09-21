@@ -202,9 +202,28 @@ describePosix("native merge outcome with real Git and supervised lock recovery",
         expect(args[args.indexOf("--match-head-commit") + 1]).toBe(f.head);
         expect(args.includes("--auto")).toBe(route === "auto");
         expect(args.includes("--admin")).toBe(admin);
+        if (route === "auto") {
+          expect(args).toContain("--subject");
+          expect(args[args.indexOf("--subject") + 1]).toBe(f.state().previewHeadline);
+        } else {
+          expect(args).not.toContain("--subject");
+        }
       }
       expect(f.state().mergeBody).toBe(`Fixture body\n\n${credit}\n`);
       expect(f.record()).toMatchObject({ route, phase: "complete" });
     },
   );
+  it("rejects a missing auto-merge headline before intent", () => {
+    const f = fixture();
+    f.save({
+      ...f.state(),
+      previewHeadline: null,
+      pr: { ...f.state().pr, mergeStateStatus: "BEHIND" },
+    });
+    const run = f.run(true);
+    expect(run.status, run.output).toBe(1);
+    expect(run.output).toContain("auto-merge requires a current-head squash headline");
+    expect(f.state().mutations).toBe(0);
+    expect(() => f.record()).toThrow();
+  });
 });
