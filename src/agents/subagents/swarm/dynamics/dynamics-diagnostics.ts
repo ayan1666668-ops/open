@@ -1,7 +1,7 @@
 import { buildPopulationSnapshot } from "./population-controller.js";
 import type { PopulationDecision, PopulationSnapshot } from "./population-types.js";
 
-export type DynamicsDiagnostic = {
+type DynamicsDiagnostic = {
   campaignId: string;
   groupId: string;
   /** Declared or observed replicas, not a claim about which runs are still active. */
