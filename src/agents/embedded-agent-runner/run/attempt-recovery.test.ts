@@ -321,7 +321,9 @@ describe("recoverEmbeddedRunAttempt", () => {
       const { recovery, continueFromCurrentTranscript } = await recoverAfterTransportDrop({
         ...emptyLengthScenario,
         resolveReplyDelivery: async () => {
-          if (state === "error") throw new Error("delivery unavailable");
+          if (state === "error") {
+            throw new Error("delivery unavailable");
+          }
           return state;
         },
       });
@@ -330,13 +332,45 @@ describe("recoverEmbeddedRunAttempt", () => {
     },
   );
 
-  it("continues after a reply target directive without an answer", async () => {
-    const { recovery } = await recoverAfterTransportDrop({
-      ...emptyLengthScenario,
-      preToolText: "[[reply_to_current]]",
-    });
-    expect(recovery.action).toBe("retry");
-  });
+  it.each([undefined, "[[reply_to_current]]"])(
+    "continues after an earlier answer was delivered (reply target: %s)",
+    async (preToolText) => {
+      const previousAssistant = buildEmbeddedRunnerAssistant({
+        stopReason: "toolUse",
+        content: [
+          {
+            type: "toolCall",
+            id: "previous_reply",
+            name: "message",
+            arguments: { action: "send", message: "The previous result is ready." },
+          },
+        ],
+      });
+      const { recovery, continueFromCurrentTranscript } = await recoverAfterTransportDrop({
+        ...emptyLengthScenario,
+        preToolText,
+        precedingMessages: [
+          { role: "user", content: "Send the previous result.", timestamp: 0 },
+          previousAssistant,
+          {
+            role: "toolResult",
+            toolCallId: "previous_reply",
+            toolName: "message",
+            content: [{ type: "text", text: "Delivered." }],
+            isError: false,
+            timestamp: 0,
+          },
+        ],
+        answerSegments: [
+          { textEnd: 0, messageEnd: 1, finalMessageStart: 1, lastAssistant: previousAssistant },
+        ],
+        resolveReplyDelivery: async (minimumAssistantMessageIndex = 0) =>
+          minimumAssistantMessageIndex <= 1 ? "delivered" : "missing",
+      });
+      expect(recovery.action).toBe("retry");
+      expect(continueFromCurrentTranscript).toHaveBeenCalledOnce();
+    },
+  );
 
   it("routes a zero-output length overflow to compaction before output retries", async () => {
     await expect(
