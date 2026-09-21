@@ -285,6 +285,7 @@ export function createMergeOutcomeFixtureHarness() {
       cancellation: "success",
       mergeBody: null as string | null,
       previewBody: "Fixture body",
+      previewHeadline: "Configured squash headline (#123)" as string | null,
       tamperMergeBody: false,
       issueComments: [
         {
@@ -626,7 +627,7 @@ else if(args[0]==="pr"&&args[1]==="view") {
   s.reads++;save();
   if(s.unavailable) fail("metadata unavailable");
   if(s.invalid) {out({data:{repository:{}}});process.exit(0);}
-  if(args.some(x=>x.includes("viewerMergeBodyText"))) {out({data:{repository:{pullRequest:{...s.pr,viewerMergeHeadlineText:"Fixture merge headline",viewerMergeBodyText:s.previewBody}}}});}
+  if(args.some(x=>x.includes("viewerMergeBodyText"))) {out({data:{repository:{pullRequest:{...s.pr,viewerMergeBodyText:s.previewBody,...(args.some(x=>x.includes("viewerMergeHeadlineText"))?{viewerMergeHeadlineText:s.previewHeadline}:{})}}}});}
   else {
     if(!args.includes("Cache-Control: max-age=0")) fail("missing independent fresh merge observation");
     if(args.find(arg=>arg.startsWith("query="))!==${JSON.stringify(landingSnapshotQuery)}) fail("landing snapshot query is not supported by the shipped Octopool shim");
