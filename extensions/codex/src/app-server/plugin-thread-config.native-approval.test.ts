@@ -8,6 +8,7 @@ import {
   mergeCodexThreadConfigs,
   refreshCodexPluginAppApprovalPolicy,
 } from "./plugin-thread-config.js";
+import type { CodexAppServerRequestParams } from "./protocol.js";
 
 describe("Codex native app approval settings", () => {
   it.each([
@@ -24,12 +25,16 @@ describe("Codex native app approval settings", () => {
         tools: { read: { approval_mode: "approve" } },
       };
       const nativeConfig = { apps: { "calendar-app": nativeApp } };
-      const request = async (method: string, params: Record<string, unknown>) => {
+      const request = async (method: string, params?: unknown) => {
         if (method === "config/read") {
           return { config: nativeConfig, layers: [] };
         }
         if (method === "app/installed" || method === "app/read") {
-          return codexAppInventoryResponse(method, [appInfo("calendar-app", true)], params);
+          return codexAppInventoryResponse(
+            method,
+            [appInfo("calendar-app", true)],
+            params as CodexAppServerRequestParams<typeof method>,
+          );
         }
         throw new Error(`unexpected request ${method}`);
       };
