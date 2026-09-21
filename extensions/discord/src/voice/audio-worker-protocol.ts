@@ -34,7 +34,7 @@ export type DiscordAudioFrame = {
 // input reservations, so starvation cannot retire an already admitted IPC chunk.
 export const DISCORD_AUDIO_CLOCK_BYTES = 24;
 export const DISCORD_AUDIO_PLAYED_BYTES = 0;
-export const DISCORD_AUDIO_OUTPUT_STATUS = 1;
+const DISCORD_AUDIO_OUTPUT_STATUS = 1;
 export const DISCORD_AUDIO_STARTED = 2;
 export const DISCORD_CONTINUOUS_CLOCK_BYTES = 24;
 export const DISCORD_CONTINUOUS_ACTIVE = 0;
