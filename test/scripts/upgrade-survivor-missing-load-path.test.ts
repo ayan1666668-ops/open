@@ -106,6 +106,10 @@ const convergenceRestartMessage =
   "OpenClaw plugin migration inputs changed during startup convergence; refusing to report the gateway ready. Restart OpenClaw so state migrations run against the final config and plugin inventory.";
 
 it.skipIf(process.platform === "win32").each([
+  { version: "2026.4.23", provision: false, installExit: 0 },
+  { version: "2026.4.30-beta.1", provision: false, installExit: 0 },
+  { version: "2026.5.2-beta.1", provision: true, installExit: 0 },
+  { version: "2026.7.1-2", companionVersion: "2026.7.1", provision: true, installExit: 0 },
   { version: "2026.6.35", provision: true, installExit: 0 },
   { version: "2026.7.33", provision: true, installExit: 0 },
   { version: "2026.7.35", provision: true, installExit: 0 },
@@ -118,7 +122,7 @@ it.skipIf(process.platform === "win32").each([
   { version: "2026.8.2", provision: true, installExit: 42 },
 ])(
   "provisions the published companion cohort for $version (install exit $installExit)",
-  ({ version, provision, installExit }) => {
+  ({ version, companionVersion = version, provision, installExit }) => {
     const result = spawnSync(
       "bash",
       [
@@ -154,7 +158,8 @@ test "$NPM_CONFIG_REGISTRY" = https://candidate.example.invalid
     const plugins = provision ? (installExit ? ["codex"] : ["codex", "discord", "whatsapp"]) : [];
     expect(result.stdout.trim().split("\n")).toEqual([
       ...plugins.map(
-        (plugin) => `install:openclaw -- plugins install @openclaw/${plugin}@${version} --force`,
+        (plugin) =>
+          `install:openclaw -- plugins install @openclaw/${plugin}@${companionVersion} --force`,
       ),
       ...(installExit ? [] : ["start"]),
     ]);
