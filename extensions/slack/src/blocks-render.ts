@@ -153,6 +153,9 @@ function resolveSlackActionTarget(
     const value = normalizeOptionalString(action.value);
     return value ? { kind: "callback", value } : undefined;
   }
+  if (action.type === "copy-text") {
+    return undefined;
+  }
   const command = normalizeOptionalString(action.command);
   // Command-backed approvals are a shipped legacy input with no trustworthy
   // owner field. Keep them on the kind-specific compatibility resolver.
@@ -348,10 +351,12 @@ export function buildSlackPresentationBlocks(
       } else {
         const fallback = renderSlackMessagePresentationChartFallbackText(block);
         blocks.push(
-          ...chunkTextForOutbound(fallback, SLACK_SECTION_TEXT_MAX).map((text): SlackBlock => ({
-            type: "context",
-            elements: [{ type: "mrkdwn", text, verbatim: true }],
-          })),
+          ...chunkTextForOutbound(fallback, SLACK_SECTION_TEXT_MAX).map(
+            (text): SlackBlock => ({
+              type: "context",
+              elements: [{ type: "mrkdwn", text, verbatim: true }],
+            }),
+          ),
         );
       }
       continue;
