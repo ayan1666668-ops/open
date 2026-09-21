@@ -122,8 +122,15 @@ export function assessLocalPhase(observation: LocalDynamicsObservation): LocalPh
 }
 
 export function phaseMixture(assessments: readonly LocalPhaseAssessment[]): PhaseMixture {
-  // SAFETY: every COGNITIVE_PHASES key is initialized to a numeric count.
-  const counts = Object.fromEntries(COGNITIVE_PHASES.map((phase) => [phase, 0])) as PhaseMixture;
+  const counts: PhaseMixture = {
+    gas: 0,
+    liquid: 0,
+    critical: 0,
+    crystal: 0,
+    glass: 0,
+    jammed: 0,
+    unknown: 0,
+  };
   if (assessments.length === 0) {
     counts.unknown = 1;
     return counts;
