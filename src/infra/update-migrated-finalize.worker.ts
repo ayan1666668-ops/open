@@ -2,7 +2,11 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { finishUpdateRun } from "../cli/daemon-cli.js";
 import { retainCliProcessJobUntilExit, withCliProcessScope } from "../cli/runtime-cleanup-scope.js";
-import { closeCliResources, waitForPendingCliDisposers } from "../cli/runtime-cleanup.js";
+import {
+  closeCliResources,
+  pauseNonTtyStdinForCliExit,
+  waitForPendingCliDisposers,
+} from "../cli/runtime-cleanup.js";
 import type { UpdateCommandOptions } from "../cli/update-cli/shared.js";
 import {
   withDelegatedUpdateCommandExecutor,
@@ -72,6 +76,7 @@ async function finalizeMigratedUpdate(): Promise<void> {
     chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
   }
   const text = Buffer.concat(chunks).toString("utf8");
+  pauseNonTtyStdinForCliExit();
   if (process.argv[2] === "--doctor") {
     // SAFETY: The typed parent sends this private input only after binding this child.
     return await runDelegatedDoctor(JSON.parse(text) as UpdateDoctorInput);

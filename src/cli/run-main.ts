@@ -67,7 +67,11 @@ import {
   shouldUseSetupOnboardConfigureHelpFastPath,
 } from "./run-main-policy.js";
 import { withCliCommandCleanup, type CliHarnessCleanup } from "./runtime-cleanup-scope.js";
-import { closeCliResources, runCliDisposer } from "./runtime-cleanup.js";
+import {
+  closeCliResources,
+  pauseNonTtyStdinForCliExit,
+  runCliDisposer,
+} from "./runtime-cleanup.js";
 import { registerSignalExitBarrier, waitForSignalExitBarriers } from "./signal-exit-barrier.js";
 import {
   configureGatewayStartupTraceConsoleFormatting,
@@ -610,18 +614,6 @@ async function resolveLocalGatewayProbeTargets(
           },
         ];
   return { targets, auth: connection.auth };
-}
-
-function pauseNonTtyStdinForCliExit(): void {
-  const stdin = process.stdin;
-  if (stdin.isTTY) {
-    return;
-  }
-  try {
-    stdin.pause();
-  } catch {
-    // Best-effort cleanup for command paths that only inspected stdin.
-  }
 }
 
 function shouldLoadCliDotEnv(
