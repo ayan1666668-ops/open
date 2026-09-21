@@ -18,7 +18,7 @@ export function renderSessionBarRow(props: {
     <div
       class="session-bar-row ${isSelected ? "selected" : ""}"
       @click=${(event: MouseEvent) => {
-        if ((event.target as Element | null)?.closest("button")) {
+        if (event.target instanceof Element && event.target.closest("button")) {
           return;
         }
         onSelect(event);
