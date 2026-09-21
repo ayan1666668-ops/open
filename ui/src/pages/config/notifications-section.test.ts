@@ -208,7 +208,11 @@ describe("Web Push preference controls", () => {
               durableIdentity: true,
               user: nextUser,
               device: nextDevice,
-              effective: { ...nextUser, ...nextDevice },
+              effective: {
+                ...nextUser,
+                enabled: nextDevice.enabled,
+                label: nextDevice.label,
+              },
             },
           },
         }),
