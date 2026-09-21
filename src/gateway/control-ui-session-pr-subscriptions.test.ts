@@ -283,6 +283,7 @@ describe("control UI session PR subscriptions", () => {
     expect(load).toHaveBeenCalledExactlyOnceWith(
       { sessionKey: "added", agentId: "main" },
       expect.any(AbortSignal),
+      expect.objectContaining({ assertCurrent: expect.any(Function) }),
     );
     expect(broadcastToConnIds).toHaveBeenCalledExactlyOnceWith(
       CHANGED_EVENT,
@@ -362,6 +363,7 @@ describe("control UI session PR subscriptions", () => {
     expect(load).toHaveBeenCalledExactlyOnceWith(
       { sessionKey: "session", agentId: "main" },
       expect.any(AbortSignal),
+      expect.objectContaining({ assertCurrent: expect.any(Function) }),
     );
     expect(broadcastToConnIds).toHaveBeenCalledExactlyOnceWith(
       CHANGED_EVENT,
@@ -418,6 +420,7 @@ describe("control UI session PR subscriptions", () => {
     expect(load).toHaveBeenCalledWith(
       { sessionKey: "global", agentId: "work" },
       expect.any(AbortSignal),
+      expect.objectContaining({ assertCurrent: expect.any(Function) }),
     );
   });
 
@@ -440,6 +443,7 @@ describe("control UI session PR subscriptions", () => {
     expect(load).toHaveBeenCalledWith(
       { sessionKey: "refresh-me", agentId: "main", refresh: true },
       expect.any(AbortSignal),
+      expect.objectContaining({ assertCurrent: expect.any(Function) }),
     );
     expect(broadcastToConnIds.mock.calls).toEqual(
       ["conn-a", "conn-b"].map((connId) => [
@@ -482,7 +486,7 @@ describe("control UI session PR subscriptions", () => {
     vi.useFakeTimers();
     const load = vi.fn(async () => READY);
     const broadcastToConnIds = vi.fn();
-    active = createControlUiSessionPullRequestSubscriptions({ broadcastToConnIds, load });
+    active = createTestControlUiSessionPrSubscriptions({ broadcastToConnIds, load });
     await active.replace("first", ["shared", "independent"]);
     await active.replace("second", ["shared"]);
     await active.replace("first", ["shared", "independent"], new Set(["shared"]));
@@ -497,8 +501,9 @@ describe("control UI session PR subscriptions", () => {
     await active.replace("first", ["shared", "independent"], new Set(["independent"]));
     await vi.advanceTimersByTimeAsync(9_999);
     expect(load).toHaveBeenCalledExactlyOnceWith(
-      { sessionKey: "independent", refresh: true },
+      { sessionKey: "independent", agentId: "main", refresh: true },
       expect.any(AbortSignal),
+      expect.objectContaining({ assertCurrent: expect.any(Function) }),
     );
     broadcastToConnIds.mockClear();
 
@@ -507,14 +512,16 @@ describe("control UI session PR subscriptions", () => {
 
     expect(load).toHaveBeenCalledTimes(2);
     expect(load).toHaveBeenLastCalledWith(
-      { sessionKey: "shared", refresh: true },
+      { sessionKey: "shared", agentId: "main", refresh: true },
       expect.any(AbortSignal),
+      expect.objectContaining({ assertCurrent: expect.any(Function) }),
     );
     expect(broadcastToConnIds.mock.calls).toEqual(
       ["first", "second"].map((connId) => [
         CHANGED_EVENT,
         { sessions: { shared: { ...READY, status: "ready" } } },
         new Set([connId]),
+        { sessionKeys: ["shared"], agentId: "main" },
       ]),
     );
   });
@@ -525,7 +532,7 @@ describe("control UI session PR subscriptions", () => {
       vi.useFakeTimers();
       const load = vi.fn(async () => READY);
       const broadcastToConnIds = vi.fn();
-      active = createControlUiSessionPullRequestSubscriptions({ broadcastToConnIds, load });
+      active = createTestControlUiSessionPrSubscriptions({ broadcastToConnIds, load });
       await active.replace("requester", ["session"], new Set(["session"]));
       const refresh = active.replace("requester", ["session"], new Set(["session"]));
       broadcastToConnIds.mockClear();
@@ -804,6 +811,7 @@ describe("control UI session PR subscriptions", () => {
       expect(load).toHaveBeenCalledWith(
         { sessionKey: "old", agentId: "main" },
         expect.any(AbortSignal),
+        expect.objectContaining({ assertCurrent: expect.any(Function) }),
       ),
     );
     await active.replace("conn-a", ["current"]);
