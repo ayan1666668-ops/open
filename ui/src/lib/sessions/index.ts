@@ -581,6 +581,7 @@ export function createSessionCapability(
         parseAgentSessionKey(eventInfo?.key)?.agentId ??
         (typeof payloadAgentId === "string" ? payloadAgentId : undefined),
       primarySnapshotApplied,
+      affectsPrimary: eventObservation.affectsPrimary,
       affectedLists: eventObservation.lists,
     });
     notifyEvent?.(event);

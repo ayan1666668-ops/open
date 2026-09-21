@@ -125,6 +125,9 @@ export abstract class ChatPaneSessionObservation extends ChatPaneSessionCreation
         ) {
           this.requestUpdate();
         }
+        if (ownsPane() && binding.observation && !binding.observation.isCurrent()) {
+          this.synchronizeSessionObservation();
+        }
       },
       {
         onEvent: (event, result) => {

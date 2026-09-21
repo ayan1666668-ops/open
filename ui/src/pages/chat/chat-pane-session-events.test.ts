@@ -144,7 +144,7 @@ describe("mounted pane session event ownership", () => {
   );
 
   it.each([false, true])(
-    "keeps a same-key successor when its old descriptor retires (reentrant publication: %s)",
+    "keeps a same-key successor and its first message after retirement (reentrant publication: %s)",
     async (reentrant) => {
       const previous: GatewaySessionRow = {
         key: "agent:main:replaced",
@@ -161,7 +161,7 @@ describe("mounted pane session event ownership", () => {
         label: "Newest session",
       };
       const listed = [previous];
-      const { sessions, mount } = createMountedPanes(listed);
+      const { sessions, mount, emitGatewayEvent } = createMountedPanes(listed);
       let armed = false;
       const unsubscribe = sessions.subscribe((state) => {
         if (armed && state.result?.sessions.some((row) => row.sessionId === next.sessionId)) {
@@ -179,6 +179,25 @@ describe("mounted pane session event ownership", () => {
       listed.splice(0, 1, next);
       await sessions.refresh({ agentId: "main", force: true });
       expect(selectedChatSessionRow(pane.state)).toMatchObject(reentrant ? newest : next);
+      await pane.updateComplete;
+
+      emitGatewayEvent("session.message", {
+        sessionKey: next.key,
+        agentId: "main",
+        sessionId: next.sessionId,
+        hasActiveRun: true,
+        messageId: "successor-user",
+        messageSeq: 1,
+        message: {
+          role: "user",
+          content: "First successor prompt",
+          __openclaw: { id: "successor-user", seq: 1 },
+        },
+        session: { ...next, updatedAt: 4, hasActiveRun: true, status: "running" },
+      });
+      expect(pane.state.chatMessages).toContainEqual(
+        expect.objectContaining({ role: "user", content: "First successor prompt" }),
+      );
     },
   );
 
@@ -204,10 +223,19 @@ describe("mounted pane session event ownership", () => {
     const freshHistory = createDeferred<ChatHistoryResult>();
     const oldDescribe = createDeferred<{ session: GatewaySessionRow | null }>();
     const freshDescribe = createDeferred<{ session: GatewaySessionRow | null }>();
+    const initialHistoryStarted = createDeferred();
+    const freshReadStarted = createDeferred();
+    const oldHistoryReconciled = createDeferred();
+    const freshRowObserved = createDeferred();
     let eventDelivered = false;
     const reads: Array<{ method: string; params: unknown; afterEvent: boolean }> = [];
     const read: GatewayRequestHandler = (method, params) => {
       reads.push({ method, params, afterEvent: eventDelivered });
+      if (eventDelivered) {
+        freshReadStarted.resolve();
+      } else if (method !== "sessions.describe") {
+        initialHistoryStarted.resolve();
+      }
       if (method === "sessions.describe") {
         return eventDelivered ? freshDescribe.promise : oldDescribe.promise;
       }
@@ -229,7 +257,21 @@ describe("mounted pane session event ownership", () => {
     const observations: SessionRowObservation[] = [];
     const observeRow = sessions.observeRow;
     vi.spyOn(sessions, "observeRow").mockImplementation((target, listener, options) => {
-      const observation = observeRow(target, listener, options);
+      const observation = observeRow(
+        target,
+        (row) => {
+          listener(row);
+          if (
+            options?.onEvent &&
+            row !== null &&
+            row.sessionId === latest.sessionId &&
+            row.updatedAt === latest.updatedAt
+          ) {
+            freshRowObserved.resolve();
+          }
+        },
+        options,
+      );
       if (options?.onEvent) {
         observations.push(observation);
       }
@@ -244,6 +286,7 @@ describe("mounted pane session event ownership", () => {
         const outcome = reconcile(...args);
         if (beforeEvent && args[0]?.agentId === "research") {
           oldOutcomes.push(outcome);
+          oldHistoryReconciled.resolve();
         }
         return outcome;
       };
@@ -269,9 +312,8 @@ describe("mounted pane session event ownership", () => {
           scheduleScroll: false,
         });
       }
-      await vi.waitFor(() =>
-        expect(reads.some(({ method }) => method !== "sessions.describe")).toBe(true),
-      );
+      await initialHistoryStarted.promise;
+      expect(reads.some(({ method }) => method !== "sessions.describe")).toBe(true);
       expect(pane.presented).toBe(false);
       expect(observation.hasObserved).toBe(false);
 
@@ -287,13 +329,13 @@ describe("mounted pane session event ownership", () => {
       await initialHistory;
       await initialRefresh;
       expect(observation.hasObserved).toBe(false);
-      await vi.waitFor(() => expect(oldOutcomes.length).toBeGreaterThan(0));
+      await oldHistoryReconciled.promise;
+      expect(oldOutcomes.length).toBeGreaterThan(0);
       expect.soft(oldOutcomes).not.toContain(true);
       expect(pane.presented).toBe(false);
       pane.presented = true;
-      await vi.waitFor(() =>
-        expect(reads.filter(({ afterEvent }) => afterEvent).length).toBeGreaterThan(0),
-      );
+      await freshReadStarted.promise;
+      expect(reads.filter(({ afterEvent }) => afterEvent).length).toBeGreaterThan(0);
       for (const { method, params } of reads.filter(({ afterEvent }) => afterEvent)) {
         expect(params).toMatchObject({
           [method === "sessions.describe" ? "key" : "sessionKey"]: "global",
@@ -302,11 +344,10 @@ describe("mounted pane session event ownership", () => {
       }
       freshHistory.resolve({ messages: [], sessionInfo: latest, sessionId: latest.sessionId });
       freshDescribe.resolve({ session: latest });
-      await vi.waitFor(() => {
-        expect(observations.at(-1)?.hasObserved).toBe(true);
-        expect(observations.at(-1)?.row).toMatchObject(latest);
-        expect(selectedChatSessionRow(state)).toMatchObject(latest);
-      });
+      await freshRowObserved.promise;
+      expect(observations.at(-1)?.hasObserved).toBe(true);
+      expect(observations.at(-1)?.row).toMatchObject(latest);
+      expect(selectedChatSessionRow(state)).toMatchObject(latest);
       expect(pane.presented).toBe(true);
       expect(sessions.state.agentId).toBe("main");
       expect(sessions.state.result?.sessions).toEqual([expect.objectContaining(primary)]);
@@ -517,7 +558,12 @@ describe("mounted pane session event ownership", () => {
       const completing = mount("global");
       const continuing = mount("global");
       await Promise.all([refreshPane(completing), refreshPane(continuing)]);
-      const descriptor = sessions.observeRow({ key: "global", agentId: "research" }, () => {});
+      const terminalObserved = createDeferred();
+      const descriptor = sessions.observeRow({ key: "global", agentId: "research" }, (row) => {
+        if (row?.lastRunId === "completed-run" && row.hasActiveRun === false) {
+          terminalObserved.resolve();
+        }
+      });
       onTestFinished(descriptor.dispose);
       expect(descriptor.row).toMatchObject(running);
       expect(selectedChatSessionRow(continuing.state)).toMatchObject(running);
@@ -543,7 +589,8 @@ describe("mounted pane session event ownership", () => {
         message: { role: "assistant", content: "The earlier run completed." },
       });
 
-      await vi.waitFor(() => expect(descriptor.row).toMatchObject(terminal));
+      await terminalObserved.promise;
+      expect(descriptor.row).toMatchObject(terminal);
       expect(completing.state.chatRunId).toBeNull();
       expect.soft(selectedChatSessionRow(continuing.state)).toMatchObject(terminal);
       expect(continuing.state.chatRunId).toBe("newer-run");
@@ -586,13 +633,16 @@ describe("mounted pane session event ownership", () => {
     const recovered = { ...observed, label: "Recovered through history" };
     const historyReply = createDeferred<ChatHistoryResult>();
     const descriptorReply = createDeferred<{ session: GatewaySessionRow | null }>();
+    const recoveryHistoryStarted = createDeferred();
     let recovering = false;
     let listsUnavailable = false;
-    const history = vi.fn<GatewayRequestHandler>(() =>
-      recovering
-        ? historyReply.promise
-        : { messages: [], sessionInfo: selected, sessionId: selected.sessionId },
-    );
+    const history = vi.fn<GatewayRequestHandler>(() => {
+      if (recovering) {
+        recoveryHistoryStarted.resolve();
+        return historyReply.promise;
+      }
+      return { messages: [], sessionInfo: selected, sessionId: selected.sessionId };
+    });
     const patch = vi.fn<GatewayRequestHandler>(() => {
       listsUnavailable = true;
       throw new Error("Permission application unavailable");
@@ -671,7 +721,8 @@ describe("mounted pane session event ownership", () => {
       recovering = true;
       const historyReads = history.mock.calls.length;
       recovery = refreshPane(pane);
-      await vi.waitFor(() => expect(history.mock.calls.length).toBeGreaterThan(historyReads));
+      await recoveryHistoryStarted.promise;
+      expect(history.mock.calls.length).toBeGreaterThan(historyReads);
       expect(history.mock.calls.at(-1)?.[0]).toBe("chat.history");
       expect(history.mock.calls.at(-1)?.[1]).toMatchObject({
         sessionKey: "global",
@@ -725,13 +776,21 @@ describe("mounted pane session event ownership", () => {
       };
       const laterHistory = createDeferred<ChatHistoryResult>();
       const postResetHistory = createDeferred<ChatHistoryResult>();
+      const laterHistoryStarted = createDeferred();
+      const postResetHistoryStarted = createDeferred();
       let holdHistory = false;
       let heldHistoryReads = 0;
       const history = vi.fn<GatewayRequestHandler>(() => {
         if (!holdHistory) {
           return initial;
         }
-        return ++heldHistoryReads === 1 ? laterHistory.promise : postResetHistory.promise;
+        heldHistoryReads += 1;
+        if (heldHistoryReads === 1) {
+          laterHistoryStarted.resolve();
+          return laterHistory.promise;
+        }
+        postResetHistoryStarted.resolve();
+        return postResetHistory.promise;
       });
       const { sessions, mount, emitGatewayEvent } = createMountedPanes(
         generation === "rowless" ? [] : [initialRow],
@@ -811,7 +870,8 @@ describe("mounted pane session event ownership", () => {
         holdHistory = true;
         const previousReads = history.mock.calls.length;
         refresh = refreshPane(pane);
-        await vi.waitFor(() => expect(history.mock.calls.length).toBeGreaterThan(previousReads));
+        await laterHistoryStarted.promise;
+        expect(history.mock.calls.length).toBeGreaterThan(previousReads);
         expect(history.mock.calls.at(-1)?.[0]).toBe("chat.history");
         expect(history.mock.calls.at(-1)?.[1]).toMatchObject({
           sessionKey: row.key,
@@ -867,7 +927,8 @@ describe("mounted pane session event ownership", () => {
           });
           expect(heldHistoryReads).toBe(1);
         } else {
-          await vi.waitFor(() => expect(heldHistoryReads).toBe(2));
+          await postResetHistoryStarted.promise;
+          expect(heldHistoryReads).toBe(2);
           expect(history.mock.calls.at(-1)?.[0]).toBe("chat.history");
           expect(history.mock.calls.at(-1)?.[1]).not.toHaveProperty("inputRunIds");
           expect(getChatHistoryLoadState(state)).toMatchObject({

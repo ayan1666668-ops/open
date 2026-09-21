@@ -210,7 +210,7 @@ prepare_init() {
   checkout_pr_worktree_target "$pr" "$reviewed_head_sha" || return 1
 
   local json
-  json=$(pr_meta_json "$pr")
+  json=$(read_pr_view_json "$pr" "headRefName,headRefOid") || return 1
   local author_access_at_prep
   author_access_at_prep=$(resolve_pr_author_access_at_prepare "${PR_AUTHOR:-}") || return 1
 
@@ -364,6 +364,10 @@ prepare_push() {
   local lease_sha="$PREP_PUBLICATION_LEASE_SHA"
   prep_head_sha="$PREP_PUBLICATION_HEAD_SHA"
   local push_result_env=".local/prepare-push-result.env"
+  if [ "${GATES_MODE:-}" = github_pending ] && [ "${HOSTED_GATES_TARGET_HEAD_SHA:-}" != "$prep_head_sha" ]; then
+    echo "Deferred GitHub gates do not match the prepared head; re-run prepare-gates." >&2
+    return 1
+  fi
 
   verify_pr_head_branch_matches_expected "$pr" "$PR_HEAD"
   push_prep_head_to_pr_branch "$pr" "$PR_HEAD" "$prep_head_sha" "$lease_sha" "$push_result_env" || return $?
@@ -383,6 +387,10 @@ prepare_push() {
     finalize_remote_crabbox_aws_gate "$pr" "$prep_head_sha"
     # shellcheck disable=SC1091
     source .local/gates.env
+  elif [ "${GATES_MODE:-}" = github_pending ]; then
+    # Publication can assign a new OID to the verified prepared tree.
+    write_gates_env_stamp "$pr" "${DOCS_ONLY:-false}" "${CHANGELOG_REQUIRED:-false}" \
+      github_pending "" "" "$prep_head_sha" "" "" "" "" || return 1
   fi
 
   local contrib="${PR_AUTHOR:-}"
@@ -396,12 +404,16 @@ prepare_push() {
     coauthor_email=""
   fi
 
+  if [ "${GATES_MODE:-}" = github_pending ]; then
+    printf '%s\n' "- Required GitHub gates deferred; push succeeded to branch $PR_HEAD." >> .local/prep.md
+  else
+    printf '%s\n' "- Gates passed and push succeeded to branch $PR_HEAD." >> .local/prep.md
+  fi
   cat >> .local/prep.md <<EOF_PREP
-- Gates passed and push succeeded to branch $PR_HEAD.
 - Gate mode: ${GATES_MODE:-unknown}.
 - Verified the remote PR head tree matches the local prep head.
 EOF_PREP
-  if [ -n "${REMOTE_GATES_LEASE_ID:-}" ]; then
+  if [ "${GATES_MODE:-}" != github_pending ] && [ -n "${REMOTE_GATES_LEASE_ID:-}" ]; then
     cat >> .local/prep.md <<EOF_PREP
 - Remote gate stamp: ${REMOTE_GATES_PROVIDER:-unknown} ${REMOTE_GATES_RUN_ID:+run ${REMOTE_GATES_RUN_ID}, }lease ${REMOTE_GATES_LEASE_ID}${REMOTE_GATES_RUN_URL:+ (${REMOTE_GATES_RUN_URL})}.
 EOF_PREP

@@ -376,7 +376,7 @@ it.each([
           reason: "patch",
           session: { ...initial, updatedAt: 2, fastMode: true, effectiveFastMode: true },
         });
-        await vi.waitFor(() => expect(sessions.state.result?.sessions[0]?.updatedAt).toBe(2));
+        expect(sessions.state.result?.sessions[0]?.updatedAt).toBe(2);
       }
       if (overlap) {
         second = sessions.patch(initial.key, { fastMode: "auto" }, options);

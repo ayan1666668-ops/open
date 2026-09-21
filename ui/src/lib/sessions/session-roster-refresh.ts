@@ -144,7 +144,7 @@ export function createSessionRosterRefresh(host: SessionRosterRefreshHost) {
       sourceListScope && JSON.stringify(normalizeManagedSessionListQuery(sourceListScope));
     // Adopting a query's accepted row into the primary roster cannot make
     // that supplying query stale. Other membership projections still refresh.
-    scheduleManagedLists(matches, sourceKey);
+    scheduleManagedLists((entry) => matches(entry.query, entry.snapshot.result), sourceKey);
   };
 
   const refreshManagedList = createSessionManagedListRefresh(host, {
@@ -537,7 +537,7 @@ export function createSessionRosterRefresh(host: SessionRosterRefreshHost) {
       const lists = new Set<ManagedSessionList>();
       for (const entry of managedLists.values()) {
         if (
-          matches(entry) &&
+          matches(entry.query, entry.snapshot.result) &&
           (entry.pending !== null ||
             entry.snapshot.error !== null ||
             !canApplySessionListSnapshot(entry.snapshot.result, payload, entry.scope))
@@ -549,6 +549,7 @@ export function createSessionRosterRefresh(host: SessionRosterRefreshHost) {
         revision,
         scope,
         lists,
+        affectsPrimary: matches({ agentId: lastListOptions.agentId }),
         ...observations.captureEventDelivery(scope, revision),
       };
     },
@@ -673,6 +674,7 @@ export function createSessionRosterRefresh(host: SessionRosterRefreshHost) {
       options: {
         agentId?: string | null;
         primarySnapshotApplied?: boolean;
+        affectsPrimary?: boolean;
         affectedLists?: ReadonlySet<ManagedSessionList>;
       } = {},
     ) {
@@ -680,10 +682,13 @@ export function createSessionRosterRefresh(host: SessionRosterRefreshHost) {
       const affected = options.affectedLists;
       // Server events can invalidate a read; accepted row observations are reconciled into it.
       primaryWindows.invalidate(
-        (entry) => affected?.has(entry) ?? matchesAgent(entry.scope.agentId),
+        (entry) => affected?.has(entry) ?? matchesAgent(entry.query.agentId),
         lastListOptions,
       );
-      if (!options.primarySnapshotApplied && matchesAgent(lastListOptions.agentId)) {
+      if (
+        !options.primarySnapshotApplied &&
+        (options.affectsPrimary ?? matchesAgent(lastListOptions.agentId))
+      ) {
         eventRefreshCoordinator.schedule();
       }
       if (affected) {
