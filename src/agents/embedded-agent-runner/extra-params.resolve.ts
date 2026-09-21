@@ -193,7 +193,7 @@ export function shouldStripOpenAICompletionsStore(model: ProviderRuntimeModel): 
   }
   const compat =
     model.compat && typeof model.compat === "object"
-      ? (model.compat as Record<string, unknown>)
+      ? (model.compat as Record<string, unknown>) // SAFETY: guarded by the `typeof model.compat === "object"` check above
       : undefined;
   const capabilities =
     getModelProviderRequestRouteFacts(model)?.capabilities ??
@@ -229,6 +229,7 @@ export function resolveExtraBodyRecord(
     );
     return undefined;
   }
+  // SAFETY: guarded by the `typeof value !== "object" || Array.isArray(value)` check above
   const record = sanitizeExtraBodyRecord(value as Record<string, unknown>);
   return Object.keys(record).length > 0 ? record : undefined;
 }

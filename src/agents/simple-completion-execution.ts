@@ -90,12 +90,13 @@ function buildConfiguredOpenAICompletionsOnPayload(
     if (!payload || typeof payload !== "object") {
       return payload;
     }
+    // SAFETY: guarded by the `typeof payload === "object"` check above
     const payloadObj = payload as Record<string, unknown>;
     if (chatTemplateKwargs) {
       const existing = payloadObj.chat_template_kwargs;
       payloadObj.chat_template_kwargs =
         existing && typeof existing === "object" && !Array.isArray(existing)
-          ? { ...(existing as Record<string, unknown>), ...chatTemplateKwargs }
+          ? { ...(existing as Record<string, unknown>), ...chatTemplateKwargs } // SAFETY: guarded by the typeof/Array.isArray check above
           : chatTemplateKwargs;
     }
     if (extraBody) {
