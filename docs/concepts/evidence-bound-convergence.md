@@ -89,3 +89,7 @@ Deferred work:
 - persistent execution provenance beyond existing OpenClaw owners
 
 Those deferred layers must be added by the owners that can actually enforce them.
+
+## Related
+
+- [Liquid Software Factory](/concepts/liquid-software-factory) for the end-to-end search-to-convergence architecture.
