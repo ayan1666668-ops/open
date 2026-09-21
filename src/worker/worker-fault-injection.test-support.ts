@@ -14,6 +14,7 @@ import {
 import type { WorkerInferenceTerminalOutcome } from "../../packages/gateway-protocol/src/schema/worker-inference.js";
 import { createDeferred } from "../../test/helpers/promise.js";
 import { createOperationalRunInstanceRef } from "../agents/admitted-run-context.js";
+import { createZeroUsageFixture } from "../agents/test-helpers/usage-fixtures.js";
 import {
   resolveSessionTranscriptRuntimeTarget,
   upsertSessionEntryCore,
@@ -93,14 +94,7 @@ export function doneMessage(text: string): WorkerDoneMessage {
     api: "openai-responses",
     provider: MODEL_REF.provider,
     model: MODEL_REF.model,
-    usage: {
-      input: 1,
-      output: 1,
-      cacheRead: 0,
-      cacheWrite: 0,
-      totalTokens: 2,
-      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-    },
+    usage: { ...createZeroUsageFixture(), input: 1, output: 1, totalTokens: 2 },
     stopReason: "stop",
     timestamp: 1,
   };
