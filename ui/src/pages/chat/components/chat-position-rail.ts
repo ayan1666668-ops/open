@@ -2,13 +2,10 @@ import { nothing } from "lit";
 import { AsyncDirective } from "lit/async-directive.js";
 import { directive } from "lit/directive.js";
 import { t } from "../../../i18n/index.ts";
-import { captureChatSessionScrollPosition } from "../scroll.ts";
+import { captureChatSessionScrollPosition, type ChatSessionScrollPosition } from "../scroll.ts";
 import type { ChatPositionIndex } from "./chat-position-projection.ts";
 import { renderChatPositionRailView } from "./chat-position-rail-view.ts";
-import {
-  subscribeTranscriptScroll,
-  type TranscriptScrollViewport,
-} from "./chat-transcript-scroll-events.ts";
+import { subscribeTranscriptScroll } from "./chat-transcript-scroll-events.ts";
 import type { ChatTranscriptSession } from "./chat-transcript-session.ts";
 
 const MARKER_HEIGHT = 12;
@@ -69,7 +66,7 @@ class ChatPositionRailDirective extends AsyncDirective {
   private targetsChanged = true;
   private followActive = false;
   private layoutVisible = false;
-  private readerViewport: TranscriptScrollViewport | undefined;
+  private readerViewport: (ChatSessionScrollPosition & { height: number }) | undefined;
   private resizeScrollTarget: { offset: number; atEnd: boolean } | undefined;
   private followingResize = false;
   private readonly stopScrollInput = {
@@ -227,11 +224,6 @@ class ChatPositionRailDirective extends AsyncDirective {
       this.disconnectVisibility();
       this.transcriptElement = root;
       this.stopTranscriptScroll = subscribeTranscriptScroll(root, (observation) => {
-        if (observation.type === "resize") {
-          this.syncReaderViewport(observation.viewport);
-          this.scheduleLayout();
-          return;
-        }
         if (observation.type === "input") {
           if (this.followingResize) {
             this.followActive = true;
@@ -239,6 +231,14 @@ class ChatPositionRailDirective extends AsyncDirective {
           }
           this.followingResize = false;
           this.resizeScrollTarget = undefined;
+        } else if (
+          observation.type === "resize" &&
+          this.layoutVisible &&
+          this.scrollElement?.clientHeight
+        ) {
+          // Retain the committed viewport before another composer change can replace it.
+          this.syncReaderViewport();
+          this.scheduleLayout();
         }
       });
       // Publish the first visible pixel after an initially zero-area edge touch.
@@ -330,57 +330,57 @@ class ChatPositionRailDirective extends AsyncDirective {
     }
   }
 
-  private syncReaderViewport(viewport: TranscriptScrollViewport) {
-    const previous = this.readerViewport;
-    if (previous && viewport.height !== previous.height) {
-      // Intersections can precede resize compensation. Preserve the reader's
-      // rail offset while keeping any keyboard-focused marker in view.
-      this.followingResize = true;
-      this.followActive =
-        this.markerElements.get(this.interaction.focusedId ?? "")?.matches(":focus-visible") ??
-        false;
-      if (this.followActive) {
-        this.scheduleLayout();
-      }
-      // A measured end supersedes startup's non-end estimate; smooth follow may still be pending.
-      const atEnd = this.resizeScrollTarget?.atEnd || previous.anchorToEnd;
-      const maxOffset = Math.max(0, viewport.scrollHeight - viewport.height);
-      this.resizeScrollTarget = {
-        offset: atEnd ? maxOffset : Math.min(previous.scrollTop, maxOffset),
-        atEnd,
+  private syncReaderViewport() {
+    const root = this.transcriptElement;
+    if (root) {
+      const viewport = {
+        height: root.clientHeight,
+        ...captureChatSessionScrollPosition(root),
       };
-    }
-    // Navigation and a resize can arrive in the same observer delivery.
-    if (previous && viewport.scrollTop !== previous.scrollTop) {
-      const target = this.resizeScrollTarget?.offset;
-      // Smooth resize compensation crosses intermediate offsets before its target.
-      // The transcript input owner above retires it when the reader takes over.
-      const compensating =
-        target !== undefined &&
-        (Math.abs(viewport.scrollTop - target) <= 1 ||
-          (viewport.scrollTop >= Math.min(previous.scrollTop, target) &&
-            viewport.scrollTop <= Math.max(previous.scrollTop, target)));
-      if (!compensating) {
-        if (this.followingResize) {
-          this.followActive = true;
+      const previous = this.readerViewport;
+      if (previous && viewport.height !== previous.height) {
+        // Intersections can precede resize compensation. Preserve the reader's
+        // rail offset while keeping any keyboard-focused marker in view.
+        this.followingResize = true;
+        this.followActive =
+          this.markerElements.get(this.interaction.focusedId ?? "")?.matches(":focus-visible") ??
+          false;
+        if (this.followActive) {
           this.scheduleLayout();
         }
-        this.followingResize = false;
-        this.resizeScrollTarget = undefined;
+        // A measured end supersedes startup's non-end estimate; smooth follow may still be pending.
+        const atEnd = this.resizeScrollTarget?.atEnd || previous.anchorToEnd;
+        const maxOffset = Math.max(0, root.scrollHeight - viewport.height);
+        this.resizeScrollTarget = {
+          offset: atEnd ? maxOffset : Math.min(previous.scrollTop, maxOffset),
+          atEnd,
+        };
       }
+      // Navigation and a resize can arrive in the same observer delivery.
+      if (previous && viewport.scrollTop !== previous.scrollTop) {
+        const target = this.resizeScrollTarget?.offset;
+        // Smooth resize compensation crosses intermediate offsets before its target.
+        // The transcript input owner above retires it when the reader takes over.
+        const compensating =
+          target !== undefined &&
+          (Math.abs(viewport.scrollTop - target) <= 1 ||
+            (viewport.scrollTop >= Math.min(previous.scrollTop, target) &&
+              viewport.scrollTop <= Math.max(previous.scrollTop, target)));
+        if (!compensating) {
+          if (this.followingResize) {
+            this.followActive = true;
+            this.scheduleLayout();
+          }
+          this.followingResize = false;
+          this.resizeScrollTarget = undefined;
+        }
+      }
+      this.readerViewport = viewport;
     }
-    this.readerViewport = viewport;
   }
 
   private syncVisibleMarks() {
-    const root = this.transcriptElement;
-    if (root) {
-      this.syncReaderViewport({
-        height: root.clientHeight,
-        scrollHeight: root.scrollHeight,
-        ...captureChatSessionScrollPosition(root),
-      });
-    }
+    this.syncReaderViewport();
     const visible = new Set(
       Array.from(this.observedMessages.values())
         .filter((message) => message.visible)

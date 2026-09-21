@@ -152,7 +152,6 @@ export function adjustTextareaHeight(el: HTMLTextAreaElement) {
     return;
   }
   const thread = el.closest(".chat")?.querySelector<HTMLElement>(".chat-thread") ?? null;
-  const transcriptHeight = thread?.clientHeight;
   const preserveBottomAnchor = thread
     ? captureChatSessionScrollPosition(thread).anchorToEnd
     : false;
@@ -173,19 +172,12 @@ export function adjustTextareaHeight(el: HTMLTextAreaElement) {
   updateTextareaOverflow(el);
   // Once capped, the textarea can perturb the sibling transcript without
   // resizing its viewport, so ResizeObserver has no correction to apply.
-  if (thread && preserveBottomAnchor) {
-    thread.scrollTop = thread.scrollHeight;
-  }
-  if (thread && thread.clientHeight !== transcriptHeight) {
-    // A mode strip can reverse this resize before observers see the intermediate viewport.
-    publishTranscriptScroll(thread, {
-      type: "resize",
-      viewport: {
-        height: thread.clientHeight,
-        scrollHeight: thread.scrollHeight,
-        ...captureChatSessionScrollPosition(thread),
-      },
-    });
+  if (thread) {
+    if (preserveBottomAnchor) {
+      thread.scrollTop = thread.scrollHeight;
+    }
+    // A following composer commit can hide this viewport from browser observers.
+    publishTranscriptScroll(thread, { type: "resize" });
   }
 }
 

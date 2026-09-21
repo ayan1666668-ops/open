@@ -115,28 +115,30 @@ export function renderAsyncQuestionSummary(
         : undefined;
   const retryable = queued?.sendState === "failed" || queued?.sendState === "unconfirmed";
   return html`<div class="chat-question-summary" role="status" aria-live="polite">
-    ${questions.questions.map(
-      (question, index) => html`<div>
-        <strong>${question.title}</strong>
-        <div>
-          ${
-            answers
-              ? questionDraftValues(answers.get(String(index))).join(", ")
-              : queued
-                ? nothing
-                : t(
-                    reopening
-                      ? "chat.asyncQuestions.reopening"
-                      : dismissed
-                        ? "chat.asyncQuestions.dismissed"
-                        : archived
-                          ? "chat.asyncQuestions.archived"
-                          : "chat.asyncQuestions.inComposer",
-                  )
-          }
-        </div>
-      </div>`,
-    )}
+    ${
+      queued && !answers
+        ? html`<div class="chat-question-summary__prompt">${queued.text}</div>`
+        : questions.questions.map(
+            (question, index) => html`<div>
+              <strong>${question.title}</strong>
+              <div>
+                ${
+                  answers
+                    ? questionDraftValues(answers.get(String(index))).join(", ")
+                    : t(
+                        reopening
+                          ? "chat.asyncQuestions.reopening"
+                          : dismissed
+                            ? "chat.asyncQuestions.dismissed"
+                            : archived
+                              ? "chat.asyncQuestions.archived"
+                              : "chat.asyncQuestions.inComposer",
+                      )
+                }
+              </div>
+            </div>`,
+          )
+    }
     ${
       deliveryLabel
         ? html`<div class="chat-question-summary__delivery">

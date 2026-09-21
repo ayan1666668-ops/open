@@ -190,9 +190,6 @@ export function createControlUiSessionFixtures(
       );
       set("pinned", next.pinnedAt !== undefined);
     }
-    // Default commits advance the fixture's row clock; explicit wire replies
-    // still model equal-clock or out-of-order acknowledgements.
-    set("updatedAt", (next.updatedAt ?? 0) + 1);
     value.row = next;
     for (const field of changed) {
       value.changed.add(field);

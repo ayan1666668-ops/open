@@ -181,6 +181,7 @@ it.each(["discard", "ack", "consumed"] as const)(
     const sessionKey = "agent:main:main";
     const question = {
       role: "assistant",
+      runId: "question-run",
       content: "Which audience?",
       __openclaw: { id: "audience-question", seq: 1 },
       openclawAsyncDelivery: {
@@ -236,6 +237,19 @@ it.each(["discard", "ack", "consumed"] as const)(
           row,
         ),
       ).toBe(true);
+      for (const { host } of panes) {
+        host.chatMessages = [
+          question,
+          ...["question-run", "later-run"].map((runId) => ({
+            role: "assistant",
+            runId,
+            content: "Finished.",
+            phase: "final_answer",
+            __openclaw: { runTerminal: true },
+          })),
+        ];
+        host.requestUpdate?.();
+      }
       const discard = () =>
         first.element.querySelector<HTMLButtonElement>(".chat-send-status__discard")!;
       expect(discard()).not.toBeNull();

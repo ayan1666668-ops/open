@@ -6,6 +6,7 @@ import {
   reconnectMockGateway,
   defaultControlUiFeatureMethods,
 } from "../test-helpers/control-ui-e2e.ts";
+import { readStoredQuestionDrafts } from "./chat-async-questions.test-support.ts";
 import {
   captureUiProof,
   controlUiSessionUrl,
@@ -251,50 +252,18 @@ suite.define(() => {
           message,
         });
       }
-      await expectBrowser(page.getByText("Other work finished.", { exact: true })).toBeVisible();
+      await expectBrowser(
+        page.locator(".chat-thread-inner").getByText("Other work finished.", { exact: true }),
+      ).toBeVisible();
       await expectBrowser(draft).toHaveValue("New contributors and maintainers");
       // Observe the owning IndexedDB transaction, not a timeout, before simulating a reload.
       await expect
-        .poll(() =>
-          page.evaluate(async () => {
-            if (!(await indexedDB.databases()).some((db) => db.name === "openclaw-control-ui")) {
-              return false;
-            }
-            const db = await new Promise<IDBDatabase>((resolve, reject) => {
-              const request = indexedDB.open("openclaw-control-ui");
-              request.addEventListener("success", () => resolve(request.result), { once: true });
-              request.addEventListener(
-                "error",
-                () => reject(request.error ?? new Error("Could not open question draft database")),
-                { once: true },
-              );
-            });
-            try {
-              const records = await new Promise<
-                Array<{ questionDrafts?: Array<{ answers: Array<{ freeText: string }> }> }>
-              >((resolve, reject) => {
-                const request = db
-                  .transaction("composerDrafts", "readonly")
-                  .objectStore("composerDrafts")
-                  .getAll();
-                request.addEventListener("success", () => resolve(request.result), { once: true });
-                request.addEventListener(
-                  "error",
-                  () => reject(request.error ?? new Error("Could not read question drafts")),
-                  { once: true },
-                );
-              });
-              return records.some((record) =>
-                record.questionDrafts?.some((question) =>
-                  question.answers.some(
-                    (answer) => answer.freeText === "New contributors and maintainers",
-                  ),
-                ),
-              );
-            } finally {
-              db.close();
-            }
-          }),
+        .poll(async () =>
+          (await readStoredQuestionDrafts(page)).some((question) =>
+            question.answers.some(
+              (answer) => answer.freeText === "New contributors and maintainers",
+            ),
+          ),
         )
         .toBe(true);
       await page.reload();
@@ -715,20 +684,27 @@ suite.define(() => {
     async (confirmation) => {
       const context = await suite.newBrowserContext(createControlUiE2eContextOptions());
       const page = await context.newPage();
+      const deliveryQuestion = {
+        ...questionMessage,
+        __openclaw: { id: "delivery-question", seq: 1 },
+      };
       const gateway = await installMockGateway(page, {
-        historyMessages: [{ ...questionMessage, __openclaw: { id: "delivery-question", seq: 1 } }],
+        historyMessages: [deliveryQuestion],
       });
       const artifactDir = createControlUiE2eArtifactDir(`async-question-delivery-${confirmation}`);
+      const answer = confirmation === "discard" ? "Engineers" : "The customer support team";
       try {
         await page.goto(`${suite.server.baseUrl}chat`);
         const card = page.locator(".agent-chat__question-dock openclaw-chat-question-panel");
         const custom = card.getByRole("textbox", { name: `Your own answer for ${title}` });
-        await custom.fill("The customer support team");
+        if (confirmation !== "discard") {
+          await custom.fill(answer);
+        }
         await gateway.deferNext("chat.send");
         await card.getByRole("button", { name: "Submit", exact: true }).click();
         const original = await gateway.waitForRequest("chat.send");
         expect(requireRecord(original.params)).toMatchObject({
-          message: `> ${title}\n\nThe customer support team`,
+          message: `> ${title}\n\n${answer}`,
           replyToId: "delivery-question",
         });
         const summary = page
@@ -745,7 +721,7 @@ suite.define(() => {
         await card.waitFor({ state: "detached" });
         expect(await card.getByRole("button", { name: "Submit", exact: true }).count()).toBe(0);
         await summary.waitFor();
-        expect(await summary.textContent()).toContain("The customer support team");
+        expect(await summary.textContent()).toContain(answer);
         const failedSend = page.locator('.chat-send-status[data-send-state="failed"]');
         const retry = summary.getByRole("button", { name: "Retry answer", exact: true });
         await retry.waitFor();
@@ -797,13 +773,55 @@ suite.define(() => {
         expect((await readOutboxQueue(page)).map((item) => item.id)).toEqual([queueId]);
         await expectRequestCountStable(gateway, "chat.send", 0);
         if (confirmation === "discard") {
+          const laterRequest = {
+            role: "user",
+            content: "Use your best judgment and finish the summary.",
+            __openclaw: { id: "delivery-follow-up", seq: 2, runId: "delivery-finishing-run" },
+          };
+          const laterFinal = {
+            role: "assistant",
+            content: "The summary is finished.",
+            stopReason: "stop",
+            __openclaw: {
+              id: "delivery-completed",
+              seq: 3,
+              runId: "delivery-finishing-run",
+              runTerminal: true,
+              mirrorOrigin: "codex-app-server",
+            },
+          };
+          await gateway.setHistoryMessages([deliveryQuestion, laterRequest, laterFinal]);
+          for (const message of [laterRequest, laterFinal]) {
+            await gateway.emitGatewayEvent("session.message", {
+              sessionKey: "agent:main:main",
+              messageId: message["__openclaw"].id,
+              messageSeq: message["__openclaw"].seq,
+              message,
+            });
+          }
+          await expectBrowser(page.getByText(laterFinal.content, { exact: true })).toBeVisible();
+          await expectBrowser(summary).toContainText("Answer not sent");
           await failedSend.getByRole("button", { name: "Discard", exact: true }).click();
+          await page.screenshot({
+            path: path.join(artifactDir, "discard-after-completion.png"),
+            animations: "disabled",
+          });
           await expectBrowser(card).toBeVisible();
-          await expectBrowser(card.locator(".chat-question-panel__other")).toHaveValue(
-            "The customer support team",
+          await expectBrowser(card.getByRole("radio", { name: /Engineers/ })).toHaveAttribute(
+            "aria-checked",
+            "true",
           );
+          await expectBrowser(custom).toHaveValue("");
           expect(await readOutboxQueue(page)).toEqual([]);
           await expectBrowser(summary).not.toContainText("Awaiting delivery confirmation");
+          await page.reload();
+          await expectBrowser(card).toBeVisible();
+          await expectBrowser(card.getByRole("radio", { name: /Engineers/ })).toHaveAttribute(
+            "aria-checked",
+            "true",
+          );
+          await expectBrowser(custom).toHaveValue("");
+          expect(await readOutboxQueue(page)).toEqual([]);
           await expectRequestCountStable(gateway, "chat.send", 0);
           return;
         }

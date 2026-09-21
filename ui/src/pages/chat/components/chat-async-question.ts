@@ -328,7 +328,7 @@ export function createAsyncQuestionPresentation(
       const admitted = getQuestionDraft(question, drafts);
       admitted.status = "submitted";
       admitted.admittedQueueId = queued.id;
-      admitted.answers = parseGeneratedAsyncAnswer(question, queued.text) ?? new Map();
+      admitted.answers = parseGeneratedAsyncAnswer(question, queued.text) ?? admitted.answers;
     }
     const draft = resolved.get(question.itemId) ?? drafts.get(question.itemId);
     if (delivery.has(question.itemId) || draft?.status === "submitted") {
@@ -453,6 +453,8 @@ export function createAsyncQuestionPresentation(
         status: undefined,
         admittedQueueId: undefined,
         error: undefined,
+        reopenedAfterBoundary: questions.find(({ question }) => question.itemId === itemId)
+          ?.boundary,
       });
       onChange();
     },
