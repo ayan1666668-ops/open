@@ -47,8 +47,8 @@ describe("required plugin discovery diagnostics", () => {
 
       withPluginCache(createPluginCache(), () => {
         const discovery = discoverOpenClawPlugins({ env, extraPaths });
-        expect(discovery.candidates.map((candidate) => candidate.idHint).sort()).toEqual(
-          [explicitFile ? "index" : installedId, "Addon"].sort(),
+        expect(discovery.candidates.map((candidate) => candidate.idHint).toSorted()).toEqual(
+          [explicitFile ? "index" : installedId, "Addon"].toSorted(),
         );
         expect(discovery.diagnostics).toEqual([]);
         const registry = loadPluginManifestRegistryCore({
@@ -57,8 +57,8 @@ describe("required plugin discovery diagnostics", () => {
           discovery,
           installRecords: {},
         });
-        expect(registry.plugins.map((plugin) => plugin.id).sort()).toEqual(
-          [installedId, "Addon"].sort(),
+        expect(registry.plugins.map((plugin) => plugin.id).toSorted()).toEqual(
+          [installedId, "Addon"].toSorted(),
         );
         expect(registry.diagnostics).toEqual([]);
       });
