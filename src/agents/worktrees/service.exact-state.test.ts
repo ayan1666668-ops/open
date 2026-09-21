@@ -46,7 +46,7 @@ describe("managed exact-state retirement", () => {
     });
   });
 
-  async function retiredFixture(name: string) {
+  async function retiredFixture(name: string, prepare?: (checkout: string) => Promise<void>) {
     const created = await materializeManagedWorktreeFixture({
       env,
       repoRoot: repo,
@@ -57,6 +57,7 @@ describe("managed exact-state retirement", () => {
     });
     const head = await git(created.path, "rev-parse", "HEAD");
     await git(created.path, "checkout", "--detach", "HEAD");
+    await prepare?.(created.path);
     const indexPath = path.resolve(
       created.path,
       await git(created.path, "rev-parse", "--git-path", "index"),
@@ -112,7 +113,13 @@ describe("managed exact-state retirement", () => {
       await fs.writeFile(path.join(created.path, "encoded.utf16"), Buffer.from([0x78, 0]));
       await fs.writeFile(path.join(created.path, "README.md"), "staged half\n");
       await fs.writeFile(path.join(created.path, "staged-only.txt"), "only reachable from index\n");
-      await git(created.path, "add", "README.md", "staged-only.txt");
+      await fs.mkdir(path.join(created.path, "missing-parent", "nested"), { recursive: true });
+      await fs.writeFile(
+        path.join(created.path, "missing-parent", "nested", "staged-child.txt"),
+        "nested index-only bytes\n",
+      );
+      await git(created.path, "add", "README.md", "staged-only.txt", "missing-parent");
+      await fs.rm(path.join(created.path, "missing-parent"), { recursive: true });
       const stagedBlob = await git(created.path, "rev-parse", ":staged-only.txt");
       await fs.writeFile(path.join(created.path, "README.md"), "unstaged half\n");
       await fs.rm(path.join(created.path, "staged-only.txt"));
@@ -181,6 +188,9 @@ describe("managed exact-state retirement", () => {
       expect(await git(restored.path, "status", "--porcelain=v1", "-z")).toBe(status);
       expect(await git(restored.path, "diff", "--cached", "--binary")).toBe(staged);
       expect(await git(restored.path, "diff", "--binary")).toBe(unstaged);
+      await expect(fs.lstat(path.join(restored.path, "missing-parent"))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
       expect(await fs.readFile(path.join(restored.path, "saved.secret"), "utf8")).toBe(
         "saved ignored bytes\n",
       );
@@ -322,6 +332,51 @@ describe("managed exact-state retirement", () => {
     expect(swapped).toBe(true);
     expect(await fs.readdir(outside)).toEqual([]);
   });
+  it.each([false, true])(
+    "rejects a replaced captured-missing parent (symlink=%s)",
+    async (symlink) => {
+      const { created, retired } = await retiredFixture("missing-parent", async (checkout) => {
+        await fs.mkdir(path.join(checkout, "missing-parent"));
+        await fs.writeFile(path.join(checkout, "missing-parent", "staged.txt"), "index only\n");
+        await git(checkout, "add", "missing-parent");
+        await fs.rm(path.join(checkout, "missing-parent"), { recursive: true });
+      });
+      await git(repo, "worktree", "remove", "--force", retired.recoveryPath!);
+      const outside = path.join(stateDir, "outside-parent");
+      await fs.mkdir(outside);
+      const target = path.join(created.path, "missing-parent");
+      const write = fs.writeFile;
+      let injected = false;
+      vi.spyOn(fs, "writeFile").mockImplementation(async (...args) => {
+        const result = await write(...args);
+        if (
+          !injected &&
+          typeof args[0] === "string" &&
+          path.basename(path.dirname(args[0])) === "files"
+        ) {
+          injected = true;
+          if (symlink) {
+            fsSync.symlinkSync(outside, target, process.platform === "win32" ? "junction" : "dir");
+          } else {
+            fsSync.writeFileSync(target, "concurrent bytes\n");
+          }
+        }
+        return result;
+      });
+      await expect(service.restore({ id: created.id })).rejects.toThrow(
+        /non-directory parent|ENOTDIR/i,
+      );
+      expect(injected).toBe(true);
+      expect(await fs.readdir(outside)).toEqual([]);
+      if (symlink) {
+        expect(await fs.realpath(target)).toBe(await fs.realpath(outside));
+      } else {
+        expect(await fs.readFile(target, "utf8")).toBe("concurrent bytes\n");
+      }
+      expect(await git(repo, "rev-parse", retired.snapshotRef!)).toBeTruthy();
+    },
+  );
+
   it("does not apply restored metadata through an outside hard-link alias", async () => {
     const { created, retired } = await retiredFixture("hardlink");
     await git(repo, "worktree", "remove", "--force", retired.recoveryPath!);

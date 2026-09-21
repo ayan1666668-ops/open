@@ -74,15 +74,20 @@ function checkedPath(hex: string): Buffer {
   }
   return bytes;
 }
-async function checkParents(root: string, relative: Buffer) {
+async function checkParents(root: string, relative: Buffer, allowMissing = false) {
   const parents: (string | Buffer)[] = [root];
   for (let slash = relative.indexOf(47); slash !== -1; slash = relative.indexOf(47, slash + 1)) {
     parents.push(checkoutPathFromGitBytes(root, relative.subarray(0, slash)));
   }
   const observed = await Promise.all(
     parents.map(async (parent) => {
-      const stat = await fs.lstat(parent, { bigint: true });
-      if (!stat.isDirectory()) {
+      const stat = await fs.lstat(parent, { bigint: true }).catch((error: unknown) => {
+        if (allowMissing && parent !== root && isMissingPathError(error)) {
+          return undefined;
+        }
+        throw error;
+      });
+      if (stat && !stat.isDirectory()) {
         throw new Error("Exact-state path has a non-directory parent; checkout preserved");
       }
       return { parent, stat };
@@ -92,8 +97,12 @@ async function checkParents(root: string, relative: Buffer) {
   // before the synchronous mutation, without yielding to another workspace writer.
   return () => {
     for (const { parent, stat } of observed) {
-      const current = fsSync.lstatSync(parent, { bigint: true });
-      if (!current.isDirectory() || current.dev !== stat.dev || current.ino !== stat.ino) {
+      const current = fsSync.lstatSync(parent, { bigint: true, throwIfNoEntry: !allowMissing });
+      if (
+        stat
+          ? !current?.isDirectory() || current.dev !== stat.dev || current.ino !== stat.ino
+          : current !== undefined
+      ) {
         throw new Error("Exact-state parent directory changed; source preserved");
       }
     }
@@ -566,7 +575,9 @@ export async function restoreExactStateMetadata(params: {
     assertCurrent();
     if (entry.kind === "missing") {
       const relative = checkedPath(entry.path);
-      await checkParents(cwd, relative);
+      // A captured deletion can include the entire parent tree. Existing ancestors
+      // must remain safe directories; absent ones must stay absent through this check.
+      const assertParents = await checkParents(cwd, relative, true);
       const exists = await fs.lstat(checkoutPathFromGitBytes(cwd, relative)).then(
         () => true,
         (error: unknown) => {
@@ -576,6 +587,8 @@ export async function restoreExactStateMetadata(params: {
           throw error;
         },
       );
+      assertCurrent();
+      assertParents();
       if (exists) {
         throw new Error("Captured missing exact-state path changed; source and receipt preserved");
       }
