@@ -198,6 +198,9 @@ applies separately to each turn. Live turns use the recipe's configured thinking
 default so each model can apply its supported reasoning levels. Scenarios that
 prohibit live providers retain that restriction.
 
+Frozen extended-stable candidate targets use their historical runner and reject
+both live-selection variables before Docker starts, with exit code 2.
+
 ```bash
 # Export the three provider keys before invoking the lane.
 OPENCLAW_UPGRADE_SURVIVOR_BASELINE_SPEC=openclaw@2026.9.5 \

@@ -110,6 +110,13 @@ NODE
 esac
 openclaw_resolve_frozen_upgrade_survivor_capabilities "$ROOT_DIR"
 if [ "$UPGRADE_TARGET_TRAIN" = extended-stable ]; then
+  if [ -n "${OPENCLAW_UPGRADE_SURVIVOR_LIVE_MODELS:-}" ]; then
+    echo "Selected extended-stable target does not support OPENCLAW_UPGRADE_SURVIVOR_LIVE_MODELS with its frozen upgrade survivor runner." >&2
+    exit 2
+  elif [ "${OPENCLAW_UPGRADE_SURVIVOR_LIVE_OPENAI:-0}" = "1" ]; then
+    echo "Selected extended-stable target does not support OPENCLAW_UPGRADE_SURVIVOR_LIVE_OPENAI with its frozen upgrade survivor runner." >&2
+    exit 2
+  fi
   # Extended-stable retains shipped state expectations. Regular releases keep
   # the trusted runner and its serving-turn/post-inference assertions together.
   UPGRADE_SCENARIO_DIR="$(openclaw_resolve_frozen_target_file \

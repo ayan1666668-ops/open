@@ -1,14 +1,15 @@
-import { spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   chmodSync,
+  cpSync,
   existsSync,
   mkdirSync,
   readFileSync,
   readdirSync,
   writeFileSync,
 } from "node:fs";
-import { delimiter, join, resolve } from "node:path";
+import { delimiter, dirname, join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../helpers/temp-dir.js";
 
@@ -38,7 +39,7 @@ function writeExecutable(path: string, source: string): void {
   chmodSync(path, 0o755);
 }
 
-function runSurvivor(overrides: NodeJS.ProcessEnv = {}, shell = "bash") {
+function runSurvivor(overrides: NodeJS.ProcessEnv = {}, shell = "bash", targetVersion?: string) {
   const root = tempDirs.make("openclaw-upgrade-survivor-registry-");
   const binDir = join(root, "bin");
   const captureDir = join(root, "capture");
@@ -46,6 +47,46 @@ function runSurvivor(overrides: NodeJS.ProcessEnv = {}, shell = "bash") {
   mkdirSync(binDir);
   mkdirSync(captureDir);
   writeFileSync(packageTarball, "candidate");
+  const targetEnv: NodeJS.ProcessEnv = {};
+  if (targetVersion) {
+    const selectedRoot = join(root, "selected");
+    for (const file of [
+      "scripts/e2e/lib/upgrade-survivor/run.sh",
+      "scripts/lib/openclaw-test-state.mts",
+      "scripts/lib/npm-publish-plan.mjs",
+      "scripts/windows-cmd-helpers.mjs",
+      "scripts/e2e/lib/plugin-index-sqlite.mjs",
+      "scripts/e2e/lib/env-limits.mjs",
+      "scripts/e2e/lib/text-file-utils.mjs",
+    ]) {
+      mkdirSync(dirname(join(selectedRoot, file)), { recursive: true });
+      cpSync(file, join(selectedRoot, file));
+    }
+    writeFileSync(join(selectedRoot, "package.json"), JSON.stringify({ version: targetVersion }));
+    const git = (...args: string[]) =>
+      execFileSync(
+        "git",
+        ["-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false", ...args],
+        { cwd: selectedRoot, encoding: "utf8" },
+      ).trim();
+    git("init", "-q");
+    git("add", ".");
+    git(
+      "-c",
+      "user.name=Test",
+      "-c",
+      "user.email=test@example.invalid",
+      "commit",
+      "-qm",
+      "fixture",
+    );
+    Object.assign(targetEnv, {
+      OPENCLAW_DOCKER_E2E_REPO_ROOT: selectedRoot,
+      OPENCLAW_ALLOW_FROZEN_TARGET_SCENARIO_OMISSIONS: "1",
+      OPENCLAW_SELECTED_SHA: git("rev-parse", "HEAD"),
+      OPENCLAW_TOOLING_SHA: SOURCE_SHA,
+    });
+  }
   writeExecutable(
     join(binDir, "node"),
     `#!/usr/bin/env bash
@@ -129,6 +170,7 @@ fi
       OPENCLAW_UPGRADE_SURVIVOR_PUBLISHED_BASELINE: "1",
       PATH: `${binDir}:${process.env.PATH ?? ""}`,
       TMPDIR: root,
+      ...targetEnv,
       ...overrides,
     },
     timeout: 30_000,
@@ -545,6 +587,50 @@ test "$LIVE_GEMINI_API_KEY" = fixture-google
     );
     expect(existsSync(join(captureDir, "docker-args"))).toBe(false);
   });
+
+  it.each(
+    ["2026.7.35", "2026.9.4"].flatMap((version) =>
+      ["", "OPENCLAW_UPGRADE_SURVIVOR_LIVE_MODELS", "OPENCLAW_UPGRADE_SURVIVOR_LIVE_OPENAI"].map(
+        (liveVariable) => ({ version, liveVariable }),
+      ),
+    ),
+  )(
+    "checks selected target $version before forwarding $liveVariable",
+    ({ version, liveVariable }) => {
+      const liveValue = liveVariable.endsWith("MODELS") ? "openai/gpt-5.5" : "1";
+      const frozen = version === "2026.7.35";
+      const { captureDir, result, root } = runSurvivor(
+        {
+          OPENCLAW_UPGRADE_SURVIVOR_LIVE_MODELS: "",
+          OPENCLAW_UPGRADE_SURVIVOR_LIVE_OPENAI: "0",
+          OPENAI_API_KEY: frozen ? undefined : "fixture-openai",
+          ...(liveVariable ? { [liveVariable]: liveValue } : {}),
+        },
+        "bash",
+        version,
+      );
+      if (frozen && liveVariable) {
+        expect(result.status, result.stderr).toBe(2);
+        expect(result.stderr).toContain(
+          `Selected extended-stable target does not support ${liveVariable} with its frozen upgrade survivor runner.`,
+        );
+        expect(existsSync(join(captureDir, "docker-args"))).toBe(false);
+        return;
+      }
+      expect(result.status, result.stderr).toBe(0);
+      const args = readFileSync(join(captureDir, "docker-run-args"), "utf8").split("\0");
+      const runnerRoot = frozen ? join(root, "selected") : process.cwd();
+      expect(args).toContain(
+        `${runnerRoot}/scripts/e2e/lib/upgrade-survivor/run.sh:/tmp/openclaw-upgrade-survivor-run.sh:ro`,
+      );
+      if (liveVariable) {
+        expect(args).toContain(`${liveVariable}=${liveValue}`);
+        expect(args).toContain("OPENAI_API_KEY");
+      } else {
+        expect(args).not.toContain("OPENAI_API_KEY");
+      }
+    },
+  );
 
   it("forwards the opted-in key by environment name without putting it in Docker arguments", () => {
     const key = "live-openai-key-must-not-appear-in-arguments";
