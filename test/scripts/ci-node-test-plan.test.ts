@@ -1150,7 +1150,8 @@ describe("scripts/lib/ci-node-test-plan.mts", () => {
       ...(await importOriginal<typeof import("../vitest/vitest.test-shards.mjs")>()),
       fullSuiteVitestShards: [{ name: "agentic", config, projects: [config] }],
     }));
-    vi.doMock("../../scripts/lib/list-test-files.mts", () => ({
+    vi.doMock("../../scripts/lib/list-test-files.mts", async (importOriginal) => ({
+      ...(await importOriginal<typeof import("../../scripts/lib/list-test-files.mts")>()),
       listTrackedTestFiles: (root: string) => (root === "src/gateway" ? files : []),
     }));
     vi.doMock("../../scripts/lib/ci-test-timings.mts", () => ({
@@ -1205,7 +1206,8 @@ describe("scripts/lib/ci-node-test-plan.mts", () => {
       ...(await importOriginal<typeof import("../vitest/vitest.test-shards.mjs")>()),
       fullSuiteVitestShards: [{ name: "agentic", config, projects: [config] }],
     }));
-    vi.doMock("../../scripts/lib/list-test-files.mts", () => ({
+    vi.doMock("../../scripts/lib/list-test-files.mts", async (importOriginal) => ({
+      ...(await importOriginal<typeof import("../../scripts/lib/list-test-files.mts")>()),
       listTrackedTestFiles: (root: string) => (root === "src/gateway" ? files : []),
     }));
     vi.doMock("../../scripts/lib/ci-test-timings.mts", () => ({
@@ -1895,7 +1897,8 @@ describe("scripts/lib/ci-node-test-plan.mts", () => {
         { name: "core-runtime", config, projects: ["test/vitest/vitest.hooks.config.ts"] },
       ],
     }));
-    vi.doMock("../../scripts/lib/list-test-files.mts", () => ({
+    vi.doMock("../../scripts/lib/list-test-files.mts", async (importOriginal) => ({
+      ...(await importOriginal<typeof import("../../scripts/lib/list-test-files.mts")>()),
       listTrackedTestFiles: (root: string) => (root === "src/gateway" ? files : []),
     }));
     vi.doMock("../../scripts/lib/ci-test-timings.mts", () => ({
@@ -2423,11 +2426,9 @@ describe("scripts/lib/ci-node-test-plan.mts", () => {
               for (const sibling of job.groups.filter(
                 (entry) => entry !== group && usesParallelPacking(job),
               )) {
-                const measuredSibling =
-                  /^agentic-gateway-(?:core-2|server-isolated)(?:-hosted-\d+)?$/u.test(
-                    sibling.shard_name,
-                  );
-                expect(effectiveWorkers(sibling), sibling.shard_name).toBe(measuredSibling ? 8 : 2);
+                expect(effectiveWorkers(sibling), sibling.shard_name).toBe(
+                  sibling.fallbackMaxWorkers === 2 ? 8 : 2,
+                );
               }
             }
           }
@@ -2955,7 +2956,10 @@ describe("scripts/lib/ci-node-test-plan.mts", () => {
       expect(startupHealthJob.planConcurrency).toBe(1);
       expect(startupHealthJob.env?.OPENCLAW_VITEST_MAX_WORKERS).toBeUndefined();
       for (const sibling of measuredSiblings) {
-        expect(sibling.env?.OPENCLAW_VITEST_MAX_WORKERS).toBeUndefined();
+        const isolated = /^agentic-gateway-server-isolated(?:-hosted-\d+)?$/u.test(
+          sibling.shard_name,
+        );
+        expect(sibling.env?.OPENCLAW_VITEST_MAX_WORKERS).toBe(isolated ? "8" : undefined);
       }
     }
     const largeJobs = compact.filter(
