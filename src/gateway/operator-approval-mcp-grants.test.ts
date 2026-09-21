@@ -26,6 +26,7 @@ import { startTestApprovalRequest } from "./exec-approval-manager.test-support.j
 import { createGatewayAuxHandlers } from "./server-aux-handlers.js";
 import { createPluginApprovalHandlers } from "./server-methods/plugin-approval.js";
 import type { GatewayRequestHandlerOptions } from "./server-methods/types.js";
+import { createTestRuntimeSecretsActivator } from "./server-startup-config.test-support.js";
 
 const requests: ReturnType<typeof startTestApprovalRequest>[] = [];
 const auxiliaries: ReturnType<typeof createGatewayAuxHandlers>[] = [];
@@ -39,9 +40,7 @@ function gateway() {
   const aux = createGatewayAuxHandlers({
     log: {},
     getNativeApprovalRouteCoordinator: () => undefined,
-    activateRuntimeSecrets: async () => {
-      throw new Error("unexpected secrets reload");
-    },
+    activateRuntimeSecrets: createTestRuntimeSecretsActivator(),
     sharedGatewaySessionGenerationState: { current: undefined, required: null },
     resolveSharedGatewaySessionGenerationForConfig: () => undefined,
     clients: [],

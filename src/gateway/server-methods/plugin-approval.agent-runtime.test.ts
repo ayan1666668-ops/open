@@ -1,17 +1,11 @@
-import fs from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { runQaGatewayFixture } from "../../../test/helpers/qa-gateway-cleanup.js";
-import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js";
 import type { PluginApprovalRequestPayload } from "../../infra/plugin-approvals.js";
-import { closeOpenClawStateDatabaseByPath } from "../../state/openclaw-state-db-cache.js";
-import {
-  openOpenClawStateDatabase,
-  type OpenClawStateDatabaseOptions,
-} from "../../state/openclaw-state-db.js";
-import { resolveOpenClawStateSqlitePath } from "../../state/openclaw-state-db.paths.js";
+import { openOpenClawStateDatabase } from "../../state/openclaw-state-db.js";
 import type { AgentRuntimeIdentity } from "../agent-runtime-identity-token.js";
-import { ExecApprovalManager } from "../exec-approval-manager.js";
+import type { ExecApprovalManager } from "../exec-approval-manager.js";
 import {
+  createPreparedTestApprovalManager,
   createTestApprovalManager,
   startTestApprovalRequest,
 } from "../exec-approval-manager.test-support.js";
@@ -24,21 +18,6 @@ async function cleanupRequests() {
     async () => {},
     ...requests.splice(0).map((request) => request.cleanup),
   );
-}
-
-const tempDirs = useAutoCleanupTempDirTracker((cleanup) =>
-  afterEach(async () => {
-    await cleanupRequests();
-    for (const dir of tempDirs.dirs) {
-      closeOpenClawStateDatabaseByPath(resolveOpenClawStateSqlitePath({ OPENCLAW_STATE_DIR: dir }));
-    }
-    cleanup();
-  }),
-);
-
-function databaseOptions(): OpenClawStateDatabaseOptions {
-  const stateDir = fs.realpathSync(tempDirs.make("plugin-approval-id-"));
-  return { env: { ...process.env, OPENCLAW_STATE_DIR: stateDir } };
 }
 
 function executionIdentity() {
@@ -102,7 +81,8 @@ function requestHandler(
   return handler;
 }
 
-afterEach(() => {
+afterEach(async () => {
+  await cleanupRequests();
   vi.restoreAllMocks();
 });
 
@@ -187,13 +167,12 @@ describe("plugin approval signed agent runtime", () => {
     });
   });
 
-  it("uses signed runtime owner and route instead of forged request metadata", async () => {
-    const options = databaseOptions();
-    const manager = new ExecApprovalManager<PluginApprovalRequestPayload>({
-      approvalKind: "plugin",
-      persistence: { runtimeEpoch: "runtime-a", databaseOptions: options },
-      validateAgentRuntimeDelegatedAuthority: () => true,
-    });
+  it("uses signed runtime owner and route instead of forged request metadata", async (testContext) => {
+    const { manager, databaseOptions: options } =
+      await createPreparedTestApprovalManager<PluginApprovalRequestPayload>(testContext, {
+        approvalKind: "plugin",
+        validateAgentRuntimeDelegatedAuthority: () => true,
+      });
     const opts = requestOptions({
       request: {
         pluginId: "forged-plugin",
@@ -261,13 +240,12 @@ describe("plugin approval signed agent runtime", () => {
     }, request.cleanup);
   });
 
-  it("does not create execution identity storage when collection is disabled", async () => {
-    const options = databaseOptions();
-    const manager = new ExecApprovalManager<PluginApprovalRequestPayload>({
-      approvalKind: "plugin",
-      persistence: { runtimeEpoch: "runtime-a", databaseOptions: options },
-      validateAgentRuntimeDelegatedAuthority: () => true,
-    });
+  it("does not create execution identity storage when collection is disabled", async (testContext) => {
+    const { manager, databaseOptions: options } =
+      await createPreparedTestApprovalManager<PluginApprovalRequestPayload>(testContext, {
+        approvalKind: "plugin",
+        validateAgentRuntimeDelegatedAuthority: () => true,
+      });
     const opts = requestOptions({
       request: { title: "Sensitive action", description: "D", twoPhase: true },
       identity: {

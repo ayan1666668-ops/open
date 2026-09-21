@@ -6,7 +6,6 @@ import type { callGateway } from "../../gateway/call.js";
 import type { RestartRecoveryCandidate } from "../../gateway/chat-abort.js";
 import type { GatewayRecoveryRuntime } from "../../gateway/server-instance-runtime.types.js";
 import { getAgentEventLifecycleGeneration } from "../../infra/agent-events.js";
-import * as gatewayWorkAdmission from "../../process/gateway-work-admission.js";
 import { sessionChanges } from "../../sessions/session-row-changes.js";
 import {
   createSessionEntry,
@@ -126,31 +125,6 @@ export function createRecoveryRuntimeFixture(params: {
     },
     sendRecoveryNotice: params.sendRecoveryNotice,
   };
-}
-
-// Worker-backed recovery may outlast a state poll. Observe its actual admission
-// settlement; stopping the scheduler only joins cancellation, not reconciliation.
-export function observeRecoveryAdmissionSettlement(
-  origin: "main-session:startup-recovery" | "main-session:target-recovery",
-  expected = 1,
-) {
-  const settled = createDeferred();
-  let remaining = expected;
-  const admit = gatewayWorkAdmission.runWithGatewayIndependentRootWorkAdmission;
-  const spy = vi
-    .spyOn(gatewayWorkAdmission, "runWithGatewayIndependentRootWorkAdmission")
-    .mockImplementation(
-      async <T>(run: () => Promise<T>, actualOrigin?: string, signal?: AbortSignal) => {
-        try {
-          return await admit(run, actualOrigin, signal);
-        } finally {
-          if (actualOrigin === origin && --remaining === 0) {
-            settled.resolve();
-          }
-        }
-      },
-    );
-  return { settled: settled.promise, restore: () => spy.mockRestore() };
 }
 
 export function mainSessionEntry(overrides: SessionEntryFixture = {}): SessionEntry {

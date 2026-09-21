@@ -1,17 +1,9 @@
-import fs from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { runQaGatewayFixture } from "../../../test/helpers/qa-gateway-cleanup.js";
-import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js";
-import { closeOpenClawStateDatabaseByPath } from "../../state/openclaw-state-db-cache.js";
-import {
-  openOpenClawStateDatabase,
-  type OpenClawStateDatabaseOptions,
-} from "../../state/openclaw-state-db.js";
-import { resolveOpenClawStateSqlitePath } from "../../state/openclaw-state-db.paths.js";
+import { openOpenClawStateDatabase } from "../../state/openclaw-state-db.js";
 import type { AgentRuntimeIdentity } from "../agent-runtime-identity-token.js";
-import { ExecApprovalManager } from "../exec-approval-manager.js";
 import {
-  createTestApprovalManager,
+  createPreparedTestApprovalManager,
   startTestApprovalRequest,
 } from "../exec-approval-manager.test-support.js";
 import { createChatRunState } from "../server-chat-state.js";
@@ -30,20 +22,7 @@ vi.mock("../../infra/command-analysis/explain.js", () => ({
   resolveCommandAnalysisSummaryForDisplay: vi.fn(async () => null),
 }));
 
-const tempDirs = useAutoCleanupTempDirTracker((cleanup) =>
-  afterEach(async () => {
-    await cleanupRequests();
-    for (const dir of tempDirs.dirs) {
-      closeOpenClawStateDatabaseByPath(resolveOpenClawStateSqlitePath({ OPENCLAW_STATE_DIR: dir }));
-    }
-    cleanup();
-  }),
-);
-
-function databaseOptions(): OpenClawStateDatabaseOptions {
-  const stateDir = fs.realpathSync(tempDirs.make("exec-approval-id-"));
-  return { env: { ...process.env, OPENCLAW_STATE_DIR: stateDir } };
-}
+afterEach(cleanupRequests);
 
 function identity(enabled: boolean): AgentRuntimeIdentity {
   return {
@@ -116,7 +95,7 @@ function requestOptions(
 
 describe("exec approval signed agent runtime", () => {
   it("rejects closed authority before creating an exec approval", async (testContext) => {
-    const manager = createTestApprovalManager(testContext, {
+    const { manager } = await createPreparedTestApprovalManager(testContext, {
       validateAgentRuntimeDelegatedAuthority: () => false,
     });
     const handler = createExecApprovalHandlers(manager)["exec.approval.request"]!;
@@ -131,7 +110,7 @@ describe("exec approval signed agent runtime", () => {
   });
 
   it("sanitizes display-only cwd and resolvedPath in the stored request", async (testContext) => {
-    const manager = createTestApprovalManager(testContext, {
+    const { manager } = await createPreparedTestApprovalManager(testContext, {
       validateAgentRuntimeDelegatedAuthority: () => true,
     });
     const handler = createExecApprovalHandlers(manager)["exec.approval.request"]!;
@@ -162,7 +141,7 @@ describe("exec approval signed agent runtime", () => {
 
   it("cancels an exec approval when authority closes after the handshake", async (testContext) => {
     let active = true;
-    const manager = createTestApprovalManager(testContext, {
+    const { manager } = await createPreparedTestApprovalManager(testContext, {
       validateAgentRuntimeDelegatedAuthority: () => active,
     });
     const handler = createExecApprovalHandlers(manager)["exec.approval.request"]!;
@@ -183,66 +162,71 @@ describe("exec approval signed agent runtime", () => {
     }, request.cleanup);
   });
 
-  it.each([
+  it.for([
     ["enabled", true],
     ["disabled", false],
-  ] as const)("uses signed runtime provenance with collection %s", async (_label, enabled) => {
-    const options = databaseOptions();
-    const manager = new ExecApprovalManager({
-      approvalKind: "exec",
-      persistence: { runtimeEpoch: "runtime-a", databaseOptions: options },
-      validateAgentRuntimeDelegatedAuthority: () => true,
-    });
-    const handler = createExecApprovalHandlers(manager)["exec.approval.request"];
-    if (!handler) {
-      throw new Error("exec approval request handler is unavailable");
-    }
-    const opts = requestOptions(identity(enabled));
-
-    const request = startTestApprovalRequest(manager, handler, opts);
-    requests.push(request);
-    await runQaGatewayFixture(async () => {
-      const pending = request.pending;
-      const acceptedId = await request.accepted();
-      expect(opts.context.broadcast).toHaveBeenCalled();
-      const approvalId = String(
-        (vi.mocked(opts.context.broadcast).mock.calls[0]?.[1] as { id?: unknown } | undefined)?.id,
+  ] as const)(
+    "uses signed runtime provenance with collection %s",
+    async ([_label, enabled], testContext) => {
+      const { manager, databaseOptions: options } = await createPreparedTestApprovalManager(
+        testContext,
+        {
+          approvalKind: "exec",
+          validateAgentRuntimeDelegatedAuthority: () => true,
+        },
       );
-      expect(approvalId).toBe(acceptedId);
-      expect((await manager.getSnapshot(approvalId))?.request).toMatchObject({
-        agentId: "main",
-        sessionKey: "agent:main:session-1",
-        sessionId: null,
-        runId: "run-1",
-        turnSourceChannel: "telegram",
-        turnSourceTo: "chat-1",
-        turnSourceAccountId: "default",
-        turnSourceThreadId: "thread-1",
-      });
-      const db = openOpenClawStateDatabase(options).db;
-      if (enabled) {
-        expect(
-          db
-            .prepare(
-              "SELECT approval_id, source_context_id, source_execution_id FROM operator_approval_execution_identities WHERE approval_id = ?",
-            )
-            .get(approvalId),
-        ).toEqual({
-          approval_id: approvalId,
-          source_context_id: "context-1",
-          source_execution_id: "execution-1",
-        });
-      } else {
-        expect(
-          db
-            .prepare(
-              "SELECT name FROM sqlite_schema WHERE type = 'table' AND name = 'operator_approval_execution_identities'",
-            )
-            .get(),
-        ).toBeUndefined();
+      const handler = createExecApprovalHandlers(manager)["exec.approval.request"];
+      if (!handler) {
+        throw new Error("exec approval request handler is unavailable");
       }
-      await manager.resolve(approvalId, "deny");
-      await pending;
-    }, request.cleanup);
-  });
+      const opts = requestOptions(identity(enabled));
+
+      const request = startTestApprovalRequest(manager, handler, opts);
+      requests.push(request);
+      await runQaGatewayFixture(async () => {
+        const pending = request.pending;
+        const acceptedId = await request.accepted();
+        expect(opts.context.broadcast).toHaveBeenCalled();
+        const approvalId = String(
+          (vi.mocked(opts.context.broadcast).mock.calls[0]?.[1] as { id?: unknown } | undefined)
+            ?.id,
+        );
+        expect(approvalId).toBe(acceptedId);
+        expect((await manager.getSnapshot(approvalId))?.request).toMatchObject({
+          agentId: "main",
+          sessionKey: "agent:main:session-1",
+          sessionId: null,
+          runId: "run-1",
+          turnSourceChannel: "telegram",
+          turnSourceTo: "chat-1",
+          turnSourceAccountId: "default",
+          turnSourceThreadId: "thread-1",
+        });
+        const db = openOpenClawStateDatabase(options).db;
+        if (enabled) {
+          expect(
+            db
+              .prepare(
+                "SELECT approval_id, source_context_id, source_execution_id FROM operator_approval_execution_identities WHERE approval_id = ?",
+              )
+              .get(approvalId),
+          ).toEqual({
+            approval_id: approvalId,
+            source_context_id: "context-1",
+            source_execution_id: "execution-1",
+          });
+        } else {
+          expect(
+            db
+              .prepare(
+                "SELECT name FROM sqlite_schema WHERE type = 'table' AND name = 'operator_approval_execution_identities'",
+              )
+              .get(),
+          ).toBeUndefined();
+        }
+        await manager.resolve(approvalId, "deny");
+        await pending;
+      }, request.cleanup);
+    },
+  );
 });
