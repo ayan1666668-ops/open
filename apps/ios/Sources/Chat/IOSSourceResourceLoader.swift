@@ -31,6 +31,18 @@ actor IOSSourceResourceLoader {
         await self.loader(ifCurrentRoute: route)?.loadFavicon(host: host)
     }
 
+    func loadInboundMedia(
+        source: String,
+        sessionKey: String,
+        agentID: String?,
+        kind: OpenClawChatMediaKind,
+        ifCurrentRoute route: GatewayNodeSessionRoute)
+        async -> OpenClawChatLoadedMedia?
+    {
+        await self.loader(ifCurrentRoute: route)?.loadInboundMedia(
+            source: source, sessionKey: sessionKey, agentID: agentID, kind: kind)
+    }
+
     private func loader(ifCurrentRoute route: GatewayNodeSessionRoute) async -> OpenClawChatSourceResources? {
         guard let connection = await connectionProvider(),
               await gateway.currentGatewayID(ifCurrentRoute: route) == connection.gatewayID,
@@ -97,7 +109,7 @@ actor IOSSourceResourceLoader {
         else { throw CancellationError() }
         var request = URLRequest(url: url)
         request.timeoutInterval = 15
-        request.setValue("application/json, image/*", forHTTPHeaderField: "Accept")
+        request.setValue("application/json, image/*, audio/*, video/*", forHTTPHeaderField: "Accept")
         if url.scheme?.lowercased() == "https" {
             for (name, value) in GatewayCustomHeaders.sanitized(connection.customHeaders) {
                 request.setValue(value, forHTTPHeaderField: name)

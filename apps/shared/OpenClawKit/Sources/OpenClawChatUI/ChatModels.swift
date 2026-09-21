@@ -176,6 +176,15 @@ public struct OpenClawChatMessageContent: Codable, Hashable, Sendable {
         return nil
     }
 
+    var fetchableMediaReference: String? {
+        guard let kind = self.mediaKind else { return nil }
+        if let source = self.url, OpenClawChatMediaURL.inboundSource(source) != nil {
+            return source
+        }
+        let value = self.artifactId?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return !value.isEmpty && kind.acceptsManagedArtifactID(value) ? value : nil
+    }
+
     public init(
         type: String?,
         text: String?,
@@ -459,6 +468,7 @@ public struct OpenClawChatMessage: Codable, Hashable, Identifiable, Sendable {
         let truncated: Bool?
         let tokensBefore: Double?
         let tokensAfter: Double?
+        let media: [AnyCodable]?
     }
 
     public var id: UUID = .init()
@@ -643,7 +653,30 @@ public struct OpenClawChatMessage: Codable, Hashable, Identifiable, Sendable {
             (try? container.decode([String].self, forKey: .mediaTypes))
             ?? (try? container.decode(String.self, forKey: .mediaType)).map { [$0] }
             ?? []
-        let alreadyContainsAudio = decodedContent.contains { content in
+        // Canonical facts own sent attachments. Preserve references, never their bytes, in history/cache.
+        var seenSources = Set(decodedContent.compactMap(\.url))
+        let inboundAttachments = (decodedOpenClaw?.media ?? []).compactMap { fact -> OpenClawChatMessageContent? in
+            guard let fields = fact.dictionaryValue,
+                  let source = fields["url"]?.stringValue ?? fields["path"]?.stringValue,
+                  let source = OpenClawChatMediaURL.inboundSource(source),
+                  seenSources.insert(source).inserted
+            else { return nil }
+            let mimeType = fields["contentType"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let family = mimeType?.lowercased().split(separator: "/").first.map(String.init)
+            let type = family.flatMap(OpenClawChatMediaKind.init(rawValue:))?.rawValue ?? "file"
+            return OpenClawChatMessageContent(
+                type: type,
+                text: nil,
+                mimeType: mimeType,
+                fileName: fields["fileName"]?.stringValue ?? URL(string: source)?.lastPathComponent,
+                url: source,
+                width: fields["width"]?.intValue,
+                height: fields["height"]?.intValue,
+                sizeBytes: fields["sizeBytes"]?.intValue,
+                durationSeconds: fields["durationMs"]?.doubleValue.map { $0 / 1000 },
+                content: nil)
+        }
+        let alreadyContainsAudio = (decodedContent + inboundAttachments).contains { content in
             content.mimeType?.lowercased().hasPrefix("audio/") == true
         }
         let audioAttachments: [OpenClawChatMessageContent] = alreadyContainsAudio ? [] : mediaPaths
@@ -659,7 +692,7 @@ public struct OpenClawChatMessage: Codable, Hashable, Identifiable, Sendable {
                     fileName: (mediaPath as NSString).lastPathComponent,
                     content: nil)
             }
-        self.content = decodedContent + audioAttachments
+        self.content = decodedContent + audioAttachments + inboundAttachments
         self.isTruncated = decodedOpenClaw?.truncated == true || decodedContent.contains { content in
             content.text?.contains(Self.transcriptTruncationMarker) == true
         }
@@ -720,7 +753,8 @@ public struct OpenClawChatMessage: Codable, Hashable, Identifiable, Sendable {
                     idempotencyKey: nil,
                     truncated: self.isTruncated ? true : nil,
                     tokensBefore: self.historyMarker?.tokensBefore,
-                    tokensAfter: self.historyMarker?.tokensAfter),
+                    tokensAfter: self.historyMarker?.tokensAfter,
+                    media: nil),
                 forKey: .openClaw)
         }
         try container.encodeIfPresent(self.provenance, forKey: .provenance)

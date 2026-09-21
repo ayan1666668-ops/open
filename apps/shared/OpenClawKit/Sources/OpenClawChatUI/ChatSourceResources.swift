@@ -111,6 +111,39 @@ public actor OpenClawChatSourceResources {
         return data
     }
 
+    public func loadInboundMedia(
+        source: String,
+        sessionKey: String,
+        agentID: String?,
+        kind: OpenClawChatMediaKind) async -> OpenClawChatLoadedMedia?
+    {
+        let revision = self.revision
+        guard let source = OpenClawChatMediaURL.inboundSource(source), !sessionKey.isEmpty,
+              let snapshot = await self.loadContextSnapshot(),
+              let base = Self.appendResourcePath("/__openclaw__/assistant-media", to: snapshot.resourceBaseURL),
+              var components = URLComponents(url: base, resolvingAgainstBaseURL: false)
+        else { return nil }
+        components.queryItems = [
+            URLQueryItem(name: "source", value: source),
+            URLQueryItem(name: "sessionKey", value: sessionKey),
+        ]
+        if let agentID { components.queryItems?.append(URLQueryItem(name: "agentId", value: agentID)) }
+        if kind != .image { components.queryItems?.append(URLQueryItem(name: "playback", value: "1")) }
+        let maximumBytes = (kind == .image ? 12 : 20) * 1024 * 1024
+        guard let url = components.url,
+              await self.isCurrent(), self.revision == revision, !Task.isCancelled,
+              let (data, response) = try? await self.request(url, maximumBytes),
+              await self.isCurrent(), self.revision == revision, !Task.isCancelled,
+              let http = response as? HTTPURLResponse
+        else { return nil }
+        if http.statusCode == 202, kind != .image { return .preparing }
+        guard http.statusCode == 200,
+              let mimeType = http.mimeType, mimeType.lowercased().hasPrefix(kind.mimeTypePrefix),
+              !data.isEmpty, data.count <= maximumBytes
+        else { return nil }
+        return .data(OpenClawChatMediaData(data: data, mimeType: mimeType))
+    }
+
     private func downloadFavicon(url: URL, revision: UInt64) async -> Data? {
         guard await self.isCurrent(), self.revision == revision, !Task.isCancelled,
               let (data, response) = try? await self.request(url, Self.maximumFaviconBytes),

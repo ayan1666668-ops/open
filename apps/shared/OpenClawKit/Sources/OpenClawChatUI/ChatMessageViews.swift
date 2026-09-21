@@ -790,7 +790,7 @@ private struct AttachmentRow: View {
         OpenClawChatPlaybackMode?) async throws -> OpenClawChatLoadedMedia?
 
     var body: some View {
-        if let artifactId = self.fetchableArtifactId, let kind = self.att.mediaKind {
+        if let artifactId = self.att.fetchableMediaReference, let kind = self.att.mediaKind {
             switch kind {
             case .image:
                 ChatMediaImageAttachment(
@@ -846,12 +846,6 @@ private struct AttachmentRow: View {
 
     private var isAudio: Bool {
         self.att.mediaKind == .audio
-    }
-
-    private var fetchableArtifactId: String? {
-        guard let kind = self.att.mediaKind else { return nil }
-        let value = self.att.artifactId?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return !value.isEmpty && kind.acceptsManagedArtifactID(value) ? value : nil
     }
 
     private var fallbackIcon: String {

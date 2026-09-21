@@ -4,6 +4,112 @@ import Testing
 
 @Suite("Chat source resources", .timeLimit(.minutes(1)))
 struct ChatSourceResourceTests {
+    @Test(arguments: [
+        (OpenClawChatMediaKind.video, "video/quicktime"), (.video, "video/mp4"),
+        (.audio, "audio/mp4"), (.audio, "audio/mpeg"), (.audio, "audio/wav"),
+        (.image, "image/jpeg"), (.image, "image/png"), (.image, "image/heic"), (.image, "image/gif"),
+    ])
+    func `inbound media fetch validates family and uses bounded authenticated resource route`(
+        kind: OpenClawChatMediaKind, mime: String) async throws
+    {
+        let fixture = SourceResourceFixture(
+            config: Self.disabledConfig, response: .init(data: Data([1]), statusCode: 200, mimeType: mime))
+        let loader = try self.loader(fixture)
+        let loaded = await loader.loadInboundMedia(
+            source: "media://inbound/fixture", sessionKey: "main", agentID: nil, kind: kind)
+        guard case let .data(media) = loaded else {
+            Issue.record("Expected fetched media")
+            return
+        }
+        let request = try #require(await fixture.requests.last)
+        let query = try #require(URLComponents(url: request.url, resolvingAgainstBaseURL: false)?.queryItems)
+        #expect(query.contains(URLQueryItem(name: "playback", value: "1")) == (kind != .image))
+        #expect(media.mimeType == mime)
+        #expect(media.data == Data([1]))
+        #expect(await fixture.requests.last?.maximumBytes == (kind == .image ? 12 : 20) * 1024 * 1024)
+    }
+
+    @Test(arguments: ["image/png", "text/html", "application/octet-stream"])
+    func `inbound video refuses a different response family`(mime: String) async throws {
+        let fixture = SourceResourceFixture(
+            config: Self.disabledConfig, response: .init(data: Data([1]), statusCode: 200, mimeType: mime))
+        let loader = try self.loader(fixture)
+        #expect(await loader.loadInboundMedia(
+            source: "media://inbound/clip.mov", sessionKey: "main", agentID: nil, kind: .video) == nil)
+    }
+
+    @Test func `inbound video refuses oversized bytes even if request adapter fails to enforce cap`() async throws {
+        let fixture = SourceResourceFixture(config: Self.disabledConfig, response: .init(
+            data: Data(count: 20 * 1024 * 1024 + 1), statusCode: 200, mimeType: "video/mp4"))
+        let loader = try self.loader(fixture)
+        #expect(await loader.loadInboundMedia(
+            source: "media://inbound/clip.mp4", sessionKey: "main", agentID: nil, kind: .video) == nil)
+    }
+
+    @Test(arguments: [OpenClawChatMediaKind.audio, .video])
+    func `inbound transcoding response keeps playback preparing`(kind: OpenClawChatMediaKind) async throws {
+        let fixture = SourceResourceFixture(config: Self.disabledConfig, response: .init(
+            data: Data(#"{"status":"preparing"}"#.utf8), statusCode: 202, mimeType: "application/json"))
+        let loader = try self.loader(fixture)
+        let result = await loader.loadInboundMedia(
+            source: "media://inbound/fixture", sessionKey: "main", agentID: nil, kind: kind)
+        guard case .preparing = result else {
+            Issue.record("Transcoding must flow into the bounded playback retry loader")
+            return
+        }
+    }
+
+    @Test func `inbound image uses authenticated bounded route and survives disabled favicons`() async throws {
+        let fixture = SourceResourceFixture(config: Self.disabledConfig)
+        let loader = try self.loader(fixture)
+        let source = "media://inbound/synthetic.jpg"
+        let loaded = await loader.loadInboundMedia(
+            source: source,
+            sessionKey: "agent:main:main",
+            agentID: "main",
+            kind: .image)
+        guard case let .data(media) = loaded else {
+            Issue.record("Expected fetched image bytes")
+            return
+        }
+        #expect(media.data == Data([1]))
+        let request = try #require(await fixture.requests.last)
+        #expect(request.url.path == "/control/__openclaw__/assistant-media")
+        let query = try #require(URLComponents(url: request.url, resolvingAgainstBaseURL: false)?.queryItems)
+        #expect(query.contains(URLQueryItem(name: "source", value: source)))
+        #expect(query.contains(URLQueryItem(name: "sessionKey", value: "agent:main:main")))
+        #expect(query.contains(URLQueryItem(name: "agentId", value: "main")))
+        #expect(request.maximumBytes == 12 * 1024 * 1024)
+    }
+
+    @Test(arguments: [
+        "https://other.example/image.jpg",
+        "file:///private/image.jpg",
+        "media://inbound/../image.jpg",
+        "media://inbound/a%2Fb.jpg",
+        "media://user@inbound/image.jpg",
+        "media://inbound/image.jpg?token=secret",
+    ])
+    func `inbound image rejects noncanonical sources without requests`(source: String) async throws {
+        let fixture = SourceResourceFixture(config: Self.disabledConfig)
+        let loader = try self.loader(fixture)
+        #expect(await loader.loadInboundMedia(source: source, sessionKey: "main", agentID: nil, kind: .image) == nil)
+        #expect(await fixture.requests.isEmpty)
+    }
+
+    @Test func `inbound image does not publish bytes after route retirement`() async throws {
+        let fixture = SourceResourceFixture(config: Self.disabledConfig, blocksRequest: true)
+        let loader = try self.loader(fixture)
+        let pending = Task { await loader.loadInboundMedia(
+            source: "media://inbound/image.jpg",
+            sessionKey: "main",
+            agentID: nil, kind: .image) }
+        await fixture.waitUntilBlocked()
+        await fixture.retireRoute()
+        await fixture.finishRequest()
+        #expect(await pending.value == nil)
+    }
+
     @Test func `accepted runtime config owns mount origin and preference without HTTP bootstrap`() async throws {
         let fixture = SourceResourceFixture(config: #"""
         {"runtimeConfig":{"gateway":{
