@@ -47,3 +47,17 @@ export function capturedSessionCard(
     matches[0]
   );
 }
+
+export function patchedPrimarySessionFields(
+  card: Pick<WorkboardCard, "sessionKey" | "primarySessionDetached">,
+  patchSessionKey: unknown,
+): Pick<WorkboardCard, "sessionKey" | "primarySessionDetached"> {
+  if (patchSessionKey === undefined) {
+    return {
+      sessionKey: card.sessionKey,
+      primarySessionDetached: card.primarySessionDetached,
+    };
+  }
+  const sessionKey = normalizeOptionalString(patchSessionKey);
+  return { sessionKey, primarySessionDetached: sessionKey ? undefined : true };
+}

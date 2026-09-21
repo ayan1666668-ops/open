@@ -71,7 +71,11 @@ import {
 } from "./store-normalizers.js";
 import { readCards } from "./store-read.js";
 import { WorkboardStoreRuntime } from "./store-runtime.js";
-import { cardSessionKey, capturedSessionCard } from "./store-session-binding.js";
+import {
+  cardSessionKey,
+  capturedSessionCard,
+  patchedPrimarySessionFields,
+} from "./store-session-binding.js";
 
 type WorkboardUpdateCardOptions = {
   allowAutomationLaunch?: boolean;
@@ -733,10 +737,6 @@ export class WorkboardCoreStore extends WorkboardStoreRuntime {
           ? (existing.completedAt ?? now)
           : undefined
         : normalizeTimestamp(effectivePatch.completedAt, 0) || undefined;
-    const sessionKey =
-      effectivePatch.sessionKey === undefined
-        ? existing.sessionKey
-        : normalizeOptionalString(effectivePatch.sessionKey);
     const execution =
       effectivePatch.execution === undefined
         ? existing.execution
@@ -796,13 +796,7 @@ export class WorkboardCoreStore extends WorkboardStoreRuntime {
         effectivePatch.agentId === undefined
           ? existing.agentId
           : normalizeOptionalString(effectivePatch.agentId),
-      sessionKey,
-      primarySessionDetached:
-        effectivePatch.sessionKey === undefined
-          ? existing.primarySessionDetached
-          : sessionKey
-            ? undefined
-            : true,
+      ...patchedPrimarySessionFields(existing, effectivePatch.sessionKey),
       runId:
         effectivePatch.runId === undefined
           ? existing.runId
