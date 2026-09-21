@@ -4751,20 +4751,22 @@ describe("scripts/lib/ci-node-test-plan.mts", () => {
           if (group.timing_key === undefined) {
             continue;
           }
-          const key = parseCompactSplitTimingKey(group.timing_key);
           const isParallelServer =
             group.configs.length === 1 &&
             group.configs[0] === "test/vitest/vitest.gateway-server.config.ts";
           const parallelAgentsCore =
             group.configs.length === 1 && group.configs[0] === agentVitestProjectOwners.core.config;
+          if (parallelAgentsCore && !group.shard_name.includes("-hosted-")) {
+            expect(group.timing_key).toBe(`${group.shard_name}-parallel`);
+            expect(group.env?.OPENCLAW_VITEST_MAX_WORKERS).toBe("2");
+            continue;
+          }
+          const key = parseCompactSplitTimingKey(group.timing_key);
           if (!key) {
-            expect(isParallelServer || parallelAgentsCore).toBe(true);
+            expect(isParallelServer).toBe(true);
             expect(group.timing_key).toBe(
-              `${group.shard_name}${isParallelServer ? parallelTimingSuffix(group.includePatterns) : "-parallel"}`,
+              `${group.shard_name}${parallelTimingSuffix(group.includePatterns)}`,
             );
-            if (parallelAgentsCore) {
-              expect(group.env?.OPENCLAW_VITEST_MAX_WORKERS).toBe("2");
-            }
             continue;
           }
           const parent = key.parentShardName;
