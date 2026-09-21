@@ -79,7 +79,7 @@ shares of the complete config estimate.
 
 Native database-worker roots share a 20-file CI job ceiling, including every
 co-located envelope. The existing root registry owns classification; migrated
-files retain their measured owner-specific job and process limits. This partitions the
+files retain their original plugin's job and process limits. This partitions the
 185-file native envelope from [run 35176277297](https://github.com/openclaw/openclaw/actions/runs/35176277297)
 into ten non-overlapping envelopes. That run continued passing tests for more
 than 58 minutes before the job deadline; it is a lower bound, not a completed
@@ -94,9 +94,9 @@ Most fallback rates use median wrapper seconds per counting file from 371 succes
 
 The Codex rates were refreshed after the app-server fixture began reusing database workers. The newest three successful qualifying PR runs at the September 20, 2026 21:25 UTC cutoff were [35537834254](https://github.com/openclaw/openclaw/actions/runs/35537834254), [35537743091](https://github.com/openclaw/openclaw/actions/runs/35537743091), and [35537672782](https://github.com/openclaw/openclaw/actions/runs/35537672782), all on two detected CPUs with a two-worker budget. Ordinary Codex envelopes, then serial, have a median rate of 2.490 seconds/file across 78 observations. The database-worker config's overall median, which includes Codex, changes from 7.582 to 7.599 seconds/file across 114 envelopes. Explicit database-worker app-server files use a conservative 17.31 seconds/file, rounded up from the slowest 11-file envelope's 190.394 seconds; the previous floor was 46.26. This keeps the native tail visible above the mixed config median. Summed case time is a different measure: those app-server files averaged 11.672 seconds across 207 file observations. The wrapper rates already incorporate worker scheduling and must not be divided by the worker count again.
 
-Ordinary Codex tests use isolated thread workers and inherit file parallelism from the shared worker budget. Each file retires its mocked module graph and globals; the process bound rises from 12 to 24 files. Database-worker-routed Codex tests already use isolated forks and retain their independent 12-file bound. An initial same-host, two-worker comparison took 507.8 seconds serial, 539.4 seconds with isolated forks, and 512.4 seconds with isolated threads. Isolation therefore preserves roughly the same two-worker wall while enabling parallel scheduling and bounding retained state per file. The 300-second no-output watchdog, test deadlines, and assertions remain unchanged.
+This calibration preserves execution policy: ordinary Codex files remain serial and non-isolated, database-worker-routed Codex files retain isolated forks, and both keep their 12-file process bound. The 300-second no-output watchdog and test deadlines remain unchanged. Weight changes affect packing and predictions, not per-file scheduling.
 
-The landed caps are 90 compact rows, 130 final PR Node rows and 70 final push Node rows; changed-extension fallback retains its 50-row cap. These caps admit the 240-second budget without another policy increase. Replaying PR #153435's 38 changed paths and a broad SDK fallback on the `9034c0aa` counting inventory with the refreshed Codex rates and bounds emits 111 envelopes in 48 extension rows, down from 124 envelopes in 50 rows, for both changed sets:
+The landed caps are 90 compact rows, 130 final PR Node rows and 70 final push Node rows; changed-extension fallback retains its 50-row cap. These caps admit the 240-second budget without another policy increase. Replaying PR #153435's 38 changed paths and a broad SDK fallback on the `9034c0aa` counting inventory with the refreshed Codex rates emits 124 envelopes in 48 extension rows, down from 50 rows with the same envelope inventory and process bounds, for both changed sets:
 
 | Profile    | Compact PR rows | Final PR Node rows before → after | Final push Node rows |
 | ---------- | --------------: | --------------------------------: | -------------------: |
