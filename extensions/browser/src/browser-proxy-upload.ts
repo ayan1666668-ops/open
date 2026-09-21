@@ -549,6 +549,17 @@ export async function stageBrowserProxyUploadRequest(params: {
   const uploadDir = params.uploadDir ?? DEFAULT_UPLOAD_DIR;
   const stagingRoot = path.join(uploadDir, BROWSER_PROXY_UPLOAD_ROOT_NAME);
   await fs.mkdir(stagingRoot, { recursive: true, mode: 0o700 });
+  // A writable staging root means an earlier give-up can be retried: unlatch
+  // recovery so retained uploads are re-evaluated before quota admission.
+  if ((recoveryAttemptCounts.get(uploadDir) ?? 0) >= BROWSER_PROXY_UPLOAD_RECOVERY_MAX_ATTEMPTS) {
+    recoveryAttemptCounts.delete(uploadDir);
+    recoveryPromises.delete(uploadDir);
+    for (const directory of cleanupAttemptCounts.keys()) {
+      if (directory.startsWith(stagingRoot + path.sep)) {
+        cleanupAttemptCounts.delete(directory);
+      }
+    }
+  }
   params.signal?.throwIfAborted();
   await ensureBrowserProxyUploadCleanup({ uploadDir });
   params.signal?.throwIfAborted();
