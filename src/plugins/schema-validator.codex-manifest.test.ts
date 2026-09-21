@@ -23,7 +23,7 @@ describe("bundled codex manifest config schema", () => {
       schema: await readCodexConfigSchema(),
       cacheKey: "codex-manifest-native-hook-relay-unknown-key",
       value: {
-        appServer: { approvalPolicy: "untrusted", nativeHookRelay: { enabeld: false } },
+        appServer: { approvalPolicy: "never", nativeHookRelay: { enabeld: false } },
       },
     });
 
@@ -44,7 +44,7 @@ describe("bundled codex manifest config schema", () => {
       schema: await readCodexConfigSchema(),
       cacheKey: "codex-manifest-native-hook-relay-kill-switch",
       value: {
-        appServer: { approvalPolicy: "untrusted", nativeHookRelay: { enabled: false } },
+        appServer: { approvalPolicy: "never", nativeHookRelay: { enabled: false } },
       },
     });
 

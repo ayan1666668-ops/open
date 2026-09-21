@@ -436,12 +436,8 @@ function readCodexNativeChildThreadId(rawPayload: unknown): string | undefined {
   return threadId || undefined;
 }
 
-// The relay event the app-server approval bridge's native policy path is gated on
-// (`approval-bridge.ts`: `allowedEvents.includes("pre_tool_use")`), and where
-// trusted-tool policy runs. `permission_request` is deliberately not the floor:
-// `resolveCodexNativeHookRelayEvents` below excludes it while approvals are
-// active so the approval bridge owns escalation instead of a stale pre-guardian
-// plugin prompt.
+// The approval bridge gates policy on registered PreToolUse, even without a native
+// hook command. PermissionRequest belongs to the separate escalation owner.
 const CODEX_NATIVE_HOOK_RELAY_APPROVAL_POLICY_FLOOR_EVENT: NativeHookRelayEvent = "pre_tool_use";
 
 // The same override warns once per turn otherwise. Keyed by message: one line per
@@ -453,58 +449,9 @@ type CodexNativeHookRelayRequest = {
   events?: readonly NativeHookRelayEvent[];
 };
 
-/**
- * Applies the before-tool policy floor to an operator-configured relay shape,
- * keyed on the **effective** approval policy of the run: the runtime-resolved
- * value rather than the configured one.
- *
- * Two layers can move that value away from what the operator configured.
- * `applyCodexSessionPermissionPolicy` (`session-permission-policy.ts`) replaces
- * the whole approval/sandbox/reviewer tuple for a session permission mode, and
- * `resolveCodexAppServerRuntimeOptions` (`config-options.ts`, the
- * `forcedPolicy?.approvalPolicy ?? approvalPolicy` resolution) can force a
- * prompting policy over a configured `"never"` — unknown-model or exec-mode
- * reviewer forcing, a forced guardian reviewer, a forced danger-full-access
- * sandbox, or `forcePerCommandApprovals` promoting to `"untrusted"`. Both run
- * paths call this after that resolution and before the relay options are
- * consumed, so no thread can drop the relay the approval bridge runs on while
- * its own policy still prompts.
- *
- * The approval transport itself is out of reach here by construction: approvals
- * ride the app-server approval bridge over JSON-RPC, which falls back to the
- * in-process `before_tool_call` hook when no relay is registered.
- *
- * A full opt-out therefore needs two things to be true: approvals off **and** no
- * active OpenClaw before-tool policy. `hasBeforeToolCallPolicy()` reports the
- * second — a registered `before_tool_call` hook or any trusted-tool policy — and
- * is the same predicate `nativeHookRelayEventHasLocalWork` uses to decide whether
- * `pre_tool_use` has local work at all. Without it the opt-out would omit the
- * relay that executes and can block that policy.
- *
- * That second predicate is not redundant with the first. Session permission mode
- * `"full"` resolves to `approvalPolicy: "never"` with `danger-full-access`
- * regardless of any live OpenClaw before-tool policy, so a policy-bearing run can
- * legitimately reach this guard with approvals off. `hasBeforeToolCallPolicy()`
- * is the only thing holding the relay open in that case.
- *
- * Narrowing to the floor event keeps the approval bridge armed even when the
- * event installs no Codex-side hook: `approval-bridge.ts` gates on the
- * registration's `allowedEvents.includes("pre_tool_use")`, not on whether
- * `buildCodexNativeHookRelayConfig` emitted a populated `hooks.PreToolUse`
- * array. With no before-tool policy and loop detection off, that array is empty
- * by design and the registration still owns command approvals.
- *
- * An explicit `events` list passes through verbatim under every policy. That is
- * upstream's own pre-existing contract, not a gap: #116117 (`a19132e7eb`,
- * "prevent approval promotion from blocking unattended runs" / "honor hook
- * approval ownership" / "keep permission grants human-gated") deliberately
- * preserves an explicit `permission_request` relay under a prompting policy and
- * pins it in `run-attempt.native-hook-relay.test.ts`. This config surface exposes
- * those semantics unchanged; the floor applies only to the `enabled: false`
- * opt-out, which would otherwise remove a relay the operator never scoped.
- *
- * Fields beyond `enabled`/`events` (ttl, timeouts) pass through untouched.
- */
+// Full opt-out requires effective approvals off and no active before-tool policy;
+// otherwise PreToolUse retains policy and approval-bridge registration ownership.
+// Explicit event scopes retain the #116117 contract; this floor only guards enabled:false.
 export function resolveCodexNativeHookRelayForApprovalPolicy<
   T extends CodexNativeHookRelayRequest,
 >(params: {

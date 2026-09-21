@@ -48,7 +48,7 @@ vi.mock("./config-reviewer.js", () => ({
   assertCodexModelBackedReviewerEffectiveConfig: async () => {},
 }));
 
-vi.mock("./attempt-context.js", () => ({
+vi.mock("./attempt-workspace-context.js", () => ({
   prepareCodexWorkspaceDeveloperInstructions: async () => "",
 }));
 

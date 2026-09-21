@@ -21,12 +21,14 @@ import { createServer } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
+import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import { expect } from "vitest";
 import type { EventFrame } from "../../../packages/gateway-protocol/src/index.js";
 import { isLiveTestEnabled } from "../../agents/live-test-helpers.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import { isTruthyEnvValue } from "../../infra/env.js";
 import { setTestEnvValue } from "../../test-utils/env.js";
+import { splitShellArgs } from "../../utils/shell-argv.js";
 import type { GatewayClient } from "../client.js";
 import {
   connectTestGatewayClient,
@@ -547,6 +549,104 @@ export async function readCapturedJsonRpcRecords(
   return records;
 }
 
+export const CODEX_APPROVAL_REQUEST_METHOD = "item/commandExecution/requestApproval";
+
+// Codex's approval producer shlex-joins the shell argv (0.154 bespoke_event_handling.rs).
+// Match the complete POSIX shell/script shape from core/shell.rs, not a nonce in another command.
+function capturedApprovalCommandMatches(captured: string, command: string): boolean {
+  const argv = splitShellArgs(captured);
+  return Boolean(
+    argv &&
+    argv.length === 3 &&
+    ["bash", "zsh", "sh"].includes(path.basename(argv[0])) &&
+    (argv[1] === "-lc" || argv[1] === "-c") &&
+    argv[2] === command,
+  );
+}
+
+/**
+ * Pairs the app-server's approval request (`rpc-out.jsonl`) with the gateway's
+ * response by JSON-RPC id (`rpc-in.jsonl`). Polls because the tee appends after
+ * the turn already settled. Returns whatever it has at the deadline so a partial
+ * round-trip is still recorded in the receipt.
+ */
+export async function readCapturedApprovalRoundTrip(params: {
+  proofDir: string;
+  command: string;
+  timeoutMs: number;
+}): Promise<{ request?: Record<string, unknown>; response?: Record<string, unknown> }> {
+  const requestPath = path.join(params.proofDir, "rpc-out.jsonl");
+  const responsePath = path.join(params.proofDir, "rpc-in.jsonl");
+  const deadline = Date.now() + params.timeoutMs;
+  let request: Record<string, unknown> | undefined;
+  for (;;) {
+    request ??= (await readCapturedJsonRpcRecords(requestPath)).find(
+      (record) =>
+        record.method === CODEX_APPROVAL_REQUEST_METHOD &&
+        isRecord(record.params) &&
+        typeof record.params.command === "string" &&
+        capturedApprovalCommandMatches(record.params.command, params.command),
+    );
+    const requestId = request?.id;
+    if (requestId !== undefined) {
+      const response = (await readCapturedJsonRpcRecords(responsePath)).find(
+        (record) => record.method === undefined && record.id === requestId,
+      );
+      if (response) {
+        return { request, response };
+      }
+    }
+    if (Date.now() >= deadline) {
+      return request ? { request } : {};
+    }
+    await delay(CAPTURE_POLL_MS);
+  }
+}
+
+function readApprovalDecision(response: Record<string, unknown>): string | undefined {
+  const result = response.result;
+  if (result && typeof result === "object" && !Array.isArray(result)) {
+    const decision = (result as Record<string, unknown>).decision;
+    if (typeof decision === "string") {
+      return decision;
+    }
+  }
+  return undefined;
+}
+
+export function assertCapturedApprovalRoundTrip(
+  roundTrip: Awaited<ReturnType<typeof readCapturedApprovalRoundTrip>>,
+  command: string,
+): string | undefined {
+  const decision = roundTrip.response ? readApprovalDecision(roundTrip.response) : undefined;
+  expect(
+    roundTrip.request,
+    `no ${CODEX_APPROVAL_REQUEST_METHOD} request captured for command: ${command}`,
+  ).toBeTruthy();
+  expect(
+    roundTrip.response,
+    `no gateway response captured for ${CODEX_APPROVAL_REQUEST_METHOD} id ${String(roundTrip.request?.id)}`,
+  ).toBeTruthy();
+  expect(roundTrip.response).not.toHaveProperty("error");
+  // This nonce-only command needs no policy amendment. A transport error or
+  // absent/unknown decision is not an approval round-trip, even if the turn failed.
+  expect(["accept", "acceptForSession", "decline", "cancel"]).toContain(decision);
+  return decision;
+}
+
+export async function prepareRelayProofCapture(proofDir: string): Promise<void> {
+  await fs.mkdir(proofDir, { recursive: true });
+  // The tee appends. Exclusive creation keeps previous runs from qualifying this one
+  // and retains their evidence when an operator accidentally reuses a directory.
+  for (const filename of ["rpc-in.jsonl", "rpc-out.jsonl"]) {
+    try {
+      await fs.writeFile(path.join(proofDir, filename), "", { flag: "wx" });
+    } catch (error) {
+      throw new Error(`Cannot reserve ${filename}; use a fresh RELAY_PROOF_DIR`, { cause: error });
+    }
+  }
+}
+
 /** One prepared proof run: a live gateway, a paired client and the capture dir. */
 export type RelayProofLane = {
   appServerConfig: Record<string, unknown>;
@@ -592,7 +692,7 @@ export async function runCodexRelayProofLane(params: {
   if (!codexCommand) {
     throw new Error("RELAY_PROOF_CODEX_COMMAND is required");
   }
-  await fs.mkdir(proofDir, { recursive: true });
+  await prepareRelayProofCapture(proofDir);
 
   const { clearRuntimeConfigSnapshot, loadConfig } = await import("../../config/config.js");
   const { resolveAgentDir } = await import("../../agents/agent-scope.js");

@@ -10,14 +10,12 @@ import {
   createStartedThreadHarness,
   extractRelayIdFromThreadRequest,
   runCodexAppServerAttempt,
+  setupRunAttemptTestHooks,
   tempDir,
 } from "./run-attempt-test-harness.js";
-import {
-  createLoopRelayParams,
-  setupNativeHookRelayTestHooks,
-} from "./run-attempt.native-hook-relay.test-helpers.js";
+import { createLoopRelayParams } from "./run-attempt.native-hook-relay.test-helpers.js";
 
-setupNativeHookRelayTestHooks();
+setupRunAttemptTestHooks();
 
 describe("runCodexAppServerAttempt native hook relay attestation", () => {
   it("refuses to run when managed-only hooks would silently discard its enforcing relay", async () => {

@@ -16,18 +16,21 @@ import { randomBytes, randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
+import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import { describe, expect, it } from "vitest";
 import type { EventFrame } from "../../../packages/gateway-protocol/src/index.js";
 import type { GatewayClient } from "../client.js";
 import {
+  assertCapturedApprovalRoundTrip,
   assertCodexHookOverlay,
   CAPTURE_FRAME_TIMEOUT_MS,
   CAPTURE_POLL_MS,
+  CODEX_APPROVAL_REQUEST_METHOD,
   type CodexHookOverlay,
   type CodexThreadLifecycleMethod,
-  extractChatFinalText,
   isRelayProofApprovalMode,
   isRelayProofLaneEnabled,
+  readCapturedApprovalRoundTrip,
   readCapturedJsonRpcRecords,
   readLifecycleIdentity,
   type RelayProofMode,
@@ -51,7 +54,6 @@ const describeLive = isRelayProofLaneEnabled([
   ? describe
   : describe.skip;
 
-const CODEX_APPROVAL_REQUEST_METHOD = "item/commandExecution/requestApproval";
 // What raises an approval changed with the `untrusted` retirement. Under the old
 // policy the safe-command classifier decided the approval on command *content*, so
 // an opaque command was enough — a bare `echo` was auto-trusted, a `perl -e`
@@ -99,16 +101,17 @@ function resolveStaticRelayProofMode(): StaticRelayProofMode {
 function readSideResult(
   event: EventFrame,
   runId: string,
+  sessionKey: string,
 ): { isError: boolean; text: string } | undefined {
   if (event.event !== "chat.side_result") {
     return undefined;
   }
   const payload = event.payload;
-  if (!payload || typeof payload !== "object") {
+  if (!isRecord(payload)) {
     return undefined;
   }
-  const record = payload as Record<string, unknown>;
-  if (record.kind !== "btw" || record.runId !== runId) {
+  const record = payload;
+  if (record.kind !== "btw" || record.runId !== runId || record.sessionKey !== sessionKey) {
     return undefined;
   }
   return {
@@ -118,11 +121,8 @@ function readSideResult(
 }
 
 /**
- * Side-question replies do not always surface as a `chat` final frame for the
- * originating runId, so accept the `chat.side_result` frame, any gateway frame
- * carrying the echo token, or the app-server's own `item/completed`
- * agentMessage from the stdio capture. An errored `chat.side_result` fails the
- * run immediately with the gateway's own reason.
+ * Require the public side result and final frame for this exact run/session.
+ * Native output alone cannot prove delivery through the Gateway's `/btw` owner.
  */
 async function waitForSideQuestionEcho(params: {
   client: GatewayClient;
@@ -146,13 +146,12 @@ async function waitForSideQuestionEcho(params: {
   if (started?.status !== "started") {
     throw new Error(`side question did not start: ${JSON.stringify(started)}`);
   }
-  const capturePath = path.join(params.proofDir, "rpc-out.jsonl");
   const deadline = Date.now() + params.timeoutMs;
   while (Date.now() < deadline) {
     // Fail fast: the gateway already knows the side question is dead, so do not
     // sit out the remaining timeout waiting for an echo that cannot arrive.
     const sideResult = params.events
-      .map((event) => readSideResult(event, runId))
+      .map((event) => readSideResult(event, runId, params.sessionKey))
       .find((result) => result !== undefined);
     if (sideResult?.isError) {
       await fs.writeFile(
@@ -161,25 +160,16 @@ async function waitForSideQuestionEcho(params: {
       );
       throw new Error(`side question failed: ${sideResult.text.trim() || "(no reason reported)"}`);
     }
-    if (sideResult && sideResult.text.includes(params.token)) {
+    const finalized = params.events.some(
+      (event) =>
+        event.event === "chat" &&
+        isRecord(event.payload) &&
+        event.payload.runId === runId &&
+        event.payload.sessionKey === params.sessionKey &&
+        event.payload.state === "final",
+    );
+    if (sideResult && finalized && sideResult.text.includes(params.token)) {
       return { source: "gateway-side-result", text: sideResult.text };
-    }
-    const final = params.events
-      .map((event) => extractChatFinalText(event, runId))
-      .find((text) => typeof text === "string" && text.includes(params.token));
-    if (final) {
-      return { source: "gateway-chat-final", text: final };
-    }
-    const frame = params.events.find((event) => {
-      const serialized = JSON.stringify(event);
-      return serialized.includes(params.token) && !serialized.includes("/btw");
-    });
-    if (frame) {
-      return { source: "gateway-event", text: JSON.stringify(frame) };
-    }
-    const captured = await readCapturedAgentMessage(capturePath, params.token);
-    if (captured) {
-      return { source: "app-server-capture", text: captured };
     }
     await delay(250);
   }
@@ -235,6 +225,7 @@ async function runApprovalProofTurn(params: {
   }
   const roundTrip = await readCapturedApprovalRoundTrip({
     proofDir: params.proofDir,
+    command,
     timeoutMs: APPROVAL_CAPTURE_TIMEOUT_MS,
   });
   await assertCapturedCodexHookOverlay({
@@ -247,95 +238,7 @@ async function runApprovalProofTurn(params: {
   approval.requestId = roundTrip.request?.id ?? null;
   approval.requestParams = roundTrip.request?.params ?? null;
   approval.response = roundTrip.response ?? null;
-  approval.decision = roundTrip.response ? readApprovalDecision(roundTrip.response) : undefined;
-  expect(
-    roundTrip.request,
-    `no ${CODEX_APPROVAL_REQUEST_METHOD} request captured for command: ${command}`,
-  ).toBeTruthy();
-  expect(
-    roundTrip.response,
-    `no gateway response captured for ${CODEX_APPROVAL_REQUEST_METHOD} id ${String(roundTrip.request?.id)}`,
-  ).toBeTruthy();
-}
-
-/**
- * Pairs the app-server's approval request (`rpc-out.jsonl`) with the gateway's
- * response by JSON-RPC id (`rpc-in.jsonl`). Polls because the tee appends after
- * the turn already settled. Returns whatever it has at the deadline so a partial
- * round-trip is still recorded in the receipt.
- */
-async function readCapturedApprovalRoundTrip(params: {
-  proofDir: string;
-  timeoutMs: number;
-}): Promise<{ request?: Record<string, unknown>; response?: Record<string, unknown> }> {
-  const requestPath = path.join(params.proofDir, "rpc-out.jsonl");
-  const responsePath = path.join(params.proofDir, "rpc-in.jsonl");
-  const deadline = Date.now() + params.timeoutMs;
-  let request: Record<string, unknown> | undefined;
-  for (;;) {
-    request ??= (await readCapturedJsonRpcRecords(requestPath)).find(
-      (record) => record.method === CODEX_APPROVAL_REQUEST_METHOD,
-    );
-    const requestId = request?.id;
-    if (requestId !== undefined) {
-      const response = (await readCapturedJsonRpcRecords(responsePath)).find(
-        (record) => record.method === undefined && record.id === requestId,
-      );
-      if (response) {
-        return { request, response };
-      }
-    }
-    if (Date.now() >= deadline) {
-      return request ? { request } : {};
-    }
-    await delay(CAPTURE_POLL_MS);
-  }
-}
-
-function readApprovalDecision(response: Record<string, unknown>): string | undefined {
-  const result = response.result;
-  if (result && typeof result === "object" && !Array.isArray(result)) {
-    const decision = (result as Record<string, unknown>).decision;
-    if (typeof decision === "string") {
-      return decision;
-    }
-  }
-  return response.error ? "error" : undefined;
-}
-
-async function readCapturedAgentMessage(
-  capturePath: string,
-  token: string,
-): Promise<string | undefined> {
-  let text: string;
-  try {
-    text = await fs.readFile(capturePath, "utf8");
-  } catch {
-    return undefined;
-  }
-  for (const line of text.split("\n")) {
-    if (!line.includes(token) || !line.includes("agentMessage")) {
-      continue;
-    }
-    try {
-      const parsed = JSON.parse(line) as {
-        method?: string;
-        params?: { item?: { text?: unknown; type?: unknown } };
-      };
-      const item = parsed.params?.item;
-      if (
-        parsed.method === "item/completed" &&
-        item?.type === "agentMessage" &&
-        typeof item.text === "string" &&
-        item.text.includes(token)
-      ) {
-        return item.text;
-      }
-    } catch {
-      /* partial line */
-    }
-  }
-  return undefined;
+  approval.decision = assertCapturedApprovalRoundTrip(roundTrip, command);
 }
 
 /**
