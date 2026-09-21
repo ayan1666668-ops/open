@@ -284,6 +284,79 @@ Explicit caller-owned in-memory context remains caller-supplied input, not permi
 
 Serialization: `serialize: true` keeps same-lane runs ordered (most CLIs serialize on one provider lane). OpenClaw also drops stored CLI session reuse when the selected auth identity changes. A changed auth profile id, static API key, static token, or OAuth account identity all count, when the CLI exposes one. OAuth access and refresh token rotation alone does not cut the session. If a CLI has no stable OAuth account id, OpenClaw lets that CLI enforce its own resume permissions.
 
+### Operator-equivalent auth profiles (`auth.historyEquivalenceGroups`)
+
+By default the rule above is strict: any change of the selected auth profile id
+drops the stored native CLI session. That is the correct default for two
+different people or two unrelated accounts. It is the wrong outcome for a single
+operator who runs a billing waterfall across several of their **own**
+subscriptions, where a credit- or limit-driven failover mid-conversation
+discards the whole working context even though the human on both legs is the
+same.
+
+`auth.historyEquivalenceGroups` is a bounded, opt-in exception for exactly that
+case. Each group lists auth profile ids the operator declares to be their own
+equivalent identities. A failover **between two profiles that share one declared
+group** no longer invalidates the native session; every other profile change
+keeps today's strict behavior byte for byte.
+
+```json5
+{
+  auth: {
+    historyEquivalenceGroups: [
+      ["anthropic:max", "anthropic:sc", "anthropic:scm", "anthropic:overflow"],
+      ["openai:max", "openai:sc", "openai:scm", "openai:overflow"],
+    ],
+  },
+}
+```
+
+What the setting does and does not do:
+
+- **Scope.** It affects only native `--resume` continuity — whether the stored
+  provider-side session id survives a profile swap. It is not an authorization
+  input anywhere else.
+- **Saved-history recovery is unaffected.** Permission to replay saved OpenClaw
+  history still follows the account-boundary rules above, and mixed-account
+  history stays ineligible. Grouping two profiles does not make one account's
+  saved transcript replayable under another.
+- **Billing and routing are unaffected.** Each turn is still billed to the
+  profile that actually served it; the setting never changes which profile is
+  selected.
+- **Membership is per group, not transitive.** Two ids are equivalent only when a
+  **single** group contains both. With `[["a","b"], ["b","c"]]`, the swaps
+  `a↔b` and `b↔c` preserve the session, but `a↔c` does not, because `a` and `c`
+  never co-occur in one group.
+- **Chained hops are checked pairwise.** After each successful turn the binding
+  is rewritten with the profile that just served it, so `a→b→c` is permitted only
+  because each individual hop shares a group. A direct `a→c` swap is still
+  refused.
+- **Evaluated per turn from current config.** Removing a profile from a group
+  takes effect on the next turn: the following swap involving it invalidates
+  normally. There is no stored grant and nothing to revoke.
+- **A same-profile credential change still invalidates.** The exception applies
+  only to a swap between two _distinct_ grouped ids. Rotating or replacing the
+  credential under one profile id, with no profile change, still cuts the session
+  through the auth epoch.
+
+**Credential reassignment behind a grouped name.** Group membership is a
+statement about profile **names the operator controls**, not about the
+credentials currently stored under them. If the operator replaces the credential
+under a grouped profile id with a different account's credential, and a swap then
+occurs between two grouped ids, the native session is preserved: within a group
+the auth-epoch check is deliberately bypassed, because a per-leg epoch always
+differs across a swap and re-applying it would make the setting a no-op. Treat
+listing a profile id in a group as a standing declaration that whatever
+credential the operator later puts behind that name is still their own identity.
+Reassigning a grouped name to another party's account is an explicit operator act
+and is outside what this setting defends against; operators who do not want that
+latitude should leave the profile out of every group, which restores strict
+per-account invalidation for it.
+
+**Compatibility.** The key is new and optional. With it absent — the default —
+behavior is identical to previous releases, so no migration or config change is
+required on upgrade.
+
 ## Fallback prelude from claude-cli sessions
 
 A `claude-cli` attempt can fail over to a non-CLI candidate in [`agents.defaults.model.fallbacks`](/concepts/model-failover). OpenClaw then seeds the next attempt with a context prelude harvested from Claude Code's local JSONL transcript. That transcript lives under `~/.claude/projects/`, keyed per workspace. This supplies CLI-owned context that may not be present in OpenClaw's SQLite session transcript.
