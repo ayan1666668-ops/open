@@ -1,0 +1,145 @@
+import { describe, expect, it, vi } from "vitest";
+import {
+  recoverAfterTransportDrop,
+  type TransportDropScenario,
+} from "./attempt-recovery.test-support.js";
+
+vi.mock("../../../infra/backoff.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../../infra/backoff.js")>()),
+  sleepWithAbort: vi.fn(async () => {}),
+}));
+
+describe("settled tool-call rejection recovery", () => {
+  // Live shape from openclaw/openclaw#147040: exec/edit calls settled earlier in
+  // the turn, then the provider completed a tool call whose arguments the
+  // transport rejected before dispatch. The original-prompt resubmit is closed by
+  // the committed effects, so the runner continues the current transcript.
+  const rejectedToolCall: TransportDropScenario = {
+    toolName: "write",
+    errorMessage: "Provider completed tool call with malformed JSON arguments",
+    errorCode: "malformed_tool_call_arguments",
+    content: [],
+    diagnostics: [],
+  };
+
+  it.each<[string, TransportDropScenario]>([
+    ["the structured rejection code", rejectedToolCall],
+    [
+      "inconsistent completed Responses output",
+      {
+        ...rejectedToolCall,
+        errorCode: "incomplete_tool_call",
+        errorMessage: "Responses stream completed with an incomplete terminal tool call",
+        diagnostics: [
+          {
+            type: "openai_responses_terminal",
+            timestamp: 1,
+            details: { eventType: "response.completed" },
+          },
+        ],
+      },
+    ],
+    ["the exact rejection message alone", { ...rejectedToolCall, errorCode: undefined }],
+    [
+      "the errored turn already carried visible text",
+      { ...rejectedToolCall, content: [{ type: "text", text: "Updating the config now." }] },
+    ],
+    [
+      "the batch had a settled tool failure",
+      {
+        ...rejectedToolCall,
+        failedToolCallId: "call_2",
+        lastToolError: { toolName: "write", error: "write failed" },
+      },
+    ],
+  ])(
+    "continues the transcript after a pre-dispatch tool-call rejection on a settled batch with %s",
+    async (_label, scenario) => {
+      const {
+        recovery,
+        markOwnedTranscriptRetry,
+        continueFromCurrentTranscript,
+        failoverRetryController,
+        onAgentEvent,
+      } = await recoverAfterTransportDrop(scenario);
+
+      expect(recovery).toMatchObject({ action: "retry", lastRetryFailoverReason: null });
+      expect(markOwnedTranscriptRetry).toHaveBeenCalledOnce();
+      expect(continueFromCurrentTranscript).toHaveBeenCalledExactlyOnceWith({
+        includeToolFailureInstruction: Boolean(scenario.lastToolError),
+      });
+      expect(failoverRetryController.transientRetryCount).toBe(1);
+      expect(onAgentEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ reason: "tool_call_rejection" }),
+        }),
+      );
+      expect(failoverRetryController.advanceAuthProfile).not.toHaveBeenCalled();
+    },
+  );
+
+  it("shares the existing budget across rejection and transient recovery", async () => {
+    const { recovery, recover, failoverRetryController, continueFromCurrentTranscript } =
+      await recoverAfterTransportDrop(rejectedToolCall);
+    expect(recovery.action).toBe("retry");
+    failoverRetryController.observeAttempt({ providerRetryMaxRetries: 2 });
+    await expect(
+      failoverRetryController.maybeRetryTransient({ reason: "server_error" }),
+    ).resolves.toBe(true);
+    await expect(recover()).resolves.toEqual({ action: "proceed" });
+    expect(failoverRetryController.transientRetryCount).toBe(2);
+    expect(continueFromCurrentTranscript).toHaveBeenCalledOnce();
+  });
+
+  it.each<[string, TransportDropScenario]>([
+    ["the continuation budget is disabled", { retryAvailable: false }],
+    ["the harness owns transport recovery", { pluginHarnessOwnsTransport: true }],
+    ["a tool result is missing", { missingToolResult: true }],
+    ["a lifecycle item remains active", { activeCount: 1 }],
+    ["asynchronous tool work remains", { asyncStarted: true }],
+    ["a tool intentionally ended the turn", { terminate: true }],
+    ["approval is pending", { didSendDeterministicApprovalPrompt: true }],
+    ["a client tool is pending", { clientToolCalls: [{ name: "read", params: {} }] }],
+    [
+      "a child was accepted",
+      { acceptedSessionSpawns: [{ runId: "child-run", childSessionKey: "agent:main:child" }] },
+    ],
+    ["the provider refused", { diagnostics: [{ type: "provider_refusal", timestamp: 1 }] }],
+    [
+      "an incomplete call has no completed-response evidence",
+      {
+        errorCode: "incomplete_tool_call",
+        errorMessage: "Responses stream completed with an incomplete terminal tool call",
+      },
+    ],
+    ["the attempt yielded", { yieldDetected: true }],
+    ["the run was externally aborted", { terminal: { kind: "aborted", source: "external" } }],
+    ["the run timed out", { terminal: { kind: "timeout", phase: "prompt", source: "runtime" } }],
+    [
+      "the rejection message is not exact and no code is set",
+      {
+        errorCode: undefined,
+        errorMessage: "Provider completed tool call with malformed JSON arguments after dispatch",
+      },
+    ],
+  ])("does not continue the transcript after a rejection when %s", async (_label, scenario) => {
+    const { recovery, markOwnedTranscriptRetry, continueFromCurrentTranscript } =
+      await recoverAfterTransportDrop({ ...rejectedToolCall, ...scenario });
+
+    expect(recovery).toEqual({ action: "proceed" });
+    expect(markOwnedTranscriptRetry).not.toHaveBeenCalled();
+    expect(continueFromCurrentTranscript).not.toHaveBeenCalled();
+  });
+
+  it("leaves a replay-safe rejection to the original-prompt resubmit", async () => {
+    // Read-only tools keep the attempt replay-safe; handleEmbeddedAssistantFailure
+    // owns that resubmit (PR #142176), so recovery must not continue the transcript.
+    const { recovery, continueFromCurrentTranscript } = await recoverAfterTransportDrop({
+      ...rejectedToolCall,
+      toolName: "read",
+      replaySafe: true,
+    });
+    expect(recovery).toEqual({ action: "proceed" });
+    expect(continueFromCurrentTranscript).not.toHaveBeenCalled();
+  });
+});

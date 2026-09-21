@@ -10,7 +10,7 @@ import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import {
   QA_EVIDENCE_FILENAME,
   type QaEvidenceSummaryJson,
-} from "../../../../extensions/qa-lab/api.js";
+} from "../../../../extensions/qa-lab/test-api.js";
 import { normalizeTlsFingerprint } from "../../../../packages/gateway-client/src/client-address-utils.js";
 import { clearConfigCache, clearRuntimeConfigSnapshot } from "../../../../src/config/config.js";
 import { createConfiguredGatewayLocalProbe } from "../../../../src/gateway/local-http-probe.js";
@@ -433,9 +433,10 @@ export async function runGatewayTlsPinningProof(): Promise<GatewayTlsPinningProo
         });
       }
     };
-    if ((await probeHealth())?.statusCode !== 200) {
-      throw new Error("Initial local TLS health probe failed");
-    }
+    await waitForRenewalFact(
+      async () => ((await probeHealth())?.statusCode === 200 ? true : undefined),
+      "the initial accepted local TLS health listener",
+    );
     const initialTarget = await missedRenewalProbe.resolveWebSocketTarget(port);
     if (initialTarget?.tlsFingerprint !== preparedTls.fingerprintSha256) {
       throw new Error("A WebSocket-first probe did not verify the initial listener pin");

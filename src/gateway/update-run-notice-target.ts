@@ -6,7 +6,7 @@ import { getChannelPlugin } from "../channels/plugins/index.js";
 import { parseSessionThreadInfo } from "../config/sessions/thread-info.js";
 import type { SessionEntry } from "../config/sessions/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
-import type { SessionDeliveryRoute } from "../infra/session-delivery-queue-storage.js";
+import type { SessionDeliveryRoute } from "../infra/session-delivery-queue.records.js";
 import { getUpdateRun, recordUpdateRunVerification } from "../infra/update-run-ledger.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { resolveChannelAccountEntry } from "../routing/account-lookup.js";
@@ -71,10 +71,14 @@ export function authorizeUpdateRunNoticeTarget(
     : target;
 }
 
-export function recordUpdateRunNoticeSkipped(runId: string | undefined, reason: string): void {
+export function recordUpdateRunNoticeSkipped(
+  runId: string | undefined,
+  reason: string,
+  env?: NodeJS.ProcessEnv,
+): void {
   log.warn(`lifecycle notice skipped: ${reason}`, { runId });
-  if (runId && getUpdateRun(runId)?.verification.noticeDelivered !== true) {
-    recordUpdateRunVerification(runId, { noticeDelivered: false });
+  if (runId && getUpdateRun(runId, { env })?.verification.noticeDelivered !== true) {
+    recordUpdateRunVerification(runId, { noticeDelivered: false }, { env });
   }
 }
 
@@ -85,15 +89,17 @@ export function resolveUpdateRunNoticeTarget(params: {
   explicitDeliveryContext?: DeliveryContext;
   threadId?: string;
   session?: NoticeSession;
+  env?: NodeJS.ProcessEnv;
 }): NoticeTarget {
   const session =
-    params.session ?? (params.sessionKey ? loadSessionEntry(params.sessionKey) : undefined);
+    params.session ??
+    (params.sessionKey ? loadSessionEntry(params.sessionKey, { env: params.env }) : undefined);
   const routingKey = params.sessionKey ?? session?.canonicalKey;
   const { baseSessionKey, threadId } = parseSessionThreadInfo(routingKey);
   let context = deliveryContextFromSession(session?.entry);
   let chatType = sessionDeliveryOrigin(session?.entry)?.chatType ?? "direct";
   if (!hasDeliveryTargetFields(context) && baseSessionKey && baseSessionKey !== routingKey) {
-    const { entry } = loadSessionEntry(baseSessionKey);
+    const { entry } = loadSessionEntry(baseSessionKey, { env: params.env });
     chatType =
       sessionDeliveryOrigin(session?.entry)?.chatType ??
       sessionDeliveryOrigin(entry)?.chatType ??

@@ -1,16 +1,9 @@
-/**
- * Real runtime proof for openclaw/openclaw#147040: a loopback Anthropic-format provider
- * first completes a valid `write` tool call (a committed side effect), then completes a
- * tool call whose argument buffer is truncated. The transport rejects that call before
- * dispatch. The original-prompt resubmit is closed by the committed write, so the
- * embedded runner continues the current transcript and recovers with the provider's
- * third, well-formed response, without replaying the prompt or the write.
- */
 import fs from "node:fs/promises";
 import { createServer } from "node:http";
-import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { isRecord } from "@openclaw/normalization-core/record-coerce";
+import { afterEach, describe, expect, it, vi } from "vitest";
+/** Real Gateway/Responses proof: settled write, failed read, rejected call, continuation. */
 import { clearConfigCache, clearRuntimeConfigSnapshot } from "../src/config/config.js";
 import { clearSessionStoreCacheForTest } from "../src/config/sessions/store-writer-state.js";
 import type { ModelDefinitionConfig, ModelProviderConfig } from "../src/config/types.models.js";
@@ -18,7 +11,15 @@ import {
   disconnectGatewayClient,
   startGatewayWithClient,
 } from "../src/gateway/test-helpers.e2e.js";
+import { onAgentEvent, type AgentEventPayload } from "../src/infra/agent-events.js";
 import { captureEnv, setTestEnvValue } from "../src/test-utils/env.js";
+import { acquireTestPortBlock, type TestPortClaim } from "../src/test-utils/port-claims.js";
+import { useAutoCleanupTempDirTracker } from "./helpers/temp-dir.js";
+
+vi.mock("../src/infra/backoff.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../src/infra/backoff.js")>()),
+  sleepWithAbort: async (_ms: number, signal?: AbortSignal) => signal?.throwIfAborted(),
+}));
 
 const envKeys = [
   "HOME",
@@ -35,11 +36,11 @@ const envKeys = [
   "OPENCLAW_DISABLE_BUNDLED_PLUGINS",
 ] as const;
 
-const PROVIDER_ID = "mock-anthropic";
-const MODEL_ID = "claude-opus-5";
+const PROVIDER_ID = "mock-responses";
+const MODEL_ID = "synthetic-recovery-model";
 const USER_PROMPT = "write my note, then update the config";
-// Alphanumeric like a real Anthropic id; the runner normalizes ids before replay.
-const WRITE_CALL_ID = "toolu01issue147040write";
+// Stable synthetic IDs let the request and tool-lifecycle observations agree.
+const WRITE_CALL_ID = "call_write_note";
 const WRITE_CONTENT = "ISSUE147040_WRITE_DONE\n";
 const TRUNCATED_FRAGMENT = '{"path":"config.json","old_string":"{\\n  \\"port';
 const RECOVERED_MARKER = "ISSUE147040_RECOVERED_AFTER_REJECTION";
@@ -52,100 +53,63 @@ type CapturedRequest = {
   messages: unknown[];
 };
 
-function anthropicSse(events: Record<string, unknown>[]): string {
+function responsesSse(events: Record<string, unknown>[]): string {
   return events
     .map((event) => `event: ${String(event.type)}\ndata: ${JSON.stringify(event)}\n\n`)
     .join("");
 }
 
-function messageStart(id: string): Record<string, unknown> {
-  return {
-    type: "message_start",
-    message: {
-      id,
-      type: "message",
-      role: "assistant",
-      model: MODEL_ID,
-      content: [],
-      stop_reason: null,
-      usage: { input_tokens: 640, output_tokens: 0 },
-    },
-  };
-}
-
-function toolUseTurn(params: {
-  id: string;
-  callId: string;
-  name: string;
-  partialJson: string;
-}): string {
-  return anthropicSse([
-    messageStart(params.id),
+function responseTurn(turn: number): string {
+  const call = (id: string, name: string, args: string, status = "completed") => ({
+    type: "function_call",
+    id: "fc_" + id,
+    call_id: id,
+    name,
+    arguments: args,
+    status,
+  });
+  const message = (text: string) => ({
+    type: "message",
+    id: "msg_" + turn,
+    role: "assistant",
+    status: "completed",
+    content: [{ type: "output_text", text, annotations: [] }],
+  });
+  const output =
+    turn === 1
+      ? [
+          message("I am saving the note."),
+          call(
+            WRITE_CALL_ID,
+            "write",
+            JSON.stringify({ path: "note.txt", content: WRITE_CONTENT }),
+          ),
+        ]
+      : turn === 2
+        ? [call("call_failed_read", "read", JSON.stringify({ path: "missing-proof-file.txt" }))]
+        : turn === 3
+          ? [call("call_rejected_edit", "edit", TRUNCATED_FRAGMENT, "incomplete")]
+          : [message(RECOVERED_MARKER)];
+  return responsesSse([
     {
-      type: "content_block_start",
-      index: 0,
-      content_block: { type: "tool_use", id: params.callId, name: params.name, input: {} },
+      type: "response.completed",
+      response: {
+        id: "resp_proof_" + turn,
+        model: MODEL_ID,
+        status: "completed",
+        output,
+        usage: { input_tokens: 640, output_tokens: 20, total_tokens: 660 },
+      },
     },
-    {
-      type: "content_block_delta",
-      index: 0,
-      delta: { type: "input_json_delta", partial_json: params.partialJson },
-    },
-    { type: "content_block_stop", index: 0 },
-    {
-      type: "message_delta",
-      delta: { stop_reason: "tool_use", stop_sequence: null },
-      usage: { output_tokens: 1329 },
-    },
-    { type: "message_stop" },
   ]);
 }
 
-/** Request 1: a valid `write` call that the runner executes (committed side effect). */
-function writeToolTurn(): string {
-  return toolUseTurn({
-    id: "msg_issue147040_write",
-    callId: WRITE_CALL_ID,
-    name: "write",
-    partialJson: JSON.stringify({ path: "note.txt", content: WRITE_CONTENT }),
-  });
-}
-
-/** Request 2: a sealed `edit` call whose argument buffer is truncated mid-string. */
-function rejectedToolCallTurn(): string {
-  return toolUseTurn({
-    id: "msg_issue147040_rejected",
-    callId: "call_issue147040_truncated",
-    name: "edit",
-    partialJson: TRUNCATED_FRAGMENT,
-  });
-}
-
-/** Request 3: a plain text answer carrying the recovery marker. */
-function recoveredTextTurn(): string {
-  return anthropicSse([
-    messageStart("msg_issue147040_recovered"),
-    { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
-    {
-      type: "content_block_delta",
-      index: 0,
-      delta: { type: "text_delta", text: RECOVERED_MARKER },
-    },
-    { type: "content_block_stop", index: 0 },
-    {
-      type: "message_delta",
-      delta: { stop_reason: "end_turn", stop_sequence: null },
-      usage: { output_tokens: 12 },
-    },
-    { type: "message_stop" },
-  ]);
-}
-
-function buildMockAnthropicProvider(baseUrl: string) {
+function buildMockResponsesProvider(baseUrl: string) {
   const model: ModelDefinitionConfig = {
     id: MODEL_ID,
-    name: "Mock Claude Opus 5",
-    api: "anthropic-messages",
+    name: "Synthetic recovery model",
+    compat: { supportsStore: false },
+    api: "openai-responses",
     reasoning: false,
     input: ["text"],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
@@ -154,8 +118,9 @@ function buildMockAnthropicProvider(baseUrl: string) {
   };
   const config: Omit<ModelProviderConfig, "models"> & { models: [ModelDefinitionConfig] } = {
     baseUrl,
-    apiKey: "sk-ant-api03-issue147040-proof", // pragma: allowlist secret
-    api: "anthropic-messages",
+    apiKey: "synthetic-proof-key",
+    api: "openai-responses",
+    request: { allowPrivateNetwork: true },
     models: [model],
   };
   return { providerId: PROVIDER_ID, modelRef: `${PROVIDER_ID}/${MODEL_ID}`, config } as const;
@@ -166,26 +131,23 @@ function countOccurrences(haystack: string, needle: string): number {
 }
 
 describe("issue #147040 real runtime proof", () => {
-  let tempHome: string | undefined;
-
-  afterEach(async () => {
-    if (tempHome) {
-      await fs.rm(tempHome, { recursive: true, force: true });
-      tempHome = undefined;
-    }
-  });
+  const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 
   it(
     "continues the transcript after a tool-call rejection that follows a committed write",
     { timeout: 90_000 },
     async () => {
       const envSnapshot = captureEnv([...envKeys]);
+      const toolStarts: AgentEventPayload[] = [];
+      const observedEvents: AgentEventPayload[] = [];
+      let unsubscribe = () => {};
+      let providerClaim: TestPortClaim | undefined;
       let providerServer: ReturnType<typeof createServer> | undefined;
       let gateway: Awaited<ReturnType<typeof startGatewayWithClient>> | undefined;
       const providerRequests: CapturedRequest[] = [];
 
       try {
-        tempHome = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-issue147040-proof-"));
+        const tempHome = tempDirs.make("openclaw-issue147040-proof-");
         const stateDir = path.join(tempHome, ".openclaw");
         const workspaceDir = path.join(tempHome, "workspace");
         const configPath = path.join(stateDir, "openclaw.json");
@@ -219,43 +181,40 @@ describe("issue #147040 real runtime proof", () => {
             body += chunk;
           });
           request.on("end", () => {
-            const parsed = JSON.parse(body) as { stream?: unknown; messages?: unknown[] };
+            const parsed = JSON.parse(body) as { stream?: unknown; input?: unknown[] };
             providerRequests.push({
               method: request.method ?? "",
               url: request.url ?? "",
               stream: parsed.stream,
-              messages: parsed.messages ?? [],
+              messages: parsed.input ?? [],
             });
             response.writeHead(200, {
               "content-type": "text/event-stream; charset=utf-8",
               "cache-control": "no-cache",
             });
-            // 1: valid write (executed), 2: truncated call (rejected), 3+: recovery text.
-            const turn = providerRequests.length;
-            response.end(
-              turn === 1
-                ? writeToolTurn()
-                : turn === 2
-                  ? rejectedToolCallTurn()
-                  : recoveredTextTurn(),
-            );
+            response.end(responseTurn(providerRequests.length));
           });
         });
+        providerClaim = await acquireTestPortBlock({ offsets: [0] });
         await new Promise<void>((resolve, reject) => {
           providerServer?.once("error", reject);
-          providerServer?.listen(0, "127.0.0.1", resolve);
+          providerServer?.listen(providerClaim?.port, "127.0.0.1", resolve);
         });
         const providerAddress = providerServer.address();
         if (!providerAddress || typeof providerAddress === "string") {
           throw new Error("proof provider did not bind a loopback port");
         }
-        const provider = buildMockAnthropicProvider(`http://127.0.0.1:${providerAddress.port}`);
+        const provider = buildMockResponsesProvider(`http://127.0.0.1:${providerAddress.port}/v1`);
         const cfg = {
+          plugins: { slots: { memory: "none" } },
           agents: {
             defaults: {
               workspace: workspaceDir,
               skipBootstrap: true,
               model: { primary: provider.modelRef },
+              models: { [provider.modelRef]: { agentRuntime: { id: "openclaw" } } },
+              heartbeat: { every: "0m" },
+              skills: [],
             },
             entries: { main: { default: true } },
           },
@@ -269,6 +228,19 @@ describe("issue #147040 real runtime proof", () => {
           configPath,
           token: TOKEN,
           clientDisplayName: "issue147040-proof",
+        });
+        await gateway.server.startupSettled;
+        unsubscribe = onAgentEvent((event) => {
+          if (event.stream === "tool" && event.data.phase === "start") {
+            toolStarts.push(event);
+          }
+          if (
+            event.stream === "lifecycle" ||
+            event.stream === "error" ||
+            event.stream === "run_status"
+          ) {
+            observedEvents.push(event);
+          }
         });
         const started = await gateway.client.request<{ runId?: string; status?: string }>(
           "chat.send",
@@ -285,7 +257,14 @@ describe("issue #147040 real runtime proof", () => {
           { runId: started.runId, timeoutMs: 30_000 },
           { timeoutMs: 35_000 },
         );
-        expect(waited).toMatchObject({ status: "ok" });
+        expect(
+          waited,
+          JSON.stringify({
+            requests: providerRequests.length,
+            tools: toolStarts.map((event) => event.data.name),
+            events: observedEvents.map((event) => ({ stream: event.stream, data: event.data })),
+          }),
+        ).toMatchObject({ status: "ok" });
 
         // The committed side effect happened exactly once: the write ran, and the
         // recovery did not replay the prompt or re-run the tool.
@@ -293,35 +272,49 @@ describe("issue #147040 real runtime proof", () => {
           WRITE_CONTENT,
         );
 
-        // Three streaming Messages requests went to the real transport over HTTP:
-        // the prompt, the post-write continuation, and the post-rejection continuation.
+        // The failed read is settled before the rejected edit; only sampling resumes.
+        expect(toolStarts.map((event) => event.data.name)).toEqual(["write", "read"]);
         expect(
           providerRequests.map(({ method, url, stream }) => ({ method, url, stream })),
         ).toEqual([
-          { method: "POST", url: "/v1/messages", stream: true },
-          { method: "POST", url: "/v1/messages", stream: true },
-          { method: "POST", url: "/v1/messages", stream: true },
+          { method: "POST", url: "/v1/responses", stream: true },
+          { method: "POST", url: "/v1/responses", stream: true },
+          { method: "POST", url: "/v1/responses", stream: true },
+          { method: "POST", url: "/v1/responses", stream: true },
         ]);
         // The recovery request continued the current transcript: the settled write
         // result is still there, the prompt appears once, and nothing from the
         // rejected call reached the provider.
-        const recoveryMessages = JSON.stringify(providerRequests[2]?.messages ?? []);
-        expect(recoveryMessages).toContain(`"tool_use_id":"${WRITE_CALL_ID}"`);
-        expect(recoveryMessages).toContain('"name":"write"');
-        expect(recoveryMessages).toContain("Successfully wrote");
+        const recoveryMessages = JSON.stringify(providerRequests[3]?.messages ?? []);
+        expect(recoveryMessages.includes(`"call_id":"${WRITE_CALL_ID}"`)).toBe(true);
+        expect(recoveryMessages.includes('"name":"write"')).toBe(true);
+        expect(recoveryMessages.includes("Successfully wrote")).toBe(true);
+        expect(recoveryMessages.includes("call_failed_read")).toBe(true);
+        const failedRead = providerRequests[3]?.messages.find(
+          (item) =>
+            isRecord(item) &&
+            item.type === "function_call_output" &&
+            item.call_id === "call_failed_read",
+        );
+        if (!isRecord(failedRead) || typeof failedRead.output !== "string") {
+          throw new Error("Recovery request omitted the settled read result");
+        }
+        expect(JSON.parse(failedRead.output)).toMatchObject({ status: "error", tool: "read" });
         expect(countOccurrences(recoveryMessages, USER_PROMPT)).toBe(1);
-        expect(recoveryMessages).not.toContain(TRUNCATED_FRAGMENT);
-        expect(recoveryMessages).not.toContain("malformed JSON arguments");
+        expect(recoveryMessages.includes(TRUNCATED_FRAGMENT)).toBe(false);
+        expect(recoveryMessages.includes("malformed JSON arguments")).toBe(false);
 
         const history = await gateway.client.request<{ messages?: unknown[] }>("chat.history", {
           sessionKey,
           limit: 20,
         });
         const serialized = JSON.stringify(history.messages ?? []);
-        expect(serialized).toContain(RECOVERED_MARKER);
-        expect(serialized).not.toContain("malformed JSON arguments");
-        expect(serialized).not.toContain(TRUNCATED_FRAGMENT);
+        expect(serialized.includes(RECOVERED_MARKER)).toBe(true);
+        expect(serialized.includes("malformed JSON arguments")).toBe(false);
+        expect(serialized.includes("incomplete terminal tool call")).toBe(false);
+        expect(serialized.includes(TRUNCATED_FRAGMENT)).toBe(false);
       } finally {
+        unsubscribe();
         if (gateway) {
           await disconnectGatewayClient(gateway.client).catch(() => undefined);
           await gateway.server.close().catch(() => undefined);
@@ -331,6 +324,7 @@ describe("issue #147040 real runtime proof", () => {
             providerServer?.close(() => resolve());
           });
         }
+        await providerClaim?.release();
         envSnapshot.restore();
         clearRuntimeConfigSnapshot();
         clearConfigCache();

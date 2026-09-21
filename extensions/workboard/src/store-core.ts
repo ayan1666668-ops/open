@@ -12,10 +12,9 @@ import { normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runti
 import type {
   PersistedWorkboardAttachment,
   PersistedWorkboardBoard,
-  PersistedWorkboardCard,
-  PersistedWorkboardNotificationSubscription,
   WorkboardCardStore,
   WorkboardKeyedStore,
+  WorkboardSubscriptionStore,
 } from "./persistence-types.js";
 import { normalizeAutomationPatch, normalizeCardAutomation } from "./store-automation.js";
 import {
@@ -23,7 +22,6 @@ import {
   cardBoardId,
   cardParentIds,
   cardSessionKey,
-  compareCards,
   isActiveDependencyTarget,
   isDependencyPromotableStatus,
   lifecycleStatusSourceUpdatedAtFromPatch,
@@ -73,6 +71,7 @@ import {
   syncExecutionSessionKey,
   trimMetadataToBudget,
 } from "./store-normalizers.js";
+import { readCards } from "./store-read.js";
 import { WorkboardStoreRuntime } from "./store-runtime.js";
 
 type WorkboardUpdateCardOptions = {
@@ -98,14 +97,14 @@ export class WorkboardCoreStore extends WorkboardStoreRuntime {
   private compensationJournal?: WorkboardMutationJournalEntry[];
   protected readonly store: WorkboardCardStore;
   protected readonly boardStore: WorkboardKeyedStore<PersistedWorkboardBoard>;
-  protected readonly subscriptionStore: WorkboardKeyedStore<PersistedWorkboardNotificationSubscription>;
+  protected readonly subscriptionStore: WorkboardSubscriptionStore;
   protected readonly attachmentStore: WorkboardKeyedStore<PersistedWorkboardAttachment>;
 
   constructor(
     store: WorkboardCardStore,
     stores: {
       boards: WorkboardKeyedStore<PersistedWorkboardBoard>;
-      subscriptions: WorkboardKeyedStore<PersistedWorkboardNotificationSubscription>;
+      subscriptions: WorkboardSubscriptionStore;
       attachments: WorkboardKeyedStore<PersistedWorkboardAttachment>;
       ready?: Promise<number>;
       dataVersion?: () => number | Promise<number>;
@@ -115,7 +114,10 @@ export class WorkboardCoreStore extends WorkboardStoreRuntime {
     super(stores.dataVersion, stores.close, stores.ready);
     this.store = this.trackCardStore(store);
     this.boardStore = this.track(stores.boards);
-    this.subscriptionStore = this.track(stores.subscriptions, { notifyChanges: false });
+    this.subscriptionStore = {
+      ...this.track(stores.subscriptions, { notifyChanges: false }),
+      entries: (options) => this.runOperation(() => stores.subscriptions.entries(options)),
+    };
     this.attachmentStore = this.track(stores.attachments, { notifyChanges: false });
   }
 
@@ -298,14 +300,7 @@ export class WorkboardCoreStore extends WorkboardStoreRuntime {
 
   async list(options: WorkboardListOptions = {}): Promise<WorkboardCard[]> {
     const boardId = normalizeBoardId(options.boardId);
-    const entries = await this.store.entries(boardId);
-    return entries
-      .map((entry) => entry.value)
-      .filter(
-        (entry): entry is PersistedWorkboardCard => entry?.version === 1 && Boolean(entry.card?.id),
-      )
-      .map((entry) => entry.card)
-      .toSorted(compareCards);
+    return readCards(this.store, boardId === undefined ? undefined : { kind: "board", boardId });
   }
 
   async listBoards(): Promise<{ boards: WorkboardBoardSummary[] }> {
@@ -391,7 +386,7 @@ export class WorkboardCoreStore extends WorkboardStoreRuntime {
       if (await this.store.hasCards(boardId)) {
         throw new Error("board still has cards; archive it or move/delete the cards first.");
       }
-      for (const entry of await this.subscriptionStore.entries()) {
+      for (const entry of await this.subscriptionStore.entries({ boardId })) {
         if (entry.value?.version === 1 && entry.value.subscription?.boardId === boardId) {
           await this.subscriptionStore.delete(entry.key);
         }
@@ -630,7 +625,7 @@ export class WorkboardCoreStore extends WorkboardStoreRuntime {
         throw new Error("sessionKey is required.");
       }
       const boardId = normalizeBoardId(input.boardId) ?? "default";
-      const matches = (await this.list())
+      const matches = (await readCards(this.store, { kind: "session", sessionKey }))
         .filter((card) => cardSessionKey(card) === sessionKey)
         .toSorted((left, right) => right.updatedAt - left.updatedAt);
       const existing =
@@ -1141,23 +1136,6 @@ export class WorkboardCoreStore extends WorkboardStoreRuntime {
       return Boolean(card && cardParentIds(card).some(visit));
     };
     return visit(cardId);
-  }
-
-  protected async recordDispatch(card: WorkboardCard, now: number): Promise<WorkboardCard> {
-    const result = await this.updateLatestCard(card.id, (current) => ({
-      metadata: {
-        ...current.metadata,
-        automation: normalizeAutomation(
-          {
-            ...current.metadata?.automation,
-            dispatchCount: (current.metadata?.automation?.dispatchCount ?? 0) + 1,
-            lastDispatchAt: now,
-          },
-          current.metadata?.automation,
-        ),
-      },
-    }));
-    return result.card;
   }
 
   protected async recordOrchestrationCandidate(
