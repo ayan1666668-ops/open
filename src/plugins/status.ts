@@ -197,6 +197,7 @@ type PluginReportParams = {
   onlyPluginIds?: readonly string[];
   /** Capture full registrations without starting channel runtime sidecars. */
   runtimeInspection?: boolean;
+  loadMode?: "validate";
   workspaceDir?: string;
   /** Use an explicit env when plugin roots should resolve independently from process.env. */
   env?: NodeJS.ProcessEnv;
@@ -204,7 +205,7 @@ type PluginReportParams = {
   metadataSnapshot?: PluginMetadataSnapshot;
 };
 
-function preparePluginReport(params: PluginReportParams | undefined, loadMode?: "validate") {
+function preparePluginReport(params: PluginReportParams | undefined) {
   const rawConfig = params?.config ?? getRuntimeConfig();
   const workspace = resolvePluginControlPlaneWorkspace({
     config: rawConfig,
@@ -279,7 +280,7 @@ function preparePluginReport(params: PluginReportParams | undefined, loadMode?: 
       env: params?.env,
       loadModules: true,
       cache: true,
-      mode: loadMode,
+      mode: params?.loadMode,
       onlyPluginIds,
       toolDiscovery: params?.runtimeInspection,
     }),
@@ -289,9 +290,8 @@ function preparePluginReport(params: PluginReportParams | undefined, loadMode?: 
 function buildPluginReport(
   params: PluginReportParams | undefined,
   loadModules: boolean,
-  loadMode?: "validate",
 ): PluginStatusReport {
-  const prepared = preparePluginReport(params, loadMode);
+  const prepared = preparePluginReport(params);
   const { rawConfig, workspaceDir, metadataSnapshot, context, runtimeCompatConfig, onlyPluginIds } =
     prepared;
   const registry = loadModules
@@ -364,12 +364,9 @@ export function buildPluginSnapshotReport(params?: PluginReportParams): PluginSt
 export async function withPluginDiagnosticsReport<T>(
   params: PluginReportParams | undefined,
   consume: (report: PluginStatusReport) => T | Promise<T>,
-  options?: { loadMode?: "validate" },
 ): Promise<T> {
   await using cache = createPluginCache();
-  return await withPluginCache(cache, () =>
-    consume(buildPluginReport(params, true, options?.loadMode)),
-  );
+  return await withPluginCache(cache, () => consume(buildPluginReport(params, true)));
 }
 
 /** Serializes an owned inspection before disposing its registration resources. */
