@@ -320,6 +320,9 @@ export function readReferencedSessionIds(
  * no index can serve it. Freshness is preserved rather than dropped: the memo
  * is only used while a connection-local token proves no insert or update landed
  * since the pass, and any later boundary re-reads the store the moment it does.
+ * That token is only believed against the handle that produced it, so a cached
+ * connection replaced mid-batch rebuilds the pass rather than inheriting a
+ * proof whose two halves restart on a new connection.
  */
 export async function withBatchedSessionReferenceAnalysis<T>(
   database: Pick<OpenClawAgentDatabase, "db" | "path">,
@@ -330,11 +333,15 @@ export async function withBatchedSessionReferenceAnalysis<T>(
     database.db,
     database.path,
     candidateSessionIds,
-    (sink) => {
+    // Reads through the handle the batch is being primed on, which is not
+    // necessarily the one captured above: a rebuild after the cached connection
+    // is replaced mid-batch must scan the replacement, never the closed handle.
+    (sink, connection) => {
+      const scoped = { db: connection };
       const candidates = new Set(candidateSessionIds);
       for (const row of iterateSqliteQuerySync(
-        database.db,
-        selectReferenceRows(database, new Set(), candidateSessionIds),
+        connection,
+        selectReferenceRows(scoped, new Set(), candidateSessionIds),
       )) {
         if (candidates.has(row.current_session_id)) {
           sink.add(row.current_session_id, row.session_key);
@@ -347,7 +354,7 @@ export async function withBatchedSessionReferenceAnalysis<T>(
         }
       }
       addRetainedWindowSessionReferences(
-        database,
+        scoped,
         new Set<string>(),
         new Set(),
         candidateSessionIds,

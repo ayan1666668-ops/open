@@ -19,6 +19,7 @@ import {
   withBatchedSessionReferenceAnalysis,
 } from "./session-accessor.sqlite-lifecycle-state.js";
 import { readSessionMaintenanceCapCandidates } from "./session-accessor.sqlite-maintenance-candidates.js";
+import { trackMaterializedKeys } from "./session-accessor.sqlite-read-tracking.test-support.js";
 import { SESSION_STATE_ID_TRIM_CHARACTERS } from "./session-accessor.sqlite-references.js";
 
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
@@ -60,26 +61,6 @@ function insertEntry(
       "INSERT INTO session_nodes (session_key, current_session_id, entry_json, updated_at) VALUES (?, ?, CAST(? AS TEXT), ?)",
     )
     .run(key, id, json ?? JSON.stringify({ sessionId: id, updatedAt: 1 }), 1);
-}
-
-function trackMaterializedKeys(database: OpenClawAgentDatabase) {
-  const materializedKeys: string[] = [];
-  const prepare = database.db.prepare.bind(database.db);
-  vi.spyOn(database.db, "prepare").mockImplementation((sql) => {
-    const statement = prepare(sql);
-    const iterate = statement.iterate.bind(statement);
-    vi.spyOn(statement, "iterate").mockImplementation(function* (...args) {
-      for (const row of iterate(...args)) {
-        if (typeof row.session_key === "string") {
-          materializedKeys.push(row.session_key);
-        }
-        yield row;
-      }
-      return undefined;
-    });
-    return statement;
-  });
-  return materializedKeys;
 }
 
 const readers = [
