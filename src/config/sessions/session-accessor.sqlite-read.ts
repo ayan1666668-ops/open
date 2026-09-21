@@ -7,7 +7,6 @@ import {
 import { assertSqliteJsonlReadBudget } from "../../infra/sqlite-jsonl-budget.js";
 import { coerceRequiredSqliteNumber as sqliteNumber } from "../../infra/sqlite-number.js";
 import { runSqliteDeferredTransactionSync } from "../../infra/sqlite-transaction.js";
-import { extractAssistantPhaseText } from "../../shared/chat-message-content.js";
 import { isTranscriptOnlyOpenClawAssistantModel } from "../../shared/transcript-only-openclaw-assistant.js";
 import { SessionMetadataUnavailableError } from "../../state/openclaw-agent-db-read-error.js";
 import { withOpenClawAgentDatabaseReadOnly } from "../../state/openclaw-agent-db-readonly.js";
@@ -19,6 +18,7 @@ import { resolveOpenClawAgentSqlitePath } from "../../state/openclaw-agent-db.pa
 import type {
   LatestTranscriptAssistantMessage,
   LatestTranscriptAssistantText,
+  SessionTranscriptContextVersion,
   SessionTranscriptReadScope,
   SessionTranscriptEventRow,
   SessionTranscriptStats,
@@ -36,7 +36,6 @@ import { canRebasePreparedAssistantInTransaction } from "./session-accessor.sqli
 import {
   readTranscriptContextVersionInTransaction,
   readTranscriptMutationStateInTransaction,
-  type SessionTranscriptContextVersion,
 } from "./session-accessor.sqlite-transcript-state.js";
 import {
   readTranscriptStatsBatchFromDatabase,
@@ -49,6 +48,7 @@ import {
 import { assertSessionTranscriptHot } from "./session-cold-storage-state.js";
 import { projectResetBoundaryNavigationSql } from "./session-model-context-projection.js";
 import { resolveSqliteSessionTranscriptReadFence } from "./session-transcript-read-fence.js";
+import { projectAssistantTranscriptText } from "./transcript-assistant-delivery.js";
 
 export type SqliteTranscriptSnapshotRow = {
   eventJson: string;
@@ -212,14 +212,21 @@ export function validatePreparedAssistantAppendSync(
 export function loadTranscriptHeaderSync(scope: SessionTranscriptReadScope): unknown {
   const resolved = resolveSqliteTranscriptReadScope(scope);
   const database = openOpenClawAgentDatabase(toDatabaseOptions(resolved));
-  return readHotSessionTranscriptSnapshot(database, resolved.sessionId, "header", () => {
+  return readTranscriptHeaderFromDatabase(database, resolved.sessionId);
+}
+
+export function readTranscriptHeaderFromDatabase(
+  database: Pick<OpenClawAgentDatabase, "agentId" | "db" | "path">,
+  sessionId: string,
+): unknown {
+  return readHotSessionTranscriptSnapshot(database, sessionId, "header", () => {
     const db = getSessionKysely(database.db);
     const row = executeSqliteQueryTakeFirstSync(
       database.db,
       db
         .selectFrom("transcript_events")
         .select("event_json")
-        .where("session_id", "=", resolved.sessionId)
+        .where("session_id", "=", sessionId)
         .orderBy("seq", "asc")
         .limit(1),
     );
@@ -494,7 +501,7 @@ export function loadLatestAssistantText(
         if (!latest) {
           continue;
         }
-        const text = parseLatestAssistantText(latest);
+        const text = projectAssistantTranscriptText(latest.message, latest.id);
         if (text) {
           return text;
         }
@@ -506,23 +513,6 @@ export function loadLatestAssistantText(
       operationLabel: "latest assistant fenced read",
     },
   );
-}
-
-function parseLatestAssistantText(
-  latest: LatestTranscriptAssistantMessage,
-): LatestTranscriptAssistantText | undefined {
-  const message = latest.message as { timestamp?: unknown };
-  const text = extractAssistantPhaseText(latest.message)?.trim();
-  if (!text) {
-    return undefined;
-  }
-  return {
-    ...(latest.id ? { id: latest.id } : {}),
-    text,
-    ...(typeof message.timestamp === "number" && Number.isFinite(message.timestamp)
-      ? { timestamp: message.timestamp }
-      : {}),
-  };
 }
 
 function parseLatestAssistantMessageEvent(

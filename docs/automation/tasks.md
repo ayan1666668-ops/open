@@ -366,9 +366,11 @@ For the full operator ledger, use the CLI: `openclaw tasks list`.
 
 ### Control UI
 
-The web Control UI has a **Tasks** page in the sidebar with live active and recent background tasks. Use it to inspect progress, open linked sessions, refresh the ledger, cancel queued and running tasks, or retry/dismiss a blocked completion delivery. Task detail keeps execution status and delivery status separate and exposes the retained result for copying.
+The web Control UI has a **Tasks** page in the sidebar with live active and recent background tasks. Use it to inspect progress, open linked sessions, refresh the ledger, cancel queued and running tasks, or retry/dismiss a blocked completion delivery. Task detail keeps execution status and delivery status separate and exposes the retained result for copying. Final delivery and outcome corrections update the live task without counting delivery as additional execution time.
 
 Chat panes also have a collapsible **Background tasks** rail scoped to the current conversation, with active work, stop controls, and a finished section. Open it from the pane's **Tasks** panel action. Subagent activity below the parent conversation also opens the selected child's details.
+
+The compact subagent list below the conversation also keeps queued, running, and waiting work in creation order. Recent completions move above ongoing work, newest completion first, and remain eligible for display for 60 seconds. The five-row list reserves room for the latest result without letting a burst of completions hide all ongoing work. Open **Tasks** for additional active work and up to 50 recent finished tasks. Progress and result-delivery updates do not change the order. Completed subagents show a small green check over the claw; failures and timeouts keep their warning badges.
 
 Running work stays in creation order so progress updates do not move rows while you monitor them. Finished work is selected and displayed by completion time, newest first. Transient list conflicts retry silently; if retries are exhausted, use **Refresh** in the Tasks panel header. Session label and category edits preserve task pagination when session access stays the same. Sharing, role, and session identity changes can still require a fresh page.
 

@@ -34,16 +34,16 @@ import {
 } from "../../infra/agent-events.js";
 import { registerAgentRunContext } from "../../infra/agent-run-registry.js";
 import { loadDeliveryQueueEntryInDatabase } from "../../infra/delivery-queue-sqlite-bound.js";
+import { loadDeliveryQueueEntry } from "../../infra/delivery-queue-sqlite.js";
 import {
-  loadDeliveryQueueEntry,
-  upsertDeliveryQueueEntry,
-} from "../../infra/delivery-queue-sqlite.js";
-import {
+  completeDeliveryQueueEntryInDatabase,
   prepareDeliveryQueueTerminalEntry,
   terminalizePendingDeliveryQueueEntryInDatabase,
 } from "../../infra/delivery-queue-sqlite.kernel.js";
+import { seedDeliveryQueueEntry } from "../../infra/delivery-queue-sqlite.test-support.js";
 import { OUTBOUND_DELIVERY_QUEUE_NAME } from "../../infra/outbound/delivery-queue-media-staging.js";
-import { ackDelivery, enqueueDeliveryOnce } from "../../infra/outbound/delivery-queue-storage.js";
+import type { QueuedDelivery } from "../../infra/outbound/delivery-queue-types.js";
+import { createUnmodifiedPreparedOutboundBatch } from "../../infra/outbound/prepared-batch.js";
 import {
   initializeGlobalHookRunner,
   resetGlobalHookRunner,
@@ -196,6 +196,22 @@ vi.mock("../../config/sessions/transcript.js", async (importOriginal) => {
 });
 
 let tmpDir: string;
+
+function seedQueuedFinal(id: string, text: string): void {
+  const entry: QueuedDelivery = {
+    id,
+    enqueuedAt: Date.now(),
+    retryCount: 0,
+    attemptCount: 0,
+    channel: "discord",
+    to: "discord:dm:123",
+    preparedBatch: createUnmodifiedPreparedOutboundBatch([{ text }]),
+    queuePolicy: "required",
+    completionRetention: "permanent",
+    retainOnFailure: true,
+  };
+  seedDeliveryQueueEntry({ queueName: OUTBOUND_DELIVERY_QUEUE_NAME, stateDir: tmpDir, entry });
+}
 const resolveGatewayContext = () => undefined;
 
 function loadSessionEntry(
@@ -2864,17 +2880,7 @@ describe("main-session-restart-recovery", () => {
     ],
   ])("defers mixed deliveries while any exact queue owner is pending", async (...deliveries) => {
     try {
-      await enqueueDeliveryOnce(
-        {
-          channel: "discord",
-          to: "discord:dm:123",
-          payloads: [{ text: "Pending sibling." }],
-          queuePolicy: "required",
-          completionRetention: "permanent",
-        },
-        "delivery-still-pending",
-        tmpDir,
-      );
+      seedQueuedFinal("delivery-still-pending", "Pending sibling.");
       const sessionsDir = await makeSessionsDir();
       await writeMainSession({
         sessionsDir,
@@ -2896,17 +2902,7 @@ describe("main-session-restart-recovery", () => {
 
   it("completes terminal deliveries despite a residual pending queue row", async () => {
     try {
-      await enqueueDeliveryOnce(
-        {
-          channel: "discord",
-          to: "discord:dm:123",
-          payloads: [{ text: "Already delivered." }],
-          queuePolicy: "required",
-          completionRetention: "permanent",
-        },
-        "delivery-terminal-with-row",
-        tmpDir,
-      );
+      seedQueuedFinal("delivery-terminal-with-row", "Already delivered.");
       const sessionsDir = await makeSessionsDir();
       const storePath = path.join(sessionsDir, "sessions.json");
       await writeMainSession({
@@ -3065,20 +3061,10 @@ describe("main-session-restart-recovery", () => {
     async (ownerStatus) => {
       const deliveryId = `delivery-owner-${ownerStatus}`;
       try {
-        await enqueueDeliveryOnce(
-          {
-            channel: "discord",
-            to: "discord:dm:123",
-            payloads: [{ text: "Queue owns this final." }],
-            queuePolicy: "required",
-            completionRetention: "permanent",
-          },
-          deliveryId,
-          tmpDir,
-        );
+        seedQueuedFinal(deliveryId, "Queue owns this final.");
         if (ownerStatus === "settling") {
           const entry = loadDeliveryQueueEntry(OUTBOUND_DELIVERY_QUEUE_NAME, deliveryId, tmpDir)!;
-          upsertDeliveryQueueEntry({
+          seedDeliveryQueueEntry({
             queueName: OUTBOUND_DELIVERY_QUEUE_NAME,
             entry: { ...entry, recoveryState: "settlement_pending" },
             status: "failed",
@@ -3108,7 +3094,11 @@ describe("main-session-restart-recovery", () => {
             ),
           ).toMatchObject({ status: "terminalized" });
         } else if (ownerStatus === "completed") {
-          await ackDelivery(deliveryId, tmpDir);
+          completeDeliveryQueueEntryInDatabase(
+            openOpenClawStateDatabase({ env: { ...process.env, OPENCLAW_STATE_DIR: tmpDir } }),
+            OUTBOUND_DELIVERY_QUEUE_NAME,
+            deliveryId,
+          );
         }
         const sessionsDir = await makeSessionsDir();
         await writeMainSession({
@@ -3776,15 +3766,15 @@ describe("main-session-restart-recovery", () => {
     try {
       await waitForFast(() => expect(callGateway).toHaveBeenCalledOnce());
       dispatchSettlement.resolve(); // The second store waits for the first recovery slot.
-      await waitForFast(() => expect(callGateway).toHaveBeenCalledTimes(2));
+      await mockRecoveryRuntime.expectAdmission(
+        2,
+        { storePath, sessionKey: "agent:main:main" },
+        { storePath: lateStorePath, sessionKey: "agent:late:main" },
+      );
       await recovery.stop();
 
-      expect(loadSessionEntry({ sessionKey: "agent:main:main", storePath })).toMatchObject({
-        abortedLastRun: false,
-      });
-      expect(
-        loadSessionEntry({ sessionKey: "agent:late:main", storePath: lateStorePath }),
-      ).toMatchObject({ abortedLastRun: false });
+      expect(readStore(storePath)["agent:main:main"]?.abortedLastRun).toBe(false);
+      expect(readStore(lateStorePath)["agent:late:main"]?.abortedLastRun).toBe(false);
       expect(discoverySpy.mock.calls.filter(([observedCfg]) => observedCfg === cfg)).toHaveLength(
         2,
       );
@@ -3920,7 +3910,7 @@ describe("main-session-restart-recovery", () => {
     ]);
 
     releaseStartup.resolve();
-    await waitForFast(() => expect(callGateway).toHaveBeenCalledOnce());
+    await mockRecoveryRuntime.expectAdmission(1, { storePath, sessionKey: "agent:main:main" });
     await recovery.stop();
 
     const store = readStore(storePath);
@@ -3957,7 +3947,7 @@ describe("main-session-restart-recovery", () => {
     } as OpenClawConfig;
     releaseStartup.resolve();
 
-    await waitForFast(() => expect(callGateway).toHaveBeenCalledOnce());
+    await mockRecoveryRuntime.expectAdmission(1, { storePath, sessionKey: "agent:work:main" });
     await recovery.stop();
     expect(loadSessionEntry({ sessionKey: "agent:work:main", storePath })).toMatchObject({
       abortedLastRun: false,
@@ -4310,65 +4300,6 @@ describe("main-session-restart-recovery", () => {
       discoverySpy.mockRestore();
       vi.useRealTimers();
     }
-  });
-
-  it("admits each scheduled recovery attempt as independent root work", async () => {
-    const sessionsDir = await makeSessionsDir();
-    await writeMainSession({
-      sessionsDir,
-      pendingFinalDelivery: makePendingFinalDelivery(),
-    });
-
-    const suspensionRef: {
-      current: ReturnType<typeof tryBeginGatewaySuspendAdmission>;
-    } = { current: null };
-    vi.mocked(callGateway)
-      .mockImplementationOnce(async () => {
-        expect(getActiveGatewayRootWorkCount()).toBe(1);
-        suspensionRef.current = tryBeginGatewaySuspendAdmission(() => {});
-        expect(suspensionRef.current?.commit()).toBe(true);
-        throw new Error("retry after suspension");
-      })
-      .mockImplementationOnce(async () => {
-        expect(getActiveGatewayRootWorkCount()).toBe(1);
-        return { runId: "run-resumed", status: "timeout" };
-      })
-      .mockImplementationOnce(async () => {
-        expect(getActiveGatewayRootWorkCount()).toBe(1);
-        return { runId: "run-resumed" };
-      });
-
-    scheduleRestartAbortedMainSessionRecovery({
-      getConfig: () => ({}),
-      delayMs: 1,
-      maxRetries: 2,
-      stateDir: tmpDir,
-    });
-
-    await waitForFast(() => {
-      expect(callGateway).toHaveBeenCalledTimes(2);
-      expect(getActiveGatewayRootWorkCount()).toBe(0);
-    });
-    expect(suspensionRef.current?.release()).toBe(true);
-
-    await waitForFast(() => {
-      expect(callGateway).toHaveBeenCalledTimes(3);
-      const entry = loadSessionEntry({
-        storePath: path.join(sessionsDir, "sessions.json"),
-        sessionKey: "agent:main:main",
-      });
-      expect(entry?.abortedLastRun).toBe(false);
-    });
-    const runIds = vi
-      .mocked(callGateway)
-      .mock.calls.map(([request]) =>
-        request.method === "agent"
-          ? (request.params as { idempotencyKey?: unknown }).idempotencyKey
-          : undefined,
-      )
-      .filter((runId) => runId !== undefined);
-    expect(new Set(runIds).size).toBe(1);
-    expect(getActiveGatewayRootWorkCount()).toBe(0);
   });
 
   it("retries only the requested abandoned durable claim", async () => {

@@ -59,6 +59,7 @@ import type { ApplicationContext, ApplicationNavigationOptions } from "./context
 import { syncControlUiSystemChrome } from "./control-ui-presentation.ts";
 import { createGatewayControlUiReloadOptions } from "./gateway-control-ui-reload.ts";
 import {
+  APP_SIDEBAR_ELEMENT,
   BROWSER_PANEL_ELEMENT,
   COMMAND_PALETTE_ELEMENT,
   DESKTOP_PANEL_ELEMENT,
@@ -79,13 +80,6 @@ import {
   retryStaleChunkReloadWhenReachable,
   scheduleStaleChunkReload,
 } from "./stale-chunk-reload.ts";
-
-const APP_SIDEBAR_TAG = "openclaw-app-sidebar";
-const APP_SIDEBAR_ELEMENT = {
-  tagName: APP_SIDEBAR_TAG,
-  label: APP_SIDEBAR_TAG,
-  loadModule: () => import("../components/app-sidebar.ts"),
-} satisfies OptionalCustomElement;
 
 i18n.setLocaleLoadRecovery({
   isUnrecoverableError: isStaleChunkImportError,
@@ -138,7 +132,7 @@ class OpenClawShell
   // Desktop and modal navigation are two slots for the same live sidebar.
   // Moving its element preserves session controllers and the resident pet
   // instead of resetting their lifecycle at every responsive breakpoint.
-  readonly navigationSidebar = document.createElement(APP_SIDEBAR_TAG);
+  readonly navigationSidebar = document.createElement(APP_SIDEBAR_ELEMENT.tagName);
   // Where "Back to app" / Escape leaves the settings takeover; falls back to
   // chat (the app default route) when settings was the entry point.
   lastWorkspaceLocation: ShellNavigationHost["lastWorkspaceLocation"] = null;
@@ -666,9 +660,6 @@ class OpenClawShell
       context: primaryContext,
       attentionCount: context.overlays.snapshot.approvalQueue.length,
       gatewayDisconnected,
-      ...(gatewayDisconnected && {
-        queuedCount: this.outboxStoreRuntime?.summarizeStoredChatOutboxes(outboxScopeHost).total,
-      }),
     });
     const environment = context.config?.current.environment;
     if (environment) {
@@ -758,7 +749,6 @@ class OpenClawShell
   override render() {
     if (this.workspaceChromeVisible) {
       this.lazyCustomElements.preload(APP_SIDEBAR_ELEMENT);
-      this.lazyCustomElements.preload(this.commandPaletteElement);
     }
     return renderApplicationShell(this);
   }

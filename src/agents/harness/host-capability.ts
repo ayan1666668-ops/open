@@ -1,5 +1,6 @@
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
+import { buildActiveNodeContextText } from "../../infra/active-node-context.js";
 import { emitAgentRunOutputTokens } from "../../infra/agent-events.js";
 import { getActiveDiagnosticTraceContext } from "../../infra/diagnostic-trace-context.js";
 import {
@@ -64,6 +65,8 @@ import {
   resolveAgentQuestionAnswerAuthority,
   withAgentQuestionAnswerAuthority,
 } from "./host-private-capabilities.js";
+import { retainHarnessSource } from "./host-source-authority.js";
+import { formatHarnessApprovalPresentation } from "./native-hook-relay-approval-presentation.js";
 import { createSessionNodeAuthorities } from "./node-execution-authority.js";
 import { bindHarnessReplyMedia } from "./reply-media.js";
 
@@ -468,6 +471,7 @@ export function createAgentHarnessHostCapabilities(params: {
     kind: "agent-harness-host-capability" as const,
     version: 1 as const,
     assertActive,
+    retainSourceAuthority: () => retainHarnessSource(attempt.admittedRunContext, assertActive),
     reportOutputTokens: (outputTokens) => {
       assertActive();
       const data = emitAgentRunOutputTokens({
@@ -510,6 +514,10 @@ export function createAgentHarnessHostCapabilities(params: {
         managedLocalIdentity: preparedRunEnvironment.managedLocalIdentity,
         ...(localProcessEnv ? { localProcessEnv } : {}),
       });
+    },
+    activeComputerContext: () => {
+      assertActive();
+      return buildActiveNodeContextText();
     },
     bindToolSurface,
     createToolSurface: (options, bindingOptions) => {
@@ -596,8 +604,8 @@ export function createAgentHarnessHostCapabilities(params: {
                   "plugin.approval.request",
                   { timeoutMs: request.transportTimeoutMs ?? request.timeoutMs },
                   {
-                    title: request.title,
-                    description: request.description,
+                    ...formatHarnessApprovalPresentation(request),
+                    ...(request.detail !== undefined ? { detail: request.detail } : {}),
                     severity: request.severity,
                     toolName: request.toolName,
                     toolCallId: request.toolCallId,

@@ -5,6 +5,7 @@ import type { Readable } from "node:stream";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../test/helpers/promise.js";
+import { sqliteWorkerPreloadEnv } from "../infra/sqlite-worker-preload.test-support.js";
 import { closeOpenClawStateDatabaseForTest } from "../state/openclaw-state-db.js";
 import { OpenClawStateLeaseError, withOpenClawStateLease } from "../state/openclaw-state-lease.js";
 import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
@@ -77,9 +78,11 @@ function runLeaseChild(
   children: Set<LeaseChildRun>,
   scriptPath: string,
   args: string[],
+  env?: NodeJS.ProcessEnv,
 ): LeaseChildRun {
   const child = spawn(process.execPath, ["--import", "tsx", scriptPath, ...args], {
     stdio: ["ignore", "pipe", "pipe"],
+    env,
   });
   child.stdout.setEncoding("utf8");
   child.stderr.setEncoding("utf8");
@@ -286,7 +289,7 @@ describe("plugin lifecycle lease", () => {
         await cleanupEntered.promise;
         await expect(
           withPluginLifecycleLease({ env: state.env, waitMs: 0 }, async () => "acquired"),
-        ).rejects.toMatchObject({ code: "OPENCLAW_STATE_LEASE_TIMEOUT" });
+        ).rejects.toMatchObject({ outcome: { kind: "held" } });
       } finally {
         releaseCleanup.resolve();
         await completion;
@@ -317,31 +320,26 @@ describe("plugin lifecycle lease", () => {
         waitMs: 3_000,
       });
 
-      vi.useFakeTimers();
+      const first = withPluginLifecycleLease(leaseOptions("state-a"), async () => {
+        events.push("first-enter");
+        firstEntered.resolve();
+        await releaseFirst.promise;
+        events.push("first-exit");
+      });
+      await firstEntered.promise;
+      const second = withPluginLifecycleLease(leaseOptions("state-b"), async () => {
+        events.push("second-enter");
+      });
       try {
-        const first = withPluginLifecycleLease(leaseOptions("state-a"), async () => {
-          events.push("first-enter");
-          firstEntered.resolve();
-          await releaseFirst.promise;
-          events.push("first-exit");
-        });
-        await firstEntered.promise;
-        const second = withPluginLifecycleLease(leaseOptions("state-b"), async () => {
-          events.push("second-enter");
-        });
-        try {
-          await vi.advanceTimersByTimeAsync(100);
-          expect(events).toEqual(["first-enter"]);
-        } finally {
-          releaseFirst.resolve();
-          // Drive the pending acquisition retry after the first owner releases.
-          await vi.advanceTimersByTimeAsync(250);
-          await Promise.all([first, second]);
-        }
-        expect(events).toEqual(["first-enter", "first-exit", "second-enter"]);
+        await expect(
+          withPluginLifecycleLease({ ...leaseOptions("state-b"), waitMs: 0 }, async () => {}),
+        ).rejects.toMatchObject({ outcome: { kind: "held" } });
+        expect(events).toEqual(["first-enter"]);
       } finally {
-        vi.useRealTimers();
+        releaseFirst.resolve();
+        await Promise.all([first, second]);
       }
+      expect(events).toEqual(["first-enter", "first-exit", "second-enter"]);
     });
   });
 
@@ -401,7 +399,7 @@ describe("plugin lifecycle lease", () => {
         let assertionError: unknown;
         try {
           await expect(fs.readFile(secondResult, "utf8")).resolves.toBe(
-            "OPENCLAW_STATE_LEASE_TIMEOUT",
+            "OPENCLAW_STATE_LEASE_HELD",
           );
           await expect(fs.access(secondMarker)).rejects.toMatchObject({ code: "ENOENT" });
         } catch (error) {
@@ -437,6 +435,17 @@ describe("plugin lifecycle lease", () => {
         // This race owns two synthetic records, not bundled inventory discovery.
         const bundledDir = state.path("empty-bundled-plugins");
         await fs.mkdir(bundledDir);
+        // Both processes and their SQLite workers share the lease clock for this cache handoff.
+        const clockPreload = await state.writeText(
+          "lease-clock.cjs",
+          `Date.now = () => ${Date.now()};\n`,
+        );
+        const childEnv = { ...process.env };
+        for (const [key, value] of Object.entries(sqliteWorkerPreloadEnv(clockPreload))) {
+          childEnv[key] = key.endsWith("_OPTIONS")
+            ? [childEnv[key], value].filter(Boolean).join(" ")
+            : value;
+        }
         // A missing database skips worker startup, so prime an existing empty index.
         await seedInstalledPluginIndex({}, { env: state.env, candidates: [] });
         const childScript = await state.writeText(
@@ -489,20 +498,18 @@ describe("plugin lifecycle lease", () => {
         `,
         );
 
-        const alpha = runLeaseChild(children, childScript, [
-          "alpha",
-          state.stateDir,
-          alphaGoMarker,
-          releaseAlphaMarker,
-          bundledDir,
-        ]);
-        const beta = runLeaseChild(children, childScript, [
-          "beta",
-          state.stateDir,
-          betaGoMarker,
-          releaseAlphaMarker,
-          bundledDir,
-        ]);
+        const alpha = runLeaseChild(
+          children,
+          childScript,
+          ["alpha", state.stateDir, alphaGoMarker, releaseAlphaMarker, bundledDir],
+          childEnv,
+        );
+        const beta = runLeaseChild(
+          children,
+          childScript,
+          ["beta", state.stateDir, betaGoMarker, releaseAlphaMarker, bundledDir],
+          childEnv,
+        );
         await Promise.all([alpha.ready, beta.ready]);
         await fs.writeFile(alphaGoMarker, "go");
         await alpha.waitForPhase("acquired");

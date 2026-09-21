@@ -2,6 +2,7 @@
 import { html, nothing, type TemplateResult } from "lit";
 import { ref } from "lit/directives/ref.js";
 import type { ChatPendingInputsPage } from "../../../../../packages/gateway-protocol/src/schema/logs-chat.js";
+import type { ThemeBranding } from "../../../../../packages/gateway-protocol/src/theme.ts";
 import type { GatewayBrowserClient } from "../../../api/gateway.ts";
 import type {
   AgentsListResult,
@@ -37,7 +38,7 @@ import type { LinkFaviconFetcher } from "../link-favicon-loader.ts";
 import type { ChatRunUiStatus } from "../run-lifecycle.ts";
 import type { RealtimeTalkConversationEntry } from "../talk/conversation.ts";
 import type { CompactionStatus, RunOutputUsage } from "../tool-stream-contract.ts";
-import type { AsyncQuestionDraft } from "./chat-async-question.ts";
+import type { AsyncQuestionDraft, AsyncQuestionPresentation } from "./chat-async-question.ts";
 import type { ChatAttachmentControlsProps } from "./chat-attachment-controls.types.ts";
 import type { BackgroundTasksProps } from "./chat-background-tasks.types.ts";
 import { resolveChatContextCopy, usesNativeContextMenu } from "./chat-context-copy.ts";
@@ -87,6 +88,7 @@ type ReplyMessageAccess = {
 };
 
 export type ChatThreadProps = ChatSendStatusActions & {
+  branding?: ThemeBranding;
   compactionStatus?: CompactionStatus | null;
   paneId: string;
   /** Routing for peer sender names in a shared session. */
@@ -125,7 +127,7 @@ export type ChatThreadProps = ChatSendStatusActions & {
   startupLabel?: string;
   waitingApproval?: boolean;
   questionPrompts?: readonly QuestionPrompt[];
-  onAsyncQuestionSubmit?: (message: string) => Promise<boolean>;
+  asyncQuestions?: AsyncQuestionPresentation;
   sessions: SessionsListResult | null;
   /** Host context resolving global-alias session keys (scope=global fleets). */
   sessionHost?: UiSessionDefaultsHost | null;
@@ -162,7 +164,6 @@ export type ChatThreadProps = ChatSendStatusActions & {
   onOpenSidebar?: (content: SidebarContent) => void;
   onOpenWorkspaceFile?: (target: { path: string; line?: number | null }) => void;
   onOpenSessionLink?: (target: SessionLinkTarget) => void;
-  onOpenSessionCheckpoints?: () => void | Promise<void>;
   onRequestOpenImage?: () => number;
   onOpenImage?: (item: ImageLightboxItem, requestVersion?: number) => void;
   onAssistantAttachmentLoaded?: () => void;

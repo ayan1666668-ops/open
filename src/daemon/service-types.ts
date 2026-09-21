@@ -2,10 +2,7 @@ import type { DaemonRuntimePinUpdate } from "./runtime-pin-types.js";
 import type { ServiceInspectionReason } from "./service-inspection-error.js";
 import type { GatewayServiceRuntime } from "./service-runtime.js";
 /** Shared daemon service argument, state, and command config contracts. */
-import type {
-  GatewayServiceDefinitionTransactionHooks,
-  GatewayServiceStagedFiles,
-} from "./service-stage.js";
+import type { GatewayServiceDefinitionTransactionHooks } from "./service-stage.js";
 
 /** Environment map passed to service renderers and platform supervisors. */
 export type GatewayServiceEnv = Record<string, string | undefined>;
@@ -30,8 +27,6 @@ export type GatewayServiceInstallArgs = {
   // Verified before a config rewrite; Windows uses this to bridge a transient
   // listener gap while replacing a Startup-folder fallback.
   startupFallbackTakeoverRuntime?: GatewayServiceRuntime;
-  /** Await durable caller sealing before native load; currently systemd only. */
-  beforeLoad?: (staged: GatewayServiceStagedFiles) => Promise<void>;
   definitionTransaction?: GatewayServiceDefinitionTransactionHooks;
 };
 
@@ -55,8 +50,22 @@ export type GatewayServiceControlArgs = {
   preserveAutoStart?: boolean;
   /** Original live caller fence, rechecked at native mutation boundaries. */
   assertCurrent?: () => void;
+  /** Native identity captured before stopping; activation must revalidate it. */
+  systemdIdentity?: SystemdServiceIdentity;
   warn?: (message: string) => void;
   onMutation?: (mutation: GatewayLifecycleMutation) => void;
+};
+
+/** In-memory native evidence; never reconstructed from readiness or persisted state. */
+export type SystemdServiceIdentity = {
+  scope: "user" | "system";
+  unitName: string;
+  unitPath: string;
+  bus: { address: string } | { machine: string };
+  busId: string;
+  managerOwner: string;
+  managerUid: number;
+  serviceUser: string;
 };
 
 export type GatewayLifecycleMutationMode =
@@ -65,7 +74,6 @@ export type GatewayLifecycleMutationMode =
   | "kickstart"
   | "bootout"
   | "disable"
-  | "disable-stop"
   | "disable-bootout"
   | "handoff-kickstart"
   | "handoff-reload"
