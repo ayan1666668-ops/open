@@ -723,7 +723,7 @@ index 593bac0b7708fc0e908f9f8de650e45f8b3610ec..66e09365025b0e593e38d8410c8019d6
    }
  };
 diff --git a/dist/chunks/chunk.KZJTFPDQ.js b/dist/chunks/chunk.KZJTFPDQ.js
-index 11de1ac9d650dc1e2db6922f8fb6cd217bc13a4d..52e887352b4e52c32580a166a19425045752e858 100644
+index 11de1ac9d650dc1e2db6922f8fb6cd217bc13a4d..439bc19d31d5e0a82efcf56e1a576703000179e7 100644
 --- a/dist/chunks/chunk.KZJTFPDQ.js
 +++ b/dist/chunks/chunk.KZJTFPDQ.js
 @@ -58,17 +58,16 @@ var openDropdowns = /* @__PURE__ */ new Set();
@@ -910,7 +910,7 @@ index 11de1ac9d650dc1e2db6922f8fb6cd217bc13a4d..52e887352b4e52c32580a166a1942504
      }
      if (changedProperties.has("size")) {
        this.syncItemSizes();
-@@ -300,104 +265,85 @@ var WaDropdown = class extends WebAwesomeElement {
+@@ -300,104 +265,94 @@ var WaDropdown = class extends WebAwesomeElement {
      );
      items.forEach((item) => item.size = this.size);
    }
@@ -931,7 +931,8 @@ index 11de1ac9d650dc1e2db6922f8fb6cd217bc13a4d..52e887352b4e52c32580a166a1942504
 +  /** Gets the current active submenu item. */
    getCurrentSubmenuItem() {
 -    return this.openSubmenuStack.length > 0 ? this.openSubmenuStack[this.openSubmenuStack.length - 1] : void 0;
--  }
++    return this.activeSubmenus.at(-1)?.item;
+   }
 -  /** Closes all submenus in the dropdown. */
 -  closeAllSubmenus() {
 -    const items = this.getItems(true);
@@ -939,8 +940,7 @@ index 11de1ac9d650dc1e2db6922f8fb6cd217bc13a4d..52e887352b4e52c32580a166a1942504
 -      item.submenuOpen = false;
 -    });
 -    this.openSubmenuStack = [];
-+    return this.activeSubmenus.at(-1)?.item;
-   }
+-  }
 -  /** Closes sibling submenus at the same level as the specified item. */
 -  closeSiblingSubmenus(item) {
 -    const parentDropdownItem = item.closest('wa-dropdown-item:not([slot="submenu"])');
@@ -1040,11 +1040,20 @@ index 11de1ac9d650dc1e2db6922f8fb6cd217bc13a4d..52e887352b4e52c32580a166a1942504
 +      // Input accepted during cleanup or popup rendering already owns the selection.
 +      const submenu = this.getCurrentSubmenuItem();
 +      const items = submenu ? this.getSubmenuItems(submenu) : this.getItems();
-+      const focusedItem = [...activeElements()].find((element) => items.includes(element));
-+      const initialItem = focusedItem ?? items[0];
++      const content = this.defaultSlot.assignedElements({ flatten: true });
++      const ownsFocus = (element) => element instanceof HTMLElement &&
++        element.closest("wa-dropdown") === this && !element.matches(":disabled, [disabled]") &&
++        content.some((root) => root.contains(element));
++      const focusedItem = [...activeElements()].find(ownsFocus);
++      const autofocusItem = focusedItem ? void 0 : [...this.querySelectorAll("[autofocus]")].find(
++        (element) => ownsFocus(element) && element.getClientRects().length > 0
++      );
++      const initialItem = focusedItem ?? autofocusItem ?? items[0];
 +      if (initialItem) {
 +        items.forEach((item) => item.active = item === initialItem);
++        if (initialItem.localName === "wa-dropdown-item") initialItem.active = true;
 +        if (!focusedItem) initialItem.focus({ preventScroll: true });
++        if (initialItem.autofocus) initialItem.scrollIntoView({ block: "nearest" });
 +      }
 +      if (!isCurrent()) return;
      }
@@ -1080,7 +1089,7 @@ index 11de1ac9d650dc1e2db6922f8fb6cd217bc13a4d..52e887352b4e52c32580a166a1942504
    }
    /** Handles clicks on the menu. */
    handleMenuClick(event) {
-@@ -405,8 +351,6 @@ var WaDropdown = class extends WebAwesomeElement {
+@@ -405,8 +360,6 @@ var WaDropdown = class extends WebAwesomeElement {
      if (!item || item.disabled) return;
      if (item.hasSubmenu) {
        if (!item.submenuOpen) {
@@ -1089,7 +1098,7 @@ index 11de1ac9d650dc1e2db6922f8fb6cd217bc13a4d..52e887352b4e52c32580a166a1942504
          item.submenuOpen = true;
        }
        event.stopPropagation();
-@@ -433,60 +377,57 @@ var WaDropdown = class extends WebAwesomeElement {
+@@ -433,60 +386,57 @@ var WaDropdown = class extends WebAwesomeElement {
    handleTriggerClick() {
      this.open = !this.open;
    }
@@ -1189,7 +1198,7 @@ index 11de1ac9d650dc1e2db6922f8fb6cd217bc13a4d..52e887352b4e52c32580a166a1942504
      if (!item.submenuElement) return;
      const isRtl = this.localize.dir() === "rtl";
      const placement = isRtl ? "left-start" : "right-start";
-@@ -506,6 +447,7 @@ var WaDropdown = class extends WebAwesomeElement {
+@@ -506,6 +456,7 @@ var WaDropdown = class extends WebAwesomeElement {
          })
        ]
      }).then(({ x, y, placement: placement2 }) => {
@@ -1510,7 +1519,7 @@ index bedb1923179f2a73be2eaf24e8c1a3c35718683d..04dc1c15097ad58de31a8670e2c870d3
  /** Parses a CSS duration and returns the number of milliseconds. */
  export declare function parseDuration(duration: number | string): number;
 diff --git a/dist-cdn/chunks/chunk.63RYV7SI.js b/dist-cdn/chunks/chunk.63RYV7SI.js
-index 886b0e05a9d51bbe6636d1e394d49ef4edfb84fc..b70b032602209e9e4d769bdbd0144c00fe64351a 100644
+index 886b0e05a9d51bbe6636d1e394d49ef4edfb84fc..822128149d8167429d120a868a729c4964593cc1 100644
 --- a/dist-cdn/chunks/chunk.63RYV7SI.js
 +++ b/dist-cdn/chunks/chunk.63RYV7SI.js
 @@ -68,17 +68,16 @@ var openDropdowns = /* @__PURE__ */ new Set();
@@ -1697,7 +1706,7 @@ index 886b0e05a9d51bbe6636d1e394d49ef4edfb84fc..b70b032602209e9e4d769bdbd0144c00
      }
      if (changedProperties.has("size")) {
        this.syncItemSizes();
-@@ -310,104 +275,85 @@ var WaDropdown = class extends WebAwesomeElement {
+@@ -310,104 +275,94 @@ var WaDropdown = class extends WebAwesomeElement {
      );
      items.forEach((item) => item.size = this.size);
    }
@@ -1718,7 +1727,8 @@ index 886b0e05a9d51bbe6636d1e394d49ef4edfb84fc..b70b032602209e9e4d769bdbd0144c00
 +  /** Gets the current active submenu item. */
    getCurrentSubmenuItem() {
 -    return this.openSubmenuStack.length > 0 ? this.openSubmenuStack[this.openSubmenuStack.length - 1] : void 0;
--  }
++    return this.activeSubmenus.at(-1)?.item;
+   }
 -  /** Closes all submenus in the dropdown. */
 -  closeAllSubmenus() {
 -    const items = this.getItems(true);
@@ -1726,8 +1736,7 @@ index 886b0e05a9d51bbe6636d1e394d49ef4edfb84fc..b70b032602209e9e4d769bdbd0144c00
 -      item.submenuOpen = false;
 -    });
 -    this.openSubmenuStack = [];
-+    return this.activeSubmenus.at(-1)?.item;
-   }
+-  }
 -  /** Closes sibling submenus at the same level as the specified item. */
 -  closeSiblingSubmenus(item) {
 -    const parentDropdownItem = item.closest('wa-dropdown-item:not([slot="submenu"])');
@@ -1827,11 +1836,20 @@ index 886b0e05a9d51bbe6636d1e394d49ef4edfb84fc..b70b032602209e9e4d769bdbd0144c00
 +      // Input accepted during cleanup or popup rendering already owns the selection.
 +      const submenu = this.getCurrentSubmenuItem();
 +      const items = submenu ? this.getSubmenuItems(submenu) : this.getItems();
-+      const focusedItem = [...activeElements()].find((element) => items.includes(element));
-+      const initialItem = focusedItem ?? items[0];
++      const content = this.defaultSlot.assignedElements({ flatten: true });
++      const ownsFocus = (element) => element instanceof HTMLElement &&
++        element.closest("wa-dropdown") === this && !element.matches(":disabled, [disabled]") &&
++        content.some((root) => root.contains(element));
++      const focusedItem = [...activeElements()].find(ownsFocus);
++      const autofocusItem = focusedItem ? void 0 : [...this.querySelectorAll("[autofocus]")].find(
++        (element) => ownsFocus(element) && element.getClientRects().length > 0
++      );
++      const initialItem = focusedItem ?? autofocusItem ?? items[0];
 +      if (initialItem) {
 +        items.forEach((item) => item.active = item === initialItem);
++        if (initialItem.localName === "wa-dropdown-item") initialItem.active = true;
 +        if (!focusedItem) initialItem.focus({ preventScroll: true });
++        if (initialItem.autofocus) initialItem.scrollIntoView({ block: "nearest" });
 +      }
 +      if (!isCurrent()) return;
      }
@@ -1867,7 +1885,7 @@ index 886b0e05a9d51bbe6636d1e394d49ef4edfb84fc..b70b032602209e9e4d769bdbd0144c00
    }
    /** Handles clicks on the menu. */
    handleMenuClick(event) {
-@@ -415,8 +361,6 @@ var WaDropdown = class extends WebAwesomeElement {
+@@ -415,8 +370,6 @@ var WaDropdown = class extends WebAwesomeElement {
      if (!item || item.disabled) return;
      if (item.hasSubmenu) {
        if (!item.submenuOpen) {
@@ -1876,7 +1894,7 @@ index 886b0e05a9d51bbe6636d1e394d49ef4edfb84fc..b70b032602209e9e4d769bdbd0144c00
          item.submenuOpen = true;
        }
        event.stopPropagation();
-@@ -443,60 +387,57 @@ var WaDropdown = class extends WebAwesomeElement {
+@@ -443,60 +396,57 @@ var WaDropdown = class extends WebAwesomeElement {
    handleTriggerClick() {
      this.open = !this.open;
    }
@@ -1976,7 +1994,7 @@ index 886b0e05a9d51bbe6636d1e394d49ef4edfb84fc..b70b032602209e9e4d769bdbd0144c00
      if (!item.submenuElement) return;
      const isRtl = this.localize.dir() === "rtl";
      const placement = isRtl ? "left-start" : "right-start";
-@@ -516,6 +457,7 @@ var WaDropdown = class extends WebAwesomeElement {
+@@ -516,6 +466,7 @@ var WaDropdown = class extends WebAwesomeElement {
          })
        ]
      }).then(({ x: x2, y, placement: placement2 }) => {

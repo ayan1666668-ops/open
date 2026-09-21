@@ -527,6 +527,20 @@ describe.runIf(browserMode)("Web Awesome dropdown lifecycle", () => {
     expect(selected).toEqual([photo]);
   });
 
+  it.each(["item", "input"] as const)(
+    "keeps autofocus on an owned %s inside grouped menu content",
+    async (kind) => {
+      const f = await fixture();
+      const group = document.createElement("div");
+      const target = document.createElement(kind === "item" ? "wa-dropdown-item" : "input");
+      target.autofocus = true;
+      group.append(target);
+      f.dropdown.append(group);
+      await open(f);
+      expect(document.activeElement).toBe(target);
+    },
+  );
+
   it("settles a never-connected submenu close as a public no-op", async () => {
     const item = document.createElement("wa-dropdown-item");
     let completed = false;
