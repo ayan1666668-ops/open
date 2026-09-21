@@ -264,6 +264,15 @@ serveWorkerTasks(
                     deferProfileDisplay: true,
                     resolveCronJobName: () => undefined,
                   };
+                  if (request.request.kind === "message-lookup") {
+                    return {
+                      kind: "message-lookup",
+                      messages: await options.readers.readSessionMessagesMatchingIdAsync(
+                        request.request.params.target,
+                        request.request.params.messageId,
+                      ),
+                    };
+                  }
                   if (request.request.kind === "delta") {
                     return {
                       kind: "delta",
@@ -313,6 +322,13 @@ serveWorkerTasks(
         },
       );
     } catch (error) {
+      if (
+        error instanceof SyntaxError &&
+        request.kind === "history-page" &&
+        request.request.kind === "message-lookup"
+      ) {
+        return { ok: false, error: { kind: "syntax", message: error.message } };
+      }
       if (error instanceof SessionTranscriptColdError) {
         return { ok: false, error: { kind: "cold", sessionId: error.sessionId } };
       }

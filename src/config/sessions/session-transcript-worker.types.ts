@@ -165,5 +165,6 @@ export type SessionTranscriptWorkerReply<Kind extends keyof SessionTranscriptWor
       error:
         | { kind: "cold"; sessionId: string }
         | { kind: "projection"; sessionId: string }
-        | { kind: "fence"; message: string };
+        | { kind: "fence"; message: string }
+        | { kind: "syntax"; message: string };
     };
