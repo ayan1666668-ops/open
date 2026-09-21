@@ -183,7 +183,13 @@ export function isContaminatedDreamingSnippet(
   );
   const hasStatus = /\bstatus:\s*staged\b/i.test(snippet);
   const hasRecalls = /\brecalls:\s*\d+\b/i.test(snippet);
-  return hasNarrativeLead && hasConfidence && hasEvidence && hasStatus && hasRecalls;
+  const hasReflectionNote = /\bnote:\s*reflection\b/i.test(snippet);
+  return (
+    hasNarrativeLead &&
+    hasConfidence &&
+    hasEvidence &&
+    ((hasStatus && hasRecalls) || hasReflectionNote)
+  );
 }
 
 export function normalizeMemoryPath(rawPath: string): string {

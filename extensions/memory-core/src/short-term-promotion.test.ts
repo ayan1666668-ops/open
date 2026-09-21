@@ -1669,6 +1669,38 @@ describe("short-term promotion", () => {
     expect(ranked).toStrictEqual([]);
   });
 
+  it("does not rank a REM reflection snippet (note: reflection, no status/recalls) (#154803)", async (workspaceDir) => {
+    await testing.writeRawRecallStore(workspaceDir, {
+      version: 1,
+      updatedAt: "2026-04-04T00:00:00.000Z",
+      entries: {
+        "rem-reflection": {
+          key: "rem-reflection",
+          path: "memory/2026-04-03.md",
+          startLine: 1,
+          endLine: 1,
+          source: "memory",
+          snippet:
+            "Reflections: Theme: assistant kept surfacing across 4 memories. confidence: 0.90 evidence: memory/2026-04-08.md:2-2 note: reflection",
+          recallCount: 4,
+          dailyCount: 0,
+          groundedCount: 0,
+          totalScore: 3.6,
+          maxScore: 0.95,
+          firstRecalledAt: "2026-04-03T00:00:00.000Z",
+          lastRecalledAt: "2026-04-04T00:00:00.000Z",
+          queryHashes: ["a", "b"],
+          recallDays: ["2026-04-03", "2026-04-04"],
+          conceptTags: ["assistant"],
+        },
+      },
+    });
+
+    const ranked = await rankAllCandidates(workspaceDir);
+
+    expect(ranked).toStrictEqual([]);
+  });
+
   it("does not promote rehydrated candidates whose relocated range covers a managed dreaming fence marker line (#80613)", async (workspaceDir) => {
     // Daily note: human content + a managed Light Sleep block. The relevant
     // surface is the marker lines (5 and 8), not the fenced content between
