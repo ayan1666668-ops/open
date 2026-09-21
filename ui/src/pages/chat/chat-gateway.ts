@@ -5,7 +5,7 @@ import {
 } from "@openclaw/gateway-client/browser";
 import { asNullableRecord as asRecord } from "@openclaw/normalization-core/record-coerce";
 import { extractAssistantPhaseText } from "../../../../src/shared/chat-message-content.js";
-import { appendedTextActivatesAssistantScaffolding } from "../../../../src/shared/text/assistant-visible-text.js";
+import { appendedTextActivatesAssistantScaffolding } from "../../../../src/shared/text/assistant-visible-text-boundary.js";
 import { t } from "../../i18n/index.ts";
 import { accumulatedStreamText } from "../../lib/chat/chat-types.ts";
 import { isAssistantHeartbeatAckForDisplay } from "../../lib/chat/heartbeat-display.ts";

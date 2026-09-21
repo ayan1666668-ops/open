@@ -149,13 +149,15 @@ suite.define(() => {
           if (!mockGateway) {
             throw new Error("mock gateway handle missing");
           }
-          const originalReplace = String.prototype.replace;
+          const originalReplace = Object.getOwnPropertyDescriptor(String.prototype, "replace")
+            ?.value as typeof String.prototype.replace;
           let maxReplaceInputChars = 0;
           let replaceCalls = 0;
           let cumulativeText = "";
           const startedAt = performance.now();
           // eslint-disable-next-line no-extend-native -- bounded proof instruments production replacement inputs and restores in finally
           String.prototype.replace = function (
+            this: string,
             searchValue: string | RegExp,
             replaceValue: string | ((substring: string, ...args: unknown[]) => string),
           ) {
@@ -164,7 +166,7 @@ suite.define(() => {
               replaceCalls += 1;
               maxReplaceInputChars = Math.max(maxReplaceInputChars, source.length);
             }
-            return originalReplace.call(source, searchValue, replaceValue as never);
+            return Reflect.apply(originalReplace, source, [searchValue, replaceValue]);
           } as typeof String.prototype.replace;
           try {
             for (let index = 1; index <= count; index += 1) {
