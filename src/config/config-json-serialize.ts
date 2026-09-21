@@ -109,11 +109,11 @@ function resolveToJSON(value: unknown, jsonKey: string): unknown {
     if (!isPlainContainer(current)) {
       return current;
     }
-    const toJSON = (current as { toJSON?: unknown }).toJSON;
+    const toJSON = current.toJSON;
     if (typeof toJSON !== "function") {
       return current;
     }
-    current = (toJSON as (key: string) => unknown).call(current, jsonKey);
+    current = toJSON.call(current, jsonKey);
   }
   throw new TypeError("Converting circular structure to JSON");
 }
@@ -128,6 +128,7 @@ function collectEntries(container: object): SerializeEntry[] {
   }
   const entries: SerializeEntry[] = [];
   for (const key of Object.keys(container)) {
+    // SAFETY: the array branch above returned, so this non-array object is a plain record.
     entries.push({ key, jsonKey: key, value: (container as Record<string, unknown>)[key] });
   }
   return entries;
@@ -182,10 +183,7 @@ export function serializeConfigJson(value: object): string {
       if (typeof resolved === "bigint") {
         throw new TypeError("Do not know how to serialize a BigInt");
       }
-      if (
-        isPlainContainer(resolved) &&
-        typeof (resolved as { toJSON?: unknown }).toJSON === "function"
-      ) {
+      if (isPlainContainer(resolved) && typeof resolved.toJSON === "function") {
         resolved = resolveToJSON(resolved, entry.jsonKey);
         if (typeof resolved === "bigint") {
           throw new TypeError("Do not know how to serialize a BigInt");
