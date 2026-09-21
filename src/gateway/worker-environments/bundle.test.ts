@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import * as tar from "tar";
@@ -42,6 +43,7 @@ async function writeFixture(
     ["image-processor.worker.mjs", "export const imageProcessor = true;\n"],
     ["service-child-group-anchor.mjs", "export const anchor = true;\n"],
     ["service-child-relay.mjs", "export const relay = true;\n"],
+    ["sqlite-store.worker.mjs", "export const sqliteStore = true;\n"],
     ["worker.mjs", workerSource],
     ["workspace-rsync-receiver.mjs", "export const receiver = true;\n"],
   ] as const) {
@@ -130,11 +132,15 @@ describe("worker bundle producer", () => {
       }).prepare();
       expect(first.bundleHash).toMatch(/^[a-f0-9]{64}$/u);
       expect(second.bundleHash).toBe(first.bundleHash);
+      const compressed = await fs.readFile(first.tarballPath);
+      expect(first.tarballSha256).toBe(createHash("sha256").update(compressed).digest("hex"));
+      expect(first.tarballBytes).toBe(compressed.byteLength);
       await expect(listTarball(first.tarballPath)).resolves.toEqual([
         "github-exec-launcher.mjs",
         "image-processor.worker.mjs",
         "service-child-group-anchor.mjs",
         "service-child-relay.mjs",
+        "sqlite-store.worker.mjs",
         "worker.mjs",
         "workspace-rsync-receiver.mjs",
       ]);
@@ -146,6 +152,7 @@ describe("worker bundle producer", () => {
         ["image-processor.worker.mjs", "export const imageProcessor = true;\n"],
         ["service-child-group-anchor.mjs", "export const anchor = true;\n"],
         ["service-child-relay.mjs", "export const relay = true;\n"],
+        ["sqlite-store.worker.mjs", "export const sqliteStore = true;\n"],
         ["worker.mjs", "export const worker = true;\n"],
         ["workspace-rsync-receiver.mjs", "export const receiver = true;\n"],
       ] as const) {
@@ -181,6 +188,7 @@ describe("worker bundle producer", () => {
         "image-processor.worker.mjs",
         "service-child-group-anchor.mjs",
         "service-child-relay.mjs",
+        "sqlite-store.worker.mjs",
         "worker.mjs",
         "workspace-rsync-receiver.mjs",
       ]) {
@@ -590,6 +598,7 @@ describe("worker bundle producer", () => {
         "image-processor.worker.mjs",
         "service-child-group-anchor.mjs",
         "service-child-relay.mjs",
+        "sqlite-store.worker.mjs",
         "worker.mjs",
         "workspace-rsync-receiver.mjs",
       ]);
@@ -602,6 +611,7 @@ describe("worker bundle producer", () => {
       "image-processor.worker.mjs",
       "service-child-group-anchor.mjs",
       "service-child-relay.mjs",
+      "sqlite-store.worker.mjs",
       "worker.mjs",
       "workspace-rsync-receiver.mjs",
     ]) {

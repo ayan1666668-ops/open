@@ -1,6 +1,6 @@
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
-import type { UsageCostTranscriptFile } from "./session-cost-usage-collection.js";
 import type { SessionUsageRollupData } from "./session-cost-usage-rollup.js";
+import type { UsageCostTranscriptFile } from "./session-cost-usage.types.js";
 
 // Cache data is rebuildable. Semantic changes get a new version; old rows are
 // ignored and rebuilt instead of normalized through a runtime compatibility path.
@@ -41,6 +41,10 @@ export type UsageCostStoredRollup = {
   valueJson: string;
 };
 
+export type UsageCostFreshnessCheckpoint =
+  | Pick<UsageCostJsonlCheckpoint, "kind" | "observedSize" | "observedMtimeMs" | "device" | "inode">
+  | Pick<UsageCostSqliteCheckpoint, "kind" | "maxSeq" | "eventCount" | "size" | "mtimeMs">;
+
 export function decodeUsageCostRollup(
   valueJson: string,
   pricingFingerprint: string,
@@ -70,10 +74,10 @@ export function decodeUsageCostRollup(
 }
 
 export function isUsageCostRollupFresh(params: {
-  stored: UsageCostStoredRollup | undefined;
+  checkpoint: UsageCostFreshnessCheckpoint | undefined;
   file: UsageCostTranscriptFile;
 }): boolean {
-  const checkpoint = params.stored?.entry.checkpoint;
+  const { checkpoint } = params;
   if (!checkpoint || checkpoint.kind !== params.file.kind) {
     return false;
   }
