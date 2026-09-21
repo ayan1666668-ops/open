@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { finishUpdateRun } from "../cli/daemon-cli.js";
 import { retainCliProcessJobUntilExit, withCliProcessScope } from "../cli/runtime-cleanup-scope.js";
-import { closeCliResources } from "../cli/runtime-cleanup.js";
+import { closeCliResources, waitForPendingCliDisposers } from "../cli/runtime-cleanup.js";
 import type { UpdateCommandOptions } from "../cli/update-cli/shared.js";
 import {
   withDelegatedUpdateCommandExecutor,
@@ -367,6 +367,7 @@ void (async () => {
   } finally {
     try {
       await closeCliResources();
+      await waitForPendingCliDisposers();
     } finally {
       await closeOpenClawStateDatabaseAsync();
     }
