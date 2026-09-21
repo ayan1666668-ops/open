@@ -14,9 +14,9 @@ const result = await agents.run("Explore alternate explanations for this failure
 });
 ```
 
-This uses the existing `agents.run` to `sessions_spawn` bridge. It does not install a
-controller service, add a scheduler, change tool permissions, or add dependencies.
-Calls without `dynamics` keep their existing behavior.
+This uses the existing `agents.run` to `sessions_spawn` bridge. It does not
+install a controller service, add a scheduler, change tool permissions, or add
+dependencies. Calls without `dynamics` keep their existing behavior.
 
 ## Profiles
 
@@ -29,6 +29,10 @@ Calls without `dynamics` keep their existing behavior.
 Effective temperature and mutation budget are search guidance, not model sampling
 parameters or enforced filesystem permissions. Model and thinking overrides retain
 their existing meanings.
+
+Profiles are execution trajectories, not security principals. The native value is
+that OpenClaw can bind the trajectory into the launch, constrain explicit handoff,
+and require the existing sandbox owner for the verifier path.
 
 ## Verifier handoff
 
@@ -47,33 +51,52 @@ const review = await agents.run("Check this candidate against the stated accepta
 The bridge filters the explicit handoff, uses `context: "isolated"`, and passes
 `sandbox: "require"` to the existing native spawn owner for verifier profiles.
 Missing sandbox support is an error; it never silently retries without a sandbox.
-References are caller-provided data, not fetched automatically or treated as authority.
-Each reference is limited to 512 characters, each reference array to 32 entries,
-and a supplied summary to 4096 characters.
 
-The resolved profile, handoff, and host-derived run identities are serialized into
-the prepared task before the existing launch fingerprint is computed. A changed
-profile or candidate cannot reuse the same persisted launch payload. No new
-persistent store or schema is introduced.
+References are caller-provided data, not fetched automatically or treated as
+authority. Each reference is limited to 512 characters, each reference array to
+32 entries, and a supplied summary to 4096 characters.
+
+The resolved profile, handoff, exact candidate manifest when supplied, and
+host-derived run identities are serialized before the existing launch fingerprint
+is computed. Changing profile or bound candidate identity therefore changes the
+launch identity.
+
+## Liquid search, deterministic convergence
+
+The intended progression is:
+
+```text
+explore broadly -> coordinate -> challenge -> freeze exact candidate -> verify
+```
+
+Different lanes may occupy different phases at the same time. Diagnostics remain
+search-only. Existing admission, tool policy, sandbox, cancellation, approval,
+publication, merge, and deployment owners retain authority.
+
+## Lifecycle
+
+Dynamics diagnostic bookkeeping is owned by the parent run. If the parent wait is
+aborted or fails, that bookkeeping is released. This does not cancel live sibling
+collectors; it only prevents abandoned advisory state from accumulating in the
+Gateway process.
 
 ## Limits and trust
 
 Handoff filtering is not a complete independence guarantee. It does not sanitize
 the caller's original task, disable shared memory, mount candidate artifacts
 read-only, or prove that another permitted tool cannot reach sibling data.
+
 The verifier profile name describes its intended role, not an attestation. The
 runtime and operator's existing policies must establish any stronger isolation.
 
-The population, verification, and consolidation helpers in the dependent PRs are
-experimental assessments; this spawn integration does not automatically execute
-population recommendations, attest measurement receipts, approve effects, or
-adopt a learned policy. Existing OpenClaw owners retain those responsibilities.
+The current implementation does not attest measurement receipts, approve effects,
+adopt policy, or automatically execute advisory population actions.
 
 ## Validation
 
-The native bridge regression tests exercise profile dispatch, denied admission,
-revoked execution, legacy calls, and sandbox errors with mocked execution services.
-An isolated Node test harness also exercised unchanged replay and changed-profile
-and changed-candidate rejection. These are boundary tests, not a live model or
-sandbox qualification. Full repository CI and a live native Swarm run remain
-required before claiming end-to-end readiness.
+Repository tests cover profile resolution, handoff filtering, exact candidate
+binding, replay identity, host-owned population diagnostics, local mixed-phase
+regressions, and refusal to downgrade a sandbox-required verifier.
+
+A live model-backed native collector transcript remains useful end-to-end evidence
+for the experiment and should be captured before claiming production readiness.
