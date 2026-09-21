@@ -51,6 +51,10 @@ const BUILTIN_PROFILES = {
 
 type BuiltinDynamicsProfileId = keyof typeof BUILTIN_PROFILES;
 
+function isBuiltinDynamicsProfileId(id: string): id is BuiltinDynamicsProfileId {
+  return Object.hasOwn(BUILTIN_PROFILES, id);
+}
+
 function stableProfileInput(profile: DynamicsProfile): string {
   return JSON.stringify({
     contextBoundary: profile.contextBoundary,
@@ -64,10 +68,10 @@ function stableProfileInput(profile: DynamicsProfile): string {
 }
 
 export function resolveDynamicsProfile(id: string): ResolvedDynamicsProfile {
-  if (typeof id !== "string" || !Object.hasOwn(BUILTIN_PROFILES, id)) {
+  if (typeof id !== "string" || !isBuiltinDynamicsProfileId(id)) {
     throw new Error("Unknown cognitive dynamics profile");
   }
-  const profile = BUILTIN_PROFILES[id as BuiltinDynamicsProfileId];
+  const profile = BUILTIN_PROFILES[id];
   const digestInput = stableProfileInput(profile);
   return {
     ...profile,
