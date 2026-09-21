@@ -10,7 +10,7 @@ import {
 } from "openclaw/plugin-sdk/llm";
 import { createZeroUsageFixture } from "openclaw/plugin-sdk/test-fixtures";
 import { describe, expect, it } from "vitest";
-import { XAI_BASE_URL } from "./model-definitions.js";
+import { resolveXaiCatalogEntry, XAI_BASE_URL } from "./model-definitions.js";
 import { resolveFastModeSupport } from "./provider-policy-api.js";
 import { applyXaiRuntimeModelCompat } from "./runtime-model-compat.js";
 import { wrapXaiProviderStream } from "./stream.js";
@@ -123,6 +123,7 @@ it.each([
   { modelId: "grok-3", target: "grok-3-fast", supported: true },
   { modelId: "grok-4-0709", target: "grok-4-fast", supported: true },
   { modelId: "grok-4.3", target: "grok-4.3", supported: false },
+  { modelId: "grok-4.7", target: "grok-4.7", supported: false },
   { modelId: "grok-3-fast", target: "grok-3-fast", supported: false },
 ])("publishes the actual Fast mapping for $modelId", ({ modelId, target, supported }) => {
   expect(
@@ -143,24 +144,20 @@ async function captureXaiResponsesPayloadWithThinking(
   modelId = "grok-4.5",
 ): Promise<Record<string, unknown>> {
   const model = applyXaiRuntimeModelCompat({
+    ...resolveXaiCatalogEntry(modelId),
     api: "openai-responses",
     provider: "xai",
     id: modelId,
     baseUrl: "https://api.x.ai/v1",
     reasoning: true,
-    input: ["text", "image"],
-    cost: {
-      input: 2,
-      output: 6,
-      cacheRead: modelId === "grok-4.6" ? 0.5 : 0.3,
-      cacheWrite: 0,
-    },
-    contextWindow: 500_000,
-    maxTokens: 64_000,
   } as Model<"openai-responses">);
 
   const payloadPromise = new Promise<Record<string, unknown>>((resolve, reject) => {
-    const stream = streamSimple(
+    const wrapped = wrapXaiProviderStream({
+      streamFn: streamSimple,
+      extraParams: { tool_stream: false },
+    } as never)!;
+    const stream = wrapped(
       model,
       { messages: [{ role: "user", content: "hello", timestamp: 0 }] },
       {
@@ -173,10 +170,12 @@ async function captureXaiResponsesPayloadWithThinking(
         },
       },
     );
-    void stream.result().then(
-      () => reject(new Error("provider payload callback was not invoked")),
-      (error: unknown) => reject(error instanceof Error ? error : new Error(String(error))),
-    );
+    void Promise.resolve(stream)
+      .then((resolvedStream) => resolvedStream.result())
+      .then(
+        () => reject(new Error("provider payload callback was not invoked")),
+        (error: unknown) => reject(error instanceof Error ? error : new Error(String(error))),
+      );
   });
 
   return await payloadPromise;
@@ -184,7 +183,7 @@ async function captureXaiResponsesPayloadWithThinking(
 
 describe("xai stream wrappers", () => {
   it.each(
-    ["grok-4.5", "grok-4.6"].flatMap((id) =>
+    ["grok-4.5", "grok-4.6", "grok-4.7"].flatMap((id) =>
       ["https://cli-chat-proxy.grok.com/v1", "https://CLI-CHAT-PROXY.GROK.COM:443/v1/"].map(
         (baseUrl) => ({ id, baseUrl }),
       ),
@@ -582,12 +581,17 @@ describe("xai stream wrappers", () => {
     expect(payload.include).toEqual(["reasoning.encrypted_content"]);
   }, 10_000);
 
-  it("preserves Grok 4.6 xhigh at the final xAI Responses payload boundary", async () => {
-    const payload = await captureXaiResponsesPayloadWithThinking("xhigh", "grok-4.6");
+  it.each(["grok-4.6", "grok-4.7"])(
+    "preserves %s xhigh at the final xAI Responses payload boundary",
+    async (modelId) => {
+      const payload = await captureXaiResponsesPayloadWithThinking("xhigh", modelId);
 
-    expect(payload.reasoning).toEqual({ effort: "xhigh", summary: "auto" });
-    expect(payload.include).toEqual(["reasoning.encrypted_content"]);
-  }, 10_000);
+      expect(payload.model).toBe(modelId);
+      expect(payload.reasoning).toEqual({ effort: "xhigh", summary: "auto" });
+      expect(payload.include).toEqual(["reasoning.encrypted_content"]);
+    },
+    10_000,
+  );
 
   it("clamps unsupported Grok 4.5 off reasoning to low", async () => {
     const payload = await captureXaiResponsesPayloadWithThinking("off");

@@ -931,25 +931,28 @@ describe("xai provider plugin", () => {
     expect(normalizedCompat?.unsupportedToolSchemaKeywords).toEqual(["minContains", "maxContains"]);
   });
 
-  it("preserves Grok 4.6 xhigh reasoning through its concrete OAuth identity", async () => {
-    mockXaiRuntimeOAuth();
-    stubXaiFetch(() =>
-      Response.json({
-        data: [{ id: "grok-4.6", api_backend: "responses" }],
-      }),
-    );
-    const { provider, result } = await runXaiCatalog();
-    const model = result.models.find((entry) => entry.id === "grok-4.6");
-    const normalized = provider.normalizeResolvedModel?.({
-      provider: "xai",
-      modelId: "grok-4.6",
-      model: { ...model, provider: "xai" },
-    } as never);
+  it.each(["grok-4.6", "grok-4.7"])(
+    "preserves %s xhigh reasoning through its concrete OAuth identity",
+    async (modelId) => {
+      mockXaiRuntimeOAuth();
+      stubXaiFetch(() =>
+        Response.json({
+          data: [{ id: modelId, api_backend: "responses" }],
+        }),
+      );
+      const { provider, result } = await runXaiCatalog();
+      const model = result.models.find((entry) => entry.id === modelId);
+      const normalized = provider.normalizeResolvedModel?.({
+        provider: "xai",
+        modelId,
+        model: { ...model, provider: "xai" },
+      } as never);
 
-    expect(normalized?.id).toBe("grok-4.6");
-    expect(normalized?.thinkingLevelMap?.xhigh).toBe("xhigh");
-    expect(normalized?.compat).toMatchObject({
-      supportedReasoningEfforts: ["low", "medium", "high", "xhigh"],
-    });
-  });
+      expect(normalized?.id).toBe(modelId);
+      expect(normalized?.thinkingLevelMap?.xhigh).toBe("xhigh");
+      expect(normalized?.compat).toMatchObject({
+        supportedReasoningEfforts: ["low", "medium", "high", "xhigh"],
+      });
+    },
+  );
 });

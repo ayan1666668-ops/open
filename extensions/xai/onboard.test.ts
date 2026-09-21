@@ -92,6 +92,7 @@ describe("xai onboard", () => {
     expect(cfg.models?.providers?.xai?.baseUrl).toBe("https://api.x.ai/v1");
     expect(cfg.models?.providers?.xai?.api).toBe("openai-responses");
     expect(cfg.models?.providers?.xai?.models.map((m) => m.id)).toEqual([
+      "grok-4.7",
       "grok-4.6",
       "grok-4.5",
       "grok-build-0.1",

@@ -117,7 +117,7 @@ it.each([
     }
     expect(result.provider.baseUrl).toBe(expectedUrl);
     expect(result.provider.auth).toBe(expectedAuth);
-    expect(result.provider.models[0]?.id).toBe("grok-4.6");
+    expect(result.provider.models[0]?.id).toBe("grok-4.7");
     expect(result.provider.models.some((model) => model.id === "auto")).toBe(false);
   },
 );

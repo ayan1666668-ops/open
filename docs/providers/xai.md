@@ -150,6 +150,7 @@ see [legacy compatibility and moving aliases](#legacy-compatibility-and-moving-a
 
 | Family         | Model ids                                                    |
 | -------------- | ------------------------------------------------------------ |
+| Grok 4.7       | `grok-4.7`                                                   |
 | Grok 4.6       | `grok-4.6`                                                   |
 | Grok 4.5       | `grok-4.5` (aliases: `grok-4.5-latest`, `grok-build-latest`) |
 | Grok Build 0.1 | `grok-build-0.1`                                             |
@@ -158,7 +159,7 @@ see [legacy compatibility and moving aliases](#legacy-compatibility-and-moving-a
 
 <Tip>
 OAuth and API-key setup use `xai/grok-4.6` as the curated default.
-Grok 4.5, `grok-build-0.1`, Grok 4.3, and both dated
+Grok 4.7, Grok 4.5, `grok-build-0.1`, Grok 4.3, and both dated
 Grok 4.20 variants remain selectable.
 </Tip>
 
@@ -171,11 +172,23 @@ Catalog context and token-cost metadata follows xAI's live
 [model pages](https://docs.x.ai/developers/models) and
 [pricing page](https://docs.x.ai/developers/pricing). xAI applies higher rates
 when a request crosses its documented 200k-token long-context threshold:
-for Grok 4.5 and Grok 4.6, input, cached-input, and output rates double.
-OpenClaw's flat catalog cost fields record the short-context rates. The current
-[Grok Build](https://docs.x.ai/build/overview) coding agent uses Grok 4.6. The
-historical OpenClaw `grok-build-latest` compatibility alias remains pinned to
-Grok 4.5.
+for Grok 4.5, Grok 4.6, and Grok 4.7, input, cached-input, and output rates double.
+OpenClaw's flat catalog cost fields record the short-context rates.
+
+[Grok 4.7](https://docs.x.ai/developers/models/grok-4.7) accepts text and image
+input with a 500,000-token context window. Its catalog `maxTokens: 128000` is
+OpenClaw's output-budget default, matching the
+[Responses API default](https://docs.x.ai/developers/rest-api-reference/inference/responses),
+not a hard model output limit. To select it explicitly, run
+`openclaw models set xai/grok-4.7`; OAuth availability still depends on the
+authenticated account catalog. Existing model selections and setup defaults
+are unchanged.
+
+xAI's [Grok 4.7 guide](https://docs.x.ai/developers/grok-4-7) also identifies it
+as the Grok Build default. Grok 4.7 Fast is limited to Grok Build and Cursor,
+not the public xAI API, so it is not a separate built-in catalog entry.
+The historical OpenClaw `grok-build-latest` compatibility alias remains pinned
+to Grok 4.5; no `grok-4.7-latest` alias is assumed.
 
 Supported non-curated aliases retain their reasoning, input, and token-limit
 metadata without joining the published inventory. Their pricing remains unknown,
@@ -725,7 +738,7 @@ An explicit tool model remains selected; the Grok 4.3 examples below are overrid
       to disable it.
     - The bundled xAI wrapper strips unsupported contains-count schema bounds
       and unsupported reasoning *effort* payload keys before sending native
-      xAI requests. Grok 4.6 supports low, medium, high, and xhigh effort
+      xAI requests. Grok 4.6 and Grok 4.7 support low, medium, high, and xhigh effort
       (default high). Grok 4.5 supports low, medium, and high effort
       (default high). Grok 4.3 supports none, low, medium, and high
       effort (default low). Other reasoning-capable xAI models do not expose a
