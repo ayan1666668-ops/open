@@ -3,11 +3,11 @@ import { normalizeOptionalString } from "@openclaw/normalization-core/string-coe
 import { Type } from "typebox";
 import { Value } from "typebox/value";
 import { readMissingScopeErrorDetails } from "../../../packages/gateway-protocol/src/gateway-error-details.js";
-import type { ThinkingCatalogEntry } from "../../auto-reply/thinking.js";
 import {
   SessionMoveProfileTargetSchema,
   type SessionsDispatchResult,
 } from "../../../packages/gateway-protocol/src/schema/session-placement.js";
+import type { ThinkingCatalogEntry } from "../../auto-reply/thinking.js";
 import {
   DEFAULT_SUBAGENT_MAX_CHILDREN_PER_AGENT,
   DEFAULT_SUBAGENT_MAX_SPAWN_DEPTH,
@@ -20,7 +20,7 @@ import { loadSessionEntryReadOnly } from "../../config/sessions/session-accessor
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { ADMIN_SCOPE } from "../../gateway/method-scopes.js";
 import { resolveWorkspacePathContainment } from "../../gateway/server-methods/workspace-path-containment.js";
-import { loadGatewayModelCatalog } from "../../gateway/server-model-catalog.js";
+import { loadGatewayModelCatalogSnapshot } from "../../gateway/server-model-catalog.js";
 import { resolveGatewaySessionStoreTarget } from "../../gateway/session-utils-store-lookup.js";
 import { resolveWorkerPlacementDestination } from "../../gateway/worker-environments/placement-destination.js";
 import { isPathInside } from "../../infra/path-guards.js";
@@ -35,6 +35,9 @@ import { normalizeDeliveryContext } from "../../utils/delivery-context.shared.js
 import { listAgentIds, resolveAgentConfig, resolveSessionAgentId } from "../agent-scope.js";
 import { reserveChildAdmissionSlot } from "../child-admission.js";
 import { resolveAgentIdentity } from "../identity.js";
+import { findModelCatalogEntry } from "../model-catalog-lookup.js";
+import { selectModelCatalogRuntimeEntry } from "../model-catalog-view.js";
+import type { ModelCatalogEntry } from "../model-catalog.js";
 import { resolveSandboxRuntimeStatus } from "../sandbox/runtime-status.js";
 import { resolveSpawnedWorkspaceInheritance, type SpawnedToolContext } from "../spawned-context.js";
 import {
@@ -60,7 +63,10 @@ import {
 } from "../subagents/spawn/subagent-spawn-requester-prefs.js";
 import { buildSubagentTaskMessage } from "../subagents/spawn/subagent-system-prompt.js";
 import { resolveSubagentTargetPolicy } from "../subagents/spawn/subagent-target-policy.js";
-import { resolveCandidateThinkingLevel } from "../thinking-runtime.js";
+import {
+  resolveCandidateThinkingLevel,
+  resolveEffectiveAgentRuntime,
+} from "../thinking-runtime.js";
 import { resolveAgentTimeoutMs } from "../timeout.js";
 import { normalizeToolModelOverride, readToolStringParam, ToolInputError } from "./common.js";
 import { getGatewayToolCallerIdentity } from "./gateway-caller-context.js";
@@ -108,11 +114,26 @@ export const VISIBLE_SESSIONS_SPAWN_SCHEMA = {
   worktreeBaseRef: Type.Optional(Type.String({ description: "Worktree base ref" })),
 };
 
+/**
+ * `sessions.create` validates thinking against the concrete runtime row it
+ * selects from `routeVariants`, so the clamp needs the whole snapshot. Loaders
+ * that still answer with a bare row list stay supported: those rows serve as
+ * both the logical catalog and its own route variants.
+ */
+type VisibleChildModelCatalogLoader = (params: {
+  agentId: string;
+  getConfig: () => OpenClawConfig;
+}) => Promise<
+  | ModelCatalogEntry[]
+  | { entries: ModelCatalogEntry[]; routeVariants?: readonly ModelCatalogEntry[] }
+  | undefined
+>;
+
 export type VisibleSessionsSpawnDeps = {
   callGateway?: InProcessGatewayCaller;
   registerRun?: typeof registerSubagentRun;
   countActiveRuns?: typeof countActiveRunsForSession;
-  loadModelCatalog?: typeof loadGatewayModelCatalog;
+  loadModelCatalog?: VisibleChildModelCatalogLoader;
 };
 
 type VisibleSessionsSpawnOptions = VisibleSessionsSpawnDeps &
@@ -146,19 +167,59 @@ function summarizeSessionsSpawnError(error: unknown): string {
  * level instead of one it could not authorize.
  */
 async function loadVisibleChildThinkingCatalog(params: {
-  loadModelCatalog?: typeof loadGatewayModelCatalog;
+  loadModelCatalog?: VisibleChildModelCatalogLoader;
   agentId: string;
   cfg: OpenClawConfig;
-}): Promise<ThinkingCatalogEntry[] | undefined> {
+}): Promise<
+  { entries: ModelCatalogEntry[]; routeVariants: readonly ModelCatalogEntry[] } | undefined
+> {
   try {
-    const catalog = await (params.loadModelCatalog ?? loadGatewayModelCatalog)({
+    const loaded = await (params.loadModelCatalog ?? loadGatewayModelCatalogSnapshot)({
       agentId: params.agentId,
       getConfig: () => params.cfg,
     });
-    return Array.isArray(catalog) ? catalog : undefined;
+    if (Array.isArray(loaded)) {
+      return { entries: loaded, routeVariants: loaded };
+    }
+    if (!Array.isArray(loaded?.entries)) {
+      return undefined;
+    }
+    return {
+      entries: loaded.entries,
+      routeVariants: Array.isArray(loaded.routeVariants) ? loaded.routeVariants : loaded.entries,
+    };
   } catch {
     return undefined;
   }
+}
+
+/**
+ * Mirrors Gateway's capability owner selection (`projectSessionsPatchEntry`):
+ * the logical row identifies the model, then the concrete row for the runtime
+ * that will own the child's turn supplies the thinking capabilities. Grading
+ * against the logical row instead keeps levels the validator rejects (creation
+ * fails where an omitted level used to succeed) and drops levels the selected
+ * runtime does support.
+ */
+function selectVisibleChildThinkingCatalog(params: {
+  catalog: { entries: ModelCatalogEntry[]; routeVariants: readonly ModelCatalogEntry[] };
+  provider: string;
+  modelId: string;
+  agentRuntime: string;
+}): ThinkingCatalogEntry[] {
+  const logical = findModelCatalogEntry(params.catalog.entries, {
+    provider: params.provider,
+    modelId: params.modelId,
+  });
+  if (!logical) {
+    return params.catalog.entries;
+  }
+  const selected = selectModelCatalogRuntimeEntry({
+    entry: logical,
+    routeVariants: params.catalog.routeVariants,
+    runtimeId: params.agentRuntime,
+  }).entry;
+  return [selected];
 }
 
 export async function maybeSpawnVisibleSession(params: {
@@ -472,17 +533,34 @@ export async function maybeSpawnVisibleSession(params: {
       inheritedThinkingLevel && inheritedThinkingCatalog
         ? (() => {
             const { provider, model } = splitModelRef(resolvedModel);
-            return provider && model
-              ? resolveCandidateThinkingLevel({
-                  cfg,
-                  provider,
-                  modelId: model,
-                  level: inheritedThinkingLevel,
-                  catalog: inheritedThinkingCatalog,
-                  agentId: targetAgentId,
-                  sessionKey: `agent:${targetAgentId}:dashboard:pending`,
-                })
-              : undefined;
+            if (!provider || !model) {
+              return undefined;
+            }
+            const pendingSessionKey = `agent:${targetAgentId}:dashboard:pending`;
+            // Resolve the runtime once so row selection and level grading can
+            // never disagree about which harness owns the child's turn.
+            const agentRuntime = resolveEffectiveAgentRuntime({
+              cfg,
+              provider,
+              modelId: model,
+              agentId: targetAgentId,
+              sessionKey: pendingSessionKey,
+            });
+            return resolveCandidateThinkingLevel({
+              cfg,
+              provider,
+              modelId: model,
+              level: inheritedThinkingLevel,
+              catalog: selectVisibleChildThinkingCatalog({
+                catalog: inheritedThinkingCatalog,
+                provider,
+                modelId: model,
+                agentRuntime,
+              }),
+              agentId: targetAgentId,
+              sessionKey: pendingSessionKey,
+              agentRuntime,
+            });
           })()
         : undefined;
     const resolvedThinkingLevel = inheritedThinkingLevel

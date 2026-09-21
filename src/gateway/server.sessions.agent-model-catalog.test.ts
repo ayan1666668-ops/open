@@ -10,7 +10,7 @@ import {
 import { closeOpenClawStateDatabaseForTest } from "../state/openclaw-state-db.js";
 import type { PrepareGatewaySessionLifecycle } from "./session-lifecycle-preparation.js";
 import { writeSessionStore } from "./test-helpers.js";
-import { testState } from "./test-helpers.runtime-state.js";
+import { agentDiscoveryMock, testState } from "./test-helpers.runtime-state.js";
 import {
   directSessionReq,
   getGatewayConfigModule,
@@ -19,6 +19,9 @@ import {
 } from "./test/server-sessions.test-helpers.js";
 
 afterEach(() => {
+  // Only the spawn-to-creation cases seed discovery; every other case in this
+  // file relies on the real registry.
+  Object.assign(agentDiscoveryMock, { enabled: false, models: [] });
   closeOpenClawStateDatabaseForTest();
 });
 
@@ -487,73 +490,204 @@ test.each([
 // sides. The unclamped level is the same one the cases above prove creation
 // rejects, so a regression in the clamp fails here as a creation failure.
 //
-// Skipped: exercises the real (unmocked) resolveSubagentModelAndThinkingPlan ->
-// prepareModelChoice path, which currently throws
-// "templateModelRegistry.fork is not a function" against main's current
-// embedded-agent-runner/prepared-model-runtime shape. Confirmed pre-existing
-// and unrelated to this branch (passes on the branch's own pre-sync tip in an
-// isolated worktree). Tracked as openclaw-4cvl.
-test.skip.each([
-  { label: "an off-only child", offOnly: true, expectedLevel: "off" },
-  { label: "a reasoning-capable child", offOnly: false, expectedLevel: "high" },
-])("visible spawn creates %s through the real sessions.create path", async (scenario) => {
-  const { workStorePath } = await createSelectedGlobalSessionStore();
-  testState.agentConfig = { model: { primary: offOnlyRef } };
-  testState.agentsConfig = { list: [{ id: "main", default: true }, { id: "work" }] };
-  const parentKey = "agent:work:dashboard:visible-spawn-parent";
-  // Real creation validates declared spawn lineage, so the requester must exist.
-  await writeSessionStore({
-    agentId: "work",
-    storePath: workStorePath,
-    entries: { [parentKey]: sessionStoreEntry("visible-spawn-parent") },
-  });
-  const { getRuntimeConfig } = await getGatewayConfigModule();
-  const { maybeSpawnVisibleSession } = await import("../agents/tools/sessions-spawn-visible.js");
-  const loadGatewayModelCatalog = vi.fn(async () => [
-    scenario.offOnly ? offOnlyModel : { ...offOnlyModel, reasoning: true },
-  ]);
-  const registerRun = vi.fn();
-  const gatewayCalls: { method: string; params: Record<string, unknown> }[] = [];
+// The real spawn path resolves its model through `prepareModelChoice`, so the
+// fixture model has to exist in discovery as well as in the prepared catalog.
+const runtimeVariantModel = {
+  id: "reasoner",
+  name: "Reasoner",
+  provider: "runtime-fixture",
+  reasoning: true,
+};
+const runtimeVariantRef = "runtime-fixture/reasoner";
 
-  const result = await maybeSpawnVisibleSession({
-    raw: { visible: true, task: "inspect issue" },
-    task: "inspect issue",
-    label: "Visible child",
-    runtime: "subagent",
-    requestedAgentId: "work",
-    sandbox: "inherit",
-    expectsCompletionMessage: true,
-    options: {
-      config: getRuntimeConfig(),
-      agentSessionKey: parentKey,
-      requesterThinkingLevel: "high",
-      loadModelCatalog: loadGatewayModelCatalog as never,
-      registerRun: registerRun as never,
-      countActiveRuns: () => 0,
-      callGateway: async (method, params) => {
-        gatewayCalls.push({ method, params: params as Record<string, unknown> });
-        const response = await directSessionReq<Record<string, unknown>>(
-          method as "sessions.create",
-          params as Record<string, unknown>,
-          { context: { loadGatewayModelCatalog } },
-        );
-        if (!response.ok) {
-          throw new Error(response.error?.message ?? "sessions.create failed");
-        }
-        return response.payload as never;
+type VisibleSpawnBoundaryCase = {
+  label: string;
+  model: { id: string; provider: string; [key: string]: unknown };
+  ref: string;
+  /** Rows the prepared catalog publishes as route variants for that model. */
+  routeVariants?: { id: string; provider: string; [key: string]: unknown }[];
+  agentRuntime?: string;
+  inherited: string;
+  expectedLevel: string;
+  /** Creation must reject the unclamped inherited level for this catalog. */
+  rejectsUnclamped?: boolean;
+};
+
+const visibleSpawnBoundaryCases: VisibleSpawnBoundaryCase[] = [
+  {
+    label: "an off-only child",
+    model: offOnlyModel,
+    ref: offOnlyRef,
+    inherited: "high",
+    expectedLevel: "off",
+  },
+  {
+    label: "a reasoning-capable child",
+    model: { ...offOnlyModel, reasoning: true },
+    ref: offOnlyRef,
+    inherited: "high",
+    expectedLevel: "high",
+  },
+  // Logical row advertises max, the row for the runtime that will own the turn
+  // advertises only high. `sessions.create` validates against the latter, so
+  // forwarding max here fails creation outright.
+  {
+    label: "a child clamped to its selected runtime row",
+    model: { ...runtimeVariantModel, compat: { supportedReasoningEfforts: ["max"] } },
+    ref: runtimeVariantRef,
+    routeVariants: [
+      { ...runtimeVariantModel, compat: { supportedReasoningEfforts: ["max"] } },
+      {
+        ...runtimeVariantModel,
+        nativeRuntime: "fixture-native",
+        compat: { supportedReasoningEfforts: ["high"] },
       },
-    },
-  });
+    ],
+    agentRuntime: "fixture-native",
+    inherited: "max",
+    expectedLevel: "high",
+    rejectsUnclamped: true,
+  },
+  // The inverse mismatch: grading against the logical row alone would drop an
+  // effort the selected runtime row genuinely supports.
+  {
+    label: "a child keeping effort its selected runtime row supports",
+    model: { ...runtimeVariantModel, compat: { supportedReasoningEfforts: ["high"] } },
+    ref: runtimeVariantRef,
+    routeVariants: [
+      { ...runtimeVariantModel, compat: { supportedReasoningEfforts: ["high"] } },
+      {
+        ...runtimeVariantModel,
+        nativeRuntime: "fixture-native",
+        compat: { supportedReasoningEfforts: ["max"] },
+      },
+    ],
+    agentRuntime: "fixture-native",
+    inherited: "max",
+    expectedLevel: "max",
+  },
+];
 
-  expect(gatewayCalls[0]).toMatchObject({
-    method: "sessions.create",
-    params: { agentId: "work", model: offOnlyRef, thinkingLevel: scenario.expectedLevel },
-  });
-  expect(result).toMatchObject({ status: "accepted" });
-  // The tool mints the child key, so read the persisted row it reports back.
-  const childSessionKey = result?.childSessionKey as string;
-  expect(childSessionKey).toBeTruthy();
-  expect(
-    loadSessionEntry({ agentId: "work", sessionKey: childSessionKey, storePath: workStorePath }),
-  ).toMatchObject({ thinkingLevel: scenario.expectedLevel });
-});
+test.each(visibleSpawnBoundaryCases)(
+  "visible spawn creates $label through the real sessions.create path",
+  async (scenario) => {
+    const { dir, workStorePath } = await createSelectedGlobalSessionStore();
+    if (scenario.agentRuntime) {
+      // A model pinned to a harness is refused at creation unless that harness
+      // is installed and enabled, so the runtime-variant cases need a fixture.
+      const rootDir = await fs.mkdtemp(path.join(dir, "harness-"));
+      createColdPluginFixture({
+        rootDir,
+        pluginId: scenario.agentRuntime,
+        manifest: { activation: { onAgentHarnesses: [scenario.agentRuntime] } },
+      });
+      const { writeConfigFile } = await getGatewayConfigModule();
+      await writeConfigFile({
+        plugins: {
+          load: { paths: [rootDir] },
+          entries: { [scenario.agentRuntime]: { enabled: true } },
+        },
+      });
+    }
+    testState.agentConfig = { model: { primary: scenario.ref } };
+    testState.agentsConfig = {
+      list: [
+        { id: "main", default: true },
+        {
+          id: "work",
+          ...(scenario.agentRuntime
+            ? { models: { [scenario.ref]: { agentRuntime: { id: scenario.agentRuntime } } } }
+            : {}),
+        },
+      ],
+    };
+    agentDiscoveryMock.enabled = true;
+    agentDiscoveryMock.models = [{ ...scenario.model, input: ["text"] }];
+    const parentKey = "agent:work:dashboard:visible-spawn-parent";
+    // Real creation validates declared spawn lineage, so the requester must exist.
+    await writeSessionStore({
+      agentId: "work",
+      storePath: workStorePath,
+      entries: { [parentKey]: sessionStoreEntry("visible-spawn-parent") },
+    });
+    const { getRuntimeConfig } = await getGatewayConfigModule();
+    const { maybeSpawnVisibleSession } = await import("../agents/tools/sessions-spawn-visible.js");
+    const entries = [scenario.model];
+    const routeVariants = scenario.routeVariants ?? entries;
+    const loadGatewayModelCatalogSnapshot = vi.fn(async (request?: { agentId?: string }) => ({
+      entries,
+      routeVariants,
+      agentId: request?.agentId ?? "work",
+      agentDir: path.join(dir, "catalog-agent"),
+      workspaceDir: path.join(dir, "catalog-workspace"),
+      config: getRuntimeConfig(),
+      catalogComplete: true,
+    }));
+    const registerRun = vi.fn();
+    const gatewayCalls: { method: string; params: Record<string, unknown> }[] = [];
+
+    const result = await maybeSpawnVisibleSession({
+      raw: { visible: true, task: "inspect issue" },
+      task: "inspect issue",
+      label: "Visible child",
+      runtime: "subagent",
+      requestedAgentId: "work",
+      sandbox: "inherit",
+      expectsCompletionMessage: true,
+      options: {
+        config: getRuntimeConfig(),
+        agentSessionKey: parentKey,
+        requesterThinkingLevel: scenario.inherited as never,
+        loadModelCatalog: loadGatewayModelCatalogSnapshot as never,
+        registerRun: registerRun as never,
+        countActiveRuns: () => 0,
+        callGateway: async (method, params) => {
+          gatewayCalls.push({ method, params: params as Record<string, unknown> });
+          const response = await directSessionReq<Record<string, unknown>>(
+            method as "sessions.create",
+            params as Record<string, unknown>,
+            { context: { loadGatewayModelCatalogSnapshot } },
+          );
+          if (!response.ok) {
+            throw new Error(response.error?.message ?? "sessions.create failed");
+          }
+          return response.payload as never;
+        },
+      },
+    });
+
+    if (scenario.rejectsUnclamped) {
+      // Same handler, same catalog: the level a logical-row-only clamp would
+      // have forwarded is refused, so the clamp below is load-bearing rather
+      // than cosmetic.
+      const rejected = await directSessionReq(
+        "sessions.create",
+        {
+          key: "agent:work:dashboard:unclamped-probe",
+          agentId: "work",
+          model: scenario.ref,
+          thinkingLevel: scenario.inherited,
+          task: "inspect issue",
+        },
+        { context: { loadGatewayModelCatalogSnapshot } },
+      );
+      expect(rejected.ok).toBe(false);
+      expect(rejected.error?.message).toContain(
+        `thinkingLevel "${scenario.inherited}" is not supported for ${scenario.ref}`,
+      );
+    }
+
+    expect(result?.error).toBeUndefined();
+    expect(result).toMatchObject({ status: "accepted" });
+    expect(gatewayCalls[0]).toMatchObject({
+      method: "sessions.create",
+      params: { agentId: "work", model: scenario.ref, thinkingLevel: scenario.expectedLevel },
+    });
+    // The tool mints the child key, so read the persisted row it reports back.
+    const childSessionKey = result?.childSessionKey as string;
+    expect(childSessionKey).toBeTruthy();
+    expect(
+      loadSessionEntry({ agentId: "work", sessionKey: childSessionKey, storePath: workStorePath }),
+    ).toMatchObject({ thinkingLevel: scenario.expectedLevel });
+  },
+);

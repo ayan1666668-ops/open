@@ -1363,6 +1363,93 @@ describe("sessions_spawn tool", () => {
     );
   });
 
+  // `sessions.create` grades an explicit `thinkingLevel` against the concrete
+  // runtime row it selects from `routeVariants`, not against the logical row.
+  // A clamp that reads logical rows only therefore disagrees with the validator
+  // in both directions: it keeps a level native selection rejects (creation
+  // fails where an omitted level used to succeed), and it drops a level the
+  // native row does support (silent downgrade).
+  // The `flat` shape keeps every row in one array (what a legacy array-returning
+  // loader yields); the `snapshot` shape separates logical `entries` from
+  // `routeVariants`, which is what the prepared Gateway catalog actually
+  // publishes. Both must clamp against the native row.
+  it.each(
+    (["flat", "snapshot"] as const).flatMap((shape) => [
+      {
+        name: `clamps down to the selected native runtime row (${shape} catalog)`,
+        shape,
+        logicalEfforts: ["max"],
+        nativeEfforts: ["high"],
+        inherited: "max",
+        expected: "high",
+      },
+      {
+        name: `keeps effort the selected native runtime row supports (${shape} catalog)`,
+        shape,
+        logicalEfforts: ["high"],
+        nativeEfforts: ["max"],
+        inherited: "max",
+        expected: "max",
+      },
+    ]),
+  )("$name", async ({ shape, logicalEfforts, nativeEfforts, inherited, expected }) => {
+    const callGateway = vi.fn(async () => ({
+      key: "agent:main:dashboard:child",
+      runStarted: true,
+      runId: "run-visible",
+    }));
+    const logical = {
+      id: "reasoner",
+      provider: "runtime-fixture",
+      name: "Reasoner",
+      reasoning: true,
+      compat: { supportedReasoningEfforts: logicalEfforts },
+    };
+    const native = {
+      ...logical,
+      nativeRuntime: "fixture-native",
+      compat: { supportedReasoningEfforts: nativeEfforts },
+    };
+    const loadModelCatalog = vi.fn(async () =>
+      shape === "flat"
+        ? [logical, native]
+        : { entries: [logical], routeVariants: [logical, native] },
+    );
+    const tool = createSessionsSpawnTool({
+      agentSessionKey: "agent:main:main",
+      requesterThinkingLevel: inherited as never,
+      config: {
+        agents: {
+          defaults: {
+            model: { primary: "runtime-fixture/reasoner" },
+            models: {
+              "runtime-fixture/reasoner": { agentRuntime: { id: "fixture-native" } },
+            },
+          },
+          list: [{ id: "main" }],
+        },
+      },
+      callGateway: callGateway as never,
+      loadModelCatalog: loadModelCatalog as never,
+      registerRun: vi.fn(),
+      countActiveRuns: () => 0,
+    });
+
+    await tool.execute(`visible-runtime-variant-${shape}-${expected}`, {
+      task: "inspect issue",
+      visible: true,
+    });
+
+    expect(callGateway).toHaveBeenCalledWith(
+      "sessions.create",
+      expect.objectContaining({
+        agentId: "main",
+        model: "runtime-fixture/reasoner",
+        thinkingLevel: expected,
+      }),
+    );
+  });
+
   it("rejects cross-agent visible transcript forks", async () => {
     const callGateway = vi.fn();
     const tool = createSessionsSpawnTool({
