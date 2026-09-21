@@ -4,11 +4,11 @@ import { createSqliteWorkerOperationAdmission } from "../infra/sqlite-worker-ope
 import type { SqliteWorkerOperationSettlement } from "../infra/sqlite-worker-operation-settlement.js";
 import type { OpenClawStateWorkerContext } from "../state/openclaw-state-worker-context.types.js";
 import { runOpenClawStateWorkerOperation } from "../state/openclaw-state-worker-store.js";
+import { getTaskFlowRegistryStore } from "./task-flow-registry.store.js";
 import {
   beginTaskFlowRegistryWorkerMutation,
   ensureTaskFlowRegistryReadyAsync,
-} from "./task-flow-registry.js";
-import { getTaskFlowRegistryStore } from "./task-flow-registry.store.js";
+} from "./task-flow-runtime-internal.js";
 import { getTaskRegistryStore } from "./task-registry.store.js";
 import type { TaskRegistryWorkerOperations } from "./task-registry.worker-contract.js";
 
