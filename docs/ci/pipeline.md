@@ -123,8 +123,10 @@ independent of changes to the ordinary execution pin; source/build smoke alone
 does not prove an installed upgrade. See the
 [package validation matrix](/ci/release-validation/package-acceptance).
 
-No workflow or composite selects Node 22 for project execution. Runner images
-can contain unused older toolchains, and recovery bundles intentionally retain
+Select a supported Node runtime before project commands, including lightweight
+workflow checks and release orchestration. Hosted images can default to Node 22;
+an absent version pin does not prove a supported runtime. Runner images can also
+contain unused older toolchains, and recovery bundles intentionally retain
 older syntax targets so unsupported runtimes can print upgrade diagnostics.
 Those are separate from the supported runtime and test-job versions. GitHub
 JavaScript actions also have their own runtime, independent of the `node` on

@@ -26,6 +26,7 @@ import { minimatch } from "minimatch";
 import { afterEach, describe, expect, it } from "vitest";
 import { parse } from "yaml";
 import * as qaEvidence from "../../extensions/qa-lab/test-api.js";
+import { isSupportedOpenClawNodeVersion } from "../../node-version.mjs";
 import {
   detectChangedScope,
   detectNodeFastScope,
@@ -11555,6 +11556,49 @@ server.listen(0, "127.0.0.1", () => {
         "fetch-depth": 1,
         "persist-credentials": false,
       });
+    }
+  });
+
+  it("selects a supported Node before lightweight checks, release approval, and image wrappers", () => {
+    for (const [file, jobId, consumerName] of [
+      ["workflow-sanity.yml", "actionlint", "Disallow tracked merge conflict markers"],
+      ["android-release.yml", "publish_signed_android_apk", "Validate release approval and target"],
+      ["docker-channel-promote.yml", "resolve", "Resolve release channel policy"],
+      ["linux-app-release.yml", "validate_release", "Verify trusted release tooling identity"],
+      [
+        "openclaw-live-and-e2e-checks-reusable.yml",
+        "prepare_live_test_image",
+        "Pack live-test image artifact",
+      ],
+      [
+        "openclaw-live-and-e2e-checks-reusable.yml",
+        "validate_live_models_docker",
+        "Verify and load live-test image artifact",
+      ],
+      [
+        "openclaw-live-and-e2e-checks-reusable.yml",
+        "validate_live_models_docker_targeted",
+        "Verify and load live-test image artifact",
+      ],
+    ]) {
+      const workflow = parse(readFileSync(`.github/workflows/${file}`, "utf8"));
+      const job = workflow.jobs[jobId];
+      const steps: WorkflowStep[] = job.steps;
+      const consumerIndex = steps.findIndex((step) => step.name === consumerName);
+      const context = `${file}:${jobId}`;
+      expect(consumerIndex, context).toBeGreaterThanOrEqual(0);
+      const setup = expectDefined(
+        steps.slice(0, consumerIndex).find((step) => step.uses?.startsWith("actions/setup-node@")),
+        `${context} must select Node before ${consumerName}`,
+      );
+      const version = setup.with?.["node-version"];
+      const resolved =
+        version === "${{ env.NODE_VERSION }}"
+          ? (job.env?.NODE_VERSION ?? workflow.env?.NODE_VERSION)
+          : version;
+      expect(isSupportedOpenClawNodeVersion(resolved), context).toBe(true);
+      expect(setup.if, context).toBeUndefined();
+      expect(setup.with?.["package-manager-cache"], context).toBe(false);
     }
   });
 
