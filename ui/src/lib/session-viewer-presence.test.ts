@@ -161,6 +161,35 @@ describe("session viewer presence store", () => {
     await flushSync();
   });
 
+  it("does not restore presence until a visible document regains focus", async () => {
+    const harness = createGatewayHarness();
+    const store = sessionViewerPresenceForGateway(harness.gateway);
+    const owner = {};
+    store.watch(owner, ["agent:main:visible"]);
+    await flushSync();
+
+    vi.mocked(document.hasFocus).mockReturnValue(false);
+    document.dispatchEvent(new Event("visibilitychange"));
+    await flushSync();
+    expect(harness.request).toHaveBeenLastCalledWith(SESSION_VIEWERS_SET_METHOD, {
+      sessionKeys: [],
+    });
+    const unfocusedCount = harness.request.mock.calls.length;
+
+    document.dispatchEvent(new Event("visibilitychange"));
+    await flushSync();
+    expect(harness.request).toHaveBeenCalledTimes(unfocusedCount);
+
+    vi.mocked(document.hasFocus).mockReturnValue(true);
+    window.dispatchEvent(new Event("focus"));
+    await flushSync();
+    expect(harness.request).toHaveBeenLastCalledWith(SESSION_VIEWERS_SET_METHOD, {
+      sessionKeys: ["agent:main:visible"],
+    });
+    store.unwatch(owner);
+    await flushSync();
+  });
+
   it("redeclares aliases against the new client hello", async () => {
     const harness = createGatewayHarness();
     const store = sessionViewerPresenceForGateway(harness.gateway);

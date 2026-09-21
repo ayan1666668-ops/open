@@ -9,7 +9,19 @@ import type {
   ExecutionIdentityInspectionQuery,
   ExecutionIdentityInspectionOutcome,
 } from "../audit/execution-identity-inspection.types.js";
+import type {
+  CronRunRecoveryReadCommand,
+  CronRunRecoveryObservation,
+} from "../cron/store/run-recovery-read.types.js";
 import type { FleetCellRecord } from "../fleet/registry.types.js";
+import type {
+  WorkerPlacementConflictBinding,
+  WorkerSessionPlacementReadResult,
+} from "../gateway/worker-environments/placement-read-projection.types.js";
+import type {
+  DevicePairingReadCommand,
+  DevicePairingReadReply,
+} from "../infra/device-pairing-read.types.js";
 import type { readExecApprovalsConfigRow } from "../infra/exec-approvals-sqlite.js";
 import type {
   ConversationRef,
@@ -49,7 +61,9 @@ export type OpenClawStateReadAuthority = {
 
 export type OpenClawStateReadCommand =
   | { type: "conversationBindings.inspect"; conversation: ConversationRef }
+  | DevicePairingReadCommand
   | PluginBlobReadCommand
+  | CronRunRecoveryReadCommand
   | { type: "exec-approvals.read" }
   | {
       [Kind in keyof SkillLibraryReadOnlyOperations]: {
@@ -71,7 +85,12 @@ export type OpenClawStateReadCommand =
   | { type: "sandboxRegistry.list" }
   | { type: "sandboxRegistry.get"; containerName: string }
   | { type: "sandboxRegistry.runtimeIds"; backendId: string; scopeKey: string }
-  | { type: "sandboxRegistry.browsers" };
+  | { type: "sandboxRegistry.browsers" }
+  | {
+      type: "workers.placementProjection";
+      sessionIds: readonly string[];
+      conflictBindings: readonly WorkerPlacementConflictBinding[];
+    };
 export type OpenClawStateReadRequest = {
   context: SqliteWorkerStateContext;
   databasePath: string;
@@ -88,6 +107,7 @@ export type OpenClawStateReadReply = (
       sourceAdmitted: true;
       record: SessionBindingRecord | null;
     }
+  | DevicePairingReadReply
   | PluginBlobReadReply
   | {
       [Kind in keyof SkillLibraryReadOnlyOperations]: {
@@ -102,6 +122,12 @@ export type OpenClawStateReadReply = (
       type: "userProfiles.email.resolve";
       sourceAdmitted: true;
       profileId: string | undefined;
+    }
+  | {
+      ok: true;
+      type: "cron.observeRunRecovery";
+      sourceAdmitted: true;
+      observation: CronRunRecoveryObservation;
     }
   | {
       ok: true;
@@ -175,6 +201,12 @@ export type OpenClawStateReadReply = (
       entries: SandboxBrowserRegistryEntry[];
     }
   | {
+      ok: true;
+      type: "workers.placementProjection";
+      sourceAdmitted: true;
+      result: WorkerSessionPlacementReadResult;
+    }
+  | {
       ok: false;
       sourceAdmitted?: true;
       message: string;
@@ -191,6 +223,8 @@ export type OpenClawStateReadOutcome =
 
 export type OpenClawStateReadPhase = "before-read" | "read" | "unobserved";
 export type OpenClawStateReadOptions = {
+  /** Publication and authority reads must not inherit an inspection snapshot. */
+  current?: boolean;
   mapError?: (error: unknown, phase: OpenClawStateReadPhase) => unknown;
 };
 

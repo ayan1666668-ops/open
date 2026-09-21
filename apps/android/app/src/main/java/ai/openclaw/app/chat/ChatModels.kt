@@ -550,6 +550,7 @@ data class ChatSessionEntry(
   val swarmLog: String? = null,
   val status: String? = null,
   val lastRunError: String? = null,
+  val lastRunId: String? = null,
   val startedAt: Long? = null,
   val endedAt: Long? = null,
   val runtimeMs: Long? = null,
@@ -557,7 +558,7 @@ data class ChatSessionEntry(
   val hasSessionUsageMetadata: Boolean =
     inputTokens != null || outputTokens != null || estimatedCostUsd != null,
   val hasRunMetadata: Boolean =
-    status != null || startedAt != null || endedAt != null || runtimeMs != null || outputTokens != null,
+    status != null || lastRunId != null || startedAt != null || endedAt != null || runtimeMs != null || outputTokens != null,
 )
 
 // Match Gateway precedence: terminal status wins; only missing live flags use historical status.

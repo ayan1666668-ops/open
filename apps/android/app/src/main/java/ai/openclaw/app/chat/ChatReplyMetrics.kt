@@ -19,6 +19,7 @@ internal fun ChatHistory.withReplyMetrics(
   val startedAt = row?.startedAt
   val endedAt = row?.endedAt
   val runtimeMs = row?.runtimeMs
+  val lastRunId = row?.lastRunId
   val final = annotated.lastOrNull()
   val timestamp = final?.timestampMs
   if (
@@ -26,6 +27,7 @@ internal fun ChatHistory.withReplyMetrics(
     (row.sessionId == null || row.sessionId == sid) &&
     startedAt != null && endedAt != null && endedAt >= startedAt && runtimeMs != null && runtimeMs >= 0 &&
     final != null && final.isReplyMetricsAnswer() &&
+    !lastRunId.isNullOrBlank() && final.runId == lastRunId &&
     !final.entryId.isNullOrBlank() && timestamp != null && timestamp in startedAt..endedAt &&
     final.replyMetrics == null && retained.values.none { it.endedAt == endedAt && it.entryId != final.entryId }
   ) {

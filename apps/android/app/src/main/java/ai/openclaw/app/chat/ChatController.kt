@@ -7988,6 +7988,7 @@ class ChatController internal constructor(
       swarmLog = obj["swarmLog"].asStringOrNull()?.trim(),
       status = obj["status"].asStringOrNull()?.trim(),
       lastRunError = obj["lastRunError"].asStringOrNull()?.trim(),
+      lastRunId = obj["lastRunId"].asStringOrNull()?.trim()?.takeIf { it.isNotEmpty() },
       startedAt = obj["startedAt"].asLongOrNull(),
       endedAt = obj["endedAt"].asLongOrNull(),
       runtimeMs = obj["runtimeMs"].asLongOrNull(),
@@ -7997,8 +7998,9 @@ class ChatController internal constructor(
           "outputTokens" in obj ||
           "estimatedCostUsd" in obj,
       hasRunMetadata =
-        "status" in obj ||
+          "status" in obj ||
           "lastRunError" in obj ||
+          "lastRunId" in obj ||
           "startedAt" in obj ||
           "endedAt" in obj ||
           "runtimeMs" in obj ||
@@ -9335,6 +9337,7 @@ internal fun mergeChatSessionEntry(
     swarmLog = next.swarmLog ?: existing.swarmLog,
     status = if (next.hasRunMetadata) next.status else existing.status,
     lastRunError = if (next.hasRunMetadata) next.lastRunError else existing.lastRunError,
+    lastRunId = if (next.hasRunMetadata) next.lastRunId else existing.lastRunId,
     startedAt = if (next.hasRunMetadata) next.startedAt else existing.startedAt,
     endedAt = if (next.hasRunMetadata) next.endedAt else existing.endedAt,
     runtimeMs = if (next.hasRunMetadata) next.runtimeMs else existing.runtimeMs,

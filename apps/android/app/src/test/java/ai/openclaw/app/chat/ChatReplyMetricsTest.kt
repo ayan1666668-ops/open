@@ -14,6 +14,7 @@ class ChatReplyMetricsTest {
     role = "assistant",
     content = listOf(ChatMessageContent(text = "answer $id")),
     timestampMs = time,
+    runId = "run-$id",
     phase = "final_answer",
   )
 
@@ -31,6 +32,7 @@ class ChatReplyMetricsTest {
         key = "agent:main:chat",
         updatedAtMs = end,
         status = "done",
+        lastRunId = messages.lastOrNull()?.runId,
         startedAt = start,
         endedAt = end,
         runtimeMs = end - start,
@@ -128,5 +130,17 @@ class ChatReplyMetricsTest {
     assertNull(reset.messages.single().replyMetrics)
     val differentEntrySameTime = history(listOf(answer("other", 190))).withReplyMetrics(first.messages)
     assertNull(differentEntrySameTime.messages.single().replyMetrics)
+  }
+
+  @Test
+  fun terminalRowNeverAttributesOneRunToAnOverlappingRunsAnswer() {
+    val first = answer("a", 180)
+    val overlapping = answer("b", 190)
+    val result =
+      history(listOf(first, overlapping))
+        .copy(sessionInfo = history(emptyList()).sessionInfo!!.copy(lastRunId = first.runId))
+        .withReplyMetrics(emptyList())
+
+    assertEquals(listOf(null, null), result.messages.map { it.replyMetrics })
   }
 }
