@@ -3,12 +3,14 @@ import "./system-agent.mocks.test-support.js";
 import fs from "node:fs";
 import path from "node:path";
 import { expectDefined } from "@openclaw/normalization-core";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../../test/helpers/promise.js";
+import { runQaGatewayFixture } from "../../../test/helpers/qa-gateway-cleanup.js";
 import { createOperationalRunInstanceRef } from "../../agents/admitted-run-context.js";
 import { withGatewayToolCallerIdentity } from "../../agents/tools/gateway-caller-context.js";
 import { createGatewayHostLifecycle } from "../../cli/gateway-cli/host-lifecycle.js";
 import { prepareHostedGatewayStop, type HostedGatewayStop } from "../../daemon/hosted-stop.js";
+import { racePromiseWithAbortSignal } from "../../infra/abort-signal.js";
 import {
   claimAgentRunDelegatedAuthority,
   releaseAgentRunDelegatedAuthority,
@@ -23,6 +25,7 @@ import { createTestApprovalManager } from "../exec-approval-manager.test-support
 import { handleGatewayRequest } from "../server-methods.js";
 import type { GatewayHostLifecycle } from "../server-public.js";
 import type { WorkerSessionTurnClaim } from "../worker-environments/placement-record.js";
+import { runSystemAgentGatewayTask } from "./system-agent-execution.js";
 import { systemAgentHandlers, type SystemAgentChatSession } from "./system-agent.js";
 import {
   callChat,
@@ -47,6 +50,13 @@ const {
 } = useSystemAgentGatewayTestFixture();
 
 describe("openclaw.chat hosted lifecycle", () => {
+  let finishFixture: (() => Promise<void>) | undefined;
+  afterEach(async () => {
+    // Child-suite cleanup precedes the shared fixture's storage and registry reset.
+    const finish = finishFixture;
+    finishFixture = undefined;
+    await finish?.();
+  });
   it.for([
     { action: "restart", fullPermission: false, loss: "none" },
     { action: "stop", fullPermission: false, loss: "none" },
@@ -146,7 +156,12 @@ describe("openclaw.chat hosted lifecycle", () => {
       );
       const authority = claimAgentRunDelegatedAuthority(operationalRunInstance);
       const controller = new AbortController();
-      const broadcast = vi.fn();
+      const approvalRequested = createDeferred<unknown>();
+      const broadcast = vi.fn((event: string, payload: unknown) => {
+        if (event === "openclaw.approval.requested") {
+          approvalRequested.resolve(payload);
+        }
+      });
       const context = {
         ...makeContext(sessions),
         systemAgentApprovalManager: manager,
@@ -205,10 +220,45 @@ describe("openclaw.chat hosted lifecycle", () => {
           extraHandlers: { "openclaw.chat": systemAgentHandlers["openclaw.chat"]! },
         }),
       );
+      void pendingChat.catch(() => {});
       let sameOwnerChat: Promise<RespondCall> | undefined;
-      try {
+      let closing: Promise<void> | undefined;
+      const cleanup = () =>
+        (closing ??= runQaGatewayFixture(
+          async () => {
+            releasePreparation.resolve();
+            releaseAudit.resolve();
+            controller.abort();
+          },
+          async () => {
+            for (const record of await manager.listPendingRecords()) {
+              await manager.expire(record.id);
+            }
+          },
+          () => manager.drain(),
+          () => pendingChat,
+          () => sameOwnerChat,
+          () => host.retire(),
+          () => engine.dispose(),
+        ));
+      let finished: Promise<void> | undefined;
+      // Keep the body join outside cleanup: its finally awaits that same cleanup.
+      finishFixture = () => (finished ??= runQaGatewayFixture(cleanup, () => body));
+      const body = runQaGatewayFixture(async () => {
         if (!fullPermission) {
-          await vi.waitFor(async () => expect(await manager.listPendingRecords()).toHaveLength(1));
+          const requestedEvent = await racePromiseWithAbortSignal(
+            Promise.race([
+              approvalRequested.promise,
+              pendingChat.then(() => {
+                throw new Error("Delegated lifecycle replied before its approval request");
+              }),
+            ]),
+            testContext.signal,
+          );
+          // Publication proves registration; the queue barrier separately proves
+          // the proposal task released its lane before we inspect idle state.
+          await runSystemAgentGatewayTask(async () => undefined);
+          expect(await manager.listPendingRecords()).toHaveLength(1);
           expect(requestResponses.calls).toHaveLength(0);
           expect(getActiveGatewayRootWorkCount()).toBe(1);
           expect(systemAgentLane()).toMatchObject({ activeCount: 0, queuedCount: 0 });
@@ -216,6 +266,7 @@ describe("openclaw.chat hosted lifecycle", () => {
             (await manager.listPendingRecords())[0],
             "pending approval",
           ).id;
+          expect(requestedEvent).toMatchObject({ id: proposalId });
           expect(await manager.getSnapshot(proposalId)).toMatchObject({
             request: { proposalHash, agentId: "main", sessionKey: "agent:main:main" },
           });
@@ -276,7 +327,7 @@ describe("openclaw.chat hosted lifecycle", () => {
         );
         expect(requestLifecycle).toHaveBeenCalledExactlyOnceWith(action, expect.any(Function));
         if (loss === "none") {
-          await auditStarted.promise;
+          await racePromiseWithAbortSignal(auditStarted.promise, testContext.signal);
           expect(acceptStop).toHaveBeenCalledTimes(action === "stop" ? 1 : 0);
           expect(nativeEffect).not.toHaveBeenCalled();
           expect(requestResponses.calls).toHaveLength(0);
@@ -334,17 +385,8 @@ describe("openclaw.chat hosted lifecycle", () => {
             expect(nativeEffect).toHaveBeenCalledOnce();
           }
         }
-      } finally {
-        releasePreparation.resolve();
-        releaseAudit.resolve();
-        controller.abort();
-        for (const record of await manager.listPendingRecords()) {
-          await manager.expire(record.id);
-        }
-        await Promise.allSettled([pendingChat, sameOwnerChat]);
-        await host.retire();
-        await engine.dispose();
-      }
+      }, cleanup);
+      await body;
     },
   );
 });
