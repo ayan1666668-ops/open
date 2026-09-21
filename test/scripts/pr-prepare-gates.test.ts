@@ -1394,7 +1394,7 @@ describe("prepare gate stamp transitions", () => {
 source '${repoRoot}/scripts/pr-lib/merge.sh'
 PR_MAIN_SHA=${mainSha}
 pr_gh() { echo 'carried observation must avoid another GitHub lookup' >&2; return 99; }
-run_quiet_logged() { return 0; }
+run_quiet_logged() { cat >/dev/null; }
 pr_git() {
   case "$*" in
     "rev-parse ${currentHead}^") return 1 ;;
@@ -1481,7 +1481,7 @@ fi
     const result = runGatesBash(
       [
         `pr_gh() { test "$1" = pr || return 99; printf '{"headRefName":"topic","headRefOid":"${currentHead}","isCrossRepository":false,"baseRepository":{"nameWithOwner":"openclaw/openclaw"}}\\n'; }`,
-        "run_quiet_logged() { printf 'ARG:%s\\n' \"$@\"; }",
+        "run_quiet_logged() { cat >/dev/null; printf 'ARG:%s\\n' \"$@\"; }",
         "PR_MAIN_SHA=$(git rev-parse HEAD)",
         `run_hosted_prepare_gates 100606 ${currentHead} false`,
       ].join("\n"),
@@ -1502,7 +1502,7 @@ fi
       [
         `pr_gh() { test "$1" = pr || return 99; printf '{"headRefName":"topic","headRefOid":"${headSha}","isCrossRepository":false,"baseRepository":{"nameWithOwner":"openclaw/openclaw"}}\\n'; }`,
         'rg() { command grep -F -q "$3" "$4"; }',
-        `run_quiet_logged() { printf 'Missing successful recent CI workflow for ${headSha}. Observed: none\\n' > "$2"; return 1; }`,
+        `run_quiet_logged() { cat >/dev/null; printf 'Missing successful recent CI workflow for ${headSha}. Observed: none\\n' > "$2"; return 1; }`,
         "PR_MAIN_SHA=$(git rev-parse HEAD)",
         `run_hosted_prepare_gates 100606 ${headSha} false`,
       ].join("\n"),
@@ -1522,7 +1522,7 @@ fi
       [
         `pr_gh() { test "$1" = pr || return 99; printf '{"headRefName":"topic","headRefOid":"${headSha}","isCrossRepository":true,"baseRepository":{"nameWithOwner":"openclaw/openclaw"}}\\n'; }`,
         'rg() { command grep -F -q "$3" "$4"; }',
-        `run_quiet_logged() { printf 'Missing successful recent CI workflow for ${headSha}. Observed: none\\n' > "$2"; return 1; }`,
+        `run_quiet_logged() { cat >/dev/null; printf 'Missing successful recent CI workflow for ${headSha}. Observed: none\\n' > "$2"; return 1; }`,
         "PR_MAIN_SHA=$(git rev-parse HEAD)",
         `run_hosted_prepare_gates 100606 ${headSha} false`,
       ].join("\n"),
