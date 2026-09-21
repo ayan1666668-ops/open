@@ -238,11 +238,12 @@ describe("CI changed Node test plan", () => {
     const ordinary = "src/plugin-sdk/config-runtime.test.ts";
     const shards = createChangedNodeTestShards([...CI_PROOF_TEST_FILES, ordinary]);
     expect(shards).not.toBeNull();
-    const files = (shards ?? []).flatMap((shard) => [
-      ...(shard.targets ?? []),
-      ...(shard.includePatterns ?? []),
-      ...(shard.groups?.flatMap((group) => group.includePatterns ?? []) ?? []),
-    ]);
+    const files = (shards ?? []).flatMap((shard) =>
+      (shard.targets ?? []).concat(
+        shard.includePatterns ?? [],
+        shard.groups?.flatMap((group) => group.includePatterns ?? []) ?? [],
+      ),
+    );
     expect(files).toContain(ordinary);
     expect(files.some(isCiProofTestFile)).toBe(false);
   });

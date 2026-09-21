@@ -23,7 +23,10 @@ describe("Windows CI whole-file placement", () => {
     );
     const shards = createWindowsTestShards(scripts);
     expect(shards).toHaveLength(5);
-    expect(shards.flatMap((shard) => shard.targets).toSorted()).toEqual(inventory.toSorted());
+    const compareFiles = (a: string, b: string) => a.localeCompare(b);
+    expect(shards.flatMap((shard) => shard.targets).toSorted(compareFiles)).toEqual(
+      inventory.toSorted(compareFiles),
+    );
     expect(shards.every((shard) => shard.predicted_seconds < 420)).toBe(true);
     expect(
       shards.filter(
