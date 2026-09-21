@@ -22,6 +22,7 @@ import { defaultRuntime } from "../runtime.js";
 import { shortenHomeInString, shortenHomePath } from "../utils.js";
 import { formatMissingPluginMessage } from "./error-format.js";
 import { formatCliJsonFailure } from "./failure-output.js";
+import type { PluginInspectGatewayRuntime } from "./plugins-inspect-gateway-runtime.js";
 import { quietPluginJsonLogger } from "./plugins-json-logger.js";
 import { formatPluginBundleFormat, formatPluginStatus } from "./plugins-list-format.js";
 
@@ -183,6 +184,7 @@ export async function runPluginsInspectCommand(
       failPluginInspect("Pass either a plugin id or --all, not both.", opts.json);
       return;
     }
+    const gatewayInspection = runtimeInspect ? await loadInspectGatewayRuntime(cfg) : undefined;
     const formatReport = (report: PluginStatusReport): string => {
       globalDiagnostics = formatGlobalPluginDiagnostics(report.diagnostics);
       const inspectAll = buildAllPluginInspectReports({
@@ -191,38 +193,70 @@ export async function runPluginsInspectCommand(
         report,
       });
       if (opts.json) {
-        const inspectAllWithInstall = inspectAll.map((inspect) => ({
-          ...inspect,
-          install: resolveInstallRecord(inspect.plugin.id),
-        }));
+        const inspectAllWithInstall = inspectAll.map((inspect) => {
+          if (!gatewayInspection) {
+            return {
+              ...inspect,
+              install: resolveInstallRecord(inspect.plugin.id),
+            };
+          }
+          const gatewayRuntime = gatewayInspection.runtime.gatewayRuntimeForPlugin(
+            gatewayInspection.report,
+            inspect.plugin.id,
+          );
+          return projectRuntimeInspectJson(
+            inspect,
+            resolveInstallRecord(inspect.plugin.id),
+            gatewayRuntime,
+            gatewayInspection.runtime.PLUGIN_INSPECT_CLI_PROCESS_NOTE,
+            gatewayInspection.runtime.reportedPluginGatewayStatus(gatewayRuntime),
+          );
+        });
         return JSON.stringify(inspectAllWithInstall, null, 2);
       }
       const tableWidth = getTerminalTableWidth();
-      const rows = inspectAll.map((inspect) => ({
-        Name: inspect.plugin.name || inspect.plugin.id,
-        ID:
-          inspect.plugin.name && inspect.plugin.name !== inspect.plugin.id ? inspect.plugin.id : "",
-        Status: formatPluginStatus(inspect.plugin, runtimeInspect),
-        Shape: inspect.shape,
-        Capabilities: formatCapabilityKinds(inspect.capabilities),
-        Compatibility:
-          inspect.compatibility.length > 0
-            ? inspect.compatibility
-                .map((entry) => (entry.severity === "warn" ? `warn:${entry.code}` : entry.code))
-                .join(", ")
-            : "none",
-        Bundle: inspect.bundleCapabilities.length > 0 ? inspect.bundleCapabilities.join(", ") : "-",
-        Hooks: formatHookSummary({
-          typedHookCount: inspect.typedHooks.length,
-          customHookCount: inspect.customHooks.length,
-        }),
-      }));
-      return renderTable({
+      const rows = inspectAll.map((inspect) => {
+        const gatewayRuntime = gatewayInspection
+          ? gatewayInspection.runtime.gatewayRuntimeForPlugin(
+              gatewayInspection.report,
+              inspect.plugin.id,
+            )
+          : undefined;
+        const status =
+          gatewayInspection && gatewayRuntime
+            ? reportedGatewayStatusText(
+                gatewayInspection.runtime.reportedPluginGatewayStatus(gatewayRuntime),
+              )
+            : formatPluginStatus(inspect.plugin);
+        return {
+          Name: inspect.plugin.name || inspect.plugin.id,
+          ID:
+            inspect.plugin.name && inspect.plugin.name !== inspect.plugin.id
+              ? inspect.plugin.id
+              : "",
+          Status: status,
+          Shape: inspect.shape,
+          Capabilities: formatCapabilityKinds(inspect.capabilities),
+          Compatibility:
+            inspect.compatibility.length > 0
+              ? inspect.compatibility
+                  .map((entry) => (entry.severity === "warn" ? `warn:${entry.code}` : entry.code))
+                  .join(", ")
+              : "none",
+          Bundle:
+            inspect.bundleCapabilities.length > 0 ? inspect.bundleCapabilities.join(", ") : "-",
+          Hooks: formatHookSummary({
+            typedHookCount: inspect.typedHooks.length,
+            customHookCount: inspect.customHooks.length,
+          }),
+        };
+      });
+      const table = renderTable({
         width: tableWidth,
         columns: [
           { key: "Name", header: "Name", minWidth: 14, flex: true },
           { key: "ID", header: "ID", minWidth: 10, flex: true },
-          { key: "Status", header: "Status", minWidth: 10 },
+          { key: "Status", header: "Status", minWidth: 15 },
           { key: "Shape", header: "Shape", minWidth: 18 },
           { key: "Capabilities", header: "Capabilities", minWidth: 28, flex: true },
           { key: "Compatibility", header: "Compatibility", minWidth: 24, flex: true },
@@ -231,6 +265,9 @@ export async function runPluginsInspectCommand(
         ],
         rows,
       }).trimEnd();
+      return gatewayInspection
+        ? `${formatRuntimeInspectPreface(gatewayInspection.report)}\n${table}`
+        : table;
     };
     const output = runtimeInspect
       ? await tracePluginLifecyclePhaseAsync(
@@ -295,6 +332,7 @@ export async function runPluginsInspectCommand(
     failPluginInspect(formatMissingPluginMessage({ id, includeSearch: true }), opts.json);
     return;
   }
+  const gatewayInspection = runtimeInspect ? await loadInspectGatewayRuntime(cfg) : undefined;
   const formatReport = (report: PluginStatusReport): string | undefined => {
     globalDiagnostics = formatGlobalPluginDiagnostics(report.diagnostics);
     const inspect = buildPluginInspectReport({
@@ -309,6 +347,7 @@ export async function runPluginsInspectCommand(
         resolveInstallRecord(inspect.plugin.id),
         opts,
         formatPluginCompatibilityNotice,
+        gatewayInspection,
       );
     }
     return undefined;
@@ -337,15 +376,99 @@ export async function runPluginsInspectCommand(
   }
 }
 
+const CLI_REGISTRATION_NOTE =
+  "Hooks, tools, and other registrations come from loading the module in this CLI process, not from the running Gateway.";
+
+type InspectGatewayRuntimeModule = typeof import("./plugins-inspect-gateway-runtime.js");
+
+type InspectGatewayInspection = {
+  runtime: InspectGatewayRuntimeModule;
+  report: Awaited<ReturnType<InspectGatewayRuntimeModule["readPluginsInspectGatewayRuntime"]>>;
+};
+
+async function loadInspectGatewayRuntime(
+  config: ReturnType<typeof getRuntimeConfig>,
+): Promise<InspectGatewayInspection> {
+  const runtime = await import("./plugins-inspect-gateway-runtime.js");
+  return {
+    runtime,
+    report: await tracePluginLifecyclePhaseAsync(
+      "gateway plugin runtime",
+      () => runtime.readPluginsInspectGatewayRuntime(config),
+      { command: "inspect" },
+    ),
+  };
+}
+
+function reportedGatewayStatusText(status: string): string {
+  if (status === "loaded" || status === "active") {
+    return theme.success(status);
+  }
+  if (status === "service-failed" || status === "error") {
+    return theme.error(status);
+  }
+  return theme.warn(status);
+}
+
+function formatRuntimeInspectPreface(report: InspectGatewayInspection["report"]): string {
+  if (report.kind === "unreachable") {
+    return ["Gateway runtime: unreachable", report.detail, CLI_REGISTRATION_NOTE].join("\n");
+  }
+  return `Status is the running Gateway. ${CLI_REGISTRATION_NOTE}`;
+}
+
+function projectRuntimeInspectJson(
+  inspect: PluginInspectReport,
+  install: PluginInstallRecord | undefined,
+  gatewayRuntime: PluginInspectGatewayRuntime,
+  inspectionNote: string,
+  reportedStatus: string,
+) {
+  return {
+    inspectionScope: "cli-process",
+    reportedStatus,
+    gatewayRuntime,
+    inspectionNote,
+    ...inspect,
+    plugin: {
+      ...inspect.plugin,
+      statusScope: "cli-process",
+      ...(typeof inspect.plugin.activated === "boolean" ? { activationScope: "cli-process" } : {}),
+    },
+    install,
+  };
+}
+
 function formatPluginInspection(
   inspect: PluginInspectReport,
   install: PluginInstallRecord | undefined,
   opts: PluginInspectOptions,
   formatPluginCompatibilityNotice: (notice: PluginCompatibilityNotice) => string,
+  gatewayInspection?: InspectGatewayInspection,
 ): string {
   const runtimeInspect = opts.runtime === true;
+  const gatewayRuntime =
+    runtimeInspect && gatewayInspection
+      ? gatewayInspection.runtime.gatewayRuntimeForPlugin(
+          gatewayInspection.report,
+          inspect.plugin.id,
+        )
+      : undefined;
 
   if (opts.json) {
+    if (gatewayRuntime && gatewayInspection) {
+      return JSON.stringify(
+        projectRuntimeInspectJson(
+          inspect,
+          install,
+          gatewayRuntime,
+          gatewayInspection.runtime.PLUGIN_INSPECT_CLI_PROCESS_NOTE,
+          gatewayInspection.runtime.reportedPluginGatewayStatus(gatewayRuntime),
+        ),
+        null,
+        2,
+      );
+    }
     return JSON.stringify({ ...inspect, install }, null, 2);
   }
 
@@ -358,7 +481,21 @@ function formatPluginInspection(
     lines.push(inspect.plugin.description);
   }
   lines.push("");
-  lines.push(`${theme.muted("Status:")} ${formatPluginStatus(inspect.plugin, runtimeInspect)}`);
+  if (gatewayRuntime && gatewayInspection) {
+    lines.push(
+      `${theme.muted("Gateway runtime:")} ${reportedGatewayStatusText(gatewayRuntime.reachable ? gatewayRuntime.state : "unreachable")}`,
+    );
+    lines.push(gatewayRuntime.detail);
+    lines.push(
+      `${theme.muted("Status:")} ${reportedGatewayStatusText(gatewayInspection.runtime.reportedPluginGatewayStatus(gatewayRuntime))}`,
+    );
+    lines.push(
+      `${theme.muted("CLI module:")} ${inspect.plugin.status} in this CLI process (not the Gateway)`,
+    );
+    lines.push(CLI_REGISTRATION_NOTE);
+  } else {
+    lines.push(`${theme.muted("Status:")} ${formatPluginStatus(inspect.plugin, runtimeInspect)}`);
+  }
   if (inspect.plugin.failurePhase) {
     lines.push(`${theme.muted("Failure phase:")} ${inspect.plugin.failurePhase}`);
   }

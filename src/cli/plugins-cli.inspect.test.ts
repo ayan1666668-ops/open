@@ -30,14 +30,29 @@ import {
   runtimeErrors,
   setInstalledPluginIndexInstallRecords,
 } from "./plugins-cli-test-helpers.js";
+import {
+  PLUGIN_INSPECT_CLI_PROCESS_NOTE,
+  PLUGIN_INSPECT_NO_GATEWAY_DETAIL,
+} from "./plugins-inspect-gateway-runtime.js";
 
 const workshopMocks = vi.hoisted(() => ({
   detectToolPolicyDiagnostic: vi.fn(),
 }));
+const readPluginsInspectGatewayRuntimeMock = vi.hoisted(() => vi.fn());
 
 vi.mock("../skills/workshop/tool-policy-diagnostic.js", () => ({
   detectSkillWorkshopToolPolicyDiagnostic: workshopMocks.detectToolPolicyDiagnostic,
 }));
+
+vi.mock("./plugins-inspect-gateway-runtime.js", async () => {
+  const actual = await vi.importActual<typeof import("./plugins-inspect-gateway-runtime.js")>(
+    "./plugins-inspect-gateway-runtime.js",
+  );
+  return {
+    ...actual,
+    readPluginsInspectGatewayRuntime: readPluginsInspectGatewayRuntimeMock,
+  };
+});
 
 function setInspectInstallRecords(
   records: Record<string, PluginInstallRecord>,
@@ -98,6 +113,26 @@ function createInspectReport(
 
 type PluginHumanFormat = "detail" | "table" | "verbose";
 
+function withUnreachableGatewayScope<T extends { plugin: { activated?: boolean } }>(entry: T) {
+  return {
+    inspectionScope: "cli-process",
+    reportedStatus: "unreachable",
+    gatewayRuntime: {
+      source: "gateway",
+      reachable: false,
+      state: "unreachable",
+      detail: PLUGIN_INSPECT_NO_GATEWAY_DETAIL,
+    },
+    inspectionNote: PLUGIN_INSPECT_CLI_PROCESS_NOTE,
+    ...entry,
+    plugin: {
+      ...entry.plugin,
+      statusScope: "cli-process",
+      ...(typeof entry.plugin.activated === "boolean" ? { activationScope: "cli-process" } : {}),
+    },
+  };
+}
+
 function readRenderedStatus(output: string, format: PluginHumanFormat): string | undefined {
   const text = stripVTControlCharacters(output);
   if (format === "detail") {
@@ -121,6 +156,11 @@ describe("plugins cli inspect", () => {
   beforeEach(() => {
     resetPluginsCliTestState();
     workshopMocks.detectToolPolicyDiagnostic.mockReset();
+    readPluginsInspectGatewayRuntimeMock.mockReset();
+    readPluginsInspectGatewayRuntimeMock.mockResolvedValue({
+      kind: "unreachable",
+      detail: "No running Gateway. Plugin runtime state was not read from the daemon.",
+    });
   });
 
   it.each([
@@ -345,21 +385,28 @@ describe("plugins cli inspect", () => {
   it.each([
     { args: ["inspect", "display-probe", "--runtime"], format: "detail" },
     { args: ["inspect", "--all", "--runtime"], format: "table" },
-  ] as const)("retains actual runtime status for $format output", async ({ args, format }) => {
-    const plugin = createPluginRecord({ id: "display-probe", name: "Display", imported: true });
-    const report = { plugins: [plugin], diagnostics: [] };
-    const inspect = createInspectReport({ plugin });
-    buildPluginSnapshotReportMock.mockReturnValue(report);
-    withPluginDiagnosticsReportForInspectionMock.mockImplementation(async (_params, formatReport) =>
-      formatReport({ ...createEmptyPluginRegistry(), workspaceScope: "omitted", ...report }),
-    );
-    buildPluginInspectReportMock.mockReturnValue(inspect);
-    buildAllPluginInspectReportsMock.mockReturnValue([inspect]);
+  ] as const)(
+    "reports an unreachable Gateway instead of a loaded status for $format output",
+    async ({ args, format }) => {
+      const plugin = createPluginRecord({ id: "display-probe", name: "Display", imported: true });
+      const report = { plugins: [plugin], diagnostics: [] };
+      const inspect = createInspectReport({ plugin });
+      buildPluginSnapshotReportMock.mockReturnValue(report);
+      withPluginDiagnosticsReportForInspectionMock.mockImplementation(
+        async (_params, formatReport) =>
+          formatReport({ ...createEmptyPluginRegistry(), workspaceScope: "omitted", ...report }),
+      );
+      buildPluginInspectReportMock.mockReturnValue(inspect);
+      buildAllPluginInspectReportsMock.mockReturnValue([inspect]);
 
-    await runPluginsCommand(["plugins", ...args]);
+      await runPluginsCommand(["plugins", ...args]);
 
-    expect(readRenderedStatus(pluginsCliRuntimeLogs.join("\n"), format)).toBe("loaded");
-  });
+      const rendered = stripVTControlCharacters(pluginsCliRuntimeLogs.join("\n"));
+      expect(readRenderedStatus(rendered, format)).toBe("unreachable");
+      expect(rendered).toContain("this CLI process");
+      expect(rendered).not.toMatch(/^Status: loaded$/m);
+    },
+  );
 
   it.each([false, true].flatMap((all) => [false, true].map((json) => ({ all, json }))))(
     "renders live metadata before retirement and prints after cleanup: all=$all, json=$json",
@@ -461,7 +508,13 @@ describe("plugins cli inspect", () => {
           if (json) {
             expect(pluginsCliRuntimeLogs).toHaveLength(1);
             expect(JSON.parse(pluginsCliRuntimeLogs[0] ?? "null")).toEqual(
-              selection === "single" ? inspect : reports,
+              runtime
+                ? selection === "single"
+                  ? withUnreachableGatewayScope(inspect)
+                  : reports.map((entry) => withUnreachableGatewayScope(entry))
+                : selection === "single"
+                  ? inspect
+                  : reports,
             );
           }
         }
@@ -515,8 +568,10 @@ describe("plugins cli inspect", () => {
         });
       }
       await runPluginsCommand(["plugins", "inspect", "--all", "--json", ...runtimeArgs]);
-      expect(JSON.parse(pluginsCliRuntimeLogs.at(-1) ?? "null")).toEqual(
-        reports.map(({ plugin }) => ({ plugin, install })),
+      const parsed = JSON.parse(pluginsCliRuntimeLogs.at(-1) ?? "null");
+      const expected = reports.map(({ plugin }) => ({ plugin, install }));
+      expect(parsed).toEqual(
+        runtime ? expected.map((entry) => withUnreachableGatewayScope(entry)) : expected,
       );
     },
   );

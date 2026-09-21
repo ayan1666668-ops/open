@@ -18,12 +18,18 @@ openclaw plugins inspect <id> --json
 openclaw plugins inspect --all
 ```
 
-Inspect shows identity, load status, source, manifest capabilities, policy flags, diagnostics, install metadata, bundle capabilities, and any detected MCP or LSP server support without importing plugin runtime by default. JSON output includes the plugin manifest contracts, such as `contracts.agentToolResultMiddleware` and `contracts.trustedToolPolicies`, so operators can audit trusted-surface declarations before enabling or restarting a plugin. Add `--runtime` to load the plugin module and include registered hooks, tools, commands, services, gateway methods, and HTTP routes. Runtime inspection reports missing plugin dependencies directly; installs and repairs stay in `openclaw plugins install`, `openclaw plugins update`, and `openclaw doctor --fix`.
+Inspect shows identity, load status, source, manifest capabilities, policy flags, diagnostics, install metadata, bundle capabilities, and any detected MCP or LSP server support without importing plugin runtime by default. JSON output includes the plugin manifest contracts, such as `contracts.agentToolResultMiddleware` and `contracts.trustedToolPolicies`, so operators can audit trusted-surface declarations before enabling or restarting a plugin. Add `--runtime` to load the plugin module in this CLI process and to ask the running Gateway which plugins it has actually loaded. Runtime inspection reports missing plugin dependencies directly; installs and repairs stay in `openclaw plugins install`, `openclaw plugins update`, and `openclaw doctor --fix`.
+
+`--runtime` JSON separates those two facts:
+
+- `reportedStatus` and `gatewayRuntime` describe the running Gateway. `reportedStatus` is `loaded` only when that Gateway reports the plugin as active. `unloaded`, `disabled`, `service-failed`, and `not-loaded` mean the Gateway has not loaded it. `unreachable` means the Gateway could not be queried; the command does not invent a loaded Gateway result.
+- `inspectionScope` is `cli-process`. `plugin.status`, `plugin.statusScope`, activation, hooks, tools, commands, services, and routes describe the module load in this CLI process. They are not a copy of the Gateway's registrations.
+
+Human output uses the same split. `Status` is the Gateway result. `CLI module` is this process.
 
 Default human inspection uses `enabled`, `disabled`, or `error` status labels,
 matching `plugins list`. It describes the metadata snapshot; it does not claim
-that a plugin module was imported. With `--runtime`, successful runtime inspection
-uses `loaded`. JSON retains the underlying registry status and separate `imported` field.
+that a plugin module was imported. JSON retains the underlying registry status and separate `imported` field. With `--runtime`, `plugin.status` remains that CLI-process registry status; use `reportedStatus` for the Gateway.
 
 For multi-entry packages, inspecting any child shows the shared package install metadata. `inspect --all --json` includes that same record for each child. If package ownership is missing or ambiguous, inspection omits install metadata rather than attributing an unrelated install record.
 

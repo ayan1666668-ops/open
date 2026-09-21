@@ -311,10 +311,13 @@ include warnings about unfinished cleanup. Cached modules, native libraries, or
 other process state may remain until the Gateway exits. Restart is a recovery
 option when those leftovers cause problems.
 
-`inspect --runtime` loads the plugin module and proves it registered runtime
-surfaces (tools, hooks, services, Gateway methods, HTTP routes, plugin-owned
-CLI commands). Plain `inspect` and `list` are cold manifest/config/registry
-checks only.
+`inspect --runtime` loads the plugin module in this CLI process and proves which
+runtime surfaces that process registered (tools, hooks, services, Gateway methods,
+HTTP routes, plugin-owned CLI commands). It also queries the running Gateway.
+`plugin.status` and those registrations are the CLI load. `reportedStatus` and
+`gatewayRuntime` are the Gateway. When the Gateway is unreachable, the command
+says so instead of reporting that the Gateway loaded the plugin. Plain `inspect`
+and `list` are cold manifest/config/registry checks only.
 
 ## Manage plugins from an agent conversation
 

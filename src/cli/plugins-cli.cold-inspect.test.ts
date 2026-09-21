@@ -99,10 +99,18 @@ it.each([false, true])(
   async (enabled) => {
     const fixture = createFixture(enabled);
     expect(await runPluginsCommand(["inspect", pluginId, "--runtime"])).toMatchObject({
+      inspectionScope: "cli-process",
+      reportedStatus: "unreachable",
+      gatewayRuntime: {
+        source: "gateway",
+        reachable: false,
+        state: "unreachable",
+      },
       plugin: {
         id: pluginId,
         enabled,
         status: enabled ? "error" : "disabled",
+        statusScope: "cli-process",
         imported: enabled,
         cliBackendIds: [],
       },
@@ -146,10 +154,18 @@ it("registered plugins inspect --runtime reports registrations rather than unreg
     } };`,
   );
   expect(await runPluginsCommand(["inspect", pluginId, "--runtime"])).toMatchObject({
+    inspectionScope: "cli-process",
+    reportedStatus: "unreachable",
+    gatewayRuntime: {
+      source: "gateway",
+      reachable: false,
+      state: "unreachable",
+    },
     plugin: {
       id: pluginId,
       enabled: true,
       status: "loaded",
+      statusScope: "cli-process",
       imported: true,
       cliBackendIds: ["runtime-cli"],
     },
