@@ -194,8 +194,9 @@ The legacy `OPENCLAW_UPGRADE_SURVIVOR_LIVE_OPENAI=1` form still selects
 An explicit model list takes precedence over that flag; the summary records
 `liveModels.source` and `overridesLiveOpenai`. The existing
 `OPENCLAW_UPGRADE_SURVIVOR_LIVE_OPENAI_TIMEOUT_SECONDS` budget (default 180 seconds)
-applies separately to each turn. Scenarios that prohibit live providers retain
-that restriction.
+applies separately to each turn. Live turns use the recipe's configured thinking
+default so each model can apply its supported reasoning levels. Scenarios that
+prohibit live providers retain that restriction.
 
 ```bash
 # Export the three provider keys before invoking the lane.

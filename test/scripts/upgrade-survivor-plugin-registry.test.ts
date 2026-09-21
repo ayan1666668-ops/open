@@ -8,7 +8,7 @@ import {
   readdirSync,
   writeFileSync,
 } from "node:fs";
-import { join, resolve } from "node:path";
+import { delimiter, join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../helpers/temp-dir.js";
 
@@ -419,6 +419,73 @@ on_exit 0
 });
 
 describe("standalone upgrade survivor live OpenAI probe", () => {
+  it("runs each selected model with its recipe thinking default and isolated live key", () => {
+    const root = tempDirs.make("upgrade-survivor-live-turns-");
+    const bin = join(root, "bin");
+    const calls = join(root, "calls.jsonl");
+    mkdirSync(bin);
+    writeExecutable(
+      join(bin, "openclaw"),
+      `#!/usr/bin/env node
+const assert = require("node:assert/strict"), fs = require("node:fs");
+const args = process.argv.slice(2);
+assert(!args.includes("--thinking"), "Honor the configured model's supported thinking default");
+assert(args.includes("--local"));
+const model = args[args.indexOf("--model") + 1];
+const provider = model.split("/")[0];
+for (const [id, key] of Object.entries({openai:"OPENAI_API_KEY",anthropic:"ANTHROPIC_API_KEY",google:"GEMINI_API_KEY"})) {
+  assert.equal(process.env[key] === "live-fixture-" + id, id === provider);
+}
+fs.appendFileSync(process.env.FIXTURE_CALLS, JSON.stringify({model, session:args[args.indexOf("--session-id") + 1]}) + "\\n");
+console.log(JSON.stringify({payloads:[{text:"OPENCLAW_UPGRADE_SURVIVOR_LIVE_OK"}]}));
+`,
+    );
+    const source = readFileSync("scripts/e2e/lib/upgrade-survivor/run.sh", "utf8");
+    const firstPhase = source.indexOf("\nphase storage-preflight");
+    expect(firstPhase).toBeGreaterThan(0);
+    const runner = join(root, "live-turns.sh");
+    writeFileSync(
+      runner,
+      `${source.slice(0, firstPhase)}
+trap - ERR EXIT HUP INT TERM
+stop_gateway() { :; }
+run_live_models
+`,
+    );
+    const models = ["openai/gpt-5.5", "anthropic/claude-opus-5", "google/gemini-3.1-pro-preview"];
+    const result = spawnSync("bash", [runner], {
+      encoding: "utf8",
+      env: {
+        PATH: [bin, process.env.PATH].join(delimiter),
+        HOME: root,
+        OPENAI_API_KEY: "live-fixture-openai",
+        ANTHROPIC_API_KEY: "live-fixture-anthropic",
+        GEMINI_API_KEY: "live-fixture-google",
+        OPENCLAW_UPGRADE_SURVIVOR_LIVE_MODELS: models.join(" "),
+        OPENCLAW_UPGRADE_SURVIVOR_BASELINE: "openclaw@2026.9.5",
+        OPENCLAW_UPGRADE_SURVIVOR_RUNTIME_ROOT: join(root, "runtime"),
+        OPENCLAW_UPGRADE_SURVIVOR_SUMMARY_JSON: join(root, "summary.json"),
+        FIXTURE_CALLS: calls,
+      },
+    });
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+    const turns: { model: string; session: string }[] = readFileSync(calls, "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(turns.map(({ model }) => model)).toEqual(models);
+    expect(new Set(turns.map(({ session }) => session)).size).toBe(3);
+    const summary = JSON.parse(readFileSync(join(root, "live-models.json"), "utf8"));
+    expect(
+      summary.models.map(({ model, ok }: { model: string; ok: boolean }) => ({ model, ok })),
+    ).toEqual(models.map((model) => ({ model, ok: true })));
+    for (const entry of summary.models) {
+      expect(entry.latencyMs).toBeGreaterThanOrEqual(0);
+      expect(existsSync(join(root, `${entry.artifact}.json`))).toBe(true);
+      expect(existsSync(join(root, `${entry.artifact}.err`))).toBe(true);
+    }
+  });
+
   it.each([
     { OPENCLAW_UPGRADE_SURVIVOR_LIVE_OPENAI: "1" },
     {

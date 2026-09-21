@@ -2017,7 +2017,6 @@ run_live_models() {
         --session-id "upgrade-survivor-$artifact" \
         --model "$model" \
         --message "Reply with exactly $marker and no other text." \
-        --thinking low \
         --timeout "$timeout_seconds" \
         --json
     ) >"$ARTIFACT_ROOT/$artifact.json" 2>"$ARTIFACT_ROOT/$artifact.err" || turn_status=$?

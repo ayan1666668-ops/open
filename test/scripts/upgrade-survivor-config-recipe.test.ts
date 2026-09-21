@@ -24,6 +24,7 @@ import {
   resolveUpgradeSurvivorOpenClawCommand,
   runUpgradeSurvivorOpenClawStep,
 } from "../../scripts/e2e/lib/upgrade-survivor/config-recipe.mts";
+import { buildInlineProviderModels } from "../../src/agents/embedded-agent-runner/model.inline-provider.js";
 import { AgentsSchema } from "../../src/config/zod-schema.agents.js";
 import { ModelsConfigSchema } from "../../src/config/zod-schema.core.js";
 
@@ -323,7 +324,16 @@ esac
           "config",
           "set",
           "plugins.allow",
-          JSON.stringify(["discord", "memory", "telegram", "whatsapp", "codex"]),
+          JSON.stringify([
+            "anthropic",
+            "google",
+            "openai",
+            "discord",
+            "memory",
+            "telegram",
+            "whatsapp",
+            "codex",
+          ]),
           "--strict-json",
         ],
         id: "plugins-codex-allowlist",
@@ -385,14 +395,60 @@ esac
           api: "google-generative-ai",
           apiKey: { source: "env", provider: "default", id: "GEMINI_API_KEY" },
           baseUrl: "https://generativelanguage.googleapis.com/v1beta",
-          models: [],
+          models: [
+            {
+              id: "gemini-3.1-pro-preview",
+              name: "Gemini 3.1 Pro Preview",
+              reasoning: true,
+              input: ["text", "image"],
+              cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+              contextWindow: 1048576,
+              maxTokens: 65536,
+            },
+          ],
         },
       });
       expect(writes.find((entry) => entry.path === "agents")?.value).toMatchObject({
         defaults: { model: { primary: "openai/gpt-5.5" } },
       });
+      const googleStep = resolveUpgradeSurvivorConfigStepsForBaseline("base", version).find(
+        (step) => step.id === "models-google",
+      );
+      const google = JSON.parse(googleStep?.argv[3] ?? "{}");
+      expect(buildInlineProviderModels({ google })).toEqual([
+        expect.objectContaining({
+          provider: "google",
+          id: "gemini-3.1-pro-preview",
+          api: "google-generative-ai",
+          baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+          reasoning: true,
+          contextWindow: 1048576,
+          maxTokens: 65536,
+        }),
+      ]);
     },
   );
+
+  it.each([
+    "base",
+    "feishu-channel",
+    "configured-plugin-installs",
+    "sqlite-volume",
+    "acpx-openclaw-tools-bridge",
+    "codex-allowlist-survival",
+  ])("keeps all configured provider owners allowed in the %s recipe", (scenario) => {
+    for (const version of ["2026.3.22", "2026.8.1", "2026.9.5"]) {
+      let allow: string[] = [];
+      for (const step of resolveUpgradeSurvivorConfigStepsForBaseline(scenario, version)) {
+        if (step.argv[2] === "plugins") {
+          allow = JSON.parse(step.argv[3] ?? "{}").allow;
+        } else if (step.argv[2] === "plugins.allow") {
+          allow = JSON.parse(step.argv[3] ?? "[]");
+        }
+      }
+      expect(allow).toEqual(expect.arrayContaining(["anthropic", "google", "openai"]));
+    }
+  });
 
   it("keeps the watch direct-node recipe isolated from unrelated plugin fixtures", () => {
     const steps = resolveUpgradeSurvivorConfigStepsForBaseline("watchos-direct-node", "2026.6.34");
