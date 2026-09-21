@@ -1,6 +1,31 @@
 /** Test helpers for exercising generic daemon service orchestration. */
+import os from "node:os";
 import { vi } from "vitest";
 import type { GatewayService } from "./service.js";
+
+export function pathLikeToString(pathname: unknown): string {
+  if (typeof pathname === "string") {
+    return pathname;
+  }
+  if (pathname instanceof URL) {
+    return pathname.pathname;
+  }
+  if (pathname instanceof Uint8Array) {
+    return Buffer.from(pathname).toString("utf8");
+  }
+  return "";
+}
+
+// Keep OS-account fixtures out of the SDK-exposed spy barrel: node:os mock factories
+// import that barrel, so importing node:os there would deadlock test collection.
+/** Keep service policy real while giving isolated HOME scopes an OS account identity. */
+export function mockSystemAccountHome(): void {
+  const account = os.userInfo();
+  // Native OS home APIs read the parent environment in Node worker threads.
+  const homedir = () => process.env.HOME ?? account.homedir;
+  vi.spyOn(os, "homedir").mockImplementation(homedir);
+  vi.spyOn(os, "userInfo").mockImplementation(() => ({ ...account, homedir: homedir() }));
+}
 
 export type SystemdManagerSnapshotFixture = {
   programArguments: string[];

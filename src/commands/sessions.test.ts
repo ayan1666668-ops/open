@@ -1,5 +1,6 @@
 // Sessions command tests cover listing, details, filtering, and transcript display behavior.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { stripAnsi, visibleWidth } from "../../packages/terminal-core/src/ansi.js";
 import { ExpectedCliError } from "../cli/failure-output.js";
 import {
   assignSessionOwner,
@@ -20,7 +21,23 @@ import {
 
 mockSessionsConfig();
 
+import { sessionsCleanupCommand } from "./sessions-cleanup.js";
 import { sessionsCommand } from "./sessions.js";
+
+function singleSessionTableCells(logs: string[]): string[] {
+  const lines = stripAnsi(logs.join("\n"))
+    .split("\n")
+    .filter((line) => /^[│|]/u.test(line))
+    .map((line) =>
+      line
+        .split(/[│|]/u)
+        .slice(1, -1)
+        .map((cell) => cell.trim()),
+    );
+  const [header = [], ...rows] = lines;
+  expect(rows.length).toBeGreaterThan(0);
+  return header.map((_, index) => rows.map((row) => row[index]).join(""));
+}
 
 describe("sessionsCommand", () => {
   beforeEach(() => {
@@ -55,10 +72,66 @@ describe("sessionsCommand", () => {
 
     expect(logs.join("\n")).toContain("Tokens (ctx %");
 
-    const row = logs.find((line) => line.includes("agent:main:+15555550123")) ?? "";
-    expect(row).toBe(
-      "direct      agent:main:+15555550123    45m ago   test:opus      OpenAI Codex       2.0k/200k (1%)       visibility:shared id:abc123",
+    expect(singleSessionTableCells(logs)).toEqual([
+      "direct",
+      "agent:main:+15555550123",
+      "45m ago",
+      "test:opus",
+      "OpenAI Codex",
+      "2.0k/200k (1%)",
+      "visibility:shared id:abc123",
+    ]);
+  });
+
+  it.each([
+    { name: "listing", run: sessionsCommand, options: {} },
+    { name: "cleanup dry-run", run: sessionsCleanupCommand, options: { dryRun: true } },
+  ])("aligns $name columns for Unicode keys and full model names", async ({ run, options }) => {
+    const entries = [
+      { key: "agent:main:main", model: "gpt-5.6-luna" },
+      { key: "agent:main:東京", model: "gemini-3-flash-preview" },
+      { key: "agent:main:e\u0301", model: "gpt-5.6-luna" },
+      { key: "agent:main:👩‍💻", model: "claude-sonnet-4-6" },
+    ];
+    const store = await writeStore(
+      Object.fromEntries(
+        entries.map(({ key, model }, index) => [
+          key,
+          { sessionId: `row-${index}`, updatedAt: Date.now(), model, systemSent: true },
+        ]),
+      ),
     );
+    const columns = Object.getOwnPropertyDescriptor(process.stdout, "columns");
+    Object.defineProperty(process.stdout, "columns", { configurable: true, value: 240 });
+    try {
+      const { runtime, logs } = makeRuntime();
+      await run({ store, ...options }, runtime);
+      const lines = stripAnsi(logs.join("\n")).split("\n");
+      const header = lines.find((line) => line.includes("Key") && line.includes("Model")) ?? "";
+      expect(header).toContain("Flags");
+      for (const { key, model } of entries) {
+        const row = lines.find((line) => line.includes(key)) ?? "";
+        expect(row).toContain(key);
+        expect(row).toContain(model);
+        expect(row).toContain("system");
+        for (const [title, value] of [
+          ["Key", key],
+          ["Model", model],
+          ["Flags", "system"],
+        ] as const) {
+          expect(visibleWidth(row.slice(0, row.indexOf(value)))).toBe(
+            visibleWidth(header.slice(0, header.indexOf(title))),
+          );
+        }
+      }
+    } finally {
+      cleanupStore(store);
+      if (columns) {
+        Object.defineProperty(process.stdout, "columns", columns);
+      } else {
+        Reflect.deleteProperty(process.stdout, "columns");
+      }
+    }
   });
 
   it("shows recorded totals without a percentage when freshness provenance is missing", async () => {
@@ -82,6 +155,77 @@ describe("sessionsCommand", () => {
     const row = logs.find((line) => line.includes("agent:main:+15555550123")) ?? "";
     expect(row).toContain("2.0k/200k (?%)");
   });
+
+  it.each([
+    { totalTokens: 0, contextTokens: 200_000, fresh: true, version: 1, expected: "0/200k (0%)" },
+    { totalTokens: 1, contextTokens: 200_000, fresh: true, version: 1, expected: "1/200k (0%)" },
+    { totalTokens: 49, contextTokens: 200_000, fresh: true, version: 1, expected: "49/200k (0%)" },
+    { totalTokens: 420, contextTokens: 999, fresh: true, version: 1, expected: "420/999 (42%)" },
+    {
+      totalTokens: 999,
+      contextTokens: 1_000,
+      fresh: true,
+      version: 1,
+      expected: "999/1.0k (100%)",
+    },
+    {
+      totalTokens: 1_000_000,
+      contextTokens: 2_500_000,
+      fresh: true,
+      version: 1,
+      expected: "1.0m/2.5m (40%)",
+    },
+    { totalTokens: 49, contextTokens: 200_000, fresh: false, version: 1, expected: "49/200k (?%)" },
+    {
+      totalTokens: 49,
+      contextTokens: 200_000,
+      fresh: true,
+      version: undefined,
+      expected: "49/200k (?%)",
+    },
+    {
+      totalTokens: undefined,
+      contextTokens: 999,
+      fresh: undefined,
+      version: undefined,
+      expected: "unknown/999 (?%)",
+    },
+  ] as const)(
+    "preserves token values in text and JSON ($expected, fresh=$fresh, version=$version)",
+    async ({ totalTokens, contextTokens, fresh, version, expected }) => {
+      const store = await writeStore({
+        "agent:main:boundary": {
+          sessionId: "boundary-session",
+          updatedAt: Date.now() - 60_000,
+          totalTokens,
+          totalTokensFresh: fresh,
+          totalTokensVersion: version,
+          contextTokens,
+          modelSelectionLocked: true,
+          model: "test:opus",
+        },
+      });
+      try {
+        const { runtime, logs } = makeRuntime();
+        await sessionsCommand({ store }, runtime);
+        expect(singleSessionTableCells(logs)[5]).toBe(expected);
+
+        const json = makeRuntime();
+        await sessionsCommand({ store, json: true }, json.runtime);
+        const payload = JSON.parse(json.logs.join("\n"));
+        expect(payload.sessions).toEqual([
+          expect.objectContaining({
+            key: "agent:main:boundary",
+            totalTokens: totalTokens ?? null,
+            totalTokensFresh: fresh === true && version === 1,
+            contextTokens,
+          }),
+        ]);
+      } finally {
+        cleanupStore(store);
+      }
+    },
+  );
 
   it("renders the agent runtime in the tabular view", async () => {
     setMockSessionsConfig(() => ({
@@ -113,10 +257,15 @@ describe("sessionsCommand", () => {
 
     expect(logs.join("\n")).toContain("Runtime");
 
-    const row = logs.find((line) => line.includes("agent:main:main")) ?? "";
-    expect(row).toBe(
-      "direct      agent:main:main            1m ago    claude-opus-4-7 Claude CLI         unknown/200k (?%)    visibility:shared id:main-session",
-    );
+    expect(singleSessionTableCells(logs)).toEqual([
+      "direct",
+      "agent:main:main",
+      "1m ago",
+      "claude-opus-4-7",
+      "Claude CLI",
+      "unknown/200k (?%)",
+      "visibility:shared id:main-session",
+    ]);
   });
 
   it("renders configured CLI runtime when the session stores a canonical provider", async () => {
@@ -147,26 +296,31 @@ describe("sessionsCommand", () => {
 
     cleanupStore(store);
 
-    const row = logs.find((line) => line.includes("agent:main:main")) ?? "";
-    expect(row).toBe(
-      "direct      agent:main:main            1m ago    claude-opus-4-7 Claude CLI         unknown/200k (?%)    visibility:shared id:main-session",
-    );
+    expect(singleSessionTableCells(logs)).toEqual([
+      "direct",
+      "agent:main:main",
+      "1m ago",
+      "claude-opus-4-7",
+      "Claude CLI",
+      "unknown/200k (?%)",
+      "visibility:shared id:main-session",
+    ]);
   });
 
   it("renders recorded runtime with current context after a same-model runtime change", async () => {
     setMockSessionsConfig(() => ({
       agents: {
         defaults: {
-          model: { primary: "openai/gpt-5.6-sol" },
+          model: { primary: "openai/gpt-5.6-luna" },
           models: {
-            "openai/gpt-5.6-sol": { agentRuntime: { id: "codex" } },
+            "openai/gpt-5.6-luna": { agentRuntime: { id: "codex" } },
           },
         },
       },
       models: {
         providers: {
           openai: {
-            models: [{ id: "gpt-5.6-sol", contextTokens: 1_000_000, contextWindow: 1_050_000 }],
+            models: [{ id: "gpt-5.6-luna", contextTokens: 1_000_000, contextWindow: 1_050_000 }],
           },
         },
       },
@@ -177,7 +331,7 @@ describe("sessionsCommand", () => {
           sessionId: "stale-openclaw-window",
           updatedAt: Date.now() - 60_000,
           modelProvider: "openai",
-          model: "gpt-5.6-sol",
+          model: "gpt-5.6-luna",
           agentHarnessId: "openclaw",
           contextTokens: 272_000,
           contextTokensSource: "runtime",
@@ -195,7 +349,7 @@ describe("sessionsCommand", () => {
 
     const row = logs.find((line) => line.includes("agent:main:main")) ?? "";
     expect(row).toContain("OpenClaw Default");
-    expect(row).toContain("0.0k/1000k (0%)");
+    expect(row).toContain("11/1.0m (0%)");
   });
 
   it("shows placeholder rows when tokens are missing", async () => {
@@ -338,9 +492,9 @@ describe("sessionsCommand", () => {
 
     const { runtime, logs } = makeRuntime();
     await sessionsCommand({ store }, runtime);
-    const row = logs.find((line) => line.includes(sessionKey)) ?? "";
-    expect(row).toContain(
-      "visibility:suggest owner:profile-owner participants:profile:profile-ada,profile:profile-ben,profile:profile-cam,profile:profile-dee,+1",
+    // Flags may wrap between words or within a long participant identifier.
+    expect(singleSessionTableCells(logs).at(-1)?.replace(/\s/gu, "")).toBe(
+      "visibility:suggestowner:profile-ownerparticipants:profile:profile-ada,profile:profile-ben,profile:profile-cam,profile:profile-dee,+1id:shared-session",
     );
 
     const payload = await runSessionsJson<{

@@ -15,4 +15,4 @@ export {
   createRealtimeTranscriptionWebSocketSession,
   type RealtimeTranscriptionWebSocketSessionOptions,
   type RealtimeTranscriptionWebSocketTransport,
-} from "../realtime-transcription/websocket-session.js";
+} from "./realtime-transcription-session.js";

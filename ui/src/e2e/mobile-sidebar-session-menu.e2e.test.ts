@@ -1,10 +1,11 @@
 import { expect, it } from "vitest";
+import { captureControlUiE2eFailureDiagnostics } from "../test-helpers/control-ui-e2e.ts";
+import { createControlUiSessionRow as sessionRow } from "../test-helpers/control-ui-session-fixtures.ts";
 import {
   captureUiProof,
   controlUiSessionUrl,
   createSessionManagementE2eSuite,
   installMockGateway,
-  sessionRow,
   sessionsListResponse,
 } from "./session-management.test-support.ts";
 
@@ -48,11 +49,11 @@ suite.define(() => {
 
       const row = page.locator(`[data-session-key="${sessionKey}"]`);
       await row.waitFor({ state: "visible" });
-      await row.getByRole("button", { name: "Open session menu" }).click();
+      await row.locator("[data-sidebar-session-menu]").tap();
 
       const menu = page.getByRole("menu", { name: "Actions for Mobile sidebar menu" });
       await menu.waitFor({ state: "visible" });
-      await captureUiProof(page, "mobile-sidebar-session-menu-after-root.png");
+      await captureUiProof(suite, page, "mobile-sidebar-session-menu-after-root.png");
 
       expect(await page.locator("openclaw-session-menu [slot='submenu']").count()).toBe(0);
       await page.getByRole("menuitem", { name: "Move to group" }).click();
@@ -84,7 +85,13 @@ suite.define(() => {
       }
       expect(backBox.y).toBeGreaterThanOrEqual(menuBox.y);
       expect(backBox.y + backBox.height).toBeLessThanOrEqual(menuBox.y + menuBox.height);
-      await captureUiProof(page, "mobile-sidebar-session-menu-after-group-drilldown.png");
+      await captureUiProof(suite, page, "mobile-sidebar-session-menu-after-group-drilldown.png");
+    } catch (error) {
+      await captureControlUiE2eFailureDiagnostics(page, {
+        error: error instanceof Error ? error : new Error(String(error)),
+        label: "mobile-sidebar-session-menu",
+      });
+      throw error;
     } finally {
       await context.close();
     }

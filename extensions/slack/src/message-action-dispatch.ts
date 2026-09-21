@@ -1,4 +1,3 @@
-// Slack plugin module implements message action dispatch behavior.
 import { normalizeAccountId } from "openclaw/plugin-sdk/account-resolution";
 import type { AgentToolResult } from "openclaw/plugin-sdk/agent-core";
 import { readBooleanParam } from "openclaw/plugin-sdk/boolean-param";
@@ -96,6 +95,19 @@ export async function handleSlackMessageAction(params: {
       readStringParam(actionParams, "to", { required: true });
     return normalizeChannelId ? normalizeChannelId(channelId) : channelId;
   };
+
+  if (action === "conversation-open") {
+    return await invoke(
+      {
+        action: "openConversation",
+        userIds: actionParams.userIds,
+        teamId: readStringParam(actionParams, "teamId"),
+        accountId,
+      },
+      cfg,
+      ctx.toolContext,
+    );
+  }
 
   if (action === "send") {
     const to = readStringParam(actionParams, "to", { required: true });

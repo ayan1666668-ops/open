@@ -72,6 +72,7 @@ function resolveExactIdentifierSectionInstruction(
 export function buildCompactionStructureInstructions(
   customInstructions?: string,
   summarizationInstructions?: CompactionSummarizationInstructions,
+  latestUnresolvedUserRequest?: string,
 ): string {
   const identifierSectionInstruction =
     resolveExactIdentifierSectionInstruction(summarizationInstructions);
@@ -83,10 +84,20 @@ export function buildCompactionStructureInstructions(
     "Record completed requests outside ## Pending user asks; list only unresolved user requests there.",
     "When prior compaction summaries are present, re-distill them with new messages and remove stale duplicate detail.",
   ].join("\n");
+  const latestRequestBlock = latestUnresolvedUserRequest
+    ? wrapUntrustedInstructionBlock("Latest unresolved user request", latestUnresolvedUserRequest)
+    : "";
+  const latestRequestInstruction = latestRequestBlock
+    ? [
+        "Make the exact request below the first item in ## Pending user asks.",
+        "Its run owner will resume it after compaction, so summary prose cannot mark it complete.",
+        latestRequestBlock,
+      ].join("\n")
+    : "";
   const custom = customInstructions?.trim();
   const customBlock =
     custom && wrapUntrustedInstructionBlock("Additional context from /compact", custom);
-  return customBlock ? `${sectionsTemplate}\n\n${customBlock}` : sectionsTemplate;
+  return [sectionsTemplate, latestRequestInstruction, customBlock].filter(Boolean).join("\n\n");
 }
 
 function normalizedSummaryLines(summary: string): string[] {
@@ -145,6 +156,18 @@ function extractPendingAskSection(summary: string): string {
   return section?.split(/^##[ \t]+\S.*$/mu, 1)[0]?.trim() ?? "";
 }
 
+function formatLatestUserRequestContext(request: string): string {
+  return `${LATEST_USER_REQUEST_CONTEXT_LABEL} ${JSON.stringify(request)}`;
+}
+
+function extractLeadingPendingAsk(summary: string): string {
+  return normalizedSummaryLines(extractPendingAskSection(summary))[0] ?? "";
+}
+
+function isEmptyPendingAsk(value: string): boolean {
+  return /^(?:none|none captured|no pending asks)[.!]?$/iu.test(value);
+}
+
 /**
  * Plan truncation that keeps the audit facts and lets everything else shrink.
  * Only the headings, the bounded latest-ask context, and the audited source
@@ -161,14 +184,18 @@ export function createSummaryQualityRetentionPlan(
     identifiers: string[];
     latestAsk: string | null;
     latestAskInRetainedTurn?: boolean;
+    latestUnresolvedUserRequest?: string;
     requiredAskContext?: string;
     identifierPolicy?: CompactionSummarizationInstructions["identifierPolicy"];
   },
 ): SummaryQualityRetentionPlan | null {
   const requiredAskContext = params.requiredAskContext?.trim() ?? "";
+  const latestUnresolvedUserRequest = params.latestUnresolvedUserRequest?.trim() ?? "";
   const bodyHasLatestAsk = hasAskOverlap(params.auditSummary ?? summary, params.latestAsk);
   const requiredContextBlock =
-    (bodyHasLatestAsk || params.latestAskInRetainedTurn) && requiredAskContext
+    !latestUnresolvedUserRequest &&
+    (bodyHasLatestAsk || params.latestAskInRetainedTurn) &&
+    requiredAskContext
       ? `## Latest user request context\n${JSON.stringify(requiredAskContext)}`
       : "";
   const parsedSummary =
@@ -183,13 +210,12 @@ export function createSummaryQualityRetentionPlan(
   const auditedIdentifiers = enforceIdentifiers ? params.identifiers : [];
   const marker = truncatedMarker.trim();
   const pendingAsk = contents[PENDING_ASK_SECTION_INDEX] ?? "";
-  // A split ask remains paired with its retained turn suffix, which owns continuation state.
-  // Other asks keep the model's classification and fail safe to Pending when omitted.
-  const protectedAskContext =
-    !params.latestAskInRetainedTurn &&
-    requiredAskContext &&
-    (!bodyHasLatestAsk ||
-      (hasAskOverlap(pendingAsk, params.latestAsk) && !pendingAsk.includes(requiredAskContext)))
+  const protectedAskContext = latestUnresolvedUserRequest
+    ? formatLatestUserRequestContext(latestUnresolvedUserRequest)
+    : !params.latestAskInRetainedTurn &&
+        requiredAskContext &&
+        (!bodyHasLatestAsk ||
+          (hasAskOverlap(pendingAsk, params.latestAsk) && !pendingAsk.includes(requiredAskContext)))
       ? `${LATEST_USER_REQUEST_CONTEXT_LABEL}\n${JSON.stringify(requiredAskContext)}`
       : "";
   const protectedTails = REQUIRED_SUMMARY_SECTIONS.map((_, index) =>
@@ -202,11 +228,13 @@ export function createSummaryQualityRetentionPlan(
   const bodyHasIdentifiers = auditedIdentifiers.every((identifier) =>
     summaryIncludesIdentifier(summary, identifier),
   );
-  const bodyHasRequiredAskContext = !requiredAskContext
-    ? true
-    : requiredContextBlock
-      ? summary.startsWith(requiredContextBlock)
-      : contents[PENDING_ASK_SECTION_INDEX]?.includes(protectedAskContext);
+  const bodyHasRequiredAskContext = latestUnresolvedUserRequest
+    ? extractLeadingPendingAsk(parsedSummary) === protectedAskContext
+    : !requiredAskContext
+      ? true
+      : requiredContextBlock
+        ? summary.startsWith(requiredContextBlock)
+        : contents[PENDING_ASK_SECTION_INDEX]?.includes(protectedAskContext);
   const renderSections = (sectionContents: string[]) =>
     REQUIRED_SUMMARY_SECTIONS.map((heading, index) => {
       const content = sectionContents[index];
@@ -217,8 +245,14 @@ export function createSummaryQualityRetentionPlan(
     if (!tail) {
       return optional;
     }
-    if (index === PENDING_ASK_SECTION_INDEX && optional.includes(tail)) {
-      return optional;
+    if (index === PENDING_ASK_SECTION_INDEX) {
+      const leading = normalizedSummaryLines(optional)[0] ?? "";
+      if (leading === tail) {
+        return optional;
+      }
+      if (latestUnresolvedUserRequest) {
+        return [tail, isEmptyPendingAsk(leading) ? "" : optional].filter(Boolean).join("\n");
+      }
     }
     if (index === EXACT_IDENTIFIERS_SECTION_INDEX) {
       const missing = auditedIdentifiers.filter(
@@ -227,9 +261,7 @@ export function createSummaryQualityRetentionPlan(
       return [optional, ...missing].filter(Boolean).join("\n");
     }
     const retainedOptional =
-      index === PENDING_ASK_SECTION_INDEX &&
-      protectedAskContext &&
-      /^(?:none|none captured|no pending asks)[.!]?$/iu.test(optional)
+      index === PENDING_ASK_SECTION_INDEX && protectedAskContext && isEmptyPendingAsk(optional)
         ? ""
         : optional;
     return [retainedOptional, tail].filter(Boolean).join("\n");
@@ -259,7 +291,7 @@ export function createSummaryQualityRetentionPlan(
   return {
     minimumChars: minimumSummary.length,
     needsRebuild: (maxChars) =>
-      !bodyHasLatestAsk ||
+      (!latestUnresolvedUserRequest && !bodyHasLatestAsk) ||
       !bodyHasRequiredAskContext ||
       !bodyHasIdentifiers ||
       !protectedWithinCap(maxChars),
@@ -388,19 +420,20 @@ export function extractOpaqueIdentifiers(text: string): string[] {
   ).slice(0, MAX_EXTRACTED_IDENTIFIERS);
 }
 
-function tokenizeAskOverlapText(text: string): string[] {
+function tokenizeAskOverlapText(text: string, includeFallbackTokens = false): string[] {
   const normalized = localeLowercasePreservingWhitespace(text.normalize("NFKC")).trim();
   if (!normalized) {
     return [];
   }
   const keywords = extractKeywords(normalized);
-  if (keywords.length > 0) {
+  if (keywords.length > 0 && !includeFallbackTokens) {
     return keywords;
   }
-  return normalized
+  const tokens = normalized
     .split(/[^\p{L}\p{N}]+/u)
     .map((token) => token.trim())
     .filter((token) => token.length > 0);
+  return uniqueStrings([...keywords, ...tokens]);
 }
 
 function resolveAskOverlapRequirement(latestAsk: string | null): {
@@ -430,10 +463,11 @@ function hasAskOverlap(summary: string, latestAsk: string | null): boolean {
   if (!requirement) {
     return true;
   }
-  const summaryTokens = new Set(tokenizeAskOverlapText(summary));
+  // Summary headings contribute keywords even when the ask has only stop words.
+  // Retain summary fallback tokens without broadening keyword-bearing requests.
+  const summaryTokens = new Set(tokenizeAskOverlapText(summary, true));
   const overlapCount = requirement.tokens.filter((token) => summaryTokens.has(token)).length;
-  const { requiredMatches } = requirement;
-  return overlapCount >= requiredMatches;
+  return overlapCount >= requirement.requiredMatches;
 }
 
 /** Audits a candidate summary for required sections, pending asks, and identifier preservation. */
@@ -443,6 +477,7 @@ export function auditSummaryQuality(params: {
   sourceSummaries?: string[];
   identifiers: string[];
   latestAsk: string | null;
+  latestUnresolvedUserRequest?: string;
   retainedTurnSummary?: string;
   identifierPolicy?: CompactionSummarizationInstructions["identifierPolicy"];
 }): { ok: boolean; reasons: string[] } {
@@ -469,13 +504,25 @@ export function auditSummaryQuality(params: {
       reasons.push(`missing_identifiers:${missingIdentifiers.slice(0, 3).join(",")}`);
     }
   }
-  if (!hasAskOverlap(params.summary, params.latestAsk)) {
+  const leadingPendingAsk = extractLeadingPendingAsk(params.structuralSummary);
+  if (
+    params.latestUnresolvedUserRequest &&
+    leadingPendingAsk !== formatLatestUserRequestContext(params.latestUnresolvedUserRequest)
+  ) {
+    reasons.push("latest_user_ask_not_foregrounded");
+  } else if (
+    !params.latestUnresolvedUserRequest &&
+    !hasAskOverlap(params.summary, params.latestAsk)
+  ) {
     reasons.push("latest_user_ask_not_reflected");
   }
+  const retainedPendingAsk = extractLeadingPendingAsk(params.retainedTurnSummary ?? "");
   if (
-    params.retainedTurnSummary !== undefined &&
-    resolveAskOverlapRequirement(params.latestAsk) &&
-    hasAskOverlap(extractPendingAskSection(params.retainedTurnSummary), params.latestAsk)
+    params.latestUnresolvedUserRequest
+      ? retainedPendingAsk && !isEmptyPendingAsk(retainedPendingAsk)
+      : params.retainedTurnSummary !== undefined &&
+        resolveAskOverlapRequirement(params.latestAsk) &&
+        hasAskOverlap(extractPendingAskSection(params.retainedTurnSummary), params.latestAsk)
   ) {
     reasons.push("retained_turn_ask_marked_pending");
   }

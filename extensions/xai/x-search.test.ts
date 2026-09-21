@@ -35,7 +35,7 @@ function installXSearchFetch(payload?: Record<string, unknown>) {
       ),
     ),
   );
-  global.fetch = withFetchPreconnect(mockFetch);
+  vi.stubGlobal("fetch", withFetchPreconnect(mockFetch));
   return mockFetch;
 }
 
@@ -243,7 +243,7 @@ describe("xai x_search tool", () => {
           queueMicrotask(() => controller.abort(reason));
         }),
     );
-    global.fetch = withFetchPreconnect(mockFetch);
+    vi.stubGlobal("fetch", withFetchPreconnect(mockFetch));
     const tool = createConfiguredXSearchTool();
 
     await expect(
@@ -282,7 +282,7 @@ describe("xai x_search tool", () => {
         return jsonResponse({ output_text: "Cancelled X answer", citations: [] });
       })
       .mockResolvedValueOnce(jsonResponse({ output_text: "Recovered X answer", citations: [] }));
-    global.fetch = withFetchPreconnect(mockFetch);
+    vi.stubGlobal("fetch", withFetchPreconnect(mockFetch));
     const tool = createConfiguredXSearchTool();
     const query = "unique standalone x_search late-cancel cache regression";
 
@@ -364,10 +364,10 @@ describe("xai x_search tool", () => {
     expect(mockFetch).toHaveBeenCalled();
     expect(firstFetchUrl(mockFetch)).toContain("api.x.ai/v1/responses");
     const body = parseFirstRequestBody(mockFetch);
-    expect(body.model).toBe("grok-4.3");
+    expect(body.model).toBe("grok-4.6");
     expect(body.input).toEqual([{ role: "user", content: "dinner recipes" }]);
     expect(body.store).toBe(false);
-    expect(body.reasoning).toEqual({ effort: "none" });
+    expect(body.reasoning).toEqual({ effort: "low" });
     expect(body.max_turns).toBe(2);
     expect(body.tools).toEqual([
       {
@@ -489,7 +489,7 @@ describe("xai x_search tool", () => {
         }),
       ),
     );
-    global.fetch = withFetchPreconnect(mockFetch);
+    vi.stubGlobal("fetch", withFetchPreconnect(mockFetch));
     const tool = createConfiguredXSearchTool({
       apiKey: "xai-plugin-key",
       xSearch: { enabled: true },
@@ -502,11 +502,11 @@ describe("xai x_search tool", () => {
     ).rejects.toThrow("xAI X search failed: malformed JSON response");
   });
 
-  it("rejects x_search success JSON without answer text", async () => {
+  it("reports missing x_search answers without blaming JSON decoding", async () => {
     const mockFetch = vi.fn((_input?: unknown, _init?: unknown) =>
-      Promise.resolve(jsonResponse({ output: [] })),
+      Promise.resolve(jsonResponse({ status: "incomplete", output: [] })),
     );
-    global.fetch = withFetchPreconnect(mockFetch);
+    vi.stubGlobal("fetch", withFetchPreconnect(mockFetch));
     const tool = createConfiguredXSearchTool({
       apiKey: "xai-plugin-key",
       xSearch: { enabled: true },
@@ -514,9 +514,9 @@ describe("xai x_search tool", () => {
 
     await expect(
       tool?.execute?.("x-search:missing-text", {
-        query: "malformed x_search missing text probe",
+        query: "x_search missing answer probe",
       }),
-    ).rejects.toThrow("xAI X search failed: malformed JSON response");
+    ).rejects.toThrow("xAI X search failed: no answer text returned; try a simpler request");
   });
 
   it("prefers the active runtime config for shared xAI keys", async () => {

@@ -41,7 +41,7 @@ function installCodeExecutionFetch(payload?: Record<string, unknown>) {
       ),
     ),
   );
-  global.fetch = withFetchPreconnect(mockFetch);
+  vi.stubGlobal("fetch", withFetchPreconnect(mockFetch));
   return mockFetch;
 }
 
@@ -151,7 +151,7 @@ describe("xai code_execution tool", () => {
     expect(mockFetch).toHaveBeenCalled();
     expect(firstFetchUrl(mockFetch)).toContain("api.x.ai/v1/responses");
     const body = parseFirstRequestBody(mockFetch);
-    expect(body.model).toBe("grok-4.3");
+    expect(body.model).toBe("grok-4.6");
     expect(body.store).toBe(false);
     expect(body.reasoning).toEqual({ effort: "low" });
     expect(body.max_turns).toBe(2);
@@ -253,7 +253,7 @@ describe("xai code_execution tool", () => {
     const mockFetch = vi.fn((_input?: unknown, _init?: unknown) =>
       Promise.resolve(malformedJsonResponse()),
     );
-    global.fetch = withFetchPreconnect(mockFetch);
+    vi.stubGlobal("fetch", withFetchPreconnect(mockFetch));
     const tool = createCodeExecutionTool({
       config: {
         plugins: {
@@ -277,11 +277,13 @@ describe("xai code_execution tool", () => {
     ).rejects.toThrow("xAI code execution failed: malformed JSON response");
   });
 
-  it("rejects code_execution success JSON without answer text", async () => {
+  it("reports missing code_execution answers without blaming JSON decoding", async () => {
     const mockFetch = vi.fn((_input?: unknown, _init?: unknown) =>
-      Promise.resolve(jsonResponse({ output: [{ type: "code_interpreter_call" }] })),
+      Promise.resolve(
+        jsonResponse({ status: "incomplete", output: [{ type: "code_interpreter_call" }] }),
+      ),
     );
-    global.fetch = withFetchPreconnect(mockFetch);
+    vi.stubGlobal("fetch", withFetchPreconnect(mockFetch));
     const tool = createCodeExecutionTool({
       config: {
         plugins: {
@@ -302,6 +304,6 @@ describe("xai code_execution tool", () => {
       tool?.execute?.("code-execution:missing-text", {
         task: "Calculate the mean of [40, 42, 44]",
       }),
-    ).rejects.toThrow("xAI code execution failed: malformed JSON response");
+    ).rejects.toThrow("xAI code execution failed: no answer text returned; try a simpler request");
   });
 });

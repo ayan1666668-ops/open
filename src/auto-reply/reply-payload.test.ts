@@ -1,10 +1,12 @@
 // Reply payload tests cover internal reply metadata contracts.
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   isCommandReplyForDelivery,
+  isReplyPayloadSessionWriterDeliveryAuthorized,
   isReplyPayloadTerminalContent,
   markCommandReplyForDelivery,
   readPairingQrReplyChannelData,
+  setReplyPayloadMetadata,
 } from "./reply-payload.js";
 
 describe("command reply delivery", () => {
@@ -57,6 +59,32 @@ describe("reply payload terminal content", () => {
     ["commentary", { text: "working", isCommentary: true }, false],
     ["status", { text: "compacting", isStatusNotice: true }, false],
     [
+      "fresh text with TTS audio",
+      {
+        text: "answer",
+        mediaUrl: "file:///tmp/answer.mp3",
+        ttsSupplement: { spokenText: "answer" },
+      },
+      true,
+    ],
+    [
+      "already-delivered text with TTS audio",
+      {
+        text: "answer",
+        mediaUrl: "file:///tmp/answer.mp3",
+        ttsSupplement: { spokenText: "answer", visibleTextAlreadyDelivered: true },
+      },
+      false,
+    ],
+    [
+      "audio-only TTS supplement",
+      {
+        mediaUrl: "file:///tmp/answer.mp3",
+        ttsSupplement: { spokenText: "answer" },
+      },
+      false,
+    ],
+    [
       "TTS supplement",
       {
         mediaUrl: "file:///tmp/answer.mp3",
@@ -67,4 +95,92 @@ describe("reply payload terminal content", () => {
   ] as const)("classifies %s payloads", (_name, payload, expected) => {
     expect(isReplyPayloadTerminalContent(payload)).toBe(expected);
   });
+});
+
+describe("session writer delivery authority", () => {
+  const currentEntry = {
+    activeWriterRunId: "run-active",
+    lifecycleRevision: "revision-active",
+    sessionId: "session-active",
+  };
+
+  it("leaves payloads without a writer claim authorized", () => {
+    expect(isReplyPayloadSessionWriterDeliveryAuthorized({ text: "reply" }, undefined)).toBe(true);
+  });
+
+  it("accepts only the session row that still owns the payload", () => {
+    const payload = setReplyPayloadMetadata(
+      { text: "reply" },
+      {
+        sessionWriterDeliveryAuthority: {
+          expectedLifecycleRevision: "revision-active",
+          expectedSessionId: "session-active",
+          expectedWriterRunId: "run-active",
+          sessionKey: "agent:main:active",
+        },
+      },
+    );
+
+    expect(isReplyPayloadSessionWriterDeliveryAuthorized(payload, currentEntry)).toBe(true);
+    expect(
+      isReplyPayloadSessionWriterDeliveryAuthorized(payload, {
+        ...currentEntry,
+        activeWriterRunId: "run-replacement",
+      }),
+    ).toBe(false);
+    expect(
+      isReplyPayloadSessionWriterDeliveryAuthorized(payload, {
+        ...currentEntry,
+        lifecycleRevision: "revision-replacement",
+      }),
+    ).toBe(false);
+    expect(
+      isReplyPayloadSessionWriterDeliveryAuthorized(payload, {
+        ...currentEntry,
+        sessionId: "session-replacement",
+      }),
+    ).toBe(false);
+    expect(isReplyPayloadSessionWriterDeliveryAuthorized(payload, undefined)).toBe(false);
+  });
+});
+
+it("retains private delivery authority across independently loaded reply module graphs", async () => {
+  let open = true;
+  const capability = {
+    adopt: async () => open,
+    close: () => {
+      open = false;
+    },
+  };
+  const payload = setReplyPayloadMetadata(
+    { text: "Synthetic waiting status" },
+    {
+      progressContinuation: capability,
+      sessionWriterDeliveryAuthority: {
+        expectedSessionId: "original-session",
+        expectedWriterRunId: "original-run",
+        sessionKey: "agent:main:original",
+      },
+    },
+  );
+  vi.resetModules();
+  const reloaded = await import("./reply-payload.js");
+  const adopt = reloaded.getReplyPayloadMetadata(payload)?.progressContinuation?.adopt;
+  const receipt = {
+    channel: "synthetic",
+    to: "original-recipient",
+    messageId: "existing-card",
+    text: payload.text,
+    snapshot: { lines: [] },
+  };
+  await expect(adopt?.(receipt)).resolves.toBe(true);
+  capability.close();
+  await expect(adopt?.(receipt)).resolves.toBe(false);
+  expect(
+    reloaded.isReplyPayloadSessionWriterDeliveryAuthorized(payload, {
+      sessionId: "replacement-session",
+      activeWriterRunId: "replacement-run",
+    }),
+  ).toBe(false);
+  expect(JSON.stringify(payload)).toBe(JSON.stringify({ text: "Synthetic waiting status" }));
 });

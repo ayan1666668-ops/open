@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import type { IncomingMessage } from "node:http";
 import path from "node:path";
 import { Readable } from "node:stream";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../../test/helpers/promise.js";
 import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js";
@@ -140,11 +141,75 @@ describe("node workspace transfer service", () => {
       const plain = await service.prepareSync({ ...request, generation: 1 });
       expect(plain.snapshot.manifest.baseCommit).toBeNull();
 
+      if (process.platform !== "win32") {
+        const nodeRoot = path.join(root, "node-workspaces");
+        const input = {
+          gatewayNamespace: "gateway-umask",
+          environmentId: request.environmentId,
+          sessionId: request.sessionId,
+          generation: 1,
+          argv: ["node", "-e", ""],
+        };
+        const server = await startNodeWorkspaceTransferTestServer(service);
+        try {
+          const created = await runCommandWithTimeout(
+            [
+              "/bin/sh",
+              "-c",
+              'umask 0002; exec "$@"',
+              "workspace-transfer-umask",
+              process.execPath,
+              "--import",
+              fileURLToPath(new URL("../../../scripts/tsx.mjs", import.meta.url)),
+              "--input-type=module",
+              "--eval",
+              `
+                import assert from "node:assert/strict";
+                import fs from "node:fs/promises";
+                import path from "node:path";
+                const { NodeWorkerWorkspaceRuntime } = await import(process.argv[1]);
+                const { root, input } = JSON.parse(process.argv[2]);
+                const runtime = new NodeWorkerWorkspaceRuntime({ root });
+                const initial = await runtime.exec(input);
+                for (let dir = initial.workspaceDir; dir !== path.dirname(root); dir = path.dirname(dir)) {
+                  assert.equal((await fs.stat(dir)).mode & 0o777, 0o700, dir);
+                  await fs.chmod(dir, 0o775);
+                }
+              `,
+              new URL("../../node-host/node-worker-workspace.ts", import.meta.url).href,
+              JSON.stringify({ root: nodeRoot, input }),
+            ],
+            { timeoutMs: 30_000 },
+          );
+          expect(created).toMatchObject({ code: 0, stderr: "" });
+          const reopened = new NodeWorkerWorkspaceRuntime({ root: nodeRoot });
+          const downloaded = await reopened.exec(
+            {
+              ...input,
+              transfer: {
+                direction: "download",
+                token: plain.token,
+                manifestRef: plain.snapshot.manifestRef,
+              },
+            },
+            undefined,
+            { url: server.gatewayUrl },
+          );
+          expect(await fs.readFile(path.join(downloaded.workspaceDir, "input.txt"), "utf8")).toBe(
+            "gateway input\n",
+          );
+          for (let dir = downloaded.workspaceDir; dir !== root; dir = path.dirname(dir)) {
+            expect((await fs.stat(dir)).mode & 0o777, dir).toBe(0o700);
+          }
+        } finally {
+          await server.close();
+        }
+      }
+
       await git("init", "--quiet", "--object-format=sha1");
 
       const staged = await service.prepareSync({ ...request, generation: 2 });
       expect(staged.snapshot.manifest.baseCommit).toBeNull();
-      expect(staged.snapshot.packPath).toBeUndefined();
       expect(staged.snapshot.manifestRef).toBe(plain.snapshot.manifestRef);
       expect(staged.snapshot.manifest.entries).toContainEqual(
         expect.objectContaining({ path: "input.txt", type: "file" }),
@@ -163,7 +228,6 @@ describe("node workspace transfer service", () => {
       );
       const committed = await service.prepareSync({ ...request, generation: 3 });
       expect(committed.snapshot.manifest.baseCommit).toBe(await git("rev-parse", "HEAD"));
-      expect(committed.snapshot.packPath).toBeDefined();
 
       await fs.writeFile(path.join(localPath, ".git", "HEAD"), "invalid HEAD\n");
       await expect(service.prepareSync({ ...request, generation: 4 })).rejects.toThrow(
@@ -174,7 +238,7 @@ describe("node workspace transfer service", () => {
     }
   });
 
-  it("streams a plain workspace to the node and accepts only its changed result blobs", async () => {
+  it("streams workspace and changed results beyond worker credential expiry", async () => {
     const root = tempDirs.make("node-workspace-transfer-service-");
     const localPath = path.join(root, "gateway-workspace");
     await fs.mkdir(localPath);
@@ -191,7 +255,7 @@ describe("node workspace transfer service", () => {
     const credential = {
       credentialHash: "a".repeat(43),
       ownerEpoch: 3,
-      expiresAtMs: nowMs + 10 * 60_000,
+      expiresAtMs: nowMs + 60_000,
       sessionId: "session-1",
     };
     const service = createNodeWorkspaceTransferService({
@@ -225,12 +289,7 @@ describe("node workspace transfer service", () => {
         headers: { authorization: `Bearer ${uploadTokenForGet}` },
       });
       service.revoke("environment-1", uploadTokenForGet);
-      nowMs += 10 * 60_000;
-      const expired = await fetch(`${httpOrigin}${manifestPath}`, {
-        headers: { authorization: `Bearer ${prepared.token}` },
-      });
-      nowMs -= 10 * 60_000;
-      for (const response of [crossEnvironment, wrongDirection, expired]) {
+      for (const response of [crossEnvironment, wrongDirection]) {
         expect(response.status).toBe(404);
         expect(response.headers.get("cache-control")).toBe("no-store");
         await expect(response.json()).resolves.toEqual({ error: "not_found" });
@@ -265,6 +324,19 @@ describe("node workspace transfer service", () => {
       await expect(
         fs.readFile(path.join(downloaded.workspaceDir, "nested", "input.txt"), "utf8"),
       ).resolves.toBe("nested input\n");
+      nowMs += 2 * 60_000;
+      const afterWorkerExpiry = await fetch(`${httpOrigin}${manifestPath}`, {
+        headers: { authorization: `Bearer ${prepared.token}` },
+      });
+      expect(afterWorkerExpiry.status).toBe(200);
+      await afterWorkerExpiry.arrayBuffer();
+      nowMs += 8 * 60_000;
+      const expired = await fetch(`${httpOrigin}${manifestPath}`, {
+        headers: { authorization: `Bearer ${prepared.token}` },
+      });
+      expect(expired.status).toBe(404);
+      expect(expired.headers.get("cache-control")).toBe("no-store");
+      await expect(expired.json()).resolves.toEqual({ error: "not_found" });
       await fs.writeFile(path.join(downloaded.workspaceDir, "result.txt"), "node result\n");
       const attachmentsRoot = path.join(root, "attachments");
       const inputDirectory = stagedInputDirectory("a".repeat(64));
@@ -346,6 +418,7 @@ describe("node workspace transfer service", () => {
               direction: "upload",
               token,
               baseManifestRef: prepared.snapshot.manifestRef,
+              referenceManifestRef: prepared.snapshot.manifestRef,
             },
           },
           undefined,
@@ -374,7 +447,9 @@ describe("node workspace transfer service", () => {
         headers: { authorization: `Bearer ${uploadToken}`, "content-length": "0" },
       });
       expect(replay.status).toBe(404);
+      service.revoke("environment-1", uploadToken);
       const uploaded = service.takeUpload("environment-1", prepared.snapshot.manifestRef);
+      await service.discardUpload("environment-1", uploadToken);
       expect(uploaded.current.entries).toContainEqual(
         expect.objectContaining({ path: "result.txt", type: "file" }),
       );
@@ -403,7 +478,9 @@ describe("node workspace transfer service", () => {
         "environment-1",
         prepared.snapshot.manifestRef,
       );
-      await expect(uploadResult(failedUploadToken)).rejects.toThrow("workspace-transfer-failed");
+      await expect(uploadResult(failedUploadToken)).rejects.toThrow(
+        "workspace-transfer-invalid: gateway rejected workspace transfer payload (staging)",
+      );
       expect(writeFaults.lastStagingRoot()).toBeDefined();
       await expect(fs.stat(writeFaults.lastStagingRoot()!)).rejects.toMatchObject({
         code: "ENOENT",

@@ -1,5 +1,10 @@
 import { createHash } from "node:crypto";
+import path from "node:path";
 import { root as fsRoot, sanitizeUntrustedFileName, type Root } from "../infra/fs-safe.js";
+import type { MediaFact } from "./media-facts.js";
+
+/** Existing per-file allowance for staging task inputs. */
+export const STAGED_INPUT_MAX_BYTES = 50 * 1024 * 1024;
 
 const STAGED_INPUT_DIRECTORY_PREFIX = "media/inbound/openclaw-staged-";
 export const STAGED_INPUT_GIT_PATHSPEC = `:(glob)${STAGED_INPUT_DIRECTORY_PREFIX}*/**`;
@@ -89,12 +94,60 @@ export function stagedInputFileName(name: string): string {
   return sanitizeUntrustedFileName(`input-${name}`, "input-attachment");
 }
 
+/** Maps producer-stamped upload handles to exact private paths for the current turn. */
+export function resolveStagedInputMediaPaths(
+  media: readonly MediaFact[] | undefined,
+): ReadonlyMap<string, string> {
+  const paths = new Map<string, string>();
+  const ambiguous = new Set<string>();
+  for (const fact of media ?? []) {
+    if (fact.staged !== true || !fact.path) {
+      continue;
+    }
+    const directory = stagedInputPathDirectory(fact.path);
+    const prefix = directory ? `${directory}/input-` : undefined;
+    if (!prefix || !fact.path.startsWith(prefix)) {
+      continue;
+    }
+    const fileName = fact.path.slice(prefix.length);
+    if (!/^file_[^/\\]+$/u.test(fileName)) {
+      continue;
+    }
+    const extension = path.posix.extname(fileName);
+    const aliases = extension ? [fileName, fileName.slice(0, -extension.length)] : [fileName];
+    for (const alias of aliases) {
+      if (ambiguous.has(alias)) {
+        continue;
+      }
+      const existing = paths.get(alias);
+      if (existing && existing !== fact.path) {
+        // A duplicate alias has no authoritative target; input order must not select one.
+        paths.delete(alias);
+        ambiguous.add(alias);
+      } else {
+        paths.set(alias, fact.path);
+      }
+    }
+  }
+  return paths;
+}
+
+type StagedInputFileSystem = {
+  exists: (filePath: string) => Promise<boolean>;
+  readText: (filePath: string, options: { maxBytes: number }) => Promise<string>;
+  create: (
+    filePath: string,
+    data: string,
+    options: { mode: number; assertBeforeMutation: () => void },
+  ) => Promise<unknown>;
+};
+
 export async function ensureStagedInputDirectory(
-  rootDir: string,
+  rootDir: string | StagedInputFileSystem,
   directory: string,
   signal?: AbortSignal,
 ): Promise<void> {
-  const root = await fsRoot(rootDir);
+  const root = typeof rootDir === "string" ? await fsRoot(rootDir) : rootDir;
   const ignorePath = `${directory}/.gitignore`;
   if (await root.exists(directory)) {
     if ((await root.readText(ignorePath, { maxBytes: 1024 })) !== STAGED_INPUT_GITIGNORE) {
@@ -104,5 +157,8 @@ export async function ensureStagedInputDirectory(
   }
   // Never add an exclusion to an existing project directory or replace its files.
   signal?.throwIfAborted();
-  await root.create(ignorePath, STAGED_INPUT_GITIGNORE, { mode: 0o600 });
+  await root.create(ignorePath, STAGED_INPUT_GITIGNORE, {
+    mode: 0o600,
+    assertBeforeMutation: () => signal?.throwIfAborted(),
+  });
 }

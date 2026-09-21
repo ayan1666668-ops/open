@@ -72,6 +72,45 @@ describe("worker connection endpoint", () => {
     });
   });
 
+  it("rejects endpoint fields inherited from the prototype", () => {
+    const endpoint = Object.assign(Object.create({ kind: "unix" }) as Record<string, unknown>, {
+      socketPath: "/tmp/openclaw-worker/gateway.sock",
+    });
+
+    expect(parseWorkerConnectionEndpoint(endpoint)).toBeUndefined();
+
+    const websocketEndpoint = Object.assign(Object.create({ tlsFingerprint: fingerprint }), {
+      kind: "websocket",
+      url: "wss://gateway.example/__openclaw__/worker",
+    });
+
+    expect(parseWorkerConnectionEndpoint(websocketEndpoint)).toBeUndefined();
+
+    for (const cloudflareAccess of [
+      Object.assign(Object.create({ clientId: "fixture-id" }), { clientSecret: "fixture-secret" }),
+      Object.assign(Object.create({ clientSecret: "fixture-secret" }), { clientId: "fixture-id" }),
+    ]) {
+      expect(
+        parseWorkerConnectionEndpoint({
+          kind: "websocket",
+          url: "wss://gateway.example/__openclaw__/worker",
+          cloudflareAccess,
+        }),
+      ).toBeUndefined();
+    }
+  });
+
+  it("omits explicitly undefined optional credentials", () => {
+    const endpoint = { kind: "websocket", url: "ws://127.0.0.1/__openclaw__/worker" };
+    expect(
+      parseWorkerConnectionEndpoint({
+        ...endpoint,
+        tlsFingerprint: undefined,
+        cloudflareAccess: undefined,
+      }),
+    ).toStrictEqual(endpoint);
+  });
+
   it.each([
     `sha256:${fingerprint.toUpperCase()}`,
     fingerprint.toUpperCase(),

@@ -22,6 +22,7 @@ import {
   type LegacyCronRepairResult,
   type LegacyCronRepairState,
 } from "./legacy-repair.js";
+import { collectCronNativeToolAdvisories } from "./native-tool-advisory.js";
 import {
   formatLegacyIssuePreview,
   formatIncompleteInheritedAuthorityAdvisory,
@@ -251,6 +252,17 @@ export async function collectLegacyCronStoreHealthFindings(params: {
     return findings;
   }
 
+  for (const message of collectCronNativeToolAdvisories({ cfg: params.cfg, jobs: rawJobs })) {
+    findings.push(
+      legacyCronStoreFinding({
+        message,
+        path: sqliteStorePath,
+        requirement: "cron-native-tool-cap-review",
+        fixHint:
+          "Review the job's tools from an authorized session; Doctor will not add native tools.",
+      }),
+    );
+  }
   const normalized = normalizeStoredCronJobs(rawJobs);
   for (const line of formatLegacyIssuePreview(normalized.issues)) {
     findings.push(
@@ -384,8 +396,12 @@ export async function maybeRepairLegacyCronStore(params: {
     legacyQuarantine,
     legacyImportCount,
     invalidConfigRows,
+    persistedQuarantine,
     rawJobs,
   } = state;
+  const revalidatableQuarantineCount = persistedQuarantine.filter(
+    (entry) => entry.reason === "invalid-schedule" && entry.job,
+  ).length;
   const sqliteStorePath = resolveOpenClawStateSqlitePath();
   try {
     const quarantine = loadCronQuarantinedJobs(storePath);
@@ -415,7 +431,8 @@ export async function maybeRepairLegacyCronStore(params: {
       !legacyStoreDetected &&
       !legacyRunLogDetected &&
       !legacyQuarantine &&
-      invalidConfigRows.length === 0
+      invalidConfigRows.length === 0 &&
+      revalidatableQuarantineCount === 0
     ) {
       return;
     }
@@ -434,9 +451,18 @@ export async function maybeRepairLegacyCronStore(params: {
         `- ${pluralize(invalidConfigRows.length, "malformed cron row")} will be quarantined in SQLite`,
       );
     }
+    if (revalidatableQuarantineCount > 0) {
+      previewLines.push(
+        `- ${pluralize(revalidatableQuarantineCount, "quarantined automation")} will be revalidated and restored only if current validation passes`,
+      );
+    }
+    const noteHeading =
+      legacyStoreDetected || legacyRunLogDetected || legacyQuarantine
+        ? `Legacy cron storage detected at ${shortenHomePath(storePath)}.`
+        : `Cron store issues detected at ${shortenHomePath(sqliteStorePath)}.`;
     note(
       [
-        `Legacy cron storage detected at ${shortenHomePath(storePath)}.`,
+        noteHeading,
         ...previewLines,
         `Repair with ${formatCliCommand("openclaw doctor --fix")} to finish the migration.`,
       ].join("\n"),
@@ -449,11 +475,20 @@ export async function maybeRepairLegacyCronStore(params: {
     if (!shouldRepair) {
       return;
     }
-    noteLegacyCronRepairResult(await applyLegacyCronStoreRepair({ cfg: params.cfg, state }));
+    noteLegacyCronRepairResult(
+      await applyLegacyCronStoreRepair({
+        cfg: params.cfg,
+        state,
+        recoverQuarantinedScheduleJobs: true,
+      }),
+    );
     return;
   }
   noteCronModelOverrides({ cfg: params.cfg, jobs: rawJobs });
   noteCronDeliveryTargetAdvisory({ cfg: params.cfg, jobs: rawJobs });
+  for (const message of collectCronNativeToolAdvisories({ cfg: params.cfg, jobs: rawJobs })) {
+    note(message, "Cron");
+  }
 
   const inFlightCount = countInFlightCronJobs(rawJobs);
   if (inFlightCount > 0) {
@@ -607,6 +642,11 @@ export async function maybeRepairLegacyCronStore(params: {
       `- ${pluralize(invalidConfigRows.length, "malformed cron row")} will be quarantined in SQLite`,
     );
   }
+  if (revalidatableQuarantineCount > 0) {
+    previewLines.push(
+      `- ${pluralize(revalidatableQuarantineCount, "quarantined automation")} will be revalidated and restored only if current validation passes`,
+    );
+  }
   if (notifyCount > 0) {
     previewLines.push(
       `- ${pluralize(notifyCount, "job")} still uses legacy \`notify: true\` webhook fallback`,
@@ -643,6 +683,11 @@ export async function maybeRepairLegacyCronStore(params: {
   }
 
   noteLegacyCronRepairResult(
-    await applyLegacyCronStoreRepair({ cfg: params.cfg, state, normalized }),
+    await applyLegacyCronStoreRepair({
+      cfg: params.cfg,
+      state,
+      normalized,
+      recoverQuarantinedScheduleJobs: true,
+    }),
   );
 }

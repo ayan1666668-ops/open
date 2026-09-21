@@ -22,11 +22,21 @@ export const TSGO_CORE_TEST_SHARDS = [
     config: "test/tsconfig/tsconfig.core.test.gateway-root.json",
   },
   {
+    name: "gateway-server",
+    group: "src",
+    config: "test/tsconfig/tsconfig.core.test.gateway-server.json",
+  },
+  {
     name: "gateway-other",
     group: "src",
     config: "test/tsconfig/tsconfig.core.test.gateway-other.json",
   },
   { name: "infra", group: "src", config: "test/tsconfig/tsconfig.core.test.infra.json" },
+  {
+    name: "state-logging",
+    group: "src",
+    config: "test/tsconfig/tsconfig.core.test.state-logging.json",
+  },
   { name: "commands", group: "src", config: "test/tsconfig/tsconfig.core.test.commands.json" },
   {
     name: "plugins-platform",
@@ -58,7 +68,47 @@ export const TSGO_CORE_TEST_SHARDS = [
     config: "test/tsconfig/tsconfig.test.packages.json",
     sparseRoots: ["packages", "src", "ui/src"],
   },
+  {
+    name: "plugin-sdk",
+    group: "src",
+    config: "test/tsconfig/tsconfig.core.test.plugin-sdk.json",
+  },
+  // Append new splits to preserve the existing CI stripe assignments.
+  {
+    name: "commands-doctor",
+    group: "src",
+    config: "test/tsconfig/tsconfig.core.test.commands-doctor.json",
+  },
+  {
+    name: "cli-update",
+    group: "src",
+    config: "test/tsconfig/tsconfig.core.test.cli-update.json",
+  },
+  {
+    name: "gateway-methods",
+    group: "src",
+    config: "test/tsconfig/tsconfig.core.test.gateway-methods.json",
+  },
+  {
+    name: "ui-chat",
+    group: "ui",
+    config: "test/tsconfig/tsconfig.core.test.ui-chat.json",
+  },
+  {
+    name: "agents-sessions",
+    group: "src",
+    config: "test/tsconfig/tsconfig.core.test.agents-sessions.json",
+  },
 ] as const;
+
+export const TSGO_CORE_GRAPHS = [
+  { name: "core", config: "tsconfig.core.json" },
+  { name: "ui", config: "tsconfig.ui.json" },
+  ...TSGO_CORE_TEST_SHARDS.map((shard) => ({
+    name: `core-test-${shard.name}`,
+    config: shard.config,
+  })),
+];
 
 export type TsgoCoreTestShard = (typeof TSGO_CORE_TEST_SHARDS)[number];
 
@@ -142,4 +192,37 @@ export function findTsgoCoreTestShardViolations(params: {
   }
 
   return violations;
+}
+
+/** Select every consuming graph, not just the file's declared root partition. */
+export function selectChangedTsgoCoreTestShards(
+  paths: readonly string[],
+  graphs: readonly { config: string; roots: readonly string[]; files: readonly string[] }[],
+): readonly { name: string; config: string }[] | undefined {
+  if (
+    paths.length === 0 ||
+    paths.some((file) => !/^(?:src|ui|packages)\/.+\.test\.tsx?$/u.test(file))
+  ) {
+    return undefined;
+  }
+  const testConfigs = new Set<string>(TSGO_CORE_TEST_SHARDS.map((shard) => shard.config));
+  const testGraphs = graphs.filter((graph) => testConfigs.has(graph.config));
+  if (
+    graphs.length !== TSGO_CORE_GRAPHS.length ||
+    TSGO_CORE_GRAPHS.some(
+      (expected) => graphs.filter((graph) => graph.config === expected.config).length !== 1,
+    ) ||
+    paths.some((file) => testGraphs.filter((graph) => graph.roots.includes(file)).length !== 1) ||
+    paths.some((file) => !testGraphs.some((graph) => graph.files.includes(file))) ||
+    graphs.some(
+      (graph) => !testConfigs.has(graph.config) && paths.some((file) => graph.files.includes(file)),
+    )
+  ) {
+    return undefined;
+  }
+  return TSGO_CORE_TEST_SHARDS.filter((shard) =>
+    testGraphs.some(
+      (graph) => graph.config === shard.config && paths.some((file) => graph.files.includes(file)),
+    ),
+  );
 }

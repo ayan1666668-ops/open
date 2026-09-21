@@ -81,21 +81,30 @@ describe("buildQaGatewayConfig", () => {
     );
   });
 
-  it("stamps fresh QA configs with the current OpenClaw version", () => {
-    const cfg = buildQaGatewayConfig({
-      bind: "loopback",
-      gatewayPort: 18789,
-      gatewayToken: "token",
-      workspaceDir: "/tmp/qa-workspace",
-      ...createQaChannelTransportParams(),
-    });
+  it.each(["/tmp/qa-first/workspace", "/tmp/qa-second/workspace"])(
+    "stamps fresh QA configs and confines rolling logs (%s)",
+    (workspaceDir) => {
+      const cfg = buildQaGatewayConfig({
+        bind: "loopback",
+        gatewayPort: 18789,
+        gatewayToken: "token",
+        workspaceDir,
+        ...createQaChannelTransportParams(),
+      });
 
-    expect(cfg.meta).toEqual({ lastTouchedVersion: OPENCLAW_VERSION });
-    expect(cfg.plugins?.allow).toEqual(["memory-core", "qa-lab", "qa-channel"]);
-    expect(getPrimaryModel(cfg.agents?.defaults?.model)).toBe("mock-openai/gpt-5.6-luna");
-    expect(cfg.agents?.entries?.qa).not.toHaveProperty("default");
-    expect(cfg.channels?.["qa-channel"]?.baseUrl).toBe("http://127.0.0.1:43124");
-  });
+      expect(cfg.meta).toEqual({ lastTouchedVersion: OPENCLAW_VERSION });
+      expect(cfg.logging?.file).toBe(`${workspaceDir}/logs/openclaw-YYYY-MM-DD.log`);
+      expect(cfg.plugins?.allow).toEqual(["memory-core", "qa-lab", "qa-channel"]);
+      expect(cfg.commands?.ownerAllowFrom).toEqual([
+        "qa-channel:qa-operator",
+        "qa-channel:dm:qa-operator",
+      ]);
+      expect(cfg.commands?.allowFrom).toEqual({ "qa-channel": ["*"] });
+      expect(getPrimaryModel(cfg.agents?.defaults?.model)).toBe("mock-openai/gpt-5.6-luna");
+      expect(cfg.agents?.entries?.qa).not.toHaveProperty("default");
+      expect(cfg.channels?.["qa-channel"]?.baseUrl).toBe("http://127.0.0.1:43124");
+    },
+  );
 
   it("keeps mock-openai as the default provider lane", () => {
     const cfg = buildQaGatewayConfig({
@@ -138,6 +147,11 @@ describe("buildQaGatewayConfig", () => {
       },
     });
     expect(cfg.plugins?.allow).toEqual(["memory-core", "qa-lab", "qa-channel"]);
+    expect(cfg.commands?.ownerAllowFrom).toEqual([
+      "qa-channel:qa-operator",
+      "qa-channel:dm:qa-operator",
+    ]);
+    expect(cfg.commands?.allowFrom).toEqual({ "qa-channel": ["*"] });
     expectQaLabPluginEnabled(cfg);
     expect(cfg.plugins?.slots?.memory).toBe("memory-core");
     expect(cfg.plugins?.entries?.acpx).toBeUndefined();
@@ -304,7 +318,7 @@ describe("buildQaGatewayConfig", () => {
   it.each([
     ["openai/gpt-5.6", "openai/gpt-5.6-luna"],
     ["openai/gpt-5.6-sol", "openai/gpt-5.6-luna"],
-    ["openai/gpt-5.6-luna", "openai/gpt-5.6-sol"],
+    ["openai/gpt-5.6-luna", "openai/gpt-5.6-terra"],
   ])("keeps an omitted live alternate on OpenAI for %s", (primary, alternate) => {
     const cfg = buildQaGatewayConfig({
       bind: "loopback",

@@ -41,7 +41,7 @@ export type ExecPolicyOverrides = {
 
 // Gather the shared config state once so exec resolution applies one
 // agent/global/session precedence order.
-function resolveExecConfigState(params: {
+export function resolveExecConfigState(params: {
   cfg?: OpenClawConfig;
   sessionEntry?: ExecSessionDefaults;
   execOverrides?: ExecPolicyOverrides;
@@ -132,7 +132,7 @@ export function resolveExecDefaults(params: {
     globalExec,
   } = resolveExecConfigState(params);
   const sandboxRuntime = params.sessionKey
-    ? resolveSandboxRuntimeStatus({ cfg, sessionKey: params.sessionKey })
+    ? resolveSandboxRuntimeStatus({ cfg, agentId: resolvedAgentId, sessionKey: params.sessionKey })
     : undefined;
   const sandboxRequired =
     params.sessionEntry?.sandbox === "required" || sandboxRuntime?.sandboxRequired === true;

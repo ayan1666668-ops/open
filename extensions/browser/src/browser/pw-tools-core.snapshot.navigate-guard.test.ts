@@ -322,7 +322,7 @@ describe("pw-tools-core.snapshot navigate guard", () => {
       cdpUrl: "http://127.0.0.1:18792",
       targetId: "tab-1",
       ssrfPolicy: { allowPrivateNetwork: true },
-      reason: "retry navigate after detached frame",
+      page: expect.objectContaining({ goto }),
     });
     expect(getPwToolsCoreSessionMocks().gotoPageWithNavigationGuard).toHaveBeenCalledTimes(2);
     expect(result.url).toBe("https://example.com/recovered");
@@ -374,7 +374,7 @@ describe("pw-tools-core.snapshot navigate guard", () => {
       };
       const result = await mod.navigateViaPlaywright(navigation);
 
-      expect(reconnect).toHaveBeenCalledWith("http://127.0.0.1:18792", undefined);
+      expect(reconnect).toHaveBeenCalledWith("http://127.0.0.1:18792", undefined, undefined);
       expect(session.getPageForTargetId).toHaveBeenLastCalledWith(
         expect.objectContaining({ targetId: "replacement-target" }),
       );

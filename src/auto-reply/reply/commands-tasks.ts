@@ -1,21 +1,16 @@
 // Implements task-list commands that route through the current session agent.
-import { resolveSessionAgentId } from "../../agents/agent-scope.js";
 import { formatDurationCompact } from "../../infra/format-time/format-duration.ts";
 import { formatTimeAgo } from "../../infra/format-time/format-relative.ts";
 import type { TaskRecord } from "../../tasks/task-registry.types.js";
+import { readTaskStatusSnapshots } from "../../tasks/task-status-access.js";
 import {
-  listTasksForAgentIdForStatus,
-  listTasksForSessionKeyForStatus,
-} from "../../tasks/task-status-access.js";
-import {
-  buildTaskStatusSnapshot,
+  type buildTaskStatusSnapshot,
   formatTaskStatus,
   formatTaskStatusDetail,
   formatTaskStatusTitle,
 } from "../../tasks/task-status.js";
-import type { ReplyPayload } from "../types.js";
 import { commandReply, defineAuthorizedTextCommand, matchCommandPrefix } from "./command-gates.js";
-import type { CommandHandler, HandleCommandsParams } from "./commands-types.js";
+import type { CommandHandler } from "./commands-types.js";
 
 const MAX_VISIBLE_TASKS = 5;
 
@@ -39,14 +34,15 @@ const TASK_RUNTIME_LABELS: Record<TaskRecord["runtime"], string> = {
 
 function formatTaskHeadline(snapshot: ReturnType<typeof buildTaskStatusSnapshot>): string {
   if (snapshot.totalCount === 0) {
-    return "All clear - nothing linked to this session right now.";
+    return "Task runs: none active or recent for this session.";
   }
   return `Current session: ${snapshot.activeCount} active · ${snapshot.totalCount} total`;
 }
 
-function formatAgentFallbackLine(agentId: string): string | undefined {
-  const snapshot = buildTaskStatusSnapshot(listTasksForAgentIdForStatus(agentId));
-  if (snapshot.totalCount === 0) {
+function formatAgentFallbackLine(
+  snapshot: ReturnType<typeof buildTaskStatusSnapshot> | undefined,
+): string | undefined {
+  if (!snapshot || snapshot.totalCount === 0) {
     return undefined;
   }
   return `Agent-local: ${snapshot.activeCount} active · ${snapshot.totalCount} total`;
@@ -80,10 +76,10 @@ function formatVisibleTask(task: TaskRecord, index: number): string {
   return lines.join("\n");
 }
 
-function buildTasksText(params: { sessionKey: string; agentId: string }): string {
-  const sessionSnapshot = buildTaskStatusSnapshot(
-    listTasksForSessionKeyForStatus(params.sessionKey),
-  );
+async function buildTasksText(params: { sessionKey: string; agentId: string }): Promise<string> {
+  const snapshots = await readTaskStatusSnapshots(params);
+  snapshots.assertCurrent();
+  const { session: sessionSnapshot, agent } = snapshots;
   const lines = ["📋 Tasks", formatTaskHeadline(sessionSnapshot)];
 
   if (sessionSnapshot.totalCount > 0) {
@@ -102,24 +98,11 @@ function buildTasksText(params: { sessionKey: string; agentId: string }): string
     return lines.join("\n");
   }
 
-  const agentFallback = formatAgentFallbackLine(params.agentId);
+  const agentFallback = formatAgentFallbackLine(agent);
   if (agentFallback) {
     lines.push(agentFallback);
   }
   return lines.join("\n");
-}
-
-async function buildTasksReply(params: HandleCommandsParams): Promise<ReplyPayload> {
-  const agentId = resolveSessionAgentId({
-    sessionKey: params.sessionKey,
-    config: params.cfg,
-  });
-  return {
-    text: buildTasksText({
-      sessionKey: params.sessionKey,
-      agentId,
-    }),
-  };
 }
 
 export const handleTasksCommand: CommandHandler = defineAuthorizedTextCommand(
@@ -130,6 +113,6 @@ export const handleTasksCommand: CommandHandler = defineAuthorizedTextCommand(
   },
   async (params) =>
     params.command.commandBodyNormalized === "/tasks"
-      ? { shouldContinue: false, reply: await buildTasksReply(params) }
+      ? commandReply(await buildTasksText(params))
       : commandReply("Usage: /tasks"),
 );

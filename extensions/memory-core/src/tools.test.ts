@@ -12,13 +12,13 @@ import {
   resetMemoryToolMockState,
   setMemoryCloseImpl,
   setMemoryCustomStatus,
-  setMemoryPendingSyncSources,
+  setMemoryLastSyncError,
   setMemorySearchImpl,
   setMemorySearchManagerImpl,
   setMemorySourceCounts,
   setMemoryStatusDirty,
 } from "./memory-tool-manager.test-mocks.js";
-import { applyProjectRanking } from "./memory/project-ranking.js";
+import { applyProjectRanking, prepareActiveProjectKeys } from "./memory/project-ranking.js";
 import { createMemorySearchTool, testing as memoryToolsTesting } from "./tools.js";
 import { buildMemorySearchUnavailableResult } from "./tools.shared.js";
 import {
@@ -324,6 +324,7 @@ describe("memory_search unavailable payloads", () => {
 
     const tool = createMemorySearchToolOrThrow();
     const result = await tool.execute("provider-worded-like-deadline", { query: "hello" });
+    expect(result.details).not.toHaveProperty("timedOut");
     expectUnavailableMemorySearchDetails(result.details, {
       error: "memory_search timed out after 15s",
       warning: "Memory search is unavailable due to an embedding/provider error.",
@@ -352,11 +353,15 @@ describe("memory_search unavailable payloads", () => {
       const tool = createMemorySearchToolOrThrow();
 
       const resultPromise = tool.execute("search-timeout", { query: "hello" });
-      await vi.advanceTimersByTimeAsync(15_000);
+      await vi.advanceTimersByTimeAsync(29_999);
+      expect(searchSignal?.aborted).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
 
       const result = await resultPromise;
+      expect(result.details).toMatchObject({ timedOut: true, timeoutMs: 30_000 });
       expectUnavailableMemorySearchDetails(result.details, {
-        error: "memory_search timed out after 15s",
+        error: "memory_search timed out after 30s",
+        timeoutMs: 30_000,
         warning: "Memory search did not finish within its time limit.",
         action:
           "Retry memory_search after a short wait: a memory-corpus timeout pauses retries for up to a minute. If memory-corpus timeouts persist, run: openclaw memory status --deep --agent main, and rebuild with openclaw memory index --force --agent main only if it reports the index dirty or incomplete",
@@ -365,12 +370,26 @@ describe("memory_search unavailable payloads", () => {
       expect(searchSignal?.aborted).toBe(true);
       const cooldownResult = await tool.execute("search-cooldown", { query: "hello again" });
       expectUnavailableMemorySearchDetails(cooldownResult.details, {
-        error: "memory_search timed out after 15s",
+        error: "memory_search timed out after 30s",
+        timeoutMs: 30_000,
         warning: "Memory search did not finish within its time limit.",
         action:
           "Retry memory_search after a short wait: a memory-corpus timeout pauses retries for up to a minute. If memory-corpus timeouts persist, run: openclaw memory status --deep --agent main, and rebuild with openclaw memory index --force --agent main only if it reports the index dirty or incomplete",
       });
       expect(searchCalls).toBe(1);
+      setMemorySearchImpl(async () => {
+        searchCalls += 1;
+        return [];
+      });
+      await vi.advanceTimersByTimeAsync(59_999);
+      const pausedResult = await tool.execute("search-still-paused", { query: "hello again" });
+      expect(pausedResult.details).toEqual(cooldownResult.details);
+      expect(searchCalls).toBe(1);
+      await vi.advanceTimersByTimeAsync(1);
+      const retryResult = await tool.execute("search-retry", { query: "hello again" });
+      expect(retryResult.details).toMatchObject({ results: [] });
+      expect(retryResult.details).not.toHaveProperty("unavailable");
+      expect(searchCalls).toBe(2);
     } finally {
       vi.useRealTimers();
     }
@@ -392,11 +411,12 @@ describe("memory_search unavailable payloads", () => {
       const tool = createMemorySearchToolOrThrow();
 
       const resultPromise = tool.execute("abort-aware-timeout", { query: "hello" });
-      await vi.advanceTimersByTimeAsync(15_000);
+      await vi.advanceTimersByTimeAsync(30_000);
 
       const result = await resultPromise;
       expectUnavailableMemorySearchDetails(result.details, {
-        error: "memory_search timed out after 15s",
+        error: "memory_search timed out after 30s",
+        timeoutMs: 30_000,
         warning: "Memory search did not finish within its time limit.",
         action:
           "Retry memory_search after a short wait: a memory-corpus timeout pauses retries for up to a minute. If memory-corpus timeouts persist, run: openclaw memory status --deep --agent main, and rebuild with openclaw memory index --force --agent main only if it reports the index dirty or incomplete",
@@ -585,7 +605,7 @@ describe("memory_search unavailable payloads", () => {
     expect(getMemorySyncMockCalls()).toBe(0);
   });
 
-  it("qualifies empty results when the manager reports a dirty index", async () => {
+  it("does not qualify routine pending index work as a search failure", async () => {
     setMemoryStatusDirty(true);
     setMemorySearchImpl(async () => []);
     const tool = createMemorySearchToolOrThrow({
@@ -597,18 +617,16 @@ describe("memory_search unavailable payloads", () => {
 
     const result = await tool.execute("dirty-index", { query: "hidden codeword" });
 
-    expect(result.details).toMatchObject({
-      results: [],
-      stale: true,
-      warning: "Memory index is dirty. Search results may be incomplete.",
-      action: "Run: openclaw memory status --index --agent main",
-    });
+    expect(result.details).toMatchObject({ results: [] });
+    expect(result.details).not.toHaveProperty("stale");
+    expect(result.details).not.toHaveProperty("warning");
+    expect(result.details).not.toHaveProperty("action");
     expect(getMemorySyncMockCalls()).toBe(0);
   });
 
-  it("does not qualify results while session-only catch-up is in progress", async () => {
+  it("qualifies results after automatic indexing fails", async () => {
     setMemoryStatusDirty(true);
-    setMemoryPendingSyncSources(["sessions"]);
+    setMemoryLastSyncError("embedding request timed out");
     setMemorySearchImpl(async () => []);
     const tool = createMemorySearchToolOrThrow({
       config: {
@@ -617,12 +635,16 @@ describe("memory_search unavailable payloads", () => {
       },
     });
 
-    const result = await tool.execute("session-catch-up", { query: "hidden codeword" });
+    const result = await tool.execute("failed-index", { query: "hidden codeword" });
 
-    expect(result.details).toMatchObject({ results: [] });
-    expect(result.details).not.toHaveProperty("stale");
-    expect(result.details).not.toHaveProperty("warning");
-    expect(result.details).not.toHaveProperty("action");
+    expect(result.details).toMatchObject({
+      results: [],
+      stale: true,
+      warning:
+        "Memory index is stale: embedding request timed out. Search results may be incomplete.",
+      action:
+        "Run: openclaw memory status --index --agent main. Rebuilding may call the configured embedding provider and can incur provider cost.",
+    });
   });
 
   it("surfaces embedding bootstrap degradation when keyword search has no hits", async () => {
@@ -677,6 +699,8 @@ describe("memory_search unavailable payloads", () => {
       indexIdentity: {
         status: "mismatched",
         reason,
+        code: "provider",
+        owner: "configuration",
       },
     });
 
@@ -690,10 +714,9 @@ describe("memory_search unavailable payloads", () => {
 
     expectUnavailableMemorySearchDetails(result.details, {
       error: reason,
-      warning:
-        "Tell the user: memory search is paused because the memory index was built with a different embedding provider/model/settings.",
+      warning: `Tell the user: memory search is paused because the current memory configuration no longer matches the index (${reason}).`,
       action:
-        "Tell the user to run: openclaw memory status --index or openclaw memory index --force.",
+        "Tell the user to run: openclaw memory status --index --agent main. Rebuilding may call the configured embedding provider and can incur provider cost.",
     });
     expect(searchCalls).toBe(1);
     expect(getMemorySyncMockCalls()).toBe(0);
@@ -900,7 +923,7 @@ describe("memory_search corpus labels", () => {
             projectKey: "github.com/acme/Gamma",
           },
         ],
-        opts?.activeProjectKeys,
+        prepareActiveProjectKeys(opts?.activeProjectKeys),
       );
     });
     const tool = createMemorySearchToolOrThrow({
@@ -982,12 +1005,14 @@ describe("memory_search corpus labels", () => {
         corpus: "sessions",
       });
 
-      expectUnavailableMemorySearchDetails(result.details, {
+      expect(result.details).toMatchObject({
         error: "Session transcript search is not enabled.",
         warning: "Session transcript search is unavailable for this agent.",
-        action:
-          'Enable memory.search.experimental.sessionMemory and add "sessions" to memory.search.sources, then retry memory_search.',
+        action: expect.stringContaining(
+          "If an exact session-history capability is available for this run",
+        ),
       });
+      expect((result.details as { action?: string }).action).not.toContain("sessions_search");
       expect(getMemorySearchManagerMockCalls()).toBe(0);
     },
   );
@@ -1018,6 +1043,8 @@ describe("memory_search corpus labels", () => {
         agentSessionKey: "agent:main:main",
       });
 
+      expect(tool.description).toContain("indexed session transcripts");
+      expect(tool.description).not.toContain("sessions_search");
       await tool.execute("ordinary-search", { query: "favorite food", corpus });
 
       expect(seenSources).toEqual(["sessions"]);

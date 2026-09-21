@@ -5,6 +5,7 @@ import { expectDefined } from "@openclaw/normalization-core";
 import { Command } from "commander";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { isRich, theme } from "../../../packages/terminal-core/src/theme.js";
+import { resolveCronDeliveryPlan } from "../../cron/delivery-plan.js";
 import { dispatchCronDelivery } from "../../cron/isolated-agent/delivery-dispatch.js";
 import { CronService, type CronEvent } from "../../cron/service.js";
 import { createNoopLogger } from "../../cron/service.test-harness.js";
@@ -16,6 +17,7 @@ import type { CronJob } from "../../cron/types.js";
 import { cronHandlers } from "../../gateway/server-methods/cron.js";
 import type { RespondFn } from "../../gateway/server-methods/types.js";
 import { getActiveGatewayRootWorkCount } from "../../process/gateway-work-admission.js";
+import { ExitError } from "../../runtime.js";
 import { resetTaskRegistryForTests } from "../../tasks/task-runtime.test-helpers.js";
 import { withOpenClawTestState } from "../../test-utils/openclaw-test-state.js";
 
@@ -48,12 +50,20 @@ async function runCli(args: string[]) {
   const program = new Command();
   program.exitOverride();
   registerCronCli(program);
-  await program.parseAsync(["cron", ...args], { from: "user" });
+  let exitCode: number | undefined;
+  try {
+    await program.parseAsync(["cron", ...args], { from: "user" });
+  } catch (error) {
+    if (!(error instanceof ExitError)) {
+      throw error;
+    }
+    exitCode = error.code;
+  }
   expect(mocks.runtime.error).not.toHaveBeenCalled();
   return {
     text: mocks.runtime.log.mock.calls.map(([line]) => String(line)).join("\n"),
     json: mocks.runtime.writeJson.mock.calls.at(-1)?.[0],
-    exitCode: mocks.runtime.exit.mock.calls.at(-1)?.[0],
+    exitCode,
   };
 }
 
@@ -116,7 +126,6 @@ describe("cron CLI delivery suppression readback", () => {
           const sessionKey = `agent:main:cron:${job.id}:run:${sessionId}`;
           const now = Date.now();
           const dispatch = await dispatchCronDelivery({
-            cfg: {},
             cfgWithAgentDefaults: {},
             deps: {},
             job,
@@ -127,7 +136,6 @@ describe("cron CLI delivery suppression readback", () => {
             lifecycleRevision: randomUUID(),
             sessionUpdatedAt: now,
             runStartedAt: now,
-            runEndedAt: now,
             timeoutMs: 5_000,
             resolvedDelivery:
               phase === "delivery-error" || phase === "required-delivery-error"
@@ -137,6 +145,7 @@ describe("cron CLI delivery suppression readback", () => {
                     error: new Error("fixture delivery route unavailable"),
                   }
                 : { ok: true, mode: "explicit", channel: "telegram", to: "123" },
+            deliveryPlan: resolveCronDeliveryPlan(job),
             deliveryRequested: phase !== "not-requested",
             undeliveredRunStatus: "ok",
             spawnOnlyHandoff: false,
@@ -155,11 +164,14 @@ describe("cron CLI delivery suppression readback", () => {
             abortSignal,
             isAborted: () => abortSignal?.aborted === true,
             abortReason: () => "fixture aborted",
-            withRunSession: (result) => ({ ...result, sessionId, sessionKey }),
           });
+          const failure = dispatch.disposition?.kind === "error" ? dispatch.disposition : undefined;
           return {
-            status: "ok",
-            ...dispatch.result,
+            status: failure ? "error" : "ok",
+            error: failure?.error,
+            errorKind: failure?.errorKind,
+            sessionId,
+            sessionKey,
             delivered: dispatch.delivered,
             deliveryAttempted: dispatch.deliveryAttempted,
             deliveryError: dispatch.deliveryError,

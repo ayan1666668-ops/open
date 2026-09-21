@@ -17,6 +17,7 @@ const processRecord = z.object({
   role: z.string(),
   attempt: z.number().int().nonnegative(),
   instance: z.string(),
+  creationTime: z.string().regex(/^\d+$/u).optional(),
 });
 const reportSchema = z.object({
   code: z.number().nullable(),
@@ -59,43 +60,71 @@ export function readCiCheckoutStep(job: string, name = "Checkout"): Step & { run
 
 export function renderGitTestClock(
   source: string,
-  options: { realClock?: boolean; realDrain?: boolean } = {},
-) {
-  if (options.realClock) {
-    return source;
+  options: {
+    realClock?: boolean;
+    realDrain?: boolean;
+    readyFetchClockAdvanceSeconds?: number;
+  } = {},
+): string {
+  // Change Python before shell quoting, so injected clock literals cannot alter
+  // the generated argument or reintroduce a pipe-backed source transport.
+  const embedded = /^(run_owner ')([\s\S]*?)('\n# End generated CI Git owner\.)$/mu;
+  if (embedded.test(source)) {
+    return source.replace(embedded, (_match, prefix: string, body: string, suffix: string) => {
+      const adjusted = renderGitTestClock(body.replaceAll("'\\''", "'"), options);
+      return prefix + adjusted.replaceAll("'", "'\\''") + suffix;
+    });
+  }
+  // Command deadlines and TERM grace are independent. Real-clock callers keep
+  // real grace unless they explicitly opt into the fixture's immediate escalation.
+  const clockSource =
+    (options.realDrain ?? options.realClock)
+      ? source
+      : source.replace("kill_at = deadline - cleanup_seconds / 2", "kill_at = time.monotonic()");
+  if (options.realClock && options.readyFetchClockAdvanceSeconds === undefined) {
+    return clockSource;
   }
   // Only a ready, deliberately stalled tree advances the fetch clock. Real
   // process startup and teardown retain their independent wall-clock watchdogs.
-  const rendered = source
-    .replace(/fetch_timeout_seconds = [^\n]+/u, "fetch_timeout_seconds = 2")
+  const fetchClockSource = clockSource
     .replace(
       "def run_git(",
-      `def fetch_clock():
-    return 2 * sum(name.startswith("fetch-tick-") and name.endswith(".json")
+      `def fetch_clock(timeout=None):
+${options.readyFetchClockAdvanceSeconds === undefined ? "" : '    if timeout is not None:\n        print(f"fixture fetch timeout: {timeout}", file=sys.stderr, flush=True)\n'}    return ${options.readyFetchClockAdvanceSeconds ?? 2} * sum(name.startswith("fetch-tick-") and name.endswith(".json")
                    for name in os.listdir(os.environ["TMPDIR"]))
 
 
 def run_git(`,
     )
-    .replace("deadline = time.monotonic() + timeout", "deadline = fetch_clock() + timeout")
+    .replace(
+      "deadline = time.monotonic() + timeout",
+      options.readyFetchClockAdvanceSeconds === undefined
+        ? "deadline = fetch_clock() + timeout"
+        : 'deadline = fetch_clock(timeout if "fetch" in arguments else None) + timeout',
+    )
     .replace(
       "deadline is not None and time.monotonic() >= deadline",
       "deadline is not None and fetch_clock() >= deadline",
-    )
-    .replace(/\btimeout=(?:30|120)(?=[,)])/gu, "timeout=2")
-    .replace(
-      /retry_at = time\.monotonic\(\) \+ [^\n]+/u,
-      'print(f"fixture backoff: {seconds}", flush=True)\n    retry_at = time.monotonic() + 0.05',
-    )
-    .replace(/--((?:checkout-)?git) 120\b/gu, "--$1 2")
-    // Keep pre-fix standalone shell bodies executable for red/green proof.
-    .replaceAll("120s git", "2s git")
-    .replaceAll("sleep $((attempt * 2))", 'echo "fixture backoff: $((attempt * 2))"')
-    .replaceAll("sleep $((attempt * 5))", "sleep 0.05")
-    .replaceAll("sleep 5", "sleep 0.05");
-  return options.realDrain
-    ? rendered
-    : rendered.replace("kill_at = deadline - cleanup_seconds / 2", "kill_at = time.monotonic()");
+    );
+  // Deadline-policy proofs retain their actual timeout arguments, backoff and drain.
+  if (options.realClock) {
+    return fetchClockSource;
+  }
+  return (
+    fetchClockSource
+      .replace(/fetch_timeout_seconds = [^\n]+/u, "fetch_timeout_seconds = 2")
+      .replace(/\btimeout=(?:30|60|120)(?=[,)])/gu, "timeout=2")
+      .replace(
+        /retry_at = time\.monotonic\(\) \+ [^\n]+/u,
+        'print(f"fixture backoff: {seconds}", flush=True)\n    retry_at = time.monotonic() + 0.05',
+      )
+      .replace(/--((?:checkout-)?git) 120\b/gu, "--$1 2")
+      // Keep pre-fix standalone shell bodies executable for red/green proof.
+      .replaceAll("120s git", "2s git")
+      .replaceAll("sleep $((attempt * 2))", 'echo "fixture backoff: $((attempt * 2))"')
+      .replaceAll("sleep $((attempt * 5))", "sleep 0.05")
+      .replaceAll("sleep 5", "sleep 0.05")
+  );
 }
 
 export function expectCiCheckoutCleanup(report: Report) {

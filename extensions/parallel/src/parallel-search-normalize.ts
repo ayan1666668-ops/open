@@ -38,11 +38,6 @@ const PARALLEL_MAX_SEARCH_QUERIES = 5;
 const PARALLEL_SESSION_ID_MAX_LENGTH = 1000;
 const PARALLEL_CLIENT_MODEL_MAX_LENGTH = 100;
 
-export const normalizeParallelSessionId: (
-  value: string | undefined,
-  maxLength: number,
-) => string | undefined = normalizeBoundedOptionalString;
-
 type ParallelSearchResult = {
   title?: unknown;
   url?: unknown;
@@ -84,7 +79,10 @@ function normalizeParallelSearchRequest(
     objective,
     searchQueries,
     count: resolveParallelSearchCount(args, configuredCount),
-    sessionId: normalizeParallelSessionId(readStringParam(args, "session_id"), sessionIdMaxLength),
+    sessionId: normalizeBoundedOptionalString(
+      readStringParam(args, "session_id"),
+      sessionIdMaxLength,
+    ),
     clientModel: normalizeParallelClientModel(readStringParam(args, "client_model")),
   };
 }
@@ -125,6 +123,7 @@ export async function executeParallelSearchRequest(params: {
     provider: params.provider,
     objective: request.objective,
     searchQueries: request.searchQueries,
+    count: request.count,
     response,
     start,
   });
@@ -133,7 +132,7 @@ export async function executeParallelSearchRequest(params: {
   return payload;
 }
 
-export function resolveParallelSearchCount(
+function resolveParallelSearchCount(
   args: Record<string, unknown>,
   configuredCount: unknown,
 ): number {
@@ -150,7 +149,7 @@ export function resolveParallelSearchCount(
   });
 }
 
-export function normalizeParallelObjective(value: string | undefined): string | undefined {
+function normalizeParallelObjective(value: string | undefined): string | undefined {
   const trimmed = normalizeOptionalString(value);
   if (!trimmed) {
     return undefined;
@@ -160,7 +159,7 @@ export function normalizeParallelObjective(value: string | undefined): string | 
     : truncateUtf16Safe(trimmed, PARALLEL_MAX_OBJECTIVE_CHARS);
 }
 
-export function normalizeParallelClientModel(value: string | undefined): string | undefined {
+function normalizeParallelClientModel(value: string | undefined): string | undefined {
   const trimmed = normalizeOptionalString(value);
   if (!trimmed) {
     return undefined;
@@ -174,7 +173,7 @@ export function normalizeParallelClientModel(value: string | undefined): string 
 // trim, drop empties/duplicates, truncate over-long entries to the API's hard
 // limit, and cap to the API's maximum so a malformed call from the model
 // doesn't 422 the request. See https://docs.parallel.ai/search/best-practices.
-export function normalizeParallelSearchQueries(value: unknown): string[] {
+function normalizeParallelSearchQueries(value: unknown): string[] {
   const candidates = Array.isArray(value) ? value : [];
   const seen = new Set<string>();
   const out: string[] = [];
@@ -211,7 +210,7 @@ function invalidSearchQueriesPayload() {
   };
 }
 
-export function normalizeParallelResults(payload: unknown): ParallelSearchResult[] {
+function normalizeParallelResults(payload: unknown): ParallelSearchResult[] {
   if (!payload || typeof payload !== "object") {
     return [];
   }
@@ -225,8 +224,9 @@ export function normalizeParallelResults(payload: unknown): ParallelSearchResult
 }
 
 /** Maps a Parallel v1 response into wrapped `web_search` result entries. */
-function mapParallelResults(response: ParallelSearchResponse): Record<string, unknown>[] {
-  return normalizeParallelResults(response).map((entry) => {
+function mapParallelResults(response: ParallelSearchResponse, count: number) {
+  const results = normalizeParallelResults(response).slice(0, count);
+  return results.map((entry) => {
     const title = typeof entry.title === "string" ? entry.title : "";
     const url = typeof entry.url === "string" ? entry.url : "";
     const published =
@@ -254,10 +254,11 @@ function buildParallelSearchPayload(params: {
   provider: "parallel" | "parallel-free";
   objective?: string;
   searchQueries: readonly string[];
+  count: number;
   response: ParallelSearchResponse;
   start: number;
 }): Record<string, unknown> {
-  const results = mapParallelResults(params.response);
+  const results = mapParallelResults(params.response, params.count);
   const payload: Record<string, unknown> = {
     ...(params.objective ? { objective: params.objective } : {}),
     searchQueries: params.searchQueries,
@@ -303,7 +304,7 @@ function stripParallelGeneratedSessionId(
   return rest;
 }
 
-export function buildParallelCacheKey(params: {
+function buildParallelCacheKey(params: {
   endpoint: string;
   objective?: string;
   searchQueries: readonly string[];

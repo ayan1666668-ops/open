@@ -9,8 +9,9 @@ import {
   forceDisconnectPlaywrightForTarget,
   getObservedBrowserStateForPage,
   getObservedBrowserStateViaPlaywright,
-  getMainFrameDocumentIdentityViaPlaywright,
+  getDocumentIdentitiesViaPlaywright,
   getPageForTargetId,
+  hasCachedPlaywrightBrowserConnection,
   isBrowserObservedDialogBlockedError,
   listPagesViaPlaywright,
   markObservedDialogsHandledRemotelyForPage,
@@ -28,6 +29,7 @@ import {
 import {
   armDialogViaPlaywright,
   armFileUploadViaPlaywright,
+  downloadCurrentDocumentViaPlaywright,
   downloadViaPlaywright,
   uploadViaPlaywright,
   waitForDownloadViaPlaywright,
@@ -56,10 +58,9 @@ import {
   navigateViaPlaywright,
   pdfViaPlaywright,
   resizeViewportViaPlaywright,
-  snapshotAiViaPlaywright,
   snapshotAriaViaPlaywright,
   snapshotRoleViaPlaywright,
-  storeAriaSnapshotRefsViaPlaywright,
+  storeSnapshotRefsViaPlaywright,
 } from "./pw-tools-core.snapshot.js";
 import {
   emulateMediaViaPlaywright,
@@ -83,6 +84,7 @@ import {
 import { traceStartViaPlaywright, traceStopViaPlaywright } from "./pw-tools-core.trace.js";
 
 export const pwAi = {
+  downloadCurrentDocumentViaPlaywright,
   closePageByTargetIdViaPlaywright,
   closePlaywrightBrowserConnection,
   retirePlaywrightBrowserConnection,
@@ -94,8 +96,9 @@ export const pwAi = {
   createObservedDialogAbortSignalForPage,
   getObservedBrowserStateForPage,
   getObservedBrowserStateViaPlaywright,
-  getMainFrameDocumentIdentityViaPlaywright,
+  getDocumentIdentitiesViaPlaywright,
   getPageForTargetId,
+  hasCachedPlaywrightBrowserConnection,
   isBrowserObservedDialogBlockedError,
   listPagesViaPlaywright,
   markObservedDialogsHandledRemotelyForPage,
@@ -137,10 +140,9 @@ export const pwAi = {
   setLocaleViaPlaywright,
   setOfflineViaPlaywright,
   setTimezoneViaPlaywright,
-  snapshotAiViaPlaywright,
   snapshotAriaViaPlaywright,
   snapshotRoleViaPlaywright,
-  storeAriaSnapshotRefsViaPlaywright,
+  storeSnapshotRefsViaPlaywright,
   screenshotWithLabelsViaPlaywright,
   storageClearViaPlaywright,
   storageGetViaPlaywright,
