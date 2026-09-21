@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { runQaGatewayFixture } from "../../test/helpers/qa-gateway-cleanup.js";
 import { createOperationalRunInstanceRef } from "../agents/admitted-run-context.js";
 import type { PluginApprovalRequestPayload } from "../infra/plugin-approvals.js";
 import { createEmptyPluginRegistry } from "../plugins/registry-empty.js";
@@ -22,6 +23,8 @@ import {
   setDangerousDemoCommandRegistry,
 } from "./node-invoke-plugin-policy.test-helpers.js";
 
+const approvalCleanups: Array<() => Promise<void>> = [];
+
 function createPrivateTransport() {
   const invoke = vi.fn<PluginNodeInvokePrivateTransport["invoke"]>(async (request) => {
     request.onDispatchReady("private-invoke");
@@ -36,7 +39,10 @@ function createPrivateTransport() {
 
 describe("private node policy transport", () => {
   beforeEach(resetPluginRuntimeStateForTest);
-  afterEach(resetPluginRuntimeStateForTest);
+  afterEach(async () => {
+    await runQaGatewayFixture(async () => {}, ...approvalCleanups.splice(0));
+    resetPluginRuntimeStateForTest();
+  });
 
   it("uses the registered risk and approval policy without advertising the private capability", async (testContext) => {
     const manager = createTestApprovalManager<PluginApprovalRequestPayload>(testContext, {
@@ -61,13 +67,15 @@ describe("private node policy transport", () => {
     setDangerousDemoCommandRegistry([registration]);
     const node = createNodeSession();
     node.commands = [];
-    const { context, invoke } = createContext({
+    const { context, invoke, nextApproval, trackApproval, cleanup } = createContext({
       nodeSession: node,
       pluginApprovalManager: manager,
       getApprovalClientConnIds: createApprovalClientLookup([reviewer]),
     });
+    approvalCleanups.push(cleanup);
     const privateTransport = createPrivateTransport();
     const onNodeCommandDispatched = vi.fn();
+    const requested = nextApproval();
     const result = applyPluginNodeInvokePolicy({
       context,
       client: reviewer,
@@ -78,19 +86,21 @@ describe("private node policy transport", () => {
       deadlineAtMs: performance.now() + 5_000,
       onNodeCommandDispatched,
     });
-
-    const approval = await expectSinglePendingApproval(manager);
-    expect(privateTransport.invoke).not.toHaveBeenCalled();
-    expect(await manager.resolve(approval.id, "allow-once")).toBe(true);
-    await expect(result).resolves.toMatchObject({ ok: true, payload: { completed: true } });
-    expect(registration.policy.classifyRisk).toHaveBeenCalledOnce();
-    expect(handle).toHaveBeenCalledOnce();
-    expect(privateTransport.invoke).toHaveBeenCalledOnce();
-    expect(privateTransport.invoke.mock.calls[0]?.[0]).not.toHaveProperty("deadlineAtMs");
-    expect(onNodeCommandDispatched).toHaveBeenCalledOnce();
-    expect((await manager.getSnapshot(approval.id))?.consumedDecision).toBe("allow-once");
-    expect(node.commands).toEqual([]);
-    expect(invoke).not.toHaveBeenCalled();
+    void trackApproval(result);
+    await runQaGatewayFixture(async () => {
+      const approval = await expectSinglePendingApproval(manager, requested, result);
+      expect(privateTransport.invoke).not.toHaveBeenCalled();
+      expect(await manager.resolve(approval.id, "allow-once")).toBe(true);
+      await expect(result).resolves.toMatchObject({ ok: true, payload: { completed: true } });
+      expect(registration.policy.classifyRisk).toHaveBeenCalledOnce();
+      expect(handle).toHaveBeenCalledOnce();
+      expect(privateTransport.invoke).toHaveBeenCalledOnce();
+      expect(privateTransport.invoke.mock.calls[0]?.[0]).not.toHaveProperty("deadlineAtMs");
+      expect(onNodeCommandDispatched).toHaveBeenCalledOnce();
+      expect((await manager.getSnapshot(approval.id))?.consumedDecision).toBe("allow-once");
+      expect(node.commands).toEqual([]);
+      expect(invoke).not.toHaveBeenCalled();
+    }, cleanup);
   });
 
   it.each(["missing-policy", "invalid-risk"] as const)(

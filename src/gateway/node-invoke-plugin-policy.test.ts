@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../test/helpers/promise.js";
+import { runQaGatewayFixture } from "../../test/helpers/qa-gateway-cleanup.js";
 import { createOperationalRunInstanceRef } from "../agents/admitted-run-context.js";
 import type { ChannelApprovalKind } from "../infra/approval-types.js";
 import { resolveCanonicalPluginApprovalRequestAllowedDecisions } from "../infra/plugin-approval-canonical-decisions.js";
@@ -34,11 +35,14 @@ import {
   DEMO_PLUGIN_ID,
   expectApprovalResolution,
   expectSinglePendingApproval,
+  expectTargetedApprovalRequest,
   invokeDemoPolicy,
   nodeCommandsConfig,
   setDangerousDemoCommandRegistry,
 } from "./node-invoke-plugin-policy.test-helpers.js";
 import { listPendingOperatorApprovals } from "./operator-approval-store.js";
+
+const approvalCleanups: Array<() => Promise<void>> = [];
 
 const tempDirs: string[] = [];
 
@@ -59,7 +63,8 @@ describe("applyPluginNodeInvokePolicy", () => {
     hasApprovalTurnSourceRouteMock.mockClear();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await runQaGatewayFixture(async () => {}, ...approvalCleanups.splice(0));
     resetPluginRuntimeStateForTest();
     for (const dir of tempDirs.splice(0)) {
       closeOpenClawStateDatabaseByPath(path.join(dir, "state.sqlite"));
@@ -165,11 +170,12 @@ describe("applyPluginNodeInvokePolicy", () => {
         return await policyContext.invokeNode();
       }),
     ]);
-    const { context, invoke } = createContext({
+    const { context, invoke, nextApproval, trackApproval, cleanup } = createContext({
       nodeSession,
       pluginApprovalManager: manager,
       getApprovalClientConnIds: createApprovalClientLookup([reviewer]),
     });
+    approvalCleanups.push(cleanup);
     let runtimeCurrent = true;
     const stream = {
       onProgress: vi.fn(),
@@ -189,6 +195,7 @@ describe("applyPluginNodeInvokePolicy", () => {
       params?.onProgress?.("approved-duplex-progress");
       return { ok: true, payload: { approved: true }, payloadJSON: null, error: null };
     });
+    const requested = nextApproval();
     const resultPromise = applyPluginNodeInvokePolicy({
       context,
       client: {
@@ -206,32 +213,34 @@ describe("applyPluginNodeInvokePolicy", () => {
       sessionKey: "agent:main:paired",
       nodeInvokeStream: stream,
     });
+    void trackApproval(resultPromise);
+    await runQaGatewayFixture(async () => {
+      const approval = await expectSinglePendingApproval(manager, requested, resultPromise);
+      expect(approval.request.sessionKey).toBe("agent:main:paired");
+      expect(invoke).not.toHaveBeenCalled();
+      expect(await manager.resolve(approval.id, "allow-once")).toBe(true);
 
-    const approval = await expectSinglePendingApproval(manager);
-    expect(approval.request.sessionKey).toBe("agent:main:paired");
-    expect(invoke).not.toHaveBeenCalled();
-    expect(await manager.resolve(approval.id, "allow-once")).toBe(true);
+      await expect(resultPromise).resolves.toMatchObject({ ok: true });
+      expect(stream.onDispatchReady.mock.calls).toEqual([
+        ["rejected-duplex-invoke"],
+        ["approved-duplex-invoke"],
+      ]);
+      expect(stream.onProgress.mock.calls).toEqual([["approved-duplex-progress"]]);
+      expect(invoke).toHaveBeenCalledTimes(2);
+      expect(await manager.listPendingRecords()).toHaveLength(0);
+      expect((await manager.getSnapshot(approval.id))?.consumedDecision).toBe("allow-once");
+      expect(invoke).toHaveBeenCalledWith(
+        expect.objectContaining({
+          expectedConnId: "conn-1",
+          expectedPairingGeneration: "paired-generation-1",
+          sessionKey: "agent:main:paired",
+          idleTimeoutMs: 5_000,
+        }),
+      );
 
-    await expect(resultPromise).resolves.toMatchObject({ ok: true });
-    expect(stream.onDispatchReady.mock.calls).toEqual([
-      ["rejected-duplex-invoke"],
-      ["approved-duplex-invoke"],
-    ]);
-    expect(stream.onProgress.mock.calls).toEqual([["approved-duplex-progress"]]);
-    expect(invoke).toHaveBeenCalledTimes(2);
-    expect(await manager.listPendingRecords()).toHaveLength(0);
-    expect((await manager.getSnapshot(approval.id))?.consumedDecision).toBe("allow-once");
-    expect(invoke).toHaveBeenCalledWith(
-      expect.objectContaining({
-        expectedConnId: "conn-1",
-        expectedPairingGeneration: "paired-generation-1",
-        sessionKey: "agent:main:paired",
-        idleTimeoutMs: 5_000,
-      }),
-    );
-
-    runtimeCurrent = false;
-    expect(invoke.mock.calls[0]?.[0]?.isDispatchAuthorized?.()).toBe(false);
+      runtimeCurrent = false;
+      expect(invoke.mock.calls[0]?.[0]?.isDispatchAuthorized?.()).toBe(false);
+    }, cleanup);
   });
 
   it("does not trust a plugin-owned invocation session without host attestation", async (testContext) => {
@@ -240,10 +249,12 @@ describe("applyPluginNodeInvokePolicy", () => {
     });
     setDangerousDemoCommandRegistry([createApprovalRequestPolicy()]);
     const reviewer = createOperatorClient("conn-owner-approval");
-    const { context } = createContext({
+    const { context, nextApproval, trackApproval, cleanup } = createContext({
       pluginApprovalManager: manager,
       getApprovalClientConnIds: createApprovalClientLookup([reviewer]),
     });
+    approvalCleanups.push(cleanup);
+    const requested = nextApproval();
     const resultPromise = applyPluginNodeInvokePolicy({
       context,
       client: {
@@ -258,11 +269,13 @@ describe("applyPluginNodeInvokePolicy", () => {
       params: DEMO_PARAMS,
       sessionKey: "agent:main:plugin-asserted",
     });
-
-    const approval = await expectSinglePendingApproval(manager);
-    expect(approval.request.sessionKey).toBeNull();
-    expect(await manager.resolve(approval.id, "deny")).toBe(true);
-    await expect(resultPromise).resolves.toMatchObject({ ok: true });
+    void trackApproval(resultPromise);
+    await runQaGatewayFixture(async () => {
+      const approval = await expectSinglePendingApproval(manager, requested, resultPromise);
+      expect(approval.request.sessionKey).toBeNull();
+      expect(await manager.resolve(approval.id, "deny")).toBe(true);
+      await expect(resultPromise).resolves.toMatchObject({ ok: true });
+    }, cleanup);
   });
 
   it("classifies exact arguments before the policy handler and transport", async () => {
@@ -651,27 +664,26 @@ describe("applyPluginNodeInvokePolicy", () => {
       }),
     ]);
     setDangerousDemoCommandRegistry([createApprovalRequestPolicy()]);
-    const { context } = createContext({
+    const { context, nextApproval, trackApproval, cleanup } = createContext({
       pluginApprovalManager: manager,
       getApprovalClientConnIds,
     });
+    approvalCleanups.push(cleanup);
     const requester = createOperatorClient();
     requester.internal = synthetic ? { syntheticClient: true } : undefined;
+    const requested = nextApproval();
     const resultPromise = invokeDemoPolicy(context, requester);
+    void trackApproval(resultPromise);
+    await runQaGatewayFixture(async () => {
+      const record = await expectSinglePendingApproval(manager, requested, resultPromise);
+      expect(record.requestedByConnId).toBe("conn-requester");
+      expect(record.requestedByDeviceId).toBe("device-owner");
+      expect(record.requestedByClientId).toBe("client-owner");
+      expect(context.broadcast).not.toHaveBeenCalled();
+      expectTargetedApprovalRequest(context, record.id, visibleConnIds);
 
-    const record = await expectSinglePendingApproval(manager);
-    expect(record.requestedByConnId).toBe("conn-requester");
-    expect(record.requestedByDeviceId).toBe("device-owner");
-    expect(record.requestedByClientId).toBe("client-owner");
-    expect(context.broadcast).not.toHaveBeenCalled();
-    expect(context.broadcastToConnIds).toHaveBeenCalledWith(
-      "plugin.approval.requested",
-      expect.objectContaining({ id: record.id }),
-      visibleConnIds,
-      { dropIfSlow: true },
-    );
-
-    await expectApprovalResolution(resultPromise, manager, record);
+      await expectApprovalResolution(resultPromise, manager, record);
+    }, cleanup);
   });
 
   it("keeps a sole-reviewer operator requester routable instead of no-route denying", async (testContext) => {
@@ -680,30 +692,27 @@ describe("applyPluginNodeInvokePolicy", () => {
     });
     const requester = createOperatorClient();
     setDangerousDemoCommandRegistry([createApprovalRequestPolicy()]);
-    const { context } = createContext({
+    const { context, nextApproval, trackApproval, cleanup } = createContext({
       pluginApprovalManager: manager,
       getApprovalClientConnIds: createApprovalClientLookup([requester]),
     });
+    approvalCleanups.push(cleanup);
+    const requested = nextApproval();
     const resultPromise = invokeDemoPolicy(context, requester);
+    void trackApproval(resultPromise);
+    await runQaGatewayFixture(async () => {
+      const record = await expectSinglePendingApproval(manager, requested, resultPromise);
+      expectTargetedApprovalRequest(context, record.id, new Set(["conn-requester"]));
 
-    const record = await expectSinglePendingApproval(manager);
-    expect(context.broadcastToConnIds).toHaveBeenCalledWith(
-      "plugin.approval.requested",
-      expect.objectContaining({ id: record.id }),
-      new Set(["conn-requester"]),
-      { dropIfSlow: true },
-    );
-
-    await expectApprovalResolution(resultPromise, manager, record);
+      await expectApprovalResolution(resultPromise, manager, record);
+    }, cleanup);
   });
 
   it("sanitizes node-policy approval titles at creation like the RPC ingress", async (testContext) => {
     const manager = createTestApprovalManager<PluginApprovalRequestPayload>(testContext, {
       approvalKind: "plugin",
     });
-    const getApprovalClientConnIds = createApprovalClientLookup([
-      createOperatorClient("conn-owner-approval"),
-    ]);
+    const getApprovalClientConnIds = createApprovalClientLookup();
     setDangerousDemoCommandRegistry([
       // Bidi override + zero-width space: reviewer-spoofing characters.
       createApprovalRequestPolicy({
@@ -713,17 +722,24 @@ describe("applyPluginNodeInvokePolicy", () => {
         agentId: "agent​x",
       }),
     ]);
-    const { context } = createContext({ pluginApprovalManager: manager, getApprovalClientConnIds });
+    const { context, nextApproval, trackApproval, cleanup } = createContext({
+      pluginApprovalManager: manager,
+      getApprovalClientConnIds,
+    });
+    approvalCleanups.push(cleanup);
+    const requested = nextApproval();
     const resultPromise = invokeDemoPolicy(context, createOperatorClient());
+    void trackApproval(resultPromise);
+    await runQaGatewayFixture(async () => {
+      const record = await expectSinglePendingApproval(manager, requested, resultPromise);
+      expect(record.request.title).toBe("Deploy\\u{202E}yolped");
+      expect(record.request.description).toBe("safe\\u{200B}text");
+      // Metadata is interpolated into channel approval text lines.
+      expect(record.request.toolName).toBe("tool\\u{202E}run");
+      expect(record.request.agentId).toBe("agent\\u{200B}x");
 
-    const record = await expectSinglePendingApproval(manager);
-    expect(record.request.title).toBe("Deploy\\u{202E}yolped");
-    expect(record.request.description).toBe("safe\\u{200B}text");
-    // Metadata is interpolated into channel approval text lines.
-    expect(record.request.toolName).toBe("tool\\u{202E}run");
-    expect(record.request.agentId).toBe("agent\\u{200B}x");
-
-    await expectApprovalResolution(resultPromise, manager, record);
+      await expectApprovalResolution(resultPromise, manager, record);
+    }, cleanup);
   });
 
   it("limits explicitly one-shot node-policy approvals to allow-once or deny", async (testContext) => {
@@ -734,20 +750,22 @@ describe("applyPluginNodeInvokePolicy", () => {
     setDangerousDemoCommandRegistry([
       createApprovalRequestPolicy({ allowedDecisions: ["allow-once"] }),
     ]);
-    const { context } = createContext({
+    const { context, nextApproval, trackApproval, cleanup } = createContext({
       pluginApprovalManager: manager,
-      getApprovalClientConnIds: createApprovalClientLookup([
-        createOperatorClient("conn-owner-approval"),
-      ]),
+      getApprovalClientConnIds: createApprovalClientLookup(),
     });
+    approvalCleanups.push(cleanup);
+    const requested = nextApproval();
     const resultPromise = invokeDemoPolicy(context, createOperatorClient());
+    void trackApproval(resultPromise);
+    await runQaGatewayFixture(async () => {
+      const record = await expectSinglePendingApproval(manager, requested, resultPromise);
+      expect(record.request.allowedDecisions).toEqual(["allow-once", "deny"]);
+      expect(await manager.resolve(record.id, "allow-always")).toBe(false);
+      expect(await manager.listPendingRecords()).toHaveLength(1);
 
-    const record = await expectSinglePendingApproval(manager);
-    expect(record.request.allowedDecisions).toEqual(["allow-once", "deny"]);
-    expect(await manager.resolve(record.id, "allow-always")).toBe(false);
-    expect(await manager.listPendingRecords()).toHaveLength(1);
-
-    await expectApprovalResolution(resultPromise, manager, record);
+      await expectApprovalResolution(resultPromise, manager, record);
+    }, cleanup);
   });
 
   it("forwards plugin policy approvals to the originating turn source", async (testContext) => {
@@ -758,14 +776,16 @@ describe("applyPluginNodeInvokePolicy", () => {
     const getApprovalClientConnIds = vi.fn(() => new Set<string>());
     const handlePluginApprovalRequested = vi.fn(async () => true);
     setDangerousDemoCommandRegistry([createApprovalRequestPolicy()]);
-    const { context } = createContext({
+    const { context, nextApproval, trackApproval, cleanup } = createContext({
       pluginApprovalManager: manager,
       getApprovalClientConnIds,
       hasExecApprovalClients: vi.fn(() => false),
       forwardPluginApprovalRequest: handlePluginApprovalRequested,
       validateAgentRuntimeApprovalAuthority: () => true,
     });
+    approvalCleanups.push(cleanup);
     const operationalRunInstance = createOperationalRunInstanceRef("run-node-policy");
+    const requested = nextApproval();
     const resultPromise = applyPluginNodeInvokePolicy({
       context,
       client: {
@@ -796,34 +816,31 @@ describe("applyPluginNodeInvokePolicy", () => {
         threadId: 7,
       },
     });
-
-    const record = await expectSinglePendingApproval(manager);
-    expect(record.request.turnSourceChannel).toBe("tui");
-    expect(record.request.turnSourceTo).toBe("terminal");
-    expect(record.request.turnSourceAccountId).toBe("default");
-    expect(record.request.turnSourceThreadId).toBe(7);
-    expect(context.broadcast).not.toHaveBeenCalled();
-    expect(context.broadcastToConnIds).toHaveBeenCalledWith(
-      "plugin.approval.requested",
-      expect.objectContaining({ id: record.id }),
-      new Set<string>(),
-      { dropIfSlow: true },
-    );
-    expect(handlePluginApprovalRequested).toHaveBeenCalledWith(
-      expect.objectContaining({
-        id: record.id,
-        request: expect.objectContaining({
-          turnSourceChannel: "tui",
-          turnSourceTo: "terminal",
-          turnSourceAccountId: "default",
-          turnSourceThreadId: 7,
-          agentId: "main",
-          sessionKey: "agent:main:telegram:direct:alice",
+    void trackApproval(resultPromise);
+    await runQaGatewayFixture(async () => {
+      const record = await expectSinglePendingApproval(manager, requested, resultPromise);
+      expect(record.request.turnSourceChannel).toBe("tui");
+      expect(record.request.turnSourceTo).toBe("terminal");
+      expect(record.request.turnSourceAccountId).toBe("default");
+      expect(record.request.turnSourceThreadId).toBe(7);
+      expect(context.broadcast).not.toHaveBeenCalled();
+      expectTargetedApprovalRequest(context, record.id, new Set<string>());
+      expect(handlePluginApprovalRequested).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: record.id,
+          request: expect.objectContaining({
+            turnSourceChannel: "tui",
+            turnSourceTo: "terminal",
+            turnSourceAccountId: "default",
+            turnSourceThreadId: 7,
+            agentId: "main",
+            sessionKey: "agent:main:telegram:direct:alice",
+          }),
         }),
-      }),
-    );
+      );
 
-    await expectApprovalResolution(resultPromise, manager, record);
+      await expectApprovalResolution(resultPromise, manager, record);
+    }, cleanup);
   });
 
   it("delivers plugin policy approvals to visible iOS reviewers", async (testContext) => {
@@ -839,32 +856,37 @@ describe("applyPluginNodeInvokePolicy", () => {
       ) => true,
     );
     setDangerousDemoCommandRegistry([createApprovalRequestPolicy()]);
-    const { context } = createContext({
+    const { context, nextApproval, trackApproval, cleanup } = createContext({
       pluginApprovalManager: manager,
       getApprovalClientConnIds: vi.fn(() => new Set<string>()),
       hasExecApprovalClients: vi.fn(() => false),
       pluginApprovalIosPushDelivery: { handleRequested },
     });
+    approvalCleanups.push(cleanup);
 
+    const requested = nextApproval();
     const resultPromise = invokeDemoPolicy(context, createOperatorClient());
-    const record = await expectSinglePendingApproval(manager);
+    void trackApproval(resultPromise);
+    await runQaGatewayFixture(async () => {
+      const record = await expectSinglePendingApproval(manager, requested, resultPromise);
 
-    expect(handleRequested).toHaveBeenCalledTimes(1);
-    const deliveryOptions = handleRequested.mock.calls[0]?.[1];
-    expect(
-      deliveryOptions?.isTargetVisible?.({
-        deviceId: "device-owner",
-        scopes: ["operator.approvals", "operator.read"],
-      }),
-    ).toBe(true);
-    expect(
-      deliveryOptions?.isTargetVisible?.({
-        deviceId: "device-other",
-        scopes: ["operator.approvals", "operator.read"],
-      }),
-    ).toBe(false);
+      expect(handleRequested).toHaveBeenCalledTimes(1);
+      const deliveryOptions = handleRequested.mock.calls[0]?.[1];
+      expect(
+        deliveryOptions?.isTargetVisible?.({
+          deviceId: "device-owner",
+          scopes: ["operator.approvals", "operator.read"],
+        }),
+      ).toBe(true);
+      expect(
+        deliveryOptions?.isTargetVisible?.({
+          deviceId: "device-other",
+          scopes: ["operator.approvals", "operator.read"],
+        }),
+      ).toBe(false);
 
-    await expectApprovalResolution(resultPromise, manager, record);
+      await expectApprovalResolution(resultPromise, manager, record);
+    }, cleanup);
   });
 
   it("sends an iOS cleanup wake through the current delivery owner", async (testContext) => {
@@ -873,7 +895,7 @@ describe("applyPluginNodeInvokePolicy", () => {
     });
     const handleExpired = vi.fn(async () => {});
     setDangerousDemoCommandRegistry([createApprovalRequestPolicy()]);
-    const { context } = createContext({
+    const { context, nextApproval, trackApproval, cleanup } = createContext({
       pluginApprovalManager: manager,
       getApprovalClientConnIds: vi.fn(() => new Set<string>()),
       hasExecApprovalClients: vi.fn(() => false),
@@ -882,20 +904,25 @@ describe("applyPluginNodeInvokePolicy", () => {
         handleExpired,
       },
     });
+    approvalCleanups.push(cleanup);
 
+    const requested = nextApproval();
     const resultPromise = invokeDemoPolicy(context, createOperatorClient());
-    const record = await expectSinglePendingApproval(manager);
-    const replacementExpired = vi.fn(async () => {});
-    context.pluginApprovalIosPushDelivery = { handleExpired: replacementExpired };
-    await manager.expire(record.id, "timeout");
+    void trackApproval(resultPromise);
+    await runQaGatewayFixture(async () => {
+      const record = await expectSinglePendingApproval(manager, requested, resultPromise);
+      const replacementExpired = vi.fn(async () => {});
+      context.pluginApprovalIosPushDelivery = { handleExpired: replacementExpired };
+      await manager.expire(record.id, "timeout");
 
-    await expect(resultPromise).resolves.toStrictEqual({
-      ok: true,
-      payload: { id: record.id, decision: null },
-    });
-    expect(handleExpired).not.toHaveBeenCalled();
-    expect(replacementExpired).toHaveBeenCalledWith(expect.objectContaining({ id: record.id }));
-    expect(replacementExpired.mock.contexts).toEqual([context.pluginApprovalIosPushDelivery]);
+      await expect(resultPromise).resolves.toStrictEqual({
+        ok: true,
+        payload: { id: record.id, decision: null },
+      });
+      expect(handleExpired).not.toHaveBeenCalled();
+      expect(replacementExpired).toHaveBeenCalledWith(expect.objectContaining({ id: record.id }));
+      expect(replacementExpired.mock.contexts).toEqual([context.pluginApprovalIosPushDelivery]);
+    }, cleanup);
   });
 
   it("ignores approval routes from unsigned node.invoke clients", async (testContext) => {
@@ -948,18 +975,20 @@ describe("applyPluginNodeInvokePolicy", () => {
     setDangerousDemoCommandRegistry([
       createApprovalRequestPolicy({ timeoutMs: Number.MAX_SAFE_INTEGER }),
     ]);
-    const { context } = createContext({
+    const { context, nextApproval, trackApproval, cleanup } = createContext({
       pluginApprovalManager: manager,
-      getApprovalClientConnIds: createApprovalClientLookup([
-        createOperatorClient("conn-owner-approval"),
-      ]),
+      getApprovalClientConnIds: createApprovalClientLookup(),
     });
+    approvalCleanups.push(cleanup);
+    const requested = nextApproval();
     const resultPromise = invokeDemoPolicy(context, createOperatorClient());
+    void trackApproval(resultPromise);
+    await runQaGatewayFixture(async () => {
+      const record = await expectSinglePendingApproval(manager, requested, resultPromise);
+      expect(record.expiresAtMs - record.createdAtMs).toBe(MAX_PLUGIN_APPROVAL_TIMEOUT_MS);
 
-    const record = await expectSinglePendingApproval(manager);
-    expect(record.expiresAtMs - record.createdAtMs).toBe(MAX_PLUGIN_APPROVAL_TIMEOUT_MS);
-
-    await expectApprovalResolution(resultPromise, manager, record);
+      await expectApprovalResolution(resultPromise, manager, record);
+    }, cleanup);
   });
 
   it("fails closed when the allow-once claim cannot be consumed", async (testContext) => {
@@ -968,21 +997,23 @@ describe("applyPluginNodeInvokePolicy", () => {
     });
     vi.spyOn(manager, "consumeAllowOnce").mockResolvedValue(false);
     setDangerousDemoCommandRegistry([createApprovalRequestPolicy()]);
-    const { context } = createContext({
+    const { context, nextApproval, trackApproval, cleanup } = createContext({
       pluginApprovalManager: manager,
-      getApprovalClientConnIds: createApprovalClientLookup([
-        createOperatorClient("conn-owner-approval"),
-      ]),
+      getApprovalClientConnIds: createApprovalClientLookup(),
     });
+    approvalCleanups.push(cleanup);
+    const requested = nextApproval();
     const resultPromise = invokeDemoPolicy(context, createOperatorClient());
+    void trackApproval(resultPromise);
+    await runQaGatewayFixture(async () => {
+      const record = await expectSinglePendingApproval(manager, requested, resultPromise);
+      expect(await manager.resolve(record.id, "allow-once")).toBe(true);
 
-    const record = await expectSinglePendingApproval(manager);
-    expect(await manager.resolve(record.id, "allow-once")).toBe(true);
-
-    await expect(resultPromise).resolves.toStrictEqual({
-      ok: true,
-      payload: { id: record.id, decision: null },
-    });
+      await expect(resultPromise).resolves.toStrictEqual({
+        ok: true,
+        payload: { id: record.id, decision: null },
+      });
+    }, cleanup);
   });
 
   it("fails closed before routing an unrenderable persistent policy approval", async () => {
@@ -999,9 +1030,7 @@ describe("applyPluginNodeInvokePolicy", () => {
     ]);
     const { context, invoke } = createContext({
       pluginApprovalManager: manager,
-      getApprovalClientConnIds: createApprovalClientLookup([
-        createOperatorClient("conn-owner-approval"),
-      ]),
+      getApprovalClientConnIds: createApprovalClientLookup(),
     });
 
     await expect(invokeDemoPolicy(context, createOperatorClient())).rejects.toThrow(
@@ -1039,18 +1068,20 @@ describe("applyPluginNodeInvokePolicy", () => {
         description: `${"b".repeat(255)}🚀tail`,
       }),
     ]);
-    const { context } = createContext({
+    const { context, nextApproval, trackApproval, cleanup } = createContext({
       pluginApprovalManager: manager,
-      getApprovalClientConnIds: createApprovalClientLookup([
-        createOperatorClient("conn-owner-approval"),
-      ]),
+      getApprovalClientConnIds: createApprovalClientLookup(),
     });
+    approvalCleanups.push(cleanup);
+    const requested = nextApproval();
     const resultPromise = invokeDemoPolicy(context, createOperatorClient());
+    void trackApproval(resultPromise);
+    await runQaGatewayFixture(async () => {
+      const record = await expectSinglePendingApproval(manager, requested, resultPromise);
+      expect(record.request.title).toBe("a".repeat(79));
+      expect(record.request.description).toBe("b".repeat(255));
 
-    const record = await expectSinglePendingApproval(manager);
-    expect(record.request.title).toBe("a".repeat(79));
-    expect(record.request.description).toBe("b".repeat(255));
-
-    await expectApprovalResolution(resultPromise, manager, record);
+      await expectApprovalResolution(resultPromise, manager, record);
+    }, cleanup);
   });
 });

@@ -1,6 +1,7 @@
 import { setImmediate } from "node:timers/promises";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../../test/helpers/promise.js";
+import { runQaGatewayFixture } from "../../../test/helpers/qa-gateway-cleanup.js";
 import { createOperationalRunInstanceRef } from "../../agents/admitted-run-context.js";
 import type { ComputerToolTransport } from "../../agents/tools/computer-tool.js";
 import {
@@ -119,12 +120,17 @@ const revocations: Array<{ name: string; revoke(harness: Harness): void }> = [
   },
 ];
 
+let approvalCleanup: (() => Promise<void>) | undefined;
+
 describe("session computer transport", () => {
   beforeEach(() => {
     resetAgentRunRegistryForTest();
     resetPluginRuntimeStateForTest();
   });
-  afterEach(() => {
+  afterEach(async () => {
+    const cleanup = approvalCleanup;
+    approvalCleanup = undefined;
+    await cleanup?.();
     vi.restoreAllMocks();
     resetAgentRunRegistryForTest();
     resetPluginRuntimeStateForTest();
@@ -440,27 +446,45 @@ describe("session computer transport", () => {
       }
       return await policy.invokeNode();
     });
+    const requested = createDeferred<unknown>();
+    const broadcast = vi.mocked(context.broadcastToConnIds).getMockImplementation();
+    vi.mocked(context.broadcastToConnIds).mockImplementation((...args) => {
+      broadcast?.(...args);
+      if (args[0] === "plugin.approval.requested") {
+        requested.resolve(args[1]);
+      }
+    });
     const operation = transport.invoke(request("type"));
-    const record = await expectSinglePendingApproval(manager);
-    expect(record.request).toMatchObject({
-      agentId: "main",
-      sessionKey: h.state.placement.sessionKey,
-      runId: h.claim.runId,
-    });
-    expect(record.agentRuntimeDelegatedAuthority).toMatchObject({
-      kind: "worker",
-      turnClaim: h.claim,
-      operationalRunInstance: h.run,
-    });
-    expect(await manager.resolve(record.id, "allow-once")).toBe(true);
-    await expect(operation).resolves.toMatchObject({ ok: true });
-    expect((await manager.getSnapshot(record.id))?.consumedDecision).toBe("allow-once");
-    releaseAgentRunDelegatedAuthority(h.authority);
-    h.releaseClaim();
-    h.policyHandle.mockClear();
-    await prepared.close("completion");
-    expect(h.policyHandle).not.toHaveBeenCalled();
-    expect(await manager.listPendingRecords()).toEqual([]);
+    void operation.catch(() => {});
+    let closing: Promise<void> | undefined;
+    approvalCleanup = () =>
+      (closing ??= runQaGatewayFixture(
+        () => manager.drain(),
+        () => operation,
+        () => prepared.close("completion"),
+      ));
+    await runQaGatewayFixture(async () => {
+      const record = await expectSinglePendingApproval(manager, requested.promise, operation);
+      expect(record.request).toMatchObject({
+        agentId: "main",
+        sessionKey: h.state.placement.sessionKey,
+        runId: h.claim.runId,
+      });
+      expect(record.agentRuntimeDelegatedAuthority).toMatchObject({
+        kind: "worker",
+        turnClaim: h.claim,
+        operationalRunInstance: h.run,
+      });
+      expect(await manager.resolve(record.id, "allow-once")).toBe(true);
+      await expect(operation).resolves.toMatchObject({ ok: true });
+      expect((await manager.getSnapshot(record.id))?.consumedDecision).toBe("allow-once");
+      releaseAgentRunDelegatedAuthority(h.authority);
+      h.releaseClaim();
+      h.policyHandle.mockClear();
+      await prepared.close("completion");
+      expect(h.policyHandle).not.toHaveBeenCalled();
+      expect(await manager.listPendingRecords()).toEqual([]);
+    }, approvalCleanup);
   });
 
   it.each([

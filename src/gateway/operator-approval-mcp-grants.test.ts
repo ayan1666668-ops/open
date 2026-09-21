@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { runQaGatewayFixture } from "../../test/helpers/qa-gateway-cleanup.js";
 import { buildCodexUserMcpServersThreadConfigPatchForRuntime } from "../agents/cli-runner/bundle-mcp-codex.js";
 import {
   clearRuntimeConfigSnapshot,
@@ -21,10 +22,12 @@ import {
   createOpenClawTestState,
   type OpenClawTestState,
 } from "../test-utils/openclaw-test-state.js";
+import { startTestApprovalRequest } from "./exec-approval-manager.test-support.js";
 import { createGatewayAuxHandlers } from "./server-aux-handlers.js";
 import { createPluginApprovalHandlers } from "./server-methods/plugin-approval.js";
 import type { GatewayRequestHandlerOptions } from "./server-methods/types.js";
 
+const requests: ReturnType<typeof startTestApprovalRequest>[] = [];
 const auxiliaries: ReturnType<typeof createGatewayAuxHandlers>[] = [];
 let fixture: OpenClawTestState | undefined;
 const cfg: OpenClawConfig = {
@@ -63,6 +66,10 @@ beforeEach(async () => {
   setRuntimeConfigSnapshot(cfg);
 });
 afterEach(async () => {
+  await runQaGatewayFixture(
+    async () => {},
+    ...requests.splice(0).map((request) => request.cleanup),
+  );
   for (const aux of auxiliaries) {
     await aux.stopOperatorInteractions();
   }
@@ -140,50 +147,62 @@ async function requestGrant(
       validateAgentRuntimeApprovalAuthority: () => validateAgentRunDelegatedAuthority(authority),
     },
   } as unknown as GatewayRequestHandlerOptions;
-  const pending = createPluginApprovalHandlers(aux.pluginApprovalManager)[
-    "plugin.approval.request"
-  ]!(args);
-  await vi.waitFor(() => expect(args.respond).toHaveBeenCalled());
-  releaseBinding?.();
-  const record = (await aux.pluginApprovalManager.listPendingRecords())[0];
-  if (!record) {
-    await pending;
-    throw new Error("MCP approval request did not register");
+  const approval = startTestApprovalRequest(
+    { drain: () => aux.stopOperatorInteractions() },
+    createPluginApprovalHandlers(aux.pluginApprovalManager)["plugin.approval.request"]!,
+    args,
+  );
+  let closing: Promise<void> | undefined;
+  const cleanup = () =>
+    (closing ??= runQaGatewayFixture(approval.cleanup, () => releaseBinding?.()));
+  requests.push({ ...approval, cleanup });
+  try {
+    const approvalId = await approval.accepted();
+    const records = await aux.pluginApprovalManager.listPendingRecords();
+    expect(records).toHaveLength(1);
+    const record = records[0]!;
+    expect(record.id).toBe(approvalId);
+    return { aux, authority, pending: approval.pending, record, cleanup };
+  } catch (error) {
+    return await runQaGatewayFixture(async () => {
+      throw error;
+    }, cleanup);
   }
-  return { aux, authority, pending, record };
 }
 
 describe("gateway MCP tool grants", () => {
   it("mints once for the authenticated agent and projects the grant after gateway restart", async () => {
-    const { aux, pending, record } = await requestGrant({ agentId: "other" });
-    expect(await aux.pluginApprovalManager.resolve(record.id, "allow-always")).toBe(true);
-    await pending;
-    const expected = {
-      server: "project.docs",
-      tool: "write_note",
-      source: "allow-always",
-      addedAt: expect.any(Number),
-    };
-    expect(loadExecApprovalsReadOnly().agents).toEqual({ main: { mcpTools: [expected] } });
-    expect(await aux.pluginApprovalManager.resolve(record.id, "allow-always")).toBe(false);
-    await aux.stopOperatorInteractions();
-    await closeOpenClawStateDatabaseAsync();
-    closeOpenClawStateDatabaseForTest();
-    const restarted = gateway();
-    expect(restarted.pluginApprovalManager.runtimeEpoch).not.toBe(
-      aux.pluginApprovalManager.runtimeEpoch,
-    );
-    expect(loadExecApprovalsReadOnly().agents).toEqual({ main: { mcpTools: [expected] } });
-    expect(
-      await buildCodexUserMcpServersThreadConfigPatchForRuntime(cfg, { agentId: "main" }),
-    ).toMatchObject({
-      mcp_servers: { "project.docs": { tools: { write_note: { approval_mode: "approve" } } } },
-    });
-    expect(
-      await buildCodexUserMcpServersThreadConfigPatchForRuntime(cfg, { agentId: "other" }),
-    ).not.toMatchObject({
-      mcp_servers: { "project.docs": { tools: { write_note: { approval_mode: "approve" } } } },
-    });
+    const { aux, pending, record, cleanup } = await requestGrant({ agentId: "other" });
+    await runQaGatewayFixture(async () => {
+      expect(await aux.pluginApprovalManager.resolve(record.id, "allow-always")).toBe(true);
+      await pending;
+      const expected = {
+        server: "project.docs",
+        tool: "write_note",
+        source: "allow-always",
+        addedAt: expect.any(Number),
+      };
+      expect(loadExecApprovalsReadOnly().agents).toEqual({ main: { mcpTools: [expected] } });
+      expect(await aux.pluginApprovalManager.resolve(record.id, "allow-always")).toBe(false);
+      await aux.stopOperatorInteractions();
+      await closeOpenClawStateDatabaseAsync();
+      closeOpenClawStateDatabaseForTest();
+      const restarted = gateway();
+      expect(restarted.pluginApprovalManager.runtimeEpoch).not.toBe(
+        aux.pluginApprovalManager.runtimeEpoch,
+      );
+      expect(loadExecApprovalsReadOnly().agents).toEqual({ main: { mcpTools: [expected] } });
+      expect(
+        await buildCodexUserMcpServersThreadConfigPatchForRuntime(cfg, { agentId: "main" }),
+      ).toMatchObject({
+        mcp_servers: { "project.docs": { tools: { write_note: { approval_mode: "approve" } } } },
+      });
+      expect(
+        await buildCodexUserMcpServersThreadConfigPatchForRuntime(cfg, { agentId: "other" }),
+      ).not.toMatchObject({
+        mcp_servers: { "project.docs": { tools: { write_note: { approval_mode: "approve" } } } },
+      });
+    }, cleanup);
   });
 
   it.each([
@@ -198,57 +217,66 @@ describe("gateway MCP tool grants", () => {
     { name: "removed server", removed: true },
     { name: "closed authority", closed: true },
   ])("does not mint for $name", async (options) => {
-    const { aux, authority, pending, record } = await requestGrant(options);
-    if (options.prompt) {
-      setRuntimeConfigSnapshot({
-        ...cfg,
-        mcp: {
-          servers: {
-            "project.docs": { command: "docs-mcp", codex: { defaultToolsApprovalMode: "prompt" } },
+    const { aux, authority, pending, record, cleanup } = await requestGrant(options);
+    await runQaGatewayFixture(async () => {
+      if (options.prompt) {
+        setRuntimeConfigSnapshot({
+          ...cfg,
+          mcp: {
+            servers: {
+              "project.docs": {
+                command: "docs-mcp",
+                codex: { defaultToolsApprovalMode: "prompt" },
+              },
+            },
           },
-        },
-      });
-    }
-    if (options.removed) {
-      setRuntimeConfigSnapshot({ ...cfg, mcp: { servers: {} } });
-    }
-    if (options.nativePrompt) {
-      setRuntimeConfigSnapshot({
-        ...cfg,
-        mcp: {
-          servers: {
-            "project.docs": { command: "docs-mcp", default_tools_approval_mode: "prompt" },
+        });
+      }
+      if (options.removed) {
+        setRuntimeConfigSnapshot({ ...cfg, mcp: { servers: {} } });
+      }
+      if (options.nativePrompt) {
+        setRuntimeConfigSnapshot({
+          ...cfg,
+          mcp: {
+            servers: {
+              "project.docs": { command: "docs-mcp", default_tools_approval_mode: "prompt" },
+            },
           },
-        },
-      });
-    }
-    if (options.closed) {
-      releaseAgentRunDelegatedAuthority(authority);
-    }
-    await aux.pluginApprovalManager.resolve(record.id, options.decision ?? "allow-always");
-    await pending;
-    expect(loadExecApprovalsReadOnly().agents).toEqual({});
+        });
+      }
+      if (options.closed) {
+        releaseAgentRunDelegatedAuthority(authority);
+      }
+      await aux.pluginApprovalManager.resolve(record.id, options.decision ?? "allow-always");
+      await pending;
+      expect(loadExecApprovalsReadOnly().agents).toEqual({});
+    }, cleanup);
   });
 
   it("keeps one-shot approval when correlation is lost while the prompt is pending", async () => {
     let active = true;
-    const { aux, pending, record } = await requestGrant({ isActive: () => active });
-    active = false;
-    expect(await aux.pluginApprovalManager.resolve(record.id, "allow-always")).toBe(true);
-    await pending;
-    expect(loadExecApprovalsReadOnly().agents).toEqual({});
-    expect(
-      (await aux.pluginApprovalManager.getSnapshot(record.id))?.mcpToolApprovalActive,
-    ).toBeUndefined();
+    const { aux, pending, record, cleanup } = await requestGrant({ isActive: () => active });
+    await runQaGatewayFixture(async () => {
+      active = false;
+      expect(await aux.pluginApprovalManager.resolve(record.id, "allow-always")).toBe(true);
+      await pending;
+      expect(loadExecApprovalsReadOnly().agents).toEqual({});
+      expect(
+        (await aux.pluginApprovalManager.getSnapshot(record.id))?.mcpToolApprovalActive,
+      ).toBeUndefined();
+    }, cleanup);
   });
 
   it("rejects an unadvertised allow-always without minting", async () => {
-    const { aux, pending, record } = await requestGrant({
+    const { aux, pending, record, cleanup } = await requestGrant({
       allowedDecisions: ["allow-once", "deny"],
     });
-    expect(await aux.pluginApprovalManager.resolve(record.id, "allow-always")).toBe(false);
-    expect(loadExecApprovalsReadOnly().agents).toEqual({});
-    await aux.pluginApprovalManager.resolve(record.id, "deny");
-    await pending;
+    await runQaGatewayFixture(async () => {
+      expect(await aux.pluginApprovalManager.resolve(record.id, "allow-always")).toBe(false);
+      expect(loadExecApprovalsReadOnly().agents).toEqual({});
+      await aux.pluginApprovalManager.resolve(record.id, "deny");
+      await pending;
+    }, cleanup);
   });
 });

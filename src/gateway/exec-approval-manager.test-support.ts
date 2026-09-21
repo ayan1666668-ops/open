@@ -1,13 +1,19 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
-import { vi, type TestContext } from "vitest";
+import { expect, vi, type TestContext } from "vitest";
 import { createFixtureLifetime } from "../../test/helpers/fixture-lifetime.js";
+import { createDeferred } from "../../test/helpers/promise.js";
+import { runQaGatewayFixture } from "../../test/helpers/qa-gateway-cleanup.js";
 import type { ExecApprovalRequestPayload } from "../infra/exec-approvals.js";
 import { closeOpenClawStateDatabaseByPathAsync } from "../state/openclaw-state-db-cache.js";
 import { openOpenClawStateDatabase } from "../state/openclaw-state-db.js";
 import { ExecApprovalManager } from "./exec-approval-manager.js";
 import type { ExecApprovalManagerOptions } from "./exec-approval-manager.types.js";
 import * as operatorApprovalStore from "./operator-approval-store.js";
+import type {
+  GatewayRequestHandler,
+  GatewayRequestHandlerOptions,
+} from "./server-methods/types.js";
 
 /** Vitest clocks are process-local; send controlled time through the store's existing input. */
 export function installTestApprovalClock(): (() => void) | undefined {
@@ -70,4 +76,46 @@ export function createTestApprovalManager<TPayload = ExecApprovalRequestPayload>
     );
     throw error;
   }
+}
+
+/** Two-phase fixtures own the accepted handshake and the handler through teardown. */
+export function startTestApprovalRequest(
+  manager: { drain(): Promise<void> },
+  handler: GatewayRequestHandler,
+  options: GatewayRequestHandlerOptions,
+) {
+  const response = createDeferred<Parameters<GatewayRequestHandlerOptions["respond"]>>();
+  const respond = options.respond;
+  options.respond = (...args) => {
+    respond(...args);
+    response.resolve(args);
+  };
+  const pending = (async () => handler(options))();
+  // Observe rejection immediately, including when a test assertion exits first.
+  void pending.catch(() => {});
+  let closing: Promise<void> | undefined;
+  return {
+    pending,
+    async accepted(): Promise<string> {
+      const [ok, payload, error] = await Promise.race([
+        response.promise,
+        pending.then(() => {
+          throw new Error("Approval request completed before its accepted handshake");
+        }),
+      ]);
+      expect(ok).toBe(true);
+      expect(error).toBeUndefined();
+      expect(payload).toMatchObject({ status: "accepted", id: expect.any(String) });
+      const id = (payload as { id: string }).id;
+      expect(id.length).toBeGreaterThan(0);
+      return id;
+    },
+    cleanup(this: void) {
+      // Drain releases decision observers; the handler must join before its store closes.
+      return (closing ??= runQaGatewayFixture(
+        () => manager.drain(),
+        () => pending,
+      ));
+    },
+  };
 }
