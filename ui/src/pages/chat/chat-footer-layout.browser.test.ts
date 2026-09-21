@@ -2,6 +2,7 @@
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { z } from "zod";
 import { readStyleSheet } from "../../../../test/helpers/ui-style-fixtures.js";
 import { withBrowserPage } from "../../test-helpers/browser-page.ts";
 import {
@@ -18,6 +19,25 @@ import {
 const describeBrowserLayout = canRunChatLayoutBrowser ? describe : describe.skip;
 const layoutBrowser = createChatLayoutBrowser();
 const { openBrowserPage } = layoutBrowser;
+
+// Playwright types generic trace records as string dictionaries, while Chromium
+// sends structured arguments. Validate the records this regression relies on.
+const layoutTraceEventSchema = z.discriminatedUnion("name", [
+  z.object({
+    name: z.literal("Layout"),
+    args: z.object({ beginData: z.object({ frame: z.string() }) }),
+  }),
+  z.object({
+    name: z.literal("LayoutInvalidationTracking"),
+    args: z.object({
+      data: z.object({
+        frame: z.string(),
+        reason: z.string(),
+        nodeName: z.string().optional(),
+      }),
+    }),
+  }),
+]);
 
 describeBrowserLayout.concurrent("chat footer browser layout", () => {
   beforeAll(() => layoutBrowser.start());
@@ -51,15 +71,27 @@ describeBrowserLayout.concurrent("chat footer browser layout", () => {
       const { frameTree } = await client.send("Page.getFrameTree");
       let layouts = 0;
       const footerReattachments: string[] = [];
+      const traceErrors: string[] = [];
       client.on("Tracing.dataCollected", ({ value }) => {
-        for (const event of value) {
-          if (event.name === "Layout" && event.args?.beginData?.frame === frameTree.frame.id) {
-            layouts++;
+        for (const rawEvent of value) {
+          if (rawEvent.name !== "Layout" && rawEvent.name !== "LayoutInvalidationTracking") {
+            continue;
           }
-          const data = event.args?.data;
+          const parsed = layoutTraceEventSchema.safeParse(rawEvent);
+          if (!parsed.success) {
+            traceErrors.push(parsed.error.message);
+            continue;
+          }
+          const event = parsed.data;
+          if (event.name === "Layout") {
+            if (event.args.beginData.frame === frameTree.frame.id) {
+              layouts++;
+            }
+            continue;
+          }
+          const { data } = event.args;
           if (
-            event.name === "LayoutInvalidationTracking" &&
-            data?.frame === frameTree.frame.id &&
+            data.frame === frameTree.frame.id &&
             data.reason === "Added to layout" &&
             data.nodeName?.includes("class='chat-footer'")
           ) {
@@ -83,14 +115,15 @@ describeBrowserLayout.concurrent("chat footer browser layout", () => {
           }
         });
       } finally {
-        const complete = new Promise<void>((resolve) =>
-          client.once("Tracing.tracingComplete", () => resolve()),
-        );
+        const complete = new Promise<void>((resolve) => {
+          client.once("Tracing.tracingComplete", () => resolve());
+        });
         await client.send("Tracing.end");
         await complete;
         await client.detach();
       }
       expect(await getRect(page, ".chat-main__conversation")).toEqual(before);
+      expect(traceErrors).toEqual([]);
       expect(layouts).toBeGreaterThan(0);
       expect(footerReattachments).toEqual([]);
 
