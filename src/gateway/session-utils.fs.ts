@@ -13,7 +13,6 @@ import { isOversizedTranscriptLine } from "./session-transcript-record-parser.js
 export type { SessionTranscriptUsageSnapshot } from "./session-transcript-derived-readers.js";
 
 export { resolveSessionTranscriptCandidates } from "./session-transcript-files.fs.js";
-export { buildSessionPreviewItems } from "./session-display-projection.js";
 
 export function capArrayByJsonBytes<T>(
   items: T[],
