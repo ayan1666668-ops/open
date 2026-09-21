@@ -5418,7 +5418,9 @@ require("node:fs").writeFileSync("scheduler-baseline", process.env.OPENCLAW_UPGR
           expect(result.status, result.stdout + result.stderr).toBe(0);
           expect(result.stdout).toContain("project_parallelism=1");
           if (task === "test") {
-            expect(result.stdout).toContain(`targets=${JSON.stringify([...targets, "--fileParallelism"])}`);
+            expect(result.stdout).toContain(
+              `targets=${JSON.stringify([...targets, "--fileParallelism"])}`,
+            );
           }
         }
       }
