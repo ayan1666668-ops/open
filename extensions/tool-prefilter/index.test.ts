@@ -342,6 +342,69 @@ describe("tool-prefilter plugin", () => {
       expect(isRestrictiveToolPolicySupported({ harnessId: "codex" })).toBe(false);
       expect(isRestrictiveToolPolicySupported({ agentHarnessId: "codex-app-server" })).toBe(false);
     });
+
+    it("returns false when model-scoped defaults specify codex runtime", () => {
+      const config = {
+        agents: {
+          defaults: {
+            models: {
+              "openai/gpt-5.4": {
+                agentRuntime: { id: "codex" },
+              },
+            },
+          },
+        },
+      } as any;
+      expect(
+        isRestrictiveToolPolicySupported(
+          { modelProviderId: "openai", modelId: "gpt-5.4", agentId: "agent-1" },
+          config,
+        ),
+      ).toBe(false);
+    });
+
+    it("returns false for unknown harnesses to preserve tools when unknown", () => {
+      expect(
+        isRestrictiveToolPolicySupported({
+          harnessId: "unknown-third-party-harness",
+        }),
+      ).toBe(false);
+      expect(
+        isRestrictiveToolPolicySupported({ agentId: "custom-agent" }, {
+          agents: {
+            entries: {
+              "custom-agent": {
+                agentRuntime: { id: "unknown-harness" },
+              },
+            },
+          },
+        } as any),
+      ).toBe(false);
+    });
+
+    it("uses authoritative api.runtime.modelConfig.resolveModelRuntimePolicy when available", () => {
+      const mockResolve = vi.fn().mockReturnValue({
+        policy: { id: "codex" },
+        source: "model",
+      });
+      const mockApi = {
+        runtime: {
+          modelConfig: {
+            resolveModelRuntimePolicy: mockResolve,
+          },
+        },
+      };
+
+      const ctx = { modelProviderId: "openai", modelId: "gpt-5.4", agentId: "agent-1" };
+      expect(isRestrictiveToolPolicySupported(ctx, undefined, mockApi as any)).toBe(false);
+      expect(mockResolve).toHaveBeenCalledWith(
+        expect.objectContaining({
+          provider: "openai",
+          modelId: "gpt-5.4",
+          agentId: "agent-1",
+        }),
+      );
+    });
   });
 
   describe("unsupported harness safety in before_prompt_build", () => {
@@ -493,6 +556,150 @@ describe("tool-prefilter plugin", () => {
 
       const event = { currentUserMessage: "Just saying hello" };
       const ctx = { agentId: "copilot-agent" };
+
+      const result = await hookHandler(event, ctx);
+
+      expect(mockEvaluate).toHaveBeenCalledTimes(1);
+      expect(result).toEqual({ toolsAllow: [] });
+    });
+
+    it("preserves tools on realistic Codex host context with model-scoped codex runtime in agents.defaults.models", async () => {
+      let hookHandler: Function = () => {};
+      const mockEvaluate = vi.fn().mockResolvedValue({
+        status: "ok",
+        result: {
+          model: "typesafe-ai/jev",
+          answers: {
+            any_tool_needed: {
+              type: "boolean",
+              probabilityTrue: 0.04, // pure conversation turn
+            },
+          },
+        },
+      });
+
+      const hostConfig = {
+        agents: {
+          defaults: {
+            models: {
+              "openai/gpt-5.4": {
+                agentRuntime: { id: "codex" },
+              },
+            },
+          },
+        },
+      };
+
+      const mockApi = {
+        pluginConfig: { enabled: true, thresholdAnyTool: 0.35 },
+        config: hostConfig,
+        runtime: {
+          decisions: {
+            evaluate: mockEvaluate,
+          },
+          modelConfig: {
+            resolveModelRuntimePolicy: vi.fn().mockReturnValue({
+              policy: { id: "codex" },
+              source: "model",
+            }),
+          },
+        },
+        on: vi.fn((_name: string, handler: Function) => {
+          hookHandler = handler;
+        }),
+        logger: {
+          info: vi.fn(),
+          warn: vi.fn(),
+        },
+      };
+
+      pluginEntry.register(mockApi as any);
+
+      // Exact realistic Codex attempt hookContext shape from extensions/codex/src/app-server/run-attempt-context.ts:107
+      const event = { currentUserMessage: "What is 2 + 2?" };
+      const ctx = {
+        runId: "run-attempt-1",
+        agentId: "default",
+        sessionKey: "agent:default:main",
+        sessionId: "session-abc-123",
+        workspaceDir: "/repo/workspace",
+        modelProviderId: "openai",
+        modelId: "gpt-5.4",
+        trigger: "user",
+      };
+
+      const result = await hookHandler(event, ctx);
+
+      expect(mockEvaluate).toHaveBeenCalledTimes(1);
+      expect(result).toBeUndefined(); // MUST preserve tools, avoiding Codex app-server rejection
+      expect(mockApi.logger.info).toHaveBeenCalledWith(
+        expect.stringContaining("active harness does not support turn-scoped tool pruning"),
+      );
+    });
+
+    it("prunes tools when ordinary openai/gpt-5.4 session is explicitly configured with openclaw runtime", async () => {
+      let hookHandler: Function = () => {};
+      const mockEvaluate = vi.fn().mockResolvedValue({
+        status: "ok",
+        result: {
+          model: "typesafe-ai/jev",
+          answers: {
+            any_tool_needed: {
+              type: "boolean",
+              probabilityTrue: 0.04,
+            },
+          },
+        },
+      });
+
+      const hostConfig = {
+        agents: {
+          defaults: {
+            models: {
+              "openai/gpt-5.4": {
+                agentRuntime: { id: "openclaw" },
+              },
+            },
+          },
+        },
+      };
+
+      const mockApi = {
+        pluginConfig: { enabled: true, thresholdAnyTool: 0.35 },
+        config: hostConfig,
+        runtime: {
+          decisions: {
+            evaluate: mockEvaluate,
+          },
+          modelConfig: {
+            resolveModelRuntimePolicy: vi.fn().mockReturnValue({
+              policy: { id: "openclaw" },
+              source: "model",
+            }),
+          },
+        },
+        on: vi.fn((_name: string, handler: Function) => {
+          hookHandler = handler;
+        }),
+        logger: {
+          info: vi.fn(),
+          warn: vi.fn(),
+        },
+      };
+
+      pluginEntry.register(mockApi as any);
+
+      const event = { currentUserMessage: "What is 2 + 2?" };
+      const ctx = {
+        runId: "run-attempt-2",
+        agentId: "default",
+        sessionKey: "agent:default:main",
+        sessionId: "session-abc-456",
+        workspaceDir: "/repo/workspace",
+        modelProviderId: "openai",
+        modelId: "gpt-5.4",
+        trigger: "user",
+      };
 
       const result = await hookHandler(event, ctx);
 
