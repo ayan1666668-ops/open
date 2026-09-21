@@ -64,7 +64,11 @@ describe("ChatAudioPlayer", () => {
     await player.updateComplete;
     expect(player.querySelector("audio, .chat-audio-player__toggle")).toBeNull();
     expect(player.querySelector("[role=status]")?.textContent).toContain("Preview unavailable");
-    expect(player.querySelector("a[download]")).not.toBeNull();
+    expect(player.querySelector("a[download]")).toMatchObject({
+      href: "https://example.com/voice-note.mp3",
+      target: "_blank",
+      rel: "noreferrer",
+    });
     expect(player.querySelector(".chat-assistant-attachment-card__expand")).toBeNull();
   });
 

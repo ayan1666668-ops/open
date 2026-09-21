@@ -532,7 +532,7 @@ class ChatAudioPlayer extends OpenClawLightDomContentsElement {
           <span class="chat-assistant-attachment-card__reason" role="status"
             >${t("chat.attachments.previewUnavailable")}</span
           >
-          ${downloadHref ? html`<a class="chat-assistant-attachment-card__action" href=${downloadHref} download=${this.label} aria-label=${t("chat.mediaPlayer.download", { filename: this.label })}>${icons.download}</a>` : nothing}
+          ${downloadHref ? html`<a class="chat-assistant-attachment-card__action" href=${downloadHref} download=${this.label} target="_blank" rel="noreferrer" aria-label=${t("chat.mediaPlayer.download", { filename: this.label })}>${icons.download}</a>` : nothing}
         </div>
       </div>`;
     }
