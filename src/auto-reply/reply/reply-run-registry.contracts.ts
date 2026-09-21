@@ -1,3 +1,4 @@
+import type { AdmittedRunOperatorAuthority } from "../../agents/admitted-run-context.js";
 import type { CurrentInboundPromptContext } from "../../agents/internal-runtime-context.js";
 import type { ReplyExpectation } from "../../agents/reply-completion.js";
 import type { ScheduledToolPolicyContext } from "../../agents/scheduled-tool-policy.js";
@@ -59,6 +60,8 @@ export type ReplyBackendQueueMessageOptions = {
 };
 
 export type ReplyMessageInjectionOptions = ReplyBackendQueueMessageOptions & {
+  /** User-authorized controls retain sender authority but are not answers to pending questions. */
+  allowPendingUserInputAnswer?: false;
   /** Consumed by reply ownership and never forwarded to the active backend. */
   toolAuthorityOverlay?: ReplyToolAuthorityOverlay;
   /** Composed into V2's final admission assertion after asynchronous preparation. */
@@ -72,6 +75,7 @@ export type ReplyToolAuthorityRoute = Readonly<{
 
 /** Per-message authority facts projected against an active run's frozen owner state. */
 export type ReplyToolAuthorityOverlay = Readonly<{
+  operatorAuthority?: AdmittedRunOperatorAuthority;
   permissionMode?: SessionEntry["permissionMode"];
   toolOverrides?: SessionEntry["toolOverrides"];
   originatingChannel?: OriginatingChannelType;

@@ -39,6 +39,7 @@ import { parseAgentSessionKey } from "../../routing/session-key.js";
 import { isTrustedSecretSurfaceUnavailableError } from "../../secrets/runtime-degraded-state.js";
 import { getSessionRepositoryWorkspaceStore } from "../../state/session-repository-workspaces.js";
 import { readCurrentUserProfileAliases } from "../../state/user-profile-list.js";
+import { runTasksWithConcurrency } from "../../utils/run-with-concurrency.js";
 import { readGatewayAccessRevision } from "../gateway-access-revision.js";
 import {
   CONTROL_UI_GITHUB_CREDENTIAL_UNAVAILABLE_MESSAGE,
@@ -159,23 +160,24 @@ function sanitizeProjectRecord(project: ProjectRecord): ProjectRecord {
   };
 }
 
-function resolvePathProject(
-  projects: readonly ProjectRegistryEntry[],
-  folder: string,
-  sessionKey: string,
-): ProjectRegistryEntry | undefined {
-  const sessionAgentId = parseAgentSessionKey(sessionKey)?.agentId;
-  return projects
-    .filter((project) => project.repoRoot === folder)
-    .toSorted((left, right) => {
-      const rank = (project: ProjectRegistryEntry) =>
-        project.source === "workspace" && project.agentId === sessionAgentId
-          ? 0
-          : project.source !== "workspace"
-            ? 1
-            : 2;
-      return rank(left) - rank(right) || left.id.localeCompare(right.id);
-    })[0];
+function indexPathProjects(projects: readonly ProjectRegistryEntry[]) {
+  const byPath = new Map<string, ProjectRegistryEntry>();
+  const byAgent = new Map<string | undefined, ProjectRegistryEntry>();
+  for (const project of projects) {
+    // The registry emits one workspace per unique configured agent.
+    if (project.source === "workspace") {
+      byAgent.set(project.agentId, project);
+    }
+    const previous = byPath.get(project.repoRoot);
+    if (
+      !previous ||
+      (Number(project.source === "workspace") - Number(previous.source === "workspace") ||
+        project.id.localeCompare(previous.id)) < 0
+    ) {
+      byPath.set(project.repoRoot, project);
+    }
+  }
+  return { byPath, byAgent };
 }
 
 function listProjectRecents(
@@ -196,6 +198,7 @@ function listProjectRecents(
   const projectsById = new Map(projects.map((project) => [project.id, project]));
   const seen = new Set<string>();
   const recents: ProjectRecent[] = [];
+  let pathProjects: ReturnType<typeof indexPathProjects> | undefined;
   for (const [sessionKey, entry] of candidates) {
     if (entry.repositoryWorkspaceId) {
       const repository = getSessionRepositoryWorkspaceStore().get(entry.repositoryWorkspaceId);
@@ -225,8 +228,13 @@ function listProjectRecents(
     const spawnedCwd = normalizeOptionalString(entry.spawnedCwd);
     const execCwd = normalizeOptionalString(entry.execCwd);
     const folder = worktreeRoot ?? spawnedCwd ?? execCwd;
-    const project =
-      explicitProject ?? (folder ? resolvePathProject(projects, folder, sessionKey) : undefined);
+    let project = explicitProject;
+    if (!project && folder) {
+      const agentId = parseAgentSessionKey(sessionKey)?.agentId;
+      const indexed = (pathProjects ??= indexPathProjects(projects));
+      const workspace = indexed.byAgent.get(agentId);
+      project = workspace?.repoRoot === folder ? workspace : indexed.byPath.get(folder);
+    }
     const key = project
       ? `project:${project.id}`
       : folder
@@ -354,60 +362,41 @@ async function listObservedProjects(
     });
   }
 
-  const candidates: ProjectCandidate[] = [];
-  type RepositoryIdentity = Awaited<
-    ReturnType<ProjectWorktreeService["resolveRepositoryIdentity"]>
-  >;
-  const identities = new Map<string, Promise<RepositoryIdentity>>();
-  let identityProbeCount = 0;
-  const resolveIdentity = (checkoutPath: string) => {
-    const existing = identities.get(checkoutPath);
-    if (existing) {
-      return existing;
-    }
-    if (identityProbeCount >= PROJECTS_LIST_MAX_IDENTITY_PROBES) {
-      return undefined;
-    }
-    identityProbeCount += 1;
-    const identity = Promise.resolve().then(() => service.resolveRepositoryIdentity(checkoutPath));
-    identities.set(checkoutPath, identity);
-    return identity;
-  };
+  // Admit the same newest-first distinct paths before overlapping Git work. Keep facts
+  // request-local: session/registry revisions cannot detect external Git metadata edits.
+  const probePaths = [
+    ...new Set(
+      rawCandidates.map((raw) => (raw.kind === "worktree" ? raw.repoRoot : raw.checkoutPath)),
+    ),
+  ].slice(0, PROJECTS_LIST_MAX_IDENTITY_PROBES);
+  const { results } = await runTasksWithConcurrency({
+    tasks: probePaths.map((checkoutPath) => () => service.resolveRepositoryIdentity(checkoutPath)),
+    limit: 4,
+  });
+  const identities = new Map(
+    probePaths.map((checkoutPath, index) => [checkoutPath, results[index]]),
+  );
 
-  // The buffer is already newest-first, so probes always go to the retained top-K candidates.
+  const candidates: ProjectCandidate[] = [];
   for (const raw of rawCandidates) {
+    const identity = identities.get(raw.kind === "worktree" ? raw.repoRoot : raw.checkoutPath);
     if (raw.kind === "worktree") {
-      let originUrl: string | undefined;
-      const pendingIdentity = resolveIdentity(raw.repoRoot);
-      try {
-        const identity = pendingIdentity ? await pendingIdentity : undefined;
-        originUrl = identity?.originUrl || undefined;
-      } catch {
-        // The registry fingerprint and checkout path remain authoritative if the source checkout
-        // disappears after the managed worktree record was written.
-      }
+      // Registry facts survive a missing source checkout or exhausted probe budget.
       candidates.push({
         checkoutPath: raw.checkoutPath,
         fingerprint: raw.fingerprint,
         lastUsedAt: raw.lastUsedAt,
-        ...(originUrl ? { originUrl } : {}),
+        ...(identity?.originUrl ? { originUrl: identity.originUrl } : {}),
       });
       continue;
     }
-    const pendingIdentity = resolveIdentity(raw.checkoutPath);
-    if (!pendingIdentity) {
-      continue;
-    }
-    try {
-      const identity = await pendingIdentity;
+    if (identity) {
       candidates.push({
         checkoutPath: identity.checkoutRoot,
         fingerprint: identity.fingerprint,
         lastUsedAt: raw.lastUsedAt,
         ...(identity.originUrl ? { originUrl: identity.originUrl } : {}),
       });
-    } catch {
-      // Plain folders remain available through the existing folder picker.
     }
   }
 

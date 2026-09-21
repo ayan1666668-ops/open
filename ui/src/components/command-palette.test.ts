@@ -51,7 +51,7 @@ describe("CommandPalette search", () => {
     vi.unstubAllGlobals();
   });
 
-  it("lazily searches automation names and descriptions once per connection", async () => {
+  it("lazily searches compact automation names once per connection", async () => {
     const request = vi.fn(async (method: string) => {
       if (method === "models.list") {
         return { models: [] };
@@ -62,7 +62,6 @@ describe("CommandPalette search", () => {
             {
               id: "nightly-invoices",
               name: "Nightly invoices",
-              description: "Reconciles customer billing",
             },
           ],
         };
@@ -81,7 +80,7 @@ describe("CommandPalette search", () => {
       ),
     );
 
-    await enterQuery(palette, "reconciles");
+    await enterQuery(palette, "nightly");
     await vi.advanceTimersByTimeAsync(50);
     await vi.waitFor(() => expect(palette.textContent).toContain("Nightly invoices"));
     const item = findPaletteOption(palette, "Nightly invoices");
@@ -123,7 +122,7 @@ describe("CommandPalette search", () => {
       await palette.updateComplete;
       expect(findPaletteOption(palette, "Needle obsolete")).toBeUndefined();
       expect(palette.querySelectorAll('[role="option"]')).toHaveLength(hasRows ? 1 : 0);
-      expect(palette.querySelector('[role="status"]')?.textContent).toContain(
+      expect(palette.querySelector('.cmd-palette__search [role="status"]')?.textContent).toContain(
         hasRows
           ? "Some models could not be refreshed. Open Models to try again."
           : "Models unavailable",
@@ -171,7 +170,7 @@ describe("CommandPalette search", () => {
     await palette.updateComplete;
     expect(findPaletteOption(palette, "Needle obsolete")).toBeUndefined();
     expect(palette.querySelectorAll('[role="option"]')).toHaveLength(1);
-    expect(palette.querySelector('[role="status"]')?.textContent).toContain(
+    expect(palette.querySelector('.cmd-palette__search [role="status"]')?.textContent).toContain(
       "Some models could not be refreshed. Open Models to try again.",
     );
 
@@ -202,7 +201,7 @@ describe("CommandPalette search", () => {
     harness.emit("chat.metadata.changed");
     await vi.advanceTimersByTimeAsync(50);
     await palette.updateComplete;
-    expect(palette.querySelector('[role="status"]')?.textContent).toContain(
+    expect(palette.querySelector('.cmd-palette__search [role="status"]')?.textContent).toContain(
       "Model search unavailable",
     );
     expect(findPaletteOption(palette, "Needle old")).toBeDefined();
