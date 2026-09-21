@@ -81,6 +81,14 @@ function hasSplitModelSpecialToken(currentStream: string, deltaText: string): bo
   return Boolean(candidateToken && candidateToken.length > currentSuffix.length);
 }
 
+const STREAM_PROJECTION_BOUNDARY_WINDOW = 256;
+
+function deltaCompletesHiddenAssistantSyntax(currentStream: string, deltaText: string): boolean {
+  const boundaryStart = Math.max(0, currentStream.length - STREAM_PROJECTION_BOUNDARY_WINDOW);
+  const boundaryText = `${currentStream.slice(boundaryStart)}${deltaText}`;
+  return extractText({ role: "assistant", content: boundaryText }) !== boundaryText;
+}
+
 function resolveDeltaChatStreamText(
   currentStream: string | null,
   payload: ChatEventPayload,
@@ -111,9 +119,14 @@ function resolveDeltaChatStreamText(
       return typeof snapshot === "string" ? snapshot : `${currentStream}${deltaText}`;
     }
 
-    // A model control token can begin in one delta and finish in the next;
-    // projecting the delta alone cannot see that boundary-spanning token.
-    if (hasSplitModelSpecialToken(currentStream, deltaText)) {
+    // Hidden syntax can begin in the visible prefix and finish in the next
+    // delta. Probe only a bounded join window before taking the raw-snapshot
+    // shortcut; the full cumulative projection remains the authority when the
+    // join activates any sanitizer family.
+    if (
+      hasSplitModelSpecialToken(currentStream, deltaText) ||
+      deltaCompletesHiddenAssistantSyntax(currentStream, deltaText)
+    ) {
       const snapshot = extractText(payload.message);
       return typeof snapshot === "string" ? snapshot : `${currentStream}${deltaText}`;
     }
