@@ -9,23 +9,28 @@ export interface ToolPreFilterPluginConfig {
 export default definePluginEntry({
   id: "tool-prefilter",
   name: "Tool Pre-filter",
-  description: "Dynamic two-stage skill and tool pre-filtering using decision models to reduce context overhead and eliminate tool hallucinations.",
+  description:
+    "Dynamic two-stage skill and tool pre-filtering using decision models to reduce context overhead and eliminate tool hallucinations.",
   register(api: OpenClawPluginApi) {
     api.on("before_prompt_build", async (event, ctx) => {
       const config = (api.pluginConfig ?? {}) as ToolPreFilterPluginConfig;
       if (config.enabled === false) {
-        return;
+        return undefined;
       }
 
       // If the runtime decisions evaluation is not available, fail-open
       const decisions = api.runtime?.decisions;
       if (!decisions || typeof decisions.evaluate !== "function") {
-        return;
+        return undefined;
       }
 
-      const userMessage = event.currentUserMessage?.trim() || event.prompt?.trim();
+      // The hook contract explicitly distinguishes an empty currentUserMessage from an omitted legacy field.
+      // If currentUserMessage is explicitly provided (including an empty string), do not fall back to event.prompt.
+      const rawMessage =
+        event.currentUserMessage !== undefined ? event.currentUserMessage : event.prompt;
+      const userMessage = rawMessage?.trim();
       if (!userMessage) {
-        return;
+        return undefined;
       }
 
       const threshold = config.thresholdAnyTool ?? 0.35;
@@ -55,17 +60,20 @@ export default definePluginEntry({
           },
         );
 
-        if (outcome && outcome.status === "ok" && outcome.answers?.any_tool_needed) {
-          const prob = outcome.answers.any_tool_needed.probabilityTrue ?? 0.5;
+        if (outcome && outcome.status === "ok") {
+          const answer = outcome.result?.answers?.any_tool_needed;
+          if (answer && answer.type === "boolean" && typeof answer.probabilityTrue === "number") {
+            const prob = answer.probabilityTrue;
 
-          // Pure conversational turn: strip optional tools from the model context
-          if (prob < threshold) {
-            api.logger?.info(
-              `[tool-prefilter] Pure conversation detected (tool probability: ${(prob * 100).toFixed(1)}% < ${(threshold * 100).toFixed(1)}%). Pruning tools to save context.`,
-            );
-            return {
-              toolsAllow: [],
-            };
+            // Pure conversational turn: strip optional tools from the model context
+            if (prob < threshold) {
+              api.logger?.info(
+                `[tool-prefilter] Pure conversation detected (tool probability: ${(prob * 100).toFixed(1)}% < ${(threshold * 100).toFixed(1)}%). Pruning tools to save context.`,
+              );
+              return {
+                toolsAllow: [],
+              };
+            }
           }
         }
       } catch (err) {
@@ -74,6 +82,8 @@ export default definePluginEntry({
       } finally {
         clearTimeout(timeoutHandle);
       }
+
+      return undefined;
     });
   },
 });

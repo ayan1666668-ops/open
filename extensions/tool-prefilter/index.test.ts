@@ -26,13 +26,17 @@ describe("tool-prefilter plugin", () => {
     expect(registeredHooks.before_prompt_build).toBeDefined();
   });
 
-  it("prunes all tools (returns toolsAllow: []) when pure conversation is detected", async () => {
+  it("prunes all tools (returns toolsAllow: []) when pure conversation is detected from outcome.result.answers", async () => {
     let hookHandler: Function = () => {};
     const mockEvaluate = vi.fn().mockResolvedValue({
       status: "ok",
-      answers: {
-        any_tool_needed: {
-          probabilityTrue: 0.08, // Very low probability -> pure conversation
+      result: {
+        model: "typesafe-ai/jev",
+        answers: {
+          any_tool_needed: {
+            type: "boolean",
+            probabilityTrue: 0.08, // Very low probability -> pure conversation
+          },
         },
       },
     });
@@ -71,9 +75,13 @@ describe("tool-prefilter plugin", () => {
     let hookHandler: Function = () => {};
     const mockEvaluate = vi.fn().mockResolvedValue({
       status: "ok",
-      answers: {
-        any_tool_needed: {
-          probabilityTrue: 0.95, // High probability -> tools needed!
+      result: {
+        model: "typesafe-ai/jev",
+        answers: {
+          any_tool_needed: {
+            type: "boolean",
+            probabilityTrue: 0.95, // High probability -> tools needed!
+          },
         },
       },
     });
@@ -103,6 +111,124 @@ describe("tool-prefilter plugin", () => {
 
     expect(mockEvaluate).toHaveBeenCalledTimes(1);
     expect(result).toBeUndefined(); // Does not restrict tools
+  });
+
+  it("distinguishes an explicitly empty currentUserMessage and does not classify prompt", async () => {
+    let hookHandler: Function = () => {};
+    const mockEvaluate = vi.fn();
+
+    const mockApi = {
+      pluginConfig: { enabled: true },
+      runtime: {
+        decisions: {
+          evaluate: mockEvaluate,
+        },
+      },
+      on: vi.fn((_name: string, handler: Function) => {
+        hookHandler = handler;
+      }),
+      logger: {
+        info: vi.fn(),
+        warn: vi.fn(),
+      },
+    };
+
+    pluginEntry.register(mockApi as any);
+
+    // Explicitly empty message: must not fall back to classifying reconstructed history in prompt
+    const event = { currentUserMessage: "", prompt: "Some older conversational context" };
+    const ctx = { agentId: "agent-1" };
+
+    const result = await hookHandler(event, ctx);
+
+    expect(mockEvaluate).not.toHaveBeenCalled();
+    expect(result).toBeUndefined();
+  });
+
+  it("falls back to prompt when currentUserMessage is omitted", async () => {
+    let hookHandler: Function = () => {};
+    const mockEvaluate = vi.fn().mockResolvedValue({
+      status: "ok",
+      result: {
+        model: "typesafe-ai/jev",
+        answers: {
+          any_tool_needed: {
+            type: "boolean",
+            probabilityTrue: 0.05,
+          },
+        },
+      },
+    });
+
+    const mockApi = {
+      pluginConfig: { enabled: true },
+      runtime: {
+        decisions: {
+          evaluate: mockEvaluate,
+        },
+      },
+      on: vi.fn((_name: string, handler: Function) => {
+        hookHandler = handler;
+      }),
+      logger: {
+        info: vi.fn(),
+        warn: vi.fn(),
+      },
+    };
+
+    pluginEntry.register(mockApi as any);
+
+    // currentUserMessage is undefined (omitted legacy caller)
+    const event = { prompt: "Just chatting with you" };
+    const ctx = { agentId: "agent-1" };
+
+    const result = await hookHandler(event, ctx);
+
+    expect(mockEvaluate).toHaveBeenCalledTimes(1);
+    expect(mockEvaluate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        state: { userMessage: "Just chatting with you" },
+      }),
+      expect.anything(),
+    );
+    expect(result).toEqual({ toolsAllow: [] });
+  });
+
+  it("fails open gracefully when decision result is malformed or answers missing", async () => {
+    let hookHandler: Function = () => {};
+    const mockEvaluate = vi.fn().mockResolvedValue({
+      status: "ok",
+      result: {
+        model: "typesafe-ai/jev",
+        answers: {}, // Missing any_tool_needed
+      },
+    });
+
+    const mockApi = {
+      pluginConfig: { enabled: true },
+      runtime: {
+        decisions: {
+          evaluate: mockEvaluate,
+        },
+      },
+      on: vi.fn((_name: string, handler: Function) => {
+        hookHandler = handler;
+      }),
+      logger: {
+        info: vi.fn(),
+        warn: vi.fn(),
+      },
+    };
+
+    pluginEntry.register(mockApi as any);
+
+    const event = { currentUserMessage: "Hello there" };
+    const ctx = { agentId: "agent-1" };
+
+    const result = await hookHandler(event, ctx);
+
+    expect(mockEvaluate).toHaveBeenCalledTimes(1);
+    expect(result).toBeUndefined(); // Fails open
   });
 
   it("fails open gracefully on decision provider error without throwing", async () => {
