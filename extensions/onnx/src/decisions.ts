@@ -76,14 +76,6 @@ export function createOnnxProvider(
   return {
     id: "onnx",
     contractVersion: 1,
-    capabilities: {
-      questionTypes: ["boolean", "choice", "score"],
-      maxQuestions: 32,
-      maxChoiceAlternatives: 64,
-      maxScoreLevels: 64,
-      maxInputTokens: 512,
-      requiresBooleanCriteria: true,
-    },
     async evaluate(batch: DecisionBatch, context) {
       context.signal.throwIfAborted();
       if (!findModel(context.model)) {

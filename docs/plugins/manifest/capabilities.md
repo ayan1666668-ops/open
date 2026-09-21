@@ -106,6 +106,32 @@ Each entry requires a provider ID, model ID, and display name. The selector uses
 `example-decisions/fast`. Disabled plugins are excluded from the decision picker;
 saved unavailable selections remain visible for the operator to repair.
 
+An entry can include `capabilities` for discovery and `decision_evaluate` guidance:
+
+```json
+{
+  "questionTypes": ["boolean", "choice", "score"],
+  "maxQuestions": 32,
+  "maxChoiceAlternatives": 64,
+  "maxScoreLevels": 64,
+  "maxInputTokens": 512,
+  "inputTokenScope": "encoded-question",
+  "requiresBooleanCriteria": true,
+  "confidence": "none"
+}
+```
+
+`questionTypes` lists supported primitives. Limits are optional positive safe
+integers; omit unknown limits. `inputTokenScope` is `encoded-question` when the
+budget includes the state, instructions, and complete encoded rubric, or
+`state-plus-each-criterion` when each state/instruction and criterion pair has its
+own budget. `requiresBooleanCriteria` requires both true and false descriptions.
+`confidence` is `none` or `provider-specific`; a provider metric is not a calibrated
+probability of correctness. The manifest reader removes unknown or malformed
+capability fields before exposing them in `models.list.decisionModels` and tool
+guidance. These facts do not assert credential readiness or service health, and
+providers still validate their own inputs during execution.
+
 ## Tool metadata reference
 
 `toolMetadata` uses the same `configSignals` and `authSignals` shapes as generation provider metadata, keyed by tool name. `contracts.tools` declares ownership. `toolMetadata` declares cheap availability evidence so OpenClaw can avoid importing a plugin runtime just to have its tool factory return `null`.

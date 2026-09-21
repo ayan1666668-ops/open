@@ -10,14 +10,6 @@ export function resolveDecisionModelSetting(config: OpenClawConfig, agentId?: st
   return value ? (parseProviderModelRef(value) ?? undefined) : undefined;
 }
 
-/** Preserve an explicit empty inherited value for observational inspection. */
-export function resolveRawDecisionModelSetting(config: OpenClawConfig, agentId?: string) {
-  return (
-    (agentId ? resolveAgentConfig(config, agentId)?.decisionModel : undefined) ??
-    config.agents?.defaults?.decisionModel
-  );
-}
-
 /** Activation includes explicitly selected providers throughout the configured fleet. */
 export function getConfiguredDecisionProviderIds(config: OpenClawConfig): string[] {
   const refs = [

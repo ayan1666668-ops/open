@@ -110,42 +110,9 @@ export type DecisionOutcome =
     }
   | { readonly status: "unavailable"; readonly reason: UnavailableReason };
 
-export type DecisionProviderCapabilities = {
-  readonly questionTypes: readonly ("boolean" | "choice" | "score")[];
-  readonly maxQuestions?: number;
-  readonly maxChoiceAlternatives?: number;
-  readonly maxScoreLevels?: number;
-  /** Maximum encoded tokens per provider input, when the provider can state it. */
-  readonly maxInputTokens?: number;
-  readonly requiresBooleanCriteria?: boolean;
-};
-
-export type DecisionSelection =
-  | { readonly status: "none"; readonly origin: "none" | "explicit-disablement" }
-  | {
-      readonly status: "selected";
-      readonly provider: string;
-      readonly model: string;
-      readonly origin: "default" | "agent-override";
-    };
-
-export type DecisionInspection = {
-  readonly selection: DecisionSelection;
-  readonly provider?: {
-    readonly id: string;
-    readonly pluginId: string;
-    readonly capabilities?: DecisionProviderCapabilities;
-  };
-  readonly availability:
-    | { readonly status: "unknown"; readonly reason: "no-selection" | "not-configured" }
-    | { readonly status: "blocked"; readonly reason: UnavailableReason }
-    | { readonly status: "available" };
-};
-
 export interface DecisionProviderV1 {
   readonly id: string;
   readonly contractVersion: 1;
-  readonly capabilities?: DecisionProviderCapabilities;
   /** Prepared local credential availability only; must not perform I/O. */
   isReady?(): boolean;
   evaluate(
@@ -178,7 +145,6 @@ export interface DecisionRuntimeV1 {
       readonly signal: AbortSignal;
     },
   ): Promise<DecisionOutcome>;
-  inspect(options?: { readonly agentId?: string }): DecisionInspection;
 }
 
 // Caller cancellation, closed host authority, and programmer/contract errors

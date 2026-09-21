@@ -9,11 +9,7 @@ import { createPluginRecord } from "../plugins/loader-records.js";
 import { getPluginInstance } from "../plugins/plugin-instance-scope.js";
 import { createTestPluginRegistry } from "../plugins/registry-runtime.test-helpers.js";
 import { resetPluginRuntimeStateForTest, setActivePluginRegistry } from "../plugins/runtime.js";
-import {
-  evaluateDecisionInRegistry,
-  inspectDecisionInRegistry,
-  prepareDecisionProviderReload,
-} from "./runtime.js";
+import { evaluateDecisionInRegistry, prepareDecisionProviderReload } from "./runtime.js";
 import type {
   DecisionBatch,
   DecisionProviderV1,
@@ -146,19 +142,6 @@ describe("registered decision capability", () => {
     });
     expect(call).not.toHaveBeenCalled();
   });
-  it("preserves inherited explicit disablement in inspection", async () => {
-    const host = registered();
-    expect(
-      inspectDecisionInRegistry(
-        { agents: { defaults: { decisionModel: "" } } },
-        host.registry,
-        "inherited",
-      ),
-    ).toMatchObject({
-      selection: { status: "none", origin: "explicit-disablement" },
-      availability: { status: "unknown", reason: "no-selection" },
-    });
-  });
   it("preserves choice, fractional score, Boolean, usage and local provenance", async () => {
     const host = registered();
     expect(await host.run()).toMatchObject({
@@ -262,7 +245,6 @@ describe("registered decision capability", () => {
     for (let i = 0; i < 3; i++) {
       expect(await host.run()).toEqual({ status: "unavailable", reason: "invalid-response" });
     }
-    expect(host.registry.decisionProviders[0]!.host.inspect(config).blocker).toBe("circuit-open");
     expect(await host.run()).toEqual({ status: "unavailable", reason: "circuit-open" });
     expect(call).toHaveBeenCalledTimes(3);
   });

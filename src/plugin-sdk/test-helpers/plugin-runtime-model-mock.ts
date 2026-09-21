@@ -11,10 +11,6 @@ export function createPluginModelRuntimeMock(
         status: "unavailable" as const,
         reason: "disabled" as const,
       })),
-      inspect: vi.fn(() => ({
-        selection: { status: "none" as const, origin: "none" as const },
-        availability: { status: "unknown" as const, reason: "no-selection" as const },
-      })),
     },
     modelConfig: {
       resolveDefaultModelForAgent:

@@ -1,8 +1,4 @@
-import { resolveAgentConfig } from "../agents/agent-scope-config.js";
-import {
-  resolveDecisionModelSetting,
-  resolveRawDecisionModelSetting,
-} from "../agents/decision-model-setting.js";
+import { resolveDecisionModelSetting } from "../agents/decision-model-setting.js";
 import { getRuntimeConfig } from "../config/config.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { withPluginHostCleanupTimeout } from "../plugins/host-hook-cleanup-timeout.js";
@@ -16,12 +12,7 @@ import type { PluginRegistry } from "../plugins/registry-types.js";
 import { getPluginRegistryState } from "../plugins/runtime-state.js";
 import { getPluginRegistryForContext } from "../plugins/runtime/gateway-request-scope.js";
 import type { DecisionProviderHost } from "./provider-host.js";
-import type {
-  DecisionBatch,
-  DecisionInspection,
-  DecisionOutcome,
-  DecisionRuntimeV1,
-} from "./types.js";
+import type { DecisionBatch, DecisionOutcome, DecisionRuntimeV1 } from "./types.js";
 import { DecisionContractError, validateDecisionBatch } from "./validation.js";
 
 type Options = Parameters<DecisionRuntimeV1["evaluate"]>[1];
@@ -110,104 +101,6 @@ export async function evaluateDecisionInRegistry(
     throw new Error("Decision consumer authority closed.");
   }
   return result;
-}
-
-export function inspectDecisionInRegistry(
-  config: OpenClawConfig,
-  registry: PluginRegistry | null,
-  agentId?: string,
-): DecisionInspection {
-  const agentConfig = agentId ? resolveAgentConfig(config, agentId) : undefined;
-  const rawSelection = resolveRawDecisionModelSetting(config, agentId);
-  const origin: "agent-override" | "default" =
-    agentId && agentConfig?.decisionModel !== undefined ? "agent-override" : "default";
-  const selection = resolveDecisionModelSetting(config, agentId);
-  if (!selection) {
-    return {
-      selection: { status: "none", origin: rawSelection === "" ? "explicit-disablement" : "none" },
-      availability: { status: "unknown", reason: "no-selection" },
-    };
-  }
-  const entry = registry?.decisionProviders.find(
-    (candidate) => candidate.host.provider.id === selection.provider,
-  );
-  const selected = {
-    status: "selected" as const,
-    provider: selection.provider,
-    model: selection.model,
-    origin,
-  };
-  if (!entry || !registry) {
-    return {
-      selection: selected,
-      availability: { status: "unknown", reason: "not-configured" },
-    };
-  }
-  const host = entry.host.inspect(config);
-  if (
-    config.plugins?.enabled === false ||
-    config.plugins?.entries?.[entry.pluginId]?.enabled === false
-  ) {
-    return {
-      selection: selected,
-      provider: {
-        id: entry.host.provider.id,
-        pluginId: entry.pluginId,
-        capabilities: entry.host.capabilities(),
-      },
-      availability: { status: "blocked", reason: "disabled" },
-    };
-  }
-  if (!host.configured) {
-    return {
-      selection: selected,
-      provider: {
-        id: entry.host.provider.id,
-        pluginId: entry.pluginId,
-        capabilities: entry.host.capabilities(),
-      },
-      availability: { status: "unknown", reason: "not-configured" },
-    };
-  }
-  if (!host.credentialReady) {
-    return {
-      selection: selected,
-      provider: {
-        id: entry.host.provider.id,
-        pluginId: entry.pluginId,
-        capabilities: entry.host.capabilities(),
-      },
-      availability: {
-        status: "blocked",
-        reason: host.blocker ?? "credentials-unavailable",
-      },
-    };
-  }
-  if (!host.callable) {
-    const reason = host.blocker ?? "retiring";
-    return {
-      selection: selected,
-      provider: {
-        id: entry.host.provider.id,
-        pluginId: entry.pluginId,
-        capabilities: entry.host.capabilities(),
-      },
-      availability: { status: "blocked", reason },
-    };
-  }
-  return {
-    selection: selected,
-    provider: {
-      id: entry.host.provider.id,
-      pluginId: entry.pluginId,
-      capabilities: entry.host.capabilities(),
-    },
-    availability: { status: "available" },
-  };
-}
-
-export function inspectDecision(config: OpenClawConfig, agentId?: string): DecisionInspection {
-  return inspectDecisionInRegistry(config, getPluginRegistryForContext(), agentId);
 }
 
 /** Abort before dependent consumers drain. Services subsequently join actual physical settlement. */

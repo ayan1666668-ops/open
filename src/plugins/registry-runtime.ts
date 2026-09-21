@@ -4,7 +4,6 @@ import { createChannelIngressDrain } from "../channels/message/ingress-drain.js"
 import { createChannelIngressQueue } from "../channels/message/ingress-queue.js";
 import { getRuntimeConfig } from "../config/config.js";
 import type { SessionEntry } from "../config/sessions/types.js";
-import { inspectDecisionInRegistry } from "../decisions/runtime.js";
 import {
   createPluginBlobStore,
   type OpenBlobStoreOptions,
@@ -364,14 +363,6 @@ export function createPluginRuntimeResolver(state: PluginRegistryState) {
               assertRuntimeCurrent();
               options.signal.throwIfAborted();
               return result;
-            },
-            inspect: (options) => {
-              assertRuntimeCurrent();
-              return inspectDecisionInRegistry(
-                getRuntimeConfig(),
-                currentDecisionRegistry(),
-                options?.agentId,
-              );
             },
           } satisfies PluginRuntime["decisions"];
         }

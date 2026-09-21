@@ -7,16 +7,11 @@ import { evaluate as evaluateTypeSafe } from "./client.js";
 import type { RuntimeConfig } from "./config.js";
 import { decisionFailure } from "./errors.js";
 
-/** Transport and result validation are shared with the independently usable agent tool. */
+/** Translate the host-selected decision contract through the TypeSafe transport. */
 export function createDecisionProvider(getConfig: () => RuntimeConfig): DecisionProviderV1 {
   return {
     id: "typesafe",
     contractVersion: 1,
-    capabilities: {
-      questionTypes: ["boolean", "choice", "score"],
-      maxChoiceAlternatives: 255,
-      maxScoreLevels: 10,
-    },
     isReady: () => {
       const config = getConfig();
       return Boolean(config.baseUrl || config.apiKey);
