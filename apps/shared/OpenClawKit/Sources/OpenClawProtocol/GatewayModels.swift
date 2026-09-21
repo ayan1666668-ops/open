@@ -8047,19 +8047,22 @@ public struct GatewaySuspendPrepareBusyResult: Codable, Sendable {
     public let retryafterms: Int
     public let activecount: Int
     public let blockers: [GatewaySuspendBlocker]
+    public let writecustody: [[String: AnyCodable]]?
 
     public init(
         status: String,
         reason: AnyCodable,
         retryafterms: Int,
         activecount: Int,
-        blockers: [GatewaySuspendBlocker])
+        blockers: [GatewaySuspendBlocker],
+        writecustody: [[String: AnyCodable]]? = nil)
     {
         self.status = status
         self.reason = reason
         self.retryafterms = retryafterms
         self.activecount = activecount
         self.blockers = blockers
+        self.writecustody = writecustody
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -8068,6 +8071,7 @@ public struct GatewaySuspendPrepareBusyResult: Codable, Sendable {
         case retryafterms = "retryAfterMs"
         case activecount = "activeCount"
         case blockers
+        case writecustody = "writeCustody"
     }
 }
 
@@ -8078,6 +8082,7 @@ public struct GatewaySuspendPrepareDrainingResult: Codable, Sendable {
     public let retryafterms: Int
     public let activecount: Int
     public let blockers: [GatewaySuspendBlocker]
+    public let writecustody: [[String: AnyCodable]]?
 
     public init(
         status: String,
@@ -8085,7 +8090,8 @@ public struct GatewaySuspendPrepareDrainingResult: Codable, Sendable {
         expiresatms: Int,
         retryafterms: Int,
         activecount: Int,
-        blockers: [GatewaySuspendBlocker])
+        blockers: [GatewaySuspendBlocker],
+        writecustody: [[String: AnyCodable]]? = nil)
     {
         self.status = status
         self.suspensionid = suspensionid
@@ -8093,6 +8099,7 @@ public struct GatewaySuspendPrepareDrainingResult: Codable, Sendable {
         self.retryafterms = retryafterms
         self.activecount = activecount
         self.blockers = blockers
+        self.writecustody = writecustody
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -8102,6 +8109,7 @@ public struct GatewaySuspendPrepareDrainingResult: Codable, Sendable {
         case retryafterms = "retryAfterMs"
         case activecount = "activeCount"
         case blockers
+        case writecustody = "writeCustody"
     }
 }
 
@@ -8133,19 +8141,22 @@ public struct GatewaySuspendPrepareReadyResult: Codable, Sendable {
     public let expiresatms: Int
     public let activecount: Int
     public let blockers: [GatewaySuspendBlocker]
+    public let writecustody: [[String: AnyCodable]]?
 
     public init(
         status: String,
         suspensionid: String,
         expiresatms: Int,
         activecount: Int,
-        blockers: [GatewaySuspendBlocker])
+        blockers: [GatewaySuspendBlocker],
+        writecustody: [[String: AnyCodable]]? = nil)
     {
         self.status = status
         self.suspensionid = suspensionid
         self.expiresatms = expiresatms
         self.activecount = activecount
         self.blockers = blockers
+        self.writecustody = writecustody
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -8154,6 +8165,7 @@ public struct GatewaySuspendPrepareReadyResult: Codable, Sendable {
         case expiresatms = "expiresAtMs"
         case activecount = "activeCount"
         case blockers
+        case writecustody = "writeCustody"
     }
 }
 
@@ -8193,19 +8205,22 @@ public struct GatewaySuspendStatusDrainingResult: Codable, Sendable {
     public let retryafterms: Int
     public let activecount: Int
     public let blockers: [GatewaySuspendBlocker]
+    public let writecustody: [[String: AnyCodable]]?
 
     public init(
         status: String,
         expiresatms: Int,
         retryafterms: Int,
         activecount: Int,
-        blockers: [GatewaySuspendBlocker])
+        blockers: [GatewaySuspendBlocker],
+        writecustody: [[String: AnyCodable]]? = nil)
     {
         self.status = status
         self.expiresatms = expiresatms
         self.retryafterms = retryafterms
         self.activecount = activecount
         self.blockers = blockers
+        self.writecustody = writecustody
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -8214,6 +8229,7 @@ public struct GatewaySuspendStatusDrainingResult: Codable, Sendable {
         case retryafterms = "retryAfterMs"
         case activecount = "activeCount"
         case blockers
+        case writecustody = "writeCustody"
     }
 }
 
@@ -8234,18 +8250,22 @@ public struct GatewaySuspendStatusParams: Codable, Sendable {
 public struct GatewaySuspendStatusReadyResult: Codable, Sendable {
     public let status: String
     public let expiresatms: Int
+    public let writecustody: [[String: AnyCodable]]?
 
     public init(
         status: String,
-        expiresatms: Int)
+        expiresatms: Int,
+        writecustody: [[String: AnyCodable]]? = nil)
     {
         self.status = status
         self.expiresatms = expiresatms
+        self.writecustody = writecustody
     }
 
     private enum CodingKeys: String, CodingKey {
         case status
         case expiresatms = "expiresAtMs"
+        case writecustody = "writeCustody"
     }
 }
 

@@ -31,6 +31,17 @@ the captured task owner and database lifecycle still authorize the operation.
 Maintenance joins the sweep before completing; expiry, storage formats, and
 update behavior are unchanged.
 
+Warm profile ensures read existing email, provider, and Gateway-owner identities
+without writer admission. Missing identities and display-name changes recheck
+their authoritative rows inside the existing write transaction. Exec authorization
+commits batch pending requests in order through the shared-state worker; unchanged
+policy snapshots require no write transaction. Changed batches reread policy and
+agent-deletion fences before committing, and execution rechecks current authority
+against the captured database owner. Coordinator contention stays on the worker
+for these commits. Remaining synchronous state writes report coordinator waits
+over 100 ms through the transaction diagnostics logger. Schema initialization,
+durability, migration, and update behavior are unchanged.
+
 Sandbox registry lists, point lookups, backend/scope runtime IDs, and browser
 registry reads execute in the shared-state read worker. CLI management and
 runtime provisioning await the same domain APIs. Reads retain inherited snapshot
@@ -665,8 +676,11 @@ later row replacement, including ABA replacement, suppresses stale delivery.
 Registered Gateway task list, get, and history reads, artifact task-ID scope resolution, plus subagent list and wait
 preparation, asynchronously join the event batches accepted before their first
 wait. Later arrivals do not add batches to that fence. Preparation waits for
-persistence and required publication, refreshes the projection through its worker
-owner, and rechecks database, store, and task identity before exposing results.
+persistence and required publication. Reads reuse the resident projection when
+its only dirty scopes belong to live later metadata mutations that preserve task
+routing, access, and detail; those mutations retain their publication obligations.
+Broad invalidation, orphaned dirty scopes, and other mutations still require worker
+preparation. Reads recheck database, store, and task identity before exposing results.
 Gateway responses also recheck current task visibility; held pages retain their
 revision and selected-row checks. Wait notifications read the prepared resident
 view without joining their own publishing event. Fresh owner lookups retain the
