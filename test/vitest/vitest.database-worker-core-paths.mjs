@@ -13,6 +13,7 @@ export const databaseWorkerCoreTestFiles = [
   "src/agents/cli-runner/prepare.durable-context.test.ts",
   "src/agents/embedded-agent-runner/run.prepared-harness-source-delivery.integration.test.ts",
   "src/agents/embedded-agent-runner/run.shared-integration.test.ts",
+  "src/plugins/runtime/runtime-agent.ingress.integration.test.ts",
   "src/auto-reply/dispatch.block-streaming-recovery.test.ts",
   "src/auto-reply/reply/agent-runner-execution-cli-commentary.test.ts",
   "src/auto-reply/reply/agent-runner-memory.private-transcript.test.ts",
