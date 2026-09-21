@@ -58,7 +58,7 @@ describe("coerceDisplayValue middle truncation", () => {
     const detail = formatToolDetail(
       resolveToolDisplay({
         name: "sessions_spawn",
-        args: { task: longPath },
+        args: { taskName: longPath },
       }),
     );
     expect(detail).toContain("/usr/local/share/");
@@ -70,7 +70,7 @@ describe("coerceDisplayValue middle truncation", () => {
     const detail = formatToolDetail(
       resolveToolDisplay({
         name: "sessions_spawn",
-        args: { task: "short-task-name" },
+        args: { taskName: "short-task-name" },
       }),
     );
     expect(detail).toBe("short-task-name");
@@ -85,7 +85,7 @@ describe("coerceDisplayValue middle truncation", () => {
     const detail = formatToolDetail(
       resolveToolDisplay({
         name: "sessions_spawn",
-        args: { task: longValue },
+        args: { taskName: longValue },
       }),
     );
     expect(detail).not.toContain("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnop");
@@ -99,7 +99,7 @@ describe("coerceDisplayValue middle truncation", () => {
     const detail = formatToolDetail(
       resolveToolDisplay({
         name: "sessions_spawn",
-        args: { task: longValue },
+        args: { taskName: longValue },
       }),
     );
     expect(detail).not.toContain("AKIDABCDEFGHIJKLMNOP1234567890");
