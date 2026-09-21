@@ -28,10 +28,14 @@ import {
 } from "./session-store-read-candidates.js";
 import type {
   SessionStoreTargetInventoryRequest,
+  SessionStoreTargetReadRequest,
+  SessionStoreTargetReadResult,
   SessionStoreTargetInventoryResult,
 } from "./session-store-target-inventory.js";
 import type {
   SessionEntryListWorkerInput,
+  SessionExactEntriesWorkerInput,
+  SessionStoreTargetWorkerInput,
   SessionTargetInventoryWorkerInput,
   SessionIdentityEvidenceWorkerInput,
   SessionMembersWorkerInput,
@@ -52,6 +56,8 @@ export const historyPages = new WorkerTaskPool<
   | SessionRowPresenceWorkerInput
   | SessionMembersWorkerInput
   | SessionEntryListWorkerInput
+  | SessionExactEntriesWorkerInput
+  | SessionStoreTargetWorkerInput
   | SessionTargetInventoryWorkerInput
   | SessionIdentityEvidenceWorkerInput
   | SessionUsageCacheWorkerInput
@@ -63,6 +69,8 @@ export const historyPages = new WorkerTaskPool<
     | "session-row-presence"
     | "session-members"
     | "session-entry-list"
+    | "session-exact-entries"
+    | "session-store-target"
     | "session-target-inventory"
     | "session-identity-evidence"
     | "usage-cache"
@@ -302,6 +310,9 @@ export async function withSessionHistoryWorkerReadCandidates<T>(
   candidates: readonly SessionStoreReadCandidate[],
   operation: (scope: {
     assertCurrent: () => void;
+    readStoreTarget: (
+      request: SessionStoreTargetReadRequest,
+    ) => Promise<SessionStoreTargetReadResult>;
     readTargetInventory: (
       request: SessionStoreTargetInventoryRequest,
     ) => Promise<SessionStoreTargetInventoryResult>;
@@ -366,6 +377,43 @@ export async function withSessionHistoryWorkerReadCandidates<T>(
       assertCurrent();
       const value = await operation({
         assertCurrent,
+        readStoreTarget: async (request) => {
+          const reply = await historyPages.run(
+            () => {
+              assertCurrent();
+              dispatched = true;
+              historyLane.nativeSequence++;
+              return { kind: "session-store-target", request };
+            },
+            { inputBytes: JSON.stringify(request).length * 2, timeoutMs: 60_000 },
+          );
+          const result = unwrapSessionTranscriptWorkerReply<
+            | "history-page"
+            | "session-preview"
+            | "session-title-fields"
+            | "session-row-presence"
+            | "session-members"
+            | "session-entry-list"
+            | "session-exact-entries"
+            | "session-store-target"
+            | "session-target-inventory"
+            | "session-identity-evidence"
+            | "usage-cache"
+            | "transcript-search"
+          >(reply);
+          if (
+            typeof result === "boolean" ||
+            Array.isArray(result) ||
+            (result.kind !== "session-store-target" &&
+              result.kind !== "session-target-registry-required")
+          ) {
+            throw new Error(
+              "Session history worker returned another result instead of store target",
+            );
+          }
+          assertCurrent();
+          return result;
+        },
         readTargetInventory: async (request) => {
           const reply = await historyPages.run(
             () => {
@@ -386,6 +434,8 @@ export async function withSessionHistoryWorkerReadCandidates<T>(
             | "session-row-presence"
             | "session-members"
             | "session-entry-list"
+            | "session-exact-entries"
+            | "session-store-target"
             | "session-target-inventory"
             | "session-identity-evidence"
             | "usage-cache"
