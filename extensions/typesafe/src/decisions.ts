@@ -12,6 +12,11 @@ export function createDecisionProvider(getConfig: () => RuntimeConfig): Decision
   return {
     id: "typesafe",
     contractVersion: 1,
+    capabilities: {
+      questionTypes: ["boolean", "choice", "score"],
+      maxChoiceAlternatives: 255,
+      maxScoreLevels: 10,
+    },
     isReady: () => {
       const config = getConfig();
       return Boolean(config.baseUrl || config.apiKey);

@@ -14,6 +14,7 @@ import type {
   DecisionBatch,
   DecisionOutcome,
   DecisionProviderV1,
+  DecisionProviderCapabilities,
   DecisionRuntimeV1,
   ProviderFailureReason,
   UnavailableReason,
@@ -199,6 +200,10 @@ export class DecisionProviderHost {
       usage: { inputTokens: this.inputTokens, outputTokens: this.outputTokens },
       reasons: { ...this.reasons },
     };
+  }
+
+  capabilities(): DecisionProviderCapabilities | undefined {
+    return this.provider.capabilities;
   }
 
   async evaluate(

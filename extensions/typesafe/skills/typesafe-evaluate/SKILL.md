@@ -1,11 +1,11 @@
 ---
 name: typesafe-evaluate
-description: Make explicit typed hosted Jev or local Kev decisions with the typesafe_evaluate tool.
+description: Make explicit provider-neutral decisions with the decision_evaluate tool.
 ---
 
 # TypeSafe evaluations
 
-Use `typesafe_evaluate` for semantic decisions over explicit supplied state. It
+Use `decision_evaluate` for semantic decisions over explicit supplied state. It
 returns typed decisions, not generated explanations or permission to act. If the
 tool is unavailable, report that; do not substitute shell/HTTP calls or ask for a
 credential in chat. Hosted calls send the supplied data to TypeSafe and may incur
@@ -21,7 +21,7 @@ Put meaning in instructions and criteria, not just the question ID.
   if appropriate. Preserve the selected label, full distribution, and confidence.
 - **Score:** rate against 2–10 ordered descriptions. The answer is the fractional
   probability-weighted zero-based position, not a normalized score or integer.
-- **Noul:** probability of yes, from 0 to 1, with optional `criteria.true` and
+- **Boolean:** probability of true, from 0 to 1, with optional `criteria.true` and
   `criteria.false` descriptions. This is not intensity and has no confidence field.
 
 Only send necessary evidence authorized for sharing. Never include credentials.
@@ -44,5 +44,6 @@ negative judgment; do not retry automatically or fabricate an answer.
 
 The optional tool is distinct from the background decision-provider API. Enabling
 the plugin/tool does not itself select a decision model or schedule consumer work.
-Native consumers use the global or per-agent `decisionModel` role. Plugin `model`
-configuration is only the optional tool’s default.
+The calling agent's global or per-agent `decisionModel` role selects the provider.
+The legacy `typesafe_evaluate` tool remains available for migration and keeps its
+TypeSafe-specific `noul` and per-call model semantics.

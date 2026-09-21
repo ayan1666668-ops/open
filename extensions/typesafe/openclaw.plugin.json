@@ -11,7 +11,8 @@
   },
   "contracts": {
     "tools": [
-      "typesafe_evaluate"
+      "typesafe_evaluate",
+      "decision_evaluate"
     ],
     "decisionProviders": [
       "typesafe"
@@ -19,6 +20,9 @@
   },
   "toolMetadata": {
     "typesafe_evaluate": {
+      "optional": true
+    },
+    "decision_evaluate": {
       "optional": true
     }
   },

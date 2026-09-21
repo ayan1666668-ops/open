@@ -1,6 +1,8 @@
 import { resolveSandboxWorkspaceAuthority } from "../../agents/sandbox/workspace-authority.js";
 // Plugin runtime entrypoint assembles runtime helpers available to activated plugins.
 import { getRuntimeConfig } from "../../config/config.js";
+import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import { inspectDecision } from "../../decisions/runtime.js";
 import {
   listImageGenerationProviders,
   listMusicGenerationProviders,
@@ -213,6 +215,8 @@ export const createPluginRuntime: PluginRuntimeFactory = (
     decisions: {
       evaluate: async (...args) =>
         (await import("../../decisions/runtime.js")).evaluateDecision(...args),
+      inspect: (options) =>
+        inspectDecision(base.config.current() as OpenClawConfig, options?.agentId),
     },
     gateway: _options.gateway ?? createRuntimeGateway(),
     config: base.config,

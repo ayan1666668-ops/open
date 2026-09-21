@@ -55,14 +55,14 @@ describe("plugin ownership and configuration", () => {
       registerDecisionProvider: vi.fn(),
     } as unknown as OpenClawPluginApi;
     plugin.register(api);
-    expect(registerTool).toHaveBeenCalledTimes(1);
+    expect(registerTool).toHaveBeenCalledTimes(2);
     const registration = registerTool.mock.calls[0];
     assert(registration);
     const tool: AnyAgentTool = registration[0];
     expect(tool.name).toBe("typesafe_evaluate");
     expect(registration[1]).toEqual({ optional: true });
     expect(manifest.contracts).toEqual({
-      tools: ["typesafe_evaluate"],
+      tools: ["typesafe_evaluate", "decision_evaluate"],
       decisionProviders: ["typesafe"],
     });
     expect(manifest.decisionModels).toEqual([
