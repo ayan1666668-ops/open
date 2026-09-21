@@ -526,13 +526,18 @@ describe("control UI session PR subscriptions", () => {
     );
   });
 
-  it.each(["stop", "disconnect", "empty replace"])(
+  it.each(["stop", "disconnect", "empty replace", "reader retirement"])(
     "cancels a coalesced refresh on %s and settles its callers without waiting",
     async (cleanup) => {
       vi.useFakeTimers();
       const load = vi.fn(async () => READY);
       const broadcastToConnIds = vi.fn();
-      active = createTestControlUiSessionPrSubscriptions({ broadcastToConnIds, load });
+      let connected = true;
+      active = createTestControlUiSessionPrSubscriptions({
+        broadcastToConnIds,
+        load,
+        isConnectionActive: () => connected,
+      });
       await active.replace("requester", ["session"], new Set(["session"]));
       const refresh = active.replace("requester", ["session"], new Set(["session"]));
       broadcastToConnIds.mockClear();
@@ -541,6 +546,9 @@ describe("control UI session PR subscriptions", () => {
         operations.push(active.stop());
       } else if (cleanup === "disconnect") {
         active.unsubscribe("requester");
+      } else if (cleanup === "reader retirement") {
+        connected = false;
+        operations.push(active.pollNow());
       } else {
         operations.push(active.replace("requester", []));
       }

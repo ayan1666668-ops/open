@@ -1,3 +1,4 @@
+import { copyFileSync, renameSync } from "node:fs";
 import { DatabaseSync, StatementSync } from "node:sqlite";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import { describe, expect, it, vi } from "vitest";
@@ -19,7 +20,7 @@ import type {
 } from "./control-ui-contract.js";
 import { prepareControlUiSessionPrRead } from "./control-ui-session-pr-read.js";
 import { createControlUiSessionPullRequestSubscriptions } from "./control-ui-session-pr-subscriptions.js";
-import { githubJson, pullListItem } from "./control-ui-session-prs.test-support.js";
+import { githubJson, pullListItem, requestUrl } from "./control-ui-session-prs.test-support.js";
 import type { OperatorScope } from "./operator-scopes.js";
 import { createGatewayConnectionState } from "./server-connection-state.js";
 import { handleGatewayRequest } from "./server-methods.js";
@@ -312,68 +313,110 @@ describe("registered session PR subscriptions", () => {
     },
   );
 
-  it.each(["connection", "grant"] as const)(
-    "keeps a shared load for an unchanged viewer when the other %s retires",
-    async (retired) => {
-      await withFixture("operator.read", async (f) => {
-        const entered = createDeferredCore();
-        const held = createDeferredCore<ControlUiSessionPullRequests>();
-        f.load.mockImplementationOnce(async () => {
-          entered.resolve();
-          return await held.promise;
-        });
-        const peer = f.addReader("unchanged-reader");
-        try {
-          await f.subscribe();
-          await entered.promise;
-          await f.subscribe([sessionKey], peer.client);
-          if (retired === "connection") {
-            f.client.invalidated = true;
-          } else {
-            f.access.abort(new Error("Original access retired"));
+  it.each([
+    { retired: "connection", delayed: false },
+    { retired: "grant", delayed: false },
+    { retired: "connection", delayed: true },
+    { retired: "grant", delayed: true },
+  ] as const)(
+    "keeps a shared load for an unchanged viewer when the other $retired retires (delayed=$delayed)",
+    async ({ retired, delayed }) => {
+      if (delayed) {
+        vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      }
+      try {
+        await withFixture("operator.read", async (f) => {
+          const entered = createDeferredCore();
+          const held = createDeferredCore<ControlUiSessionPullRequests>();
+          const peer = f.addReader("unchanged-reader");
+          if (delayed) {
+            await f.subscriptions.replace(f.client.connId!, [sessionKey], new Set([sessionKey]));
+            await f.subscribe([sessionKey], peer.client);
+            f.load.mockClear();
+            f.socket.send.mockClear();
+            peer.socket.send.mockClear();
           }
-          held.resolve(snapshot);
-          await f.subscriptions.pollNow();
-          expect(f.load).toHaveBeenCalledTimes(1);
-          expect(frames(f.socket)).toEqual([]);
-          expect(frames(peer.socket)).toEqual([expectedFrame(sessionKey)]);
-          expect(f.load.mock.calls[0]?.[1]?.aborted).toBe(false);
-        } finally {
-          held.resolve(snapshot);
-        }
-      });
+          f.load.mockImplementationOnce(async () => {
+            entered.resolve();
+            return await held.promise;
+          });
+          const refreshes: Promise<void>[] = [];
+          try {
+            if (delayed) {
+              for (const client of [f.client, peer.client]) {
+                refreshes.push(
+                  f.subscriptions.replace(client.connId!, [sessionKey], new Set([sessionKey])),
+                );
+              }
+            } else {
+              await f.subscribe();
+              await entered.promise;
+              await f.subscribe([sessionKey], peer.client);
+            }
+            if (retired === "connection") {
+              f.client.invalidated = true;
+            } else {
+              f.access.abort(new Error("Original access retired"));
+            }
+            if (delayed) {
+              await vi.advanceTimersByTimeAsync(10_000);
+              await entered.promise;
+            }
+            held.resolve(snapshot);
+            await Promise.all([f.subscriptions.pollNow(), ...refreshes]);
+            expect(f.load).toHaveBeenCalledTimes(1);
+            expect(frames(f.socket)).toEqual([]);
+            expect(frames(peer.socket)).toEqual([expectedFrame(sessionKey)]);
+            expect(f.load.mock.calls[0]?.[1]?.aborted).toBe(false);
+          } finally {
+            held.resolve(snapshot);
+          }
+        });
+      } finally {
+        vi.useRealTimers();
+      }
     },
   );
 
   it("retires cached branch data after canonical replacement and hydrates the new target", async () => {
-    await withFixture("operator.read", async (f) => {
-      await f.subscribe();
-      await f.subscriptions.pollNow();
-      f.socket.send.mockClear();
-      const original = loadGatewaySessionEntryReadOnly(sessionKey, { agentId: "main" });
-      await expect(
-        deleteSessionEntryLifecycle({
-          agentId: "main",
-          storePath: original.storePath,
-          target: { canonicalKey: original.canonicalKey, storeKeys: original.storeKeys },
-          expectedSessionId: sessionKey,
-          archiveTranscript: false,
-        }),
-      ).resolves.toMatchObject({ deleted: true });
-      await f.seed(sessionKey, f.profile.id, {
-        sessionId: "replacement-publication",
-        updatedAt: 2,
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      await withFixture("operator.read", async (f) => {
+        await f.subscribe();
+        await f.subscriptions.replace(f.client.connId!, [sessionKey], new Set([sessionKey]));
+        const retiredRefresh = f.subscriptions.replace(
+          f.client.connId!,
+          [sessionKey],
+          new Set([sessionKey]),
+        );
+        f.socket.send.mockClear();
+        const original = loadGatewaySessionEntryReadOnly(sessionKey, { agentId: "main" });
+        await expect(
+          deleteSessionEntryLifecycle({
+            agentId: "main",
+            storePath: original.storePath,
+            target: { canonicalKey: original.canonicalKey, storeKeys: original.storeKeys },
+            expectedSessionId: sessionKey,
+            archiveTranscript: false,
+          }),
+        ).resolves.toMatchObject({ deleted: true });
+        await f.seed(sessionKey, f.profile.id, {
+          sessionId: "replacement-publication",
+          updatedAt: 2,
+        });
+        const replacement = { ...snapshot, branch: { ...branch, branch: "replacement-change" } };
+        f.load.mockResolvedValue(replacement);
+        await Promise.all([f.subscriptions.pollNow(), retiredRefresh]);
+        expect(f.load).toHaveBeenCalledTimes(3);
+        expect(frames(f.socket)).toEqual([expectedFrame(sessionKey, replacement)]);
+        const peer = f.addReader("replacement-reader");
+        await f.subscribe([sessionKey], peer.client);
+        await f.subscriptions.pollNow();
+        expect(frames(peer.socket)).toEqual([expectedFrame(sessionKey, replacement)]);
       });
-      const replacement = { ...snapshot, branch: { ...branch, branch: "replacement-change" } };
-      f.load.mockResolvedValue(replacement);
-      await f.subscriptions.pollNow();
-      expect(f.load).toHaveBeenCalledTimes(2);
-      expect(frames(f.socket)).toEqual([expectedFrame(sessionKey, replacement)]);
-      const peer = f.addReader("replacement-reader");
-      await f.subscribe([sessionKey], peer.client);
-      await f.subscriptions.pollNow();
-      expect(frames(peer.socket)).toEqual([expectedFrame(sessionKey, replacement)]);
-    });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
@@ -592,83 +635,175 @@ it("keeps warm default-loader SQL constant as readers join without a native row 
   });
 });
 
-it.each(["concurrency limit", "earlier refresh", "publication"] as const)(
-  "retires default PR loads queued behind %s",
-  async (waitingOn) => {
+it("drops cached subscription hydration after physical database replacement", async () => {
+  try {
     await withOpenClawTestState({ scenario: "minimal" }, async () => {
       vi.stubEnv("GH_TOKEN", "");
       vi.stubEnv("GITHUB_TOKEN", "");
-      const entered = createDeferredCore();
-      const release = createDeferredCore();
-      const lookedUp: string[] = [];
-      const activeLoads = waitingOn === "concurrency limit" ? 4 : 1;
-      vi.stubGlobal(
-        "fetch",
-        vi.fn<typeof fetch>(async (input) => {
-          const url = new URL(
-            typeof input === "string" ? input : input instanceof URL ? input.href : input.url,
-          );
-          if (url.pathname.endsWith("/pulls")) {
-            lookedUp.push(url.pathname);
-            if (lookedUp.length === activeLoads) {
-              entered.resolve();
-            }
-            await release.promise;
-            return githubJson([pullListItem({ state: "closed", head: {} })]);
-          }
-          return githubJson({ additions: 1, deletions: 0 });
-        }),
-      );
+      let rateLimited = false;
+      const provider = vi.fn<typeof fetch>(async (input) => {
+        const url = new URL(requestUrl(input));
+        if (!url.pathname.endsWith("/pulls")) {
+          throw new Error(`Unexpected replacement PR request: ${url.pathname}`);
+        }
+        return rateLimited
+          ? githubJson({ message: "Rate limited" }, 429)
+          : githubJson([
+              pullListItem({
+                number: 300,
+                html_url: "https://github.com/synthetic/publication/pull/300",
+                state: "closed",
+                head: {},
+                base: { ref: "main", repo: { name: "publication", owner: { login: "synthetic" } } },
+              }),
+            ]);
+      });
+      vi.stubGlobal("fetch", provider);
       const f = await createFixture("operator.read", true);
       try {
-        const keys = [];
-        for (let index = 0; index < (waitingOn === "concurrency limit" ? 5 : 1); index++) {
-          const key = `agent:main:queued-pr-${index}`;
-          keys.push(key);
-          const repository = getSessionRepositoryWorkspaceStore().create({
-            agentId: "main",
-            sessionKey: key,
-            url: `https://github.com/synthetic/queued-${index}`,
-            branch: "guest-change",
-            assertCurrent: () => {},
-          });
-          await f.seed(key, f.profile.id, { repositoryWorkspaceId: repository.workspaceId });
+        const repository = getSessionRepositoryWorkspaceStore().create({
+          agentId: "main",
+          sessionKey,
+          url: "https://github.com/synthetic/publication",
+          branch: "guest-change",
+          assertCurrent: () => {},
+        });
+        await f.seed(sessionKey, f.profile.id, { repositoryWorkspaceId: repository.workspaceId });
+        await f.subscribe();
+        await f.subscriptions.pollNow();
+        expect(frames(f.socket)).toMatchObject([
+          { payload: { sessions: { [sessionKey]: { pullRequests: [{ number: 300 }] } } } },
+        ]);
+        const requestsBeforeReplacement = provider.mock.calls.length;
+        const source = loadGatewaySessionEntryReadOnly(sessionKey, { agentId: "main" }).readSource;
+        if (!source) {
+          throw new Error("Missing session PR source after initial delivery");
         }
-        await f.subscribe(keys);
-        await entered.promise;
-        const queuedRefresh =
-          waitingOn === "earlier refresh"
-            ? f.subscriptions.replace(f.client.connId!, keys, new Set(keys))
-            : Promise.resolve();
-        const source = loadGatewaySessionEntryReadOnly(keys[0]!, { agentId: "main" }).readSource;
-        expect(source).toBeDefined();
-        let retirement: ReturnType<typeof closeOpenClawAgentDatabaseByPathAsync> | undefined;
-        const peer = waitingOn === "publication" ? f.addReader("publication-peer") : undefined;
-        if (peer) {
-          await f.subscribe(keys, peer.client);
-          f.socket.send.mockImplementationOnce(() => {
-            retirement = closeOpenClawAgentDatabaseByPathAsync(source!.path);
-          });
-        } else {
-          await closeOpenClawAgentDatabaseByPathAsync(source!.path);
-        }
-        release.resolve();
-        await Promise.all([f.subscriptions.pollNow(), queuedRefresh]);
-        await retirement;
-        expect(lookedUp).toHaveLength(activeLoads);
-        expect(lookedUp.some((url) => url.includes("queued-4"))).toBe(false);
-        if (peer) {
-          expect(JSON.stringify(frames(f.socket))).toContain('"number":103469');
-          expect(JSON.stringify(frames(peer.socket))).not.toContain('"number":103469');
-        } else {
-          expect(JSON.stringify(frames(f.socket))).not.toContain('"number":103469');
-        }
+        // Checkpoint the native owner, then replace only the file identity; logical headers match.
+        await closeOpenClawAgentDatabaseByPathAsync(source.path);
+        const replacementPath = `${source.path}.replacement`;
+        copyFileSync(source.path, replacementPath);
+        renameSync(replacementPath, source.path);
+        rateLimited = true;
+
+        const peer = f.addReader("physical-replacement-reader");
+        await f.subscribe([sessionKey], peer.client);
+        // Join native work without forcing a refresh or discarding the existing subscription cache.
+        await f.subscriptions.pollNow();
+        expect(frames(peer.socket)).toMatchObject([
+          {
+            payload: {
+              sessions: {
+                [sessionKey]: { pullRequests: [], rateLimited: true, status: "rate-limited" },
+              },
+            },
+          },
+        ]);
+        expect(provider).toHaveBeenCalledTimes(requestsBeforeReplacement + 1);
       } finally {
-        release.resolve();
         await f.close();
-        vi.unstubAllGlobals();
-        vi.unstubAllEnvs();
       }
     });
+  } finally {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  }
+});
+
+it.each(["concurrency limit", "earlier refresh", "refresh timer", "publication"] as const)(
+  "retires default PR loads queued behind %s",
+  async (waitingOn) => {
+    try {
+      await withOpenClawTestState({ scenario: "minimal" }, async () => {
+        vi.stubEnv("GH_TOKEN", "");
+        vi.stubEnv("GITHUB_TOKEN", "");
+        const entered = createDeferredCore();
+        const release = createDeferredCore();
+        const lookedUp: string[] = [];
+        const activeLoads = waitingOn === "concurrency limit" ? 4 : 1;
+        if (waitingOn === "refresh timer") {
+          vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+          release.resolve();
+        }
+        vi.stubGlobal(
+          "fetch",
+          vi.fn<typeof fetch>(async (input) => {
+            const url = new URL(
+              typeof input === "string" ? input : input instanceof URL ? input.href : input.url,
+            );
+            if (url.pathname.endsWith("/pulls")) {
+              lookedUp.push(url.pathname);
+              if (lookedUp.length === activeLoads) {
+                entered.resolve();
+              }
+              await release.promise;
+              return githubJson([pullListItem({ state: "closed", head: {} })]);
+            }
+            return githubJson({ additions: 1, deletions: 0 });
+          }),
+        );
+        const f = await createFixture("operator.read", true);
+        try {
+          const keys = [];
+          for (let index = 0; index < (waitingOn === "concurrency limit" ? 5 : 1); index++) {
+            const key = `agent:main:queued-pr-${index}`;
+            keys.push(key);
+            const repository = getSessionRepositoryWorkspaceStore().create({
+              agentId: "main",
+              sessionKey: key,
+              url: `https://github.com/synthetic/queued-${index}`,
+              branch: "guest-change",
+              assertCurrent: () => {},
+            });
+            await f.seed(key, f.profile.id, { repositoryWorkspaceId: repository.workspaceId });
+          }
+          if (waitingOn === "refresh timer") {
+            await f.subscriptions.replace(f.client.connId!, keys, new Set(keys));
+            f.socket.send.mockClear();
+          } else {
+            await f.subscribe(keys);
+            await entered.promise;
+          }
+          const queuedRefresh =
+            waitingOn === "earlier refresh" || waitingOn === "refresh timer"
+              ? f.subscriptions.replace(f.client.connId!, keys, new Set(keys))
+              : Promise.resolve();
+          const source = loadGatewaySessionEntryReadOnly(keys[0]!, { agentId: "main" }).readSource;
+          expect(source).toBeDefined();
+          let retirement: ReturnType<typeof closeOpenClawAgentDatabaseByPathAsync> | undefined;
+          const peer = waitingOn === "publication" ? f.addReader("publication-peer") : undefined;
+          if (peer) {
+            await f.subscribe(keys, peer.client);
+            f.socket.send.mockImplementationOnce(() => {
+              retirement = closeOpenClawAgentDatabaseByPathAsync(source!.path);
+            });
+          } else {
+            await closeOpenClawAgentDatabaseByPathAsync(source!.path);
+          }
+          release.resolve();
+          const settled = Promise.all([f.subscriptions.pollNow(), queuedRefresh]);
+          if (waitingOn === "refresh timer") {
+            await vi.advanceTimersByTimeAsync(10_000);
+          }
+          await settled;
+          await retirement;
+          expect(lookedUp).toHaveLength(activeLoads);
+          expect(lookedUp.some((url) => url.includes("queued-4"))).toBe(false);
+          if (peer) {
+            expect(JSON.stringify(frames(f.socket))).toContain('"number":103469');
+            expect(JSON.stringify(frames(peer.socket))).not.toContain('"number":103469');
+          } else {
+            expect(JSON.stringify(frames(f.socket))).not.toContain('"number":103469');
+          }
+        } finally {
+          release.resolve();
+          await f.close();
+        }
+      });
+    } finally {
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+      vi.unstubAllEnvs();
+    }
   },
 );

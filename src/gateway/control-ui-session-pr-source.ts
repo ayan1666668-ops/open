@@ -14,7 +14,7 @@ import { isIncognitoOpenClawAgentSqlitePath } from "../state/openclaw-agent-db.p
 /** Retain source lifetime through the caller's last assertion and publication. */
 export async function withControlUiSessionPrSource<T>(
   source: { agentId: string; path: string },
-  operation: (assertCurrent: () => void) => Promise<T>,
+  operation: (assertCurrent: () => void, sourceIdentity: string) => Promise<T>,
 ): Promise<T> {
   const target = { agentId: normalizeAgentId(source.agentId), path: path.resolve(source.path) };
   const unregister: Array<() => void> = [];
@@ -24,6 +24,7 @@ export async function withControlUiSessionPrSource<T>(
   try {
     let paths: string[];
     let assertSource: () => void;
+    let sourceIdentity: string;
     if (isIncognitoOpenClawAgentSqlitePath(target.path, target)) {
       // Borrow the already selected native owner without opening or querying SQLite.
       const database = agentDatabaseLifecycle.databases.get(target.path);
@@ -37,6 +38,7 @@ export async function withControlUiSessionPrSource<T>(
       releaseNative = retainAgentDatabase(database.db);
       const claim = createOpenClawAgentDatabaseClaim(database, releaseNative);
       releaseNative = claim.release;
+      sourceIdentity = `incognito:${claim.incarnation}`;
       paths = [target.path];
       assertSource = () => {
         claim.assertCurrent();
@@ -53,6 +55,7 @@ export async function withControlUiSessionPrSource<T>(
       if (!identity.key.startsWith("file:") || identity.canonicalPath !== candidate.physicalPath) {
         throw changed();
       }
+      sourceIdentity = identity.key;
       paths = [...new Set([candidate.path, candidate.physicalPath])];
       assertSource = () => {
         const current = readDatabasePathIdentitySync(candidate.path);
@@ -81,7 +84,7 @@ export async function withControlUiSessionPrSource<T>(
       assertSource();
     };
     assertCurrent();
-    return await operation(assertCurrent);
+    return await operation(assertCurrent, sourceIdentity);
   } finally {
     active = false;
     for (const release of unregister.toReversed()) {

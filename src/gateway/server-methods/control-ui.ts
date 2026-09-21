@@ -436,22 +436,25 @@ export function createControlUiHandlers(
             );
           }
         };
-        await withControlUiSessionPrSource(binding.readSource, async (assertSourceCurrent) => {
-          const assertReadCurrent = () => {
-            assertSourceCurrent();
-            assertCurrent();
-          };
-          const result = await loadChecks(
-            { ...parsed, agentId: binding.params.agentId },
-            {
-              sessionScope: binding.identity,
-              assertCurrent: assertReadCurrent,
-              read: { target: binding, assertCurrent: assertReadCurrent },
-            },
-          );
-          assertReadCurrent();
-          respond(true, result, undefined);
-        });
+        await withControlUiSessionPrSource(
+          binding.readSource,
+          async (assertSourceCurrent, sourceIdentity) => {
+            const assertReadCurrent = () => {
+              assertSourceCurrent();
+              assertCurrent();
+            };
+            const result = await loadChecks(
+              { ...parsed, agentId: binding.params.agentId },
+              {
+                sessionScope: binding.identity,
+                assertCurrent: assertReadCurrent,
+                read: { target: binding, sourceIdentity, assertCurrent: assertReadCurrent },
+              },
+            );
+            assertReadCurrent();
+            respond(true, result, undefined);
+          },
+        );
       } catch (error) {
         const message =
           error instanceof gitHubPublicApi.ControlUiGitHubError &&

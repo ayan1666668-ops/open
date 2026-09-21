@@ -33,6 +33,7 @@ type LoadSessionPullRequests = (
 type WatchedKeyState = {
   connIds: Set<string>;
   target: ControlUiSessionPrTarget;
+  sourceIdentity?: string;
   // Retire cache pins with the shared key, without cancelling another watcher's load.
   cacheLifetime: AbortController;
   hash?: string;
@@ -158,9 +159,11 @@ export function createControlUiSessionPullRequestSubscriptions(
   const load = customLoad ?? loadSessionPullRequests;
   const withSource = <T>(
     target: ControlUiSessionPrTarget,
-    operation: (assertCurrent: () => void) => Promise<T>,
+    operation: (assertCurrent: () => void, sourceIdentity: string) => Promise<T>,
   ) =>
-    customLoad ? operation(() => {}) : withControlUiSessionPrSource(target.readSource, operation);
+    customLoad
+      ? operation(() => {}, target.identity)
+      : withControlUiSessionPrSource(target.readSource, operation);
   let timer: ReturnType<typeof globalThis.setTimeout> | null = null;
   const scope = new AsyncWorkScope();
   let stopPromise: Promise<void> | undefined;
@@ -183,9 +186,19 @@ export function createControlUiSessionPullRequestSubscriptions(
     }
   };
 
-  const stateForTarget = (sessionKey: string, target: ControlUiSessionPrTarget) => {
+  const stateForTarget = (
+    sessionKey: string,
+    target: ControlUiSessionPrTarget,
+    sourceIdentity?: string,
+  ) => {
     const previous = keyStates.get(sessionKey);
-    if (previous?.target.identity === target.identity) {
+    if (
+      previous?.target.identity === target.identity &&
+      (sourceIdentity === undefined ||
+        previous.sourceIdentity === undefined ||
+        previous.sourceIdentity === sourceIdentity)
+    ) {
+      previous.sourceIdentity ??= sourceIdentity;
       return previous;
     }
     previous?.cancelRefresh?.();
@@ -193,6 +206,7 @@ export function createControlUiSessionPullRequestSubscriptions(
     const state: WatchedKeyState = {
       connIds: new Set(previous?.connIds),
       target,
+      sourceIdentity,
       cacheLifetime: new AbortController(),
     };
     keyStates.set(sessionKey, state);
@@ -237,31 +251,29 @@ export function createControlUiSessionPullRequestSubscriptions(
     isCurrent: () => boolean,
     refresh = false,
   ): Promise<ControlUiSessionPullRequestSnapshot> => {
-    const state = currentKeyState(sessionKey);
-    if (scope.isClosing || !state || !isCurrent()) {
+    const targetState = currentKeyState(sessionKey);
+    if (scope.isClosing || !targetState || !isCurrent()) {
       return Promise.resolve(UNAVAILABLE_SNAPSHOT);
     }
-    const pending = inflight.get(sessionKey);
-    if (pending) {
-      if (pending.state === state && (!refresh || pending.refresh)) {
-        pending.demands.add(isCurrent);
-        return pending.promise;
-      }
-      // Serialize a forced refresh behind an older normal load so that older
-      // poll results can never land after the refresh and revert its snapshot.
-      const follow = async (assertSourceCurrent: () => void) => {
+    return withSource(targetState.target, async (assertSourceCurrent, sourceIdentity) => {
+      const state = stateForTarget(sessionKey, targetState.target, sourceIdentity);
+      const pending = inflight.get(sessionKey);
+      if (pending) {
+        if (pending.state === state && (!refresh || pending.refresh)) {
+          pending.demands.add(isCurrent);
+          return pending.promise;
+        }
+        // Serialize a forced refresh behind an older normal load so that older
+        // poll results can never land after the refresh and revert its snapshot.
         await pending.promise;
         assertSourceCurrent();
         return currentKeyState(sessionKey) === state && isCurrent()
           ? loadSnapshot(sessionKey, isCurrent, refresh)
           : UNAVAILABLE_SNAPSHOT;
-      };
-      return withSource(state.target, follow).catch(() => UNAVAILABLE_SNAPSHOT);
-    }
-    const demands = new Set([isCurrent]);
-    const promise = scope
-      .track(() =>
-        withSource(state.target, async (assertSourceCurrent) => {
+      }
+      const demands = new Set([isCurrent]);
+      const promise = scope
+        .track(async () => {
           const delay = refresh
             ? (state.refreshedAt ?? -Infinity) +
               CONTROL_UI_SESSION_PR_REFRESH_INTERVAL_MS -
@@ -297,6 +309,7 @@ export function createControlUiSessionPullRequestSubscriptions(
               state.cacheLifetime.signal,
               {
                 target: state.target,
+                sourceIdentity,
                 assertCurrent: () => {
                   assertSourceCurrent();
                   if (
@@ -324,15 +337,16 @@ export function createControlUiSessionPullRequestSubscriptions(
             }
             return snapshot;
           });
-        }).catch(() => UNAVAILABLE_SNAPSHOT),
-      )
-      .finally(() => {
-        if (inflight.get(sessionKey)?.promise === promise) {
-          inflight.delete(sessionKey);
-        }
-      });
-    inflight.set(sessionKey, { promise, refresh, state, demands });
-    return promise;
+        })
+        .catch(() => UNAVAILABLE_SNAPSHOT)
+        .finally(() => {
+          if (inflight.get(sessionKey)?.promise === promise) {
+            inflight.delete(sessionKey);
+          }
+        });
+      inflight.set(sessionKey, { promise, refresh, state, demands });
+      return promise;
+    }).catch(() => UNAVAILABLE_SNAPSHOT);
   };
 
   const push = (
@@ -442,11 +456,12 @@ export function createControlUiSessionPullRequestSubscriptions(
 
       await Promise.all(
         Array.from(subscription, async ([sessionKey, watched]) => {
-          const state = currentKeyState(sessionKey);
-          if (!state) {
+          const targetState = currentKeyState(sessionKey);
+          if (!targetState) {
             return;
           }
-          return withSource(state.target, async (assertSourceCurrent) => {
+          return withSource(targetState.target, async (assertSourceCurrent, sourceIdentity) => {
+            const state = stateForTarget(sessionKey, targetState.target, sourceIdentity);
             const isCurrent = () =>
               subscriptions.get(normalizedConnId)?.get(sessionKey) === watched;
             const refresh = refreshSessionKeys.has(sessionKey);

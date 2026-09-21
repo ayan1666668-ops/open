@@ -92,11 +92,12 @@ export function loadTestSessionPullRequests(
   if (!target) {
     return Promise.resolve({ pullRequests: [], rateLimited: false });
   }
-  return withControlUiSessionPrSource(target.readSource, (assertSourceCurrent) =>
+  return withControlUiSessionPrSource(target.readSource, (assertSourceCurrent, sourceIdentity) =>
     loadControlUiSessionPullRequests(params, {
       ...deps,
       read: {
         target,
+        sourceIdentity,
         assertCurrent: () => {
           assertSourceCurrent();
           if (readTarget()?.identity !== target.identity) {

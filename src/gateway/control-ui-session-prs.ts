@@ -534,7 +534,7 @@ export async function loadControlUiSessionPullRequests(
       deps,
       request.refresh === true,
       references,
-      target.identity,
+      JSON.stringify([target.identity, deps.read.sourceIdentity]),
     ).catch(() => {
       releaseGitReadCache("pull-request.branch-facts", deps.cacheSignal);
       return null;
