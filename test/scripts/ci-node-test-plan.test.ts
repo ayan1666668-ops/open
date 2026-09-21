@@ -594,7 +594,8 @@ describe("scripts/lib/ci-node-test-plan.mts", () => {
           },
         ],
       }));
-      vi.doMock("../../scripts/lib/list-test-files.mts", () => ({
+      vi.doMock("../../scripts/lib/list-test-files.mts", async (importOriginal) => ({
+        ...(await importOriginal<typeof import("../../scripts/lib/list-test-files.mts")>()),
         listTrackedTestFiles: (root: string) => (root === "src/agents" ? files : []),
       }));
       vi.doMock("../../scripts/lib/ci-test-timings.mts", () => ({
@@ -2369,7 +2370,8 @@ describe("scripts/lib/ci-node-test-plan.mts", () => {
           const workers =
             profile.name !== "GitHub-hosted" &&
             job.runner === EXTRA_LARGE_NODE_TEST_RUNNER &&
-            job.planConcurrency === 1
+            job.planConcurrency === 1 &&
+            job.env?.OPENCLAW_VITEST_MAX_WORKERS === undefined
               ? 8
               : 2;
           expect(group.timing_key, group.shard_name).toContain(`#file-parallel-${workers}`);
@@ -5436,9 +5438,14 @@ describe("scripts/lib/ci-node-test-plan.mts", () => {
           ),
         );
         for (const job of admission) {
+          // Runtime and dist rows were already serial; only ordinary 32-class
+          // Gateway rows transfer an admitted job cap onto unmeasured siblings.
           if (
             runnerBackend === "github" ||
             !usesParallelPacking(job) ||
+            job.runner !== EXTRA_LARGE_NODE_TEST_RUNNER ||
+            job.pretestBuildMode !== undefined ||
+            job.requiresDist ||
             !job.groups.some((group) => group.fallbackMaxWorkers === 2) ||
             !job.groups.some((group) => group.configs.some(isExclusiveCiTestConfig))
           ) {
@@ -5674,7 +5681,9 @@ describe("scripts/lib/ci-node-test-plan.mts", () => {
         recipient.planConcurrency = 1;
         recipient.pretestBuildMode = "runtime";
         const keys = recipient.groups.map((group) => group.timing_key);
-        for (const group of recipient.groups) {
+        for (const group of recipient.groups.filter(
+          (entry) => entry.fallbackMaxWorkers === undefined,
+        )) {
           group.env = { OPENCLAW_VITEST_MAX_WORKERS: "2", ...group.env };
         }
         expectTimingFamilies(promoted, beforeInherited);
@@ -5690,7 +5699,9 @@ describe("scripts/lib/ci-node-test-plan.mts", () => {
         expectTimingFamilies(promoted, beforeInherited);
         expect(policies(promoted, beforeInherited)).toEqual(policies(before, beforeInherited));
         delete recipient.env.OPENCLAW_VITEST_MAX_WORKERS;
-        for (const group of recipient.groups) {
+        for (const group of recipient.groups.filter(
+          (entry) => entry.fallbackMaxWorkers === undefined,
+        )) {
           group.env = { OPENCLAW_VITEST_MAX_WORKERS: "2", ...group.env };
         }
         const hosted = expectDefined(
