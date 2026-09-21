@@ -78,6 +78,35 @@ describe("live provider catalog projection", () => {
     expect(
       projectProviderCatalogSnapshotRows([{ id: model.id, object: "model" }], explicitPreview),
     ).toEqual([]);
+
+    const deprecatedModel = buildModel("deprecated-model");
+    const deprecatedSeed: ProviderCatalogSnapshot = new Map([
+      [deprecatedModel.id, { model: deprecatedModel, status: "deprecated" }],
+    ]);
+    const omittedStatus = projectUpstreamProviderCatalogSnapshot({
+      providerId: "opencode-go",
+      provider: {
+        id: "opencode-go",
+        api: "https://opencode.ai/zen/go/v1",
+        npm: "@ai-sdk/openai-compatible",
+        models: {
+          [deprecatedModel.id]: {
+            id: deprecatedModel.id,
+            limit: { context: 128_000, output: deprecatedModel.maxTokens },
+          },
+        },
+      },
+      seed: deprecatedSeed,
+      anthropicBaseUrl: "https://opencode.ai/zen/go",
+      defaultBaseUrl: "https://opencode.ai/zen/go/v1",
+    });
+    expect(omittedStatus.get(deprecatedModel.id)).toMatchObject({ status: "deprecated" });
+    expect(
+      projectProviderCatalogSnapshotRows(
+        [{ id: deprecatedModel.id, object: "model" }],
+        omittedStatus,
+      ),
+    ).toEqual([]);
   });
 
   it("keeps cache admission and fallback shared", async () => {
