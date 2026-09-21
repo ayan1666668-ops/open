@@ -120,7 +120,7 @@ it.each(["file", "symlink"] as const)(
   },
 );
 
-it.each(["mode", "same-size content", "identity"] as const)(
+it.each(["mode", "same-size content with changed mtime", "identity"] as const)(
   "refuses %s changes at the copy mutation boundary before exposing plugin bytes",
   async (change) => {
     const f = await fixture();
@@ -136,9 +136,20 @@ it.each(["mode", "same-size content", "identity"] as const)(
       } else if (change === "mode") {
         fsSync.chmodSync(f.file, 0o600);
       } else {
+        const before = fsSync.lstatSync(f.file, { bigint: true });
         fsSync.chmodSync(f.file, 0o600);
         fsSync.writeFileSync(f.file, "altered but equal bytes!");
         fsSync.chmodSync(f.file, 0o444);
+        // A same-tick rewrite can retain its timestamps; force a real fingerprint change.
+        fsSync.utimesSync(f.file, before.atime, new Date(before.mtime.getTime() + 60_000));
+        const changed = fsSync.lstatSync(f.file, { bigint: true });
+        expect(changed).toMatchObject({
+          dev: before.dev,
+          ino: before.ino,
+          size: before.size,
+          mode: before.mode,
+        });
+        expect(changed.mtimeNs).not.toBe(before.mtimeNs);
       }
     });
     await expect(f.copy()).rejects.toThrow("changed after snapshot inventory");
