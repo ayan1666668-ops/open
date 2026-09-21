@@ -93,7 +93,7 @@ describe("native dynamics spawn preparation", () => {
           candidate,
         },
       }),
-    ).toThrow("does not match the explicit handoff");
+    ).toThrow("does not match candidate manifest");
   });
 
   it("bounds handoffs and snapshots their content before returning", () => {
