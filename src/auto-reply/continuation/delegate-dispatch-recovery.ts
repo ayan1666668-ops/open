@@ -13,7 +13,7 @@ import {
 } from "../../infra/session-delivery-queue-storage.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import { parseAgentSessionKey } from "../../sessions/session-key-utils.js";
-import { deliveryContextFromSession } from "../../utils/delivery-context.shared.js";
+import { deliveryContextFromSession } from "../../utils/delivery-context.read.js";
 import { resolveContinuationRuntimeConfig } from "./config.js";
 import { DelegateTerminalChainStatePersistError } from "./delegate-dispatch-chain-state.js";
 import type { DelegateDispatchContext } from "./delegate-dispatch-contract.js";

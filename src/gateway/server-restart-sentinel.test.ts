@@ -40,6 +40,7 @@ import {
 import { normalizeSessionDeliveryState } from "../utils/delivery-context.shared.js";
 import { resolveRuntimeServiceVersion } from "../version.js";
 import {
+  createGeneratedMediaDeliveryEntry,
   expectCapturedQueueContext,
   expectRecordFields,
   mockCallArg,
@@ -174,7 +175,7 @@ const mocks = vi.hoisted(() => {
       legacyKey: undefined,
     })),
     deliveryContextFromSession: vi.fn<
-      typeof import("../utils/delivery-context.shared.js").deliveryContextFromSession
+      typeof import("../utils/delivery-context.read.js").deliveryContextFromSession
     >(() => undefined),
     mergeDeliveryContext: vi.fn<
       typeof import("../utils/delivery-context.shared.js").mergeDeliveryContext
@@ -190,11 +191,11 @@ const mocks = vi.hoisted(() => {
     ]),
     enqueueDeliveryOnce: vi.fn(async (_payload: unknown, id: string) => ({ id, created: true })),
     findDeliveryIntentOwner: vi.fn<
-      () => {
+      () => Promise<{
         namespace: "prepared" | "preparing" | "migration" | "legacy-preparing" | "legacy";
         status: "pending" | "failed" | "completed";
-      } | null
-    >(() => null),
+      } | null>
+    >(async () => null),
     ackDelivery: vi.fn(async (_id: string) => {}),
     failDelivery: vi.fn(async () => {}),
     failDeliveryAfterPlatformSend: vi.fn(async () => {}),
@@ -406,6 +407,10 @@ vi.mock("./session-utils.js", async (importOriginal) => ({
   loadSessionEntry: mocks.loadSessionEntry,
 }));
 
+vi.mock("../utils/delivery-context.read.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../utils/delivery-context.read.js")>()),
+  deliveryContextFromSession: mocks.deliveryContextFromSession,
+}));
 vi.mock("../config/sessions/session-accessor.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../config/sessions/session-accessor.js")>()),
   isSessionRecipientAuthorityCurrent: mocks.isSessionRecipientAuthorityCurrent,
@@ -413,7 +418,6 @@ vi.mock("../config/sessions/session-accessor.js", async (importOriginal) => ({
 
 vi.mock("../utils/delivery-context.shared.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../utils/delivery-context.shared.js")>()),
-  deliveryContextFromSession: mocks.deliveryContextFromSession,
   mergeDeliveryContext: mocks.mergeDeliveryContext,
 }));
 
@@ -624,14 +628,8 @@ function expectContinuationDispatchFields(
   return params;
 }
 
-type GeneratedMediaDeliveryEntry = Extract<
-  Parameters<typeof deliverQueuedSessionDelivery>[0]["entry"],
-  { kind: "agentTurn" }
->;
-
 function deliverGeneratedMedia(
-  overrides: Partial<GeneratedMediaDeliveryEntry> &
-    Pick<GeneratedMediaDeliveryEntry, "id" | "messageId">,
+  overrides: Parameters<typeof createGeneratedMediaDeliveryEntry>[0],
   stateDir?: string,
   resolveGatewayContext?: () => undefined,
 ) {
@@ -644,21 +642,7 @@ function deliverGeneratedMedia(
             env: { ...process.env, OPENCLAW_STATE_DIR: stateDir },
           }),
     ...(resolveGatewayContext ? { resolveGatewayContext } : {}),
-    entry: {
-      kind: "agentTurn",
-      sessionKey: "agent:main:main",
-      message: "generated image ready",
-      enqueuedAt: 1,
-      retryCount: 0,
-      route: { channel: "discord", to: "channel:123", chatType: "channel" },
-      inputProvenance: {
-        kind: "inter_session",
-        sourceChannel: "internal",
-        sourceTool: "image_generate",
-      },
-      sourceReplyDeliveryMode: "automatic",
-      ...overrides,
-    },
+    entry: createGeneratedMediaDeliveryEntry(overrides),
   });
 }
 
@@ -790,7 +774,7 @@ describe("scheduleRestartSentinelWake", () => {
     mocks.enqueueDeliveryOnce.mockReset();
     mocks.enqueueDeliveryOnce.mockImplementation(async (_payload, id) => ({ id, created: true }));
     mocks.findDeliveryIntentOwner.mockReset();
-    mocks.findDeliveryIntentOwner.mockReturnValue(null);
+    mocks.findDeliveryIntentOwner.mockResolvedValue(null);
     mocks.withStableDeliveryPreparation.mockReset();
     mocks.withStableDeliveryPreparation.mockImplementation(
       async (params: {
@@ -1223,8 +1207,13 @@ describe("scheduleRestartSentinelWake", () => {
         const delivery = await vi.importActual<
           typeof import("../utils/delivery-context.shared.js")
         >("../utils/delivery-context.shared.js");
+        const deliveryRead = await vi.importActual<
+          typeof import("../utils/delivery-context.read.js")
+        >("../utils/delivery-context.read.js");
         mocks.loadSessionEntry.mockImplementation(sessionUtils.loadSessionEntry);
-        mocks.deliveryContextFromSession.mockImplementation(delivery.deliveryContextFromSession);
+        mocks.deliveryContextFromSession.mockImplementation(
+          deliveryRead.deliveryContextFromSession,
+        );
         mocks.mergeDeliveryContext.mockImplementation(delivery.mergeDeliveryContext);
       } else {
         mocks.deliveryContextFromSession.mockReturnValue({ channel: "webchat" });
@@ -1722,7 +1711,7 @@ describe("scheduleRestartSentinelWake", () => {
 
   it("does not resend a restart notice whose stable queue id is already owned", async () => {
     mocks.withStableDeliveryPreparation.mockResolvedValueOnce({ status: "existing" });
-    mocks.findDeliveryIntentOwner.mockReturnValueOnce({
+    mocks.findDeliveryIntentOwner.mockResolvedValueOnce({
       namespace: "prepared",
       status: "pending",
     });
@@ -3530,6 +3519,9 @@ describe("scheduleRestartSentinelWake", () => {
       source: "restart-sentinel",
       intent: "immediate",
       reason: "wake",
+      // The wake is agent-qualified: continuation ownership travels with the
+      // heartbeat so a replayed recipient cannot wake another agent's session.
+      agentId: "main",
       sessionKey: "agent:main:main",
     });
   });
@@ -4444,9 +4436,9 @@ describe("scheduleRestartSentinelWake", () => {
             }),
           },
         }));
-        const delivery = await vi.importActual<
-          typeof import("../utils/delivery-context.shared.js")
-        >("../utils/delivery-context.shared.js");
+        const delivery = await vi.importActual<typeof import("../utils/delivery-context.read.js")>(
+          "../utils/delivery-context.read.js",
+        );
         mocks.deliveryContextFromSession.mockImplementation(delivery.deliveryContextFromSession);
       } else {
         mocks.deliveryContextFromSession.mockReturnValue(context);
