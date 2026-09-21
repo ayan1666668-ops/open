@@ -11,6 +11,10 @@ import type {
 } from "../audit/execution-identity-inspection.types.js";
 import type { FleetCellRecord } from "../fleet/registry.types.js";
 import type { readExecApprovalsConfigRow } from "../infra/exec-approvals-sqlite.js";
+import type {
+  ConversationRef,
+  SessionBindingRecord,
+} from "../infra/outbound/session-binding.types.js";
 import type { SqliteWorkerStateContext } from "../infra/sqlite-worker-state-context.js";
 import type {
   readUpdateRunRecord,
@@ -43,6 +47,7 @@ export type OpenClawStateReadAuthority = {
 };
 
 export type OpenClawStateReadCommand =
+  | { type: "conversationBindings.inspect"; conversation: ConversationRef }
   | PluginBlobReadCommand
   | { type: "exec-approvals.read" }
   | { type: "agentDatabaseRegistry.read" }
@@ -69,6 +74,12 @@ export type OpenClawStateReadRequest = {
   command: OpenClawStateReadCommand | { type: "admit" };
 };
 export type OpenClawStateReadReply = (
+  | {
+      ok: true;
+      type: "conversationBindings.inspect";
+      sourceAdmitted: true;
+      record: SessionBindingRecord | null;
+    }
   | PluginBlobReadReply
   | {
       ok: true;
