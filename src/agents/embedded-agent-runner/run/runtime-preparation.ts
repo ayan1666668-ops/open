@@ -225,7 +225,9 @@ export async function prepareEmbeddedRunRuntime(input: {
     ? activePreparedAuthPlan.forwardedAuthProfileId
     : undefined;
   const requestedThinkLevel = resolveInitialThinkLevel({
-    requested: reasoningEffortOverride ?? params.thinkLevel,
+    requested: params.thinkLevelExplicit
+      ? params.thinkLevel
+      : (reasoningEffortOverride ?? params.thinkLevel),
     config: params.config,
     agentId: params.agentId,
     provider,

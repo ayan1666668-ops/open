@@ -12,7 +12,7 @@ describe("session model-selection projection", () => {
         mode: "auto",
         recoveryHint: "Use /jev-router off",
         lastDecision: {
-          model: "  openai/gpt-5.6-luna\n",
+          model: "  openai/gpt-4.1-mini\n",
           reason: "complex \u0000 task",
           at: 1234,
           ignored: "not projected",
@@ -22,7 +22,7 @@ describe("session model-selection projection", () => {
       mode: "auto",
       recoveryHint: "Use /jev-router off",
       lastDecision: {
-        model: "openai/gpt-5.6-luna",
+        model: "openai/gpt-4.1-mini",
         reason: "complex task",
         at: 1234,
       },
@@ -57,14 +57,14 @@ describe("session model-selection projection", () => {
           value: {
             mode: "off",
             recoveryHint: "Use the plugin control",
-            lastDecision: { model: "openai/gpt-5.6-sol" },
+            lastDecision: { model: "openai/gpt-4.1" },
           },
         },
       ]),
     ).toEqual({
       mode: "off",
       recoveryHint: "Use the plugin control",
-      lastDecision: { model: "openai/gpt-5.6-sol" },
+      lastDecision: { model: "openai/gpt-4.1" },
     });
     expect(resolveSessionModelSelectionFromExtensions(undefined)).toBeUndefined();
   });

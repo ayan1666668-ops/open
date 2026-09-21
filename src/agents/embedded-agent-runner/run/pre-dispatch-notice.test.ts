@@ -6,7 +6,7 @@ describe("pre-dispatch notice delivery", () => {
     const onBlockReply = vi.fn(async () => {});
     const onBlockReplyFlush = vi.fn(async () => {});
     const first = await deliverPreDispatchNotice({
-      notice: { text: "Auto router: dispatching Astra Medium." },
+      notice: { text: "Auto router: dispatching Selected model Medium." },
       runId: "notice-test-session:first",
       onBlockReply,
       onBlockReplyFlush,
@@ -20,7 +20,7 @@ describe("pre-dispatch notice delivery", () => {
     expect(first).toBe("delivered");
     expect(second).toBe("skipped");
     expect(onBlockReply).toHaveBeenCalledExactlyOnceWith({
-      text: "Auto router: dispatching Astra Medium.",
+      text: "Auto router: dispatching Selected model Medium.",
       isStatusNotice: true,
     });
     expect(onBlockReplyFlush).toHaveBeenCalledExactlyOnceWith({ reason: "message_end" });
@@ -46,7 +46,7 @@ describe("pre-dispatch notice delivery", () => {
 
     await expect(
       deliverPreDispatchNotice({
-        notice: { text: "Auto router: dispatching Luna Max." },
+        notice: { text: "Auto router: dispatching Selected model Max." },
         runId: "notice-test-session:durable-host",
         onPreDispatchNotice,
         onBlockReply,
@@ -55,7 +55,7 @@ describe("pre-dispatch notice delivery", () => {
     ).resolves.toBe("delivered");
 
     expect(onPreDispatchNotice).toHaveBeenCalledExactlyOnceWith({
-      text: "Auto router: dispatching Luna Max.",
+      text: "Auto router: dispatching Selected model Max.",
       isStatusNotice: true,
     });
     expect(onBlockReply).not.toHaveBeenCalled();
@@ -68,7 +68,7 @@ describe("pre-dispatch notice delivery", () => {
 
     await expect(
       deliverPreDispatchNotice({
-        notice: { text: "Auto router: dispatching Sol Medium." },
+        notice: { text: "Auto router: dispatching Another model Medium." },
         runId: "notice-test-session:host-declined",
         onPreDispatchNotice,
         onBlockReply,
@@ -77,7 +77,7 @@ describe("pre-dispatch notice delivery", () => {
 
     expect(onPreDispatchNotice).toHaveBeenCalledOnce();
     expect(onBlockReply).toHaveBeenCalledExactlyOnceWith({
-      text: "Auto router: dispatching Sol Medium.",
+      text: "Auto router: dispatching Another model Medium.",
       isStatusNotice: true,
     });
   });

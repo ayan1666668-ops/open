@@ -221,15 +221,23 @@ export function createChatSendReplyDispatch(params: {
       // A missing live session has no authority for either durable or fallback delivery.
       return true;
     }
+    const expectedLifecycleRevision = current.entry?.lifecycleRevision;
+    const expectedStorePath = current.storePath;
+    const sessionIdentityChanged = () => {
+      const latest = loadSessionEntry(session.sessionKey, sessionLoadOptions);
+      return (
+        latest.storePath !== expectedStorePath ||
+        latest.entry?.sessionId !== sessionId ||
+        latest.entry?.lifecycleRevision !== expectedLifecycleRevision
+      );
+    };
     const appended = await appendAssistantTranscriptMessage({
       sessionKey: session.sessionKey,
       message: payload.text.trim(),
       sessionId,
       storePath: current.storePath,
       expectedSessionId: sessionId,
-      ...(current.entry?.lifecycleRevision
-        ? { expectedLifecycleRevision: current.entry.lifecycleRevision }
-        : {}),
+      ...(expectedLifecycleRevision ? { expectedLifecycleRevision } : {}),
       assertCommitAllowed: () => {
         if (params.abortSignal?.aborted) {
           throw new Error("Chat pre-dispatch notice run was aborted.");
@@ -250,7 +258,11 @@ export function createChatSendReplyDispatch(params: {
       // A replacement can invalidate the run without aborting its signal. Do
       // not fall back to transport delivery for a notice whose durable commit
       // was correctly rejected by the same live-authority guard.
-      if (params.abortSignal?.aborted || (params.isRunCurrent && !params.isRunCurrent())) {
+      if (
+        params.abortSignal?.aborted ||
+        (params.isRunCurrent && !params.isRunCurrent()) ||
+        sessionIdentityChanged()
+      ) {
         return true;
       }
       logGateway.warn(

@@ -254,4 +254,50 @@ describe("selected route thinking metadata at runtime preparation", () => {
       runtime.stopRuntimeAuthRefreshTimer();
     }
   });
+
+  it("gives explicit current-turn effort precedence over hook effort", async () => {
+    const run = async (thinkLevelExplicit: boolean | undefined) => {
+      const runId = `explicit-effort-${thinkLevelExplicit ? "user" : "baseline"}`;
+      const runtime = await prepareEmbeddedRunRuntime({
+        assertCurrent: () => {},
+        runParams: {
+          runId,
+          admittedRunContext: createTestAdmittedRunContext(runId),
+          sessionId: "explicit-effort-session",
+          sessionKey: "agent:main:explicit-effort-session",
+          agentId: "main",
+          prompt: "Reply briefly.",
+          workspaceDir: root,
+          timeoutMs: 5_000,
+          config: preparedModelRuntime.config,
+          authProfileId: "openai:subscription",
+          authProfileIdSource: "user",
+          thinkLevel: "low",
+          thinkLevelExplicit,
+        },
+        provider: "openai",
+        modelId: MODEL_ID,
+        agentDir: preparedModelRuntime.agentDir,
+        workspaceDir: root,
+        globalLane: "test",
+        hookRunner: {
+          hasHooks: (hookName) => hookName === "before_model_resolve",
+          runBeforeModelResolve: async () => ({ reasoningEffortOverride: "high" }),
+        },
+        hookContext: { sessionId: "explicit-effort-session", workspaceDir: root },
+        markStartupStage: () => {},
+        notifyExecutionPhase: () => {},
+        fallbackConfigured: false,
+        preparedModelRuntime,
+      });
+      try {
+        return runtime.snapshot().thinkLevel;
+      } finally {
+        runtime.stopRuntimeAuthRefreshTimer();
+      }
+    };
+
+    await expect(run(undefined)).resolves.toBe("high");
+    await expect(run(true)).resolves.toBe("low");
+  });
 });

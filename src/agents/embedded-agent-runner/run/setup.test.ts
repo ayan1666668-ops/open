@@ -7,6 +7,7 @@ import type { SessionEntry } from "../../../config/sessions/types.js";
 import type { ModelDefinitionConfig } from "../../../config/types.models.js";
 import type { OpenClawConfig } from "../../../config/types.openclaw.js";
 import type { ProviderRuntimeModel } from "../../../plugins/provider-runtime-model.types.js";
+import type { PluginHookBeforeModelResolveResult } from "../../../plugins/types.js";
 import { AGENT_HARNESS_SESSION_ID_LOCKED_MESSAGE } from "../../../sessions/agent-harness-session-key.js";
 import { AuthStorage } from "../../sessions/auth-storage.js";
 import { ModelRegistry } from "../../sessions/model-registry.js";
@@ -215,7 +216,7 @@ describe("resolveHookModelSelection", () => {
       runBeforeModelResolve: vi.fn(async () => ({
         modelOverride: "routed-model",
         providerOverride: "routed-provider",
-        reasoningEffortOverride: "high",
+        reasoningEffortOverride: "high" as const,
         preDispatchNotice: { text: "  routed before dispatch  " },
       })),
     };
@@ -246,7 +247,7 @@ describe("resolveHookModelSelection", () => {
       hasHooks: vi.fn(() => true),
       runBeforeModelResolve: vi.fn(async () => ({
         modelOverride: "routed-model",
-        reasoningEffortOverride: "high",
+        reasoningEffortOverride: "high" as const,
         preDispatchNotice: { text: "routed before dispatch" },
       })),
     };
@@ -268,12 +269,15 @@ describe("resolveHookModelSelection", () => {
   });
 
   it("drops malformed effort and empty notices from hook output", async () => {
+    // Simulate an untyped plugin payload so runtime normalization, rather than
+    // the public result type, owns malformed-value handling.
+    const malformedResult = {
+      reasoningEffortOverride: "bogus",
+      preDispatchNotice: { text: "   " },
+    } as unknown as PluginHookBeforeModelResolveResult;
     const hookRunner = {
       hasHooks: vi.fn(() => true),
-      runBeforeModelResolve: vi.fn(async () => ({
-        reasoningEffortOverride: "bogus",
-        preDispatchNotice: { text: "   " },
-      })),
+      runBeforeModelResolve: vi.fn(async () => malformedResult),
     };
 
     await expect(

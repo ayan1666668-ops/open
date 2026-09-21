@@ -774,7 +774,7 @@ describe("pre-dispatch notice session authority", () => {
         retire();
         await expect(
           deliverPreDispatchNotice({
-            notice: { text: "Stale routing notice", isStatusNotice: true },
+            notice: { text: "Stale routing notice" },
             runId,
             signal: abortController.signal,
             onPreDispatchNotice: dispatch.onPreDispatchNotice,

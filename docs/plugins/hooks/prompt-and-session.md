@@ -33,8 +33,11 @@ Use the phase-specific hooks for new plugins:
   selection. Hosts that advertise `routingCapabilities: "model-effort-v1"`
   also accept `reasoningEffortOverride` and a short `preDispatchNotice`; the
   notice is delivered by the host after classification and before model
-  dispatch. The event's optional `signal` is aborted with the turn, so a
-  classifier should stop its work when cancellation is requested.
+  dispatch. A concrete thinking level selected in the current user turn keeps
+  precedence over hook effort; otherwise hook effort applies to that turn and
+  does not replace the stored session baseline. The event's optional `signal`
+  is aborted with the turn, so a classifier should stop its work when
+  cancellation is requested.
 - `agent_turn_prepare`: receives the current prompt, prepared session
   messages, and queued injections consumed for this session.
   Return `prependContext` or `appendContext`.

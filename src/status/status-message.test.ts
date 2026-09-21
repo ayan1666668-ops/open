@@ -80,15 +80,15 @@ describe("buildStatusMessageParts presentation", () => {
       modelAuth: "api-key",
       modelSelection: {
         mode: "auto",
-        lastDecision: { model: "openai/gpt-5.6-luna", reason: "complex task", at: 1234 },
+        lastDecision: { model: "openai/gpt-4.1-mini", reason: "complex task", at: 1234 },
       },
     });
 
-    expect(parts.text).toContain("🎯 Selection: Auto · last openai/gpt-5.6-luna (complex task)");
+    expect(parts.text).toContain("🎯 Selection: Auto · last openai/gpt-4.1-mini (complex task)");
     const table = parts.presentation.blocks.find((block) => block.type === "table");
     expect(table?.type === "table" ? table.rows : []).toContainEqual([
       "🎯 Selection",
-      "Auto · last openai/gpt-5.6-luna (complex task)",
+      "Auto · last openai/gpt-4.1-mini (complex task)",
     ]);
   });
 
