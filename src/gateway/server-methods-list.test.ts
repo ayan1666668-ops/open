@@ -234,6 +234,9 @@ describe("listGatewayMethods", () => {
       "themes.import",
       "controlUi.githubDetail",
       "progressCard.refresh",
+      "files.roots.list",
+      "files.root.list",
+      "files.root.get",
     ];
     expect(listGatewayMethods().slice(-expectedSuffix.length)).toEqual(expectedSuffix);
     const methods = listGatewayMethods();
@@ -288,6 +291,9 @@ describe("listGatewayMethods", () => {
       "themes.import",
       "controlUi.githubDetail",
       "progressCard.refresh",
+      "files.roots.list",
+      "files.root.list",
+      "files.root.get",
     ]);
   });
 
@@ -471,6 +477,9 @@ describe("listGatewayMethods", () => {
       "themes.import",
       "controlUi.githubDetail",
       "progressCard.refresh",
+      "files.roots.list",
+      "files.root.list",
+      "files.root.get",
     ];
     expect(coreMethods.slice(-expectedCoreSuffix.length)).toEqual(expectedCoreSuffix);
     expect(methods.indexOf("approval.get")).toBeGreaterThan(methods.indexOf("tts.speak"));

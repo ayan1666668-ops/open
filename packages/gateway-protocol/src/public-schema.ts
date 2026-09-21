@@ -1,6 +1,7 @@
 // Explicit schema exports keep public protocol changes reviewable.
 export * from "./schema/sessions-goal.js";
 export * from "./schema/human-mentions.js";
+export * from "./schema/file-roots.js";
 export * from "./public-schema-push.js";
 export * from "./public-schema-users.js";
 export * from "./public-schema-plugins.js";
