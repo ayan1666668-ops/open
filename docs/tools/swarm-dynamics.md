@@ -75,10 +75,11 @@ publication, merge, and deployment owners retain authority.
 
 ## Lifecycle
 
-Dynamics diagnostic bookkeeping is owned by the parent run. If the parent wait is
-aborted or fails, that bookkeeping is released. This does not cancel live sibling
-collectors; it only prevents abandoned advisory state from accumulating in the
-Gateway process.
+Dynamics diagnostic bookkeeping is owned by the parent run through OpenClaw's
+existing catalog/run disposal lifetime. Parent disposal or abort releases that
+bookkeeping. Recoverable wait errors leave it intact. Cleanup does not cancel live
+sibling collectors; it only prevents abandoned advisory state from accumulating
+in the Gateway process.
 
 ## Limits and trust
 
