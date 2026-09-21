@@ -196,9 +196,10 @@ describe("OpenAI ChatGPT Responses inference streaming", () => {
     [
       { code: "cyber_policy", category: "cyber" },
       { code: "misalignment_policy_violation", category: "misalignment" },
-    ].flatMap((policy) =>
+    ].flatMap(({ code, category }) =>
       (["error", "response.failed", 400, 403] as const).map((terminal) => ({
-        ...policy,
+        code,
+        category,
         terminal,
       })),
     ),
