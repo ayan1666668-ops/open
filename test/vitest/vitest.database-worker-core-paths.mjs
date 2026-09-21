@@ -35,6 +35,7 @@ export const databaseWorkerCoreTestFiles = [
   "test/loopback-ask-user-telegram-channel.test.ts",
   "test/slack-outbound-permanent-rejection-loopback.test.ts",
   "test/telegram-outbound-permanent-rejection-loopback.test.ts",
+  "src/agents/cli-runner.before-agent-reply-cron.test.ts",
   "src/agents/cli-runner.prepare-fixture.test.ts",
   "src/agents/harness/selection.test.ts",
   "src/agents/cli-runner/prepare.test.ts",
