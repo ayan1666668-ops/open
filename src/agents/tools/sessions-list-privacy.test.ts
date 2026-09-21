@@ -94,7 +94,7 @@ async function withInventory(
     client.connect.scopes = ["operator.read"];
     const context = requestContext(cfg);
     context.getRuntimeConfig = () => cfg;
-    context.trackExecution = (operation) => operation();
+    context.trackExecution = async (operation) => await operation();
     await initializeSessionReadContext(context);
     const asReader = <T>(operation: () => Promise<T>) =>
       withPluginRuntimeGatewayRequestScope({ context, isWebchatConnect: () => false }, () =>

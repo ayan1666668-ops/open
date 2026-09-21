@@ -4,23 +4,35 @@ import type { MaterializedRow } from "./session-row-projection-record.js";
 import type { SessionRowProjection } from "./session-row-projection.js";
 
 type SessionListRead = {
-  projection: SessionRowProjection;
-  record: MaterializedRow;
+  projection: WeakRef<SessionRowProjection>;
   client?: GatewayClient | null;
+  agentId: string;
+  key: string;
+  storePath: string;
+  storeAgentId: string;
   generation: MaterializedRow["generation"];
   sessionId: string;
   lifecycleRevision?: string;
 };
 
-// In-process consumers retain the producer's generation without exposing it on the wire.
+// Result rows carry identity, without retaining the owner's materialized metadata graph.
 const reads = new WeakMap<object, SessionListRead>();
 
 export function bindSessionListRowRead(
   row: object,
-  read: Pick<SessionListRead, "projection" | "record" | "client">,
+  read: {
+    projection: SessionRowProjection;
+    record: MaterializedRow;
+    client?: GatewayClient | null;
+  },
 ): void {
   reads.set(row, {
-    ...read,
+    projection: new WeakRef(read.projection),
+    client: read.client,
+    agentId: read.record.agentId,
+    key: read.record.key,
+    storePath: read.record.storeTarget.storePath,
+    storeAgentId: read.record.storeTarget.agentId,
     generation: read.record.generation,
     sessionId: read.record.entry.sessionId,
     lifecycleRevision: read.record.entry.lifecycleRevision,
@@ -43,10 +55,10 @@ export async function readSessionListRowTitleFields(row: object, requireOwner: b
   const { readSessionTitleFieldsFromTranscriptAsync } =
     await import("./session-transcript-title-reader.js");
   return await readSessionTitleFieldsFromTranscriptAsync({
-    agentId: selected.record.storeTarget.agentId,
-    sessionKey: selected.record.key,
+    agentId: selected.storeAgentId,
+    sessionKey: selected.key,
     sessionId: selected.sessionId,
-    storePath: selected.record.storeTarget.storePath,
+    storePath: selected.storePath,
     sessionEntry: { sessionId: selected.sessionId },
   });
 }
@@ -71,27 +83,28 @@ export async function withCurrentSessionListRows<T>(
     }
     return read;
   });
-  const projection = selected[0]!.projection;
-  if (selected.some((read) => read.projection !== projection)) {
+  const projection = selected[0]!.projection.deref();
+  if (!projection || selected.some((read) => read.projection.deref() !== projection)) {
     throw new Error("Gateway changed while preparing session inventory; retry the request");
   }
   while (true) {
     const prepared = await projection.withPreparedExactRows(
-      () => selected.map(({ record }) => ({ agentId: record.agentId, key: record.key })),
+      () => selected.map(({ agentId, key }) => ({ agentId, key })),
       (read) => {
         const presentations = new Map<
           GatewayClient | null | undefined,
           ReturnType<typeof prepareProjectedSessionPresentation>
         >();
         const visible = selected.map((selectedRead) => {
-          const { record: previous, client } = selectedRead;
-          const query = { agentId: previous.agentId, key: previous.key };
-          const record = read.describe(query, previous);
+          const { agentId, key, client } = selectedRead;
+          const query = { agentId, key };
+          const record = read.describe(query);
           if (
             !record ||
-            record.agentId !== previous.agentId ||
-            record.key !== previous.key ||
-            record.storeTarget.storePath !== previous.storeTarget.storePath ||
+            record.agentId !== agentId ||
+            record.key !== key ||
+            record.storeTarget.storePath !== selectedRead.storePath ||
+            record.storeTarget.agentId !== selectedRead.storeAgentId ||
             record.generation !== selectedRead.generation ||
             record.entry.sessionId !== selectedRead.sessionId ||
             record.entry.lifecycleRevision !== selectedRead.lifecycleRevision

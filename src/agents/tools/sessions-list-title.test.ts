@@ -106,7 +106,7 @@ async function withInventory(
       }));
     const before = persisted();
     const context = requestContext(cfg);
-    context.trackExecution = (operation) => operation();
+    context.trackExecution = async (operation) => await operation();
     await initializeSessionReadContext(context);
     const client = identifiedClient(viewer.id);
     const asReader = <T>(operation: () => Promise<T>) =>
