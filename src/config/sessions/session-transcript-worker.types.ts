@@ -4,6 +4,7 @@ import type {
   readSessionEntryResetRecallCutoff,
 } from "../../../packages/memory-host-sdk/src/host/session-files.js";
 import type { PreparedSessionHistoryReadTarget } from "../../gateway/session-history-read.types.js";
+import type { SessionPreviewItem } from "../../gateway/session-utils.types.js";
 import type {
   SessionCostUsageCacheRead,
   SessionCostUsageCacheReadResult,
@@ -26,6 +27,7 @@ import type {
   SessionAccessScope,
   SessionEntryListScope,
   SessionEntrySummary,
+  SessionTranscriptReadScope,
   SessionTranscriptRuntimeTarget,
 } from "./session-accessor.types.js";
 import type { CanonicalSessionReaderContinuation } from "./session-canonical-key.js";
@@ -66,6 +68,20 @@ export type SessionTranscriptHistoryWorkerInput = {
   request: SessionHistoryWorkerRequest;
   target: Omit<PreparedSessionHistoryReadTarget, "database">;
   admission?: UserTurnTranscriptAdmissionReceipt;
+};
+
+export type SessionPreviewWorkerInput = {
+  kind: "session-preview";
+  database: { agentId: string; path: string };
+  scope: SessionTranscriptReadScope;
+  maxItems: number;
+  maxChars: number;
+  admission?: UserTurnTranscriptAdmissionReceipt;
+};
+
+export type SessionPreviewWorkerResult = {
+  kind: "session-preview";
+  items: SessionPreviewItem[];
 };
 
 export type SessionRowPresenceWorkerInput = {
@@ -125,6 +141,7 @@ export type SessionBranchSummaryWorkerInput = {
 export type SessionTranscriptWorkerValues = {
   "branch-summaries": SessionBranchSummaryReadResult;
   "history-page": SessionHistoryWorkerResult;
+  "session-preview": SessionPreviewWorkerResult;
   "session-row-presence": boolean;
   "session-members": SessionMember[];
   "session-entry-list": SessionEntryListWorkerResult;

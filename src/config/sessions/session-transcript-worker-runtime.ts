@@ -46,6 +46,8 @@ import {
 } from "./session-transcript-worker-resources.js";
 import type {
   SessionTranscriptHistoryWorkerInput,
+  SessionPreviewWorkerInput,
+  SessionPreviewWorkerResult,
   SessionRowPresenceWorkerInput,
   SessionMembersWorkerInput,
   SessionEntryListWorkerInput,
@@ -62,6 +64,9 @@ export type SessionHistoryWorkerDatabase = {
     prepare: () => Omit<SessionTranscriptHistoryWorkerInput, "database">,
     inputBytes: number,
   ) => Promise<SessionHistoryWorkerResult>;
+  readPreview: (
+    input: Omit<SessionPreviewWorkerInput, "kind" | "database">,
+  ) => Promise<SessionPreviewWorkerResult["items"]>;
   readEntryPresence: (scope: SessionRowPresenceWorkerInput["scope"]) => Promise<boolean>;
   readIdentityEvidence: (
     input: Omit<SessionIdentityEvidenceWorkerInput, "kind" | "database">,
@@ -166,6 +171,7 @@ function retainSessionHistoryWorkerDatabase(options: OpenClawAgentDatabaseOption
     const runRequest = async <TResult>(
       prepare: () =>
         | Omit<SessionTranscriptHistoryWorkerInput, "database">
+        | Omit<SessionPreviewWorkerInput, "database">
         | Omit<SessionRowPresenceWorkerInput, "database">
         | Omit<SessionMembersWorkerInput, "database">
         | Omit<SessionEntryListWorkerInput, "database">
@@ -175,6 +181,7 @@ function retainSessionHistoryWorkerDatabase(options: OpenClawAgentDatabaseOption
       receive: (
         value:
           | SessionHistoryWorkerResult
+          | SessionPreviewWorkerResult
           | boolean
           | SessionMember[]
           | SessionEntryListWorkerResult
@@ -200,6 +207,7 @@ function retainSessionHistoryWorkerDatabase(options: OpenClawAgentDatabaseOption
         const value = receive(
           unwrapSessionTranscriptWorkerReply<
             | "history-page"
+            | "session-preview"
             | "session-row-presence"
             | "session-members"
             | "session-entry-list"
@@ -233,6 +241,7 @@ function retainSessionHistoryWorkerDatabase(options: OpenClawAgentDatabaseOption
           if (
             typeof value === "boolean" ||
             Array.isArray(value) ||
+            value.kind === "session-preview" ||
             value.kind === "session-entry-list" ||
             value.kind === "session-target-inventory" ||
             value.kind === "session-target-registry-required" ||
@@ -243,6 +252,23 @@ function retainSessionHistoryWorkerDatabase(options: OpenClawAgentDatabaseOption
           }
           return value;
         }),
+      readPreview: async (input) =>
+        await runRequest(
+          () => ({ kind: "session-preview", ...input }),
+          JSON.stringify(input).length * 2,
+          (value) => {
+            if (
+              typeof value === "boolean" ||
+              Array.isArray(value) ||
+              value.kind !== "session-preview"
+            ) {
+              throw new Error(
+                "Session history worker returned another result instead of a preview",
+              );
+            }
+            return value.items;
+          },
+        ),
       readUsageCache: async (input) =>
         await runRequest(
           () => ({ kind: "usage-cache", ...input }),

@@ -20,6 +20,7 @@ import type {
   SessionTargetInventoryWorkerInput,
   SessionIdentityEvidenceWorkerInput,
   SessionMembersWorkerInput,
+  SessionPreviewWorkerInput,
   SessionModelContextWorkerInput,
   SessionRowPresenceWorkerInput,
   SessionTranscriptHistoryWorkerInput,
@@ -92,6 +93,7 @@ serveWorkerTasks(
       | SessionTargetInventoryWorkerInput
       | SessionIdentityEvidenceWorkerInput
       | SessionTranscriptHistoryWorkerInput
+      | SessionPreviewWorkerInput
       | SessionRowPresenceWorkerInput
       | SessionMembersWorkerInput
       | SessionUsageCacheWorkerInput
@@ -219,6 +221,23 @@ serveWorkerTasks(
       return await runWithSessionTranscriptReadFence(
         request.admission,
         async (): Promise<SessionTranscriptWorkerReply<keyof SessionTranscriptWorkerValues>> => {
+          if (request.kind === "session-preview") {
+            const { readSessionPreviewItemsFromTranscript } =
+              await import("../../gateway/session-transcript-preview.js");
+            return {
+              ok: true,
+              ...(await withHistoryDatabase(request.database, () => ({
+                kind: "session-preview" as const,
+                items: readSessionPreviewItemsFromTranscript(
+                  request.scope,
+                  request.maxItems,
+                  request.maxChars,
+                  "display",
+                  { readOnly: true },
+                ),
+              }))),
+            };
+          }
           if (request.kind === "model-context") {
             const { readSessionTranscriptModelContext } =
               await import("./session-accessor.sqlite-model-context.js");
