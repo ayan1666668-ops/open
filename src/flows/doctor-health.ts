@@ -17,10 +17,8 @@ import {
   type DoctorConfigCapture,
   type UpdatePostInstallDoctorResult,
 } from "../infra/update-doctor-result.js";
-import {
-  createUpdateFailureFact,
-  normalizeUpdateFailureFacts,
-} from "../infra/update-failure-facts.js";
+import { formatUpdateFailureFact } from "../infra/update-failure-facts-format.js";
+import { createUpdateFailureFact } from "../infra/update-failure-facts.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import type { RuntimeEnv } from "../runtime.js";
 import { createLazyRuntimeModule } from "../shared/lazy-runtime.js";
@@ -89,6 +87,7 @@ async function runDoctorHealthFlowWithResult(
     ReturnType<typeof import("../commands/doctor-maintenance.js").beginDoctorMaintenance>
   >;
   let exitCode: number | undefined;
+  let healthContext: DoctorHealthFlowContext | undefined;
   let doctorResult: UpdatePostInstallDoctorResult = { status: "error" };
   try {
     const { beginDoctorMaintenance } = await import("../commands/doctor-maintenance.js");
@@ -198,9 +197,15 @@ async function runDoctorHealthFlowWithResult(
         stateDirExistedAtStart,
         gatewayMaintenanceActive: maintenance !== undefined,
         agentDatabaseRefusals,
+        preparedAgentCount: Math.max(
+          admissionSchemas.agentDatabaseMigrationDiscovery?.configuredAgentDatabaseTargets.length ??
+            0,
+          admissionSchemas.agentDatabaseMigrationDiscovery?.registeredAgentDatabases.length ?? 0,
+        ),
         runWithPluginMetadataSnapshot: configResult.runWithPluginMetadataSnapshot,
         invalidatePluginMetadataSnapshot: configResult.invalidatePluginMetadataSnapshot,
       };
+      healthContext = ctx;
       const { runDoctorHealthContributions } = await import("./doctor-health-contributions.js");
       await runDoctorHealthContributions(ctx);
       if (ctx.configWriteRefusal) {
@@ -275,7 +280,6 @@ async function runDoctorHealthFlowWithResult(
           : [],
       ),
       ...(ctx.postInstallDoctorResult?.warnings ?? []),
-      ...(ctx.updateWarnings ?? []),
     ]);
     doctorResult = {
       ...(ctx.postInstallDoctorResult ?? { status: "ok" }),
@@ -288,6 +292,14 @@ async function runDoctorHealthFlowWithResult(
   } catch (error) {
     const { DoctorStateMigrationRefusalError } =
       await import("../infra/state-migrations.messages.js");
+    const refusalWarnings =
+      error instanceof DoctorStateMigrationRefusalError
+        ? error.failureFacts.map(formatUpdateFailureFact)
+        : [];
+    if (healthContext && refusalWarnings.length > 0) {
+      const { recordDoctorHealthWarnings } = await import("./doctor-health-contribution.js");
+      recordDoctorHealthWarnings(healthContext, [], refusalWarnings, { prepend: true });
+    }
     if (error instanceof DoctorStateMigrationRefusalError) {
       const { recordUpdateDoctorRefusal, resolveUpdateDoctorGitRecovery } =
         await import("../commands/doctor-update-refusal.js");
@@ -299,30 +311,17 @@ async function runDoctorHealthFlowWithResult(
     }
     doctorResult = {
       status: "error",
+      ...(!healthContext && refusalWarnings.length > 0 ? { warnings: refusalWarnings } : {}),
       failureFacts:
-        error instanceof UpdateDoctorError
+        error instanceof UpdateDoctorError || error instanceof DoctorStateMigrationRefusalError
           ? error.failureFacts
-          : error instanceof DoctorStateMigrationRefusalError
-            ? normalizeUpdateFailureFacts(
-                error.stepReceipts.flatMap((receipt) =>
-                  receipt.outcome === "refused" && receipt.refusal
-                    ? [
-                        {
-                          check: receipt.id,
-                          code: receipt.refusal.code,
-                          message: receipt.refusal.message,
-                        },
-                      ]
-                    : [],
-                ),
-              )
-            : [
-                createUpdateFailureFact({
-                  check: "doctor",
-                  code: "doctor-failed",
-                  message: error instanceof Error ? error.message : String(error),
-                }),
-              ],
+          : [
+              createUpdateFailureFact({
+                check: "doctor",
+                code: "doctor-failed",
+                message: error instanceof Error ? error.message : String(error),
+              }),
+            ],
     };
     if (maintenance) {
       if (!(error instanceof DoctorStateMigrationRefusalError)) {
@@ -340,10 +339,19 @@ async function runDoctorHealthFlowWithResult(
         for (const change of updateResult.capture.configChanges) {
           createSubsystemLogger("update").warn(formatUpdateDoctorConfigChange(change));
         }
+        const contributionWarnings = healthContext?.updateWarnings ?? [];
+        const deferredCount = healthContext?.updateBudget?.deferred.size ?? 0;
+        // Contributions put deferrals first; retain migration advisories before other diagnostics.
+        const warnings = normalizeUpdatePostInstallDoctorWarnings([
+          ...contributionWarnings.slice(0, deferredCount),
+          ...(doctorResult.warnings ?? []),
+          ...contributionWarnings.slice(deferredCount),
+        ]);
         await writeUpdatePostInstallDoctorResult({
           resultPath: updateResult.resultPath,
           result: {
             ...doctorResult,
+            ...(warnings.length ? { warnings } : {}),
             ...(updateResult.capture.configChanges.length
               ? { configChanges: updateResult.capture.configChanges }
               : {}),

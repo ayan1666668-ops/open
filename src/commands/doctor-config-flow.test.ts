@@ -12,6 +12,7 @@ import type { PluginCapabilityConsentHandler } from "../plugins/capability-conse
 import { buildPluginCapabilityConsentReview } from "../plugins/capability-summary.js";
 import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.js";
 import { closeOpenClawStateDatabaseForTest } from "../state/openclaw-state-db.js";
+import { warmDoctorConfigFlow } from "./doctor-config-flow-warmup.test-support.js";
 import { loadAndMaybeMigrateDoctorConfig } from "./doctor-config-flow.js";
 import {
   getDoctorConfigInputForTest,
@@ -748,10 +749,6 @@ vi.mock("./doctor/shared/missing-configured-plugin-install.js", () => ({
   })),
 }));
 
-vi.mock("./doctor/shared/active-tool-schema-warnings.js", () => ({
-  collectActiveToolSchemaProjectionWarnings: vi.fn(async () => []),
-}));
-
 vi.mock("./doctor/shared/stale-oauth-profile-shadows.js", () => ({
   repairStaleOAuthProfileShadows: vi.fn(async () => ({
     changes: [],
@@ -1466,33 +1463,7 @@ type RepairedDiscordPolicy = {
 };
 
 describe("doctor config flow", () => {
-  beforeAll(async () => {
-    await Promise.all([
-      import("../config/plugin-auto-enable.js"),
-      import("./doctor/repair-sequencing.js"),
-      import("./doctor/shared/channel-doctor.js"),
-      import("./doctor/shared/legacy-config-issues.js"),
-      import("./doctor/shared/plugin-tool-allowlist-warnings.js"),
-      import("./doctor/shared/preview-warnings.js"),
-      import("./doctor/shared/hooks-token-reuse-repair.js"),
-    ]);
-    await collectDoctorWarnings({
-      channels: {
-        slack: {
-          dangerouslyAllowNameMatching: true,
-          accounts: { work: { allowFrom: ["alice"] } },
-        },
-      },
-    });
-    await collectDoctorWarnings({
-      channels: {
-        googlechat: {
-          groupPolicy: "allowlist",
-          accounts: { work: { groupPolicy: "allowlist" } },
-        },
-      },
-    });
-  });
+  beforeAll(() => warmDoctorConfigFlow(collectDoctorWarnings));
 
   beforeEach(() => {
     terminalNoteMock.mockClear();
@@ -1511,6 +1482,17 @@ describe("doctor config flow", () => {
     collectImplicitFallbackClobberWarningsMock.mockReturnValue([]);
     noteImplicitFallbackClobberWarningsMock.mockClear();
     runDoctorConfigPreflightOptionsMock.mockClear();
+  });
+
+  it("explains GitHub preview recovery without expanding the plugin allowlist", async () => {
+    const config = { plugins: { allow: ["telegram"] } };
+    const warnings = await collectDoctorWarnings(config);
+    expect(warnings).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('append "github" to the existing allowlist'),
+      ]),
+    );
+    expect(config.plugins.allow).toEqual(["telegram"]);
   });
 
   it("preserves invalid config for doctor repairs", async () => {
@@ -2041,11 +2023,6 @@ describe("doctor config flow", () => {
     );
     expect(result.runWithPluginMetadataSnapshot).toEqual(expect.any(Function));
     expect(result.invalidatePluginMetadataSnapshot).toEqual(expect.any(Function));
-    expect(collectDoctorPreviewNotesParamsMock).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        runWithPluginMetadataSnapshot: result.runWithPluginMetadataSnapshot,
-      }),
-    );
   });
 
   it("exposes cleanup-refreshed plugin metadata to later Doctor scopes", async () => {
