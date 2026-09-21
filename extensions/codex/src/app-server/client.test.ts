@@ -705,7 +705,7 @@ describe("CodexAppServerClient", () => {
     expect(harness.writes).toHaveLength(0);
   });
 
-  it("resolves transport-exit waits when exit races the initial state check", async () => {
+  it("resolves a pending transport-exit wait when the child exits", async () => {
     const harness = createClientHarness();
     clients.push(harness.client);
 

@@ -1,13 +1,12 @@
-import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
   consumeCodexAppServerLiveThread,
   retainCodexAppServerLiveThread,
 } from "./client-runtime.js";
 import { CodexAppServerClient } from "./client.js";
+import { threadStartResult } from "./codex-app-server.test-fixtures.js";
 import { maybeCompactCodexAppServerSession } from "./compact.js";
 import { resolveCodexAppServerRuntimeOptions } from "./config.js";
 import {
@@ -23,40 +22,66 @@ import {
   retireSharedCodexAppServerClientIfCurrent,
   resetSharedCodexAppServerClientForTests,
 } from "./shared-client.js";
-import { createClientHarness } from "./test-support.js";
+import { createClientHarness, useAutoCleanupTempDirTracker } from "./test-support.js";
 import { withCodexAppServerThreadMutation } from "./thread-ownership.js";
 import { CODEX_APP_SERVER_VERSION } from "./version.js";
 
-let directory: string | undefined;
+const tempDirs = useAutoCleanupTempDirTracker(afterEach);
+let directory: string;
+let agentDir: string;
+let sessionFile: string;
+const pluginConfig = {
+  appServer: { command: process.execPath, args: ["app-server"], homeScope: "user" },
+};
+let runtime: ReturnType<typeof resolveCodexAppServerRuntimeOptions>;
 const transports: ReturnType<typeof createClientHarness>[] = [];
+
+beforeEach(() => {
+  directory = tempDirs.make("codex-compact-owner-");
+  agentDir = path.join(directory, "agent");
+  sessionFile = path.join(directory, "session.jsonl");
+  runtime = resolveCodexAppServerRuntimeOptions({
+    pluginConfig,
+    codexConfigToml: null,
+    requirementsToml: null,
+  });
+});
 
 afterEach(async () => {
   resetSharedCodexAppServerClientForTests();
   await Promise.all(transports.splice(0).map(({ client }) => client.closeAndWait()));
   resetCodexTestBindingStore();
   vi.restoreAllMocks();
-  if (directory) {
-    await fs.rm(directory, { recursive: true, force: true });
-    directory = undefined;
-  }
 });
+
+function sendCompactionCompleted(
+  send: (message: unknown) => void,
+  threadId: string,
+  turnId: string,
+) {
+  const turn = { id: turnId, threadId, status: "completed" };
+  send({
+    method: "turn/started",
+    params: { threadId, turn: { ...turn, status: "inProgress" } },
+  });
+  for (const method of ["item/started", "item/completed"]) {
+    send({
+      method,
+      params: {
+        threadId,
+        turnId,
+        item: { id: "compacted", type: "contextCompaction" },
+      },
+    });
+  }
+  send({ method: "turn/completed", params: { threadId, turn } });
+}
 
 it.each(["warm", "closed", "detached", "unconfirmed-close"])(
   "supports repeated compaction and the next turn (owner %s)",
   async (ownerState) => {
     const ownerClosed = ownerState === "closed" || ownerState === "unconfirmed-close";
-    directory = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "codex-compact-owner-")));
-    const agentDir = path.join(directory, "agent");
-    const sessionFile = path.join(directory, "session.jsonl");
     const sessionKey = "agent:main:compact-owner";
-    const pluginConfig = {
-      appServer: { command: process.execPath, args: ["app-server"], homeScope: "user" },
-    };
-    const runtime = resolveCodexAppServerRuntimeOptions({
-      pluginConfig,
-      codexConfigToml: null,
-      requirementsToml: null,
-    });
     const owners = new Map<string, number>();
     const operations: { client: number; method: string; threadId?: string }[] = [];
     vi.spyOn(CodexAppServerClient, "start").mockImplementation(async () => {
@@ -97,29 +122,7 @@ it.each(["warm", "closed", "detached", "unconfirmed-close"])(
             owners.set(threadId, index);
             send({
               id: request.id,
-              result: {
-                thread: {
-                  id: threadId,
-                  turns: [],
-                  cwd: directory,
-                  sessionId: "session-1",
-                  cliVersion: CODEX_APP_SERVER_VERSION,
-                  createdAt: 1,
-                  updatedAt: 1,
-                  ephemeral: false,
-                  modelProvider: "openai",
-                  preview: "",
-                  projectId: null,
-                  source: "unknown",
-                  status: { type: "idle" },
-                },
-                model: "gpt-5.6-luna",
-                modelProvider: "openai",
-                cwd: directory,
-                approvalPolicy: "never",
-                approvalsReviewer: "user",
-                sandbox: { type: "dangerFullAccess" },
-              },
+              result: threadStartResult(threadId, directory),
             });
             return;
           }
@@ -130,28 +133,10 @@ it.each(["warm", "closed", "detached", "unconfirmed-close"])(
           ) {
             const turn = { id: "finished-turn", threadId, status: "completed" };
             if (request.method === "thread/compact/start") {
-              send({
-                method: "turn/started",
-                params: { threadId, turn: { ...turn, status: "inProgress" } },
-              });
-              send({
-                method: "item/started",
-                params: {
-                  threadId,
-                  turnId: turn.id,
-                  item: { id: "compacted", type: "contextCompaction" },
-                },
-              });
-              send({
-                method: "item/completed",
-                params: {
-                  threadId,
-                  turnId: turn.id,
-                  item: { id: "compacted", type: "contextCompaction" },
-                },
-              });
+              sendCompactionCompleted(send, threadId, turn.id);
+            } else {
+              send({ method: "turn/completed", params: { threadId, turn } });
             }
-            send({ method: "turn/completed", params: { threadId, turn } });
             send({ id: request.id, result: request.method === "turn/start" ? { turn } : {} });
             return;
           }
@@ -284,18 +269,7 @@ it.each(["warm", "closed", "detached", "unconfirmed-close"])(
 it.each(["success", "failure"])(
   "keeps a successor fenced until final detached-owner exit after compaction %s",
   async (outcome) => {
-    directory = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "codex-compact-exit-")));
-    const agentDir = path.join(directory, "agent");
-    const sessionFile = path.join(directory, "session.jsonl");
     const sessionKey = "agent:main:compact-final-owner";
-    const pluginConfig = {
-      appServer: { command: process.execPath, args: ["app-server"], homeScope: "user" },
-    };
-    const runtime = resolveCodexAppServerRuntimeOptions({
-      pluginConfig,
-      codexConfigToml: null,
-      requirementsToml: null,
-    });
     const compactStarted = createDeferred<{
       id: number;
       send: (message: unknown) => void;
@@ -320,32 +294,9 @@ it.each(["success", "failure"])(
             return;
           }
           if (request.method === "thread/resume") {
-            send({
-              id: request.id,
-              result: {
-                thread: {
-                  id: request.params?.threadId,
-                  turns: [],
-                  cwd: directory,
-                  sessionId: "session-final-owner",
-                  cliVersion: CODEX_APP_SERVER_VERSION,
-                  createdAt: 1,
-                  updatedAt: 1,
-                  ephemeral: false,
-                  modelProvider: "openai",
-                  preview: "",
-                  projectId: null,
-                  source: "unknown",
-                  status: { type: "idle" },
-                },
-                model: "gpt-5.6-luna",
-                modelProvider: "openai",
-                cwd: directory,
-                approvalPolicy: "never",
-                approvalsReviewer: "user",
-                sandbox: { type: "dangerFullAccess" },
-              },
-            });
+            const result = threadStartResult(request.params?.threadId, directory);
+            result.thread.sessionId = "session-final-owner";
+            send({ id: request.id, result });
             return;
           }
           if (request.method === "thread/compact/start") {
@@ -397,32 +348,7 @@ it.each(["success", "failure"])(
     const pendingCompact = await compactStarted.promise;
     releaseRetirementLease?.();
     if (outcome === "success") {
-      const turn = {
-        id: "compaction-turn",
-        threadId: "final-owner-thread",
-        status: "completed",
-      };
-      pendingCompact.send({
-        method: "turn/started",
-        params: { threadId: "final-owner-thread", turn: { ...turn, status: "inProgress" } },
-      });
-      pendingCompact.send({
-        method: "item/started",
-        params: {
-          threadId: "final-owner-thread",
-          turnId: turn.id,
-          item: { id: "compacted", type: "contextCompaction" },
-        },
-      });
-      pendingCompact.send({
-        method: "item/completed",
-        params: {
-          threadId: "final-owner-thread",
-          turnId: turn.id,
-          item: { id: "compacted", type: "contextCompaction" },
-        },
-      });
-      pendingCompact.send({ method: "turn/completed", params: { threadId: turn.threadId, turn } });
+      sendCompactionCompleted(pendingCompact.send, "final-owner-thread", "compaction-turn");
       pendingCompact.send({ id: pendingCompact.id, result: {} });
     } else {
       pendingCompact.send({
