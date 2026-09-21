@@ -192,7 +192,13 @@ export function createCollectorLaunchCallbacks(params: {
       sessionCleanup.status === "fulfilled" &&
       sessionCleanup.value.attachmentsRemoved &&
       sessionCleanup.value.sessionDeleted;
-    if (cleanupComplete && canCleanupCreatedSession?.() !== false) {
+    // Ronan's ruling: `cleanupComplete` is a FACT about a finished exact-session
+    // operation -- it already requires attachmentsRemoved AND sessionDeleted, and that
+    // delete could only have happened through the identity-fenced frozen owner.
+    // Re-checking live currentness here was a TOCTOU trap: authority expiring after an
+    // authorized delete left collectorLaunchCleanupPending true forever even though the
+    // session was gone. The pre-delete gate keeps successor protection.
+    if (cleanupComplete) {
       emitSessionLifecycleEvent({
         sessionKey: childSessionKey,
         reason: "delete",
