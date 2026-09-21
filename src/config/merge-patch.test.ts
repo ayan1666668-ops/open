@@ -299,6 +299,7 @@ describe("stack-safe deep merge-patch", () => {
     const added = patch.added as Record<string, unknown>;
     expect(Object.hasOwn(added, "__proto__")).toBe(true);
     expect(Object.getPrototypeOf(added)).toBe(Object.prototype);
+    // oxlint-disable-next-line unicorn/prefer-structured-clone -- The round-trip mints an own `__proto__` key on both sides; structuredClone cannot express that shape.
     expect(JSON.parse(JSON.stringify(added))).toEqual(
       JSON.parse('{"__proto__":{"flag":true},"kept":1}'),
     );

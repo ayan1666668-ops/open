@@ -36,6 +36,7 @@ describe("projectRuntimeChangesOntoSource", () => {
     const model = result.model as Record<string, unknown>;
     expect(Object.hasOwn(model, "__proto__")).toBe(true);
     expect(Object.getPrototypeOf(model)).toBe(Object.prototype);
+    // oxlint-disable-next-line unicorn/prefer-structured-clone -- The round-trip mints an own `__proto__` key on both sides; structuredClone cannot express that shape.
     expect(JSON.parse(JSON.stringify(model))).toEqual(
       JSON.parse('{"__proto__":{"flag":true},"name":"gpt"}'),
     );
