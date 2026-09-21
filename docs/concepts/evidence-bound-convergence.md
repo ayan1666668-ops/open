@@ -78,3 +78,7 @@ Deferred:
 - trusted verifier-independence attestations
 - effect requests and effect authorization
 - persistent provenance beyond existing OpenClaw owners
+
+## Related
+
+- [Liquid Software Factory PR stack](/concepts/liquid-software-factory-stack) for the four-layer review topology.
