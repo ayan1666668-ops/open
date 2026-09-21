@@ -108,7 +108,11 @@ describe("resolveChatArtifactDownload", () => {
   ])("uses raw HTTP bytes only for $page with $gateway", async ({ page, gateway, http }) => {
     vi.stubGlobal("location", new URL(page));
     const blob = new Blob(["png"], { type: "image/png" });
-    const fetchMock = vi.fn(async () => ({ ok: true, blob: async () => blob }));
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      headers: new Headers({ "Content-Disposition": ' AtTaChMeNt ; filename="image.png" ' }),
+      blob: async () => blob,
+    }));
     vi.stubGlobal("fetch", fetchMock);
     const request = vi.fn().mockResolvedValue(http ? { artifact, url: ticket } : inline);
     const result = await resolveChatArtifactDownload(
@@ -153,7 +157,8 @@ describe("resolveChatArtifactDownload", () => {
           }
           return {
             ok: failure !== "missing route",
-            status: 404,
+            status: failure === "missing route" ? 404 : 200,
+            headers: new Headers(),
             blob: async () => new Blob(["UI"], { type: "text/html" }),
           };
         }),
@@ -184,6 +189,7 @@ describe("resolveChatArtifactDownload", () => {
       "fetch",
       vi.fn(async () => ({
         ok: true,
+        headers: new Headers({ "Content-Disposition": 'attachment; filename="artifact"' }),
         blob: async () => new Blob(["untrusted"], { type: mimeType }),
       })),
     );

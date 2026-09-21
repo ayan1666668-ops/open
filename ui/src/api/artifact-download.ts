@@ -86,6 +86,12 @@ export async function downloadArtifact(
     if (!response.ok) {
       throw new Error(`Artifact download failed (${response.status})`);
     }
+    if (
+      response.headers.get("content-disposition")?.split(";", 1)[0]?.trim().toLowerCase() !==
+      "attachment"
+    ) {
+      throw new Error("Artifact download returned an unexpected content disposition");
+    }
     const blob = await response.blob();
     if (
       blob.type.split(";", 1)[0]?.trim().toLowerCase() !== (mimeType || "application/octet-stream")

@@ -30,18 +30,21 @@ describe("session workspace artifacts", () => {
   }) {
     const handleOpenSidebar = createSidebarContentRecorder();
     const url = "/api/artifacts/download/connection/ticket";
-    const request = vi.fn().mockResolvedValue({
+    const request = vi.fn(async (_method: string, query: { transport?: string }) => ({
       artifact: {
         id: "artifact-1",
         mimeType: params.mimeType,
         title: params.title ?? "Unicode artifact",
       },
-      ...(params.http ? { url } : { data: params.data, encoding: "base64" }),
-    });
+      ...(params.http && query.transport === "http"
+        ? { url }
+        : { data: params.data, encoding: "base64" }),
+    }));
     const fetchMock = vi.fn(async () => {
       const bytes = Uint8Array.from(atob(params.data), (char) => char.charCodeAt(0));
       return {
         ok: true,
+        headers: new Headers({ "Content-Disposition": 'attachment; filename="artifact"' }),
         blob: async () =>
           params.mimeType.startsWith("image/")
             ? new Blob([bytes], { type: params.mimeType })
@@ -162,7 +165,11 @@ describe("session workspace artifacts", () => {
         if (httpFails) {
           throw new TypeError("HTTP media is unreachable");
         }
-        return { ok: true, blob: async () => blob };
+        return {
+          ok: true,
+          headers: new Headers({ "Content-Disposition": 'attachment; filename="archive.zip"' }),
+          blob: async () => blob,
+        };
       });
       vi.useFakeTimers();
       vi.setSystemTime(Date.now() + 360_000);
@@ -207,7 +214,11 @@ describe("session workspace artifacts", () => {
     "does not save a binary download after %s",
     async (retirement) => {
       const fixture = await createBinaryArtifactPanel();
-      const transfer = createDeferred<{ ok: boolean; blob: () => Promise<Blob> }>();
+      const transfer = createDeferred<{
+        ok: boolean;
+        headers: Headers;
+        blob: () => Promise<Blob>;
+      }>();
       const started = createDeferred();
       fixture.fetchMock.mockImplementation(() => {
         started.resolve();
@@ -229,6 +240,7 @@ describe("session workspace artifacts", () => {
       }
       transfer.resolve({
         ok: true,
+        headers: new Headers({ "Content-Disposition": 'attachment; filename="archive.zip"' }),
         blob: async () => new Blob(["old"], { type: "application/zip" }),
       });
       await read.mock.results[0]?.value;
@@ -406,6 +418,49 @@ describe("session workspace artifacts", () => {
           signal: expect.any(AbortSignal),
         });
       }
+    },
+  );
+
+  it.each([undefined, 'inline; filename="index.html"'])(
+    "reauthorizes HTML artifact bytes when the proxy returns application HTML with disposition %s",
+    async (disposition) => {
+      const source = "<h1>Actual artifact</h1>";
+      const { state, request, fetchMock, url } = createArtifactHost({
+        data: btoa(source),
+        mimeType: "text/html",
+        title: "report.html",
+        http: true,
+      });
+      fetchMock.mockResolvedValueOnce(
+        new Response("<html><body>Control UI application</body></html>", {
+          headers: {
+            "Content-Type": "text/html",
+            ...(disposition ? { "Content-Disposition": disposition } : {}),
+          },
+        }),
+      );
+
+      createSessionWorkspaceProps(state).onOpenArtifact("artifact-1");
+
+      expect(await loadedSidebarContent(state)).toMatchObject({
+        kind: "markdown",
+        rawText: source,
+      });
+      expect(fetchMock).toHaveBeenCalledExactlyOnceWith(url, {
+        credentials: "same-origin",
+        redirect: "error",
+        signal: expect.any(AbortSignal),
+      });
+      expect(request.mock.contexts).toEqual([state.client, state.client]);
+      expect(request.mock.calls.map(([, query]) => query)).toEqual([
+        {
+          sessionKey: state.sessionKey,
+          agentId: "main",
+          artifactId: "artifact-1",
+          transport: "http",
+        },
+        { sessionKey: state.sessionKey, agentId: "main", artifactId: "artifact-1" },
+      ]);
     },
   );
 
