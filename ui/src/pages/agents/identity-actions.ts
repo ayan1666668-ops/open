@@ -39,15 +39,19 @@ export function setIdentityDraftField(
 
 export function selectIdentityAvatar(host: AgentIdentityEditorHost, file: File) {
   const epoch = advanceAvatarSelectionEpoch(host);
-  void fileToAvatarDataUrl(file).then((dataUrl) => {
+  void fileToAvatarDataUrl(file).then((result) => {
     if (avatarSelectionEpochs.get(host) !== epoch) {
       return;
     }
-    if (dataUrl) {
-      host.identityDraft = { ...host.identityDraft, avatar: dataUrl };
+    if (result.ok) {
+      host.identityDraft = { ...host.identityDraft, avatar: result.dataUrl };
       host.identityError = null;
     } else {
-      host.identityError = t("agents.identity.imageUnusable");
+      host.identityError = t(
+        result.reason === "too-detailed"
+          ? "agents.identity.imageTooDetailed"
+          : "agents.identity.imageUnusable",
+      );
     }
   });
 }
