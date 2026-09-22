@@ -70,9 +70,7 @@ function readRequirements(value: unknown): DynamicsSpawnRequirements {
   }
   const raw = readRecord(value, "dynamics.requirements");
   if (
-    Object.keys(raw).some(
-      (key) => !["sandbox", "candidateDigest", "artifactRefs"].includes(key),
-    )
+    Object.keys(raw).some((key) => !["sandbox", "candidateDigest", "artifactRefs"].includes(key))
   ) {
     throw new Error("unsupported dynamics requirement");
   }
@@ -151,10 +149,7 @@ export function prepareDynamicsSpawn(params: {
   if (
     Object.keys(options).some(
       (key) =>
-        key !== "boundary" &&
-        key !== "requirements" &&
-        key !== "handoff" &&
-        key !== "candidate",
+        key !== "boundary" && key !== "requirements" && key !== "handoff" && key !== "candidate",
     )
   ) {
     throw new Error("dynamics accepts only boundary, requirements, handoff, and candidate");

@@ -10,19 +10,19 @@ import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { resetGatewayWorkAdmission } from "../process/gateway-work-admission.js";
 import { captureEnv, setTestEnvValue } from "../test-utils/env.js";
 import { cleanupSessionStateForTest } from "../test-utils/session-state-cleanup.js";
-import { applyCodeModeCatalog } from "./code-mode.js";
 import { codeModeSwarmHandlers } from "./code-mode-swarm.runtime.js";
-import { createToolSearchCatalogRef } from "./tool-search-catalog.js";
-import type { ToolSearchRuntime } from "./tool-search-runtime.js";
-import type { ToolSearchToolContext } from "./tool-search-types.js";
+import { applyCodeModeCatalog } from "./code-mode.js";
 import {
   resetSubagentRegistryForTests,
   testing as subagentRegistryTesting,
 } from "./subagents/registry/subagent-registry.test-helpers.js";
-import { prepareDynamicsSpawn } from "./subagents/swarm/dynamics/dynamics-spawn.js";
-import { testing as swarmSchedulerTesting } from "./subagents/swarm/swarm-scheduler.test-support.js";
 import { spawnSubagentDirect } from "./subagents/spawn/subagent-spawn.js";
 import { testing as subagentSpawnTesting } from "./subagents/spawn/subagent-spawn.test-support.js";
+import { prepareDynamicsSpawn } from "./subagents/swarm/dynamics/dynamics-spawn.js";
+import { testing as swarmSchedulerTesting } from "./subagents/swarm/swarm-scheduler.test-support.js";
+import { createToolSearchCatalogRef } from "./tool-search-catalog.js";
+import type { ToolSearchRuntime } from "./tool-search-runtime.js";
+import type { ToolSearchToolContext } from "./tool-search-types.js";
 import { createSessionsSpawnTool } from "./tools/sessions-spawn-tool.js";
 
 const envSnapshot = captureEnv(["OPENCLAW_CONFIG_PATH", "OPENCLAW_STATE_DIR"]);
@@ -138,95 +138,92 @@ describe("Code Mode dynamics native replay", () => {
     }
   });
 
-  it(
-    "replays the exact candidate without redispatch and rejects changed governing identity",
-    async () => {
-      const config = await writeConfig();
-      const requests: Array<{ method: string; params: Record<string, unknown> }> = [];
-      const dispatchGatewayMethodInProcess: DispatchGatewayMethodInProcess = async <T>(
-        method: string,
-        params: Record<string, unknown>,
-      ) => {
-        requests.push({ method, params });
-        // SAFETY: this fixture supplies the accepted Gateway response shape for the generic T.
-        return { runId: "native-replay-run", status: "accepted" } as T;
-      };
-      subagentSpawnTesting.setDepsForTest({
-        hasInProcessGatewayContext: () => true,
-        dispatchGatewayMethodInProcess,
-      });
+  it("replays the exact candidate without redispatch and rejects changed governing identity", async () => {
+    const config = await writeConfig();
+    const requests: Array<{ method: string; params: Record<string, unknown> }> = [];
+    const dispatchGatewayMethodInProcess: DispatchGatewayMethodInProcess = async <T>(
+      method: string,
+      params: Record<string, unknown>,
+    ) => {
+      requests.push({ method, params });
+      // SAFETY: this fixture supplies the accepted Gateway response shape for the generic T.
+      return { runId: "native-replay-run", status: "accepted" } as T;
+    };
+    subagentSpawnTesting.setDepsForTest({
+      hasInProcessGatewayContext: () => true,
+      dispatchGatewayMethodInProcess,
+    });
 
-      const originalDynamics = dynamics();
-      const input = preparedInput(originalDynamics);
-      const seeded = await spawnSubagentDirect(
-        {
-          ...input,
-          swarmLaunchReplayKey: replayKey,
-          swarmLaunchRequestFingerprint: fingerprint(input),
-        },
-        {
-          agentSessionKey: sessionKey,
-          requesterRunId: parentRunId,
-        },
-      );
-      expect(seeded).toMatchObject({ status: "accepted" });
-      expect(requests).toHaveLength(1);
-      expect(requests[0]?.params.message).toEqual(
-        expect.stringContaining('"policyDigest":"sha256:policy-a"'),
-      );
-
-      const catalogRef = createToolSearchCatalogRef();
-      const spawnTool = createSessionsSpawnTool({
-        config,
+    const originalDynamics = dynamics();
+    const input = preparedInput(originalDynamics);
+    const seeded = await spawnSubagentDirect(
+      {
+        ...input,
+        swarmLaunchReplayKey: replayKey,
+        swarmLaunchRequestFingerprint: fingerprint(input),
+      },
+      {
         agentSessionKey: sessionKey,
         requesterRunId: parentRunId,
-      });
-      const ctx: ToolSearchToolContext = {
-        config,
-        runtimeConfig: config,
-        sessionKey,
-        sessionId: "session-parent",
-        runId: parentRunId,
-        catalogRef,
-      };
-      applyCodeModeCatalog({ ...ctx, tools: [spawnTool] });
+      },
+    );
+    expect(seeded).toMatchObject({ status: "accepted" });
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.params.message).toEqual(
+      expect.stringContaining('"policyDigest":"sha256:policy-a"'),
+    );
 
-      const callExactId = vi.fn(async () => {
-        throw new Error("exact replay must not redispatch sessions_spawn");
-      });
-      const runtime: Pick<ToolSearchRuntime, "callExactId"> = { callExactId };
-      const request = {
-        id: requestId,
-        method: "agentSpawn" as const,
-        args: [task, { dynamics: originalDynamics }],
-      };
+    const catalogRef = createToolSearchCatalogRef();
+    const spawnTool = createSessionsSpawnTool({
+      config,
+      agentSessionKey: sessionKey,
+      requesterRunId: parentRunId,
+    });
+    const ctx: ToolSearchToolContext = {
+      config,
+      runtimeConfig: config,
+      sessionKey,
+      sessionId: "session-parent",
+      runId: parentRunId,
+      catalogRef,
+    };
+    applyCodeModeCatalog({ ...ctx, tools: [spawnTool] });
 
-      await expect(
-        codeModeSwarmHandlers.agentSpawn({
-          runtime,
-          parentToolCallId: "parent-call",
-          request,
-          codeModeRunId,
-          ctx,
-        }),
-      ).resolves.toMatchObject({ status: "accepted", runId: seeded.runId });
-      expect(callExactId).not.toHaveBeenCalled();
-      expect(requests).toHaveLength(1);
+    const callExactId = vi.fn(async () => {
+      throw new Error("exact replay must not redispatch sessions_spawn");
+    });
+    const runtime: Pick<ToolSearchRuntime, "callExactId"> = { callExactId };
+    const request = {
+      id: requestId,
+      method: "agentSpawn" as const,
+      args: [task, { dynamics: originalDynamics }],
+    };
 
-      await expect(
-        codeModeSwarmHandlers.agentSpawn({
-          runtime,
-          parentToolCallId: "parent-call",
-          request: {
-            ...request,
-            args: [task, { dynamics: dynamics("sha256:policy-b") }],
-          },
-          codeModeRunId,
-          ctx,
-        }),
-      ).rejects.toThrow("replay request does not match the persisted collector");
-      expect(callExactId).not.toHaveBeenCalled();
-      expect(requests).toHaveLength(1);
-    },
-  );
+    await expect(
+      codeModeSwarmHandlers.agentSpawn({
+        runtime,
+        parentToolCallId: "parent-call",
+        request,
+        codeModeRunId,
+        ctx,
+      }),
+    ).resolves.toMatchObject({ status: "accepted", runId: seeded.runId });
+    expect(callExactId).not.toHaveBeenCalled();
+    expect(requests).toHaveLength(1);
+
+    await expect(
+      codeModeSwarmHandlers.agentSpawn({
+        runtime,
+        parentToolCallId: "parent-call",
+        request: {
+          ...request,
+          args: [task, { dynamics: dynamics("sha256:policy-b") }],
+        },
+        codeModeRunId,
+        ctx,
+      }),
+    ).rejects.toThrow("replay request does not match the persisted collector");
+    expect(callExactId).not.toHaveBeenCalled();
+    expect(requests).toHaveLength(1);
+  });
 });
