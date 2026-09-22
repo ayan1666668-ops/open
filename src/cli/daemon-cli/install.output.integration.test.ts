@@ -225,6 +225,8 @@ describe("runDaemonInstall integration", () => {
       await runDaemonInstall({ json, force: true });
 
       const warnings = ["", "repeat", "repeat"];
+      const message =
+        "Gateway service installed. Runtime readiness has not been checked; startup may still be in progress. Check with openclaw gateway status and openclaw health.";
       expect(runtimeLogs).toEqual(
         json
           ? [
@@ -233,6 +235,7 @@ describe("runDaemonInstall integration", () => {
                   action: "install",
                   ok: true,
                   result: "installed",
+                  message,
                   service: {
                     label: "Gateway",
                     loaded: true,
@@ -245,7 +248,7 @@ describe("runDaemonInstall integration", () => {
                 2,
               ),
             ]
-          : warnings,
+          : [...warnings, message],
       );
       expect(runtimeErrors).toEqual([]);
       expect(serviceMock.install).toHaveBeenCalledOnce();

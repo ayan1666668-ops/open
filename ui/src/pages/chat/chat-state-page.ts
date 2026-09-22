@@ -18,6 +18,7 @@ import {
 } from "../../lib/sessions/session-key.ts";
 import { resolveAgentIdForSession } from "./chat-avatar.ts";
 import { CHAT_TRANSCRIPT_LOADING_CHANGED_EVENT } from "./chat-history-events.ts";
+import { chatProviderReviewRow } from "./chat-provider-review.ts";
 import { removeQueuedMessage } from "./chat-queue.ts";
 import { attachChatRealtimeActions, createInitialChatRealtimeState } from "./chat-realtime.ts";
 import {
@@ -37,6 +38,7 @@ import {
   openSessionWorkspacePreview,
   clearSessionWorkspacePreviews,
 } from "./components/chat-session-workspace-state.ts";
+import { resetTaskDetail } from "./components/chat-task-detail-state.ts";
 import {
   handleChatDraftChange,
   handleChatInputHistoryKey,
@@ -237,7 +239,7 @@ export function createPageState(
     refreshSessionsAfterChat: new Map<string, { sessionKey: string; agentId?: string }>(),
     pendingAbort: null,
     pendingSessionMessageReloadSessionKey: null,
-    chatSubmitGuards: new Map<string, Promise<void>>(),
+    chatSubmitGuards: new Set<string>(),
     chatGoalDraftMode: null,
     chatSendTimingsByRun: new Map(),
     chatQueue: [],
@@ -306,7 +308,7 @@ export function createPageState(
     });
     renderLifecycle.invalidate();
   };
-  attachChatRealtimeActions(state);
+  attachChatRealtimeActions(state, () => !chatProviderReviewRow(state)?.providerReview);
   state.loadAssistantIdentity = () => loadPageAssistantIdentity(state);
   state.handleSendChat = (messageOverride, options, submissionAction) => {
     const message = messageOverride ?? state.chatMessage;
@@ -339,7 +341,7 @@ export function createPageState(
       renderLifecycle.invalidate();
       return;
     }
-    const outcome = removeQueuedMessage(state, id);
+    const outcome = removeQueuedMessage(state, id, { discard: true });
     if (outcome === "removed") {
       setChatError(state, null);
       void resumeStoredChatOutboxes(state);
@@ -363,6 +365,12 @@ export function createPageState(
   state.editQueuedChatMessage = (id) => {
     if (beginQueuedMessageEdit(state, id) === "unavailable") {
       setChatError(state, QUEUED_MESSAGE_EDIT_CONFLICT_ERROR);
+    } else {
+      for (const key of ["lastError", "chatError"] as const) {
+        if (state[key] === QUEUED_MESSAGE_EDIT_CONFLICT_ERROR) {
+          state[key] = null;
+        }
+      }
     }
     renderLifecycle.invalidate();
   };
@@ -395,6 +403,15 @@ export function createPageState(
   };
   state.updateSidebarLayout = (layout, options) => {
     const normalized = normalizeSidebarLayout(layout);
+    if (
+      state.sidebarLayout.columns
+        .flatMap((column) => column.panels)
+        .find((panel) => panel.slot === "tasks")?.taskId !==
+      normalized.columns.flatMap((column) => column.panels).find((panel) => panel.slot === "tasks")
+        ?.taskId
+    ) {
+      resetTaskDetail(state);
+    }
     const presentation =
       options?.dashboardPresentation === "personal"
         ? sidebarDashboardPresentation(normalized)

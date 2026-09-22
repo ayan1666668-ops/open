@@ -1,6 +1,9 @@
 import path from "node:path";
 import { vi } from "vitest";
-import { WORKER_EXECUTION_CONTEXT_PROTOCOL_FEATURE } from "../../../packages/gateway-protocol/src/schema/worker-admission.js";
+import {
+  WORKER_EXECUTION_AUTHORITY_PROTOCOL_FEATURE,
+  WORKER_EXECUTION_CONTEXT_PROTOCOL_FEATURE,
+} from "../../../packages/gateway-protocol/src/schema/worker-admission.js";
 import {
   createOperationalRunInstanceRef,
   prepareAgentRunAdmission,
@@ -11,6 +14,7 @@ import { clearRuntimeConfigSnapshot } from "../../config/io.js";
 import { upsertSessionEntryCore } from "../../config/sessions/session-accessor.js";
 import { resetAgentEventsForTest } from "../../infra/agent-events.js";
 import {
+  closeOpenClawStateDatabaseAsync,
   closeOpenClawStateDatabaseForTest,
   openOpenClawStateDatabase,
   type OpenClawStateDatabase,
@@ -99,6 +103,7 @@ export async function cleanupWorkerTurnLauncherTest(): Promise<void> {
   cleanupAdmissionSink?.();
   cleanupAdmissionSink = undefined;
   clearRuntimeConfigSnapshot();
+  await closeOpenClawStateDatabaseAsync();
   closeOpenClawStateDatabaseForTest();
   resetAgentEventsForTest();
   await testState.cleanup();
@@ -116,6 +121,7 @@ export function setWorkerTurnSessionTarget(target: typeof sessionTarget): typeof
 
 type DefaultedWorkerTurnLauncherOption =
   | "reconcileActivePlacement"
+  | "waitForAdmissionNode"
   | "redispatchReclaimed"
   | "resolveWorkspace"
   | "workspaceOperations";
@@ -125,6 +131,7 @@ export function createWorkerSessionTurnPlacementProvider(
     Partial<Pick<WorkerTurnLauncherOptions, DefaultedWorkerTurnLauncherOption>>,
 ) {
   return createRawWorkerSessionTurnPlacementProvider({
+    waitForAdmissionNode: async () => {},
     reconcileActivePlacement: async () => {
       throw new Error("unexpected active placement reconciliation");
     },
@@ -273,7 +280,10 @@ export function attachedEnvironment(): WorkerTurnEnvironmentRecord {
     bootstrapReceipt: {
       bundleHash: BUNDLE_HASH,
       openclawVersion: "2026.7.2",
-      protocolFeatures: [WORKER_EXECUTION_CONTEXT_PROTOCOL_FEATURE],
+      protocolFeatures: [
+        WORKER_EXECUTION_CONTEXT_PROTOCOL_FEATURE,
+        WORKER_EXECUTION_AUTHORITY_PROTOCOL_FEATURE,
+      ],
       installKind: "bundle",
     },
     ownerEpoch: OWNER_EPOCH,

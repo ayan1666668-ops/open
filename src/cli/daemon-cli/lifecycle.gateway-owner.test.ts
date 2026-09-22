@@ -79,7 +79,9 @@ vi.mock("./lifecycle-audit.js", () => ({
 }));
 vi.mock("../../infra/restart-intent.js", async (original) => ({
   ...(await original<typeof import("../../infra/restart-intent.js")>()),
+  prepareGatewayRestartIntentLegacyProcess: async () => undefined,
   writeGatewayRestartIntentSync: () => true,
+  writeGatewayServiceRestartIntentSync: () => true,
   clearGatewayRestartIntentSync: vi.fn(),
 }));
 
@@ -197,7 +199,8 @@ it.each([false, true])(
       mocks.waitForGatewayHealthyListener.mock.invocationCallOrder[1]!,
     );
     expect(mocks.waitForGatewayHealthyListener.mock.invocationCallOrder[1]).toBeLessThan(
-      lifecycleTestRuntime.log.mock.invocationCallOrder[0]!,
+      (json ? lifecycleTestRuntime.writeJson : lifecycleTestRuntime.log).mock
+        .invocationCallOrder[0]!,
     );
   },
 );

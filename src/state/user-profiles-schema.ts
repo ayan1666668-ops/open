@@ -6,6 +6,7 @@ import {
   runOpenClawStateWriteTransaction,
   type OpenClawStateDatabaseOptions,
 } from "./openclaw-state-db.js";
+import type { UserProfileOwnerErrorCode } from "./user-profiles.types.js";
 
 // Canonical additive schema for durable user profiles. Kept feature-local so
 // ordinary shared-state opens do not create identity tables until they are used.
@@ -13,6 +14,7 @@ const USER_PROFILES_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS user_profiles (
   id TEXT NOT NULL PRIMARY KEY,
   display_name TEXT,
+  primary_github_account_id INTEGER,
   avatar BLOB,
   avatar_mime TEXT,
   avatar_sha256 TEXT,
@@ -44,37 +46,15 @@ CREATE INDEX IF NOT EXISTS idx_user_profile_identities_profile_id
   ON user_profile_identities(profile_id);
 `;
 
-export type UserProfilesDatabase = {
-  user_profiles: {
-    id: string;
-    display_name: string | null;
-    avatar: Uint8Array | null;
-    avatar_mime: string | null;
-    avatar_sha256: string | null;
-    merged_into: string | null;
-    role?: string | null;
-    created_at: number;
-    updated_at: number;
-  };
-  user_profile_emails: { email: string; profile_id: string; created_at: number };
-  user_profile_identities: {
-    provider: string;
-    subject: string;
-    profile_id: string;
-    canonical_login: string | null;
-    created_at: number;
-  };
-};
-
 export class UserProfileNotFoundError extends Error {
-  constructor(profileId: string) {
+  constructor(readonly profileId: string) {
     super(`user profile not found: ${profileId}`);
     this.name = "UserProfileNotFoundError";
   }
 }
 
 export class UserProfileOwnerError extends Error {
-  constructor(readonly code: "merge" | "role" | "repair-required") {
+  constructor(readonly code: UserProfileOwnerErrorCode) {
     super(
       code === "repair-required"
         ? "the shared owner profile requires repair; run openclaw doctor --fix and reconnect"
@@ -122,6 +102,7 @@ export function ensureUserProfilesSchema(
     ({ db }) => {
       db.exec(USER_PROFILES_SCHEMA_SQL); // sqlite-allow-raw -- Canonical feature-local additive DDL.
       ensureColumn(db, "user_profile_identities", "canonical_login TEXT");
+      ensureColumn(db, "user_profiles", "primary_github_account_id INTEGER");
       hasRoleColumn = tableHasColumn(db, "user_profiles", "role");
     },
     options,

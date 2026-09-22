@@ -22,12 +22,12 @@ import { parseInboundMediaUri } from "../../media/media-reference.js";
 import { MEDIA_MAX_BYTES, readMediaBuffer } from "../../media/store.js";
 import { isIncognitoSessionKey } from "../../routing/session-key.js";
 import { ModelSelectionLockedError } from "../../sessions/model-overrides.js";
+import { recordSessionCreated } from "../../sessions/session-created.js";
 import { withSessionInitializationSource } from "../../sessions/session-initialization.js";
 import {
   isCompetingSessionWorkAdmissionActive,
   runExclusiveSessionLifecycleMutation,
 } from "../../sessions/session-lifecycle-admission.js";
-import { recordSessionCreated } from "../../sessions/session-state-events.js";
 import {
   readSessionUpstreamLink,
   type SessionUpstreamLink,
@@ -46,6 +46,7 @@ import { resolveVisibleActiveSessionRunState } from "./session-active-runs.js";
 import { emitSessionsChanged } from "./session-change-event.js";
 import { prepareSessionForkFilesystemRoot } from "./session-create-root.js";
 import { resolveOperatorSessionCreation } from "./session-creation-provenance.js";
+import { retainSessionScopedRead } from "./session-scoped-read.js";
 import {
   loadAccessorSessionEntryForGatewayTarget,
   resolveSessionWorkerPlacementMutationError,
@@ -178,36 +179,42 @@ async function listBranches(options: GatewayRequestHandlerOptions): Promise<void
     respond(false, undefined, requestedAgent.error);
     return;
   }
-  const current = loadAccessorSessionEntryForGatewayTarget({
-    key: sessionKey,
-    cfg,
-    agentId: requestedAgent.agentId,
-  });
-  if (!current.entry?.sessionId) {
-    // A session key that has not materialized yet (fresh chat, no first
-    // message) legitimately has no branches. Only the mutating siblings
-    // (rewind/switch/fork) treat a missing session as an error; erroring here
-    // put a spurious failure in gateway logs on every new-chat load.
-    respond(true, { branches: [] }, undefined);
-    return;
+  const read = retainSessionScopedRead(options, sessionKey, requestedAgent.agentId);
+  try {
+    const current = loadAccessorSessionEntryForGatewayTarget({
+      key: sessionKey,
+      cfg,
+      agentId: requestedAgent.agentId,
+    });
+    if (!current.entry?.sessionId) {
+      // A session key that has not materialized yet (fresh chat, no first
+      // message) legitimately has no branches. Only the mutating siblings
+      // (rewind/switch/fork) treat a missing session as an error; erroring here
+      // put a spurious failure in gateway logs on every new-chat load.
+      respond(true, { branches: [] }, undefined);
+      return;
+    }
+    if (readSessionUpstreamLink(current.canonicalKey, current.target.agentId)) {
+      // Upstream-linked sessions truthfully have no local branches; only the
+      // mutating siblings (rewind/switch/fork) must fail closed on them.
+      respond(true, { branches: [] }, undefined);
+      return;
+    }
+    const result = await listSessionBranches({
+      agentId: current.target.agentId,
+      sessionKey: current.canonicalKey,
+      sessionStoreKey: current.sessionStoreKey,
+      storePath: current.storePath,
+    });
+    read?.assertCurrent();
+    if (result.status !== "ok") {
+      respondBranchListError(result, respond);
+      return;
+    }
+    respond(true, { branches: result.branches }, undefined);
+  } finally {
+    read?.release();
   }
-  if (readSessionUpstreamLink(current.canonicalKey, current.target.agentId)) {
-    // Upstream-linked sessions truthfully have no local branches; only the
-    // mutating siblings (rewind/switch/fork) must fail closed on them.
-    respond(true, { branches: [] }, undefined);
-    return;
-  }
-  const result = await listSessionBranches({
-    agentId: current.target.agentId,
-    sessionKey: current.canonicalKey,
-    sessionStoreKey: current.sessionStoreKey,
-    storePath: current.storePath,
-  });
-  if (result.status !== "ok") {
-    respondBranchListError(result, respond);
-    return;
-  }
-  respond(true, { branches: result.branches }, undefined);
 }
 
 async function mutateSessionAtMessage(
@@ -622,7 +629,7 @@ async function mutateSessionAtMessage(
       if (action !== "fork") {
         clearSessionQueues(lifecycleIdentities);
       } else {
-        recordSessionCreated({
+        recordSessionCreated(cfg, {
           sessionKey: result.key,
           agentId: current.target.agentId,
           entry: result.entry,

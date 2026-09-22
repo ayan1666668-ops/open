@@ -24,6 +24,25 @@ local runs, Windows, explicit plugin stripes, and explicit serial selections kee
 eight-directory chunks. Explicit split-core and parallel execution selections
 remain unchanged.
 
+Oxlint's type-aware backend discovers `src/tsconfig.json` and `ui/tsconfig.json`
+separately. Both inherit the root compiler options, include shared ambient
+declarations, and follow imported dependencies. Every existing lint target and
+rule still runs, including source CommonJS test preloads. The CLI `--tsconfig`
+option controls import resolution; it does not replace these discovery projects.
+
+Current CI core-test rows combine their paired stripes into one queue of fresh
+compiler processes, with the same two-child limit. Each independent graph runs
+in incremental project mode: solution-build mode can miss an added root whose
+timestamp predates restored build information. Frozen targets keep their
+original stripe invocations. Per-graph elapsed times appear in the job log.
+
+The test-type jobs restore their own `.artifacts/tsgo-cache` state across runs.
+Cache keys separate compiler/dependency/configuration versions and CI rows;
+the compiler still validates every selected graph after a hit. Pull requests
+only restore state, while the existing trusted cache writer policy controls
+publication after successful checks. Cache-off and frozen-target runs retain
+their original behavior. Lint programs do not share these compiler caches.
+
 Oxlint keeps `eslint/no-redeclare` enabled for JavaScript. For `.ts`, `.tsx`,
 `.mts`, and `.cts`, `tsgo` owns declaration validity, including intentional
 type/value pairs with the same public name. `eslint/no-var` remains enabled
@@ -88,6 +107,18 @@ roots. Linux-runnable source extraction requires explicit typed localized format
 for an `Int`) instead of arbitrary Swift interpolation. Constrained inflected
 count resources are supported on both platforms. Use explicit verbatim text for
 user, system, or already-localized data.
+
+For staged checks, `pnpm check:changed --staged` compares the index with `HEAD`.
+Use `pnpm check:changed --staged --base <commit>` to compare the index with an
+explicit commit, including during a pending merge. Path selection, package
+classification, and the staged ratchets use that same base. Without `--staged`,
+the default comparison base remains `origin/main`.
+
+Delegated staged checks carry the selected paths and comparison base to the
+remote checker. Crabbox synchronizes working-tree files, not the local Git
+index, so remote results describe those materialized files rather than an exact
+copy of the staged snapshot. Keep the intended proof files consistent before
+using that route.
 
 ## Surface ratchets
 
@@ -223,8 +254,10 @@ and its digest anchors when advancing the toolchain.
 
 Trusted Linux hydration uses the shared Node compatibility selector and can
 seed a job-private Corepack home from the same authenticated pnpm archives.
-These runtime archives do not replace the frozen-lockfile dependency install
-or change the dependency-store cache keys.
+The shared setup action also carries authenticated pnpm archives in its warmed
+store, so hosted and Blacksmith jobs can bootstrap before dependency installation
+without downloading pnpm again. These archives do not replace the frozen-lockfile
+dependency install.
 
 With `install-bun: "true"`, `setup-node-env` can also reuse the original pinned
 Bun 1.4.0 ZIPs from `/opt/crabbox/toolchain-archives` on Linux glibc x64.
