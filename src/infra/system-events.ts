@@ -388,23 +388,25 @@ export function drainSystemEvents(sessionKey: string): string[] {
 }
 
 /**
- * Removes every pending event for one context key under a session queue.
+ * Removes exactly one pending occurrence by its globally-unique id.
  *
- * Used to retire a durable completion event once its shared steering copy has
- * been delivered, so a later heartbeat cannot re-deliver the same occurrence.
- * Returns the number of events removed.
+ * Settlement never keys on the reusable `contextKey`: a finished process
+ * record can be cleared or expire while its event stays queued, so a later
+ * process reuses that context and an acknowledgment driven by the older
+ * occurrence would retire the newer one instead. Returns the number of events
+ * removed, 0 when the occurrence was already settled on another path.
  */
-export function removeSystemEventsByContextKey(sessionKey: string, contextKey: string): number {
-  const entry = getSessionQueue(sessionKey);
+export function removeSystemEventById(sessionKey: string, eventId: string): number {
+  const key = requireSessionKey(sessionKey);
+  const entry = queues.get(key);
   if (!entry || entry.queue.length === 0) {
     return 0;
   }
-  const key = requireSessionKey(sessionKey);
-  const normalized = normalizeContextKey(contextKey);
-  if (normalized === null) {
+  const id = eventId.trim();
+  if (!id) {
     return 0;
   }
-  const matching = entry.queue.filter((event) => (event.contextKey ?? null) === normalized);
+  const matching = entry.queue.filter((event) => event.id === id);
   if (matching.length === 0) {
     return 0;
   }

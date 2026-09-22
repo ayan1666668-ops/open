@@ -1,20 +1,20 @@
 /** Tests exec-completion steering queue enqueue, leasing, ack/release, ownership, and shared occurrence. */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { publishSystemEventStoreResolver } from "../infra/system-event-ownership.js";
 import {
   consumeSelectedSystemEventEntries,
   drainSystemEventEntries,
-  enqueueSystemEventEntry,
   enqueueSystemEventReceipt,
   peekSystemEventEntries,
   resetSystemEventsForTest,
 } from "../infra/system-events.js";
+import { drainGlobalSingletonLifecycleState } from "../shared/global-singleton.js";
 import {
   ackLeasedExecSteeringItems,
   ensureExecSteeringConsumptionObserver,
   enqueueExecSteeringCompletion,
   hasPendingExecSteeringItems,
   invalidateExecSteeringByDurableEventId,
-  invalidateExecSteeringByOccurrence,
   leasePendingExecSteeringItems,
   prependExecSteeringPrompt,
   releaseLeasedExecSteeringItems,
@@ -64,7 +64,12 @@ function enqueueSharedOccurrence(overrides: {
   requesterSessionKey?: string;
   ownerAgentId?: string;
   text?: string;
-}): { durableEventId: string; queueKey: string; occurrenceKey: string } {
+}): {
+  durableEventId: string;
+  queueKey: string;
+  occurrenceKey: string;
+  remove: () => boolean;
+} {
   const sessionKey = overrides.requesterSessionKey ?? requesterSessionKey;
   const occurrenceKey = `exec:${overrides.execId}`;
   const receipt = enqueueSystemEventReceipt(
@@ -88,7 +93,12 @@ function enqueueSharedOccurrence(overrides: {
       : {}),
     ...(overrides.ownerAgentId ? { ownerAgentId: overrides.ownerAgentId } : {}),
   });
-  return { durableEventId: receipt.eventId, queueKey: sessionKey, occurrenceKey };
+  return {
+    durableEventId: receipt.eventId,
+    queueKey: sessionKey,
+    occurrenceKey,
+    remove: receipt.remove,
+  };
 }
 
 describe("exec-steering-queue", () => {
@@ -97,6 +107,9 @@ describe("exec-steering-queue", () => {
   });
   afterEach(() => {
     resetSystemEventsForTest();
+    // The store resolver is process-global, so a case that publishes one clears
+    // it here rather than resolving the next case against a stale path.
+    publishSystemEventStoreResolver(undefined);
   });
 
   it("leases a pending completion into a turn prompt", () => {
@@ -230,13 +243,23 @@ describe("exec-steering-queue", () => {
   it("acking a steered turn retires the shared durable system event (steering -> heartbeat)", () => {
     const queueKey = "agent:main:main";
     // The durable system event the notify path enqueues for this occurrence.
-    enqueueSystemEventEntry("Exec completed (abcd1234, exit 0) :: job done", {
-      sessionKey: queueKey,
-      contextKey: "exec:abcd1234",
-    });
+    const receipt = enqueueSystemEventReceipt(
+      "Exec completed (abcd1234, exit 0) :: job done",
+      { sessionKey: queueKey, contextKey: "exec:abcd1234" },
+      { allowDuplicate: true },
+    );
+    if (!receipt) {
+      throw new Error("expected a durable system event receipt");
+    }
     expect(peekSystemEventEntries(queueKey)).toHaveLength(1);
 
-    enqueue({ occurrenceKey: "exec:abcd1234", execId: "abcd1234" });
+    // The steering copy the notify path enqueues for the same occurrence, bound
+    // to the durable event's globally-unique id.
+    enqueue({
+      occurrenceKey: "exec:abcd1234",
+      execId: "abcd1234",
+      durableEventId: receipt.eventId,
+    });
     const leased = leasePendingExecSteeringItems({
       requesterSessionKey,
       leaseId: "run-1:exec-steering",
@@ -247,12 +270,86 @@ describe("exec-steering-queue", () => {
     expect(peekSystemEventEntries(queueKey)).toEqual([]);
   });
 
-  it("invalidating an acknowledged occurrence removes its steering copy (poll/heartbeat -> steering)", () => {
-    enqueue({ occurrenceKey: "exec:zzz99999", execId: "zzz99999", text: "polled output" });
+  it("settles the steering copy when its durable event is consumed elsewhere", () => {
+    const shared = enqueueSharedOccurrence({ execId: "zzz99999", text: "polled output" });
     expect(hasPendingExecSteeringItems({ requesterSessionKey })).toBe(true);
-    // A terminal poll or heartbeat consumed this occurrence's durable event.
-    expect(invalidateExecSteeringByOccurrence("exec:zzz99999")).toBe(1);
+    // A terminal poll or heartbeat consumed this occurrence's durable event by
+    // its id; the shared settlement observer retires the matching copy.
+    expect(shared.remove()).toBe(true);
     expect(hasPendingExecSteeringItems({ requesterSessionKey })).toBe(false);
+  });
+
+  it("consumes only the leased occurrence's event id when a process slug is reused", () => {
+    const reused = "exec:reused99";
+    const older = enqueueSystemEventReceipt(
+      "Exec completed (reused99, exit 0) :: older",
+      { sessionKey: requesterSessionKey, contextKey: reused },
+      { allowDuplicate: true },
+    );
+    const newer = enqueueSystemEventReceipt(
+      "Exec completed (reused99, exit 0) :: newer",
+      { sessionKey: requesterSessionKey, contextKey: reused },
+      { allowDuplicate: true },
+    );
+    if (!older || !newer) {
+      throw new Error("expected durable system event receipts");
+    }
+    // The older process's record was cleared, so a later process reused the slug
+    // and two occurrences now share one `exec:<sessionId>` context key.
+    enqueue({
+      occurrenceKey: reused,
+      execId: "reused99",
+      durableEventId: older.eventId,
+      text: "older",
+    });
+    const leased = leasePendingExecSteeringItems({
+      requesterSessionKey,
+      leaseId: "run-1:exec-steering",
+    });
+    expect(leased?.itemIds).toHaveLength(1);
+    expect(
+      ackLeasedExecSteeringItems({ itemIds: leased!.itemIds, leaseId: "run-1:exec-steering" }),
+    ).toBe(1);
+    // Only the leased occurrence settled; the newer one stays queued for its
+    // own turn rather than being retired by the older occurrence's ack.
+    expect(peekSystemEventEntries(requesterSessionKey).map((event) => event.id)).toEqual([
+      newer.eventId,
+    ]);
+  });
+
+  it("leaves an unowned newer occurrence alone when only steering settles", () => {
+    const reused = "exec:control99";
+    const older = enqueueSystemEventReceipt(
+      "Exec completed (control99, exit 0) :: older",
+      { sessionKey: requesterSessionKey, contextKey: reused },
+      { allowDuplicate: true },
+    );
+    const newer = enqueueSystemEventReceipt(
+      "Exec completed (control99, exit 0) :: newer",
+      { sessionKey: requesterSessionKey, contextKey: reused },
+      { allowDuplicate: true },
+    );
+    if (!older || !newer) {
+      throw new Error("expected durable system event receipts");
+    }
+    enqueue({
+      occurrenceKey: reused,
+      execId: "control99",
+      durableEventId: older.eventId,
+      text: "older",
+    });
+    const leased = leasePendingExecSteeringItems({
+      requesterSessionKey,
+      leaseId: "run-1:exec-steering",
+    });
+    // A mismatched lease id settles nothing at all, so both occurrences survive.
+    expect(
+      ackLeasedExecSteeringItems({ itemIds: leased!.itemIds, leaseId: "run-2:exec-steering" }),
+    ).toBe(0);
+    expect(peekSystemEventEntries(requesterSessionKey).map((event) => event.id)).toEqual([
+      older.eventId,
+      newer.eventId,
+    ]);
   });
 
   it("settles the steering copy by durable event id, not the reusable occurrence key", () => {
@@ -397,14 +494,15 @@ describe("exec-steering-queue", () => {
   });
 
   it("invalidates an already-leased copy before dispatch when its occurrence is acknowledged", () => {
-    enqueue({ occurrenceKey: "exec:leased01", execId: "leased01" });
+    const shared = enqueueSharedOccurrence({ execId: "leased01" });
     const leased = leasePendingExecSteeringItems({
       requesterSessionKey,
       leaseId: "run-1:exec-steering",
     });
     expect(leased?.isCurrent()).toBe(true);
-    // Concurrent terminal poll acknowledges the occurrence between lease and dispatch.
-    expect(invalidateExecSteeringByOccurrence("exec:leased01")).toBe(1);
+    // A concurrent terminal poll settles the shared occurrence's durable event
+    // by its id between lease and dispatch.
+    expect(shared.remove()).toBe(true);
     // The pre-dispatch guard now rejects the stale leased copy.
     expect(leased?.isCurrent()).toBe(false);
   });
@@ -530,5 +628,123 @@ describe("exec-steering-queue", () => {
         text: "ignored",
       }),
     ).toBeUndefined();
+  });
+
+  it("revokes queued output when the physical session store is replaced", () => {
+    publishSystemEventStoreResolver(() => "/stores/first.db");
+    enqueue({
+      occurrenceKey: "exec:store01",
+      execId: "store01",
+      durableEventId: "durable-store01",
+    });
+    expect(hasPendingExecSteeringItems({ requesterSessionKey })).toBe(true);
+
+    // An accepted `session.store` replacement retires the canonical occurrence,
+    // and the queued steering copy captured against the retired store is revoked
+    // with it rather than reaching the replacement conversation's provider
+    // request.
+    publishSystemEventStoreResolver(() => "/stores/second.db");
+
+    expect(hasPendingExecSteeringItems({ requesterSessionKey })).toBe(false);
+  });
+
+  it("revokes an already-leased copy whose store is replaced before provider dispatch", () => {
+    publishSystemEventStoreResolver(() => "/stores/first.db");
+    enqueue({
+      occurrenceKey: "exec:store03",
+      execId: "store03",
+      durableEventId: "durable-store03",
+    });
+    const leased = leasePendingExecSteeringItems({
+      requesterSessionKey,
+      leaseId: "run-1:exec-steering",
+    });
+    expect(leased?.isCurrent()).toBe(true);
+    publishSystemEventStoreResolver(() => "/stores/second.db");
+    // The lease no longer has authority, so the embedded run refuses it before
+    // it can reach the replacement conversation's provider request.
+    expect(leased?.isCurrent()).toBe(false);
+  });
+
+  it("refuses a queued copy whose store was replaced before it could be leased", () => {
+    publishSystemEventStoreResolver(() => "/stores/first.db");
+    enqueue({
+      occurrenceKey: "exec:store02",
+      execId: "store02",
+      durableEventId: "durable-store02",
+    });
+    publishSystemEventStoreResolver(() => "/stores/second.db");
+    expect(
+      leasePendingExecSteeringItems({ requesterSessionKey, leaseId: "run-1:exec-steering" }),
+    ).toBeUndefined();
+    expect(hasPendingExecSteeringItems({ requesterSessionKey })).toBe(false);
+  });
+
+  it("keeps queued output when the same physical store is republished", () => {
+    publishSystemEventStoreResolver(() => "/stores/same.db");
+    enqueue({
+      occurrenceKey: "exec:same01",
+      execId: "same01",
+      durableEventId: "durable-same01",
+    });
+    const leased = leasePendingExecSteeringItems({
+      requesterSessionKey,
+      leaseId: "run-1:exec-steering",
+    });
+    expect(leased?.isCurrent()).toBe(true);
+
+    // A same-store republish keeps the canonical owner's facts, so the copy
+    // keeps its authority and returns to the queue when the lease is released.
+    publishSystemEventStoreResolver(() => "/stores/same.db");
+    expect(leased?.isCurrent()).toBe(true);
+
+    releaseLeasedExecSteeringItems({
+      itemIds: leased!.itemIds,
+      leaseId: "run-1:exec-steering",
+    });
+    expect(hasPendingExecSteeringItems({ requesterSessionKey })).toBe(true);
+  });
+
+  it("clears queued entries on Gateway close", async () => {
+    enqueue({
+      occurrenceKey: "exec:close01",
+      execId: "close01",
+      durableEventId: "durable-close01",
+    });
+    expect(hasPendingExecSteeringItems({ requesterSessionKey })).toBe(true);
+    await drainGlobalSingletonLifecycleState("close");
+    // A Gateway reopened in the same process must not inject this entry into a
+    // later turn that reuses the session key.
+    expect(hasPendingExecSteeringItems({ requesterSessionKey })).toBe(false);
+    expect(
+      leasePendingExecSteeringItems({ requesterSessionKey, leaseId: "run-2:exec-steering" }),
+    ).toBeUndefined();
+  });
+
+  it("clears an already-leased entry on Gateway close", async () => {
+    enqueue({
+      occurrenceKey: "exec:close02",
+      execId: "close02",
+      durableEventId: "durable-close02",
+    });
+    const leased = leasePendingExecSteeringItems({
+      requesterSessionKey,
+      leaseId: "run-1:exec-steering",
+    });
+    expect(leased?.isCurrent()).toBe(true);
+    await drainGlobalSingletonLifecycleState("close");
+    // The lease lost its entry with the queue, so it can never reach provider
+    // I/O from the closed Gateway's retained state.
+    expect(leased?.isCurrent()).toBe(false);
+  });
+
+  it("keeps queued output across a same-process restart", async () => {
+    enqueue({
+      occurrenceKey: "exec:keep01",
+      execId: "keep01",
+      durableEventId: "durable-keep01",
+    });
+    await drainGlobalSingletonLifecycleState("restart");
+    expect(hasPendingExecSteeringItems({ requesterSessionKey })).toBe(true);
   });
 });

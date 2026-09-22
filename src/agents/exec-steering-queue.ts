@@ -26,12 +26,22 @@
  *   before provider I/O.
  * - Entries bind to their requester session key so a conversation reset can
  *   retire pending and leased results before the next turn leases stale output.
+ * - Entries also bind to the physical session store they were captured against,
+ *   through the same store owner the canonical event uses, so an accepted store
+ *   replacement revokes queued and already-leased output rather than letting it
+ *   reach the replacement conversation's provider request. The singleton
+ *   registers Gateway lifecycle cleanup so a close cannot strand entries either.
  */
 import { truncateUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
-import { resolveSystemEventQueueKey } from "../infra/system-event-ownership.js";
+import {
+  getSystemEventStorePath,
+  isSystemEventStoreCurrent,
+  registerSystemEventStoreOwner,
+  resolveSystemEventQueueKey,
+} from "../infra/system-event-ownership.js";
 import {
   registerSystemEventConsumptionObserver,
-  removeSystemEventsByContextKey,
+  removeSystemEventById,
 } from "../infra/system-events.js";
 import { resolveGlobalSingleton } from "../shared/global-singleton.js";
 import { sanitizeForPromptLiteral, wrapPromptDataBlock } from "./sanitize-for-prompt.js";
@@ -40,6 +50,12 @@ const STALE_EXEC_STEERING_LEASE_MS = 5 * 60 * 1000;
 const MAX_MERGED_EXEC_STEERING_CHARS = 24_000;
 const MAX_EXEC_STEERING_ITEM_CHARS = 8_000;
 const MAX_EXEC_STEERING_ITEMS_PER_SESSION = 200;
+
+/**
+ * Process-wide identity shared by the steering singleton, its Gateway-lifecycle
+ * cleanup registration, and its physical-store retirement owner.
+ */
+const EXEC_STEERING_QUEUE_KEY = Symbol.for("openclaw.execSteeringQueue");
 
 const MERGED_EXEC_STEERING_PROMPT_HEADER = [
   "[OpenClaw runtime event] Background exec completions arrived since your last turn.",
@@ -72,6 +88,13 @@ type ExecSteeringQueueItem = {
    * re-enqueued occurrence that reuses the same `exec:<sessionId>` context.
    */
   durableEventId?: string;
+  /**
+   * Physical session-store path this copy was captured against. The canonical
+   * event owner retires an occurrence when its store is replaced, so the
+   * steering copy carries the same identity and is revoked with it instead of
+   * reaching the replacement conversation's provider request.
+   */
+  sessionStorePath?: string | null;
   /** Short exec id shown to the operator (process session id prefix). */
   execId: string;
   /** "completed" | "failed" outcome label. */
@@ -136,12 +159,6 @@ type ExecSteeringRuntime = {
     requesterSessionKey: string;
     ownerAgentId?: string;
   }) => boolean;
-  /**
-   * Invalidates any queued or leased completion carrying an occurrence key,
-   * called when the durable system event for that occurrence is acknowledged by
-   * a heartbeat or terminal poll. Returns the number of entries removed.
-   */
-  invalidateExecSteeringByOccurrence: (occurrenceKey: string) => number;
   /**
    * Invalidates any queued or leased completion bound to a durable system
    * event id, called from the shared settlement observer when that exact event
@@ -230,6 +247,25 @@ function createExecSteeringRuntime(): ExecSteeringRuntime {
   const queues = new Map<string, Map<string, StoredItem>>();
   let sequence = 0;
 
+  // Store-owned retirement, mirroring the canonical system-event queues: an
+  // accepted `session.store` replacement drops every queued or leased copy
+  // captured against the retired store, while a same-store republish keeps them.
+  // Without this the steering copy would retain provider-dispatch authority into
+  // the replacement conversation after the canonical event was already retired.
+  registerSystemEventStoreOwner(EXEC_STEERING_QUEUE_KEY, () => {
+    for (const [queueKey, queue] of queues) {
+      for (const [itemId, stored] of queue) {
+        if (isSystemEventStoreCurrent(queueKey, stored.item.sessionStorePath)) {
+          continue;
+        }
+        queue.delete(itemId);
+      }
+      if (queue.size === 0) {
+        queues.delete(queueKey);
+      }
+    }
+  });
+
   function enqueueExecSteeringCompletion(input: {
     requesterSessionKey: string;
     ownerAgentId?: string;
@@ -261,12 +297,17 @@ function createExecSteeringRuntime(): ExecSteeringRuntime {
     }
     sequence += 1;
     const itemId = `exec-steer:${queueKey}:${sequence}`;
+    // Capture the physical store the canonical event was enqueued against. The
+    // canonical enqueue resolves its store from the agent-qualified session key
+    // alone, so the same call shape keeps both representations on one identity.
+    const sessionStorePath = getSystemEventStorePath(queueKey);
     const item: ExecSteeringQueueItem = {
       itemId,
       queueKey,
       ...(input.ownerAgentId ? { ownerAgentId: input.ownerAgentId } : {}),
       occurrenceKey,
       ...(input.durableEventId ? { durableEventId: input.durableEventId } : {}),
+      ...(sessionStorePath === undefined ? {} : { sessionStorePath }),
       execId: input.execId,
       status: input.status,
       exitLabel: input.exitLabel,
@@ -379,9 +420,14 @@ function createExecSteeringRuntime(): ExecSteeringRuntime {
       isCurrent: () =>
         leasedItemIds.every((itemId) => {
           const found = findStored(itemId);
+          // Authority is lease membership AND physical-store currency: an
+          // accepted store replacement retires the canonical occurrence this
+          // copy shares, so a copy captured against the retired store must be
+          // refused here before it reaches provider I/O.
           return (
             found?.stored.lease.status === "in_progress" &&
-            found.stored.lease.leaseId === params.leaseId
+            found.stored.lease.leaseId === params.leaseId &&
+            isSystemEventStoreCurrent(found.queueKey, found.stored.item.sessionStorePath)
           );
         }),
     };
@@ -392,6 +438,7 @@ function createExecSteeringRuntime(): ExecSteeringRuntime {
     leaseId: string;
   }): number {
     let updated = 0;
+    const settledEventIds: Array<{ queueKey: string; durableEventId: string }> = [];
     for (const itemId of params.itemIds) {
       for (const queue of queues.values()) {
         const stored = queue.get(itemId);
@@ -402,10 +449,17 @@ function createExecSteeringRuntime(): ExecSteeringRuntime {
         ) {
           // Delivered items are removed so a later ack cannot re-deliver them.
           queue.delete(itemId);
-          // Retire the durable system event that shares this occurrence so a
-          // later heartbeat or terminal poll cannot re-deliver it. Delivered
-          // exactly once across steering, heartbeat, and poll.
-          removeSystemEventsByContextKey(stored.item.queueKey, stored.item.occurrenceKey);
+          // Collect exactly the durable occurrence this lease carried, by its
+          // globally-unique id. The reusable `exec:<sessionId>` context key is
+          // not usable here: a cleared or expired process record lets a later
+          // process reuse it, and removing by context would then retire the
+          // newer occurrence and its steering copy instead of this one.
+          if (stored.item.durableEventId) {
+            settledEventIds.push({
+              queueKey: stored.item.queueKey,
+              durableEventId: stored.item.durableEventId,
+            });
+          }
           updated += 1;
           break;
         }
@@ -415,6 +469,11 @@ function createExecSteeringRuntime(): ExecSteeringRuntime {
       if (queue.size === 0) {
         queues.delete(key);
       }
+    }
+    // Settle after the sweep, so the shared consumption observer's fan-out runs
+    // against a settled map rather than mid-iteration.
+    for (const settled of settledEventIds) {
+      removeSystemEventById(settled.queueKey, settled.durableEventId);
     }
     return updated;
   }
@@ -442,26 +501,6 @@ function createExecSteeringRuntime(): ExecSteeringRuntime {
       }
     }
     return updated;
-  }
-
-  function invalidateExecSteeringByOccurrence(occurrenceKey: string): number {
-    const key = occurrenceKey.trim();
-    if (!key) {
-      return 0;
-    }
-    let removed = 0;
-    for (const [queueKey, queue] of queues) {
-      for (const [itemId, stored] of queue) {
-        if (stored.item.occurrenceKey === key) {
-          queue.delete(itemId);
-          removed += 1;
-        }
-      }
-      if (queue.size === 0) {
-        queues.delete(queueKey);
-      }
-    }
-    return removed;
   }
 
   function invalidateExecSteeringByDurableEventId(durableEventId: string): number {
@@ -527,7 +566,6 @@ function createExecSteeringRuntime(): ExecSteeringRuntime {
     ackLeasedExecSteeringItems,
     releaseLeasedExecSteeringItems,
     hasPendingExecSteeringItems,
-    invalidateExecSteeringByOccurrence,
     invalidateExecSteeringByDurableEventId,
     retireExecSteeringForSessionKeys,
     resetExecSteeringQueueForTest,
@@ -542,11 +580,20 @@ export const {
   ackLeasedExecSteeringItems,
   releaseLeasedExecSteeringItems,
   hasPendingExecSteeringItems,
-  invalidateExecSteeringByOccurrence,
   invalidateExecSteeringByDurableEventId,
   retireExecSteeringForSessionKeys,
   resetExecSteeringQueueForTest,
-} = resolveGlobalSingleton(Symbol.for("openclaw.execSteeringQueue"), createExecSteeringRuntime);
+} = resolveGlobalSingleton(
+  EXEC_STEERING_QUEUE_KEY,
+  createExecSteeringRuntime,
+  // Production lifecycle cleanup, mirroring the canonical system-event queues'
+  // `close-only` ownership: a same-store restart keeps their facts, while a
+  // `close` (reopening a Gateway in the same process) drops queued and leased
+  // entries that would otherwise be injected into a later turn under the same
+  // session key.
+  (runtime) => runtime.resetExecSteeringQueueForTest(),
+  "close-only",
+);
 
 // Route every durable-event consumer through one settlement observer: when the
 // system-event queue consumes an occurrence on any path (heartbeat settlement,

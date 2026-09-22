@@ -14,7 +14,6 @@ import type {
 import { createDeferredCore, type Deferred } from "../shared/deferred.js";
 import type { DeliveryContext } from "../utils/delivery-context.types.js";
 import { readEnvInt } from "./bash-tools.shared.js";
-import { invalidateExecSteeringByOccurrence } from "./exec-steering-queue.js";
 
 const DEFAULT_JOB_TTL_MS = 30 * 60 * 1000; // 30 minutes
 const MIN_JOB_TTL_MS = 60 * 1000; // 1 minute
@@ -339,8 +338,10 @@ export function recordNotifyOnExitRemoval(
   remove: NotifyOnExitRemoval,
 ): void {
   if (session.terminalPollObserved) {
+    // The precise receipt consumes exactly this occurrence by its durable id,
+    // and the shared settlement observer retires the matching steering copy, so
+    // no process-wide invalidation is needed here.
     remove();
-    invalidateExecSteeringByOccurrence(`exec:${session.id}`);
     return;
   }
   session.notifyOnExitRemoval = remove;
@@ -353,12 +354,11 @@ export function acknowledgeNotifyOnExit(record: {
   terminalPollObserved?: boolean;
 }): void {
   record.terminalPollObserved = true;
-  // A terminal poll or heartbeat consumes this completion's durable event, so
-  // retire the steering copy that shares its occurrence. Delivered exactly once
-  // across steering, heartbeat, and poll.
-  if (record.id) {
-    invalidateExecSteeringByOccurrence(`exec:${record.id}`);
-  }
+  // A terminal poll or heartbeat consumes exactly this completion's durable
+  // event, and the shared settlement observer retires the steering copy that
+  // carries the same id. Delivered exactly once across steering, heartbeat, and
+  // poll. Settling by `exec:<id>` here would instead also match a later process
+  // that reused the slug, deleting an unrelated session's steering item.
   const remove = record.notifyOnExitRemoval;
   if (!remove) {
     return;

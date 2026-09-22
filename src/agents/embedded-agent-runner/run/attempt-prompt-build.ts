@@ -345,7 +345,14 @@ export async function prepareEmbeddedAttemptPromptAssembly(input: {
   }
 
   let leasedExecSteering: EmbeddedAttemptExecSteeringLease | undefined;
-  if (attempt.sessionKey && !preserveExactPrompt) {
+  // A heartbeat turn owns exec completions through the durable system-event
+  // path, and `heartbeat-dispatch` settles them only once channel delivery is
+  // known (`sent && !failed`). Leasing the steering copy here would duplicate
+  // that content in the same turn and acknowledge the canonical event as soon as
+  // the model turn returned, losing the completion when the send failed or was
+  // skipped. Those occurrences stay with heartbeat delivery settlement, and a
+  // heartbeat that never settles them leaves them for the next busy turn.
+  if (attempt.sessionKey && !preserveExactPrompt && attempt.trigger !== "heartbeat") {
     const execLeaseId = `${attempt.runId}:exec-steering`;
     const leasedExec = leasePendingExecSteeringItems({
       requesterSessionKey: attempt.sessionKey,

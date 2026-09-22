@@ -7,6 +7,11 @@ import { createHookRunner } from "../../../plugins/hooks.js";
 import { prepareSystemAgentRunAdmission } from "../../admitted-run-context.js";
 import { buildAgentRunTerminalReplySnapshot } from "../../agent-run-terminal-reply.js";
 import {
+  enqueueExecSteeringCompletion,
+  hasPendingExecSteeringItems,
+  resetExecSteeringQueueForTest,
+} from "../../exec-steering-queue.js";
+import {
   createTestSession,
   registerAgentSessionLoopTestLifecycle,
   testModel,
@@ -363,4 +368,53 @@ it("injects complete lifecycle results into requester prompts and acknowledges o
   expect(api.ackPendingAgentSteeringItems(secondLease)).toBe(1);
   expect(second.delivery?.status).toBe("delivered");
   expect(first.completion).toEqual(storedCompletion);
+});
+
+describe("exec steering lease gate", () => {
+  beforeEach(() => {
+    resetExecSteeringQueueForTest();
+  });
+
+  it("leaves exec-completion settlement to heartbeat delivery on a heartbeat turn", async () => {
+    const runId = "heartbeat-steering-gate";
+    const sessionKey = `agent:main:${runId}`;
+    enqueueExecSteeringCompletion({
+      requesterSessionKey: sessionKey,
+      occurrenceKey: "exec:hbgate01",
+      execId: "hbgate01",
+      status: "completed",
+      exitLabel: "exit 0",
+      text: "HEARTBEAT TURN MUST NOT SETTLE THIS",
+    });
+
+    const turn = await assembleWithCapturedHookCtx(runId, { trigger: "heartbeat" });
+
+    // The completion stays pending: the heartbeat's own delivery settlement
+    // (`sent && !failed`) owns it, so a failed or skipped send cannot lose it,
+    // and a later busy turn still finds it.
+    expect(turn.setLeasedExecSteering).not.toHaveBeenCalled();
+    expect(turn.prompt.effectivePrompt).not.toContain("Background exec completions arrived");
+    expect(turn.prompt.effectivePrompt).not.toContain("HEARTBEAT TURN MUST NOT SETTLE THIS");
+    expect(hasPendingExecSteeringItems({ requesterSessionKey: sessionKey })).toBe(true);
+  });
+
+  it("still steers exec completions into an ordinary turn", async () => {
+    const runId = "user-steering-gate";
+    const sessionKey = `agent:main:${runId}`;
+    enqueueExecSteeringCompletion({
+      requesterSessionKey: sessionKey,
+      occurrenceKey: "exec:usergate1",
+      execId: "usergate1",
+      status: "completed",
+      exitLabel: "exit 0",
+      text: "USER TURN STEERS THIS",
+    });
+
+    const turn = await assembleWithCapturedHookCtx(runId, { trigger: "user" });
+
+    expect(turn.setLeasedExecSteering).toHaveBeenCalledOnce();
+    expect(turn.prompt.effectivePrompt).toContain("Background exec completions arrived");
+    expect(turn.prompt.effectivePrompt).toContain("USER TURN STEERS THIS");
+    expect(hasPendingExecSteeringItems({ requesterSessionKey: sessionKey })).toBe(false);
+  });
 });

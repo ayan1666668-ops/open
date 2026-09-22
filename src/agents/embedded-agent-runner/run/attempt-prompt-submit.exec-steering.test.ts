@@ -9,13 +9,12 @@
 import type { Context, Model } from "openclaw/plugin-sdk/llm";
 import { afterEach, expect, it, vi } from "vitest";
 import {
-  enqueueSystemEventEntry,
+  enqueueSystemEventReceipt,
   peekSystemEventEntries,
   resetSystemEventsForTest,
 } from "../../../infra/system-events.js";
 import {
   enqueueExecSteeringCompletion,
-  invalidateExecSteeringByOccurrence,
   leasePendingExecSteeringItems,
   prependExecSteeringPrompt,
   resetExecSteeringQueueForTest,
@@ -79,11 +78,17 @@ function submissionInput(
   };
 }
 
-function enqueueOwned(text: string, occurrenceKey: string, execId: string): void {
+function enqueueOwned(
+  text: string,
+  occurrenceKey: string,
+  execId: string,
+  durableEventId?: string,
+): void {
   enqueueExecSteeringCompletion({
     requesterSessionKey,
     ownerAgentId: "research",
     occurrenceKey,
+    ...(durableEventId ? { durableEventId } : {}),
     execId,
     status: "completed",
     exitLabel: "exit 0",
@@ -92,11 +97,17 @@ function enqueueOwned(text: string, occurrenceKey: string, execId: string): void
 }
 
 it("delivers the owning agent's completion into the provider request exactly once", async () => {
-  enqueueSystemEventEntry("Exec completed (owned001, exit 0) :: BUILD OK", {
-    sessionKey: "agent:research:global",
-    contextKey: "exec:owned001",
-  });
-  enqueueOwned("BUILD OK", "exec:owned001", "owned001");
+  // The durable event and its steering copy share one globally-unique id, as
+  // the exec runtime's notification path binds them.
+  const receipt = enqueueSystemEventReceipt(
+    "Exec completed (owned001, exit 0) :: BUILD OK",
+    { sessionKey: "agent:research:global", contextKey: "exec:owned001" },
+    { allowDuplicate: true },
+  );
+  if (!receipt) {
+    throw new Error("Expected a durable system event receipt");
+  }
+  enqueueOwned("BUILD OK", "exec:owned001", "owned001", receipt.eventId);
   const leased = leasePendingExecSteeringItems({
     requesterSessionKey,
     ownerAgentId: "research",
@@ -169,7 +180,15 @@ it("refuses another agent's copy of a shared global key before provider I/O", as
 });
 
 it("rejects an already-leased copy acknowledged elsewhere before provider dispatch", async () => {
-  enqueueOwned("RACED OUTPUT", "exec:raced01", "raced01");
+  const receipt = enqueueSystemEventReceipt(
+    "Exec completed (raced01, exit 0) :: RACED OUTPUT",
+    { sessionKey: "agent:research:global", contextKey: "exec:raced01" },
+    { allowDuplicate: true },
+  );
+  if (!receipt) {
+    throw new Error("Expected a durable system event receipt");
+  }
+  enqueueOwned("RACED OUTPUT", "exec:raced01", "raced01", receipt.eventId);
   const leased = leasePendingExecSteeringItems({
     requesterSessionKey,
     ownerAgentId: "research",
@@ -178,9 +197,9 @@ it("rejects an already-leased copy acknowledged elsewhere before provider dispat
   if (!leased) {
     throw new Error("Expected a leased exec completion");
   }
-  // A terminal poll or heartbeat acknowledged the shared occurrence between
-  // lease and dispatch, so the lease loses authority.
-  expect(invalidateExecSteeringByOccurrence("exec:raced01")).toBe(1);
+  // A terminal poll or heartbeat settled the shared occurrence by its durable
+  // id between lease and dispatch, so the lease loses authority.
+  expect(receipt.remove()).toBe(true);
   expect(leased.isCurrent()).toBe(false);
 
   const requests: Context["messages"][] = [];
