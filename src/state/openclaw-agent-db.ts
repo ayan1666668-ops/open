@@ -57,8 +57,7 @@ import {
   readOpenClawAgentDatabaseIdentity,
 } from "./openclaw-agent-db-identity.js";
 import {
-  assertAgentDatabaseMaintenanceAccess,
-  registerAgentDatabaseMaintenanceAccess,
+  hasAgentDatabaseMaintenanceAuthority,
   assertOpenClawAgentDatabaseLease,
   claimOpenClawAgentDatabaseLease,
   recordOpenClawAgentDatabaseIntegrityVerified,
@@ -68,6 +67,7 @@ import {
 } from "./openclaw-agent-db-lease.js";
 import {
   agentDatabaseLifecycle as cache,
+  assertAgentDatabaseTerminalOpenAllowed,
   startAgentDatabaseOpenTiming,
   closeCachedOpenClawAgentDatabase,
   closeMaintenanceAgentDatabase,
@@ -117,8 +117,7 @@ import { runOpenClawAgentWriteAdmission } from "./openclaw-agent-write-admission
 import { requestOpenClawAgentDatabaseQuickCheck } from "./openclaw-database-verify.js";
 import {
   clearOpenClawDatabaseQuarantine,
-  createOpenClawDatabaseVerificationError,
-  readOpenClawDatabaseQuarantine,
+  readOpenClawDatabaseQuarantineFailure,
   type OpenClawAgentIntegrityVerification,
 } from "./openclaw-quarantine-store.js";
 import {
@@ -270,24 +269,10 @@ function* openOpenClawAgentDatabaseSteps(
   quarantineOrphanedSqliteSidecars(pathname);
   // Latched paths are quarantined; every fresh open fails fast here until
   // doctor repairs the file and clears the latch plus the persisted row.
-  const terminalFailure = cache.terminal.get(pathname);
-  if (terminalFailure) {
-    throw terminalFailure;
-  }
-  let persistedFailure: Error | undefined;
-  try {
-    const quarantine = readOpenClawDatabaseQuarantine(pathname, { env: databaseOptions.env });
-    if (quarantine) {
-      persistedFailure = createOpenClawDatabaseVerificationError(
-        "agent",
-        pathname,
-        quarantine.reason,
-      );
-    }
-  } catch {
-    // A broken quarantine store must not brick every agent open.
-    // The process latch and daily verifier still cover known damage.
-  }
+  assertAgentDatabaseTerminalOpenAllowed(pathname);
+  const persistedFailure = readOpenClawDatabaseQuarantineFailure("agent", pathname, {
+    env: databaseOptions.env,
+  });
   if (persistedFailure) {
     recordOpenClawAgentDatabaseOpenFailure(pathname, persistedFailure);
     throw persistedFailure;
@@ -428,7 +413,11 @@ function* openOpenClawAgentDatabaseSteps(
     ensureOpenClawAgentDatabasePermissions(pathname, databaseOptions);
     const database = { agentId, db, path: pathname, walMaintenance };
     openedDatabase = database;
-    registerAgentDatabaseMaintenanceAccess(db);
+    if (hasAgentDatabaseMaintenanceAuthority()) {
+      throw new Error(
+        "Agent database maintenance is in progress; retry after openclaw doctor --fix completes.",
+      );
+    }
     const cleanup = registerAgentDeletionDatabaseCleanup(database, databaseOptions);
     if (cleanup) {
       const release = retainAgentDatabase(db);
@@ -648,7 +637,6 @@ function findOpenClawAgentDatabaseIfOpen(
     );
   }
   assertAgentDeletionDatabaseCleanupAccess(database, options);
-  assertAgentDatabaseMaintenanceAccess(database.db);
   observeOpenClawDatabaseMaintenanceResource(database.db);
   return database;
 }
