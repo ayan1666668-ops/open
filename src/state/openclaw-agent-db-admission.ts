@@ -10,6 +10,7 @@ import {
 import { registerDeferredSqliteWalWriteAdmission } from "../infra/sqlite-wal-write-admission.js";
 import { normalizeAgentId } from "../routing/session-key.js";
 import { createDeferredCore } from "../shared/deferred.js";
+import { assertAgentDatabaseAdmitted } from "./agent-database-admission.js";
 import {
   assertAgentDeletionDatabaseCleanupAccess,
   getAgentDeletionDatabaseCleanup,
@@ -18,7 +19,6 @@ import type {
   OpenClawAgentDatabase,
   OpenClawAgentDatabaseOptions,
 } from "./openclaw-agent-db-contract.js";
-import { assertAgentDatabaseMaintenanceAccess } from "./openclaw-agent-db-lease.js";
 import {
   agentDatabaseLifecycle as cache,
   retainAgentDatabase,
@@ -75,13 +75,13 @@ function assertAgentDatabaseOperationCurrent(
   assertCurrent?: () => void,
 ): void {
   pending.controller.signal.throwIfAborted();
+  assertAgentDatabaseAdmitted(database.agentId, { env: options.env });
   if (cache.databases.get(pending.path) !== database || !database.db.isOpen) {
     throw new Error(`Agent database closed before its admitted operation: ${pending.path}`);
   }
   // Coalesced callers keep their own scope; admission cannot lend its cleanup authority.
   assertAgentDeletionDatabaseCleanupAccess(database, options);
   assertCurrent?.();
-  assertAgentDatabaseMaintenanceAccess(database.db);
 }
 
 /** Bind both admission drivers to the canonical private database-open generator. */
@@ -324,6 +324,7 @@ export function createOpenClawAgentDatabaseAdmissionOwner(
   ): void {
     const pathname = pending.path;
     pending.controller.signal.throwIfAborted();
+    assertAgentDatabaseAdmitted(pending.agentId, { env: options.env });
     if (cache.pending.get(pathname) !== pending) {
       throw new Error(`Agent database open was replaced: ${pathname}`);
     }

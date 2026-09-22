@@ -218,14 +218,46 @@ describe("Gateway code-mode matrix fixtures", () => {
     expect(fs.existsSync(path.join(path.dirname(entry), "receipts.jsonl"))).toBe(false);
   });
 
-  it.each(["automation-contracts", "process-contracts", "checked-cell-cache"] as const)(
-    "%s relies on actual built-ins instead of synthetic replacements",
-    (task) => {
-      const { fixture, entry } = prepare(task);
-      expect(invoke(entry, []).tools).toEqual([]);
-      expect(fixture.requiredTools).toEqual([]);
-    },
-  );
+  it("records every return-value effect in the fixture receipt owner", () => {
+    const { fixture, root, entry } = prepare("return-value-effects");
+    const input = { nonce: fixture.expected.nonce };
+    const run = invoke<{ nonce: string }>(entry, [
+      { name: "matrix_return_effect", input },
+      { name: "matrix_return_effect", input },
+    ]);
+    expect(run.results.map((result) => result.details)).toEqual([input, input]);
+    const receipts = fs
+      .readFileSync(path.join(root, "receipts.jsonl"), "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(receipts).toEqual([
+      { sequence: 1, kind: "call", tool: "matrix_return_effect", ...input },
+      { sequence: 2, kind: "effect", tool: "matrix_return_effect", ...input },
+      { sequence: 3, kind: "call", tool: "matrix_return_effect", ...input },
+      { sequence: 4, kind: "effect", tool: "matrix_return_effect", ...input },
+    ]);
+  });
+
+  it("declares the serialization seed used by the prescribed guest program", () => {
+    const { fixture, entry } = prepare("result-save-invalid-json");
+    const run = invoke<{ nonce: string }>(entry, [{ name: "matrix_serialization_seed" }]);
+    const schema = expectDefined(run.tools[0]?.outputSchema, "serialization seed schema");
+    const seed = expectDefined(run.results[0], "serialization seed").details;
+    expect(Value.Check(schema, seed)).toBe(true);
+    expect(seed).toEqual({ nonce: fixture.expected.nonce });
+  });
+
+  it.each([
+    "automation-contracts",
+    "process-contracts",
+    "javascript-contracts",
+    "gateway-config-read",
+  ] as const)("%s relies on actual built-ins instead of synthetic replacements", (task) => {
+    const { fixture, entry } = prepare(task);
+    expect(invoke(entry, []).tools).toEqual([]);
+    expect(fixture.requiredTools).toEqual([]);
+  });
 
   it("keeps each repetition reproducible across runtime/model consumers", () => {
     for (const task of GATEWAY_MATRIX_TASKS) {
@@ -246,6 +278,10 @@ import { pathToFileURL } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 const fixtureData = JSON.parse(fs.readFileSync(new URL("./case.json", import.meta.url), "utf8"));
 const config = JSON.parse(fs.readFileSync(process.env.OPENCLAW_CONFIG_PATH, "utf8"));
+fs.writeFileSync(new URL("./observed-config.json", import.meta.url), JSON.stringify({
+  codeMode: config.tools.codeMode,
+  plugins: { allow: config.plugins.allow, quickjs: config.plugins.entries["code-mode-quickjs"] }
+}));
 const pluginDir = config.plugins.load.paths[0];
 const { default: register } = await import(pathToFileURL(path.join(pluginDir, "index.mjs")).href);
 const tools = new Map();
@@ -303,56 +339,72 @@ if (process.argv.includes("call")) {
 }
 `;
 
-it("keeps interview settlement effects out of the completed task score and receipts", async () => {
-  const root = tempDirs.make("openclaw-matrix-producer-");
-  const runtime = path.join(root, "fake-gateway.mjs");
-  const fixture = createGatewayMatrixFixture("partial-failure", 1);
-  fs.writeFileSync(runtime, FAKE_GATEWAY);
-  fs.writeFileSync(path.join(root, "case.json"), JSON.stringify({ expected: fixture.expected }));
-  vi.stubEnv("OPENAI_API_KEY", "synthetic-local-producer-test-key");
-  try {
-    const result = await runGatewayMatrixCell({
-      cell: {
-        id: "receipt-boundary",
-        model: "openai/gpt-5.6-sol",
-        mode: "code",
-        task: "partial-failure",
-        repetition: 1,
-      },
-      runtime: { args: [runtime], cwd: root },
-      repoRoot: root,
-      outputDir: root,
-      keepState: false,
-      thinking: "off",
-      timeoutSeconds: 30,
-      gitSha: "a".repeat(40),
-      buildSha256: "b".repeat(64),
-      sourceDirty: false,
-      sourcePatchSha256: null,
-    });
-    const gateway = expectDefined(result.gateway, "producer Gateway evidence");
-    expect(gateway.behavior.exactlyOneEffect).toBe(true);
-    expect(result.failureCategory).toBe("interview_mismatch");
-    expect(gateway.interview.checks.noExternalAction).toBe(false);
-    const artifacts = path.join(root, "cells", "receipt-boundary");
-    const readReceipts = (name: string) =>
-      JSON.parse(fs.readFileSync(path.join(artifacts, name), "utf8")) as {
-        kind: string;
-        tool: string;
-      }[];
-    const taskReceipts = readReceipts("task-receipts.json");
-    const interviewReceipts = readReceipts("interview-receipts.json");
-    expect(taskReceipts.map(({ kind, tool }) => `${kind}:${tool}`)).toEqual([
-      "call:matrix_settle",
-      "effect:matrix_settle",
-      "call:matrix_settlement_inspect",
-    ]);
-    expect(interviewReceipts.map(({ kind, tool }) => `${kind}:${tool}`)).toEqual([
-      "call:matrix_settle",
-      "effect:matrix_settle",
-    ]);
-    expect(readReceipts("receipts.json")).toEqual([...taskReceipts, ...interviewReceipts]);
-  } finally {
-    vi.unstubAllEnvs();
-  }
-});
+it.each(["node", "quickjs"] as const)(
+  "routes %s while keeping interview settlement effects out of the completed task score and receipts",
+  async (executor) => {
+    const root = tempDirs.make("openclaw-matrix-producer-");
+    const runtime = path.join(root, "fake-gateway.mjs");
+    const fixture = createGatewayMatrixFixture("partial-failure", 1);
+    fs.writeFileSync(runtime, FAKE_GATEWAY);
+    fs.writeFileSync(path.join(root, "case.json"), JSON.stringify({ expected: fixture.expected }));
+    vi.stubEnv("OPENAI_API_KEY", "synthetic-local-producer-test-key");
+    try {
+      const result = await runGatewayMatrixCell({
+        executor,
+        cell: {
+          id: "receipt-boundary",
+          model: "openai/gpt-5.6-sol",
+          mode: "code",
+          task: "partial-failure",
+          repetition: 1,
+        },
+        runtime: { args: [runtime], cwd: root },
+        repoRoot: root,
+        outputDir: root,
+        keepState: false,
+        thinking: "off",
+        timeoutSeconds: 30,
+        gitSha: "a".repeat(40),
+        buildSha256: "b".repeat(64),
+        sourceDirty: false,
+        sourcePatchSha256: null,
+      });
+      const observedConfig = JSON.parse(
+        fs.readFileSync(path.join(root, "observed-config.json"), "utf8"),
+      );
+      expect(observedConfig.codeMode.executor).toBe(executor);
+      expect(observedConfig.plugins.allow.includes("code-mode-quickjs")).toBe(
+        executor === "quickjs",
+      );
+      expect(observedConfig.plugins.quickjs).toEqual(
+        executor === "quickjs" ? { enabled: true } : undefined,
+      );
+      expect(result.executor).toBe(executor);
+      const gateway = expectDefined(result.gateway, "producer Gateway evidence");
+      expect(gateway.settings.executor).toBe(executor);
+      expect(gateway.behavior.exactlyOneEffect).toBe(true);
+      expect(result.failureCategory).toBe("interview_mismatch");
+      expect(gateway.interview.checks.noExternalAction).toBe(false);
+      const artifacts = path.join(root, "cells", "receipt-boundary");
+      const readReceipts = (name: string) =>
+        JSON.parse(fs.readFileSync(path.join(artifacts, name), "utf8")) as {
+          kind: string;
+          tool: string;
+        }[];
+      const taskReceipts = readReceipts("task-receipts.json");
+      const interviewReceipts = readReceipts("interview-receipts.json");
+      expect(taskReceipts.map(({ kind, tool }) => `${kind}:${tool}`)).toEqual([
+        "call:matrix_settle",
+        "effect:matrix_settle",
+        "call:matrix_settlement_inspect",
+      ]);
+      expect(interviewReceipts.map(({ kind, tool }) => `${kind}:${tool}`)).toEqual([
+        "call:matrix_settle",
+        "effect:matrix_settle",
+      ]);
+      expect(readReceipts("receipts.json")).toEqual([...taskReceipts, ...interviewReceipts]);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  },
+);

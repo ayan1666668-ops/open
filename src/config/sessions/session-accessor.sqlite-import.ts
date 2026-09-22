@@ -17,6 +17,7 @@ import {
   withSqliteSessionImportStage,
   type SqliteSessionImportStage,
 } from "./session-accessor.sqlite-import-stage.js";
+import { invalidateSessionEntryMaintenanceAgeFact } from "./session-accessor.sqlite-maintenance-age.js";
 import {
   formatSqliteSessionReferenceForScope,
   getSessionKysely,
@@ -31,6 +32,7 @@ import {
 import { appendTranscriptEventsInTransaction } from "./session-accessor.sqlite-transcript-store.js";
 import { assertSessionTranscriptHot } from "./session-cold-storage-state.js";
 import { reconcileSessionTranscriptIndexInTransaction } from "./session-transcript-index.js";
+import { transcriptEventJsonSql } from "./transcript-payload.js";
 import type { SessionEntry } from "./types.js";
 
 /** Internal doctor/migration import target for one legacy session row. */
@@ -135,6 +137,7 @@ function importSqliteSessionRowsInTransaction(
   }
   // Historical generations append under their existing node without changing its current pointer.
   if (!preserveHistoricalNode) {
+    invalidateSessionEntryMaintenanceAgeFact(database.db);
     writeSessionEntry(database, resolved.sessionKey, importedEntry, {
       allowStoredAliases: true,
       previousEntry: currentEntry ?? null,
@@ -155,7 +158,7 @@ function importSqliteSessionRowsInTransaction(
       database.db,
       getSessionKysely(database.db)
         .selectFrom("transcript_events")
-        .select("event_json")
+        .select(transcriptEventJsonSql(database.db).as("event_json"))
         .where("session_id", "=", params.entry.sessionId),
     )) {
       stage.addSeen(row.event_json);
@@ -168,7 +171,7 @@ function importSqliteSessionRowsInTransaction(
     );
     // Doctor imports run outside gateway requests and must finish with a complete projection.
     reconcileSessionTranscriptIndexInTransaction(database.db, params.entry.sessionId);
-    publishSessionEntryCacheInvalidation(database);
+    publishSessionEntryCacheInvalidation(database, { sessionKey: resolved.sessionKey });
   }
   if (params.transcriptMtimeMs !== undefined) {
     advanceTranscriptMutationAtInTransaction(

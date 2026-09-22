@@ -19,13 +19,11 @@ vi.mock("../../gateway/method-scopes.js", () => ({
   resolveLeastPrivilegeOperatorScopesForMethod: () => ["operator.write"],
 }));
 
-vi.mock("../../gateway/server-plugins.js", () => ({
+vi.mock("../../gateway/server-plugin-in-process-dispatch.js", () => ({
   dispatchGatewayMethodInProcess: mocks.dispatch,
   getInProcessGatewayRequestContext: (resolver?: () => GatewayRequestContext | undefined) =>
     resolver ? resolver() : mocks.hasContext ? mocks.context : undefined,
   runWithOperatorToolGatewayCleanupContext: <T>(run: () => T) => run(),
-  hasInProcessGatewayContext: (resolveGatewayContext?: () => GatewayRequestContext | undefined) =>
-    Boolean(resolveGatewayContext?.() ?? mocks.hasContext),
 }));
 
 vi.mock("./gateway.js", () => ({ callGatewayTool: mocks.callGatewayTool }));
@@ -92,6 +90,7 @@ describe("trusted in-process Gateway session creation", () => {
         forceSyntheticClient: true,
         operatorRoleActor: { kind: "system" },
         sessionCreation: creation,
+        syntheticScopeMode: "minimum",
         syntheticScopes: ["operator.write"],
       },
     );
@@ -243,6 +242,7 @@ describe("trusted in-process Gateway session creation", () => {
         resolveGatewayContext: expect.any(Function),
         sessionCreation: creation,
         signal: controller.signal,
+        syntheticScopeMode: "minimum",
         syntheticScopes: ["operator.write"],
         timeoutMs: 2_000,
       });
@@ -378,6 +378,7 @@ describe("request-shaped in-process Gateway dispatch", () => {
         forceSyntheticClient: true,
         operatorRoleActor: { kind: "system" },
         agentToolCaller,
+        syntheticScopeMode: "minimum",
         syntheticScopes: ["operator.write"],
         expectFinal: true,
         onAccepted,
@@ -620,6 +621,10 @@ describe("built-in Gateway foreground authority", () => {
       name: "generic",
       call: () => callInProcessGatewayTool("sessions.patch", { key: "target", pinned: true }),
     },
+    {
+      name: "Cron mutation",
+      call: () => callAgentToolGatewayRequest({ method: "cron.add", params: {} }),
+    },
   ];
 
   it.each(callers)(
@@ -675,6 +680,36 @@ describe("built-in Gateway foreground authority", () => {
       expect(committed).toBe(false);
     },
   );
+
+  it("keeps a preserved write fenced by its original request signal", async () => {
+    const controller = new AbortController();
+    const entered = createDeferred();
+    const release = createDeferred();
+    const commit = vi.fn();
+    mocks.dispatch.mockImplementationOnce(async (_method, _params, options) => {
+      entered.resolve();
+      await release.promise;
+      options.sessionMutationCommitGuard?.();
+      commit();
+      return { ok: true };
+    });
+    const pending = bindAgentToolGatewayRequest({ revalidateOnCompletion: false })({
+      method: "message.action",
+      params: { action: "channel-edit" },
+      signal: controller.signal,
+    });
+    const rejected = expect(pending).rejects.toThrow("message request canceled");
+    try {
+      await entered.promise;
+      controller.abort(new Error("message request canceled"));
+      release.resolve();
+      await rejected;
+      expect(commit).not.toHaveBeenCalled();
+    } finally {
+      release.resolve();
+      await Promise.allSettled([pending]);
+    }
+  });
 
   it("lets host-owned abort cleanup settle without reopening the closed foreground caller", async () => {
     const context = {} as GatewayRequestContext;
