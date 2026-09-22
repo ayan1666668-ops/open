@@ -854,7 +854,11 @@ describe("agent activity audit projection", () => {
   it("records observed skill use between lifecycle start and terminal events", async () => {
     const inputs: AuditEventInput[] = [];
     const writer = captureAuditWriter(inputs);
-    const recorder = createAgentEventAuditRecorder({ writer, terminalSettleMs: 60_000 });
+    const recorder = createAgentEventAuditRecorder({
+      writer,
+      getConfig: () => ({}),
+      terminalSettleMs: 60_000,
+    });
     const lifecycleGeneration = "gateway-skill-use";
 
     recorder.record(agentEvent({ lifecycleGeneration, seq: 1 }));

@@ -106,6 +106,7 @@ function projectAgentEventToAudit(event: AgentEventPayload): AuditEventInput | u
   const inputs: AuditEventInput[] = [];
   const recorder = createAgentEventAuditRecorder({
     writer: captureAuditWriter(inputs),
+    getConfig: () => ({}),
     terminalSettleMs: 60_000,
   });
   recorder.record(event);
@@ -200,6 +201,7 @@ describe("hidden-run skill-selection audit attribution", () => {
     const inputs: AuditEventInput[] = [];
     const recorder = createAgentEventAuditRecorder({
       writer: captureAuditWriter(inputs),
+      getConfig: () => ({}),
       terminalSettleMs: 60_000,
     });
     const stopAudit = onAgentAuditEvent(recorder.record);
