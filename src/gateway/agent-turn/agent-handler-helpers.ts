@@ -29,7 +29,7 @@ import type { GatewayRequestHandlerOptions } from "../server-methods/types.js";
 import {
   emitGatewaySessionEndPluginHook,
   emitGatewaySessionStartPluginHook,
-} from "../session-reset-service.js";
+} from "../session-lifecycle-plugin-hooks.js";
 import { loadSessionEntry, resolveDeletedAgentIdFromSessionKey } from "../session-utils.js";
 
 export const CRON_CONTINUATION_RELEASE_RECOVERY_DELAYS_MS = [250, 1_000, 4_000, 15_000] as const;

@@ -151,6 +151,7 @@ export const sessionDeleteHandlers: GatewayRequestHandlers = {
       cleanupSessionBeforeMutation,
       emitGatewaySessionEndPluginHook,
       emitSessionUnboundLifecycleEvent,
+      readGatewaySessionEndPluginHookMessages,
     } = await loadSessionsRuntimeModule();
 
     const assertCurrent = () => {
@@ -284,6 +285,17 @@ export const sessionDeleteHandlers: GatewayRequestHandlers = {
               storePath,
               target: { canonicalKey: target.canonicalKey, storeKeys: target.storeKeys },
             };
+            // Capture the final transcript before deletion removes it; the
+            // session_end hook must not receive an empty payload on delete.
+            const sessionEndMessages = postCleanupEntry?.sessionId
+              ? await readGatewaySessionEndPluginHookMessages({
+                  agentId: target.agentId,
+                  entry: postCleanupEntry,
+                  sessionId: postCleanupEntry.sessionId,
+                  sessionKey: target.canonicalKey ?? key,
+                  storePath,
+                })
+              : undefined;
             // Catalog and other plugin-owned sessions keep model selection locked,
             // so deletion must use the exact-row owner-validated lifecycle seam.
             const result =
@@ -313,6 +325,7 @@ export const sessionDeleteHandlers: GatewayRequestHandlers = {
                 agentId: target.agentId,
                 reason: "deleted",
                 archivedTranscripts: result.archivedTranscripts,
+                messages: sessionEndMessages,
               });
               await emitSessionUnboundLifecycleEvent({
                 targetSessionKey: target.canonicalKey ?? key,

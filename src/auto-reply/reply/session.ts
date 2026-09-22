@@ -58,9 +58,10 @@ import {
 } from "../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import {
-  forgetActiveSessionForShutdown,
-  noteActiveSessionForShutdown,
-} from "../../gateway/active-sessions-shutdown-tracker.js";
+  emitGatewaySessionEndPluginHook,
+  emitGatewaySessionStartPluginHook,
+} from "../../gateway/session-lifecycle-plugin-hooks.js";
+import { readGatewaySessionEndPluginHookMessages } from "../../gateway/session-reset-transcript.js";
 import {
   captureSessionMemoryTranscript,
   type SessionMemoryTranscript,
@@ -131,12 +132,7 @@ import {
   createReplySessionEntryHandle,
   type ReplySessionEntryHandle,
 } from "./session-entry-handle.js";
-import {
-  buildSessionEndHookPayload,
-  buildSessionStartHookPayload,
-  resolveExplicitSessionEndReason,
-  resolveStaleSessionEndReason,
-} from "./session-hooks.js";
+import { resolveExplicitSessionEndReason, resolveStaleSessionEndReason } from "./session-hooks.js";
 import {
   ReplySessionInitConflictError,
   runWithSessionInitConflictRetry,
@@ -1053,6 +1049,7 @@ async function initSessionStateAttemptLocked(
   const resetBoundaryAppended = resetBoundary !== undefined;
   let previousSessionMemory: SessionMemoryTranscript | undefined;
   let previousSessionResetMessages: unknown[] | undefined;
+  let previousSessionEndMessages: unknown[] | undefined;
   const committed = await commitReplySessionInitialization({
     commitGuard: !entry
       ? () => {
@@ -1122,6 +1119,17 @@ async function initSessionStateAttemptLocked(
         // Plugin observers retain their full-message contract independently of
         // the bounded memory excerpt. This preparation runs outside the commit.
         previousSessionResetMessages = await readBeforeResetMessages({
+          agentId,
+          sessionId: currentEntry.sessionId,
+          sessionKey,
+          storePath,
+        });
+      }
+      if (previousSessionEntry && getGlobalHookRunner()?.hasHooks("session_end")) {
+        // session_end observers need the transcript before the commit rewrites
+        // the visible window (reset boundary / stale rollover). Read it through
+        // the canonical transcript owner while the old window is still current.
+        previousSessionEndMessages = await readGatewaySessionEndPluginHookMessages({
           agentId,
           sessionId: currentEntry.sessionId,
           sessionKey,
@@ -1274,50 +1282,32 @@ async function initSessionStateAttemptLocked(
 
     // If replacing an existing session, fire session_end for the old one
     if (previousSessionEntry?.sessionId) {
-      // The shutdown finalizer must not re-fire session_end for a session
-      // that is being replaced here; forget unconditionally so the next drain
-      // skips this id even when no `session_end` plugin is currently attached.
-      forgetActiveSessionForShutdown(previousSessionEntry.sessionId);
-      if (hookRunner.hasHooks("session_end")) {
-        const payload = buildSessionEndHookPayload({
-          sessionId: previousSessionEntry.sessionId,
-          sessionKey,
-          agentId,
-          reason: previousSessionEndReason,
-          sessionFile: previousSessionTranscript.sessionFile,
-          transcriptArchived: previousSessionTranscript.transcriptArchived,
-          nextSessionId: effectiveSessionId,
-        });
-        void runWithGatewayIndependentRootWorkContinuation(async () => {
-          await hookRunner.runSessionEnd(payload.event, payload.context);
-        }, "hooks:session-end").catch(() => {});
-      }
+      emitGatewaySessionEndPluginHook({
+        cfg,
+        sessionKey,
+        sessionId: previousSessionEntry.sessionId,
+        storePath,
+        agentId,
+        reason: previousSessionEndReason ?? "unknown",
+        messages: previousSessionEndMessages,
+        nextSessionId: effectiveSessionId,
+        nextSessionKey: sessionKey,
+        // The auto-reset hook already fired above with the memory snapshot.
+        skipAutoReset: true,
+      });
     }
 
     // Fire session_start for the new session
     if (effectiveSessionId) {
-      // Track the new session so the shutdown finalizer fires a typed
-      // session_end with reason="shutdown"/"restart" if the gateway stops
-      // while this session is still active (see #57790).
-      noteActiveSessionForShutdown({
+      emitGatewaySessionStartPluginHook({
         cfg,
         sessionKey,
         sessionId: effectiveSessionId,
+        resumedFrom: previousSessionEntry?.sessionId,
         storePath,
         sessionFile: sessionKey,
         agentId,
       });
-    }
-    if (hookRunner.hasHooks("session_start")) {
-      const payload = buildSessionStartHookPayload({
-        sessionId: effectiveSessionId,
-        sessionKey,
-        agentId,
-        resumedFrom: previousSessionEntry?.sessionId,
-      });
-      void runWithGatewayIndependentRootWorkContinuation(async () => {
-        await hookRunner.runSessionStart(payload.event, payload.context);
-      }, "hooks:session-start").catch(() => {});
     }
   }
 

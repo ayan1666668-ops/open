@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../../config/config.js";
 import type { SessionEntry } from "../../config/sessions.js";
+import { formatSqliteSessionFileMarker } from "../../config/sessions/legacy-sqlite-marker.js";
 import * as sessionAccessor from "../../config/sessions/session-accessor.js";
 import {
   loadSessionEntry,
@@ -466,6 +467,47 @@ describe("session hook context wiring", () => {
     expect(event?.nextSessionId).toBe("old-session");
     expect(startEvent?.sessionId).toBe("old-session");
     expectFields(startContext, { sessionId: startEvent?.sessionId });
+  });
+
+  it("delivers the SQLite transcript to session_end before a /new rollover", async () => {
+    const sessionKey = "agent:main:sqlite-end";
+    const sessionId = "sqlite-end-session";
+    const storePath = await createStorePath("sqlite-end");
+    const sessionFile = formatSqliteSessionFileMarker({ agentId: "main", sessionId, storePath });
+    await writeStore(storePath, {
+      [sessionKey]: { sessionId, sessionFile, updatedAt: Date.now() },
+    });
+    await replaceTranscriptEvents({ agentId: "main", sessionId, sessionKey, storePath }, [
+      { type: "session", version: 3, id: sessionId },
+      {
+        type: "message",
+        id: "m1",
+        parentId: sessionId,
+        message: { role: "user", content: "keep me" },
+      },
+    ]);
+
+    await initSessionState({
+      ctx: { Body: "/new", SessionKey: sessionKey },
+      cfg: { session: { store: storePath } } as OpenClawConfig,
+      commandAuthorized: true,
+    });
+
+    expect(hookRunnerMocks.runSessionEnd).toHaveBeenCalledTimes(1);
+    const [event] = requireHookCall(hookRunnerMocks.runSessionEnd, "session_end");
+    expectFields(event, {
+      sessionId,
+      sessionKey,
+      reason: "new",
+      messageCount: 1,
+      sessionFile,
+    });
+    // The final transcript is captured before the reset rewrites the window.
+    expect(event.messages).toHaveLength(1);
+    expect((event.messages as Array<{ role?: unknown; content?: unknown }>)[0]).toMatchObject({
+      role: "user",
+      content: "keep me",
+    });
   });
 
   it("keeps rollover hooks and browser cleanup root-admitted until they settle", async () => {

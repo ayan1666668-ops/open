@@ -23,7 +23,7 @@ import {
   forgetActiveSessionForShutdown,
   noteActiveSessionForShutdown,
 } from "../../gateway/active-sessions-shutdown-tracker.js";
-import { resolveStableSessionEndTranscript } from "../../gateway/session-transcript-files.fs.js";
+import { readGatewaySessionEndPluginHookTranscript } from "../../gateway/session-reset-transcript.js";
 import { logVerbose } from "../../globals.js";
 import { getGlobalHookRunner } from "../../plugins/hook-runner-global.js";
 import { runWithGatewayDetachedWorkContinuation } from "../../process/gateway-work-admission.js";
@@ -321,29 +321,25 @@ function emitCompactionSessionLifecycleHooks(params: {
             storePath: params.storePath,
           })
         : params.storePath;
-    const transcript = resolveStableSessionEndTranscript({
-      sessionId: params.previousEntry.sessionId,
-      storePath,
-      agentId,
-    });
-    const payload = buildSessionEndHookPayload({
-      sessionId: params.previousEntry.sessionId,
-      sessionKey: params.sessionKey,
-      agentId,
-      reason: "compaction",
-      sessionFile:
-        transcript.sessionFile ??
-        (agentId && storePath
-          ? formatSqliteSessionFileMarker({
-              agentId,
-              sessionId: params.previousEntry.sessionId,
-              storePath,
-            })
-          : undefined),
-      transcriptArchived: transcript.transcriptArchived,
-      nextSessionId: params.nextEntry.sessionId,
-    });
+    const sessionId = params.previousEntry.sessionId;
     void runWithGatewayDetachedWorkContinuation(async () => {
+      const transcript = await readGatewaySessionEndPluginHookTranscript({
+        agentId,
+        entry: params.previousEntry,
+        sessionId,
+        sessionKey: params.sessionKey,
+        storePath,
+      });
+      const payload = buildSessionEndHookPayload({
+        sessionId,
+        sessionKey: params.sessionKey,
+        agentId,
+        reason: "compaction",
+        messages: transcript.messages,
+        sessionFile: transcript.sessionFile,
+        transcriptArchived: transcript.transcriptArchived,
+        nextSessionId: params.nextEntry.sessionId,
+      });
       await hookRunner.runSessionEnd(payload.event, payload.context);
     }, "hooks:session-end").catch((error: unknown) => {
       logVerbose(`session_end hook failed: ${String(error)}`);

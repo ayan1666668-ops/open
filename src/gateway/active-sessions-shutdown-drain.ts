@@ -5,7 +5,7 @@ import {
   forgetActiveSessionForShutdown,
   listActiveSessionsForShutdown,
 } from "./active-sessions-shutdown-tracker.js";
-import { resolveStableSessionEndTranscript } from "./session-transcript-files.fs.js";
+import { readGatewaySessionEndPluginHookTranscript } from "./session-reset-transcript.js";
 
 export async function drainActiveSessionsForShutdown(params: {
   reason: "shutdown" | "restart";
@@ -29,17 +29,19 @@ export async function drainActiveSessionsForShutdown(params: {
         if (!hookRunner?.hasHooks("session_end")) {
           return;
         }
-        const transcript = resolveStableSessionEndTranscript({
+        const transcript = await readGatewaySessionEndPluginHookTranscript({
+          agentId: entry.agentId,
           sessionId: entry.sessionId,
+          sessionKey: entry.sessionKey,
           storePath: entry.storePath,
           sessionFile: entry.sessionFile,
-          agentId: entry.agentId,
         });
         const payload = buildSessionEndHookPayload({
           sessionId: entry.sessionId,
           sessionKey: entry.sessionKey,
           agentId: entry.agentId,
           reason: params.reason,
+          messages: transcript.messages,
           sessionFile: transcript.sessionFile,
           transcriptArchived: transcript.transcriptArchived,
         });

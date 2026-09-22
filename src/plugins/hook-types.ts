@@ -492,17 +492,18 @@ export type PluginHookBeforeAgentFinalizeResult = {
   };
 };
 
-type PluginHookBeforeCompactionEvent = {
+/** Transcript messages carried by lifecycle hooks that observe session content. */
+type PluginHookTranscriptMessages = { messages?: unknown[] };
+
+type PluginHookBeforeCompactionEvent = PluginHookTranscriptMessages & {
   messageCount: number;
   compactingCount?: number;
   tokenCount?: number;
-  messages?: unknown[];
   sessionFile?: string;
 };
 
-type PluginHookBeforeResetEvent = {
+type PluginHookBeforeResetEvent = PluginHookTranscriptMessages & {
   sessionFile?: string;
-  messages?: unknown[];
   reason?: string;
 };
 
@@ -821,7 +822,7 @@ export type PluginHookSessionEndReason =
   | "restart"
   | "unknown";
 
-export type PluginHookSessionEndEvent = {
+export type PluginHookSessionEndEvent = PluginHookTranscriptMessages & {
   sessionId: string;
   sessionKey?: string;
   messageCount: number;

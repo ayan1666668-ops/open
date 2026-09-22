@@ -30,10 +30,6 @@ import { acquireAgentRuntimeCleanupRegistries } from "../agents/prepared-model-r
 import { resolveSessionModelRef } from "../agents/session-model-ref.js";
 import { managedWorktrees } from "../agents/worktrees/service.js";
 import {
-  buildSessionEndHookPayload,
-  buildSessionStartHookPayload,
-} from "../auto-reply/reply/session-hooks.js";
-import {
   clearSessionResetRuntimeState,
   createSessionResetCleanupGuard,
   SessionResetCleanupError,
@@ -67,16 +63,10 @@ import type { SessionAcpMeta } from "../config/sessions/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { logVerbose } from "../globals.js";
 import { createInternalHookEvent, triggerInternalHook } from "../hooks/internal-hooks.js";
-import {
-  emitSessionAutoResetHook,
-  hasSessionAutoResetListeners,
-  isSessionAutoResetReason,
-} from "../hooks/session-auto-reset.js";
 import { getSessionBindingService } from "../infra/outbound/session-binding-service.js";
 import { getGlobalHookRunner } from "../plugins/hook-runner-global.js";
 import { runPluginHostCleanup } from "../plugins/host-hook-cleanup.js";
 import { getActivePluginRegistry } from "../plugins/runtime.js";
-import { runWithGatewayIndependentRootWorkContinuation } from "../process/gateway-work-admission.js";
 import {
   isIncognitoSessionKey,
   isSubagentSessionKey,
@@ -102,13 +92,13 @@ import {
 } from "../sessions/session-state-events.js";
 import { resolveGlobalSingleton } from "../shared/global-singleton.js";
 import { getOrCreatePromise } from "../shared/lazy-promise.js";
-import {
-  forgetActiveSessionForShutdown,
-  noteActiveSessionForShutdown,
-} from "./active-sessions-shutdown-tracker.js";
 import { authorizeGatewaySessionCreation, resolveCreatorSandbox } from "./operator-role-policy.js";
 import { ADMIN_SCOPE } from "./operator-scopes.js";
 import type { GatewayOperatorRoleActor } from "./server-methods/shared-types.js";
+import {
+  emitGatewaySessionEndPluginHook,
+  emitGatewaySessionStartPluginHook,
+} from "./session-lifecycle-plugin-hooks.js";
 import {
   type PreparedGatewaySessionLifecycle,
   type PrepareGatewaySessionLifecycle,
@@ -123,10 +113,6 @@ import {
 } from "./session-reset-acp.js";
 import { notifyGatewaySessionReset } from "./session-reset-notifications.js";
 import { readGatewayBeforeResetPluginHookMessages } from "./session-reset-transcript.js";
-import {
-  resolveStableSessionEndTranscript,
-  type ArchivedSessionTranscript,
-} from "./session-transcript-files.fs.js";
 import {
   loadSessionEntry,
   resolveGatewaySessionStoreTarget,
@@ -190,132 +176,6 @@ const mcpRunEndWatcherState = resolveGlobalSingleton<McpRunEndWatcherState>(
   },
 );
 const mcpRunEndWatchers = mcpRunEndWatcherState.watchers;
-
-export function emitGatewaySessionEndPluginHook(params: {
-  cfg: OpenClawConfig;
-  sessionKey: string;
-  sessionId?: string;
-  storePath: string;
-  sessionFile?: string;
-  agentId: string;
-  workspaceDir?: string;
-  reason:
-    | "new"
-    | "reset"
-    | "idle"
-    | "daily"
-    | "compaction"
-    | "deleted"
-    | "shutdown"
-    | "restart"
-    | "unknown";
-  archivedTranscripts?: ArchivedSessionTranscript[];
-  nextSessionId?: string;
-  nextSessionKey?: string;
-}): void {
-  if (!params.sessionId) {
-    return;
-  }
-  // Drop this session from the shutdown finalizer's tracked set unconditionally
-  // -- even when no plugin hooks are registered for `session_end`, the session
-  // is being closed here and must not be re-finalized by a later shutdown drain.
-  forgetActiveSessionForShutdown(params.sessionId);
-  const hookRunner = getGlobalHookRunner();
-  const shouldEmitAutoReset =
-    isSessionAutoResetReason(params.reason) && hasSessionAutoResetListeners();
-  const shouldEmitPluginHook = hookRunner?.hasHooks("session_end") === true;
-  if (!shouldEmitAutoReset && !shouldEmitPluginHook) {
-    return;
-  }
-  const transcript = resolveStableSessionEndTranscript({
-    sessionId: params.sessionId,
-    storePath: params.storePath,
-    sessionFile: params.sessionFile,
-    agentId: params.agentId,
-    archivedTranscripts: params.archivedTranscripts,
-  });
-  if (shouldEmitAutoReset) {
-    emitSessionAutoResetHook({
-      cfg: params.cfg,
-      sessionId: params.sessionId,
-      sessionKey: params.sessionKey,
-      reason: params.reason,
-      sessionFile: transcript.sessionFile,
-      transcriptArchived: transcript.transcriptArchived,
-      nextSessionId: params.nextSessionId,
-      nextSessionKey: params.nextSessionKey,
-      agentId: params.agentId,
-      workspaceDir: params.workspaceDir,
-      storePath: params.storePath,
-    });
-  }
-  if (!shouldEmitPluginHook) {
-    return;
-  }
-  if (!hookRunner) {
-    return;
-  }
-  const payload = buildSessionEndHookPayload({
-    sessionId: params.sessionId,
-    sessionKey: params.sessionKey,
-    agentId: params.agentId,
-    reason: params.reason,
-    sessionFile: transcript.sessionFile,
-    transcriptArchived: transcript.transcriptArchived,
-    nextSessionId: params.nextSessionId,
-    nextSessionKey: params.nextSessionKey,
-  });
-  void runWithGatewayIndependentRootWorkContinuation(async () => {
-    await hookRunner.runSessionEnd(payload.event, payload.context);
-  }, "hooks:session-end").catch((err: unknown) => {
-    logVerbose(`session_end hook failed: ${String(err)}`);
-  });
-}
-
-export function emitGatewaySessionStartPluginHook(params: {
-  cfg: OpenClawConfig;
-  sessionKey: string;
-  sessionId?: string;
-  resumedFrom?: string;
-  storePath?: string;
-  sessionFile?: string;
-  agentId: string;
-}): void {
-  if (!params.sessionId) {
-    return;
-  }
-  // Track the session for the shutdown finalizer even when no plugin hooks are
-  // registered locally, so a later restart still emits a typed `session_end`
-  // for sessions that opened while a `session_end` plugin was attached. The
-  // tracker is keyed by `sessionId`, so a session that is subsequently closed
-  // via reset / delete / compaction is forgotten before the shutdown drain
-  // ever runs (see #57790).
-  if (params.storePath) {
-    noteActiveSessionForShutdown({
-      cfg: params.cfg,
-      sessionKey: params.sessionKey,
-      sessionId: params.sessionId,
-      storePath: params.storePath,
-      sessionFile: params.sessionFile,
-      agentId: params.agentId,
-    });
-  }
-  const hookRunner = getGlobalHookRunner();
-  if (!hookRunner?.hasHooks("session_start")) {
-    return;
-  }
-  const payload = buildSessionStartHookPayload({
-    sessionId: params.sessionId,
-    sessionKey: params.sessionKey,
-    agentId: params.agentId,
-    resumedFrom: params.resumedFrom,
-  });
-  void runWithGatewayIndependentRootWorkContinuation(async () => {
-    await hookRunner.runSessionStart(payload.event, payload.context);
-  }, "hooks:session-start").catch((err: unknown) => {
-    logVerbose(`session_start hook failed: ${String(err)}`);
-  });
-}
 
 export async function emitSessionUnboundLifecycleEvent(params: {
   targetSessionKey: string;
@@ -1181,15 +1041,19 @@ export async function performGatewaySessionReset(params: {
           reason: "reset",
         });
       }
-      const beforeResetMessages = getGlobalHookRunner()?.hasHooks("before_reset")
-        ? await readGatewayBeforeResetPluginHookMessages({
-            agentId: resolveLifecycleAgentId(cfg, target.agentId ?? requestedAgentId),
-            entry,
-            sessionId: entry?.sessionId,
-            sessionKey: target.canonicalKey ?? params.key,
-            storePath,
-          })
-        : undefined;
+      // Capture before the reset rewrites the visible transcript window: both
+      // before_reset and session_end hooks must see the pre-reset messages.
+      const resetHookRunner = getGlobalHookRunner();
+      const resetHookMessages =
+        resetHookRunner?.hasHooks("before_reset") || resetHookRunner?.hasHooks("session_end")
+          ? await readGatewayBeforeResetPluginHookMessages({
+              agentId: resolveLifecycleAgentId(cfg, target.agentId ?? requestedAgentId),
+              entry,
+              sessionId: entry?.sessionId,
+              sessionKey: target.canonicalKey ?? params.key,
+              storePath,
+            })
+          : undefined;
 
       const { prepareSubagentSessionCleanupRevocation } =
         await import("../agents/subagents/registry/subagent-registry.js");
@@ -1222,7 +1086,7 @@ export async function performGatewaySessionReset(params: {
         await emitGatewayBeforeResetPluginHook({
           cfg,
           key: params.key,
-          messages: beforeResetMessages,
+          messages: resetHookMessages,
           target,
           storePath,
           entry,
@@ -1263,6 +1127,7 @@ export async function performGatewaySessionReset(params: {
           agentId: target.agentId,
           reason: params.reason,
           archivedTranscripts: [],
+          messages: resetHookMessages,
         });
         await emitSessionUnboundLifecycleEvent({
           targetSessionKey: target.canonicalKey,
@@ -1515,7 +1380,7 @@ export async function performGatewaySessionReset(params: {
               await emitGatewayBeforeResetPluginHook({
                 cfg,
                 key: params.key,
-                messages: beforeResetMessages,
+                messages: resetHookMessages,
                 target,
                 storePath,
                 entry: mutation.previousEntry,
@@ -1536,6 +1401,7 @@ export async function performGatewaySessionReset(params: {
                 reason: params.reason,
                 archivedTranscripts: [],
                 nextSessionId: mutation.nextEntry.sessionId,
+                messages: resetHookMessages,
               });
               emitGatewaySessionStartPluginHook({
                 cfg,

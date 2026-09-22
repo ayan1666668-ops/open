@@ -19,6 +19,9 @@ vi.mock("../../commands/agent.js", () => ({
 
 vi.mock("../session-reset-service.js", () => ({
   performGatewaySessionReset: performGatewaySessionResetMock,
+}));
+
+vi.mock("../session-lifecycle-plugin-hooks.js", () => ({
   emitGatewaySessionEndPluginHook: vi.fn(),
   emitGatewaySessionStartPluginHook: vi.fn(),
 }));
