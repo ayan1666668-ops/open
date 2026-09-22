@@ -50,6 +50,70 @@ describe("personal publication definitive outcomes", () => {
       requestId,
     );
   it.each([
+    { boundary: "connection closes", readback: false },
+    { boundary: "permission ends", readback: false },
+    { boundary: "permission ends during readback", readback: true },
+  ] as const)(
+    "retains an accepted open PR response after the requesting $boundary",
+    async ({ boundary, readback }) => {
+      const workspace = await createRealPublicationWorkspace();
+      const transport = mocks.runCommand.getMockImplementation()!;
+      let created = false;
+      mocks.runCommand.mockImplementation(async (argv: string[], options?: { input?: string }) => {
+        let response = await transport(argv, options);
+        const creating = argv.includes("POST") && argv.includes("repos/openclaw/openclaw/pulls");
+        if (creating) {
+          created = true;
+          if (readback) {
+            return commandResult("", 1);
+          }
+        }
+        if (readback && created && argv.includes("state=all")) {
+          response = commandResult(
+            JSON.stringify([
+              {
+                url: "https://github.com/openclaw/openclaw/pull/125200",
+                userId: account.accountId,
+                state: "open",
+                body: "",
+                headSha: await workspace.git("rev-parse", "HEAD"),
+                headRef: BRANCH,
+                baseRef: "main",
+              },
+            ]),
+          );
+        }
+        if (creating || (readback && created && argv.includes("state=all"))) {
+          if (boundary === "connection closes") {
+            fixture.runtime.live = false;
+          } else {
+            fixture.client.connect.scopes = ["operator.read"];
+          }
+        }
+        return response;
+      });
+
+      const published = await fixture.coordinator.requestPersonalForSession(
+        request(),
+        fixture.action,
+      );
+
+      expect(published).toMatchObject({
+        status: "published",
+        url: "https://github.com/openclaw/openclaw/pull/125200",
+      });
+      expect(
+        readPersonalGitHubPublication(fixture.owner, { requestId: published.requestId }),
+      ).toMatchObject({
+        status: "published",
+        pull_request_url: "https://github.com/openclaw/openclaw/pull/125200",
+      });
+      await fixture.coordinator.resumeSessionRequests();
+      expect(workspace.effects).toEqual(["push", "pull_request"]);
+    },
+  );
+
+  it.each([
     "closed",
     "closed-before-unavailable",
     "closed-with-foreign",
