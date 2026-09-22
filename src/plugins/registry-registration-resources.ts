@@ -36,7 +36,8 @@ export class PluginRegistrationResourceSource {
           const last = --this.#claims === 0;
           this.#closed = last;
           // Physical custody can outlive the releasing caller's captured work scope.
-          const pending = this.#cleanupWork.track(async () => {
+          const cleanup = this.#cleanupWork.track(async () => {
+            // Cache the release promise before cleanup can synchronously reenter it.
             await Promise.resolve();
             const entries = [...this.#registrations]
               // Construction owns rollback failures; the last claim owns successful entries.
@@ -87,7 +88,7 @@ export class PluginRegistrationResourceSource {
           });
           release = (async () => {
             try {
-              return await pending;
+              return await cleanup;
             } finally {
               if (last) {
                 await this.#cleanupWork.run(() => this.#cleanupWork.drain());

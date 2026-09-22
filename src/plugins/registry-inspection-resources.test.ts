@@ -148,11 +148,11 @@ describe("owned plugin inspections", () => {
           capturedInstanceDisposal: true,
         },
       ] as const
-    ).flatMap((fixture) =>
+    ).flatMap(({ capturedDisposal, disposalFailure, capturedInstanceDisposal }) =>
       [false, true].map((closedReleaseScope) => ({
-        capturedDisposal: fixture.capturedDisposal,
-        disposalFailure: fixture.disposalFailure,
-        capturedInstanceDisposal: fixture.capturedInstanceDisposal,
+        capturedDisposal,
+        disposalFailure,
+        capturedInstanceDisposal,
         closedReleaseScope,
       })),
     ),
