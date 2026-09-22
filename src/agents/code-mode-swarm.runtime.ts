@@ -11,8 +11,11 @@ import type { AgentToolUpdateCallback } from "./runtime/index.js";
 import {
   getSwarmRunByLaunchReplayKey,
   initSubagentRegistry,
+  listSwarmRunsForGroup,
 } from "./subagents/registry/subagent-registry.js";
 import type { SubagentRunRecord } from "./subagents/registry/subagent-registry.types.js";
+import { prepareDynamicsSpawn } from "./subagents/swarm/dynamics/dynamics-spawn.js";
+import { diagnoseHostCollectorPopulation } from "./subagents/swarm/dynamics/population-runtime.js";
 import {
   SWARM_CODE_MODE_IDEMPOTENCY_KEY,
   SWARM_CODE_MODE_REQUEST_FINGERPRINT,
@@ -31,6 +34,47 @@ import {
 } from "./tools/agents-wait-tool.js";
 import { ToolInputError } from "./tools/common.js";
 import { resolveInternalSessionKey, resolveMainSessionAlias } from "./tools/sessions-resolution.js";
+
+const dynamicsGroups = new Set<string>();
+const dynamicsAdvisoryByGroup = new Map<string, string>();
+
+type DynamicsGroupLifetime = {
+  disposers?: Set<() => void>;
+  abortSignal?: AbortSignal;
+  dispose: () => void;
+};
+
+const dynamicsGroupLifetimes = new Map<string, DynamicsGroupLifetime>();
+
+function releaseDynamicsGroup(groupId: string): void {
+  dynamicsGroups.delete(groupId);
+  dynamicsAdvisoryByGroup.delete(groupId);
+  const lifetime = dynamicsGroupLifetimes.get(groupId);
+  if (!lifetime) {
+    return;
+  }
+  dynamicsGroupLifetimes.delete(groupId);
+  lifetime.disposers?.delete(lifetime.dispose);
+  lifetime.abortSignal?.removeEventListener("abort", lifetime.dispose);
+}
+
+function retainDynamicsGroup(groupId: string, ctx: ToolSearchToolContext): void {
+  dynamicsGroups.add(groupId);
+  if (dynamicsGroupLifetimes.has(groupId)) {
+    return;
+  }
+  const disposers = ctx.catalogRef
+    ? (ctx.catalogRef.onDispose ??= new Set<() => void>())
+    : undefined;
+  const abortSignal = ctx.abortSignal;
+  const dispose = () => releaseDynamicsGroup(groupId);
+  dynamicsGroupLifetimes.set(groupId, { disposers, abortSignal, dispose });
+  disposers?.add(dispose);
+  abortSignal?.addEventListener("abort", dispose, { once: true });
+  if (abortSignal?.aborted) {
+    dispose();
+  }
+}
 
 function resolveCodeModeRequesterSessionKey(ctx: ToolSearchToolContext): string {
   const sessionKey = ctx.sessionKey?.trim();
@@ -74,7 +118,7 @@ function readOptionalStringOption(
 }
 
 async function runAgentSpawnBridge(params: {
-  runtime: ToolSearchRuntime;
+  runtime: Pick<ToolSearchRuntime, "callExactId">;
   parentToolCallId: string;
   request: PendingBridgeRequest;
   codeModeRunId: string;
@@ -124,10 +168,17 @@ async function runAgentSpawnBridge(params: {
     runAgentToolSourceExecutionGuard(spawnTool);
   };
   assertCurrent();
+  const groupId = resolveCodeModeSwarmGroupId(params.ctx);
+  const dynamicsEnabled = options.dynamics !== undefined;
   const spawnInput: Record<PropertyKey, unknown> = {
-    task: prompt.trim(),
+    ...prepareDynamicsSpawn({
+      task: prompt.trim(),
+      dynamics: options.dynamics,
+      sourceReplicaId: groupId,
+      targetReplicaId: `${params.codeModeRunId}:${params.request.id}`,
+    }),
     collect: true,
-    groupId: resolveCodeModeSwarmGroupId(params.ctx),
+    groupId,
     ...(label ? { label } : {}),
     ...(model ? { model } : {}),
     ...(thinking ? { thinking } : {}),
@@ -164,6 +215,9 @@ async function runAgentSpawnBridge(params: {
       }
     }
     assertCurrent();
+    if (dynamicsEnabled) {
+      retainDynamicsGroup(groupId, params.ctx);
+    }
     return replayedSpawnResult(existing);
   }
   Object.defineProperty(spawnInput, SWARM_CODE_MODE_IDEMPOTENCY_KEY, {
@@ -189,6 +243,9 @@ async function runAgentSpawnBridge(params: {
         : "collector spawn was not accepted";
     throw new ToolInputError(`agents.run spawn failed: ${detail}`);
   }
+  if (dynamicsEnabled) {
+    retainDynamicsGroup(groupId, params.ctx);
+  }
   return value;
 }
 
@@ -206,13 +263,51 @@ async function runAgentWaitBridge(params: {
     throw new ToolInputError("agents.run wait requires session identity.");
   }
   const requesterSessionKey = resolveCodeModeRequesterSessionKey(params.ctx);
-  return await waitForCollectorCompletion({
+  const groupId = resolveCodeModeSwarmGroupId(params.ctx);
+  const completion = await waitForCollectorCompletion({
     runId: runId.trim(),
     currentSessionKeys: new Set([rawSessionKey, requesterSessionKey]),
     currentAgentId: params.ctx.agentId,
     config: params.ctx.runtimeConfig ?? params.ctx.config,
     signal: params.signal,
   });
+  if (dynamicsGroups.has(groupId)) {
+    const records = listSwarmRunsForGroup(groupId, requesterSessionKey, params.ctx.agentId);
+    const { decision, diagnostic } = diagnoseHostCollectorPopulation({
+      groupId,
+      maxConcurrent: resolveSwarmConfig(
+        params.ctx.runtimeConfig ?? params.ctx.config,
+        params.ctx.agentId,
+      ).maxConcurrent,
+      records: records.map((entry) => ({
+        runId: entry.swarmRunId ?? entry.runId,
+        terminalStatus: entry.collectorCompletion?.status ?? null,
+      })),
+    });
+    const actions = decision.actions.filter((action) => action.kind !== "hold");
+    if (actions.length > 0) {
+      const unresolved =
+        diagnostic.unresolved.length > 0 ? ` unresolved=${diagnostic.unresolved.join(",")}` : "";
+      const actionLabels = actions.map((action) =>
+        action.kind === "deepen" ? `deepen(thinking=${action.suggestedThinking})` : action.kind,
+      );
+      const advisory = `Dynamics advisory: ${actionLabels.join(", ")} — ${decision.rationale.join(" ")}${unresolved}`;
+      if (dynamicsAdvisoryByGroup.get(groupId) !== advisory) {
+        emitSessionLifecycleEvent({
+          sessionKey: rawSessionKey,
+          reason: "swarm-note",
+          swarmGroupId: groupId,
+          kind: "log",
+          text: advisory,
+        });
+        dynamicsAdvisoryByGroup.set(groupId, advisory);
+      }
+    }
+    if (records.length > 0 && records.every((entry) => entry.collectorCompletion)) {
+      releaseDynamicsGroup(groupId);
+    }
+  }
+  return completion;
 }
 
 function runSwarmNoteBridge(params: {
