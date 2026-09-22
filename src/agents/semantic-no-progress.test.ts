@@ -209,6 +209,58 @@ describe("semantic no-progress shadow observer", () => {
     await observer.close();
   });
 
+  it.each([
+    [
+      "a typed unavailable result",
+      vi.fn(async () => ({ status: "unavailable" as const, reason: "transport" as const })),
+    ],
+    [
+      "an unexpected provider exception",
+      vi.fn(async () => {
+        throw new Error("provider exploded");
+      }),
+    ],
+  ])("records %s as a non-authoritative uncertain judgment", async (_label, evaluate) => {
+    const observer = createSemanticNoProgressObserver({
+      signal: new AbortController().signal,
+      assertActive: vi.fn(),
+      runtime: { evaluate },
+    });
+
+    await observer.observeOutcome({ ...trajectoryEntry(1), evidence });
+
+    expect(observer.snapshot()).toMatchObject({
+      latestJudgment: { verdict: "uncertain", evidence },
+      metrics: {
+        unavailableDecisions: 1,
+        verdicts: { uncertain: 1 },
+      },
+    });
+    await observer.close();
+  });
+
+  it("propagates admitted-owner loss instead of converting it to uncertainty", async () => {
+    const ownerLost = new Error("admitted owner lost");
+    let assertions = 0;
+    const observer = createSemanticNoProgressObserver({
+      signal: new AbortController().signal,
+      assertActive: () => {
+        assertions += 1;
+        if (assertions >= 4) {
+          throw ownerLost;
+        }
+      },
+      runtime: outcome("stalled"),
+    });
+
+    await expect(observer.observeOutcome({ ...trajectoryEntry(1), evidence })).rejects.toBe(
+      ownerLost,
+    );
+    expect(observer.snapshot().latestJudgment).toBeUndefined();
+    expect(observer.snapshot().metrics.verdicts.uncertain).toBe(0);
+    await observer.close();
+  });
+
   it("rechecks the admitted owner after runtime resolution before provider work", async () => {
     const assertActive = vi.fn();
     const runtime = outcome("progress");
