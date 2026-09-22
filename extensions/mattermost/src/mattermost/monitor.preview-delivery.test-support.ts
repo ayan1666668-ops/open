@@ -248,7 +248,7 @@ export function registerMattermostPreviewDeliveryTests<Socket extends PreviewSoc
           expect(secondPlanRetractionDeletes).toBe(2);
         }
       }
-      const updates = draftStream.update.mock.calls.map((call) => String(call[0]));
+      const updates = draftStream.update.mock.calls.map((call) => call[0]);
       if (toolProgress) {
         expect(updates.at(-1)).toContain("Read");
         expect(updates.at(-1)).toContain("done");

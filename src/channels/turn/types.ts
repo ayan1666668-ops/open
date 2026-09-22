@@ -171,11 +171,7 @@ type ChannelProviderOwnedDeliveryInfo = ChannelDeliveryInfo & {
   onPlatformSendDispatch: () => Promise<void>;
 };
 
-export type {
-  ChannelDeliveryIntent,
-  ChannelDeliveryOutcome,
-  ChannelDeliveryResult,
-} from "./delivery-outcome.js";
+export type { ChannelDeliveryOutcome, ChannelDeliveryResult } from "./delivery-outcome.js";
 
 /** Durable outbound delivery options available to channel turn delivery adapters. */
 type ChannelTurnDurableDeliveryOptions = Pick<

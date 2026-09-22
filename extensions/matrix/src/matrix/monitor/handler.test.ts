@@ -3193,7 +3193,7 @@ describe("matrix monitor handler draft streaming", () => {
     const { dispatch, redactEventMock } = createStreamingHarness({ blockStreamingEnabled: true });
     const { deliver, opts, finish } = await dispatch();
 
-    opts.onPartialReply?.({ text: "Single block" });
+    await opts.onPartialReply?.({ text: "Single block" });
     await waitForMatrixState(() => {
       expect(sendSingleTextMessageMatrixMock).toHaveBeenCalledTimes(1);
     });
@@ -3224,7 +3224,7 @@ describe("matrix monitor handler draft streaming", () => {
     const { dispatch } = createStreamingHarness({ streaming: "quiet" });
     const { deliver, opts, finish } = await dispatch();
 
-    opts.onPartialReply?.({ text: "Raw preview" });
+    await opts.onPartialReply?.({ text: "Raw preview" });
     await waitForMatrixState(() => {
       expect(sendSingleTextMessageMatrixMock).toHaveBeenCalledTimes(1);
     });
@@ -3248,7 +3248,7 @@ describe("matrix monitor handler draft streaming", () => {
     const { dispatch } = createStreamingHarness({ streaming: "partial" });
     const { deliver, opts, finish } = await dispatch();
 
-    opts.onPartialReply?.({ text: "Raw caption" });
+    await opts.onPartialReply?.({ text: "Raw caption" });
     await waitForMatrixState(() => {
       expect(sendSingleTextMessageMatrixMock).toHaveBeenCalledTimes(1);
     });
@@ -3272,7 +3272,7 @@ describe("matrix monitor handler draft streaming", () => {
     const { dispatch } = createStreamingHarness({ streaming: "partial" });
     const { deliver, opts, finish } = await dispatch();
 
-    opts.onPartialReply?.({ text: "Visible preview" });
+    await opts.onPartialReply?.({ text: "Visible preview" });
     await waitForMatrixState(() => {
       expect(sendSingleTextMessageMatrixMock).toHaveBeenCalledTimes(1);
     });
@@ -3393,7 +3393,7 @@ describe("matrix monitor handler draft streaming", () => {
         expect(lastCallArg(sendSingleTextMessageMatrixMock, 1, "Matrix resumed plan body")).toBe(
           "`▸ Resume`",
         );
-        opts.onAssistantMessageStart?.();
+        await opts.onAssistantMessageStart?.();
         await opts.onItemEvent?.({
           itemId: "card-rejected",
           kind: "tool",
@@ -3401,7 +3401,7 @@ describe("matrix monitor handler draft streaming", () => {
           phase: "end",
           status: "blocked",
         });
-        opts.onAssistantMessageStart?.();
+        await opts.onAssistantMessageStart?.();
         await opts.onItemEvent?.(
           projectAgentToolActivity({ toolCallId: "exec-1", name: "exec", phase: "start" }),
         );
@@ -3411,7 +3411,7 @@ describe("matrix monitor handler draft streaming", () => {
         expect(withActivity).toContain("▸ Resume");
         expect(withActivity).toContain("blocked");
         expect(withActivity).toContain("Exec");
-        opts.onAssistantMessageStart?.();
+        await opts.onAssistantMessageStart?.();
         await opts.onPlanUpdate?.({ phase: "update", steps: [] });
         await vi.advanceTimersByTimeAsync(1_000);
         const afterClear = lastCallArg(
@@ -3646,7 +3646,7 @@ describe("matrix monitor handler draft streaming", () => {
     });
     const { deliver, opts, finish } = await dispatch();
 
-    opts.onPartialReply?.({ text: "Single block" });
+    await opts.onPartialReply?.({ text: "Single block" });
     await waitForMatrixState(() => {
       expect(sendSingleTextMessageMatrixMock).toHaveBeenCalledTimes(1);
     });
@@ -3685,7 +3685,7 @@ describe("matrix monitor handler draft streaming", () => {
     });
     const { deliver, opts, finish } = await dispatch();
 
-    opts.onPartialReply?.({ text: "hello @alice:example.org" });
+    await opts.onPartialReply?.({ text: "hello @alice:example.org" });
     await waitForMatrixState(() => {
       expect(sendSingleTextMessageMatrixMock).toHaveBeenCalledTimes(1);
     });
@@ -3711,7 +3711,7 @@ describe("matrix monitor handler draft streaming", () => {
     });
     const { deliver, opts, finish } = await dispatch();
 
-    opts.onPartialReply?.({ text: "Spoken answer" });
+    await opts.onPartialReply?.({ text: "Spoken answer" });
     await waitForMatrixState(() => {
       expect(sendSingleTextMessageMatrixMock).toHaveBeenCalledTimes(1);
     });
@@ -3758,7 +3758,7 @@ describe("matrix monitor handler draft streaming", () => {
     });
     const { deliver, opts, finish } = await dispatch();
 
-    opts.onPartialReply?.({ text: "Spoken answer" });
+    await opts.onPartialReply?.({ text: "Spoken answer" });
     await waitForMatrixState(() => {
       expect(sendSingleTextMessageMatrixMock).toHaveBeenCalledTimes(1);
     });
@@ -3793,7 +3793,7 @@ describe("matrix monitor handler draft streaming", () => {
     });
     const { deliver, opts, finish } = await dispatch();
 
-    opts.onPartialReply?.({ text: "Spoken answer" });
+    await opts.onPartialReply?.({ text: "Spoken answer" });
     await waitForMatrixState(() => {
       expect(sendSingleTextMessageMatrixMock).toHaveBeenCalledTimes(1);
     });
@@ -3922,7 +3922,7 @@ describe("matrix monitor handler draft streaming", () => {
     });
     const { deliver, opts, finish } = await dispatch();
 
-    opts.onPartialReply?.({ text: "Single" });
+    await opts.onPartialReply?.({ text: "Single" });
     await waitForMatrixState(() => {
       expect(sendSingleTextMessageMatrixMock).toHaveBeenCalledTimes(1);
     });
@@ -3940,7 +3940,7 @@ describe("matrix monitor handler draft streaming", () => {
     const { dispatch, redactEventMock } = createStreamingHarness({ blockStreamingEnabled: true });
     const { deliver, opts, finish } = await dispatch();
 
-    opts.onPartialReply?.({ text: "Block one" });
+    await opts.onPartialReply?.({ text: "Block one" });
     await waitForMatrixState(() => {
       expect(sendSingleTextMessageMatrixMock).toHaveBeenCalledTimes(1);
     });
@@ -3952,12 +3952,12 @@ describe("matrix monitor handler draft streaming", () => {
     expect(deliverMatrixRepliesMock).not.toHaveBeenCalled();
     expect(redactEventMock).not.toHaveBeenCalled();
 
-    opts.onAssistantMessageStart?.();
+    await opts.onAssistantMessageStart?.();
     sendSingleTextMessageMatrixMock.mockResolvedValueOnce({
       messageId: "$draft2",
       roomId: "!room",
     });
-    opts.onPartialReply?.({ text: "Block two" });
+    await opts.onPartialReply?.({ text: "Block two" });
     await waitForMatrixState(() => {
       expect(sendSingleTextMessageMatrixMock).toHaveBeenCalledTimes(2);
     });
@@ -3974,7 +3974,7 @@ describe("matrix monitor handler draft streaming", () => {
     const { dispatch, redactEventMock } = createStreamingHarness({ blockStreamingEnabled: true });
     const { deliver, opts, finish } = await dispatch();
 
-    opts.onPartialReply?.({ text: "Alpha" });
+    await opts.onPartialReply?.({ text: "Alpha" });
     await waitForMatrixState(() => {
       expect(sendSingleTextMessageMatrixMock).toHaveBeenCalledTimes(1);
     });
@@ -3985,7 +3985,7 @@ describe("matrix monitor handler draft streaming", () => {
       messageId: "$draft2",
       roomId: "!room",
     });
-    opts.onPartialReply?.({ text: "AlphaBeta" });
+    await opts.onPartialReply?.({ text: "AlphaBeta" });
 
     // The next block must not update the previous block's draft while the
     // prior block delivery is still draining.
@@ -4007,7 +4007,7 @@ describe("matrix monitor handler draft streaming", () => {
     const { dispatch, redactEventMock } = createStreamingHarness({ blockStreamingEnabled: true });
     const { deliver, opts, finish } = await dispatch();
 
-    opts.onPartialReply?.({ text: "Alpha" });
+    await opts.onPartialReply?.({ text: "Alpha" });
     await waitForMatrixState(
       () => {
         expect(sendSingleTextMessageMatrixMock).toHaveBeenCalledTimes(1);
@@ -4015,7 +4015,7 @@ describe("matrix monitor handler draft streaming", () => {
       { interval: 1 },
     );
 
-    opts.onPartialReply?.({ text: "AlphaBeta" });
+    await opts.onPartialReply?.({ text: "AlphaBeta" });
     await waitForMatrixState(
       () => {
         expectMatrixEdit("!room:example.org", "$draft1", "AlphaBeta");
@@ -4050,7 +4050,7 @@ describe("matrix monitor handler draft streaming", () => {
     const { dispatch } = createStreamingHarness();
     const { deliver, opts, finish } = await dispatch();
 
-    opts.onPartialReply?.({ text: "Hello" });
+    await opts.onPartialReply?.({ text: "Hello" });
     await waitForMatrixState(() => {
       expect(sendSingleTextMessageMatrixMock).toHaveBeenCalledTimes(1);
     });
@@ -4069,7 +4069,7 @@ describe("matrix monitor handler draft streaming", () => {
       const { dispatch } = createStreamingHarness();
       const { deliver, opts, finish } = await dispatch();
 
-      opts.onPartialReply?.({ text: "Hello" });
+      await opts.onPartialReply?.({ text: "Hello" });
       await waitForMatrixState(() => {
         expect(sendSingleTextMessageMatrixMock).toHaveBeenCalledTimes(1);
       });
@@ -4079,7 +4079,7 @@ describe("matrix monitor handler draft streaming", () => {
 
       // Further partial updates should NOT create new messages.
       sendSingleTextMessageMatrixMock.mockClear();
-      opts.onPartialReply?.({ text: "Ghost" });
+      await opts.onPartialReply?.({ text: "Ghost" });
 
       await vi.advanceTimersByTimeAsync(50);
       expect(sendSingleTextMessageMatrixMock).not.toHaveBeenCalled();
@@ -4095,7 +4095,7 @@ describe("matrix monitor handler draft streaming", () => {
       const { dispatch } = createStreamingHarness();
       const { deliver, opts, finish } = await dispatch();
 
-      opts.onPartialReply?.({ text: "Primary answer" });
+      await opts.onPartialReply?.({ text: "Primary answer" });
       await waitForMatrixState(() => {
         expect(sendSingleTextMessageMatrixMock).toHaveBeenCalledTimes(1);
       });
@@ -4106,7 +4106,7 @@ describe("matrix monitor handler draft streaming", () => {
       sendSingleTextMessageMatrixMock.mockResolvedValue({ messageId: "$draft2", roomId: "!room" });
 
       await opts.onQueuedFollowupAdmitted?.();
-      opts.onPartialReply?.({ text: "Queued followup answer" });
+      await opts.onPartialReply?.({ text: "Queued followup answer" });
       await vi.advanceTimersByTimeAsync(50);
 
       expect(sendSingleTextMessageMatrixMock).toHaveBeenCalledTimes(1);
@@ -4163,7 +4163,7 @@ describe("matrix monitor handler draft streaming", () => {
     const { deliver, opts, finish } = await dispatch();
 
     // Block 1: stream and deliver.
-    opts.onPartialReply?.({ text: "Block one" });
+    await opts.onPartialReply?.({ text: "Block one" });
     await waitForMatrixState(() => {
       expect(sendSingleTextMessageMatrixMock).toHaveBeenCalledTimes(1);
     });
@@ -4173,13 +4173,13 @@ describe("matrix monitor handler draft streaming", () => {
     await deliver({ text: "tool result" }, { kind: "tool" });
 
     // New assistant message starts — payload.text will reset upstream.
-    opts.onAssistantMessageStart?.();
+    await opts.onAssistantMessageStart?.();
 
     // Block 2: partial text starts fresh (no stale offset).
     sendSingleTextMessageMatrixMock.mockClear();
     sendSingleTextMessageMatrixMock.mockResolvedValue({ messageId: "$draft2", roomId: "!room" });
 
-    opts.onPartialReply?.({ text: "Block two" });
+    await opts.onPartialReply?.({ text: "Block two" });
     await waitForMatrixState(() => {
       expect(sendSingleTextMessageMatrixMock).toHaveBeenCalledTimes(1);
     });
@@ -4194,14 +4194,14 @@ describe("matrix monitor handler draft streaming", () => {
     const { dispatch, redactEventMock } = createStreamingHarness({ blockStreamingEnabled: true });
     const { deliver, opts, finish } = await dispatch();
 
-    opts.onPartialReply?.({ text: "Alpha" });
+    await opts.onPartialReply?.({ text: "Alpha" });
     await waitForMatrixState(() => {
       expect(sendSingleTextMessageMatrixMock).toHaveBeenCalledTimes(1);
     });
 
     await opts.onBlockReplyQueued?.({ text: "Alpha" });
-    opts.onAssistantMessageStart?.();
-    opts.onPartialReply?.({ text: "Beta" });
+    await opts.onAssistantMessageStart?.();
+    await opts.onPartialReply?.({ text: "Beta" });
 
     await waitForMatrixState(() => {
       expectMatrixEdit("!room:example.org", "$draft1", "Beta");
@@ -4234,15 +4234,15 @@ describe("matrix monitor handler draft streaming", () => {
     const { dispatch, redactEventMock } = createStreamingHarness({ blockStreamingEnabled: true });
     const { deliver, opts, finish } = await dispatch();
 
-    opts.onAssistantMessageStart?.();
-    opts.onPartialReply?.({ text: "Alpha" });
+    await opts.onAssistantMessageStart?.();
+    await opts.onPartialReply?.({ text: "Alpha" });
     await waitForMatrixState(() => {
       expect(sendSingleTextMessageMatrixMock).toHaveBeenCalledTimes(1);
     });
 
-    opts.onAssistantMessageStart?.();
+    await opts.onAssistantMessageStart?.();
     await opts.onBlockReplyQueued?.({ text: "Alpha" }, { assistantMessageIndex: 1 });
-    opts.onPartialReply?.({ text: "Beta" });
+    await opts.onPartialReply?.({ text: "Beta" });
 
     await waitForMatrixState(() => {
       expectMatrixEdit("!room:example.org", "$draft1", "Beta");
@@ -4275,16 +4275,16 @@ describe("matrix monitor handler draft streaming", () => {
     const { dispatch } = createStreamingHarness({ blockStreamingEnabled: true });
     const { deliver, opts, finish } = await dispatch();
 
-    opts.onPartialReply?.({ text: "Alpha" });
+    await opts.onPartialReply?.({ text: "Alpha" });
     await waitForMatrixState(() => {
       expect(sendSingleTextMessageMatrixMock).toHaveBeenCalledTimes(1);
     });
     expect(singleTextMessageBody()).toBe("Alpha");
 
     await opts.onBlockReplyQueued?.({ text: "Alpha" });
-    opts.onPartialReply?.({ text: "AlphaBeta" });
+    await opts.onPartialReply?.({ text: "AlphaBeta" });
     await opts.onBlockReplyQueued?.({ text: "Beta" });
-    opts.onPartialReply?.({ text: "AlphaBetaGamma" });
+    await opts.onPartialReply?.({ text: "AlphaBetaGamma" });
 
     expect(sendSingleTextMessageMatrixMock).toHaveBeenCalledTimes(1);
     expect(editMessageMatrixMock).not.toHaveBeenCalled();
@@ -4348,7 +4348,7 @@ describe("matrix monitor handler draft streaming", () => {
         dispatchInboundMessage: vi.fn(async (args: { replyOptions?: GetReplyOptions }) => {
           capturedReplyOpts = args?.replyOptions;
           // Simulate streaming then model error.
-          capturedReplyOpts?.onPartialReply?.({ text: "partial" });
+          await capturedReplyOpts?.onPartialReply?.({ text: "partial" });
           throw new Error("model timeout");
         }) as never,
       });
@@ -4398,7 +4398,7 @@ describe("matrix monitor handler draft streaming", () => {
       }),
       dispatchInboundMessage: vi.fn(async (args: { replyOptions?: GetReplyOptions }) => {
         capturedReplyOpts = args?.replyOptions;
-        capturedReplyOpts?.onPartialReply?.({ text: "partial" });
+        await capturedReplyOpts?.onPartialReply?.({ text: "partial" });
         await waitForMatrixState(() => {
           expect(sendSingleTextMessageMatrixMock).toHaveBeenCalledTimes(1);
         });
@@ -4421,7 +4421,7 @@ describe("matrix monitor handler draft streaming", () => {
     const { dispatch, redactEventMock } = createStreamingHarness({ streaming: "partial" });
     const { deliver, opts, finish } = await dispatch();
 
-    opts.onPartialReply?.({ text: "Partial reply" });
+    await opts.onPartialReply?.({ text: "Partial reply" });
     await waitForMatrixState(() => {
       expect(sendSingleTextMessageMatrixMock).toHaveBeenCalledTimes(1);
     });
@@ -4445,7 +4445,7 @@ describe("matrix monitor handler draft streaming", () => {
     const { dispatch } = createStreamingHarness();
     const { deliver, opts, finish } = await dispatch();
 
-    opts.onPartialReply?.({ text: "Streaming" });
+    await opts.onPartialReply?.({ text: "Streaming" });
     await waitForMatrixState(() => {
       expect(sendSingleTextMessageMatrixMock).toHaveBeenCalledTimes(1);
     });
@@ -4486,7 +4486,7 @@ describe("matrix monitor handler draft streaming", () => {
       const { deliver, opts, finish } = await dispatch();
 
       // Simulate streaming: partial reply creates draft message.
-      opts.onPartialReply?.({ text: "Partial reply" });
+      await opts.onPartialReply?.({ text: "Partial reply" });
       await waitForMatrixState(() => {
         expect(sendSingleTextMessageMatrixMock).toHaveBeenCalledTimes(1);
       });
@@ -4513,7 +4513,7 @@ describe("matrix monitor handler draft streaming", () => {
       const { dispatch, redactEventMock } = createStreamingHarness({ replyToMode, threadReplies });
       const { deliver, opts, finish } = await dispatch();
 
-      opts.onPartialReply?.({ text: "Partial reply" });
+      await opts.onPartialReply?.({ text: "Partial reply" });
       await waitForMatrixState(() => {
         expect(sendSingleTextMessageMatrixMock).toHaveBeenCalledTimes(1);
       });
@@ -4544,9 +4544,9 @@ describe("matrix monitor handler draft streaming", () => {
     // streaming for the next assistant block still starts from the original
     // reply target.
     await deliver({ text: "tool result", replyToId: "$msg1" }, { kind: "tool" });
-    opts.onAssistantMessageStart?.();
+    await opts.onAssistantMessageStart?.();
 
-    opts.onPartialReply?.({ text: "Partial reply" });
+    await opts.onPartialReply?.({ text: "Partial reply" });
     await waitForMatrixState(() => {
       expect(sendSingleTextMessageMatrixMock).toHaveBeenCalledTimes(1);
     });
@@ -4564,7 +4564,7 @@ describe("matrix monitor handler draft streaming", () => {
     const { dispatch, redactEventMock } = createStreamingHarness();
     const { deliver, opts, finish } = await dispatch();
 
-    opts.onPartialReply?.({ text: "Partial reply" });
+    await opts.onPartialReply?.({ text: "Partial reply" });
     await waitForMatrixState(() => {
       expect(sendSingleTextMessageMatrixMock).toHaveBeenCalledTimes(1);
     });
@@ -4608,7 +4608,7 @@ describe("matrix monitor handler draft streaming", () => {
     const { dispatch, redactEventMock } = createStreamingHarness();
     const { deliver, opts, finish } = await dispatch();
 
-    opts.onPartialReply?.({ text: "Partial reply" });
+    await opts.onPartialReply?.({ text: "Partial reply" });
     await waitForMatrixState(() => {
       expect(sendSingleTextMessageMatrixMock).toHaveBeenCalledTimes(1);
     });
@@ -4629,7 +4629,7 @@ describe("matrix monitor handler draft streaming", () => {
     const { dispatch, redactEventMock } = createStreamingHarness({ streaming: "partial" });
     const { deliver, opts, finish } = await dispatch();
 
-    opts.onPartialReply?.({ text: "screenshot ready" });
+    await opts.onPartialReply?.({ text: "screenshot ready" });
     await waitForMatrixState(() => {
       expect(sendSingleTextMessageMatrixMock).toHaveBeenCalledTimes(1);
     });
@@ -4655,7 +4655,7 @@ describe("matrix monitor handler draft streaming", () => {
     const { dispatch, redactEventMock } = createStreamingHarness({ streaming: "quiet" });
     const { deliver, opts, finish } = await dispatch();
 
-    opts.onPartialReply?.({ text: "screenshot ready" });
+    await opts.onPartialReply?.({ text: "screenshot ready" });
     await waitForMatrixState(() => {
       expect(sendSingleTextMessageMatrixMock).toHaveBeenCalledTimes(1);
     });
@@ -4679,7 +4679,7 @@ describe("matrix monitor handler draft streaming", () => {
     const { dispatch, redactEventMock } = createStreamingHarness({ streaming: "partial" });
     const { deliver, opts, finish } = await dispatch();
 
-    opts.onPartialReply?.({ text: "@room screenshot ready" });
+    await opts.onPartialReply?.({ text: "@room screenshot ready" });
     await waitForMatrixState(() => {
       expect(sendSingleTextMessageMatrixMock).toHaveBeenCalledTimes(1);
     });
@@ -4711,7 +4711,7 @@ describe("matrix monitor handler draft streaming", () => {
     const { dispatch, redactEventMock } = createStreamingHarness();
     const { deliver, opts, finish } = await dispatch();
 
-    opts.onPartialReply?.({ text: "1234" });
+    await opts.onPartialReply?.({ text: "1234" });
     await waitForMatrixState(() => {
       expect(sendSingleTextMessageMatrixMock).toHaveBeenCalledTimes(1);
     });
@@ -4726,7 +4726,7 @@ describe("matrix monitor handler draft streaming", () => {
       };
     });
 
-    opts.onPartialReply?.({ text: "123456" });
+    await opts.onPartialReply?.({ text: "123456" });
     await deliver({ text: "123456" }, { kind: "final" });
 
     expect(editMessageMatrixMock).not.toHaveBeenCalled();

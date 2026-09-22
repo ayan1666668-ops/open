@@ -52,12 +52,12 @@ export function registerMatrixPreviewDeliveryTests(harness: PreviewDeliveryHarne
     });
     const { opts, finish } = await dispatch();
     try {
-      opts.onPartialReply?.({ text: "Visible preview" });
+      await opts.onPartialReply?.({ text: "Visible preview" });
       await waitForMatrixState(() => {
         expect(sendSingleTextMessageMatrixMock).toHaveBeenCalledTimes(1);
       });
       await opts.onObservedReplyDelivery?.();
-      opts.onPartialReply?.({ text: "Late model delta" });
+      await opts.onPartialReply?.({ text: "Late model delta" });
       await opts.onItemEvent?.({
         itemId: "late-tool",
         kind: "tool",
@@ -78,7 +78,7 @@ export function registerMatrixPreviewDeliveryTests(harness: PreviewDeliveryHarne
     const { dispatch, redactEventMock } = createStreamingHarness({ streaming: "partial" });
     const { deliver, opts, finish } = await dispatch();
 
-    opts.onPartialReply?.({ text: "Visible preview" });
+    await opts.onPartialReply?.({ text: "Visible preview" });
     await waitForMatrixState(() => {
       expect(sendSingleTextMessageMatrixMock).toHaveBeenCalledTimes(1);
     });
@@ -106,7 +106,7 @@ export function registerMatrixPreviewDeliveryTests(harness: PreviewDeliveryHarne
     const { dispatch, redactEventMock } = createStreamingHarness({ streaming: "partial" });
     const { deliver, opts, finish } = await dispatch();
 
-    opts.onPartialReply?.({ text: "Visible preview" });
+    await opts.onPartialReply?.({ text: "Visible preview" });
     await waitForMatrixState(() => {
       expect(sendSingleTextMessageMatrixMock).toHaveBeenCalledTimes(1);
     });
@@ -134,7 +134,7 @@ export function registerMatrixPreviewDeliveryTests(harness: PreviewDeliveryHarne
     const { dispatch, redactEventMock } = createStreamingHarness({ streaming: "partial" });
     const { deliver, opts, finish } = await dispatch();
 
-    opts.onPartialReply?.({ text: "Visible preview" });
+    await opts.onPartialReply?.({ text: "Visible preview" });
     await waitForMatrixState(() => {
       expect(sendSingleTextMessageMatrixMock).toHaveBeenCalledTimes(1);
     });
@@ -165,7 +165,7 @@ export function registerMatrixPreviewDeliveryTests(harness: PreviewDeliveryHarne
     const { dispatch, redactEventMock } = createStreamingHarness({ streaming: "partial" });
     const { deliver, opts, finish } = await dispatch();
 
-    opts.onPartialReply?.({ text: "Visible preview" });
+    await opts.onPartialReply?.({ text: "Visible preview" });
     await waitForMatrixState(() => {
       expect(sendSingleTextMessageMatrixMock).toHaveBeenCalledTimes(1);
     });
@@ -199,7 +199,7 @@ export function registerMatrixPreviewDeliveryTests(harness: PreviewDeliveryHarne
       const { dispatch, redactEventMock } = createStreamingHarness({ streaming: "partial" });
       const { deliver, opts, finish } = await dispatch();
 
-      opts.onPartialReply?.({ text: "Visible preview" });
+      await opts.onPartialReply?.({ text: "Visible preview" });
       await waitForMatrixState(() => {
         expect(sendSingleTextMessageMatrixMock).toHaveBeenCalledTimes(1);
       });
@@ -233,7 +233,7 @@ export function registerMatrixPreviewDeliveryTests(harness: PreviewDeliveryHarne
       const { dispatch, redactEventMock } = createStreamingHarness({ streaming: "partial" });
       const { deliver, opts, finish } = await dispatch();
 
-      opts.onPartialReply?.({ text: "Visible preview" });
+      await opts.onPartialReply?.({ text: "Visible preview" });
       await waitForMatrixState(() => {
         expect(sendSingleTextMessageMatrixMock).toHaveBeenCalledTimes(1);
       });
@@ -263,7 +263,7 @@ export function registerMatrixPreviewDeliveryTests(harness: PreviewDeliveryHarne
       const { dispatch, redactEventMock } = createStreamingHarness({ streaming: "partial" });
       const { deliver, opts, finish } = await dispatch();
 
-      opts.onPartialReply?.({ text: "Visible preview" });
+      await opts.onPartialReply?.({ text: "Visible preview" });
       await waitForMatrixState(() => {
         expect(sendSingleTextMessageMatrixMock).toHaveBeenCalledTimes(1);
       });
@@ -297,7 +297,7 @@ export function registerMatrixPreviewDeliveryTests(harness: PreviewDeliveryHarne
     const { dispatch, redactEventMock } = createStreamingHarness({ streaming: "partial" });
     const { deliver, opts, finish } = await dispatch();
 
-    opts.onPartialReply?.({ text: "Visible preview" });
+    await opts.onPartialReply?.({ text: "Visible preview" });
     await waitForMatrixState(() => {
       expect(sendSingleTextMessageMatrixMock).toHaveBeenCalledTimes(1);
     });
@@ -343,7 +343,7 @@ export function registerMatrixPreviewDeliveryTests(harness: PreviewDeliveryHarne
       const { dispatch, redactEventMock } = createStreamingHarness({ streaming: "partial" });
       const { deliver, onError, opts, finish } = await dispatch();
 
-      opts.onPartialReply?.({ text: "First generation" });
+      await opts.onPartialReply?.({ text: "First generation" });
       await waitForMatrixState(() => {
         expect(sendSingleTextMessageMatrixMock).toHaveBeenCalledTimes(1);
       });
@@ -368,14 +368,14 @@ export function registerMatrixPreviewDeliveryTests(harness: PreviewDeliveryHarne
         if (priorDisposition === "retained") {
           onError(new Error("replacement failed"), { kind: "block" });
         }
-        opts.onAssistantMessageStart?.();
+        await opts.onAssistantMessageStart?.();
       }
 
       sendSingleTextMessageMatrixMock.mockResolvedValueOnce({
         messageId: "$draft2",
         roomId: "!room",
       });
-      opts.onPartialReply?.({ text: "Next generation" });
+      await opts.onPartialReply?.({ text: "Next generation" });
       await waitForMatrixState(() => {
         expect(sendSingleTextMessageMatrixMock).toHaveBeenCalledTimes(2);
       });
