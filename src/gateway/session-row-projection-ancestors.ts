@@ -1,4 +1,5 @@
 import type { AsyncLocalStorage } from "node:async_hooks";
+import { isIncognitoSessionKey } from "../routing/session-key.js";
 import type { createSessionRowPlacementProjection } from "./session-row-placement-projection.js";
 import type {
   SessionRowReadView,
@@ -6,6 +7,7 @@ import type {
   withPreparedSessionRows,
 } from "./session-row-prepared-read.js";
 import * as records from "./session-row-projection-record.js";
+import { resolveStoredSessionKeyForAgentStore } from "./session-store-key.js";
 
 /** Materialization reads current physical relations from the projection's existing indexes. */
 export function createSessionRowRelationReads(owner: {
@@ -109,6 +111,7 @@ export function createSessionRowAncestorReads(owner: {
   lookup: (query: records.Lookup) => records.Row | undefined;
   prepareExactRows: (queries: readonly records.Lookup[]) => Promise<void> | undefined;
   assertExactRowsPrepared: (queries: readonly records.Lookup[]) => void;
+  retainArchiveRows: () => { update: (ids: readonly string[]) => void; release: () => void };
   describe: SessionRowReadView["describe"];
   inOwnerContext: ReturnType<typeof AsyncLocalStorage.snapshot>;
   placementFacts: ReturnType<typeof createSessionRowPlacementProjection>;
@@ -155,17 +158,41 @@ export function createSessionRowAncestorReads(owner: {
             ]);
           }
         : queries;
-      return owner.placementFacts.withPreparedRows(
-        owner.projection(),
-        owner.isActive,
-        owner.lookup,
-        selected,
-        owner.prepareExactRows,
-        (read) => {
-          owner.assertExactRowsPrepared(selected(read.state.cfg));
-          return consume(read);
-        },
-      );
+      const archivedRows = owner.retainArchiveRows();
+      try {
+        return await owner.placementFacts.withPreparedRows(
+          owner.projection(),
+          owner.isActive,
+          owner.lookup,
+          selected,
+          (targets) => {
+            archivedRows.update(
+              targets.flatMap((query) => {
+                if (
+                  isIncognitoSessionKey(
+                    resolveStoredSessionKeyForAgentStore({
+                      cfg: owner.state().cfg,
+                      sessionKey: query.key,
+                      agentId: query.agentId,
+                    }),
+                  )
+                ) {
+                  return [];
+                }
+                const row = owner.lookup(query);
+                return row?.entry?.archivedAt !== undefined ? [records.identity(row)] : [];
+              }),
+            );
+            return owner.prepareExactRows(targets);
+          },
+          (read) => {
+            owner.assertExactRowsPrepared(selected(read.state.cfg));
+            return consume(read);
+          },
+        );
+      } finally {
+        archivedRows.release();
+      }
     },
   };
 }

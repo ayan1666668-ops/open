@@ -35,7 +35,9 @@ describe("readRestoredSessionTranscript", () => {
     const revoked = new Error("reader revoked");
     let current = true;
     const assertCurrent = () => {
-      if (!current) throw revoked;
+      if (!current) {
+        throw revoked;
+      }
     };
     vi.mocked(restoreSessionColdTranscript).mockImplementationOnce(async () => {
       current = false;

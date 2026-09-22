@@ -1,5 +1,5 @@
-import { StatementSync } from "node:sqlite";
 import { expect, it, vi } from "vitest";
+import { observeHostDataSql } from "../../../test/helpers/sqlite-statement-execution-counter.js";
 import {
   replaceSessionEntrySync,
   replaceTranscriptEvents,
@@ -58,41 +58,32 @@ it("keeps warm, dirty, and archived keyed RPCs off host SQLite while preserving 
       return respond.mock.calls[0]?.[1];
     };
     const expected = await read();
+    expect(expected).toMatchObject({ messages: messages.slice(1) });
     expect(expected).toMatchObject({
-      messages: messages.slice(1).map((message, index) => ({
-        ...message,
-        __openclaw: { id: `message-${index + 1}` },
-      })),
+      messages: [
+        { __openclaw: { id: "message-1" } },
+        { __openclaw: { id: "message-2" } },
+        { __openclaw: { id: "message-3" } },
+      ],
     });
-    const statements = new Map<string, number>();
-    const spies = (["all", "get", "run", "iterate"] as const).map((method) => {
-      const original = StatementSync.prototype[method];
-      return vi.spyOn(StatementSync.prototype, method).mockImplementation(
-        new Proxy(original, {
-          apply(target, receiver: StatementSync, args) {
-            statements.set(receiver.sourceSQL, (statements.get(receiver.sourceSQL) ?? 0) + 1);
-            return Reflect.apply(target, receiver, args);
-          },
-        }),
-      );
-    });
+    const hostSql = observeHostDataSql();
     try {
       for (let index = 0; index < 100; index++) {
         expect(await read()).toEqual(expected);
       }
-      expect([...statements]).toEqual([]);
+      expect(hostSql.calls.flatMap((call) => call.mock.calls)).toEqual([]);
       for (const method of ["sessions.get", "sessions.describe"] as const) {
         for (let index = 0; index < 100; index++) {
           sessionChanges.emit({ agentId: scope.agentId, sessionKey: scope.sessionKey });
           // Count the RPC read, independently of the committed writer's publication work.
-          statements.clear();
+          hostSql.calls.forEach((call) => call.mockClear());
           const result = await read(method);
           if (method === "sessions.get") {
             expect(result).toEqual(expected);
           } else {
             expect(result).toMatchObject({ session: { sessionId: scope.sessionId } });
           }
-          expect([...statements]).toEqual([]);
+          expect(hostSql.calls.flatMap((call) => call.mock.calls)).toEqual([]);
         }
       }
       replaceSessionEntrySync(scope, {
@@ -103,19 +94,17 @@ it("keeps warm, dirty, and archived keyed RPCs off host SQLite while preserving 
       });
       for (const method of ["sessions.get", "sessions.describe"] as const) {
         sessionChanges.emit({ all: true, scope: "catalog" });
-        statements.clear();
+        hostSql.calls.forEach((call) => call.mockClear());
         const result = await read(method);
         if (method === "sessions.get") {
           expect(result).toEqual(expected);
         } else {
           expect(result).toMatchObject({ session: { sessionId: scope.sessionId, archivedAt: 1 } });
         }
-        expect([...statements]).toEqual([]);
+        expect(hostSql.calls.flatMap((call) => call.mock.calls)).toEqual([]);
       }
     } finally {
-      for (const spy of spies) {
-        spy.mockRestore();
-      }
+      hostSql.restore();
     }
   });
 });

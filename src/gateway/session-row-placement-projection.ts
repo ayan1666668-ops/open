@@ -188,6 +188,12 @@ export function createSessionRowPlacementProjection(
         if (selectIds().some((id) => !resident.has(id) && !prepared.has(id))) {
           continue;
         }
+        for (const [id, facts] of prepared) {
+          if (registered.has(id)) {
+            resident.set(id, facts);
+            dirty.delete(id);
+          }
+        }
         const previous = exact;
         let result: T;
         // Owner context restoration must retain this synchronous frame, never its async descendants.

@@ -111,7 +111,7 @@ export const sessionByKeyReadHandlers: GatewayRequestHandlers = {
       const requested = requestedAgent();
       if (!requested.ok) {
         respond(false, undefined, requested.error);
-        return;
+        return undefined;
       }
       const record = read.describe({ key, agentId: requested.agentId });
       const cfg = context.getRuntimeConfig();
@@ -120,7 +120,7 @@ export const sessionByKeyReadHandlers: GatewayRequestHandlers = {
         : undefined;
       if (!record?.entry.sessionId || boundaryFilter?.(record.key, record.entry) === false) {
         respond(true, { messages: [] }, undefined);
-        return;
+        return undefined;
       }
       return record;
     });

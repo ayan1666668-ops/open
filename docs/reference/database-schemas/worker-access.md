@@ -120,12 +120,15 @@ Dirty resident row refreshes also prepare ACP metadata in the shared-state read
 worker. Explicit absence travels with the row facts, so presentation does not
 repeat ACP lookups or their schema admission checks. ACP publications invalidate
 the existing row revision, and entry lifecycle matching still rejects stale
-runtime metadata. Optional preview and terminal fallback reads use the retained
+runtime metadata. Optional preview and terminal-message facts use the retained
 history worker, with foreground priority and row-generation checks before
-publication.
+publication. The host evaluates fallback notices using its current runtime plugin
+aliases; configuration and model policy do not travel to the read worker.
 
-Durable `sessions.get` reads select session metadata from the row projection and
-read raw recent messages in the history worker. They recheck the current config,
+Durable keyed RPCs prepare only their selected dirty or archived rows through the
+worker before synchronous presentation; placement waits recheck that preparation.
+`sessions.get` selects session metadata from the row projection and reads raw
+recent messages in the history worker. They recheck the current config,
 sharing policy, and session identity before responding. Hot transcript reads use
 the atomic reader's cold marker; restoration runs only after a cold rejection and
 retains the bounded retry for a concurrent rearchive.

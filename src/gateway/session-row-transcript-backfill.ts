@@ -3,18 +3,26 @@ import {
   toDatabaseOptions,
 } from "../config/sessions/session-accessor.sqlite-scope.js";
 import { withSessionHistoryWorkerDatabase } from "../config/sessions/session-transcript-worker-runtime.js";
+import { readSessionFallbackModel } from "../status/session-fallback-model.js";
 import type { readSessionRowTranscriptFields } from "./session-row-transcript-backfill.kernel.js";
 
 /** Optional transcript facts keep the row generation and foreground admission on the host. */
 export async function backfillSessionRowTranscriptFields(
-  params: Parameters<typeof readSessionRowTranscriptFields>[0] & { shouldCommit?: () => boolean },
-): Promise<ReturnType<typeof readSessionRowTranscriptFields>> {
+  params: Omit<Parameters<typeof readSessionRowTranscriptFields>[0], "includeTerminalModel"> & {
+    shouldCommit?: () => boolean;
+    model?: Pick<
+      Parameters<typeof readSessionFallbackModel>[0],
+      "selectedProvider" | "selectedModel" | "config"
+    >;
+  },
+): Promise<{ lastMessagePreview?: string; fallbackModel?: { provider: string; model: string } }> {
   if (params.shouldCommit?.() === false) {
     return {};
   }
-  const { shouldCommit, sessionEntry, ...scope } = params;
+  const { shouldCommit, sessionEntry, model, ...scope } = params;
   const input = {
     ...scope,
+    includeTerminalModel: model !== undefined,
     sessionEntry: {
       sessionId: sessionEntry.sessionId,
       updatedAt: sessionEntry.updatedAt,
@@ -31,9 +39,25 @@ export async function backfillSessionRowTranscriptFields(
       }),
     ),
     async (owner) => {
-      const fields = await owner.readRowBackfill(input);
+      const { terminalModel, ...fields } = await owner.readRowBackfill(input);
       owner.assertCurrent();
-      return shouldCommit?.() === false ? {} : fields;
+      if (shouldCommit?.() === false) {
+        return {};
+      }
+      const fallback =
+        model &&
+        readSessionFallbackModel({
+          ...model,
+          sessionEntry,
+          sessionScope: { ...scope, agentId: params.storeAgentId ?? params.agentId },
+          terminalModel: terminalModel ?? null,
+        });
+      return {
+        ...fields,
+        ...(fallback
+          ? { fallbackModel: { provider: fallback.modelProvider, model: fallback.model } }
+          : {}),
+      };
     },
   );
 }

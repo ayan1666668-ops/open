@@ -4,8 +4,8 @@ import {
   isSessionTranscriptProjectionUnavailableError,
   SessionTranscriptStorageUnavailableError,
 } from "../config/sessions/session-transcript-projection-error.js";
-import type { SessionEntry } from "../config/sessions/types.js";
-import { readSessionFallbackModel } from "../status/session-fallback-model.js";
+import type { InternalSessionEntry } from "../config/sessions/types.js";
+import { readSessionTerminalFallbackModel } from "../status/session-fallback-model.js";
 import { projectSessionDisplayMessage } from "./session-display-projection.js";
 import { sqliteMessageEventWithSeq } from "./session-transcript-entry-message.js";
 
@@ -17,25 +17,21 @@ export function readSessionRowTranscriptFields(params: {
   sessionKey: string;
   sessionId: string;
   sessionEntry: Pick<
-    SessionEntry,
+    InternalSessionEntry,
     "sessionId" | "updatedAt" | "status" | "lastRunId" | "fallbackNotice"
   >;
-  model?: Pick<
-    Parameters<typeof readSessionFallbackModel>[0],
-    "selectedProvider" | "selectedModel" | "config"
-  >;
-}): { lastMessagePreview?: string; fallbackModel?: { provider: string; model: string } } {
+  includeTerminalModel?: boolean;
+}): {
+  lastMessagePreview?: string;
+  terminalModel?: ReturnType<typeof readSessionTerminalFallbackModel>;
+} {
   const transcriptScope = { ...params, agentId: params.storeAgentId ?? params.agentId };
   try {
-    const fallback =
-      params.model &&
-      readSessionFallbackModel({
-        ...params.model,
-        sessionEntry: params.sessionEntry,
-        sessionScope: transcriptScope,
-      });
-    const fallbackModel = fallback
-      ? { provider: fallback.modelProvider, model: fallback.model }
+    const terminalModel = params.includeTerminalModel
+      ? readSessionTerminalFallbackModel({
+          sessionEntry: params.sessionEntry,
+          sessionScope: transcriptScope,
+        })
       : undefined;
     const tail = readSessionTranscriptBoundedMessageTailPage(transcriptScope, {
       maxMessages: 20,
@@ -55,11 +51,11 @@ export function readSessionRowTranscriptFields(params: {
         // Detach resident strings from the parsed transcript payload.
         return {
           lastMessagePreview: Buffer.from(projected.text, "utf16le").toString("utf16le"),
-          ...(fallbackModel ? { fallbackModel } : {}),
+          ...(terminalModel ? { terminalModel } : {}),
         };
       }
     }
-    return fallbackModel ? { fallbackModel } : {};
+    return terminalModel ? { terminalModel } : {};
   } catch (error) {
     if (
       isSessionTranscriptProjectionUnavailableError(error) ||

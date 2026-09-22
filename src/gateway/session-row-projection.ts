@@ -38,17 +38,14 @@ import { createSessionRowProjectionCatalog } from "./session-row-projection-cata
 import { createSessionRowProjectionContext } from "./session-row-projection-context.js";
 import { createSessionRowCreatorIndex } from "./session-row-projection-identities.js";
 import {
-  refreshSessionRowMaterializations,
   lookupSessionRow,
   findSessionRowById,
   readResidentSessionRow,
   readSessionRowEntry,
 } from "./session-row-projection-materialize.js";
-import {
-  withSessionRowDatabaseFacts,
-  type PreparedSessionRowDatabaseFacts,
-} from "./session-row-projection-read.js";
+import type { PreparedSessionRowDatabaseFacts } from "./session-row-projection-read.js";
 import * as records from "./session-row-projection-record.js";
+import { createSessionRowRefresh } from "./session-row-projection-refresh.js";
 import { createSessionRowProjectionTranscriptUpdates } from "./session-row-projection-transcript.js";
 import {
   createSessionRowScopeMatcher,
@@ -56,7 +53,6 @@ import {
   selectMatchingSessionRows,
   selectSessionRowEntries,
 } from "./session-row-scope.js";
-import { resolveStoredSessionKeyForAgentStore } from "./session-store-key.js";
 import type { WorkerSessionPlacementStore } from "./worker-environments/placement-store.js";
 
 /** Committed publications own invalidation; each admitted physical store is hydrated once. */
@@ -114,7 +110,7 @@ export async function createSessionRowProjection(params: {
       }
     },
     hasWork: needsMaterialization,
-    refresh: refreshBatch,
+    refresh: () => refreshBatch(),
     needsYield: () => dirty.size > 0 || topologyDirty,
     // Adopt published catalog reads without waiting for an in-flight renewal.
     idle: () => (catalog.isRefreshing ? yieldSessionListWork() : Promise.resolve()),
@@ -446,20 +442,22 @@ export async function createSessionRowProjection(params: {
     });
     return true;
   }
-  function refresh(
-    ids: readonly string[],
-    prepared?: ReadonlyMap<string, PreparedSessionRowDatabaseFacts>,
-    materializeArchived = false,
-  ) {
-    if (disposed) {
-      return;
-    }
-    refreshSessionRowMaterializations({
-      ids,
-      prepared,
-      materializeArchived,
+  const { refresh, refreshBatch, prepareExactRows, assertExactRowsPrepared } =
+    createSessionRowRefresh({
       rows,
       dirty,
+      state: () => ({
+        cfg,
+        disposed,
+        topologyDirty,
+        subagentRevision: metadata.materializedRevisions.subagentRevision,
+      }),
+      runAsOwner: inOwnerContext,
+      lookup,
+      prepareRegistryFacts,
+      topology,
+      catalog,
+      placementFacts,
       prepare: () => {
         metadata.prepare(epoch, cfg, matching, put);
         return cfg;
@@ -468,83 +466,12 @@ export async function createSessionRowProjection(params: {
       acquireEntry,
       materialize,
       forgetBackfill: backfill.remove,
+      retainArchived(row) {
+        // Exact preparation participates in the archive owner's existing bounded cache.
+        archive.describe(row);
+        backfill.enqueue(records.identity(row));
+      },
     });
-  }
-  function pendingExactRows(queries: readonly records.Lookup[]) {
-    const selected = new Set<string>();
-    for (const query of queries) {
-      const key = resolveStoredSessionKeyForAgentStore({
-        cfg,
-        sessionKey: query.key,
-        agentId: query.agentId,
-      });
-      if (isIncognitoSessionKey(key)) {
-        continue;
-      }
-      const row = lookup(query);
-      if (
-        row &&
-        (dirty.has(records.identity(row)) ||
-          isCold(row) ||
-          row.subagentRevision !== metadata.materializedRevisions.subagentRevision)
-      ) {
-        selected.add(records.identity(row));
-      }
-    }
-    return selected;
-  }
-  function prepareExactRows(queries: readonly records.Lookup[]) {
-    const selected = pendingExactRows(queries);
-    if (disposed || selected.size === 0) {
-      return undefined;
-    }
-    for (const id of selected) {
-      if (!isCold(rows.get(id)!)) {
-        dirty.add(id);
-      }
-    }
-    return inOwnerContext(() =>
-      withSessionRowDatabaseFacts(
-        { rows, dirty, selected, cfg, revision: () => (disposed ? undefined : epoch) },
-        (ids, facts) => {
-          withAgentRosterFactsBatch(cfg, () => refresh(ids, facts, true));
-          for (const id of ids) {
-            const row = rows.get(id);
-            if (records.ready(row) && row.entry.archivedAt !== undefined) {
-              // Exact preparation participates in the archive owner's existing bounded cache.
-              archive.describe(row);
-              backfill.enqueue(id);
-            }
-          }
-        },
-      ),
-    );
-  }
-  async function refreshBatch() {
-    for (let pending = prepareRegistryFacts(); pending; pending = prepareRegistryFacts()) {
-      await pending;
-    }
-    if (disposed) {
-      return;
-    }
-    if (topologyDirty) {
-      topology();
-    }
-    if (catalog.needsInitialRead) {
-      await catalog.refresh();
-    }
-    await placementFacts.prepare();
-    for (let pending = prepareRegistryFacts(); pending; pending = prepareRegistryFacts()) {
-      await pending;
-    }
-    if (placementFacts.needsPreparation) {
-      return;
-    }
-    await withSessionRowDatabaseFacts(
-      { rows, dirty, cfg, revision: () => (disposed ? undefined : epoch) },
-      (ids, facts) => withAgentRosterFactsBatch(cfg, () => refresh(ids, facts)),
-    );
-  }
   function needsMaterialization() {
     return (
       !disposed &&
@@ -707,11 +634,8 @@ export async function createSessionRowProjection(params: {
       referenced,
       lookup,
       prepareExactRows,
-      assertExactRowsPrepared(queries) {
-        if (pendingExactRows(queries).size > 0) {
-          throw new Error("Session row facts changed before the prepared read; retry the request");
-        }
-      },
+      assertExactRowsPrepared,
+      retainArchiveRows: archive.retainRows,
       describe,
       inOwnerContext,
       placementFacts,
