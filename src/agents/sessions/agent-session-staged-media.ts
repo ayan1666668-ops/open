@@ -4,15 +4,19 @@ import type { AgentMessage } from "../runtime/index.js";
 /**
  * A staged media reference is readable only by the session that published its result, and a
  * persisted toolResult is where that reference lands in a session. This binds ownership at that
- * point. Best-effort: the staged object already refuses a request that names no session, so a
- * failure here narrows nothing away from the shipped private behaviour.
+ * point, and it is AWAITED before the message reaches a listener or the store: every reader
+ * learns the reference from this message, and the route refuses a staged object with no owner,
+ * so the owner must be on the record while the reference is still invisible to everyone else.
+ *
+ * Best-effort: a failed write leaves the object unbound, which the route refuses, so a failure
+ * here narrows access rather than widening it.
  */
-export function bindStagedMediaOwnership(
+export async function bindStagedMediaOwnership(
   message: AgentMessage,
   sessionKey: string | undefined,
-): void {
+): Promise<string[]> {
   if (message.role !== "toolResult" || !sessionKey) {
-    return;
+    return [];
   }
-  void recordInboundMediaOwnersInValue(message.content, { sessionKey }).catch(() => undefined);
+  return await recordInboundMediaOwnersInValue(message.content, { sessionKey }).catch(() => []);
 }

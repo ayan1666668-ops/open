@@ -12,10 +12,18 @@
 // Records are advisory to nothing and enforced by the route, so a write failure must
 // not silently publish an unbound object: recordStagedInboundMedia reports failure and
 // the caller keeps the bytes private rather than attaching an unenforceable reference.
+//
+// Two invariants hold the binding together. A registry that cannot be read is a failure
+// rather than an empty registry, because an empty registry is the state that binds
+// nothing. And a record is forgotten only once the bytes it names are gone, because
+// forgetting a live record would stop restricting an object that is still readable.
 import fs from "node:fs/promises";
 import path from "node:path";
+import { createSubsystemLogger } from "../logging/subsystem.js";
 import { parseInboundMediaUri } from "./media-reference.js";
 import { getMediaDir } from "./store.js";
+
+const log = createSubsystemLogger("media/inbound-ownership");
 
 /** Ownership record for one staged inbound media object. */
 export type InboundMediaOwnership = {
@@ -30,7 +38,12 @@ const OWNERSHIP_FILE_NAME = "inbound-ownership.json";
 const OWNERSHIP_FILE_MODE = 0o600;
 /** Bounded so a long-lived store cannot grow the registry without limit. */
 const MAX_OWNERSHIP_ENTRIES = 5000;
-const OWNERSHIP_RETENTION_MS = 14 * 24 * 60 * 60 * 1000;
+/**
+ * How many records one prune pass may test against the store. The pass runs inside the
+ * update lock, on every staged object and every persisted tool result, so the work it does
+ * is bounded; a record whose test is deferred is kept, which is the safe direction.
+ */
+const PRUNE_EXISTENCE_CHECKS_PER_PASS = 128;
 /** Depth bound for the reference walk, which runs on every persisted tool result. */
 const MAX_REFERENCE_WALK_DEPTH = 6;
 
@@ -62,46 +75,96 @@ export function inboundMediaIdFromReference(source: string): string | undefined 
   }
 }
 
+/**
+ * Reads the registry.
+ *
+ * A file that is not there is an empty registry, because nothing has been staged. Every
+ * other failure, an unreadable file, a truncated write, or malformed JSON, is reported as a
+ * FAILURE rather than as an empty registry. The two states mean opposite things: an empty
+ * registry is the state in which nothing is bound, and a caller that cannot resolve a
+ * record must refuse the request rather than fall back to the access an object had before
+ * it was staged.
+ */
 async function readOwnershipIndex(): Promise<OwnershipIndex> {
+  let raw: string;
   try {
-    const raw = await fs.readFile(ownershipFilePath(), "utf8");
-    const parsed = JSON.parse(raw) as unknown;
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    raw = await fs.readFile(ownershipFilePath(), "utf8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
       return {};
     }
-    const index: OwnershipIndex = {};
-    // SAFETY: parsed is confirmed a non-null, non-array object immediately above.
-    for (const [id, value] of Object.entries(parsed as Record<string, unknown>)) {
-      if (!isSafeInboundMediaId(id) || !value || typeof value !== "object") {
-        continue;
-      }
-      // SAFETY: value is confirmed a non-null object by the guard on the loop entry above.
-      const record = value as Record<string, unknown>;
-      if (typeof record.stagedAt !== "number" || !Number.isFinite(record.stagedAt)) {
-        continue;
-      }
-      index[id] = {
-        stagedAt: record.stagedAt,
-        ...(typeof record.sessionKey === "string" ? { sessionKey: record.sessionKey } : {}),
-        ...(typeof record.agentId === "string" ? { agentId: record.agentId } : {}),
-      };
+    log.warn("Inbound media ownership registry could not be read", {
+      path: ownershipFilePath(),
+      error: String(err),
+    });
+    throw err;
+  }
+  const parsed = JSON.parse(raw) as unknown;
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    log.warn("Inbound media ownership registry does not hold an index", {
+      path: ownershipFilePath(),
+    });
+    throw new Error(`${OWNERSHIP_FILE_NAME} does not hold an ownership index`);
+  }
+  const index: OwnershipIndex = {};
+  // SAFETY: parsed is confirmed a non-null, non-array object immediately above.
+  for (const [id, value] of Object.entries(parsed as Record<string, unknown>)) {
+    if (!isSafeInboundMediaId(id) || !value || typeof value !== "object") {
+      continue;
     }
-    return index;
-  } catch {
-    return {};
+    // SAFETY: value is confirmed a non-null object by the guard on the loop entry above.
+    const record = value as Record<string, unknown>;
+    if (typeof record.stagedAt !== "number" || !Number.isFinite(record.stagedAt)) {
+      continue;
+    }
+    index[id] = {
+      stagedAt: record.stagedAt,
+      ...(typeof record.sessionKey === "string" ? { sessionKey: record.sessionKey } : {}),
+      ...(typeof record.agentId === "string" ? { agentId: record.agentId } : {}),
+    };
+  }
+  return index;
+}
+
+/** Whether the store still holds the bytes an inbound id names. */
+async function inboundMediaBytesExist(id: string): Promise<boolean> {
+  try {
+    return (await fs.stat(path.join(getMediaDir(), "inbound", id))).isFile();
+  } catch (err) {
+    // Only a missing file is proof that the bytes are gone. An unreadable or unresolvable
+    // path is not, and keeping the record only ever restricts.
+    return (err as NodeJS.ErrnoException).code !== "ENOENT";
   }
 }
 
-function pruneOwnershipIndex(index: OwnershipIndex, now: number): OwnershipIndex {
-  const live = Object.entries(index).filter(
-    ([, record]) => now - record.stagedAt <= OWNERSHIP_RETENTION_MS,
-  );
-  if (live.length <= MAX_OWNERSHIP_ENTRIES) {
-    return Object.fromEntries(live);
+/**
+ * Drops the records whose bytes are gone, and nothing else.
+ *
+ * The registry is the only thing that keeps a staged object bound to its session, and the
+ * route refuses an object with no owner, so dropping a record while its file still exists
+ * is a downgrade: the object stops being restricted while it is still readable. Age and
+ * size are therefore never a reason on their own to forget a record. The bound decides
+ * which records are worth re-examining, oldest first because the store deletes the oldest
+ * bytes, and a record whose bytes are still there is kept however old it is.
+ *
+ * Consequence, and the reason for it: a registry at its bound whose oldest records all
+ * still name live files stays at its bound rather than discarding a live binding, so the
+ * bound is enforced over successive passes rather than in one.
+ */
+async function pruneOwnershipIndex(index: OwnershipIndex): Promise<OwnershipIndex> {
+  if (Object.keys(index).length <= MAX_OWNERSHIP_ENTRIES) {
+    return index;
   }
-  // Oldest first: the registry keeps the newest entries when it overflows.
-  live.sort(([, left], [, right]) => right.stagedAt - left.stagedAt);
-  return Object.fromEntries(live.slice(0, MAX_OWNERSHIP_ENTRIES));
+  const oldestFirst = Object.entries(index).sort(
+    ([, left], [, right]) => left.stagedAt - right.stagedAt,
+  );
+  const kept: OwnershipIndex = { ...index };
+  for (const [id] of oldestFirst.slice(0, PRUNE_EXISTENCE_CHECKS_PER_PASS)) {
+    if (id in kept && !(await inboundMediaBytesExist(id))) {
+      delete kept[id];
+    }
+  }
+  return kept;
 }
 
 /** Writes the index atomically so a reader never observes a truncated registry. */
@@ -143,7 +206,7 @@ async function updateOwnership(
   return await withOwnershipLock(async () => {
     try {
       const now = Date.now();
-      const index = pruneOwnershipIndex(await readOwnershipIndex(), now);
+      const index = await pruneOwnershipIndex(await readOwnershipIndex());
       const existing = index[id];
       if (options.requireExisting && !existing) {
         // Binding is what narrows a published object. An object that was never staged
@@ -201,7 +264,13 @@ export async function recordInboundMediaOwner(
   );
 }
 
-/** Reads the ownership record for an inbound id, or undefined when it is not staged. */
+/**
+ * Reads the ownership record for an inbound id, or undefined when it is not staged.
+ *
+ * A registry that cannot be read rejects rather than reporting "not staged": the two states
+ * mean opposite things, so a caller must refuse what it cannot resolve and never fall back
+ * to the access an object had before it was staged.
+ */
 export async function resolveInboundMediaOwnership(
   id: string,
 ): Promise<InboundMediaOwnership | undefined> {

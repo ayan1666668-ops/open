@@ -1,6 +1,8 @@
 // Inbound media ownership tests cover the binding the assistant media route enforces:
 // a staged object is bound from the moment it is published, and the session that
 // persists the reference becomes its owner.
+import fs from "node:fs/promises";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { withTestDir } from "../test-helpers/temp-dir.js";
 import { captureEnv, setTestEnvValue } from "../test-utils/env.js";
@@ -13,6 +15,22 @@ import {
   recordStagedInboundMedia,
   resolveInboundMediaOwnership,
 } from "./inbound-media-ownership.js";
+import { getMediaDir } from "./store.js";
+
+/** Writes the registry directly, the way a store that outlived its files would hold it. */
+async function writeRegistry(index: Record<string, { stagedAt: number; sessionKey?: string }>) {
+  const target = path.join(getMediaDir(), "inbound-ownership.json");
+  await fs.mkdir(path.dirname(target), { recursive: true });
+  await fs.writeFile(target, JSON.stringify(index), "utf8");
+  return target;
+}
+
+/** Creates the bytes a record names, inside the bucket the registry tracks. */
+async function writeInboundBytes(id: string): Promise<void> {
+  const inboundDir = path.join(getMediaDir(), "inbound");
+  await fs.mkdir(inboundDir, { recursive: true });
+  await fs.writeFile(path.join(inboundDir, id), "inbound bytes", "utf8");
+}
 
 async function withStateDir(run: () => Promise<void>): Promise<void> {
   const env = captureEnv(["OPENCLAW_STATE_DIR"]);
@@ -85,6 +103,77 @@ describe("inbound media ownership", () => {
     ]) {
       expect(inboundMediaIdFromReference(source), source).toBeUndefined();
     }
+  });
+
+  // The registry is the only thing that keeps a staged object bound, so a record may be
+  // forgotten only once the bytes it names are gone. Age and size alone are reasons to
+  // re-examine a record, never reasons to forget a live one.
+  it("keeps a live binding over the bound and reaps only records whose bytes are gone", async () => {
+    await withStateDir(async () => {
+      const liveId = "over-bound-live-image.png";
+      await writeInboundBytes(liveId);
+      // The live record is the OLDEST, so a registry that keeps its newest entries when it
+      // overflows discards exactly the binding that still has bytes to protect.
+      const deadIds = Array.from(
+        { length: 5000 },
+        (_, position) => `over-bound-dead-${position}.png`,
+      );
+      const index: Record<string, { stagedAt: number }> = { [liveId]: { stagedAt: 1 } };
+      deadIds.forEach((id, position) => {
+        index[id] = { stagedAt: 2 + position };
+      });
+      await writeRegistry(index);
+
+      // Any write runs the prune, so the next staged object is what re-examines the registry.
+      expect(await recordStagedInboundMedia("over-bound-fresh.png")).toBe(true);
+
+      const live = await resolveInboundMediaOwnership(liveId);
+      expect(live?.stagedAt).toBe(1);
+      expect(live?.sessionKey).toBeUndefined();
+      expect(await resolveInboundMediaOwnership(deadIds[0]!)).toBeUndefined();
+    });
+  });
+
+  it("keeps a record whose bytes still exist however old the record is", async () => {
+    await withStateDir(async () => {
+      const liveId = "ancient-live-image.png";
+      await writeInboundBytes(liveId);
+      await writeRegistry({ [liveId]: { stagedAt: 1, sessionKey: "agent:main:ancient" } });
+
+      expect(await recordStagedInboundMedia("ancient-fresh-image.png")).toBe(true);
+
+      expect(await resolveInboundMediaOwnership(liveId)).toMatchObject({
+        stagedAt: 1,
+        sessionKey: "agent:main:ancient",
+      });
+    });
+  });
+
+  // An empty registry is the state in which nothing is bound, so a registry that cannot be
+  // READ must never be reported as one: the records it holds are the only thing keeping
+  // staged objects bound, and a rewrite from an empty index deletes them.
+  it.each(["{ this is not json", "[]", '"an ownership index"'])(
+    "reports a registry it cannot read instead of an empty registry: %s",
+    async (contents) => {
+      await withStateDir(async () => {
+        const target = await writeRegistry({});
+        await fs.writeFile(target, contents, "utf8");
+
+        await expect(resolveInboundMediaOwnership("bound.png")).rejects.toThrow();
+        expect(await recordStagedInboundMedia("fresh.png")).toBe(false);
+        expect(await fs.readFile(target, "utf8")).toBe(contents);
+      });
+    },
+  );
+
+  it("reports an unreadable registry file instead of an empty registry", async () => {
+    await withStateDir(async () => {
+      const target = path.join(getMediaDir(), "inbound-ownership.json");
+      await fs.mkdir(target, { recursive: true });
+
+      await expect(resolveInboundMediaOwnership("bound.png")).rejects.toThrow();
+      expect(await recordStagedInboundMedia("fresh.png")).toBe(false);
+    });
   });
 
   it("binds every staged reference a persisted value carries", async () => {

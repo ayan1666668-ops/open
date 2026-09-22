@@ -390,6 +390,13 @@ export abstract class AgentSessionBase {
     messageChanged = prepareSessionToolResult(this.sessionManager, event) || messageChanged;
     const publishAfterPersistence = event.type === "message_end" && event.message.role === "user";
 
+    // Bind a staged reference before the message reaches a listener or the store. The media
+    // route refuses a staged object that has no owner, and a reader learns the reference from
+    // this message, so the owner has to be on the record while the reference is still invisible.
+    if (event.type === "message_end") {
+      await bindStagedMediaOwnership(event.message, this.sessionKey);
+    }
+
     // Notify all listeners
     if (event.type === "agent_end") {
       await this.emitTerminal({
@@ -426,7 +433,6 @@ export abstract class AgentSessionBase {
         const toolResultChangedByExtension =
           event.message.role === "toolResult" &&
           this.extensionModifiedToolResultIds.delete(event.message.toolCallId);
-        bindStagedMediaOwnership(event.message, this.sessionKey);
         try {
           // Normalize live delivery facts before persistence makes its redacted copy.
           // Stored arguments must never replace the values used for tool execution.

@@ -3,12 +3,14 @@ import type { IncomingMessage } from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { finished } from "node:stream/promises";
+import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resolveStateDir } from "../config/paths.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import {
   recordInboundMediaOwner,
   recordStagedInboundMedia,
+  resolveInboundMediaOwnership,
 } from "../media/inbound-media-ownership.js";
 import { getMediaDir } from "../media/store.js";
 import { closeOpenClawStateDatabaseForTest } from "../state/openclaw-state-db.js";
@@ -144,6 +146,127 @@ describe("assistant image session policy", () => {
   // default media roots, so a staged object has to stay bound to the session that
   // published it: a reader who kept the reference may not fetch it while naming no
   // session, and it may not outlive that session's visibility.
+  // A staged object is servable from the moment bytes are published, and it is bound to a
+  // session only once the result that carries the reference is persisted. The record exists
+  // from the first moment and names no owner until the second, so a reader who learned the
+  // reference could fetch it through that window unless the route refuses an unbound record.
+  it("refuses a staged object until it is bound to a session", async () => {
+    await withEnvAsync(
+      { OPENCLAW_STATE_DIR: path.join(temp, "unbound-staged-state") },
+      async () => {
+        const inboundDir = path.join(getMediaDir(), "inbound");
+        await fs.mkdir(inboundDir, { recursive: true });
+        const id = "unbound-inline-image.png";
+        await fs.writeFile(path.join(inboundDir, id), PNG);
+        const reference = `media://inbound/${id}`;
+
+        // Control, before the object is staged: the same reference is served, so the refusals
+        // below are the binding rather than a route that stopped working.
+        expect((await request(reference)).payload).toMatchObject({ available: true });
+
+        expect(await recordStagedInboundMedia(id)).toBe(true);
+        expect((await resolveInboundMediaOwnership(id))?.sessionKey).toBeUndefined();
+
+        // Staged with no owner yet: no request is served, with or without a session, because
+        // nothing has authorised a session to read these bytes.
+        expect((await request(reference)).res.statusCode).toBe(404);
+        expect((await request(reference, { unscoped: true, omitAgent: true })).res.statusCode).toBe(
+          404,
+        );
+
+        // Bound: the publishing session reads its own object, and an unbound reader still cannot.
+        expect(await recordInboundMediaOwner(id, { sessionKey })).toBe(true);
+        const allowed = await request(reference);
+        expect(allowed.payload).toMatchObject({ available: true });
+        const ticket = String(allowed.payload!.mediaTicket);
+        expect((await request(reference, { ticket, bytes: true })).bytes).toEqual(PNG);
+        expect((await request(reference, { unscoped: true, omitAgent: true })).res.statusCode).toBe(
+          404,
+        );
+      },
+    );
+  });
+
+  // The route serves one stored object for every spelling of it, so a path or a file URL that
+  // lands in the inbound bucket has to answer to the same binding as the media:// reference.
+  it("enforces the staging binding however the staged object is addressed", async () => {
+    await withEnvAsync(
+      { OPENCLAW_STATE_DIR: path.join(temp, "addressed-staged-state") },
+      async () => {
+        const inboundDir = path.join(getMediaDir(), "inbound");
+        await fs.mkdir(inboundDir, { recursive: true });
+        const id = "addressed-inline-image.png";
+        const file = path.join(inboundDir, id);
+        await fs.writeFile(file, PNG);
+        expect(await recordStagedInboundMedia(id)).toBe(true);
+        expect(await recordInboundMediaOwner(id, { sessionKey })).toBe(true);
+        const fileUrl = pathToFileURL(file).href;
+
+        for (const source of [file, fileUrl, `media://inbound/${id}`]) {
+          expect(
+            (await request(source, { unscoped: true, omitAgent: true })).res.statusCode,
+            source,
+          ).toBe(404);
+        }
+
+        // Control: the owning session still reads the object through either spelling, so the
+        // refusal above is the binding and not a format the route stopped accepting.
+        for (const source of [file, fileUrl]) {
+          const metadata = await request(source);
+          expect(metadata.payload, source).toMatchObject({ available: true });
+          const bytes = await request(source, {
+            ticket: String(metadata.payload!.mediaTicket),
+            bytes: true,
+          });
+          expect(bytes.res.statusCode, source).toBe(200);
+          expect(bytes.bytes, source).toEqual(PNG);
+        }
+      },
+    );
+  });
+
+  // A registry that cannot be read is not a registry with no records. The records it holds are
+  // what keep staged objects bound, so a failed read refuses the request rather than serving
+  // the object as though nothing had ever been staged.
+  it("refuses a staged object when the ownership registry cannot be read", async () => {
+    await withEnvAsync(
+      { OPENCLAW_STATE_DIR: path.join(temp, "unreadable-registry-state") },
+      async () => {
+        const inboundDir = path.join(getMediaDir(), "inbound");
+        await fs.mkdir(inboundDir, { recursive: true });
+        const id = "unreadable-registry-image.png";
+        await fs.writeFile(path.join(inboundDir, id), PNG);
+        const reference = `media://inbound/${id}`;
+        expect(await recordStagedInboundMedia(id)).toBe(true);
+        expect(await recordInboundMediaOwner(id, { sessionKey })).toBe(true);
+
+        // A directory where the registry belongs cannot be read, and is not an empty registry.
+        const indexPath = path.join(getMediaDir(), "inbound-ownership.json");
+        await fs.rm(indexPath, { force: true });
+        await fs.mkdir(indexPath);
+        expect((await request(reference)).res.statusCode).toBe(404);
+        expect((await request(reference, { unscoped: true, omitAgent: true })).res.statusCode).toBe(
+          404,
+        );
+
+        // The fail-closed consequence, pinned deliberately: while the registry is unreadable an
+        // unstaged object cannot be told apart from a staged one, so it is refused too.
+        const unstaged = path.join(inboundDir, "unstaged-while-unreadable.png");
+        await fs.writeFile(unstaged, PNG);
+        expect((await request(unstaged, { unscoped: true, omitAgent: true })).res.statusCode).toBe(
+          404,
+        );
+
+        // Reconfirmation: a readable registry serves the same request again, so the refusals
+        // above are the read failure rather than a broken path.
+        await fs.rm(indexPath, { recursive: true, force: true });
+        expect(await recordStagedInboundMedia(id)).toBe(true);
+        expect(await recordInboundMediaOwner(id, { sessionKey })).toBe(true);
+        expect((await request(reference)).payload).toMatchObject({ available: true });
+      },
+    );
+  });
+
   it("refuses a staged reference without its originating session and after withdrawal", async () => {
     await withEnvAsync({ OPENCLAW_STATE_DIR: path.join(temp, "staged-media-state") }, async () => {
       cfg.gateway = {

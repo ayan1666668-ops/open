@@ -1,7 +1,10 @@
 import { FsSafeError } from "../infra/fs-safe.js";
-import { resolveInboundMediaOwnership } from "../media/inbound-media-ownership.js";
+import {
+  resolveInboundMediaOwnership,
+  type InboundMediaOwnership,
+} from "../media/inbound-media-ownership.js";
 import type { MediaProbeResult } from "../media/media-probe.js";
-import { parseInboundMediaUri } from "../media/media-reference.js";
+import { parseInboundMediaUri, resolveInboundMediaReference } from "../media/media-reference.js";
 
 /**
  * The staged-media ownership binding the Control UI assistant media route enforces.
@@ -106,11 +109,38 @@ export function reclassifyManagedInboundAvailability(
 }
 
 /**
+ * Resolves the inbound-store object a request addresses, however the request names it.
+ *
+ * The route serves one stored object for every spelling of it, a managed `media://` reference
+ * and the absolute path or file URL that lands in the same inbound bucket, so the ownership
+ * gate has to resolve both the same way. Only a source that actually names a file in the
+ * bucket has an id here; anything else belongs to a lane this registry does not own.
+ */
+async function managedInboundObjectId(source: string): Promise<string | undefined> {
+  try {
+    return (await resolveInboundMediaReference(source))?.id;
+  } catch {
+    // A source that cannot be resolved as a managed reference is not a staged object, and the
+    // route's own resolution of it refuses or serves it on its own terms.
+    return undefined;
+  }
+}
+
+/**
  * A staged object is bound to the session that published it. The media store is one of the
  * default media roots, so without this a reader who learned the reference could fetch it while
  * naming no session at all, and outlive the visibility of the session whose history published
- * it. An owned reference therefore needs a session that matches its owner, and an ownerless
- * request is refused rather than falling back to general reader authority.
+ * it. An object therefore needs a session that matches its owner, and the binding holds
+ * however the object is addressed.
+ *
+ * Three answers decide this, and each one fails closed:
+ *
+ * - a staged object with no owner is refused, because nothing has authorised a session to
+ *   read it yet and the window between staging and binding is served by no request at all;
+ * - a staged object whose record cannot be read is refused, because an unreadable registry
+ *   is not evidence that the object is unowned;
+ * - an object with no record at all is left to the route, since a lane this registry never
+ *   staged, such as a channel attachment, keeps the access it has today.
  *
  * Returns `true` when the request may proceed and `false` when it must be refused.
  */
@@ -118,17 +148,21 @@ export async function managedInboundOwnershipAllows(
   source: string,
   ...sessionBoundKeys: (string | undefined)[]
 ): Promise<boolean> {
-  if (!isManagedInboundSource(source)) {
+  const id = await managedInboundObjectId(source);
+  if (!id) {
     return true;
   }
-  const ownership = await resolveInboundMediaOwnership(managedInboundMediaId(source) ?? "");
+  let ownership: InboundMediaOwnership | undefined;
+  try {
+    ownership = await resolveInboundMediaOwnership(id);
+  } catch {
+    return false;
+  }
   if (!ownership) {
     return true;
   }
-  return (
-    !ownership.sessionKey ||
-    sessionBoundKeys.some((candidate) => candidate && candidate === ownership.sessionKey)
-  );
+  const owner = ownership.sessionKey;
+  return Boolean(owner && sessionBoundKeys.some((candidate) => candidate === owner));
 }
 
 /**
