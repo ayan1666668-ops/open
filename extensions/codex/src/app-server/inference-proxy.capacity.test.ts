@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { EventEmitter, once } from "node:events";
 import { createServer, request, type IncomingMessage } from "node:http";
-import { createConnection } from "node:net";
+import { createConnection, Socket } from "node:net";
 import { zstdCompressSync } from "node:zlib";
 import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
 import {
@@ -22,6 +22,7 @@ const transport = vi.hoisted(() => ({
   servers: [] as ReturnType<typeof createServer>[],
   decompressions: undefined as (() => void)[] | undefined,
   decompressionStarted: undefined as (() => void) | undefined,
+  upstreamOptions: undefined as ((options: ClientOptions) => ClientOptions) | undefined,
 }));
 vi.mock("node:zlib", async (original) => {
   const actual = await original<typeof import("node:zlib")>();
@@ -74,8 +75,12 @@ vi.mock("openclaw/plugin-sdk/websocket-runtime", async (original) => {
     },
     WebSocket: class extends actual.WebSocket {
       constructor(url: string | URL, options?: ClientOptions) {
-        super(String(url).startsWith("wss:") ? transport.upstream : url, options);
-        if (String(url).startsWith("wss:")) {
+        const upstream = String(url).startsWith("wss:");
+        super(
+          upstream ? transport.upstream : url,
+          upstream ? (transport.upstreamOptions?.(options ?? {}) ?? options) : options,
+        );
+        if (upstream) {
           transport.remotes.push(this);
         }
       }
@@ -114,6 +119,7 @@ beforeEach(async () => {
   transport.servers = [];
   transport.decompressions = undefined;
   transport.decompressionStarted = undefined;
+  transport.upstreamOptions = undefined;
   clients = [];
   transport.resolve.mockReset().mockResolvedValue({ lookup: undefined });
   transport.fetch.mockReset().mockImplementation(async (args) => {
@@ -322,31 +328,13 @@ describe("inference relay capacity", () => {
   });
 
   it("starts a WebSocket request while 16 HTTP responses are still streaming", async () => {
-    const streams: ReadableStreamDefaultController<Uint8Array>[] = [];
-    const admitted = createDeferred<void>();
-    transport.fetch.mockImplementation(async (args) => {
-      await new Response(args.init.body).arrayBuffer();
-      return {
-        response: new Response(
-          new ReadableStream<Uint8Array>({
-            start(controller) {
-              streams.push(controller);
-              if (streams.length === 16) {
-                admitted.resolve();
-              }
-              controller.enqueue(new TextEncoder().encode("synthetic HTTP delta"));
-            },
-          }),
-        ),
-        release: async () => {},
-      };
-    });
+    const http = holdHttpResponses();
     const responses = Array.from({ length: 16 }, () => post());
-    await admitted.promise;
+    await http.waitFor(16);
     const next = await open();
     await send(next.client, next.upstream);
     await complete(next.client, next.upstream);
-    for (const stream of streams) {
+    for (const stream of http.streams) {
       stream.close();
     }
     expect((await Promise.all(responses)).every((response) => response.status === 200)).toBe(true);
@@ -457,6 +445,118 @@ describe("inference relay capacity", () => {
       stream.close();
     }
     expect((await Promise.all(responses)).every(({ status }) => status === 200)).toBe(true);
+  });
+
+  it("holds residency through physical upstream closure after a cancelled handshake", async () => {
+    const http = holdHttpResponses();
+    const responseController = new AbortController();
+    const responses: ReturnType<typeof post>[] = [];
+    let completedResponses = 0;
+    const startHttp = () =>
+      post(responseController.signal).then((response) => {
+        completedResponses++;
+        return response;
+      });
+    const destroyStarted = createDeferred<void>();
+    const allowDestroy = createDeferred<void>();
+    const upstreamSocket = new (class extends Socket {
+      override _destroy(error: Error | null, callback: (error?: Error | null) => void) {
+        destroyStarted.resolve();
+        // Hold the actual socket destruction, not only its completion callback.
+        // oxlint-disable-next-line eslint/no-underscore-dangle -- Node documents _destroy as the custom stream teardown hook.
+        void allowDestroy.promise.then(() => super._destroy(error, callback));
+      }
+    })();
+    try {
+      for (let index = 0; index < 79; index += 16) {
+        responses.push(...Array.from({ length: Math.min(16, 79 - index) }, startHttp));
+        await http.waitFor(responses.length);
+      }
+      const received = createDeferred<void>();
+      const peerClosed = createDeferred<void>();
+      server.removeAllListeners("upgrade");
+      server.once("upgrade", (_request, socket) => {
+        socket.once("close", () => peerClosed.resolve());
+        socket.once("end", () => socket.end());
+        socket.on("error", () => {});
+        socket.resume();
+        received.resolve();
+      });
+      const logicalClosed = createDeferred<void>();
+      let requestClosed = false;
+      let socketClosed = false;
+      const target = new URL(transport.upstream);
+      transport.upstreamOptions = (options) => ({
+        ...options,
+        createConnection: () =>
+          upstreamSocket.connect({ host: target.hostname, port: Number(target.port) }),
+        finishRequest(upstreamRequest, websocket) {
+          upstreamRequest.once("socket", (socket) => {
+            socket.once("close", () => {
+              socketClosed = true;
+            });
+          });
+          upstreamRequest.once("close", () => {
+            requestClosed = true;
+          });
+          // A CONNECTING websocket emits error before its logical close.
+          websocket.once("close", () => logicalClosed.resolve());
+          assert(options.finishRequest);
+          options.finishRequest(upstreamRequest, websocket);
+        },
+      });
+      const upgrade = once(relayServer(), "upgrade");
+      const client = connect();
+      const [, downstream] = await upgrade;
+      await received.promise;
+      const fetch = transport.fetch.getMockImplementation();
+      assert(fetch);
+      const replacement = createDeferred<{
+        requestClosed: boolean;
+        socketClosed: boolean;
+        calls: number;
+      }>();
+      transport.fetch.mockImplementationOnce((args) => {
+        replacement.resolve({
+          requestClosed,
+          socketClosed,
+          calls: transport.fetch.mock.calls.length,
+        });
+        return fetch(args);
+      });
+      const incoming = once(relayServer(), "request");
+      responses.push(startHttp());
+      await incoming;
+      const downstreamClosed = once(downstream, "close");
+      client.terminate();
+      await Promise.all([downstreamClosed, logicalClosed.promise, destroyStarted.promise]);
+      await new Promise<void>((resolve) => {
+        setImmediate(resolve);
+      });
+      // Logical WS closure and downstream cleanup cannot release the 80th slot
+      // while its real upstream socket is still waiting to be destroyed.
+      expect(upstreamSocket.closed).toBe(false);
+      expect(requestClosed).toBe(false);
+      expect(socketClosed).toBe(false);
+      expect(completedResponses).toBe(0);
+      expect(http.streams).toHaveLength(79);
+      expect(transport.fetch).toHaveBeenCalledTimes(79);
+      allowDestroy.resolve();
+      expect(await replacement.promise).toEqual({
+        requestClosed: true,
+        socketClosed: true,
+        calls: 80,
+      });
+      await Promise.all([http.waitFor(80), peerClosed.promise]);
+      for (const stream of http.streams) {
+        stream.close();
+      }
+      expect((await Promise.all(responses)).every(({ status }) => status === 200)).toBe(true);
+    } finally {
+      allowDestroy.resolve();
+      responseController.abort();
+      await Promise.allSettled(responses);
+    }
   });
 
   it("charges pipelined HTTP operations independently on a shared downstream socket", async () => {

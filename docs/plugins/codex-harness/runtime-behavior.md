@@ -242,7 +242,7 @@ preparations and uploads run at once, with another 16 waiting in arrival order.
 Responses keep streaming after their upload capacity is released, so a long
 response does not block a seventeenth chat or native child from starting.
 
-The relay separately bounds HTTP operations and WebSocket connections to 80,
+The relay allows up to 80 combined HTTP operations and WebSocket connections,
 with room for 16 pending or closing admissions. It retains up to 64 usable
 WebSockets and reclaims the oldest completed idle connection when either
 transport needs room. Active responses and newly opened connections awaiting

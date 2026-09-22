@@ -54,6 +54,14 @@ const HOP_HEADERS = new Set([
 ]);
 const FAILURE = "Codex parent-local inference transport failed; retry on a fresh connection.";
 
+type ResidentTicket = {
+  signal: AbortSignal;
+  deadlineAtMs: number;
+  pending: boolean;
+  release: (() => void) | null;
+  retiring: boolean;
+};
+
 /** Private, fixed-destination relay. No upstream credentials or model content are retained. */
 export async function createCodexInferenceProxy(params: {
   upstream: URL;
@@ -73,22 +81,27 @@ export async function createCodexInferenceProxy(params: {
   const pathPrefix =
     "/" + generateSecureToken({ bytes: 32, redact: true }) + upstream.pathname.replace(/\/$/, "");
   const acquireUpload = createUploadAdmission();
-  const sockets = new Set<WebSocket>();
   const connections = new Set<() => void>();
   const idleConnections = new Set<() => void>();
   const residents = createPermitPool(MAX_RESIDENTS);
-  const tickets = new Set<object>();
-  const unresolved = new Set<{ signal: AbortSignal; deadlineAtMs: number }>();
-  let granted = 0;
-  let retiringIdle = 0;
+  const tickets = new Set<ResidentTicket>();
   const reclaimIdle = () => {
-    if (
-      granted === MAX_RESIDENTS &&
-      retiringIdle === 0 &&
-      [...unresolved].some(
-        ({ signal, deadlineAtMs }) => !signal.aborted && Date.now() < deadlineAtMs,
-      )
-    ) {
+    if (tickets.size < MAX_RESIDENTS || idleConnections.size === 0) {
+      return;
+    }
+    let acquired = 0;
+    let waiting = false;
+    let retiring = false;
+    // A logically closed connection still owns its ticket until transport cleanup settles.
+    for (const ticket of tickets) {
+      retiring ||= ticket.retiring;
+      if (ticket.release) {
+        acquired++;
+      } else if (ticket.pending && !ticket.signal.aborted && Date.now() < ticket.deadlineAtMs) {
+        waiting = true;
+      }
+    }
+    if (!retiring && acquired === MAX_RESIDENTS && waiting) {
       idleConnections.values().next().value?.();
     }
   };
@@ -98,50 +111,41 @@ export async function createCodexInferenceProxy(params: {
     if (tickets.size >= MAX_RESIDENTS + MAX_PENDING_REQUESTS) {
       return null;
     }
-    const ticket = { signal, deadlineAtMs };
+    const ticket: ResidentTicket = {
+      signal,
+      deadlineAtMs,
+      pending: true,
+      release: null,
+      retiring: false,
+    };
     tickets.add(ticket);
-    unresolved.add(ticket);
-    let releasePermit: (() => void) | null = null;
     let finished = false;
-    let retiring = false;
     const settle = () => {
-      if (!finished || !socket.closed || unresolved.has(ticket)) {
+      if (!finished || !socket.closed || ticket.pending || !tickets.delete(ticket)) {
         return;
       }
       socket.off("close", settle);
-      tickets.delete(ticket);
-      if (releasePermit) {
-        releasePermit();
-        releasePermit = null;
-        granted--;
-      }
-      if (retiring) {
-        retiring = false;
-        retiringIdle--;
-      }
+      ticket.release?.();
+      ticket.release = null;
       reclaimIdle();
     };
     socket.once("close", settle);
     const ready = residents.acquire({ signal, deadlineAtMs }).then((release) => {
-      unresolved.delete(ticket);
+      ticket.pending = false;
       if (release && signal.aborted) {
         release();
-      } else if (release) {
-        releasePermit = release;
-        granted++;
+      } else {
+        ticket.release = release;
       }
       settle();
       reclaimIdle();
-      return releasePermit !== null;
+      return ticket.release !== null;
     });
     reclaimIdle();
     return {
       ready,
       retireIdle() {
-        if (!retiring) {
-          retiring = true;
-          retiringIdle++;
-        }
+        ticket.retiring = true;
       },
       finish() {
         finished = true;
@@ -351,12 +355,6 @@ export async function createCodexInferenceProxy(params: {
         remote?.terminate();
         local?.terminate();
         proxyAgent?.destroy();
-        if (remote) {
-          sockets.delete(remote);
-        }
-        if (local) {
-          sockets.delete(local);
-        }
         socket.destroy();
         // ws can emit close before a CONNECTING request's socket actually closes.
         // Keep residency until the public request/socket teardown has settled too.
@@ -378,11 +376,7 @@ export async function createCodexInferenceProxy(params: {
           idleConnections.values().next().value?.();
         }
         if (connections.size >= MAX_WEBSOCKETS) {
-          rejectWebSocketUpgrade(socket, {
-            status: 503,
-            headers: { "Retry-After": "1" },
-            body: { contentType: "application/json", text: OVERLOAD_BODY },
-          });
+          rejectBusyUpgrade(socket);
           return;
         }
         connections.add(close);
@@ -397,11 +391,7 @@ export async function createCodexInferenceProxy(params: {
         signal.throwIfAborted();
         assertCurrent();
         if (!admitted) {
-          rejectWebSocketUpgrade(socket, {
-            status: 503,
-            headers: { "Retry-After": "1" },
-            body: { contentType: "application/json", text: OVERLOAD_BODY },
-          });
+          rejectBusyUpgrade(socket);
           return;
         }
         // Admission precedes the upstream dial. Complete the real upstream handshake
@@ -410,11 +400,7 @@ export async function createCodexInferenceProxy(params: {
         signal.throwIfAborted();
         assertCurrent();
         if (!releasePermit) {
-          rejectWebSocketUpgrade(socket, {
-            status: 503,
-            headers: { "Retry-After": "1" },
-            body: { contentType: "application/json", text: OVERLOAD_BODY },
-          });
+          rejectBusyUpgrade(socket);
           return;
         }
         // Queueing, DNS and the remote handshake share one native-compatible deadline.
@@ -463,7 +449,6 @@ export async function createCodexInferenceProxy(params: {
             request.end();
           },
         });
-        sockets.add(remote);
         remote.once("upgrade", (response) => {
           handshakeHeaders.set(req, relayHeaders(response.headers));
         });
@@ -504,7 +489,6 @@ export async function createCodexInferenceProxy(params: {
               clearTimeout(handshakeTimer);
               socket.off("end", close);
               local = accepted;
-              sockets.add(accepted);
               accepted.once("error", close);
               accepted.once("close", close);
               let releaseFrame = () => {};
@@ -627,9 +611,6 @@ export async function createCodexInferenceProxy(params: {
     for (const closeConnection of connections) {
       closeConnection();
     }
-    for (const socket of sockets) {
-      socket.terminate();
-    }
     server.close();
     server.closeAllConnections();
     wss.close();
@@ -679,7 +660,10 @@ function createUploadAdmission() {
     if (queued) {
       queuedBytes += bytes;
     }
-    let releasePermit: (() => void) | null = null;
+    const releasePermit = await permits.acquire({ signal, deadlineAtMs });
+    if (queued) {
+      queuedBytes -= bytes;
+    }
     let released = false;
     const release = () => {
       if (released) {
@@ -689,22 +673,20 @@ function createUploadAdmission() {
       outstanding--;
       releasePermit?.();
     };
-    try {
-      releasePermit = await permits.acquire({ signal, deadlineAtMs });
-      if (!releasePermit || signal.aborted) {
-        release();
-        return null;
-      }
-      return release;
-    } catch (error) {
+    if (!releasePermit || signal.aborted) {
       release();
-      throw error;
-    } finally {
-      if (queued) {
-        queuedBytes -= bytes;
-      }
+      return null;
     }
+    return release;
   };
+}
+
+function rejectBusyUpgrade(socket: Duplex) {
+  rejectWebSocketUpgrade(socket, {
+    status: 503,
+    headers: { "Retry-After": "1" },
+    body: { contentType: "application/json", text: OVERLOAD_BODY },
+  });
 }
 
 function createUploadBody(bytes: Buffer, signal: AbortSignal, release: () => void) {
