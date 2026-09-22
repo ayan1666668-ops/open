@@ -20,6 +20,7 @@ const RESERVED_CATALOG_ROOTS = {
 } as const;
 
 const PLUGIN_CATALOG_PATHS = {
+  "browser extension": "registered and covered by the browser plugin",
   "browser extension native-host": "registered and covered by the browser plugin",
   memory: "registered and covered by the memory-core plugin",
   "memory search": "registered and covered by the memory-core plugin",
@@ -30,6 +31,7 @@ const JSON_NOT_APPLICABLE = {
   namespaces: {
     reason: "command group only; reporting subcommands declare JSON output individually",
     commands: [
+      "agents team",
       "backup",
       "backup git",
       "backup sqlite",
@@ -175,6 +177,7 @@ const JSON_NOT_APPLICABLE = {
       "models image-fallbacks add",
       "models image-fallbacks remove",
       "models image-fallbacks clear",
+      "models auth activate",
       "models auth logout",
       "models auth order set",
       "models auth order clear",

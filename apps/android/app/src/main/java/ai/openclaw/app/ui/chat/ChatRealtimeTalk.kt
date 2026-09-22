@@ -45,7 +45,7 @@ internal fun rememberChatRealtimeTalkLauncher(viewModel: MainViewModel): () -> U
   val context = LocalContext.current
   val talkSetupReadiness by viewModel.talkSetupReadiness.collectAsState()
   val currentTalkSetup by rememberUpdatedState(talkSetupReadiness.realtimeTalk)
-  val failureText by viewModel.talkModeFailureText.collectAsState()
+  val failureText by viewModel.talkFailureText.collectAsState()
   var setupMessage by remember { mutableStateOf<String?>(null) }
   val showSetupMessage = {
     setupMessage = gatewayTalkSetupDescription(currentTalkSetup)

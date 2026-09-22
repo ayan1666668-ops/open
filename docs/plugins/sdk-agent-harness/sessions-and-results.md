@@ -59,7 +59,56 @@ mutating native state. The callback belongs to one registered harness lifetime;
 retaining it after the operation closes does not retain authority. Post-delete
 hooks are notifications, not the owner of durable binding removal.
 
+Implement `withSessionContextReset(params, run)` when a native binding must be
+invalidated by a successful same-key rewind or branch switch. This optional hook
+uses the same prepared `commit`/`rollback` contract, but keeps the session key and
+retained history. Core commits invalidation only after validating the requested
+cut and restores it if the transcript transaction fails. Release subscriptions
+after the committed mutation settles. The optional `previousSessionId` is the
+recorded predecessor, allowing retirement of a binding not yet transferred after
+compaction without adopting it during preparation. Ordinary compaction does not
+invoke this hook and continues to preserve native thread continuity.
+
+## Subagent task history
+
+Native subagents can expose the shared task transcript view through the optional
+`taskHistory` harness capability. Declare the owned `taskKinds` and implement
+`read({ task, cfg, cursor, limit, assertCurrent })`. Return chronological chat
+`messages` with a stable `messageId` (or canonical `__openclaw.id`) and an optional
+`nextCursor` for older history. Internal runtime-only IDs are insufficient: the
+shared viewer must recognize the identity across pages and refreshes. Rows that
+share a transcript entry ID remain one display group.
+Preserve typed thinking, tool-call, and tool-result content so the normal chat
+renderer can display it. Bound native reads and response sizes.
+
+The Gateway's `tasks.history` method authorizes the task's requester session and
+routes history to its existing OpenClaw child session or the owning harness.
+It accepts a task ID, an optional opaque cursor, and a limit from 1 to 200
+(default 100). The harness must verify native parent/child lineage and the
+bound connection, and call `assertCurrent()` after awaited work. The Gateway
+rechecks access before returning a page and caps the response at 4 MiB.
+
+Record immutable native history routing facts in task detail when creating the
+task. A later parent turn can replace its current native thread without changing
+the child's source. Preserve the original parent and connection identity across
+progress, completion, and recovery; never reconstruct them from a replacement
+binding. Preserve authorized compaction transfers within the same session
+lifecycle, while rejecting resets and account or connection changes.
+Runtime task detail participates in the Gateway's cursor and
+after-await identity checks.
+
+Keep `childSessionKey` absent for native children: it describes an OpenClaw
+session and also determines lifecycle ownership. Reading history must not adopt
+the child, create another transcript store, or change cancellation and recovery.
+`TaskSummary.hasTranscript` advertises readable history to the shared viewer.
+
 ## Tool and media results
+
+`inferToolMetaFromArgs` from `openclaw/plugin-sdk/agent-harness-runtime` returns
+compact, lossy display metadata. Array values deeper than 64 levels are omitted;
+shallower siblings still contribute to the preview. The helper can return
+`undefined`. Keep the original arguments for validation and execution: display
+metadata is neither an argument replacement nor a general-purpose traversal limit.
 
 Core constructs the OpenClaw tool list and passes it into the prepared
 attempt. When a harness executes a dynamic tool call, return the tool result
@@ -68,6 +117,43 @@ yourself.
 
 This keeps text, image, video, music, TTS, approval, and messaging-tool
 outputs on the same delivery path as OpenClaw-backed runs.
+
+For messaging tools, read the original result's `details.messageDelivery` with
+`readEmbeddedMessageDeliveryFact` from `openclaw/plugin-sdk/agent-harness-runtime`.
+Only settled delivery counts as a sent message; successful dry runs and suppressed
+sends must not suppress a later reply. Preserve partial delivery evidence when a
+tool also reports an error. Messaging tool results without a delivery fact use
+`isDeliveredMessagingToolResult`, which owns tool eligibility and receipt interpretation.
+For core conversation tools, it reads the original Gateway result's `details.status`:
+`sent` confirms delivery, as do `replied` and `timeout` for `conversations_turn`.
+A peer-reply timeout or correlation error does not undo the channel send or change
+the tool's error status. `queued`, `suppressed`, and `unknown` do not confirm delivery,
+even when they include a prepared message ID. Session coordination results are not
+external delivery receipts.
+Use `requirePluginDeliveryId: true` when legacy plugin results need a concrete
+message ID; authoritative core conversation statuses do not require one.
+`projectPluginMessageDeliveryFact` reads legacy result envelopes into the shared
+delivery shape, retaining partial-delivery status for attachment handling.
+For legacy message sends, an error takes precedence over a message ID unless
+the result confirms partial delivery.
+Use `isDeliveredMessagingToolSendToCurrentSource` for source-route comparisons and
+`extractMessagingToolSourceReplyPayload` to retain attachment metadata and the
+transcript owner's confirmation. Presentation middleware cannot establish new
+delivery facts.
+
+The same runtime entrypoint exports `sanitizeToolArgs` for diagnostic tool
+arguments and event payloads. It redacts nested fields without mutating the input
+and preserves own JSON keys, including `__proto__`; repeated references become
+`"[Circular]"`. Use `sanitizeToolResult` for result presentation, which also applies
+the shared result-size and image-storage rules.
+
+For successful `sessions_spawn` results, use `normalizeAcceptedSessionSpawnResult`
+from `openclaw/plugin-sdk/agent-harness-tool-runtime` and retain its
+`AcceptedSessionSpawn` in the attempt's `acceptedSessionSpawns`. Capture the
+original result before middleware changes its details. Preserve
+`expectsCompletionMessage`: core needs that fact to transfer child completion
+delivery when the requester yields. The helper returns `null` for an unaccepted
+or incomplete receipt and treats missing completion intent as `false`.
 
 Set `AgentHarnessAttemptResult.hostOwnedToolMediaUrls` only for native artifacts
 that the trusted harness runtime created and persisted itself. Every entry must

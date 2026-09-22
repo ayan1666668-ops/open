@@ -61,6 +61,7 @@ vi.mock("./usage.js", () => ({
 vi.mock("../../plugins/provider-model-routes.js", () => ({
   // Synthetic route IDs in this fixture are already canonical.
   createProviderModelCatalogIdNormalizer: () => (modelId: string) => modelId,
+  resolveProviderModelCatalogId: ({ modelId }: { modelId: string }) => modelId,
   resolveProviderModelPolicySurface: () => null,
   resolveProviderModelRoutes: authStoreMocks.resolveProviderModelRoutes,
 }));
@@ -155,6 +156,7 @@ export async function resolveSession(params: {
 }): Promise<string | undefined> {
   return (
     await resolveSessionAuthSelection({
+      agentId: "main",
       cfg: params.cfg ?? ({} as OpenClawConfig),
       provider: params.provider ?? "openai",
       modelId: params.sessionEntry.model ?? "model-x",

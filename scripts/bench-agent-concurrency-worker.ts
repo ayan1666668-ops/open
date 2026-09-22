@@ -110,8 +110,6 @@ async function resetRuntime(persist: boolean): Promise<void> {
   ]);
   subagents.resetSubagentRegistryForTests({ persist });
   subagents.testing.setDepsForTest();
-  tasks.resetTaskRegistryControlRuntimeForTests();
-  tasks.resetTaskRegistryDeliveryRuntimeForTests();
   tasks.resetDetachedTaskLifecycleRuntimeForTests();
   tasks.resetTaskRegistryForTests({ persist });
   tasks.resetTaskFlowRegistryForTests({ persist });
@@ -225,8 +223,13 @@ async function configureSpawnRuntime(
       persistSubagentRunsToDisk: () => {},
       persistSubagentRunsToDiskOrThrow: () => {},
     });
+    const { createInMemoryTaskRegistryStore, createInMemoryTaskFlowRegistryStore } =
+      await import("../src/test-utils/task-registry-store.js");
+    const inMemoryFlowStore = createInMemoryTaskFlowRegistryStore();
     taskStore.configureTaskRegistryRuntime({
       store: {
+        ...createInMemoryTaskRegistryStore(undefined, inMemoryFlowStore),
+        // Memory mode measures runtime projection with empty, no-op task persistence.
         loadSnapshot: () => ({ tasks: new Map(), deliveryStates: new Map() }),
         upsertTaskWithDeliveryState: () => {},
         deleteTaskWithDeliveryState: () => {},
@@ -235,12 +238,7 @@ async function configureSpawnRuntime(
       },
     });
     flowStore.configureTaskFlowRegistryRuntime({
-      store: {
-        loadSnapshot: () => ({ flows: new Map() }),
-        upsertFlow: () => {},
-        deleteFlow: () => {},
-        close: () => {},
-      },
+      store: inMemoryFlowStore,
     });
     return;
   }
@@ -619,21 +617,11 @@ async function runSweepSample(childCount: number): Promise<Sample> {
     persist: () => {},
     clearPendingLifecycleError: () => {},
     clearPendingLifecycleTimeout: () => {},
-    clearPendingSubagentRecoveryNotice: () => true,
     sweepPendingLifecycle: () => {},
     completeSubagentRunWithRecovery: async () => {
       lostContextCompletions += 1;
     },
     getGatewayRecoveryRuntime: () => undefined,
-    abandonSubagentRestartRecoveryLaunch: () => true,
-    clearAcceptedSubagentRestartRecovery: () => true,
-    resumeSettledSubagentRestartRecovery: () => true,
-    replaceSubagentRunAfterSteer: () => true,
-    markSubagentRestartRecoveryLaunchAttempted: () => undefined,
-    markSubagentRestartRecoveryLaunchAccepted: () => undefined,
-    markSubagentRestartRecoveryLaunchConsumed: () => undefined,
-    reserveSubagentRestartRecoveryLaunch: () => undefined,
-    resetSubagentRestartRecoveryLaunchAttempt: () => true,
     finalizeInterruptedSubagentRun: async ({ runId, expectedEntry }) => {
       if (runs.get(runId) !== expectedEntry || expectedEntry?.generation !== 3) {
         throw new Error(`unexpected recovery projection owner: ${runId}`);

@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import { normalizeOptionalString as normalizeLifecycleRunId } from "@openclaw/normalization-core/string-coerce";
 import type { SessionRunStatus } from "../../packages/gateway-protocol/src/schema/sessions-row.js";
 import { isAgentLifecycleYieldedWaiting } from "../agents/agent-lifecycle-parent-state.js";
@@ -14,11 +15,17 @@ import type { InternalSessionEntry as SessionEntry } from "../config/sessions.js
 import { patchSessionEntryCore } from "../config/sessions/session-accessor.js";
 import { getAgentEventLifecycleGeneration, type AgentEventPayload } from "../infra/agent-events.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
+import {
+  readAgentRunProviderReview,
+  type ProviderReviewTerminalFact,
+} from "../sessions/provider-review-terminal.js";
 import { parseCronRunScopeSuffix } from "../sessions/session-key-utils.js";
+import { sessionChanges } from "../sessions/session-row-changes.js";
 import {
   recordGatewaySessionRunFailure,
   resolveSessionRunError,
 } from "../sessions/session-run-error.js";
+import { isIncognitoSessionKey } from "../shared/incognito-session-key.js";
 import { loadSessionEntry } from "./session-utils.js";
 import type { GatewaySessionRow } from "./session-utils.types.js";
 
@@ -75,7 +82,9 @@ type PersistedLifecycleSessionShape = Pick<
   | "lifecycleRunId"
 >;
 
-type GatewaySessionLifecycleSnapshot = Partial<Pick<SessionEntry, keyof LifecycleSessionShape>>;
+type GatewaySessionLifecycleSnapshot = Partial<
+  Omit<Pick<SessionEntry, keyof LifecycleSessionShape>, "status"> & { status: SessionRunStatus }
+>;
 
 function isFiniteTimestamp(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value) && value > 0;
@@ -163,7 +172,7 @@ function resolveRuntimeMs(params: {
 }
 
 export function deriveGatewaySessionLifecycleSnapshot(params: {
-  session?: GatewaySessionLifecycleSnapshot | null;
+  session?: Partial<Pick<SessionEntry, keyof LifecycleSessionShape>> | null;
   event: LifecycleEventLike;
 }): GatewaySessionLifecycleSnapshot {
   const phase = resolveLifecyclePhase(params.event);
@@ -218,7 +227,12 @@ function derivePersistedSessionLifecyclePatch(params: {
   event: LifecycleEventLike;
 }): Partial<PersistedLifecycleSessionShape> {
   const snapshot = deriveGatewaySessionLifecycleSnapshot({
-    session: params.entry ?? undefined,
+    session: params.entry
+      ? {
+          ...params.entry,
+          status: params.entry.status === "interrupted" ? "failed" : params.entry.status,
+        }
+      : undefined,
     event: params.event,
   });
   const snapshotPatch: Partial<PersistedLifecycleSessionShape> = {
@@ -262,7 +276,11 @@ export function deriveGatewaySessionLifecycleProjectionPatch(params: {
     lifecycleRunId: _lifecycleRunId,
     ...patch
   } = derivePersistedSessionLifecyclePatch(params);
-  return patch;
+  const { status, ...fields } = patch;
+  // Suppressed events are no-ops; present undefined fields still intentionally clear state.
+  return Object.hasOwn(patch, "status")
+    ? { ...fields, status: status === "interrupted" ? "failed" : status }
+    : fields;
 }
 
 export function isRestartRecoveryLifecycleEvent(params: {
@@ -317,14 +335,20 @@ function acceptsCronRunContinuationLifecycleEvent(params: {
   return Boolean(marker?.phase === "continuing" && runId && marker.ownerRunId === runId);
 }
 
-// sessions.list cache fence input. The terminal entry write (status/endedAt/
-// runtimeMs) commits asynchronously after the run-index fence already bumped
-// at lifecycle end; without its own fence a list computed in that window
-// caches the pre-terminal row indefinitely.
-let lifecyclePersistenceVersion = 0;
-
-export function readSessionLifecyclePersistenceVersion(): number {
-  return lifecyclePersistenceVersion;
+function matchesProviderReviewWriter(
+  entry: SessionEntry,
+  fact: ProviderReviewTerminalFact,
+): boolean {
+  return (
+    entry.sessionId === fact.target.sessionId &&
+    entry.lifecycleRevision === fact.target.lifecycleRevision &&
+    (entry.activeWriterRunId === fact.expectedWriterRunId ||
+      entry.lifecycleRunId === fact.expectedWriterRunId) &&
+    (entry.activeWriterRunId === undefined ||
+      entry.activeWriterRunId === fact.expectedWriterRunId) &&
+    (entry.lifecycleRunId === undefined || entry.lifecycleRunId === fact.expectedWriterRunId) &&
+    (!entry.providerReview || isDeepStrictEqual(entry.providerReview, fact.review))
+  );
 }
 
 export async function persistGatewaySessionLifecycleEvent(params: {
@@ -332,6 +356,11 @@ export async function persistGatewaySessionLifecycleEvent(params: {
   agentId?: string;
   event: LifecycleEventLike;
   assertCommitAllowed?: () => void;
+  expectedWriter?: {
+    runId: string;
+    sessionId: string;
+    lifecycleRevision?: string;
+  };
 }): Promise<void> {
   const phase = resolveLifecyclePhase(params.event);
   if (!phase) {
@@ -345,6 +374,27 @@ export async function persistGatewaySessionLifecycleEvent(params: {
   if (!sessionEntry.entry) {
     return;
   }
+  // Incognito keeps its existing native lifecycle writer. The runtime's private fact
+  // joins that same entry update; public event data cannot introduce a review pause.
+  const terminalReview =
+    (phase === "error" || (phase === "end" && params.event.data?.stopReason === "error")) &&
+    isIncognitoSessionKey(sessionEntry.canonicalKey) &&
+    params.event.runId
+      ? readAgentRunProviderReview(params.event.runId)
+      : undefined;
+  const providerReview =
+    terminalReview &&
+    terminalReview.target.sessionKey === sessionEntry.canonicalKey &&
+    terminalReview.target.storePath === sessionEntry.storePath &&
+    terminalReview.target.sessionId === params.event.sessionId &&
+    terminalReview.review.runId === params.event.runId &&
+    terminalReview.lifecycleGeneration === params.event.lifecycleGeneration &&
+    params.event.ts >= terminalReview.capturedAtMs &&
+    (terminalReview.lifecycleStartedAt === undefined ||
+      terminalReview.lifecycleStartedAt === params.event.data?.startedAt) &&
+    matchesProviderReviewWriter(sessionEntry.entry, terminalReview)
+      ? terminalReview
+      : undefined;
   const owningSessionId =
     typeof params.event.sessionId === "string" && params.event.sessionId
       ? params.event.sessionId
@@ -362,6 +412,20 @@ export async function persistGatewaySessionLifecycleEvent(params: {
       terminalRecovery = undefined;
       failedRun = undefined;
       const entry = storedEntry as SessionEntry;
+      if (providerReview && !matchesProviderReviewWriter(entry, providerReview)) {
+        return null;
+      }
+      const expected = params.expectedWriter;
+      if (
+        expected &&
+        (entry.sessionId !== expected.sessionId ||
+          entry.lifecycleRevision !== expected.lifecycleRevision ||
+          (entry.activeWriterRunId !== expected.runId && entry.lifecycleRunId !== expected.runId) ||
+          (entry.activeWriterRunId !== undefined && entry.activeWriterRunId !== expected.runId) ||
+          (entry.lifecycleRunId !== undefined && entry.lifecycleRunId !== expected.runId))
+      ) {
+        return null;
+      }
       if (
         exactCronRun &&
         !acceptsCronRunContinuationLifecycleEvent({ entry, event: params.event })
@@ -396,10 +460,14 @@ export async function persistGatewaySessionLifecycleEvent(params: {
         // their async persistence can settle out of order.
         return null;
       }
-      const patch = derivePersistedSessionLifecyclePatch({
-        entry,
-        event: params.event,
-      });
+      const patch: Partial<PersistedLifecycleSessionShape> & Pick<SessionEntry, "providerReview"> =
+        derivePersistedSessionLifecyclePatch({
+          entry,
+          event: params.event,
+        });
+      if (providerReview && Object.keys(patch).length > 0) {
+        patch.providerReview = providerReview.review;
+      }
       if (
         (phase === "error" || phase === "end") &&
         eventRunId &&
@@ -432,14 +500,27 @@ export async function persistGatewaySessionLifecycleEvent(params: {
       skipMaintenance: true,
       takeCacheOwnership: true,
       requireWriteSuccess: true,
-      ...(params.assertCommitAllowed ? { assertCommitAllowed: params.assertCommitAllowed } : {}),
+      ...(providerReview ? { providerReviewMutation: true } : {}),
+      onCommitted: () =>
+        sessionChanges.emit({
+          sessionKey: sessionEntry.canonicalKey,
+          agentId: sessionEntry.agentId,
+          storePath: sessionEntry.storePath,
+        }),
+      ...(params.assertCommitAllowed || providerReview
+        ? {
+            assertCommitAllowed: () => {
+              params.assertCommitAllowed?.();
+              providerReview?.assertCurrent();
+            },
+          }
+        : {}),
     },
   );
   if (persisted && terminalRecovery) {
     const message = `main-session restart recovery terminal: session=${sessionEntry.canonicalKey} run=${terminalRecovery.runId} status=${terminalRecovery.outcome.status} reason=${terminalRecovery.outcome.reason}`;
     restartRecoveryLog[terminalRecovery.outcome.status === "ok" ? "info" : "warn"](message);
   }
-  lifecyclePersistenceVersion += 1;
   if (persisted && failedRun) {
     const { runId, error } = failedRun;
     // Only accepted errors pay for branch navigation; assistant detection and

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../../test/helpers/promise.js";
 import { upsertSessionEntryCore } from "../../config/sessions/session-accessor.js";
-import { addSessionMember } from "../../config/sessions/session-sharing-store.js";
+import { addSessionMember } from "../../config/sessions/session-sharing-store.native.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import {
   claimAgentRunDelegatedAuthority,
@@ -288,34 +288,64 @@ describe("question gateway methods", () => {
     });
   });
 
-  it("requests questions, then gets and lists them", async () => {
-    const requested = await call("question.request", {
-      ...requestParams,
-      id: "client-question-id",
-    });
-    expect(requested[0]).toBe(true);
-    const id = (requested[1] as { id: string }).id;
-    expect(id).toBe("client-question-id");
-    expect(broadcast).toHaveBeenCalledWith(
-      "question.requested",
-      expect.objectContaining({
-        id,
-        runId: "run-main",
-        questions: [expect.objectContaining({ header: "Destination" })],
-        status: "pending",
-      }),
-    );
+  it.each([undefined, "https://example.test/connect", "http://localhost:8080/connect"])(
+    "requests questions with browser URL %s, then gets and lists them",
+    async (url) => {
+      const questions = [{ ...requestParams.questions[0], ...(url ? { url } : {}) }];
+      const requested = await call("question.request", {
+        ...requestParams,
+        id: "client-question-id",
+        questions,
+      });
+      expect(requested[0]).toBe(true);
+      const id = (requested[1] as { id: string }).id;
+      expect(id).toBe("client-question-id");
+      expect(broadcast).toHaveBeenCalledWith(
+        "question.requested",
+        expect.objectContaining({
+          id,
+          runId: "run-main",
+          questions,
+          status: "pending",
+        }),
+      );
 
-    expect(await call("question.get", { id })).toEqual([
-      true,
-      { question: expect.objectContaining({ id, runId: "run-main", status: "pending" }) },
-      undefined,
-    ]);
-    expect(await call("question.list", {})).toEqual([
-      true,
-      { questions: [expect.objectContaining({ id, runId: "run-main" })] },
-      undefined,
-    ]);
+      expect(await call("question.get", { id })).toEqual([
+        true,
+        {
+          question: expect.objectContaining({
+            id,
+            questions,
+            runId: "run-main",
+            status: "pending",
+          }),
+        },
+        undefined,
+      ]);
+      expect(await call("question.list", {})).toEqual([
+        true,
+        { questions: [expect.objectContaining({ id, questions, runId: "run-main" })] },
+        undefined,
+      ]);
+    },
+  );
+
+  it.each([
+    ["script", "javascript:alert(1)"],
+    ["data", "data:text/html,hello"],
+    ["relative", "/connect"],
+    ["ambiguous scheme", "https:example.test/connect"],
+    ["credentials", "https://fixture-user:fixture-password@example.test/connect"],
+    ["over-limit", "https://example.test/" + "x".repeat(2048)],
+  ])("rejects a %s browser URL before publishing", async (_name, url) => {
+    expect(
+      await call("question.request", {
+        ...requestParams,
+        questions: [{ ...requestParams.questions[0], url }],
+      }),
+    ).toMatchObject([false, undefined, { code: "INVALID_REQUEST" }]);
+    expect(manager.list()).toEqual([]);
+    expect(broadcast).not.toHaveBeenCalled();
   });
 
   it("broadcasts answered and expired terminal states", async () => {
@@ -658,7 +688,7 @@ describe("question gateway methods", () => {
       const id = await requestSecretQuestion();
       const value = "test-secret-value-gateway-diversion-123";
       const client = {
-        connect: { client: { displayName: "Trusted Operator" } },
+        connect: { client: { displayName: "Trusted Operator" }, scopes: ["operator.questions"] },
       } as GatewayClient;
 
       const resolved = await call(
@@ -811,7 +841,11 @@ describe("question gateway methods", () => {
       await withOpenClawTestState({ scenario: "minimal" }, async () => {
         mockReferencedStoreSnapshot();
         const reload = createDeferred<{ warningCount: number }>();
-        reloadSecrets.mockReturnValue(reload.promise);
+        const reloadStarted = createDeferred();
+        reloadSecrets.mockImplementation(() => {
+          reloadStarted.resolve();
+          return reload.promise;
+        });
         const id = await requestSecretQuestion();
         const firstValue = "test-secret-committed-first";
         const pending = call("question.resolve", {
@@ -836,6 +870,12 @@ describe("question gateway methods", () => {
             readSecretStoreValue({ scope: { kind: "team" }, name: "SERVICE_API_KEY" }),
           ).toEqual({ ok: true, value: firstValue });
           expect(manager.get(id)?.status).toBe("answered");
+          await Promise.race([
+            reloadStarted.promise,
+            pending.then(() => {
+              throw new Error("question.resolve settled before runtime refresh began");
+            }),
+          ]);
           expect(reloadSecrets).toHaveBeenCalledTimes(1);
         } finally {
           reload.resolve({ warningCount: 0 });

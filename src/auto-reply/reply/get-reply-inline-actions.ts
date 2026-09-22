@@ -4,6 +4,7 @@ import type { QueueMode } from "../../../packages/gateway-protocol/src/schema/lo
 import { collectTextContentBlocks } from "../../agents/content-blocks.js";
 import type { BlockReplyChunking } from "../../agents/embedded-agent-block-chunker.js";
 import type { ExecPolicyOverrides } from "../../agents/exec-defaults.js";
+import { resolveReplyCompletion } from "../../agents/reply-completion.js";
 import { getChannelPlugin } from "../../channels/plugins/index.js";
 import type { SessionEntry } from "../../config/sessions.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
@@ -28,13 +29,7 @@ import {
   markReplyPayloadForSourceSuppressionDelivery,
 } from "../reply-payload.js";
 import type { MsgContext, TemplateContext } from "../templating.js";
-import type {
-  ElevatedLevel,
-  ReasoningLevel,
-  ThinkLevel,
-  ThinkingCatalogEntry,
-  VerboseLevel,
-} from "../thinking.js";
+import type { ElevatedLevel, ThinkingCatalogEntry, VerboseLevel } from "../thinking.js";
 import type { GetReplyOptions, ReplyPayload } from "../types.js";
 import {
   readAbortCutoffFromSessionEntry,
@@ -53,6 +48,8 @@ import { extractExplicitGroupId } from "./group-id.js";
 import { stripMentions, stripStructuralPrefixes } from "./mentions.js";
 import type { createModelSelectionState } from "./model-selection.js";
 import { getStandaloneSlashCommandName } from "./reply-inline.js";
+import type { ReplyModelLevelResolver } from "./reply-model-levels.js";
+import { resolveReplyOperationRunState } from "./reply-operation-run-state.js";
 import { createSkillCommandLoaders } from "./skill-command-loaders.js";
 import type { TypingController } from "./typing.js";
 
@@ -185,9 +182,8 @@ export async function handleInlineActions(params: {
   elevatedFailures: Array<{ gate: string; key: string }>;
   defaultActivation: Parameters<typeof buildStatusReply>[0]["defaultGroupActivation"];
   thinkingCatalog?: ThinkingCatalogEntry[];
-  resolvedThinkLevel: ThinkLevel | undefined;
+  resolveModelLevels: ReplyModelLevelResolver;
   resolvedVerboseLevel: VerboseLevel | undefined;
-  resolvedReasoningLevel: ReasoningLevel;
   resolvedElevatedLevel: ElevatedLevel;
   execOverrides?: ExecPolicyOverrides;
   blockReplyChunking?: BlockReplyChunking;
@@ -233,9 +229,8 @@ export async function handleInlineActions(params: {
     elevatedFailures,
     defaultActivation,
     thinkingCatalog,
-    resolvedThinkLevel,
+    resolveModelLevels,
     resolvedVerboseLevel,
-    resolvedReasoningLevel,
     resolvedElevatedLevel,
     execOverrides,
     blockReplyChunking,
@@ -284,6 +279,14 @@ export async function handleInlineActions(params: {
         })
       : false;
     if (shouldSkip) {
+      const runState = resolveReplyOperationRunState(opts);
+      if (runState) {
+        // The stop owner cancelled this queued input; no answer remains due.
+        runState.replyCompletion = resolveReplyCompletion(
+          runState.replyCompletion?.expectation ?? "required",
+          "blocked",
+        );
+      }
       typing.cleanup();
       return { kind: "reply", reply: undefined };
     }
@@ -339,14 +342,18 @@ export async function handleInlineActions(params: {
     params.skillCommands.length > 0
       ? params.skillCommands
       : shouldLoadSkillCommands
-        ? (await skillCommandsRuntimeLoader.load()).listSkillCommandsForWorkspace({
+        ? await (
+            await skillCommandsRuntimeLoader.load()
+          ).prepareSkillCommandsForWorkspace({
             ...skillCommandContext,
             skillFilter,
           })
         : [];
   const allSkillCommands =
     shouldLoadSkillCommands && skillFilter !== undefined
-      ? (await skillCommandsRuntimeLoader.load()).listSkillCommandsForWorkspace({
+      ? await (
+          await skillCommandsRuntimeLoader.load()
+        ).prepareSkillCommandsForWorkspace({
           ...skillCommandContext,
           includeAllowlistHidden: true,
         })
@@ -435,6 +442,16 @@ export async function handleInlineActions(params: {
           commandName: skillInvocation.command.name,
           skillName: skillInvocation.command.skillName,
         };
+        opts?.abortSignal?.throwIfAborted();
+        if (opts?.runId) {
+          // Tool commands leave transcript persistence with ordinary reply dispatch.
+          opts.onAgentRunStart?.(opts.runId, undefined, {
+            completionSource: "reply-dispatch",
+            getResult: () => ({}),
+          });
+        }
+        // The execution owner can observe revocation while arming cancellation.
+        opts?.abortSignal?.throwIfAborted();
         const result = await tool.execute(toolCallId, toolArgs, opts?.abortSignal);
         const blockedReason = extractBlockedToolReason(result);
         if (blockedReason) {
@@ -546,9 +563,8 @@ export async function handleInlineActions(params: {
       contextTokens,
       workspaceDir,
       thinkingCatalog,
-      resolvedThinkLevel,
+      ...(await resolveModelLevels()),
       resolvedVerboseLevel: resolvedVerboseLevel ?? "off",
-      resolvedReasoningLevel,
       resolvedElevatedLevel,
       resolveDefaultThinkingLevel,
       isGroup,
@@ -591,9 +607,8 @@ export async function handleInlineActions(params: {
       opts,
       defaultGroupActivation: defaultActivation,
       thinkingCatalog,
-      resolvedThinkLevel,
+      resolveModelLevels,
       resolvedVerboseLevel: resolvedVerboseLevel ?? "off",
-      resolvedReasoningLevel,
       resolvedElevatedLevel,
       blockReplyChunking,
       resolvedBlockStreamingBreak,

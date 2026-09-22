@@ -7,13 +7,7 @@ import type {
 } from "../../lib/chat/chat-types.ts";
 import { readHumanMentions } from "../../lib/chat/human-mentions.ts";
 import { outboxPayloadMatchesOwner } from "../../lib/chat/outbox-payload-store.runtime.ts";
-import {
-  INTERRUPTED_SETTINGS_WAIT_ERROR,
-  MAX_STORED_QUEUE_ITEMS,
-  normalizeStoredQueueItem,
-  sameQueuedDeliveryVersion,
-  type StoredComposerSession,
-} from "../../lib/chat/outbox-store-codec.ts";
+import { MAX_STORED_QUEUE_ITEMS } from "../../lib/chat/outbox-store-codec.ts";
 import {
   captureDraftReplacement,
   nextDraftRevision,
@@ -23,7 +17,6 @@ import {
   readDraftRevisionState,
 } from "../../lib/chat/outbox-store-draft-state.ts";
 import {
-  applyStoredChatOutboxScope,
   captureChatOutboxAdmission,
   notifyStoredChatOutboxChanges,
   readStoredOutboxStore as readStore,
@@ -33,7 +26,6 @@ import {
   writeStoredOutboxStore as writeStore,
   type ChatComposerScope,
   type StoredChatOutboxScope,
-  type StoredComposerState,
 } from "../../lib/chat/outbox-store.ts";
 import {
   resolveUiConversationIdentity,
@@ -41,11 +33,14 @@ import {
 } from "../../lib/sessions/session-key.ts";
 // Control UI chat module implements composer persistence behavior.
 import { getSafeSessionStorage } from "../../local-storage.ts";
-import {
-  getChatAttachmentDataUrl,
-  releaseChatAttachmentPayloads,
-} from "./attachment-payload-store.ts";
+import { releaseChatAttachmentPayloads } from "./attachment-payload-store.ts";
 import { normalizeChatComposerDraft } from "./composer-draft.ts";
+import {
+  queueItemVersionMatches,
+  queueItemsEqual,
+  serializeQueueItemForScope,
+  writeStoredComposerSession,
+} from "./composer-queue-serialization.ts";
 import {
   captureDurableChatAttachments,
   chatAttachmentDraftSignature,
@@ -115,99 +110,23 @@ type ChatComposerPersistOptions = {
   expectedDraftRevision?: number;
 };
 
-function serializeQueueItem(item: ChatQueueItem): ChatQueueItem | null {
-  if (
-    !item.id?.trim() ||
-    (!item.text?.trim() &&
-      !item.attachments?.length &&
-      !item.attachmentPayload &&
-      !item.attachmentStorageError) ||
-    item.pendingRunId ||
-    (item.sendState === "sending" && !item.sendRunId)
-  ) {
-    return null;
-  }
-  const attachments = (item.attachments ?? []).map((attachment) => {
-    const { dataUrl: _dataUrl, previewUrl: _previewUrl, ...metadata } = attachment;
-    // A failed migration owns no Blob yet: retain its inline bytes across reload.
-    // Only a payload reference permits removing bytes from the stored queue row.
-    if (item.attachmentPayload) {
-      return metadata;
-    }
-    const dataUrl = getChatAttachmentDataUrl(attachment);
-    if (dataUrl) {
-      return Object.assign(metadata, { dataUrl });
-    }
-    return item.attachmentStorageError ? metadata : null;
-  });
-  if (item.attachments?.length && attachments.some((attachment) => attachment === null)) {
-    return null;
-  }
-  return normalizeStoredQueueItem({
-    ...item,
-    attachments: attachments.length ? attachments : undefined,
-    ...(item.sendState === "waiting-model" ? { sendError: INTERRUPTED_SETTINGS_WAIT_ERROR } : {}),
-  });
-}
+type ChatComposerDraftRevisionState = ReturnType<typeof readDraftRevisionState>;
 
-function serializeQueueItemForScope(
-  item: ChatQueueItem,
-  scope: StoredChatOutboxScope,
-): ChatQueueItem | null {
-  const serialized = serializeQueueItem(item);
-  if (!serialized) {
-    return null;
-  }
-  return applyStoredChatOutboxScope(serialized, scope);
-}
-
-function queueItemVersionMatches(
-  stored: ChatQueueItem,
-  expected: ChatQueueItem,
-  scope: StoredChatOutboxScope,
-): boolean {
-  const canonicalExpected = serializeQueueItemForScope(expected, scope);
-  return Boolean(canonicalExpected && sameQueuedDeliveryVersion(stored, canonicalExpected));
-}
-
-function queueItemsEqual(
-  stored: ChatQueueItem,
-  canonicalExpected: ChatQueueItem,
-  scope: StoredChatOutboxScope,
-): boolean {
-  const canonicalStored = serializeQueueItemForScope(stored, scope);
-  return Boolean(
-    canonicalStored && JSON.stringify(canonicalStored) === JSON.stringify(canonicalExpected),
+export function markChatComposerEdit(
+  state: ChatComposerPersistenceState,
+  draftRevision?: number,
+): void {
+  const scope = resolveUiConversationIdentity(state, state.sessionKey);
+  const revision =
+    draftRevision ??
+    nextDraftRevision(loadCapturedChatComposerState(state, scope).revisions.latestAttempt);
+  rememberDraftEdit(
+    getSafeSessionStorage() ?? state,
+    storageTargetForGateway(state.settings?.gatewayUrl).key,
+    storedChatOutboxScopeKey(scope),
+    revision,
   );
 }
-
-function writeStoredComposerSession(
-  store: StoredComposerState,
-  storeSessionKey: string,
-  session: StoredComposerSession | null,
-  queue: ChatQueueItem[],
-): void {
-  if (
-    !session?.draft &&
-    !session?.goalMode &&
-    session?.draftRevision === undefined &&
-    queue.length === 0
-  ) {
-    delete store.sessions[storeSessionKey];
-    return;
-  }
-  store.sessions[storeSessionKey] = {
-    ...(session?.awaitingDefaults ? { awaitingDefaults: true } : {}),
-    ...(session?.draft ? { draft: session.draft } : {}),
-    ...(session?.draftMentions ? { draftMentions: session.draftMentions } : {}),
-    ...(session?.goalMode ? { goalMode: session.goalMode } : {}),
-    ...(session?.draftRevision !== undefined ? { draftRevision: session.draftRevision } : {}),
-    ...(queue.length ? { queue } : {}),
-    updatedAt: Date.now(),
-  };
-}
-
-type ChatComposerDraftRevisionState = ReturnType<typeof readDraftRevisionState>;
 
 export function captureChatComposerReplacement(
   state: ChatComposerPersistenceState,
@@ -428,15 +347,26 @@ export function persistChatComposerState(
   return persistChatComposerStateResult(state, sessionKey, options) === "persisted";
 }
 
+export type ChatQueueAdmissionResult = "admitted" | "source-changed" | "full" | "storage-failed";
+
 export function admitStoredChatComposerQueueItem(
   state: ChatComposerScope,
   captured: ReturnType<typeof captureChatOutboxAdmission>,
   item: ChatQueueItem,
   replaces?: StoredChatQueueReplacement,
 ): boolean {
+  return admitStoredChatComposerQueueItemResult(state, captured, item, replaces) === "admitted";
+}
+
+export function admitStoredChatComposerQueueItemResult(
+  state: ChatComposerScope,
+  captured: ReturnType<typeof captureChatOutboxAdmission>,
+  item: ChatQueueItem,
+  replaces?: StoredChatQueueReplacement,
+): ChatQueueAdmissionResult {
   const storage = getSafeSessionStorage();
   if (!storage || !captured.scope.sessionKey.trim()) {
-    return false;
+    return "storage-failed";
   }
   try {
     const target = storageTargetForGateway(state.settings?.gatewayUrl);
@@ -444,7 +374,7 @@ export function admitStoredChatComposerQueueItem(
     const scope = captured.scope;
     const serialized = serializeQueueItemForScope(item, scope);
     if (!serialized) {
-      return false;
+      return "storage-failed";
     }
     const migrated = resolvePendingComposerSessions(store, state);
     const storeSessionKey = storedChatOutboxScopeKey(scope);
@@ -461,22 +391,22 @@ export function admitStoredChatComposerQueueItem(
           entry.id === replaces.id && queueItemVersionMatches(entry, replaces.expected, scope),
       )
     ) {
-      return false;
+      return "source-changed";
     }
     const queue = storedQueue.filter((entry) => entry.id !== replaces?.id);
     const existing = queue.find((entry) => entry.id === serialized.id);
     if (existing) {
       if (!queueItemsEqual(existing, serialized, scope)) {
-        return false;
+        return "storage-failed";
       }
       if (migrated) {
         writeStore(storage, target, store);
         notifyStoredChatOutboxChanges();
       }
-      return true;
+      return "admitted";
     }
     if (queue.length >= MAX_STORED_QUEUE_ITEMS) {
-      return false;
+      return "full";
     }
     writeStoredComposerSession(store, storeSessionKey, session, [...queue, serialized]);
     if (captured.awaitingDefaults) {
@@ -489,9 +419,9 @@ export function admitStoredChatComposerQueueItem(
     // Verify the captured write before subscribers can change defaults or drain it.
     const admitted = Boolean(persisted && queueItemsEqual(persisted, serialized, scope));
     notifyStoredChatOutboxChanges();
-    return admitted;
+    return admitted ? "admitted" : "storage-failed";
   } catch {
-    return false;
+    return "storage-failed";
   }
 }
 
@@ -682,6 +612,15 @@ export class ChatComposerPersistence {
     return this.ready;
   }
 
+  get durableScope() {
+    const state = this.getState();
+    return state ? this.resolveDurableScope(state) : null;
+  }
+
+  get draftRevision(): number {
+    return this.latestDraftRevision;
+  }
+
   start() {
     const state = this.getState();
     if (!state) {
@@ -754,12 +693,7 @@ export class ChatComposerPersistence {
     this.pending = this.snapshot(state, draftRevision, this.committedDraftRevision);
     // An edit owns the draft before its debounced write. Otherwise another
     // pane's older async action can publish over it and fence out that write.
-    rememberDraftEdit(
-      getSafeSessionStorage() ?? state,
-      storageTargetForGateway(state.settings?.gatewayUrl).key,
-      storedChatOutboxScopeKey(this.pending.scope),
-      draftRevision,
-    );
+    markChatComposerEdit(state, draftRevision);
     this.clearTimer();
     this.timer = globalThis.setTimeout(
       () => this.persistNow(),
@@ -963,6 +897,9 @@ export class ChatComposerPersistence {
         attachment.browserAnnotation
           ? { browserAnnotation: Object.assign({}, attachment.browserAnnotation) }
           : {},
+        attachment.selectionAnnotation
+          ? { selectionAnnotation: Object.assign({}, attachment.selectionAnnotation) }
+          : {},
       ),
     );
     const durable = durableScope
@@ -1093,18 +1030,37 @@ export class ChatComposerPersistence {
       this.persistSnapshot(state, snapshot);
       return;
     }
-    const baseline = this.snapshot(state, this.latestDraftRevision, this.committedDraftRevision);
-    const restoreRevision = this.forceDurableOwnerRestore ? 0 : this.latestDraftRevision;
     this.durablePersistence.restore(
-      {
-        scope,
-        latestRevision: restoreRevision,
-        signature: chatAttachmentDraftSignature(
-          state.chatMessage,
-          state.chatAttachments ?? [],
-          state.chatGoalDraftMode,
-          state.chatMentions,
-        ),
+      scope,
+      () => {
+        const baseline = this.snapshot(
+          state,
+          this.latestDraftRevision,
+          this.committedDraftRevision,
+        );
+        return {
+          latestRevision: this.forceDurableOwnerRestore ? 0 : this.latestDraftRevision,
+          signature: chatAttachmentDraftSignature(
+            state.chatMessage,
+            state.chatAttachments ?? [],
+            state.chatGoalDraftMode,
+            state.chatMentions,
+          ),
+          onCurrentWins: (storedRevision) => {
+            this.forceDurableOwnerRestore = false;
+            if (
+              baseline.durable &&
+              (state.chatMessage ||
+                state.chatGoalDraftMode ||
+                (state.chatAttachments?.length ?? 0) > 0)
+            ) {
+              this.durablePersistence.persist({
+                ...baseline.durable,
+                expectedRevision: storedRevision,
+              });
+            }
+          },
+        };
       },
       () => ({
         scope: this.resolveDurableScope(state),
@@ -1147,18 +1103,6 @@ export class ChatComposerPersistence {
           });
         }
         state.requestUpdate?.();
-      },
-      (storedRevision) => {
-        this.forceDurableOwnerRestore = false;
-        if (
-          baseline.durable &&
-          (state.chatMessage || state.chatGoalDraftMode || (state.chatAttachments?.length ?? 0) > 0)
-        ) {
-          this.durablePersistence.persist({
-            ...baseline.durable,
-            expectedRevision: storedRevision,
-          });
-        }
       },
     );
   }

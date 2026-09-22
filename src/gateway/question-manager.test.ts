@@ -45,6 +45,12 @@ const invalidAnswerCases: Array<[string, Question[], QuestionAnswers, string]> =
   ],
   ["an empty string", questions, { answers: { choice: ["  "] } }, "choice"],
   [
+    "an empty secret value",
+    [{ ...questions[0]!, options: [], isSecret: true }],
+    { answers: { choice: [""] } },
+    "choice",
+  ],
+  [
     "multiple values for a single-select question",
     questions,
     { answers: { choice: ["One", "Two"] } },
@@ -203,10 +209,12 @@ describe("QuestionManager", () => {
   it("retires local questions without cancelling truth or refreshing human-input recovery", async () => {
     const onResolved = vi.fn();
     const releaseHumanInputWait = vi.fn();
+    const releaseOwnRunAccess = vi.fn();
     const record = manager.request({
       questions,
       timeoutMs: 10_000,
       onResolved,
+      ownRunAccess: { canSelect: () => true, canAccess: () => true, release: releaseOwnRunAccess },
       registerHumanInputWait: () => releaseHumanInputWait,
     });
     const waiting = manager.waitAnswer(record.id, 5_000);
@@ -216,18 +224,23 @@ describe("QuestionManager", () => {
     expect(record.status).toBe("pending");
     expect(manager.get(record.id)).toBeNull();
     expect(releaseHumanInputWait).toHaveBeenCalledExactlyOnceWith(false);
+    expect(releaseOwnRunAccess).toHaveBeenCalledOnce();
+    expect(manager.getOwnRunAccess(record.id)).toBeUndefined();
     await vi.advanceTimersByTimeAsync(10_000 + QUESTION_RESOLVED_ENTRY_GRACE_MS);
     expect(onResolved).not.toHaveBeenCalled();
+    expect(releaseOwnRunAccess).toHaveBeenCalledOnce();
     expect(manager.request({ id: record.id, questions, timeoutMs: 10_000 }).status).toBe("pending");
   });
 
   it("permanently closes admission without reset reopening the retired owner", () => {
     const releaseHumanInputWait = vi.fn();
+    const releaseOwnRunAccess = vi.fn();
     const onResolved = vi.fn();
     const record = manager.request({
       questions,
       timeoutMs: 10_000,
       onResolved,
+      ownRunAccess: { canSelect: () => true, canAccess: () => true, release: releaseOwnRunAccess },
       registerHumanInputWait: () => releaseHumanInputWait,
     });
     manager.close();
@@ -238,6 +251,7 @@ describe("QuestionManager", () => {
     );
     expect(manager.get(record.id)).toBeNull();
     expect(releaseHumanInputWait).toHaveBeenCalledExactlyOnceWith(false);
+    expect(releaseOwnRunAccess).toHaveBeenCalledOnce();
     expect(onResolved).not.toHaveBeenCalled();
     expect(vi.getTimerCount()).toBe(0);
   });
@@ -383,18 +397,75 @@ describe("QuestionManager", () => {
   });
 
   it("keeps terminal records through the grace window", async () => {
-    const record = manager.request({ questions, timeoutMs: 10_000 });
+    let accessActive = true;
+    const releaseOwnRunAccess = vi.fn(() => {
+      accessActive = false;
+    });
+    const record = manager.request({
+      questions,
+      timeoutMs: 10_000,
+      ownRunAccess: {
+        canSelect: () => accessActive,
+        canAccess: () => accessActive,
+        release: releaseOwnRunAccess,
+      },
+    });
     manager.resolve(record.id, answers);
 
     await vi.advanceTimersByTimeAsync(QUESTION_RESOLVED_ENTRY_GRACE_MS - 1);
     expect(manager.get(record.id)?.status).toBe("answered");
+    expect(manager.getOwnRunAccess(record.id)?.canAccess(null, {})).toBe(true);
+    expect(releaseOwnRunAccess).not.toHaveBeenCalled();
 
     await vi.advanceTimersByTimeAsync(1);
     expect(manager.get(record.id)).toBeNull();
+    expect(manager.getOwnRunAccess(record.id)).toBeUndefined();
+    expect(releaseOwnRunAccess).toHaveBeenCalledOnce();
+    manager.close();
+    expect(releaseOwnRunAccess).toHaveBeenCalledOnce();
+  });
+
+  it("retains authority sweeping for legacy requesters without a run selector", () => {
+    let active = true;
+    const resolved = vi.fn();
+    const record = manager.request({
+      questions,
+      timeoutMs: 10_000,
+      isRequesterActive: () => active,
+      onResolved: resolved,
+    });
+    active = false;
+    manager.cancelClosedAuthorities({ instanceId: "other-instance", runId: "other-run" });
+    expect(resolved).toHaveBeenCalledWith({ id: record.id, status: "cancelled" });
   });
 });
 
 describe("answer canonicalization", () => {
+  it.each(["  synthetic-secret  ", "\tsynthetic-secret\n", "   "])(
+    "preserves exact secret bytes while normalizing ordinary answers: %j",
+    async (value) => {
+      const record = manager.request({
+        questions: [
+          {
+            questionId: "secret_value",
+            header: "Secret",
+            question: "Enter a synthetic secret.",
+            options: [],
+            isSecret: true,
+          },
+          ...questions,
+        ],
+        timeoutMs: 10_000,
+      });
+      const waiting = manager.waitAnswer(record.id);
+      manager.resolve(record.id, { answers: { secret_value: [value], choice: ["  Two  "] } });
+      expect(await waiting).toEqual({
+        status: "answered",
+        answers: { answers: { secret_value: [value], choice: ["Two"] } },
+      });
+    },
+  );
+
   it("stores declared option labels for trim-variant submissions", () => {
     const localManager = new QuestionManager();
     const record = localManager.request({

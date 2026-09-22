@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../test/helpers/promise.js";
 import type { RunEmbeddedAgentParams } from "../agents/embedded-agent-runner/run/params.js";
+import { setReplyPayloadMetadata } from "../auto-reply/reply-payload.js";
 import type { SessionEntry } from "../config/sessions/types.js";
 import {
   emitTrustedDiagnosticEvent,
@@ -324,7 +325,11 @@ describe("realtime voice agent consult runtime", () => {
   });
 
   it("runs an embedded agent using the shared session and prompt contract", async () => {
-    const { runtime, runEmbeddedAgent, sessionStore } = createAgentRuntime();
+    const { runtime, runEmbeddedAgent, sessionStore } = createAgentRuntime([
+      setReplyPayloadMetadata({ text: "Earlier answer." }, { precedingInputAnswer: true }),
+      { text: "Speak this." },
+      { text: "Then this." },
+    ]);
 
     const result = await consultRealtimeVoiceAgent({
       cfg: { agents: { list: [{ id: "operator", default: true }] } } as never,
@@ -349,7 +354,7 @@ describe("realtime voice agent consult runtime", () => {
       timeoutMs: 10_000,
     });
 
-    expect(result).toEqual({ text: "Speak this." });
+    expect(result).toEqual({ text: "Speak this.\n\nThen this." });
     const voiceSession = sessionStore["voice:15550001234"];
     if (!voiceSession) {
       throw new Error("Expected voice consult session entry");
@@ -561,6 +566,37 @@ describe("realtime voice agent consult runtime", () => {
     expect(runEmbeddedAgent).not.toHaveBeenCalled();
   });
 
+  it("allows an independent consult when only the requester session is locked", async () => {
+    const { runtime, runEmbeddedAgent, sessionStore } = createAgentRuntime();
+    sessionStore["agent:main:main"] = {
+      sessionId: "locked-requester",
+      updatedAt: 1,
+      agentHarnessId: "codex",
+      modelSelectionLocked: true,
+    };
+
+    await expect(
+      consultRealtimeVoiceAgent({
+        cfg: {} as never,
+        agentRuntime: runtime as never,
+        logger: { warn: vi.fn() },
+        agentId: "meet-consult",
+        sessionKey: "agent:meet-consult:subagent:google-meet:meet-independent",
+        spawnedBy: "agent:main:main",
+        contextMode: "fork",
+        messageProvider: "google-meet",
+        lane: "google-meet",
+        runIdPrefix: "google-meet:meet-independent",
+        args: { question: "Check the meeting." },
+        transcript: [],
+        surface: "a private Google Meet",
+        userLabel: "Participant",
+      }),
+    ).resolves.toEqual({ text: "Speak this." });
+    expect(sessionForkMocks.forkSessionEntryFromParent).not.toHaveBeenCalled();
+    expect(requireEmbeddedAgentCall(runEmbeddedAgent).agentId).toBe("meet-consult");
+  });
+
   it("fresh-checks archive state after a queued lifecycle mutation", async () => {
     const { runtime, runEmbeddedAgent, sessionStore } = createAgentRuntime();
     const sessionKey = "voice:archive-race";
@@ -672,7 +708,10 @@ describe("realtime voice agent consult runtime", () => {
 
   it("returns a speakable fallback when the embedded agent has no visible text", async () => {
     const warn = vi.fn();
-    const { runtime } = createAgentRuntime([{ text: "hidden", isReasoning: true }]);
+    const { runtime } = createAgentRuntime([
+      setReplyPayloadMetadata({ text: "Earlier answer." }, { precedingInputAnswer: true }),
+      { text: "hidden", isReasoning: true },
+    ]);
 
     const result = await consultRealtimeVoiceAgent({
       cfg: {} as never,

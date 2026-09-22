@@ -2,7 +2,8 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js";
 import { setRuntimeConfigSnapshot } from "../../config/io.js";
 import {
   loadSessionEntry,
@@ -14,6 +15,7 @@ import { NodeWorkerWorkspaceRuntime } from "../../node-host/node-worker-workspac
 import { runCommandWithTimeout } from "../../process/exec.js";
 import type { DB } from "../../state/openclaw-state-db.generated.js";
 import {
+  closeOpenClawStateDatabaseAsync,
   closeOpenClawStateDatabaseForTest,
   openOpenClawStateDatabase,
 } from "../../state/openclaw-state-db.js";
@@ -29,9 +31,13 @@ import { recoverPendingWorkspaceResults } from "./placement-dispatch-pending-res
 import { createWorkerPlacementReclaim } from "./placement-reclaim.js";
 import { placementTurnOwner, projectWorkerSessionTurnClaim } from "./placement-record.js";
 import { createWorkerSessionPlacementStore } from "./placement-store.js";
+import { SessionWorkspaceReservationBusyError } from "./placement-workspace-reservation.js";
 import { createRepositoryWorkspaceMutationService } from "./repository-workspace-mutation.js";
 import { syncSessionRepositoryWorkspace } from "./repository-workspace-startup.js";
-import { readSessionRepositoryCheckpoint } from "./session-repository-checkpoints.js";
+import {
+  readSessionRepositoryArtifacts,
+  withSessionRepositoryCheckpoint,
+} from "./session-repository-checkpoints.js";
 import type { WorkerTunnelHandle } from "./tunnel-contract.js";
 import {
   attachedEnvironment,
@@ -60,6 +66,8 @@ vi.mock("./worker-github-binding.js", () => ({
 }));
 
 describe("repository workspace result ownership", () => {
+  const seedDirs = useAutoCleanupTempDirTracker(afterAll);
+  const originSeeds = new Map<boolean, string>();
   let closeNode: (() => Promise<void>) | undefined;
   beforeEach(setupWorkerTurnLauncherTest);
   afterEach(async () => {
@@ -67,14 +75,15 @@ describe("repository workspace result ownership", () => {
       await closeNode?.();
     } finally {
       closeNode = undefined;
-      await cleanupWorkerTurnLauncherTest();
+      await cleanupWorkerTurnLauncherTest({ reuseReadWorkers: true });
     }
   });
+  afterAll(async () => {
+    await closeOpenClawStateDatabaseAsync();
+    closeOpenClawStateDatabaseForTest();
+  });
 
-  async function fixture(executionMode: "worker-turn" | "remote-exec", runSetupScript = false) {
-    setRuntimeConfigSnapshot({ session: { store: sessionTarget.storePath } });
-    const origin = path.join(root, "origin");
-    await fs.mkdir(origin);
+  async function initializeOriginSeed(origin: string, runSetupScript: boolean) {
     if (runSetupScript) {
       await fs.mkdir(path.join(origin, ".openclaw"));
       await fs.writeFile(
@@ -88,7 +97,7 @@ describe("repository workspace result ownership", () => {
         timeoutMs: 10_000,
         baseEnv: {
           PATH: process.env.PATH,
-          HOME: root,
+          HOME: origin,
           GIT_CONFIG_GLOBAL: os.devNull,
           GIT_CONFIG_NOSYSTEM: "1",
         },
@@ -108,6 +117,19 @@ describe("repository workspace result ownership", () => {
       "-m",
       "base",
     );
+  }
+
+  async function fixture(executionMode: "worker-turn" | "remote-exec", runSetupScript = false) {
+    setRuntimeConfigSnapshot({ session: { store: sessionTarget.storePath } });
+    let seed = originSeeds.get(runSetupScript);
+    if (!seed) {
+      seed = seedDirs.make("openclaw-repository-result-seed-");
+      await initializeOriginSeed(seed, runSetupScript);
+      originSeeds.set(runSetupScript, seed);
+    }
+    const origin = path.join(root, "origin");
+    // Only pristine source bytes are shared; checkpoints and Git refs stay case-owned.
+    await fs.cp(seed, origin, { recursive: true });
     const store = getSessionRepositoryWorkspaceStore();
     const repository = store.create({
       agentId: sessionTarget.agentId,
@@ -204,9 +226,17 @@ describe("repository workspace result ownership", () => {
         publishAcceptedWorkspace,
       });
     const environments: WorkerDispatchEnvironmentService = {
+      prepareProjectIntent: async () => {
+        throw new Error("unexpected local-project preparation");
+      },
+      assertPreparedIntentCurrent: vi.fn(),
+      getPreparedCandidates: () => [],
+      schedulePreparedRefill: vi.fn(),
+      bindPreparedWorkspace: async () => {
+        throw new Error("unexpected prepared binding");
+      },
       get: () => attachedEnvironment(),
-      create: vi.fn(async () => attachedEnvironment()),
-      createFromProfileSnapshot: vi.fn(async () => attachedEnvironment()),
+      createWithRequest: vi.fn(async () => attachedEnvironment()),
       attachSession: vi.fn(async () => credential()),
       destroy: vi.fn(async () => attachedEnvironment()),
       startTunnel: vi.fn(async () => tunnel),
@@ -265,12 +295,12 @@ describe("repository workspace result ownership", () => {
         },
       });
       expect(saved).toBe("saved");
-      const checkpoint = await readSessionRepositoryCheckpoint({
+      const checkpoint = await readSessionRepositoryArtifacts({
         workspaceId: f.repository.workspaceId,
+        previewPath: "editor.txt",
+        assertCurrent: () => {},
       });
-      expect((await checkpoint.readEntry(checkpoint.changedEntries[0]!)).toString()).toBe(
-        "saved from editor\n",
-      );
+      expect(checkpoint.preview).toEqual(new Uint8Array(Buffer.from("saved from editor\n")));
       expect(placements.get(SESSION_ID)?.workspaceBaseManifestRef).toBe(
         checkpoint.currentManifestRef,
       );
@@ -325,11 +355,13 @@ describe("repository workspace result ownership", () => {
       );
       expect(placements.listPendingWorkspaceResults()).toEqual([]);
       expect(placements.get(SESSION_ID)).toMatchObject({ state: "active", turnClaim: null });
-      const checkpoint = await readSessionRepositoryCheckpoint({
+      const checkpoint = await readSessionRepositoryArtifacts({
         workspaceId: f.repository.workspaceId,
+        previewPath: "uncertain.txt",
+        assertCurrent: () => {},
       });
-      expect((await checkpoint.readEntry(checkpoint.changedEntries[0]!)).toString()).toBe(
-        "write completed before transport loss\n",
+      expect(checkpoint.preview).toEqual(
+        new Uint8Array(Buffer.from("write completed before transport loss\n")),
       );
     },
   );
@@ -357,7 +389,7 @@ describe("repository workspace result ownership", () => {
           mutate: async (assertCurrent) => {
             await expect(
               placements.withRepositoryWorkspaceReservation(sessionTarget, competing),
-            ).rejects.toThrow("checkpoint is busy");
+            ).rejects.toBeInstanceOf(SessionWorkspaceReservationBusyError);
             assertCurrent();
             return { changed: false, value: "unchanged" };
           },
@@ -456,25 +488,29 @@ describe("repository workspace result ownership", () => {
       });
       await f.stop(sessionTarget);
       expect(placements.get(SESSION_ID)?.state).toBe("reclaimed");
-      const snapshot = await readSessionRepositoryCheckpoint({
-        workspaceId: f.repository.workspaceId,
-      });
-      expect(snapshot.changedEntries.map((entry) => entry.path)).toEqual([
-        "editor.txt",
-        "first.txt",
-        "second.txt",
-        "setup.txt",
-      ]);
       const expected = new Map([
         ["editor.txt", "editor save\n"],
         ["first.txt", "first turn\n"],
         ["second.txt", "second turn\n"],
         ["setup.txt", "prepared\n"],
       ]);
-      for (const entry of snapshot.changedEntries) {
-        expect((await snapshot.readEntry(entry)).toString()).toBe(expected.get(entry.path));
-      }
-      expect(snapshot.baseManifestRef).toBe(pinned.baseManifestHash);
+      await withSessionRepositoryCheckpoint(
+        { workspaceId: f.repository.workspaceId },
+        async (snapshot) => {
+          expect(snapshot.changedEntries.map((entry) => entry.path)).toEqual([
+            "editor.txt",
+            "first.txt",
+            "second.txt",
+            "setup.txt",
+          ]);
+          for (const entry of snapshot.changedEntries) {
+            expect(await fs.readFile(path.join(snapshot.stagingRoot, entry.path), "utf8")).toBe(
+              expected.get(entry.path),
+            );
+          }
+          expect(snapshot.baseManifestRef).toBe(pinned.baseManifestHash);
+        },
+      );
       expect(f.store.get(f.repository.workspaceId)?.baseManifestHash).toBe(pinned.baseManifestHash);
       const artifactRoot = f.store.artifactPath(f.repository.workspaceId);
       expect(
@@ -533,26 +569,6 @@ describe("repository workspace result ownership", () => {
       const owned = f.beginTurn("interrupted", !materialized);
       const destination = path.join(root, "materialized-worktree");
       if (materialized) {
-        const database = openOpenClawStateDatabase();
-        executeSqliteQuerySync(
-          database.db,
-          getNodeSqliteKysely<Pick<DB, "worker_environments">>(database.db)
-            .insertInto("worker_environments")
-            .values({
-              environment_id: owned.placement.environmentId,
-              provider_id: "fixture",
-              profile_id: "development",
-              profile_snapshot_json: "{}",
-              provision_operation_id: "repository-result-move",
-              lease_id: "repository-result-lease",
-              state: "attached",
-              owner_epoch: owned.placement.activeOwnerEpoch,
-              attached_session_ids_json: JSON.stringify([SESSION_ID]),
-              created_at_ms: 1,
-              updated_at_ms: 1,
-              state_changed_at_ms: 1,
-            }),
-        );
         placements.beginPlacementMove({
           sessionId: SESSION_ID,
           source: {
@@ -614,9 +630,17 @@ describe("repository workspace result ownership", () => {
         database: openOpenClawStateDatabase(),
       });
       const environments: WorkerDispatchEnvironmentService = {
+        prepareProjectIntent: async () => {
+          throw new Error("unexpected local-project preparation");
+        },
+        assertPreparedIntentCurrent: vi.fn(),
+        getPreparedCandidates: () => [],
+        schedulePreparedRefill: vi.fn(),
+        bindPreparedWorkspace: async () => {
+          throw new Error("unexpected prepared binding");
+        },
         get: () => undefined,
-        create: vi.fn(async () => attachedEnvironment()),
-        createFromProfileSnapshot: vi.fn(async () => attachedEnvironment()),
+        createWithRequest: vi.fn(async () => attachedEnvironment()),
         attachSession: vi.fn(async () => credential()),
         destroy: vi.fn(async () => attachedEnvironment()),
         startTunnel: vi.fn(async () => {
@@ -651,12 +675,12 @@ describe("repository workspace result ownership", () => {
         turnClaim: null,
       });
       expect(environments.startTunnel).not.toHaveBeenCalled();
-      const saved = await readSessionRepositoryCheckpoint({
+      const saved = await readSessionRepositoryArtifacts({
         workspaceId: f.repository.workspaceId,
+        previewPath: "survives.txt",
+        assertCurrent: () => {},
       });
-      expect((await saved.readEntry(saved.changedEntries[0]!)).toString()).toBe(
-        "durable before restart\n",
-      );
+      expect(saved.preview).toEqual(new Uint8Array(Buffer.from("durable before restart\n")));
     },
   );
 });

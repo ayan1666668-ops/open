@@ -1,6 +1,7 @@
 import os from "node:os";
 import type { ChatType } from "../channels/chat-type.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { prepareActiveNodeContext } from "../infra/active-node-context.js";
 import { getMachineDisplayName } from "../infra/machine-name.js";
 import { resolveRuntimeOsLabel } from "../infra/os-summary.js";
 import { normalizeMessageChannel } from "../utils/message-channel.js";
@@ -16,6 +17,7 @@ export async function resolveAgentRuntimePrompt(params: {
   workspaceDir?: string;
   cwd?: string;
   preparedRepoRoot?: string | null;
+  preparedGitCoauthorPrompt?: string | null;
   sessionKey?: string;
   sessionId?: string;
   model: string;
@@ -42,6 +44,7 @@ export async function resolveAgentRuntimePrompt(params: {
     agentId: params.agentId,
   });
   const machineName = await getMachineDisplayName();
+  await prepareActiveNodeContext();
   const systemPromptParams = buildSystemPromptParams({
     config: params.config,
     agentId: params.agentId,
@@ -49,6 +52,9 @@ export async function resolveAgentRuntimePrompt(params: {
     cwd: params.cwd,
     ...(Object.hasOwn(params, "preparedRepoRoot")
       ? { preparedRepoRoot: params.preparedRepoRoot }
+      : {}),
+    ...(Object.hasOwn(params, "preparedGitCoauthorPrompt")
+      ? { preparedGitCoauthorPrompt: params.preparedGitCoauthorPrompt }
       : {}),
     runtime: {
       sessionKey: params.sessionKey,

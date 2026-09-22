@@ -1,5 +1,4 @@
 import crypto from "node:crypto";
-import type { CurrentInboundPromptContext } from "../../agents/embedded-agent-runner/run/params.js";
 import { normalizeChatType } from "../../channels/chat-type.js";
 import type { SessionEntry } from "../../config/sessions.js";
 import { loadSessionEntry } from "../../config/sessions/session-accessor.js";
@@ -10,7 +9,7 @@ import { formatErrorMessage } from "../../infra/errors.js";
 import { defaultRuntime } from "../../runtime.js";
 import { resolveSendPolicy } from "../../sessions/send-policy.js";
 import { readPendingUserTurnTranscriptAdmission } from "../../sessions/user-turn-transcript-admission.js";
-import { sessionDeliveryChannel } from "../../utils/delivery-context.shared.js";
+import { sessionDeliveryChannel } from "../../utils/delivery-context.read.js";
 import { markReplyPayloadForSourceSuppressionDelivery } from "../reply-payload.js";
 import type { ReplyPayload } from "../types.js";
 import { resolveRunAfterAutoFallbackPrimaryProbeRecheck } from "./agent-runner-auto-fallback.js";
@@ -80,7 +79,6 @@ export type AdmittedFollowupTurn = {
   config: OpenClawConfig;
   session: FollowupSessionOwner;
   sessionStore?: Record<string, SessionEntry>;
-  currentInboundContext?: CurrentInboundPromptContext;
   sendPolicy: "allow" | "deny";
   preflightCompactionApplied: boolean;
   preflightFailurePayload?: ReplyPayload;
@@ -115,18 +113,23 @@ function isSameSessionGeneration(
   );
 }
 
-/** Resolves one queued item into an immutable admitted turn. */
+/** Resolves one queued item into an admitted turn. */
 export async function admitFollowupTurn(params: {
   queued: FollowupRun;
   defaults: FollowupRunnerParams;
   onCompactionNoticePayload?: (payload: ReplyPayload, turn: AdmittedFollowupTurn) => Promise<void>;
 }): Promise<FollowupAdmissionResult> {
+  const assertOperatorCurrent = () => {
+    params.queued.operatorAuthority?.assertCurrent();
+  };
+  assertOperatorCurrent();
   const resolvedConfig = await resolveQueuedReplyExecutionConfig(params.queued.run.config, {
     originatingChannel: params.queued.originatingChannel,
     messageProvider: params.queued.run.messageProvider,
     originatingAccountId: params.queued.originatingAccountId,
     agentAccountId: params.queued.run.agentAccountId,
   });
+  assertOperatorCurrent();
   const config = resolveQueuedReplyRuntimeConfig(resolvedConfig);
   const replySessionKey = params.queued.run.sessionKey ?? params.defaults.sessionKey;
   const initialStoredEntry = replySessionKey
@@ -176,6 +179,7 @@ export async function admitFollowupTurn(params: {
     // callbacks in that closure so retried non-routable items use the newest transport owner.
     queuedFollowupAdmitted = true;
     await params.defaults.opts?.onQueuedFollowupAdmitted?.();
+    assertOperatorCurrent();
     if (operation.sessionId !== run.sessionId) {
       run = {
         ...run,
@@ -299,7 +303,6 @@ export async function admitFollowupTurn(params: {
       config,
       session,
       sessionStore,
-      currentInboundContext,
       sendPolicy: resolveTurnSendPolicy(activeEntry),
       preflightCompactionApplied: false,
     };
@@ -309,7 +312,6 @@ export async function admitFollowupTurn(params: {
           ? params.queued.currentInboundContext
           : refreshActiveGoalContext(params.queued.currentInboundContext, entry);
       turn.sendPolicy = resolveTurnSendPolicy(entry, turn.queued);
-      turn.currentInboundContext = refreshedInboundContext;
       turn.queued = { ...turn.queued, currentInboundContext: refreshedInboundContext };
     };
     const readTurnSessionEntry = () =>

@@ -18,6 +18,7 @@ plugins](/plugins/sdk-provider-plugins) guide.
 <Tabs>
   <Tab title="Embeddings">
     ```typescript
+    // fetchAcmeEmbedding is your plugin's own vendor API call, not an SDK export.
     api.registerEmbeddingProvider({
       id: "acme-ai",
       defaultModel: "acme-embed",
@@ -203,6 +204,13 @@ plugins](/plugins/sdk-provider-plugins) guide.
     `hint`, `envVars`, `placeholder`, `signupUrl`, `credentialPath`,
     `getCredentialValue`, `setCredentialValue`, and `createTool` are all
     required.
+
+    Search providers can declare `configPath` as a path relative to their own
+    plugin configuration for the Search settings page. It defaults to
+    `["webSearch"]`; use `null` when the provider has no inline settings.
+    Providers sharing a plugin can expose different settings without showing
+    fields that only apply to a sibling provider. Credentials remain described
+    by `credentialPath` and use the existing masked credential editor.
 
     Search providers using `openclaw/plugin-sdk/provider-web-search` should
     resolve `resolveSearchCacheTtlMs(searchConfig)` once per execution and

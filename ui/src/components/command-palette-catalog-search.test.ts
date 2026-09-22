@@ -92,7 +92,6 @@ describe("command palette catalog search", () => {
               {
                 id: "nightly",
                 name: "Nightly invoices",
-                description: "Reconciles customer billing",
               },
             ],
           };
@@ -151,7 +150,7 @@ describe("command palette catalog search", () => {
         expect.objectContaining({ category: "agents", label: "Main assistant" }),
         expect.objectContaining({ category: "automations", label: "Nightly invoices" }),
         expect.objectContaining({ category: "skills", label: "Forecast brief" }),
-        expect.objectContaining({ category: "plugins", label: "Weather helper" }),
+        expect.objectContaining({ category: "plugins", label: "Weather helper", icon: "plug" }),
         expect.objectContaining({ category: "models", label: "Search model" }),
       ]),
     );

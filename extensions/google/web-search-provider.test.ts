@@ -177,8 +177,42 @@ describe("google web search provider", () => {
     await tool?.execute({ query: "OpenClaw docs" });
 
     expect(getGeminiFetchUrl(mockFetch)).toBe(
-      "https://generativelanguage.googleapis.com/proxy/v1beta/models/gemini-2.5-flash:generateContent",
+      "https://generativelanguage.googleapis.com/proxy/v1beta/models/gemini-3.6-flash:generateContent",
     );
+  });
+
+  it.each([
+    [undefined, "gemini-3.6-flash"],
+    ["", "gemini-3.6-flash"],
+    ["  ", "gemini-3.6-flash"],
+    ["gemini-2.5-flash", "gemini-2.5-flash"],
+    [" gemini-3.5-flash ", "gemini-3.5-flash"],
+  ])("selects model %j as %s through plugin config", async (model, expectedModel) => {
+    const mockFetch = installGeminiFetch();
+    const options = createGeminiToolOptions();
+    const tool = createGeminiWebSearchProvider().createTool({
+      ...options,
+      config: {
+        plugins: {
+          entries: {
+            google: {
+              config: {
+                webSearch: { ...options.config.plugins.entries.google.config.webSearch, model },
+              },
+            },
+          },
+        },
+      },
+      searchConfig: { provider: "gemini", cacheTtlMinutes: 0 },
+    });
+
+    const result = await tool?.execute({ query: "OpenClaw model selection" });
+
+    expect(getGeminiFetchUrl(mockFetch)).toBe(
+      `https://generativelanguage.googleapis.com/v1beta/models/${expectedModel}:generateContent`,
+    );
+    expect(result).toMatchObject({ provider: "gemini", model: expectedModel });
+    expect(parseGeminiFetchBody(mockFetch).tools).toEqual([{ google_search: {} }]);
   });
 
   it("sends operator headers while keeping provider-owned headers authoritative", async () => {
@@ -395,11 +429,44 @@ describe("google web search provider", () => {
 
     expect(result).toMatchObject({
       citations: [],
-      model: "gemini-2.5-flash",
+      model: "gemini-3.6-flash",
       provider: "gemini",
     });
     expect(String(result?.content)).toContain("Today's date is Sunday, June 7, 2026.");
   });
+
+  it.each([
+    { httpStatus: 401, embedded: false },
+    { httpStatus: 403, embedded: false },
+    { httpStatus: 429, embedded: false },
+    { httpStatus: 403, embedded: true },
+  ])(
+    "preserves typed status $httpStatus (embedded=$embedded)",
+    async ({ httpStatus, embedded }) => {
+      vi.stubGlobal(
+        "fetch",
+        withFetchPreconnect(
+          vi.fn(
+            async () =>
+              new Response(
+                JSON.stringify({
+                  error: { code: httpStatus, message: "denied key=AIza-plugin-test" },
+                }),
+                { status: embedded ? 200 : httpStatus },
+              ),
+          ),
+        ),
+      );
+      const tool = createGeminiWebSearchProvider().createTool(createGeminiToolOptions());
+      await expect(
+        tool?.execute({ query: `synthetic-http-${embedded}-${httpStatus}` }),
+      ).rejects.toMatchObject({
+        status: httpStatus,
+        statusCode: httpStatus,
+        message: expect.not.stringContaining("AIza-plugin-test"),
+      });
+    },
+  );
 
   it("reports malformed Gemini API JSON with a stable provider error", async () => {
     vi.stubGlobal(
@@ -676,7 +743,7 @@ describe("google web search provider", () => {
     await tool?.execute({ query: "OpenClaw provider baseUrl fallback" });
 
     expect(getGeminiFetchUrl(mockFetch)).toBe(
-      "https://generativelanguage.googleapis.com/provider/v1beta/models/gemini-2.5-flash:generateContent",
+      "https://generativelanguage.googleapis.com/provider/v1beta/models/gemini-3.6-flash:generateContent",
     );
   });
 
@@ -711,7 +778,7 @@ describe("google web search provider", () => {
     await tool?.execute({ query: "OpenClaw plugin baseUrl precedence" });
 
     expect(getGeminiFetchUrl(mockFetch)).toBe(
-      "https://generativelanguage.googleapis.com/plugin/v1beta/models/gemini-2.5-flash:generateContent",
+      "https://generativelanguage.googleapis.com/plugin/v1beta/models/gemini-3.6-flash:generateContent",
     );
   });
 

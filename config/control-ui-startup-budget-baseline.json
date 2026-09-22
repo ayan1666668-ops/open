@@ -1,5 +1,5 @@
 {
-  "startupJsGzipBytes": 351659,
-  "reason": "PR #141121 (Control UI warm reload) measures 351659 B startup gzip in Linux CI at 491b8bf880a (+1282 B, 0.37% over the 350377 B baseline; current main measures about 350640 B in the same CI). The boot record, roster-cache lifecycle, and transcript prewarm join the boot path after deferring the roster and snapshot readers. Fixed 358400 B cap and existing growth allowance retained.",
-  "updatedAt": "2026-09-08"
+  "startupJsGzipBytes": 370300,
+  "reason": "Avatar-hat catalog measured 370,196 B locally against main baseline 369,600 B (enforcement 370,176 B); 370,300 B rounds up with Linux headroom, and the unchanged 512 B growth and 64 B build-variance allowances give a 370,876 B enforcement limit, 700 B (0.19 %) above the base limit.",
+  "updatedAt": "2026-09-21"
 }

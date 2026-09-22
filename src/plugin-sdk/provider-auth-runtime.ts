@@ -18,7 +18,7 @@ export {
   collectProviderApiKeysForExecution,
   executeWithApiKeyRotation,
 } from "../agents/api-key-rotation.js";
-export { NON_ENV_SECRETREF_MARKER } from "../agents/model-auth-markers.js";
+export { NON_ENV_SECRETREF_MARKER } from "../secrets/provider-credential-values.js";
 export {
   isProviderAuthError,
   requireApiKey,
@@ -298,7 +298,9 @@ export async function resolveApiKeyForProvider(
   /** Provider auth lookup params forwarded to the runtime auth module. */
   params: Parameters<ResolveApiKeyForProvider>[0],
 ): Promise<Awaited<ReturnType<ResolveApiKeyForProvider>>> {
+  params.signal?.throwIfAborted();
   const runtimeAuth = await loadRuntimeModelAuthModule();
+  params.signal?.throwIfAborted();
   const resolveApiKeyForProviderLocal =
     typeof runtimeAuth.resolveProviderRuntimeApiKey === "function"
       ? runtimeAuth.resolveProviderRuntimeApiKey

@@ -1,15 +1,23 @@
 import { isDeepStrictEqual } from "node:util";
+import type { LegacyConfigUpdatePlan } from "../../commands/doctor/legacy-config-repair.js";
 import { readConfigFileSnapshot } from "../../config/config.js";
+import { hashConfigRaw } from "../../config/io.read-helpers.js";
 import type { ConfigFileSnapshot } from "../../config/types.openclaw.js";
 import type { PluginInstallRecord } from "../../config/types.plugins.js";
+import {
+  createManagedUpdateRequesterContinuationAuthority,
+  UpdateRequesterRevokedError,
+} from "../../infra/update-requester-authority.js";
 import { loadInstalledPluginIndexInstallRecords } from "../../plugins/installed-plugin-index-records.js";
 import { captureTargetDatabaseSchemaContext } from "./schema-preflight.js";
-import { UpdatePreMutationError } from "./shared.js";
+import { UpdatePreMutationError, type UpdateCommandOptions } from "./shared.js";
+import type { UpdateCommandExecutor } from "./update-command-executor.js";
+import type { PreManagedServiceStop } from "./update-command-service-context-types.js";
 import {
   resolveOwnedManagedUpdateEnv,
   stripGatewayServiceMarkerEnv,
+  withOwnedManagedUpdateEnv,
 } from "./update-command-service-env.js";
-import type { PreManagedServiceStop } from "./update-command-service.js";
 
 export type OwnedManagedUpdateContext = {
   env: NodeJS.ProcessEnv;
@@ -22,6 +30,7 @@ export async function captureOwnedManagedUpdatePreflightContext(params: {
   stopState: PreManagedServiceStop | undefined;
   processEnv: NodeJS.ProcessEnv;
   invocationCwd?: string;
+  legacyConfigPlan?: LegacyConfigUpdatePlan;
 }) {
   const state = params.stopState;
   if (state?.serviceUpdateVerdict?.kind !== "owned" || !state.serviceEnv) {
@@ -36,13 +45,16 @@ export async function captureOwnedManagedUpdatePreflightContext(params: {
         invocationCwd: params.invocationCwd,
       }),
     ),
+    { legacyConfigPlan: params.legacyConfigPlan },
   );
 }
 
 export async function revalidateUpdateDatabaseContext(
   expected: Awaited<ReturnType<typeof captureTargetDatabaseSchemaContext>>,
 ) {
-  const current = await captureTargetDatabaseSchemaContext(expected.readEnv);
+  const current = await captureTargetDatabaseSchemaContext(expected.readEnv, {
+    legacyConfigPlan: expected.legacyConfigPlan,
+  });
   const before = expected.configSnapshot;
   const after = current.configSnapshot;
   if (
@@ -60,32 +72,6 @@ export async function revalidateUpdateDatabaseContext(
     );
   }
   return current;
-}
-
-/** Run one update phase under the managed Gateway's authoritative environment. */
-export async function withOwnedManagedUpdateEnv<T>(
-  env: NodeJS.ProcessEnv | undefined,
-  run: () => Promise<T>,
-): Promise<T> {
-  if (!env) {
-    return await run();
-  }
-  // Update finalization is a single serialized CLI phase. Some plugin/config owners still read
-  // process.env, so switch the complete phase atomically and restore the caller afterward.
-  const previousEnv = { ...process.env };
-  for (const key of Object.keys(process.env)) {
-    delete process.env[key];
-  }
-  // A caller may pass process.env itself; clearing it must not erase the supplied scope.
-  Object.assign(process.env, env === process.env ? previousEnv : env);
-  try {
-    return await run();
-  } finally {
-    for (const key of Object.keys(process.env)) {
-      delete process.env[key];
-    }
-    Object.assign(process.env, previousEnv);
-  }
 }
 
 export async function captureOwnedManagedUpdateContext(params: {
@@ -113,8 +99,66 @@ export async function captureOwnedManagedUpdateContext(params: {
   // normalized owned environment before I/O so even capture failure recovery targets its owner.
   stopState.serviceEnv = env;
   return await withOwnedManagedUpdateEnv(env, async () => {
-    const configSnapshot = await readConfigFileSnapshot({ skipPluginValidation: true });
+    const configSnapshot = await readConfigFileSnapshot({
+      observe: false,
+      skipPluginValidation: true,
+    });
     const pluginInstallRecords = await loadInstalledPluginIndexInstallRecords({ env });
     return { env, configSnapshot, pluginInstallRecords };
   });
+}
+
+export async function readUpdateCandidateSource(
+  env: NodeJS.ProcessEnv,
+  legacyConfigPlan?: LegacyConfigUpdatePlan,
+) {
+  if (legacyConfigPlan) {
+    const context = await captureTargetDatabaseSchemaContext(env, {
+      legacyConfigPlan,
+    });
+    if (context.legacyConfigPlan) {
+      return { config: context.config, hash: hashConfigRaw(context.configSnapshot.raw) };
+    }
+  }
+  const snapshot = await withOwnedManagedUpdateEnv(env, () =>
+    readConfigFileSnapshot({ skipPluginValidation: true, observe: false }),
+  );
+  return { config: snapshot.config, hash: hashConfigRaw(snapshot.raw) };
+}
+
+/** Complete native admission before any execution guard can observe the pending requester. */
+export async function admitUpdateRequesterContinuation(
+  run: NonNullable<UpdateCommandOptions["run"]>,
+  executor: UpdateCommandExecutor,
+  root: string,
+  serviceRoot?: string,
+): Promise<void> {
+  const original = run.requesterAuthority;
+  const requester = original?.requester;
+  if (!requester?.authorizationSource?.startsWith("profile:")) {
+    return;
+  }
+  const runId = run.runId;
+  const previousFence = run.executorFence;
+  const fence = await executor.enter(root, { preflight: true, serviceRoot });
+  const assertRunCurrent = () => {
+    if (
+      run.runId !== runId ||
+      run.requesterAuthority !== original ||
+      run.executorFence !== previousFence ||
+      (previousFence && previousFence !== fence)
+    ) {
+      throw new UpdateRequesterRevokedError();
+    }
+    fence.assertCurrent();
+  };
+  assertRunCurrent();
+  const continued = await createManagedUpdateRequesterContinuationAuthority(
+    requester,
+    { runId, executor: fence },
+    run.env,
+  );
+  assertRunCurrent();
+  run.requesterAuthority = continued;
+  run.executorFence = fence;
 }
