@@ -26,6 +26,7 @@ import { openOpenClawStateDatabase } from "../state/openclaw-state-db.js";
 import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
 import * as migrationArtifact from "./doctor-session-sqlite-artifact.js";
 import * as migrationRun from "./doctor-session-sqlite-migration-run.js";
+import { readSessionSqliteMigrationWarnings } from "./doctor-session-sqlite-warnings.js";
 import { seedDeferredPluginSessionSource } from "./doctor-session-sqlite.deferred-plugin.test-support.js";
 import { runDoctorSessionSqlite, type DoctorSessionSqliteReport } from "./doctor-session-sqlite.js";
 import { noteSessionTranscriptHealth } from "./doctor-session-transcripts.js";
@@ -320,7 +321,7 @@ describe("retained session source verification", () => {
     },
   );
 
-  it.each(["none", "archived", "live", "missing-index"] as const)(
+  it.each(["none", "archived", "conflicting-archives", "live", "missing-index"] as const)(
     "settles plugin work after index-free canonical session repair (remaining history: %s)",
     async (history) => {
       await withOpenClawTestState(
@@ -337,24 +338,28 @@ describe("retained session source verification", () => {
             agents: { entries: { main: { default: true }, ops: {} } },
             gateway: { mode: "local" },
           };
+          const historyIds =
+            history === "conflicting-archives" ? ["history", "other-history"] : ["history"];
           for (const agentId of ["main", "ops"]) {
             const directory = state.sessionsDir(agentId);
             fs.mkdirSync(directory, { recursive: true });
             fs.writeFileSync(path.join(directory, "sessions.json"), "{}");
-            fs.writeFileSync(
-              path.join(directory, `${agentId}-history.jsonl`),
-              [
-                { type: "session", version: 3, id: `${agentId}-history` },
-                {
-                  type: "message",
-                  id: `${agentId}-user`,
-                  parentId: null,
-                  message: { role: "user", content: "Canonical history" },
-                },
-              ]
-                .map((entry) => JSON.stringify(entry))
-                .join("\n") + "\n",
-            );
+            for (const historyId of historyIds) {
+              fs.writeFileSync(
+                path.join(directory, `${agentId}-${historyId}.jsonl`),
+                [
+                  { type: "session", version: 3, id: `${agentId}-${historyId}` },
+                  {
+                    type: "message",
+                    id: `${agentId}-user`,
+                    parentId: null,
+                    message: { role: "user", content: "Canonical history" },
+                  },
+                ]
+                  .map((entry) => JSON.stringify(entry))
+                  .join("\n") + "\n",
+              );
+            }
           }
           const imported = await runDoctorSessionSqlite({
             cfg,
@@ -362,7 +367,7 @@ describe("retained session source verification", () => {
             allAgents: true,
             mode: "import",
           });
-          expect(imported.totals.importedEntries).toBe(2);
+          expect(imported.totals.importedEntries).toBe(2 * historyIds.length);
           const manifest = migrationRun.readSessionSqliteMigrationManifest(
             imported.migrationRun!.manifestPath,
           )!;
@@ -382,7 +387,7 @@ describe("retained session source verification", () => {
                 originals.delete(move.archivePath);
               }
             }
-            if (history === "archived") {
+            if (history === "archived" || history === "conflicting-archives") {
               for (const move of [...target.plannedMoves, ...target.completedMoves]) {
                 if (move.kind !== "transcript") {
                   continue;
@@ -403,6 +408,37 @@ describe("retained session source verification", () => {
             }
           }
           fs.writeFileSync(imported.migrationRun!.manifestPath, JSON.stringify(manifest));
+          if (history === "conflicting-archives") {
+            const duplicate = structuredClone(manifest);
+            duplicate.runId += "-duplicate";
+            for (const target of duplicate.targets) {
+              target.plannedMoves = target.plannedMoves.filter(
+                (move) => move.kind === "unreferenced-jsonl",
+              );
+              for (const move of target.plannedMoves) {
+                const bytes = Buffer.from(
+                  originals
+                    .get(move.archivePath)!
+                    .toString("utf8")
+                    .replace("Canonical history", "Conflicting history"),
+                );
+                move.archivePath += ".duplicate";
+                fs.writeFileSync(move.archivePath, bytes);
+                move.artifact!.identity = migrationArtifact.readMigrationArtifactIdentity(
+                  move.archivePath,
+                );
+                originals.set(move.archivePath, bytes);
+              }
+              target.completedMoves = structuredClone(target.plannedMoves);
+            }
+            fs.writeFileSync(
+              path.join(
+                path.dirname(imported.migrationRun!.manifestPath),
+                `${duplicate.runId}.json`,
+              ),
+              JSON.stringify(duplicate),
+            );
+          }
           const pluginId = "session-fixture";
           const pluginRoot = state.path("session-plugin");
           fs.mkdirSync(pluginRoot);
@@ -497,6 +533,19 @@ describe("retained session source verification", () => {
             );
             expect(row?.status).toBe("completed");
             expect(row?.finished_at).not.toBeNull();
+            if (history === "conflicting-archives") {
+              const warnings = readSessionSqliteMigrationWarnings(state.env);
+              expect(warnings).toHaveLength(4);
+              for (const agentId of ["main", "ops"]) {
+                for (const historyId of historyIds) {
+                  expect(warnings).toContainEqual(
+                    expect.stringContaining(
+                      `${agentId}-${historyId}: multiple primary files claim this identity`,
+                    ),
+                  );
+                }
+              }
+            }
             await editConfig();
             expect(
               (await io.readConfigFileSnapshot()).sourceConfig.plugins?.entries?.[pluginId]?.config,
