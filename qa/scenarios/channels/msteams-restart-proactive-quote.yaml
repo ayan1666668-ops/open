@@ -27,5 +27,4 @@ scenario:
   execution:
     kind: vitest
     path: extensions/msteams/src/msteams-ingress.test.ts
-    testNamePattern: preserves the inbound quote across restart
-    summary: Persist real Teams ingress, replace its owner, then exercise the replay context and proactive adapter for group and native channel-thread replies.
+    summary: Run the Microsoft Teams durable-ingress file, including persisted restart recovery, replay context, proactive group and channel-thread delivery, retries, deduplication, and queue lifecycle coverage.
