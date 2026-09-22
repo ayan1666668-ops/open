@@ -55,7 +55,9 @@ const runMSTeamsFileConsentInvokeHandler = vi.hoisted(() => vi.fn(async () => {}
 const loadMSTeamsSdkWithAuth = vi.hoisted(() =>
   vi.fn(async (_creds?: unknown, options?: Record<string, unknown>) => {
     const { App } =
-      await vi.importActual<typeof import("@microsoft/teams.apps")>("@microsoft/teams.apps");
+      await vi.importActual<typeof import("@microsoft/teams.apps/dist/app.js")>(
+        "@microsoft/teams.apps",
+      );
     const sdkApp = new App({
       clientId: "test-app-id",
       clientSecret: "test-secret",

@@ -1,4 +1,5 @@
 // Sign-in routes use the installed SDK's OAuth handlers and event emitter.
+import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
 import { describe, expect, it, vi } from "vitest";
 import {
   createConfig,
@@ -94,7 +95,7 @@ describe("monitorMSTeamsProvider SSO", () => {
         ],
         [verifyStateHandler, "signin/verifyState", { state: "verification-code" }],
       ] as const) {
-        const saved = Promise.withResolvers<void>();
+        const saved = createDeferred<void>();
         ssoTokenStore.save.mockClear().mockImplementation(async () => {
           if (ssoTokenStore.save.mock.calls.length === 2) {
             saved.resolve();

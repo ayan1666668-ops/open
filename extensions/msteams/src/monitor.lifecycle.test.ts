@@ -23,6 +23,7 @@ import {
   updateMSTeamsConfig,
   waitForMSTeamsTestState,
 } from "./monitor.lifecycle.test-support.js";
+import type { MSTeamsPollStore } from "./polls.js";
 
 const { monitorMSTeamsProvider } = await import("./monitor.js");
 
