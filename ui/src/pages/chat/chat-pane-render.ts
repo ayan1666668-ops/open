@@ -618,7 +618,7 @@ export class ChatPane extends ChatPaneLayoutRender {
         state.requestUpdate?.();
       },
       onDismissRealtimeTalkInputNotice: () => {
-        dismissRealtimeTalkInputNotice(state as never);
+        dismissRealtimeTalkInputNotice(state);
         state.requestUpdate?.();
       },
       onAbort: sessionActionCallbacks.onAbort,

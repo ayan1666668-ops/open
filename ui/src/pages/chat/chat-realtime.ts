@@ -123,7 +123,9 @@ export function dismissRealtimeTalkError(state: ChatRealtimeState) {
   stopChatRealtimeTalk(state);
 }
 
-export function dismissRealtimeTalkInputNotice(state: ChatRealtimeState) {
+export function dismissRealtimeTalkInputNotice(
+  state: Pick<ChatRealtimeState, "realtimeTalkInputNotice">,
+) {
   state.realtimeTalkInputNotice = null;
 }
 
