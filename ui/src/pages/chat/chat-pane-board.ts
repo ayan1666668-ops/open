@@ -318,13 +318,15 @@ export abstract class ChatPaneBoard extends ChatPaneHistory {
       : undefined;
   }
 
-  captureNavigationFace(): "chat" | "dashboard" {
+  captureNavigationFace(): "chat" | "dashboard" | undefined {
     const state = this.state;
     if (!state) {
       return this.routeFace;
     }
     if (!isSidebarSlotVisible(state.sidebarLayout, "dashboard")) {
-      return "chat";
+      return this.routeFace !== undefined || this.readSavedDashboardLayout() !== undefined
+        ? "chat"
+        : undefined;
     }
     // Focusing an open pane adopts its live layout instead of reopening its shared default.
     this.dashboardPresentationActivation = {
@@ -543,7 +545,7 @@ export abstract class ChatPaneBoard extends ChatPaneHistory {
         Boolean(this.boardProvider) ||
         isGatewayMethodAdvertised(this.context.gateway.snapshot, "board.get") !== false,
       hasBoard,
-      face: this.routeFace,
+      face: this.routeFace ?? "chat",
       activeTabId,
     };
   }

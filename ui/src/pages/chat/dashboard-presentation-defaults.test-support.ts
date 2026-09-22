@@ -25,13 +25,13 @@ type DashboardPane = TestChatPane & {
     board?: ResolvedBoardView,
   ) => BoardWidgetPageMenu | undefined;
   boardProvider: BoardProvider;
-  routeFace: "chat" | "dashboard";
+  routeFace: "chat" | "dashboard" | undefined;
   dashboardExpanded: boolean;
   narrow: boolean;
   paneWidth: number;
   resolveBoardView: () => ResolvedBoardView;
   syncRetainedBoardSession: (board: ResolvedBoardView) => void;
-  captureNavigationFace: () => "chat" | "dashboard";
+  captureNavigationFace: () => "chat" | "dashboard" | undefined;
   commitSidebarPanelResize: (layout: SidebarLayout, columnId: string, size: number) => void;
   handleBoardCommand: (event: BoardCommandEvent) => void;
   saveDashboardDefault: (row: GatewaySessionRow, agentId: string | undefined) => Promise<void>;

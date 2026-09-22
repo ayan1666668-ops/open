@@ -21,7 +21,7 @@ export type ChatPaneElement = HTMLElement & {
   prepareForEviction?: () => void;
   hasQueuedMessageEdit?: boolean;
   presented?: boolean;
-  captureNavigationFace?: () => BoardFace;
+  captureNavigationFace?: () => BoardFace | undefined;
   routeFace?: BoardFace;
   sessionKey?: string;
   transcriptLoading?: boolean;
