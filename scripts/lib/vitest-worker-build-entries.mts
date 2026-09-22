@@ -24,6 +24,7 @@ import { doctorConfigRuntimeEntrypoints } from "../../src/commands/doctor-config
 import { cronOwnerHardeningEntrypoints } from "../../src/cron/owner-hardening-runtime.test-support.ts";
 import { sessionChildCacheRetentionEntrypoint } from "../../src/gateway/session-child-cache-retention-entrypoint.test-support.ts";
 import { sessionTitleRetentionEntrypoints } from "../../src/gateway/session-title-retention.test-support.ts";
+import { sqliteReadOnlyCompileCacheParentEntrypoint } from "../../src/infra/sqlite-readonly-worker.compile-cache-runtime.test-support.ts";
 import {
   triageTestRuntimeEntrypoints,
   triageMaintenanceRuntimeEntrypoints,
@@ -99,6 +100,7 @@ export const vitestWorkerBuildEntries = {
     codexCatalogPageWorkerEntrypoint,
     agentWorkerStoreFixtureEntrypoint,
     memoryPublicationFaultEntrypoint,
+    sqliteReadOnlyCompileCacheParentEntrypoint,
     ...Object.values(triageTestRuntimeEntrypoints),
     ...Object.values(triageMaintenanceRuntimeEntrypoints),
     authProfileScopeCwdEntrypoint,
@@ -145,8 +147,6 @@ export const vitestWorkerBuildEntries = {
   ]),
   // The real ulimit fixture must import its parent before imposing a file-size limit.
   "infra/sqlite-snapshot-source": "src/infra/sqlite-snapshot-source.ts",
-  "entry.compile-cache": "src/entry.compile-cache.ts",
-  "infra/sqlite-readonly-worker": "src/infra/sqlite-readonly-worker.ts",
   // Keep provider preparation in the same compiled graph as payload rendering;
   // a source-injected plugin would miss duplicated registry scope state.
   "plugins/provider-hook-runtime": "src/plugins/provider-hook-runtime.ts",
