@@ -8,10 +8,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { clearConfigCache, clearRuntimeConfigSnapshot } from "../config/config.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { resetGatewayWorkAdmission } from "../process/gateway-work-admission.js";
+import { resetTaskFlowRegistryForTests } from "../tasks/task-flow-registry.test-support.js";
+import {
+  configureInMemoryTaskStoresForTests,
+  resetTaskRegistryForTests,
+} from "../tasks/task-registry.test-support.js";
 import { captureEnv, setTestEnvValue } from "../test-utils/env.js";
 import { cleanupSessionStateForTest } from "../test-utils/session-state-cleanup.js";
 import { codeModeSwarmHandlers } from "./code-mode-swarm.runtime.js";
-import { applyCodeModeCatalog } from "./code-mode.js";
+import { applyCodeModeCatalog, createCodeModeTools } from "./code-mode.js";
 import {
   resetSubagentRegistryForTests,
   testing as subagentRegistryTesting,
@@ -111,10 +116,21 @@ describe("Code Mode dynamics native replay", () => {
     resetGatewayWorkAdmission();
     swarmSchedulerTesting.reset();
     resetSubagentRegistryForTests({ persist: false });
+    resetTaskRegistryForTests({ persist: false });
+    resetTaskFlowRegistryForTests({ persist: false });
+    // Queued subagent admission creates its task through the real registry; keep that
+    // owner in-process so the suite never depends on a host SQLite broker.
+    configureInMemoryTaskStoresForTests();
     subagentRegistryTesting.setDepsForTest({
       loadAgentRuntimePluginRegistryHandle: () => undefined,
       persistSubagentRunsToDisk: () => {},
       persistSubagentRunsToDiskOrThrow: () => {},
+      // Registration commits through the async persistence owner; the sync doubles alone
+      // leave that path on real disk transactions.
+      persistSubagentRunsToDiskAsyncOrThrow: async (_runs, _ids, options) => {
+        options.assertCurrent?.();
+        options.onCommitted?.();
+      },
       restoreSubagentRunsFromDisk: () => 0,
     });
     stateDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-dynamics-replay-"));
@@ -126,6 +142,8 @@ describe("Code Mode dynamics native replay", () => {
     resetGatewayWorkAdmission();
     swarmSchedulerTesting.reset();
     resetSubagentRegistryForTests({ persist: false });
+    resetTaskRegistryForTests({ persist: false });
+    resetTaskFlowRegistryForTests({ persist: false });
     subagentRegistryTesting.setDepsForTest();
     subagentSpawnTesting.setDepsForTest();
     clearRuntimeConfigSnapshot();
@@ -187,7 +205,8 @@ describe("Code Mode dynamics native replay", () => {
       runId: parentRunId,
       catalogRef,
     };
-    applyCodeModeCatalog({ ...ctx, tools: [spawnTool] });
+    // Code Mode compaction only publishes a catalog when its own control tools are present.
+    applyCodeModeCatalog({ ...ctx, tools: [...createCodeModeTools(ctx), spawnTool] });
 
     const callExactId = vi.fn(async () => {
       throw new Error("exact replay must not redispatch sessions_spawn");
