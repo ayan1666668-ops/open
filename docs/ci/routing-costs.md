@@ -132,19 +132,19 @@ Rounded native components plus one 60-second setup yield **235/466-second floors
 
 ### Current inventory
 
-On the working candidate rebased onto `2c7feb0648c`, hybrid's broad-PR plan separates two critical pairs and packs **seven eligible jobs into three**. Four removed setups save 3–4 minutes; the two splits add 1.5–2 minutes, leaving a conditional **1.5–2 Blacksmith 8-class minutes /$0.024–$0.032** before runtime interactions. Main adds one split and its setup. Extension packing retains its separate controlled 47→40-job comparison.
+Main now includes the separately owned [runtime release tier](https://github.com/openclaw/openclaw/pull/155606); its coverage movement is not an R3 saving. On the candidate rebased onto `0a5b5381a26b`, hybrid's broad-PR plan separates two critical pairs and packs **seven eligible jobs into three**. Four removed setups save 3–4 minutes; the two splits add 1.5–2 minutes, leaving a conditional **1.5–2 Blacksmith 8-class minutes /$0.024–$0.032** before runtime interactions. Main adds one split and its setup. Extension packing retains its separate controlled 47→40-job comparison.
 
-The immutable nine-job calibration cohort fits four jobs with canonical forecasts of **629, 539, 662 and 672 seconds**. That cohort checks the policy; it does not define the current inventory's job count. Current packed `compact-small-21` forecasts 617 seconds, and tooling `compact-small-33` forecasts 576.5 seconds. The longest known forecast remains the 703-second CLI child.
+The immutable nine-job calibration cohort fits four jobs with canonical forecasts of **629, 539, 662 and 672 seconds**. That cohort checks the policy; it does not define the current inventory's job count. Current packed `compact-small-20` forecasts 617 seconds, and tooling `compact-small-32` forecasts 576.5 seconds. The longest known forecast remains the 703-second CLI child.
 
 | Profile and shape                | Before Node /compact | Final Node /compact | Final Node classes        | Caps Node /compact |
 | -------------------------------- | -------------------: | ------------------: | ------------------------- | -----------------: |
-| Hybrid main                      |               44 /45 |              45 /46 | BS8: 14; BS32: 31         |             70 /90 |
-| Hybrid broad PR                  |              100 /62 |              98 /60 | BS8: 65; BS32: 33         |            130 /90 |
-| RunsOn main-shaped qualification |               45 /46 |              46 /47 | BS8: 14; BS32: 31; AWS: 1 |             70 /90 |
-| RunsOn broad PR                  |              101 /63 |              99 /61 | BS8: 65; BS32: 33; AWS: 1 |            130 /90 |
-| Blacksmith main                  |               51 /52 |              51 /52 | Unchanged                 |             70 /90 |
-| Blacksmith broad PR              |              105 /67 |             105 /67 | Unchanged                 |            130 /90 |
-| GitHub main                      |               57 /58 |              57 /58 | Hosted: 57                |             70 /90 |
+| Hybrid main                      |               42 /43 |              43 /44 | BS8: 13; BS32: 30         |             70 /90 |
+| Hybrid broad PR                  |               99 /61 |              97 /59 | BS8: 65; BS32: 32         |            130 /90 |
+| RunsOn main-shaped qualification |               43 /44 |              44 /45 | BS8: 13; BS32: 30; AWS: 1 |             70 /90 |
+| RunsOn broad PR                  |              100 /62 |              98 /60 | BS8: 65; BS32: 32; AWS: 1 |            130 /90 |
+| Blacksmith main                  |               51 /52 |              51 /52 | BS8: 18; BS32: 33         |             70 /90 |
+| Blacksmith broad PR              |              105 /67 |             105 /67 | BS8: 57; BS32: 48         |            130 /90 |
+| GitHub main                      |               58 /59 |              58 /59 | Hosted: 58                |             70 /90 |
 | GitHub broad PR                  |              111 /73 |             111 /73 | Hosted: 111               |            130 /90 |
 
 Compact counts include dist descriptors; broad-PR Node counts include 40 extension rows. RunsOn adds one cron job to the hybrid plan. All counts stay inside the unchanged 70/130/90 caps. Together, current Node and extension packing remove a net nine setups from a broad PR: an estimated 6.75–9 Blacksmith 8-class minutes, or $0.108–$0.144 before runtime interactions. Main adds one setup, approximately 0.75–1 minute or $0.012–$0.016. These counts and costs are planner arithmetic, not native performance acceptance. Final measurements are recorded in [PR #155403](https://github.com/openclaw/openclaw/pull/155403).
