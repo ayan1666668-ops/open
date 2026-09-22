@@ -8,6 +8,8 @@ import {
 } from "openclaw/plugin-sdk/system-event-runtime";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig, PluginRuntime } from "../../runtime-api.js";
+import { type MSTeamsActivityHandler, registerMSTeamsHandlers } from "../monitor-handler.js";
+import { installMSTeamsTestRuntime } from "../monitor-handler.test-helpers.js";
 import type { MSTeamsMessageHandlerDeps } from "../monitor-handler.types.js";
 import { setMSTeamsRuntime } from "../runtime.js";
 import { createMSTeamsReactionHandler } from "./reaction-handler.js";
@@ -437,6 +439,108 @@ describe("createMSTeamsReactionHandler", () => {
       );
 
       expect(peekSystemEventEntries(forbiddenDirectRoute.sessionKey)).toEqual([]);
+    });
+
+    it("routes a threaded channel reaction to the thread session", async () => {
+      const runtime = buildProductionBoundaryRuntime();
+      setMSTeamsRuntime(runtime);
+      const handler = createMSTeamsReactionHandler(buildDeps(routeCfg, runtime));
+      const channelConversationId = "19:trusted-channel@thread.tacv2";
+      const threadRootId = "1700000000000";
+      const parentRoute = resolveAgentRoute({
+        cfg: routeCfg,
+        channel: "msteams",
+        peer: { kind: "channel", id: channelConversationId },
+        teamId: "trustedTeam",
+      });
+      const threadSessionKey = `${parentRoute.sessionKey}:thread:${threadRootId}`;
+
+      await invokeReactionEvent(
+        handler,
+        reactionFrom(
+          {
+            id: `${channelConversationId};messageid=${threadRootId}`,
+            conversationType: "channel",
+          },
+          "trustedTeam",
+        ),
+        "added",
+      );
+
+      expect(peekSystemEventEntries(threadSessionKey)).toEqual([
+        expect.objectContaining({
+          text: "Teams reaction 👍 added by Allowed Sender on message target-message",
+          contextKey:
+            "msteams:reaction:19:trusted-channel@thread.tacv2:target-message:allowed-aad:like:added",
+        }),
+      ]);
+      expect(peekSystemEventEntries(parentRoute.sessionKey)).toEqual([]);
+    });
+
+    it("routes a reaction registered through the Teams activity handler to the thread session", async () => {
+      // Keep the real routing and system-event owners installed; only the unrelated
+      // runtime services `registerMSTeamsHandlers` needs stay mocked. The event queue is
+      // wrapped so the helper still publishes into the real in-process store.
+      const enqueueSystemEventMock = vi.fn();
+      enqueueSystemEventMock.mockImplementation(enqueueSystemEvent);
+      installMSTeamsTestRuntime({
+        resolveAgentRoute: (params) =>
+          resolveAgentRoute({
+            cfg: routeCfg,
+            channel: "msteams",
+            peer: params.peer as { kind: "channel"; id: string },
+            teamId: "trustedTeam",
+          }),
+        enqueueSystemEvent: enqueueSystemEventMock,
+      });
+      let reactionsAdded: Parameters<MSTeamsActivityHandler["onReactionsAdded"]>[0] | undefined;
+      const activityHandler: MSTeamsActivityHandler = {
+        onMessage: () => activityHandler,
+        onMembersAdded: () => activityHandler,
+        onReactionsAdded: (callback) => {
+          reactionsAdded = callback;
+          return activityHandler;
+        },
+        onReactionsRemoved: () => activityHandler,
+        run: async () => undefined,
+      };
+      // The Teams SDK dispatch boundary: the same registration production uses for
+      // `reactionsAdded` / `reactionsRemoved` activities.
+      registerMSTeamsHandlers(activityHandler, buildDeps(routeCfg));
+
+      const channelConversationId = "19:trusted-channel@thread.tacv2";
+      const threadRootId = "1700000000000";
+      const parentRoute = resolveAgentRoute({
+        cfg: routeCfg,
+        channel: "msteams",
+        peer: { kind: "channel", id: channelConversationId },
+        teamId: "trustedTeam",
+      });
+
+      await reactionsAdded?.(
+        {
+          activity: {
+            type: "messageReaction",
+            reactionsAdded: [{ type: "like" }],
+            from: { id: "teams-user", aadObjectId: "allowed-aad", name: "Allowed Sender" },
+            conversation: {
+              id: `${channelConversationId};messageid=${threadRootId}`,
+              conversationType: "channel",
+            },
+            channelData: { team: { id: "trustedTeam" } },
+            replyToId: "target-message",
+          },
+          sendActivity: vi.fn(async () => undefined),
+        } as never,
+        vi.fn(async () => undefined),
+      );
+
+      expect(peekSystemEventEntries(`${parentRoute.sessionKey}:thread:${threadRootId}`)).toEqual([
+        expect.objectContaining({
+          text: "Teams reaction 👍 added by Allowed Sender on message target-message",
+        }),
+      ]);
+      expect(peekSystemEventEntries(parentRoute.sessionKey)).toEqual([]);
     });
   });
 

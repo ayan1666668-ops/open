@@ -1,9 +1,10 @@
-import { normalizeMSTeamsConversationId } from "../inbound.js";
+import { extractMSTeamsConversationMessageId, normalizeMSTeamsConversationId } from "../inbound.js";
 import type { MSTeamsMessageHandlerDeps } from "../monitor-handler.types.js";
 import { resolveMSTeamsReactionEmoji } from "../reaction-types.js";
 import { getMSTeamsRuntime } from "../runtime.js";
 import type { MSTeamsTurnContext } from "../sdk-types.js";
 import { resolveMSTeamsSenderAccess } from "./access.js";
+import { resolveMSTeamsRouteSessionKey } from "./thread-session.js";
 
 type ReactionDirection = "added" | "removed";
 
@@ -40,6 +41,9 @@ export function createMSTeamsReactionHandler(deps: MSTeamsMessageHandlerDeps) {
 
     const rawConversationId = activity.conversation?.id ?? "";
     const conversationId = normalizeMSTeamsConversationId(rawConversationId);
+    // Teams carries the reacted channel thread root as `;messageid=` on the conversation id.
+    // Admission and the route peer use the normalized id; session placement needs the root.
+    const conversationMessageId = extractMSTeamsConversationMessageId(rawConversationId);
     const isChannel = activity.conversation?.conversationType === "channel";
 
     const senderId = from.aadObjectId ?? from.id;
@@ -93,6 +97,17 @@ export function createMSTeamsReactionHandler(deps: MSTeamsMessageHandlerDeps) {
     // The replyToId points to the message that was reacted to.
     const targetMessageId = activity.replyToId ?? "unknown";
 
+    // A reaction is a supplemental event for a message that may live in a channel thread.
+    // Reuse the inbound thread routing owner so the event lands in the transcript that owns
+    // the reacted message instead of the parent channel session. Unlike an inbound message,
+    // `replyToId` here is the reacted message itself rather than a thread root, so it must not
+    // seed a lane: reactions to top-level channel messages stay in the parent session.
+    const sessionKey = resolveMSTeamsRouteSessionKey({
+      baseSessionKey: route.sessionKey,
+      isChannel,
+      conversationMessageId,
+    });
+
     for (const reaction of reactions) {
       const reactionType = reaction.type ?? "unknown";
       const emoji = resolveMSTeamsReactionEmoji(reactionType);
@@ -110,7 +125,7 @@ export function createMSTeamsReactionHandler(deps: MSTeamsMessageHandlerDeps) {
       });
 
       core.system.enqueueSystemEvent(label, {
-        sessionKey: route.sessionKey,
+        sessionKey,
         contextKey: `msteams:reaction:${conversationId}:${targetMessageId}:${senderId}:${reactionType}:${direction}`,
       });
     }
