@@ -25,7 +25,7 @@ import {
 import { peekSystemEventEntries, removeSystemEvents } from "../../../infra/system-events.js";
 import { buildPersistedUserTurnMessage } from "../../../sessions/user-turn-transcript.message.js";
 import {
-  closeOpenClawAgentDatabasesForTest,
+  closeOpenClawAgentDatabasesForTestAsync,
   runOpenClawAgentWriteTransaction,
 } from "../../../state/openclaw-agent-db.js";
 import { captureOpenClawStateWorkerContext } from "../../../state/openclaw-state-worker-context.js";
@@ -397,8 +397,11 @@ export async function observeReturnCovenantCase(params: {
       : 0;
 
   // Reopen the physical owner before scanning so this receipt covers durable
-  // transcript recovery rather than the writer's in-process projection.
-  closeOpenClawAgentDatabasesForTest();
+  // transcript recovery rather than the writer's in-process projection. The
+  // close must be AWAITED: the synchronous form leaves any resource without
+  // closeSync parked in the closing set, and the scan's own open is then
+  // refused with "Agent database resources are closing".
+  await closeOpenClawAgentDatabasesForTestAsync();
   const transcript = await loadTranscriptEvents({
     ...returnCovenantCaseScope(state, context),
     sessionId: returnCovenantCurrentSessionId(state),

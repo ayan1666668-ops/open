@@ -73,6 +73,7 @@ import {
   closeOpenClawAgentDatabaseByPath,
   closeOpenClawAgentDatabaseByPathAsync,
   closeOpenClawAgentDatabases,
+  closeOpenClawAgentDatabasesAsync,
   refreshAgentDatabaseIdleTimer,
   retainAgentDatabase,
   retainFailedAgentDatabaseClose,
@@ -751,6 +752,23 @@ export { withAgentDatabaseMaintenanceLease } from "./openclaw-agent-db-maintenan
 /** Release fixture handles and pathname trust before a test root is recreated. */
 export function closeOpenClawAgentDatabasesForTest(rootPath?: string): void {
   closeOpenClawAgentDatabases(rootPath);
+  clearOpenClawAgentDatabaseValidationCache(rootPath);
+  cache.terminal.clearAll(rootPath);
+}
+
+/**
+ * Awaitable form of {@link closeOpenClawAgentDatabasesForTest}.
+ *
+ * The synchronous form only closes in place for resources that expose
+ * `closeSync`; anything else is parked in the closing set while its close
+ * completes, and `registerAgentDatabaseResource` then refuses an overlapping
+ * open with "Agent database resources are closing". A caller that closes in
+ * order to force a durable re-read therefore has to await the close, or it
+ * races its own next open. Clears the same two caches so the durable-read
+ * intent is preserved.
+ */
+export async function closeOpenClawAgentDatabasesForTestAsync(rootPath?: string): Promise<void> {
+  await closeOpenClawAgentDatabasesAsync(rootPath);
   clearOpenClawAgentDatabaseValidationCache(rootPath);
   cache.terminal.clearAll(rootPath);
 }
