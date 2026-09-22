@@ -2258,6 +2258,7 @@
                       },
                       "providers/opencode",
                       "providers/opencode-go",
+                      "providers/perplexity-agent-api",
                       "providers/perplexity-provider",
                       "providers/qianfan",
                       "providers/qwen",
