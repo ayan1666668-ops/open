@@ -218,25 +218,27 @@ describeWithLanNodePairingServer("gateway ssh-verified node pairing auto-approve
           expect(record?.pendingNodeSurface).toBeUndefined();
         } catch (error) {
           bodyFailure = { error };
-          throw error;
-        } finally {
-          // Release a failed assertion's probe and join its full approval tail
-          // before the next case resets configuration or pairing state.
-          probe.resolve({ status: "timeout" });
-          try {
-            await waitFor(
-              async () => (getActiveGatewayRootWorkCount() === 0 ? true : undefined),
-              "SSH pairing work completion",
+        }
+        // Release a failed assertion's probe and join its full approval tail
+        // before the next case resets configuration or pairing state.
+        probe.resolve({ status: "timeout" });
+        try {
+          await waitFor(
+            async () => (getActiveGatewayRootWorkCount() === 0 ? true : undefined),
+            "SSH pairing work completion",
+          );
+        } catch (cleanupError) {
+          if (bodyFailure) {
+            throw new AggregateError(
+              [bodyFailure.error, cleanupError],
+              "SSH pairing fixture and cleanup failed",
+              { cause: cleanupError },
             );
-          } catch (cleanupError) {
-            if (bodyFailure) {
-              throw new AggregateError(
-                [bodyFailure.error, cleanupError],
-                "SSH pairing fixture and cleanup failed",
-              );
-            }
-            throw cleanupError;
           }
+          throw cleanupError;
+        }
+        if (bodyFailure) {
+          throw bodyFailure.error;
         }
       },
     });
