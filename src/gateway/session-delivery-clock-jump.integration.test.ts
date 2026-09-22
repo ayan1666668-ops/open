@@ -52,6 +52,9 @@ async function startProofProvider(
     });
     request.on("end", () => {
       requests.push(body);
+      const outputText = body.includes("clock-jump readiness marker")
+        ? "CLOCK_JUMP READY"
+        : "CLOCK_JUMP DELIVERED";
       const events = [
         {
           type: "response.output_item.added",
@@ -70,7 +73,7 @@ async function startProofProvider(
             id: "clock-jump-message",
             role: "assistant",
             status: "completed",
-            content: [{ type: "output_text", text: "CLOCK_JUMP DELIVERED", annotations: [] }],
+            content: [{ type: "output_text", text: outputText, annotations: [] }],
           },
         },
         {
@@ -109,7 +112,7 @@ describe("session delivery clock-jump integration", () => {
   it(
     "delivers and settles a released claim through a real Gateway client",
     { timeout: 90_000 },
-    async () => {
+    async ({ signal }) => {
       const startedAt = performance.now();
       const stages: Partial<
         Record<DeliveryProofStage, { count: number; firstAtMs: number; lastAtMs: number }>
@@ -222,6 +225,20 @@ describe("session delivery clock-jump integration", () => {
             observe(`agent-${phase}`);
           }
         });
+        // Gateway startup leaves first-turn preparation cold. Finish it before timing claim release.
+        await expect(
+          gateway.client.request(
+            "agent",
+            {
+              sessionKey: "agent:main:clock-jump-readiness",
+              message: "Reply with the clock-jump readiness marker.",
+              idempotencyKey: "clock-jump-readiness",
+            },
+            { expectFinal: true, signal },
+          ),
+        ).resolves.toMatchObject({ status: "ok" });
+        expect(providerRequests).toHaveLength(1);
+        expect(providerRequests[0]).toContain("clock-jump readiness marker");
         await gateway.client.request("sessions.messages.subscribe", { key: sessionKey });
         await expect
           .poll(() => scheduleSessionDelivery(id, queueContext), { timeout: 10_000, interval: 50 })
@@ -240,8 +257,8 @@ describe("session delivery clock-jump integration", () => {
           },
           { timeout: 15_000, interval: 50 },
         );
-        expect(providerRequests).toHaveLength(1);
-        expect(providerRequests[0]).toContain("clock-jump proof marker");
+        expect(providerRequests).toHaveLength(2);
+        expect(providerRequests[1]).toContain("clock-jump proof marker");
         expect(await loadPendingSessionDeliveries(queueContext)).toStrictEqual([]);
         expect(getDeliveryQueueEntryStatus(SESSION_DELIVERY_QUEUE_NAME, id)).toBe("completed");
       } catch (error) {
