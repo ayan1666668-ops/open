@@ -103,6 +103,7 @@ function compactGroupTimingKey(group: NodeTestShardGroup): string {
 type NodeTestShard = {
   checkName: string;
   shardName: string;
+  timing_key?: string;
   configs: string[];
   runner: string;
   requiresDist: boolean;
@@ -1066,7 +1067,10 @@ function readCompactGroupSeconds(
   profile: "blacksmith" | "github",
 ): number | undefined {
   const timings = readCompactGroupTimings(profile);
-  const measured = timings[compactGroupTimingKey(group)];
+  const key = compactGroupTimingKey(group);
+  // Keep the full owner's admission estimate until the reduced tier has samples.
+  const measured =
+    timings[key] ?? (key === `changed-${group.shard_name}` ? timings[group.shard_name] : undefined);
   if (measured !== undefined) {
     return measured;
   }
@@ -2555,6 +2559,7 @@ function createNodeTestShardsForOwners(
         let includePatterns =
           splitShard.includePatterns ??
           (!includeTooling ? mixedToolingTestFiles(splitConfigs) : undefined);
+        let timingKey: string | undefined;
         if (!includeProofTests) {
           const files = includePatterns ?? listWholeConfigSplitFiles(splitShard.shardName);
           if (files?.some(isCiProofTestFile)) {
@@ -2570,6 +2575,11 @@ function createNodeTestShardsForOwners(
             includePatterns = files.filter((file) => isRuntimeTestFileIncluded(file, options));
             if (includePatterns.length === 0) {
               return [];
+            }
+            if (includePatterns.length < files.length) {
+              // Refit folds complete split generations into their timing parent.
+              // Reduced automatic coverage must never reprice the full release owner.
+              timingKey = `changed-${splitShard.shardName}`;
             }
           }
         }
@@ -2607,6 +2617,7 @@ function createNodeTestShardsForOwners(
           {
             checkName: formatNodeTestShardCheckName(splitShard.shardName),
             shardName: splitShard.shardName,
+            ...(timingKey ? { timing_key: timingKey } : {}),
             configs: splitConfigs,
             ...(splitShard.env ? { env: splitShard.env } : {}),
             ...(includePatterns ? { includePatterns } : {}),
@@ -2957,6 +2968,15 @@ export function createNodeTestShardBundles(
       bundled.push({
         checkName: formatNodeTestShardCheckName(shardName),
         shardName,
+        ...(group.shards.some((shard) => shard.timing_key)
+          ? {
+              timing_key: createCompactSplitTimingGeneration({
+                configs: group.configs,
+                parentShardName: `changed-${shardName}`,
+                stripes: [bin.includePatterns],
+              }).timingKeys[0]!,
+            }
+          : {}),
         configs: group.configs,
         includePatterns: bin.includePatterns.toSorted((a, b) => a.localeCompare(b)),
         ...(group.pretestBuildMode ? { pretestBuildMode: group.pretestBuildMode } : {}),
@@ -3784,6 +3804,7 @@ function createCompactNodeTestShardBundles(
         requiresDist: shard.requiresDist,
         runner,
         shard_name: shard.shardName,
+        ...(shard.timing_key ? { timing_key: shard.timing_key } : {}),
       },
       options.runnerBackend,
     );

@@ -1836,6 +1836,7 @@ jobs:
                       env: shard.env,
                       includePatterns: shard.includePatterns,
                       shard_name: shard.shardName,
+                      timing_key: shard.timing_key,
                     }]
                   : undefined
               );

@@ -24,6 +24,7 @@ import {
 } from "../../scripts/lib/ci-node-test-plan.mts";
 import {
   isCiProofTestFile,
+  isReleaseOnlyRuntimeTestFile,
   RELEASE_ONLY_RUNTIME_TEST_FILES,
 } from "../../scripts/lib/ci-proof-test-inventory.mts";
 import { isRuntimePlacementIncludePatterns } from "../../scripts/lib/ci-test-timings-schema.mts";
@@ -3534,6 +3535,13 @@ describe("scripts/lib/ci-node-test-plan.mts", () => {
   it.each(["blacksmith", "github", "hybrid"])(
     "defers exactly the runtime release inventory from automatic plans on %s",
     (runnerBackend) => {
+      const reducedOwners = defaultShards
+        .filter(
+          (shard) =>
+            shard.shardName === "core-runtime-config" ||
+            shard.includePatterns?.some(isReleaseOnlyRuntimeTestFile),
+        )
+        .map((shard) => shard.shardName);
       for (const compactMode of ["push", "pull-request"] as const) {
         const before = getCommittedCompactPlan(compactMode, runnerBackend);
         const after = createNodeTestShardBundles({
@@ -3552,9 +3560,43 @@ describe("scripts/lib/ci-node-test-plan.mts", () => {
         );
         expect(afterFiles.filter((file) => !beforeFiles.includes(file))).toEqual([]);
         expect(afterFiles).toContain("src/config/config-startup-corpus.test.ts");
+        for (const owner of reducedOwners) {
+          const owns = (group: { shard_name: string }) =>
+            group.shard_name === owner || group.shard_name.startsWith(`${owner}-hosted-`);
+          const reduced = after.flatMap((shard) => shard.groups).filter(owns);
+          expect(reduced.length, owner).toBeGreaterThan(0);
+          for (const group of reduced) {
+            const timingKey = expectDefined(group.timing_key, "reduced runtime timing identity");
+            expect(parseCompactSplitTimingKey(timingKey)?.parentShardName ?? timingKey).toBe(
+              `changed-${owner}`,
+            );
+          }
+        }
       }
     },
   );
+
+  it("keeps noncompact reduced runtime bundles separate from release timing history", () => {
+    const full = createNodeTestShardBundles();
+    const reduced = createNodeTestShardBundles({ includeReleaseOnlyRuntimeTests: false });
+    for (const config of [
+      "test/vitest/vitest.runtime-config.config.ts",
+      "test/vitest/vitest.infra.config.ts",
+      "test/vitest/vitest.unit-src.config.ts",
+    ]) {
+      expect(
+        full.filter((shard) => shard.configs.includes(config)).some((shard) => shard.timing_key),
+      ).toBe(false);
+      const owners = reduced.filter((shard) => shard.configs.includes(config) && shard.timing_key);
+      expect(owners.length, config).toBeGreaterThan(0);
+      for (const owner of owners) {
+        const key = expectDefined(owner.timing_key, "reduced bundle timing identity");
+        expect(parseCompactSplitTimingKey(key)?.parentShardName ?? key).toBe(
+          `changed-${owner.shardName}`,
+        );
+      }
+    }
+  });
 
   it("preserves runtime preparation and core-only ownership in full and compact plans", () => {
     const qaConfig = "test/vitest/vitest.extension-qa.config.ts";

@@ -7196,61 +7196,71 @@ describe("ci workflow guards", () => {
     },
   );
 
-  it("packs flat manual Node rows below the output budget without changing their plan", () => {
-    const configs = ["test/vitest/vitest.unit-fast.config.ts"];
-    const env = { OPENCLAW_VITEST_MAX_WORKERS: "2" };
-    const includePatterns = Array.from(
-      { length: 6_000 },
-      (_, index) =>
-        `src/infra/manual-inventory/owner-${index}/workflow-contract-process-boundaries.test.ts`,
-    );
-    const manifest = runCiManifestFixture({
-      bundledPlanner: true,
-      eventName: "workflow_dispatch",
-      historicalCompatibility: false,
-      releaseGate: true,
-      scopeEnv: { OPENCLAW_CI_WORKFLOW_REVISION: "a".repeat(40) },
-      nodeTestShards: [
+  it.each([undefined, "changed-manual-inventory"])(
+    "packs flat manual Node rows without losing timing identity %s",
+    (timingKey) => {
+      const configs = ["test/vitest/vitest.unit-fast.config.ts"];
+      const env = { OPENCLAW_VITEST_MAX_WORKERS: "2" };
+      const includePatterns = Array.from(
+        { length: 6_000 },
+        (_, index) =>
+          `src/infra/manual-inventory/owner-${index}/workflow-contract-process-boundaries.test.ts`,
+      );
+      const manifest = runCiManifestFixture({
+        bundledPlanner: true,
+        eventName: "workflow_dispatch",
+        historicalCompatibility: false,
+        releaseGate: true,
+        scopeEnv: { OPENCLAW_CI_WORKFLOW_REVISION: "a".repeat(40) },
+        nodeTestShards: [
+          {
+            checkName: "checks-node-manual-inventory",
+            configs,
+            env,
+            includePatterns,
+            requiresDist: false,
+            runner: "ubuntu-24.04",
+            shardName: "manual-inventory",
+            timing_key: timingKey,
+            timeoutMinutes: 20,
+          },
+        ],
+      });
+      expect(manifest.status, manifest.output).toBe(0);
+      expect(manifest.outputChars).toBeLessThan(262_144);
+      const rows = JSON.parse(
+        expectDefined(manifest.outputs.checks_node_core_nondist_matrix, "manual Node matrix"),
+      ).include;
+      expect(rows).toHaveLength(1);
+      const [row] = rows;
+      expect(row).toMatchObject({
+        check_name: "checks-node-manual-inventory",
+        env,
+        runner: "ubuntu-24.04",
+        shard_name: "manual-inventory",
+        timeout_minutes: 20,
+      });
+      for (const field of ["groups", "configs", "includePatterns"]) {
+        expect(row).not.toHaveProperty(field);
+      }
+      expect(
+        resolveShardPlans({ OPENCLAW_NODE_TEST_GROUPS_GZIP_BASE64: row.groups_gzip_base64 }),
+      ).toEqual([
         {
-          checkName: "checks-node-manual-inventory",
-          configs,
-          env,
-          includePatterns,
-          requiresDist: false,
-          runner: "ubuntu-24.04",
-          shardName: "manual-inventory",
-          timeoutMinutes: 20,
+          kind: "group",
+          name: "manual-inventory",
+          timingKey: timingKey ?? "manual-inventory",
+          plan: {
+            configs,
+            env,
+            includePatterns,
+            shard_name: "manual-inventory",
+            ...(timingKey ? { timing_key: timingKey } : {}),
+          },
         },
-      ],
-    });
-    expect(manifest.status, manifest.output).toBe(0);
-    expect(manifest.outputChars).toBeLessThan(262_144);
-    const rows = JSON.parse(
-      expectDefined(manifest.outputs.checks_node_core_nondist_matrix, "manual Node matrix"),
-    ).include;
-    expect(rows).toHaveLength(1);
-    const [row] = rows;
-    expect(row).toMatchObject({
-      check_name: "checks-node-manual-inventory",
-      env,
-      runner: "ubuntu-24.04",
-      shard_name: "manual-inventory",
-      timeout_minutes: 20,
-    });
-    for (const field of ["groups", "configs", "includePatterns"]) {
-      expect(row).not.toHaveProperty(field);
-    }
-    expect(
-      resolveShardPlans({ OPENCLAW_NODE_TEST_GROUPS_GZIP_BASE64: row.groups_gzip_base64 }),
-    ).toEqual([
-      {
-        kind: "group",
-        name: "manual-inventory",
-        timingKey: "manual-inventory",
-        plan: { configs, env, includePatterns, shard_name: "manual-inventory" },
-      },
-    ]);
-  });
+      ]);
+    },
+  );
 
   it.each([
     ...(["github", "hybrid", "blacksmith"] as const).map((runnerProfile) => ({
