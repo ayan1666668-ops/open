@@ -1,17 +1,34 @@
 import { Type } from "typebox";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
+import {
+  clearRuntimeConfigSnapshot,
+  setRuntimeConfigSnapshot,
+} from "../config/runtime-snapshot.js";
+import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { prepareDecisionProviderReload } from "../decisions/runtime.js";
 import type { DecisionBatch, DecisionOutcome, DecisionRuntimeV1 } from "../decisions/types.js";
+import { runPluginRegisterSyncInRegistry } from "../plugins/loader-module-runtime.js";
+import { createPluginRecord } from "../plugins/loader-records.js";
+import { getPluginInstance } from "../plugins/plugin-instance-scope.js";
+import { createTestPluginRegistry } from "../plugins/registry-runtime.test-helpers.js";
+import { resetPluginRuntimeStateForTest, setActivePluginRegistry } from "../plugins/runtime.js";
 import { ToolSearchRuntime } from "./tool-search-runtime.js";
 import type { ToolSearchToolContext } from "./tool-search-types.js";
 import {
   createToolSearchCatalogRef,
   createToolSearchTools,
   registerHeadlessToolSearchCatalog,
+  restrictToolSearchCatalog,
   resolveToolSearchConfig,
   TOOL_SEARCH_RAW_TOOL_NAME,
   TOOL_SEARCH_CODE_MODE_TOOL_NAME,
 } from "./tool-search.js";
 import { jsonResult, type AnyAgentTool } from "./tools/common.js";
+
+afterEach(() => {
+  resetPluginRuntimeStateForTest();
+  clearRuntimeConfigSnapshot();
+});
 
 function fakeTool(name: string): AnyAgentTool {
   return {
@@ -105,6 +122,65 @@ function decisionFixture(
       return outcomeFor(batch, choose?.(batch) ?? "candidate_0");
     }),
   };
+}
+
+function registerDecisionFixture(config: OpenClawConfig) {
+  const evaluate = vi.fn(async (batch: DecisionBatch) => outcomeFor(batch));
+  const builder = createTestPluginRegistry();
+  const record = createPluginRecord({
+    id: "fixture-decision-owner",
+    source: "/synthetic/tool-search-decision-provider.ts",
+    origin: "global",
+    enabled: true,
+    configSchema: false,
+    contracts: { decisionProviders: ["fixture"] },
+  });
+  const api = builder.createApi(record, { config });
+  runPluginRegisterSyncInRegistry(
+    (registration) =>
+      registration.registerDecisionProvider({
+        id: "fixture",
+        contractVersion: 1,
+        evaluate,
+      }),
+    api,
+    builder.registry,
+    record.id,
+  );
+  builder.registry.plugins.push(record);
+  setRuntimeConfigSnapshot(config, config);
+  setActivePluginRegistry(builder.registry);
+  onTestFinished(async () => {
+    prepareDecisionProviderReload(builder.registry, new Set([record.id]));
+    await getPluginInstance(record)?.dispose();
+  });
+  return evaluate;
+}
+
+function resultDetails(result: Awaited<ReturnType<AnyAgentTool["execute"]>>): unknown {
+  return result.details;
+}
+
+function compactIdentity(value: unknown): Array<{ id: string; name: string }> {
+  if (!Array.isArray(value)) {
+    throw new Error("Expected Tool Search candidate array");
+  }
+  return value.map((candidate) => {
+    if (
+      !candidate ||
+      typeof candidate !== "object" ||
+      typeof (candidate as { id?: unknown }).id !== "string" ||
+      typeof (candidate as { name?: unknown }).name !== "string"
+    ) {
+      throw new Error("Expected Tool Search candidate identity");
+    }
+    expect(candidate).not.toHaveProperty("parameters");
+    expect(candidate).not.toHaveProperty("outputSchema");
+    return {
+      id: (candidate as { id: string }).id,
+      name: (candidate as { name: string }).name,
+    };
+  });
 }
 
 describe("Tool Search semantic ranking shadow", () => {
@@ -400,5 +476,123 @@ describe("Tool Search semantic ranking shadow", () => {
       ],
     });
     expect(decisionRuntime.evaluate).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    {
+      label: "the global decision model is absent",
+      config: {
+        tools: {
+          toolSearch: {
+            enabled: true,
+            mode: "tools",
+            semanticRanking: "shadow",
+            maxSearchLimit: 20,
+          },
+        },
+      } satisfies OpenClawConfig,
+    },
+    {
+      label: "the owning agent explicitly disables its decision model",
+      config: {
+        agents: {
+          defaults: { decisionModel: "fixture/semantic-v1" },
+          entries: { "semantic-test-agent": { decisionModel: "" } },
+        },
+        tools: {
+          toolSearch: {
+            enabled: true,
+            mode: "tools",
+            semanticRanking: "shadow",
+            maxSearchLimit: 20,
+          },
+        },
+      } satisfies OpenClawConfig,
+    },
+  ])("keeps structured and code search byte-for-byte lexical when $label", async ({ config }) => {
+    const providerEvaluate = registerDecisionFixture(config);
+    const catalogRef = createToolSearchCatalogRef();
+    const tools = Array.from({ length: 6 }, (_, index) => fakeTool(`calendar_event_${index}`));
+    registerHeadlessToolSearchCatalog({ catalogRef, tools });
+    restrictToolSearchCatalog({
+      catalogRef,
+      allowedToolNames: new Set(tools.slice(0, 4).map((tool) => tool.name)),
+    });
+    const abortController = new AbortController();
+    const common = {
+      catalogRef,
+      agentId: "semantic-test-agent",
+      abortSignal: abortController.signal,
+    };
+    const lexicalConfig = {
+      ...config,
+      tools: {
+        toolSearch: {
+          ...config.tools?.toolSearch,
+          semanticRanking: "off" as const,
+        },
+      },
+    } satisfies OpenClawConfig;
+
+    const lexicalTools = createToolSearchTools({ ...common, config: lexicalConfig });
+    const shadowTools = createToolSearchTools({ ...common, config });
+    const lexicalStructured = lexicalTools.find((tool) => tool.name === TOOL_SEARCH_RAW_TOOL_NAME)!;
+    const shadowStructured = shadowTools.find((tool) => tool.name === TOOL_SEARCH_RAW_TOOL_NAME)!;
+    const singleInput = { query: "calendar events", limit: 2 };
+    const batchInput = {
+      queries: [
+        { query: "calendar events", limit: 3 },
+        { query: "manage calendar", limit: 1 },
+      ],
+    };
+
+    const lexicalSingle = resultDetails(
+      await lexicalStructured.execute("lexical-single", singleInput),
+    );
+    const shadowSingle = resultDetails(
+      await shadowStructured.execute("shadow-single", singleInput),
+    );
+    expect(JSON.stringify(shadowSingle)).toBe(JSON.stringify(lexicalSingle));
+    expect(compactIdentity(shadowSingle)).toEqual([
+      { id: "openclaw:core:calendar_event_0", name: "calendar_event_0" },
+      { id: "openclaw:core:calendar_event_1", name: "calendar_event_1" },
+    ]);
+
+    const lexicalBatch = resultDetails(
+      await lexicalStructured.execute("lexical-batch", batchInput),
+    );
+    const shadowBatch = resultDetails(await shadowStructured.execute("shadow-batch", batchInput));
+    expect(JSON.stringify(shadowBatch)).toBe(JSON.stringify(lexicalBatch));
+    const batchGroups = (shadowBatch as { results: Array<{ candidates: unknown }> }).results;
+    expect(batchGroups.map((group) => compactIdentity(group.candidates))).toEqual([
+      [
+        { id: "openclaw:core:calendar_event_0", name: "calendar_event_0" },
+        { id: "openclaw:core:calendar_event_1", name: "calendar_event_1" },
+        { id: "openclaw:core:calendar_event_2", name: "calendar_event_2" },
+      ],
+      [{ id: "openclaw:core:calendar_event_0", name: "calendar_event_0" }],
+    ]);
+
+    const lexicalCode = lexicalTools.find((tool) => tool.name === TOOL_SEARCH_CODE_MODE_TOOL_NAME)!;
+    const shadowCode = shadowTools.find((tool) => tool.name === TOOL_SEARCH_CODE_MODE_TOOL_NAME)!;
+    const code = 'return await openclaw.tools.search("calendar events", { limit: 2 });';
+    const lexicalCodeDetails = resultDetails(
+      await lexicalCode.execute("lexical-code", { code }, abortController.signal),
+    ) as { ok: boolean; value: unknown };
+    const shadowCodeDetails = resultDetails(
+      await shadowCode.execute("shadow-code", { code }, abortController.signal),
+    ) as { ok: boolean; value: unknown };
+    expect(shadowCodeDetails.ok).toBe(true);
+    expect(JSON.stringify(shadowCodeDetails.value)).toBe(JSON.stringify(lexicalCodeDetails.value));
+    expect(compactIdentity(shadowCodeDetails.value)).toEqual([
+      { id: "openclaw:core:calendar_event_0", name: "calendar_event_0" },
+      { id: "openclaw:core:calendar_event_1", name: "calendar_event_1" },
+    ]);
+
+    for (const result of [shadowSingle, ...batchGroups.map((group) => group.candidates)]) {
+      expect(JSON.stringify(result)).not.toContain("calendar_event_4");
+      expect(JSON.stringify(result)).not.toContain("calendar_event_5");
+    }
+    expect(providerEvaluate).not.toHaveBeenCalled();
   });
 });
