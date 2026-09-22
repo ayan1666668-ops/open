@@ -42,6 +42,26 @@ export function requiresDirectoryReload(current: CronFormState, next: CronFormSt
   );
 }
 
+/** The `conversations.list` request key an editor's form implies. */
+type DirectoryRoute = { mode: string; channel: string; agentId: string };
+
+function readDirectoryRoute(cronState: CronState): DirectoryRoute {
+  return {
+    mode: cronState.cronForm.deliveryMode,
+    channel: cronState.cronForm.deliveryChannel.trim(),
+    agentId: cronState.cronForm.agentId.trim() || cronState.cronAgentId?.trim() || "",
+  };
+}
+
+function sameDirectoryRoute(read: DirectoryRoute | null, next: DirectoryRoute): boolean {
+  return (
+    read !== null &&
+    read.mode === next.mode &&
+    read.channel === next.channel &&
+    read.agentId === next.agentId
+  );
+}
+
 export type DeliveryConversationsHost = {
   /** The page state that currently owns the editor. */
   currentCronState: () => CronState;
@@ -74,6 +94,13 @@ export class DeliveryConversationsController {
    * the connection, and the admin scope all survive an editor swap.
    */
   private editorGeneration = 0;
+  /**
+   * The route the cache was last read against. Keeping it here rather than in
+   * the caller is what lets a continuation ask whether the editor still targets
+   * the channel and agent the cached rows describe, without having to snapshot
+   * the form itself before every await.
+   */
+  private readRoute: DirectoryRoute | null = null;
 
   constructor(private readonly host: DeliveryConversationsHost) {}
 
@@ -82,6 +109,7 @@ export class DeliveryConversationsController {
     this.requestId += 1;
     this.conversations = [];
     this.error = null;
+    this.readRoute = null;
     this.host.notify(cronState);
   }
 
@@ -129,6 +157,42 @@ export class DeliveryConversationsController {
     editorGeneration: number,
     stillEditing: boolean,
   ) {
+    this.resettle(cronState, connectionScope, editorGeneration, stillEditing);
+  }
+
+  /**
+   * Resettle the directory when a rejected save replaced the editor's route.
+   *
+   * Revision-conflict recovery loads the authoritative definition into the
+   * editor and still reports `saved: false`, so the post-save resettle above
+   * never runs for it. If that definition moved the route the cache was read
+   * against, the cached rows describe a channel or agent the editor no longer
+   * targets -- the sending account is applied locally, so an unchanged account
+   * does not hide them -- and a read still outstanding for the old route would
+   * publish onto the new one. Retiring both and reading the recovered route is
+   * the only outcome that leaves no stale target selectable.
+   *
+   * A rejected save that did not move the route (a field error, a refused
+   * request) leaves the cache alone, so retrying a save never re-reads the
+   * Gateway for a directory that still answers.
+   */
+  reconcileRoute(
+    cronState: CronState,
+    connectionScope: GatewayConnectionScope | null,
+    editorGeneration: number,
+  ) {
+    if (sameDirectoryRoute(this.readRoute, readDirectoryRoute(cronState))) {
+      return;
+    }
+    this.resettle(cronState, connectionScope, editorGeneration, Boolean(cronState.cronEditingJob));
+  }
+
+  private resettle(
+    cronState: CronState,
+    connectionScope: GatewayConnectionScope | null,
+    editorGeneration: number,
+    stillEditing: boolean,
+  ) {
     if (!this.ownedBy(cronState, connectionScope, editorGeneration)) {
       return;
     }
@@ -164,9 +228,11 @@ export class DeliveryConversationsController {
     this.error = null;
     this.host.notify(cronState);
     const client = cronState.client;
-    const mode = cronState.cronForm.deliveryMode;
-    const channel = cronState.cronForm.deliveryChannel.trim();
-    const agentId = cronState.cronForm.agentId.trim() || cronState.cronAgentId?.trim() || "";
+    // Recorded before the guards so a route that reads nothing is still the
+    // route the (empty) cache answers for, and retrying its save stays quiet.
+    const route = readDirectoryRoute(cronState);
+    this.readRoute = route;
+    const { mode, channel, agentId } = route;
     if (
       !this.host.canManage() ||
       !client ||

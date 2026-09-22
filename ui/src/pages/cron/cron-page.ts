@@ -579,6 +579,11 @@ class CronPage extends OpenClawLightDomElement {
       const editing = Boolean(cronState.cronEditingJob);
       const result = await addCronJob(cronState);
       if (!result.saved) {
+        // A rejected save is not always a no-op: revision-conflict recovery
+        // loads the authoritative definition into the editor and still reports
+        // `saved: false`, which can move the route out from under the cached
+        // recipient directory.
+        this.deliveryDirectory.reconcileRoute(cronState, connectionScope, editorGeneration);
         return;
       }
       // The save yields while the page, the connection, and the editor can all

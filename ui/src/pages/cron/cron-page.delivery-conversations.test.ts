@@ -949,4 +949,120 @@ describe("CronPage lifecycle", () => {
     );
     expect(page.deliveryConversationsError).toBeNull();
   });
+
+  it("re-reads the recipient directory when conflict recovery replaces the route", async () => {
+    // Revision-conflict recovery loads the authoritative definition into the
+    // open editor and still reports `saved: false`, so the post-save resettle
+    // never runs. The sending account is applied to cached rows locally, so a
+    // recovery that only moves the channel leaves every Telegram target
+    // selectable on the recovered Discord route unless the cache is retired.
+    const { page, directoryChannels, directories } = await startConflictRecovery({
+      recoveredChannel: "discord",
+    });
+
+    await waitForCronPage(() => expect(page.cron.cronForm.deliveryChannel).toBe("discord"));
+    await waitForCronPage(() => expect(directoryChannels).toEqual(["telegram", "discord"]));
+    expect(page.cron.cronForm.deliveryAccountId).toBe("default");
+    expect(page.deliveryConversations).toEqual([]);
+
+    directories[1]?.resolve({ conversations: [conversationTarget("-100recovered")] });
+    await waitForCronPage(() =>
+      expect(page.deliveryConversations.map((entry) => entry.target)).toEqual(["-100recovered"]),
+    );
+  });
+
+  it("drops an in-flight directory response after conflict recovery replaces the route", async () => {
+    // The old route's read is still outstanding when recovery lands; without
+    // retiring it, it publishes onto the route that replaced it.
+    const { page, directoryChannels, directories } = await startConflictRecovery({
+      recoveredChannel: "discord",
+      resolveFirstDirectory: false,
+    });
+
+    await waitForCronPage(() => expect(directoryChannels).toEqual(["telegram", "discord"]));
+
+    directories[0]?.resolve({ conversations: [conversationTarget("-100stale")] });
+    await Promise.resolve();
+
+    expect(page.deliveryConversations).toEqual([]);
+    expect(page.deliveryConversationsError).toBeNull();
+  });
+
+  it("keeps the recipient directory when conflict recovery preserves the route", async () => {
+    // A rejected save that leaves the route in place must not re-read the
+    // Gateway: the cached directory still answers for that exact channel and
+    // agent, so retrying a save cannot turn into a discovery loop.
+    const { page, directoryChannels } = await startConflictRecovery({
+      recoveredChannel: "telegram",
+    });
+
+    await waitForCronPage(() => expect(page.cron.cronError).toContain("changed on the Gateway"));
+    expect(directoryChannels).toEqual(["telegram"]);
+    expect(page.deliveryConversations.map((entry) => entry.target)).toEqual(["-100original"]);
+  });
 });
+
+/**
+ * Drives one editor through a `CRON_JOB_CHANGED` save: the editor opens on a
+ * Telegram announce route, its directory read is answered, and the retry is
+ * refused so `cron.get` replaces the form with an authoritative definition on
+ * `recoveredChannel` under the same `default` account.
+ */
+async function startConflictRecovery(options: {
+  recoveredChannel: string;
+  resolveFirstDirectory?: boolean;
+}) {
+  const directories = [
+    createDeferred<{ conversations: ConversationListItem[] }>(),
+    createDeferred<{ conversations: ConversationListItem[] }>(),
+  ];
+  const directoryChannels: string[] = [];
+  const editedJob = createCronViewJob("digest", {
+    configRevision: "rev-1",
+    sessionTarget: "isolated",
+    payload: { kind: "agentTurn", message: "Send the digest" },
+    delivery: { mode: "announce", channel: "telegram", to: "-100original", accountId: "default" },
+  } as Partial<CronJob>);
+  const authoritativeJob = {
+    ...editedJob,
+    configRevision: "rev-2",
+    delivery: {
+      mode: "announce",
+      channel: options.recoveredChannel,
+      to: "-100authoritative",
+      accountId: "default",
+    },
+  } as CronJob;
+  const fallbackRequest = createRequest();
+  const request = vi.fn(async (method: string, payload?: unknown) => {
+    if (method === "conversations.list") {
+      const channel = (payload as { channel?: string } | undefined)?.channel ?? "";
+      directoryChannels.push(channel);
+      return directories[Math.min(directoryChannels.length - 1, directories.length - 1)]?.promise;
+    }
+    if (method === "cron.update") {
+      throw Object.assign(new Error("cron job definition changed"), {
+        details: { code: "CRON_JOB_CHANGED" },
+      });
+    }
+    if (method === "cron.get") {
+      return authoritativeJob;
+    }
+    return fallbackRequest(method);
+  });
+  const page = createPage(
+    createContext(createGateway({ request } as unknown as GatewayBrowserClient, true), "writer"),
+  );
+
+  await waitForCronPage(() => expect(page.cron.connected).toBe(true));
+  page.selectJob(editedJob);
+  await waitForCronPage(() => expect(directoryChannels).toEqual(["telegram"]));
+  if (options.resolveFirstDirectory !== false) {
+    directories[0]?.resolve({ conversations: [conversationTarget("-100original")] });
+    await waitForCronPage(() => expect(page.deliveryConversations).toHaveLength(1));
+  }
+
+  page.submitForm();
+  await waitForCronPage(() => expect(request).toHaveBeenCalledWith("cron.get", { id: "digest" }));
+  return { page, request, directories, directoryChannels };
+}
