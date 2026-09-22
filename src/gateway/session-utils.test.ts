@@ -1168,6 +1168,7 @@ describe("gateway session utils", () => {
       "medium",
       "high",
       "max",
+      "ultra",
     ]);
     expect(row.thinkingLevels?.map((level) => level.id)).toEqual([
       "off",
@@ -1175,6 +1176,7 @@ describe("gateway session utils", () => {
       "medium",
       "high",
       "max",
+      "ultra",
     ]);
     expect(defaults.thinkingDefault).toBe("medium");
     expect(row.thinkingDefault).toBe("medium");
@@ -1233,8 +1235,8 @@ describe("gateway session utils", () => {
       modelCatalog: catalog,
     });
 
-    expect(defaults.thinkingLevels?.map((level) => level.id)).toEqual(["off"]);
-    expect(row.thinkingLevels?.map((level) => level.id)).toEqual(["off"]);
+    expect(defaults.thinkingLevels?.map((level) => level.id)).toEqual(["off", "ultra"]);
+    expect(row.thinkingLevels?.map((level) => level.id)).toEqual(["off", "ultra"]);
     expect(defaults.thinkingDefault).toBe("off");
     expect(row.thinkingDefault).toBe("off");
   });
@@ -1641,7 +1643,7 @@ describe("gateway session utils", () => {
     expect(options).toHaveProperty("manifestRegistry");
   });
 
-  test("keeps stored thinking without capability facts and clamps it with a known profile", () => {
+  test("keeps stored Ultra for supported harnesses and clamps unavailable native profiles", () => {
     providerArtifactMocks.resolveBundledProviderPolicySurface.mockReturnValue({
       resolveThinkingProfile: () => ({
         levels: [{ id: "off" }, { id: "high" }, { id: "xhigh" }, { id: "max" }],
@@ -1685,11 +1687,16 @@ describe("gateway session utils", () => {
 
     expect(row(stored).thinkingLevel).toBe("ultra");
     expect(row(stored, {}).thinkingLevel).toBe("ultra");
-    expect(row(stored, { reasoning: true }).thinkingLevel).toBe("high");
+    expect(row(stored, { reasoning: true }).thinkingLevel).toBe("ultra");
+    expect(row(stored, { reasoning: false }).thinkingLevel).toBe("off");
+    expect(
+      row(stored, { reasoning: true, compat: { supportedReasoningEfforts: ["off"] } })
+        .thinkingLevel,
+    ).toBe("off");
     expect(
       row(stored, { reasoning: true, compat: { supportedReasoningEfforts: ["max"] } })
         .thinkingLevel,
-    ).toBe("max");
+    ).toBe("ultra");
     const nativeUltra = row(stored, {
       reasoning: true,
       compat: { supportedReasoningEfforts: ["max", "ultra"] },
@@ -4898,7 +4905,10 @@ describe("gateway session utils", () => {
     });
     const agentsById = new Map(result.agents.map((agent) => [agent.id, agent]));
 
-    expect(agentsById.get("main")?.thinkingLevels?.map((level) => level.id)).toEqual(["off"]);
+    expect(agentsById.get("main")?.thinkingLevels?.map((level) => level.id)).toEqual([
+      "off",
+      "ultra",
+    ]);
     expect(agentsById.get("work")?.thinkingDefault).toBe("medium");
     expect(agentsById.get("work")?.thinkingLevels?.map((level) => level.id)).toContain("medium");
     expect(agentsById.get("missing")?.thinkingLevels?.map((level) => level.id)).toContain("high");
@@ -4948,6 +4958,7 @@ describe("gateway session utils", () => {
         "low",
         "medium",
         "high",
+        "ultra",
       ]);
       expect(agent?.thinkingOptions).toEqual(agent?.thinkingLevels?.map((level) => level.label));
     });
