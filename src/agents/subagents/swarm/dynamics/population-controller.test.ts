@@ -149,7 +149,9 @@ describe("mixed-phase population controller", () => {
       ],
     });
     expect(snapshot.phaseMixture.crystal).toBe(0);
-    expect(assessPopulation(snapshot).actions.some((action) => action.kind === "freeze")).toBe(false);
+    expect(
+      assessPopulation(snapshot).actions.some((action) => action.kind === "freeze"),
+    ).toBe(false);
   });
 
   it("freezes a well-evidenced low-entropy candidate without granting authority", () => {
