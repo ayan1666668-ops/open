@@ -15,6 +15,7 @@ import {
   validateQaEvidenceSummaryJson,
   type CodeModeMatrixCellResult,
   type CodeModeMatrixTask,
+  type MatrixCell,
 } from "../../../scripts/code-mode-model-matrix.ts";
 import { getEffectiveQaEvidenceEntries, projectQaEvidenceScenarioOutcomes } from "../api.js";
 
@@ -32,6 +33,12 @@ import fs from "node:fs/promises";
 import path from "node:path";
 const option = (name) => process.argv[process.argv.indexOf(name) + 1];
 const workspace = option("--cwd");
+if (process.argv.includes("--local-model-lean")) throw new Error("unexpected lean profile");
+const config = JSON.parse(await fs.readFile(option("--config"), "utf8"));
+if (config.agents.defaults.models[option("--model")].agentRuntime.id !== "openclaw"
+  || config.agents.defaults.fastModeDefault !== false
+  || config.tools.codeMode.executor !== "node"
+  || config.tools.toolSearch !== undefined) throw new Error("benchmark controls drifted");
 const prompt = process.argv[4];
 let calls = 0;
 const read = async (name) => {
@@ -83,7 +90,206 @@ console.log(JSON.stringify({
 
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 
+function scheduledResult(
+  cell: MatrixCell,
+  failureCategory: CodeModeMatrixCellResult["failureCategory"] = null,
+): CodeModeMatrixCellResult {
+  return {
+    ...cell,
+    buildSha256: "synthetic-build",
+    gitSha: "synthetic-source",
+    sourceDirty: false,
+    sourcePatchSha256: null,
+    codeModeEngaged: cell.mode === "code",
+    elapsedMs: 1,
+    expected: "ok",
+    final: failureCategory ? "" : "ok",
+    failureCategory,
+    observedModel: cell.model.split("/")[1]!,
+    observedProvider: cell.model.split("/")[0]!,
+    passed: failureCategory === null,
+    status: failureCategory ? "error" : "ok",
+    oracle: {
+      answer: !failureCategory,
+      effect: !failureCategory,
+      engagement: true,
+      identity: true,
+      toolExecution: true,
+    },
+    timestamp: "2026-09-21T12:00:00.000Z",
+    usage: { input: 8, output: 2, total: 10 },
+    costUsd: 0.1,
+  };
+}
+
+describe("Code Mode matrix paired admission", () => {
+  it.each([
+    { flag: "--max-cells", value: "3", reason: "max_cells" },
+    { flag: "--max-tokens", value: "15", reason: "max_tokens" },
+  ])(
+    "settles the declared pair before $reason stops the next wave",
+    async ({ flag, value, reason }) => {
+      const root = tempDirs.make("openclaw-matrix-admission-");
+      const schedule = path.join(root, "schedule.json");
+      await fs.writeFile(
+        schedule,
+        JSON.stringify([
+          { model: "fixture/model", task: "read", repetition: 1, firstMode: "code" },
+          { model: "fixture/model", task: "read", repetition: 2, firstMode: "direct" },
+        ]),
+      );
+      const started: string[] = [];
+      let release: (() => void) | undefined;
+      const pairReady = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const result = await runCodeModeModelMatrix(
+        parseCodeModeMatrixOptions(
+          [
+            "--model",
+            "fixture/model",
+            "--task",
+            "read",
+            "--mode",
+            "direct",
+            "--mode",
+            "code",
+            "--schedule",
+            schedule,
+            "--repetitions",
+            "2",
+            "--concurrency",
+            "2",
+            flag,
+            value,
+          ],
+          root,
+        ),
+        {
+          readGitSha: async () => "synthetic-source",
+          readBuildSha256: async () => "synthetic-build",
+          buildCliArtifacts: async () => {},
+          runCell: async ({ cell }) => {
+            started.push(cell.mode);
+            if (started.length === 2) {
+              release?.();
+            }
+            await pairReady;
+            return scheduledResult(cell);
+          },
+        },
+      );
+      expect(started).toEqual(["code", "direct"]);
+      expect(result.exitCode).toBe(1);
+      expect(result.summary).toMatchObject({
+        admission: {
+          admittedCells: 2,
+          completedCells: 2,
+          stopReason: reason,
+          unstarted: [{ reason }, { reason }],
+          observed: { tokens: 20 },
+        },
+      });
+    },
+  );
+
+  it.each(
+    (["provider_auth", "provider_billing", "model_unavailable"] as const).flatMap((category) =>
+      [1, 2].map((concurrency) => ({ category, concurrency })),
+    ),
+  )(
+    "settles admitted pairs before $category stops its scope at concurrency $concurrency",
+    async ({ category, concurrency }) => {
+      const root = tempDirs.make("openclaw-matrix-provider-stop-");
+      const requested: string[] = [];
+      const result = await runCodeModeModelMatrix(
+        parseCodeModeMatrixOptions(
+          [
+            "--model",
+            "openai/first",
+            "--model",
+            "openai/second",
+            "--model",
+            "google/third",
+            "--task",
+            "read",
+            "--mode",
+            "direct",
+            "--mode",
+            "code",
+            "--repetitions",
+            "1",
+            "--concurrency",
+            String(concurrency),
+          ],
+          root,
+        ),
+        {
+          readGitSha: async () => "synthetic-source",
+          readBuildSha256: async () => "synthetic-build",
+          buildCliArtifacts: async () => {},
+          runCell: async ({ cell }) => {
+            requested.push(cell.model);
+            return scheduledResult(cell, cell.model === "openai/first" ? category : null);
+          },
+        },
+      );
+      expect(requested.filter((model) => model === "openai/first")).toHaveLength(2);
+      expect(requested.filter((model) => model === "openai/second")).toHaveLength(
+        category === "model_unavailable" ? 2 : 0,
+      );
+      expect(requested.filter((model) => model === "google/third")).toHaveLength(2);
+      expect(result.exitCode).toBe(1);
+    },
+  );
+});
+
 describe("Code Mode model matrix runtime and output admission", () => {
+  it("stops after a wave changes built artifacts and retains its original observation", async () => {
+    const root = tempDirs.make("openclaw-code-mode-build-drift-");
+    const artifact = path.join(root, "entry.js");
+    await fs.writeFile(artifact, "original");
+    const dispatched: string[] = [];
+    const options = parseCodeModeMatrixOptions(
+      [
+        "--model",
+        "openai/fixture",
+        "--task",
+        "read",
+        "--mode",
+        "code",
+        "--repetitions",
+        "2",
+        "--output-dir",
+        "artifacts/build-drift",
+      ],
+      root,
+    );
+    await expect(
+      runCodeModeModelMatrix(options, {
+        readGitSha: async () => "synthetic-source",
+        readBuildSha256: async () =>
+          createHash("sha256")
+            .update(await fs.readFile(artifact))
+            .digest("hex"),
+        buildCliArtifacts: async () => {},
+        runCell: async ({ cell, buildSha256 }) => {
+          dispatched.push(cell.id);
+          await fs.writeFile(artifact, "changed");
+          return { ...scheduledResult(cell), buildSha256 };
+        },
+      }),
+    ).rejects.toThrow("Runtime build changed");
+    expect(dispatched).toHaveLength(1);
+    const output = path.join(root, "artifacts/build-drift");
+    const rows = (await fs.readFile(path.join(output, "results.jsonl"), "utf8")).trim().split("\n");
+    expect(rows).toHaveLength(1);
+    expect(JSON.parse(rows[0]!).id).toBe(dispatched[0]);
+    await expect(fs.stat(path.join(output, "mode-comparison.json"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
   it("rejects a dirty frozen runtime before building or dispatching any model", async () => {
     const root = tempDirs.make("openclaw-code-mode-frozen-runtime-");
     const options = parseCodeModeMatrixOptions(
@@ -177,6 +383,38 @@ describe("Code Mode model matrix provider setup", () => {
     expect(buildCodeModeMatrixAgentEnv("huggingface/model", "/runtime", {}).OLLAMA_API_KEY).toBe(
       undefined,
     );
+    const isolated = buildCodeModeMatrixAgentEnv("ollama/fixture", "/runtime", {
+      HOME: "/operator",
+      CODEX_HOME: "/operator/codex",
+      OPENCLAW_CONFIG_PATH: "/operator/config",
+      UNRELATED_TOKEN: "synthetic-unrelated-value",
+      PATH: "/bin",
+    });
+    expect(isolated.PATH).toBe("/bin");
+    expect(isolated).not.toHaveProperty("HOME");
+    expect(isolated).not.toHaveProperty("CODEX_HOME");
+    expect(isolated).not.toHaveProperty("OPENCLAW_CONFIG_PATH");
+    expect(isolated).not.toHaveProperty("UNRELATED_TOKEN");
+  });
+
+  it("rejects competing credentials and non-API-key provider routes", () => {
+    expect(() =>
+      buildCodeModeMatrixAgentEnv("openai/fixture", "/runtime", {
+        OPENAI_API_KEY: "synthetic-primary",
+        CODEX_API_KEY: "synthetic-competitor",
+      }),
+    ).toThrow("Ambiguous benchmark authentication");
+    expect(() =>
+      buildCodeModeMatrixAgentEnv("anthropic/fixture", "/runtime", {
+        ANTHROPIC_OAUTH_TOKEN: "synthetic-oauth",
+      }),
+    ).toThrow("requires an API-key environment input");
+    const env = buildCodeModeMatrixAgentEnv("anthropic/fixture", "/runtime", {
+      ANTHROPIC_API_KEY: "synthetic-selected",
+      OPENAI_API_KEY: "synthetic-unrelated",
+    });
+    expect(env.ANTHROPIC_API_KEY).toBe("synthetic-selected");
+    expect(env).not.toHaveProperty("OPENAI_API_KEY");
   });
 });
 
@@ -224,24 +462,29 @@ describe("Code Mode model matrix classification", () => {
     });
   });
 
-  it("keeps provider failures distinct from model task failures", () => {
+  it.each([
+    ["HTTP 402 payment required", "credits depleted", "provider_billing"],
+    ["HTTP 403", "You do not have access to this model", "model_unavailable"],
+    ["HTTP 403", "Invalid API key", "provider_auth"],
+    ["HTTP 403", "Forbidden", "provider_auth"],
+  ])("classifies %s with %s as %s", (diagnostics, message, category) => {
     expect(
       classifyCodeModeMatrixCell({
-        diagnostics: "HTTP 402 payment required",
+        diagnostics,
         effectPassed: false,
         envelope: {
           ...successEnvelope,
           ok: false,
           status: "error",
           final: "",
-          error: { kind: "error_payload", message: "credits depleted" },
+          error: { kind: "error_payload", message },
         },
         expected: "CM-EXPECTED",
         mode: "code",
         model: "ollama/qwen3.5:9b",
         task: "read",
       }).failureCategory,
-    ).toBe("provider_billing");
+    ).toBe(category);
   });
 
   it("does not fail a successful run because diagnostics mention a recovered provider error", () => {
@@ -423,6 +666,8 @@ describe("Code Mode model matrix extended fixtures", () => {
         [
           "--model",
           "fixture/model",
+          "--concurrency",
+          "1",
           "--repetitions",
           "1",
           "--keep-state",
