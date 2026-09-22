@@ -375,6 +375,57 @@ describe("MeetingSessionRuntime durable transcripts", () => {
 });
 
 describe("MeetingSessionRuntime failed joins", () => {
+  it.each([false, true])(
+    "retries failed joins while preserving acquired browser custody: %s",
+    async (acquiredTab) => {
+      const launchError = new Error("browser launch failed");
+      let launches = 0;
+      let releaseAllowed = false;
+      const request = { url: "https://meeting.example/retry", agentId: "main" };
+      const { runtime } = createTestRuntime({
+        releaseBrowserTab: async (session) => {
+          if (!session.browser?.tab || !releaseAllowed) {
+            return false;
+          }
+          session.browser.tab = undefined;
+          return true;
+        },
+        joinTransport: async ({ session }) => {
+          launches += 1;
+          if (launches > 1 || acquiredTab) {
+            session.browser = {
+              launched: true,
+              tab: { targetId: `${session.id}-retry-tab`, openedByPlugin: true },
+            };
+          }
+          if (launches === 1) {
+            throw launchError;
+          }
+          return {};
+        },
+      });
+      try {
+        await expect(runtime.join(request)).rejects.toBe(launchError);
+        const pending = runtime.list()[0];
+        expect(runtime.list()).toHaveLength(acquiredTab ? 1 : 0);
+        const retried = await runtime.join(request);
+        expect(retried.session.state).toBe("active");
+        expect(launches).toBe(2);
+        if (pending) {
+          expect(pending.browser?.tab).toBeDefined();
+          releaseAllowed = true;
+          await expect(runtime.leave(pending.id)).resolves.toMatchObject({ browserLeft: true });
+        }
+        expect(runtime.list()).toEqual([retried.session]);
+      } finally {
+        releaseAllowed = true;
+        for (const session of runtime.list()) {
+          await runtime.leave(session.id);
+        }
+      }
+    },
+  );
+
   it("cleans an externally ended reusable session before replacing it", async () => {
     const stop = vi.fn(async () => {});
     const releaseBrowserTab = vi.fn(async () => true);
@@ -478,55 +529,69 @@ describe("MeetingSessionRuntime failed joins", () => {
     expect(runtime.list()).toEqual([]);
   });
 
-  it("retains a failed join with live cleanup for a later leave retry", async () => {
-    const joinError = new Error("transport setup failed");
-    const cleanupError = new Error("transport cleanup still pending");
-    let resourceLive = true;
-    let attempts = 0;
-    const stop = vi.fn(async () => {
-      if (++attempts <= 2) {
-        throw cleanupError;
-      }
-      resourceLive = false;
-    });
-    const { createdSessions, runtime } = createTestRuntime({
-      releaseBrowserTab: async (session) => {
-        if (session.browser) {
-          session.browser.tab = undefined;
+  it.each([true, false])(
+    "retains a failed join with live cleanup for a later leave retry (tab: %s)",
+    async (acquiredTab) => {
+      const joinError = new Error("transport setup failed");
+      const cleanupError = new Error("transport cleanup still pending");
+      let resourceLive = true;
+      let releaseStop = false;
+      const stop = vi.fn(async () => {
+        if (!releaseStop) {
+          throw cleanupError;
         }
-        return true;
-      },
-      joinTransport: async ({ session, context }) => {
-        session.browser = {
-          launched: true,
-          tab: { targetId: "partial-tab", openedByPlugin: true },
-        };
-        context.attachRuntimeHandles(session, { stop });
-        throw joinError;
-      },
-    });
-    try {
-      await expect(
-        runtime.join({ url: "https://meeting.example/failed", agentId: "main" }),
-      ).rejects.toBe(joinError);
-      expect(resourceLive).toBe(true);
-      expect(stop).toHaveBeenCalledTimes(2);
-      const original = createdSessions[0];
-      expect(original).toBeDefined();
-      if (!original) {
-        throw new Error("Expected the original meeting session");
+        resourceLive = false;
+      });
+      const { createdSessions, runtime } = createTestRuntime({
+        releaseBrowserTab: async (session) => {
+          if (!session.browser?.tab) {
+            return false;
+          }
+          session.browser.tab = undefined;
+          return true;
+        },
+        joinTransport: async ({ session, context }) => {
+          if (acquiredTab) {
+            session.browser = {
+              launched: true,
+              tab: { targetId: "partial-tab", openedByPlugin: true },
+            };
+          }
+          context.attachRuntimeHandles(session, { stop });
+          throw joinError;
+        },
+      });
+      try {
+        await expect(
+          runtime.join({ url: "https://meeting.example/failed", agentId: "main" }),
+        ).rejects.toBe(joinError);
+        expect(resourceLive).toBe(true);
+        expect(stop).toHaveBeenCalledTimes(2);
+        const original = createdSessions[0];
+        expect(original).toBeDefined();
+        if (!original) {
+          throw new Error("Expected the original meeting session");
+        }
+        await expect(runtime.status(original.id)).resolves.toMatchObject({ found: true });
+        await expect(runtime.join({ url: original.url, agentId: "main" })).rejects.toBe(
+          cleanupError,
+        );
+        expect(createdSessions).toHaveLength(1);
+        expect(resourceLive).toBe(true);
+        expect(stop).toHaveBeenCalledTimes(3);
+        releaseStop = true;
+        await runtime.leave(original.id);
+        expect(resourceLive).toBe(false);
+        expect(stop).toHaveBeenCalledTimes(4);
+        await expect(runtime.status(original.id)).resolves.toMatchObject({ found: false });
+      } finally {
+        releaseStop = true;
+        if (resourceLive) {
+          await stop();
+        }
       }
-      await expect(runtime.status(original.id)).resolves.toMatchObject({ found: true });
-      await runtime.leave(original.id);
-      expect(resourceLive).toBe(false);
-      expect(stop).toHaveBeenCalledTimes(3);
-      await expect(runtime.status(original.id)).resolves.toMatchObject({ found: false });
-    } finally {
-      if (resourceLive) {
-        await stop();
-      }
-    }
-  });
+    },
+  );
 
   it("retries unprocessed retained tabs after settlement rejects", async () => {
     const settlementError = new Error("retained release rejected");
@@ -616,6 +681,56 @@ describe("MeetingSessionRuntime failed joins", () => {
 });
 
 describe("MeetingSessionRuntime leave cleanup", () => {
+  it.each([false, true])(
+    "allows same-URL retry after ordinary leave according to owned browser custody: %s",
+    async (acquiredTab) => {
+      let releaseAllowed = false;
+      let launches = 0;
+      const request = { url: "https://meeting.example/ordinary", agentId: "main" };
+      const { runtime } = createTestRuntime({
+        releaseBrowserTab: async (session) => {
+          if (!session.browser?.tab || !releaseAllowed) {
+            return false;
+          }
+          session.browser.tab = undefined;
+          return true;
+        },
+        joinTransport: async ({ session }) => {
+          launches += 1;
+          session.browser = {
+            launched: acquiredTab,
+            ...(acquiredTab
+              ? { tab: { targetId: `${session.id}-ordinary-tab`, openedByPlugin: true } }
+              : {}),
+          };
+          return {};
+        },
+      });
+      try {
+        const first = await runtime.join(request);
+        await expect(runtime.leave(first.session.id)).resolves.toMatchObject({
+          browserLeft: false,
+        });
+        const second = await runtime.join(request);
+        expect(second.session.id).not.toBe(first.session.id);
+        expect(second.session.state).toBe("active");
+        expect(launches).toBe(2);
+        if (acquiredTab) {
+          expect(first.session.browser?.tab).toBeDefined();
+          releaseAllowed = true;
+          await expect(runtime.leave(first.session.id)).resolves.toMatchObject({
+            browserLeft: true,
+          });
+        }
+      } finally {
+        releaseAllowed = true;
+        for (const session of runtime.list()) {
+          await runtime.leave(session.id);
+        }
+      }
+    },
+  );
+
   it("clears stale in-call health after confirmed browser departure", async () => {
     const { runtime } = createTestRuntime({
       releaseBrowserTab: async () => true,

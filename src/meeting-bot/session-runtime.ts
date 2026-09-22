@@ -401,12 +401,9 @@ export class MeetingSessionRuntime<
         session.state === "ended" &&
         session.transport === resolved.transport &&
         this.options.sameMeetingUrl(session.url, resolved.url) &&
-        (this.#sessionCleanup.isPending(session.id) || this.#sessionCleanup.hasRuntime(session.id))
+        this.#sessionCleanup.hasRuntime(session.id)
       ) {
-        const left = await this.#leaveUnlocked(session.id);
-        if (left.browserLeft === false) {
-          throw new Error(this.options.messages.previousBrowserLeaveFailed);
-        }
+        await this.#leaveUnlocked(session.id);
       }
     }
     const activeSessions = this.list().filter(
@@ -572,6 +569,7 @@ export class MeetingSessionRuntime<
       const cleanup = await this.#sessionCleanup.cleanup({
         sessionId: session.id,
         keepBrowserTab: options?.keepBrowserTab === true,
+        hasBrowserTab: () => Boolean(this.options.getBrowser(session)?.tab),
         releaseBrowser: async () => await this.options.releaseBrowserTab(session),
       });
       session.browserLeft = cleanup.browserLeft;

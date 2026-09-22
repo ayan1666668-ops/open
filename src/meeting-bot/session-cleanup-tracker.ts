@@ -107,6 +107,7 @@ export class MeetingSessionCleanupTracker {
   async cleanup(params: {
     sessionId: string;
     keepBrowserTab: boolean;
+    hasBrowserTab: () => boolean;
     releaseBrowser: () => Promise<boolean | undefined>;
   }): Promise<{ browserLeft?: boolean; complete: boolean; unpublished: boolean }> {
     const state = this.#states.get(params.sessionId)?.cleanup;
@@ -128,7 +129,8 @@ export class MeetingSessionCleanupTracker {
           state.browserSettled = true;
         } else {
           state.browserLeft = await params.releaseBrowser();
-          state.browserSettled = state.browserLeft !== false;
+          // No owned tab means no browser cleanup to retry; preserve the leave diagnostic.
+          state.browserSettled = state.browserLeft !== false || !params.hasBrowserTab();
         }
       } catch (error) {
         cleanupError ??= error;
@@ -155,7 +157,7 @@ export class MeetingSessionCleanupTracker {
       return { browserLeft: params.browserLeft, complete: true, incomplete: false };
     }
     if (!params.hasBrowserTab()) {
-      state.browserSettled ||= state.browserLeft !== false;
+      state.browserSettled = true;
     } else if (!state.browserSettled) {
       try {
         state.browserLeft = await params.releaseBrowser();
