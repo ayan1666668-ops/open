@@ -1,3 +1,4 @@
+import { expectDefined } from "@openclaw/normalization-core/expect";
 import { describe, expect, it } from "vitest";
 import { buildProviderToolCompatFamilyHooks } from "./provider-tools.js";
 
@@ -81,8 +82,8 @@ describe("deep provider tool schemas", () => {
       const sourceProperties = source.properties as Record<string, Record<string, unknown>>;
       const resultProperties = result.properties as Record<string, Record<string, unknown>>;
       expect(resultProperties.stable).toBe(stable);
-      source = sourceProperties.nested;
-      result = resultProperties.nested;
+      source = expectDefined(sourceProperties.nested, "source nested schema");
+      result = expectDefined(resultProperties.nested, "normalized nested schema");
     }
     expect(source).toBe(leaf);
     expect(source).toEqual({ anyOf: [{ const: "first" }, { const: "second" }] });
