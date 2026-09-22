@@ -1,6 +1,11 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import {
+  assertCurrentNativeHostLaunchContext,
+  assertExpectedNativeHostProfile,
+  NativeHostSetupContextError,
+} from "./extension-install-context.js";
+import {
   chromeStoreInstallRequests,
   type ChromeStoreInstallRequest,
   FOUNDATION_CHROME_WEB_STORE_EXTENSION_ID,
@@ -28,6 +33,7 @@ import {
   type NativeHostRegistrationStatus,
 } from "./extension-install-registration.js";
 import { isValidProfileName } from "./profiles.js";
+export { NativeHostSetupContextError } from "./extension-install-context.js";
 export {
   repairChromeExtensionNativeHosts,
   resolveNativeHostPath,
@@ -87,6 +93,8 @@ export async function installChromeExtensionBootstrap(params: {
   signal?: AbortSignal;
   browserProfile?: string;
   nativeHostExecutable?: string;
+  requireCurrentLaunchContext?: boolean;
+  expectedRegistrations?: readonly NativeHostRegistrationStatus[];
 }): Promise<BrowserExtensionStatus> {
   const deps = params.deps ?? {};
   const platform = deps.platform ?? process.platform;
@@ -94,6 +102,19 @@ export async function installChromeExtensionBootstrap(params: {
     throw new Error("Invalid native browser profile");
   }
   params.signal?.throwIfAborted();
+  if (
+    (params.requireCurrentLaunchContext || params.expectedRegistrations) &&
+    platform !== "win32"
+  ) {
+    for (const root of chromeProductRoots(deps)) {
+      const registration = await inspectRegistration(root, deps);
+      if (params.requireCurrentLaunchContext) {
+        assertCurrentNativeHostLaunchContext(registration, deps);
+      }
+      assertExpectedNativeHostProfile(registration, params.expectedRegistrations);
+    }
+    params.signal?.throwIfAborted();
+  }
   const installed = await installStableChromeExtension(params.bundledDir, deps);
   if (platform === "win32" && process.platform !== "win32" && !deps.windowsNative) {
     return await browserExtensionStatus({ bundledDir: params.bundledDir, deps });
@@ -136,11 +157,16 @@ export async function installChromeExtensionBootstrap(params: {
         deps,
         browserProfile: params.browserProfile,
         signal: params.signal,
+        requireCurrentLaunchContext: params.requireCurrentLaunchContext,
+        expectedRegistrations: params.expectedRegistrations,
       });
       preRegisteredRoots += 1;
       params.onProgress?.(`Pre-registered the native host for ${root.label}.`);
     } catch (error) {
       params.signal?.throwIfAborted();
+      if (error instanceof NativeHostSetupContextError) {
+        throw error;
+      }
       preRegistrationIssues.push(
         `${root.label}: native host pre-registration refused (${error instanceof Error ? error.message : String(error)})`,
       );
@@ -206,7 +232,11 @@ export async function installChromeExtensionBootstrap(params: {
       deps,
     });
   }
-  const status = await browserExtensionStatus({ bundledDir: params.bundledDir, deps });
+  const status = await browserExtensionStatus({
+    bundledDir: params.bundledDir,
+    deps,
+    requireCurrentLaunchContext: params.requireCurrentLaunchContext,
+  });
   return {
     ...status,
     issues: [...new Set([...preRegistrationIssues, ...status.issues])],
@@ -221,6 +251,7 @@ export async function browserExtensionStatus(params: {
   browserProfile?: string;
   signal?: AbortSignal;
   windowsObservation?: import("./extension-windows-host.js").WindowsHostProjection;
+  requireCurrentLaunchContext?: boolean;
   deps?: ExtensionInstallDeps;
 }): Promise<BrowserExtensionStatus> {
   const deps = params.deps ?? {};
@@ -262,14 +293,18 @@ export async function browserExtensionStatus(params: {
       : await Promise.all(
           chromeProductRoots(deps).map((root) => inspectRegistration(root, deps, predictedIds)),
         ).then((entries) =>
-          entries.map(
-            ({
+          entries.map((registration) => {
+            if (params.requireCurrentLaunchContext) {
+              assertCurrentNativeHostLaunchContext(registration, deps);
+            }
+            const {
               nativeHostPath: _nativeHostPath,
               launcherPath: _launcherPath,
               launchContext: _launchContext,
               ...entry
-            }) => entry,
-          ),
+            } = registration;
+            return entry;
+          }),
         );
   const unavailableRegistration = registrations.some((registration) => {
     const productWasDiscovered =

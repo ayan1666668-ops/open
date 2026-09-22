@@ -196,6 +196,14 @@ profile; use `setup --action install --browser-profile <name>` to change it.
 An explicit selection cannot bypass ownership or origin checks. Setup does not
 rotate the existing relay key or rewrite Chrome pairing preferences.
 
+Setup also preserves the registered state and configuration selection. If the
+current process uses a different configuration, it stops before installation or
+relay access. Rerun with the matching `OPENCLAW_STATE_DIR` and
+`OPENCLAW_CONFIG_PATH`; choosing another browser profile does not authorize
+changing the configuration file. An implicit default config and its explicit
+path count as the same selection. Setup rechecks the saved selection before
+publishing a replacement native-host manifest.
+
 On Windows, omitted profile selection uses bounded, serial read-only inspection of
 already-configured extension profiles. Only a current matching C# registration
 descriptor, independently validated against its binding and requested context,

@@ -50,7 +50,7 @@ afterEach(() => {
 
 async function setup(
   platform: "linux" | "darwin",
-  options: { legacy?: boolean; relocate?: boolean } = {},
+  options: { legacy?: boolean; relocate?: boolean; registeredConfig?: "custom" | "default" } = {},
 ) {
   const f = await fixture(platform);
   const real = await vi.importActual<typeof import("../browser/extension-install.js")>(
@@ -58,10 +58,20 @@ async function setup(
   );
   const root = chromeProductRoots(f.deps)[0]!;
   await fs.mkdir(root.userDataDir, { recursive: true, mode: 0o700 });
+  const registeredConfigPath =
+    options.registeredConfig === "custom"
+      ? path.join(f.root, "saved custom config.json")
+      : options.registeredConfig === "default"
+        ? path.join(f.stateDir, "openclaw.json")
+        : undefined;
   let now = 0;
   const deps = {
     ...f.deps,
-    env: { ...f.deps.env, OPENCLAW_STATE_DIR: f.stateDir },
+    env: {
+      ...f.deps.env,
+      OPENCLAW_STATE_DIR: f.stateDir,
+      OPENCLAW_CONFIG_PATH: registeredConfigPath,
+    },
     now: () => now,
     sleep: async (ms: number) => {
       now += ms;
@@ -86,7 +96,7 @@ async function setup(
     profile: "Default",
     entries: { [installedId]: { location: 4, path: seeded.installedCopy.path, state: 1 } },
   });
-  const configPath = path.join(f.stateDir, "openclaw.json");
+  const configPath = registeredConfigPath ?? path.join(f.stateDir, "openclaw.json");
   const cfg = {
     browser: {
       defaultProfile: "other",
@@ -130,7 +140,7 @@ async function setup(
   });
   const config = vi.spyOn(core, "getRuntimeConfig").mockReturnValue(cfg);
   const json = vi.spyOn(core.defaultRuntime, "writeJson").mockImplementation(capture.writeJson);
-  vi.spyOn(core.defaultRuntime, "error").mockImplementation(capture.error);
+  const error = vi.spyOn(core.defaultRuntime, "error").mockImplementation(capture.error);
   const exit = vi.spyOn(core.defaultRuntime, "exit").mockImplementation(capture.exit);
   const { registerBrowserExtensionCommands } = await import("./browser-cli-extension.js");
   async function run(action: string, profile?: string) {
@@ -171,6 +181,7 @@ async function setup(
     installedId,
     oldBundleId,
     json,
+    error,
     exit,
     config,
     run,
@@ -179,6 +190,80 @@ async function setup(
 }
 
 describe.each(["linux", "darwin"] as const)("POSIX bundle migration on %s", (platform) => {
+  it.each(
+    [false, true].flatMap((legacy) =>
+      [
+        { action: "inspect", profile: undefined },
+        { action: "verify", profile: "work" },
+        { action: "install", profile: undefined },
+        { action: "install", profile: "other" },
+      ].map(({ action, profile }) => ({ legacy, action, profile })),
+    ),
+  )(
+    "refuses $action from a different config before effects (legacy=$legacy, profile=$profile)",
+    async ({ legacy, action, profile }) => {
+      const f = await setup(platform, { legacy, registeredConfig: "custom", relocate: false });
+      const callerConfigPath = path.join(f.stateDir, "openclaw.json");
+      const callerConfig = {
+        browser: {
+          defaultProfile: "other",
+          profiles: {
+            other: { driver: "extension" as const, cdpPort: 19555 },
+            work: { driver: "extension" as const, cdpPort: 29444 },
+          },
+        },
+      };
+      await fs.writeFile(callerConfigPath, JSON.stringify(callerConfig), { mode: 0o600 });
+      boundary.deps = { ...f.deps, env: { ...f.deps.env, OPENCLAW_CONFIG_PATH: undefined } };
+      f.config.mockReturnValue(callerConfig);
+      const copy = path.join(f.stateDir, "browser", "chrome-extension", "background.js");
+      const paths = [f.manifestPath, f.manifest.path, callerConfigPath, copy];
+      const before = await Promise.all(paths.map((file) => fs.readFile(file)));
+      const copyInode = (await fs.stat(copy)).ino;
+      await expect(f.run(action, profile)).rejects.toThrow("__exit__:1");
+      expect(f.error).toHaveBeenCalledWith(expect.stringContaining("OPENCLAW_CONFIG_PATH"));
+      expect(boundary.readToken).not.toHaveBeenCalled();
+      expect(boundary.connect).not.toHaveBeenCalled();
+      expect(await Promise.all(paths.map((file) => fs.readFile(file)))).toEqual(before);
+      expect((await fs.stat(copy)).ino).toBe(copyInode);
+      await f.assertPairingPreserved();
+    },
+  );
+
+  it("accepts an implicit default config matching the explicitly registered default", async () => {
+    const f = await setup(platform, { registeredConfig: "default", relocate: false });
+    boundary.deps = { ...f.deps, env: { ...f.deps.env, OPENCLAW_CONFIG_PATH: undefined } };
+    const launcherBefore = await fs.readFile(f.manifest.path);
+    await f.run("install");
+    expect(f.exit).not.toHaveBeenCalled();
+    const current = JSON.parse(await fs.readFile(f.manifestPath, "utf8")) as { path: string };
+    expect(await fs.readFile(current.path)).toEqual(launcherBefore);
+    await f.assertPairingPreserved();
+  });
+
+  it("rechecks the saved browser binding when automatic installation begins", async () => {
+    const f = await setup(platform, { relocate: false });
+    let replacement: Buffer | undefined;
+    boundary.install.mockImplementationOnce(async (params) => {
+      await f.real.installChromeExtensionBootstrap({
+        ...f,
+        browserProfile: "other",
+        waitMs: 1000,
+        requestStoreInstall: false,
+      });
+      replacement = await fs.readFile(f.manifestPath);
+      return f.real.installChromeExtensionBootstrap({ ...params, deps: boundary.deps });
+    });
+    await expect(f.run("install")).rejects.toThrow("__exit__:1");
+    expect(await fs.readFile(f.manifestPath)).toEqual(replacement);
+    const status = await f.real.browserExtensionStatus(f);
+    expect(status.registrations.find((entry) => entry.product === f.root.product)).toMatchObject({
+      state: "owned",
+      browserProfile: "other",
+    });
+    await f.assertPairingPreserved();
+  });
+
   it.each(
     [false, true].flatMap((legacy) =>
       ["inspect", "verify", "install"].map((action) => ({ legacy, action })),

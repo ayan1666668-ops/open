@@ -20,6 +20,53 @@ afterEach(() => {
 });
 
 describe("native host repair", () => {
+  it("refuses a config selection changed while the replacement manifest is being staged", async () => {
+    const value = await fixture();
+    const root = chromeProductRoots(value.deps)[0]!;
+    const installed = await installStableChromeExtension(value.bundledDir, value.deps);
+    const extensionIds = [await predictedId(installed), await predictedId(value.bundledDir)];
+    const params = { root, extensionIds, pluginRoot: value.pluginRoot, deps: value.deps };
+    const original = await installRegistration({ ...params, browserProfile: "work" });
+    const manifestBefore = await fs.readFile(original.manifestPath, "utf8");
+    const launcherBefore = await fs.readFile(original.launcherPath!, "utf8");
+    const replacement = await installRegistration({
+      ...params,
+      browserProfile: "work",
+      deps: {
+        ...value.deps,
+        env: { ...value.deps.env, OPENCLAW_CONFIG_PATH: path.join(value.root, "other.json") },
+      },
+    });
+    const replacementManifest = await fs.readFile(replacement.manifestPath, "utf8");
+    await fs.writeFile(original.launcherPath!, launcherBefore, { mode: 0o700 });
+    await fs.writeFile(original.manifestPath, manifestBefore, { mode: 0o600 });
+    const open = fs.open.bind(fs);
+    let changed = false;
+    vi.spyOn(fs, "open").mockImplementation(async (file, ...args) => {
+      const handle = await open(file, ...args);
+      if (
+        !changed &&
+        typeof file === "string" &&
+        path.dirname(file) === root.nativeManifestDir &&
+        file !== original.manifestPath
+      ) {
+        changed = true;
+        await fs.writeFile(original.manifestPath, replacementManifest, { mode: 0o600 });
+      }
+      return handle;
+    });
+    await expect(
+      installRegistration({
+        ...params,
+        browserProfile: "other",
+        requireCurrentLaunchContext: true,
+      }),
+    ).rejects.toThrow("OPENCLAW_CONFIG_PATH");
+    expect(changed).toBe(true);
+    expect(await fs.readFile(original.manifestPath, "utf8")).toBe(replacementManifest);
+    expect(await fs.readFile(replacement.launcherPath!, "utf8")).toContain("other.json");
+  });
+
   it.each([
     { installedConfig: "custom config's $& path.json", callerConfig: undefined },
     { installedConfig: "custom config's $& path.json", callerConfig: "different.json" },

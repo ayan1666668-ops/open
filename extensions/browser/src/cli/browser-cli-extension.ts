@@ -12,6 +12,7 @@ import {
 } from "../browser/config.js";
 import {
   FOUNDATION_CHROME_WEB_STORE_URL,
+  NativeHostSetupContextError,
   normalizeExtensionInstallWaitMs,
   repairChromeExtensionNativeHosts,
   removeChromeStoreInstallRequests,
@@ -200,9 +201,11 @@ export function registerBrowserExtensionCommands(
             );
           }
         },
-        () => {
+        (error: unknown) => {
           defaultRuntime.error(
-            "Chrome setup could not finish. Check the action, local profile, and native host installation. If automatic Windows selection is unverified, repair the intended existing profile with --browser-profile <name> --action install.",
+            error instanceof NativeHostSetupContextError
+              ? error.message
+              : "Chrome setup could not finish. Check the action, local profile, and native host installation. If automatic Windows selection is unverified, repair the intended existing profile with --browser-profile <name> --action install.",
           );
           defaultRuntime.exit(1);
         },

@@ -2,8 +2,15 @@ import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { replaceFileAtomic } from "openclaw/plugin-sdk/security-runtime";
-import { resolveStateDir } from "openclaw/plugin-sdk/state-paths";
 import { asNullableRecord } from "openclaw/plugin-sdk/string-coerce-runtime";
+import {
+  assertCurrentNativeHostLaunchContext,
+  assertExpectedNativeHostProfile,
+  NativeHostSetupContextError,
+  resolveInstallConfigPath,
+  resolveInstallStateDir,
+  type NativeHostLaunchContext,
+} from "./extension-install-context.js";
 import { FOUNDATION_CHROME_WEB_STORE_EXTENSION_ID } from "./extension-install-external.js";
 import {
   approvedInstallRealpaths,
@@ -26,8 +33,6 @@ import { isValidProfileName } from "./profiles.js";
 
 const OWNED_LAUNCHER_MARKER = "# OpenClaw native messaging bootstrap v1";
 
-type NativeHostLaunchContext = { stateDir: string; configPath?: string };
-
 export type NativeHostRegistrationStatus = {
   product: ChromeProduct;
   browser: string;
@@ -43,16 +48,6 @@ export type NativeHostRegistrationStatus = {
 
 function nativeMessagingRoot(deps: ExtensionInstallDeps = {}): string {
   return path.join(resolveInstallStateDir(deps), "browser", "native-messaging");
-}
-
-function resolveInstallStateDir(deps: ExtensionInstallDeps): string {
-  return path.resolve(deps.stateDir ?? resolveStateDir(deps.env));
-}
-
-function resolveInstallConfigPath(deps: ExtensionInstallDeps): string | undefined {
-  const env = deps.env ?? process.env;
-  const explicit = env.OPENCLAW_CONFIG_PATH?.trim();
-  return explicit ? resolveStateDir({ ...env, OPENCLAW_STATE_DIR: explicit }) : undefined;
 }
 
 function shellQuote(value: string): string {
@@ -398,12 +393,18 @@ export async function installRegistration(params: {
   expectedNativeHostPath?: string;
   browserProfile?: string;
   signal?: AbortSignal;
+  requireCurrentLaunchContext?: boolean;
+  expectedRegistrations?: readonly NativeHostRegistrationStatus[];
 }): Promise<NativeHostRegistrationStatus> {
   const { root, extensionIds, deps } = params;
   const manifestPath = path.join(root.nativeManifestDir, `${BROWSER_NATIVE_HOST_NAME}.json`);
   const existing = await inspectRegistration(root, deps);
+  assertExpectedNativeHostProfile(existing, params.expectedRegistrations);
   if (existing.state === "foreign" || existing.state === "invalid") {
     throw new Error(`Refusing to overwrite ${existing.state} native host: ${manifestPath}`);
+  }
+  if (params.requireCurrentLaunchContext) {
+    assertCurrentNativeHostLaunchContext(existing, deps);
   }
   if (
     params.expectedNativeHostPath !== undefined &&
@@ -430,7 +431,10 @@ export async function installRegistration(params: {
     extensionIds,
     deps,
     // Relocation replaces package targets, never the registered profile/config selection.
-    launchContext: params.expectedNativeHostPath === undefined ? undefined : existing.launchContext,
+    launchContext:
+      params.requireCurrentLaunchContext || params.expectedNativeHostPath !== undefined
+        ? existing.launchContext
+        : undefined,
     browserProfile: params.browserProfile ?? existing.browserProfile,
   });
   const launcherPath = launcher.path;
@@ -467,7 +471,30 @@ export async function installRegistration(params: {
       await fs.chmod(launcherPath, 0o700);
     }
     params.signal?.throwIfAborted();
-    await replaceFileAtomic({ filePath: manifestPath, content: manifestContent, mode: 0o600 });
+    await replaceFileAtomic({
+      filePath: manifestPath,
+      content: manifestContent,
+      mode: 0o600,
+      beforeRename:
+        params.requireCurrentLaunchContext || params.expectedRegistrations
+          ? async () => {
+              params.signal?.throwIfAborted();
+              const current = await inspectRegistration(root, deps);
+              if (params.requireCurrentLaunchContext) {
+                assertCurrentNativeHostLaunchContext(current, deps);
+              }
+              assertExpectedNativeHostProfile(current, params.expectedRegistrations);
+              const currentManifest =
+                current.state === "missing" ? undefined : await fs.readFile(manifestPath, "utf8");
+              if (current.state !== existing.state || currentManifest !== previousManifest) {
+                throw new NativeHostSetupContextError(
+                  "Chrome's native host selection changed during setup. Inspect the registered OPENCLAW_CONFIG_PATH before trying again.",
+                );
+              }
+              params.signal?.throwIfAborted();
+            }
+          : undefined,
+    });
   } catch (error) {
     // Remove only this attempt's unreferenced candidate. An ambiguous publication
     // leaves it intact; the selected manifest remains the dependency authority.

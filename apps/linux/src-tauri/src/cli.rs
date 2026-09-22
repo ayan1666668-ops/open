@@ -325,6 +325,7 @@ mod tests {
         use serde_json::json;
         use std::fs;
         use std::os::unix::fs::PermissionsExt;
+        use std::process::Command;
 
         struct Fixture(PathBuf);
         impl Drop for Fixture {

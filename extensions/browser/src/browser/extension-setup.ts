@@ -88,7 +88,10 @@ export async function observeBrowserExtensionSetup(
     | "onProgress"
     | "profile"
     | "nativeHostExecutable"
-  >,
+  > & {
+    requireCurrentLaunchContext?: boolean;
+    expectedRegistrations?: BrowserExtensionStatus["registrations"];
+  },
 ): Promise<BrowserExtensionStatus> {
   options.signal?.throwIfAborted();
   return options.action === "install"
@@ -99,6 +102,7 @@ export async function observeBrowserExtensionSetup(
         browserProfile: options.profile,
         nativeHostExecutable: options.nativeHostExecutable,
         signal: options.signal,
+        requireCurrentLaunchContext: options.requireCurrentLaunchContext,
       });
 }
 
@@ -211,7 +215,7 @@ async function resolveWindowsSetupSelection(
 export async function runBrowserExtensionSetup(
   input: SetupOptions,
 ): Promise<BrowserExtensionSetupResult> {
-  let options = input;
+  let options = { ...input, requireCurrentLaunchContext: true };
   options.signal?.throwIfAborted();
   // Share the existing 60-second management budget across discovery and the
   // selected operation, rather than granting every candidate another minute.
@@ -277,7 +281,14 @@ export async function runBrowserExtensionSetup(
   const status =
     options.action !== "install" && observed
       ? observed
-      : await observeBrowserExtensionSetup({ ...options, profile: profileName });
+      : await observeBrowserExtensionSetup({
+          ...options,
+          profile: profileName,
+          expectedRegistrations:
+            options.profile === undefined && observed?.platform !== "win32"
+              ? observed?.registrations
+              : undefined,
+        });
   options.signal?.throwIfAborted();
   // The setup action prepares Google Chrome; a sibling browser's installation
   // cannot establish Chrome readiness. Full CLI status still reports every product.

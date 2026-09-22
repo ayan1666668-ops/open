@@ -274,6 +274,20 @@ describe.skipIf(process.platform === "win32")("native host registration", () => 
         deps,
         waitMs: 1000,
       });
+      const savedManifest = await fs.readFile(registration!.manifestPath);
+      const savedLauncher = await fs.readFile(manifest.path);
+      await expect(
+        installChromeExtensionBootstrap({
+          bundledDir: value.bundledDir,
+          pluginRoot: value.pluginRoot,
+          browserProfile: "e2e",
+          requireCurrentLaunchContext: true,
+          deps: { ...deps, env: { ...deps.env, OPENCLAW_CONFIG_PATH: undefined } },
+          waitMs: 1000,
+        }),
+      ).rejects.toThrow("OPENCLAW_CONFIG_PATH");
+      expect(await fs.readFile(registration!.manifestPath)).toEqual(savedManifest);
+      expect(await fs.readFile(manifest.path)).toEqual(savedLauncher);
       const gatewayStatePath = path.join(stateDir, "state", "openclaw.sqlite");
       const configBefore = await fs.readFile(configPath);
       await expect(fs.stat(gatewayStatePath)).rejects.toMatchObject({ code: "ENOENT" });
@@ -285,8 +299,9 @@ describe.skipIf(process.platform === "win32")("native host registration", () => 
           env: {
             HOME: value.homeDir,
             TMPDIR: os.tmpdir(),
-            OPENCLAW_STATE_DIR: stateDir,
-            OPENCLAW_CONFIG_PATH: configPath,
+            ...(entryMode === "cli"
+              ? { OPENCLAW_STATE_DIR: stateDir, OPENCLAW_CONFIG_PATH: configPath }
+              : {}),
           },
           timeout: 20_000,
         },

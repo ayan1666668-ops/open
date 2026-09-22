@@ -3,7 +3,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { readBrowserHostConfig } from "./src/browser/extension-host-config.js";
-import { normalizeExtensionInstallWaitMs } from "./src/browser/extension-install.js";
+import {
+  NativeHostSetupContextError,
+  normalizeExtensionInstallWaitMs,
+} from "./src/browser/extension-install.js";
 import { runBrowserExtensionSetup } from "./src/browser/extension-setup.js";
 
 async function main(): Promise<void> {
@@ -40,7 +43,11 @@ async function main(): Promise<void> {
   }
 }
 
-void main().catch(() => {
-  process.stderr.write("Chrome setup could not finish. Check the local browser runtime.\n");
+void main().catch((error: unknown) => {
+  process.stderr.write(
+    error instanceof NativeHostSetupContextError
+      ? `${error.message}\n`
+      : "Chrome setup could not finish. Check the local browser runtime.\n",
+  );
   process.exitCode = 1;
 });
