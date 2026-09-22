@@ -60,6 +60,7 @@ function activeRunContext(params: {
     throw new Error("expected active run registration");
   }
   const entry = registration.entry;
+  const terminalStarted = createDeferredCore();
   const unsubscribe = onAgentEvent((event) => {
     if (
       event.runId !== params.runId ||
@@ -81,6 +82,7 @@ function activeRunContext(params: {
         removeChatAbortControllerEntry(chatAbortControllers, params.runId, entry);
       },
     );
+    terminalStarted.resolve();
   });
   const chatRunState = createChatRunState();
   return {
@@ -98,6 +100,7 @@ function activeRunContext(params: {
       })),
     },
     controller: registration.controller,
+    terminalStarted: terminalStarted.promise,
     unsubscribe,
   };
 }
@@ -742,15 +745,21 @@ test("sessions.patch returns UNAVAILABLE when terminal persistence fails", async
   await writeSessionStore({ entries: { [sessionKey]: sessionStoreEntry(sessionId) } });
   const persistence = createDeferredCore();
   const active = activeRunContext({ runId, sessionId, sessionKey, persistence });
+  const archive = directSessionReq(
+    "sessions.patch",
+    { key: sessionKey, archived: true, expectedSessionId: sessionId },
+    {
+      context: active.context,
+    },
+  );
   try {
-    const archive = directSessionReq(
-      "sessions.patch",
-      { key: sessionKey, archived: true, expectedSessionId: sessionId },
-      {
-        context: active.context,
-      },
-    );
-    await vi.waitFor(() => expect(active.controller.signal.aborted).toBe(true));
+    await Promise.race([
+      active.terminalStarted,
+      archive.then(() => {
+        throw new Error("archive completed before terminal persistence started");
+      }),
+    ]);
+    expect(active.controller.signal.aborted).toBe(true);
     persistence.reject(new Error("disk full"));
 
     const archived = await archive;
@@ -758,6 +767,8 @@ test("sessions.patch returns UNAVAILABLE when terminal persistence fails", async
     expect(archived.error).toMatchObject({ code: "UNAVAILABLE", retryable: true });
     expect(loadSessionEntry({ storePath, sessionKey })?.archivedAt).toBeUndefined();
   } finally {
+    persistence.resolve();
+    await Promise.allSettled([archive]);
     active.unsubscribe();
   }
 });
@@ -848,13 +859,18 @@ test("sessions.patchMany prepares independent archive drains concurrently and re
     },
   });
   const firstDrained = createDeferredCore();
+  const firstStarted = createDeferredCore();
+  const secondStarted = createDeferredCore();
   const firstRelease = vi.fn();
   const secondRelease = vi.fn();
-  const beginInferenceSessionDrain = vi.fn((sessionId: string) => ({
-    drained: sessionId === firstSessionId ? firstDrained.promise : Promise.resolve(),
-    hasWork: () => false,
-    release: sessionId === firstSessionId ? firstRelease : secondRelease,
-  }));
+  const beginInferenceSessionDrain = vi.fn((sessionId: string) => {
+    (sessionId === firstSessionId ? firstStarted : secondStarted).resolve();
+    return {
+      drained: sessionId === firstSessionId ? firstDrained.promise : Promise.resolve(),
+      hasWork: () => false,
+      release: sessionId === firstSessionId ? firstRelease : secondRelease,
+    };
+  });
 
   const archive = directSessionReq<{ outcomes: Array<{ key: string; ok: boolean }> }>(
     "sessions.patchMany",
@@ -869,27 +885,38 @@ test("sessions.patchMany prepares independent archive drains concurrently and re
     },
   );
 
-  await vi.waitFor(() => expect(beginInferenceSessionDrain).toHaveBeenCalledTimes(2));
-  expect(beginInferenceSessionDrain.mock.calls.map(([sessionId]) => sessionId)).toEqual([
-    firstSessionId,
-    secondSessionId,
-  ]);
-  expect(firstRelease).not.toHaveBeenCalled();
-  expect(secondRelease).not.toHaveBeenCalled();
-  firstDrained.resolve();
+  try {
+    await Promise.race([
+      Promise.all([firstStarted.promise, secondStarted.promise]),
+      archive.then(() => {
+        throw new Error("archive completed before both worker drains started");
+      }),
+    ]);
+    expect(beginInferenceSessionDrain).toHaveBeenCalledTimes(2);
+    expect(beginInferenceSessionDrain.mock.calls.map(([sessionId]) => sessionId)).toEqual([
+      firstSessionId,
+      secondSessionId,
+    ]);
+    expect(firstRelease).not.toHaveBeenCalled();
+    expect(secondRelease).not.toHaveBeenCalled();
+    firstDrained.resolve();
 
-  const result = await archive;
-  expect(result.payload?.outcomes).toEqual([
-    { key: firstKey, ok: true },
-    { key: secondKey, ok: true },
-  ]);
-  expect(firstRelease).toHaveBeenCalledOnce();
-  expect(secondRelease).toHaveBeenCalledOnce();
-  expect(firstRelease.mock.invocationCallOrder[0]).toBeLessThan(
-    secondRelease.mock.invocationCallOrder[0]!,
-  );
-  expectArchived(storePath, firstKey);
-  expectArchived(storePath, secondKey);
+    const result = await archive;
+    expect(result.payload?.outcomes).toEqual([
+      { key: firstKey, ok: true },
+      { key: secondKey, ok: true },
+    ]);
+    expect(firstRelease).toHaveBeenCalledOnce();
+    expect(secondRelease).toHaveBeenCalledOnce();
+    expect(firstRelease.mock.invocationCallOrder[0]).toBeLessThan(
+      secondRelease.mock.invocationCallOrder[0]!,
+    );
+    expectArchived(storePath, firstKey);
+    expectArchived(storePath, secondKey);
+  } finally {
+    firstDrained.resolve();
+    await Promise.allSettled([archive]);
+  }
 });
 
 test("sessions.patchMany attempts every archive drain release without masking success", async () => {
@@ -988,19 +1015,25 @@ test("sessions.patch rejects a generation replaced after the exact preparation r
     placement = workerPlacement({ sessionId, sessionKey, state: "reclaimed" });
     return placement as Extract<WorkerSessionPlacementRecord, { state: "reclaimed" }>;
   });
-  try {
-    const archive = directSessionReq(
-      "sessions.patch",
-      { key: sessionKey, archived: true, expectedSessionId: sessionId },
-      {
-        context: {
-          ...active.context,
-          workerSessionPlacementService: placementReader(() => placement),
-          workerPlacementDispatchService: { dispatch, reclaim },
-        },
+  const archive = directSessionReq(
+    "sessions.patch",
+    { key: sessionKey, archived: true, expectedSessionId: sessionId },
+    {
+      context: {
+        ...active.context,
+        workerSessionPlacementService: placementReader(() => placement),
+        workerPlacementDispatchService: { dispatch, reclaim },
       },
-    );
-    await vi.waitFor(() => expect(active.controller.signal.aborted).toBe(true));
+    },
+  );
+  try {
+    await Promise.race([
+      active.terminalStarted,
+      archive.then(() => {
+        throw new Error("archive completed before terminal persistence started");
+      }),
+    ]);
+    expect(active.controller.signal.aborted).toBe(true);
     await upsertSessionEntryCore(
       { storePath, sessionKey },
       { sessionId: "session-archive-generation-replacement", updatedAt: 2 },
@@ -1021,6 +1054,8 @@ test("sessions.patch rejects a generation replaced after the exact preparation r
     expect(placement.state).toBe("active");
     expect(dispatch).not.toHaveBeenCalled();
   } finally {
+    persistence.resolve();
+    await Promise.allSettled([archive]);
     active.unsubscribe();
   }
 });
