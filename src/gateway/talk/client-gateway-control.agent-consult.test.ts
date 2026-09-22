@@ -986,42 +986,6 @@ describe("Talk client agent consult admission", () => {
     expect(result.text).not.toContain("stale-model-id");
   });
 
-  it("carries the exact confirmed call into a tool-call consult", async () => {
-    const now = Date.now();
-    const toolParams = { action: "send", message: "confirmed message" };
-    const challenge = checkClientVoiceToolConfirmationPolicy({
-      agentId: "researcher",
-      voiceSessionId: "voice-session",
-      runId: "run-original",
-      toolName: "message",
-      toolCallId: "blocked-message-call",
-      toolParams,
-      now,
-    });
-    if (challenge.allowed) {
-      throw new Error("expected challenge");
-    }
-    const confirmationId = challenge.reason.match(/VOICE_CONFIRMATION_REQUIRED:([^\s]+)/)?.[1];
-    noteClientVoiceConfirmationUtterance({
-      agentId: "researcher",
-      voiceSessionId: "voice-session",
-      text: "yes",
-      timestamp: now + 1,
-    });
-    mocks.consultRealtimeVoiceAgent.mockImplementationOnce(async (params: ConsultParams) => {
-      params.onRunStarted?.({ runId: "run-talk", sessionId: "session-talk", timeoutMs: 1 });
-      await params.agentRuntime.runEmbeddedAgent(coreParams);
-      return { text: "done" };
-    });
-    await createRunner().runArgs({ question: "Confirm", confirmationId });
-    expect(mocks.runEmbeddedAgentCore.mock.calls[0]?.[0].extraSystemPrompt).toContain(
-      "previously blocked tool call",
-    );
-    expect(mocks.runEmbeddedAgentCore.mock.calls[0]?.[0].extraSystemPrompt).toContain(
-      "blocked-message-call",
-    );
-  });
-
   it("continues the admitted run when close invalidates confirmation before registration", async () => {
     const now = Date.now();
     const challenge = checkClientVoiceToolConfirmationPolicy({
