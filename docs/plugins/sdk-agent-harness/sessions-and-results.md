@@ -59,6 +59,16 @@ mutating native state. The callback belongs to one registered harness lifetime;
 retaining it after the operation closes does not retain authority. Post-delete
 hooks are notifications, not the owner of durable binding removal.
 
+Implement `withSessionContextReset(params, run)` when a native binding must be
+invalidated by a successful same-key rewind or branch switch. This optional hook
+uses the same prepared `commit`/`rollback` contract, but keeps the session key and
+retained history. Core commits invalidation only after validating the requested
+cut and restores it if the transcript transaction fails. Release subscriptions
+after the committed mutation settles. The optional `previousSessionId` is the
+recorded predecessor, allowing retirement of a binding not yet transferred after
+compaction without adopting it during preparation. Ordinary compaction does not
+invoke this hook and continues to preserve native thread continuity.
+
 ## Subagent task history
 
 Native subagents can expose the shared task transcript view through the optional
@@ -93,6 +103,12 @@ the child, create another transcript store, or change cancellation and recovery.
 `TaskSummary.hasTranscript` advertises readable history to the shared viewer.
 
 ## Tool and media results
+
+`inferToolMetaFromArgs` from `openclaw/plugin-sdk/agent-harness-runtime` returns
+compact, lossy display metadata. Array values deeper than 64 levels are omitted;
+shallower siblings still contribute to the preview. The helper can return
+`undefined`. Keep the original arguments for validation and execution: display
+metadata is neither an argument replacement nor a general-purpose traversal limit.
 
 Core constructs the OpenClaw tool list and passes it into the prepared
 attempt. When a harness executes a dynamic tool call, return the tool result
