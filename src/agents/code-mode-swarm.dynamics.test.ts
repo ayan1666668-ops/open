@@ -58,7 +58,6 @@ vi.mock("./tools/sessions-resolution.js", () => ({
   resolveInternalSessionKey: ({ key }: { key: string }) => key,
 }));
 
-
 function setup(dynamics?: unknown, options: Record<string, unknown> = {}) {
   const tool = {
     name: "sessions_spawn",
