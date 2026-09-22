@@ -99,9 +99,11 @@ describe("spoken confirmation authority reaches the final tool effect", () => {
 
     const blocked = await run("call-1");
     expect(execute).not.toHaveBeenCalled();
-    const confirmationId = String(
-      (blocked.details as { reason?: string } | undefined)?.reason ?? "",
-    ).match(/VOICE_CONFIRMATION_REQUIRED:(\S+)/)?.[1];
+    const reason =
+      typeof blocked.details === "object" && blocked.details !== null && "reason" in blocked.details
+        ? blocked.details.reason
+        : "";
+    const confirmationId = String(reason).match(/VOICE_CONFIRMATION_REQUIRED:(\S+)/)?.[1];
     expect(confirmationId).toBeTruthy();
 
     vi.setSystemTime(Date.now() + 5);
