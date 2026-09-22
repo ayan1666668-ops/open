@@ -591,7 +591,7 @@ describe("sidebar attention refresh ownership", () => {
       );
 
       now = 200_000;
-      document.dispatchEvent(new Event("visibilitychange"));
+      eventListener?.({ type: "event", event: "cron", payload: {} });
       invalidateModelAuthStatusRequests(client);
       eventListener?.({ type: "event", event: "chat.metadata.changed", payload: {} });
       await waitForFast(() => expect(request).toHaveBeenCalledTimes(6));
