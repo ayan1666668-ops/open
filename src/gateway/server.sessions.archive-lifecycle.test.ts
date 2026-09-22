@@ -307,21 +307,22 @@ test("sessions.patch cancels active work and commits only after admission and te
     persistence,
     ownerConnId: "different-connection",
   });
+  const archive = directSessionReq(
+    "sessions.patch",
+    { key: sessionKey, archived: true, expectedSessionId: sessionId },
+    {
+      context: active.context,
+      client: { connId: "archive-writer", connect: { scopes: ["operator.write"] } } as never,
+    },
+  );
+  let replacement: Promise<unknown> | undefined;
   try {
-    const archive = directSessionReq(
-      "sessions.patch",
-      { key: sessionKey, archived: true, expectedSessionId: sessionId },
-      {
-        context: active.context,
-        client: { connId: "archive-writer", connect: { scopes: ["operator.write"] } } as never,
-      },
-    );
     await interrupted.promise;
     expect(active.controller.signal.aborted).toBe(true);
     expect(loadSessionEntry({ storePath, sessionKey })?.archivedAt).toBeUndefined();
 
     let replacementAdmitted = false;
-    const replacement = beginSessionWorkAdmission({
+    replacement = beginSessionWorkAdmission({
       scope: storePath,
       identities: [sessionKey, sessionId],
       assertAllowed: () => {
@@ -331,7 +332,11 @@ test("sessions.patch cancels active work and commits only after admission and te
         }
       },
     }).then(
-      (lease) => lease,
+      (lease) => {
+        // Unexpected admission still owns a lease; the assertion below rejects the result.
+        lease.release();
+        return lease;
+      },
       (error: unknown) => error,
     );
     await Promise.resolve();
@@ -348,6 +353,8 @@ test("sessions.patch cancels active work and commits only after admission and te
     expect(await replacement).toBeInstanceOf(Error);
   } finally {
     admission.release();
+    persistence.resolve();
+    await Promise.allSettled([archive, ...(replacement ? [replacement] : [])]);
     active.unsubscribe();
   }
 });
