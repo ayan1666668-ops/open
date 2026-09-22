@@ -5,6 +5,11 @@ import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import { createDeferredCore } from "../shared/deferred.js";
 import type { OpenClawStateReadOutcome } from "./openclaw-state-read.types.js";
 
+vi.hoisted(() => {
+  // Shared setup can preload the real reader; bind this fixture to its transport mocks.
+  vi.resetModules();
+});
+
 const mock = vi.hoisted(() => ({
   close: vi.fn<() => Promise<void>>(),
   read: vi.fn<() => Promise<OpenClawStateReadOutcome>>(),
@@ -15,13 +20,11 @@ const mock = vi.hoisted(() => ({
   prepareSource: vi.fn(),
   prepareSourceAsync: vi.fn(),
   excluded: vi.fn<() => boolean>(),
-  mutation: vi.fn<() => (() => void) | undefined>(),
   releaseSourcePin: vi.fn(),
 }));
 vi.mock("../infra/state-database-coordinator.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../infra/state-database-coordinator.js")>()),
   hasStateDatabaseSourceExclusion: mock.excluded,
-  prepareStateDatabaseCanonicalMutation: mock.mutation,
   acquireStateDatabaseHandleLease: () => ({ release: mock.releaseSourcePin }),
 }));
 vi.mock("./openclaw-state-db-cache.js", async (importOriginal) => ({
@@ -80,7 +83,6 @@ const tempDirs = useAutoCleanupTempDirTracker((cleanup) =>
 );
 beforeEach(() => {
   mock.excluded.mockReset().mockReturnValue(false);
-  mock.mutation.mockReset().mockReturnValue(undefined);
   mock.releaseSourcePin.mockReset();
   mock.borrow.mockReset();
   mock.independent.mockReset();
@@ -136,7 +138,7 @@ it("reads independently when native snapshot borrowing refuses a transaction", a
   expect(mock.prepareSourceAsync).not.toHaveBeenCalled();
 });
 
-it.each(["ordinary", "excluded", "mutation"] as const)(
+it.each(["ordinary", "excluded"] as const)(
   "prepares %s artifact reads from the retained native source with its cleanup owner",
   async (mode) => {
     const options = source();
@@ -144,7 +146,6 @@ it.each(["ordinary", "excluded", "mutation"] as const)(
     const observe = vi.fn();
     const release = vi.fn();
     mock.excluded.mockReturnValue(mode === "excluded");
-    mock.mutation.mockReturnValue(mode === "mutation" ? () => {} : undefined);
     mock.borrow.mockReturnValue({ database, assertCurrent() {}, observe, release });
     await expect(
       withArtifactPreservingStateReads(() =>

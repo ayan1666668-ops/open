@@ -101,6 +101,55 @@ describe("host-owned workspace access", () => {
     },
   );
 
+  it("preserves remote discovery failure causes across the SDK boundary", async () => {
+    const root = workspace();
+    const cause = new Error("transport disconnected");
+    const release = registerAgentWorkspaceAccess(root, {
+      ...provider(),
+      loadSkills: async () => {
+        throw cause;
+      },
+    });
+    try {
+      // The provider fails before using its request; the binding still owns classification.
+      const loadSkills = getAgentWorkspaceAccess(root)!.loadSkills!;
+      await loadSkills({
+        sourcePlan: {
+          workspaceDir: root,
+          roots: [],
+          pluginSkillsDir: root,
+          pluginSkillRoots: [],
+          managedSkillsDir: root,
+          stateDir: root,
+        },
+        limits: { maxCandidatesPerRoot: 1, maxSkillsLoadedPerSource: 1, maxSkillFileBytes: 1 },
+        additionalBins: [],
+      }).then(
+        () => {
+          throw new Error("expected discovery to fail");
+        },
+        (error: unknown) => {
+          expect(error).toMatchObject({ cause });
+          expect(isWorkspaceAccessUnavailableError(error)).toBe(true);
+          expect(isWorkspaceAccessUnavailableError(new Error("wrapped", { cause: error }))).toBe(
+            true,
+          );
+          // Plugins may load a separate copy of the SDK; identity cannot depend on prototypes.
+          expect(isWorkspaceAccessUnavailableError({ code: "WORKSPACE_ACCESS_UNAVAILABLE" })).toBe(
+            true,
+          );
+        },
+      );
+      expect(isWorkspaceAccessUnavailableError(cause)).toBe(false);
+      release();
+      expect(() => getAgentWorkspaceAccess(root, "loadSkills")).toThrow(
+        WorkspaceAccessUnavailableError,
+      );
+    } finally {
+      release();
+    }
+  });
+
   it("leaves unconfigured workspaces local and declared workspaces unavailable until start", () => {
     const root = workspace();
     expect(getAgentWorkspaceAccess(root)).toBeUndefined();
@@ -109,12 +158,17 @@ describe("host-owned workspace access", () => {
     expect(() => getAgentWorkspaceAccess(root, "memoryFiles")).toThrow(
       WorkspaceAccessUnavailableError,
     );
+    expect(() => getAgentWorkspaceAccess(root, "loadSkills")).toThrow(
+      WorkspaceAccessUnavailableError,
+    );
     const release = registerAgentWorkspaceAccess(root, provider());
     expect(getAgentWorkspaceAccess(root)).toBeDefined();
     expect(getAgentWorkspaceAccess(root, "memoryFiles")).toBeUndefined();
+    expect(getAgentWorkspaceAccess(root, "loadSkills")).toBeUndefined();
     release();
     expect(() => getAgentWorkspaceAccess(root)).toThrow(WorkspaceAccessUnavailableError);
     expect(getAgentWorkspaceAccess(root, "memoryFiles")).toBeUndefined();
+    expect(getAgentWorkspaceAccess(root, "loadSkills")).toBeUndefined();
   });
 
   it("rejects duplicate ownership and revokes retained methods without affecting a replacement", async () => {
@@ -140,6 +194,41 @@ describe("host-owned workspace access", () => {
     } finally {
       releaseReplacement();
     }
+  });
+
+  it("revokes skill installation while Gateway policy is pending", async () => {
+    const root = workspace();
+    const policy = createDeferredCore<undefined>();
+    const policyStarted = createDeferredCore();
+    const mutate = vi.fn();
+    const release = registerAgentWorkspaceAccess(root, {
+      ...provider(),
+      applySkillRoot: async (params) => {
+        await params.beforeInstall?.("install");
+        mutate();
+        return { ok: true, targetDir: "/host/skills/test", mode: "install" };
+      },
+    });
+    const retained = getAgentWorkspaceAccess(root)!.applySkillRoot!;
+    const install = retained({
+      workspaceDir: root,
+      extractedRoot: "/source",
+      slug: "test",
+      mode: "install",
+      beforeInstall: async () => {
+        policyStarted.resolve();
+        return policy.promise;
+      },
+    });
+    const rejected = expect(install).rejects.toThrow("stopped or not ready");
+    await policyStarted.promise;
+    release();
+    policy.resolve(undefined);
+    await rejected;
+    expect(mutate).not.toHaveBeenCalled();
+    await expect(
+      retained({ workspaceDir: root, extractedRoot: "/source", slug: "test", mode: "install" }),
+    ).rejects.toThrow("stopped or not ready");
   });
 
   it("rejects a result returned after ownership is revoked", async () => {

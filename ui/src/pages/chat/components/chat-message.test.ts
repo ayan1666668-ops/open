@@ -3367,20 +3367,6 @@ describe("grouped chat rendering", () => {
     expect(markdownRenderMock).not.toHaveBeenCalled();
   });
 
-  it.each(["user", "assistant"])("preserves a %s JSON disclosure across rerenders", (role) => {
-    const container = document.createElement("div");
-    const message = { role, content: '{"ok":true}', timestamp: 1 };
-    renderGroupedMessage(container, message, role, { autoExpandToolCalls: true });
-    const disclosure = expectElement(container, ".chat-json-collapse", HTMLDetailsElement);
-    expect(disclosure.open).toBe(false);
-    disclosure.open = true;
-
-    renderGroupedMessage(container, message, role, { autoExpandToolCalls: false });
-
-    expect(container.querySelector(".chat-json-collapse")).toBe(disclosure);
-    expect(disclosure.open).toBe(true);
-  });
-
   it("omits normalized duplicate names from standalone tool results", () => {
     const container = document.createElement("div");
     const message = createToolResultMessage("call-heartbeat", "heartbeat_respond", [
@@ -3598,9 +3584,12 @@ describe("grouped chat rendering", () => {
     expect(summary.querySelector(".chat-tool-msg-summary__label")?.textContent).toBe("Tool output");
     // The failure stays recorded: the expanded body closes with the outcome.
     expect(container.querySelector(".chat-tool-card__outcome")?.textContent).toBe("failed");
+    expect(container.querySelector(".chat-tool-msg-body .chat-text pre code")?.textContent).toBe(
+      '{\n  "status": "error"\n}',
+    );
     expect(
-      JSON.parse(container.querySelector(".chat-json-content code")?.textContent ?? "{}"),
-    ).toEqual({ status: "error" });
+      container.querySelector(".chat-tool-msg-body details, .code-block-json-mode"),
+    ).toBeNull();
     container.remove();
   });
 
@@ -3711,11 +3700,9 @@ describe("grouped chat rendering", () => {
       ["mode:", "session"],
       ["thread:", "true"],
     ]);
-    expect(
-      JSON.parse(container.querySelector(".chat-json-content code")?.textContent ?? "{}"),
-    ).toEqual({
-      status: "error",
-    });
+    expect(container.querySelector(".chat-tool-msg-body .chat-text pre code")?.textContent).toBe(
+      '{\n  "status": "error"\n}',
+    );
 
     // Collapsing the call card must not hide the matching tool output message.
     renderMessageGroups(container, groups, {
@@ -3724,11 +3711,9 @@ describe("grouped chat rendering", () => {
     });
 
     expect(container.querySelector(".chat-tool-kv")).toBeNull();
-    expect(
-      JSON.parse(container.querySelector(".chat-json-content code")?.textContent ?? "{}"),
-    ).toEqual({
-      status: "error",
-    });
+    expect(container.querySelector(".chat-tool-msg-body .chat-text pre code")?.textContent).toBe(
+      '{\n  "status": "error"\n}',
+    );
   });
 
   it("renders assistant MEDIA attachments and reply preview", async () => {
@@ -5154,7 +5139,7 @@ describe("grouped chat rendering", () => {
       expect(image?.getAttribute("src")).toBe(objectUrl);
       expect(image?.getAttribute("alt")).toBe("Generated image 1");
     });
-    const thumbnailUrl = `/rosita${managedChatImageUrl.replace(/\/full$/u, "/thumbnail")}`;
+    const thumbnailUrl = `/rosita${managedChatImageUrl.replace(/\/full$/u, "/thumbnail")}?v=2`;
     const [, fetchInit] = requireFetchCallForUrl(fetchMock, thumbnailUrl);
     expectSameOriginGet(fetchInit);
     expectElement(container, ".chat-message-image-button", HTMLButtonElement).click();
@@ -5176,7 +5161,7 @@ describe("grouped chat rendering", () => {
       expiresAt: "2026-07-28T05:00:00.000Z",
     }));
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
-      expect(url).toBe(`/rosita${ticketedUrl.replace(/\/full(?=\?)/u, "/thumbnail")}`);
+      expect(url).toBe(`/rosita${ticketedUrl.replace(/\/full(?=\?)/u, "/thumbnail")}&v=2`);
       const headers = new Headers(init?.headers);
       expect(headers.get("Authorization")).toBeNull();
       expect(headers.get("x-openclaw-requester-session-key")).toBeNull();
@@ -5197,10 +5182,10 @@ describe("grouped chat rendering", () => {
     );
 
     await vi.waitFor(() => expect(container.querySelector(".chat-message-image")).not.toBeNull());
-    expect(resolveArtifactDownload).toHaveBeenCalledWith({
-      sessionKey: "agent:main:main",
-      artifactId,
-    });
+    expect(resolveArtifactDownload).toHaveBeenCalledWith(
+      { sessionKey: "agent:main:main", artifactId },
+      expect.any(AbortSignal),
+    );
     expect(container.querySelector(".chat-message-image")).not.toBeNull();
     expect(container.querySelector(".chat-assistant-attachment-card")).toBeNull();
   });
@@ -5355,7 +5340,7 @@ describe("grouped chat rendering", () => {
     const artifactId = `artifact_managed_image_${attachmentId}`;
     const source = `/api/chat/media/outgoing/agent%3Amain%3Amain/${attachmentId}/full`;
     const ticketedUrl = `${source}?mediaTicket=ticket`;
-    const thumbnailUrl = ticketedUrl.replace(/\/full(?=\?)/u, "/thumbnail");
+    const thumbnailUrl = `${ticketedUrl.replace(/\/full(?=\?)/u, "/thumbnail")}&v=2`;
     const resolveArtifactDownload = vi.fn(async () => ({ url: ticketedUrl }));
     const objectUrls = ["blob:thumbnail", "blob:full", "blob:download"];
     const NativeUrl = URL;
@@ -5434,7 +5419,7 @@ describe("grouped chat rendering", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [, fetchInit] = requireFetchCallForUrl(
       fetchMock,
-      managedChatImageUrl.replace(/\/full$/u, "/thumbnail"),
+      `${managedChatImageUrl.replace(/\/full$/u, "/thumbnail")}?v=2`,
     );
     expect(fetchInit?.signal?.aborted).toBe(false);
     expectSameOriginGet(fetchInit);
@@ -5480,7 +5465,7 @@ describe("grouped chat rendering", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [, fetchInit] = requireFetchCallForUrl(
       fetchMock,
-      managedChatImageUrl.replace(/\/full$/u, "/thumbnail"),
+      `${managedChatImageUrl.replace(/\/full$/u, "/thumbnail")}?v=2`,
     );
     expect(fetchInit?.signal?.aborted).toBe(false);
     expectSameOriginGet(fetchInit);
@@ -5533,7 +5518,7 @@ describe("grouped chat rendering", () => {
       | undefined;
     const response = { ok: true, blob: async () => new Blob(["png"], { type: "image/png" }) };
     const fetchMock = vi.fn((url: string) => {
-      if (deferEvictedRefetch && url === imageUrls[1]?.replace(/\/full$/u, "/thumbnail")) {
+      if (deferEvictedRefetch && url === `${imageUrls[1]?.replace(/\/full$/u, "/thumbnail")}?v=2`) {
         return new Promise<typeof response>((resolve) => {
           resolveEvictedRefetch = resolve;
         });
@@ -5999,7 +5984,7 @@ describe("grouped chat rendering", () => {
 
     expect(container.querySelector(".chat-tool-card__preview-frame")).toBeNull();
     expect(onOpenSidebar).toHaveBeenCalledTimes(1);
-    expect(requireFirstMockArg(onOpenSidebar, "sidebar open").kind).toBe("markdown");
+    expect(requireFirstMockArg(onOpenSidebar, "sidebar open").kind).toBe("tool-output");
   });
 
   function renderAssistantDisclosureActionFixture(

@@ -42,6 +42,7 @@ export function createSessionRowProjectionFixture(params: {
   const rows = new Map<string, Row>();
   const store = { ...params.store };
   let revision = 0;
+  let revisionToken = {};
   const id = (row: Pick<Row, "agentId" | "key" | "storeTarget">) =>
     `${row.agentId}\0${row.storeTarget.storePath}\0${row.key}`;
   const describe: SessionRowProjection["describe"] = (
@@ -78,6 +79,7 @@ export function createSessionRowProjectionFixture(params: {
     const previous = rows.get(id(fields));
     delete store[key];
     revision++;
+    revisionToken = {};
     if (!entry || entry.incognito || isIncognitoSessionKey(key)) {
       rows.delete(id(fields));
       return;
@@ -155,15 +157,17 @@ export function createSessionRowProjectionFixture(params: {
           (!query.storePath || row.storeTarget.storePath === query.storePath),
       ),
     describe,
+    // This row-only fixture cannot certify the resident owner's complete ancestry graph.
+    ancestorRows: () => undefined,
     setArchivePageSize: () => {},
     modelFacts: (row) => {
       const source = describe(row)!.materialized.source;
       return { ...source, catalogEntry: source.thinkingProjection.catalogEntry };
     },
-    withPreparedExactRows: async (_queries, consume) => ({
-      kind: "complete",
-      value: consume(projection),
-    }),
+    withPreparedExactRows: async (queries, consume) => {
+      queries(cfg);
+      return { kind: "complete", value: consume(projection) };
+    },
     present: (record, options) => {
       const now = options?.now ?? Date.now();
       const row = presentSessionRow(record.materialized, {
@@ -188,6 +192,9 @@ export function createSessionRowProjectionFixture(params: {
     dirtyRowCount: 0,
     needsMaterialization: false,
     state: {
+      get revision() {
+        return revisionToken;
+      },
       cfg,
       modelCatalog,
       rowContext,
@@ -210,7 +217,11 @@ export function createSessionRowProjectionFixture(params: {
         ? { row: projection.present(record, options), lifecycleRunId: record.entry.lifecycleRunId }
         : { row: null };
     },
-    dispose: () => rows.clear(),
+    dispose: () => {
+      revision++;
+      revisionToken = {};
+      rows.clear();
+    },
   };
   return Object.assign(projection, { setEntry });
 }
