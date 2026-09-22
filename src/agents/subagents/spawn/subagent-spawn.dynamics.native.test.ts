@@ -74,9 +74,7 @@ async function launchPreparedVerifier() {
     collect: true,
     groupId: "swarm:agent:main:main:parent-run",
   };
-  const fingerprint = `sha256:${createHash("sha256")
-    .update(stableStringify(input))
-    .digest("hex")}`;
+  const fingerprint = `sha256:${createHash("sha256").update(stableStringify(input)).digest("hex")}`;
   return await spawnSubagentDirect(
     {
       ...input,
@@ -124,53 +122,47 @@ describe("native dynamics spawn boundary", () => {
     }
   });
 
-  it(
-    "carries verifier guidance through the real native spawn path when sandbox admission succeeds",
-    async () => {
-      await writeConfig("all");
-      const requests: Array<{ method: string; params: Record<string, unknown> }> = [];
-      subagentSpawnTesting.setDepsForTest({
-        hasInProcessGatewayContext: () => true,
-        dispatchGatewayMethodInProcess: async <T>(
-          method: string,
-          params: Record<string, unknown>,
-        ) => {
-          requests.push({ method, params });
-          // SAFETY: this fixture supplies the accepted Gateway response shape for the generic T.
-          return { runId: "native-dynamics-run", status: "accepted" } as T;
-        },
-      });
+  it("carries verifier guidance through the real native spawn path when sandbox admission succeeds", async () => {
+    await writeConfig("all");
+    const requests: Array<{ method: string; params: Record<string, unknown> }> = [];
+    subagentSpawnTesting.setDepsForTest({
+      hasInProcessGatewayContext: () => true,
+      dispatchGatewayMethodInProcess: async <T>(
+        method: string,
+        params: Record<string, unknown>,
+      ) => {
+        requests.push({ method, params });
+        // SAFETY: this fixture supplies the accepted Gateway response shape for the generic T.
+        return { runId: "native-dynamics-run", status: "accepted" } as T;
+      },
+    });
 
-      const result = await launchPreparedVerifier();
+    const result = await launchPreparedVerifier();
 
-      expect(result).toMatchObject({ status: "accepted" });
-      const launch = requests.find((request) => request.method === "agent");
-      expect(launch).toBeDefined();
-      expect(launch?.params.message).toEqual(expect.stringContaining('"boundary":"artifact-only"'));
-      expect(launch?.params.message).toEqual(expect.stringContaining("sha256:candidate"));
-      expect(launch?.params.message).toEqual(expect.stringContaining("sha256:source"));
-      expect(launch?.params.message).toEqual(expect.stringContaining("sha256:recipe"));
-      expect(launch?.params.message).toEqual(expect.stringContaining("sha256:policy"));
-      expect(launch?.params.message).toEqual(expect.stringContaining('"sandbox":"require"'));
-    },
-  );
+    expect(result).toMatchObject({ status: "accepted" });
+    const launch = requests.find((request) => request.method === "agent");
+    expect(launch).toBeDefined();
+    expect(launch?.params.message).toEqual(expect.stringContaining('"boundary":"artifact-only"'));
+    expect(launch?.params.message).toEqual(expect.stringContaining("sha256:candidate"));
+    expect(launch?.params.message).toEqual(expect.stringContaining("sha256:source"));
+    expect(launch?.params.message).toEqual(expect.stringContaining("sha256:recipe"));
+    expect(launch?.params.message).toEqual(expect.stringContaining("sha256:policy"));
+    expect(launch?.params.message).toEqual(expect.stringContaining('"sandbox":"require"'));
+  });
 
-  it(
-    "fails closed before native dispatch when a verifier requires an unavailable sandbox",
-    async () => {
-      const dispatchGatewayMethodInProcess = vi.fn(async () => {
-        throw new Error("sandbox-required verifier must not dispatch unsandboxed");
-      });
-      subagentSpawnTesting.setDepsForTest({
-        hasInProcessGatewayContext: () => true,
-        dispatchGatewayMethodInProcess,
-      });
+  it("fails closed before native dispatch when a verifier requires an unavailable sandbox", async () => {
+    const dispatchGatewayMethodInProcess = vi.fn(async () => {
+      throw new Error("sandbox-required verifier must not dispatch unsandboxed");
+    });
+    subagentSpawnTesting.setDepsForTest({
+      hasInProcessGatewayContext: () => true,
+      dispatchGatewayMethodInProcess,
+    });
 
-      const result = await launchPreparedVerifier();
+    const result = await launchPreparedVerifier();
 
-      expect(result.status).toBe("forbidden");
-      expect(result.error).toEqual(expect.stringContaining("sandbox"));
-      expect(dispatchGatewayMethodInProcess).not.toHaveBeenCalled();
-    },
-  );
+    expect(result.status).toBe("forbidden");
+    expect(result.error).toEqual(expect.stringContaining("sandbox"));
+    expect(dispatchGatewayMethodInProcess).not.toHaveBeenCalled();
+  });
 });
