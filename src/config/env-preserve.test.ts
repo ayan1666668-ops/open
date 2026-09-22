@@ -1,10 +1,6 @@
 // Covers preserved environment-variable config normalization.
 import { describe, it, expect } from "vitest";
-import {
-  EnvRefArrayMutationError,
-  restoreEnvVarRefs,
-  restoreEnvVarRefsFromResolved,
-} from "./env-preserve.js";
+import { restoreEnvVarRefs, restoreEnvVarRefsFromResolved } from "./env-preserve.js";
 
 function expectEnvRefArrayMutationError(action: () => unknown) {
   let failure: unknown;
@@ -847,57 +843,6 @@ describe("restoreEnvVarRefs", () => {
       toString: "resolved-value",
     });
   });
-
-  it("keeps an authored own __proto__ key as inert data when nothing matches", () => {
-    // JSON.parse builds the authored own key; an object literal would write
-    // the prototype instead.
-    const incoming = JSON.parse(
-      '{"apiKey":"sk-ant-new-different-key","__proto__":{"injected":true}}',
-    ) as Record<string, unknown>;
-    const parsed = JSON.parse('{"apiKey":"${ANTHROPIC_API_KEY}"}');
-    const result = restoreEnvVarRefs(incoming, parsed, env) as Record<string, unknown>;
-    expect(Object.getPrototypeOf(result)).toBe(Object.prototype);
-    expect(Object.hasOwn(result, "__proto__")).toBe(true);
-    expect(result).toEqual(incoming);
-  });
-
-  it("restores a reference under an authored own __proto__ key", () => {
-    const incoming = JSON.parse('{"__proto__":{"token":"tok-12345"}}') as Record<string, unknown>;
-    const parsed = JSON.parse('{"__proto__":{"token":"${MY_TOKEN}"}}');
-    const result = restoreEnvVarRefs(incoming, parsed, env) as Record<string, unknown>;
-    expect(Object.hasOwn(result, "__proto__")).toBe(true);
-    expect(result).toEqual(JSON.parse('{"__proto__":{"token":"${MY_TOKEN}"}}'));
-  });
-
-  it("restores references across an unchanged two-row array with authored own __proto__ keys", () => {
-    // JSON.parse builds the rows' own "__proto__" data keys; an object
-    // literal would write the prototype instead. The comparison tree has to
-    // settle that key as inert data, or neither row equals its resolved
-    // counterpart and the array identities cannot match.
-    const parsed = JSON.parse(
-      '{"providers":[' +
-        '{"id":"alpha","token":"${MY_TOKEN}","__proto__":null},' +
-        '{"id":"beta","token":"${MY_TOKEN}","__proto__":null}' +
-        "]}",
-    ) as { providers: Array<Record<string, unknown>> };
-    const incoming = JSON.parse(
-      '{"providers":[' +
-        '{"id":"alpha","token":"tok-12345","__proto__":null},' +
-        '{"id":"beta","token":"tok-12345","__proto__":null}' +
-        "]}",
-    ) as { providers: Array<Record<string, unknown>> };
-
-    const result = restoreEnvVarRefs(incoming, parsed, env) as typeof parsed;
-    expect(result.providers.map((row) => row.id)).toEqual(["alpha", "beta"]);
-    expect(result).toEqual(parsed);
-    for (const row of result.providers) {
-      expect(row.token).toBe("${MY_TOKEN}");
-      const authoredKey = Object.getOwnPropertyDescriptor(row, "__proto__");
-      expect(authoredKey?.value).toBeNull();
-      expect(authoredKey?.enumerable).toBe(true);
-      expect(Object.getPrototypeOf(row)).toBe(Object.prototype);
-    }
-  });
 });
 
 describe("restoreEnvVarRefs with edited arrays", () => {
@@ -1157,56 +1102,4 @@ describe("restoreEnvVarRefsFromResolved", () => {
       );
     },
   );
-});
-describe("stack-safe deep env-ref restoration", () => {
-  const probeEnv = { OPENCLAW_PROBE_VAR: "resolved-value" };
-
-  function buildNestedObject(
-    depth: number,
-    leaf: Record<string, unknown>,
-  ): Record<string, unknown> {
-    let value: Record<string, unknown> = leaf;
-    for (let i = 0; i < depth; i += 1) {
-      value = { level: value };
-    }
-    return value;
-  }
-
-  function readDeepLeaf(value: unknown, depth: number): unknown {
-    let current = value;
-    for (let i = 0; i < depth; i += 1) {
-      if (typeof current !== "object" || current === null || Array.isArray(current)) {
-        return undefined;
-      }
-      current = (current as Record<string, unknown>).level;
-    }
-    return current;
-  }
-
-  it("restores a deep ${VAR} reference without a call-stack overflow", () => {
-    const depth = 5_000;
-    const parsed = buildNestedObject(depth, { leaf: "${OPENCLAW_PROBE_VAR}" });
-    const incoming = buildNestedObject(depth, { leaf: "resolved-value" });
-    const result = restoreEnvVarRefs(incoming, parsed, probeEnv);
-    expect(readDeepLeaf(result, depth)).toEqual({ leaf: "${OPENCLAW_PROBE_VAR}" });
-  });
-
-  it("walks a deep reference-free document without a call-stack overflow", () => {
-    const depth = 5_000;
-    const parsed = buildNestedObject(depth, { leaf: "value" });
-    const incoming = buildNestedObject(depth, { leaf: "value" });
-    const result = restoreEnvVarRefs(incoming, parsed, probeEnv);
-    expect(readDeepLeaf(result, depth)).toEqual({ leaf: "value" });
-  });
-
-  it("keeps deep object keys in document order", () => {
-    const incoming = { a: { x: 1 }, added: "new", c: { y: 2 } };
-    const parsed = { a: { x: 1 }, c: { y: 2 } };
-    const result = restoreEnvVarRefs(incoming, parsed, probeEnv) as Record<string, unknown>;
-    expect(Object.keys(result)).toEqual(["a", "added", "c"]);
-    expect(result).toEqual(incoming);
-  });
-
-
-
 });

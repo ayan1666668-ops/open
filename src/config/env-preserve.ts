@@ -16,8 +16,6 @@ import {
 import { resolveConfigEnvVars } from "./env-substitution.js";
 import { settleContainerValue } from "./merge-patch.js";
 
-export { EnvRefArrayMutationError };
-
 /**
  * Preserves `${VAR}` environment variable references during config write-back.
  *
@@ -241,7 +239,10 @@ export function restoreEnvVarRefsFromResolved(
     if (typeof frameIncoming === "string" && typeof frameParsed === "string") {
       // An explicitly authored template is intent, even when an old escaped
       // template resolved to the same string. Literal descendants still restore.
-      if (hasEnvVarRef(frameIncoming) && frame.explicitSetPaths?.some((path) => path.length === 0)) {
+      if (
+        hasEnvVarRef(frameIncoming) &&
+        frame.explicitSetPaths?.some((path) => path.length === 0)
+      ) {
         settleEnvRefRestoreFrame(frame, frameIncoming);
         continue;
       }
