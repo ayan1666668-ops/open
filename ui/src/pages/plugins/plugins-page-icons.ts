@@ -46,6 +46,10 @@ export class PluginsPageIcons {
     };
     this.installed = new PluginIconController({
       ...shared,
+      getFetchContext: () => ({
+        ...shared.getFetchContext(),
+        theme: host.getContext().theme.resolvedMode,
+      }),
       onUrlsChange: host.onInstalledUrlsChange,
     });
     this.catalog = new PluginIconController({
