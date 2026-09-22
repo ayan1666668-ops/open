@@ -1,9 +1,15 @@
 import assert from "node:assert/strict";
 import { channel } from "node:diagnostics_channel";
+import fs from "node:fs";
+import path from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js";
 import { WorkerTaskError } from "../../infra/worker-task-pool.js";
+import type { WorkerTaskOptions } from "../../infra/worker-task-pool.types.js";
 import { createDeferredCore } from "../../shared/deferred.js";
+import { SessionMetadataUnavailableError } from "../../state/session-metadata-unavailable-error.js";
 import { SessionTranscriptColdError } from "./session-cold-storage-state.js";
+import { prepareSessionTranscriptHydration } from "./session-transcript-hydration.js";
 import { SessionTranscriptProjectionUnavailableError } from "./session-transcript-projection-error.js";
 import { SessionTranscriptReadFenceError } from "./session-transcript-read-fence.js";
 import { withSessionHistoryWorkerReadCandidates } from "./session-transcript-worker-resources.js";
@@ -12,20 +18,31 @@ import { withSessionHistoryWorkerDatabase } from "./session-transcript-worker-ru
 type Request = {
   input: unknown;
   taskId: number;
+  interactive?: boolean;
   nativeSections: SharedArrayBuffer;
 };
 type Resource = { close: () => Promise<void>; agentId?: string; revoke?: () => void };
+type QuarantineDatabase = {
+  isOpen: boolean;
+  exec: () => void;
+  prepare: () => { get: () => unknown };
+  close: () => void;
+};
 const observed = vi.hoisted(() => ({
   handler: undefined as ((input: unknown) => unknown) | undefined,
   receive: undefined as ((message: Request) => void) | undefined,
   post: vi.fn<(message: unknown) => void>(),
   read: vi.fn<() => unknown>(),
   close: vi.fn<() => void>(),
-  run: vi.fn<() => Promise<unknown>>(),
+  run: vi.fn<(input: unknown, options: WorkerTaskOptions<unknown>) => Promise<unknown>>(),
   closeResources: vi.fn<(key?: string) => Promise<void>>(),
   deferredRun: undefined as
     | ((prepare: () => unknown, options: { inputBytes?: number }) => Promise<unknown>)
     | undefined,
+  quarantineRead: vi.fn<() => unknown>(),
+  quarantineClose: vi.fn<() => void>(),
+  quarantineOpen: vi.fn<() => QuarantineDatabase>(),
+  hydrate: vi.fn<() => unknown>(),
   rotate: vi.fn<() => Promise<void>>(),
   unregister: vi.fn<() => void>(),
   resources: [] as Resource[],
@@ -54,20 +71,18 @@ vi.mock("../../infra/worker-task-pool.js", async (importOriginal) => {
   return {
     ...actual,
     createOwnedWorkerTaskPool: () => ({
-      run(prepare: () => unknown, options: { inputBytes?: number }) {
+      run(prepare: () => unknown, options: WorkerTaskOptions<unknown>) {
         if (observed.deferredRun) {
           return observed.deferredRun(prepare, options);
         }
-        prepare();
-        return observed.run();
+        return observed.run(prepare(), options);
       },
       rotate: observed.rotate,
       closeResources: observed.closeResources,
     }),
     WorkerTaskPool: class {
-      run(prepare: () => unknown) {
-        prepare();
-        return observed.run();
+      run(prepare: () => unknown, options: WorkerTaskOptions<unknown>) {
+        return observed.run(prepare(), options);
       }
       rotate() {
         return observed.rotate();
@@ -86,8 +101,8 @@ vi.mock("../../infra/worker-task-server.js", async (importOriginal) => {
   };
 });
 vi.mock("../../state/openclaw-agent-db-resources.js", () => ({
-  matchesAgentDatabaseReadCandidatePath: (candidate: { path: string }, path: string) =>
-    candidate.path === path,
+  matchesAgentDatabaseReadCandidatePath: (candidate: { path: string }, targetPath: string) =>
+    candidate.path === targetPath,
   registerOpenClawAgentDatabaseReadCandidateResource: (resource: Resource) => {
     observed.resources.push(resource);
     return observed.unregister;
@@ -108,6 +123,13 @@ vi.mock("../../state/openclaw-agent-db-readonly-scope.js", () => ({
       observed.close();
     }
   },
+}));
+vi.mock("../../infra/node-sqlite.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../infra/node-sqlite.js")>()),
+  openNodeSqliteDatabase: observed.quarantineOpen,
+}));
+vi.mock("./session-transcript-hydration.worker.js", () => ({
+  streamSessionTranscriptHydration: observed.hydrate,
 }));
 vi.mock("./session-accessor.sqlite-entry.js", () => ({
   loadSessionEntryReadOnlyInScope: () => observed.read(),
@@ -138,6 +160,37 @@ function invoke(request: ReturnType<typeof input>) {
   return Promise.resolve(observed.handler(request));
 }
 
+function installWorkerTransport() {
+  observed.run.mockImplementation(async (request, options) => {
+    const posted = createDeferredCore<unknown>();
+    observed.post.mockImplementation(posted.resolve);
+    assert(observed.receive);
+    observed.receive({
+      input: request,
+      taskId: 7,
+      interactive: Boolean(options.onRequest),
+      nativeSections: new SharedArrayBuffer(4),
+    });
+    const reply = await posted.promise;
+    assert(reply && typeof reply === "object" && "status" in reply);
+    if (reply.status === "failed") {
+      assert("error" in reply && typeof reply.error === "string");
+      throw new WorkerTaskError(reply.error, "failed");
+    }
+    assert(reply.status === "ok" && "value" in reply);
+    return structuredClone(reply.value);
+  });
+}
+
+async function readThroughWorker() {
+  const request = input();
+  installWorkerTransport();
+  return await withSessionHistoryWorkerDatabase(request.database, (owner) =>
+    owner.readEntryPresence(request.scope),
+  );
+}
+
+const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 beforeEach(() => {
   observed.deferredRun = undefined;
   observed.post.mockReset();
@@ -147,6 +200,25 @@ beforeEach(() => {
   observed.rotate.mockReset().mockResolvedValue(undefined);
   observed.closeResources.mockReset().mockResolvedValue(undefined);
   observed.unregister.mockReset();
+  observed.quarantineRead.mockReset().mockReturnValue({ user_version: 0 });
+  observed.quarantineClose.mockReset();
+  observed.quarantineOpen.mockReset().mockImplementation(() => {
+    const database: QuarantineDatabase = {
+      isOpen: true,
+      exec() {},
+      prepare: () => ({ get: observed.quarantineRead }),
+      close() {
+        observed.quarantineClose();
+        database.isOpen = false;
+      },
+    };
+    return database;
+  });
+  observed.hydrate.mockReset().mockReturnValue({
+    kind: "full",
+    eventCount: 0,
+    version: { generation: null, rawSeq: null, updatedAt: null },
+  });
 });
 afterEach(async () => {
   observed.rotate.mockResolvedValue(undefined);
@@ -154,16 +226,16 @@ afterEach(async () => {
   expect(observed.nativeWorker).not.toHaveBeenCalled();
 });
 
-it("preserves the original worker read error when closing succeeds", async () => {
+it("preserves the worker read failure through transfer when closing succeeds", async () => {
   const primary = new Error("read failed");
   observed.read.mockImplementation(() => {
     throw primary;
   });
-  await expect(invoke(input())).rejects.toBe(primary);
+  await expect(readThroughWorker()).rejects.toMatchObject({ message: primary.message });
   expect(observed.close).toHaveBeenCalledTimes(1);
 });
 
-it("retains both worker errors locally when the read and close fail", async () => {
+it("retains both worker errors through transfer when the read and close fail", async () => {
   const primary = new Error("read failed");
   const cleanup = new Error("database close failed");
   observed.read.mockImplementation(() => {
@@ -172,10 +244,13 @@ it("retains both worker errors locally when the read and close fail", async () =
   observed.close.mockImplementation(() => {
     throw cleanup;
   });
-  const failure: unknown = await invoke(input()).catch((error: unknown) => error);
+  const failure: unknown = await readThroughWorker().catch((error: unknown) => error);
   assert(failure instanceof AggregateError);
-  expect(failure.errors).toEqual([primary, cleanup]);
-  expect(failure.cause).toBe(cleanup);
+  expect(failure.errors).toMatchObject([
+    { message: primary.message },
+    { message: cleanup.message },
+  ]);
+  expect(failure.cause).toBe(failure.errors[1]);
   expect(failure.message).toContain(primary.message);
   expect(failure.message).toContain(cleanup.message);
 });
@@ -214,33 +289,50 @@ it.each(typedFailures)(
     observed.close.mockImplementation(() => {
       throw cleanup;
     });
-    const failure: unknown = await invoke(input()).catch((caught: unknown) => caught);
+    const failure: unknown = await readThroughWorker().catch((caught: unknown) => caught);
     assert(failure instanceof AggregateError);
-    expect(failure.errors).toEqual([error, cleanup]);
+    expect(failure.errors).toMatchObject([
+      { name: error.name, message: error.message },
+      { message: cleanup.message },
+    ]);
+    expect(failure.cause).toBe(failure.errors[1]);
   },
 );
 
-it("carries both failure messages through the existing worker response", async () => {
-  const primary = new Error("primary read detail");
-  const cleanup = new Error("close detail");
-  observed.read.mockImplementation(() => {
-    throw primary;
-  });
-  observed.close.mockImplementation(() => {
-    throw cleanup;
-  });
-  const posted = createDeferredCore<unknown>();
-  observed.post.mockImplementation(posted.resolve);
-  assert(observed.receive);
-  observed.receive({ input: input(), taskId: 7, nativeSections: new SharedArrayBuffer(4) });
-  const reply = await posted.promise;
-  expect(reply).toEqual({
-    status: "failed",
-    taskId: 7,
-    error: expect.stringContaining(primary.message),
-  });
-  expect(reply).toMatchObject({ error: expect.stringContaining(cleanup.message) });
-});
+it.each([false, true])(
+  "retains typed metadata refusal and SQLite cause across worker transfer with cleanup failure=%s",
+  async (fails) => {
+    const cause = Object.assign(new Error("synthetic SQLite read failure"), {
+      code: "ERR_SQLITE_ERROR",
+      errcode: 1,
+    });
+    const primary = new SessionMetadataUnavailableError("table-missing", { cause }, [
+      "transcript_events",
+    ]);
+    const cleanup = new Error("synthetic database close failure");
+    observed.read.mockImplementation(() => {
+      throw primary;
+    });
+    if (fails) {
+      observed.close.mockImplementation(() => {
+        throw cleanup;
+      });
+    }
+    const failure: unknown = await readThroughWorker().catch((error: unknown) => error);
+    const unavailable: unknown = failure instanceof AggregateError ? failure.errors[0] : failure;
+    expect(unavailable).toBeInstanceOf(SessionMetadataUnavailableError);
+    expect(unavailable).toMatchObject({
+      reason: "table-missing",
+      missingTables: ["transcript_events"],
+      cause: { message: cause.message, code: "ERR_SQLITE_ERROR", errcode: 1 },
+    });
+    if (fails) {
+      assert(failure instanceof AggregateError);
+      expect(failure.errors[1]).toMatchObject({ message: cleanup.message });
+      expect(failure.cause).toBe(failure.errors[1]);
+    }
+  },
+);
 
 it("retires idle history workers under critical pressure after active scopes release custody", async () => {
   const pressure = channel("openclaw.memory.critical");
@@ -264,6 +356,36 @@ it("retires idle history workers under critical pressure after active scopes rel
   retirement.resolve();
   await unregistered.promise;
   expect(observed.unregister).toHaveBeenCalledTimes(1);
+});
+
+it("settles an already-retired read without waiting for a healthy successor rotation", async () => {
+  const primary = new WorkerTaskError("retired read cancelled", "unavailable");
+  const rotationStarted = createDeferredCore();
+  const successorRelease = createDeferredCore();
+  observed.run.mockImplementation(async (_request, options) => {
+    options.onExecutionSettled?.({ retired: true });
+    throw primary;
+  });
+  observed.rotate.mockImplementation(() => {
+    rotationStarted.resolve();
+    return successorRelease.promise;
+  });
+  const request = input();
+  const pending = withSessionHistoryWorkerDatabase(request.database, (owner) =>
+    owner.readEntryPresence(request.scope),
+  ).catch((error: unknown) => error);
+  try {
+    expect(
+      await Promise.race([
+        pending.then(() => "settled"),
+        rotationStarted.promise.then(() => "rotating successor"),
+      ]),
+    ).toBe("settled");
+    expect(await pending).toBe(primary);
+  } finally {
+    successorRelease.resolve();
+    await pending;
+  }
 });
 
 it.each([false, true])(
@@ -634,6 +756,109 @@ it.each(["store", "inventory"] as const)(
       expect(observed.closeResources).toHaveBeenCalledWith(
         JSON.stringify([{ path: original.physicalPath, scope: original.scope }]),
       );
+    }
+  },
+);
+
+function hydrateThroughWorker() {
+  const root = tempDirs.make("openclaw-hydration-quarantine-cleanup-");
+  fs.mkdirSync(path.join(root, "state"));
+  fs.writeFileSync(path.join(root, "state", "openclaw-quarantine.sqlite"), "mock quarantine");
+  installWorkerTransport();
+  return prepareSessionTranscriptHydration({
+    agentId: "main",
+    sessionId: "quarantine-hydration",
+    sessionKey: "agent:main:quarantine-hydration",
+    storePath: path.join(root, "agents", "main", "agent", "openclaw-agent.sqlite"),
+    env: { OPENCLAW_STATE_DIR: root },
+  }).read();
+}
+
+it("hydrates after an ordinary quarantine metadata failure whose native close succeeds", async () => {
+  observed.quarantineRead.mockImplementation(() => {
+    throw new Error("quarantine metadata unavailable");
+  });
+  await expect(hydrateThroughWorker()).resolves.toMatchObject({
+    kind: "full",
+    snapshot: { events: [] },
+  });
+  expect(observed.quarantineClose).toHaveBeenCalledOnce();
+  expect(observed.hydrate).toHaveBeenCalledOnce();
+  expect(observed.rotate).not.toHaveBeenCalled();
+});
+
+it.each([
+  { readFails: false, retirementFails: false },
+  { readFails: true, retirementFails: false },
+  { readFails: true, retirementFails: true },
+])(
+  "retains hydration quarantine cleanup custody and graph (read=$readFails, retirement=$retirementFails)",
+  async ({ readFails, retirementFails }) => {
+    const readFailure = new Error("quarantine metadata read failed");
+    const closeFailure = Object.assign(new Error("quarantine native close failed"), {
+      code: "ERR_SQLITE_ERROR",
+      errcode: 5,
+    });
+    const stopFailure = new Error("quarantine worker retirement failed");
+    if (readFails) {
+      observed.quarantineRead.mockImplementation(() => {
+        throw readFailure;
+      });
+    }
+    observed.quarantineClose.mockImplementation(() => {
+      throw closeFailure;
+    });
+    const entered = createDeferredCore();
+    const retirement = createDeferredCore();
+    observed.rotate.mockImplementation(() => {
+      entered.resolve();
+      return retirement.promise;
+    });
+    let settled = false;
+    const pending = hydrateThroughWorker()
+      .then(
+        (value) => ({ value }),
+        (error: unknown) => ({ error }),
+      )
+      .finally(() => {
+        settled = true;
+      });
+    try {
+      expect(
+        await Promise.race([entered.promise.then(() => "retiring"), pending.then(() => "settled")]),
+      ).toBe("retiring");
+      expect(settled).toBe(false);
+      expect(observed.quarantineOpen.mock.results[0]?.value.isOpen).toBe(true);
+      expect(observed.hydrate).not.toHaveBeenCalled();
+      expect(observed.unregister).not.toHaveBeenCalled();
+      if (retirementFails) {
+        retirement.reject(stopFailure);
+      } else {
+        retirement.resolve();
+      }
+      const result = await pending;
+      assert("error" in result);
+      const failure = result.error;
+      assert(failure instanceof AggregateError);
+      const quarantine = retirementFails ? failure.errors[0] : failure;
+      assert(quarantine instanceof AggregateError);
+      expect(quarantine.name).toBe("OpenClawQuarantineReadCleanupError");
+      expect(quarantine.errors).toMatchObject([
+        ...(readFails ? [{ message: readFailure.message }] : []),
+        { message: closeFailure.message, code: "ERR_SQLITE_ERROR", errcode: 5 },
+      ]);
+      expect(quarantine.cause).toBe(quarantine.errors[0]);
+      expect(observed.rotate).toHaveBeenCalledOnce();
+      if (retirementFails) {
+        expect(failure.errors[1]).toBe(stopFailure);
+        expect(failure.cause).toBe(stopFailure);
+        expect(observed.unregister).not.toHaveBeenCalled();
+      } else {
+        expect(observed.unregister).toHaveBeenCalledOnce();
+      }
+    } finally {
+      retirement.resolve();
+      await pending;
     }
   },
 );

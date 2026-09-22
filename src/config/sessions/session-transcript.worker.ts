@@ -1,15 +1,20 @@
+import { coerceErrorMessage } from "@openclaw/normalization-core/error-coercion";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import type {
   UsageCostWorkerInput,
   UsageCostWorkerReply,
 } from "../../infra/session-cost-usage-worker.types.js";
 import { serveOwnedWorkerTasks } from "../../infra/worker-task-server.js";
+import { encodeOpenClawStateWorkerError } from "../../state/openclaw-state-worker-error.js";
 import { cloneEnvWithPlatformSemantics } from "../config-env-vars.js";
 import type { SessionIdentityEvidenceResult } from "./session-accessor.sqlite-entry-availability.js";
 import { SessionTranscriptColdError } from "./session-cold-storage-state.js";
 import type { SessionHistoryWorkerResult } from "./session-history-types.js";
 import { sessionHistoryCleanupError } from "./session-history-worker-errors.js";
-import { SessionTranscriptProjectionUnavailableError } from "./session-transcript-projection-error.js";
+import {
+  SessionTranscriptProjectionUnavailableError,
+  SessionTranscriptStorageUnavailableError,
+} from "./session-transcript-projection-error.js";
 import {
   runWithSessionTranscriptReadFence,
   SessionTranscriptReadFenceError,
@@ -46,7 +51,7 @@ async function withHistoryDatabase<T>(
   try {
     const value = await scope.run(database, operation);
     historyDatabaseScopes.delete(key);
-    // Missing stores must not evict useful connections or retain empty scopes.
+    // Tasks without retained connections must not evict useful connections or retain empty scopes.
     if (!scope.hasRetainedConnection) {
       return { value, closedHistoryDatabase: database };
     }
@@ -86,6 +91,14 @@ serveOwnedWorkerTasks(
       .closeOpenClawAgentDatabaseReadOnlyCandidates;
     // SAFETY: The paired runtime constructs this request; the SQLite snapshot validates admission.
     const request = input as SessionTranscriptWorkerInput | UsageCostWorkerInput;
+    if (request.kind === "sqlite-target") {
+      const { resolveSqliteTargetFromSessionStorePath } =
+        await import("./session-sqlite-target.js");
+      return {
+        ok: true,
+        value: { target: resolveSqliteTargetFromSessionStorePath(request.storePath, request) },
+      };
+    }
     if (request.kind === "usage-cost") {
       const { executeUsageCostWorker, usageCostWorkerFailure } =
         await import("../../infra/session-cost-usage-worker.js");
@@ -297,6 +310,46 @@ serveOwnedWorkerTasks(
               }))),
             };
           }
+          if (request.kind === "transcript-hydration") {
+            const { readOpenClawDatabaseQuarantineFailure } =
+              await import("../../state/openclaw-quarantine-store.js");
+            const quarantine = readOpenClawDatabaseQuarantineFailure(
+              "agent",
+              request.database.path,
+              {
+                env: request.target.env,
+              },
+            );
+            if (quarantine) {
+              throw quarantine;
+            }
+            const { readSessionTranscriptBoundedActiveContextCore } =
+              await import("./session-accessor.sqlite-active-context.js");
+            const { streamSessionTranscriptHydration } =
+              await import("./session-transcript-hydration.worker.js");
+            return {
+              ok: true,
+              ...(await withHistoryDatabase<SessionTranscriptWorkerValues["transcript-hydration"]>(
+                request.database,
+                () => {
+                  if (request.limits) {
+                    return {
+                      kind: "bounded" as const,
+                      snapshot: readSessionTranscriptBoundedActiveContextCore(request.target, {
+                        ...request.limits,
+                        readOnly: true,
+                        resolvedScope: request.resolvedScope,
+                      }),
+                    };
+                  }
+                  if (!channel) {
+                    throw new Error("Full transcript hydration requires its host channel");
+                  }
+                  return streamSessionTranscriptHydration(request, channel, control);
+                },
+              )),
+            };
+          }
           if (request.kind === "model-context") {
             const { readSessionTranscriptModelContext } =
               await import("./session-accessor.sqlite-model-context.js");
@@ -391,6 +444,9 @@ serveOwnedWorkerTasks(
       ) {
         return { ok: false, error: { kind: "syntax", message: error.message } };
       }
+      if (error instanceof SessionTranscriptStorageUnavailableError) {
+        return { ok: false, error: { kind: "storage", reason: error.reason } };
+      }
       if (error instanceof SessionTranscriptColdError) {
         return { ok: false, error: { kind: "cold", sessionId: error.sessionId } };
       }
@@ -399,6 +455,13 @@ serveOwnedWorkerTasks(
       }
       if (error instanceof SessionTranscriptReadFenceError) {
         return { ok: false, error: { kind: "fence", message: error.message } };
+      }
+      const payload = encodeOpenClawStateWorkerError(error, { includeOrdinary: true });
+      if (payload) {
+        return {
+          ok: false,
+          error: { kind: "read-error", message: coerceErrorMessage(error), payload },
+        };
       }
       throw error;
     }

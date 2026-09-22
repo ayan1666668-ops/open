@@ -46,6 +46,10 @@ describe("automatic candidates during provenance repair", () => {
       }
       const initial = await fixture.getFreshManager(cfg, "cli");
       await initial.sync({ reason: "cli", force: true });
+      // Reader startup is setup; the measured calls must contend with the held rebuild.
+      await initial.listCuratedProjectCandidates({
+        activeProjectKeys: ["github.com/example/reader-readiness"],
+      });
       const db = Reflect.get(initial, "db") as DatabaseSync;
       // Older indexes have neither classified provenance nor a chunking version.
       db.exec("DELETE FROM memory_index_chunk_provenance; DELETE FROM memory_embedding_cache");
@@ -64,16 +68,20 @@ describe("automatic candidates during provenance repair", () => {
       fixture.provider.providerRuntimeBatchGate = gate.promise;
       const upgraded = await fixture.getFreshManager(cfg);
       const candidates: Promise<unknown>[] = [];
+      let repairAdmission: Promise<unknown> | undefined;
       try {
         expect(upgraded.status().custom?.indexIdentity).toMatchObject({
           status: "mismatched",
           reason: "index provenance classifier changed",
         });
-        if (startupCatchup) {
-          await vi.waitFor(() => expect(fixture.provider.providerRuntimeActiveBatchCalls).toBe(1), {
-            timeout: 10_000,
+        if (!startupCatchup) {
+          repairAdmission = upgraded.listCuratedProjectCandidates({
+            activeProjectKeys: ["github.com/example/repair-admission"],
           });
         }
+        await vi.waitFor(() => expect(fixture.provider.providerRuntimeActiveBatchCalls).toBe(1), {
+          timeout: 10_000,
+        });
         let completed = 0;
         for (const lookup of [
           () => upgraded.listCuratedProjectCandidates({ activeProjectKeys: [projectKey] }),
@@ -95,6 +103,7 @@ describe("automatic candidates during provenance repair", () => {
       } finally {
         gate.resolve();
         await Promise.allSettled(candidates);
+        await repairAdmission;
       }
       await upgraded.sync({ reason: "test-repair-complete" });
       expect(upgraded.status().dirty).toBe(false);
