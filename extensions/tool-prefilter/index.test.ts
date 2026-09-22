@@ -117,7 +117,11 @@ describe("tool-prefilter plugin", () => {
     pluginEntry.register(mockApi as any);
 
     const event = { currentUserMessage: "Check git status and commit changes" };
-    const ctx = { agentId: "agent-1" };
+    const ctx = {
+      agentId: "agent-1",
+      modelProviderId: "anthropic",
+      modelId: "claude-3-5-sonnet",
+    };
 
     const result = await hookHandler(event, ctx);
 
@@ -246,7 +250,11 @@ describe("tool-prefilter plugin", () => {
     pluginEntry.register(mockApi as any);
 
     const event = { currentUserMessage: "Hello there" };
-    const ctx = { agentId: "agent-1" };
+    const ctx = {
+      agentId: "agent-1",
+      modelProviderId: "anthropic",
+      modelId: "claude-3-5-sonnet",
+    };
 
     const result = await hookHandler(event, ctx);
 
@@ -277,7 +285,11 @@ describe("tool-prefilter plugin", () => {
     pluginEntry.register(mockApi as any);
 
     const event = { currentUserMessage: "Read the file foo.txt" };
-    const ctx = { agentId: "agent-1" };
+    const ctx = {
+      agentId: "agent-1",
+      modelProviderId: "anthropic",
+      modelId: "claude-3-5-sonnet",
+    };
 
     const result = await hookHandler(event, ctx);
 
@@ -520,7 +532,7 @@ describe("tool-prefilter plugin", () => {
 
       const result = await hookHandler(event, ctx);
 
-      expect(mockEvaluate).toHaveBeenCalledTimes(1);
+      expect(mockEvaluate).not.toHaveBeenCalled();
       expect(result).toBeUndefined(); // MUST NOT return { toolsAllow: [] }
       expect(mockApi.logger.info).toHaveBeenCalledWith(
         expect.stringContaining("active harness does not support turn-scoped tool pruning"),
@@ -574,7 +586,7 @@ describe("tool-prefilter plugin", () => {
 
       const result = await hookHandler(event, ctx);
 
-      expect(mockEvaluate).toHaveBeenCalledTimes(1);
+      expect(mockEvaluate).not.toHaveBeenCalled();
       expect(result).toBeUndefined();
       expect(mockApi.logger.info).toHaveBeenCalledWith(
         expect.stringContaining("active harness does not support turn-scoped tool pruning"),
@@ -699,7 +711,7 @@ describe("tool-prefilter plugin", () => {
 
       const result = await hookHandler(event, ctx);
 
-      expect(mockEvaluate).toHaveBeenCalledTimes(1);
+      expect(mockEvaluate).not.toHaveBeenCalled();
       expect(result).toBeUndefined(); // MUST preserve tools, avoiding Codex app-server rejection
       expect(mockApi.logger.info).toHaveBeenCalledWith(
         expect.stringContaining("active harness does not support turn-scoped tool pruning"),
@@ -836,7 +848,7 @@ describe("tool-prefilter plugin", () => {
 
       const result = await hookHandler(event, ctx);
 
-      expect(mockEvaluate).toHaveBeenCalledTimes(1);
+      expect(mockEvaluate).not.toHaveBeenCalled();
       expect(result).toBeUndefined(); // MUST preserve tools when runtime cannot be identified
       expect(mockApi.logger.info).toHaveBeenCalledWith(
         expect.stringContaining("active harness does not support turn-scoped tool pruning"),

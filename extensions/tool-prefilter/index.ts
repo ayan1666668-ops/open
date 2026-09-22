@@ -240,6 +240,20 @@ export default definePluginEntry({
         return undefined;
       }
 
+      // Check harness eligibility before dispatching decision inference:
+      // If the active harness cannot enforce turn-scoped tool pruning (such as Codex or unknown harnesses),
+      // preserve all tools immediately without incurring unnecessary decision provider latency or cost.
+      const effectiveConfig =
+        (
+          api.runtime as unknown as { config?: { current?: () => OpenClawConfig } }
+        )?.config?.current?.() ?? api.config;
+      if (!isRestrictiveToolPolicySupported(ctx, effectiveConfig, api)) {
+        api.logger?.info(
+          `[tool-prefilter] active harness does not support turn-scoped tool pruning. Preserving tools.`,
+        );
+        return undefined;
+      }
+
       // If the runtime decisions evaluation is not available, fail-open
       const decisions = api.runtime?.decisions;
       if (!decisions || typeof decisions.evaluate !== "function") {
@@ -287,19 +301,8 @@ export default definePluginEntry({
           if (answer && answer.type === "boolean" && typeof answer.probabilityTrue === "number") {
             const prob = answer.probabilityTrue;
 
-            // Pure conversational turn: strip optional tools from the model context if supported
+            // Pure conversational turn: strip optional tools from the model context
             if (prob < threshold) {
-              const effectiveConfig =
-                (
-                  api.runtime as unknown as { config?: { current?: () => OpenClawConfig } }
-                )?.config?.current?.() ?? api.config;
-              if (!isRestrictiveToolPolicySupported(ctx, effectiveConfig, api)) {
-                api.logger?.info(
-                  `[tool-prefilter] Pure conversation detected, but active harness does not support turn-scoped tool pruning. Preserving tools.`,
-                );
-                return undefined;
-              }
-
               api.logger?.info(
                 `[tool-prefilter] Pure conversation detected (tool probability: ${(prob * 100).toFixed(1)}% < ${(threshold * 100).toFixed(1)}%). Pruning tools to save context.`,
               );
