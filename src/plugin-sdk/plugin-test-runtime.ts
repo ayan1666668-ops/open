@@ -4,7 +4,11 @@ import type { EmbeddedRunAttemptParams } from "../agents/embedded-agent-runner/r
 
 type AgentHarnessHostTestAttempt = Omit<
   EmbeddedRunAttemptParams,
-  "admittedRunContext" | "hostCapabilities" | "disableToolSearch" | "sessionReadScopeKey"
+  | "admittedRunContext"
+  | "hostCapabilities"
+  | "disableToolSearch"
+  | "sessionReadScopeKey"
+  | "semanticNoProgressObserver"
 >;
 
 /** Builds the production admitted-run host boundary for plugin integration tests. */
