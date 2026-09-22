@@ -256,7 +256,9 @@ describe("cli tool result events", () => {
         ]),
       );
       const context = buildContext(`native-completion-${isolatedCompletion}`);
-      context.params.isolatedCompletion = isolatedCompletion;
+      if (isolatedCompletion) {
+        context.params.isolatedCompletion = true;
+      }
       const handlers = createCliEventHandlers({
         context,
         toolTracking: createCliToolTracking(context),
