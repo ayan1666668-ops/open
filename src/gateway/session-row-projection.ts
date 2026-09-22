@@ -75,7 +75,13 @@ export async function createSessionRowProjection(params: {
   const creators = createSessionRowCreatorIndex();
   let stores = new Map<
     string,
-    { target: SessionStoreTarget; agentId: string; identity: string | symbol; filename: string }
+    {
+      target: SessionStoreTarget;
+      agentId: string;
+      identity: string | symbol;
+      birthtime: string | undefined;
+      filename: string;
+    }
   >();
   const byStore = new Map<string, Set<string>>(),
     byAgent = new Map<string, Set<string>>();
@@ -240,17 +246,21 @@ export async function createSessionRowProjection(params: {
         if (!opened.found) {
           return [];
         }
-        const databaseIdentity = opened.value.identity;
+        // A later store can reuse a closed file's inode without inheriting its rows.
+        const { identity: databaseIdentity, birthtime } = opened.value;
         const previous =
           stores.get(target.storePath) ??
-          [...stores.values()].find((source) => source.identity === databaseIdentity);
+          [...stores.values()].find(
+            (source) => source.identity === databaseIdentity && source.birthtime === birthtime,
+          );
         nextStores.set(target.storePath, {
           target,
           agentId: previous?.agentId ?? target.agentId,
           identity: databaseIdentity,
+          birthtime,
           filename: opened.value.filename,
         });
-        if (previous?.identity === databaseIdentity) {
+        if (previous?.identity === databaseIdentity && previous.birthtime === birthtime) {
           return [...(byStore.get(previous.target.storePath) ?? [])].flatMap((id) => {
             const row = rows.get(id);
             const entry = row && (row.storedEntry ?? readSessionRowEntry(row));
