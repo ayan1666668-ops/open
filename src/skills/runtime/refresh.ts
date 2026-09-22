@@ -375,6 +375,13 @@ function createSkillsPathWatcher(
       return;
     }
     const skillsRelevant = ancestorChanged || pathFilter.isRelevant(event, changedPath);
+    if (skillsRelevant && event === "addDir" && state.initialScan === "ready") {
+      // Chokidar publishes addDir before installing descendant native watches.
+      // Rebuild through the initial-scan owner so ready invalidates any reads
+      // cached while that directory was still unobserved.
+      reconcileRoot(changedPath, true);
+      return;
+    }
     if (skillsRelevant || pathFilter.isSupportingPath(changedPath)) {
       schedule(changedPath, skillsRelevant ? "skills" : "supporting");
     }
