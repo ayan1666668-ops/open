@@ -136,6 +136,16 @@ describe("telegram topic agentId schema", () => {
     );
   });
 
+  it("accepts agentId in topic config", () => {
+    expectTelegramConfigValid({
+      groups: {
+        "-1001234567890": {
+          topics: { "42": { agentId: "main" } },
+        },
+      },
+    });
+  });
+
   it("rejects unknown fields in topic config", () => {
     const res = TelegramConfigSchema.safeParse({
       groups: {
@@ -151,6 +161,41 @@ describe("telegram topic agentId schema", () => {
     });
 
     expect(res.success).toBe(false);
+    if (!res.success) {
+      expect(res.error.issues[0]).toMatchObject({
+        code: "unrecognized_keys",
+        keys: ["unknownField"],
+        path: ["groups", "-1001234567890", "topics", "42"],
+      });
+    }
+  });
+});
+
+describe("telegram disableAudioPreflight schema", () => {
+  it.each([true, false])("accepts disableAudioPreflight=%s for groups and topics", (value) => {
+    expectTelegramConfigValid({
+      groups: {
+        "*": {
+          disableAudioPreflight: value,
+          topics: { "42": { disableAudioPreflight: value } },
+        },
+      },
+    });
+  });
+
+  it.each([
+    {
+      scope: "group",
+      group: { disableAudioPreflight: "false" },
+      path: "groups.*.disableAudioPreflight",
+    },
+    {
+      scope: "topic",
+      group: { topics: { "42": { disableAudioPreflight: "false" } } },
+      path: "groups.*.topics.42.disableAudioPreflight",
+    },
+  ])("rejects non-boolean disableAudioPreflight in $scope config", ({ group, path }) => {
+    expectTelegramConfigIssue({ groups: { "*": group } }, path);
   });
 });
 

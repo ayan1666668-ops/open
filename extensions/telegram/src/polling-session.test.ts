@@ -1674,6 +1674,7 @@ describe("TelegramPollingSession", () => {
           const abort = new AbortController();
           const operationStarted = createDeferred<void>();
           const releaseOperation = createDeferred<void>();
+          const stopBot = vi.fn(async () => undefined);
           const recorded = new Set<string>();
           const participants: TelegramSpooledReplayDeferredParticipant[] = [];
           let settlement: Promise<void> | undefined;
@@ -1681,6 +1682,7 @@ describe("TelegramPollingSession", () => {
           const { runPromise, stopWorker } = startIsolatedIngressSession({
             abort,
             spoolDir,
+            stop: stopBot,
             ...(admission === "buffered" && operation === "commit"
               ? { spooledUpdateHandlerTimeoutMs: 100 }
               : {}),
@@ -1750,6 +1752,7 @@ describe("TelegramPollingSession", () => {
             stopWorker();
             await vi.advanceTimersByTimeAsync(16_000);
             expect(accountStopped).toBe(false);
+            expect(stopBot).not.toHaveBeenCalled();
           } finally {
             releaseOperation.resolve();
             await settlement;
@@ -1760,6 +1763,7 @@ describe("TelegramPollingSession", () => {
               expect(await listTelegramSpooledUpdateClaims({ spoolDir })).toEqual([]),
             );
           }
+          expect(stopBot).toHaveBeenCalledOnce();
           expect([...recorded]).toEqual(operation === "commit" ? ["first", "second"] : []);
           expect(await pendingUpdateIds(spoolDir, "all")).toEqual(
             operation === "commit" ? [] : [42],

@@ -582,6 +582,13 @@ describe("Telegram quote selection and accepted reply targets through HTTP", () 
                 held.release.resolve();
               }
               await tool;
+              await options?.onCompactionStart?.();
+              await waitForBotApiCall(
+                (call) =>
+                  call.method === "setMessageReaction" &&
+                  JSON.stringify(call.fields.reaction).includes("\u{1f5dc}\ufe0f"),
+              );
+              await options?.onCompactionEnd?.({ completed: true });
             } else {
               throw new Error("model failed");
             }
@@ -607,6 +614,15 @@ describe("Telegram quote selection and accepted reply targets through HTTP", () 
         }
         await work;
         await vi.advanceTimersByTimeAsync(31_000);
+        if (!cancelled) {
+          const initialReaction = calls.find(({ method }) => method === "setMessageReaction");
+          await waitForBotApiCall(
+            (call) =>
+              call !== initialReaction &&
+              call.method === "setMessageReaction" &&
+              JSON.stringify(call.fields.reaction).includes("👀"),
+          );
+        }
         expect(reactionErrors).toEqual([]);
         const reactions = acceptedCalls
           .filter(({ method }) => method === "setMessageReaction")
@@ -624,6 +640,9 @@ describe("Telegram quote selection and accepted reply targets through HTTP", () 
           expect(reactions).toContainEqual([
             { type: "emoji", emoji: outcome === "success" ? "👍" : "😱" },
           ]);
+          if (outcome === "success") {
+            expect(reactions).toContainEqual([{ type: "emoji", emoji: "\u{1f5dc}\ufe0f" }]);
+          }
         }
       } finally {
         held.release.resolve();

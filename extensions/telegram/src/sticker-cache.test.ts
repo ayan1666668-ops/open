@@ -49,6 +49,42 @@ describe("sticker-cache", () => {
     resetPluginStateStoreForTests();
   });
 
+  it.each([
+    {
+      operation: "lookup",
+      run: () => stickerCache.getCachedSticker("unavailable-sticker"),
+      fallback: null,
+    },
+    {
+      operation: "register",
+      run: () =>
+        stickerCache.cacheSticker({
+          fileId: "file-failure",
+          fileUniqueId: "unique-failure",
+          description: "Write failure should not block sticker handling",
+          cachedAt: "2026-01-26T13:00:00.000Z",
+        }),
+      fallback: undefined,
+    },
+    {
+      operation: "entries",
+      run: () => stickerCache.searchStickers("fox"),
+      fallback: [],
+    },
+  ])(
+    "returns the best-effort fallback when plugin-state $operation rejects",
+    async ({ operation, run, fallback }) => {
+      installStore({
+        ...store,
+        async [operation]() {
+          await Promise.resolve();
+          throw new Error(`${operation} failed`);
+        },
+      });
+      await expect(run()).resolves.toStrictEqual(fallback);
+    },
+  );
+
   describe("cacheSticker", () => {
     it("settles only after the backing write commits", async () => {
       const backingStore = store;
@@ -108,28 +144,6 @@ describe("sticker-cache", () => {
         description: "A delayed sticker",
         cachedAt: "2026-01-26T12:00:00.000Z",
       });
-    });
-
-    it("does not throw when plugin-state writes fail", async () => {
-      installStore({
-        ...createPluginStateKeyedStoreForTests("telegram", {
-          namespace: TELEGRAM_STICKER_CACHE_NAMESPACE,
-          maxEntries: TELEGRAM_STICKER_CACHE_MAX_ENTRIES,
-        }),
-        async register() {
-          await Promise.resolve();
-          throw new Error("write failed");
-        },
-      });
-
-      await expect(
-        stickerCache.cacheSticker({
-          fileId: "file-failure",
-          fileUniqueId: "unique-failure",
-          description: "Write failure should not block sticker handling",
-          cachedAt: "2026-01-26T13:00:00.000Z",
-        }),
-      ).resolves.toBeUndefined();
     });
   });
 
@@ -216,21 +230,6 @@ describe("sticker-cache", () => {
       const results = await stickerCache.searchStickers("cat keyboard");
       expect(results).toHaveLength(1);
       expect(results[0]?.fileUniqueId).toBe("cat-unique-1");
-    });
-
-    it("returns no matches when plugin-state search reads fail", async () => {
-      installStore({
-        ...createPluginStateKeyedStoreForTests("telegram", {
-          namespace: TELEGRAM_STICKER_CACHE_NAMESPACE,
-          maxEntries: TELEGRAM_STICKER_CACHE_MAX_ENTRIES,
-        }),
-        async entries() {
-          await Promise.resolve();
-          throw new Error("entries failed");
-        },
-      });
-
-      expect(await stickerCache.searchStickers("fox")).toStrictEqual([]);
     });
   });
 

@@ -501,6 +501,14 @@ describe("startTelegramWebhook", () => {
         expect(notFound.headers.get("x-openclaw-delivery-accepted")).toBeNull();
         expect(initSpy).toHaveBeenCalledTimes(1);
         expect(setWebhookSpy).toHaveBeenCalled();
+        const registration = requireRecord(
+          requireMockCall(setWebhookSpy, 0, "setWebhook")[1],
+          "webhook registration",
+        );
+        expect(registration.allowed_updates).toEqual(
+          expect.arrayContaining(["message_reaction", "channel_post"]),
+        );
+        expect(registration.allowed_updates).not.toContain("stopped_message_generation");
         expectMockMessageContains(runtimeLog, "webhook local listener on http://127.0.0.1:");
         expectMockMessageContains(runtimeLog, "/telegram-webhook");
         expectMockMessageContains(runtimeLog, "webhook advertised to telegram on http://");

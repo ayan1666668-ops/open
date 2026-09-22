@@ -119,6 +119,12 @@ describe("telegram ingress worker poll cadence", () => {
     await runtime.done;
 
     expect(runtime.pollBodies.map((body) => body.timeout)).toEqual([0, 0, 30]);
+    for (const body of runtime.pollBodies) {
+      expect(body.allowed_updates).toEqual(
+        expect.arrayContaining(["message_reaction", "channel_post"]),
+      );
+      expect(body.allowed_updates).not.toContain("stopped_message_generation");
+    }
     expect(runtime.messages.filter((message) => message.type === "poll-success")).toHaveLength(2);
   });
 

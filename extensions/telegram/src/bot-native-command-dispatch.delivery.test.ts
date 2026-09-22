@@ -209,6 +209,38 @@ describe("Telegram native argument menus", () => {
       expect.objectContaining({ message_thread_id: 77 }),
     );
   });
+
+  it.each(["high", "off"] as const)(
+    "shows the routed agent's per-model %s thinking level in its DM-topic menu",
+    async (thinking) => {
+      const cfg = commandConfig({
+        agents: {
+          ownership: "explicit",
+          defaults: {
+            model: "native-test/reasoner",
+            thinkingDefault: "medium",
+            models: { "native-test/reasoner": { params: { thinking: "low" } } },
+          },
+          entries: {
+            main: {},
+            alpha: {
+              models: { "native-test/reasoner": { params: { thinking } } },
+            },
+          },
+        },
+        bindings: [{ agentId: "alpha", match: { channel: "telegram", accountId: "default" } }],
+      });
+      await createBot(true, true, cfg, true).handleUpdate({
+        update_id: 3102,
+        message: { ...commandMessage("/think"), message_thread_id: 77 },
+      });
+      expect(sentMenu().text).toContain(`Current thinking level: ${thinking}.\n`);
+      expect(apiCalls).toHaveBeenCalledWith(
+        "sendMessage",
+        expect.objectContaining({ message_thread_id: 77 }),
+      );
+    },
+  );
 });
 
 describe("Telegram registered plugin delivery", () => {
