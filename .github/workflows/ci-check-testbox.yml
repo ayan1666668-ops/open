@@ -55,12 +55,76 @@ jobs:
           fetch-depth: ${{ github.event_name == 'pull_request' && '2' || '1' }}
           persist-credentials: false
       - name: Setup Node environment
+        id: setup-node-env
         uses: ./.github/actions/setup-node-env
         with:
           cache-mode: restore
           install-bun: "false"
+          restore-test-caches: "true"
+          vitest-worker-cache: "true"
           # Testbox hydration uses the ordinary pnpm store cache. Canonical CI
           # owns the exact dependency archive and never delegates here.
+      - name: Record restored production cache facts
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        env:
+          NODE_DISABLE_COMPILE_CACHE: "1"
+          PROOF_REPOSITORY: ${{ github.repository }}
+          PROOF_RUN_ID: ${{ github.run_id }}
+          PROOF_RUN_ATTEMPT: ${{ github.run_attempt }}
+          PROOF_JOB_KEY: ${{ github.job }}
+          PROOF_WORKFLOW_REF: ${{ github.workflow_ref }}
+          PROOF_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          PROOF_SOURCE_SHA: ${{ github.sha }}
+          PROOF_REF: ${{ github.ref }}
+          PROOF_EVENT: ${{ github.event_name }}
+          PROOF_LEASE_ID: ${{ inputs.testbox_id }}
+          PROOF_RUNNER_ENVIRONMENT: ${{ runner.environment }}
+          PROOF_RUNNER_NAME: ${{ runner.name }}
+          PROOF_VITEST_KEY: ${{ steps.setup-node-env.outputs.vitest-cache-matched-key }}
+          PROOF_GENERATION: ${{ steps.setup-node-env.outputs.vitest-cache-generation }}
+          PROOF_NODE_KEY: ${{ steps.setup-node-env.outputs.node-compile-cache-matched-key }}
+          PROOF_WORKER_KEY: ${{ steps.setup-node-env.outputs.vitest-worker-cache-matched-key }}
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from "node:fs";
+          import os from "node:os";
+          import { execFileSync } from "node:child_process";
+          const env = process.env;
+          const git = (...args) => execFileSync("git", args, { encoding: "utf8" }).trim();
+          const facts = {
+            version: 1,
+            origin: "github-actions-cache-restore-outputs",
+            capturedAt: new Date().toISOString(),
+            repository: env.PROOF_REPOSITORY,
+            backend: "blacksmith-testbox",
+            leaseId: env.PROOF_LEASE_ID,
+            runId: Number(env.PROOF_RUN_ID),
+            runAttempt: Number(env.PROOF_RUN_ATTEMPT),
+            jobKey: env.PROOF_JOB_KEY,
+            workflowRef: env.PROOF_WORKFLOW_REF,
+            workflowSha: env.PROOF_WORKFLOW_SHA,
+            githubSha: env.PROOF_SOURCE_SHA,
+            checkoutSha: git("rev-parse", "HEAD"),
+            checkoutTree: git("rev-parse", "HEAD^{tree}"),
+            checkoutRoot: fs.realpathSync(process.cwd()),
+            ref: env.PROOF_REF,
+            event: env.PROOF_EVENT,
+            runnerEnvironment: env.PROOF_RUNNER_ENVIRONMENT,
+            runnerName: env.PROOF_RUNNER_NAME,
+            runtime: { node: process.version, arch: process.arch, platform: process.platform,
+              uid: process.getuid(), cpus: os.availableParallelism(), memoryBytes: os.totalmem() },
+            caches: {
+              vitest: { matchedKey: env.PROOF_VITEST_KEY || "", generation: env.PROOF_GENERATION || "" },
+              node: { matchedKey: env.PROOF_NODE_KEY || "" },
+              workers: { matchedKey: env.PROOF_WORKER_KEY || "" },
+            },
+          };
+          fs.writeFileSync("/var/tmp/openclaw-production-cache-receipt.json",
+            JSON.stringify(facts, null, 2) + "\n", { mode: 0o600, flag: "wx" });
+          NODE
+      - name: Setup pinned Bun test runtime
+        uses: ./.github/actions/setup-test-bun
       - name: Prepare Testbox shell
         uses: ./.github/actions/prepare-testbox-shell
         with:

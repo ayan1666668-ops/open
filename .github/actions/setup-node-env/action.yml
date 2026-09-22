@@ -89,6 +89,18 @@ outputs:
   node-compile-cache-key:
     description: Exact Node compile cache key.
     value: ${{ steps.node-compile-cache.outputs.cache-primary-key }}
+  vitest-cache-matched-key:
+    description: Actual Vitest transform archive restored by this setup.
+    value: ${{ steps.vitest-cache.outputs.cache-matched-key }}
+  vitest-cache-generation:
+    description: Transform generation selected by this setup.
+    value: ${{ steps.vitest-cache-generation.outputs.value }}
+  node-compile-cache-matched-key:
+    description: Actual Node bytecode archive restored by this setup.
+    value: ${{ steps.node-compile-cache.outputs.cache-matched-key }}
+  vitest-worker-cache-matched-key:
+    description: Actual compiled-worker archive restored by this setup.
+    value: ${{ steps.vitest-worker-cache.outputs.cache-matched-key }}
   build-all-cache-key:
     description: Exact build-all cache key.
     value: ${{ steps.build-all-cache.outputs.cache-primary-key }}
