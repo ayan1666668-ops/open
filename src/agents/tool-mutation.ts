@@ -121,18 +121,21 @@ function readShellCommand(record: Record<string, unknown> | undefined): string |
 }
 
 function tokenizeSimpleShellCommand(command: string): string[] | undefined {
-  if (/[;&|<>\n\r`]/.test(command) || command.includes("\\")) {
-    return undefined;
-  }
-  for (const char of SHELL_EXPANSION_CHARS) {
-    if (command.includes(char)) {
-      return undefined;
-    }
-  }
   const tokens: string[] = [];
   let current = "";
   let quote: "'" | '"' | undefined;
   for (const char of command) {
+    // Quoted regex syntax is literal, not a shell pipeline or glob. Double quotes
+    // still expand substitutions; keep those and all escape syntax unclassified.
+    if (
+      char === "\\" ||
+      char === "\n" ||
+      char === "\r" ||
+      (quote === '"' && (char === "$" || char === "`")) ||
+      (!quote && (/[;&|<>`]/.test(char) || SHELL_EXPANSION_CHARS.has(char)))
+    ) {
+      return undefined;
+    }
     if (quote) {
       if (char === quote) {
         quote = undefined;
