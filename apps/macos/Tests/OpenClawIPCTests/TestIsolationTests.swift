@@ -59,7 +59,7 @@ struct TestIsolationTests {
         let root = try makeTempDirForTests()
         defer { try? FileManager.default.removeItem(at: root) }
         let processHome = FileManager.default.homeDirectoryForCurrentUser
-        let homeEnvironment = ["HOME", "CFFIXED_USER_HOME"].map { key in
+        let homeEnvironment = ["HOME", "CFFIXED_USER_HOME"].map { (key: String) in
             (key, getenv(key).map { String(cString: $0) })
         }
         let gatewayArguments = ["/fixture/openclaw", "gateway"]
