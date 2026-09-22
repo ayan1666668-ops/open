@@ -333,7 +333,9 @@ async function readLegacyAdapterSelection(
   conversations: readonly ConversationRef[],
   assertCurrent: () => void,
 ): Promise<ReadonlyArray<SessionBindingRecord | null>> {
-  const prepare = adapter.inspectByConversationAsync ?? adapter.resolveByConversationAsync;
+  const prepare =
+    adapter.inspectByConversationAsync ??
+    (adapter.inspectByConversation ? undefined : adapter.resolveByConversationAsync);
   if (prepare) {
     for (const conversation of conversations) {
       await prepare.call(adapter, { ...conversation });

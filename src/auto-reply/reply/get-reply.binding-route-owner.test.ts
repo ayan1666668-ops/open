@@ -176,7 +176,7 @@ it.each(
       scenario === "derived-none-to-global";
     const entered = createDeferred();
     const release = createDeferred();
-    let pending = transition && !inspectionReplacement;
+    let pending = false;
     let replacedDuringInspection = false;
     const lookup = (ref: ConversationRef) => {
       if (earlierChildChange) {
@@ -195,6 +195,18 @@ it.each(
       return ref.conversationId === "room" && ref.parentConversationId === "parent"
         ? current
         : null;
+    };
+    const readAsync = async (ref: ConversationRef) => {
+      if (
+        pending &&
+        scenario !== "metadata-during-touch" &&
+        (!earlierChildChange || ref.conversationId === request.conversationId)
+      ) {
+        pending = false;
+        entered.resolve();
+        await release.promise;
+      }
+      return lookup(ref);
     };
     adapter = {
       channel: "webchat",
@@ -216,6 +228,7 @@ it.each(
         : {}),
       resolveByConversation: lookup,
       inspectByConversation: lookup,
+      inspectByConversationAsync: readAsync,
       ...(inspectionReplacement
         ? {
             inspectByConversationAsync: async (ref: ConversationRef) => {
@@ -250,18 +263,7 @@ it.each(
             },
           }
         : {}),
-      resolveByConversationAsync: async (ref) => {
-        if (
-          pending &&
-          scenario !== "metadata-during-touch" &&
-          (!earlierChildChange || ref.conversationId === request.conversationId)
-        ) {
-          pending = false;
-          entered.resolve();
-          await release.promise;
-        }
-        return lookup(ref);
-      },
+      resolveByConversationAsync: readAsync,
       touchAsync: async () => {
         if (pending && scenario === "metadata-during-touch") {
           pending = false;
@@ -358,6 +360,7 @@ it.each(
       }
     };
     let ctx = inspectionReplacement ? undefined : await buildContext();
+    pending = transition && !inspectionReplacement;
     const invocation = ctx
       ? invoke(ctx)
       : buildContext().then((prepared) => {

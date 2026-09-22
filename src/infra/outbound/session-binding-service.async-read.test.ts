@@ -23,26 +23,29 @@ const record: SessionBindingRecord = {
 };
 
 describe("awaited binding read ownership", () => {
-  it("keeps admission inspection free of a legacy resolver's mutations", async () => {
-    let resolutionEffects = 0;
-    registerSessionBindingAdapter({
-      channel: "external",
-      accountId: "default",
-      listBySession: () => [],
-      inspectByConversation: () => record,
-      inspectByConversationAsync: async () => record,
-      resolveByConversation: () => {
-        resolutionEffects += 1;
-        return record;
-      },
-      resolveByConversationAsync: async () => {
-        resolutionEffects += 1;
-        return record;
-      },
-    });
-    expect(await readSessionBindingSelectionCurrent([record.conversation])).toEqual([record]);
-    expect(resolutionEffects).toBe(0);
-  });
+  it.each([false, true])(
+    "keeps admission inspection free of resolver mutations (async inspector=%s)",
+    async (asyncInspector) => {
+      let resolutionEffects = 0;
+      registerSessionBindingAdapter({
+        channel: "external",
+        accountId: "default",
+        listBySession: () => [],
+        inspectByConversation: () => record,
+        ...(asyncInspector ? { inspectByConversationAsync: async () => record } : {}),
+        resolveByConversation: () => {
+          resolutionEffects += 1;
+          return record;
+        },
+        resolveByConversationAsync: async () => {
+          resolutionEffects += 1;
+          return record;
+        },
+      });
+      expect(await readSessionBindingSelectionCurrent([record.conversation])).toEqual([record]);
+      expect(resolutionEffects).toBe(0);
+    },
+  );
 
   it.each([
     { inspect: true, change: "keep" },
