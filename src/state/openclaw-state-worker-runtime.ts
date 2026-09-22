@@ -410,6 +410,9 @@ export function executeSharedStateCommand(
       }) ?? { state: {}, basis: {} }
     );
   }
+  if (isNodeWorkerJournalCommand(command)) {
+    return executeNodeWorkerJournalCommand(command, context.databasePath, open);
+  }
   if (command.type === "deviceAuth.read" || command.type === "deviceAuth.readOrigin") {
     const read = (db: OpenClawStateDatabase["db"]) =>
       command.type === "deviceAuth.read"
@@ -510,9 +513,6 @@ export function executeSharedStateCommand(
     command.type === "conversationBindings.touch"
   ) {
     return executeCurrentConversationBindingCommand(command, writeOptions);
-  }
-  if (isNodeWorkerJournalCommand(command)) {
-    return executeNodeWorkerJournalCommand(command, writeOptions);
   }
   if (command.type === "sessionGroups.register") {
     return registerSessionGroupInDatabase(database, command.input.name, writeOptions.env);
