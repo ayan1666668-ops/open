@@ -1,11 +1,14 @@
 import { createHash } from "node:crypto";
 import type { CompactNodeTestShard, NodeTestShardGroup } from "./ci-node-test-plan.mts";
+import { mergeVitestPretestBuildModes } from "./vitest-build-prerequisites.mts";
+import { VITEST_PRETEST_BUILD_SECONDS } from "./vitest-shard-metadata.mts";
 
 const FIXED_JOB_SECONDS = 60;
 const MAX_PACKED_JOB_SECONDS = 720;
 
 // Complete serial BS8/two-worker child observations from 35702479645,
-// 35702772380 and 35707408465. Failed children are not successful wall samples.
+// 35702772380, 35707408465 and native Testbox run 35722202780.
+// Failed children are not successful wall samples.
 const TOOLING_WALLS: Record<string, { fingerprint: string; seconds: number }> = {
   "core-tooling-1": {
     fingerprint: "cc58959ec5a174f28b70f4d5da588926b0a5304826dc91e0be424211ff9f63fe",
@@ -28,41 +31,50 @@ const TOOLING_WALLS: Record<string, { fingerprint: string; seconds: number }> = 
     seconds: 218,
   },
   "core-tooling-6-hosted-1": {
-    fingerprint: "4b9450dedc5e7d153523fd52ccdaf8b83d9fc7f91baf26cfc92ec60c969c519e",
+    fingerprint: "373b9786c112b6c04404ad91dfb9fdcfd4937bc13d98a479a89e60ec64e2f193",
     seconds: 147,
   },
   "core-tooling-7-hosted-1": {
-    fingerprint: "9935f8d1d694ed59a777d48a28814fd73b39785c20ec3c73c7e3fc78c7be2733",
+    fingerprint: "4467f572a71b2e57c331390f6f6ae264f318c7819cd1d9e0a43f4b7ab6a6c0f1",
     seconds: 276,
   },
   "core-tooling-12-hosted-1": {
-    fingerprint: "8e700883fa93d7714ec08eaf74a97da3a14c76c9abdce25f80a5f034e5427059",
-    seconds: 373,
+    fingerprint: "890d8fe7c947c68c4527d77211309fe5121f8be0962e067163e9da534a68ac28",
+    seconds: 141,
   },
   "core-tooling-13-hosted-2": {
-    fingerprint: "f0d4f13d612aa5d924a204c7c08612976a64d22c06f90a4dee24b6bc52d6b841",
-    seconds: 240,
+    fingerprint: "78e44fe31b1d3804d8a2fff1088a73713e3950b404987df826c63b4712fe717b",
+    seconds: 351,
   },
   "core-tooling-12-hosted-2": {
-    fingerprint: "46c9fd1d91f1b27a3053d7ffe8e2e855b45c0abe50572d444fc7d5fdd0318dd5",
-    seconds: 206,
+    fingerprint: "c88b8bb3e584135e5e7c00472eeaf048f7aee028cde2db8d43907ff8736281a9",
+    seconds: 149,
   },
   "core-tooling-13-hosted-1": {
-    fingerprint: "ece99c506874619e8076efd308265838d150410af18866af36bbad53a448ff7f",
-    seconds: 202,
+    fingerprint: "9d67f308be60ae19e07eed77ae295950ca7b63def537f73d11d99ac854c58067",
+    seconds: 102,
   },
 };
 
-const SERIAL_TAIL_PAIRS = [
+type SerialTailPair = {
+  config: string;
+  children: Array<{
+    fingerprint: string;
+    seconds: number;
+    pretest?: { mode: NonNullable<NodeTestShardGroup["pretestBuildMode"]>; seconds: number };
+  }>;
+};
+
+const SERIAL_TAIL_PAIRS: SerialTailPair[] = [
   {
     config: "test/vitest/vitest.cli-process.config.ts",
     children: [
       {
-        key: "agentic-cli-process#selector-54-f7826a9ef2c4#generation-8e36d2d43531#part-6-of-7#include-14-4eac8c23d157",
+        fingerprint: "87825138f6f00ec44cf80bb03fb5035a5cfeb2bf77ce0a63562d8df8e266d108",
         seconds: 498,
       },
       {
-        key: "agentic-cli-process#selector-54-f7826a9ef2c4#generation-8e36d2d43531#part-7-of-7#include-15-d305c0ae5c0a",
+        fingerprint: "33425ecc4656211a0e2d108078497b0c71810484426e6f671a1f1c6d0e5d07ce",
         seconds: 643,
       },
     ],
@@ -71,44 +83,59 @@ const SERIAL_TAIL_PAIRS = [
     config: "test/vitest/vitest.tooling.config.ts",
     children: [
       {
-        key: "core-tooling-6#selector-79-8962b2387129#generation-1f9a356acb92#part-2-of-2#include-78-7a0f52a33d72",
-        seconds: 219,
+        fingerprint: "4be0076eea5e784cb981767b8c59a1b8120c22f0b432495d9a7c1ca09ba66c74",
+        seconds: 55,
+        pretest: { mode: "runtime", seconds: 120 },
       },
       {
-        key: "core-tooling-8#selector-42-d01b820346c9#generation-7b6f7f3a2425#part-2-of-2#include-41-a1c886e94c53",
-        seconds: 529,
+        fingerprint: "e81aadf38a0bef63298b8443123136c79f96ae4f1f669e61d0c4e858aadf6ecb",
+        seconds: 406,
+      },
+    ],
+  },
+
+  {
+    config: "test/vitest/vitest.tooling.config.ts",
+    children: [
+      {
+        fingerprint: "ac3b33e1ddb668d8ef271d960b06d087e3711069b3ecabab2e5aa536f4d8ac93",
+        seconds: 328,
+      },
+      {
+        fingerprint: "85d073a801fa873b7196f05434888aef0aceb5eff3d4bf7632645b4a32adbc15",
+        seconds: 638,
       },
     ],
   },
 ];
 
-function serialTwoWorkerJob(job: CompactNodeTestShard, runner: string): boolean {
+function serialTwoWorkerJob(
+  job: CompactNodeTestShard,
+  runner: string,
+  allowBuild = false,
+): boolean {
   return (
     job.runner === runner &&
     job.planConcurrency === 1 &&
     !job.requiresDist &&
-    !job.pretestBuildMode &&
+    (!job.pretestBuildMode || allowBuild) &&
     Object.entries(job.env ?? {}).every(
       ([key, value]) => key === "OPENCLAW_VITEST_MAX_WORKERS" && value === "2",
     ) &&
     job.groups.every(
       (group) =>
         !group.requiresDist &&
-        !group.pretestBuildMode &&
+        (!group.pretestBuildMode || allowBuild) &&
         group.fallbackMaxWorkers === undefined &&
         group.minTotalMemoryBytes === undefined,
     )
   );
 }
 
-function toolingWall(group: NodeTestShardGroup): number | undefined {
-  const observation = TOOLING_WALLS[group.shard_name];
-  if (!observation || !group.includePatterns?.length) {
-    return undefined;
-  }
-  // Hash the executed child contract, including selector order. A changed
-  // inventory or policy expires this placement observation rather than shrinking it.
-  const fingerprint = createHash("sha256")
+function executedGroupFingerprint(group: NodeTestShardGroup): string {
+  // Parent timing generations can change when a sibling changes. Only the
+  // executed child contract owns this observation; preserve selector order.
+  return createHash("sha256")
     .update(
       JSON.stringify({
         configs: group.configs,
@@ -117,11 +144,32 @@ function toolingWall(group: NodeTestShardGroup): number | undefined {
         ),
         includePatterns: group.includePatterns,
         shard_name: group.shard_name,
-        ...(group.timing_key ? { timing_key: group.timing_key } : {}),
+        ...(group.pretestBuildMode ? { pretestBuildMode: group.pretestBuildMode } : {}),
       }),
     )
     .digest("hex");
-  return fingerprint === observation.fingerprint ? observation.seconds : undefined;
+}
+
+function toolingWall(group: NodeTestShardGroup): number | undefined {
+  const observation = TOOLING_WALLS[group.shard_name];
+  if (!observation || !group.includePatterns?.length) {
+    return undefined;
+  }
+  return executedGroupFingerprint(group) === observation.fingerprint
+    ? observation.seconds
+    : undefined;
+}
+
+function isNumberedToolingGroup(group: NodeTestShardGroup): boolean {
+  return (
+    /^core-tooling-\d+(?:-hosted-\d+)?$/u.test(group.shard_name) &&
+    group.configs.length === 1 &&
+    group.configs[0] === "test/vitest/vitest.tooling.config.ts" &&
+    Boolean(group.includePatterns?.length) &&
+    Object.entries(group.env ?? {}).every(
+      ([key, value]) => key === "OPENCLAW_VITEST_MAX_WORKERS" && value === "2",
+    )
+  );
 }
 
 /** Reuse measured serial placement without replacing the general capacity-pricing owner. */
@@ -129,55 +177,106 @@ export function rebalanceMeasuredHybridJobs(
   jobs: CompactNodeTestShard[],
   options: {
     runner: string;
+    estimateGroup: (group: NodeTestShardGroup) => { seconds: number; complete: boolean };
     canShare: (groups: NodeTestShardGroup[]) => boolean;
   },
 ): CompactNodeTestShard[] {
   const split = jobs.flatMap((job) => {
-    const pair =
-      serialTwoWorkerJob(job, options.runner) && job.groups.length === 2
-        ? SERIAL_TAIL_PAIRS.find(({ config, children }) =>
-            children.every(({ key }) =>
-              job.groups.some(
-                (group) =>
-                  group.timing_key === key &&
-                  group.configs.length === 1 &&
-                  group.configs[0] === config &&
-                  Object.entries(group.env ?? {}).every(
-                    ([name, value]) => name === "OPENCLAW_VITEST_MAX_WORKERS" && value === "2",
-                  ),
+    if (
+      job.groups.length < 2 ||
+      !serialTwoWorkerJob(job, options.runner, true) ||
+      job.pretestBuildMode !==
+        mergeVitestPretestBuildModes(job.groups.map((group) => group.pretestBuildMode))
+    ) {
+      return [job];
+    }
+    const observations = job.groups.map(
+      (group) =>
+        SERIAL_TAIL_PAIRS.flatMap((pair) =>
+          pair.children.filter(
+            (child) =>
+              executedGroupFingerprint(group) === child.fingerprint &&
+              group.pretestBuildMode === child.pretest?.mode &&
+              group.configs.length === 1 &&
+              group.configs[0] === pair.config &&
+              Object.entries(group.env ?? {}).every(
+                ([name, value]) => name === "OPENCLAW_VITEST_MAX_WORKERS" && value === "2",
               ),
-            ),
+          ),
+        )[0],
+    );
+    const pair = SERIAL_TAIL_PAIRS.find(
+      ({ children }) =>
+        children.length === job.groups.length &&
+        children.every((child) => observations.includes(child)),
+    );
+    const tooling = job.groups.every(isNumberedToolingGroup);
+    const nativeSeconds = job.groups.map(
+      (group, index) => observations[index]?.seconds ?? (tooling ? toolingWall(group) : undefined),
+    );
+    const seconds = job.groups.map((group, index) =>
+      Math.max(nativeSeconds[index] ?? 0, tooling ? options.estimateGroup(group).seconds : 0),
+    );
+    const buildSeconds = job.groups.map((group, index) =>
+      group.pretestBuildMode
+        ? Math.max(
+            VITEST_PRETEST_BUILD_SECONDS[group.pretestBuildMode],
+            observations[index]?.pretest?.seconds ?? 0,
           )
-        : undefined;
-    if (!pair) {
+        : 0,
+    );
+    const completeWall =
+      Math.max(
+        job.predictedSeconds ?? 0,
+        (nativeSeconds.every((value) => value !== undefined)
+          ? nativeSeconds.reduce<number>((sum, value) => sum + value!, 0)
+          : seconds.reduce((sum, value) => sum + value, 0)) + Math.max(...buildSeconds),
+      ) + FIXED_JOB_SECONDS;
+    // Complete child walls identify existing tails more directly than summed
+    // file estimates. Packing still retains the higher canonical price below.
+    const limit = 600;
+    if (!pair && (!tooling || completeWall <= limit)) {
       return [job];
     }
     return job.groups.map((group, index) => ({
       ...job,
-      checkName: index === 0 ? job.checkName : `${job.checkName}-tail`,
-      shardName: index === 0 ? job.shardName : `${job.shardName}-tail`,
+      checkName:
+        index === 0 ? job.checkName : `${job.checkName}-tail${index === 1 ? "" : `-${index + 1}`}`,
+      shardName:
+        index === 0 ? job.shardName : `${job.shardName}-tail${index === 1 ? "" : `-${index + 1}`}`,
       groups: [group],
+      pretestBuildMode: group.pretestBuildMode,
       predictedSeconds: Math.max(
         job.predictedSeconds ?? 0,
-        pair.children.find(({ key }) => key === group.timing_key)!.seconds + FIXED_JOB_SECONDS,
+        seconds[index]! + buildSeconds[index]! + FIXED_JOB_SECONDS,
       ),
     }));
   });
 
+  const originalJobs = new Set(jobs);
   const measured = split.flatMap((job) => {
-    if (!serialTwoWorkerJob(job, options.runner)) {
+    if (
+      !originalJobs.has(job) ||
+      !serialTwoWorkerJob(job, options.runner) ||
+      !job.groups.every(isNumberedToolingGroup)
+    ) {
       return [];
     }
-    const walls = job.groups.map(toolingWall);
-    if (walls.some((seconds) => seconds === undefined)) {
-      return [];
-    }
+    const prices = job.groups.map((group) => {
+      const estimate = options.estimateGroup(group);
+      const observed = toolingWall(group);
+      return {
+        seconds: Math.max(estimate.seconds, observed ?? 0),
+        complete: estimate.complete || observed !== undefined,
+      };
+    });
     return [
       {
         job,
+        complete: prices.every((price) => price.complete),
         seconds: Math.max(
           job.predictedSeconds ?? 0,
-          walls.reduce<number>((sum, seconds) => sum + seconds!, 0),
+          prices.reduce((sum, price) => sum + price.seconds, 0),
         ),
       },
     ];
@@ -192,7 +291,9 @@ export function rebalanceMeasuredHybridJobs(
     ]),
   );
   const candidates = measured
-    .filter(({ seconds }) => seconds + FIXED_JOB_SECONDS <= MAX_PACKED_JOB_SECONDS)
+    .filter(
+      ({ seconds, complete }) => complete && seconds + FIXED_JOB_SECONDS <= MAX_PACKED_JOB_SECONDS,
+    )
     .toSorted((a, b) => b.seconds - a.seconds || a.job.checkName.localeCompare(b.job.checkName));
   if (candidates.length < 2) {
     return split.map((job) => priced.get(job) ?? job);

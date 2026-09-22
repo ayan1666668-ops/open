@@ -1384,12 +1384,19 @@ describe("CI changed Node test plan", () => {
     }
   });
 
-  it.each(["blacksmith", "hybrid", "runson", "github"])(
-    "keeps measured compact packing changes under the %s full-plan policy",
-    (runnerBackend) => {
-      const shards = createChangedNodeTestShards(["scripts/lib/ci-measured-compact-packing.mts"], {
-        runnerBackend,
-      });
+  it.each([
+    ...["blacksmith", "hybrid", "runson", "github"].map((runnerBackend) => ({
+      changedPath: "scripts/lib/ci-measured-compact-packing.mts",
+      runnerBackend,
+    })),
+    ...["scripts/lib/ci-test-timings.mts", "scripts/lib/vitest-shard-metadata.mts"].flatMap(
+      (changedPath) =>
+        ["blacksmith", "hybrid", "runson"].map((runnerBackend) => ({ changedPath, runnerBackend })),
+    ),
+  ])(
+    "keeps $changedPath under the $runnerBackend full-plan policy",
+    ({ changedPath, runnerBackend }) => {
+      const shards = createChangedNodeTestShards([changedPath], { runnerBackend });
       if (runnerBackend === "github") {
         expect(shards).not.toBeNull();
         expect(

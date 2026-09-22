@@ -57,9 +57,9 @@ Numbered compact bins change when membership changes. A matching suffix does not
 
 The [on-demand pilot](https://github.com/openclaw/openclaw/actions/runs/35549787290) measured the two critical compact jobs at 561/816 seconds on Blacksmith versus 755/1259 seconds on `c8i.4xlarge`: 35%/54% slower. Full Gateway-core failed on AWS at every tested worker count. Cron scaled from 156 to 138 seconds on `c8i.8xlarge` and 126 to 110 seconds on `c8a.8xlarge` at 8 versus 16 workers, but lacks a matching Blacksmith control. Checks, artifact builds, extensions, and UI have no pilot comparison.
 
-The opt-in `runson` profile derives from hybrid and extracts the three `core-runtime-cron-parallel-*` children into one serial job on `c8i.8xlarge`: 32 vCPUs, 64 GiB RAM, `ubuntu24-full-x64`, and an 80 GB gp3 root. On the measured inventory, all 258 cron files retain their two-worker job and group ceilings. The three source Blacksmith jobs retain their other children. Hybrid now separates the two measured serial CLI-process/tooling tail pairs and packs nine measured tooling rows into four on their existing Blacksmith 8-class runners. RunsOn inherits that placement and adds its single cron row. The new broad-PR counts are 98 Node /60 compact on hybrid and 99 Node /61 compact on RunsOn, within unchanged caps. Other families retain their placement. The pilot's eight-worker, 156-second cron measurement is historical context; the complete two-worker comparison below now owns this placement evidence.
+The opt-in `runson` profile derives from hybrid and extracts the three `core-runtime-cron-parallel-*` children into one serial job on `c8i.8xlarge`: 32 vCPUs, 64 GiB RAM, `ubuntu24-full-x64`, and an 80 GB gp3 root. On the retained cron comparison inventory, all 258 files kept their two-worker job and group ceilings, and the source Blacksmith jobs retained their other children. RunsOn inherits hybrid's current splitting and packing before adding its cron row. Current inventory counts and pricing are recorded in [measured compact packing](/ci/routing-costs#measured-compact-packing); the earlier fixed nine-to-four projection is not a universal result. The pilot's eight-worker, 156-second cron wall remains historical context, while the complete two-worker comparison below owns the available provider evidence.
 
-The earlier CLI pair measurements predicted a 496-second largest split job. Later compatible child observations were 497.07 and 642.11 seconds: the current rounded floors, including 60 seconds of setup, are **558 and 703 seconds**. The tooling pair's completed children give **279 and 589 seconds**. The 631-second failed tooling child remains a censored failure, not a completed successful sample. These predictions do not guarantee the original fifteen-minute wall. The splits now apply to hybrid and RunsOn, preserving configs, selectors, worker ceilings and deadlines; changed selector generations expire the exceptions.
+The compatible CLI observations retain **558 and 703-second forecasts including one 60-second setup allowance**. Separating their serial pair does not establish a 600-second maximum for each indivisible child. Eligible serial tooling pairs now split above a 600-second complete-wall estimate; packing separate short jobs uses a 720-second admission limit. These are placement estimates, not raised test deadlines or guarantees about the fifteen-minute workflow wall.
 
 [Qualification run 35702772380](https://github.com/openclaw/openclaw/actions/runs/35702772380), attempt 1 at `84733d1a17a9a7321ac74099e421889099e411b4`, ran the same cron descriptors on all three providers. All three cron jobs passed with two workers and one serial child plan. The RunsOn allocation reported `instance-life-cycle=spot`; no interruption occurred. Wait below is job creation to start, including matrix admission, not pure provider boot time.
 
@@ -69,7 +69,7 @@ The earlier CLI pair measurements predicted a 496-second largest split job. Late
 | Blacksmith 32-class       |             8 |       2 |     432s |            393.71s | 283s | Pass   |
 | GitHub `ubuntu-24.04`     |             4 |       2 |     672s |            624.14s | 243s | Pass   |
 
-RunsOn's job duration was 36 seconds shorter than the Blacksmith control's, an 8.3% reduction in this single same-run comparison. It does not establish a repeated distribution or qualify the complete workflow. The fresh Blacksmith child measurement is 393.71 seconds, or 6.56 minutes of candidate serial work removed from the existing source jobs, approximately $0.4200 at the historical $0.064/minute list rate. The control's complete 7.2-minute job is an added qualification job, not the amount removed from production. The source jobs retain other children and setup. The two Blacksmith 8-class tail splits add an estimated 1.5–2 minutes of repeated setup at 45–60 seconds each. Runtime interactions, those added steps, and AWS allocation cost must be included before claiming net whole-run savings.
+RunsOn's job duration was 36 seconds shorter than the Blacksmith control's, an 8.3% reduction in this single same-run comparison. It does not establish a repeated distribution or qualify the complete workflow. The fresh Blacksmith child measurement is 393.71 seconds, or 6.56 minutes of candidate serial work removed from the existing source jobs, approximately $0.4200 at the historical $0.064/minute list rate. The control's complete 7.2-minute job is an added qualification job, not the amount removed from production. The source jobs retain other children and setup. Each additional Blacksmith 8-class split adds an estimated 45–60 seconds of setup; the current inventory accounting appears below. Runtime interactions, those added steps, and AWS allocation cost must be included before claiming net whole-run savings.
 
 The earlier [baseline run 35688659765](https://github.com/openclaw/openclaw/actions/runs/35688659765) measured the same cron descriptors at 252.63 combined child seconds. The newer 393.71-second control replaces that 4.21-minute costing assumption; the variation is another reason not to equate a child-duration forecast with realized savings.
 
@@ -91,7 +91,7 @@ Report observed interruptions and retry attempts separately from this documented
 
 The 300-second changed-extension budget combines the same 119 child envelopes into 40 jobs instead of 47 on the September 22 counting inventory. Estimated work remains 10,140 seconds. At 45–60 seconds of fixed setup per job, the extension slice changes from 204.25–216 to 199–209 machine-minutes: a 5.25–7 minute saving. At the historical 8-class list rate of $0.016/minute, that is $0.084–0.112 per broad PR. Public hosted execution has no metered Linux runner charge; this saving is capacity there, not a cash saving.
 
-The [capacity-pricing correction](https://github.com/openclaw/openclaw/pull/155277) owns compact estimates. Replaying its committed `47b18faa725` inventory with only the extension budget changed gives the following conditional counts. That dependency was still under review when sampled; this table is not qualification of its candidate or proof of the final combined branch.
+The following historical replay uses the capacity-pricing candidate's committed `47b18faa725` inventory with only the extension budget changed. These conditional counts describe that earlier experiment, not the final rebased inventory or qualification of the combined branch.
 
 | Profile    | Broad PR Node rows, 240s → 300s | Unchanged core Node rows | Largest predicted core / extension job |
 | ---------- | ------------------------------: | -----------------------: | -------------------------------------: |
@@ -105,53 +105,51 @@ Predictions can be wrong. The old 982-second extension job included database-wor
 
 ## Measured compact packing
 
-Nine existing serial tooling jobs contain eleven complete child envelopes. Native
-runs `35702479645`, `35702772380`, and `35707408465` measured them on the
-Blacksmith 8-class (two actual CPUs), with two workers, one child at a time and
-no runtime build. Packing retains each original job's child order and every
-child's complete execution contract.
+Hybrid placement reuses the canonical tooling estimator from the [capacity-pricing work](https://github.com/openclaw/openclaw/pull/155277). It reads committed Blacksmith file measurements through `readToolingFileTimings` and passes them through the existing estimator's optional file-map argument. Only this hybrid placement pass consumes that additional map; RunsOn inherits the hybrid plan. The broader timing payload and global pricing coefficients are unchanged, so this route does not create a competing file-price table.
 
-The packing admission uses the greater of the existing owner's prediction and
-the sum of successful child wall floors, then adds **60 seconds once per new
-job**. No worker-ratio discount is applied. A complete selector/config/environment
-fingerprint prevents a changed workload from spending an old observation.
-Different classes, worker ceilings, parallel jobs and runtime builds retain their
-existing placement. Higher prices from the general pricing owner are never
-replaced by faster measurements. [PR #155277](https://github.com/openclaw/openclaw/pull/155277)
-continues to own the general capacity-pricing correction; this bounded placement
-rule does not repair unrelated underpriced groups or copy its refit payload.
+The canonical collector accepts a complete singleton invocation duration when one declared tooling file, one passing file summary, one duration, matching reporter identity and successful exit agree. Native file summaries retain precedence. Six singleton file prices were refitted from successful jobs and children in three failed workflows; a seventh stayed within the owner's 15% threshold. Seven scoped native Testbox file updates fill missing eligible prices and correct the provision estimate. Failed workflows and cancelled lease cleanup never supply complete-inventory or pruning evidence.
 
-| Existing tooling rows, identified by complete children | New predicted wall including setup |
-| ------------------------------------------------------ | ---------------------------------: |
-| `12-hosted-1` + `13-hosted-2`                          |                               673s |
-| `12-hosted-2` + `13-hosted-1` + `3`                    |                               671s |
-| `7-hosted-1` + `2` + `6-hosted-1`                      |                               687s |
-| `5` + `1` + `4`                                        |                               672s |
+Packing admits serial Blacksmith 8-class jobs with the existing two-worker ceiling, numbered tooling children and no runtime-build prerequisite. Every child needs **complete per-file measurements or an exact complete-child native observation** before its job can acquire additional packed work. Default two-second hints for unknown files do not satisfy that requirement. An incompletely measured job keeps its original membership and receives its conservative quoted cost and setup allowance.
 
-Names above are `core-tooling-*` child names, not stable numbered job positions.
-These four off-path rows have a **720-second admission bound**, not a
-sub-360-second forecast. Nine-to-four cannot meet a 600-second bound with the
-retained prices. In particular, the original proposed pairing of tooling row35
-with row24 is rejected by the newer measurements. Native execution must still
-verify the new combinations; setup variation and queueing are not covered by a
-packing estimate.
+The complete packed estimate is **60 seconds of setup plus the greater of the existing owner job price and summed canonical group prices**, retaining compatible native child observations as lower bounds. Native wall floors are not discounted by a worker ratio; the canonical file estimator keeps its normal worker-aware calculation. Each packed job must fit **720 seconds including setup**, preserve complete children and their order, respect sibling-family separation and retain its deadline. Higher owner prices cannot be replaced by faster historical samples.
 
-Five fewer setups save a conditional 3.75–5 Blacksmith minutes. The two separate
-CLI/tooling tails add 1.5–2 setup minutes, giving **2.25–3 net Blacksmith 8-class
-minutes /$0.036–$0.048** per broad hybrid PR before runtime interactions. Main
-omits these tooling rows, so its CLI split adds one setup instead. Extension
-packing remains 47→40 on its controlled inventory.
+Four new main tooling tests changed the earlier selectors. The same estimator now prices the changed inventory instead of disabling packing wholesale. Only affected jobs lacking complete file or native evidence are excluded from merging. Native observations bind to the executed config, environment, ordered selectors, child name and build mode; a parent timing key remains provenance, not admission authority. An unchanged child can therefore retain its observation when a sibling changes, while a changed executed contract expires the old observation safely.
 
-| Profile and shape                | Before Node /compact | After Node /compact | Caps Node /compact |
-| -------------------------------- | -------------------: | ------------------: | -----------------: |
-| Hybrid main                      |               45 /46 |              46 /47 |             70 /90 |
-| Hybrid broad PR                  |              101 /63 |              98 /60 |            130 /90 |
-| RunsOn main-shaped qualification |               47 /48 |              47 /48 |             70 /90 |
-| RunsOn broad PR                  |              104 /66 |              99 /61 |            130 /90 |
+Eligible serial tooling jobs with multiple children split above a **600-second complete-wall estimate**. Complete native child totals drive this decision when available, while the existing job prediction remains a floor; otherwise canonical estimates supply the child costs. Packing still retains any higher canonical price. Exact observed critical pairs also split. Runtime preparation stays only on the requiring child, and newly split critical rows cannot be repacked or charged another setup by that pass. The 703-second CLI forecast remains an unresolved indivisible tail.
 
-Ordinary main still does not select AWS. The admitted main-shaped qualification
-can select RunsOn and excludes comparison controls. Its initial preflight stays
-hosted until authorization; record that difference from an automatic main push.
+### Native calibration
+
+[Linux Testbox run 35722202780](https://github.com/openclaw/openclaw/actions/runs/35722202780) used source `2fd7485b450e12ef5574645d7b648d61ee5ce8a2` on the Blacksmith 8-class, with two observed CPUs, two workers and one child at a time. All eight selected children and the runtime preparation completed successfully. The enclosing workflow was **cancelled during lifecycle cleanup**, so it is not a green workflow or fifteen-minute qualification. Source correspondence retains the recorded runner-label fixture difference.
+
+| Original parent    | Complete `core-tooling-*` children and successful walls | Parent test envelope | Separate runtime preparation |
+| ------------------ | ------------------------------------------------------- | -------------------: | ---------------------------: |
+| `compact-small-32` | `9-hosted-1`: 54.406s; `8-hosted-2`: 405.766s           |             461.693s |                     119.271s |
+| `compact-small-34` | `6-hosted-2`: 327.673s; `9-hosted-2`: 637.106s          |             965.607s |                            — |
+| `compact-small-35` | `12-hosted-1`: 140.024s; `13-hosted-2`: 350.159s        |             491.441s |                            — |
+| `compact-small-36` | `12-hosted-2`: 148.109s; `13-hosted-1`: 101.797s        |             251.121s |                            — |
+
+Rounded native components plus one 60-second setup yield **235/466-second floors** for the first pair and **388/698-second floors** for the second. Preparation is charged only to `9-hosted-1`. The new complete `9-hosted-2` sample replaces no failure outcome: the earlier failed 631-second observation remains censored. The four packing-child measurements update only their new exact fingerprints; final packing also retains the higher canonical prices. These are child/build receipts and forecasts, not complete Actions job walls with queueing.
+
+### Current inventory
+
+On the working candidate rebased onto `2c7feb0648c`, hybrid's broad-PR plan separates two critical pairs and packs **seven eligible jobs into three**. Four removed setups save 3–4 minutes; the two splits add 1.5–2 minutes, leaving a conditional **1.5–2 Blacksmith 8-class minutes /$0.024–$0.032** before runtime interactions. Main adds one split and its setup. Extension packing retains its separate controlled 47→40-job comparison.
+
+The immutable nine-job calibration cohort fits four jobs with canonical forecasts of **629, 539, 662 and 672 seconds**. That cohort checks the policy; it does not define the current inventory's job count. Current packed `compact-small-21` forecasts 617 seconds, and tooling `compact-small-33` forecasts 576.5 seconds. The longest known forecast remains the 703-second CLI child.
+
+| Profile and shape                | Before Node /compact | Final Node /compact | Final Node classes        | Caps Node /compact |
+| -------------------------------- | -------------------: | ------------------: | ------------------------- | -----------------: |
+| Hybrid main                      |               44 /45 |              45 /46 | BS8: 14; BS32: 31         |             70 /90 |
+| Hybrid broad PR                  |              100 /62 |              98 /60 | BS8: 65; BS32: 33         |            130 /90 |
+| RunsOn main-shaped qualification |               45 /46 |              46 /47 | BS8: 14; BS32: 31; AWS: 1 |             70 /90 |
+| RunsOn broad PR                  |              101 /63 |              99 /61 | BS8: 65; BS32: 33; AWS: 1 |            130 /90 |
+| Blacksmith main                  |               51 /52 |              51 /52 | Unchanged                 |             70 /90 |
+| Blacksmith broad PR              |              105 /67 |             105 /67 | Unchanged                 |            130 /90 |
+| GitHub main                      |               57 /58 |              57 /58 | Hosted: 57                |             70 /90 |
+| GitHub broad PR                  |              111 /73 |             111 /73 | Hosted: 111               |            130 /90 |
+
+Compact counts include dist descriptors; broad-PR Node counts include 40 extension rows. RunsOn adds one cron job to the hybrid plan. All counts stay inside the unchanged 70/130/90 caps. Together, current Node and extension packing remove a net nine setups from a broad PR: an estimated 6.75–9 Blacksmith 8-class minutes, or $0.108–$0.144 before runtime interactions. Main adds one setup, approximately 0.75–1 minute or $0.012–$0.016. These counts and costs are planner arithmetic, not native performance acceptance. Final measurements are recorded in [PR #155403](https://github.com/openclaw/openclaw/pull/155403).
+
+Ordinary main still does not select AWS. The admitted main-shaped qualification can select RunsOn and excludes comparison controls. Its initial preflight stays hosted until authorization. Qualifications retain their coverage shape on reruns while using hosted routing, resource policies and deadlines; raw GitHub context continues to own authentication, concurrency and cache publication.
 
 ## Whole-run acceptance
 
@@ -159,13 +157,13 @@ hosted until authorization; record that difference from an automatic main push.
 
 The baseline allocated 29/2/10 active Blacksmith 32/16/8-class jobs and 25 hosted Ubuntu jobs. Skipped placeholders consumed no runners. That is 258.15 Blacksmith machine-minutes; historical label rates imply $13.84, while the campaign's supplied estimate was $18–20. These are pricing assumptions, not an invoice. Moving artifact builds back adds one Blacksmith job and approximately 4.67 Blacksmith minutes using the older build median; extension compaction applies to PRs only.
 
-Completion requires measured main-shaped and broad-fallback PR-shaped runs for each changed profile at or below 900 seconds, with every Blacksmith class median assignment below 60 seconds. Record actual job and step walls, total workflow wall, class counts, and cost against the same baseline. Planner estimates, reduced rows, and a successful test result alone do not establish this performance gate. The routing and packing changes remain unqualified until those exact-head observations exist.
+Completion requires measured main-shaped and broad-fallback PR-shaped runs for each changed profile at or below 900 seconds, with every Blacksmith class median assignment at most 60 seconds. Record actual job and step walls, total workflow wall, class counts, and cost against the same baseline. Planner estimates, reduced rows, and a successful test result alone do not establish this performance gate. The routing and packing changes remain unqualified until those exact-head observations exist.
 
 The two native runs at `84733d1a17a9a7321ac74099e421889099e411b4` both failed and exceeded the wall target:
 
 | Native run                                                                             | Complete wall | Active jobs | Blacksmith minutes | Hosted Ubuntu minutes | Estimated Blacksmith compute |
 | -------------------------------------------------------------------------------------- | ------------: | ----------: | -----------------: | --------------------: | ---------------------------: |
-| [Hybrid PR 35702479645](https://github.com/openclaw/openclaw/actions/runs/35702479645) |        17m57s |         151 |             906.50 |                111.32 |                     $33.5010 |
+| [Hybrid PR 35702479645](https://github.com/openclaw/openclaw/actions/runs/35702479645) |        17m57s |         151 |             906.50 |                111.32 |                     $33.5011 |
 | RunsOn qualification 35702772380                                                       |        17m33s |         155 |             946.62 |                122.35 |                     $34.6651 |
 
-Qualification additionally used 6.6 job minutes on Spot, with the $0.076286 launch-to-completion estimate above. It includes the two extra cron controls and different dispatch admission, so subtracting these total costs would not isolate the production routing change. Blacksmith Linux class median waits were 12 seconds in the PR and 9–10 seconds in qualification. Windows medians were 48 and **61 seconds**, respectively; qualification therefore also missed the under-60-second class wait target. The successful job tails were 950 seconds in the PR and 907 seconds in qualification. Passing cron controls do not turn either failed workflow into a green or fifteen-minute result. Main-shaped proof remains outstanding.
+Qualification additionally used 6.6 job minutes on Spot, with the $0.076286 launch-to-completion estimate above. It includes the two extra cron controls and different dispatch admission, so subtracting these total costs would not isolate the production routing change. Blacksmith Linux class median waits were 12 seconds in the PR and 9–10 seconds in qualification. Windows medians were 48 and **61 seconds**, respectively; qualification therefore also missed the under-60-second class wait target. The successful job tails were 950 seconds in the PR and 907 seconds in qualification. Passing cron controls do not turn either failed workflow into a green or fifteen-minute result. These runs predate the current calibrated packing candidate and do not qualify it. Current main-shaped and broad-PR receipts are recorded in [PR #155403](https://github.com/openclaw/openclaw/pull/155403).

@@ -64,6 +64,7 @@ import {
   readCompactGroupTimings,
   readCompleteSplitGenerationSeconds,
   readRuntimePlacementTimings,
+  readToolingFileTimings,
   resolveRuntimePlacementSeconds,
 } from "./ci-test-timings.mts";
 import { isStripeEligibleTestFile, listTrackedTestFiles } from "./list-test-files.mts";
@@ -1099,6 +1100,7 @@ function estimateParallelToolingSeconds(
   group: Pick<NodeTestShardGroup, "env">,
   files: readonly string[],
   runnerBackend: string | undefined,
+  fileTimings?: Readonly<Record<string, number>>,
 ): number {
   const workers = Math.min(
     files.length,
@@ -1107,7 +1109,7 @@ function estimateParallelToolingSeconds(
         PINNED_COMPACT_GROUP_ENV.OPENCLAW_VITEST_MAX_WORKERS,
     ),
   );
-  const weights = files.map(toolingFileWeight);
+  const weights = files.map((file) => toolingFileWeight(file, fileTimings));
   // File observations retain their elapsed cost under parallel execution. Old
   // numbered parent/child spans describe serial files and cannot price this lane.
   return (
@@ -4527,10 +4529,23 @@ function createCompactNodeTestShardBundles(
     job.predictedSeconds = Math.ceil(job.predictedSeconds! - savedSeconds);
   }
 
+  const toolingFileTimings =
+    options.runnerBackend === "hybrid" ? readToolingFileTimings("blacksmith") : undefined;
   const measuredJobs =
     options.runnerBackend === "hybrid" && options.compactMode !== undefined
       ? rebalanceMeasuredHybridJobs(finalJobs, {
           runner: DEFAULT_NODE_TEST_RUNNER,
+          estimateGroup: (group) => ({
+            seconds: estimateParallelToolingSeconds(
+              group,
+              group.includePatterns ?? [],
+              "blacksmith",
+              toolingFileTimings,
+            ),
+            complete: Boolean(
+              group.includePatterns?.every((file) => toolingFileTimings?.[file] !== undefined),
+            ),
+          }),
           canShare: (groups) =>
             groups.length <= COMPACT_NODE_TEST_JOB_GROUPS && hasDistinctStripeFamilies(groups),
         })
