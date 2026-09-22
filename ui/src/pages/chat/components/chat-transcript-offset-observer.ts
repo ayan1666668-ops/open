@@ -3,7 +3,7 @@ import { isTranscriptScrollKey } from "../chat-scroll-input.ts";
 import { CHAT_TRANSCRIPT_END_THRESHOLD_PX, type ChatScrollToEndOptions } from "../scroll.ts";
 import { maxTranscriptScrollOffset } from "./chat-transcript-geometry.ts";
 import type { ChatTranscriptInteractionAnchor } from "./chat-transcript-interaction-anchor.ts";
-import type { TranscriptPrependAnchor } from "./chat-transcript-prepend-anchor.ts";
+import type { TranscriptMessageAnchors } from "./chat-transcript-message-anchors.ts";
 import {
   publishTranscriptScroll,
   subscribeTranscriptScroll,
@@ -117,7 +117,7 @@ export function scrollTranscriptOffset(
 type OffsetOwner = {
   state: TranscriptOffsetState;
   getScrollElement(): HTMLDivElement | null;
-  readonly prependAnchor: TranscriptPrependAnchor;
+  readonly messageAnchors: TranscriptMessageAnchors;
   isProgrammaticScroll(): boolean;
   cancelScroll(): void;
   requestUpdate(): void;
@@ -193,7 +193,7 @@ export function observeTranscriptOffset(
     // Input can precede a projection capture while its native movement arrives
     // afterward. Carry that movement for wheel/keys as well as touch.
     if (scrolling && delta !== 0 && !programmatic) {
-      owner.prependAnchor.moveWithReader(delta);
+      owner.messageAnchors.moveWithReader(delta);
     }
     publish({
       type: "offset",
@@ -316,7 +316,7 @@ export function observeTranscriptOffset(
     if (!scrolling) {
       finishScroll();
     }
-    if (!scrolling && owner.prependAnchor.hasPrepend) {
+    if (!scrolling && owner.messageAnchors.hasPrepend) {
       owner.requestUpdate();
     }
     // Idle can arrive between smooth retargets. Completion needs the
