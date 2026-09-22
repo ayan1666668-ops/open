@@ -95,8 +95,8 @@ internal class RealtimePlayout(
     private set
 
   internal companion object {
-    // Bytes bound the unplayed backlog. The gateway relay splits output into 20 ms frames and
-    // adds a mark per provider chunk, so the entry cap must admit the whole byte budget as
+    // Bytes bound the unplayed backlog. Provider packets may be as short as 20 ms; the relay
+    // also adds a mark per provider chunk, so the entry cap must admit the whole byte budget as
     // 20 ms frames plus one mark each; a smaller entry cap ended long replies at ~77 s.
     const val MAX_QUEUED_BYTES = 12L * 1024 * 1024
     private const val MAX_QUEUED_REFRESHES = 32
