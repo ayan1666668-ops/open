@@ -8,9 +8,14 @@ import { VERSION } from "../../version.js";
 import { createUpdateProgress } from "./progress.js";
 import {
   confirmUpdateDowngrade,
+  resolveGitInstallDir,
   tryResolveInvocationCwd,
   type UpdateCommandOptions,
 } from "./shared.js";
+import {
+  resolveUpdateCommandAdmissionEnv,
+  resolveUpdateCommandAdmissionRoot,
+} from "./update-command-admission-env.js";
 import {
   captureUpdateCommandExecutorAuthority,
   type UpdateCommandExecutor,
@@ -26,8 +31,6 @@ import {
   createUpdateRunProgress,
   prepareUpdateCommand,
   prepareMutableUpdateRuntime,
-  resolveUpdateCommandAdmissionEnv,
-  resolveUpdateCommandAdmissionRoot,
   withUpdatePreviewSignals,
 } from "./update-command-run.js";
 import { preflightUpdateCommandSchemas, previewUpdateCommand } from "./update-command-schema.js";
@@ -82,6 +85,7 @@ async function updateCommandWithRuntime(
       root: resolveUpdateCommandAdmissionRoot(prepared),
       invocationCwd,
       pkgOwnership: prepared.pkgOwnership,
+      freebsdRootAdmission: prepared.freebsdRootAdmission,
       expectedForeground:
         prepared.controlPlaneUpdateSentinelMeta?.completionOwner === "gateway-restart" || undefined,
     });
@@ -131,6 +135,7 @@ async function runAdmittedUpdate(
     invocationCwd,
     initialization,
     pkgOwnership: prepared.pkgOwnership,
+    freebsdRootAdmission: prepared.freebsdRootAdmission,
     expectedForeground:
       prepared.controlPlaneUpdateSentinelMeta?.completionOwner === "gateway-restart" || undefined,
     installKind: prepared.installKind,
@@ -347,6 +352,12 @@ async function updateCommandInternal(
     });
     run.executorFence.assertCurrent();
     assertUpdatePackageActivationAdmission(root, { serviceRoot: managedServiceRoot });
+    if (run.freebsdRootAdmission) {
+      await run.freebsdRootAdmission.revalidate(
+        { roots: [discoveredRoot, root], env: run.env, timeoutMs: updateStepTimeoutMs },
+        run.executorFence.assertCurrent,
+      );
+    }
   };
   if (packageAlreadyCurrent) {
     await activateCurrentCore();
@@ -428,6 +439,21 @@ async function updateCommandInternal(
     admitExecutor(fence);
     run.activationTimeoutMs ??= activationTimeoutMs;
     fence.assertCurrent();
+    if (run.freebsdRootAdmission) {
+      await run.freebsdRootAdmission.revalidate(
+        {
+          roots: [
+            discoveredRoot,
+            root,
+            ...(packageInstallTarget?.packageRoot ? [packageInstallTarget.packageRoot] : []),
+            ...(switchToGit ? [resolveGitInstallDir()] : []),
+          ],
+          env: env ?? run.env,
+          timeoutMs: updateStepTimeoutMs,
+        },
+        fence.assertCurrent,
+      );
+    }
     if (mutableUpdatePrepared) {
       if (managedServiceRoot) {
         assertUpdatePackageActivationAdmission(managedServiceRoot);
@@ -436,11 +462,19 @@ async function updateCommandInternal(
     }
     const installKey = captureUpdateCommandExecutorAuthority(fence).installKey;
     assertUpdatePackageActivationAdmission(installKey, { serviceRoot: managedServiceRoot });
-    preUpdatePluginInstallRecords = await prepareMutableUpdateRuntime(env, fence);
+    const mutableAuthority = run.freebsdRootAdmission
+      ? {
+          assertCurrent() {
+            run.freebsdRootAdmission?.assertCurrent();
+            fence.assertCurrent();
+          },
+        }
+      : fence;
+    preUpdatePluginInstallRecords = await prepareMutableUpdateRuntime(env, mutableAuthority);
     await retainRuntime({
       mutationRoots: [root],
       timeoutMs: updateStepTimeoutMs,
-      assertCurrent: () => fence.assertCurrent(),
+      assertCurrent: () => mutableAuthority.assertCurrent(),
     });
     mutableUpdatePrepared = true;
   };

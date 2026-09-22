@@ -47,6 +47,7 @@ export async function withUpdateCommandRecoveryUnwind(
   let failure: { error: unknown } | undefined;
   try {
     await withCommandProcessScope(operation);
+    run.freebsdRootAdmission?.assertCurrent();
     run.executorFence?.assertCurrent();
   } catch (error) {
     if (hasCommandProcessCleanupError(error)) {
@@ -57,6 +58,7 @@ export async function withUpdateCommandRecoveryUnwind(
       );
     }
     try {
+      run.freebsdRootAdmission?.assertCurrent();
       run.executorFence?.assertCurrent();
     } catch (cause) {
       throw new UpdateCommandPendingRecoveryFailure(

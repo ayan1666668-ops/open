@@ -13,6 +13,8 @@ export function createUpdateCommandExecutionGuards(opts: UpdateCommandOptions, r
   const requester = run?.requesterAuthority;
   let stateHandedOff = false;
   const assertInvocation = () => {
+    // Doctor owns migrated SQLite; the independent root latch still gates effects.
+    run?.freebsdRootAdmission?.assertCurrent();
     if (opts.recovery || !stateHandedOff) {
       assertUpdateCommandRecoveryState(opts);
     }
