@@ -715,7 +715,15 @@ describe("ChatGPT Responses cached transport", () => {
           {
             type: "openai_responses_terminal",
             timestamp: expect.any(Number),
-            details: { eventType: "response.completed", stopReason: "stop", endTurn: "absent" },
+            details: {
+              eventType: "response.completed",
+              responseStatus: "completed",
+              hasRefusal: false,
+              hasError: false,
+              hasIncompleteDetails: false,
+              stopReason: "stop",
+              endTurn: "absent",
+            },
           },
         ],
       });
@@ -725,7 +733,15 @@ describe("ChatGPT Responses cached transport", () => {
         {
           type: "openai_responses_terminal",
           timestamp: expect.any(Number),
-          details: { eventType: "response.completed", stopReason: "stop", endTurn: "absent" },
+          details: {
+            eventType: "response.completed",
+            responseStatus: "completed",
+            hasRefusal: false,
+            hasError: false,
+            hasIncompleteDetails: false,
+            stopReason: "stop",
+            endTurn: "absent",
+          },
         },
       ]);
       expect((await runSession("unrelated-sse-fallback")).stopReason).toBe("stop");
