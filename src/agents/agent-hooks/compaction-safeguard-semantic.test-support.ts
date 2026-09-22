@@ -18,16 +18,19 @@ export function installDecisionFixture(
     batch: DecisionBatch,
     context: Parameters<DecisionProviderV1["evaluate"]>[1],
   ) => void | Promise<void>,
+  configOverride?: OpenClawConfig,
 ) {
-  const config: OpenClawConfig = {
-    agents: {
-      defaults: { decisionModel: "semantic-fixture/default-v1" },
-      entries: {
-        specialist: { decisionModel: "semantic-fixture/owner-v1" },
-        disabled: { decisionModel: "" },
+  const config: OpenClawConfig =
+    configOverride ??
+    ({
+      agents: {
+        defaults: { decisionModel: "semantic-fixture/default-v1" },
+        entries: {
+          specialist: { decisionModel: "semantic-fixture/owner-v1" },
+          disabled: { decisionModel: "" },
+        },
       },
-    },
-  };
+    } satisfies OpenClawConfig);
   const requests: Array<{ agentId?: string; model: string }> = [];
   const builder = createTestPluginRegistry();
   const record = createPluginRecord({
