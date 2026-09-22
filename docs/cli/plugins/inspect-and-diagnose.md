@@ -22,7 +22,7 @@ Inspect shows identity, load status, source, manifest capabilities, policy flags
 
 `--runtime` JSON separates those two facts:
 
-- `reportedStatus` and `gatewayRuntime` describe the running Gateway. `reportedStatus` is `loaded` only when that Gateway reports the plugin as active. `unloaded`, `disabled`, `service-failed`, and `not-loaded` mean the Gateway has not loaded it. `unreachable` means the Gateway could not be queried; the command does not invent a loaded Gateway result.
+- `reportedStatus` and `gatewayRuntime` describe the running Gateway. `reportedStatus` is `loaded` only when Gateway `runtime.state` is `active`. `service-failed` means the Gateway loaded the plugin and a service then failed, so check that service rather than an enable or load miss. `unloaded`, `disabled`, and `not-loaded` mean the Gateway has not loaded the plugin. `unknown` (the Gateway did not report a runtime state) and `unreachable` are not `loaded`. `unreachable` means the Gateway could not be read; the command does not invent a loaded Gateway result.
 - `inspectionScope` is `cli-process`. `plugin.status`, `plugin.statusScope`, activation, hooks, tools, commands, services, and routes describe the module load in this CLI process. They are not a copy of the Gateway's registrations.
 
 Human output uses the same split. `Status` is the Gateway result. `CLI module` is this process.
