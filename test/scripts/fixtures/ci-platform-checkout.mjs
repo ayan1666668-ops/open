@@ -424,7 +424,12 @@ function writeConsumer(target, tool) {
 
 async function command() {
   holdLease();
-  if (!options.performance || mode !== "observe") await record(process.pid, mode);
+  const descendant = mode === "child" || mode === "grandchild";
+  // Descendants publish their actual attempt below. Replacing a provisional PID
+  // record can race a Windows reader and fail before readiness with EPERM.
+  if (!descendant && (!options.performance || mode !== "observe")) {
+    await record(process.pid, mode);
+  }
   if (mode === "sentinel") {
     return;
   }
@@ -461,7 +466,7 @@ async function command() {
     const result = spawnSync("/bin/rm", args, { stdio: "inherit" });
     process.exit(result.status ?? 1);
   }
-  if (mode === "child" || mode === "grandchild") {
+  if (descendant) {
     const attempt = Number(args[0]);
     process.on("SIGTERM", () => {
       if (
