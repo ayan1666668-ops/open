@@ -19,7 +19,8 @@
 // preparation runs those owners afterwards rather than duplicating their output
 // lists or allowlisting paths inside them.
 import path from "node:path";
-import { BUILD_ALL_STEPS, resolveBuildAllStep, type BuildAllStep } from "../build-all.mts";
+// Type-only, so the step table's module stays out of this module's load graph.
+import type { BuildAllStep } from "../build-all.mts";
 import { distArtifactEntryArgs } from "./dist-artifact-ownership.mts";
 import { runManagedCommand } from "./managed-child-process.mts";
 import { TSDOWN_UNIFIED_CONFIG_GROUP } from "./tsdown-config-groups.mts";
@@ -45,8 +46,20 @@ const RESTORED_RUNTIME_STEP_LABELS = [
   "runtime-postbuild",
 ] as const;
 
+/**
+ * The canonical step table lives in the build runner, which loads the build
+ * toolchain and the source tree it drives. A shard launcher has to stay loadable
+ * without any of that, because it is the launcher that decides whether a
+ * preparation is needed at all, so the table is resolved on demand instead of at
+ * module load.
+ */
+async function loadBuildAllSteps(): Promise<typeof import("../build-all.mts")> {
+  return import("../build-all.mts");
+}
+
 /** Canonical build-all steps this preparation runs after its compile. */
-export function listRestoredRuntimeSteps(): BuildAllStep[] {
+export async function listRestoredRuntimeSteps(): Promise<BuildAllStep[]> {
+  const { BUILD_ALL_STEPS } = await loadBuildAllSteps();
   return RESTORED_RUNTIME_STEP_LABELS.map((label) => {
     const step = BUILD_ALL_STEPS.find((candidate) => candidate.label === label);
     if (!step) {
@@ -57,11 +70,12 @@ export function listRestoredRuntimeSteps(): BuildAllStep[] {
 }
 
 /** Resolve one owner step to the node invocation that inherits checkout ownership. */
-function resolveRestoredRuntimeInvocation(
+async function resolveRestoredRuntimeInvocation(
   step: BuildAllStep,
   env: NodeJS.ProcessEnv,
   repoRoot: string,
 ) {
+  const { resolveBuildAllStep } = await loadBuildAllSteps();
   // pnpm steps take their node fallback so the owner inherits the shard
   // runner's checkout ownership instead of starting a package-manager child.
   const resolved = resolveBuildAllStep(step, {
@@ -125,8 +139,8 @@ export async function buildTsgoCoreTestTypedRuntimeDist(
   if (runtime !== 0) {
     return runtime;
   }
-  for (const step of listRestoredRuntimeSteps()) {
-    const owner = resolveRestoredRuntimeInvocation(step, env, repoRoot);
+  for (const step of await listRestoredRuntimeSteps()) {
+    const owner = await resolveRestoredRuntimeInvocation(step, env, repoRoot);
     const status = await runCommand({
       bin: process.execPath,
       args: owner.args,

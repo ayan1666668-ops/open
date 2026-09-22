@@ -7,8 +7,8 @@ import {
 } from "../../scripts/lib/tsgo-core-test-dist-build.mts";
 
 describe("typed runtime declaration preparation", () => {
-  it("restores the cleaned runtime artifacts through their canonical owners", () => {
-    expect(listRestoredRuntimeSteps().map((step) => step.label)).toEqual([
+  it("restores the cleaned runtime artifacts through their canonical owners", async () => {
+    expect((await listRestoredRuntimeSteps()).map((step) => step.label)).toEqual([
       "plugins:assets:build",
       "tsdown-ai",
       "external-plugins:local-dist",
@@ -17,14 +17,14 @@ describe("typed runtime declaration preparation", () => {
     ]);
   });
 
-  it("keeps every restored owner a step build-all still defines", () => {
-    for (const step of listRestoredRuntimeSteps()) {
+  it("keeps every restored owner a step build-all still defines", async () => {
+    for (const step of await listRestoredRuntimeSteps()) {
       expect(BUILD_ALL_STEPS).toContain(step);
     }
   });
 
-  it("resolves the copied plugin assets through their node owner", () => {
-    const assetStep = listRestoredRuntimeSteps().find(
+  it("resolves the copied plugin assets through their node owner", async () => {
+    const assetStep = (await listRestoredRuntimeSteps()).find(
       (step) => step.label === "plugins:assets:copy",
     );
     expect(assetStep).toBeDefined();
@@ -41,8 +41,8 @@ describe("typed runtime declaration preparation", () => {
     expect(typeof buildTsgoCoreTestTypedRuntimeDist).toBe("function");
   });
 
-  it("restores the assets build before the copy that reads its bundles", () => {
-    const labels = listRestoredRuntimeSteps().map((step) => step.label);
+  it("restores the assets build before the copy that reads its bundles", async () => {
+    const labels = (await listRestoredRuntimeSteps()).map((step) => step.label);
     const buildIndex = labels.indexOf("plugins:assets:build");
     const copyIndex = labels.indexOf("plugins:assets:copy");
     // The copy phase runs each plugin's assetScripts.copy, which fails closed
@@ -53,8 +53,8 @@ describe("typed runtime declaration preparation", () => {
     expect(copyIndex).toBeLessThan(labels.indexOf("runtime-postbuild"));
   });
 
-  it("restores the package build before the postbuild verification loads it", () => {
-    const labels = listRestoredRuntimeSteps().map((step) => step.label);
+  it("restores the package build before the postbuild verification loads it", async () => {
+    const labels = (await listRestoredRuntimeSteps()).map((step) => step.label);
     const packageIndex = labels.indexOf("tsdown-ai");
     // runtime-postbuild verifies the built plugin control-plane modules, which
     // import @openclaw/ai/dist, so the package build has to come first.
