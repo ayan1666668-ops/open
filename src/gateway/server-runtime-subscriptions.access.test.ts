@@ -218,6 +218,7 @@ it.each(["agent", "chat"] as const)(
       const entry = {
         sessionId: "predecessor",
         lifecycleRevision: "current-lifecycle",
+        activeWriterRunId: undefined,
         updatedAt: 1,
         visibility: "shared" as const,
       };
