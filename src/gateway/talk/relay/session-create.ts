@@ -416,11 +416,24 @@ export function createTalkRealtimeRelaySession(
       if (!relay.closing && role === "user" && !final) {
         confirmationReadiness.observeUserTranscript(text, false);
       }
+      const previousTranscriptSeq = relay.voiceTranscriptSeq;
       if (final && !enqueueRelayVoiceTranscript(relay, role, text)) {
         return;
       }
+      const transcriptIdentity =
+        relay.voiceTranscriptSeq > previousTranscriptSeq
+          ? { transcriptId: `voice:${relay.id}:${relay.voiceTranscriptSeq}` }
+          : {};
       if (relay.closing) {
-        emit({ relaySessionId, type: "transcript", role, text, final, ...metadata });
+        emit({
+          relaySessionId,
+          type: "transcript",
+          role,
+          text,
+          final,
+          ...metadata,
+          ...transcriptIdentity,
+        });
         return;
       }
       const outputTurnId = role === "assistant" ? outputOwnership.resolve(true) : undefined;
@@ -438,7 +451,15 @@ export function createTalkRealtimeRelaySession(
             : "transcript.delta";
       const payload = role === "assistant" ? { text } : { role, text };
       emit(
-        { relaySessionId, type: "transcript", role, text, final, ...metadata },
+        {
+          relaySessionId,
+          type: "transcript",
+          role,
+          text,
+          final,
+          ...metadata,
+          ...transcriptIdentity,
+        },
         {
           type: eventType,
           turnId,

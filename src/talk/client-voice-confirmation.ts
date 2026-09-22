@@ -483,7 +483,7 @@ export function observeClientVoiceConfirmationRun(params: {
   const observation = new Map<string, string>();
   state.observationsByRun.set(params.runId, observation);
   return {
-    readReply(): string | undefined {
+    readReply(options?: { includeConfirmationId?: boolean }): string | undefined {
       if (observation.size === 0) {
         return undefined;
       }
@@ -493,7 +493,11 @@ export function observeClientVoiceConfirmationRun(params: {
         observation.get(pending.fingerprint) === pending.confirmationId &&
         pending.expiresAt >= Date.now()
       ) {
-        return 'One pending action has not run. Say "yes" to confirm that action or "no" to cancel it.';
+        const speech =
+          'One pending action has not run. Say "yes" to confirm that action or "no" to cancel it.';
+        return options?.includeConfirmationId
+          ? `VOICE_CONFIRMATION_REQUIRED:${pending.confirmationId} ${speech} After spoken confirmation, call openclaw_agent_consult with this confirmationId.`
+          : speech;
       }
       return "An action in that request was not run because its spoken confirmation is no longer current. Make a new request if you still want it.";
     },

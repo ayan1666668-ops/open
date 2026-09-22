@@ -2248,6 +2248,7 @@ describe("talk realtime gateway relay", () => {
     );
     expectDelivery(partialTranscript, true);
     expect(partialTranscript.textMode).toBe("snapshot");
+    expect(partialTranscript.transcriptId).toBeUndefined();
 
     const userTranscript = findEventPayload(
       events,
@@ -2261,6 +2262,7 @@ describe("talk realtime gateway relay", () => {
       text: "hello",
       final: true,
     });
+    expect(userTranscript.transcriptId).toBe(`voice:${session.relaySessionId}:1`);
     expectRecordFields(userTranscript.talkEvent, { type: "transcript.done", final: true });
     expectDelivery(userTranscript, false);
 
@@ -2275,6 +2277,7 @@ describe("talk realtime gateway relay", () => {
       text: "hi there",
       final: true,
     });
+    expect(assistantTranscript.transcriptId).toBe(`voice:${session.relaySessionId}:2`);
     expectRecordFields(assistantTranscript.talkEvent, {
       type: "output.text.done",
       final: true,

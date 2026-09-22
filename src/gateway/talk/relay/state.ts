@@ -51,6 +51,7 @@ export type TalkRealtimeRelayEventPayload =
       text: string;
       final: boolean;
       textMode?: "snapshot";
+      transcriptId?: string;
     }
   | {
       relaySessionId: string;

@@ -2575,6 +2575,36 @@ describe("chat loading skeleton", () => {
     };
   }
 
+  it("retires only the exact saved Talk entries, retaining unsaved speech and repeated words", () => {
+    const container = renderChatView({
+      realtimeTalkActive: true,
+      messages: [{ role: "user", content: "Repeated words", __openclaw: { id: "voice:call:1" } }],
+      realtimeTalkConversation: [
+        {
+          id: "u1",
+          role: "user",
+          text: "Repeated words",
+          isStreaming: false,
+          transcriptId: "voice:call:1",
+        },
+        {
+          id: "u2",
+          role: "user",
+          text: "Repeated words",
+          isStreaming: false,
+          transcriptId: "voice:call:2",
+        },
+        { id: "a1", role: "assistant", text: "Still speaking", isStreaming: true },
+      ],
+    });
+    const turns = [...container.querySelectorAll(".agent-chat__voice-turn")];
+    expect(turns).toHaveLength(2);
+    expect(turns.map((turn) => turn.textContent?.replace(/\s+/g, " ").trim())).toEqual([
+      "You Repeated words",
+      "Val Still speaking",
+    ]);
+  });
+
   it("renders realtime Talk transcript as ordered voice turns", () => {
     const container = renderChatView({
       realtimeTalkActive: true,

@@ -373,6 +373,7 @@ export class GatewayRelayRealtimeTalkTransport implements RealtimeTalkTransport 
               text: event.text,
               final: event.final ?? false,
               ...(event.textMode ? { textMode: event.textMode } : {}),
+              ...(event.transcriptId ? { transcriptId: event.transcriptId } : {}),
             });
           }
           return;

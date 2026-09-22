@@ -998,6 +998,31 @@ describe("Talk client agent consult admission", () => {
     expect(mocks.runEmbeddedAgentCore).not.toHaveBeenCalled();
   });
 
+  it("returns the current server challenge instead of a model's superseded confirmation id", async () => {
+    let currentChallenge = "";
+    mocks.consultRealtimeVoiceAgent.mockImplementationOnce(async (params: ConsultParams) => {
+      params.onRunStarted?.({ runId: "run-talk", sessionId: "session-talk", timeoutMs: 1 });
+      for (const message of ["first blocked action", "last blocked action"]) {
+        const challenge = checkClientVoiceToolConfirmationPolicy({
+          agentId: "researcher",
+          voiceSessionId: "voice-session",
+          runId: "run-talk",
+          toolName: "message",
+          toolParams: { action: "send", message },
+        });
+        if (challenge.allowed) {
+          throw new Error("expected a blocked action");
+        }
+        currentChallenge = challenge.reason.match(/VOICE_CONFIRMATION_REQUIRED:([^\s]+)/)![1]!;
+      }
+      return { text: "VOICE_CONFIRMATION_REQUIRED:stale-model-id Say yes, send the message." };
+    });
+    const result = await createRunner().runArgs({ question: "check" });
+    expect(result.text).toContain(`VOICE_CONFIRMATION_REQUIRED:${currentChallenge}`);
+    expect(result.text).toContain('Say "yes"');
+    expect(result.text).not.toContain("stale-model-id");
+  });
+
   it("continues the admitted run when close invalidates confirmation before registration", async () => {
     const now = Date.now();
     const challenge = checkClientVoiceToolConfirmationPolicy({

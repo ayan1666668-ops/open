@@ -14,6 +14,7 @@ export type GatewayRelayEvent = {
       text?: string;
       final?: boolean;
       textMode?: "snapshot";
+      transcriptId?: string;
     }
   | {
       type?: "toolCall";

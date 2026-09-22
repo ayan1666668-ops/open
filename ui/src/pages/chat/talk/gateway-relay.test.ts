@@ -293,6 +293,7 @@ describe("GatewayRelayRealtimeTalkTransport", () => {
       type: "transcript",
       role: "assistant",
       text: "not committed yet",
+      transcriptId: "voice:relay-1:1",
       textMode: "snapshot",
       final: true,
     });
@@ -314,6 +315,7 @@ describe("GatewayRelayRealtimeTalkTransport", () => {
     expect(onTranscript).toHaveBeenCalledWith({
       role: "assistant",
       text: "not committed yet",
+      transcriptId: "voice:relay-1:1",
       textMode: "snapshot",
       final: true,
     });
