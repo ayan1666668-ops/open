@@ -9,7 +9,7 @@ import {
 } from "../config/sessions/session-sharing-store.native.js";
 import * as history from "../config/sessions/session-transcript-worker-runtime.js";
 import type { SessionRowDatabaseFacts } from "../config/sessions/session-transcript-worker.types.js";
-import type { SessionEntry } from "../config/sessions/types.js";
+import type { InternalSessionEntry, SessionEntry } from "../config/sessions/types.js";
 import { resetGatewayWorkAdmission } from "../process/gateway-work-admission.js";
 import { createDeferredCore } from "../shared/deferred.js";
 import { ensureProfileForEmail } from "../state/user-profiles.js";
@@ -184,7 +184,7 @@ it.each(["notice cleared", "selection changed"] as const)(
         sessionId: "held-fallback",
       };
       const query = { agentId: scope.agentId, key: scope.sessionKey };
-      const entry: SessionEntry = {
+      const entry: InternalSessionEntry = {
         sessionId: scope.sessionId,
         updatedAt: 1,
         status: "done",
