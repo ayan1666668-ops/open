@@ -398,6 +398,35 @@ describe("exec steering lease gate", () => {
     expect(hasPendingExecSteeringItems({ requesterSessionKey: sessionKey })).toBe(true);
   });
 
+  it("recovers a failed heartbeat send on the next ordinary turn", async () => {
+    const sessionKey = "agent:main:heartbeat-recovery";
+    enqueueExecSteeringCompletion({
+      requesterSessionKey: sessionKey,
+      occurrenceKey: "exec:hbrecov1",
+      execId: "hbrecov1",
+      status: "completed",
+      exitLabel: "exit 0",
+      text: "RECOVERED AFTER FAILED HEARTBEAT",
+    });
+
+    // The heartbeat turn runs, but its channel send fails, so heartbeat
+    // delivery settlement never consumes the completion.
+    const heartbeatTurn = await assembleWithCapturedHookCtx("heartbeat-recovery-a", {
+      trigger: "heartbeat",
+      sessionKey,
+    });
+    expect(heartbeatTurn.setLeasedExecSteering).not.toHaveBeenCalled();
+    expect(hasPendingExecSteeringItems({ requesterSessionKey: sessionKey })).toBe(true);
+
+    // The same session's next ordinary turn still receives it.
+    const nextTurn = await assembleWithCapturedHookCtx("heartbeat-recovery-b", {
+      trigger: "user",
+      sessionKey,
+    });
+    expect(nextTurn.prompt.effectivePrompt).toContain("RECOVERED AFTER FAILED HEARTBEAT");
+    expect(hasPendingExecSteeringItems({ requesterSessionKey: sessionKey })).toBe(false);
+  });
+
   it("still steers exec completions into an ordinary turn", async () => {
     const runId = "user-steering-gate";
     const sessionKey = `agent:main:${runId}`;

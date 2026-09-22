@@ -82,11 +82,17 @@ const SYSTEM_EVENT_CONSUMPTION_OBSERVERS_KEY = Symbol.for(
 );
 
 // A process-wide, lifecycle-owned set so duplicated runtime chunks share one
-// settlement fan-out and a restart (or a test reset) clears stale observers
-// instead of leaking them across files.
+// settlement fan-out.
+//
+// Its lifecycle deliberately matches the queues it serves, which are all
+// `close-only`: a canonical queue and a consumer's copies survive a same-process
+// Gateway restart, so clearing the observers on `restart` would leave retained
+// occurrences settling with nobody listening and let an already-consumed copy
+// reach a later turn. A `close` still clears both together, and a test reset
+// clears the set explicitly.
 const consumptionObservers = resolveGlobalSet<SystemEventConsumptionObserver>(
   SYSTEM_EVENT_CONSUMPTION_OBSERVERS_KEY,
-  "close-and-restart",
+  "close-only",
 );
 
 /**
@@ -289,7 +295,19 @@ export function enqueueSystemEventReceipt(
   const eventId = event.id;
   return {
     eventId,
-    remove: () => consumeSelectedSystemEventEntries(sessionKey, [event]).length > 0,
+    remove: () => {
+      if (consumeSelectedSystemEventEntries(sessionKey, [event]).length > 0) {
+        return true;
+      }
+      // The canonical queue evicts its oldest entry above `MAX_EVENTS`, while a
+      // consumer's copy of this occurrence (an exec steering item) can be
+      // retained far longer. Notifying on this occurrence's globally-unique id
+      // settles that copy even though the queued entry is already gone, and
+      // cannot touch a re-enqueued occurrence that merely reused the context
+      // key. Returning false still reports that nothing was queued to remove.
+      notifySystemEventConsumption(sessionKey, [event]);
+      return false;
+    },
   };
 }
 

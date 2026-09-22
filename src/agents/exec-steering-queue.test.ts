@@ -4,6 +4,7 @@ import { publishSystemEventStoreResolver } from "../infra/system-event-ownership
 import {
   consumeSelectedSystemEventEntries,
   drainSystemEventEntries,
+  enqueueSystemEventEntry,
   enqueueSystemEventReceipt,
   peekSystemEventEntries,
   resetSystemEventsForTest,
@@ -745,6 +746,57 @@ describe("exec-steering-queue", () => {
       durableEventId: "durable-keep01",
     });
     await drainGlobalSingletonLifecycleState("restart");
+    expect(hasPendingExecSteeringItems({ requesterSessionKey })).toBe(true);
+  });
+
+  it("keeps settlement wired across a same-process restart of the retained queues", async () => {
+    const shared = enqueueSharedOccurrence({ execId: "restart01", text: "retained output" });
+    expect(hasPendingExecSteeringItems({ requesterSessionKey })).toBe(true);
+
+    // A restart retains both the canonical queue and the steering queue, so the
+    // settlement observer has to be retained with them.
+    await drainGlobalSingletonLifecycleState("restart");
+    expect(hasPendingExecSteeringItems({ requesterSessionKey })).toBe(true);
+
+    // Heartbeat consumes the retained occurrence before any later exec enqueue
+    // could re-register a lazily-wired observer.
+    expect(shared.remove()).toBe(true);
+    expect(hasPendingExecSteeringItems({ requesterSessionKey })).toBe(false);
+  });
+
+  it("retires the steering copy when an evicted completion is acknowledged", () => {
+    const shared = enqueueSharedOccurrence({ execId: "evict001", text: "will be evicted" });
+
+    // More than MAX_EVENTS newer system events evict this completion from the
+    // canonical queue, while its steering copy is retained far longer.
+    for (let index = 0; index < 25; index += 1) {
+      enqueueSystemEventEntry(`Unrelated system event ${index}`, {
+        sessionKey: requesterSessionKey,
+      });
+    }
+    const queuedIds = peekSystemEventEntries(requesterSessionKey).map((event) => event.id);
+    expect(queuedIds).not.toContain(shared.durableEventId);
+    expect(hasPendingExecSteeringItems({ requesterSessionKey })).toBe(true);
+
+    // A terminal poll acknowledges exactly this occurrence. The canonical entry
+    // is already gone, so settlement has to reach the steering copy on its id.
+    expect(shared.remove()).toBe(false);
+    expect(hasPendingExecSteeringItems({ requesterSessionKey })).toBe(false);
+  });
+
+  it("does not retire a steering copy when a different occurrence is acknowledged", () => {
+    enqueueSharedOccurrence({ execId: "bound001", text: "bound output" });
+    const other = enqueueSystemEventReceipt(
+      "Exec completed (other001, exit 0) :: other output",
+      { sessionKey: requesterSessionKey, contextKey: "exec:other001" },
+      { allowDuplicate: true },
+    );
+    if (!other) {
+      throw new Error("expected a durable system event receipt");
+    }
+    // Acknowledging an unrelated occurrence settles nothing here. A context-wide
+    // or blanket notification would wrongly retire the bound copy.
+    expect(other.remove()).toBe(true);
     expect(hasPendingExecSteeringItems({ requesterSessionKey })).toBe(true);
   });
 });
