@@ -64,7 +64,7 @@ function explorerInput() {
   return {
     ...prepareDynamicsSpawn({
       task,
-      dynamics: { profile: "explorer" },
+      dynamics: { boundary: "isolated" },
       sourceReplicaId: groupId,
       targetReplicaId: replayKey,
     }),
@@ -169,7 +169,7 @@ describe("Code Mode dynamics lifecycle integration", () => {
       request: {
         id: requestId,
         method: "agentSpawn",
-        args: [task, { dynamics: { profile: "explorer" } }],
+        args: [task, { dynamics: { boundary: "isolated" } }],
       },
       codeModeRunId,
       ctx,
