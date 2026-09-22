@@ -201,6 +201,7 @@ function retainSessionHistoryWorkerDatabase(options: OpenClawAgentDatabaseOption
             Array.isArray(value) ||
             value.kind === "session-preview" ||
             value.kind === "session-title-fields" ||
+            value.kind === "session-row-backfill" ||
             value.kind === "session-entry-list" ||
             value.kind === "session-exact-entries" ||
             value.kind === "session-row-facts" ||
@@ -244,6 +245,23 @@ function retainSessionHistoryWorkerDatabase(options: OpenClawAgentDatabaseOption
             ) {
               throw new Error(
                 "Session history worker returned another result instead of title fields",
+              );
+            }
+            return value.fields;
+          },
+        ),
+      readRowBackfill: async (params) =>
+        await runRequest(
+          () => ({ kind: "session-row-backfill", params }),
+          JSON.stringify(params).length * 2,
+          (value) => {
+            if (
+              typeof value === "boolean" ||
+              Array.isArray(value) ||
+              value.kind !== "session-row-backfill"
+            ) {
+              throw new Error(
+                "Session history worker returned another result instead of transcript fields",
               );
             }
             return value.fields;

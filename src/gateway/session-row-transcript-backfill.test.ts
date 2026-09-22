@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import { expectDefined } from "@openclaw/normalization-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { observeHostDataSql } from "../../test/helpers/sqlite-statement-execution-counter.js";
 import * as sessionAccessor from "../config/sessions/session-accessor.js";
 import { resolveSqliteTargetFromSessionStorePath } from "../config/sessions/session-sqlite-target.js";
 import {
@@ -17,6 +18,7 @@ import {
 } from "../state/openclaw-agent-db.js";
 import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
 import { backfillSessionRowTranscriptFields } from "./session-row-transcript-backfill.js";
+import { readSessionRowTranscriptFields } from "./session-row-transcript-backfill.kernel.js";
 
 const generateConversationLabelWithFallback = vi.hoisted(() => vi.fn());
 vi.mock("../auto-reply/reply/conversation-label-generator.js", () => ({
@@ -121,9 +123,17 @@ describe("session row transcript backfill", () => {
     await withSession(
       async (params) => {
         await withColdStore(params, async () => {
-          await expect(backfillSessionRowTranscriptFields(params)).resolves.toEqual({
-            lastMessagePreview: "Found the slow query",
-          });
+          const hostSql = observeHostDataSql();
+          try {
+            await expect(backfillSessionRowTranscriptFields(params)).resolves.toEqual({
+              lastMessagePreview: "Found the slow query",
+            });
+            for (const statement of hostSql.calls) {
+              expect(statement).not.toHaveBeenCalled();
+            }
+          } finally {
+            hostSql.restore();
+          }
           expect(sessionAccessor.loadSessionEntryReadOnly(params)).toEqual(params.sessionEntry);
           expect(generateConversationLabelWithFallback).not.toHaveBeenCalled();
         });
@@ -220,7 +230,7 @@ describe("session row transcript backfill", () => {
           }
           return parse(text, reviver);
         });
-        await expect(backfillSessionRowTranscriptFields(params)).resolves.toEqual({
+        expect(readSessionRowTranscriptFields(params)).toEqual({
           lastMessagePreview: "Latest reply",
         });
         expect(sessionAccessor.loadSessionEntry(params)?.displayName).toBeUndefined();

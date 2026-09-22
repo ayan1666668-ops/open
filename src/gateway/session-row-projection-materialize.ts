@@ -6,7 +6,6 @@ import { readCommittedSessionEntryCache } from "../config/sessions/session-acces
 import { readExactSessionEntryRow } from "../config/sessions/session-accessor.sqlite-entry-read.js";
 import { resolveSessionKeyBySessionId } from "../config/sessions/session-accessor.sqlite-entry.js";
 import { listSessionMembers } from "../config/sessions/session-sharing-store.js";
-import type { SessionRowDatabaseFacts } from "../config/sessions/session-transcript-worker.types.js";
 import { isIncognitoSessionKey } from "../routing/session-key.js";
 import { readOpenClawAgentDatabaseIdentity } from "../state/openclaw-agent-db-identity.js";
 import { withOpenClawAgentDatabaseReadOnly } from "../state/openclaw-agent-db-readonly.js";
@@ -18,6 +17,7 @@ import {
 import { readSessionRowFacts } from "./server-methods/session-placement-read-projection.js";
 import { readSessionListSelectionFacts } from "./session-list-target.js";
 import { isColdArchivedSessionRow } from "./session-row-projection-archive.js";
+import type { PreparedSessionRowDatabaseFacts } from "./session-row-projection-read.js";
 import * as records from "./session-row-projection-record.js";
 import { resolveStoredSessionKeyForAgentStore } from "./session-store-key.js";
 import type { SessionListRowContext } from "./session-utils-contracts.js";
@@ -37,7 +37,8 @@ function createSessionRowMaterializationBatch(): typeof readResidentSessionRow {
 /** Keyed and worker-prepared refreshes share the same bounded materialization slice. */
 export function refreshSessionRowMaterializations(owner: {
   ids: readonly string[];
-  prepared?: ReadonlyMap<string, SessionRowDatabaseFacts>;
+  prepared?: ReadonlyMap<string, PreparedSessionRowDatabaseFacts>;
+  materializeArchived?: boolean;
   rows: ReadonlyMap<string, records.Row>;
   dirty: Set<string>;
   prepare: () => records.Inputs["cfg"];
@@ -47,7 +48,7 @@ export function refreshSessionRowMaterializations(owner: {
     row: records.Row,
     agentIds: Set<string>,
     read: typeof readResidentSessionRow,
-    facts?: SessionRowDatabaseFacts,
+    facts?: PreparedSessionRowDatabaseFacts,
   ) => boolean;
   forgetBackfill: (id: string) => void;
 }) {
@@ -68,7 +69,7 @@ export function refreshSessionRowMaterializations(owner: {
         databaseFacts ? { ...current, hasBoard: databaseFacts.hasBoard } : current,
         owner.prepared ? databaseFacts?.entry : readSessionRowEntry(current),
       );
-    if (row && isColdArchivedSessionRow(row)) {
+    if (row && isColdArchivedSessionRow(row) && !owner.materializeArchived) {
       owner.dirty.delete(id);
       owner.forgetBackfill(id);
       continue;
@@ -99,7 +100,7 @@ export function readResidentSessionRow(
     placementFactsReader?: Parameters<typeof readSessionRowFacts>[0]["placementFactsReader"];
     links: SessionChildLink[];
     readSourceEntry: (key: string) => records.Row["storedEntry"];
-    databaseFacts?: SessionRowDatabaseFacts;
+    databaseFacts?: PreparedSessionRowDatabaseFacts;
   },
   activitySummaryEnabledByAgent?: Map<string, boolean>,
 ) {
@@ -117,6 +118,7 @@ export function readResidentSessionRow(
   const { inputs, presentation } = readSessionRowInputs({
     ...row,
     cfg,
+    preparedAcpMeta: params.databaseFacts?.acpMeta,
     configuredAgentIds: params.configuredAgentIds,
     store: source?.store ?? {},
     storePath: row.storeTarget.storePath,

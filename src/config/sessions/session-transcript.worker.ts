@@ -145,6 +145,17 @@ serveWorkerTasks(
           )),
         };
       }
+      if (request.kind === "session-row-backfill") {
+        const { readSessionRowTranscriptFields } =
+          await import("../../gateway/session-row-transcript-backfill.kernel.js");
+        return {
+          ok: true,
+          ...(await withHistoryDatabase(request.database, () => ({
+            kind: "session-row-backfill" as const,
+            fields: readSessionRowTranscriptFields(request.params),
+          }))),
+        };
+      }
       if (request.kind === "session-target-inventory") {
         const { readSessionStoreTargetInventory } =
           await import("./session-store-target-inventory.js");
@@ -299,6 +310,12 @@ serveWorkerTasks(
                         request.request.params.messageId,
                       ),
                     };
+                  }
+                  if (request.request.kind === "recent") {
+                    const { target, ...limits } = request.request.params;
+                    const { messages } =
+                      await options.readers.readRecentSessionMessagesWithStatsAsync(target, limits);
+                    return { kind: "recent", messages };
                   }
                   if (request.request.kind === "delta") {
                     return {

@@ -83,6 +83,15 @@ export type SessionHistoryWorkerRequest =
   | { kind: "rpc"; params: ChatHistoryPageParams & { sessionId: string; storePath: string } }
   | { kind: "message-lookup"; params: { target: SessionTranscriptReadScope; messageId: string } }
   | {
+      kind: "recent";
+      params: {
+        target: SessionTranscriptReadScope;
+        maxMessages: number;
+        maxLines: number;
+        allowResetArchiveFallback?: boolean;
+      };
+    }
+  | {
       kind: "delta";
       params: { target: SessionTranscriptReadScope; limits: SessionTranscriptRawDeltaLimits };
     }
@@ -91,5 +100,6 @@ export type SessionHistoryWorkerRequest =
 export type SessionHistoryWorkerResult =
   | { kind: "rpc"; page: ChatHistoryPage }
   | { kind: "message-lookup"; messages: unknown[] }
+  | { kind: "recent"; messages: unknown[] }
   | { kind: "delta"; delta: SessionTranscriptDisplayDeltaResult }
   | { kind: "http"; snapshot: SessionHistorySnapshot };

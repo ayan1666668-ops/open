@@ -107,6 +107,8 @@ export function createSessionRowAncestorReads(owner: {
   state: () => { cfg: records.Inputs["cfg"]; context: SessionRowReadView["state"]["rowContext"] };
   referenced: (reference: string) => records.Row | undefined;
   lookup: (query: records.Lookup) => records.Row | undefined;
+  prepareExactRows: (queries: readonly records.Lookup[]) => Promise<void> | undefined;
+  assertExactRowsPrepared: (queries: readonly records.Lookup[]) => void;
   describe: SessionRowReadView["describe"];
   inOwnerContext: ReturnType<typeof AsyncLocalStorage.snapshot>;
   placementFacts: ReturnType<typeof createSessionRowPlacementProjection>;
@@ -158,7 +160,11 @@ export function createSessionRowAncestorReads(owner: {
         owner.isActive,
         owner.lookup,
         selected,
-        consume,
+        owner.prepareExactRows,
+        (read) => {
+          owner.assertExactRowsPrepared(selected(read.state.cfg));
+          return consume(read);
+        },
       );
     },
   };

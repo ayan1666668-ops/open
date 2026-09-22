@@ -108,6 +108,7 @@ export function createSessionRowPlacementProjection(
       isActive: () => boolean,
       lookup: (query: Lookup) => Row | undefined,
       queries: (config: OpenClawConfig) => readonly Lookup[],
+      prepareRows: (queries: readonly Lookup[]) => Promise<void> | undefined,
       consume: (read: SessionRowReadView) => T,
     ): ReturnType<typeof withPreparedSessionRows<T>> {
       let deferred: { kind: "pending"; database: { agentId: string; path: string } } | undefined;
@@ -126,6 +127,15 @@ export function createSessionRowPlacementProjection(
         },
         () =>
           deferred ?? withPreparedSessionRows(projection, isActive, () => preparedQueries, consume),
+        () => {
+          let pending: Promise<void> | undefined;
+          const selected = withCanonicalSessionValidationDeferral(() => {
+            preparedQueries = queries(projection.state.cfg);
+            pending = inOwnerContext(() => prepareRows(preparedQueries));
+          });
+          deferred = selected.kind === "pending" ? selected : undefined;
+          return pending;
+        },
       );
     },
     async prepare() {
@@ -146,9 +156,11 @@ export function createSessionRowPlacementProjection(
     async withPrepared<T>(
       selectIds: () => readonly string[],
       consume: () => T,
+      prepareSelectedRows: () => Promise<void> | undefined,
     ): Promise<Awaited<T>> {
+      const prepare = () => prepareReadFacts() ?? prepareSelectedRows();
       while (true) {
-        for (let pending = prepareReadFacts(); pending; pending = prepareReadFacts()) {
+        for (let pending = prepare(); pending; pending = prepare()) {
           await pending;
         }
         if (disposed) {
@@ -162,7 +174,7 @@ export function createSessionRowPlacementProjection(
         const captured = revision;
         const snapshot = await inOwnerContext(() => reader.readProjection(requested));
         // Caller facts can retire while the placement read yields.
-        for (let pending = prepareReadFacts(); pending; pending = prepareReadFacts()) {
+        for (let pending = prepare(); pending; pending = prepare()) {
           await pending;
         }
         if (disposed) {

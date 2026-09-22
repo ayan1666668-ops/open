@@ -200,7 +200,7 @@ async function createFixture(scope: OperatorScope, useDefaultLoader = false) {
     async close() {
       await subscriptions.stop();
       connections.clients.clear();
-      disposeSessionReadContexts();
+      await disposeSessionReadContexts();
     },
   };
 }

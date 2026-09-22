@@ -8,7 +8,6 @@ import {
 import { loadCombinedSessionStoreForGatewayCore } from "../config/sessions/combined-store-gateway.js";
 import { isInternalSessionEffectsKey } from "../config/sessions/internal-session-key.js";
 import { listSessionEntriesReadOnly } from "../config/sessions/session-accessor.sqlite-entry.js";
-import type { SessionRowDatabaseFacts } from "../config/sessions/session-transcript-worker.types.js";
 import type { SessionStoreTarget } from "../config/sessions/targets.js";
 import type { InternalSessionEntry as SessionEntry } from "../config/sessions/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
@@ -45,7 +44,10 @@ import {
   readResidentSessionRow,
   readSessionRowEntry,
 } from "./session-row-projection-materialize.js";
-import { withSessionRowDatabaseFacts } from "./session-row-projection-read.js";
+import {
+  withSessionRowDatabaseFacts,
+  type PreparedSessionRowDatabaseFacts,
+} from "./session-row-projection-read.js";
 import * as records from "./session-row-projection-record.js";
 import { createSessionRowProjectionTranscriptUpdates } from "./session-row-projection-transcript.js";
 import {
@@ -54,6 +56,7 @@ import {
   selectMatchingSessionRows,
   selectSessionRowEntries,
 } from "./session-row-scope.js";
+import { resolveStoredSessionKeyForAgentStore } from "./session-store-key.js";
 import type { WorkerSessionPlacementStore } from "./worker-environments/placement-store.js";
 
 /** Committed publications own invalidation; each admitted physical store is hydrated once. */
@@ -411,7 +414,7 @@ export async function createSessionRowProjection(params: {
     row: records.Row,
     configuredAgentIds = new Set(listAgentIds(cfg)),
     readRow = readResidentSessionRow,
-    databaseFacts?: SessionRowDatabaseFacts,
+    databaseFacts?: PreparedSessionRowDatabaseFacts,
   ) {
     if (!row.entry) {
       return false;
@@ -445,7 +448,8 @@ export async function createSessionRowProjection(params: {
   }
   function refresh(
     ids: readonly string[],
-    prepared?: ReadonlyMap<string, SessionRowDatabaseFacts>,
+    prepared?: ReadonlyMap<string, PreparedSessionRowDatabaseFacts>,
+    materializeArchived = false,
   ) {
     if (disposed) {
       return;
@@ -453,6 +457,7 @@ export async function createSessionRowProjection(params: {
     refreshSessionRowMaterializations({
       ids,
       prepared,
+      materializeArchived,
       rows,
       dirty,
       prepare: () => {
@@ -464,6 +469,56 @@ export async function createSessionRowProjection(params: {
       materialize,
       forgetBackfill: backfill.remove,
     });
+  }
+  function pendingExactRows(queries: readonly records.Lookup[]) {
+    const selected = new Set<string>();
+    for (const query of queries) {
+      const key = resolveStoredSessionKeyForAgentStore({
+        cfg,
+        sessionKey: query.key,
+        agentId: query.agentId,
+      });
+      if (isIncognitoSessionKey(key)) {
+        continue;
+      }
+      const row = lookup(query);
+      if (
+        row &&
+        (dirty.has(records.identity(row)) ||
+          isCold(row) ||
+          row.subagentRevision !== metadata.materializedRevisions.subagentRevision)
+      ) {
+        selected.add(records.identity(row));
+      }
+    }
+    return selected;
+  }
+  function prepareExactRows(queries: readonly records.Lookup[]) {
+    const selected = pendingExactRows(queries);
+    if (disposed || selected.size === 0) {
+      return undefined;
+    }
+    for (const id of selected) {
+      if (!isCold(rows.get(id)!)) {
+        dirty.add(id);
+      }
+    }
+    return inOwnerContext(() =>
+      withSessionRowDatabaseFacts(
+        { rows, dirty, selected, cfg, revision: () => (disposed ? undefined : epoch) },
+        (ids, facts) => {
+          withAgentRosterFactsBatch(cfg, () => refresh(ids, facts, true));
+          for (const id of ids) {
+            const row = rows.get(id);
+            if (records.ready(row) && row.entry.archivedAt !== undefined) {
+              // Exact preparation participates in the archive owner's existing bounded cache.
+              archive.describe(row);
+              backfill.enqueue(id);
+            }
+          }
+        },
+      ),
+    );
   }
   async function refreshBatch() {
     for (let pending = prepareRegistryFacts(); pending; pending = prepareRegistryFacts()) {
@@ -486,7 +541,7 @@ export async function createSessionRowProjection(params: {
       return;
     }
     await withSessionRowDatabaseFacts(
-      { rows, dirty, revision: () => (disposed ? undefined : epoch) },
+      { rows, dirty, cfg, revision: () => (disposed ? undefined : epoch) },
       (ids, facts) => withAgentRosterFactsBatch(cfg, () => refresh(ids, facts)),
     );
   }
@@ -651,6 +706,12 @@ export async function createSessionRowProjection(params: {
       state: () => ({ cfg, context: metadata.current }),
       referenced,
       lookup,
+      prepareExactRows,
+      assertExactRowsPrepared(queries) {
+        if (pendingExactRows(queries).size > 0) {
+          throw new Error("Session row facts changed before the prepared read; retry the request");
+        }
+      },
       describe,
       inOwnerContext,
       placementFacts,
@@ -662,6 +723,10 @@ export async function createSessionRowProjection(params: {
       return readSessionRowModelFacts({
         cfg,
         ...row,
+        preparedAcpMeta:
+          row.materialized && !dirty.has(records.identity(row))
+            ? (row.materialized.source.thinkingProjection.acpMeta ?? null)
+            : undefined,
         source: { entry: row.storedEntry, readSourceEntry: (key) => readSourceEntry(row, key) },
         modelCatalog: catalog.current,
         rowContext: metadata.current,

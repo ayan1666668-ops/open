@@ -97,7 +97,7 @@ export function readSessionHistoryPageInWorker(
   signal?: AbortSignal,
 ): Promise<SessionTranscriptDisplayDeltaResult>;
 export function readSessionHistoryPageInWorker(
-  request: Extract<SessionHistoryWorkerRequest, { kind: "message-lookup" }>,
+  request: Extract<SessionHistoryWorkerRequest, { kind: "message-lookup" | "recent" }>,
   signal?: AbortSignal,
 ): Promise<unknown[]>;
 export async function readSessionHistoryPageInWorker(
