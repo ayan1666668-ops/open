@@ -19,10 +19,6 @@ import {
   createAccountStatusSink,
 } from "openclaw/plugin-sdk/channel-outbound";
 import { createPairingPrefixStripper } from "openclaw/plugin-sdk/channel-pairing";
-import {
-  createAllowlistProviderGroupPolicyWarningCollector,
-  createConditionalWarningCollector,
-} from "openclaw/plugin-sdk/channel-policy";
 import { PAIRING_APPROVED_MESSAGE } from "openclaw/plugin-sdk/channel-status";
 import { getSessionBindingService } from "openclaw/plugin-sdk/conversation-runtime";
 import {
@@ -62,6 +58,7 @@ import {
 } from "./accounts.js";
 import { feishuApprovalAuth } from "./approval-auth.js";
 import { FEISHU_CARD_INTERACTION_VERSION } from "./card-interaction.js";
+import { feishuSecurity } from "./channel-security.js";
 import { normalizeFeishuChatType, resolveFeishuChatType } from "./chat-type.js";
 import { FeishuChannelConfigSchema } from "./config-schema.js";
 import {
@@ -106,7 +103,6 @@ import {
   resolveFeishuChatReadPreliminaryAuthorization,
 } from "./read-policy.js";
 import { collectRuntimeConfigAssignments, secretTargetRegistryEntries } from "./secret-contract.js";
-import { collectFeishuSecurityAuditFindings } from "./security-audit.js";
 import { withFeishuRequestContext, withFeishuSendContext } from "./send-context.js";
 import { toFeishuMessageSendResult } from "./send-result.js";
 import { resolveFeishuSessionConversation } from "./session-conversation.js";
@@ -388,30 +384,6 @@ async function resolveFeishuMessageChatType(params: {
     runtime: params.runtime,
   });
 }
-
-const collectFeishuSecurityWarnings = createAllowlistProviderGroupPolicyWarningCollector<{
-  cfg: ClawdbotConfig;
-  accountId?: string | null;
-}>({
-  providerConfigPresent: (cfg) => cfg.channels?.feishu !== undefined,
-  resolveGroupPolicy: ({ cfg, accountId }) =>
-    resolveFeishuAccount({ cfg, accountId }).config?.groupPolicy,
-  collect: ({ cfg, accountId, groupPolicy }) => {
-    if (groupPolicy !== "open") {
-      return [];
-    }
-    const account = resolveFeishuAccount({ cfg, accountId });
-    return [
-      `- Feishu[${account.accountId}] groups: groupPolicy="open" allows any member to trigger (mention-gated). Set channels.feishu.groupPolicy="allowlist" + channels.feishu.groupAllowFrom to restrict senders.`,
-    ];
-  },
-});
-const collectFeishuOpenGroupFindings = createConditionalWarningCollector.findings({
-  collectWarnings: collectFeishuSecurityWarnings,
-  checkId: "channels.feishu.groups.open",
-  severity: "warn",
-  title: "Feishu security warning",
-});
 
 function describeFeishuMessageTool({
   cfg,
@@ -1994,10 +1966,7 @@ export const feishuPlugin: ChannelPlugin<ResolvedFeishuAccount, FeishuProbeResul
       },
       message: feishuMessageAdapter,
     },
-    security: {
-      collectWarnings: ({ cfg, accountId }) => collectFeishuOpenGroupFindings({ cfg, accountId }),
-      collectAuditFindings: ({ cfg }) => collectFeishuSecurityAuditFindings({ cfg }),
-    },
+    security: feishuSecurity,
     pairing: {
       text: {
         idLabel: "feishuUserId",

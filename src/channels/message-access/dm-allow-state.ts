@@ -8,7 +8,7 @@ export async function resolveDmAllowAuditState(params: {
   accountId: string;
   allowFrom?: Array<string | number> | null;
   dmPolicy?: string | null;
-  normalizeEntry?: (raw: string) => string;
+  normalizeEntry?: (raw: string, source?: "config" | "store") => string;
   readStore?: (provider: ChannelId, accountId: string) => Promise<string[]>;
 }) {
   const configAllowFrom = normalizeStringEntries(
@@ -23,10 +23,12 @@ export async function resolveDmAllowAuditState(params: {
   });
   const normalizeEntry = params.normalizeEntry ?? ((value: string) => value);
   const normalizedCfg = normalizeStringEntries(
-    configAllowFrom.filter((value) => value !== "*").map((value) => normalizeEntry(value)),
+    configAllowFrom
+      .filter((value) => value !== "*")
+      .map((value) => normalizeEntry(value, "config")),
   );
   const normalizedStore = normalizeStringEntries(
-    storeAllowFrom.map((value) => normalizeEntry(value)),
+    storeAllowFrom.map((value) => normalizeEntry(value, "store")),
   );
   const admittedPrincipals = Array.from(new Set([...normalizedCfg, ...normalizedStore]));
   return {

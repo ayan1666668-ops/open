@@ -615,7 +615,7 @@ type ChatChannelSecurityOptions<TResolvedAccount extends { accountId?: string | 
     policyPathSuffix?: string;
     approveChannelId?: string;
     approveHint?: string;
-    normalizeEntry?: (raw: string) => string;
+    normalizeEntry?: ChannelSecurityDmPolicy["normalizeEntry"];
     classifyEntryAuthentication?: ChannelSecurityDmPolicy["classifyEntryAuthentication"];
     inheritSharedDefaultsFromDefaultAccount?: boolean;
   };

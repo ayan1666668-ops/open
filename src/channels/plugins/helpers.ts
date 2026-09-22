@@ -49,7 +49,7 @@ export function buildAccountScopedDmSecurityPolicy(params: {
   policyPathSuffix?: string;
   approveChannelId?: string;
   approveHint?: string;
-  normalizeEntry?: (raw: string) => string;
+  normalizeEntry?: ChannelSecurityDmPolicy["normalizeEntry"];
   classifyEntryAuthentication?: ChannelSecurityDmPolicy["classifyEntryAuthentication"];
   inheritSharedDefaultsFromDefaultAccount?: boolean;
 }): ChannelSecurityDmPolicy {

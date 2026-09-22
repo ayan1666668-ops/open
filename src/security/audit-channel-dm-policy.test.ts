@@ -323,19 +323,25 @@ describe("security audit channel dm policy", () => {
     expect(new Set(collisions.map((finding) => finding.detail)).size).toBe(2);
   });
 
-  it("uses the channel-owned DM route for wildcard senders", async () => {
-    const findings = await collectChannelSecurityFindingsCore({
-      cfg: { session: { dmScope: "main" } },
-      plugins: [
-        createDmPlugin({
-          accounts: { default: { policy: "open", allowFrom: ["*"] } },
-          dmRouting: { resolveDmScope: () => "per-channel-peer" },
-        }),
-      ],
-    });
+  it.each(["open", "allowlist"])(
+    "uses the channel-owned DM route for %s wildcard senders",
+    async (policy) => {
+      const findings = await collectChannelSecurityFindingsCore({
+        cfg: { session: { dmScope: "main" } },
+        plugins: [
+          createDmPlugin({
+            accounts: { default: { policy, allowFrom: ["*"] } },
+            dmRouting: { resolveDmScope: () => "per-channel-peer" },
+          }),
+        ],
+      });
 
-    expect(collisionFindings(findings)).toHaveLength(0);
-  });
+      expect(collisionFindings(findings)).toHaveLength(0);
+      expect(findings.some((finding) => finding.checkId === "channels.whatsapp.dm.locked")).toBe(
+        false,
+      );
+    },
+  );
 
   it.each([
     {

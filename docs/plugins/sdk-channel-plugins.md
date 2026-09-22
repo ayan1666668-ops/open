@@ -258,6 +258,13 @@ raw callback string. Actor and source-message checks remain channel-owned.
     selection, persistence, environment reporting, and other logout side effects
     in the plugin.
 
+    DM audit policies may provide `normalizeEntry(raw, source)` to project
+    admitted principals. The audit passes `"config"` for configured allowlist
+    entries and `"store"` for persisted pairing approvals. Use the distinction
+    when startup filters configured entries more strictly than approved sender
+    IDs. Existing one-argument normalizers continue to apply to both sources;
+    this diagnostic callback does not change ingress authorization.
+
     If a channel intentionally applies stricter DM session routing than the
     global config, expose that behavior through `security.dmRouting` so Doctor
     and security audit resolve the same session owner as runtime. The optional

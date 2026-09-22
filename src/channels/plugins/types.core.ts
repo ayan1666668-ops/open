@@ -313,7 +313,7 @@ export type ChannelSecurityDmPolicy = {
   policyPath?: string;
   allowFromPath: string;
   approveHint: string;
-  normalizeEntry?: (raw: string) => string;
+  normalizeEntry?: (raw: string, source?: "config" | "store") => string;
   classifyEntryAuthentication?: (raw: string) => IdentifierAuthentication | undefined;
 };
 

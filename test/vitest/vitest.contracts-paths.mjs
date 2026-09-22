@@ -29,6 +29,7 @@ export const channelRegistryContractPatterns = [
 ];
 
 export const channelSessionContractPatterns = [
+  "src/channels/plugins/contracts/audit-channel-feishu.contract.test.ts",
   "src/channels/plugins/contracts/plugins-core.resolve-config-writes.contract.test.ts",
   "src/channels/plugins/contracts/registry.contract.test.ts",
   "src/channels/plugins/contracts/session-binding.registry-backed.contract.test.ts",

@@ -1,5 +1,7 @@
 import { decodeHtmlEntities } from "openclaw/plugin-sdk/html-entity-runtime";
 
+export { normalizeMSTeamsConversationId } from "./ingress-identity.js";
+
 type MSTeamsQuoteInfo = {
   sender: string;
   body: string;
@@ -83,10 +85,6 @@ type MentionableActivity = {
     mentioned?: { id?: string };
   }> | null;
 };
-
-export function normalizeMSTeamsConversationId(raw: string): string {
-  return raw.split(";")[0] ?? raw;
-}
 
 export function extractMSTeamsConversationMessageId(raw: string): string | undefined {
   if (!raw) {

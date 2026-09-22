@@ -14,10 +14,6 @@ import {
   createRuntimeOutboundDelegates,
 } from "openclaw/plugin-sdk/channel-outbound";
 import { createPairingPrefixStripper } from "openclaw/plugin-sdk/channel-pairing";
-import {
-  createAllowlistProviderGroupPolicyWarningCollector,
-  createConditionalWarningCollector,
-} from "openclaw/plugin-sdk/channel-policy";
 import { registerChannelRuntimeContext } from "openclaw/plugin-sdk/channel-runtime-context";
 import {
   createChannelDirectoryAdapter,
@@ -36,7 +32,6 @@ import type {
   ChannelMessageActionName,
   ChannelOutboundAdapter,
   ChannelPlugin,
-  OpenClawConfig,
 } from "../runtime-api.js";
 import {
   buildProbeChannelStatusSummary,
@@ -64,6 +59,7 @@ import {
   shouldSuppressLocalMSTeamsExecApprovalPrompt,
 } from "./approval-native.js";
 import { resolveMSTeamsAccount, type ResolvedMSTeamsAccount } from "./channel-config.js";
+import { collectMSTeamsSecurityFindings } from "./channel-security.js";
 import { msteamsSetupPlugin } from "./channel.setup.js";
 import { collectMSTeamsMutableAllowlistWarnings } from "./doctor.js";
 import {
@@ -81,6 +77,7 @@ import {
 import {
   normalizeMSTeamsMessagingTarget,
   normalizeMSTeamsUserInput,
+  isStableMSTeamsUserId,
   looksLikeMSTeamsTargetId,
   parseMSTeamsConversationId,
   parseMSTeamsTeamChannelInput,
@@ -98,25 +95,6 @@ const TEAMS_GRAPH_PERMISSION_HINTS: Record<string, string> = {
   "Sites.Read.All": "files (SharePoint)",
   "Files.Read.All": "files (OneDrive)",
 };
-
-const collectMSTeamsSecurityWarnings = createAllowlistProviderGroupPolicyWarningCollector<{
-  cfg: OpenClawConfig;
-}>({
-  providerConfigPresent: (cfg) => cfg.channels?.msteams !== undefined,
-  resolveGroupPolicy: ({ cfg }) => cfg.channels?.msteams?.groupPolicy,
-  collect: ({ groupPolicy }) =>
-    groupPolicy === "open"
-      ? [
-          '- MS Teams groups: groupPolicy="open" allows any member to trigger (mention-gated). Set channels.msteams.groupPolicy="allowlist" + channels.msteams.groupAllowFrom to restrict senders.',
-        ]
-      : [],
-});
-const collectMSTeamsSecurityFindings = createConditionalWarningCollector.findings({
-  collectWarnings: collectMSTeamsSecurityWarnings,
-  checkId: "channels.msteams.groups.open",
-  severity: "warn",
-  title: "MS Teams security warning",
-});
 
 const loadMSTeamsChannelRuntime = createLazyRuntimeNamedExport(
   () => import("./channel.runtime.js"),
@@ -473,7 +451,7 @@ export const msteamsPlugin: ChannelPlugin<ResolvedMSTeamsAccount, ProbeMSTeamsRe
                 return;
               }
               const cleaned = stripPrefix(trimmed);
-              if (/^[0-9a-fA-F-]{16,}$/.test(cleaned) || cleaned.includes("@")) {
+              if (isStableMSTeamsUserId(cleaned) || cleaned.includes("@")) {
                 entry.resolved = true;
                 entry.id = cleaned;
                 return;
@@ -1079,7 +1057,8 @@ export const msteamsPlugin: ChannelPlugin<ResolvedMSTeamsAccount, ProbeMSTeamsRe
       },
     },
     security: {
-      collectWarnings: ({ cfg }) => collectMSTeamsSecurityFindings({ cfg }),
+      ...msteamsSetupPlugin.security,
+      collectWarnings: collectMSTeamsSecurityFindings,
     },
     pairing: {
       text: {

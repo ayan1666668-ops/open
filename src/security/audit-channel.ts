@@ -240,7 +240,7 @@ export async function collectChannelSecurityFindingsCore(params: {
     policyPath?: string;
     allowFromPath: string;
     approveHint: string;
-    normalizeEntry?: (raw: string) => string;
+    normalizeEntry?: (raw: string, source?: "config" | "store") => string;
   }) => {
     const policyPath = input.policyPath ?? `${input.allowFromPath}policy`;
     // DM allowlist audit may need channel-specific normalization and async
@@ -283,7 +283,7 @@ export async function collectChannelSecurityFindingsCore(params: {
       return auditState;
     }
 
-    if (input.dmPolicy !== "open" && auditState.admittedPrincipals.length === 0) {
+    if (input.dmPolicy !== "open" && !hasWildcard && auditState.admittedPrincipals.length === 0) {
       findings.push({
         checkId: `channels.${input.provider}.dm.locked`,
         severity: "info",
