@@ -176,7 +176,10 @@ it.each([
     expect(state.currentSessionId).toBe(observedRow.sessionId);
     expect(getChatSessionProjection(state).scope.sessionId).toBe(observedRow.sessionId);
     expect(selectedChatSessionRow(state)).toMatchObject(observedRow);
-    await vi.waitFor(() => expect(listStoredChatOutboxes(visiblePane.state)).toEqual([]));
+    await Promise.all(
+      resume.mock.results.flatMap((result) => (result.type === "return" ? [result.value] : [])),
+    );
+    expect(listStoredChatOutboxes(visiblePane.state)).toEqual([]);
     const recoveryCalls = history.mock.calls.filter(([, raw]) => {
       const ids = asOptionalRecord(raw)?.inputRunIds;
       return Array.isArray(ids) && ids.includes(runId);

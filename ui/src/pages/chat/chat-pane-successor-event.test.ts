@@ -120,7 +120,7 @@ it.each([false, true])(
   },
 );
 
-it.each(["event", "list"] as const)(
+it.each(["event", "list", "pending list"] as const)(
   "waits for authoritative successor history after %s admission before replacing a predecessor transcript",
   async (admission) => {
     const previous: GatewaySessionRow = {
@@ -146,7 +146,7 @@ it.each(["event", "list"] as const)(
       sessionId: previous.sessionId,
       sessionInfo: previous,
     };
-    const authoritative: ChatHistoryResult = {
+    const authoritative = {
       messages: [
         {
           role: "assistant",
@@ -157,12 +157,19 @@ it.each(["event", "list"] as const)(
       ],
       sessionId: successor.sessionId,
       sessionInfo: successor,
-    };
+    } satisfies ChatHistoryResult;
     const successorHistory = createDeferred<ChatHistoryResult>();
+    const historyRequested = createDeferred();
     let holdHistory = false;
-    const history = vi.fn<GatewayRequestHandler>(() =>
-      holdHistory ? successorHistory.promise : initial,
-    );
+    let successorReads = 0;
+    const history = vi.fn<GatewayRequestHandler>(() => {
+      if (!holdHistory) {
+        return initial;
+      }
+      historyRequested.resolve();
+      successorReads += 1;
+      return successorReads === 1 ? successorHistory.promise : authoritative;
+    });
     let listedRows: GatewaySessionRow[] = [];
     const { sessions, mount, emitGatewayEvent } = createMountedPanes(
       [previous],
@@ -191,12 +198,16 @@ it.each(["event", "list"] as const)(
       const displayed = state.chatMessages;
       holdHistory = true;
       history.mockClear();
-      if (admission === "list") {
+      if (admission !== "event") {
         listedRows = [successor];
         await sessions.refresh({ agentId: "main", force: true });
         expect(selectedChatSessionRow(state)).toMatchObject(successor);
         expect(state.currentSessionId).toBe(previous.sessionId);
         expect(state.chatMessages).toBe(displayed);
+      }
+      if (admission === "pending list") {
+        refresh = loadChatHistory(state, { deferBranches: true });
+        await historyRequested.promise;
       }
 
       emitGatewayEvent("session.message", {
@@ -206,18 +217,18 @@ it.each(["event", "list"] as const)(
         messageId: "successor-input",
         messageSeq: 2,
         message: successorMessage,
+        hasActiveRun: true,
         session: successor,
         ancestorSessions: [],
       });
       // Reject mixed-incarnation display before the held history can repair it.
       expect(state.chatMessages).toBe(displayed);
       expect(state.chatMessages).toEqual(initial.messages);
-      await vi.waitFor(() =>
-        expect(history).toHaveBeenCalledExactlyOnceWith(
-          "chat.history",
-          expect.objectContaining({ sessionKey: successor.key }),
-          expect.objectContaining({ signal: expect.any(AbortSignal) }),
-        ),
+      await historyRequested.promise;
+      expect(history).toHaveBeenCalledExactlyOnceWith(
+        "chat.history",
+        expect.objectContaining({ sessionKey: successor.key }),
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
       );
       expect(selectedChatSessionRow(state)).toMatchObject(successor);
       expect(state.currentSessionId).toBe(previous.sessionId);
@@ -229,10 +240,14 @@ it.each(["event", "list"] as const)(
           ?.sessionId,
       ).toBe(previous.sessionId);
 
-      // Join the read the event already started; this call must not issue a replacement request.
+      // Join the event's read, including any successor read queued behind an older snapshot.
       refresh = loadChatHistory(state, { deferBranches: true });
       expect(history).toHaveBeenCalledTimes(1);
-      successorHistory.resolve(authoritative);
+      successorHistory.resolve(
+        admission === "pending list"
+          ? { ...authoritative, messages: authoritative.messages.slice(0, 1) }
+          : authoritative,
+      );
       await refresh;
       expect(state.currentSessionId).toBe(successor.sessionId);
       expect(getChatSessionProjection(state).scope.sessionId).toBe(successor.sessionId);
@@ -240,7 +255,7 @@ it.each(["event", "list"] as const)(
       expect(
         readChatSessionSnapshot(state.chatMessagesBySession, state, { sessionKey: successor.key }),
       ).toMatchObject({ sessionId: successor.sessionId, messages: authoritative.messages });
-      expect(history).toHaveBeenCalledTimes(1);
+      expect(history).toHaveBeenCalledTimes(admission === "pending list" ? 2 : 1);
     } finally {
       successorHistory.resolve(authoritative);
       await refresh;
