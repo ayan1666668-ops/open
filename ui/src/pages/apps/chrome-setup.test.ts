@@ -7,18 +7,44 @@ import { createNativeDeviceSettingsCapability } from "../../app/native-device-se
 import { i18n } from "../../i18n/index.ts";
 import { createApplicationContextProvider } from "../../test-helpers/application-context.ts";
 import { createChromeExtensionSetupResult } from "../../test-helpers/chrome-extension-setup.ts";
-import { createNativeDeviceSettingsSnapshot } from "../../test-helpers/native-device-settings.ts";
+import {
+  createNativeDeviceSettingsSnapshot,
+  createTauriDeviceSettingsSnapshot,
+} from "../../test-helpers/native-device-settings.ts";
 import { renderApps } from "./view.ts";
 
 type SetupElement = HTMLElement & { updateComplete: Promise<boolean> };
 const result = createChromeExtensionSetupResult;
-function bridge(postMessage: (message: { action: string }) => Promise<unknown>) {
+let defaultCapability: ApplicationContext["nativeDeviceSettings"] = null;
+const capabilities = new Set<NonNullable<ApplicationContext["nativeDeviceSettings"]>>();
+function bridge(
+  postMessage: (message: { action: string }) => Promise<unknown>,
+  platform: "darwin" | "linux" | "win32" = "darwin",
+) {
+  const snapshot =
+    platform === "darwin"
+      ? createNativeDeviceSettingsSnapshot()
+      : createTauriDeviceSettingsSnapshot(platform === "linux" ? "linux" : "windows");
+  Object.assign(window, { __OPENCLAW_NATIVE_DEVICE_SETTINGS__: snapshot });
   Object.defineProperty(window, "webkit", {
     configurable: true,
-    value: { messageHandlers: { openclawChromeSetup: { postMessage } } },
+    value: {
+      messageHandlers: {
+        openclawDeviceSettings: {
+          postMessage: (message: { type: string; action?: string }) =>
+            message.type === "chrome-extension-setup" && message.action
+              ? postMessage({ action: message.action })
+              : Promise.resolve(snapshot),
+        },
+      },
+    },
   });
+  defaultCapability = createNativeDeviceSettingsCapability()!;
+  capabilities.add(defaultCapability);
 }
-async function mount(nativeDeviceSettings: ApplicationContext["nativeDeviceSettings"] = null) {
+async function mount(
+  nativeDeviceSettings: ApplicationContext["nativeDeviceSettings"] = defaultCapability,
+) {
   const host = createApplicationContextProvider({ nativeDeviceSettings } as ApplicationContext);
   render(renderApps({ onNavigate: vi.fn() }), host);
   document.body.append(host);
@@ -38,6 +64,11 @@ beforeEach(async () => {
 });
 afterEach(() => {
   document.body.replaceChildren();
+  for (const capability of capabilities) {
+    capability.dispose();
+  }
+  capabilities.clear();
+  defaultCapability = null;
   Reflect.deleteProperty(window, "webkit");
   Reflect.deleteProperty(window, "__OPENCLAW_NATIVE_DEVICE_SETTINGS__");
   vi.restoreAllMocks();
@@ -62,7 +93,7 @@ describe("Apps local Chrome setup", () => {
             : {}),
         }),
       );
-      bridge(post);
+      bridge(post, platform);
       const { setup, card } = await mount();
       window.dispatchEvent(new Event("focus"));
       expect(post).not.toHaveBeenCalled();
@@ -92,16 +123,42 @@ describe("Apps local Chrome setup", () => {
       "https://docs.openclaw.ai/tools/chrome-extension",
     ]);
   });
+  it.each([0, 1])("recognizes an installed extension with %i enabled profiles", async (enabled) => {
+    bridge(async () =>
+      result({
+        installation: {
+          ...result().installation,
+          nativeHostRegistered: true,
+          installedProfiles: 1,
+          discoveredProfiles: enabled,
+          awaitingApproval: enabled === 0,
+        },
+        phase: enabled ? "waiting_for_connection" : "needs_browser_action",
+        nextAction: enabled ? "check_connection" : "approve_extension",
+      }),
+    );
+    const { setup } = await mount();
+    click(setup, "Refresh setup status");
+    await vi.waitFor(() =>
+      expect(setup.querySelector('[role="status"]')?.textContent).toContain("Installed"),
+    );
+    expect(setup.textContent?.includes("installed but not enabled")).toBe(enabled === 0);
+    expect(setup.textContent).not.toContain("Extension connected on this device.");
+  });
   it.each([
     { label: "legacy", actions: undefined },
     { label: "none", actions: [] },
     { label: "inspect only", actions: ["inspect"] },
     { label: "install and verify", actions: ["install", "verify"] },
   ] as const)(
-    "offers only advertised Mac actions or the released legacy install: $label", async ({ actions }) => {
+    "offers only advertised Mac actions or the released legacy install: $label",
+    async ({ actions }) => {
       const snapshot = createNativeDeviceSettingsSnapshot();
-      if (actions === undefined) { delete snapshot.browser!.chromeSetupActions; }
-      else { snapshot.browser!.chromeSetupActions = [...actions]; }
+      if (actions === undefined) {
+        delete snapshot.browser!.chromeSetupActions;
+      } else {
+        snapshot.browser!.chromeSetupActions = [...actions];
+      }
       const post = vi.fn(async (message: { type: string; action?: string }) => {
         if (message.type === "install-chrome-extension") {
           return { nativeHostRegistered: true, installRequested: true, discoveredProfiles: 0 };
@@ -112,40 +169,64 @@ describe("Apps local Chrome setup", () => {
         return snapshot;
       });
       Object.assign(window, { __OPENCLAW_NATIVE_DEVICE_SETTINGS__: snapshot });
-      Object.defineProperty(window, "webkit", { configurable: true, value: {
-        messageHandlers: { openclawDeviceSettings: { postMessage: post } },
-      } });
+      Object.defineProperty(window, "webkit", {
+        configurable: true,
+        value: {
+          messageHandlers: { openclawDeviceSettings: { postMessage: post } },
+        },
+      });
       const capability = createNativeDeviceSettingsCapability()!;
       try {
         const { setup } = await mount(capability);
         const expected: readonly string[] = actions ?? ["install"];
-        const labels = { install: "Set up Chrome on this device", inspect: "Refresh setup status", verify: "Verify connection" };
-        expect([...setup.querySelectorAll("button")].map((button) => button.textContent?.trim())).toEqual(
-          ["install", "inspect", "verify"].filter((action) => expected.includes(action)).map((action) => labels[action as keyof typeof labels]),
+        const labels = {
+          install: "Set up Chrome on this device",
+          inspect: "Refresh setup status",
+          verify: "Verify connection",
+        };
+        expect(
+          [...setup.querySelectorAll("button")].map((button) => button.textContent?.trim()),
+        ).toEqual(
+          ["install", "inspect", "verify"]
+            .filter((action) => expected.includes(action))
+            .map((action) => labels[action as keyof typeof labels]),
         );
         if (actions === undefined) {
           click(setup, labels.install);
-          await vi.waitFor(() => expect(setup.textContent).toContain("Connection has not been verified on this device."));
+          await vi.waitFor(() =>
+            expect(setup.textContent).toContain("Connection has not been verified on this device."),
+          );
           expect(post).toHaveBeenCalledWith({ type: "install-chrome-extension" });
-          expect(post.mock.calls.some(([message]) => message.type === "chrome-extension-setup")).toBe(false);
+          expect(
+            post.mock.calls.some(([message]) => message.type === "chrome-extension-setup"),
+          ).toBe(false);
           expect(setup.textContent).not.toContain("Extension connected on this device.");
         } else {
           for (const action of actions) {
             click(setup, labels[action]);
             await setup.updateComplete;
-            await vi.waitFor(() => expect(setup.querySelector<HTMLButtonElement>("button")!.disabled).toBe(false));
+            await vi.waitFor(() =>
+              expect(setup.querySelector<HTMLButtonElement>("button")!.disabled).toBe(false),
+            );
             expect(post).toHaveBeenCalledWith({ type: "chrome-extension-setup", action });
           }
-          expect(post.mock.calls.some(([message]) => message.type === "install-chrome-extension")).toBe(false);
+          expect(
+            post.mock.calls.some(([message]) => message.type === "install-chrome-extension"),
+          ).toBe(false);
         }
-      } finally { capability.dispose(); }
+      } finally {
+        capability.dispose();
+      }
     },
   );
   it("uses the existing Mac device-settings context without a desktop handler", async () => {
     const snapshot = createNativeDeviceSettingsSnapshot();
     const post = vi.fn(async (message: { type: string; action?: string }) =>
       message.type === "chrome-extension-setup"
-        ? result({ action: "inspect", target: { ...result().target, profile: "work", relayPort: 19444 } })
+        ? result({
+            action: "inspect",
+            target: { ...result().target, profile: "work", relayPort: 19444 },
+          })
         : snapshot,
     );
     Object.assign(window, { __OPENCLAW_NATIVE_DEVICE_SETTINGS__: snapshot });

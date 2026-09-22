@@ -22,6 +22,7 @@ public enum DeviceSettingKey: String, CaseIterable, Sendable {
     case healthSummaryEnabled = "capabilities.healthSummaryEnabled"
     case canvasEnabled = "capabilities.canvasEnabled"
     case cameraEnabled = "capabilities.cameraEnabled"
+    case desktopSharingEnabled = "capabilities.desktopSharingEnabled"
     case computerControlEnabled = "capabilities.computerControlEnabled"
     case computerControlProvider = "capabilities.computerControlProvider"
     case peekabooBridgeEnabled = "capabilities.peekabooBridgeEnabled"
@@ -98,7 +99,7 @@ public enum DeviceSettingsPanel: String, CaseIterable, Sendable {
 
 public enum DeviceSettingsPermission: String, CaseIterable, Encodable, Sendable {
     case notifications, accessibility, screenRecording, microphone
-    case camera, speechRecognition, location, automation
+    case camera, speechRecognition, location
     case contacts, calendars, reminders, photos
 }
 
@@ -142,6 +143,7 @@ public enum DeviceSettingsRequest: Equatable, Sendable {
     case open(DeviceSettingsPanel)
     case checkForUpdates
     case chromeExtensionSetup(ChromeExtensionSetupAction)
+    case chromeExtensionStatus
     /// Shipped contract-1 request; projects through the same canonical setup owner.
     case installChromeExtension
 
@@ -163,6 +165,9 @@ public enum DeviceSettingsRequest: Equatable, Sendable {
             else { return nil }
             self = .open(panel)
         case "check-for-updates": self = .checkForUpdates
+        case "chrome-extension-status":
+            guard payload.count == 1 else { return nil }
+            self = .chromeExtensionStatus
         case "install-chrome-extension":
             guard payload.count == 1 else { return nil }
             self = .installChromeExtension
@@ -317,6 +322,7 @@ public struct DeviceSettingsSnapshot: Encodable, Sendable {
     public struct Capabilities: Encodable, Sendable {
         public let canvasEnabled: Bool?
         public let cameraEnabled: Bool?
+        public let desktopSharingEnabled: Bool?
         public let computerControlEnabled: Bool?
         public let computerControlProvider: String?
         public let cuaDriverBundled: Bool?
@@ -330,6 +336,7 @@ public struct DeviceSettingsSnapshot: Encodable, Sendable {
         public init(
             canvasEnabled: Bool? = nil,
             cameraEnabled: Bool? = nil,
+            desktopSharingEnabled: Bool? = nil,
             computerControlEnabled: Bool? = nil,
             computerControlProvider: String? = nil,
             cuaDriverBundled: Bool? = nil,
@@ -342,6 +349,7 @@ public struct DeviceSettingsSnapshot: Encodable, Sendable {
         {
             self.canvasEnabled = canvasEnabled
             self.cameraEnabled = cameraEnabled
+            self.desktopSharingEnabled = desktopSharingEnabled
             self.computerControlEnabled = computerControlEnabled
             self.computerControlProvider = computerControlProvider
             self.cuaDriverBundled = cuaDriverBundled

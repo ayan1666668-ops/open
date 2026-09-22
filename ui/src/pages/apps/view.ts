@@ -262,11 +262,13 @@ function renderAppCard(card: AppCard, props: AppsProps) {
         </div>
         <p class="apps-card__desc">${card.desc()}</p>
         <div class="apps-card__ctas">
-          ${macGatewayLaunchUrl
-            ? html`<a class="apps-card__cta apps-card__cta--primary" href=${macGatewayLaunchUrl}>
-                ${t("appsPage.ctaOpenMac")}
-              </a>`
-            : nothing}
+          ${
+            macGatewayLaunchUrl
+              ? html`<a class="apps-card__cta apps-card__cta--primary" href=${macGatewayLaunchUrl}>
+                  ${t("appsPage.ctaOpenMac")}
+                </a>`
+              : nothing
+          }
           ${card.ctas.map((cta, index) => renderCta(cta, index + (macGatewayLaunchUrl ? 1 : 0), props))}
         </div>
         ${card.id === "chrome-extension" ? html`<openclaw-native-chrome-setup></openclaw-native-chrome-setup>` : nothing}
@@ -281,9 +283,7 @@ function renderSection(section: AppSection, props: AppsProps) {
       ? html`
           <p class="apps-pair-hint">
             ${t("appsPage.havePhone")}
-            <button type="button" @click=${props.onPairDevice}>
-              ${t("appsPage.pairDevice")}
-            </button>
+            <button type="button" @click=${props.onPairDevice}>${t("appsPage.pairDevice")}</button>
           </p>
         `
       : nothing;

@@ -48,7 +48,10 @@ struct BundledNodeWorkerTests {
         printf '%s\\n' '{"type":"ready","version":"2026.8.1","manifest":{"caps":["system"],"commands":["\(
             command)"],"pathEnv":"/usr/bin:/bin"}}'
         while IFS= read -r line; do :; done
-        """.write(to: dist.appendingPathComponent("entry.js"), atomically: true, encoding: .utf8)
+        """.write(to: dist.appendingPathComponent("mac-node-worker.js"), atomically: true, encoding: .utf8)
+        let browser = dist.appendingPathComponent("extensions/browser")
+        try FileManager.default.createDirectory(at: browser, withIntermediateDirectories: true)
+        try "exit 0\n".write(to: browser.appendingPathComponent("setup-entry.js"), atomically: true, encoding: .utf8)
         return dist
     }
 
@@ -124,13 +127,15 @@ struct BundledNodeWorkerTests {
         let profile = AppProfile(environment: ["OPENCLAW_PROFILE": "browser-fixture"])
         let worker = try BundledNodeWorker.launch(bundle: bundle, profile: profile)
         let setup = try BundledNodeWorker.browserSetupLaunch(bundle: bundle, profile: profile)
-        #expect(setup.command.prefix(2) == worker.command.prefix(2))
+        #expect(setup.command[0] == worker.command[0])
+        #expect(setup.command[1].hasSuffix("/dist/extensions/browser/setup-entry.js"))
+        #expect(worker.command[1].hasSuffix("/dist/mac-node-worker.js"))
         #expect(setup.command[0].hasPrefix(relocated.path + "/"))
         #expect(Array(setup.command.dropFirst(2)) == [
-            "--profile", "browser-fixture", "browser", "extension", "setup", "--action", "install",
-            "--json", "--wait-ms", "1000",
+            "--action", "install", "--wait-ms", "1000",
         ])
         #expect(setup.currentDirectoryURL == worker.currentDirectoryURL)
-        #expect(setup.environment == worker.environment)
+        #expect(setup.environment["PATH"] == worker.environment["PATH"])
+        #expect(setup.environment["OPENCLAW_PROFILE"] == "browser-fixture")
     }
 }

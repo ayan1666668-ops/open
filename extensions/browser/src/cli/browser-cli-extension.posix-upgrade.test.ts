@@ -232,7 +232,8 @@ describe.each(["linux", "darwin"] as const)("POSIX bundle migration on %s", (pla
         target: expect.objectContaining({ profile: "other", relayPort: 19555 }),
       }),
     );
-    expect(await fs.readFile(f.manifest.path, "utf8")).toContain("'--browser-profile' 'other'");
+    const selected = JSON.parse(await fs.readFile(f.manifestPath, "utf8")) as { path: string };
+    expect(await fs.readFile(selected.path, "utf8")).toContain("'--browser-profile' 'other'");
     await f.assertPairingPreserved();
   });
   it.each([

@@ -16,29 +16,27 @@ export function renderChromeSetupStatus({
   running: boolean;
   failed: boolean;
 }) {
-  if (legacyResult && !running && !failed) {
+  if (running || failed) {
     return html`<p role="status">
-        ${t(legacyResult.nativeHostRegistered ? "configPage.deviceSettings.chromeExtensionPhases.waiting_for_connection" : "configPage.deviceSettings.chromeExtensionFailed")}
-      </p>
-      <p>
-        ${t(legacyResult.installRequested || legacyResult.discoveredProfiles > 0 ? "configPage.deviceSettings.chromeExtensionNextActions.open_chrome" : "configPage.deviceSettings.chromeExtensionNextActions.install_from_store")}
-      </p>`;
+      ${t(running ? "configPage.deviceSettings.chromeExtensionPreparing" : "configPage.deviceSettings.chromeExtensionFailed")}
+    </p>`;
   }
+  const installation = result?.installation ?? legacyResult;
+  if (!installation) {
+    return nothing;
+  }
+  const installed = (installation.installedProfiles ?? installation.discoveredProfiles) > 0;
   return html`
     <p role="status">
-      ${
-        running
-          ? t("configPage.deviceSettings.chromeExtensionPreparing")
-          : failed
-            ? t("configPage.deviceSettings.chromeExtensionFailed")
-            : result
-              ? t(`configPage.deviceSettings.chromeExtensionPhases.${result.phase}`)
-              : nothing
-      }
+      ${t(installed ? "configPage.deviceSettings.chromeExtensionDetected" : installation.installedProfiles === undefined ? "configPage.deviceSettings.chromeExtensionUnknown" : "configPage.deviceSettings.chromeExtensionNotInstalled")}
     </p>
+    ${installed && installation.discoveredProfiles === 0 ? html`<p>${t("configPage.deviceSettings.chromeExtensionEnableHint")}</p>` : nothing}
     ${
       result
         ? html`
+            <p role="status">
+              ${t(`configPage.deviceSettings.chromeExtensionPhases.${result.phase}`)}
+            </p>
             <p>
               ${t("configPage.deviceSettings.chromeExtensionTarget", {
                 hostname: result.target.hostname,
@@ -46,14 +44,19 @@ export function renderChromeSetupStatus({
                 port: String(result.target.relayPort),
               })}
             </p>
-            <p>${t(`configPage.deviceSettings.chromeExtensionNextActions.${result.nextAction}`)}</p>
+            ${result.nextAction !== "none" ? html`<p>${t(`configPage.deviceSettings.chromeExtensionNextActions.${result.nextAction}`)}</p>` : nothing}
             ${
               result.connection.state === "connected"
                 ? html`<p>${t("configPage.deviceSettings.chromeExtensionTabsHint")}</p>`
                 : nothing
             }
           `
-        : nothing
+        : html`
+            <p>
+              ${t(installation.nativeHostRegistered ? "configPage.deviceSettings.chromeExtensionPhases.waiting_for_connection" : "configPage.deviceSettings.chromeExtensionFailed")}
+            </p>
+            ${!installation.nativeHostRegistered || installed ? nothing : html`<p>${t(installation.installRequested ? "configPage.deviceSettings.chromeExtensionNextActions.open_chrome" : installation.installedProfiles === undefined ? "configPage.deviceSettings.chromeExtensionStatusUnsupported" : "configPage.deviceSettings.chromeExtensionNextActions.install_from_store")}</p>`}
+          `
     }
   `;
 }

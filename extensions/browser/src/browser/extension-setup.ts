@@ -38,6 +38,7 @@ export type BrowserExtensionSetupResult = {
   installation: {
     nativeHostRegistered: boolean;
     installRequested: boolean;
+    installedProfiles: number;
     discoveredProfiles: number;
     awaitingApproval: boolean;
     automaticBootstrapSupported: boolean;
@@ -263,25 +264,24 @@ export async function runBrowserExtensionSetup(
       ? observed
       : await observeBrowserExtensionSetup({ ...options, profile: profileName });
   options.signal?.throwIfAborted();
-  const healthyProducts = new Set(
-    status.registrations
-      .filter((entry) => entry.state === "owned" && !entry.issue)
-      .map((entry) => entry.product),
+  // The setup action prepares Google Chrome; a sibling browser's installation
+  // cannot establish Chrome readiness. Full CLI status still reports every product.
+  const registrations = status.registrations.filter((entry) => entry.product === "chrome");
+  const unpackedProfiles = status.discovered.filter((entry) => entry.product === "chrome");
+  const storeProfiles = status.storeDiscovered.filter((entry) => entry.product === "chrome");
+  const nativeHostRegistered = registrations.some(
+    (entry) => entry.state === "owned" && !entry.issue,
   );
-  const discoveredProducts = [...status.discovered, ...status.storeDiscovered].map(
-    (entry) => entry.product,
-  );
-  const nativeHostRegistered =
-    healthyProducts.size > 0 && discoveredProducts.every((product) => healthyProducts.has(product));
-  const unavailable = status.registrations.some(
+  const unavailable = registrations.some(
     (entry) => entry.state === "foreign" || entry.state === "invalid" || Boolean(entry.issue),
   );
   const installation = {
     nativeHostRegistered,
     installRequested: status.storeInstallRequests.some((entry) => entry.state === "requested"),
+    installedProfiles: unpackedProfiles.length + storeProfiles.length,
     discoveredProfiles:
-      status.discovered.length + status.storeDiscovered.filter((entry) => entry.enabled).length,
-    awaitingApproval: status.storeDiscovered.some((entry) => entry.awaitingApproval),
+      unpackedProfiles.length + storeProfiles.filter((entry) => entry.enabled).length,
+    awaitingApproval: storeProfiles.some((entry) => entry.awaitingApproval),
     automaticBootstrapSupported: status.platformSupport === "automatic",
   };
   const result: BrowserExtensionSetupResult = {

@@ -49,6 +49,7 @@ final class DashboardDeviceSettingsMessageHandler: NSObject, WKScriptMessageHand
             self?.refresh()
         }
         self.observeBrowserChanges()
+        self.refresh()
     }
 
     func stopObserving() {
@@ -92,6 +93,7 @@ final class DashboardDeviceSettingsMessageHandler: NSObject, WKScriptMessageHand
             }
             let setupAction: ChromeExtensionSetupAction? = switch request {
             case let .chromeExtensionSetup(action): action
+            case .chromeExtensionStatus: .inspect
             case .installChromeExtension: .install
             default: nil
             }
@@ -104,7 +106,7 @@ final class DashboardDeviceSettingsMessageHandler: NSObject, WKScriptMessageHand
                         replyHandler(nil, "The device settings document is no longer available.")
                         return
                     }
-                    if request == .installChromeExtension {
+                    if request == .installChromeExtension || request == .chromeExtensionStatus {
                         // Preserve the released contract-1 projection without restoring an installer/decoder.
                         try replyHandler(
                             JSONSerialization.jsonObject(with: JSONEncoder().encode(result.legacyInstallation)), nil)
@@ -164,6 +166,8 @@ final class DashboardDeviceSettingsMessageHandler: NSObject, WKScriptMessageHand
 
     func refresh(refreshAvailability: Bool = false) {
         guard !self.observers.isEmpty else { return }
+        self.owner?.webView.configuration.preferences.setValue(
+            AppStateStore.shared.debugPaneEnabled, forKey: "developerExtrasEnabled")
         self.refreshTask?.cancel()
         self.refreshTask = Task { [weak self] in
             guard !Task.isCancelled, let self else { return }

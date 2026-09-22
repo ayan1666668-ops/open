@@ -70,6 +70,9 @@ export type Slot = {
   pendingOpens: number;
 };
 export type Actor = {
+  nativeStopped: Promise<void>;
+  markNativeStopped(): void;
+  stateDatabasePath?: string;
   id: number;
   key: string;
   databasePath: string;
@@ -129,10 +132,14 @@ export type SqliteWorkerStoreOptions = {
 };
 
 export type PreparedSqliteWorkerOpen = {
+  preparation?: Buffer;
   expectedIdentity?: string;
   createOpenAdmission?: SqliteWorkerAdmissionFactory;
   maintenanceScope?: OpenClawDatabaseMaintenanceScope;
   retainCleanup?: (cleanup: SqliteWorkerAdmissionCleanup) => void;
+  onNativeStopped?: (stopped: Promise<void>) => void;
+  stateDatabasePath?: string;
+  createAdmission?: SqliteWorkerAdmissionFactory;
   assertCurrent?: () => void;
   moduleUrl: URL;
   databasePath: string;
@@ -145,4 +152,15 @@ export type PreparedSqliteWorkerOpen = {
 export type SqliteWorkerAdmissionCleanup = {
   readonly pending: boolean;
   close(): Promise<void>;
+};
+
+export type SqliteWorkerOpenCustody = Pick<
+  PreparedSqliteWorkerOpen,
+  "maintenanceScope" | "retainCleanup" | "createAdmission" | "stateDatabasePath" | "onNativeStopped"
+> & { preparation?: unknown };
+export type SqliteWorkerInputPreparation = {
+  assertCurrent: () => void;
+  /** Transfer to a dispatch that reaches enqueue synchronously, before returning its Promise. */
+  handoff<T>(dispatch: () => Promise<T>): Promise<T>;
+  release(): void;
 };

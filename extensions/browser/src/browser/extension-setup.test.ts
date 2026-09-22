@@ -115,9 +115,41 @@ describe("host-local Chrome setup", () => {
       phase: "needs_browser_action",
       reason: "chrome_approval_required",
       nextAction: "approve_extension",
+      installation: { installedProfiles: 1, discoveredProfiles: 0 },
     });
     expect(mocks.install).toHaveBeenCalledOnce();
     expect(mocks.readToken).not.toHaveBeenCalled();
+  });
+
+  it("does not let sibling browser installations mask an unavailable Chrome helper", async () => {
+    const observed = installation();
+    observed.registrations[0]!.issue = "runtime unavailable";
+    observed.registrations.push({
+      ...observed.registrations[0]!,
+      product: "chromium",
+      issue: undefined,
+    });
+    mocks.inspect.mockResolvedValue({
+      ...observed,
+      storeDiscovered: [
+        { product: "chrome", enabled: false, awaitingApproval: true },
+        { product: "chromium", enabled: true, awaitingApproval: false },
+      ],
+      discovered: [{ product: "chrome-for-testing" }],
+    });
+    const result = await runBrowserExtensionSetup({ ...options, action: "inspect" });
+    expect(result).toMatchObject({
+      phase: "blocked",
+      reason: "native_host_unavailable",
+      nextAction: "repair_native_host",
+      installation: {
+        nativeHostRegistered: false,
+        installedProfiles: 1,
+        discoveredProfiles: 0,
+        awaitingApproval: true,
+      },
+    });
+    expect(mocks.connect).not.toHaveBeenCalled();
   });
 
   it("proves the exact local profile even when configured Gateway uses an SSH loopback", async () => {

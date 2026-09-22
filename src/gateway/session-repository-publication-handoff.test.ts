@@ -8,6 +8,7 @@ import { managedWorktrees } from "../agents/worktrees/service.js";
 import { loadSessionEntry, upsertSessionEntryCore } from "../config/sessions/session-accessor.js";
 import * as backoff from "../infra/backoff.js";
 import { registerClonedProjectRegistry } from "../projects/project-registry.test-support.js";
+import type { RepositoryGitHubPublicationRow } from "../state/github-publication-read.types.js";
 import {
   openOpenClawStateDatabase,
   runOpenClawStateWriteTransaction,
@@ -21,6 +22,7 @@ import {
   insertGitHubPublicationRequest,
   claimGitHubPublicationExecution,
   createGitHubPublicationExecutionStore,
+  isGitHubPublicationExecutionOwner,
   projectGitHubPublicationResult,
 } from "./github-publication-store.js";
 import { REMOTE_GITHUB_PUBLICATION_SNAPSHOT_JS } from "./github-repository-publication-snapshot.js";
@@ -29,7 +31,6 @@ import {
   repositoryGitHubPublicationDigest,
   claimRepositoryGitHubPublication,
   readRepositoryGitHubPublication,
-  type RepositoryGitHubPublicationRow,
 } from "./github-repository-publication-store.js";
 import { assertReceiptOwner } from "./github-repository-publication-workspace.js";
 import { materializeSessionRepositoryWorkspaceOnGateway } from "./session-repository-materialization.js";
@@ -191,6 +192,7 @@ it.each([
         request_id: "prior-cloud-publication",
         idempotency_key: "prior",
         request_digest: "",
+        requester_authority_json: null,
         session_id: sessionId,
         session_lifecycle_revision: lifecycleRevision,
         session_key: scope.sessionKey,
@@ -236,7 +238,10 @@ it.each([
       };
       row.request_digest = repositoryGitHubPublicationDigest(row);
       insertRepositoryGitHubPublication(row, () => {});
-      const prior = claimRepositoryGitHubPublication(row, "cloud-instance", () => {});
+      const prior = claimRepositoryGitHubPublication(row, "cloud-instance", {
+        assertCustody: () => {},
+        assertCurrent: () => {},
+      });
       prior.recordEffect("push");
       if (scenario !== "unsettled") {
         prior.recordEffect("push", { headCommit: publishedHead });
@@ -387,6 +392,13 @@ it.each([
           requestDigest: createHash("sha256").update("local").digest("hex"),
           sessionId,
           lifecycleRevision,
+          requester: {
+            version: 1,
+            actor: { kind: "system" },
+            scopes: ["operator.admin"],
+            grant: null,
+          },
+          assertCurrent: () => {},
           now: Date.now(),
           worktree,
           identity,
@@ -399,6 +411,7 @@ it.each([
         ...execution,
         identity: { prepare: async () => identity, isCurrent: () => true },
         validateAuthority: () => true,
+        validateCustody: () => isGitHubPublicationExecutionOwner(requestId, "local-instance"),
         projectResult: projectGitHubPublicationResult,
       });
       const localHead = git(worktree.path, "rev-parse", "HEAD");
@@ -483,14 +496,21 @@ it("can hold publisher exclusion during an existing reclaim claim without taking
       const wait = vi.spyOn(backoff, "sleepWithAbort");
       await expect(
         placements.withWorkspaceExclusion(REQUEST.sessionId, async () => {}),
-      ).rejects.toThrow("another operation holds the lease");
+      ).rejects.toMatchObject({
+        code: "OPENCLAW_STATE_LEASE_HELD",
+        outcome: { kind: "held", holder: { owner: expect.any(String), epoch: expect.any(Number) } },
+      });
       expect(wait).not.toHaveBeenCalled();
       assertOwned();
       expect(placements.validateWorkspaceResultClaim(claim)).toBe(true);
     });
     expect(entered).toBe(true);
     expect(placements.validateWorkspaceResultClaim(claim)).toBe(true);
-    for (const code of ["OPENCLAW_STATE_LEASE_TIMEOUT", "STATE_LEASE_BUSY"] as const) {
+    for (const code of [
+      "OPENCLAW_STATE_LEASE_HELD",
+      "OPENCLAW_STATE_LEASE_STORAGE_FAILED",
+      "OPENCLAW_STATE_LEASE_ABORTED",
+    ] as const) {
       const operationFailure = new OpenClawStateLeaseError("Nested operation refused admission", {
         code,
       });

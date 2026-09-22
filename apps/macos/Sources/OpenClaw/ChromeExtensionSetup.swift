@@ -32,6 +32,7 @@ final class ChromeExtensionSetup {
     struct LegacyInstallation: Encodable, Equatable {
         let nativeHostRegistered: Bool
         let installRequested: Bool
+        let installedProfiles: Int
         let discoveredProfiles: Int
     }
 
@@ -41,6 +42,7 @@ final class ChromeExtensionSetup {
             LegacyInstallation(
                 nativeHostRegistered: self.installation.nativeHostRegistered,
                 installRequested: self.installation.installRequested,
+                installedProfiles: self.installation.installedProfiles,
                 discoveredProfiles: self.installation.discoveredProfiles)
         }
 
@@ -55,6 +57,7 @@ final class ChromeExtensionSetup {
         struct Installation: Codable, Equatable {
             let nativeHostRegistered: Bool
             let installRequested: Bool
+            let installedProfiles: Int
             let discoveredProfiles: Int
             let awaitingApproval: Bool
             let automaticBootstrapSupported: Bool
@@ -112,6 +115,7 @@ final class ChromeExtensionSetup {
               (1...65535).contains(result.target.relayPort),
               !result.target.hostname.isEmpty, result.target.hostname.count <= 255,
               result.installation.discoveredProfiles >= 0,
+              result.installation.installedProfiles >= result.installation.discoveredProfiles,
               result.reason.range(of: "^[a-z][a-z0-9_]{0,79}$", options: .regularExpression) != nil,
               result.connection.extensionVersion.map({ $0.count <= 128 }) ?? true
         else { throw SetupError.unavailable }
@@ -137,14 +141,16 @@ final class ChromeExtensionSetup {
     }
 
     func stop() {
-        if let observer { self.notificationCenter?.removeObserver(observer) }
-        self.observer = nil
+        if let observer {
+            self.notificationCenter?.removeObserver(observer)
+        }
+        observer = nil
         self.notificationCenter = nil
         self.requests.cancel()
         for task in self.manualTasks.values {
             task.cancel()
         }
-        let replies = Array(self.manualReplies.values)
+        let replies = Array(manualReplies.values)
         self.manualReplies.removeAll()
         for reply in replies {
             reply.resume(throwing: SetupError.retired)
@@ -211,7 +217,7 @@ final class ChromeExtensionSetup {
         action: ChromeExtensionSetupAction,
         isCurrent: @MainActor () -> Bool) async throws -> Result
     {
-        let launch = try await self.resolveLaunch(action: action)
+        let launch = try await resolveLaunch(action: action)
         guard isCurrent(), !Task.isCancelled else { throw SetupError.retired }
         var environment = ProcessInfo.processInfo.environment
         environment.merge(launch.environment, uniquingKeysWith: { _, explicit in explicit })
@@ -226,7 +232,7 @@ final class ChromeExtensionSetup {
         guard isCurrent(), !Task.isCancelled else { throw SetupError.retired }
         // Pending/blocked are successful canonical projections, not process failures.
         guard output.success, !output.timedOut,
-              let result = try? self.readResult(output.stdout, action: action)
+              let result = try? readResult(output.stdout, action: action)
         else { throw SetupError.unavailable }
         return result
     }

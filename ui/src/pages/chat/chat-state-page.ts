@@ -18,6 +18,7 @@ import {
 } from "../../lib/sessions/session-key.ts";
 import { resolveAgentIdForSession } from "./chat-avatar.ts";
 import { CHAT_TRANSCRIPT_LOADING_CHANGED_EVENT } from "./chat-history-events.ts";
+import { chatProviderReviewRow } from "./chat-provider-review.ts";
 import { removeQueuedMessage } from "./chat-queue.ts";
 import { attachChatRealtimeActions, createInitialChatRealtimeState } from "./chat-realtime.ts";
 import {
@@ -37,6 +38,7 @@ import {
   openSessionWorkspacePreview,
   clearSessionWorkspacePreviews,
 } from "./components/chat-session-workspace-state.ts";
+import { resetTaskDetail } from "./components/chat-task-detail-state.ts";
 import {
   handleChatDraftChange,
   handleChatInputHistoryKey,
@@ -306,7 +308,7 @@ export function createPageState(
     });
     renderLifecycle.invalidate();
   };
-  attachChatRealtimeActions(state);
+  attachChatRealtimeActions(state, () => !chatProviderReviewRow(state)?.providerReview);
   state.loadAssistantIdentity = () => loadPageAssistantIdentity(state);
   state.handleSendChat = (messageOverride, options, submissionAction) => {
     const message = messageOverride ?? state.chatMessage;
@@ -339,7 +341,7 @@ export function createPageState(
       renderLifecycle.invalidate();
       return;
     }
-    const outcome = removeQueuedMessage(state, id);
+    const outcome = removeQueuedMessage(state, id, { discard: true });
     if (outcome === "removed") {
       setChatError(state, null);
       void resumeStoredChatOutboxes(state);
@@ -401,6 +403,15 @@ export function createPageState(
   };
   state.updateSidebarLayout = (layout, options) => {
     const normalized = normalizeSidebarLayout(layout);
+    if (
+      state.sidebarLayout.columns
+        .flatMap((column) => column.panels)
+        .find((panel) => panel.slot === "tasks")?.taskId !==
+      normalized.columns.flatMap((column) => column.panels).find((panel) => panel.slot === "tasks")
+        ?.taskId
+    ) {
+      resetTaskDetail(state);
+    }
     const presentation =
       options?.dashboardPresentation === "personal"
         ? sidebarDashboardPresentation(normalized)
@@ -413,9 +424,7 @@ export function createPageState(
     }
     // Every close route commits here; tab switches retain the pending selection.
     if (
-      (state.sidebarContent?.kind === "loading" ||
-        state.sidebarContent?.kind === "unavailable" ||
-        state.sidebarContent?.kind === "task") &&
+      (state.sidebarContent?.kind === "loading" || state.sidebarContent?.kind === "unavailable") &&
       !normalized.columns.some((column) => column.panels.some((panel) => panel.slot === "detail"))
     ) {
       state.sidebarContent = null;
@@ -476,13 +485,6 @@ export function createPageState(
       .flatMap((column) => column.panels)
       .find((panel) => panel.slot === targetSlot);
     if (targetPanel) {
-      if (targetSlot === "detail") {
-        if (content?.kind === "task") {
-          targetPanel.taskId = content.taskId;
-        } else {
-          delete targetPanel.taskId;
-        }
-      }
       opened = activatePanel(opened, targetPanel.id);
     }
     const availableWidth = page.getBoundingClientRect?.().width ?? 0;

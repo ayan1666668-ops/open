@@ -2,11 +2,9 @@ import { consume } from "@lit/context";
 import { html, nothing } from "lit";
 import { state } from "lit/decorators.js";
 import { applicationContext, type ApplicationContext } from "../app/context.ts";
-import {
-  createNativeChromeSetupCapability,
-  type NativeChromeSetupCapability,
-  type NativeChromeExtensionSetupAction,
-  type NativeChromeExtensionSetupResult,
+import type {
+  NativeChromeExtensionSetupAction,
+  NativeChromeExtensionSetupResult,
 } from "../app/native-chrome-setup.ts";
 import type { LegacyChromeInstallResult } from "../app/native-device-settings.ts";
 import { t } from "../i18n/index.ts";
@@ -22,7 +20,6 @@ class NativeChromeSetup extends OpenClawLightDomElement {
   @state() private failed = false;
   @state() private result: NativeChromeExtensionSetupResult | null = null;
   @state() private legacyResult: LegacyChromeInstallResult | null = null;
-  private desktopCapability: NativeChromeSetupCapability | null = null;
   private generation = 0;
   private readonly subscriptions = new SubscriptionsController(this)
     .watch(
@@ -34,35 +31,26 @@ class NativeChromeSetup extends OpenClawLightDomElement {
       () => () => this.reset(),
     );
 
-  override connectedCallback() {
-    this.desktopCapability = createNativeChromeSetupCapability();
-    super.connectedCallback();
-  }
   override disconnectedCallback() {
     this.reset();
-    this.desktopCapability?.dispose();
-    this.desktopCapability = null;
     this.subscriptions.clear();
     super.disconnectedCallback();
   }
-  private get macCapability() {
-    const mac = this.context?.nativeDeviceSettings;
-    return mac?.snapshot?.device.platform === "macos" ? mac : null;
-  }
   private get capability() {
-    // The Mac app's existing context owns its device-settings transport.
-    return this.macCapability ?? this.desktopCapability;
+    return this.context?.nativeDeviceSettings;
   }
   private get actions(): readonly NativeChromeExtensionSetupAction[] {
-    const mac = this.macCapability;
-    if (!mac) {
-      return this.desktopCapability ? ["install", "inspect", "verify"] : [];
-    }
-    const browser = mac.snapshot?.browser;
-    if (!browser) {
+    const capability = this.capability;
+    const browser = capability?.snapshot?.browser;
+    if (!capability || !browser) {
       return [];
     }
-    return browser.chromeSetupActions ?? (mac.installChromeExtension ? ["install"] : []);
+    return (
+      browser.chromeSetupActions ??
+      (capability.snapshot?.device.platform === "macos" && capability.installChromeExtension
+        ? ["install"]
+        : [])
+    );
   }
   private reset() {
     this.generation += 1;
@@ -84,12 +72,11 @@ class NativeChromeSetup extends OpenClawLightDomElement {
     this.result = null;
     this.legacyResult = null;
     try {
-      const mac = this.macCapability;
-      if (mac && mac.snapshot?.browser?.chromeSetupActions === undefined) {
-        if (action !== "install" || !mac.installChromeExtension) {
+      if (capability.snapshot?.browser?.chromeSetupActions === undefined) {
+        if (action !== "install" || !capability.installChromeExtension) {
           return;
         }
-        const result = await mac.installChromeExtension();
+        const result = await capability.installChromeExtension();
         if (isCurrent() && this.actions.includes(action)) {
           this.legacyResult = result;
         }
@@ -110,7 +97,7 @@ class NativeChromeSetup extends OpenClawLightDomElement {
     }
   }
   override render() {
-    if (!this.capability) {
+    if (!this.capability?.snapshot?.browser) {
       return nothing;
     }
     return html`

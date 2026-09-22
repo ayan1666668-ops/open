@@ -9,10 +9,10 @@ title: "Gateway on macOS"
 
 OpenClaw.app bundles a private Node runtime and matching OpenClaw package for
 its app-owned `node worker` helper and a fixed local Chrome-extension setup
-operation. Rebuilding or replacing the app replaces
-that helper too, including rebuilds with the same public version. The helper
-runs from the signed bundle, so moving the app or removing its build checkout
-does not change which worker it uses.
+entry point. The private package does not expose the full CLI or start a Gateway.
+Rebuilding or replacing the app replaces these helpers too, including rebuilds
+with the same public version. They run from the signed bundle, so moving the app
+or removing its build checkout does not change which runtime they use.
 
 The **Gateway remains external**. The app uses an external `openclaw` CLI to
 manage a per-user launchd service, or attaches to an already-running Gateway.
@@ -105,6 +105,8 @@ Behavior:
 - Quitting the app does **not** stop the Gateway (launchd keeps it alive).
 - If a Gateway is already running on the configured port, the app attaches to
   it instead of starting a new one.
+- Other listeners are left running. Resolve port conflicts through the process
+  or service that owns them; automatic cleanup only reaps recorded orphaned SSH tunnels.
 - If service inspection is inconclusive, the app defers installation and uses
   its existing readiness checks. A service confirmed absent can still be installed.
 

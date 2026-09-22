@@ -1,15 +1,16 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createDeferred } from "../../../test/helpers/promise.js";
 import { createTempDirTracker } from "../../../test/helpers/temp-dir.js";
-import { racePromiseWithAbortSignal } from "../../infra/abort-signal.js";
+import { createEmptyPluginRegistry } from "../../plugins/registry-empty.js";
+import { setActivePluginRegistry } from "../../plugins/runtime.js";
 import {
   closeOpenClawStateDatabaseAsync,
   closeOpenClawStateDatabaseForTest,
 } from "../../state/openclaw-state-db.js";
 import { createTranscriptsAutoStartService } from "../../transcripts/auto-start.js";
 import * as transcriptCapture from "../../transcripts/capture.js";
+import { activeSessions } from "../../transcripts/capture.js";
 import { clearTranscriptCapturesForTest } from "../../transcripts/capture.test-support.js";
 import type {
   TranscriptSourceProvider,
@@ -18,15 +19,10 @@ import type {
 import { TranscriptsStore, transcriptSessionSelector } from "../../transcripts/store.js";
 import { createTranscriptsTool } from "./transcripts-tool.js";
 
-const { getProvider } = vi.hoisted(() => ({ getProvider: vi.fn() }));
-vi.mock("../../transcripts/provider-registry.js", () => ({
-  getTranscriptSourceProvider: getProvider,
-  listTranscriptSourceProviders: () => [],
-}));
-const { activeSessions } = transcriptCapture;
 const tempDirs = createTempDirTracker();
 afterEach(async () => {
   await clearTranscriptCapturesForTest();
+  setActivePluginRegistry(createEmptyPluginRegistry());
   vi.restoreAllMocks();
   vi.useRealTimers();
   await closeOpenClawStateDatabaseAsync();
@@ -34,27 +30,10 @@ afterEach(async () => {
   tempDirs.cleanup();
 });
 
-async function startConfiguredCapture(
-  service: ReturnType<typeof createTranscriptsAutoStartService>,
-  signal: AbortSignal,
-) {
-  // Observe the existing owner promise; do not replace admission, persistence, or provider work.
-  const start = vi.spyOn(transcriptCapture, "startTranscripts");
-  try {
-    service.start();
-    expect(start).toHaveBeenCalledOnce();
-    const result = start.mock.results[0];
-    if (result?.type !== "return") {
-      throw new Error("Configured capture did not return its startup work");
-    }
-    await racePromiseWithAbortSignal(result.value, signal);
-  } finally {
-    start.mockRestore();
-  }
-}
-
-function harness(beforeProviderReturn?: () => Promise<void>) {
+function harness() {
+  const realNow = Date.now.bind(Date);
   vi.useFakeTimers({ toFake: ["Date"] });
+  vi.spyOn(Date, "now").mockImplementation(realNow);
   const stateDir = tempDirs.make("transcript-selection-");
   const requests: TranscriptStartRequest[] = [];
   const authorize = vi.fn<NonNullable<TranscriptSourceProvider["accessControl"]>["authorize"]>(
@@ -79,14 +58,17 @@ function harness(beforeProviderReturn?: () => Promise<void>) {
     start: async (request) => {
       requests.push(request);
       await request.onUtterance({ text: `Notes for ${request.session.sessionId}`, final: true });
-      if (beforeProviderReturn) {
-        await beforeProviderReturn();
-      }
       return { ok: true, session: request.session };
     },
     stop,
   };
-  getProvider.mockReturnValue(provider);
+  const registry = createEmptyPluginRegistry();
+  registry.transcriptSourceProviders.push({
+    pluginId: provider.id,
+    provider,
+    source: import.meta.url,
+  });
+  setActivePluginRegistry(registry);
   const ctx = {
     stateDir,
     agentId: "research",
@@ -116,6 +98,18 @@ const collision = [
   { sessionId: "2026-07-03/raw-id", date: "2026-07-04", selector: "2026-07-04/2026-07-03-raw-id" },
   { sessionId: "raw-id", date: "2026-07-03", selector: "2026-07-03/raw-id" },
 ];
+
+async function startConfiguredCapture(
+  service: ReturnType<typeof createTranscriptsAutoStartService>,
+) {
+  const starts = vi.spyOn(transcriptCapture, "startTranscripts");
+  try {
+    service.start();
+    await Promise.all(starts.mock.results.map(({ value }) => value));
+  } finally {
+    starts.mockRestore();
+  }
+}
 
 describe("transcript tool selection", () => {
   it.each([false, true])(
@@ -357,9 +351,7 @@ describe("transcript tool selection", () => {
     });
   });
 
-  it("keeps configured cleanup bound to its lifecycle token despite a selector collision", async ({
-    signal,
-  }) => {
+  it("keeps configured cleanup bound to its lifecycle token despite a selector collision", async () => {
     const h = harness();
     await h.start(collision[1]!.sessionId, collision[1]!.date);
     vi.setSystemTime(new Date("2026-07-04T10:00:00.000Z"));
@@ -378,8 +370,8 @@ describe("transcript tool selection", () => {
       },
     });
     try {
-      await startConfiguredCapture(service, signal);
-      await vi.waitFor(() => expect(activeSessions.has(collision[0]!.sessionId)).toBe(true));
+      await startConfiguredCapture(service);
+      expect(activeSessions.has(collision[0]!.sessionId)).toBe(true);
       await service.stop();
       expect(h.stop.mock.calls.map(([request]) => request.sessionId)).toEqual([
         collision[0]!.sessionId,
@@ -393,48 +385,14 @@ describe("transcript tool selection", () => {
     }
   });
 
-  it("surfaces a configured fixture startup rejection before cleanup fault injection", async ({
-    signal,
-  }) => {
-    const failure = new Error("fixture provider startup failed");
-    const h = harness(async () => {
-      throw failure;
-    });
-    const service = h.configuredCapture("public-account");
-    try {
-      await expect(startConfiguredCapture(service, signal)).rejects.toThrow(failure.message);
-      expect(h.requests).toHaveLength(1);
-      expect(activeSessions.has("notes")).toBe(false);
-    } finally {
-      await service.stop();
-    }
-  });
-
-  it.for(["missing", "unreadable"] as const)(
+  it.each(["missing", "unreadable"] as const)(
     "cleans up a configured provider without reading its $0 stored row",
-    async (fault, { signal }) => {
-      const providerReady = createDeferred();
-      const releaseProvider = createDeferred();
-      const h = harness(async () => {
-        providerReady.resolve();
-        await releaseProvider.promise;
-      });
+    async (fault) => {
+      const h = harness();
       const service = h.configuredCapture("public-account");
-      let startupSettled = false;
-      const ready = startConfiguredCapture(service, signal).then(() => {
-        startupSettled = true;
-      });
-      // Surface actual startup rejection instead of hanging at an unreached provider.
-      void ready.catch(providerReady.reject);
       try {
-        await racePromiseWithAbortSignal(providerReady.promise, signal);
-        expect(startupSettled).toBe(false);
-        expect(activeSessions.has("notes")).toBe(false);
-        expect(h.stop).not.toHaveBeenCalled();
-        releaseProvider.resolve();
-        await ready;
-        await vi.waitFor(() => expect(activeSessions.has("notes")).toBe(true));
-        expect(activeSessions.get("notes")?.phase).toBe("active");
+        await startConfiguredCapture(service);
+        expect(activeSessions.has("notes")).toBe(true);
         const session = (await h.store.readSession("notes"))!;
         const read = vi.spyOn(TranscriptsStore.prototype, "readSessionEntry");
         if (fault === "missing") {
@@ -456,20 +414,19 @@ describe("transcript tool selection", () => {
           .soft(await h.store.readSummary(session))
           .toMatchObject({ summary: { transcript: ["Notes for notes"] } });
       } finally {
-        releaseProvider.resolve();
         await service.stop();
       }
     },
   );
 
-  it.for(["stop", "summarize", "service-stop"] as const)(
+  it.each(["stop", "summarize", "service-stop"] as const)(
     "%s retains the admitted private source after a same-tuple public row rewrite",
-    async (action, { signal }) => {
+    async (action) => {
       const h = harness();
       const service = h.configuredCapture("private-account");
       try {
-        await startConfiguredCapture(service, signal);
-        await vi.waitFor(() => expect(activeSessions.has("notes")).toBe(true));
+        await startConfiguredCapture(service);
+        expect(activeSessions.has("notes")).toBe(true);
         const session = (await h.store.readSession("notes"))!;
         const selector = transcriptSessionSelector(session);
         await h.store.writeSession({

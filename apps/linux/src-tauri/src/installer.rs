@@ -1,6 +1,6 @@
 #[cfg(not(target_os = "windows"))]
 use crate::cli::openclaw_home;
-use crate::cli::OpenClawCli;
+use crate::cli::{OpenClawCli, SpawnCommand};
 use serde::Deserialize;
 #[cfg(not(target_os = "windows"))]
 use serde::Serialize;
@@ -70,7 +70,7 @@ fn configure_installer_environment(command: &mut Command) {
 #[cfg(not(target_os = "windows"))]
 pub fn install(app: &AppHandle, channel: InstallChannel) -> Result<(), String> {
     let prefix = openclaw_home().map_err(|error| error.to_string())?;
-    install_at(app, channel, prefix, channel.version(), false)
+    install_at(app, channel, prefix, channel.version(), false, None)
 }
 
 #[cfg(target_os = "windows")]
@@ -78,6 +78,7 @@ pub(crate) fn browser_runtime(
     _app: &AppHandle,
     _allow_install: bool,
     _is_current: &dyn Fn() -> bool,
+    _spawn: &SpawnCommand<'_>,
 ) -> Result<OpenClawCli, String> {
     Err("Browser runtime installation is unavailable in this Windows test build.".into())
 }
@@ -87,6 +88,7 @@ pub(crate) fn browser_runtime(
     app: &AppHandle,
     allow_install: bool,
     is_current: &dyn Fn() -> bool,
+    spawn: &SpawnCommand<'_>,
 ) -> Result<OpenClawCli, String> {
     let version = app.package_info().version.to_string();
     let release_build = crate::is_release_version(&version);
@@ -129,7 +131,14 @@ pub(crate) fn browser_runtime(
     if !is_current() {
         return Err("The native browser document changed.".into());
     }
-    install_at(app, InstallChannel::Stable, prefix.clone(), &version, true)?;
+    install_at(
+        app,
+        InstallChannel::Stable,
+        prefix.clone(),
+        &version,
+        true,
+        Some(spawn),
+    )?;
     let cli = OpenClawCli::browser_runtime(prefix).map_err(|error| error.to_string())?;
     if !cli.matches_version(&version) {
         return Err("The browser runtime does not match this app version.".into());
@@ -144,6 +153,7 @@ fn install_at(
     prefix: std::path::PathBuf,
     version: &str,
     runtime_only: bool,
+    spawn: Option<&SpawnCommand<'_>>,
 ) -> Result<(), String> {
     let script = app
         .path()
@@ -169,9 +179,11 @@ fn install_at(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
-    let mut child = command
-        .spawn()
-        .map_err(|error| format!("Could not start bundled installer: {error}"))?;
+    let mut child = match spawn {
+        Some(spawn) => spawn(&mut command),
+        None => command.spawn().map_err(|error| error.to_string()),
+    }
+    .map_err(|error| format!("Could not start bundled installer: {error}"))?;
     let stdout = child
         .stdout
         .take()
@@ -186,14 +198,16 @@ fn install_at(
     let stderr_thread = stream_lines("stderr", stderr, sender);
     let mut tail = VecDeque::with_capacity(ERROR_TAIL_LINES);
     for (stream, line) in receiver {
-        let _ = app.emit_to(
-            "main",
-            INSTALL_EVENT,
-            InstallProgress {
-                stream,
-                line: &line,
-            },
-        );
+        if !runtime_only {
+            let _ = app.emit_to(
+                "main",
+                INSTALL_EVENT,
+                InstallProgress {
+                    stream,
+                    line: &line,
+                },
+            );
+        }
         // Structured step events belong to the log pane; the failure tail is
         // shown as prose and must keep only human-readable diagnostics.
         if serde_json::from_str::<serde_json::Value>(&line)

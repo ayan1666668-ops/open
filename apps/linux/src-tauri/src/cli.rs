@@ -5,11 +5,13 @@ use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Seek};
 use std::path::PathBuf;
-use std::process::{Command, Output, Stdio};
+use std::process::{Child, Command, Output, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
+
+pub(crate) type SpawnCommand<'a> = dyn Fn(&mut Command) -> Result<Child, String> + 'a;
 
 #[derive(Clone, Debug)]
 pub struct OpenClawCli {
@@ -43,25 +45,27 @@ impl std::error::Error for CliError {}
 
 impl OpenClawCli {
     pub fn discover() -> Result<Self, CliError> {
+        let cli = Self::locate()?;
+        match cli.verify() {
+            Ok(()) => Ok(cli),
+            Err(_) if cli.executable == PathBuf::from("openclaw") => Err(CliError::Missing),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Resolve the executable for an owner that supplies cancellable process supervision.
+    pub(crate) fn locate() -> Result<Self, CliError> {
         let home = openclaw_home()?;
         if let Some(override_path) = env::var_os("OPENCLAW_DESKTOP_CLI") {
-            let cli = Self::new(PathBuf::from(override_path), home);
-            cli.verify()?;
-            return Ok(cli);
+            return Ok(Self::new(PathBuf::from(override_path), home));
         }
 
         let managed = home.join("bin/openclaw");
         if managed.is_file() {
-            let cli = Self::new(managed, home);
-            cli.verify()?;
-            return Ok(cli);
+            return Ok(Self::new(managed, home));
         }
 
-        let cli = Self::new(PathBuf::from("openclaw"), home);
-        match cli.verify() {
-            Ok(()) => Ok(cli),
-            Err(_) => Err(CliError::Missing),
-        }
+        Ok(Self::new(PathBuf::from("openclaw"), home))
     }
 
     fn new(executable: PathBuf, openclaw_home: PathBuf) -> Self {
@@ -153,7 +157,11 @@ impl OpenClawCli {
         })
     }
 
-    pub(crate) fn bounded_json<T: DeserializeOwned>(&self, args: &[&str]) -> Result<T, CliError> {
+    pub(crate) fn bounded_json<T: DeserializeOwned>(
+        &self,
+        args: &[&str],
+        spawn: &SpawnCommand<'_>,
+    ) -> Result<T, CliError> {
         let mut command = self.command(args)?;
         let mut output = ChromeSetupOutput::new().map_err(|error| {
             CliError::Spawn(format!("Could not prepare Chrome setup output: {error}"))
@@ -166,9 +174,7 @@ impl OpenClawCli {
             .env("OPENCLAW_NO_RESPAWN", "1")
             .stdout(Stdio::from(stdout))
             .stderr(Stdio::null());
-        let mut child = command
-            .spawn()
-            .map_err(|error| CliError::Spawn(format!("Could not start Chrome setup: {error}")))?;
+        let mut child = spawn(&mut command).map_err(CliError::Spawn)?;
         let deadline = Instant::now() + Duration::from_secs(60);
         let result = loop {
             if output
@@ -348,8 +354,15 @@ cat "$root/result.json"
         .unwrap();
         fs::set_permissions(&executable, fs::Permissions::from_mode(0o700)).unwrap();
         let cli = OpenClawCli::new(executable, fixture.0.clone());
+        let spawn = |command: &mut Command| command.spawn().map_err(|error| error.to_string());
         assert!(cli.matches_version("2026.9.4"));
         assert!(!cli.matches_version("2026.9.3"));
+        let denied = run(&cli, Action::Install, &|_| {
+            Err("fixture-revoked-authority".into())
+        })
+        .unwrap_err();
+        assert!(!denied.contains("fixture-revoked-authority"));
+        assert!(!fixture.0.join("calls").exists());
         for (action, name, phase) in [
             (Action::Inspect, "inspect", "inspection_required"),
             (Action::Install, "install", "needs_browser_action"),
@@ -361,12 +374,12 @@ cat "$root/result.json"
                     "profile": "work", "relayPort": 18792},
                 "phase": phase, "reason": "fixture",
                 "installation": {"nativeHostRegistered": false, "installRequested": false,
-                    "discoveredProfiles": [], "awaitingApproval": false,
+                    "installedProfiles": 0, "discoveredProfiles": 0, "awaitingApproval": false,
                     "automaticBootstrapSupported": false},
                 "connection": {"state": "not_checked"}, "nextAction": "install"
             });
             fs::write(fixture.0.join("result.json"), expected.to_string()).unwrap();
-            assert_eq!(run(&cli, action).unwrap(), expected);
+            assert_eq!(run(&cli, action, &spawn).unwrap(), expected);
         }
         assert_eq!(
             fs::read_to_string(fixture.0.join("calls")).unwrap(),
@@ -377,16 +390,16 @@ cat "$root/result.json"
                 .concat()
         );
         fs::write(fixture.0.join("fail"), "").unwrap();
-        let error = run(&cli, Action::Install).unwrap_err();
+        let error = run(&cli, Action::Install, &spawn).unwrap_err();
         assert!(error.contains("Chrome setup failed"));
         assert!(!error.contains("fixture-private-diagnostic"));
         fs::remove_file(fixture.0.join("fail")).unwrap();
         fs::write(fixture.0.join("result.json"), "x".repeat(1024 * 1024 + 1)).unwrap();
-        assert!(run(&cli, Action::Inspect)
+        assert!(run(&cli, Action::Inspect, &spawn)
             .unwrap_err()
             .contains("invalid Chrome setup result"));
         fs::write(fixture.0.join("result.json"), "invalid JSON").unwrap();
-        assert!(run(&cli, Action::Inspect)
+        assert!(run(&cli, Action::Inspect, &spawn)
             .unwrap_err()
             .contains("invalid Chrome setup result"));
     }

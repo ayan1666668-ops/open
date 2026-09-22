@@ -17,6 +17,7 @@ export function createChromeExtensionSetupResult(
     installation: {
       nativeHostRegistered: false,
       installRequested: false,
+      installedProfiles: 0,
       discoveredProfiles: 0,
       awaitingApproval: false,
       automaticBootstrapSupported: true,

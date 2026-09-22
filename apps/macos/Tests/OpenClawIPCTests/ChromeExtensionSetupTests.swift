@@ -11,7 +11,7 @@ struct ChromeExtensionSetupTests {
             kind: "local-host", platform: "darwin", hostname: "Example Mac", profile: "chrome", relayPort: 18792),
         phase: .needsBrowserAction, reason: "chrome_approval_required",
         installation: .init(
-            nativeHostRegistered: true, installRequested: true, discoveredProfiles: 0,
+            nativeHostRegistered: true, installRequested: true, installedProfiles: 1, discoveredProfiles: 0,
             awaitingApproval: true, automaticBootstrapSupported: true),
         connection: .init(state: .notChecked, extensionVersion: nil), nextAction: .approveExtension)
 
@@ -77,7 +77,9 @@ struct ChromeExtensionSetupTests {
         var calls = 0
         let setup = ChromeExtensionSetup { _ in
             calls += 1
-            if calls == 1 { throw ChromeExtensionSetup.SetupError.unavailable }
+            if calls == 1 {
+                throw ChromeExtensionSetup.SetupError.unavailable
+            }
             return self.prepared
         }
         defer { setup.stop() }
@@ -159,9 +161,13 @@ struct ChromeExtensionSetupTests {
         let setup = ChromeExtensionSetup { _ in
             calls += 1
             if calls == 1 {
+                let suspended = AsyncStream<Void>.makeStream()
+                defer { suspended.continuation.finish() }
+                var suspension = suspended.stream.makeAsyncIterator()
                 started.continuation.yield(())
                 do {
-                    try await Task.sleep(for: .seconds(60))
+                    await suspension.next()
+                    try Task.checkCancellation()
                 } catch {
                     cancelled = Task.isCancelled
                     throw error
@@ -185,7 +191,7 @@ struct ChromeExtensionSetupTests {
     private static let pending = """
     {"action":"install","target":{"kind":"local-host","platform":"darwin","hostname":"Example Mac",
     "profile":"chrome","relayPort":18792},"phase":"needs_browser_action","reason":"chrome_approval_required",
-    "installation":{"nativeHostRegistered":true,"installRequested":true,"discoveredProfiles":0,
+    "installation":{"nativeHostRegistered":true,"installRequested":true,"installedProfiles":1,"discoveredProfiles":0,
     "awaitingApproval":true,"automaticBootstrapSupported":true},"connection":{"state":"not_checked"},
     "nextAction":"approve_extension","privatePath":"must not cross bridge"}
     """
@@ -215,11 +221,13 @@ struct ChromeExtensionSetupTests {
         #expect(!ChromeExtensionSetup.arguments(action: .install).contains("--browser-profile"))
     }
 
-    @Test func `released bridge receives exactly its three canonical installation fields`() throws {
+    @Test func `legacy bridge preserves installed profiles separately from enabled profiles`() throws {
         let result = try ChromeExtensionSetup.readResult(Self.pending, action: .install)
         let bytes = try JSONEncoder().encode(result.legacyInstallation)
         let actual = try #require(JSONSerialization.jsonObject(with: bytes) as? NSDictionary)
-        #expect(actual == ["nativeHostRegistered": true, "installRequested": true, "discoveredProfiles": 0])
+        #expect(actual == [
+            "nativeHostRegistered": true, "installRequested": true, "installedProfiles": 1, "discoveredProfiles": 0,
+        ])
     }
 
     @Test func `registration and pending approval preserve controller state without claiming connected`() throws {
@@ -237,6 +245,7 @@ struct ChromeExtensionSetupTests {
         ("local-host", "remote-host"), ("darwin", "linux"), ("18792", "0"),
         ("\"profile\":\"chrome\"", "\"profile\":\"invalid/profile\""),
         ("needs_browser_action", "unknown"), ("chrome_approval_required", "raw private diagnostic"),
+        ("\"installedProfiles\":1", "\"installedProfiles\":-1"),
     ])
     func `rejects invalid host targets and controller states`(_ replacement: (String, String)) {
         #expect(throws: (any Error).self) {

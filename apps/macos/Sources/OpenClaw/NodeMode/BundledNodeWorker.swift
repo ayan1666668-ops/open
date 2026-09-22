@@ -10,10 +10,15 @@ enum BundledNodeWorker {
         let buildId: String
     }
 
-    static func launch(bundle: Bundle, profile: AppProfile = .current) throws -> MacNodeHostWorkerLaunch {
-        let runtime = try self.validatedRuntime(bundle: bundle)
+    static func launch(
+        bundle: Bundle,
+        profile: AppProfile = .current,
+        desktopSharingEnabled: Bool? = nil) throws -> MacNodeHostWorkerLaunch
+    {
+        let runtime = try validatedRuntime(bundle: bundle)
         return MacNodeHostWorkerLaunch(
-            command: CommandResolver.nodeHostWorkerCommand(prefix: runtime.prefix, profile: profile),
+            command: CommandResolver.nodeHostWorkerCommand(
+                prefix: runtime.prefix, profile: profile, desktopSharingEnabled: desktopSharingEnabled),
             currentDirectoryURL: runtime.root,
             environment: runtime.environment)
     }
@@ -25,12 +30,13 @@ enum BundledNodeWorker {
         action: ChromeExtensionSetupAction = .install,
         profile: AppProfile = .current) throws -> MacNodeHostWorkerLaunch
     {
-        let runtime = try self.validatedRuntime(bundle: bundle)
+        let runtime = try validatedRuntime(bundle: bundle, entry: "extensions/browser/setup-entry.js")
+        var environment = runtime.environment
+        environment["OPENCLAW_PROFILE"] = profile.name ?? "default"
         return MacNodeHostWorkerLaunch(
-            command: profile.localCLICommand(
-                prefix: runtime.prefix, arguments: ChromeExtensionSetup.arguments(action: action)),
+            command: runtime.prefix + ["--action", action.rawValue, "--wait-ms", "1000"],
             currentDirectoryURL: runtime.root,
-            environment: runtime.environment)
+            environment: environment)
     }
 
     private struct Runtime {
@@ -39,7 +45,7 @@ enum BundledNodeWorker {
         let environment: [String: String]
     }
 
-    private static func validatedRuntime(bundle: Bundle) throws -> Runtime {
+    private static func validatedRuntime(bundle: Bundle, entry: String = "mac-node-worker.js") throws -> Runtime {
         #if arch(arm64)
         let architecture = "arm64"
         #elseif arch(x86_64)
@@ -50,7 +56,7 @@ enum BundledNodeWorker {
         let root = bundle.bundleURL.appendingPathComponent("Contents/Resources/node-worker/\(architecture)")
         let node = root.appendingPathComponent("bin/node")
         let packageRoot = root.appendingPathComponent("lib/node_modules/openclaw")
-        let entry = packageRoot.appendingPathComponent("dist/entry.js")
+        let entry = packageRoot.appendingPathComponent("dist/\(entry)")
         let info = bundle.infoDictionary ?? [:]
         let appBuild = ArtifactBuildInfo(infoDictionary: info)
         do {

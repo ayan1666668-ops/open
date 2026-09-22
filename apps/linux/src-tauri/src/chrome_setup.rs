@@ -1,7 +1,8 @@
 //! Local CLI adapter only. The browser plugin owns setup policy and result state.
-use crate::cli::{CliError, OpenClawCli};
+use crate::cli::{CliError, OpenClawCli, SpawnCommand};
 use serde::Deserialize;
 use serde_json::Value;
+use std::process::Command;
 use std::sync::{mpsc, Mutex};
 use std::thread;
 use tauri::{AppHandle, Manager};
@@ -60,7 +61,13 @@ impl ChromeSetup {
     fn request(&self, app: AppHandle, cli: Option<OpenClawCli>, open_store: bool) {
         let outcome = self.enqueue(Box::new(move || {
             let current = || !app.state::<crate::DesktopState>().is_quitting();
-            let result = perform(&app, cli, Action::Install, &current);
+            let spawn = |command: &mut Command| {
+                if !current() {
+                    return Err("OpenClaw is quitting.".into());
+                }
+                command.spawn().map_err(|error| error.to_string())
+            };
+            let result = perform(&app, cli, Action::Install, &current, &spawn);
             if !current() {
                 return;
             }
@@ -101,7 +108,18 @@ impl ChromeSetup {
                 !app.state::<crate::DesktopState>().is_quitting()
                     && crate::native_browser_bridge::request_is_current(&app, generation)
             };
-            let result = perform(&app, None, action, &current);
+            let spawn = |command: &mut Command| {
+                // Hold document authority through spawn, then let admitted work
+                // settle without blocking navigation.
+                app.state::<crate::native_browser_bridge::NativeBrowserBridgeState>()
+                    .with_document_authority(generation, || {
+                        if app.state::<crate::DesktopState>().is_quitting() {
+                            return Err("OpenClaw is quitting.".into());
+                        }
+                        command.spawn().map_err(|error| error.to_string())
+                    })
+            };
+            let result = perform(&app, None, action, &current, &spawn);
             let _ = tx.send(result);
         }))?;
         rx.recv()
@@ -114,23 +132,26 @@ fn perform(
     cli: Option<OpenClawCli>,
     action: Action,
     is_current: &dyn Fn() -> bool,
+    spawn: &SpawnCommand<'_>,
 ) -> Result<Value, String> {
     if !is_current() {
         return Err("The native browser document changed.".into());
     }
     let cli = match cli {
         Some(cli) => cli,
-        None => crate::installer::browser_runtime(app, action == Action::Install, is_current)
-            .map_err(|_| {
-                "The local browser runtime is unavailable. Check the local installation."
-                    .to_string()
-            })?,
+        None => {
+            crate::installer::browser_runtime(app, action == Action::Install, is_current, spawn)
+                .map_err(|_| {
+                    "The local browser runtime is unavailable. Check the local installation."
+                        .to_string()
+                })?
+        }
     };
     // Runtime discovery/provisioning may await a process: revalidate before registration.
     if !is_current() {
         return Err("The native browser document changed.".into());
     }
-    run(&cli, action)
+    run(&cli, action, spawn)
 }
 
 fn store_allowed(report: &Value) -> bool {
@@ -157,7 +178,7 @@ pub enum Action {
 #[derive(Deserialize)]
 #[serde(tag = "type", deny_unknown_fields)]
 enum Request {
-    #[serde(rename = "chrome-setup")]
+    #[serde(rename = "chrome-extension-setup")]
     ChromeSetup { action: Action },
 }
 
@@ -184,10 +205,11 @@ fn arguments(action: Action) -> [&'static str; 8] {
     ]
 }
 
-pub fn run(cli: &OpenClawCli, action: Action) -> Result<Value, String> {
+pub fn run(cli: &OpenClawCli, action: Action, spawn: &SpawnCommand<'_>) -> Result<Value, String> {
     // Pending and blocked are successful canonical JSON results, not transport
     // failures. Do not infer readiness or bootstrap support from this platform.
-    cli.bounded_json(&arguments(action)).map_err(cli_error)
+    cli.bounded_json(&arguments(action), spawn)
+        .map_err(cli_error)
 }
 
 pub fn cli_error(error: CliError) -> String {
@@ -221,7 +243,7 @@ mod tests {
             ("verify", Action::Verify),
         ] {
             assert_eq!(
-                parse_request(json!({"type": "chrome-setup", "action": name})).unwrap(),
+                parse_request(json!({"type": "chrome-extension-setup", "action": name})).unwrap(),
                 action
             );
             assert_eq!(
@@ -239,12 +261,12 @@ mod tests {
             );
         }
         for message in [
-            json!({"type": "chrome-setup"}),
-            json!({"type": "chrome-setup", "action": "install --url https://other.example"}),
-            json!({"type": "chrome-setup", "action": "pair"}),
-            json!({"type": "chrome-setup", "action": "inspect", "profile": "remote"}),
-            json!({"type": "chrome-setup", "action": "install", "command": "other"}),
-            json!({"type": "chrome-setup", "action": "install", "url": "https://other.example"}),
+            json!({"type": "chrome-extension-setup"}),
+            json!({"type": "chrome-extension-setup", "action": "install --url https://other.example"}),
+            json!({"type": "chrome-extension-setup", "action": "pair"}),
+            json!({"type": "chrome-extension-setup", "action": "inspect", "profile": "remote"}),
+            json!({"type": "chrome-extension-setup", "action": "install", "command": "other"}),
+            json!({"type": "chrome-extension-setup", "action": "install", "url": "https://other.example"}),
             json!({"type": "open-link", "action": "install"}),
         ] {
             assert!(parse_request(message).is_err());
