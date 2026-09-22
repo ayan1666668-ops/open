@@ -11,11 +11,6 @@ import { toErrorObject } from "../infra/errors.js";
 import type { ImageContent } from "../llm/types.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import {
-  inboundMediaIdFromReference,
-  recordStagedInboundMedia,
-} from "../media/inbound-media-ownership.js";
-import { buildInboundMediaUriFromPath } from "../media/media-reference.js";
-import {
   buildImageResizeSideGrid,
   getImageMetadata,
   IMAGE_REDUCE_QUALITY_STEPS,
@@ -25,7 +20,6 @@ import {
   resizeToJpeg,
   type ImageMetadata,
 } from "../media/media-services.js";
-import { saveMediaBuffer } from "../media/store.js";
 import {
   DEFAULT_IMAGE_MAX_BYTES,
   DEFAULT_IMAGE_MAX_DIMENSION_PX,
@@ -477,10 +471,19 @@ async function stageInlineImageBlock(
     return undefined;
   }
   try {
+    // Loaded here rather than at module scope: this module is the target of the lazy
+    // `tool-images.runtime` facade, and the media layer reaches back into the tool layer, so a
+    // static edge to it would put the facade in a cycle and the sealed worker build would emit
+    // the facade as an unstaged runtime chunk instead of inlining it.
+    const [{ saveMediaBuffer }, { buildInboundMediaUriFromPath }, ownership] = await Promise.all([
+      import("../media/store.js"),
+      import("../media/media-reference.js"),
+      import("../media/inbound-media-ownership.js"),
+    ]);
     const saved = await saveMediaBuffer(Buffer.from(data, "base64"), block.mimeType, "inbound");
     const url = buildInboundMediaUriFromPath(saved.path);
-    const id = url ? inboundMediaIdFromReference(url) : undefined;
-    if (!url || !id || !(await recordStagedInboundMedia(id))) {
+    const id = url ? ownership.inboundMediaIdFromReference(url) : undefined;
+    if (!url || !id || !(await ownership.recordStagedInboundMedia(id))) {
       return undefined;
     }
     return { ...block, url };
