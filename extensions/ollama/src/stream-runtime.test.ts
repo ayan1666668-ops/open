@@ -394,6 +394,14 @@ describe("createConfiguredOllamaCompatStreamWrapper", () => {
       expectedThink: "max",
     },
     {
+      name: "preserves native Ollama Cloud GLM-5.3 max thinking on the wire",
+      id: "glm-5.3",
+      provider: "ollama-cloud",
+      contextWindow: 131072,
+      thinkingLevel: "max",
+      expectedThink: "max",
+    },
+    {
       name: "keeps the high fallback for Ollama Cloud GPT-OSS",
       id: "gpt-oss:120b",
       provider: "ollama-cloud",
@@ -3410,17 +3418,20 @@ describe("createOllamaStreamFn", () => {
     );
   });
 
-  it("preserves configured Ollama Cloud params.thinking=max", async () => {
-    await expectSuccessfulOllamaRequest(
-      {
-        baseUrl: "https://ollama.com",
-        model: { provider: "ollama-cloud", id: "glm-5.2", params: { thinking: "max" } },
-      },
-      ({ body }) => {
-        expect(body.think).toBe("max");
-      },
-    );
-  });
+  it.each(["glm-5.2", "glm-5.3"])(
+    "preserves configured Ollama Cloud %s params.thinking=max",
+    async (id) => {
+      await expectSuccessfulOllamaRequest(
+        {
+          baseUrl: "https://ollama.com",
+          model: { provider: "ollama-cloud", id, params: { thinking: "max" } },
+        },
+        ({ body }) => {
+          expect(body.think).toBe("max");
+        },
+      );
+    },
+  );
 
   it.each(["gpt-oss:120b", "kimi-k2.5", "custom-thinking-model"])(
     "keeps configured Ollama Cloud %s params.thinking=max compatible",
