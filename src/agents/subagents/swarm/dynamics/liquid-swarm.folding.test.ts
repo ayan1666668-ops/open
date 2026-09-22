@@ -40,7 +40,7 @@ describe("Liquid Swarm folding regression", () => {
     expect(gas.snapshot.phaseMixture.gas).toBe(1);
     expect(gas.decision.authority).toBe("search-only");
     expect(gas.decision.actions).toContainEqual(
-      expect.objectContaining({ kind: "spawn", profile: "builder" }),
+      expect.objectContaining({ kind: "spawn", purpose: "coordinate" }),
     );
 
     const mixed = decide([
