@@ -1,8 +1,7 @@
 import { expectDefined } from "@openclaw/normalization-core";
 import { vi } from "vitest";
-import { buildAnthropicCliBackend } from "../../../extensions/anthropic/api.js";
-import { discordPlugin } from "../../../extensions/discord/api.js";
 import * as runtimePlugins from "../../../src/agents/runtime-plugins.js";
+import type { ChannelPlugin } from "../../../src/channels/plugins/types.public.js";
 import type { OpenClawConfig } from "../../../src/config/types.openclaw.js";
 import { createPluginRegistry } from "../../../src/plugins/registry.js";
 import {
@@ -11,6 +10,8 @@ import {
 } from "../../../src/plugins/runtime.js";
 import { createPluginRuntime } from "../../../src/plugins/runtime/index.js";
 import { createPluginRecord } from "../../../src/plugins/status.test-fixtures.js";
+import type { CliBackendPlugin } from "../../../src/plugins/types.js";
+import { loadBundledPluginFacade } from "../../../src/test-utils/bundled-plugin-public-surface.js";
 
 export async function installScheduledMessageReadRuntime(params: {
   cfg: OpenClawConfig;
@@ -18,6 +19,16 @@ export async function installScheduledMessageReadRuntime(params: {
   nativeCreatorAccountId?: string;
   cleanup: Array<() => void | Promise<void>>;
 }): Promise<() => Promise<void>> {
+  const [{ buildAnthropicCliBackend }, { discordPlugin }] = await Promise.all([
+    loadBundledPluginFacade<{ buildAnthropicCliBackend: () => CliBackendPlugin }>({
+      pluginId: "anthropic",
+      artifactBasename: "api.js",
+    }),
+    loadBundledPluginFacade<{ discordPlugin: ChannelPlugin }>({
+      pluginId: "discord",
+      artifactBasename: "api.js",
+    }),
+  ]);
   const owner = createPluginRegistry({
     logger: { info() {}, warn() {}, error() {}, debug() {} },
     runtime: createPluginRuntime(),

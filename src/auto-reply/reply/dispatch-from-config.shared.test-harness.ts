@@ -4,7 +4,10 @@ import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import type { TtsAutoMode } from "../../config/types.tts.js";
 import type { WorkerSessionPlacementRecord } from "../../gateway/worker-environments/placement-record.js";
 import type { SessionWorkerPlacementContext } from "../../gateway/worker-environments/session-placement-lifecycle.js";
-import type { SessionBindingRecord } from "../../infra/outbound/session-binding-service.js";
+import type {
+  ConversationRef,
+  SessionBindingRecord,
+} from "../../infra/outbound/session-binding-service.js";
 import { isPluginOwnedBindingMetadata } from "../../plugins/conversation-binding-metadata.js";
 import type {
   PluginHookBeforeDispatchResult,
@@ -615,7 +618,10 @@ vi.mock("../../acp/runtime/registry.js", () => ({
   getAcpRuntimeBackend: acpMocks.getAcpRuntimeBackend,
   requireAcpRuntimeBackend: acpMocks.requireAcpRuntimeBackend,
 }));
-vi.mock("../../infra/outbound/session-binding-service.js", () => ({
+vi.mock("../../infra/outbound/session-binding-service.js", async () => ({
+  ...(await import("../../infra/outbound/session-binding-errors.js")),
+  readSessionBindingSelectionCurrent: (refs: readonly ConversationRef[]) =>
+    Promise.all(refs.map((ref) => sessionBindingMocks.resolveByConversationAsync(ref))),
   getSessionBindingService: () => ({
     bind: vi.fn(async () => {
       throw new Error("bind not mocked");

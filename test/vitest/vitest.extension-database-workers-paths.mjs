@@ -204,6 +204,7 @@ export const databaseWorkerExtensionTestFiles = [
   "extensions/matrix/src/matrix/send.authority.integration.test.ts",
   "extensions/matrix/src/direct-encryption.test.ts",
   "extensions/matrix/src/matrix/conversation-route-owner.test.ts",
+  "extensions/matrix/src/matrix/monitor/handler.active-turn-steering.test.ts",
   "extensions/matrix/src/matrix/monitor/handler.binding-route.test.ts",
   "extensions/matrix/src/matrix/sdk.test.ts",
   "extensions/matrix/src/matrix/monitor/startup-verification.test.ts",
