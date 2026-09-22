@@ -14,6 +14,18 @@ Manifest fields that declare what a plugin owns and when the activation planner 
 
 Use `contracts` only for static capability ownership metadata that OpenClaw can read without importing the plugin runtime.
 
+`contracts.codeModeExecutors` declares the supported executor supplied by a plugin's
+`code-mode-executor-api` public artifact. Plugins currently implement `quickjs`;
+the other selectable executor, `node`, is owned by core. The plugin's installation
+ID is separate from this executor ID. Selecting QuickJS loads only its
+admitted owner. Selected bundled executors remain available when plugins are
+globally disabled or an allowlist names other plugins, preserving their former
+core runtime availability. An explicit owner deny or disabled entry still blocks
+selection; external executors follow the full plugin policy.
+The artifact exports `codeModeExecutor` using the
+`openclaw/plugin-sdk/code-mode-executor-runtime` contract. It does not register
+model tools or replace host tool authorization. See [Code Mode executors](/tools/code-mode/executors).
+
 ```json
 {
   "contracts": {
@@ -105,32 +117,6 @@ loading the provider runtime or resolving credentials.
 Each entry requires a provider ID, model ID, and display name. The selector uses
 `example-decisions/fast`. Disabled plugins are excluded from the decision picker;
 saved unavailable selections remain visible for the operator to repair.
-
-An entry can include `capabilities` for discovery and `decision_evaluate` guidance:
-
-```json
-{
-  "questionTypes": ["boolean", "choice", "score"],
-  "maxQuestions": 32,
-  "maxChoiceAlternatives": 64,
-  "maxScoreLevels": 64,
-  "maxInputTokens": 512,
-  "inputTokenScope": "encoded-question",
-  "requiresBooleanCriteria": true,
-  "confidence": "none"
-}
-```
-
-`questionTypes` lists supported primitives. Limits are optional positive safe
-integers; omit unknown limits. `inputTokenScope` is `encoded-question` when the
-budget includes the state, instructions, and complete encoded rubric, or
-`state-plus-each-criterion` when each state/instruction and criterion pair has its
-own budget. `requiresBooleanCriteria` requires both true and false descriptions.
-`confidence` is `none` or `provider-specific`; a provider metric is not a calibrated
-probability of correctness. The manifest reader removes unknown or malformed
-capability fields before exposing them in `models.list.decisionModels` and tool
-guidance. These facts do not assert credential readiness or service health, and
-providers still validate their own inputs during execution.
 
 ## Tool metadata reference
 
