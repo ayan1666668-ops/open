@@ -73,6 +73,56 @@ it.runIf(
     return entries;
   });
   syncBuiltinESMExports();
+  const pendingTimers = new Map<
+    Parameters<typeof clearTimeout>[0],
+    { settled: Promise<void>; finish(): void }
+  >();
+  const originalSetTimeout = globalThis.setTimeout;
+  const originalClearTimeout = globalThis.clearTimeout;
+  const timeoutSpy = vi
+    .spyOn(globalThis, "setTimeout")
+    .mockImplementation((callback, delay, ...args) => {
+      const { promise: settled, resolve: finish } = createDeferredCore();
+      const timer = originalSetTimeout(() => {
+        pendingTimers.delete(timer);
+        try {
+          callback.apply(timer, args);
+        } finally {
+          finish();
+        }
+      }, delay);
+      pendingTimers.set(timer, { settled, finish });
+      return timer;
+    });
+  const clearTimeoutSpy = vi.spyOn(globalThis, "clearTimeout").mockImplementation((timer) => {
+    originalClearTimeout(timer);
+    pendingTimers.get(timer)?.finish();
+    pendingTimers.delete(timer);
+  });
+  const settleWatchers = async () => {
+    for (;;) {
+      await Promise.resolve();
+      await vi.waitFor(() => {
+        expect(errors).toEqual([]);
+        expect(watches.every(({ ready, watcher }) => ready || watcher.closed)).toBe(true);
+      });
+      const generationCount = watches.length;
+      // Drain actual debounce/stability work before priming the cache. A late
+      // ready-time publication must not mask missing native descendant coverage.
+      await Promise.all(Array.from(pendingTimers.values(), ({ settled }) => settled));
+      await new Promise<void>((resolve) => {
+        setImmediate(resolve);
+      });
+      expect(errors).toEqual([]);
+      if (
+        pendingTimers.size === 0 &&
+        watches.length === generationCount &&
+        watches.every(({ ready, watcher }) => ready || watcher.closed)
+      ) {
+        return;
+      }
+    }
+  };
   let observation: ReturnType<typeof nativeFs.watch> | undefined;
 
   try {
@@ -101,11 +151,8 @@ it.runIf(
     // before scan release; it never forwards events to the product watcher.
     await expect.poll(() => nativeCreationObserved, { timeout: 3_000 }).toBe(true);
     releaseScan.resolve();
-    await vi.waitFor(() => {
-      expect(watches.every(({ ready, watcher }) => ready || watcher.closed)).toBe(true);
-      expect(errors).toEqual([]);
-    });
-    await expect.poll(read, { timeout: 3_000 }).toEqual(["rescan-proof"]);
+    await settleWatchers();
+    expect(read()).toEqual(["rescan-proof"]);
 
     // A ready-time inventory alone discovers the sibling, but cannot observe
     // later changes inside it unless the replacement has native coverage.
@@ -120,6 +167,8 @@ it.runIf(
     } finally {
       readdir.mockRestore();
       watch.mockRestore();
+      timeoutSpy.mockRestore();
+      clearTimeoutSpy.mockRestore();
       syncBuiltinESMExports();
       await fs.rm(root, { recursive: true, force: true });
     }
