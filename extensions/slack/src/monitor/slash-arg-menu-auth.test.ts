@@ -66,14 +66,12 @@ vi.mock("./slash-commands.runtime.js", async () => {
     findCommandByNativeName: (name: string) =>
       fixtures.definitions.find((definition) => definition.nativeName === name),
     listNativeCommandSpecsForConfig: () =>
-      fixtures.definitions.map(
-        (definition): NativeCommandSpec => ({
-          name: definition.nativeName!,
-          description: definition.description,
-          acceptsArgs: true,
-          args: definition.args,
-        }),
-      ),
+      fixtures.definitions.map((definition): NativeCommandSpec => ({
+        name: definition.nativeName!,
+        description: definition.description,
+        acceptsArgs: true,
+        args: definition.args,
+      })),
   };
 });
 
