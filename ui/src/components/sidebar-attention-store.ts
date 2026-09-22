@@ -37,9 +37,6 @@ type SidebarAttentionOwner = {
   dismissalKey: string | null;
 };
 
-const VISIBILITY_REFRESH_MIN_AGE_MS = 60_000;
-const IDLE_REFRESH_INTERVAL_MS = 10 * 60_000;
-
 export class SidebarAttentionStoreController implements StoreController {
   readonly mentions: MentionsCapability;
   private cronJobs: CronAttentionJob[] = [];
@@ -51,7 +48,6 @@ export class SidebarAttentionStoreController implements StoreController {
   private loadedOwner: SidebarAttentionOwner | null = null;
   private loadedClient = this.sources.gateway.snapshot.client;
   private loadedAgentScope = { ...this.sources.agentSelection.state };
-  private cronLoadedAtMs = 0;
   private dismissalKey: string | null = null;
   private dismissed: SidebarAttentionDismissals = {};
   private loadGeneration = 0;
@@ -67,7 +63,6 @@ export class SidebarAttentionStoreController implements StoreController {
   private readonly stopOutbox: () => void;
   private outboxRuntime: typeof import("../pages/chat/chat-outbox-owner.ts") | null = null;
   private disposed = false;
-  private readonly idleRefreshTimer: ReturnType<typeof globalThis.setInterval>;
 
   constructor(
     private readonly sources: SidebarAttentionStoreSources,
@@ -82,7 +77,9 @@ export class SidebarAttentionStoreController implements StoreController {
     this.stopEvents = sources.gateway.subscribeEvents((event) => {
       if (event.event === "cron") {
         this.load(false);
-      } else if (event.event === "config.changed" || event.event === "chat.metadata.changed") {
+      } else if (event.event === "config.changed") {
+        this.load();
+      } else if (event.event === "chat.metadata.changed") {
         this.load(true, false);
       }
     });
@@ -104,9 +101,8 @@ export class SidebarAttentionStoreController implements StoreController {
       .catch(() => {
         // Chat retains its existing recovery controls if its lazy runtime cannot load.
       });
-    document.addEventListener("visibilitychange", this.refreshIfStale);
+    document.addEventListener("visibilitychange", this.refreshDeferred);
     globalThis.addEventListener("storage", this.syncDismissalsFromStorage);
-    this.idleRefreshTimer = globalThis.setInterval(this.refreshIfStale, IDLE_REFRESH_INTERVAL_MS);
     this.synchronizeGateway();
   }
 
@@ -271,9 +267,6 @@ export class SidebarAttentionStoreController implements StoreController {
       if (!current()) {
         return;
       }
-      if (!scope.modelAuthAgentId) {
-        this.cronLoadedAtMs = Date.now();
-      }
       this.reconcileDismissals(scope);
       this.onChange();
     };
@@ -312,6 +305,7 @@ export class SidebarAttentionStoreController implements StoreController {
               await loadCompactCronJobsPage(cron, { append: true });
             }
             if (current()) {
+              this.cronRefreshNeeded ||= Boolean(cron.cronJobsError || cron.cronError);
               if (!cron.cronJobsError && !cron.cronJobsHasMore) {
                 this.cronJobs = cron.cronJobs.map((job) => ({
                   id: job.id,
@@ -444,12 +438,10 @@ export class SidebarAttentionStoreController implements StoreController {
     this.load();
   }
 
-  private readonly refreshIfStale = () => {
+  private readonly refreshDeferred = () => {
     this.scheduleModelAuthRefresh();
-    const stale = Date.now() - this.cronLoadedAtMs >= VISIBILITY_REFRESH_MIN_AGE_MS;
-    if (document.visibilityState === "visible" && (this.cronRefreshNeeded || stale)) {
-      // Hidden cron events need an immediate catch-up even inside the freshness
-      // window, without refreshing independently current model authentication.
+    if (document.visibilityState === "visible" && this.cronRefreshNeeded) {
+      // Catch up hidden changes or failed reads without reloading unchanged inventory.
       this.load(false);
     }
   };
@@ -498,8 +490,7 @@ export class SidebarAttentionStoreController implements StoreController {
     this.stopMentions();
     this.stopOutbox();
     this.mentions.dispose();
-    document.removeEventListener("visibilitychange", this.refreshIfStale);
+    document.removeEventListener("visibilitychange", this.refreshDeferred);
     globalThis.removeEventListener("storage", this.syncDismissalsFromStorage);
-    globalThis.clearInterval(this.idleRefreshTimer);
   }
 }
