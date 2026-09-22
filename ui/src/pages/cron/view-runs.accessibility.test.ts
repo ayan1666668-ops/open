@@ -2,30 +2,28 @@ import { render } from "lit";
 import { describe, expect, it } from "vitest";
 import { i18n } from "../../i18n/index.ts";
 import { captureI18nStateForTesting } from "../../i18n/lib/translate.test-support.ts";
+import { createInitialCronState } from "../../lib/cron/index.ts";
 import { renderRunsSection } from "./view-runs.ts";
 
 type CronRunsSectionProps = Parameters<typeof renderRunsSection>[0];
 
-function createRunsProps(overrides: Partial<CronRunsSectionProps> = {}): CronRunsSectionProps {
+type RunsOverrides = Partial<Omit<CronRunsSectionProps, "state">> & {
+  state?: Partial<CronRunsSectionProps["state"]>;
+};
+
+function createRunsProps(overrides: RunsOverrides = {}): CronRunsSectionProps {
+  const { state, ...props } = overrides;
   return {
-    basePath: "",
-    agentId: "main",
-    runs: [],
     runsState: "ready",
-    runsHasMore: false,
-    runsLoadingMore: false,
-    runsStatuses: [],
-    runsDeliveryStatuses: [],
-    runsQuery: "",
-    runsSortDir: "desc",
+    state: { ...createInitialCronState(), ...state },
     onLoadMoreRuns: () => undefined,
     onRefresh: () => undefined,
     onRunsFiltersChange: () => undefined,
-    ...overrides,
+    ...props,
   };
 }
 
-function renderRuns(overrides: Partial<CronRunsSectionProps> = {}) {
+function renderRuns(overrides: RunsOverrides = {}) {
   const container = document.createElement("div");
   render(renderRunsSection(createRunsProps(overrides)), container);
   return container;
@@ -53,8 +51,7 @@ describe("cron run filter accessibility", () => {
     );
 
     const singlyFilteredRuns = renderRuns({
-      runsStatuses: ["error"],
-      runsDeliveryStatuses: ["delivered"],
+      state: { cronRunsStatuses: ["error"], cronRunsDeliveryStatuses: ["delivered"] },
     });
     expect(getFilterTrigger(singlyFilteredRuns, "status").getAttribute("aria-label")).toBe(
       "Status Error",
@@ -64,8 +61,10 @@ describe("cron run filter accessibility", () => {
     );
 
     const doublyFilteredRuns = renderRuns({
-      runsStatuses: ["error", "ok"],
-      runsDeliveryStatuses: ["not-delivered", "delivered"],
+      state: {
+        cronRunsStatuses: ["error", "ok"],
+        cronRunsDeliveryStatuses: ["not-delivered", "delivered"],
+      },
     });
     const doublyFilteredStatus = getFilterTrigger(doublyFilteredRuns, "status");
     const doublyFilteredDelivery = getFilterTrigger(doublyFilteredRuns, "delivery");
@@ -77,8 +76,10 @@ describe("cron run filter accessibility", () => {
     expect(doublyFilteredDelivery.textContent).toContain("Delivered, Not delivered");
 
     const filteredRuns = renderRuns({
-      runsStatuses: ["error", "ok", "skipped"],
-      runsDeliveryStatuses: ["delivered", "not-delivered", "unknown"],
+      state: {
+        cronRunsStatuses: ["error", "ok", "skipped"],
+        cronRunsDeliveryStatuses: ["delivered", "not-delivered", "unknown"],
+      },
     });
     const statusTrigger = getFilterTrigger(filteredRuns, "status");
     const deliveryTrigger = getFilterTrigger(filteredRuns, "delivery");
@@ -95,8 +96,10 @@ describe("cron run filter accessibility", () => {
     try {
       await i18n.setLocale("de");
       const doublyFilteredRuns = renderRuns({
-        runsStatuses: ["error", "ok"],
-        runsDeliveryStatuses: ["not-delivered", "delivered"],
+        state: {
+          cronRunsStatuses: ["error", "ok"],
+          cronRunsDeliveryStatuses: ["not-delivered", "delivered"],
+        },
       });
       const doublyFilteredStatus = getFilterTrigger(doublyFilteredRuns, "status");
       const doublyFilteredDelivery = getFilterTrigger(doublyFilteredRuns, "delivery");
@@ -108,8 +111,10 @@ describe("cron run filter accessibility", () => {
       expect(doublyFilteredDelivery.textContent).toContain("Zugestellt, Nicht zugestellt");
 
       const container = renderRuns({
-        runsStatuses: ["ok", "error", "skipped"],
-        runsDeliveryStatuses: ["delivered", "not-delivered", "unknown"],
+        state: {
+          cronRunsStatuses: ["ok", "error", "skipped"],
+          cronRunsDeliveryStatuses: ["delivered", "not-delivered", "unknown"],
+        },
       });
       expect(getFilterTrigger(container, "status").getAttribute("aria-label")).toBe(
         "Status OK +2 (OK, Fehler und Übersprungen)",
@@ -151,7 +156,9 @@ describe("cron run filter accessibility", () => {
     try {
       Object.defineProperty(globalThis, "document", { configurable: true, value: undefined });
       expect(() =>
-        renderRunsSection(createRunsProps({ runsStatuses: ["ok", "error", "skipped"] })),
+        renderRunsSection(
+          createRunsProps({ state: { cronRunsStatuses: ["ok", "error", "skipped"] } }),
+        ),
       ).not.toThrow();
     } finally {
       Object.defineProperty(globalThis, "document", documentDescriptor);
