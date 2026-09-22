@@ -19,7 +19,12 @@ const SESSION_MEMORY_CAPTURE_PAGE_MESSAGES = 256;
 const SESSION_MEMORY_CAPTURE_MAX_SCANNED_MESSAGES = 4_096;
 
 export type SessionMemoryTranscript =
-  | ({ status: "available" } & (SessionMemoryProjection | { content: null; originClass: "agent" }))
+  | ({
+      status: "available";
+    } & (
+      | SessionMemoryProjection
+      | { content: null; originClass: "agent"; lastMessageTimestamp?: number }
+    ))
   | { status: "unavailable"; reason: string };
 
 // The bounded reader already projects the active branch, but message pages

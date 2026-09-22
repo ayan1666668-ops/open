@@ -156,7 +156,14 @@ async function saveSessionMemoryNow(
     // Session-memory artifacts share the same configured user-day boundary as daily memory files.
     const now = new Date(event.timestamp);
     const userTimezone = resolveUserTimezone(cfg?.agents?.defaults?.userTimezone ?? process.env.TZ);
-    const localTimestamp = formatLocalSessionTimestamp(now, userTimezone);
+    // Date the artifact from the captured conversation, falling back to the reset
+    // trigger when the transcript is empty or carries no message timestamps.
+    const contentTimestamp =
+      transcript.status === "available" ? transcript.lastMessageTimestamp : undefined;
+    const localTimestamp = formatLocalSessionTimestamp(
+      new Date(contentTimestamp ?? event.timestamp),
+      userTimezone,
+    );
     const dateStr = localTimestamp.date;
 
     // Manual commands carry the prior entry separately; automatic rollover
