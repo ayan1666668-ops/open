@@ -1,5 +1,5 @@
 import { recordInboundMediaOwnersInValue } from "../../media/inbound-media-ownership.js";
-import type { AgentMessage } from "../runtime/index.js";
+import type { AgentEvent, AgentMessage } from "../runtime/index.js";
 
 /**
  * A staged media reference is readable only by the session that published its result, and a
@@ -19,4 +19,17 @@ export async function bindStagedMediaOwnership(
     return [];
   }
   return await recordInboundMediaOwnersInValue(message.content, { sessionKey }).catch(() => []);
+}
+
+/**
+ * Binds the reference a `message_end` event is about to publish, so the session base can await it
+ * as one call. Any other event carries no reference to bind.
+ */
+export async function bindStagedMediaOwnershipForEvent(
+  event: AgentEvent,
+  sessionKey: string | undefined,
+): Promise<string[]> {
+  return event.type === "message_end"
+    ? await bindStagedMediaOwnership(event.message, sessionKey)
+    : [];
 }
