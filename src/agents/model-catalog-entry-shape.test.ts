@@ -82,6 +82,32 @@ describe("model catalog entry shape stability", () => {
     expect(merged.compat).toEqual({ codeMode: "preferred" });
   });
 
+  it("clears inherited compat when a configured endpoint makes the route custom", () => {
+    // The base row has no baseUrl, so catalogRouteChanges cannot see the route
+    // change, but the resolver treats the configured endpoint as a custom route
+    // and hands back no capabilities. The inherited flags must not survive.
+    const base: ModelCatalogEntry = {
+      id: "model-a",
+      name: "Model A",
+      provider: "acme",
+      api: "openai-completions",
+      reasoning: false,
+      compat: { supportsTools: false },
+    };
+    const overlay: ModelCatalogEntry = {
+      id: "model-a",
+      name: "Model A",
+      provider: "acme",
+      api: "openai-completions",
+      baseUrl: "https://custom.test/v1",
+      reasoning: false,
+    };
+
+    const merged = overlayCatalogMetadata(base, overlay, { preserveBaseCompat: true });
+
+    expect(Object.hasOwn(merged, "compat")).toBe(false);
+  });
+
   it("builds configured rows without undefined optional facts", () => {
     const cfg = {
       models: {

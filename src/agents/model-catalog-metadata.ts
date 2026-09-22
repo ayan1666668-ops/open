@@ -78,9 +78,13 @@ export function overlayCatalogMetadata(
   // Options + default are one normalized unit (default ∈ options): an overlay
   // that replaces the options list must also own the default, or a base default
   // absent from the new list would leak through the field-by-field merge.
+  // The resolved compat below is the single source for the merged row. Leaving the
+  // base value in the spread would let an inherited capability survive a decision
+  // to clear it.
   const {
     contextWindows: _baseContextWindows,
     contextWindowDefault: _baseContextWindowDefault,
+    compat: _baseCompat,
     ...selectionNeutralBase
   } = routeBase;
   const contextWindowSelection =
