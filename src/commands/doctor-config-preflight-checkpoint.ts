@@ -5,6 +5,7 @@ import type {
   MigrationCheckpointIdentity,
   StartupMigrationLease,
 } from "../infra/startup-migration-checkpoint.js";
+import type { DoctorConfigPreflightPluginSnapshotRead } from "./doctor-config-preflight-plugin-index.js";
 import { resolveStateMigrationConfigInput } from "./doctor/shared/legacy-config-state-migration-input.js";
 
 /** Renew through awaited admission and surface a lost lease before the next write. */
@@ -68,4 +69,16 @@ export function migrationCheckpointIdentitiesMatch(
     left.pluginDoctorConfigFingerprint === right.pluginDoctorConfigFingerprint &&
     left.pluginMigrationFingerprint === right.pluginMigrationFingerprint
   );
+}
+
+export function checkpointIdentityForSnapshot(
+  snapshotRead: DoctorConfigPreflightPluginSnapshotRead,
+  baseConfig = snapshotRead.snapshot.sourceConfig ?? snapshotRead.snapshot.config ?? {},
+) {
+  const { snapshot, pluginMigrationFingerprint } = snapshotRead;
+  return resolveMigrationCheckpointIdentity({
+    snapshot,
+    baseConfig,
+    pluginMigrationFingerprint,
+  });
 }
