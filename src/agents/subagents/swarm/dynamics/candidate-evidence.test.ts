@@ -1,8 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  candidateIdentity,
-  type CandidateManifest,
-} from "./candidate-evidence.js";
+import { candidateIdentity, type CandidateManifest } from "./candidate-evidence.js";
 
 const candidate: CandidateManifest = {
   version: 1,
