@@ -7,6 +7,45 @@ import type {
 } from "./session-row-prepared-read.js";
 import * as records from "./session-row-projection-record.js";
 
+/** Materialization reads current physical relations from the projection's existing indexes. */
+export function createSessionRowRelationReads(owner: {
+  config: () => records.Inputs["cfg"];
+  rows: ReadonlyMap<string, records.Row>;
+  byParent: ReadonlyMap<string, Set<string>>;
+  dirty: ReadonlySet<string>;
+  referenced: (reference: string) => records.Row | undefined;
+  readEntry: (row: records.Row) => records.Row["storedEntry"];
+  acquireEntry: (row: records.Row, entry: records.Row["storedEntry"]) => records.Row | undefined;
+}) {
+  return {
+    readSourceEntry(this: void, row: records.Row, key: string, residentOnly = false) {
+      const source = owner.referenced(
+        records.parentReference(owner.config(), key, row.agentId, row.storeTarget.storePath),
+      );
+      return (
+        source &&
+        (!residentOnly && owner.dirty.has(records.identity(source))
+          ? owner.readEntry(source)
+          : source.storedEntry)
+      );
+    },
+    readChildLinks(this: void, row: records.Row, residentOnly = false) {
+      const links = [...records.dependents(row, owner.byParent)].flatMap((child) => {
+        let value = owner.rows.get(child);
+        if (value && !residentOnly && owner.dirty.has(child)) {
+          value = owner.acquireEntry(value, owner.readEntry(value));
+        }
+        return value?.entry && [...value.parents].some((ref) => owner.referenced(ref) === row)
+          ? [{ key: value.key, entry: value.entry }]
+          : [];
+      });
+      // Keyed child refreshes reorder the parent index; presentation must stay stable.
+      links.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+      return links;
+    },
+  };
+}
+
 /** Follow the projection's physical lineage and aggregate owners without a roster scan. */
 function readSessionRowAncestors<T extends records.Row>(
   record: records.Row,
@@ -71,6 +110,12 @@ export function createSessionRowAncestorReads(owner: {
   describe: SessionRowReadView["describe"];
   inOwnerContext: ReturnType<typeof AsyncLocalStorage.snapshot>;
   placementFacts: ReturnType<typeof createSessionRowPlacementProjection>;
+  membership: {
+    prepare: () => Promise<void>;
+    needsPreparation: (
+      queries: (config: records.Inputs["cfg"]) => readonly records.Lookup[],
+    ) => boolean;
+  };
   isActive: () => boolean;
   projection: () => SessionRowReadView & { isCurrent(row: records.Row): boolean };
 }) {
@@ -80,7 +125,11 @@ export function createSessionRowAncestorReads(owner: {
         ...owner.state(),
         referenced: owner.referenced,
         prepare: (row) =>
-          records.hasEntry(row) && owner.placementFacts.isPrepared(row.entry.sessionId)
+          records.hasEntry(row) &&
+          owner.placementFacts.isPrepared(row.entry.sessionId) &&
+          !owner.membership.needsPreparation(() => [
+            { ...row, storePath: row.storeTarget.storePath },
+          ])
             ? owner.describe({ ...row, storePath: row.storeTarget.storePath }, row)
             : undefined,
       }),
@@ -114,13 +163,27 @@ export function createSessionRowAncestorReads(owner: {
             ]);
           }
         : queries;
-      return owner.placementFacts.withPreparedRows(
-        owner.projection(),
-        owner.isActive,
-        owner.lookup,
-        selected,
-        consume,
-      );
+      const membershipPending = Symbol("session-membership-pending");
+      while (owner.isActive()) {
+        while (owner.isActive() && owner.membership.needsPreparation(selected)) {
+          await owner.membership.prepare();
+        }
+        const prepared = await owner.placementFacts.withPreparedRows<T | typeof membershipPending>(
+          owner.projection(),
+          owner.isActive,
+          owner.lookup,
+          selected,
+          (read) =>
+            owner.membership.needsPreparation(selected) ? membershipPending : consume(read),
+        );
+        if (prepared.kind === "pending") {
+          return prepared;
+        }
+        if (prepared.value !== membershipPending) {
+          return { kind: "complete", value: prepared.value };
+        }
+      }
+      throw new Error("Session row projection is no longer active");
     },
   };
 }

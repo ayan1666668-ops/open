@@ -80,10 +80,7 @@ function reportScratchMessage(
   }
 }
 
-async function wasScratchReclaimed(directory: string, error: unknown): Promise<boolean> {
-  if (!isMissingPathError(error)) {
-    return false;
-  }
+async function wasScratchReclaimed(directory: string): Promise<boolean> {
   try {
     await fs.lstat(directory);
     return false;
@@ -203,7 +200,7 @@ async function cleanupBackupScratchDirectory(
     await fs.rmdir(directory);
     return { status: "reclaimed" };
   } catch (error) {
-    if (await wasScratchReclaimed(directory, error)) {
+    if (await wasScratchReclaimed(directory)) {
       return { status: "already-reclaimed", directory };
     }
     const warning = `Backup scratch cleanup failed at ${directory}: ${formatErrorMessage(error)}. Run \`openclaw doctor --fix\` to retry cleanup.`;
@@ -295,7 +292,11 @@ export async function maintainBackupScratch(params: {
               }
               throw error;
             });
-          await inspectScratchPayload(directory);
+          // Live snapshots can remove journals while inspection awaits lstat.
+          // Token-backed repair inspects only after exclusive admission below.
+          if (!params.repair || !token) {
+            await inspectScratchPayload(directory);
+          }
           if (!token && !entry.name.startsWith(retiredPrefix)) {
             report.warnings.push(
               `Legacy backup scratch at ${directory} has no lifetime token. Confirm older backup processes have stopped before removing it.`,
@@ -332,7 +333,7 @@ export async function maintainBackupScratch(params: {
         } catch (error) {
           if (isSqliteLockError(error)) {
             report.active.push(directory);
-          } else if (await wasScratchReclaimed(directory, error)) {
+          } else if (await wasScratchReclaimed(directory)) {
             report.alreadyReclaimed.push(directory);
           } else {
             report.warnings.push(

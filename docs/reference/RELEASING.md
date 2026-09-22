@@ -19,7 +19,10 @@ OpenClaw exposes four user-facing update channels:
 Extended-stable ships a Gateway from either of the two trailing completed
 months, along with official npm plugins and Docker images, without moving
 regular `latest` or `main` selectors. Each release also has a GitHub Release
-with shared validation evidence that is never marked Latest.
+with shared validation evidence that is never marked Latest. Its release notes
+start with a generated notice identifying the Gateway-only LTS-equivalent track,
+the source month, and the regular stable version captured by the immutable
+publication tooling.
 
 Tideclaw alpha builds are a separate internal prerelease track (npm dist-tag `alpha`), covered under [NPM workflow inputs](#npm-workflow-inputs) and [Release test boxes](#release-test-boxes).
 
@@ -472,7 +475,7 @@ For beta, stable, and full profiles, Linux (`ubuntu`) cross-OS lanes gate npm pu
      --skip-dispatch
    ```
 
-   Include `--plugin-sdk-api-acknowledgement` only when the preflight reported Plugin SDK API changes. Stable candidates need no Windows tag. Optionally pass `--windows-node-tag vX.Y.Z` to record the approved installer digest map and include both Windows inputs in the printed publish command. Beta and alpha candidates defer Parallels install/update proof to the postpublish `pnpm release:beta-smoke` roster by default; pass `--run-parallels` only when the operator explicitly wants that proof before publish. Stable and full candidates run Parallels by default. The helper verifies release-note provenance, npm preflight bytes, and plugin publish plans, then prints the publish command. When admitted Full Release Validation evidence carries `coveragePolicy=npm-beta-v1`, it records Telegram package proof as `deferred-postpublish`; other evidence retains the existing Telegram check. After it completes green, create and push the final signed tag at that same Release SHA, then run the printed publish command.
+   Include `--plugin-sdk-api-acknowledgement` only when the preflight reported Plugin SDK API changes. Stable candidates need no Windows tag. Optionally pass `--windows-node-tag vX.Y.Z` to record the approved installer digest map and include both Windows inputs in the printed publish command. For a stable tag validated with the beta profile and no soak, pass the operator-approved `--stable-soak-waiver '<reason>'`; the embedded preflight evaluates the [same waiver](#check-publication-gates) and the printed command carries `stable_soak_waiver`. Beta and alpha candidates defer Parallels install/update proof to the postpublish `pnpm release:beta-smoke` roster by default; pass `--run-parallels` only when the operator explicitly wants that proof before publish. Stable and full candidates run Parallels by default. The helper verifies release-note provenance, npm preflight bytes, and plugin publish plans, then prints the publish command. When admitted Full Release Validation evidence carries `coveragePolicy=npm-beta-v1`, it records Telegram package proof as `deferred-postpublish`; other evidence retains the existing Telegram check. After it completes green, create and push the final signed tag at that same Release SHA, then run the printed publish command.
 
    `pnpm release:candidate` validates the current frozen branch tip by default (or the explicit `--target-sha`), and rejects a tag that already exists. After validating its evidence, it runs the [publish preflight](#check-publication-gates), reusing the downloaded manifests and exact run attempt. It records the gate table in the evidence bundle before the final signed tag is pushed. The planned tag is a warning until created; any failed gate leaves the checklist incomplete.
 
