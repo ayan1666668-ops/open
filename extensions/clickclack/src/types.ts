@@ -204,6 +204,8 @@ export type ClickClackEvent = {
   seq?: number;
   created_at: string;
   payload: Record<string, unknown>;
+  /** Bot user ids explicitly woken by this realtime event. */
+  wake_bot_user_ids?: string[];
 };
 
 /**

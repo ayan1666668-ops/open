@@ -271,7 +271,7 @@ describe("native Gateway protocol levels", () => {
     assertPattern(
       android,
       androidPath,
-      /val minProtocol =\s+if \(options\.role == "node" && client\.mode == "node"\)\s*\{\s+GATEWAY_MIN_NODE_PROTOCOL_VERSION\s+\}\s+else\s*\{\s+GATEWAY_MIN_PROTOCOL_VERSION\s+\}/,
+      /val minProtocol =\s+if \(target\.options\.role == "node" && client\.mode == "node"\)\s*\{\s+GATEWAY_MIN_NODE_PROTOCOL_VERSION\s+\}\s+else\s*\{\s+GATEWAY_MIN_PROTOCOL_VERSION\s+\}/,
       "connect params must advertise the role-specific protocol floor.",
     );
     assertPattern(
