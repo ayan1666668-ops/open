@@ -415,8 +415,18 @@ describe("native heartbeat busy poll settlement", () => {
           );
           const task = "job" in added ? added.job : added;
           const releaseMain = await holdLane(CommandLane.Main);
+          const bothRequested = createDeferred();
+          request.mockImplementation((opts, lifecycle) => {
+            const pending = requestHeartbeatAndWait({ ...opts, coalesceMs: 250 }, lifecycle);
+            if (request.mock.calls.length === 2) {
+              bothRequested.resolve();
+            }
+            return pending;
+          });
           const parents = [cron.run(monitor.id, "force"), cron.run(task.id, "force")];
-          await vi.waitFor(() => expect(request).toHaveBeenCalledTimes(2));
+          // Polling with vi.waitFor advances the coalescer while SQLite admission is still pending.
+          await bothRequested.promise;
+          expect(request).toHaveBeenCalledTimes(2);
           await vi.advanceTimersByTimeAsync(250);
           expect(runOnce).toHaveBeenCalledOnce();
           expect(runOnce.mock.calls[0]?.[0]).toMatchObject({
