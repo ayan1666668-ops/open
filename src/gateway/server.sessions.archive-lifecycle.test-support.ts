@@ -1,5 +1,6 @@
 import { expect, vi } from "vitest";
 import { loadSessionEntry } from "../config/sessions/session-accessor.js";
+import { racePromiseWithAbortSignal } from "../infra/abort-signal.js";
 import { onAgentEvent } from "../infra/agent-events.js";
 import { createDeferredCore } from "../shared/deferred.js";
 import { markChatAbortTerminalPersistenceError } from "./chat-abort-lifecycle-internal.js";
@@ -34,6 +35,9 @@ export function activeRunContext(params: {
     throw new Error("expected active run registration");
   }
   const entry = registration.entry;
+  const aborted = createDeferredCore();
+  const onAbort = () => aborted.resolve();
+  entry.controller.signal.addEventListener("abort", onAbort, { once: true });
   const terminalStarted = createDeferredCore();
   const unsubscribe = onAgentEvent((event) => {
     if (
@@ -63,6 +67,7 @@ export function activeRunContext(params: {
   });
   const chatRunState = createChatRunState();
   return {
+    aborted: aborted.promise,
     context: {
       agentRunSeq: new Map([[params.runId, 0]]),
       broadcast: vi.fn(),
@@ -78,8 +83,27 @@ export function activeRunContext(params: {
     },
     controller: registration.controller,
     terminalStarted: terminalStarted.promise,
-    unsubscribe,
+    unsubscribe() {
+      entry.controller.signal.removeEventListener("abort", onAbort);
+      unsubscribe();
+    },
   };
+}
+
+export function waitForArchivePhase(
+  phase: Promise<unknown>,
+  archive: Promise<unknown>,
+  signal: AbortSignal,
+) {
+  return racePromiseWithAbortSignal(
+    Promise.race([
+      phase,
+      archive.then((result) => {
+        throw new Error("Archive settled before the expected fixture phase", { cause: result });
+      }),
+    ]),
+    signal,
+  );
 }
 
 export function identifiedClient(profileId: string): GatewayClient {

@@ -14,6 +14,7 @@ import { closeOpenClawStateDatabaseForTest } from "../state/openclaw-state-db.js
 import {
   activeRunContext,
   identifiedClient,
+  waitForArchivePhase,
   workerPlacement,
   placementReader,
   archiveLifecycleRequestContext,
@@ -357,7 +358,8 @@ test.for(["owner", "viewer"] as const)(
           sessionKey,
           expectedSessionId: sessionId,
         });
-        await vi.waitFor(() => expect(active.controller.signal.aborted).toBe(true));
+        await waitForArchivePhase(active.aborted, archive, signal);
+        expect(active.controller.signal.aborted).toBe(true);
 
         sharing = invokeVisibilityHandler({
           client: owner,
@@ -742,13 +744,9 @@ test("sessions.patchMany prepares independent archive drains concurrently and re
     );
 
     try {
-      await racePromiseWithAbortSignal(
-        Promise.race([
-          Promise.all([firstStarted.promise, secondStarted.promise]),
-          archive.then(() => {
-            throw new Error("archive completed before both worker drains started");
-          }),
-        ]),
+      await waitForArchivePhase(
+        Promise.all([firstStarted.promise, secondStarted.promise]),
+        archive,
         signal,
       );
       expect(beginInferenceSessionDrain).toHaveBeenCalledTimes(2);
@@ -896,15 +894,7 @@ test("sessions.patch rejects a generation replaced after the exact preparation r
       },
     );
     try {
-      await racePromiseWithAbortSignal(
-        Promise.race([
-          active.terminalStarted,
-          archive.then(() => {
-            throw new Error("archive completed before terminal persistence started");
-          }),
-        ]),
-        signal,
-      );
+      await waitForArchivePhase(active.terminalStarted, archive, signal);
       expect(active.controller.signal.aborted).toBe(true);
       await upsertSessionEntryCore(
         { storePath, sessionKey },
