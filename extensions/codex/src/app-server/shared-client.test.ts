@@ -146,17 +146,6 @@ let waitForCodexAppServerClientDesktopGenerationDrain: typeof import("./shared-c
 let resetSharedCodexAppServerClientForTests: typeof import("./shared-client.js").resetSharedCodexAppServerClientForTests;
 let withLeasedCodexAppServerClientStartSelectionRetry: typeof import("./shared-client.js").withLeasedCodexAppServerClientStartSelectionRetry;
 
-function createAutoInitializingClientHarness() {
-  return createClientHarness({
-    onWrite(line, send) {
-      const request = JSON.parse(line) as { id: number; method: string };
-      if (request.method === "initialize") {
-        send({ id: request.id, result: { userAgent: `codex-cli/${CODEX_APP_SERVER_VERSION}` } });
-      }
-    },
-  });
-}
-
 async function sendInitializeResult(
   harness: ReturnType<typeof createClientHarness>,
   userAgent: string,
@@ -167,7 +156,7 @@ async function sendInitializeResult(
 }
 
 // Capture reads runtime files before startup; respond when initialize reaches the wire.
-function createInitializingClientHarness(userAgent: string) {
+function createInitializingClientHarness(userAgent = `codex-cli/${CODEX_APP_SERVER_VERSION}`) {
   return createClientHarness({
     onWrite: (line, send) => {
       const request = JSON.parse(line) as { id: number; method: string };
@@ -346,7 +335,7 @@ describe("shared Codex app-server client", () => {
   it.each(["shared", "isolated"] as const)(
     "uses the configured remote endpoint for a %s client without explicit start options",
     async (kind) => {
-      const harness = createAutoInitializingClientHarness();
+      const harness = createInitializingClientHarness();
       const startSpy = vi.spyOn(CodexAppServerClient, "start").mockResolvedValue(harness.client);
       const acquire =
         kind === "shared" ? getSharedCodexAppServerClient : createIsolatedCodexAppServerClient;
@@ -368,7 +357,7 @@ describe("shared Codex app-server client", () => {
   );
 
   it("preserves explicit start options over the plugin endpoint", async () => {
-    const harness = createAutoInitializingClientHarness();
+    const harness = createInitializingClientHarness();
     const startSpy = vi.spyOn(CodexAppServerClient, "start").mockResolvedValue(harness.client);
 
     const client = await getSharedCodexAppServerClient({
@@ -396,7 +385,7 @@ describe("shared Codex app-server client", () => {
   it.each(["shared", "isolated"] as const)(
     "opens a native %s catalog client without selecting an OpenClaw agent",
     async (kind) => {
-      const harness = createAutoInitializingClientHarness();
+      const harness = createInitializingClientHarness();
       const startSpy = vi.spyOn(CodexAppServerClient, "start").mockResolvedValue(harness.client);
       const acquire =
         kind === "shared" ? getSharedCodexAppServerClient : createIsolatedCodexAppServerClient;
@@ -615,19 +604,6 @@ describe("shared Codex app-server client", () => {
     expect(releaseLeasedSharedCodexAppServerClient(harness.client)).toBe(true);
   });
 
-  it("retains an initialized shared client by its persisted instance id", async () => {
-    const harness = createClientHarness();
-    vi.spyOn(CodexAppServerClient, "start").mockResolvedValue(harness.client);
-    const acquire = getLeasedSharedCodexAppServerClient({ timeoutMs: 1_000 });
-    await sendInitializeResult(harness, "openclaw/0.149.0 (Linux; test)");
-    const client = await acquire;
-
-    const retained = retainSharedCodexAppServerClientByInstanceId(client.getInstanceId());
-    expect(retained?.client).toBe(client);
-    retained?.release();
-    expect(releaseLeasedSharedCodexAppServerClient(client)).toBe(true);
-  });
-
   it.each([
     {
       version: "2026.7.1",
@@ -653,7 +629,7 @@ describe("shared Codex app-server client", () => {
     const globalState = globalThis as Record<symbol, unknown>;
     globalState[legacySlot] = legacyState;
     try {
-      const harness = createAutoInitializingClientHarness();
+      const harness = createInitializingClientHarness();
       vi.spyOn(CodexAppServerClient, "start").mockResolvedValue(harness.client);
       const client = await getLeasedSharedCodexAppServerClient({ timeoutMs: 1_000 });
 
@@ -802,9 +778,11 @@ describe("shared Codex app-server client", () => {
     ).toBeUndefined();
     expect(pluginLocal.process.stdin.destroyed).toBe(false);
     expect(startSpy).toHaveBeenCalledTimes(2);
-    const retained = retainSharedCodexAppServerClientByInstanceId(firstClient.getInstanceId());
+    const retained = await retainSharedCodexAppServerClientByInstanceId(
+      firstClient.getInstanceId(),
+    );
     expect(retained?.client).toBe(firstClient);
-    retained?.release();
+    await retained?.release();
     expect(startSpy.mock.calls[0]?.[0]).toMatchObject({
       command: "/Applications/Codex.app/Contents/Resources/codex",
       commandSource: "resolved-managed",
@@ -1194,7 +1172,7 @@ describe("shared Codex app-server client", () => {
     "preserves the elapsed startup budget across a wall-clock jump for a %s client",
     async (kind) => {
       vi.useFakeTimers({ toFake: ["Date"] });
-      const harness = createAutoInitializingClientHarness();
+      const harness = createInitializingClientHarness();
       vi.spyOn(CodexAppServerClient, "start").mockResolvedValue(harness.client);
       const entered = createDeferred<void>();
       const released = createDeferred<void>();
@@ -3437,8 +3415,8 @@ describe("shared Codex app-server client", () => {
   );
 
   it("closes shared transports despite a failing close observer and reopens admission", async () => {
-    const first = createAutoInitializingClientHarness();
-    const second = createAutoInitializingClientHarness();
+    const first = createInitializingClientHarness();
+    const second = createInitializingClientHarness();
     vi.spyOn(CodexAppServerClient, "start")
       .mockResolvedValueOnce(first.client)
       .mockResolvedValueOnce(second.client);
@@ -3469,9 +3447,9 @@ describe("shared Codex app-server client", () => {
   });
 
   it("joins sibling transports before reporting a close failure and reopening admission", async () => {
-    const first = createAutoInitializingClientHarness();
-    const second = createAutoInitializingClientHarness();
-    const replacement = createAutoInitializingClientHarness();
+    const first = createInitializingClientHarness();
+    const second = createInitializingClientHarness();
+    const replacement = createInitializingClientHarness();
     vi.spyOn(CodexAppServerClient, "start")
       .mockResolvedValueOnce(first.client)
       .mockResolvedValueOnce(second.client)

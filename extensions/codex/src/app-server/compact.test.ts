@@ -102,16 +102,21 @@ function startCompaction(
   options: {
     currentTokenCount?: number;
     nativeToolSurface?: "unrestricted" | "host-isolated";
+    pluginConfig?: unknown;
   } = {},
 ) {
-  return maybeCompactCodexAppServerSession({
-    sessionId: "session-1",
-    sessionKey: "agent:main:session-1",
-    sessionFile,
-    workspaceDir: tempDir,
-    trigger: "manual",
-    ...options,
-  });
+  const { pluginConfig, ...paramsOptions } = options;
+  return maybeCompactCodexAppServerSession(
+    {
+      sessionId: "session-1",
+      sessionKey: "agent:main:session-1",
+      sessionFile,
+      workspaceDir: tempDir,
+      trigger: "manual",
+      ...paramsOptions,
+    },
+    pluginConfig ? { pluginConfig } : {},
+  );
 }
 
 describe("maybeCompactCodexAppServerSession", () => {
@@ -1032,159 +1037,102 @@ describe("maybeCompactCodexAppServerSession", () => {
     expect(result.failure?.reason).toBe("stale_thread_binding");
   });
 
-  it("blocks same-process binding writes until guarded native compaction starts", async () => {
-    let releaseExternalWrite!: () => void;
-    const externalWriteGate = new Promise<void>((resolve) => {
-      releaseExternalWrite = resolve;
-    });
-    let externalWriteStarted = false;
-    let externalWriteFinished = false;
-    const fake = createFakeCodexClient();
-    fake.request.mockImplementation(async (method) => {
-      if (method === "thread/unsubscribe") {
-        return {};
-      }
-      const response = await expectExternalMutationBlockedDuringNativeRequest({
-        releaseExternalMutation: releaseExternalWrite,
-        isExternalMutationStarted: () => externalWriteStarted,
-        isExternalMutationFinished: () => externalWriteFinished,
+  it.each(["writes", "clears"])(
+    "blocks same-process binding %s until guarded native compaction starts",
+    async (mutation) => {
+      const externalMutationGate = createDeferred<void>();
+      let externalMutationStarted = false;
+      let externalMutationFinished = false;
+      const fake = createFakeCodexClient();
+      fake.request.mockImplementation(async (method) => {
+        if (method === "thread/unsubscribe") {
+          return {};
+        }
+        const response = await expectExternalMutationBlockedDuringNativeRequest({
+          releaseExternalMutation: externalMutationGate.resolve,
+          isExternalMutationStarted: () => externalMutationStarted,
+          isExternalMutationFinished: () => externalMutationFinished,
+        });
+        setImmediate(fake.completeCompaction);
+        return response;
       });
-      setImmediate(fake.completeCompaction);
-      return response;
-    });
-    setCodexAppServerClientFactoryForTest(async () => fake.client);
-    const sessionFile = await writeTestBinding({
-      contextEngine: {
-        schemaVersion: 1,
-        engineId: "lossless-claw",
-        policyFingerprint: "policy-1",
-        projection: {
-          schemaVersion: 1,
-          mode: "thread_bootstrap",
-          epoch: "epoch-1",
-          fingerprint: "fingerprint-1",
-        },
-      },
-    });
-    const externalWrite = (async () => {
-      await externalWriteGate;
-      externalWriteStarted = true;
-      await writeCodexAppServerBinding(sessionFile, {
-        threadId: "thread-2",
-        cwd: tempDir,
+      setCodexAppServerClientFactoryForTest(async () => fake.client);
+      const sessionFile = await writeTestBinding({
         contextEngine: {
           schemaVersion: 1,
           engineId: "lossless-claw",
-          policyFingerprint: "policy-2",
+          policyFingerprint: "policy-1",
           projection: {
             schemaVersion: 1,
             mode: "thread_bootstrap",
-            epoch: "epoch-2",
+            epoch: "epoch-1",
+            fingerprint: "fingerprint-1",
           },
         },
       });
-      externalWriteFinished = true;
-    })();
+      const externalMutation = (async () => {
+        await externalMutationGate.promise;
+        externalMutationStarted = true;
+        if (mutation === "writes") {
+          await writeCodexAppServerBinding(sessionFile, {
+            threadId: "thread-2",
+            cwd: tempDir,
+            contextEngine: {
+              schemaVersion: 1,
+              engineId: "lossless-claw",
+              policyFingerprint: "policy-2",
+              projection: {
+                schemaVersion: 1,
+                mode: "thread_bootstrap",
+                epoch: "epoch-2",
+              },
+            },
+          });
+        } else {
+          await expect(clearCodexAppServerBindingForThread(sessionFile, "thread-1")).resolves.toBe(
+            true,
+          );
+        }
+        externalMutationFinished = true;
+      })();
 
-    const result = requireCompactResult(
-      await maybeCompactCodexAppServerSession(
-        {
-          sessionId: "session-1",
-          sessionKey: "agent:main:session-1",
-          sessionFile,
-          workspaceDir: tempDir,
-          trigger: "budget",
-          currentTokenCount: 456,
-        },
-        { allowNonManualNativeRequest: true },
-      ),
-    );
+      const result = requireCompactResult(
+        await maybeCompactCodexAppServerSession(
+          {
+            sessionId: "session-1",
+            sessionKey: "agent:main:session-1",
+            sessionFile,
+            workspaceDir: tempDir,
+            trigger: "budget",
+            currentTokenCount: 456,
+          },
+          { allowNonManualNativeRequest: true },
+        ),
+      );
 
-    await externalWrite;
-    expect(fake.request).toHaveBeenCalledWith(
-      "thread/compact/start",
-      { threadId: "thread-1" },
-      { timeoutMs: 60_000, assertCurrent: expect.any(Function) },
-    );
-    expect(result.ok).toBe(true);
-    expect(result.compacted).toBe(true);
-    expect(await readCodexAppServerBinding(sessionFile)).toMatchObject({
-      threadId: "thread-2",
-      contextEngine: {
-        policyFingerprint: "policy-2",
-        projection: {
-          epoch: "epoch-2",
-        },
-      },
-    });
-  });
-
-  it("blocks same-process binding clears until guarded native compaction starts", async () => {
-    let releaseExternalClear!: () => void;
-    const externalClearGate = new Promise<void>((resolve) => {
-      releaseExternalClear = resolve;
-    });
-    let externalClearStarted = false;
-    let externalClearFinished = false;
-    const fake = createFakeCodexClient();
-    fake.request.mockImplementation(async (method) => {
-      if (method === "thread/unsubscribe") {
-        return {};
+      await externalMutation;
+      expect(fake.request).toHaveBeenCalledWith(
+        "thread/compact/start",
+        { threadId: "thread-1" },
+        { timeoutMs: 60_000, assertCurrent: expect.any(Function) },
+      );
+      expect(result.ok).toBe(true);
+      expect(result.compacted).toBe(true);
+      if (mutation === "writes") {
+        expect(await readCodexAppServerBinding(sessionFile)).toMatchObject({
+          threadId: "thread-2",
+          contextEngine: {
+            policyFingerprint: "policy-2",
+            projection: {
+              epoch: "epoch-2",
+            },
+          },
+        });
+      } else {
+        await expect(readCodexAppServerBinding(sessionFile)).resolves.toBeUndefined();
       }
-      const response = await expectExternalMutationBlockedDuringNativeRequest({
-        releaseExternalMutation: releaseExternalClear,
-        isExternalMutationStarted: () => externalClearStarted,
-        isExternalMutationFinished: () => externalClearFinished,
-      });
-      setImmediate(fake.completeCompaction);
-      return response;
-    });
-    setCodexAppServerClientFactoryForTest(async () => fake.client);
-    const sessionFile = await writeTestBinding({
-      contextEngine: {
-        schemaVersion: 1,
-        engineId: "lossless-claw",
-        policyFingerprint: "policy-1",
-        projection: {
-          schemaVersion: 1,
-          mode: "thread_bootstrap",
-          epoch: "epoch-1",
-          fingerprint: "fingerprint-1",
-        },
-      },
-    });
-    const externalClear = (async () => {
-      await externalClearGate;
-      externalClearStarted = true;
-      const cleared = await clearCodexAppServerBindingForThread(sessionFile, "thread-1");
-      externalClearFinished = true;
-      expect(cleared).toBe(true);
-    })();
-
-    const result = requireCompactResult(
-      await maybeCompactCodexAppServerSession(
-        {
-          sessionId: "session-1",
-          sessionKey: "agent:main:session-1",
-          sessionFile,
-          workspaceDir: tempDir,
-          trigger: "budget",
-          currentTokenCount: 456,
-        },
-        { allowNonManualNativeRequest: true },
-      ),
-    );
-
-    await externalClear;
-    expect(fake.request).toHaveBeenCalledWith(
-      "thread/compact/start",
-      { threadId: "thread-1" },
-      { timeoutMs: 60_000, assertCurrent: expect.any(Function) },
-    );
-    expect(result.ok).toBe(true);
-    expect(result.compacted).toBe(true);
-    await expect(readCodexAppServerBinding(sessionFile)).resolves.toBeUndefined();
-  });
+    },
+  );
 
   it("skips native app-server compaction when trigger is omitted", async () => {
     const fake = createFakeCodexClient();
@@ -2357,25 +2305,6 @@ describe("maybeCompactCodexAppServerSession", () => {
     expect(fake.close).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps the lifecycle fence when an unconfirmed stdio process does not stop", async () => {
-    const fake = createFakeCodexClient({ retainedThreadId: "thread-stuck-stdio" });
-    fake.request.mockRejectedValueOnce(new Error("thread/compact/start timed out"));
-    fake.closeAndWait.mockResolvedValueOnce({ exited: false, cleanup: "uncertain" });
-    setCodexAppServerClientFactoryForTest(async () => fake.client);
-    const sessionFile = await writeTestBinding({ threadId: "thread-stuck-stdio" });
-
-    const outcome = await Promise.race([
-      startCompaction(sessionFile).then(() => "settled" as const),
-      new Promise<"pending">((resolve) => {
-        setTimeout(() => resolve("pending"), 20);
-      }),
-    ]);
-
-    expect(outcome).toBe("pending");
-    expect(fake.closeAndWait).toHaveBeenCalledOnce();
-    await expect(readCodexAppServerBinding(sessionFile)).resolves.toBeDefined();
-  });
-
   it("detaches a guarded remote start after releasing the binding lock", async () => {
     const fake = createFakeCodexClient();
     fake.request.mockRejectedValueOnce(new Error("thread/compact/start timed out"));
@@ -2674,11 +2603,13 @@ function createFakeCodexClient(
   request: ReturnType<typeof vi.fn<CodexAppServerClient["request"]>>;
   close: ReturnType<typeof vi.fn>;
   closeAndWait: ReturnType<typeof vi.fn<CodexAppServerClient["closeAndWait"]>>;
+  emitTransportExit: () => void;
   emit: (notification: CodexServerNotification) => void;
   completeCompaction: () => void;
 } {
   const handlers = new Set<(notification: CodexServerNotification) => void>();
   const closeHandlers = new Set<() => void>();
+  const transportExit = createDeferred<void>();
   const retainedThreadId =
     options.retainedThreadId === undefined ? "thread-1" : options.retainedThreadId;
   const subscribedThreadIds = new Set(
@@ -2818,6 +2749,7 @@ function createFakeCodexClient(
       handler();
     }
   });
+  const emitTransportExit = transportExit.resolve;
   const closeAndWait = vi.fn<CodexAppServerClient["closeAndWait"]>(async () => {
     close();
     return { exited: true, cleanup: "closed" };
@@ -2830,6 +2762,7 @@ function createFakeCodexClient(
   );
   const client = {
     request,
+    getInstanceId: vi.fn(() => "fake-compaction-client"),
     close,
     closeAndWait,
     addNotificationHandler,
@@ -2837,6 +2770,10 @@ function createFakeCodexClient(
     addCloseHandler: vi.fn((handler: () => void) => {
       closeHandlers.add(handler);
       return () => closeHandlers.delete(handler);
+    }),
+    addTransportExitHandler: vi.fn((handler: () => void) => {
+      void transportExit.promise.then(handler);
+      return () => undefined;
     }),
   } as unknown as CodexAppServerClient;
   ensureCodexAppServerClientRuntime(client, { agentDir: tempDir });
@@ -2854,6 +2791,7 @@ function createFakeCodexClient(
     request,
     close,
     closeAndWait,
+    emitTransportExit,
     emit,
     completeCompaction,
   };

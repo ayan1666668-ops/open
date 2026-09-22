@@ -65,7 +65,9 @@ import { acquireCodexNativeConfigFence } from "./native-config-fence.js";
 import { nativeHookRelayUnregisterQueue } from "./native-hook-relay-state.js";
 import {
   closeRetiredSharedClientEntry,
-  closeRetiredSharedClientEntryIfIdle,
+  notifyDesktopGenerationDrainChecks,
+  retainSharedClientEntry,
+  releaseSharedClientEntry,
   createCodexAppServerStartupLifetime,
   getCurrentSharedClientEntry,
   getSharedCodexAppServerClientState,
@@ -84,7 +86,10 @@ import { withTimeout } from "./timeout.js";
 
 export type { CodexAppServerPreparedAuth } from "./auth-bridge.js";
 
-export { retireSharedCodexAppServerClientIfCurrent } from "./shared-client-lifecycle.js";
+export {
+  retireSharedCodexAppServerClientIfCurrent,
+  retainSharedCodexAppServerClientByInstanceId,
+} from "./shared-client-lifecycle.js";
 // Keep disposal preloaded and build-scoped: shutdown must close the old clients
 // even if another module copy has loaded replacement code.
 const SHARED_CODEX_APP_SERVER_CLIENT_DISPOSER = codexBuildSymbol(
@@ -1286,24 +1291,6 @@ export function retainSharedCodexAppServerClientIfCurrent(
   return entry ? retainSharedClientEntry(entry) : undefined;
 }
 
-/** Retains the live shared client whose initialized instance id matches a thread binding. */
-export function retainSharedCodexAppServerClientByInstanceId(
-  clientId: string | undefined,
-): { client: CodexAppServerClient; release: () => void } | undefined {
-  const normalizedClientId = clientId?.trim();
-  if (!normalizedClientId) {
-    return undefined;
-  }
-  for (const entry of getSharedCodexAppServerClientState().clients.values()) {
-    const client = entry.client;
-    if (client?.getInstanceId() !== normalizedClientId || entry.closeWhenIdle || entry.closeError) {
-      continue;
-    }
-    return { client, release: retainSharedClientEntry(entry) };
-  }
-  return undefined;
-}
-
 /** Captures physical ownership, independently of unrelated thread and reader leases. */
 export function captureCodexAppServerClientLifetime(
   client: CodexAppServerClient,
@@ -1410,12 +1397,6 @@ function isOlderDesktopGenerationClientForHome(
   );
 }
 
-function notifyDesktopGenerationDrainChecks(state: SharedCodexAppServerClientState): void {
-  for (const check of state.desktopGenerationDrainChecks) {
-    check();
-  }
-}
-
 /** Clears a matching shared client and waits for its process to exit. */
 export async function clearSharedCodexAppServerClientIfCurrentAndWait(
   client: CodexAppServerClient | undefined,
@@ -1501,30 +1482,6 @@ export function clearSharedCodexAppServerClientIfCurrentAndUnclaimed(
     activeLeases: entry?.activeLeases ?? 0,
     pendingAcquires: entry?.pendingAcquires ?? 0,
   };
-}
-
-function retainSharedClientEntry(
-  entry: SharedCodexAppServerClientEntry,
-  counter: "activeLeases" | "pendingAcquires" = "activeLeases",
-): () => void {
-  let released = false;
-  entry[counter] += 1;
-  return () => {
-    if (released) {
-      return;
-    }
-    released = true;
-    releaseSharedClientEntry(entry, counter);
-  };
-}
-
-function releaseSharedClientEntry(
-  entry: SharedCodexAppServerClientEntry,
-  counter: "activeLeases" | "pendingAcquires",
-): void {
-  entry[counter] -= 1;
-  closeRetiredSharedClientEntryIfIdle(entry);
-  notifyDesktopGenerationDrainChecks(getSharedCodexAppServerClientState());
 }
 
 function closeSharedClientEntryIfUnclaimed(entry: SharedCodexAppServerClientEntry): boolean {

@@ -646,7 +646,7 @@ async function projectConversationSourceHistory(
   if (history.length === 0) {
     return;
   }
-  const clientLease = retainSharedCodexAppServerClientByInstanceId(target.clientId);
+  const clientLease = await retainSharedCodexAppServerClientByInstanceId(target.clientId);
   if (!clientLease) {
     throw new Error("Codex conversation source history lost its bound client owner.");
   }
@@ -656,7 +656,7 @@ async function projectConversationSourceHistory(
       items: history,
     });
   } finally {
-    clientLease.release();
+    await clientLease.release();
   }
 }
 
