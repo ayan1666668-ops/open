@@ -28,7 +28,7 @@ function createFixtureGit(root: string) {
   const handoff = createPrivateHandoffStoreFixture(home);
   const env: NodeJS.ProcessEnv = {
     ...handoff.env,
-    PATH: process.env.PATH,
+    PATH: handoff.env.PATH,
     HOME: home,
     TMPDIR: root,
     GIT_CONFIG_GLOBAL: "/dev/null",
@@ -745,7 +745,7 @@ if (process.argv[1]?.endsWith('/watch-pr-ci.mts')) {
     gateMain,
     env,
     git,
-    assertPrivateHandoffVerified: handoff.assertProvisionersVerified,
+    assertPrivateHandoffVerified: () => handoff.assertProvisionersInjected(),
     metadata,
     seedPreparedMerge() {
       // Merge-only cases need prepared inputs, not another prepare/gates/push run.

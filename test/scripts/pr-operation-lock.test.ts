@@ -897,7 +897,7 @@ describePosix("scripts/pr per-PR operation lock", () => {
       const binDir = join(repoDir, "isolated-bin");
       const cli = join(repoDir, "scripts/pr");
       const realGit = realpathSync(join(binDir, "git"));
-      const handoff = createPrivateHandoffStoreFixture(homeDir);
+      const handoff = createPrivateHandoffStoreFixture(homeDir, binDir);
       const env: NodeJS.ProcessEnv = {
         ...createPrFixtureEnv(homeDir, binDir),
         ...handoff.env,
@@ -1085,7 +1085,7 @@ describePosix("scripts/pr per-PR operation lock", () => {
           !existing &&
           (failure === "healthy" || failure === "second")
         ) {
-          handoff.assertProvisionersVerified();
+          handoff.assertProvisionersInjected();
         }
         const events = readFileSync(eventsPath, "utf8").trim().split("\n");
         expect(git("ls-remote", "origin", "refs/pull/42/head"), output).toBe(

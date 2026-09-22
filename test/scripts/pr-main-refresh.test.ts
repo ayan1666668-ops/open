@@ -766,6 +766,31 @@ ${readFileSync(gitShim, "utf8")}
     },
   );
 
+  it("rejects a later uninjected provisioner despite an earlier valid receipt", () => {
+    const f = fixture();
+    f.git(f.canonical, "worktree", "remove", "--force", f.worktree);
+    const first = f.run("review-checkout-main");
+    expect(first.status, first.stdout + first.stderr).toBe(0);
+    f.assertPrivateHandoffVerified();
+
+    f.git(f.canonical, "worktree", "remove", "--force", f.worktree);
+    const nodeOptions = f.env.NODE_OPTIONS;
+    delete f.env.NODE_OPTIONS;
+    try {
+      const second = f.run("review-checkout-main");
+      expect(second.status, second.stdout + second.stderr).not.toBe(0);
+      expect(second.stderr).toContain("Missing private handoff preload");
+      expect(existsSync(f.worktree)).toBe(false);
+      expect(() => f.assertPrivateHandoffVerified()).toThrow(
+        "not every launched provisioner received its private store",
+      );
+    } finally {
+      f.env.NODE_OPTIONS = nodeOptions;
+    }
+    const owner = f.git(f.canonical, "rev-parse", "refs/openclaw/pr-operation-locks/42");
+    recoverFixtureLock(f, owner);
+  });
+
   it("invalidates the previous snapshot when the same operation provisions a new worktree", () => {
     const f = fixture();
     f.configure({ moveAfterFirstFetch: true });

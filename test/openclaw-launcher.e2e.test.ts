@@ -1528,71 +1528,76 @@ describe("openclaw launcher", () => {
   it.each([
     ["source", "import"],
     ["packaged", "import"],
-    ["source", "preload"],
-    ["packaged", "preload"],
-  ] as const)(
-    "a %s cli-entry %s preserves the launcher without rerunning the host",
-    async (kind, invocation) => {
-      const fixtureRoot = await makeLauncherFixture(fixtures);
-      await fs.writeFile(
-        path.join(fixtureRoot, "package.json"),
-        JSON.stringify({
-          name: "openclaw",
-          type: "module",
-          version: "2026.8.1",
-          exports: { "./cli-entry": "./openclaw.mjs" },
-        }),
-      );
-      if (kind === "source") {
-        await addSourceTreeMarker(fixtureRoot);
-      }
-      await fs.writeFile(
-        path.join(fixtureRoot, "dist", "entry.js"),
-        [
-          'import module from "node:module";',
-          "process.stdout.write(JSON.stringify({",
-          "  launcher: process.argv[1],",
-          "  args: process.argv.slice(2),",
-          '  cache: module.getCompileCacheDir?.() ? "enabled" : "disabled",',
-          '  sourceRespawn: process.env.OPENCLAW_COMPILE_CACHE_DISABLED_RESPAWNED ?? "0",',
-          '  packagedRespawn: process.env.OPENCLAW_PACKAGED_COMPILE_CACHE_RESPAWNED ?? "0",',
-          "}));",
-        ].join("\n"),
-      );
-      const hostMarker = path.join(fixtureRoot, "host-executions.txt");
-      const host = path.join(fixtureRoot, "host.mjs");
+    ["source", "preload-with-entry"],
+    ["packaged", "preload-with-entry"],
+    ["source", "preload-without-entry"],
+    ["packaged", "preload-without-entry"],
+  ] as const)("a %s cli-entry %s restarts the actual launcher", async (kind, invocation) => {
+    const fixtureRoot = await makeLauncherFixture(fixtures);
+    await fs.writeFile(
+      path.join(fixtureRoot, "package.json"),
+      JSON.stringify({
+        name: "openclaw",
+        type: "module",
+        version: "2026.8.1",
+        exports: { "./cli-entry": "./openclaw.mjs" },
+      }),
+    );
+    if (kind === "source") {
+      await addSourceTreeMarker(fixtureRoot);
+    }
+    await fs.writeFile(
+      path.join(fixtureRoot, "dist", "entry.js"),
+      [
+        'import module from "node:module";',
+        "process.stdout.write(JSON.stringify({",
+        "  launcher: process.argv[1],",
+        "  args: process.argv.slice(2),",
+        '  cache: module.getCompileCacheDir?.() ? "enabled" : "disabled",',
+        '  sourceRespawn: process.env.OPENCLAW_COMPILE_CACHE_DISABLED_RESPAWNED ?? "0",',
+        '  packagedRespawn: process.env.OPENCLAW_PACKAGED_COMPILE_CACHE_RESPAWNED ?? "0",',
+        "}));",
+      ].join("\n"),
+    );
+    const hostMarker = path.join(fixtureRoot, "host-executions.txt");
+    const host = path.join(fixtureRoot, "host.mjs");
+    if (invocation !== "preload-without-entry") {
       await fs.writeFile(
         host,
-        [
-          'import fs from "node:fs";',
-          `fs.appendFileSync(${JSON.stringify(hostMarker)}, "host\\n");`,
-          'await import("openclaw/cli-entry");',
-        ].join("\n"),
+        invocation === "import"
+          ? [
+              'import fs from "node:fs";',
+              `fs.appendFileSync(${JSON.stringify(hostMarker)}, "host\\n");`,
+              'await import("openclaw/cli-entry");',
+            ].join("\n")
+          : 'await import("openclaw/cli-entry");',
       );
-      const args =
-        invocation === "import" ? [host, "proof-argument"] : ["--import", "openclaw/cli-entry"];
-      const result = spawnSync(testNodeExecPath, args, {
-        cwd: fixtureRoot,
-        env: launcherEnv({ NODE_COMPILE_CACHE: path.join(fixtureRoot, ".node-compile-cache") }),
-        encoding: "utf8",
-      });
+    }
+    const args =
+      invocation === "import"
+        ? [host, "proof-argument"]
+        : invocation === "preload-with-entry"
+          ? ["--import", "openclaw/cli-entry", host, "proof-argument"]
+          : ["--import", "openclaw/cli-entry"];
+    const result = spawnSync(testNodeExecPath, args, {
+      cwd: fixtureRoot,
+      env: launcherEnv({ NODE_COMPILE_CACHE: path.join(fixtureRoot, ".node-compile-cache") }),
+      encoding: "utf8",
+    });
 
-      expect(result.status, result.stderr).toBe(0);
-      expect(result.stderr).toBe("");
-      expect(JSON.parse(result.stdout)).toEqual({
-        launcher: path.join(fixtureRoot, "openclaw.mjs"),
-        args: invocation === "import" ? ["proof-argument"] : [],
-        cache: kind === "source" ? "disabled" : "enabled",
-        sourceRespawn: kind === "source" ? "1" : "0",
-        packagedRespawn: kind === "packaged" ? "1" : "0",
-      });
-      if (invocation === "import") {
-        expect(await fs.readFile(hostMarker, "utf8")).toBe("host\n");
-      } else {
-        await expect(fs.stat(hostMarker)).rejects.toMatchObject({ code: "ENOENT" });
-      }
-    },
-  );
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(JSON.parse(result.stdout)).toEqual({
+      launcher: path.join(fixtureRoot, "openclaw.mjs"),
+      args: invocation === "preload-without-entry" ? [] : ["proof-argument"],
+      cache: kind === "source" ? "disabled" : "enabled",
+      sourceRespawn: kind === "source" ? "1" : "0",
+      packagedRespawn: kind === "packaged" ? "1" : "0",
+    });
+    if (invocation === "import") {
+      expect(await fs.readFile(hostMarker, "utf8")).toBe("host\n");
+    }
+  });
 
   it.runIf(process.platform !== "win32")(
     "preserves a packaged pnpm project path through compile-cache respawn",
