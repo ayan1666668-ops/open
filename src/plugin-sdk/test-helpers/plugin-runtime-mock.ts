@@ -840,6 +840,7 @@ export function createPluginRuntimeMock(overrides: PluginRuntimeMockOverrides = 
             await Promise.race([flush.admission, completion]);
           };
           return {
+            shouldBuffer: vi.fn(() => false),
             enqueue: async (item: unknown) => {
               await runFlush(params.onFlush([item], createTestInboundDebounceFlush));
             },
