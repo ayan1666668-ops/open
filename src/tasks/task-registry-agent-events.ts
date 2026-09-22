@@ -80,6 +80,7 @@ type PendingEvent = {
   claimed: Error;
   receipt?: TaskAgentEventReceipt | null;
   publication?: TaskAgentEventPublication;
+  delivery?: { receipt: TaskAgentEventPublication; isCurrent: () => boolean };
   commitFacts?: unknown;
   committedTarget?: TaskAgentEventInput["expectedTask"];
   lineageResident?: TaskRecord;
@@ -209,7 +210,24 @@ function retainCommittedEventAfterResultFailure(pending: PendingEvent): void {
   }
 }
 
-function publishDelivery(receipt: TaskAgentEventPublication): void {
+function publishDelivery(pending: PendingEvent): void {
+  const delivery = pending.delivery;
+  if (!delivery) {
+    return;
+  }
+  const { receipt } = delivery;
+  try {
+    assertCurrent(pending, {
+      ...pending.input,
+      expectedTask: captureTaskPersistenceReceipt(receipt.task),
+    });
+  } catch {
+    return;
+  }
+  const current = tasks.get(pending.input.taskId);
+  if (!current || !delivery.isCurrent() || !isEquivalentTaskRecord(current, receipt.task)) {
+    return;
+  }
   if (receipt.task.deliveryStatus === "not_applicable" || receipt.task.notifyPolicy === "silent") {
     return;
   }
@@ -310,7 +328,7 @@ function prepareNativeEventConsumption(): { consume: () => void; release: () => 
             // A later enclosing write can replace this row, including an ABA replacement.
             const latest = tasks.get(entry.input.taskId);
             if (latest && publication.isCurrent() && isEquivalentTaskRecord(latest, receipt.task)) {
-              publishDelivery(receipt);
+              entry.delivery = { receipt, isCurrent: publication.isCurrent };
             }
           };
           const database = openClawStateDatabaseCache.getOpenClawStateDatabaseIfOpenAtPath(
@@ -454,7 +472,10 @@ async function persist(pending: PendingEvent): Promise<void> {
               pending.phase.kind !== "consumed" &&
               isEquivalentTaskRecord(task, pending.publication.task)
             ) {
-              publishDelivery(pending.publication);
+              pending.delivery = {
+                receipt: pending.publication,
+                isCurrent: () => tasks.get(taskId) === task,
+              };
             }
           },
         },
@@ -562,6 +583,11 @@ function startDrain(): void {
         } finally {
           forget(entry);
           active = undefined;
+          // A committed notification starts after its own accepted event settles;
+          // cleanup failure still rejects external readers without suppressing delivery.
+          if (entry.delivery) {
+            publishDelivery(entry);
+          }
         }
       }
     } finally {

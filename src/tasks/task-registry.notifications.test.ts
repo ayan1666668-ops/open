@@ -18,7 +18,7 @@ import {
 const hoisted = vi.hoisted(() => ({ sendMessageMock: vi.fn<typeof sendMessage>() }));
 vi.mock("./task-registry-delivery-runtime.js", () => ({
   sendMessage: hoisted.sendMessageMock,
-  resolveTaskControlUiSessionUrl: () => undefined,
+  prepareTaskControlUiSessionUrl: async () => () => undefined,
 }));
 const GUILDCHAT_ORIGIN = { channel: "guildchat", to: "guildchat:123" } as const;
 let releaseHeartbeat: (() => void) | undefined;

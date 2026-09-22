@@ -16,6 +16,7 @@ import {
 } from "../agents/sandbox/registry.kernel.js";
 import {
   loadSubagentRunsByRunIdsFromSqlite,
+  loadSubagentRunsForChildSessionFromSqlite,
   loadSubagentRunsForSessionFromSqlite,
   loadSubagentSessionListRunsFromSqlite,
 } from "../agents/subagents/registry/subagent-registry.store.sqlite.js";
@@ -52,6 +53,10 @@ import {
   selectSkillLibraryRevisionMetadataBatch,
   selectSkillLibraryRevisionManifestsBatch,
 } from "../skills/library/selection-read.kernel.js";
+import {
+  readTaskRegistryMutationSnapshotInDatabase,
+  readTaskRegistrySnapshot,
+} from "../tasks/task-registry.store.kernel.js";
 import { readConfigMachineStateRowInDatabase } from "./config-machine-state.js";
 import { readOnboardingRecommendationsInDatabase } from "./onboarding-recommendations.kernel.js";
 import { readRegisteredAgentDatabaseRows } from "./openclaw-agent-db-registry.read.js";
@@ -160,6 +165,9 @@ function isReadRequest(input: unknown): input is OpenClawStateReadRequest {
           (isRecord(input.command.input.cursor) &&
             typeof input.command.input.cursor.changedAtMs === "number" &&
             typeof input.command.input.cursor.environmentId === "string"))) ||
+      (input.command.type === "subagents.forChildSession" &&
+        typeof input.command.childSessionKey === "string") ||
+      input.command.type === "tasks.mutationSnapshot" ||
       (input.command.type === "userProfiles.reconcile" &&
         typeof input.command.profileId === "string") ||
       (input.command.type === "userProfiles.email.resolve" &&
@@ -365,6 +373,27 @@ serveOwnedWorkerTasks(
                   command.type === "devicePairing.bootstrapContext"
                 ) {
                   return executeDevicePairingRead(db, input.databasePath, command);
+                }
+                if (command.type === "tasks.mutationSnapshot") {
+                  return {
+                    ok: true,
+                    type: command.type,
+                    sourceAdmitted,
+                    snapshot:
+                      command.input === undefined
+                        ? readTaskRegistrySnapshot({ db, path: input.databasePath })
+                        : readTaskRegistryMutationSnapshotInDatabase(db, command.input),
+                  };
+                }
+                if (command.type === "subagents.forChildSession") {
+                  return {
+                    ok: true,
+                    type: command.type,
+                    sourceAdmitted,
+                    runs: loadSubagentRunsForChildSessionFromSqlite(command.childSessionKey, {
+                      db,
+                    }),
+                  };
                 }
                 if (command.type === "pluginBlob.lookup") {
                   return {

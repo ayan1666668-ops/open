@@ -39,7 +39,7 @@ export type ContextEngineSubagentEndedParams = {
   workspaceDir?: string;
 };
 
-type SubagentProgressOrigin = {
+export type SubagentProgressOrigin = {
   channel?: string;
   accountId?: string;
   to?: string;
@@ -92,7 +92,7 @@ export type SwarmStructuredOutputState = {
   invalidAttempts: number;
 };
 
-type SwarmQueuedLaunch = {
+export type SwarmQueuedLaunch = {
   request: Record<string, unknown>;
   /** Exact trusted launch capability, persisted so restart replay cannot lose it. */
   authorization?: SubagentLaunchAuthorization;
