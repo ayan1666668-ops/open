@@ -46,14 +46,17 @@ module flows remain reachable through `slackScenarioContext`; their lifecycle
 and cleanup contracts remain module-owned. Direct raw-client calls bypass the
 new driver's receipt ledger, so prefer `channelE2e` for new native fixtures.
 
-## Acceptance capture
+## Native write capture
 
-`slackScenarioContext.readNativeWrites()` returns safe, successful Gateway write
-summaries from the existing debug-proxy owner: post/update/delete, reaction
-add/remove, upload completion, and file deletion. Entries say `api-accepted` and
-include request-event IDs plus native message/thread/file IDs where available.
-Failed Slack responses are not accepted writes. Missing capture is not proof of
-absence; capture is bounded and only observes traffic through that Gateway.
+`slackScenarioContext.readNativeWrites()` returns safe Gateway mutation summaries
+from the existing debug-proxy owner: post/update/delete, reaction add/remove,
+upload completion, and file deletion. Entries include request-event IDs plus
+native message/thread/file IDs where available. Filter `evidence: "api-accepted"`
+when asserting acceptance. Unanswered requests, transport/server errors,
+potentially partial failures, and undecodable responses remain `uncertain`, with
+a fixed diagnostic reason and no raw SDK error.
+Definitive Slack rejections and read-only calls are excluded. Missing capture is
+not proof of absence; capture is bounded and only observes traffic through that Gateway.
 Use the existing `getMessageWriteCursor` / `readMessageWrites(cursor)` pair for
 transient post/update text and Block Kit observations used by progress recipes.
 No second Socket Mode client is needed or allowed for this proof.

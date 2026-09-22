@@ -61,11 +61,12 @@ Cancellation is not permission to issue more normal actions.
 Inspect the standard `qa-suite-summary.json`, `qa-suite-report.md`, and
 `qa-evidence.json`. Each custom scenario also writes
 `<scenario-id>-slack-e2e.json`, a mode-0600 private native receipt/cleanup artifact.
-The adapter snapshots accepted Gateway writes after confirmed process shutdown,
-before the temporary capture database is deleted. Safe receipt facts remain in
-the private E2E artifact; sanitized `gateway-debug` logs are not that database.
-Keep identities, synthetic message bodies, capture, and media private. Publish
-sanitized results, not raw capture or SDK errors.
+The adapter snapshots all Gateway mutation receipts after confirmed process
+shutdown, including uncertain outcomes. Unresolved Gateway effects preserve the
+temporary capture database and fail cleanup; they never grant deletion ownership.
+Safe receipt facts remain in the private E2E artifact; sanitized `gateway-debug`
+logs are not that database. Keep identities, synthetic message bodies, capture,
+and media private. Publish sanitized results, not raw capture or SDK errors.
 
 ## Cleanup and recovery
 

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   getSlackQaMessageWriteCursor,
-  readSlackQaAcceptedWrites,
+  readSlackQaNativeWrites,
   readSlackQaMessageWrites,
 } from "./slack-live.capture.js";
 
@@ -184,7 +184,7 @@ describe("Slack QA debug capture", () => {
       { ...buildResponse("rejected", false), id: 12 },
       { id: 11, ...buildMessageRequest({ flowId: "rejected", method: "reactions.add", text: "" }) },
     );
-    const writes = readSlackQaAcceptedWrites({
+    const writes = readSlackQaNativeWrites({
       afterRequestEventId: 0,
       sessionId: "qa-slack",
       store: { getSessionEvents: () => events.toReversed(), readBlob: () => null },
@@ -204,5 +204,89 @@ describe("Slack QA debug capture", () => {
       fileIds: ["F_DELETED"],
     });
     expect(JSON.stringify(writes)).not.toContain("private-url");
+  });
+
+  it("retains unresolved mutations without treating read-only calls or rejections as side effects", () => {
+    const events: Array<Record<string, unknown>> = [
+      {
+        id: 1,
+        ...buildMessageRequest({ flowId: "old", text: "before cursor" }),
+      },
+      {
+        id: 2,
+        ...buildMessageRequest({ flowId: "pending", text: "private-body", threadTs: "1.000000" }),
+      },
+      {
+        id: 3,
+        ...buildMessageRequest({
+          flowId: "error",
+          method: "chat.update",
+          text: "",
+          ts: "3.000000",
+        }),
+      },
+      {
+        id: 4,
+        flowId: "error",
+        kind: "error",
+        errorText: "Authorization: private-token",
+        headersJson: '{"authorization":"private-token"}',
+      },
+      { id: 5, ...buildMessageRequest({ flowId: "rejected", text: "" }) },
+      { id: 6, ...buildResponse("rejected", false, { error: "private-error" }), status: 429 },
+      {
+        id: 7,
+        ...buildMessageRequest({ flowId: "read", method: "conversations.history", text: "" }),
+      },
+      { id: 8, ...buildMessageRequest({ flowId: "undecodable", text: "" }) },
+      {
+        id: 9,
+        ...buildResponse("undecodable", true),
+        dataText: '{"ok":true,"private":"truncated',
+      },
+    ];
+    const params = {
+      afterRequestEventId: 1,
+      sessionId: "qa-slack",
+      store: { getSessionEvents: () => events.toReversed(), readBlob: () => null },
+    };
+    const writes = readSlackQaNativeWrites(params);
+    expect(writes).toEqual([
+      expect.objectContaining({
+        requestEventId: 2,
+        method: "chat.postMessage",
+        evidence: "uncertain",
+        reason: "response-not-captured",
+        channelId: "C123",
+        threadId: "1.000000",
+      }),
+      expect.objectContaining({
+        requestEventId: 3,
+        method: "chat.update",
+        evidence: "uncertain",
+        reason: "transport-error",
+        messageId: "3.000000",
+      }),
+      expect.objectContaining({
+        requestEventId: 8,
+        evidence: "uncertain",
+        reason: "response-undecodable",
+      }),
+    ]);
+    expect(JSON.stringify(writes)).not.toContain("private-");
+
+    events.push({ id: 10, ...buildResponse("pending", true) });
+    const settled = readSlackQaNativeWrites(params);
+    expect(settled.find((write) => write.requestEventId === 2)).toMatchObject({
+      evidence: "api-accepted",
+      messageId: "2.000000",
+      threadId: "1.000000",
+    });
+    expect(settled.find((write) => write.requestEventId === 2)).not.toHaveProperty("reason");
+    expect(
+      settled
+        .filter((write) => write.evidence === "uncertain")
+        .map((write) => write.requestEventId),
+    ).toEqual([3, 8]);
   });
 });

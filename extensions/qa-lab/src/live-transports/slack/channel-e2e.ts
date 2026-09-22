@@ -4,7 +4,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { z } from "zod";
 import type { QaChannelE2eDriver, QaChannelE2eMessage } from "../shared/channel-e2e.types.js";
 import { createSlackE2eObservations, describeSlackFailure } from "./channel-e2e-observations.js";
-import type { SlackAcceptedWrite } from "./slack-live.capture.js";
+import type { SlackNativeWrite } from "./slack-live.capture.js";
 import type { SlackAuthIdentity, SlackQaWebClient } from "./slack-live.contracts.js";
 
 const fileSchema = z.object({
@@ -23,6 +23,10 @@ type Receipt = { message: QaChannelE2eMessage; deleted?: boolean };
 type Evidence = {
   operation: string;
   outcome: "pending" | "api-accepted" | "stored" | "uncertain" | "failed";
+  requestEventId?: number;
+  channelId?: string;
+  threadId?: string;
+  emoji?: string;
   messageId?: string;
   fileIds?: string[];
   detail?: string;
@@ -49,7 +53,7 @@ export function createSlackChannelE2e(params: {
   waitReady: () => Promise<void>;
   outputDir: string;
   scenarioId: string;
-  readAcceptedWrites: () => Promise<SlackAcceptedWrite[]>;
+  readNativeWrites: () => Promise<SlackNativeWrite[]>;
 }): SlackChannelE2eSession {
   const receipts = new Map<string, Receipt>();
   const files = new Map<string, "driver" | "sut">();
@@ -367,12 +371,14 @@ export function createSlackChannelE2e(params: {
       while (true) {
         const messages = await readNative({ threadId: root, after: afterId, limit: 1000 });
         if (!input.threadId && !own(afterId).message.threadId && input.textIncludes) {
-          const writes = await checked("captured SUT writes", params.readAcceptedWrites);
+          const writes = await checked("captured SUT writes", params.readNativeWrites);
           const acceptedIds = new Set(
             writes
               .filter(
                 (write) =>
-                  write.method === "chat.postMessage" && write.channelId === params.channelId,
+                  write.evidence === "api-accepted" &&
+                  write.method === "chat.postMessage" &&
+                  write.channelId === params.channelId,
               )
               .map((write) => write.messageId),
           );
@@ -439,15 +445,23 @@ export function createSlackChannelE2e(params: {
       "capture owned SUT receipts",
       undefined,
       async () => {
-        const writes = await params.readAcceptedWrites();
+        const writes = await params.readNativeWrites();
         params.assertLease();
         for (const write of writes) {
           evidence.push({
             operation: `Gateway ${write.method}`,
-            outcome: "api-accepted",
+            outcome: write.evidence,
+            requestEventId: write.requestEventId,
+            channelId: write.channelId,
+            threadId: write.threadId,
+            emoji: write.emoji,
             messageId: write.messageId,
             fileIds: write.fileIds,
+            detail: write.reason,
           });
+          if (write.evidence !== "api-accepted") {
+            continue;
+          }
           if (
             write.method === "chat.postMessage" &&
             write.channelId === params.channelId &&

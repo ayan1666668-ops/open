@@ -3,15 +3,15 @@ import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
 import { useAutoCleanupTempDirTracker } from "openclaw/plugin-sdk/test-env";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createSlackChannelE2e } from "./channel-e2e.js";
-import type { SlackAcceptedWrite } from "./slack-live.capture.js";
+import { readSlackQaNativeWrites, type SlackNativeWrite } from "./slack-live.capture.js";
 import type { SlackMessage } from "./slack-live.contracts.js";
 
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 
-function fixture() {
+function fixture(capturedEvents?: Array<Record<string, unknown>>) {
   const controller = new AbortController();
   const messages: SlackMessage[] = [];
-  const writes: SlackAcceptedWrite[] = [];
+  const writes: SlackNativeWrite[] = [];
   let leaseAlive = true;
   let nextId = 1;
   const driverClient = {
@@ -68,7 +68,17 @@ function fixture() {
     waitReady: async () => {},
     outputDir: tempDirs.make("slack-e2e-"),
     scenarioId: "ownership",
-    readAcceptedWrites: async () => writes,
+    readNativeWrites: async () =>
+      capturedEvents
+        ? readSlackQaNativeWrites({
+            afterRequestEventId: 0,
+            sessionId: "qa-slack",
+            store: {
+              getSessionEvents: () => capturedEvents.toReversed(),
+              readBlob: () => null,
+            },
+          })
+        : writes,
   });
   return {
     session,
@@ -174,6 +184,97 @@ describe("Slack agent E2E ownership", () => {
       expect.objectContaining({ operation: "chat.postMessage", outcome: "uncertain" }),
     );
   });
+
+  it.each([
+    { terminal: "unanswered", outcome: "uncertain", reason: "response-not-captured" },
+    { terminal: "error", outcome: "uncertain", reason: "transport-error" },
+    { terminal: "undecodable", outcome: "uncertain", reason: "response-undecodable" },
+    { terminal: "server-error", outcome: "uncertain", reason: "response-indeterminate" },
+    { terminal: "partial-failure", outcome: "uncertain", reason: "response-indeterminate" },
+    { terminal: "rejected", outcome: undefined, reason: undefined },
+    { terminal: "accepted-after-error", outcome: "api-accepted", reason: undefined },
+  ])(
+    "preserves Gateway $terminal evidence without guessing cleanup targets",
+    async ({ terminal, outcome, reason }) => {
+      const events: Array<Record<string, unknown>> = [];
+      const f = fixture(events);
+      const root = await f.session.driver.send({ text: "owned root", mention: false });
+      events.push({
+        id: 1,
+        flowId: "gateway-write",
+        host: "slack.com",
+        kind: "request",
+        method: "POST",
+        path: "/api/chat.postMessage",
+        dataText: new URLSearchParams({
+          channel: "C_QA",
+          thread_ts: root.id,
+          ts: "2.000000",
+          text: "private-body",
+          token: "private-token",
+        }).toString(),
+      });
+      if (terminal === "error" || terminal === "accepted-after-error") {
+        events.push({
+          id: 2,
+          flowId: "gateway-write",
+          kind: "error",
+          errorText: "Authorization: private-token",
+        });
+      }
+      if (terminal !== "unanswered" && terminal !== "error") {
+        events.push({
+          id: 3,
+          flowId: "gateway-write",
+          kind: "response",
+          status: terminal === "server-error" ? 503 : 200,
+          dataText:
+            terminal === "undecodable"
+              ? '{"ok":true,"private":"truncated'
+              : JSON.stringify({
+                  ok: terminal === "accepted-after-error",
+                  channel: "C_QA",
+                  ts: "2.000000",
+                  error: terminal === "partial-failure" ? "fatal_error" : "missing_scope",
+                  detail: "private-error",
+                }),
+        });
+      }
+
+      if (outcome === "uncertain") {
+        await expect(f.session.cleanup()).rejects.toThrow("1 uncertain operations");
+      } else {
+        await f.session.cleanup();
+      }
+      expect(f.driverClient.chat.delete).toHaveBeenCalledWith({ channel: "C_QA", ts: root.id });
+      if (outcome === "api-accepted") {
+        expect(f.sutClient.chat.delete).toHaveBeenCalledWith({ channel: "C_QA", ts: "2.000000" });
+      } else {
+        expect(f.sutClient.chat.delete).not.toHaveBeenCalled();
+      }
+      expect(f.sutClient.files.delete).not.toHaveBeenCalled();
+      const content = await fs.readFile(f.session.artifactPath, "utf8");
+      expect(content).not.toContain("private-");
+      const artifact = JSON.parse(content);
+      const gatewayEvidence = artifact.evidence.filter(
+        (entry: { operation: string }) => entry.operation === "Gateway chat.postMessage",
+      );
+      expect(gatewayEvidence).toEqual(
+        outcome
+          ? [
+              expect.objectContaining({
+                outcome,
+                requestEventId: 1,
+                channelId: "C_QA",
+                threadId: root.id,
+                messageId: "2.000000",
+                ...(reason ? { detail: reason } : {}),
+              }),
+            ]
+          : [],
+      );
+    },
+  );
 
   it("performs no cleanup writes after lease authority is lost", async () => {
     const f = fixture();

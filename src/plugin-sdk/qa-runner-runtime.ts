@@ -133,7 +133,11 @@ type QaRunnerTransportAdapterDefinition = {
   requiredPluginIds: readonly string[];
   supportedActions: readonly ("delete" | "edit" | "react" | "thread-create")[];
   assertTransportHealthy?: () => void;
-  /** Resolves with a terminal transport failure; the host cancels and joins the run. */
+  /**
+   * Resolve (do not reject) with a terminal failure to abort active flow admission.
+   * The adapter still settles owned requests during cleanup. Omission leaves
+   * explicit health checks and scenario deadlines in effect.
+   */
   whenUnhealthy?: Promise<Error>;
   describeTransportState?: () => string;
   resetTransport?: () => void | Promise<void>;
@@ -196,9 +200,19 @@ type QaRunnerTransportAdapterDefinition = {
     concurrency: number;
     isolatedWorkers?: boolean;
   }) => string[];
+  /** Stop new actions before Gateway shutdown; retain the lease and ownership of pending writes. */
   cleanup?: () => Promise<void>;
-  /** Capture final receipts after the Gateway stops, before its temporary files are removed. */
+  /**
+   * Host-final-teardown hook after confirmed Gateway stop, before temporary-file removal.
+   * A successful capture runs once per Gateway lifetime. Throwing retains runtime
+   * evidence and reports teardown failure; post-stop adapter cleanup still runs.
+   * Omission means no adapter-specific snapshot, not a request to retain scratch state.
+   */
   captureBeforeGatewayCleanup?: () => Promise<void>;
+  /**
+   * Settle fixture cleanup and release the lease after confirmed Gateway stop.
+   * Not called when process shutdown is unconfirmed; errors join the teardown result.
+   */
   cleanupAfterGatewayStop?: () => Promise<void>;
 };
 

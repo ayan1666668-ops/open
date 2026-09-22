@@ -17,19 +17,20 @@ import { createSlackQaScenarioEnvironment } from "./scenario-environment.js";
 import {
   getSlackQaMessageWriteCursor,
   getSlackQaNativeWriteCursor,
-  readSlackQaAcceptedWrites,
+  readSlackQaNativeWrites,
   readSlackQaMessageWrites,
-  type SlackAcceptedWrite,
+  type SlackNativeWrite,
 } from "./slack-live.capture.js";
 import {
   buildSlackQaConfig,
   parseSlackQaCredentialPayload,
   resolveSlackQaRuntimeEnv,
 } from "./slack-live.config.js";
-import type {
-  SlackMessage,
-  SlackQaFetchFunction,
-  SlackQaRuntimeEnv,
+import {
+  SLACK_QA_WEB_API_TIMEOUT_MS,
+  type SlackMessage,
+  type SlackQaFetchFunction,
+  type SlackQaRuntimeEnv,
 } from "./slack-live.contracts.js";
 import { waitForSlackChannelStable } from "./slack-live.message-observations.js";
 import {
@@ -169,9 +170,26 @@ export async function createSlackQaTransportAdapter(
     flowSignal?.throwIfAborted();
   };
   const assertHandoff = options.agentE2e ? assertNativeActive : undefined;
-  const driverClient = createSlackWriteClient(runtimeEnv.driverBotToken, {}, assertHandoff);
-  const sutClient = createSlackWebClient(runtimeEnv.sutBotToken, {}, assertHandoff);
-  const sutWriteClient = createSlackWriteClient(runtimeEnv.sutBotToken, {}, assertHandoff);
+  // Stop admission on cancellation, but let dispatched writes retain late receipts
+  // until the SDK's HTTP deadline. This also covers uploadV2's external upload body.
+  const nativeOptions = options.agentE2e
+    ? {
+        rejectRateLimitedCalls: true,
+        retryConfig: { retries: 0 },
+        timeout: SLACK_QA_WEB_API_TIMEOUT_MS,
+      }
+    : {};
+  const driverClient = createSlackWriteClient(
+    runtimeEnv.driverBotToken,
+    nativeOptions,
+    assertHandoff,
+  );
+  const sutClient = createSlackWebClient(runtimeEnv.sutBotToken, nativeOptions, assertHandoff);
+  const sutWriteClient = createSlackWriteClient(
+    runtimeEnv.sutBotToken,
+    nativeOptions,
+    assertHandoff,
+  );
   const pollingAbort = new AbortController();
   const pollingOptions = resolveSlackWebClientOptions({
     rejectRateLimitedCalls: true,
@@ -198,7 +216,7 @@ export async function createSlackQaTransportAdapter(
   let nativeWriteCursor = 0;
   const readNativeWrites = async () =>
     captureReader
-      ? readSlackQaAcceptedWrites({
+      ? readSlackQaNativeWrites({
           afterRequestEventId: nativeWriteCursor,
           sessionId: captureSessionId,
           store: captureReader,
@@ -364,14 +382,19 @@ export async function createSlackQaTransportAdapter(
         });
         const flowWriteCursor = nativeWriteCursor;
         const readWrites = () =>
-          readSlackQaAcceptedWrites({
+          readSlackQaNativeWrites({
             afterRequestEventId: flowWriteCursor,
             sessionId: captureSessionId,
             store: captureReader!,
           });
-        let finalWrites: SlackAcceptedWrite[] | undefined;
+        let finalWrites: SlackNativeWrite[] | undefined;
         captureFinalWrites.push(() => {
           finalWrites = readWrites();
+          if (finalWrites.some((write) => write.evidence === "uncertain")) {
+            throw new Error(
+              "Slack Gateway mutation outcome is uncertain; preserve runtime capture",
+            );
+          }
         });
         const e2e = createSlackChannelE2e({
           channelId: runtimeEnv.channelId,
@@ -381,10 +404,12 @@ export async function createSlackQaTransportAdapter(
           sutClient,
           sutWriteClient,
           assertActive: assertNativeActive,
-          cleanupDriverClient: createSlackWriteClient(runtimeEnv.driverBotToken, {}, () =>
-            heartbeat.throwIfFailed(),
+          cleanupDriverClient: createSlackWriteClient(
+            runtimeEnv.driverBotToken,
+            nativeOptions,
+            () => heartbeat.throwIfFailed(),
           ),
-          cleanupSutClient: createSlackWriteClient(runtimeEnv.sutBotToken, {}, () =>
+          cleanupSutClient: createSlackWriteClient(runtimeEnv.sutBotToken, nativeOptions, () =>
             heartbeat.throwIfFailed(),
           ),
           assertLease: () => heartbeat.throwIfFailed(),
@@ -392,7 +417,7 @@ export async function createSlackQaTransportAdapter(
           waitReady: async () => await waitReady({ gateway: input.gateway }),
           outputDir: input.outputDir,
           scenarioId: input.scenarioId,
-          readAcceptedWrites: async () => finalWrites ?? readWrites(),
+          readNativeWrites: async () => finalWrites ?? readWrites(),
         });
         e2eSessions.push(e2e);
         await e2e.driver.doctor();
@@ -425,8 +450,19 @@ export async function createSlackQaTransportAdapter(
       pollingAbort.abort();
     },
     async captureBeforeGatewayCleanup() {
+      const failures: unknown[] = [];
       for (const capture of captureFinalWrites) {
-        capture();
+        try {
+          capture();
+        } catch (error) {
+          failures.push(error);
+        }
+      }
+      if (failures.length) {
+        throw new AggregateError(
+          failures,
+          "Slack final capture is incomplete; retain runtime evidence",
+        );
       }
     },
     async cleanupAfterGatewayStop() {
