@@ -222,9 +222,7 @@ describe.skipIf(process.platform === "win32")("iOS voice cleanup workflow", () =
     expect(result.status, result.stderr).toBe(0);
     const appBuild = commands.find((command) => command.tool === "pnpm");
     expect(appBuild?.destination).toBe("platform=iOS Simulator,id=watch-fixture");
-    expect(appBuild?.settings).toBe(
-      "ARCHS = arm64\nCOMPILER_INDEX_STORE_ENABLE = NO\n",
-    );
+    expect(appBuild?.settings).toBe("ARCHS = arm64\nCOMPILER_INDEX_STORE_ENABLE = NO\n");
     expect(
       commands.filter((command) => command.tool === "xcrun").map((command) => command.args),
     ).toEqual([
