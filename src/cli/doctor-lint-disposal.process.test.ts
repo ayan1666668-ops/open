@@ -48,7 +48,7 @@ it.each(["release", "timeout"])(
         `const fs = require("node:fs");
 module.exports = { id: "disposal-proof", register(api) {
   api.lifecycle.registerRuntimeLifecycle({ id: "retirement", async dispose() {
-    fs.writeFileSync(${JSON.stringify(observation)}, JSON.stringify({pid: process.pid, stateDir: process.env.OPENCLAW_STATE_DIR}));
+    fs.writeFileSync(${JSON.stringify(observation)}, JSON.stringify({pid: process.pid, stateDir: process.env.OPENCLAW_STATE_DIR, moduleDir: __dirname}));
     process.stderr.write("fixture disposal entered\\n");
     while (!fs.existsSync(${JSON.stringify(release)})) await new Promise(resolve => setTimeout(resolve, 20));
   }});
@@ -176,12 +176,15 @@ try {
                 }),
               ]);
               expect(output).toMatchObject({ ok: true, checksRun: 1, findings: [] });
-              const observed: { pid: number; stateDir: string } = JSON.parse(
+              const observed: { pid: number; stateDir: string; moduleDir: string } = JSON.parse(
                 fs.readFileSync(observation, "utf8"),
               );
               workerPid = observed.pid;
               expect(observed.stateDir).not.toBe(root);
               expect(fs.existsSync(observed.stateDir)).toBe(true);
+              expect(observed.moduleDir).toContain(
+                path.join(observed.stateDir, "tmp", "plugin-captures"),
+              );
             } finally {
               clearTimeout(timer);
               if (mode === "release") {
@@ -196,6 +199,13 @@ try {
       expect(JSON.parse(result.stdout)).toMatchObject({ ok: true, checksRun: 1, findings: [] });
       expect(workerPid).toBeTypeOf("number");
       expect(() => process.kill(workerPid!, 0)).toThrow();
+      if (mode === "release") {
+        const observed: { stateDir: string; moduleDir: string } = JSON.parse(
+          fs.readFileSync(observation, "utf8"),
+        );
+        expect(fs.existsSync(observed.moduleDir)).toBe(false);
+        expect(fs.existsSync(path.join(observed.stateDir, "tmp", "plugin-captures"))).toBe(false);
+      }
       expect(fs.readFileSync(configPath, "utf8")).toBe(config);
       if (mode === "timeout") {
         expect(result.stderr).toMatch(/Doctor disposal timed out after \d+ms; checks completed/u);
