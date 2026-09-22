@@ -12,6 +12,7 @@ vi.mock("./worker-environments/workspace-sync-preflight.js", () => ({
   preflightWorkerWorkspace: workspace.preflight,
 }));
 
+import { getRuntimeConfig } from "../config/config.js";
 import {
   GatewayDrainingError,
   markGatewayRestartDraining,
@@ -154,6 +155,7 @@ describe("dispatch Stop before provider allocation", () => {
         ...harness.environments,
       };
       const runtime = createGatewayWorkerPlacementRuntime({
+        getCommittedRuntimeConfig: getRuntimeConfig,
         placements,
         environments,
         gatewayNamespace: "gateway-test",
@@ -282,6 +284,7 @@ describe("dispatch Stop before provider allocation", () => {
     const environments = support.createService(support.createProvider({ provision }));
     const placements = createWorkerSessionPlacementStore({ database: support.testState.stateDb });
     const runtime = createGatewayWorkerPlacementRuntime({
+      getCommittedRuntimeConfig: getRuntimeConfig,
       placements,
       environments,
       gatewayNamespace: "gateway-test",
@@ -368,6 +371,7 @@ describe("dispatch Stop before provider allocation", () => {
       });
       const create = vi.spyOn(environments, "createWithRequest");
       const runtime = createGatewayWorkerPlacementRuntime({
+        getCommittedRuntimeConfig: getRuntimeConfig,
         placements,
         environments,
         gatewayNamespace: "gateway-test",
@@ -413,6 +417,7 @@ describe("dispatch Stop before provider allocation", () => {
     const placements = createWorkerSessionPlacementStore({ database: support.testState.stateDb });
     const revokeSessionAuthority = vi.fn();
     const runtime = createGatewayWorkerPlacementRuntime({
+      getCommittedRuntimeConfig: getRuntimeConfig,
       placements,
       environments,
       gatewayNamespace: "gateway-test",
@@ -476,6 +481,7 @@ describe("dispatch Stop before provider allocation", () => {
       onInterrupt: interrupted,
     });
     const runtime = createGatewayWorkerPlacementRuntime({
+      getCommittedRuntimeConfig: getRuntimeConfig,
       placements,
       environments,
       gatewayNamespace: "gateway-test",
@@ -574,6 +580,7 @@ describe("dispatch Stop before provider allocation", () => {
         ...harness.environments,
       };
       const runtime = createGatewayWorkerPlacementRuntime({
+        getCommittedRuntimeConfig: getRuntimeConfig,
         placements,
         environments,
         gatewayNamespace: "gateway-test",
@@ -708,6 +715,7 @@ describe("dispatch Stop before provider allocation", () => {
         );
       }
       const runtime = createGatewayWorkerPlacementRuntime({
+        getCommittedRuntimeConfig: getRuntimeConfig,
         placements,
         environments,
         gatewayNamespace: "gateway-test",
@@ -892,6 +900,7 @@ describe("dispatch Stop before provider allocation", () => {
         });
       }
       const runtime = createGatewayWorkerPlacementRuntime({
+        getCommittedRuntimeConfig: getRuntimeConfig,
         placements,
         environments,
         gatewayNamespace: "gateway-test",

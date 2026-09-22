@@ -111,6 +111,7 @@ describe("sessions.dispatch preserves admitted local work", () => {
     const revokeSessionAuthority = vi.fn();
     const clearQueues = vi.spyOn(queues, "clearSessionQueues");
     const runtime = createGatewayWorkerPlacementRuntime({
+      getCommittedRuntimeConfig: () => support.testState.config,
       placements,
       environments,
       gatewayNamespace: "gateway-test",
