@@ -84,6 +84,11 @@ type SecretStoreEgressBinding = {
   name: string;
   sentinel: string;
   allowedHosts: string[];
+  /** Store mutations version captured with this row. Launch-time registration
+   * re-validates bindings whose capture predates a store mutation, so a staged
+   * write that was rolled back while approval was pending cannot register a
+   * credential grant for a row that no longer exists. */
+  capturedStoreVersion: number;
 };
 
 export type SecretStoreExecEnvironment = {
@@ -310,6 +315,10 @@ export function readSecretStoreExecEnvironment(params: {
   database?: OpenClawStateDatabaseOptions;
 }): SecretStoreExecEnvironment {
   try {
+    // Capture before the select: a mutation racing the read leaves the snapshot
+    // stamped older than current, which forces launch-time re-validation instead
+    // of trusting partially stale rows.
+    const capturedStoreVersion = secretStoreMutationsVersion;
     return (
       withExistingOpenClawStateDatabaseReadOnly(({ db: sqlite }) => {
         const db = getNodeSqliteKysely<SecretStoreDatabase>(sqlite);
@@ -356,6 +365,7 @@ export function readSecretStoreExecEnvironment(params: {
               name: row.name,
               sentinel,
               allowedHosts: parseSecretAllowedHosts(row.allowed_hosts),
+              capturedStoreVersion,
             });
           }
         }
@@ -575,38 +585,42 @@ function rollbackSecretStoreEntryWrite(params: {
   }
 }
 
-/** Live-store lookup for one protected entry: allowed hosts for egress re-validation.
- * Returns undefined when the row is absent (deleted or rolled back). */
-export function lookupSecretStoreBinding(params: {
-  name: string;
+/** Live-store check for stale egress bindings at process registration (launch path
+ * only; the substitution hot path never touches the database). Returns the current
+ * allowed hosts per name; names absent from the map are deleted or rolled back. */
+export function validateSecretStoreBindings(params: {
+  names: readonly string[];
   database?: OpenClawStateDatabaseOptions;
-}): { allowedHosts: Set<string> } | undefined {
+}): Map<string, { allowedHosts: Set<string> }> {
+  const current = new Map<string, { allowedHosts: Set<string> }>();
+  if (params.names.length === 0) {
+    return current;
+  }
   try {
     return (
       withExistingOpenClawStateDatabaseReadOnly(({ db: sqlite }) => {
         const db = getNodeSqliteKysely<SecretStoreDatabase>(sqlite);
-        const scopeId = "";
         const rows = executeSqliteQuerySync(
           sqlite,
           db
             .selectFrom("secret_store_entries")
-            .select(["allowed_hosts"])
+            .select(["name", "allowed_hosts"])
             .where("scope_kind", "=", "team")
-            .where("scope_id", "=", scopeId)
-            .where("name", "=", params.name)
-            .where("deleted_at_ms", "is", null)
-            .limit(1),
+            .where("scope_id", "=", "")
+            .where("name", "in", params.names)
+            .where("deleted_at_ms", "is", null),
         ).rows;
-        const row = rows[0];
-        if (!row) {
-          return undefined;
+        for (const row of rows) {
+          current.set(row.name, {
+            allowedHosts: new Set(parseSecretAllowedHosts(row.allowed_hosts)),
+          });
         }
-        return { allowedHosts: new Set(parseSecretAllowedHosts(row.allowed_hosts)) };
-      }, params.database ?? {}) ?? undefined
+        return current;
+      }, params.database ?? {}) ?? current
     );
   } catch (error) {
     if (isMissingSecretStoreTableError(error)) {
-      return undefined;
+      return current;
     }
     throw error;
   }
