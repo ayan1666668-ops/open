@@ -14,10 +14,6 @@ import { setDetachedTaskLifecycleRuntime } from "../../../tasks/detached-task-ru
 import { withTaskCancellationContext } from "../../../tasks/task-cancellation-context.js";
 import * as taskControlRuntime from "../../../tasks/task-registry-control.runtime.js";
 import { cancelTaskById, findTaskByRunId, getTaskById } from "../../../tasks/task-registry.js";
-import {
-  resetTaskRegistryControlRuntimeForTests,
-  setTaskRegistryControlRuntimeForTests,
-} from "../../../tasks/task-registry.test-support.js";
 import { clearActiveEmbeddedRun, setActiveEmbeddedRun } from "../../embedded-agent-runner/runs.js";
 import { createEmbeddedRunHandle } from "../../embedded-agent-runner/runs.test-support.js";
 import { createSubagentsTool } from "../../tools/subagents-tool.js";
@@ -174,13 +170,13 @@ it.each(["before interruption", "after interruption", "after abort"] as const)(
       await blockerEntered.promise;
     }
     const ownerEntered = createDeferred();
-    setTaskRegistryControlRuntimeForTests({
-      ...taskControlRuntime,
-      killSubagentRunAdmin: (params) => {
+    const runAdmin = killSubagentRunAdmin;
+    const adminSpy = vi
+      .spyOn(taskControlRuntime, "killSubagentRunAdmin")
+      .mockImplementation((params) => {
         ownerEntered.resolve();
-        return killSubagentRunAdmin(params);
-      },
-    });
+        return runAdmin(params);
+      });
     const pending = withTaskCancellationContext(
       () => {
         if (!callerControlsAncestor) {
@@ -216,7 +212,7 @@ it.each(["before interruption", "after interruption", "after abort"] as const)(
       releaseBlocker.resolve();
       admission.release();
       await Promise.all([blocker, pending]);
-      resetTaskRegistryControlRuntimeForTests();
+      adminSpy.mockRestore();
       clearActiveEmbeddedRun(sessionId, handle, sessionKey);
       expect(getActiveSessionWorkAdmissionCount()).toBe(0);
       expect(getActiveSessionLifecycleMutationCount()).toBe(0);
@@ -288,13 +284,13 @@ it.each([
       await blockerEntered.promise;
     }
     const ownerEntered = createDeferred();
-    setTaskRegistryControlRuntimeForTests({
-      ...taskControlRuntime,
-      killSubagentRunAdmin: (params) => {
+    const runAdmin = killSubagentRunAdmin;
+    const adminSpy = vi
+      .spyOn(taskControlRuntime, "killSubagentRunAdmin")
+      .mockImplementation((params) => {
         ownerEntered.resolve();
-        return killSubagentRunAdmin(params);
-      },
-    });
+        return runAdmin(params);
+      });
     const readEntered = createDeferred();
     const releaseRead = createDeferred();
     const failure = new AggregateError([new Error("read cleanup failed")], "cancel read failed");
@@ -369,7 +365,7 @@ it.each([
       releaseRead.resolve();
       admission.release();
       await Promise.allSettled([blocker, pending]);
-      resetTaskRegistryControlRuntimeForTests();
+      adminSpy.mockRestore();
       clearActiveEmbeddedRun(sessionId, handle, sessionKey);
       expect(getActiveSessionWorkAdmissionCount()).toBe(0);
       expect(getActiveSessionLifecycleMutationCount()).toBe(0);

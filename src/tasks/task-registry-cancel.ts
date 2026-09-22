@@ -217,7 +217,7 @@ export async function cancelTaskById(params: {
         await pending;
       }
       assertCurrentControl();
-      if (!processSessionId || !cancelBackgroundExecSession?.(processSessionId)) {
+      if (!processSessionId || !cancelBackgroundExecSession(processSessionId)) {
         return notCancelled("Background command has no active cancellation handle.");
       }
     } else if (task.runtime === "cli") {
