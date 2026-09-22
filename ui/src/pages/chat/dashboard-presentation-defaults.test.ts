@@ -287,6 +287,8 @@ describe("dashboard default activation and personal layout persistence", () => {
     h.sync();
     expect(isSidebarSlotVisible(h.state.sidebarLayout, "dashboard")).toBe(false);
     expect(h.saved()).toBeUndefined();
+    h.pane.routeFace = h.pane.captureNavigationFace();
+    expect(h.pane.routeFace).toBe("dashboard");
     h.state.sessionsResult = sessionsResult([session({ key: "agent:main:other" })], 10);
     h.sync();
     expect(isSidebarSlotVisible(h.state.sidebarLayout, "dashboard")).toBe(false);

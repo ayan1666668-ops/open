@@ -324,9 +324,7 @@ export abstract class ChatPaneBoard extends ChatPaneHistory {
       return this.routeFace;
     }
     if (!isSidebarSlotVisible(state.sidebarLayout, "dashboard")) {
-      return this.routeFace !== undefined || this.readSavedDashboardLayout() !== undefined
-        ? "chat"
-        : undefined;
+      return this.readSavedDashboardLayout() !== undefined ? "chat" : this.routeFace;
     }
     // Focusing an open pane adopts its live layout instead of reopening its shared default.
     this.dashboardPresentationActivation = {
