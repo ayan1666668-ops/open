@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
+import { readNonEmptyStringPreservingWhitespace } from "@openclaw/normalization-core/string-coerce";
 import {
   hasRecordedUsageCost,
   normalizeUsage,
@@ -80,10 +81,6 @@ function sessionIdentity(row: Pick<MatrixLedgerRow, "storeId" | "sessionId">): s
 
 function rowIdentity(row: MatrixLedgerRow): string {
   return JSON.stringify([row.storeId, row.sessionId, row.seq]);
-}
-
-function optionalString(value: unknown): string | undefined {
-  return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
 function count(value: unknown): number | undefined {
@@ -174,11 +171,11 @@ export async function readMatrixSessionLedger(stateDir: string): Promise<MatrixS
           storeId,
           sessionId: session.session_id,
           sessionKey: session.session_key,
-          parentSessionKey: optionalString(value.parentSessionKey),
-          spawnedBy: optionalString(value.spawnedBy),
+          parentSessionKey: readNonEmptyStringPreservingWhitespace(value.parentSessionKey),
+          spawnedBy: readNonEmptyStringPreservingWhitespace(value.spawnedBy),
           generation: generations.get(session.session_id),
           runUsage: {
-            runId: optionalString(value.lastRunId),
+            runId: readNonEmptyStringPreservingWhitespace(value.lastRunId),
             usage: {
               input: count(value.inputTokens),
               output: count(value.outputTokens),

@@ -107,7 +107,7 @@ it("the actual CLI completes a Gateway cell without a live provider or entrypoin
       "--mode",
       "code",
       "--task",
-      "repo-invoice-repair",
+      "javascript-contracts",
       "--repetitions",
       "1",
       "--output-dir",
@@ -129,7 +129,7 @@ it("the actual CLI completes a Gateway cell without a live provider or entrypoin
     .split("\n")
     .map((line) => JSON.parse(line));
   expect(rows).toMatchObject([
-    { task: "repo-invoice-repair", failureCategory: "provider_auth", passed: false },
+    { task: "javascript-contracts", failureCategory: "provider_auth", passed: false },
   ]);
   expect(run.stdout).toContain("FAIL provider_auth");
   const resultPrefix = "[code-mode-matrix-result] ";
