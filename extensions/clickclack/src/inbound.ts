@@ -252,7 +252,12 @@ export async function handleClickClackInbound(params: {
       messageThreadId: message.parent_message_id ? message.thread_root_id : undefined,
       threadParentId: message.parent_message_id ? message.thread_root_id : undefined,
     },
-    message: { body, bodyForAgent: message.body, rawBody: message.body, commandBody: message.body },
+    message: {
+      body,
+      bodyForAgent: message.body,
+      rawBody: message.body,
+      commandBody: message.body,
+    },
     access: {
       commands: { authorized: access.commandAuthorized },
       mentions: access.mentionFacts,
@@ -262,6 +267,12 @@ export async function handleClickClackInbound(params: {
       ...(discussionRoute ? { GroupSystemPrompt: discussionRoute.systemPrompt } : {}),
     },
   });
+  // Keep the native message id visible to before_dispatch consumers. The
+  // shared context builder exposes MessageSid, but some OpenClaw hook
+  // adapters only forward the lower-case/native aliases. ClickClack's
+  // TaskZilla mention gate uses this id to hydrate wake_bot_user_ids from
+  // the realtime event after the hook's fixed allowlist drops that field.
+  Object.assign(ctxPayload, { message_id: message.id, messageSid: message.id });
   const runId = resolveClickClackAgentRunId(message.id);
   const activityReplyOptions = {
     ...(activity

@@ -497,6 +497,11 @@ describe("ClickClack inbound mention gating", () => {
     const dispatchTurn = vi.mocked(runtime.channel.inbound.dispatch);
     expect(dispatchTurn).toHaveBeenCalledTimes(1);
     expect(dispatchTurn.mock.calls[0]?.[0].ctxPayload.WasMentioned).toBe(true);
+    expect(dispatchTurn.mock.calls[0]?.[0].ctxPayload).toMatchObject({
+      MessageSid: "msg_1",
+      message_id: "msg_1",
+      messageSid: "msg_1",
+    });
   });
 
   it("does not bypass mention gating for a command mentioning another user", async () => {
