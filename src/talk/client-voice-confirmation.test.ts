@@ -204,6 +204,7 @@ describe("client voice confirmation", () => {
   it.each([
     ["exec", "git clean -fdx"],
     ["bash", "mv a b"],
+    ["exec", "sed -n '-e$w /tmp/out' 1p"],
   ])(
     "requires confirmation for an unlisted destructive shell command: %s %s",
     (toolName, command) => {

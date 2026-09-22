@@ -74,6 +74,8 @@ describe("tool mutation helpers", () => {
     ["exec", "sed --in-place 's/a/b/' file.txt"],
     ["exec", "sed -n '1p' -i file.txt"],
     ["exec", "sed -n -e '1p' -e 'w /tmp/out' file.txt"],
+    ["exec", "sed -n '-e$w /tmp/out' 1p"],
+    ["exec", "sed -n --expression='1p' file.txt"],
     ["bash", "cat package.json > /tmp/package.json"],
     ["exec", 'rg "$(touch /tmp/out)" notes.md'],
     ["exec", 'rg "`touch /tmp/out`" notes.md'],

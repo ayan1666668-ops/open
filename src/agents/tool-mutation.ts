@@ -193,35 +193,31 @@ function tokenizeReadOnlyShellCommands(command: string): string[][] | undefined 
 
 function isReadOnlySedCommand(tokens: readonly string[]): boolean {
   const args = tokens.slice(1);
-  if (args.some((token) => token === "--in-place" || token.startsWith("--in-place="))) {
-    return false;
-  }
-  if (args.some((token) => token.startsWith("-") && token !== "-" && token.includes("i"))) {
-    return false;
-  }
-  // `sed -e 'w /tmp/out'` and mixed scripts are easy to misclassify. Only
-  // allow the simple line-print shape that agents use for file inspection.
-  if (args.some((token) => token === "-e" || token === "--expression")) {
+  // `sed -e 'w /tmp/out'`, attached scripts such as `-e$w /tmp/out`, and
+  // mixed option forms are easy to misclassify. Only allow the exact
+  // suppress-auto-print flags plus the simple line-print shape agents use for
+  // file inspection.
+  if (
+    args.some(
+      (token) =>
+        token.startsWith("-") &&
+        token !== "-" &&
+        token !== "-n" &&
+        token !== "--quiet" &&
+        token !== "--silent",
+    )
+  ) {
     return false;
   }
   let sawSuppressAutoPrint = false;
   let expression: string | undefined;
   for (const token of args) {
-    if (token === "--in-place" || token.startsWith("--in-place=")) {
-      return false;
-    }
-    if (token === "--quiet" || token === "--silent") {
+    if (token === "-n" || token === "--quiet" || token === "--silent") {
       sawSuppressAutoPrint = true;
       continue;
     }
     if (token.startsWith("-") && token !== "-") {
-      if (token.includes("i")) {
-        return false;
-      }
-      if (token.includes("n")) {
-        sawSuppressAutoPrint = true;
-      }
-      continue;
+      return false;
     }
     expression ??= token;
     break;
