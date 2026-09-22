@@ -11,6 +11,7 @@ import {
   renderComposerMenu,
   renderComposerMenuOption,
 } from "../../../components/composer-menu.ts";
+import { icons } from "../../../components/icons.ts";
 import { t } from "../../../i18n/index.ts";
 import type { HumanMention } from "../../../lib/chat/chat-types.ts";
 import { MAX_HUMAN_MENTIONS, updateHumanMentions } from "../../../lib/chat/human-mentions.ts";
@@ -38,7 +39,25 @@ const MENTION_REFRESH_RETRY_MS = 30_000;
 const MENTION_REQUEST_TIMEOUT_MS = 15_000;
 const MAX_CACHED_MENTION_QUERIES = 16;
 
-type MentionTarget = { start: number; end: number; query: string; value: string };
+type MentionOption =
+  | UsersMentionableResult["users"][number]
+  | { kind: "everyone"; recipientCount: number };
+
+function optionKey(option: MentionOption): string {
+  return "profileId" in option ? `profile:${option.profileId}` : "everyone";
+}
+
+function optionLabel(option: MentionOption): string {
+  return "profileId" in option ? option.displayName : "@everyone";
+}
+
+type MentionTarget = {
+  start: number;
+  end: number;
+  query: string;
+  value: string;
+  allowEveryone: boolean;
+};
 type MentionResultSnapshot = {
   result: UsersMentionableResult;
   fetchedAt: number;
@@ -76,7 +95,9 @@ function findMentionTarget(value: string, caret: number): MentionTarget | null {
   while (end < value.length && /[\p{L}\p{N}\p{M}_.-]/u.test(value[end] ?? "")) {
     end += 1;
   }
-  return { start, end, query, value };
+  // A second bare @ is for adding people; an explicit search may still choose everyone.
+  const allowEveryone = query.trim().length > 0 || value.indexOf("@") === value.lastIndexOf("@");
+  return { start, end, query, value, allowEveryone };
 }
 
 /** One bounded suggestion lifecycle shared by existing- and new-session composers. */
@@ -87,7 +108,7 @@ export class HumanMentionMenu {
   private target: MentionTarget | null = null;
   private search: MentionSearch | null = null;
   private index = 0;
-  private selectedProfileId: string | undefined;
+  private selectedKey: string | undefined;
   private readonly selectedAvatars = new Map<string, string>();
   private readonly results = new Map<string, MentionResultSnapshot>();
   private readonly requests = new Map<string, Promise<UsersMentionableResult>>();
@@ -126,7 +147,7 @@ export class HumanMentionMenu {
     this.target = null;
     this.search = null;
     this.index = 0;
-    this.selectedProfileId = undefined;
+    this.selectedKey = undefined;
   }
 
   dispose() {
@@ -162,22 +183,41 @@ export class HumanMentionMenu {
       target.end = Math.max(target.end, previous.end + value.length - previous.value.length);
     }
     if (previous?.start !== target.start) {
-      this.selectedProfileId = undefined;
+      this.selectedKey = undefined;
     }
     this.target = target;
-    if (previous?.start === target.start && previous.query === target.query) {
+    if (
+      previous?.start === target.start &&
+      previous.query === target.query &&
+      previous.allowEveryone === target.allowEveryone
+    ) {
       return;
     }
     this.searchPeople(requestUpdate);
   }
 
+  private get options(): MentionOption[] {
+    if (this.search?.kind !== "ready") {
+      return [];
+    }
+    const { users, everyone } = this.search.result;
+    // People stay first so opening the picker does not default to a broad ping.
+    return [
+      ...users,
+      ...(everyone && this.target?.allowEveryone
+        ? [{ kind: "everyone" as const, ...everyone }]
+        : []),
+    ];
+  }
+
   private showResults(result: UsersMentionableResult) {
+    this.search = { kind: "ready", result };
+    const options = this.options;
     this.index = Math.max(
       0,
-      result.users.findIndex((user) => user.profileId === this.selectedProfileId),
+      options.findIndex((option) => optionKey(option) === this.selectedKey),
     );
-    this.selectedProfileId = result.users[this.index]?.profileId;
-    this.search = { kind: "ready", result };
+    this.selectedKey = options[this.index] ? optionKey(options[this.index]!) : undefined;
   }
 
   private searchPeople(requestUpdate: () => void) {
@@ -285,15 +325,12 @@ export class HumanMentionMenu {
   }
 
   activeId(paneId: string): string | null {
-    return this.search?.kind === "ready" && this.search.result.users[this.index]
-      ? paneDomId(paneId, `mention-option-${this.index}`)
-      : null;
+    return this.options[this.index] ? paneDomId(paneId, `mention-option-${this.index}`) : null;
   }
 
   activeLabel(): string {
-    return this.search?.kind === "ready"
-      ? (this.search.result.users[this.index]?.displayName ?? "")
-      : "";
+    const option = this.options[this.index];
+    return option ? optionLabel(option) : "";
   }
 
   handleKeydown(event: KeyboardEvent, host: HumanMentionMenuHost, requestUpdate: () => void) {
@@ -303,7 +340,7 @@ export class HumanMentionMenu {
     if (this.search?.kind === "error" && event.key === "Tab") {
       return false;
     }
-    const users = this.search?.kind === "ready" ? this.search.result.users : [];
+    const users = this.options;
     return handleComposerMenuKeydown(event, {
       count: users.length,
       index: this.index,
@@ -314,7 +351,7 @@ export class HumanMentionMenu {
       },
       move: (index) => {
         this.index = index;
-        this.selectedProfileId = users[index]?.profileId;
+        this.selectedKey = users[index] ? optionKey(users[index]!) : undefined;
         requestUpdate();
         return this.activeId(host.paneId);
       },
@@ -322,11 +359,7 @@ export class HumanMentionMenu {
     });
   }
 
-  private select(
-    person: UsersMentionableResult["users"][number],
-    host: HumanMentionMenuHost,
-    requestUpdate: () => void,
-  ) {
+  private select(person: MentionOption, host: HumanMentionMenuHost, requestUpdate: () => void) {
     const textarea = host.getTextarea();
     const current = textarea?.value ?? host.getDraft();
     this.update(
@@ -337,9 +370,13 @@ export class HumanMentionMenu {
     if (!target || host.getMentions().length >= MAX_HUMAN_MENTIONS) {
       return;
     }
-    const label = `@${person.displayName}`;
+    const label = "profileId" in person ? `@${person.displayName}` : "@everyone";
     const replacement = `${label} `;
     const next = `${current.slice(0, target.start)}${replacement}${current.slice(target.end)}`;
+    const selected: HumanMention =
+      "profileId" in person
+        ? { profileId: person.profileId, start: target.start, end: target.start + label.length }
+        : { kind: "everyone", start: target.start, end: target.start + label.length };
     const mentions = [
       ...updateHumanMentions(current, next, host.getMentions(), {
         value: current,
@@ -347,19 +384,21 @@ export class HumanMentionMenu {
         end: target.end,
         inputType: "insertReplacementText",
       }),
-      { profileId: person.profileId, start: target.start, end: target.start + label.length },
+      selected,
     ].toSorted((a, b) => a.start - b.start);
     // Preserve only selected presentation URLs, so the shared loader reuses the
     // exact image already requested by the picker. Recipient metadata stays unchanged.
     for (const profileId of this.selectedAvatars.keys()) {
-      if (!mentions.some((mention) => mention.profileId === profileId)) {
+      if (!mentions.some((mention) => "profileId" in mention && mention.profileId === profileId)) {
         this.selectedAvatars.delete(profileId);
       }
     }
-    if (person.avatarUrl) {
-      this.selectedAvatars.set(person.profileId, person.avatarUrl);
-    } else {
-      this.selectedAvatars.delete(person.profileId);
+    if ("profileId" in person) {
+      if (person.avatarUrl) {
+        this.selectedAvatars.set(person.profileId, person.avatarUrl);
+      } else {
+        this.selectedAvatars.delete(person.profileId);
+      }
     }
     host.commitDraft(next, mentions);
     this.close();
@@ -389,7 +428,7 @@ export class HumanMentionMenu {
       ? t("chat.mentions.limit")
       : this.search?.kind === "error"
         ? t("chat.mentions.unavailable")
-        : !loading && !result?.users.length
+        : !loading && !this.options.length
           ? t("chat.mentions.empty")
           : null;
     return renderComposerMenu({
@@ -428,27 +467,38 @@ export class HumanMentionMenu {
                     <span class="skeleton skeleton-line skeleton-line--medium"></span>
                   </div>`,
                 )
-              : result?.users.map((person, index) =>
-                  renderComposerMenuOption({
+              : this.options.map((person, index) => {
+                  const description =
+                    "profileId" in person
+                      ? person.online
+                        ? t("chat.mentions.online")
+                        : nothing
+                      : t("chat.mentions.everyoneDescription", {
+                          count: String(person.recipientCount),
+                        });
+                  return renderComposerMenuOption({
                     id: paneDomId(host.paneId, `mention-option-${index}`),
                     active: index === this.index,
                     select: () => this.select(person, host, requestUpdate),
                     hover: () => {
                       this.index = index;
-                      this.selectedProfileId = person.profileId;
+                      this.selectedKey = optionKey(person);
                       requestUpdate();
                     },
-                    icon: renderChatAuthorAvatar({
-                      id: person.profileId,
-                      name: person.displayName,
-                      identity: { type: "profile", id: person.profileId },
-                      profileAvatarUrl: person.avatarUrl,
-                    }),
+                    icon:
+                      "profileId" in person
+                        ? renderChatAuthorAvatar({
+                            id: person.profileId,
+                            name: person.displayName,
+                            identity: { type: "profile", id: person.profileId },
+                            profileAvatarUrl: person.avatarUrl,
+                          })
+                        : html`<span class="mention-everyone-icon">${icons.users}</span>`,
                     iconHidden: true,
-                    name: person.displayName,
-                    description: person.online ? t("chat.mentions.online") : nothing,
-                  }),
-                )
+                    name: optionLabel(person),
+                    description,
+                  });
+                })
         }
         ${
           result?.truncated

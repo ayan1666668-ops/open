@@ -108,6 +108,17 @@ serveWorkerTasks(
       }
     }
     try {
+      if (request.kind === "pending-source") {
+        const { readSessionPendingSourceNative } =
+          await import("./session-accessor.pending-input-sources.native.js");
+        return {
+          ok: true,
+          ...(await withHistoryDatabase(request.database, () => ({
+            kind: "pending-source" as const,
+            value: readSessionPendingSourceNative(request.scope, request.request),
+          }))),
+        };
+      }
       if (request.kind === "transcript-search") {
         const { searchSessionTranscriptsReadOnlySync } =
           await import("./session-transcript-search.js");

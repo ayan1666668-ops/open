@@ -18,6 +18,10 @@ import type {
 } from "../cron/store/run-recovery-read.types.js";
 import type { FleetCellRecord } from "../fleet/registry.types.js";
 import type {
+  MentionReadInput,
+  MentionReadResult,
+} from "../gateway/mention-inbox-worker-contract.js";
+import type {
   ListTerminalOperatorApprovalsInput,
   ListTerminalOperatorApprovalsResult,
 } from "../gateway/operator-approval-store.types.js";
@@ -90,6 +94,7 @@ export type OpenClawStateReadAuthority = {
 };
 
 export type OpenClawStateReadCommand =
+  | { type: "mentions.read"; input: MentionReadInput }
   | {
       [Kind in keyof McpOAuthReadOnlyOperations]: {
         type: Kind;
@@ -167,6 +172,7 @@ export type OpenClawStateReadRequest = {
   command: OpenClawStateReadCommand | { type: "admit" };
 };
 export type OpenClawStateReadReply = (
+  | { ok: true; type: "mentions.read"; sourceAdmitted: true; result: MentionReadResult }
   | {
       [Kind in keyof McpOAuthReadOnlyOperations]: {
         ok: true;

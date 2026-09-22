@@ -219,6 +219,16 @@ export function present(
   return row;
 }
 
+export function presentSnapshot(
+  record: MaterializedRow | undefined,
+  context: SessionListRowContext,
+  options: SnapshotOptions,
+) {
+  return record
+    ? { row: present(record, context, options), lifecycleRunId: record.entry.lifecycleRunId }
+    : { row: null };
+}
+
 function updateIndex(
   map: Map<string, Set<string>>,
   key: string | undefined,
@@ -407,4 +417,45 @@ export function acquireSessionRowEntry(params: {
     params.markRelated(next, includeChildren);
   }
   return next;
+}
+
+/** Read committed metadata without SQLite, presentation enrichment, or private-row acquisition. */
+export function readCommittedSessionRow(
+  query: Lookup,
+  cfg: Inputs["cfg"],
+  available: boolean,
+  lookup: (query: Lookup) => Row | undefined,
+): EntryRow | undefined {
+  if (!available || isIncognitoSessionKey(query.key)) {
+    return undefined;
+  }
+  const key = resolveStoredSessionKeyForAgentStore({
+    cfg,
+    agentId: query.agentId,
+    sessionKey: query.key,
+  });
+  if (isIncognitoSessionKey(key)) {
+    return undefined;
+  }
+  const row = lookup(query);
+  return hasEntry(row) ? row : undefined;
+}
+
+/** Backfill updates enrichment only for an already materialized row. */
+export function updateSessionRowEnrichment(
+  row: Row | undefined,
+  fields: Pick<Row, "lastMessagePreview" | "fallbackModel">,
+): boolean {
+  if (
+    !row?.materialized ||
+    (row.lastMessagePreview === fields.lastMessagePreview &&
+      isDeepStrictEqual(row.fallbackModel, fields.fallbackModel))
+  ) {
+    return false;
+  }
+  Object.assign(row, {
+    lastMessagePreview: fields.lastMessagePreview,
+    fallbackModel: fields.fallbackModel,
+  });
+  return true;
 }

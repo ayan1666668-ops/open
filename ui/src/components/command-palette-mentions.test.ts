@@ -172,6 +172,50 @@ async function mount(createdSessionKey = "agent:main:dashboard:mentioned") {
 }
 
 describe("command palette people mentions", () => {
+  it("keeps everyone distinct from a person and submits both through the shared draft", async () => {
+    const f = await mount();
+    f.directory.mockResolvedValue({
+      users: [{ profileId: "everyone", displayName: "Alex", online: true }],
+      truncated: false,
+      everyone: { recipientCount: 24 },
+    });
+    await f.search("  🙂 @");
+    expect(f.menu()?.querySelector('[role="option"][aria-selected="true"]')?.textContent).toContain(
+      "Alex",
+    );
+    await f.key("End");
+    await f.key("Enter");
+    expect(f.input.value).toBe("  🙂 @everyone ");
+    expect(f.context.sessions.createResult).not.toHaveBeenCalled();
+    await f.search();
+    expect(f.menu()?.querySelectorAll('[role="option"]')).toHaveLength(1);
+    await f.key("Enter");
+    await f.search("@ev");
+    await f.key("End");
+    await f.key("Tab");
+    expect(f.recipients().map((recipient) => recipient.querySelector("bdi")?.textContent)).toEqual([
+      "Everyone with access,",
+      "Alex",
+    ]);
+    await f.send();
+    const mentions = [
+      { kind: "everyone", start: 3, end: 12 },
+      { profileId: "everyone", start: 13, end: 18 },
+      { kind: "everyone", start: 19, end: 28 },
+    ];
+    expect(f.request).toHaveBeenCalledWith(
+      "sessions.create",
+      expect.objectContaining({ message: "🙂 @everyone @Alex @everyone", mentions }),
+    );
+    expect(
+      f.context.chatSubmissions.readInitial(
+        "agent:main:dashboard:mentioned",
+        f.context.gateway.snapshot.client,
+      )?.message?.["__openclaw"].humanMentions,
+    ).toEqual(mentions);
+    expect(f.palette.isOpen).toBe(false);
+  });
+
   it("selects one, two, and repeated references and carries real first-message metadata", async () => {
     const f = await mount();
     await f.search("  🙂 @");

@@ -49,6 +49,7 @@ export function normalizeChatHumanMentions(
       mention.end <= mention.start + 1 ||
       token.length > 257 ||
       token[0] !== "@" ||
+      ("kind" in mention && token !== "@everyone") ||
       !token.slice(1).trim() ||
       hasAsciiControlCharacter(token) ||
       splitsSurrogate(text, mention.start) ||
@@ -64,10 +65,21 @@ export function normalizeChatHumanMentions(
     }
     const start = prefix.message.length - leadingSpace;
     const end = throughToken.message.length - leadingSpace;
-    if (start < 0 || end > trimmed.length || trimmed[start] !== "@") {
+    if (
+      start < 0 ||
+      end > trimmed.length ||
+      trimmed[start] !== "@" ||
+      ("kind" in mention &&
+        (/(?:\p{L}|\p{N}|\p{M}|[_@.%+-])$/u.test(trimmed.slice(0, start)) ||
+          /^[\p{L}\p{N}\p{M}_-]/u.test(trimmed.slice(end))))
+    ) {
       return { ok: false, error: INVALID_MENTIONS };
     }
-    normalized.push({ profileId: mention.profileId, start, end });
+    normalized.push(
+      "kind" in mention
+        ? { kind: mention.kind, start, end }
+        : { profileId: mention.profileId, start, end },
+    );
     previousEnd = mention.end;
   }
   return { ok: true, value: normalized };

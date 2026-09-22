@@ -1,5 +1,9 @@
+import { StatementSync } from "node:sqlite";
 import { describe, expect, it, vi } from "vitest";
-import { validateUsersMentionableResult } from "../../packages/gateway-protocol/src/index.js";
+import {
+  MAX_EVERYONE_MENTION_RECIPIENTS,
+  validateUsersMentionableResult,
+} from "../../packages/gateway-protocol/src/index.js";
 import { createDeferred } from "../../test/helpers/promise.js";
 import { loadSessionEntry, replaceSessionEntrySync } from "../config/sessions/session-accessor.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
@@ -46,6 +50,123 @@ function holdDirectoryRead() {
 }
 
 describe("human mention directory", () => {
+  it("rejects missing and nonresident private targets without native session reads", async () => {
+    await withInbox(async (f) => {
+      const targets = [
+        "agent:main:dashboard:missing-mention",
+        "agent:main:dashboard:private-mention",
+      ];
+      await f.setSession({ sessionId: "private-mention", incognito: true }, targets[1]);
+      await f.call("users.mentionable", { sessionKey: SESSION_KEY }, f.aliceClient);
+      await f.projection.ensureMaterialized();
+      let nativeReads = 0;
+      // oxlint-disable-next-line typescript/unbound-method -- apply preserves the intercepted statement receiver.
+      const get = StatementSync.prototype.get;
+      // oxlint-disable-next-line typescript/unbound-method -- apply preserves the intercepted statement receiver.
+      const all = StatementSync.prototype.all;
+      const count = (statement: StatementSync, values: unknown[]) => {
+        if (
+          /session_nodes/i.test(statement.sourceSQL) &&
+          targets.some((key) => values.includes(key))
+        ) {
+          nativeReads++;
+        }
+      };
+      const getSpy = vi.spyOn(StatementSync.prototype, "get").mockImplementation(function (
+        this: StatementSync,
+        ...values
+      ) {
+        count(this, values);
+        return get.apply(this, values);
+      });
+      const allSpy = vi.spyOn(StatementSync.prototype, "all").mockImplementation(function (
+        this: StatementSync,
+        ...values
+      ) {
+        count(this, values);
+        return all.apply(this, values);
+      });
+      try {
+        for (const sessionKey of targets) {
+          const response = await f.call("users.mentionable", { sessionKey }, f.aliceClient);
+          expect(nativeReads).toBe(0);
+          expect(response).toMatchObject({ ok: false, error: { code: "INVALID_REQUEST" } });
+        }
+      } finally {
+        getSpy.mockRestore();
+        allSpy.mockRestore();
+      }
+    });
+  });
+
+  it("offers everyone to a regular signed-in operator, including offline recipients and not the sender", async () => {
+    await withInbox(async (f) => {
+      f.aliceClient.connect.scopes = ["operator.read", "operator.write"];
+      f.clients.splice(f.clients.indexOf(f.carolClient), 1);
+      for (const query of ["", "ev", "every", "yon", "EVERYONE"]) {
+        expect(
+          await f.call("users.mentionable", { sessionKey: SESSION_KEY, query }, f.aliceClient),
+        ).toMatchObject({ ok: true, payload: { everyone: { recipientCount: 2 } } });
+      }
+      const narrow = await f.call(
+        "users.mentionable",
+        { sessionKey: SESSION_KEY, query: "Bob" },
+        f.aliceClient,
+      );
+      expect(narrow.payload).not.toHaveProperty("everyone");
+      expect(await f.inbox.prepareRecipients(true)).toEqual({ ok: true, value: undefined });
+      expect(f.inbox.resolveEveryoneRecipients(f.aliceClient, { sessionKey: SESSION_KEY })).toEqual(
+        { ok: true, value: expect.arrayContaining([f.bob.id, f.carol.id]) },
+      );
+      await f.setSession({ visibility: "draft" });
+      const draft = await f.call("users.mentionable", { sessionKey: SESSION_KEY }, f.aliceClient);
+      expect(draft.payload).not.toHaveProperty("everyone");
+      expect(f.inbox.resolveEveryoneRecipients(f.aliceClient, { sessionKey: SESSION_KEY }).ok).toBe(
+        false,
+      );
+      await f.setSession({ incognito: true });
+      expect(
+        await f.call("users.mentionable", { sessionKey: SESSION_KEY }, f.aliceClient),
+      ).toMatchObject({ ok: false, error: { code: "INVALID_REQUEST" } });
+    });
+  });
+
+  it("rejects incomplete or oversized broadcast rosters rather than sending a partial ping", async () => {
+    await withInbox(async (f) => {
+      const directory = vi
+        .spyOn(userProfileReads, "readUserProfileDirectory")
+        .mockResolvedValueOnce({
+          profiles: [{ id: f.bob.id, logins: [] }],
+          truncated: true,
+        });
+      try {
+        const result = await f.call(
+          "users.mentionable",
+          { sessionKey: SESSION_KEY },
+          f.aliceClient,
+        );
+        expect(result.payload).not.toHaveProperty("everyone");
+        expect(
+          f.inbox.resolveEveryoneRecipients(f.aliceClient, { sessionKey: SESSION_KEY }),
+        ).toMatchObject({
+          ok: false,
+          error: { code: "INVALID_REQUEST", message: expect.stringContaining("recipient limit") },
+        });
+      } finally {
+        directory.mockRestore();
+      }
+      for (let index = 0; index < MAX_EVERYONE_MENTION_RECIPIENTS; index++) {
+        ensureProfileForEmail("too-many-" + index + "@mentions.example.test");
+      }
+      const result = await f.call("users.mentionable", { sessionKey: SESSION_KEY }, f.aliceClient);
+      expect(result.ok).toBe(true);
+      expect(result.payload).not.toHaveProperty("everyone");
+      expect(
+        f.inbox.resolveEveryoneRecipients(f.aliceClient, { sessionKey: SESSION_KEY }),
+      ).toMatchObject({ ok: false, error: { code: "INVALID_REQUEST" } });
+    });
+  });
+
   it.each([
     { change: "requester invalidation", code: "FORBIDDEN" },
     { change: "session visibility", code: "INVALID_REQUEST" },
@@ -59,7 +180,7 @@ describe("human mention directory", () => {
       });
       let changed = false;
       const frames: { ok: boolean; changed: boolean }[] = [];
-      const revocation = Promise.resolve().then(() => {
+      const revocation = Promise.resolve().then(async () => {
         if (change === "requester invalidation") {
           Object.assign(f.bobClient, { invalidated: true });
         } else if (change === "session visibility") {
@@ -70,7 +191,7 @@ describe("human mention directory", () => {
           }
           replaceSessionEntrySync(scope, { ...entry, visibility: "draft" });
         } else {
-          f.inbox.dispose();
+          await f.inbox.dispose();
         }
         changed = true;
       });
@@ -172,6 +293,7 @@ describe("human mention directory", () => {
         { sessionKey: SESSION_KEY, query: "Alice" },
         f.bobClient,
       );
+      let closing: Promise<void> | undefined;
       try {
         await held.ready;
         if (change === "requester invalidation") {
@@ -179,13 +301,15 @@ describe("human mention directory", () => {
         } else if (change === "session visibility") {
           await f.setSession({ visibility: "draft" });
         } else {
-          f.inbox.dispose();
+          closing = f.inbox.dispose();
         }
         held.release();
+        await closing;
         expect(await pending).toMatchObject({ ok: false, error: { code } });
       } finally {
         held.release();
         await pending;
+        await closing;
         held.restore();
       }
     });
@@ -223,8 +347,8 @@ describe("human mention directory", () => {
       expect(
         f.inbox.validateRecipients(f.aliceClient, { sessionKey: SESSION_KEY }, [f.bob.id]),
       ).toEqual({ ok: true, value: [f.bob.id] });
-      f.post();
-      expect(read(f.inbox, f.bobClient).items).toHaveLength(1);
+      await f.post();
+      expect((await read(f.inbox, f.bobClient)).items).toHaveLength(1);
       syncGitHubIdentity({
         identity: { accountId: 42, login: "robert-new" },
         authenticationAlias: { kind: "email", email: "bob@mentions.example.test" },
@@ -290,6 +414,7 @@ describe("human mention directory", () => {
   it.each([
     {
       name: "administrator receiving a draft",
+      directoryResolved: true,
       role: "administrator",
       sessionKey: SESSION_KEY,
       entry: { visibility: "draft" },
@@ -298,6 +423,7 @@ describe("human mention directory", () => {
     },
     {
       name: "owner-only recipient of a shared session",
+      directoryResolved: true,
       role: "owner-only",
       sessionKey: SESSION_KEY,
       entry: { visibility: "shared" },
@@ -306,6 +432,7 @@ describe("human mention directory", () => {
     },
     {
       name: "administrator in an entry-flag incognito session",
+      directoryResolved: false,
       role: "administrator",
       sessionKey: "agent:main:dashboard:mention-incognito-flag",
       entry: { visibility: "shared", incognito: true },
@@ -314,6 +441,7 @@ describe("human mention directory", () => {
     },
     {
       name: "administrator in a canonical-key incognito session",
+      directoryResolved: true,
       role: "administrator",
       sessionKey: "agent:main:dashboard:incognito-mention-key",
       entry: { visibility: "shared" },
@@ -322,7 +450,7 @@ describe("human mention directory", () => {
     },
   ] as const)(
     "applies offline recipient policy across directory, admission, and delivery: $name",
-    async ({ role, sessionKey, entry, visible, storedSources }) => {
+    async ({ role, sessionKey, entry, visible, storedSources, directoryResolved }) => {
       const cfg: OpenClawConfig = {
         gateway: {
           roles: {
@@ -358,15 +486,21 @@ describe("human mention directory", () => {
           { sessionKey, query: "Bob" },
           f.aliceClient,
         );
-        if (!directory.ok || !validateUsersMentionableResult(directory.payload)) {
-          throw new Error("Invalid mention directory response");
+        let users: [string, boolean][] = [];
+        if (directoryResolved) {
+          if (!directory.ok || !validateUsersMentionableResult(directory.payload)) {
+            throw new Error("Invalid mention directory response");
+          }
+          users = directory.payload.users.map((user) => [user.profileId, user.online]);
+        } else {
+          expect(directory).toMatchObject({ ok: false, error: { code: "INVALID_REQUEST" } });
         }
         const admission = f.inbox.validateRecipients(f.aliceClient, { sessionKey }, [f.bob.id]);
-        f.post("policy-source", { sessionKey, sessionId });
+        await f.post("policy-source", { sessionKey, sessionId });
         expect({
-          users: directory.payload.users.map((user) => [user.profileId, user.online]),
+          users,
           accepted: admission.ok,
-          inboxKeys: read(f.inbox, f.bobClient).items.map((item) => item.sessionKey),
+          inboxKeys: (await read(f.inbox, f.bobClient)).items.map((item) => item.sessionKey),
           pushedRecipients: f.push.mock.calls.map(([mention]) => mention.recipientProfileId),
           storedSources: openOpenClawStateDatabase()
             .db.prepare(
@@ -396,7 +530,7 @@ describe("human mention directory", () => {
           ok: true,
           value: [f.bob.id],
         });
-        expect(read(f.inbox, f.bobClient).items).toEqual([]);
+        expect((await read(f.inbox, f.bobClient)).items).toEqual([]);
       },
       {
         session: { scope: "global", store: "/synthetic/fixed-global.sqlite" },
@@ -456,6 +590,13 @@ describe("human mention directory", () => {
       }
       expect(result.payload.truncated).toBe(true);
       expect(result.payload.users).toHaveLength(100);
+      expect(
+        await f.call("users.mentionable", { sessionKey: SESSION_KEY }, f.aliceClient),
+      ).toMatchObject({ ok: true, payload: { everyone: { recipientCount: 107 } } });
+      const everyone = f.inbox.resolveEveryoneRecipients(f.aliceClient, {
+        sessionKey: SESSION_KEY,
+      });
+      expect(everyone.ok && everyone.value.length).toBe(107);
       expect(
         await f.call(
           "users.mentionable",

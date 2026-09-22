@@ -1,5 +1,4 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { isDeepStrictEqual } from "node:util";
 import { listAgentIds, withAgentRosterFactsBatch } from "../agents/agent-scope-config.js";
 import {
   getSubagentSessionListReadSnapshotIdentity,
@@ -138,17 +137,9 @@ export async function createSessionRowProjection(params: {
     read: (id) => rows.get(id),
     current: (row) => !topologyDirty && archive.isCurrentMaterialization(row) && isCurrent(row),
     publish(row, fields) {
-      const current = rows.get(records.identity(row));
-      if (
-        current?.materialized &&
-        (current.lastMessagePreview !== fields.lastMessagePreview ||
-          !isDeepStrictEqual(current.fallbackModel, fields.fallbackModel))
-      ) {
-        Object.assign(current, {
-          lastMessagePreview: fields.lastMessagePreview,
-          fallbackModel: fields.fallbackModel,
-        });
-        dirty.add(records.identity(current));
+      const id = records.identity(row);
+      if (records.updateSessionRowEnrichment(rows.get(id), fields)) {
+        dirty.add(id);
         void ensureMaterialized().catch(() => {});
       }
     },
@@ -207,8 +198,12 @@ export async function createSessionRowProjection(params: {
       [...(byKey.get(`id:${sessionId}`) ?? [])].flatMap((id) => rows.get(id) ?? []),
     );
   }
-  function acquireEntry(row: records.Row, storedEntry: SessionEntry | undefined) {
-    if (storedEntry?.archivedAt !== undefined) {
+  function acquireEntry(
+    row: records.Row,
+    storedEntry: SessionEntry | undefined,
+    deferPresentation = false,
+  ) {
+    if (storedEntry?.archivedAt !== undefined && !deferPresentation) {
       inOwnerContext(() => metadata.prepare(epoch, cfg, matching, put));
     }
     return records.acquireSessionRowEntry({
@@ -353,11 +348,16 @@ export async function createSessionRowProjection(params: {
           markRelated(previous, records.changesSessionRowDependents(previous.storedEntry, entry));
           if (entry?.archivedAt !== undefined && !registryFactsReady) {
             // Committed row changes must survive an unrelated compact-facts refill.
-            return archive.deferAcquisition({ ...previous, hasBoard: undefined });
+            const current = acquireEntry({ ...previous, hasBoard: undefined }, entry, true);
+            return current && archive.deferAcquisition(current);
           }
-          return isCold(previous) || records.changesRowStructure(previous, entry)
-            ? acquireEntry({ ...previous, hasBoard: undefined }, entry)
-            : previous;
+          // Authorization consumes committed metadata independently of deferred presentation.
+          return acquireEntry(
+            records.changesRowStructure(previous, entry)
+              ? { ...previous, hasBoard: undefined }
+              : previous,
+            entry,
+          );
         });
         if (row && !isCold(row)) {
           dirty.add(records.identity(row));
@@ -383,7 +383,8 @@ export async function createSessionRowProjection(params: {
           const admitted = inOwnerContext(() => {
             const entry = readSessionRowEntry(row);
             if (entry?.archivedAt !== undefined && !registryFactsReady) {
-              return archive.deferAcquisition(row);
+              const current = acquireEntry(row, entry, true);
+              return current && archive.deferAcquisition(current);
             }
             return acquireEntry(row, entry);
           });
@@ -629,6 +630,8 @@ export async function createSessionRowProjection(params: {
   void ensureMaterialized().catch(() => {});
   backfill.start();
   const projection = {
+    readCommittedEntry: (query: records.Lookup) =>
+      records.readCommittedSessionRow(query, cfg, !disposed && !topologyDirty, lookup),
     readPreparedRowContext: () =>
       disposed ? undefined : inOwnerContext(() => metadata.readPrepared(epoch)),
     capture(query: records.Lookup) {
@@ -696,15 +699,8 @@ export async function createSessionRowProjection(params: {
     selectEntries,
     listCreatedActors: (): ReturnType<typeof creators.list> =>
       inOwnerContext(() => creators.list(projection.state.scope({}).paths, matching)),
-    snapshot(query: records.Lookup, options: records.SnapshotOptions = {}) {
-      const record = describe(query);
-      return record
-        ? {
-            row: records.present(record, metadata.current, options),
-            lifecycleRunId: record.entry.lifecycleRunId,
-          }
-        : { row: null };
-    },
+    snapshot: (query: records.Lookup, options: records.SnapshotOptions = {}) =>
+      records.presentSnapshot(describe(query), metadata.current, options),
     dispose,
   };
   return projection;

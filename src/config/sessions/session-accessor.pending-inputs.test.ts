@@ -9,6 +9,7 @@ import { createUserTurnTranscriptRecorder } from "../../sessions/user-turn-trans
 import type { PersistedUserTurnMessage } from "../../sessions/user-turn-transcript.types.js";
 import {
   closeOpenClawAgentDatabasesForTest,
+  closeOpenClawAgentDatabasesAsync,
   deferOpenClawAgentPostCommitPublication,
   openOpenClawAgentDatabase,
   runOpenClawAgentWriteTransaction,
@@ -52,6 +53,14 @@ describe("accepted input custody", () => {
   const receipts: SessionPendingInputReceipt[] = [];
   const scope = () => ({ agentId: "main", sessionKey, sessionId, storePath: fixture.storePath() });
   const database = () => openOpenClawAgentDatabase(toDatabaseOptions(resolveSqliteScope(scope())));
+  const readStoredInputs = (db: ReturnType<typeof database>["db"]) =>
+    db.prepare("SELECT * FROM session_pending_inputs ORDER BY seq").all();
+  const trackPendingReads = (db: ReturnType<typeof database>["db"]) =>
+    trackSqliteStatementExecutions(db, ["pending"], (sqlText) =>
+      sqlText.startsWith("select ") && sqlText.includes('from "session_pending_inputs"')
+        ? "pending"
+        : null,
+    );
   const message = (runId: string, content = "Continue the task"): PersistedUserTurnMessage => ({
     role: "user",
     content,
@@ -104,7 +113,7 @@ describe("accepted input custody", () => {
 
   it("keeps accepted input outside the active transcript and applies its hook once across replay and promotion", async () => {
     await appendTranscriptMessage(scope(), { message: message("active", "First task") });
-    expect(readSessionSubmittedInput(scope(), "active:user")).toEqual(
+    expect(await readSessionSubmittedInput(scope(), "active:user")).toEqual(
       message("active", "First task"),
     );
     const before = await loadTranscriptEvents(scope());
@@ -113,7 +122,7 @@ describe("accepted input custody", () => {
       content: typeof input.content === "string" ? `${input.content} (approved)` : input.content,
     }));
     const receipt = await stage("queued", { prepareMessageAfterIdempotencyCheck: prepare });
-    expect(readSessionSubmittedInput(scope(), "queued:user")).toEqual(receipt.message);
+    expect(await readSessionSubmittedInput(scope(), "queued:user")).toEqual(receipt.message);
     await expect(
       stage("queued", {
         message: { ...message("queued"), timestamp: 200 },
@@ -146,7 +155,7 @@ describe("accepted input custody", () => {
       message: receipt.message,
     });
     expect(listSessionPendingInputs(scope())).toEqual({ total: 0, items: [] });
-    expect(readSessionSubmittedInput(scope(), "queued:user")).toEqual(receipt.message);
+    expect(await readSessionSubmittedInput(scope(), "queued:user")).toEqual(receipt.message);
     const committedReplay = await stage("queued", { prepareMessageAfterIdempotencyCheck: prepare });
     expect(committedReplay.message).toEqual(receipt.message);
     expect(prepare).toHaveBeenCalledOnce();
@@ -176,7 +185,7 @@ describe("accepted input custody", () => {
     expect(mirrored?.messageId).not.toBe(receipt.inputId);
     expect(listSessionPendingInputs(scope())).toEqual(pending);
     expect(await loadTranscriptEvents(scope())).toEqual(sourceTranscript);
-    expect(readSessionSubmittedInput(target, "bound-mirror:user")).toEqual(receipt.message);
+    expect(await readSessionSubmittedInput(target, "bound-mirror:user")).toEqual(receipt.message);
     await expect(appendTranscriptMessage(scope(), { message: receipt.message })).rejects.toThrow(
       "outside its admitted turn",
     );
@@ -627,7 +636,7 @@ describe("accepted input custody", () => {
     async (entry) => {
       const receipt = await stage("restart");
       rotateAgentEventLifecycleGeneration();
-      closeOpenClawAgentDatabasesForTest();
+      await closeOpenClawAgentDatabasesAsync();
       const retained = readSessionPendingInput(scope(), receipt.inputId);
       expect(retained?.state).toBe("interrupted");
       expect(await loadTranscriptEvents(scope())).toEqual([]);
@@ -844,9 +853,7 @@ describe("accepted input custody", () => {
     await upsertSessionEntryCore(scope(), { sessionId: "replacement-session", updatedAt: 2 });
     await expect(promote(receipt)).rejects.toThrow("session changed");
     const current = database();
-    const storedBefore = current.db
-      .prepare("SELECT * FROM session_pending_inputs ORDER BY seq")
-      .all();
+    const storedBefore = readStoredInputs(current.db);
     expect(storedBefore.map((row) => row.state)).toEqual(["queued", "queued"]);
     current.db.exec(
       "CREATE TRIGGER reject_pending_interruption BEFORE UPDATE OF state ON session_pending_inputs WHEN OLD.run_id = 'reset-second' AND NEW.state = 'interrupted' BEGIN SELECT RAISE(ABORT, 'interruption failed'); END",
@@ -856,14 +863,8 @@ describe("accepted input custody", () => {
     } finally {
       current.db.exec("DROP TRIGGER reject_pending_interruption");
     }
-    expect(current.db.prepare("SELECT * FROM session_pending_inputs ORDER BY seq").all()).toEqual(
-      storedBefore,
-    );
-    const counter = trackSqliteStatementExecutions(current.db, ["pending"], (sqlText) =>
-      sqlText.startsWith("select ") && sqlText.includes('from "session_pending_inputs"')
-        ? "pending"
-        : null,
-    );
+    expect(readStoredInputs(current.db)).toEqual(storedBefore);
+    const counter = trackPendingReads(current.db);
     try {
       expect(listSessionPendingInputs(scope())).toMatchObject({
         total: 2,
@@ -878,7 +879,7 @@ describe("accepted input custody", () => {
     } finally {
       counter.restore();
     }
-    expect(current.db.prepare("SELECT * FROM session_pending_inputs ORDER BY seq").all()).toEqual(
+    expect(readStoredInputs(current.db)).toEqual(
       storedBefore.map((row) => Object.assign({}, row, { state: "interrupted" })),
     );
     await deleteSessionEntryLifecycle({
@@ -897,14 +898,8 @@ describe("accepted input custody", () => {
     const second = await stage("second");
     const third = await stage("third");
     const current = database();
-    const storedBefore = current.db
-      .prepare("SELECT * FROM session_pending_inputs ORDER BY seq")
-      .all();
-    const counter = trackSqliteStatementExecutions(current.db, ["pending"], (sqlText) =>
-      sqlText.startsWith("select ") && sqlText.includes('from "session_pending_inputs"')
-        ? "pending"
-        : null,
-    );
+    const storedBefore = readStoredInputs(current.db);
+    const counter = trackPendingReads(current.db);
     try {
       expect(readSessionPendingInput(scope(), first.inputId)).toMatchObject({
         id: first.inputId,
@@ -922,9 +917,7 @@ describe("accepted input custody", () => {
     } finally {
       counter.restore();
     }
-    expect(current.db.prepare("SELECT * FROM session_pending_inputs ORDER BY seq").all()).toEqual(
-      storedBefore,
-    );
+    expect(readStoredInputs(current.db)).toEqual(storedBefore);
     const page = listSessionPendingInputs(scope(), { limit: 2 });
     expect(page.items.map((input) => input.id)).toEqual([second.inputId, third.inputId]);
     expect(page.total).toBe(3);
@@ -934,17 +927,22 @@ describe("accepted input custody", () => {
     expect(older.items.map((input) => input.id)).toEqual([first.inputId]);
     for (const idempotencyKey of ["first:user", "third:user"]) {
       expect(
-        readSessionSubmittedInput({ ...scope(), sessionId: "other-session" }, idempotencyKey),
+        await readSessionSubmittedInput({ ...scope(), sessionId: "other-session" }, idempotencyKey),
       ).toBeUndefined();
       expect(
-        readSessionSubmittedInput({ ...scope(), sessionKey: "agent:main:other" }, idempotencyKey),
+        await readSessionSubmittedInput(
+          { ...scope(), sessionKey: "agent:main:other" },
+          idempotencyKey,
+        ),
       ).toBeUndefined();
     }
   });
 
-  it("does not create missing storage for a submitted-input lookup", () => {
+  it("does not create missing storage for a submitted-input lookup", async () => {
     const storePath = path.join(fixture.sessionsDir(), "missing-agent.sqlite");
-    expect(readSessionSubmittedInput({ ...scope(), storePath }, "missing:user")).toBeUndefined();
+    expect(
+      await readSessionSubmittedInput({ ...scope(), storePath }, "missing:user"),
+    ).toBeUndefined();
     expect(fs.existsSync(storePath)).toBe(false);
   });
 
@@ -984,7 +982,7 @@ describe("accepted input custody", () => {
         }
         db.exec("PRAGMA query_only = ON");
         try {
-          expect(readSessionSubmittedInput(scope(), "invalid-source:user")).toBeUndefined();
+          expect(await readSessionSubmittedInput(scope(), "invalid-source:user")).toBeUndefined();
         } finally {
           db.exec("PRAGMA query_only = OFF");
         }
@@ -1014,7 +1012,7 @@ describe("accepted input custody", () => {
         .get(sessionId);
       db.exec("PRAGMA query_only = ON");
       try {
-        expect(readSessionSubmittedInput(scope(), "stale-source:user")).toBeUndefined();
+        expect(await readSessionSubmittedInput(scope(), "stale-source:user")).toBeUndefined();
       } finally {
         db.exec("PRAGMA query_only = OFF");
       }

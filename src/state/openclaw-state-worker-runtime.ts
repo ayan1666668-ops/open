@@ -36,6 +36,7 @@ import {
   listManagedImageRecordEntriesInDatabase,
   listManagedImageOriginalMediaIdsInDatabase,
 } from "../gateway/managed-image-record-store.kernel.js";
+import { executeMentionMutation } from "../gateway/mention-inbox.worker.js";
 import {
   executeOperatorApprovalCommand,
   isOperatorApprovalCommand,
@@ -377,6 +378,9 @@ export function executeSharedStateCommand(
       path: context.databasePath,
       env: getSqliteWorkerStateContext().environment,
     });
+  }
+  if (command.type === "mentions.mutate") {
+    return executeMentionMutation(command.input, open());
   }
   if (isUserProfileCommand(command)) {
     return executeUserProfileCommand(command, {

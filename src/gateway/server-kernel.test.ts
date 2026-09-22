@@ -38,6 +38,19 @@ import type { GatewayHostLifecycle, GatewayServer } from "./server-public.js";
 import { createMaintenanceHandles } from "./server-runtime-services.test-harness.js";
 import { expectCoreAgentDatabaseReadiness } from "./server-startup-readiness.test-support.js";
 
+const kernelTestEnv = {
+  OPENCLAW_GATEWAY_PASSWORD: undefined,
+  OPENCLAW_GATEWAY_TOKEN: undefined,
+  OPENCLAW_SKIP_BROWSER_CONTROL_SERVER: "1",
+  OPENCLAW_SKIP_CANVAS_HOST: "1",
+  OPENCLAW_SKIP_CHANNELS: "1",
+  OPENCLAW_SKIP_CRON: "1",
+  OPENCLAW_SKIP_GMAIL_WATCHER: "1",
+  OPENCLAW_SKIP_PROVIDERS: "1",
+  OPENCLAW_TEST_MINIMAL_GATEWAY: "1",
+  VITEST: "1",
+};
+
 describe("createGatewayKernel", () => {
   it.each([false, true])(
     "starts recovered channels only before close (closing=%s)",
@@ -47,16 +60,9 @@ describe("createGatewayKernel", () => {
         label: "gateway-kernel-breaker-recovery-close",
         layout: "home",
         env: {
-          OPENCLAW_GATEWAY_PASSWORD: undefined,
-          OPENCLAW_GATEWAY_TOKEN: undefined,
-          OPENCLAW_SKIP_BROWSER_CONTROL_SERVER: "1",
-          OPENCLAW_SKIP_CANVAS_HOST: "1",
+          ...kernelTestEnv,
           OPENCLAW_SKIP_CHANNELS: undefined,
-          OPENCLAW_SKIP_CRON: "1",
-          OPENCLAW_SKIP_GMAIL_WATCHER: "1",
           OPENCLAW_SKIP_PROVIDERS: undefined,
-          OPENCLAW_TEST_MINIMAL_GATEWAY: "1",
-          VITEST: "1",
         },
       });
       const originalPluginRegistry = captureActivePluginRegistrySnapshot();
@@ -157,16 +163,7 @@ describe("createGatewayKernel", () => {
         label: `gateway-kernel-${entry}-close-readiness`,
         layout: "home",
         env: {
-          OPENCLAW_GATEWAY_PASSWORD: undefined,
-          OPENCLAW_GATEWAY_TOKEN: undefined,
-          OPENCLAW_SKIP_BROWSER_CONTROL_SERVER: "1",
-          OPENCLAW_SKIP_CANVAS_HOST: "1",
-          OPENCLAW_SKIP_CHANNELS: "1",
-          OPENCLAW_SKIP_CRON: "1",
-          OPENCLAW_SKIP_GMAIL_WATCHER: "1",
-          OPENCLAW_SKIP_PROVIDERS: "1",
-          OPENCLAW_TEST_MINIMAL_GATEWAY: "1",
-          VITEST: "1",
+          ...kernelTestEnv,
         },
       });
       const token = "gateway-kernel-close-readiness-token";
@@ -174,6 +171,7 @@ describe("createGatewayKernel", () => {
       const configReloaderStop = createDeferred();
       const recoveryStop = createDeferred();
       const updateCheckStopped = createDeferred();
+      const mentionInboxStopped = createDeferred();
       const periodicStopped = createDeferred();
       const nativePreparation = createDeferred();
       const preparationStarted = createDeferred();
@@ -199,6 +197,7 @@ describe("createGatewayKernel", () => {
         configReloaderStop.resolve();
         recoveryStop.resolve();
         updateCheckStopped.resolve();
+        mentionInboxStopped.resolve();
         periodicStopped.resolve();
         nativePreparation.resolve();
       };
@@ -269,9 +268,17 @@ describe("createGatewayKernel", () => {
             updatedAt: 1,
           },
         } satisfies GatewayClient;
-        expect(kernel.gatewayRequestContext.mentionInbox?.list(reader)).toMatchObject({
-          ok: true,
-          value: { gatewayInstanceId: bootId, items: [] },
+        const mentionInbox = kernel.gatewayRequestContext.mentionInbox!;
+        await mentionInbox.list(reader, (result) => {
+          expect(result).toMatchObject({
+            ok: true,
+            value: { gatewayInstanceId: bootId, items: [] },
+          });
+        });
+        const disposeMentionInbox = mentionInbox.dispose;
+        const inboxDispose = vi.spyOn(mentionInbox, "dispose").mockImplementation(() => {
+          const drain = disposeMentionInbox();
+          return Promise.all([drain, mentionInboxStopped.promise]).then(() => {});
         });
         const boundHost = kernel.gatewayRequestContext.hostLifecycle!;
         // Handoff consumption compares the private owner, not a copied predicate.
@@ -310,10 +317,10 @@ describe("createGatewayKernel", () => {
 
         expect(getStartup()).toMatchObject({ ok: false, status: "draining" });
         expect(getReadiness()).toMatchObject({ ready: false, failing: ["gateway-draining"] });
-        expect(kernel.gatewayRequestContext.mentionInbox?.list(reader)).toMatchObject({
-          ok: false,
-          error: { code: "UNAVAILABLE" },
+        await mentionInbox.list(reader, (result) => {
+          expect(result).toMatchObject({ ok: false, error: { code: "UNAVAILABLE" } });
         });
+        expect(inboxDispose).toHaveBeenCalledOnce();
         nativePreparation.resolve();
         await pendingStop;
         await expect(boundHost.request("start", () => {})).rejects.toThrow("closed instance");
@@ -342,6 +349,11 @@ describe("createGatewayKernel", () => {
         await nextTurn();
         expect(prepareShutdown).not.toHaveBeenCalled();
         periodicStopped.resolve();
+        await nextTurn();
+        expect(closeFirstStop).not.toHaveBeenCalled();
+        expect(terminalDispose).not.toHaveBeenCalled();
+        expect(gatewayStop).not.toHaveBeenCalled();
+        mentionInboxStopped.resolve();
         await closing;
         expect(closeFirstStop).toHaveBeenCalledOnce();
         expect(kernel.runtimeState.discovery).toBeNull();
@@ -380,16 +392,8 @@ describe("createGatewayKernel", () => {
         label: "gateway-kernel-reload-candidate",
         layout: "home",
         env: {
-          OPENCLAW_GATEWAY_PASSWORD: undefined,
-          OPENCLAW_GATEWAY_TOKEN: undefined,
-          OPENCLAW_SKIP_BROWSER_CONTROL_SERVER: "1",
-          OPENCLAW_SKIP_CANVAS_HOST: "1",
-          OPENCLAW_SKIP_CHANNELS: "1",
-          OPENCLAW_SKIP_CRON: "1",
-          OPENCLAW_SKIP_GMAIL_WATCHER: "1",
-          OPENCLAW_SKIP_PROVIDERS: "1",
+          ...kernelTestEnv,
           OPENCLAW_TEST_MINIMAL_GATEWAY: "0",
-          VITEST: "1",
         },
       });
       const previousOverrides = getConfigOverrides();
@@ -544,16 +548,8 @@ describe("createGatewayKernel", () => {
       label: "gateway-kernel-deferred-readiness",
       layout: "home",
       env: {
-        OPENCLAW_GATEWAY_PASSWORD: undefined,
-        OPENCLAW_GATEWAY_TOKEN: undefined,
-        OPENCLAW_SKIP_BROWSER_CONTROL_SERVER: "1",
-        OPENCLAW_SKIP_CANVAS_HOST: "1",
-        OPENCLAW_SKIP_CHANNELS: "1",
-        OPENCLAW_SKIP_CRON: "1",
-        OPENCLAW_SKIP_GMAIL_WATCHER: "1",
-        OPENCLAW_SKIP_PROVIDERS: "1",
+        ...kernelTestEnv,
         OPENCLAW_TEST_MINIMAL_GATEWAY: "0",
-        VITEST: "1",
       },
     });
     const token = "gateway-kernel-deferred-readiness-token";
@@ -779,18 +775,9 @@ describe("createGatewayKernel", () => {
       label: "gateway-kernel-no-transport",
       layout: "home",
       env: {
+        ...kernelTestEnv,
         OPENCLAW_DIAGNOSTICS: "1",
         OPENCLAW_DIAGNOSTICS_TIMELINE_PATH: undefined,
-        OPENCLAW_GATEWAY_PASSWORD: undefined,
-        OPENCLAW_GATEWAY_TOKEN: undefined,
-        OPENCLAW_SKIP_BROWSER_CONTROL_SERVER: "1",
-        OPENCLAW_SKIP_CANVAS_HOST: "1",
-        OPENCLAW_SKIP_CHANNELS: "1",
-        OPENCLAW_SKIP_CRON: "1",
-        OPENCLAW_SKIP_GMAIL_WATCHER: "1",
-        OPENCLAW_SKIP_PROVIDERS: "1",
-        OPENCLAW_TEST_MINIMAL_GATEWAY: "1",
-        VITEST: "1",
       },
     });
     const originalPluginRegistry = captureActivePluginRegistrySnapshot();
@@ -983,16 +970,7 @@ describe("createGatewayKernel", () => {
       label: "gateway-kernel-tls-failure",
       layout: "home",
       env: {
-        OPENCLAW_GATEWAY_PASSWORD: undefined,
-        OPENCLAW_GATEWAY_TOKEN: undefined,
-        OPENCLAW_SKIP_BROWSER_CONTROL_SERVER: "1",
-        OPENCLAW_SKIP_CANVAS_HOST: "1",
-        OPENCLAW_SKIP_CHANNELS: "1",
-        OPENCLAW_SKIP_CRON: "1",
-        OPENCLAW_SKIP_GMAIL_WATCHER: "1",
-        OPENCLAW_SKIP_PROVIDERS: "1",
-        OPENCLAW_TEST_MINIMAL_GATEWAY: "1",
-        VITEST: "1",
+        ...kernelTestEnv,
       },
     });
     const token = "gateway-kernel-tls-failure-token";

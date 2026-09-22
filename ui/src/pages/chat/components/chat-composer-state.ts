@@ -113,7 +113,9 @@ export function commitComposerDraft(
     previousMentions.some((previous, index) => {
       const next = nextMentions[index]!;
       return (
-        previous.profileId !== next.profileId ||
+        ("profileId" in previous
+          ? !("profileId" in next) || previous.profileId !== next.profileId
+          : "profileId" in next) ||
         currentDraft.slice(previous.start, previous.end) !== value.slice(next.start, next.end)
       );
     })

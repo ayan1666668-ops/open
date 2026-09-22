@@ -80,6 +80,8 @@ export type NormalizedChatSendRequest = {
   /** Submitted annotation identity is immutable even when profile aliases later merge. */
   requestIdentity: string;
   mentions?: HumanMention[];
+  /** Server-selected broadcast recipients; never accepted from RPC input. */
+  everyoneRecipients?: readonly string[];
   workContext?: AttachedChatWorkContext;
   reconnectResumeRequested: boolean;
 };
@@ -309,7 +311,11 @@ export function normalizeChatSendRequest(params: {
     .update(
       JSON.stringify([
         p.message,
-        p.mentions?.map(({ profileId, start, end }) => [profileId, start, end]) ?? [],
+        p.mentions?.map((mention) =>
+          "kind" in mention
+            ? [mention.kind, mention.start, mention.end, "broadcast"]
+            : [mention.profileId, mention.start, mention.end],
+        ) ?? [],
         ...(workContext ? [workContext.snapshot] : []),
         ...(providerReview ? [providerReview.review.id, providerReview.target.sessionId] : []),
       ]),

@@ -388,6 +388,8 @@ export async function prepareGatewayLifecycle(params: {
   let mediaCleanupStopPromise: ReturnType<typeof runtimeState.stopMediaCleanup> | null = null;
   const stopMediaCleanupForClose = () =>
     (mediaCleanupStopPromise ??= runtimeState.stopMediaCleanup());
+  let mentionInboxDisposePromise: Promise<void> | undefined;
+  const disposeMentionInboxForClose = () => (mentionInboxDisposePromise ??= mentionInbox.dispose());
   // Connect, RPC, and maintenance refreshes share a Gateway owner, not a socket lifetime.
   const healthWork = new AsyncWorkScope();
   const markClosePreludeStarted = (options?: GatewayCloseOptions) => {
@@ -404,7 +406,9 @@ export async function prepareGatewayLifecycle(params: {
       notice.restartExpectedMs !== undefined ? createAgentRunRestartAbortError() : undefined,
     );
     requestEntryLifetime.beginClose();
-    mentionInbox.dispose();
+    // Disposal closes Inbox admission synchronously and retains accepted work
+    // until its drain is joined in the async prelude below.
+    void disposeMentionInboxForClose().catch(() => {});
     healthWork.beginClose();
     broadcast("shutdown", notice);
     connectionDependentSidecarStopOwner.beginClose();
@@ -431,6 +435,7 @@ export async function prepareGatewayLifecycle(params: {
     // can publish into is torn down.
     await Promise.all([
       requestEntryLifetime.waitForPendingEntries(),
+      disposeMentionInboxForClose(),
       stopDeliveryRecoveryForClose(),
       stopMediaCleanupForClose(),
       runtimeState.stopGatewayUpdateCheck(),

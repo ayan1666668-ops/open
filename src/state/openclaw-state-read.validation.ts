@@ -63,6 +63,10 @@ export function isReadRequest(input: unknown): input is OpenClawStateReadRequest
         typeof input.command.input.deviceId === "string" &&
         typeof input.command.input.publicKey === "string" &&
         typeof input.command.input.nowMs === "number") ||
+      (input.command.type === "mentions.read" &&
+        isRecord(input.command.input) &&
+        typeof input.command.input.revision === "number" &&
+        typeof input.command.input.now === "number") ||
       input.command.type === "admit" ||
       input.command.type === "subagents.sessionList" ||
       (input.command.type === "subagents.runs" &&

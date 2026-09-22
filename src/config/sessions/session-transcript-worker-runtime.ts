@@ -199,6 +199,7 @@ function retainSessionHistoryWorkerDatabase(options: OpenClawAgentDatabaseOption
           if (
             typeof value === "boolean" ||
             Array.isArray(value) ||
+            value.kind === "pending-source" ||
             value.kind === "session-preview" ||
             value.kind === "session-title-fields" ||
             value.kind === "session-entry-list" ||
@@ -215,6 +216,23 @@ function retainSessionHistoryWorkerDatabase(options: OpenClawAgentDatabaseOption
           }
           return value;
         }),
+      readPendingSource: async (input) =>
+        await runRequest(
+          () => ({ kind: "pending-source", ...input }),
+          JSON.stringify(input).length * 2,
+          (value) => {
+            if (
+              typeof value === "boolean" ||
+              Array.isArray(value) ||
+              value.kind !== "pending-source"
+            ) {
+              throw new Error(
+                "Session history worker returned another result instead of pending source",
+              );
+            }
+            return value.value;
+          },
+        ),
       readPreview: async (input) =>
         await runRequest(
           () => ({ kind: "session-preview", ...input }),

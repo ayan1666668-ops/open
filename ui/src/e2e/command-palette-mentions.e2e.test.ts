@@ -1,3 +1,4 @@
+import type { UsersMentionableResult } from "@openclaw/gateway-protocol";
 import type { Locator } from "playwright";
 import { expect, it } from "vitest";
 import {
@@ -29,9 +30,9 @@ const people = [
   displayName,
   online: index % 2 === 0,
 }));
-function mentionScenario() {
+function mentionScenario(directory: UsersMentionableResult = { users: people, truncated: false }) {
   const base = scenario({
-    "users.mentionable": { users: people, truncated: false },
+    "users.mentionable": directory,
     "sessions.create": {
       key: "agent:main:dashboard:palette-mentioned",
       runStarted: true,
@@ -79,9 +80,12 @@ async function selectPerson(input: Locator, palette: Locator, index: number) {
 }
 
 suite.define(() => {
-  it("continues an explicitly typed mention across the first-open lazy handoff", async () => {
+  it("submits explicitly selected everyone through the first-open lazy handoff", async () => {
     await suite.withPage(createControlUiE2eContextOptions(), async ({ page }) => {
-      const gateway = await installMockGateway(page, mentionScenario());
+      const gateway = await installMockGateway(
+        page,
+        mentionScenario({ users: [], truncated: false, everyone: { recipientCount: 24 } }),
+      );
       const heldModule = await holdModuleResponse(
         page,
         /\/assets\/command-palette-[^/?]+\.js(?:\?.*)?$/u,
@@ -92,20 +96,30 @@ suite.define(() => {
         await page.keyboard.press("ControlOrMeta+K");
         const cold = page.locator(".cmd-palette[aria-busy=true] textarea");
         await cold.waitFor({ state: "visible" });
-        await cold.pressSequentially("@Al");
+        await cold.pressSequentially("@ev");
         heldModule.release();
         const palette = page.locator("openclaw-command-palette");
         const input = palette.locator(".cmd-palette__input");
         const menu = palette.getByRole("listbox", { name: "Mention a person" });
-        await menu.getByRole("option").nth(9).waitFor({ state: "visible" });
-        expect(await menu.getByRole("option").count()).toBe(10);
+        await menu.getByRole("option", { name: /@everyone/ }).waitFor({ state: "visible" });
+        expect(await menu.getByRole("option").count()).toBe(1);
         expect((await gateway.waitForRequest("users.mentionable")).params).toMatchObject({
-          query: "Al",
+          query: "ev",
           agentId: "main",
         });
         await input.press("Enter");
-        expect(await input.inputValue()).toBe("@Alex Chen ");
-        expect(await palette.locator(".composer-context-strip__person").count()).toBe(1);
+        expect(await input.inputValue()).toBe("@everyone ");
+        expect(await palette.locator(".composer-context-strip__person").textContent()).toContain(
+          "Everyone with access",
+        );
+        expect(await gateway.getRequests("sessions.create")).toEqual([]);
+        await input.press("ControlOrMeta+Enter");
+        expect((await gateway.waitForRequest("sessions.create")).params).toMatchObject({
+          message: "@everyone",
+          mentions: [{ kind: "everyone", start: 0, end: 9 }],
+        });
+        await input.waitFor({ state: "hidden" });
+        expect(await gateway.getRequests("chat.send")).toEqual([]);
       } finally {
         heldModule.release();
       }
@@ -150,8 +164,12 @@ suite.define(() => {
           ).toBe(true);
           await input.press("@");
           const menu = palette.getByRole("listbox", { name: "Mention a person" });
-          await menu.getByText(/10 people/u).waitFor();
-          expect(await menu.textContent()).toContain("10 people");
+          await menu
+            .getByText("You can select up to 10 mentions per message.", { exact: true })
+            .waitFor();
+          expect(await menu.textContent()).toContain(
+            "You can select up to 10 mentions per message.",
+          );
           expect(await menu.getByRole("option").count()).toBe(0);
           expect(await input.getAttribute("aria-activedescendant")).toBeNull();
           const limited = await input.inputValue();

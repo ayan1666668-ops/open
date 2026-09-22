@@ -7,7 +7,6 @@ import { createDeferred } from "../../../test/helpers/promise.js";
 import { registerAgentSessionLoopTestLifecycle } from "../../agents/sessions/agent-session-loop-correctness.test-support.js";
 import type { dispatchInboundMessage } from "../../auto-reply/dispatch.js";
 import { replyRunRegistry } from "../../auto-reply/reply/reply-run-registry.js";
-import { getRuntimeConfig } from "../../config/config.js";
 import {
   appendTranscriptMessageSync,
   listSessionPendingInputs,
@@ -22,6 +21,8 @@ import {
   toDatabaseOptions,
 } from "../../config/sessions/session-accessor.sqlite-scope.js";
 import { rotateAgentEventLifecycleGeneration } from "../../infra/agent-events.js";
+import * as sqliteWorkers from "../../infra/sqlite-worker-store.js";
+import type { SqliteWorkerOperations, SqliteWorkerStore } from "../../infra/sqlite-worker-store.js";
 import { initializeGlobalHookRunner } from "../../plugins/hook-runner-global.js";
 import { getSessionWorkAdmissionRelease } from "../../sessions/session-lifecycle-admission.js";
 import { attachSessionTranscriptRunId } from "../../sessions/transcript-events.js";
@@ -30,158 +31,23 @@ import {
   type UserTurnTranscriptRecorder,
 } from "../../sessions/user-turn-transcript.js";
 import { openOpenClawAgentDatabase } from "../../state/openclaw-agent-db.js";
-import { ensureSessionPendingInputsSchema } from "../../state/openclaw-agent-pending-inputs-schema.js";
-import { ensureProfileForEmail, setDisplayName } from "../../state/user-profiles.js";
-import { createMentionInbox } from "../mention-inbox.js";
+import { ensureProfileForEmail } from "../../state/user-profiles.js";
 import { dispatchInboundMessageMock, installGatewayTestHooks } from "../test-helpers.js";
 import { getTestPluginRegistry } from "../test-helpers.plugin-registry.js";
 import { createWorkerSessionPlacementStore } from "../worker-environments/placement-store.js";
 import { useBrowserFollowupFixture } from "./chat-send-pending-inputs.test-support.js";
-import type { GatewayClient, RespondFn } from "./types.js";
+import {
+  createPendingMentionFixture,
+  registerChatSendPendingMentionTests,
+} from "./chat-send-pending-mentions.test-support.js";
+import type { RespondFn } from "./types.js";
 installGatewayTestHooks();
 registerAgentSessionLoopTestLifecycle();
 const createBrowserFollowupFixture = useBrowserFollowupFixture();
 
 describe("ordinary chat input admission", () => {
-  async function createMentionFixture(
-    options: { active?: boolean; preserveContent?: boolean } = {},
-  ) {
-    const fixture = await createBrowserFollowupFixture({ preserveContent: true, ...options });
-    const profiles = ["Alice", "Bob", "Carol"].map((name) => {
-      const profile = ensureProfileForEmail(`${name.toLowerCase()}@mentions.example.test`);
-      setDisplayName(profile.id, name);
-      return { profileId: profile.id, displayName: name, hasAvatar: false, updatedAt: 1 };
-    });
-    const [alice, bob, carol] = profiles;
-    if (!alice || !bob || !carol) {
-      throw new Error("Mention test profiles were not created");
-    }
-    fixture.client.authenticatedUserProfile = alice;
-    const bobClient = { ...fixture.client, connId: "bob-one", authenticatedUserProfile: bob };
-    const carolClient = { ...fixture.client, connId: "carol", authenticatedUserProfile: carol };
-    const inbox = createMentionInbox({
-      gatewayInstanceId: "chat-mention-commit-test",
-      getRuntimeConfig,
-      getClients: () => [fixture.client, bobClient, carolClient],
-      broadcastToConnIds: vi.fn(),
-    });
-    fixture.context.mentionInbox = inbox;
-    fixture.params.message = "@Bob could you review this?";
-    fixture.params.mentions = [{ profileId: bob.profileId, start: 0, end: 4 }];
-    const read = (client: GatewayClient = bobClient) => {
-      const result = inbox.list(client);
-      if (!result.ok) {
-        throw new Error(result.error.message);
-      }
-      return result.value.items;
-    };
-    return {
-      ...fixture,
-      bobClient,
-      carolClient,
-      inbox,
-      read,
-      cleanup: async () => {
-        inbox.dispose();
-        await fixture.cleanup();
-      },
-    };
-  }
-
-  it("creates recipient-only mentions at original message commit, never at the queued ACK", async () => {
-    const fixture = await createMentionFixture();
-    try {
-      const ack = await fixture.send();
-      expect(ack).toHaveBeenCalledWith(
-        true,
-        expect.objectContaining({ status: "started" }),
-        undefined,
-        expect.anything(),
-      );
-      expect(fixture.read()).toEqual([]);
-      const recorder = await fixture.dispatchedRecorder;
-      const committed = await recorder.persistApproved();
-      expect(committed?.appended).toBe(true);
-      expect(fixture.read()).toMatchObject([
-        {
-          messageId: committed?.messageId,
-          senderProfileId: fixture.client.authenticatedUserProfile?.profileId,
-          excerpt: fixture.params.message,
-        },
-      ]);
-      expect(fixture.read(fixture.client)).toEqual([]);
-      expect(fixture.read(fixture.carolClient)).toEqual([]);
-      const id = fixture.read()[0]?.id;
-      expect(id).toBeDefined();
-      fixture.inbox.dismiss(fixture.bobClient, id ? [id] : []);
-      await recorder.persistApproved();
-      await fixture.send();
-      expect(fixture.read()).toEqual([]);
-    } finally {
-      await fixture.cleanup();
-    }
-  });
-
-  it("includes an idle first commit in the Inbox before ACK without waiting for the agent", async () => {
-    const fixture = await createMentionFixture({ active: false });
-    let atAck = 0;
-    try {
-      const ack = await fixture.send(
-        vi.fn((ok) => {
-          if (ok) {
-            atAck = fixture.read().length;
-          }
-        }),
-      );
-      expect(ack).toHaveBeenCalledWith(
-        true,
-        expect.objectContaining({ status: "started", messageSeq: 2 }),
-        undefined,
-        expect.anything(),
-      );
-      expect(atAck).toBe(1);
-      await fixture.finishDispatch();
-      expect(fixture.read()).toHaveLength(1);
-    } finally {
-      await fixture.cleanup();
-    }
-  });
-
-  it("does not notify when approval replaces the selected token", async () => {
-    const fixture = await createMentionFixture({ preserveContent: false });
-    try {
-      await fixture.send();
-      const recorder = await fixture.dispatchedRecorder;
-      const committed = await recorder.persistApproved();
-      expect(committed?.message.content).toBe(fixture.approvedContent);
-      expect(committed?.message["__openclaw"]?.humanMentions).toBeUndefined();
-      expect(fixture.read()).toEqual([]);
-    } finally {
-      await fixture.cleanup();
-    }
-  });
-
-  it("rejects changed recipients on a same-ID retry while preserving the queued original", async () => {
-    const fixture = await createMentionFixture();
-    try {
-      await fixture.send();
-      fixture.params.mentions = [
-        { profileId: fixture.carolClient.authenticatedUserProfile.profileId, start: 0, end: 4 },
-      ];
-      const replay = await fixture.send();
-      expect(replay).toHaveBeenCalledWith(
-        false,
-        undefined,
-        expect.objectContaining({ message: expect.stringMatching(/different|conflict|reused/i) }),
-      );
-      const recorder = await fixture.dispatchedRecorder;
-      await recorder.persistApproved();
-      expect(fixture.read()).toHaveLength(1);
-      expect(fixture.read(fixture.carolClient)).toEqual([]);
-    } finally {
-      await fixture.cleanup();
-    }
-  });
+  const createMentionFixture = createPendingMentionFixture(createBrowserFollowupFixture);
+  registerChatSendPendingMentionTests(createBrowserFollowupFixture);
 
   it("retains pending-input custody while retrying a transient post-ACK projection failure", async () => {
     const fixture = await createBrowserFollowupFixture({ transientProjectionFailures: 1 });
@@ -403,15 +269,55 @@ describe("ordinary chat input admission", () => {
 
   it("retries a failed custody write with the same request identity without acknowledging lost input", async () => {
     const fixture = await createBrowserFollowupFixture();
-    const database = openOpenClawAgentDatabase(
-      toDatabaseOptions(resolveSqliteScope(fixture.scope)),
-    ).db;
-    ensureSessionPendingInputsSchema(database);
-    database.exec(
-      "CREATE TRIGGER reject_browser_custody BEFORE INSERT ON session_pending_inputs BEGIN SELECT RAISE(ABORT, 'custody unavailable'); END",
-    );
+    const runOperation = sqliteWorkers.runSqliteWorkerStoreOperation;
+    let refusedAccepts = 0;
+    // Refuse only this request's accept command; a schema trigger would instead fail
+    // canonical admission of the worker connection before custody is attempted.
+    const fault = vi
+      .spyOn(sqliteWorkers, "runSqliteWorkerStoreOperation")
+      .mockImplementation(
+        <Operations extends SqliteWorkerOperations, T>(
+          store: SqliteWorkerStore<Operations>,
+          operation: (scope: Pick<SqliteWorkerStore<Operations>, "execute">) => T | Promise<T>,
+          stateContext?: Parameters<typeof runOperation>[2],
+          assertCurrent?: Parameters<typeof runOperation>[3],
+          createAdmission?: Parameters<typeof runOperation>[4],
+          requireStateLifecycle?: Parameters<typeof runOperation>[5],
+        ) =>
+          runOperation(
+            store,
+            (scope) =>
+              operation({
+                execute: (command, options) => {
+                  const input = command.input;
+                  if (
+                    refusedAccepts === 0 &&
+                    command.type === "database.domain.execute" &&
+                    isRecord(input) &&
+                    isRecord(input.command) &&
+                    input.command.type === "accept" &&
+                    isRecord(input.command.input) &&
+                    input.command.input.idempotencyKey ===
+                      `${fixture.params.idempotencyKey}:user` &&
+                    isRecord(input.command.input.scope) &&
+                    input.command.input.scope.sessionId === fixture.scope.sessionId
+                  ) {
+                    refusedAccepts++;
+                    return Promise.reject(new Error("custody unavailable"));
+                  }
+                  return scope.execute(command, options);
+                },
+              }),
+            stateContext,
+            assertCurrent,
+            createAdmission,
+            requireStateLifecycle,
+          ),
+      );
     try {
       const rejected = await fixture.send();
+      expect(refusedAccepts).toBe(1);
+      expect(rejected).toHaveBeenCalledOnce();
       expect(rejected).toHaveBeenCalledWith(
         false,
         expect.objectContaining({ status: "error" }),
@@ -427,7 +333,6 @@ describe("ordinary chat input admission", () => {
         identities: [fixture.scope.sessionKey, fixture.scope.sessionId],
       });
 
-      database.exec("DROP TRIGGER reject_browser_custody");
       const retried = await fixture.send();
       expect(retried).toHaveBeenCalledWith(
         true,
@@ -441,7 +346,7 @@ describe("ordinary chat input admission", () => {
       });
       expect(loadTranscriptEventsSync(fixture.scope)).toEqual(fixture.activeTranscript);
     } finally {
-      database.exec("DROP TRIGGER IF EXISTS reject_browser_custody");
+      fault.mockRestore();
       await fixture.cleanup();
     }
   });

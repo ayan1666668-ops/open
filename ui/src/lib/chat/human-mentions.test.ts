@@ -16,6 +16,34 @@ describe("human mention text ownership", () => {
     expect(updateHumanMentions("@Alex", next, [alex])).toEqual(expected);
   });
 
+  it("retains explicit everyone selections through drafts and invalidates changed tokens", () => {
+    const everyone = { kind: "everyone" as const, start: 0, end: 9 };
+    expect(readHumanMentions("@everyone", [everyone])).toEqual([everyone]);
+    for (const [text, accepted] of [
+      ["x@everyone", false],
+      ["@everyoneelse", false],
+      ["𐐀@everyone", false],
+      ["@everyone𐐀", false],
+      ["@everyone!", true],
+      ["(@everyone)", true],
+    ] as const) {
+      const start = text.indexOf("@everyone");
+      const selection = [{ ...everyone, start, end: start + 9 }];
+      expect(readHumanMentions(text, selection)).toEqual(accepted ? selection : undefined);
+    }
+    expect(readHumanMentions("@everyone", undefined)).toBeUndefined();
+    expect(readHumanMentions("@somebody", [everyone])).toBeUndefined();
+    expect(readHumanMentions("@everyone", [{ ...everyone, profileId: "forged" }])).toBeUndefined();
+    expect(updateHumanMentions("@everyone", "Hi @everyone", [everyone])).toEqual([
+      { ...everyone, start: 3, end: 12 },
+    ]);
+    expect(updateHumanMentions("@everyone", "@everybody", [everyone])).toEqual([]);
+    expect(trimHumanMentions("  @everyone  ", [{ ...everyone, start: 2, end: 11 }])).toEqual({
+      text: "@everyone",
+      mentions: [everyone],
+    });
+  });
+
   it("deletes the actual selected occurrence when two people share a label", () => {
     const otherAlex = { profileId: "another-alex", start: 6, end: 11 };
     const previous = "@Alex @Alex";

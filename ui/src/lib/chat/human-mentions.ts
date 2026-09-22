@@ -24,9 +24,12 @@ export function readHumanMentions(
   for (const entry of value) {
     if (
       !isRecord(entry) ||
-      typeof entry.profileId !== "string" ||
-      !entry.profileId.trim() ||
-      entry.profileId.length > 256 ||
+      (entry.kind === "everyone"
+        ? "profileId" in entry
+        : entry.kind !== undefined ||
+          typeof entry.profileId !== "string" ||
+          !entry.profileId.trim() ||
+          entry.profileId.length > 256) ||
       typeof entry.start !== "number" ||
       !Number.isSafeInteger(entry.start) ||
       typeof entry.end !== "number" ||
@@ -45,7 +48,18 @@ export function readHumanMentions(
         return undefined;
       }
     }
-    mentions.push({ profileId: entry.profileId, start: entry.start, end: entry.end });
+    if (entry.kind === "everyone") {
+      if (
+        text.slice(entry.start, entry.end) !== "@everyone" ||
+        /(?:\p{L}|\p{N}|\p{M}|[_@.%+-])$/u.test(text.slice(0, entry.start)) ||
+        /^[\p{L}\p{N}\p{M}_-]/u.test(text.slice(entry.end))
+      ) {
+        return undefined;
+      }
+      mentions.push({ kind: "everyone", start: entry.start, end: entry.end });
+    } else if (typeof entry.profileId === "string") {
+      mentions.push({ profileId: entry.profileId, start: entry.start, end: entry.end });
+    }
     previousEnd = entry.end;
   }
   return mentions;

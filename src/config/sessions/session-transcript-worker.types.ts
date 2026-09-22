@@ -223,7 +223,32 @@ export type SessionBranchSummaryWorkerInput = {
   request: SessionBranchSummaryReadRequest;
 };
 
+export type SessionPendingSourceWorkerInput = {
+  kind: "pending-source";
+  database: { agentId: string; path: string };
+  scope: SessionAccessScope & { agentId: string; sessionId: string };
+  request:
+    | { kind: "submitted"; idempotencyKey: string }
+    | { kind: "retained"; idempotencyKey: string; requestFingerprint: string }
+    | {
+        kind: "dedupe";
+        idempotencyKey: string;
+        inputId: string;
+        runId: string;
+        messageJson: string;
+        lifecycleGeneration: string;
+      };
+};
+type SessionPendingSourceWorkerResult = {
+  kind: "pending-source";
+  value:
+    | boolean
+    | import("../../sessions/user-turn-transcript.types.js").PersistedUserTurnMessage
+    | undefined;
+};
+
 export type SessionHistoryWorkerInput =
+  | SessionPendingSourceWorkerInput
   | SessionTranscriptHistoryWorkerInput
   | SessionPreviewWorkerInput
   | SessionTitleFieldsWorkerInput
@@ -251,6 +276,7 @@ export type SessionHistoryWorkerPreparedInput = {
 }[SessionHistoryDatabaseWorkerInput["kind"]];
 
 export type SessionTranscriptWorkerValues = {
+  "pending-source": SessionPendingSourceWorkerResult;
   "transcript-search": SessionTranscriptSearchWorkerResult;
   "branch-summaries": SessionBranchSummaryReadResult;
   "history-page": SessionHistoryWorkerResult;
@@ -288,6 +314,9 @@ export type SessionTranscriptWorkerReply<Kind extends keyof SessionTranscriptWor
     };
 
 export type SessionHistoryWorkerDatabase = {
+  readPendingSource: (
+    input: Omit<SessionPendingSourceWorkerInput, "kind" | "database">,
+  ) => Promise<SessionPendingSourceWorkerResult["value"]>;
   searchTranscripts: (
     params: SessionTranscriptSearchWorkerInput["params"],
   ) => Promise<SessionTranscriptSearchWorkerResult["result"]>;

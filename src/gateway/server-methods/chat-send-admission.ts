@@ -57,6 +57,7 @@ import {
   inspectGoalChatSendRetry,
   readChatSendDedupeResponse,
   resolveChatSendRequestConflict,
+  prepareChatSendRequestConflict,
   respondChatSendAdmissionError,
   respondChatSendRetry,
   respondChatSessionRoutingChanged,
@@ -109,6 +110,8 @@ export async function admitChatSend(params: {
     restartSafeRequest,
     expectedLeafEntryId,
   } = session;
+  const cachedResponseMeta = { cached: true, runId: clientRunId };
+  const inFlightPayload = { runId: clientRunId, status: "in_flight" as const };
   const chatSendTraceAttributes = {
     runId: clientRunId,
     sessionKey,
@@ -136,13 +139,15 @@ export async function admitChatSend(params: {
       entry: context.dedupe.get(pendingChatSendKey),
       keyPrefix: PENDING_CHAT_SEND_DEDUPE_PREFIX,
     });
+  // Keep no-I/O reservation synchronous; inspect competing claims after any real read.
+  const retryPreparation = prepareChatSendRequestConflict(params);
+  if (retryPreparation) {
+    await retryPreparation;
+  }
   const goalRetry = inspectGoalChatSendRetry(params);
   if (goalRetry.kind !== "new") {
     if (goalRetry.kind === "replay") {
-      respond(true, { ...goalRetry.receipt, replayed: true }, undefined, {
-        cached: true,
-        runId: clientRunId,
-      });
+      respond(true, { ...goalRetry.receipt, replayed: true }, undefined, cachedResponseMeta);
     }
     return { ok: false as const };
   }
@@ -444,7 +449,7 @@ export async function admitChatSend(params: {
       context.chatRunState.hasAbortMarker(clientRunId) &&
       readChatSendDedupeResponse(context.dedupe, clientRunId);
     if (aborted) {
-      respond(aborted.ok, aborted.payload, aborted.error, { cached: true, runId: clientRunId });
+      respond(aborted.ok, aborted.payload, aborted.error, cachedResponseMeta);
       return { ok: false as const };
     }
     respondChatSendAdmissionError(err, respond);
@@ -479,16 +484,15 @@ export async function admitChatSend(params: {
     const supersedingCached =
       supersedingResult ?? readChatSendDedupeResponse(context.dedupe, clientRunId);
     if (supersedingCached) {
-      respond(supersedingCached.ok, supersedingCached.payload, supersedingCached.error, {
-        cached: true,
-        runId: clientRunId,
-      });
+      respond(
+        supersedingCached.ok,
+        supersedingCached.payload,
+        supersedingCached.error,
+        cachedResponseMeta,
+      );
       return { ok: false as const };
     }
-    respond(true, { runId: clientRunId, status: "in_flight" as const }, undefined, {
-      cached: true,
-      runId: clientRunId,
-    });
+    respond(true, inFlightPayload, undefined, cachedResponseMeta);
     return { ok: false as const };
   }
   if (lifecycleGeneration !== getAgentEventLifecycleGeneration()) {
@@ -509,20 +513,14 @@ export async function admitChatSend(params: {
       });
     }
     const aborted = readChatSendDedupeResponse(context.dedupe, clientRunId);
-    respond(aborted?.ok ?? true, aborted?.payload, aborted?.error, {
-      cached: true,
-      runId: clientRunId,
-    });
+    respond(aborted?.ok ?? true, aborted?.payload, aborted?.error, cachedResponseMeta);
     return { ok: false as const };
   }
   if (!activeRunAbort) {
     gatewayWorkAdmission.release();
     const aborted = readChatSendDedupeResponse(context.dedupe, clientRunId);
     if (aborted) {
-      respond(aborted.ok, aborted.payload, aborted.error, {
-        cached: true,
-        runId: clientRunId,
-      });
+      respond(aborted.ok, aborted.payload, aborted.error, cachedResponseMeta);
       return { ok: false as const };
     }
     respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, "chat run admission failed"));
@@ -530,10 +528,7 @@ export async function admitChatSend(params: {
   }
   if (!activeRunAbort.registered) {
     gatewayWorkAdmission.release();
-    respond(true, { runId: clientRunId, status: "in_flight" as const }, undefined, {
-      cached: true,
-      runId: clientRunId,
-    });
+    respond(true, inFlightPayload, undefined, cachedResponseMeta);
     return { ok: false as const };
   }
   let releaseGatewayRootContinuation = () => {};

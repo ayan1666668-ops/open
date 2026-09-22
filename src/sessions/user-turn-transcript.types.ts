@@ -46,7 +46,9 @@ export type PersistedUserTurnMessage = Extract<AgentMessage, { role: "user" }> &
   /** Private transcript correlation; never authorizes an execution. */
   idempotencyKey?: string;
   provenance?: InputProvenance;
-  __openclaw?: Record<string, unknown> & { humanMentions?: readonly HumanMention[] };
+  __openclaw?: Record<string, unknown> & {
+    humanMentions?: readonly HumanMention[];
+  };
 };
 
 export type UserTurnInput = Pick<PersistedUserTurnMessage, "display" | "excludeFromContext"> & {
@@ -179,7 +181,7 @@ export type PersistUserTurnTranscriptParams = {
   beforeMessageWrite?: UserTurnBeforeMessageWrite;
   expectedSessionState?: SessionTranscriptTurnExpectedState;
   sessionLifecyclePatch?: SessionTranscriptTurnLifecyclePatch;
-  onOriginalInputCommitted?: (commit: UserTurnOriginalInputCommit) => void;
+  onOriginalInputCommitted?: (commit: UserTurnOriginalInputCommit) => void | Promise<void>;
 };
 
 type UserTurnInputResolver = () => UserTurnInput | undefined | Promise<UserTurnInput | undefined>;
@@ -187,6 +189,8 @@ type UserTurnInputResolver = () => UserTurnInput | undefined | Promise<UserTurnI
 export type CreateUserTurnTranscriptRecorderParams = {
   /** Authenticated input identity independent of prepared media paths. */
   pendingInputRequestFingerprint?: string;
+  /** Private ingress custody never enters pending message JSON or transcript metadata. */
+  preparePendingInputSourceCustody?: (source: { recovered: boolean }) => void | Promise<void>;
   trackInputCompletion?: boolean;
   /** Trusted settle replay candidates; storage must match the complete original request hash. */
   pendingInputReplaySourceSessionKeys?: readonly string[];
@@ -204,8 +208,10 @@ export type CreateUserTurnTranscriptRecorderParams = {
   assertOriginalInputCommit?: () => void;
   onPersistenceError?: (error: unknown) => void;
   onMessagePersisted?: (message: PersistedUserTurnMessage) => void | Promise<void>;
-  /** Fresh original input only, after durable append and before transcript publication. */
-  onOriginalInputCommitted?: (commit: UserTurnOriginalInputCommit) => void;
+  /** Reserve owner custody synchronously with committed bytes, before source callbacks yield. */
+  retainOriginalInputCompletion?: () => (complete: () => Promise<void>) => Promise<void>;
+  /** Fresh original input only; completion is retained by the persistence owner. */
+  onOriginalInputCommitted?: (commit: UserTurnOriginalInputCommit) => void | Promise<void>;
   expectedSessionState?: SessionTranscriptTurnExpectedState;
   sessionLifecyclePatch?: SessionTranscriptTurnLifecyclePatch;
 };

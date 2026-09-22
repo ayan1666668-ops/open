@@ -5,6 +5,7 @@ import { icons } from "../../../components/icons.ts";
 import { t } from "../../../i18n/index.ts";
 import type { HumanMention } from "../../../lib/chat/chat-types.ts";
 import "../../../styles/chat/composer-context-strip.css";
+import "../../../styles/chat/mention-menu.css";
 import { renderChatAuthorAvatar } from "./chat-author-avatar.ts";
 
 class MentionOverflowDirective extends AsyncDirective {
@@ -107,10 +108,19 @@ export function renderSelectedHumanMentions(
   if (!mentions?.length) {
     return nothing;
   }
-  const recipients = new Map(mentions.map((mention) => [mention.profileId, mention]));
+  const recipients = new Map(
+    mentions.map((mention) => [
+      "profileId" in mention ? `profile:${mention.profileId}` : "everyone",
+      mention,
+    ]),
+  );
   const people = [...recipients.values()].map((mention) => {
     const label = text.slice(mention.start, mention.end);
-    return { profileId: mention.profileId, label, name: label.replace(/^@/u, "") };
+    return {
+      profileId: "profileId" in mention ? mention.profileId : undefined,
+      label,
+      name: "profileId" in mention ? label.replace(/^@/u, "") : t("chat.mentions.everyoneSelected"),
+    };
   });
   return html`<div class="chat-reply-preview composer-context-strip" role="status">
     <span class="composer-context-strip__label">
@@ -125,7 +135,16 @@ export function renderSelectedHumanMentions(
     >
       ${people.map(
         (person, index) => html`<span class="composer-context-strip__person" title=${person.label}>
-          ${renderChatAuthorAvatar({ id: person.profileId, name: person.name, identity: { type: "profile", id: person.profileId }, profileAvatarUrl: avatarUrls?.get(person.profileId) })}
+          ${
+            person.profileId
+              ? renderChatAuthorAvatar({
+                  id: person.profileId,
+                  name: person.name,
+                  identity: { type: "profile", id: person.profileId },
+                  profileAvatarUrl: avatarUrls?.get(person.profileId),
+                })
+              : html`<span class="mention-everyone-icon">${icons.users}</span>`
+          }
           <bdi class="composer-context-strip__person-name"
             >${person.name}${index < people.length - 1 ? "," : ""}</bdi
           >
