@@ -217,6 +217,9 @@ export {
 } from "../plugins/memory-state.js";
 export type {
   MemoryPluginCapability,
+  MemoryPluginDreamingPhaseStatus,
+  MemoryPluginDreamingProvider,
+  MemoryPluginDreamingStatus,
   MemoryPluginPublicArtifact,
   MemoryPromptSectionBuilder,
 } from "../plugins/memory-state.js";

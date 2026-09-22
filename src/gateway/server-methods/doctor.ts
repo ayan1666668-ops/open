@@ -26,6 +26,11 @@ import {
 } from "../../memory-host-sdk/dreaming.js";
 import * as defaultMemoryCoreRuntime from "../../plugin-sdk/memory-core-bundled-runtime.js";
 import { getActiveMemorySearchManagerCore } from "../../plugins/memory-runtime.js";
+import { resolveActiveMemoryDreamingStatus } from "../../plugins/memory-state.js";
+import type {
+  MemoryPluginDreamingPhaseStatus,
+  MemoryPluginDreamingStatus,
+} from "../../plugins/registry-contribution-types.js";
 import { normalizeAgentId } from "../../routing/session-key.js";
 import { formatError } from "../server-utils.js";
 import {
@@ -169,6 +174,44 @@ function groundedMarkdownToDiaryLines(markdown: string): string[] {
         line.length > 0 ||
         (index > 0 && expectDefined(lines[index - 1], "lines entry at index 1")?.length > 0),
     );
+}
+
+/**
+ * Overlays what the slot owner reported about the run itself. Anything it
+ * leaves out keeps the host-resolved value.
+ */
+function applyReportedDreamingTop(
+  reported: MemoryPluginDreamingStatus | null,
+): Partial<DoctorMemoryDreamingConfigPayload> {
+  if (!reported) {
+    return {};
+  }
+  return {
+    ...(reported.enabled === undefined ? {} : { enabled: reported.enabled }),
+    ...(reported.timezone === undefined ? {} : { timezone: reported.timezone }),
+  };
+}
+
+/**
+ * Merges one reported phase over the host-resolved phase. `scheduled` maps onto
+ * `managedCronPresent` so a provider that dreams on its own timer — or on an
+ * event, reporting `scheduled` without a `cron` — no longer reads as unscheduled.
+ */
+function applyReportedDreamingPhase<T extends { managedCronPresent: boolean; cron: string }>(
+  resolved: T,
+  reported: MemoryPluginDreamingPhaseStatus | undefined,
+): T {
+  if (!reported) {
+    return resolved;
+  }
+  return {
+    ...resolved,
+    ...(reported.enabled === undefined ? {} : { enabled: reported.enabled }),
+    ...(reported.cron === undefined ? {} : { cron: reported.cron }),
+    ...(reported.scheduled === undefined ? {} : { managedCronPresent: reported.scheduled }),
+    ...(reported.lastRunAtMs === undefined ? {} : { lastRunAtMs: reported.lastRunAtMs }),
+    ...(reported.nextRunAtMs === undefined ? {} : { nextRunAtMs: reported.nextRunAtMs }),
+  };
 }
 
 function resolveDreamingConfig(cfg: OpenClawConfig): DoctorMemoryDreamingConfigPayload {
@@ -624,6 +667,7 @@ export const createDoctorHandlers = (
       }
       const nowMs = Date.now();
       const dreamingConfig = resolveDreamingConfig(cfg);
+      const reportedDreaming = await resolveActiveMemoryDreamingStatus({ cfg, agentId });
       const workspaceDir = normalizeOptionalString(
         (status as Record<string, unknown>).workspaceDir,
       );
@@ -675,19 +719,21 @@ export const createDoctorHandlers = (
         dreaming: {
           ...dreamingConfig,
           ...storeStats,
+          ...applyReportedDreamingTop(reportedDreaming),
+          ...(reportedDreaming?.stats ?? {}),
           phases: {
-            light: {
-              ...dreamingConfig.phases.light,
-              ...cronStatuses.light,
-            },
-            deep: {
-              ...dreamingConfig.phases.deep,
-              ...cronStatuses.deep,
-            },
-            rem: {
-              ...dreamingConfig.phases.rem,
-              ...cronStatuses.rem,
-            },
+            light: applyReportedDreamingPhase(
+              { ...dreamingConfig.phases.light, ...cronStatuses.light },
+              reportedDreaming?.phases?.light,
+            ),
+            deep: applyReportedDreamingPhase(
+              { ...dreamingConfig.phases.deep, ...cronStatuses.deep },
+              reportedDreaming?.phases?.deep,
+            ),
+            rem: applyReportedDreamingPhase(
+              { ...dreamingConfig.phases.rem, ...cronStatuses.rem },
+              reportedDreaming?.phases?.rem,
+            ),
           },
         },
       };

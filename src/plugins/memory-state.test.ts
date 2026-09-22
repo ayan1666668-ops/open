@@ -9,6 +9,7 @@ import {
   listMemoryCorpusSupplements,
   listMemoryPromptPreparations,
   listActiveMemoryPublicArtifacts,
+  resolveActiveMemoryDreamingStatus,
   prepareMemoryPromptSection,
   registerMemoryCapability,
   registerMemoryCorpusSupplement,
@@ -167,6 +168,69 @@ describe("memory plugin state", () => {
         contentType: "markdown",
       },
     ]);
+  });
+
+  it("reports the slot owner's own dreaming schedule", async () => {
+    registerMemoryCapability("third-party-memory", {
+      dreaming: {
+        async getStatus() {
+          return {
+            enabled: true,
+            timezone: "Europe/Berlin",
+            phases: {
+              rem: { enabled: true, cron: "15 1 * * *", scheduled: true },
+              light: { enabled: true, scheduled: true },
+            },
+            stats: { promotedTotal: 139 },
+          };
+        },
+      },
+    });
+
+    await expect(
+      resolveActiveMemoryDreamingStatus({ cfg: {} as never, agentId: "main" }),
+    ).resolves.toEqual({
+      enabled: true,
+      timezone: "Europe/Berlin",
+      phases: {
+        rem: { enabled: true, cron: "15 1 * * *", scheduled: true },
+        light: { enabled: true, scheduled: true },
+      },
+      stats: { promotedTotal: 139 },
+    });
+  });
+
+  it("reports no dreaming status when the slot owner registers no provider", async () => {
+    registerMemoryCapability("memory-core", {});
+
+    await expect(
+      resolveActiveMemoryDreamingStatus({ cfg: {} as never, agentId: "main" }),
+    ).resolves.toBeNull();
+  });
+
+  it("keeps the host resolution when a dreaming provider throws or misreports", async () => {
+    registerMemoryCapability("third-party-memory", {
+      dreaming: {
+        async getStatus() {
+          throw new Error("provider exploded");
+        },
+      },
+    });
+    await expect(
+      resolveActiveMemoryDreamingStatus({ cfg: {} as never, agentId: "main" }),
+    ).resolves.toBeNull();
+
+    clearMemoryPluginState();
+    registerMemoryCapability("third-party-memory", {
+      dreaming: {
+        async getStatus() {
+          return { phases: { rem: { cron: 42 } } } as never;
+        },
+      },
+    });
+    await expect(
+      resolveActiveMemoryDreamingStatus({ cfg: {} as never, agentId: "main" }),
+    ).resolves.toBeNull();
   });
 
   it("normalizes public memory artifacts without agent ids", async () => {

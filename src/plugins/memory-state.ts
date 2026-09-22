@@ -10,6 +10,8 @@ import type {
   MemoryFlushPlan,
   MemoryPluginCapability,
   MemoryPluginCapabilityRegistration,
+  MemoryPluginDreamingProvider,
+  MemoryPluginDreamingStatus,
   MemoryPluginPublicArtifact,
   MemoryPluginRuntime,
   MemoryPromptPreparationRegistration,
@@ -35,6 +37,9 @@ export type {
   MemoryFlushPlan,
   MemoryFlushPlanResolver,
   MemoryPluginCapability,
+  MemoryPluginDreamingPhaseStatus,
+  MemoryPluginDreamingProvider,
+  MemoryPluginDreamingStatus,
   MemoryPluginPublicArtifact,
   MemoryPluginPublicArtifactsProvider,
   MemoryPluginRuntime,
@@ -441,6 +446,68 @@ export async function listActiveMemoryPublicArtifacts(params: {
     }
     return left.absolutePath.localeCompare(right.absolutePath);
   });
+}
+
+function isValidDreamingPhaseStatus(value: unknown): boolean {
+  if (value === undefined) {
+    return true;
+  }
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  const phase = value as Record<string, unknown>;
+  return (
+    (phase.enabled === undefined || typeof phase.enabled === "boolean") &&
+    (phase.cron === undefined || typeof phase.cron === "string") &&
+    (phase.scheduled === undefined || typeof phase.scheduled === "boolean") &&
+    (phase.lastRunAtMs === undefined || typeof phase.lastRunAtMs === "number") &&
+    (phase.nextRunAtMs === undefined || typeof phase.nextRunAtMs === "number")
+  );
+}
+
+/**
+ * Asks the memory slot owner how its own dreaming is scheduled and how far
+ * consolidation has got. Returns `null` when no provider is registered, when it
+ * declines, or when it misbehaves — callers then keep memory-core's resolution,
+ * so a third-party provider can never blank out the page.
+ */
+export async function resolveActiveMemoryDreamingStatus(params: {
+  cfg: OpenClawConfig;
+  agentId: string;
+}): Promise<MemoryPluginDreamingStatus | null> {
+  const capability = getMemoryCapability();
+  const provider: MemoryPluginDreamingProvider | undefined = capability?.capability.dreaming;
+  if (!provider) {
+    return null;
+  }
+  const pluginId = capability?.pluginId;
+  let reported: MemoryPluginDreamingStatus | null | undefined;
+  try {
+    reported = await provider.getStatus(params);
+  } catch (err) {
+    log.warn(`ignoring dreaming status from plugin "${pluginId}": ${String(err)}`);
+    return null;
+  }
+  if (reported === undefined || reported === null) {
+    return null;
+  }
+  if (typeof reported !== "object") {
+    log.warn(`ignoring dreaming status from plugin "${pluginId}": not an object`);
+    return null;
+  }
+  const phases = reported.phases;
+  if (
+    phases !== undefined &&
+    (typeof phases !== "object" ||
+      phases === null ||
+      !isValidDreamingPhaseStatus(phases.light) ||
+      !isValidDreamingPhaseStatus(phases.deep) ||
+      !isValidDreamingPhaseStatus(phases.rem))
+  ) {
+    log.warn(`ignoring dreaming status from plugin "${pluginId}": malformed phases`);
+    return null;
+  }
+  return reported;
 }
 
 export function clearMemoryPluginState(): void {
