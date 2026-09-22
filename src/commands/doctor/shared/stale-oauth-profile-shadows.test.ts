@@ -6,6 +6,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   coercePersistedAuthProfileStore,
   loadPersistedAuthProfileStore,
+  loadPersistedSharedAuthProfileStore,
+  mergeAuthProfileStores,
 } from "../../../agents/auth-profiles/persisted.js";
 import { clearRuntimeAuthProfileStoreSnapshots } from "../../../agents/auth-profiles/runtime-snapshots.js";
 import { writePersistedAuthProfileStoreRaw } from "../../../agents/auth-profiles/sqlite.js";
@@ -374,9 +376,77 @@ describe("stale OAuth profile shadow doctor repair", () => {
     const childStore = loadPersistedAuthProfileStore(childAgentDir);
     expect(childStore?.profiles[profileId]).toBeUndefined();
     expect(childStore?.usageStats?.[profileId]).toBeUndefined();
-    expect(childStore?.order?.anthropic).toBeUndefined();
+    expect(childStore?.order?.anthropic).toEqual([profileId]);
     expect(childStore?.lastGood?.anthropic).toBeUndefined();
   });
+
+  it.each(["preferred", "fallback"])(
+    "preserves the authored order when the %s profile becomes inherited",
+    async (position) => {
+      const sharedId = "anthropic:shared";
+      const localId = "anthropic:local";
+      const missingId = "anthropic:missing";
+      const now = Date.now();
+      const childAgentDir = path.join(stateDir, "agents", "telegram", "agent");
+      const order =
+        position === "preferred" ? [sharedId, localId, missingId] : [localId, sharedId, missingId];
+      const localCredential = oauthCredential({ accountId: "acct-local" });
+      const localHealth = { errorCount: 1, lastUsed: now - 1_000 };
+      writePersistedAuthProfileStoreRaw(
+        {
+          version: 1,
+          profiles: {
+            [localId]: localCredential,
+            [sharedId]: oauthCredential({
+              access: "child-access",
+              refresh: "child-refresh",
+              expires: now - 60_000,
+              accountId: "acct-shared",
+            }),
+          },
+          order: { anthropic: order },
+          lastGood: { anthropic: sharedId },
+          usageStats: {
+            [localId]: localHealth,
+            [sharedId]: { errorCount: 2, cooldownUntil: now + 60_000 },
+          },
+        },
+        childAgentDir,
+      );
+      saveAuthProfileStore(
+        storeWith(
+          sharedId,
+          oauthCredential({
+            access: "main-access",
+            refresh: "main-refresh",
+            expires: now + 60 * 60 * 1000,
+            accountId: "acct-shared",
+          }),
+        ),
+      );
+      const sharedBefore = loadPersistedSharedAuthProfileStore(process.env);
+
+      const result = await repairStaleOAuthProfileShadows({ cfg: {}, now });
+
+      expect(result.warnings).toEqual([]);
+      expect(result.changes).toHaveLength(1);
+      const child = loadPersistedAuthProfileStore(childAgentDir);
+      expect(child?.order?.anthropic).toEqual(order);
+      expect(child?.profiles).toEqual({ [localId]: localCredential });
+      expect(child?.usageStats).toEqual({ [localId]: localHealth });
+      expect(child?.lastGood).toBeUndefined();
+      const sharedAfter = loadPersistedSharedAuthProfileStore(process.env);
+      expect(sharedAfter).toEqual(sharedBefore);
+      expect(sharedAfter).not.toBeNull();
+      expect(child).not.toBeNull();
+      if (!sharedAfter || !child) {
+        throw new Error("Expected persisted auth owners after Doctor repair");
+      }
+      const effective = mergeAuthProfileStores(sharedAfter, child);
+      expect(effective.profiles[sharedId]).toEqual(sharedAfter.profiles[sharedId]);
+      expect(effective.order?.anthropic).toEqual(order);
+    },
+  );
 
   it("does not remove a child OAuth profile for a different account", async () => {
     const profileId = "anthropic:default";
