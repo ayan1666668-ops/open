@@ -313,7 +313,7 @@ test("projects.list preserves exact-path ranking, locale ties, and the pre-acces
         agent: "main",
         sessionKey: "global",
         folder: repo,
-        expected: [projectRecent(registered.id, "Registered")],
+        expected: [projectRecent("workspace:main", "registered")],
       },
       {
         agent: "main",
