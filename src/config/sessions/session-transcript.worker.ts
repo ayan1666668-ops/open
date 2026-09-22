@@ -187,7 +187,8 @@ serveOwnedWorkerTasks(
         };
       }
       if (request.kind === "session-entry-list") {
-        const { listSessionEntriesReadOnly } = await import("./session-accessor.sqlite-entry.js");
+        const { listSessionEntriesReadOnly } =
+          await import("./session-accessor.sqlite-entry-list.read.js");
         return {
           ok: true,
           ...(await withHistoryDatabase(request.database, () => ({
@@ -213,6 +214,32 @@ serveOwnedWorkerTasks(
         const { readSessionBranchSummariesInWorker } =
           await import("./session-accessor.sqlite-branches.js");
         return { ok: true, value: readSessionBranchSummariesInWorker(request.request) };
+      }
+      if (request.kind === "session-membership-facts") {
+        const { withOpenClawAgentDatabaseReadOnly } =
+          await import("../../state/openclaw-agent-db-readonly.js");
+        const { readSessionMembershipFactsInDatabase } =
+          await import("./session-membership-facts.js");
+        const { readWithCanonicalSessionReaderContinuation } =
+          await import("./session-canonical-key.js");
+        return {
+          ok: true,
+          ...(await withHistoryDatabase(request.database, () => {
+            const result = withOpenClawAgentDatabaseReadOnly(
+              (database) =>
+                readWithCanonicalSessionReaderContinuation(database, request.continuation, () =>
+                  readSessionMembershipFactsInDatabase(database, request.sessionKeys),
+                ),
+              { ...request.database, env: cloneEnvWithPlatformSemantics(request.env) },
+            );
+            if (!result.found && result.reason !== "database-missing") {
+              throw new Error(`Session membership read unavailable: ${result.reason}`);
+            }
+            return result.found
+              ? result.value
+              : { kind: "session-membership-facts" as const, facts: [] };
+          })),
+        };
       }
       if (request.kind === "session-members") {
         const { withOpenClawAgentDatabaseReadOnly } =

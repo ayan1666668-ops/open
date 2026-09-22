@@ -231,7 +231,7 @@ describe("sweepCronRunSessions", () => {
       });
       const database = openOpenClawAgentDatabase({ agentId: "main", path: exactStorePath });
       if (defect === "invalid participant") {
-        sessionAccessor.recordSessionParticipant(
+        await sessionAccessor.recordSessionParticipant(
           { agentId: "main", storePath: exactStorePath, sessionKey },
           {
             identity: { type: "agent", id: "peer" },
