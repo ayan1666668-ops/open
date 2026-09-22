@@ -133,15 +133,15 @@ Unknown remains `null`. Successful completion does not fabricate semantic eviden
 
 The regime names are an operator vocabulary, not calibrated physics.
 
-| Regime | Current heuristic meaning |
-| --- | --- |
-| gas | high candidate entropy + low coherence |
-| liquid | productive mobility + moderate coherence |
-| critical | umbrella for verifier conflict or mid-entropy ambiguity |
-| crystal | frozen-candidate heuristic with low entropy + high coherence/evidence and no contradictory acceptance progress |
-| glass | low mobility/progress with incomplete evidence |
-| jammed | resource/context/debt pressure dominates |
-| unknown | insufficient telemetry |
+| Regime   | Current heuristic meaning                                                                                      |
+| -------- | -------------------------------------------------------------------------------------------------------------- |
+| gas      | high candidate entropy + low coherence                                                                         |
+| liquid   | productive mobility + moderate coherence                                                                       |
+| critical | umbrella for verifier conflict or mid-entropy ambiguity                                                        |
+| crystal  | frozen-candidate heuristic with low entropy + high coherence/evidence and no contradictory acceptance progress |
+| glass    | low mobility/progress with incomplete evidence                                                                 |
+| jammed   | resource/context/debt pressure dominates                                                                       |
+| unknown  | insufficient telemetry                                                                                         |
 
 Each assessment carries a `trigger` so overloaded `critical` is disambiguated:
 
