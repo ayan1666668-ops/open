@@ -39,9 +39,7 @@ describe("native dynamics candidate preparation", () => {
 
   it("binds generic contract and host lineage into reproducible task bytes", () => {
     const first = prepareDynamicsSpawn({ ...base, dynamics: { boundary: "isolated" } });
-    expect(first).toEqual(
-      prepareDynamicsSpawn({ ...base, dynamics: { boundary: "isolated" } }),
-    );
+    expect(first).toEqual(prepareDynamicsSpawn({ ...base, dynamics: { boundary: "isolated" } }));
     expect(first.task).not.toBe(
       prepareDynamicsSpawn({ ...base, dynamics: { boundary: "summary-only" } }).task,
     );
