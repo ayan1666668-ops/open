@@ -3,6 +3,11 @@ name: CI
 on:
   workflow_dispatch:
     inputs:
+      temporary_memory_bundle28:
+        description: Temporary diagnostic only; never merge. Replay the original memory bundle on its original runner class.
+        required: false
+        default: false
+        type: boolean
       target_ref:
         description: Optional branch, tag, or full commit SHA to validate instead of the workflow ref
         required: false
@@ -176,6 +181,28 @@ jobs:
       run_protocol_event_coverage: ${{ steps.manifest.outputs.run_protocol_event_coverage }}
       android_matrix: ${{ steps.manifest.outputs.android_matrix }}
     steps:
+      - name: Validate temporary memory diagnostic dispatch
+        if: inputs.temporary_memory_bundle28 || github.ref == 'refs/heads/test/memory-bundle28-permit-diagnostic'
+        env:
+          DIAGNOSTIC_INPUTS: ${{ toJson(inputs) }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          inputs = json.loads(os.environ['DIAGNOSTIC_INPUTS'])
+          assert os.environ['GITHUB_REPOSITORY'] == 'openclaw/openclaw'
+          assert os.environ['GITHUB_EVENT_NAME'] == 'workflow_dispatch'
+          assert os.environ['GITHUB_REF'] == 'refs/heads/test/memory-bundle28-permit-diagnostic'
+          assert os.environ['GITHUB_RUN_ATTEMPT'] == '1'
+          assert os.environ['GITHUB_SHA'] == os.environ['WORKFLOW_SHA']
+          assert inputs.get('temporary_memory_bundle28') is True
+          assert inputs.get('dispatch_id') == 'memory-bundle28-permit-diagnostic'
+          assert inputs.get('target_ref') == 'f79154f315e96d3b19f9bef54935878a6fc47868'
+          assert inputs.get('release_scope', 'full') == 'full'
+          assert all(not inputs.get(k) for k in ('release_gate', 'pull_request_number',
+              'historical_target_tag', 'release_candidate_ref', 'target_context_ref', 'capture_ui_proof', 'include_android'))
+          PY
+
       - name: Validate release-gate dispatch
         if: github.event_name == 'workflow_dispatch' && inputs.release_gate
         env:
@@ -926,6 +953,12 @@ jobs:
           '
           # End generated CI Git owner.
 
+      - name: Refuse changed diagnostic target
+        if: inputs.temporary_memory_bundle28
+        run: |
+          test "$(git rev-parse HEAD)" = "f79154f315e96d3b19f9bef54935878a6fc47868"
+          test "$(git rev-parse 'HEAD^{tree}')" = "5ccafa138291f321f660227ebf37bd109806446a"
+
       - name: Resolve checkout SHA
         id: checkout_ref
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
@@ -1144,6 +1177,7 @@ jobs:
       - name: Classify candidate cache trust
         id: candidate_trust
         env:
+          TEMPORARY_MEMORY_BUNDLE28: ${{ inputs.temporary_memory_bundle28 }}
           CHECKOUT_REVISION: ${{ steps.checkout_ref.outputs.sha }}
           DEFAULT_SHA: ${{ steps.diff_base.outputs.default_sha }}
           HISTORICAL_TARGET: ${{ steps.historical_target.outputs.eligible || 'false' }}
@@ -1167,7 +1201,11 @@ jobs:
             trust=pull-request
             cache_mode=restore
           elif [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
-            if [[ "$RELEASE_GATE" == "true" ]]; then
+            if [[ "$TEMPORARY_MEMORY_BUNDLE28" == "true" && "$CHECKOUT_REVISION" == "f79154f315e96d3b19f9bef54935878a6fc47868" ]]; then
+              # The guarded temporary mode restores existing caches; it never publishes them.
+              trust=workflow
+              cache_mode=restore
+            elif [[ "$RELEASE_GATE" == "true" ]]; then
               trust=pull-request
               cache_mode=restore
             elif [[
@@ -1268,6 +1306,7 @@ jobs:
       - name: Build CI manifest
         id: manifest
         env:
+          TEMPORARY_MEMORY_BUNDLE28: ${{ inputs.temporary_memory_bundle28 }}
           OPENCLAW_CI_DOCS_ONLY: ${{ github.event_name == 'workflow_dispatch' && 'false' || steps.docs_scope.outputs.docs_only }}
           OPENCLAW_CI_DOCS_CHANGED: ${{ github.event_name == 'workflow_dispatch' && 'true' || steps.docs_scope.outputs.docs_changed }}
           OPENCLAW_CI_RUN_NODE: ${{ github.event_name == 'workflow_dispatch' && 'true' || steps.changed_scope.outputs.run_node || 'false' }}
@@ -2196,6 +2235,31 @@ jobs:
           });
           if (hybridHostedEligible) {
             console.log(`Hybrid hosted rows: ${manifest.hybrid_hosted_base_rows} base, ${manifest.hybrid_hosted_total_rows} total; optional offload ${hybridHostedOffload ? "admitted" : "retained on Blacksmith"}; measured checks ${hybridHostedChecks ? "admitted" : "retained on Blacksmith"}; main checks ${hybridHostedMainChecks ? "admitted" : "retained on Blacksmith"}`);
+          }
+
+          // Temporary diagnostic only; never merge. All normal modes keep their original matrices.
+          if (process.env.TEMPORARY_MEMORY_BUNDLE28 === "true") {
+            if (eventName !== "workflow_dispatch" || !isCanonicalRepository ||
+                process.env.GITHUB_REF !== "refs/heads/test/memory-bundle28-permit-diagnostic" ||
+                checkoutRevision !== "f79154f315e96d3b19f9bef54935878a6fc47868" || workflowRevision !== process.env.GITHUB_SHA) {
+              throw new Error("Temporary diagnostic source identity mismatch");
+            }
+            for (const key of Object.keys(manifest)) {
+              if (key.startsWith("run_")) manifest[key] = false;
+            }
+            manifest.run_checks_node_core_nondist = true;
+            // Reproduce the original runner behavior, while source identity stays explicitly pinned.
+            manifest.frozen_target = false;
+            manifest.checks_node_core_nondist_matrix = { include: [{
+              check_name: "temporary-memory-bundle-28",
+              shard_name: "changed-extensions-bundle-28",
+              runner: "blacksmith-8vcpu-ubuntu-2404",
+              git_commits: ["739e2410702e0b1ad1d17a6dac07ddc0ab6dbebb", workflowRevision],
+              plan_concurrency: 1,
+              predicted_seconds: 240,
+              test_runtime_policy: "bun-compatible",
+              groups_gzip_base64: "H4sIAAAAAAAAA72Wz27bMAzG38Xn0NkOG4Y+xe5FMTAU42ixSJWi0wZD332w0z9LMa+WDzvZBvj9KJGfKd3+akhlH7vS3Nw2zsW3p/jHo+VHZylRBQI67rAwPKgd2Up7EbZemrtNE4X6IfB3dGeTifYqLdvESe0MpMbbYvTyvVfr2IEGQ+cADzbmbKe8XprNYsK4FBrMWBzUYhdlDUSzRxXsIZueWFCI12AymkeKGcVX7SUfxiKX2An2qwBFB6N1dayRTJ1Ty0NdpsJodABX7eF+YDtXqUfvlYzE0CsdW8K65O/kFdItpx2HEKWryrjtWNgiwat8clcMbO3OYuiqLPYvWhTnznC0cBXycB7X0WbTn0wOhnKM0q1B1EiiBH6EGFg8epUFLtIqRULBjg0IJcSAzmCcMdpKSPbBOEDhMs3FPMLeFf5u05QDWvghmLi5aeiA0nGAtzRwmZ7w5VvztFk+hJ37scupZvi+aKbd7NQhcSnYMYRYMjodxuZ3xqVAH/dMZ+pnXFlBMpbANuukCtKQx5aV1hiLysXzjGnXz424FeyVnLclmWoCPvHszP8YVhx9GAuHNHqpkrMwWtDjiYE0JZQAuyH2Hhfneqfudfak/UiaWAYoZ6EVv8znT5//7z8TlFxnpsV1oOHeofjoz/Z5x/eD+pLuXGk/DmczNcjaR5oZn9fhj0yAeTwtZm8VV4I9T55UOi6PXhCnlnDmmvG3wAfDDGnmaLkSdKZDBiTiUtrpmvr8vsZfX5unu99iV6RGGgsAAA==",
+            }] };
           }
 
           for (const [key, value] of Object.entries(manifest)) {
@@ -3823,7 +3887,7 @@ jobs:
     needs: [preflight]
     if: needs.preflight.outputs.run_checks_node_core_nondist == 'true'
     # Keep planner capacity; apply only the selected 8-to-16 promotions.
-    runs-on: ${{ vars.OPENCLAW_CI_RUNNER_BACKEND == 'github' && 'ubuntu-24.04' || (vars.OPENCLAW_CI_RUNNER_BACKEND == 'hybrid' && github.run_attempt > 1) && 'ubuntu-24.04' || (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && github.run_attempt > 1)) && 'ubuntu-24.04' || (github.repository == 'openclaw/openclaw' && (github.event_name != 'pull_request' || contains(fromJSON('["OWNER","MEMBER","COLLABORATOR","CONTRIBUTOR"]'), github.event.pull_request.author_association)) && ((matrix.runner == 'blacksmith-8vcpu-ubuntu-2404' && contains(fromJSON('["checks-node-changed-extensions-bundle-16","checks-node-compact-large-9","checks-node-changed-extensions-bundle-25","checks-node-compact-large-5"]'), matrix.check_name)) && 'blacksmith-16vcpu-ubuntu-2404' || matrix.runner || 'blacksmith-4vcpu-ubuntu-2404') || 'ubuntu-24.04') }}
+    runs-on: ${{ (github.event_name == 'workflow_dispatch' && inputs.temporary_memory_bundle28) && 'blacksmith-8vcpu-ubuntu-2404' || vars.OPENCLAW_CI_RUNNER_BACKEND == 'github' && 'ubuntu-24.04' || (vars.OPENCLAW_CI_RUNNER_BACKEND == 'hybrid' && github.run_attempt > 1) && 'ubuntu-24.04' || (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && github.run_attempt > 1)) && 'ubuntu-24.04' || (github.repository == 'openclaw/openclaw' && (github.event_name != 'pull_request' || contains(fromJSON('["OWNER","MEMBER","COLLABORATOR","CONTRIBUTOR"]'), github.event.pull_request.author_association)) && ((matrix.runner == 'blacksmith-8vcpu-ubuntu-2404' && contains(fromJSON('["checks-node-changed-extensions-bundle-16","checks-node-compact-large-9","checks-node-changed-extensions-bundle-25","checks-node-compact-large-5"]'), matrix.check_name)) && 'blacksmith-16vcpu-ubuntu-2404' || matrix.runner || 'blacksmith-4vcpu-ubuntu-2404') || 'ubuntu-24.04') }}
     timeout-minutes: ${{ matrix.timeout_minutes || 60 }}
     strategy:
       fail-fast: false
@@ -3833,14 +3897,78 @@ jobs:
       matrix: ${{ fromJson(needs.preflight.outputs.checks_node_core_nondist_matrix) }}
     steps:
       - *linux_node_checkout_step
+      - name: Bind source and apply temporary observation
+        id: diagnostic_source
+        if: inputs.temporary_memory_bundle28
+        env:
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: |
+          python3 - <<'PY_f79154f315e96d3b19f9bef54935878a6fc47868'
+          import base64, gzip, hashlib, json, os, pathlib, stat, subprocess
+          out = pathlib.Path('.artifacts/memory-bundle28-permit-diagnostic')
+          out.mkdir(parents=True, exist_ok=False)
+          expected = {'source': 'f79154f315e96d3b19f9bef54935878a6fc47868', 'tree': '5ccafa138291f321f660227ebf37bd109806446a', 'patchBytes': 46096, 'patchSha256': '63e67568d285443d53a33b16b716f3f40f9f8c84e834a731dd513b10eb47a55f', 'files': {'extensions/memory-core/src/memory/manager-candidate-repair.test.ts': {'beforeSha256': 'd78f9907fba8dbfb0b0cab56ee91dcfe03d1a0fecdde41d308cfcafb5969bee0', 'afterSha256': '827134d8dbb4811351a3a087ae28755d61cf0e9cfed7fd42032c177c92f95dbb', 'beforeBytes': 8755, 'afterBytes': 11525}, 'extensions/memory-core/src/memory/manager-cpu-worker-runtime.ts': {'beforeSha256': '0cbdaaa519e01bec1c7ce43c463ec55a5c04ea1f88553caff05529ab4597b91f', 'afterSha256': '6008529fed726d1c540a535de63c407b9dbc47989fab77ec91a6b581957599fb', 'beforeBytes': 5109, 'afterBytes': 6675}, 'extensions/memory-core/src/memory/manager-database-context.ts': {'beforeSha256': 'bf2006808241b2ed7c07636b49f447e44d1d2fcf1141a4c9d60744738d194bf8', 'afterSha256': '54ced8d6bcf60383306603ecf82689efc68dd879b98dcce1c795393e3bdcd39f', 'beforeBytes': 18466, 'afterBytes': 20150}, 'extensions/memory-core/src/memory/manager-keyword-retrieval.ts': {'beforeSha256': 'd89ebea929c88c79b2df9ab2d378f34ac121be65411b243c7590a2cd2b376cb0', 'afterSha256': '132281da239726681bd9e4c9b50c0114e17ef2eb4cd0579630e1250485285214', 'beforeBytes': 20583, 'afterBytes': 22255}, 'extensions/memory-core/src/memory/manager-search.worker.ts': {'beforeSha256': '643eb3fe835d53f8b77d180641b6dc5a3bc676cc1e52deb4dc3469a5ac23a265', 'afterSha256': '7d20a9ec7048948d14cacec4b8cb9299da760fd14af3fe8cb67ae7322b13fb7a', 'beforeBytes': 6412, 'afterBytes': 8746}, 'extensions/memory-core/src/memory/manager.ts': {'beforeSha256': 'a9c41148e69b24bdac7d50fc3cf579f609f2fd7039777fbb0af1ee7086213b0c', 'afterSha256': '3b57ade150062928b63bebf7c78ac91abc24750a73ce1beaf7671bc1fdf61306', 'beforeBytes': 29122, 'afterBytes': 31071}, 'scripts/lib/vitest-worker-run.mts': {'beforeSha256': '0144339d75a27d6b8a9643fa22a46dcc346f4ee387c96b4039b2ee22bd0a1433', 'afterSha256': 'b86fe499ff436716bffab1a0c2923db62bb7f46a32b19501c4ec4a6849e9ffcf', 'beforeBytes': 9432, 'afterBytes': 11292}, 'src/infra/worker-task-pool-completion.ts': {'beforeSha256': 'b48d6d3b2be77f6ebe28571a1190e0f8d7f0ea95aa3539bf1ad14b56dc79f927', 'afterSha256': 'fea5bbaa83849c0acc6cbd6a01120c49b5bc85ca0a54b4711a045f5af93d780d', 'beforeBytes': 5324, 'afterBytes': 7083}, 'src/infra/worker-task-pool-core.ts': {'beforeSha256': '0aed482b5e3b7c25e57e45c7b233cef737b12516e639573f1cdcb1972d8153a3', 'afterSha256': '2cfe1cd0593437a87e00b2d778e16a818e7472c2cf2c6ac0d76dc8c8306425cc', 'beforeBytes': 26874, 'afterBytes': 29175}, 'src/infra/worker-task-server.ts': {'beforeSha256': 'd7446e3f4c620a1026ec1f563de6d80e8a59c4af95e5b022caeea3a4622cb244', 'afterSha256': '8d02f3be70fe0661739ef535047bdabaa6a7a198538de28819de7b246dd804e1', 'beforeBytes': 7484, 'afterBytes': 9285}}}
+          receipt = {'temporaryDiagnosticOnly': True, 'sourceChecked': False, 'overlayApplied': False,
+              'original': {'run': 35732239834, 'attempt': 1, 'job': 106760985483,
+                  'rawBytes': 226400, 'rawSha256': '16d96e9f3a5933629455f4eaa6a47641339c25a2713ce9662d2ad23491124bac',
+                  'cpuEvidenceLine': 55, 'resourceEvidenceLine': 1832, 'logicalCpuCount': 2,
+                  'totalMemoryBytes': 8220487680, 'groups': [58, 101, 106],
+                  'scheduleLimit': 'Groups are serial; original two-worker within-group interleaving is not deterministic replay.'},
+              'overlay': expected}
+          def git(*args):
+              return subprocess.check_output(['git', *args], text=True).strip()
+          def parents(commit):
+              return [line[7:] for line in git('cat-file', '-p', commit).split('\n\n', 1)[0].splitlines() if line.startswith('parent ')]
+          def inventory():
+              digest = hashlib.sha256(); count = 0
+              for row in subprocess.check_output(['git', 'ls-tree', '-rz', 'HEAD']).split(b'\0'):
+                  if not row: continue
+                  header, name = row.split(b'\t', 1); mode, kind, oid = header.split(); path = pathlib.Path(os.fsdecode(name))
+                  assert kind == b'blob' and mode in (b'100644', b'100755', b'120000')
+                  observed = path.lstat()
+                  assert stat.S_ISLNK(observed.st_mode) if mode == b'120000' else stat.S_ISREG(observed.st_mode) and bool(observed.st_mode & 0o111) == (mode == b'100755')
+                  data = os.fsencode(os.readlink(path)) if mode == b'120000' else path.read_bytes()
+                  assert hashlib.sha1(b'blob '+str(len(data)).encode()+b'\0'+data).hexdigest().encode() == oid
+                  digest.update(row+b'\0'); count += 1
+              return {'entries': count, 'sha256': digest.hexdigest()}
+          try:
+              workflow = os.environ['WORKFLOW_SHA']
+              assert workflow == os.environ['GITHUB_SHA']
+              assert os.environ['GITHUB_REF'] == 'refs/heads/test/memory-bundle28-permit-diagnostic'
+              assert git('rev-parse', 'HEAD') == 'f79154f315e96d3b19f9bef54935878a6fc47868'
+              assert git('rev-parse', 'HEAD^{tree}') == '5ccafa138291f321f660227ebf37bd109806446a'
+              assert parents('f79154f315e96d3b19f9bef54935878a6fc47868') == ['e914feb121b02591e45ff0233d57442c996d0acd', 'f82adf94b15cc17a7de95983c4d7dd440413eafa']
+              assert parents(workflow) == ['739e2410702e0b1ad1d17a6dac07ddc0ab6dbebb']
+              assert git('diff', '--no-renames', '--name-only', '739e2410702e0b1ad1d17a6dac07ddc0ab6dbebb', workflow) == '.github/workflows/ci.yml'
+              subprocess.run(['git', 'diff', '--exit-code', 'HEAD', '--'], check=True)
+              receipt.update(source='f79154f315e96d3b19f9bef54935878a6fc47868', sourceTree='5ccafa138291f321f660227ebf37bd109806446a', orderedParents=['e914feb121b02591e45ff0233d57442c996d0acd', 'f82adf94b15cc17a7de95983c4d7dd440413eafa'],
+                  workflow=workflow, workflowTree=git('rev-parse', workflow+'^{tree}'))
+              receipt['rawBefore'] = inventory()
+              for name, entry in expected['files'].items():
+                  assert hashlib.sha256(pathlib.Path(name).read_bytes()).hexdigest() == entry['beforeSha256']
+              patch = gzip.decompress(base64.b64decode('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'))
+              assert len(patch) == expected['patchBytes'] and hashlib.sha256(patch).hexdigest() == expected['patchSha256']
+              subprocess.run(['git', 'apply', '--check', '--whitespace=error-all', '-'], input=patch, check=True)
+              subprocess.run(['git', 'apply', '--whitespace=error-all', '-'], input=patch, check=True)
+              receipt['overlayApplied'] = True
+              assert set(git('diff', '--name-only').splitlines()) == set(expected['files'])
+              for name, entry in expected['files'].items():
+                  assert hashlib.sha256(pathlib.Path(name).read_bytes()).hexdigest() == entry['afterSha256']
+              assert git('write-tree') == '5ccafa138291f321f660227ebf37bd109806446a'
+              receipt['sourceChecked'] = True
+          finally:
+              (out/'receipt.json').write_text(json.dumps(receipt, indent=2)+'\n')
+          PY_f79154f315e96d3b19f9bef54935878a6fc47868
+
       - name: Setup Node environment
+        id: diagnostic_setup
         uses: ./.ci-harness/.github/actions/setup-node-env
         with:
           cache-mode: ${{ needs.preflight.outputs.cache_mode }}
-          node-version: "${{ matrix.node_version || '24.x' }}"
+          node-version: "${{ inputs.temporary_memory_bundle28 && '24.19.0' || matrix.node_version || '24.x' }}"
           install-bun: "false"
           # The trusted warmer seeds Node 24; other versions use the store.
-          dependency-cache: ${{ (matrix.node_version == null || matrix.node_version == '24.x') && vars.OPENCLAW_CI_RUNNER_BACKEND != 'github' && runner.environment == 'self-hosted' && github.event_name != 'workflow_dispatch' && github.repository == 'openclaw/openclaw' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == 'openclaw/openclaw') && 'true' || 'false' }}
+          dependency-cache: ${{ inputs.temporary_memory_bundle28 && 'true' || (matrix.node_version == null || matrix.node_version == '24.x') && vars.OPENCLAW_CI_RUNNER_BACKEND != 'github' && runner.environment == 'self-hosted' && github.event_name != 'workflow_dispatch' && github.repository == 'openclaw/openclaw' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == 'openclaw/openclaw') && 'true' || 'false' }}
           vitest-fs-cache: "true"
           vitest-worker-cache: ${{ needs.preflight.outputs.frozen_target != 'true' && matrix.pretest_build_mode == null && (matrix.node_version == null || matrix.node_version == '24.x') && 'true' || 'false' }}
           node-compile-cache: "true"
@@ -3969,8 +4097,36 @@ jobs:
           echo "detected cores=$cores plan_concurrency=${SHARD_PLAN_CONCURRENCY:-default} predicted_test_seconds=${PREDICTED_TEST_SECONDS:-unknown} -> workers=$workers"
           echo "OPENCLAW_VITEST_MAX_WORKERS=$workers" >> "$GITHUB_ENV"
 
+      - name: Verify temporary diagnostic resources
+        id: diagnostic_resources
+        if: inputs.temporary_memory_bundle28
+        run: |
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          import fs from 'node:fs';
+          import os from 'node:os';
+          import { execFileSync } from 'node:child_process';
+          const path = '.artifacts/memory-bundle28-permit-diagnostic/receipt.json';
+          const receipt = JSON.parse(fs.readFileSync(path, 'utf8'));
+          receipt.resources = { node: process.versions.node, pnpm: execFileSync('pnpm', ['--version'], {encoding:'utf8'}).trim(),
+            platform: process.platform, arch: process.arch, cpu: os.availableParallelism(), memoryBytes: os.totalmem(),
+            workers: process.env.OPENCLAW_VITEST_MAX_WORKERS, originalMemoryBytes: 8220487680,
+            cacheMode: '${{ needs.preflight.outputs.cache_mode }}', dependencyCache: true,
+            cacheDifference: 'Node pin changes transform/compile cache keys; actual restores are recorded in setup logs.' };
+          fs.writeFileSync(path, JSON.stringify(receipt, null, 2) + '\n');
+          assert.equal(receipt.resources.node, '24.19.0');
+          assert.equal(receipt.resources.pnpm, '12.4.0');
+          assert.equal(receipt.resources.platform, 'linux');
+          assert.equal(receipt.resources.arch, 'x64');
+          assert.equal(receipt.resources.cpu, 2, 'Original two-CPU allocation required; do not simulate it');
+          assert.equal(receipt.resources.workers, '2');
+          assert.equal(receipt.resources.memoryBytes, 8220487680, 'Original measured memory allocation required');
+          JS
+
       - name: Run Node test shard
+        id: diagnostic_shard
         env:
+          TEMPORARY_MEMORY_BUNDLE28: ${{ inputs.temporary_memory_bundle28 }}
           NODE_OPTIONS: --max-old-space-size=8192
           OPENCLAW_CI_TEST_RUNTIME_POLICY: ${{ matrix.test_runtime_policy || 'node' }}
           FROZEN_TARGET: ${{ needs.preflight.outputs.frozen_target }}
@@ -3997,7 +4153,115 @@ jobs:
             runner=".ci-workflow/${runner}"
             [[ -f "$runner" ]]
           fi
+          if [[ "$TEMPORARY_MEMORY_BUNDLE28" == "true" ]]; then
+            export OPENCLAW_VITEST_WORKER_CACHE=1
+            set +e
+            { time -p node --import tsx "$runner"; } 2>&1 | tee .artifacts/memory-bundle28-permit-diagnostic/bundle28.log
+            statuses=("${PIPESTATUS[@]}")
+            set -e
+            echo "exit_code=${statuses[0]}" >> "$GITHUB_OUTPUT"
+            [[ "${statuses[1]}" == "0" ]]
+            exit "${statuses[0]}"
+          fi
           time -p node --import tsx "$runner"
+
+      - name: Restore source and retain diagnostic outcome
+        if: always() && inputs.temporary_memory_bundle28
+        env:
+          SOURCE_OUTCOME: ${{ steps.diagnostic_source.outcome }}
+          SETUP_OUTCOME: ${{ steps.diagnostic_setup.outcome }}
+          RESOURCE_OUTCOME: ${{ steps.diagnostic_resources.outcome }}
+          SHARD_OUTCOME: ${{ steps.diagnostic_shard.outcome }}
+          SHARD_EXIT: ${{ steps.diagnostic_shard.outputs.exit_code }}
+        run: |
+          python3 - <<'PY_OUTCOME'
+          import hashlib, json, os, pathlib, re, stat, subprocess
+          out = pathlib.Path('.artifacts/memory-bundle28-permit-diagnostic'); out.mkdir(parents=True, exist_ok=True)
+          target = out/'receipt.json'
+          receipt = json.loads(target.read_text()) if target.exists() else {'temporaryDiagnosticOnly': True, 'sourceChecked': False, 'overlayApplied': False}
+          receipt['steps'] = {k: os.environ.get(k, '') for k in ('SOURCE_OUTCOME','SETUP_OUTCOME','RESOURCE_OUTCOME','SHARD_OUTCOME','SHARD_EXIT')}
+          receipt['run'] = {'id': os.environ['GITHUB_RUN_ID'], 'attempt': os.environ['GITHUB_RUN_ATTEMPT'], 'workflowSha': os.environ['GITHUB_SHA']}
+          errors = []; captures = []
+          try:
+              log = out/'bundle28.log'
+              if log.exists():
+                  receipt['logBytes'] = log.stat().st_size
+                  receipt['logSha256'] = hashlib.sha256(log.read_bytes()).hexdigest()
+                  for line in re.sub(r'\x1b\[[0-9;]*m', '', log.read_text()).splitlines():
+                      if 'BUNDLE28_TRACE ' in line:
+                          captures.append(json.loads(line.split('BUNDLE28_TRACE ',1)[1]))
+                  assert len(captures) <= 65536, 'Trace evidence budget exceeded'
+              receipt['traceLimited'] = any(c.get('event') == 'trace.limit' for c in captures)
+              receipt['workers'] = []
+              if log.exists():
+                  for line in re.sub(r'\x1b\[[0-9;]*m', '', log.read_text()).splitlines():
+                      if 'BUNDLE28_WORKERS ' not in line: continue
+                      worker = json.loads(line.split('BUNDLE28_WORKERS ',1)[1])
+                      assert worker.get('verifiedBeforeBorrow') is True, 'Worker receipt capture failed'
+                      assert re.fullmatch(r'[a-f0-9]{64}', worker['manifestSha256'])
+                      assert re.fullmatch(r'[a-f0-9]{64}', worker['identity'])
+                      assert re.fullmatch(r'[a-f0-9]{64}', worker['outputInventorySha256'])
+                      assert worker['outputCount'] > 0
+                      assert set(worker['workerEntries']) == {'extensions/memory-core/memory-search.worker.js','extensions/memory-core/memory-index.worker.js'}
+                      assert all(re.fullmatch(r'[a-f0-9]{64}', value) for value in worker['workerEntries'].values())
+                      for name, value in worker['selectedInputs'].items():
+                          assert value == receipt['overlay']['files'][name]['afterSha256']
+                      assert 'extensions/memory-core/src/memory/manager-search.worker.ts' in worker['selectedInputs']
+                      assert 'src/infra/worker-task-server.ts' in worker['selectedInputs']
+                      if worker not in receipt['workers']: receipt['workers'].append(worker)
+                  assert len(receipt['workers']) <= 32, 'Worker receipt budget exceeded'
+              if any(c.get('event') == 'curated.start' for c in captures):
+                  assert receipt['workers'], 'Missing borrowed worker generation receipt'
+              receipt['workerReceiptBoundary'] = 'Canonical borrower verified manifest inputs and all outputs before reply; normal joined disposal remains unchanged.'
+              receipt['priorDiagnostic'] = {'run':35747780441,'attempt':1,'workerReceipts':0,'meaning':'First run pre-dispatch delay; no retained emitted worker identity.'}
+          except Exception as error:
+              errors.append(type(error).__name__+': '+str(error))
+          finally:
+              if receipt.get('overlayApplied'):
+                  names = list(receipt['overlay']['files'])
+                  try:
+                      receipt['overlayUnchangedAfter'] = all(hashlib.sha256(pathlib.Path(name).read_bytes()).hexdigest()==entry['afterSha256'] for name,entry in receipt['overlay']['files'].items())
+                  except Exception as error:
+                      receipt['overlayUnchangedAfter'] = False
+                      errors.append('overlay postcheck: '+type(error).__name__+': '+str(error))
+                  restored = subprocess.run(['git','restore','--source=f79154f315e96d3b19f9bef54935878a6fc47868','--worktree','--',*names])
+                  receipt['restored'] = restored.returncode == 0 and subprocess.run(['git','diff','--quiet','HEAD','--']).returncode == 0
+                  try:
+                      digest=hashlib.sha256();count=0
+                      for row in subprocess.check_output(['git','ls-tree','-rz','HEAD']).split(b'\0'):
+                          if not row: continue
+                          header,name=row.split(b'\t',1);mode,kind,oid=header.split();path=pathlib.Path(os.fsdecode(name))
+                          observed=path.lstat()
+                          assert stat.S_ISLNK(observed.st_mode) if mode==b'120000' else stat.S_ISREG(observed.st_mode) and bool(observed.st_mode & 0o111)==(mode==b'100755')
+                          data=os.fsencode(os.readlink(path)) if mode==b'120000' else path.read_bytes()
+                          assert hashlib.sha1(b'blob '+str(len(data)).encode()+b'\0'+data).hexdigest().encode()==oid
+                          digest.update(row+b'\0');count+=1
+                      receipt['rawAfter']={'entries':count,'sha256':digest.hexdigest()}
+                      assert receipt['rawAfter']==receipt['rawBefore']
+                  except Exception as error:
+                      errors.append('restore inventory: '+type(error).__name__+': '+str(error))
+                  if not receipt['overlayUnchangedAfter'] or not receipt['restored']: errors.append('Source custody or restoration failed')
+              receipt['observation'] = 'not reproduced; not a product fix' if os.environ['SHARD_OUTCOME']=='success' else 'no qualification; inspect source/setup/resource/test outcome and trace ordering'
+              if os.environ['SHARD_OUTCOME']=='success' and (not receipt['sourceChecked'] or os.environ['SHARD_EXIT']!='0' or not any(c.get('event')=='lookup.joined' for c in captures)):
+                  errors.append('Missing source or target completion evidence')
+              receipt['errors']=errors
+              (out/'diagnostics.json').write_text(json.dumps(captures,indent=2)+'\n')
+              target.write_text(json.dumps(receipt,indent=2)+'\n')
+          assert not errors, errors
+          PY_OUTCOME
+
+      - name: Upload temporary diagnostic evidence
+        if: always() && inputs.temporary_memory_bundle28
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: temporary-memory-bundle28-${{ github.run_id }}-${{ github.run_attempt }}
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            .artifacts/memory-bundle28-permit-diagnostic/receipt.json
+            .artifacts/memory-bundle28-permit-diagnostic/diagnostics.json
+            .artifacts/memory-bundle28-permit-diagnostic/bundle28.log
 
       - &runner_memory_peak_step
         name: Record runner memory peak
@@ -5867,7 +6131,7 @@ jobs:
     # Full manual validation requires both build and screenshot evidence.
     needs: [preflight]
     # PRs and their exact-head release-gate substitutes retain only the build smoke.
-    if: ${{ github.event_name == 'workflow_dispatch' && !inputs.release_gate && needs.preflight.outputs.release_scope == 'full' && needs.preflight.outputs.compatibility_target != 'true' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && !inputs.temporary_memory_bundle28 && !inputs.release_gate && needs.preflight.outputs.release_scope == 'full' && needs.preflight.outputs.compatibility_target != 'true' }}
     # Keep capture on the same verified hosted image as the iOS build phases.
     runs-on: xcode-27
     timeout-minutes: 90
@@ -5986,7 +6250,7 @@ jobs:
       contents: read
     name: "ios-screenshot-evidence"
     needs: [preflight, ios-screenshot-shard]
-    if: ${{ github.event_name == 'workflow_dispatch' && !inputs.release_gate && needs.preflight.outputs.release_scope == 'full' && needs.preflight.outputs.compatibility_target != 'true' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && !inputs.temporary_memory_bundle28 && !inputs.release_gate && needs.preflight.outputs.release_scope == 'full' && needs.preflight.outputs.compatibility_target != 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -6435,6 +6699,11 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
+      - name: Refuse qualification for temporary diagnostic
+        if: inputs.temporary_memory_bundle28 || github.ref == 'refs/heads/test/memory-bundle28-permit-diagnostic' || github.head_ref == 'test/memory-bundle28-permit-diagnostic'
+        run: |
+          echo '::error::Temporary diagnostic only; never merge. This run does not qualify any source for landing.'
+          exit 1
       - name: Verify selected CI lanes
         shell: bash
         env:
@@ -6464,8 +6733,8 @@ jobs:
             macos-node=${{ needs.macos-node.result }}|${{ needs.preflight.outputs.run_macos_node }}
             macos-swift=${{ needs.macos-swift.result }}|${{ needs.preflight.outputs.run_macos_swift }}
             ios-build=${{ needs.ios-build.result }}|${{ needs.preflight.outputs.run_ios_build }}
-            ios-screenshot-shard=${{ needs.ios-screenshot-shard.result }}|${{ github.event_name == 'workflow_dispatch' && !inputs.release_gate && needs.preflight.outputs.release_scope == 'full' && needs.preflight.outputs.compatibility_target != 'true' }}
-            ios-screenshot-evidence=${{ needs.ios-screenshot-evidence.result }}|${{ github.event_name == 'workflow_dispatch' && !inputs.release_gate && needs.preflight.outputs.release_scope == 'full' && needs.preflight.outputs.compatibility_target != 'true' }}
+            ios-screenshot-shard=${{ needs.ios-screenshot-shard.result }}|${{ github.event_name == 'workflow_dispatch' && !inputs.temporary_memory_bundle28 && !inputs.release_gate && needs.preflight.outputs.release_scope == 'full' && needs.preflight.outputs.compatibility_target != 'true' }}
+            ios-screenshot-evidence=${{ needs.ios-screenshot-evidence.result }}|${{ github.event_name == 'workflow_dispatch' && !inputs.temporary_memory_bundle28 && !inputs.release_gate && needs.preflight.outputs.release_scope == 'full' && needs.preflight.outputs.compatibility_target != 'true' }}
             android=${{ needs.android.result }}|${{ needs.preflight.outputs.run_android_job }}
             docker-seed-e2e=${{ needs.docker-seed-e2e.result }}|${{ needs.preflight.outputs.run_docker_seed_e2e }}
         run: |
