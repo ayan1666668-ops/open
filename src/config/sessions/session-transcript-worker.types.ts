@@ -158,7 +158,7 @@ export type SessionExactEntriesWorkerInput = {
   env: NodeJS.ProcessEnv;
   sessionKeys: readonly string[];
   lifecycleSessionKey?: string;
-  projection?: "full" | "backing";
+  projection?: "full" | "backing" | "sharing";
   includeMembers?: boolean;
   includeAuthorization?: boolean;
   continuation?: CanonicalSessionReaderContinuation;
@@ -175,6 +175,11 @@ export type SessionExactEntriesWorkerResult = {
     birthtime?: string;
   };
   members?: Record<string, SessionMember[]>;
+  sharing?: {
+    source: { agentId: string; path: string };
+    databaseIdentity: string;
+    members: Array<{ sessionKey: string; identityIds: string[] }>;
+  };
 };
 
 type SessionStoreTargetWorkerInput = {

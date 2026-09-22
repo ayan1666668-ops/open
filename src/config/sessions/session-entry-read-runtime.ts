@@ -21,7 +21,7 @@ type SessionEntryWorkerRead = {
   storePath: string;
   sessionKeys: readonly string[];
   lifecycleSessionKey?: string;
-  projection?: "full" | "backing";
+  projection?: "full" | "backing" | "sharing";
   includeMembers?: boolean;
   includeAuthorization?: boolean;
   env?: NodeJS.ProcessEnv;
