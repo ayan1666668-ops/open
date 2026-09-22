@@ -1,7 +1,4 @@
-import {
-  candidateIdentity,
-  type CandidateManifest,
-} from "./candidate-evidence.js";
+import { candidateIdentity, type CandidateManifest } from "./candidate-evidence.js";
 import { buildHandoffManifest, type HandoffPayload } from "./dynamics-handoffs.js";
 import type {
   DynamicsRequirement,
@@ -53,7 +50,9 @@ function readBoundary(value: unknown): InformationBoundary {
     value !== "evidence-only" &&
     value !== "summary-only"
   ) {
-    throw new Error("dynamics.boundary must be isolated, artifact-only, evidence-only, or summary-only");
+    throw new Error(
+      "dynamics.boundary must be isolated, artifact-only, evidence-only, or summary-only",
+    );
   }
   return value;
 }
@@ -71,9 +70,7 @@ function readRequirements(value: unknown): DynamicsSpawnRequirements {
   }
   const raw = readRecord(value, "dynamics.requirements");
   if (
-    Object.keys(raw).some(
-      (key) => !["sandbox", "candidateDigest", "artifactRefs"].includes(key),
-    )
+    Object.keys(raw).some((key) => !["sandbox", "candidateDigest", "artifactRefs"].includes(key))
   ) {
     throw new Error("unsupported dynamics requirement");
   }
@@ -151,7 +148,8 @@ export function prepareDynamicsSpawn(params: {
   const options = readRecord(params.dynamics, "dynamics");
   if (
     Object.keys(options).some(
-      (key) => key !== "boundary" && key !== "requirements" && key !== "handoff" && key !== "candidate",
+      (key) =>
+        key !== "boundary" && key !== "requirements" && key !== "handoff" && key !== "candidate",
     )
   ) {
     throw new Error("dynamics accepts only boundary, requirements, handoff, and candidate");
