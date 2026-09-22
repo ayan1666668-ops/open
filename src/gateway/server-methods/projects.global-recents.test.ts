@@ -1,39 +1,13 @@
 import path from "node:path";
-import { expect, test, vi } from "vitest";
+import { expect, test } from "vitest";
 import { replaceSessionEntrySync } from "../../config/sessions/session-accessor.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { ensureProfileForEmail } from "../../state/user-profiles.js";
 import { createOpenClawTestState } from "../../test-utils/openclaw-test-state.js";
-import { createProjectsHandlers } from "./projects.js";
-
-const listRegistryRecords = vi.fn(async () => []);
-const resolveRepositoryIdentity = vi.fn(async (checkoutPath: string) => ({
-  checkoutRoot: checkoutPath,
-  repoRoot: checkoutPath,
-  originUrl: "",
-  fingerprint: checkoutPath,
-}));
-const projectsHandlers = createProjectsHandlers({
-  listRegistryRecords,
-  resolveRepositoryIdentity,
-} as never);
+import { invokeProjectMethod } from "./projects.test-support.js";
 
 async function listProjects(cfg: OpenClawConfig, profileId: string) {
-  let result: { payload?: unknown } | undefined;
-  await projectsHandlers["projects.list"]!({
-    req: {} as never,
-    params: {},
-    respond: (_ok, payload) => {
-      result = { payload };
-    },
-    context: { getRuntimeConfig: () => cfg } as never,
-    client: {
-      connect: { scopes: ["operator.write"] },
-      authenticatedUserProfile: { profileId },
-    } as never,
-    isWebchatConnect: () => false,
-  });
-  return result;
+  return await invokeProjectMethod("projects.list", {}, cfg, ["operator.write"], profileId);
 }
 
 const sharedWorkspacePath = path.resolve("/workspace/shared");
