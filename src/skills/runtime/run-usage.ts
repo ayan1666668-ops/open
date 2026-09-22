@@ -24,14 +24,15 @@ export function recordRunSkillUsage(params: RunSkillUsage & { runId?: string }):
     return;
   }
   const usage = skillUsageByRun.get(runId) ?? new Map<string, RunSkillUsage>();
+  // Keep the stored receipt on the original 4-field contract (name/source/
+  // activation/skillFile). Agent/session attribution travels only via the
+  // audit side-effect below; storing it here broke
+  // test/skill-usage.codex.integration.test.ts exact-shape assertions.
   const record = {
     name: params.name,
     source: params.source,
     activation: params.activation,
     ...(params.skillFile ? { skillFile: params.skillFile } : {}),
-    ...(params.agentId ? { agentId: params.agentId } : {}),
-    ...(params.sessionKey ? { sessionKey: params.sessionKey } : {}),
-    ...(params.sessionId ? { sessionId: params.sessionId } : {}),
   };
   usage.set(`${record.source}\u0000${record.name}\u0000${record.activation}`, record);
   skillUsageByRun.set(runId, usage);
