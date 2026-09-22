@@ -168,6 +168,7 @@ export function createCodexAttemptTurnState(resources: CodexAttemptResources) {
   };
   const deadlines = createCodexAttemptDeadlineController({
     startedAtMs: connection.attemptStartedAt,
+    startedAtMonotonicMs: connection.attemptStartedAtMonotonicMs,
     timeoutMs: params.timeoutMs,
     signal: runAbortController.signal,
     onDeadlineChanged: params.onAttemptDeadlineChanged,
