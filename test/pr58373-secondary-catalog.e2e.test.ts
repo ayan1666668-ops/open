@@ -47,7 +47,7 @@ describe("PR #58373 secondary catalog runtime proof", () => {
   });
 
   it(
-    "runs a model found only in the system-agent catalog after agents.create",
+    "uses secondary credentials for inherited models and rejects after all credentials are removed",
     { timeout: 90_000 },
     async () => {
       const envSnapshot = captureEnv([...envKeys]);
@@ -238,11 +238,11 @@ describe("PR #58373 secondary catalog runtime proof", () => {
             },
           );
           expect(accepted).toMatchObject({ runId, status: "accepted" });
-          await expect(
-            gateway?.client.request("agent.wait", { runId, timeoutMs: 30_000 }),
-          ).resolves.toMatchObject({ status: "ok" });
+          return gateway?.client.request("agent.wait", { runId, timeoutMs: 30_000 });
         };
-        await runSecondaryTurn("pr58373-secondary-account-b");
+        await expect(runSecondaryTurn("pr58373-secondary-account-b")).resolves.toMatchObject({
+          status: "ok",
+        });
         expect(providerRequests).toEqual([
           {
             authorization: "Bearer secondary-account-b",
@@ -255,7 +255,9 @@ describe("PR #58373 secondary catalog runtime proof", () => {
         ]);
 
         saveSecondaryAuth("secondary-account-c");
-        await runSecondaryTurn("pr58373-secondary-account-c");
+        await expect(runSecondaryTurn("pr58373-secondary-account-c")).resolves.toMatchObject({
+          status: "ok",
+        });
         expect(providerRequests[1]).toEqual({
           authorization: "Bearer secondary-account-c",
           catalogRoute: "provider-route",
@@ -264,6 +266,21 @@ describe("PR #58373 secondary catalog runtime proof", () => {
           modelRoute: "model-route",
           url: "/v1/responses",
         });
+        expect(providerRequests).toHaveLength(2);
+
+        // Removing only the local profile would still allow shared-store authentication.
+        // This custom provider has no configured or environment-backed credential source.
+        for (const agentDir of [mainAgentDir, secondaryAgentDir]) {
+          saveAuthProfileStore({ version: 1, profiles: {} }, agentDir, { syncExternalCli: false });
+        }
+        await expect(runSecondaryTurn("pr58373-secondary-no-credentials")).resolves.toMatchObject({
+          status: "error",
+          error: expect.stringContaining(`No API key found for provider "${provider.providerId}".`),
+        });
+        expect(providerRequests).toHaveLength(2);
+        expect(await fs.readFile(path.join(mainAgentDir, "models.json"), "utf8")).toBe(
+          `${mainCatalog}\n`,
+        );
         await expect(fs.stat(path.join(secondaryAgentDir, "models.json"))).rejects.toMatchObject({
           code: "ENOENT",
         });
