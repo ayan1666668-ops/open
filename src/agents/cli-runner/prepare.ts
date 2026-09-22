@@ -128,7 +128,7 @@ import {
   prepareRootedExecutionCapability,
   type PreparedRootedExecutionCapability,
 } from "../rooted-run-params.js";
-import { collectRuntimeChannelCapabilities } from "../runtime-capabilities.js";
+import { collectRuntimeChannelCapabilities, originClientFields } from "../runtime-capabilities.js";
 import { ensureSandboxWorkspaceForSession } from "../sandbox.js";
 import { resolveSandboxRuntimeStatus } from "../sandbox/runtime-status.js";
 import { buildSystemPromptReport } from "../system-prompt-report.js";
@@ -1980,8 +1980,7 @@ async function prepareCliRunContextWithinReadFence(
           cfg: params.config,
           channel: runtimeChannel,
           accountId: params.agentAccountId,
-          clientCaps: params.clientCaps,
-          ...(params.clientId ? { clientId: params.clientId } : {}),
+          ...originClientFields(params),
         });
     const builtSystemPrompt = isControlOperation
       ? ""

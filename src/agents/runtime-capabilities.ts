@@ -46,6 +46,16 @@ function mergeRuntimeCapabilities(
   return merged.length > 0 ? merged : undefined;
 }
 
+/** Capability fields from the gateway client that originated a run. */
+export function originClientFields(source: {
+  clientCaps?: string[] | null;
+  clientId?: string | null;
+}): { clientCaps?: string[] | null; clientId?: string } {
+  return source.clientId
+    ? { clientCaps: source.clientCaps, clientId: source.clientId }
+    : { clientCaps: source.clientCaps };
+}
+
 /** Collects the effective runtime capabilities for a channel/account pair. */
 export function collectRuntimeChannelCapabilities(params: {
   cfg?: OpenClawConfig;

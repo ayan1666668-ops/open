@@ -1723,8 +1723,6 @@ describe("runMemoryFlushIfNeeded", () => {
         sessionId: "session",
         sessionFile,
         sessionKey: "agent:main:main",
-        clientCaps: ["agent-kind", "inline-widgets"],
-        clientId: "openclaw-android",
       }),
       modelContextTokens: 100,
       sessionKey: "agent:main:main",
@@ -1743,8 +1741,6 @@ describe("runMemoryFlushIfNeeded", () => {
       contextTokenBudget: 100,
       agentHarnessId: "openclaw",
       modelSelectionLocked: true,
-      clientCaps: ["agent-kind", "inline-widgets"],
-      clientId: "openclaw-android",
     });
     expect(incrementCompactionCountMock).not.toHaveBeenCalled();
     expect(onCompactionNotice).toHaveBeenNthCalledWith(1, "start");

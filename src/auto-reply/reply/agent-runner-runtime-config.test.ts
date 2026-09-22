@@ -1,11 +1,11 @@
 // Tests agent runner runtime config assembly from command and session state.
 import { afterEach, describe, expect, it } from "vitest";
+import { collectRuntimeChannelCapabilities } from "../../agents/runtime-capabilities.js";
 import {
   clearRuntimeConfigSnapshot,
   setRuntimeConfigSnapshot,
 } from "../../config/runtime-snapshot.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
-import { collectRuntimeChannelCapabilities } from "../../agents/runtime-capabilities.js";
 import { buildEmbeddedRunBaseParams } from "./agent-runner-run-params.js";
 import type { FollowupRun } from "./queue.js";
 
