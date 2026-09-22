@@ -21,6 +21,10 @@ import type { DB as OpenClawAgentKyselyDatabase } from "../../state/openclaw-age
 import type { OpenClawAgentDatabase } from "../../state/openclaw-agent-db.js";
 import { tableExists } from "../../state/openclaw-state-db-schema-helpers.js";
 import type { ExactSessionEntry } from "./session-accessor.sqlite-contract.js";
+import type {
+  SessionEntryCacheSnapshot,
+  SessionSharingEntry,
+} from "./session-accessor.sqlite-entry-cache.types.js";
 import {
   prepareExactSessionEntryRowReads,
   readExactSessionEntryRow,
@@ -48,11 +52,6 @@ type SessionEntryCacheTables = Pick<OpenClawAgentKyselyDatabase, "session_nodes"
 
 type SessionEntryCacheDatabase = Pick<OpenClawAgentDatabase, "agentId" | "db">;
 
-export type SessionEntryCacheSnapshot = {
-  entries: Map<string, SessionEntry>;
-  keys: string[];
-};
-
 type SqliteSessionEntryCache = SessionEntryCacheSnapshot & {
   validityToken: SqliteSessionEntryRevision;
 };
@@ -70,16 +69,6 @@ type SqliteSessionEntryCacheWriteGeneration = {
 // every entry_json document.
 const sessionEntryCaches = new WeakMap<DatabaseSync, SqliteSessionEntryCache>();
 
-export type SessionSharingEntry = Pick<
-  SessionEntry,
-  | "sessionId"
-  | "updatedAt"
-  | "lifecycleRevision"
-  | "visibility"
-  | "incognito"
-  | "createdActor"
-  | "sandbox"
->;
 type CommittedSessionSharingFacts = { entry: SessionSharingEntry; membership: ReadonlySet<string> };
 type PreparedSessionSharingRead = {
   facts: { entry: SessionSharingEntry | undefined; membership: ReadonlySet<string> } | undefined;
