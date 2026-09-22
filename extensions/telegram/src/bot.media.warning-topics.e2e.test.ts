@@ -6,6 +6,8 @@ import {
   telegramMediaHarnessSendMessageSpy,
 } from "./bot.media.e2e.test-harness.js";
 import {
+  TELEGRAM_TEST_TIMINGS,
+  holdTelegramMediaTimeouts,
   createBotHandlerWithOptions,
   createTelegramPhotoForTest,
   mockTelegramPngDownload,
@@ -152,39 +154,64 @@ describe("Telegram media failure notices", () => {
 
   it.each([0, 1, 2])("accounts for %s failed attachments in an album", async (failedCount) => {
     const { handler, replySpy } = await createBotHandlerWithOptions({});
-    mockTelegramPngDownload();
-    for (let index = 0; index < failedCount; index++) {
-      readRemoteMediaBufferSpy.mockRejectedValueOnce(
-        new Error("Telegram media exceeds 8 MB limit"),
-      );
-    }
-    for (let index = 0; index < 2; index++) {
-      await handler({
-        message: {
-          chat: { id: 4242, type: "private" },
-          from: { id: 777, is_bot: false, first_name: "Ada" },
-          message_id: 910 + index,
-          date: 1736380800,
-          media_group_id: "failure-notice-album",
-          caption: index === 0 ? "Album attachment" : undefined,
-          photo: [createTelegramPhotoForTest(`album-${index}`)],
-        },
-        me: { username: "openclaw_bot" },
-        getFile: async () => ({ file_path: `photos/album-${index}.jpg` }),
+    const setTimeoutSpy = holdTelegramMediaTimeouts(TELEGRAM_TEST_TIMINGS.mediaGroupFlushMs);
+    try {
+      mockTelegramPngDownload();
+      for (let index = 0; index < failedCount; index++) {
+        readRemoteMediaBufferSpy.mockRejectedValueOnce(
+          new Error("Telegram media exceeds 8 MB limit"),
+        );
+      }
+      for (let index = 0; index < 2; index++) {
+        await handler({
+          message: {
+            chat: { id: 4242, type: "private" },
+            from: { id: 777, is_bot: false, first_name: "Ada" },
+            message_id: 910 + index,
+            date: 1736380800,
+            media_group_id: "failure-notice-album",
+            ...(index === 0 ? { caption: "Album attachment" } : {}),
+            photo: [createTelegramPhotoForTest(`album-${index}`)],
+          },
+          me: { username: "openclaw_bot" },
+          getFile: async () => ({ file_path: `photos/album-${index}.jpg` }),
+        });
+      }
+      const flush = setTimeoutSpy.mock.calls.findLast(
+        ([, delay]) => delay === TELEGRAM_TEST_TIMINGS.mediaGroupFlushMs,
+      )?.[0];
+      if (typeof flush !== "function") {
+        throw new Error("Expected the album flush deadline");
+      }
+      flush();
+      await vi.waitFor(() => expect(replySpy).toHaveBeenCalledTimes(1));
+      const payload = replySpy.mock.calls[0]?.[0];
+      expect(payload).toMatchObject({
+        BodyForAgent: failedCount
+          ? `Album attachment\n\n[media unavailable: ${failedCount} of 2 attachments could not be downloaded]`
+          : "Album attachment",
+        RawBody: "Album attachment",
+        CommandBody: "Album attachment",
       });
+      expect(payload.Body.includes("[media unavailable:")).toBe(failedCount > 0);
+      expect(payload.media.filter((media: { path?: string }) => media.path)).toHaveLength(
+        2 - failedCount,
+      );
+      const warnings = telegramMediaHarnessSendMessageSpy.mock.calls.filter(
+        ([, text]) => typeof text === "string" && text.includes(" of 2 images"),
+      );
+      expect(warnings).toHaveLength(failedCount > 0 ? 1 : 0);
+      if (failedCount > 0) {
+        expect(warnings[0]).toEqual([
+          4242,
+          expect.stringContaining(`${2 - failedCount} of 2 images`),
+          expect.objectContaining({
+            reply_parameters: expect.objectContaining({ message_id: 910 }),
+          }),
+        ]);
+      }
+    } finally {
+      setTimeoutSpy.mockRestore();
     }
-    await vi.waitFor(() => expect(replySpy).toHaveBeenCalledTimes(1));
-    const payload = replySpy.mock.calls[0]?.[0];
-    expect(payload).toMatchObject({
-      BodyForAgent: failedCount
-        ? `Album attachment\n\n[media unavailable: ${failedCount} of 2 attachments could not be downloaded]`
-        : "Album attachment",
-      RawBody: "Album attachment",
-      CommandBody: "Album attachment",
-    });
-    expect(payload.Body.includes("[media unavailable:")).toBe(failedCount > 0);
-    expect(payload.media.filter((media: { path?: string }) => media.path)).toHaveLength(
-      2 - failedCount,
-    );
   });
 });

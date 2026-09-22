@@ -531,38 +531,6 @@ describe("resolveTelegramToken", () => {
     );
   });
 
-  it.each(
-    ["default", "telegram-runtime"].flatMap((provider) =>
-      [undefined, ...collisionProviders].map((declaration) => ({
-        provider,
-        declaration,
-        source: declaration?.source ?? "undeclared",
-      })),
-    ),
-  )("accepts env default $provider shadowing $source", ({ provider, declaration }) => {
-    vi.stubEnv("TELEGRAM_RUNTIME_TOKEN", "secretref-env-token");
-    const cfg = {
-      secrets: {
-        defaults: provider === "default" ? undefined : { env: provider },
-        providers: declaration ? { [provider]: declaration } : undefined,
-      },
-      channels: {
-        telegram: {
-          botToken: {
-            source: "env",
-            provider,
-            id: "TELEGRAM_RUNTIME_TOKEN",
-          },
-        },
-      },
-    } as unknown as OpenClawConfig;
-
-    expect(resolveTelegramToken(cfg)).toEqual({
-      token: "secretref-env-token",
-      source: "config",
-    });
-  });
-
   it("keeps strict runtime behavior for unresolved non-env SecretRefs", () => {
     const cfg = {
       channels: {

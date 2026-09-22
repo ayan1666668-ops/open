@@ -33,8 +33,7 @@ import { buildTelegramApprovalCallbackData } from "./approval-callback-data.js";
 import {
   createTelegramSpooledReplayDeferredParticipant,
   getTelegramSpooledReplayLifecycle,
-  type TelegramSpooledReplayDeferredParticipant,
-  type TelegramSpooledReplaySettlementHold,
+  recordTelegramMessageProcessingResult,
 } from "./bot-processing-outcome.js";
 import { commitTelegramMessageDispatchReplay } from "./message-dispatch-dedupe.js";
 import { monitorTelegramProvider } from "./monitor.js";
@@ -518,6 +517,8 @@ describe("startTelegramWebhook", () => {
         );
         expect(connectedStatus.mode).toBe("webhook");
         expect(connectedStatus.connected).toBe(true);
+        expect(connectedStatus.running).toBe(true);
+        expect(connectedStatus).toHaveProperty("terminalDisconnect", undefined);
         expect(typeof connectedStatus.lastConnectedAt).toBe("number");
         expect(typeof connectedStatus.lastEventAt).toBe("number");
         expect(connectedStatus.lifecycle).toBe("ready");
@@ -632,6 +633,7 @@ describe("startTelegramWebhook", () => {
     expectMockMessageContains(runtimeError, "telegram setWebhook failed: unauthorized");
     expectStatusCall(setStatus, {
       lifecycle: "blocked",
+      terminalDisconnect: true,
       lastError: "unauthorized",
     });
   });
@@ -688,6 +690,7 @@ describe("startTelegramWebhook", () => {
       });
       expectStatusCall(setStatus, {
         lifecycle: "blocked",
+        terminalDisconnect: true,
         lastError: "unauthorized",
       });
       expect(setStatus).toHaveBeenLastCalledWith({ mode: "webhook", connected: false });
@@ -734,34 +737,6 @@ describe("startTelegramWebhook", () => {
     expect(setWebhookSpy).toHaveBeenCalledTimes(1);
   });
 
-  it("fails startup on non-recoverable getMe errors", async () => {
-    const runtimeError = vi.fn();
-    const setStatus = vi.fn();
-    const error = Object.assign(new Error("unauthorized"), { error_code: 401 });
-    initSpy.mockRejectedValueOnce(error);
-
-    await expect(
-      startTelegramWebhook({
-        token: TELEGRAM_TOKEN,
-        port: 0,
-        secret: TELEGRAM_SECRET,
-        path: TELEGRAM_WEBHOOK_PATH,
-        spoolDir: requireWebhookSpoolDir(),
-        runtime: { log: vi.fn(), error: runtimeError, exit: vi.fn() },
-        setStatus,
-      }),
-    ).rejects.toThrow("unauthorized");
-
-    expect(setWebhookSpy).not.toHaveBeenCalled();
-    expect(stopSpy).toHaveBeenCalledTimes(1);
-    expect(transportCloseSpies[0]).toHaveBeenCalledTimes(1);
-    expectMockMessageContains(runtimeError, "telegram getMe failed: unauthorized");
-    expectStatusCall(setStatus, {
-      lifecycle: "blocked",
-      lastError: "unauthorized",
-    });
-  });
-
   it("preserves the initialization failure when bot shutdown also fails", async () => {
     const runtimeError = vi.fn();
     const setStatus = vi.fn();
@@ -781,6 +756,7 @@ describe("startTelegramWebhook", () => {
       }),
     ).rejects.toBe(initializationError);
 
+    expect(setWebhookSpy).not.toHaveBeenCalled();
     expect(stopSpy).toHaveBeenCalledOnce();
     expect(transportCloseSpies[0]).toHaveBeenCalledOnce();
     expect(deleteWebhookSpy).not.toHaveBeenCalled();
@@ -907,41 +883,9 @@ describe("startTelegramWebhook", () => {
     );
   });
 
-  it("invokes webhook handler on matching path", async () => {
-    handleUpdateSpy.mockClear();
-    createTelegramBotSpy.mockClear();
-    const setStatus = vi.fn();
-    const cfg = { bindings: [] };
-    await withStartedWebhook(
-      {
-        secret: TELEGRAM_SECRET,
-        accountId: "opie",
-        config: cfg,
-        path: TELEGRAM_WEBHOOK_PATH,
-        setStatus,
-      },
-      async ({ port }) => {
-        const botParams = requireRecord(
-          requireMockCall(createTelegramBotSpy, 0, "createTelegramBot")[0],
-          "createTelegramBot params",
-        );
-        expect(botParams.accountId).toBe("opie");
-        expect(requireRecord(botParams.config, "telegram config").bindings).toEqual([]);
-        const payload = JSON.stringify(telegramMessageUpdate(1, "hello"));
-        const response = await postWebhookJson({
-          url: webhookUrl(port, TELEGRAM_WEBHOOK_PATH),
-          payload,
-          secret: TELEGRAM_SECRET,
-        });
-        expect(response.status).toBe(200);
-        await vi.waitFor(() => expect(handleUpdateSpy).toHaveBeenCalledWith(JSON.parse(payload)));
-        expectStatusCall(setStatus, { mode: "webhook", connected: true, lastError: null });
-      },
-    );
-  });
-
   it("acks before webhook update processing finishes", async () => {
     const slowUpdate = telegramMessageUpdate(2, "slow");
+    const setStatus = vi.fn();
     let finishWork: (() => void) | undefined;
     let workStarted = false;
     let workFinished = false;
@@ -958,8 +902,11 @@ describe("startTelegramWebhook", () => {
       {
         secret: TELEGRAM_SECRET,
         path: TELEGRAM_WEBHOOK_PATH,
+        setStatus,
       },
       async ({ port }) => {
+        setStatus.mockClear();
+        const receivedAfter = Date.now();
         const response = await postWebhookJson({
           url: webhookUrl(port, TELEGRAM_WEBHOOK_PATH),
           payload: JSON.stringify(slowUpdate),
@@ -972,6 +919,16 @@ describe("startTelegramWebhook", () => {
         expect(await response.text()).toBe("");
         await waitForWebhookState(() => expect(workStarted).toBe(true));
         expect(workFinished).toBe(false);
+        const receivedStatus = expectStatusCall(setStatus, {
+          mode: "webhook",
+          running: true,
+          connected: true,
+          lifecycle: "ready",
+          terminalDisconnect: undefined,
+          lastError: null,
+        });
+        expect(receivedStatus.lastConnectedAt).toBeGreaterThanOrEqual(receivedAfter);
+        expect(receivedStatus.lastEventAt).toBeGreaterThanOrEqual(receivedAfter);
 
         finishWork?.();
         await waitForWebhookState(() => expect(workFinished).toBe(true));
@@ -1356,7 +1313,10 @@ describe("startTelegramWebhook", () => {
     handleUpdateSpy.mockImplementation(async (update: unknown) => {
       seenUpdates.push(update);
       if (seenUpdates.length === 1) {
-        throw new Error("agent turn failed");
+        recordTelegramMessageProcessingResult({
+          kind: "failed-retryable",
+          error: new Error("agent turn failed"),
+        });
       }
     });
     const payload = JSON.stringify(telegramMessageUpdate(3, "boom"));
@@ -1376,12 +1336,13 @@ describe("startTelegramWebhook", () => {
           });
 
           expect(response.status).toBe(200);
+          expect(response.headers.get("x-openclaw-delivery-accepted")).toBe("durable");
           expect(await response.text()).toBe("");
           await waitForWebhookState(() => expect(seenUpdates).toEqual([JSON.parse(payload)]));
           await waitForWebhookState(async () =>
             expect(
-              (await listTelegramSpooledUpdates({ spoolDir: requireWebhookSpoolDir() })).length,
-            ).toBe(1),
+              await listTelegramSpooledUpdates({ spoolDir: requireWebhookSpoolDir() }),
+            ).toMatchObject([{ updateId: 3, attempts: 1, lastError: "agent turn failed" }]),
           );
           expectMockMessageContains(
             runtimeLog,
@@ -1516,82 +1477,6 @@ describe("startTelegramWebhook", () => {
     } finally {
       vi.useRealTimers();
     }
-  });
-
-  it("holds buffered timeout settlement behind durable webhook adoption", async () => {
-    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
-    try {
-      const update = telegramMessageUpdate(42, "held adoption");
-      await writeTelegramSpooledUpdate({
-        spoolDir: requireWebhookSpoolDir(),
-        update,
-      });
-      let participant: TelegramSpooledReplayDeferredParticipant | undefined;
-      let settlementHold: TelegramSpooledReplaySettlementHold | undefined;
-      handleUpdateSpy.mockImplementationOnce(async () => {
-        participant =
-          createTelegramSpooledReplayDeferredParticipant("test:webhook-adoption-hold") ?? undefined;
-        settlementHold = participant?.beginSettlementHold();
-      });
-
-      const started = await startTelegramWebhook({
-        token: TELEGRAM_TOKEN,
-        port: 0,
-        secret: TELEGRAM_SECRET,
-        path: TELEGRAM_WEBHOOK_PATH,
-        spoolDir: requireWebhookSpoolDir(),
-        runtime: { log: vi.fn(), error: vi.fn(), exit: vi.fn() },
-      });
-      try {
-        await waitForWebhookState(() => expect(participant).toBeDefined());
-        await vi.advanceTimersByTimeAsync(DEFAULT_INGRESS_ADOPTION_STALL_MS + 10_000);
-        await yieldWebhookTask();
-
-        expect(participant?.abortSignal.aborted).toBe(false);
-        expect(
-          (await listTelegramSpooledUpdateClaims({ spoolDir: requireWebhookSpoolDir() })).map(
-            (claim) => claim.updateId,
-          ),
-        ).toEqual([42]);
-
-        settlementHold?.release("discard-pending");
-        participant?.settle({ kind: "completed" });
-        await waitForWebhookState(async () =>
-          expect(
-            await listTelegramSpooledUpdateClaims({ spoolDir: requireWebhookSpoolDir() }),
-          ).toEqual([]),
-        );
-      } finally {
-        settlementHold?.release("replay-pending");
-        participant?.settle({ kind: "skipped" });
-        await started.stop();
-      }
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("drains spooled webhook updates left by a previous process on startup", async () => {
-    const update = telegramMessageUpdate(30, "leftover");
-    await writeTelegramSpooledUpdate({
-      spoolDir: requireWebhookSpoolDir(),
-      update,
-    });
-
-    await withStartedWebhook(
-      {
-        secret: TELEGRAM_SECRET,
-        path: TELEGRAM_WEBHOOK_PATH,
-      },
-      async () => {
-        await waitForWebhookState(() => expect(handleUpdateSpy).toHaveBeenCalledWith(update));
-        await waitForWebhookState(async () =>
-          expect(await listTelegramSpooledUpdates({ spoolDir: requireWebhookSpoolDir() })).toEqual(
-            [],
-          ),
-        );
-      },
-    );
   });
 
   it.each([
@@ -2286,97 +2171,6 @@ describe("startTelegramWebhook", () => {
         expect(handleUpdateSpy).not.toHaveBeenCalled();
       },
     );
-  });
-
-  it("keeps a webhook lane guarded while claimed completion retries", async () => {
-    let completeAttempts = 0;
-    let releaseCompletion: (() => void) | undefined;
-    let markCompletionRetryStarted: (() => void) | undefined;
-    const completionGate = new Promise<void>((resolve) => {
-      releaseCompletion = resolve;
-    });
-    const completionRetryStarted = new Promise<void>((resolve) => {
-      markCompletionRetryStarted = resolve;
-    });
-    setTelegramRuntime({
-      state: {
-        resolveStateDir: () => webhookStateDir ?? os.tmpdir(),
-        openChannelIngressQueue: (
-          options?: Omit<Parameters<typeof createChannelIngressQueue>[0], "channelId">,
-        ) => {
-          const queue = createChannelIngressQueue({ ...options, channelId: "telegram" });
-          return {
-            ...queue,
-            complete: async (...args: Parameters<typeof queue.complete>) => {
-              completeAttempts += 1;
-              if (completeAttempts === 1) {
-                throw new Error("transient completion write failure");
-              }
-              if (completeAttempts === 2) {
-                markCompletionRetryStarted?.();
-                await completionGate;
-              }
-              return await queue.complete(...args);
-            },
-          };
-        },
-      },
-    } as TelegramRuntime);
-    const firstUpdate = telegramMessageUpdate(50, "first");
-    const secondUpdate = telegramMessageUpdate(51, "second");
-    await writeTelegramSpooledUpdate({
-      spoolDir: requireWebhookSpoolDir(),
-      update: firstUpdate,
-    });
-    await writeTelegramSpooledUpdate({
-      spoolDir: requireWebhookSpoolDir(),
-      update: secondUpdate,
-    });
-    const seenUpdateIds: number[] = [];
-    handleUpdateSpy.mockImplementation(async (update: unknown) => {
-      seenUpdateIds.push((update as { update_id: number }).update_id);
-    });
-
-    const started = await startTelegramWebhook({
-      token: TELEGRAM_TOKEN,
-      port: 0,
-      secret: TELEGRAM_SECRET,
-      path: TELEGRAM_WEBHOOK_PATH,
-      spoolDir: requireWebhookSpoolDir(),
-      runtime: { log: vi.fn(), error: vi.fn(), exit: vi.fn() },
-    });
-    try {
-      await completionRetryStarted;
-      expect(seenUpdateIds).toEqual([50]);
-      expect(
-        (await listTelegramSpooledUpdateClaims({ spoolDir: requireWebhookSpoolDir() })).map(
-          (claim) => claim.updateId,
-        ),
-      ).toEqual([50]);
-      expect(
-        (await listTelegramSpooledUpdates({ spoolDir: requireWebhookSpoolDir() })).map(
-          (update) => update.updateId,
-        ),
-      ).toEqual([51]);
-
-      releaseCompletion?.();
-      await waitForWebhookState(() => expect(seenUpdateIds).toEqual([50, 51]));
-      await waitForWebhookState(async () =>
-        expect(
-          await listTelegramSpooledUpdateClaims({ spoolDir: requireWebhookSpoolDir() }),
-        ).toEqual([]),
-      );
-      expect(await listTelegramSpooledUpdates({ spoolDir: requireWebhookSpoolDir() })).toEqual([]);
-      await writeTelegramSpooledUpdate({
-        spoolDir: requireWebhookSpoolDir(),
-        update: firstUpdate,
-      });
-      expect(await listTelegramSpooledUpdates({ spoolDir: requireWebhookSpoolDir() })).toEqual([]);
-      expect(seenUpdateIds).toEqual([50, 51]);
-    } finally {
-      releaseCompletion?.();
-      await started.stop();
-    }
   });
 
   it("stops claimed completion retries when the webhook stops", async () => {

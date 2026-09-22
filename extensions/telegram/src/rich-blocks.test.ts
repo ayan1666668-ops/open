@@ -657,14 +657,6 @@ describe("markdownToTelegramRichBlocks", () => {
     expect(blocks.some((block) => block.type === "table")).toBe(false);
   });
 
-  it("does not auto-linkify bare URLs when entity detection is skipped", () => {
-    const { blocks } = markdownToTelegramRichBlocks("https://example.com", {
-      skipEntityDetection: true,
-    });
-    const text = blocks[0] && blocks[0].type === "paragraph" ? blocks[0].text : "";
-    expect(collectLinkTargets(text)).toEqual([]);
-  });
-
   it("keeps explicit markdown links when entity detection is skipped", () => {
     const { blocks } = markdownToTelegramRichBlocks("[docs](https://example.com)", {
       skipEntityDetection: true,

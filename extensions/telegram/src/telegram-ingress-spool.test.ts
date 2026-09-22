@@ -20,7 +20,6 @@ import {
   resolveTelegramIngressSpoolDir,
   resolveTelegramUpdateId,
 } from "./telegram-ingress-spool.js";
-import { telegramQueueEventId } from "./telegram-ingress-spool.test-support.js";
 
 async function withTempState<T>(
   fn: (stateDir: string, spoolDir: string) => Promise<T>,
@@ -134,7 +133,7 @@ describe("telegram ingress spool ordering", () => {
         expect(onError).not.toHaveBeenCalled();
         expect(await queue.listClaims()).toEqual([
           expect.objectContaining({
-            id: telegramQueueEventId(9),
+            id: "0000000000000009",
             laneKey: "telegram:-100123:topic:99",
             payload: expect.objectContaining({
               preparedPollAnswer: {
@@ -145,7 +144,7 @@ describe("telegram ingress spool ordering", () => {
         ]);
         expect(await queue.listPending({ limit: "all" })).toEqual([
           expect.objectContaining({
-            id: telegramQueueEventId(10),
+            id: "0000000000000010",
             laneKey: "telegram:-100123:topic:99",
           }),
         ]);

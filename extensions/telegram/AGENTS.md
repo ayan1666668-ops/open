@@ -137,7 +137,9 @@ Proof: `src/channels/message/ingress-drain.test.ts`,
 - Give each contract one primary test owner; another layer needs a distinct
   Telegram transport or lifecycle risk. Extend a stronger existing case instead
   of replaying shared retry policy or registering the same helper suite twice.
-- Capability proofs must exercise delivery or acknowledgement, not reassert
-  capability flags. Assert facts produced by the runtime, not copied test
-  algorithms or recording mocks invoked by the harness itself. Keep test access
-  private when no production caller needs it.
+- Require independent expected outcomes: do not derive them with the tested
+  helper, or let a mock implement the behavior being asserted. Capability proofs
+  must exercise delivery or acknowledgement rather than repeat declared flags.
+- Make negative controls discriminate their named guard; an unrelated denial
+  must not make them pass. Keep test access private when no production caller
+  needs it.

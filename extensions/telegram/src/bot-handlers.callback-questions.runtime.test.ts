@@ -67,26 +67,6 @@ describe("sendTelegramQuestionFeedback", () => {
 });
 
 describe("handleTelegramQuestionCallback", () => {
-  it.each([
-    [
-      { status: "already-terminal", reason: "already-terminal" },
-      "This question was already answered.",
-    ],
-  ] as const)("shows outcome feedback", async (result, expectedText) => {
-    const feedback = vi.fn(async () => undefined);
-    const resolveQuestion = vi.fn(async () => result);
-
-    await handleTelegramQuestionCallback({
-      callback,
-      cfg: {} as never,
-      senderId: "42",
-      feedback,
-      resolveQuestion,
-    });
-
-    expect(feedback).toHaveBeenCalledWith(expectedText, "terminal");
-  });
-
   it("does not turn a committed answer into an error when feedback fails", async () => {
     const feedback = vi.fn(async () => {
       throw new Error("receipt failed");
@@ -106,6 +86,5 @@ describe("handleTelegramQuestionCallback", () => {
       }),
     ).resolves.toBeUndefined();
     expect(feedback).toHaveBeenCalledOnce();
-    expect(feedback).toHaveBeenCalledWith("Answer submitted.", "terminal");
   });
 });

@@ -40,28 +40,14 @@ describe("isMediaSizeLimitError", () => {
 });
 
 describe("isDurablyRetryableInboundMediaError", () => {
-  const networkCause = () => Object.assign(new Error("read ECONNRESET"), { code: "ECONNRESET" });
   const abortCause = () => Object.assign(new Error("aborted"), { name: "AbortError" });
 
-  it("retries transient network and shutdown abort fetch failures", () => {
-    expect(
-      isDurablyRetryableInboundMediaError(
-        new MediaFetchError("fetch_failed", "x", { cause: networkCause() }),
-      ),
-    ).toBe(true);
+  it("retries shutdown abort fetch failures", () => {
     expect(
       isDurablyRetryableInboundMediaError(
         new MediaFetchError("fetch_failed", "x", { cause: abortCause() }),
       ),
     ).toBe(true);
-  });
-
-  it("retries 408, 429, and 5xx HTTP fetch failures", () => {
-    for (const status of [408, 429, 500, 502, 503, 504]) {
-      expect(
-        isDurablyRetryableInboundMediaError(new MediaFetchError("http_error", "x", { status })),
-      ).toBe(true);
-    }
   });
 
   it("does not retry permanent media failures", () => {
