@@ -429,11 +429,14 @@ export function renderExpandedToolCardContent(
         <div class="chat-tool-card__actions">${sidebarAction}</div>
         ${
           view.code
-            ? html`${hasOutput ? renderToolDataBlock({ text: card.outputText! }) : nothing}
-                <details class="chat-tool-card__input">
-                  <summary>${t("chat.toolCards.toolInput")}</summary>
-                  ${renderToolDataBlock({ text: view.code })}
-                </details>`
+            ? sourceKey === "input"
+              ? html`${hasOutput ? renderToolDataBlock({ text: card.outputText! }) : nothing}
+                  <details class="chat-tool-card__input">
+                    <summary>${t("chat.toolCards.toolInput")}</summary>
+                    ${renderToolDataBlock({ text: view.code })}
+                  </details>`
+              : html`${renderToolDataBlock({ label: t("chat.toolCards.toolInput"), text: view.code })}
+                ${hasOutput ? renderToolDataBlock({ text: card.outputText! }) : nothing}`
             : renderTerminalBlock(view.command!, card.outputText)
         }
         ${Object.keys(extraArgs).length > 0 ? renderArgsKeyValueList(extraArgs) : nothing}
