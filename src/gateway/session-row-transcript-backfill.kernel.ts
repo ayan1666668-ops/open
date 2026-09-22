@@ -4,27 +4,18 @@ import {
   isSessionTranscriptProjectionUnavailableError,
   SessionTranscriptStorageUnavailableError,
 } from "../config/sessions/session-transcript-projection-error.js";
-import type { InternalSessionEntry } from "../config/sessions/types.js";
 import { readSessionTerminalFallbackModel } from "../status/session-fallback-model.js";
 import { projectSessionDisplayMessage } from "./session-display-projection.js";
+import type {
+  SessionRowTranscriptFields,
+  SessionRowTranscriptReadParams,
+} from "./session-row-transcript-backfill.types.js";
 import { sqliteMessageEventWithSeq } from "./session-transcript-entry-message.js";
 
 /** The retained history worker reads bounded preview and terminal fallback facts. */
-export function readSessionRowTranscriptFields(params: {
-  agentId: string;
-  storeAgentId?: string;
-  storePath: string;
-  sessionKey: string;
-  sessionId: string;
-  sessionEntry: Pick<
-    InternalSessionEntry,
-    "sessionId" | "updatedAt" | "status" | "lastRunId" | "fallbackNotice"
-  >;
-  includeTerminalModel?: boolean;
-}): {
-  lastMessagePreview?: string;
-  terminalModel?: ReturnType<typeof readSessionTerminalFallbackModel>;
-} {
+export function readSessionRowTranscriptFields(
+  params: SessionRowTranscriptReadParams,
+): SessionRowTranscriptFields {
   const transcriptScope = { ...params, agentId: params.storeAgentId ?? params.agentId };
   try {
     const terminalModel = params.includeTerminalModel

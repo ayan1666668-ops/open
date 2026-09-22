@@ -30,7 +30,7 @@ import {
   createChannelTestPluginBase,
   createDirectOutboundTestAdapter,
 } from "../test-utils/channel-plugins.js";
-import { waitForAgentCommandCall } from "./agent-command.test-helpers.js";
+import { observeAgentCommandWork, waitForAgentCommandCall } from "./agent-command.test-helpers.js";
 import { setRegistry } from "./server.agent.gateway-server-agent.mocks.js";
 import { createRegistry } from "./server.e2e-registry-helpers.js";
 import { readSessionMessagesAsync } from "./session-transcript-readers.js";
@@ -307,6 +307,7 @@ describe("gateway server agent", () => {
         },
       },
     });
+    await using work = await observeAgentCommandWork();
     let subordinateAdmissionClosed: boolean | undefined;
     vi.mocked(agentCommandMock).mockImplementationOnce(async () => {
       const suspension = tryBeginGatewaySuspendAdmission(() => {});
@@ -326,12 +327,9 @@ describe("gateway server agent", () => {
 
     expect(res.ok).toBe(true);
     expect(res.payload?.status).toBe("accepted");
-    await vi.waitFor(() => {
-      expect(subordinateAdmissionClosed).toBe(false);
-    });
-    await vi.waitFor(() => {
-      expect(getActiveGatewayRootWorkCount()).toBe(0);
-    });
+    await work.settle();
+    expect(subordinateAdmissionClosed).toBe(false);
+    expect(getActiveGatewayRootWorkCount()).toBe(0);
   });
 
   test("agent marks implicit delivery when lastTo is stale", async () => {

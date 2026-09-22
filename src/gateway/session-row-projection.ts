@@ -432,7 +432,6 @@ export async function createSessionRowProjection(params: {
         cfg,
         disposed,
         topologyDirty,
-        subagentRevision: metadata.materializedRevisions.subagentRevision,
       }),
       runAsOwner: inOwnerContext,
       lookup,

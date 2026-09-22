@@ -18,7 +18,6 @@ export function createSessionRowRefresh(
       cfg: records.Inputs["cfg"];
       disposed: boolean;
       topologyDirty: boolean;
-      subagentRevision: number;
     };
     runAsOwner: <T>(operation: () => T) => T;
     lookup: (query: records.Lookup) => records.Row | undefined;
@@ -41,7 +40,7 @@ export function createSessionRowRefresh(
     }
   }
   function pendingExactRows(queries: readonly records.Lookup[]) {
-    const { cfg, subagentRevision } = owner.state();
+    const { cfg } = owner.state();
     const selected = new Set<string>();
     for (const query of queries) {
       const key = resolveStoredSessionKeyForAgentStore({
@@ -53,12 +52,7 @@ export function createSessionRowRefresh(
         continue;
       }
       const row = owner.lookup(query);
-      if (
-        row &&
-        (owner.dirty.has(records.identity(row)) ||
-          isCold(row) ||
-          row.subagentRevision !== subagentRevision)
-      ) {
+      if (row && (owner.dirty.has(records.identity(row)) || isCold(row))) {
         selected.add(records.identity(row));
       }
     }

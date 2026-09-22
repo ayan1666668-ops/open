@@ -4,7 +4,10 @@ import type {
   readSessionEntryResetRecallCutoff,
 } from "../../../packages/memory-host-sdk/src/host/session-files.js";
 import type { PreparedSessionHistoryReadTarget } from "../../gateway/session-history-read.types.js";
-import type { readSessionRowTranscriptFields } from "../../gateway/session-row-transcript-backfill.kernel.js";
+import type {
+  SessionRowTranscriptFields,
+  SessionRowTranscriptReadParams,
+} from "../../gateway/session-row-transcript-backfill.types.js";
 import type { SessionPreviewItem, SessionTitleFields } from "../../gateway/session-utils.types.js";
 import type {
   SessionCostUsageCacheRead,
@@ -127,12 +130,12 @@ type SessionTitleFieldsWorkerResult = {
 type SessionRowBackfillWorkerInput = {
   kind: "session-row-backfill";
   database: { agentId: string; path: string };
-  params: Parameters<typeof readSessionRowTranscriptFields>[0];
+  params: SessionRowTranscriptReadParams;
 };
 
 type SessionRowBackfillWorkerResult = {
   kind: "session-row-backfill";
-  fields: Awaited<ReturnType<typeof readSessionRowTranscriptFields>>;
+  fields: SessionRowTranscriptFields;
 };
 
 export type SessionRowPresenceWorkerInput = {

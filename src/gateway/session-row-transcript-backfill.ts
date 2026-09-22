@@ -3,24 +3,22 @@ import {
   toDatabaseOptions,
 } from "../config/sessions/session-accessor.sqlite-scope.js";
 import { withSessionHistoryWorkerDatabase } from "../config/sessions/session-transcript-worker-runtime.js";
+import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { readSessionFallbackModel } from "../status/session-fallback-model.js";
-import type { readSessionRowTranscriptFields } from "./session-row-transcript-backfill.kernel.js";
+import type { SessionRowTranscriptReadParams } from "./session-row-transcript-backfill.types.js";
 
 /** Optional transcript facts keep the row generation and foreground admission on the host. */
 export async function backfillSessionRowTranscriptFields(
-  params: Omit<Parameters<typeof readSessionRowTranscriptFields>[0], "includeTerminalModel"> & {
+  params: Omit<SessionRowTranscriptReadParams, "includeTerminalModel"> & {
     shouldCommit?: () => boolean;
-    model?: Pick<
-      Parameters<typeof readSessionFallbackModel>[0],
-      "selectedProvider" | "selectedModel" | "config"
-    >;
+    model?: { selectedProvider: string; selectedModel: string; config?: OpenClawConfig };
   },
 ): Promise<{ lastMessagePreview?: string; fallbackModel?: { provider: string; model: string } }> {
   if (params.shouldCommit?.() === false) {
     return {};
   }
   const { shouldCommit, sessionEntry, model, ...scope } = params;
-  const input = {
+  const input: SessionRowTranscriptReadParams = {
     ...scope,
     includeTerminalModel: model !== undefined,
     sessionEntry: {
