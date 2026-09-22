@@ -485,12 +485,12 @@ export class DraftPlaceState {
     this.callbacks.requestUpdate();
   }
 
-  selectAgentId(agentId: string) {
+  selectAgentId(agentId: string, options: { replaceTarget?: boolean } = {}) {
     const snapshot = this.read();
     if (
       snapshot.submitting ||
       snapshot.pendingPlacementSessionKey ||
-      catalog.isTarget(snapshot.data) ||
+      (!options.replaceTarget && catalog.isTarget(snapshot.data)) ||
       normalizeAgentId(agentId) === normalizeAgentId(this.agentIdValue)
     ) {
       return;
@@ -564,7 +564,7 @@ export class DraftPlaceState {
     const project = this.browser.projects.find((candidate) => candidate.id === projectId);
     if (project) {
       if (project.agentId) {
-        this.selectAgentId(project.agentId);
+        this.selectAgentId(project.agentId, { replaceTarget: true });
       }
       this.selectProject({ kind: "local", id: project.id });
     }
