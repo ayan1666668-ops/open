@@ -11,6 +11,7 @@ import { clearRuntimeConfigSnapshot, setRuntimeConfigSnapshot } from "../config/
 import { loadCombinedSessionStoreForGatewayCore } from "../config/sessions/combined-store-gateway.js";
 import * as sessionAccessor from "../config/sessions/session-accessor.js";
 import * as sessionEntryReader from "../config/sessions/session-entry-read-runtime.js";
+import { historyPages } from "../config/sessions/session-transcript-worker-resources.js";
 import {
   listKnownSessionStoreAgentIds,
   resolveExistingAgentSessionStoreTargetsSync,
@@ -220,7 +221,7 @@ describe("sweepCronRunSessions", () => {
     }
   });
 
-  it.each(["invalid JSON", "missing timestamp", "noncanonical key"])(
+  it.each(["invalid JSON", "missing timestamp", "noncanonical key", "invalid participant"])(
     "refuses selection when an unrelated row has %s",
     async (defect) => {
       const exactStorePath = path.join(tmpDir, "shared.sqlite");
@@ -229,7 +230,18 @@ describe("sweepCronRunSessions", () => {
         [sessionKey]: { sessionId: "unrelated", updatedAt: 1 },
       });
       const database = openOpenClawAgentDatabase({ agentId: "main", path: exactStorePath });
-      if (defect === "noncanonical key") {
+      if (defect === "invalid participant") {
+        sessionAccessor.recordSessionParticipant(
+          { agentId: "main", storePath: exactStorePath, sessionKey },
+          {
+            identity: { type: "agent", id: "peer" },
+            promptedAt: 1,
+          },
+        );
+        database.db
+          .prepare("UPDATE session_participants SET identity_namespace = ? WHERE session_key = ?")
+          .run("{}", sessionKey);
+      } else if (defect === "noncanonical key") {
         database.db.prepare("UPDATE session_nodes SET entry_json = ? WHERE session_key = ?").run(
           JSON.stringify({
             sessionId: "unrelated",
@@ -260,7 +272,7 @@ describe("sweepCronRunSessions", () => {
         }),
       ).toEqual({ swept: false, pruned: 0 });
       expect(warn).toHaveBeenCalledWith(
-        { err: expect.stringMatching(/canonical|invalid persisted/) },
+        { err: expect.stringMatching(/canonical|invalid persisted|participant identity/) },
         "cron-reaper: failed to sweep session store",
       );
     },
@@ -407,6 +419,7 @@ describe("sweepCronRunSessions", () => {
         log,
       }),
     ).toEqual({ swept: true, pruned: 0 });
+    const workersCreated = historyPages.getSnapshot().workersCreated;
     const result = await sweepCronRunSessionsImpl({
       agentId: "ops",
       sessionStorePath: exactStorePath,
@@ -415,6 +428,9 @@ describe("sweepCronRunSessions", () => {
     });
 
     expect(result).toEqual({ swept: true, pruned: 1 });
+    if (!process.versions.bun) {
+      expect(historyPages.getSnapshot().workersCreated).toBe(workersCreated);
+    }
     expect(
       sessionAccessor.loadSessionEntry({
         agentId: "main",

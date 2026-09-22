@@ -52,7 +52,6 @@ import {
   applySessionEntryPatchInDatabase,
   replaceSessionEntryInDatabase,
 } from "./session-accessor.sqlite-entry-mutation.js";
-import { prepareExactSessionEntryRowReads } from "./session-accessor.sqlite-entry-read.js";
 import {
   parseReadableSqliteSessionEntryRows,
   readExactSessionEntryRowValidated,
@@ -301,29 +300,22 @@ function listSqliteSessionEntriesFromDatabase(
     const requestedOwner = normalizeAgentId(agentId);
     return withSqlitePostCommitPublications(database.db, () =>
       runSqliteDeferredTransactionSync(database.db, () => {
-        const candidates = listSqliteSessionEntriesFromDatabase(database, resolved, {
-          ...scope,
-          expiredCronRuns: undefined,
-          projection: "list",
-          clone: false,
-        }).filter(
-          ({ sessionKey, entry }) =>
-            isCronRunSessionKey(sessionKey) &&
-            normalizeAgentId(parseAgentSessionKey(sessionKey)!.agentId) === requestedOwner &&
-            !((entry.updatedAt ?? 0) >= updatedBefore),
-        );
-        if (candidates.length === 0) {
-          return [];
-        }
-        // Lifecycle deletion compares the complete entry, including retained prompt snapshots.
-        const read = prepareExactSessionEntryRowReads(
-          database,
-          candidates.map(({ sessionKey }) => sessionKey),
-        );
-        return candidates.flatMap(({ sessionKey }) => {
-          const selected = read(sessionKey);
-          return selected ? [{ sessionKey, entry: selected.entry }] : [];
+        const selectedKeys = new Set<string>();
+        const snapshot = readSessionEntryCache(database, {
+          cache: false,
+          retainFullEntry: (sessionKey, entry) => {
+            const selected =
+              isCronRunSessionKey(sessionKey) &&
+              normalizeAgentId(parseAgentSessionKey(sessionKey)!.agentId) === requestedOwner &&
+              !((entry.updatedAt ?? 0) >= updatedBefore);
+            if (selected) {
+              selectedKeys.add(sessionKey);
+            }
+            return selected;
+          },
         });
+        // Sibling metadata and participants still cross complete listing validation.
+        return Array.from(iterateSessionEntriesForListing(snapshot, false, selectedKeys));
       }),
     );
   }

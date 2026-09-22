@@ -278,6 +278,7 @@ function loadSessionEntrySnapshot(
   projection: "full" | "list" = "list",
   prepared?: ValidatedSessionMetadata,
   fullEntryKeys?: ReadonlySet<string>,
+  retainFullEntry?: (sessionKey: string, entry: SessionEntry) => boolean,
 ): SessionEntryCacheSnapshot {
   // Validation lends complete parsed facts only within this read. A concurrent external commit
   // requires the ordinary fresh SELECT, never a stale snapshot stamped with its newer version.
@@ -301,6 +302,10 @@ function loadSessionEntrySnapshot(
         fullEntryKeys?.has(row.session_key) ? "full" : projection,
       );
       if (entry) {
+        if (retainFullEntry && !retainFullEntry(row.session_key, entry)) {
+          delete entry.skillsSnapshot;
+          delete entry.systemPromptReport;
+        }
         parsedEntries.set(row.session_key, entry);
       }
     }
@@ -320,25 +325,30 @@ export function readSessionEntryCache(
     projection?: "full" | "list";
     /** Uncached mixed snapshot: retain complete selected rows beside sibling metadata. */
     fullEntryKeys?: readonly string[];
+    /** Stream full JSON once, retaining prompt snapshots only for selected rows. Never cached. */
+    retainFullEntry?: (sessionKey: string, entry: SessionEntry) => boolean;
   },
 ): SessionEntryCacheSnapshot {
+  const projection = options.retainFullEntry ? "full" : options.projection;
   const prepared = assertCanonicalSqliteSessionKeysCurrent(
     database,
     undefined,
-    options.projection !== "full" && !options.fullEntryKeys,
+    projection !== "full" && !options.fullEntryKeys,
   );
   if (
     !options.cache ||
     options.fullEntryKeys ||
+    options.retainFullEntry ||
     options.latest ||
-    options.projection === "full" ||
+    projection === "full" ||
     database.db.isTransaction
   ) {
     return loadSessionEntrySnapshot(
       database,
-      options.projection,
+      projection,
       prepared,
       options.fullEntryKeys ? new Set(options.fullEntryKeys) : undefined,
+      options.retainFullEntry,
     );
   }
   const validityToken = readSessionEntryCacheValidityToken(database.db);
