@@ -15,21 +15,19 @@ import {
 } from "../../../lib/media-file-extension.ts";
 
 export type ImageBlock = {
-  url: string;
   factIndex?: number;
-  artifactId?: string;
   fileName?: string;
   openUrl?: string;
   alt?: string;
   sizeBytes?: number;
   width?: number;
   height?: number;
-};
+} & ({ url: string; artifactId?: string } | { url?: undefined; artifactId: string });
 
-export type ArtifactDownloadResolver = (params: {
-  sessionKey: string;
-  artifactId: string;
-}) => Promise<{ url: string; expiresAt?: string } | null>;
+export type ArtifactDownloadResolver = (
+  params: { sessionKey: string; artifactId: string },
+  signal?: AbortSignal,
+) => Promise<{ url: string; expiresAt?: string; blob?: Blob } | null>;
 
 export type ImageRenderOptions = {
   galleryImages?: readonly ImageBlock[];
@@ -425,7 +423,10 @@ function appendImageBlock(images: ImageBlock[], block: ImageBlock) {
     !images.some((entry) =>
       block.factIndex !== undefined
         ? entry.factIndex === block.factIndex
-        : entry.factIndex === undefined && entry.url === block.url && entry.alt === block.alt,
+        : entry.factIndex === undefined &&
+          entry.url === block.url &&
+          entry.artifactId === block.artifactId &&
+          entry.alt === block.alt,
     )
   ) {
     images.push(block);
@@ -595,6 +596,8 @@ export function projectMessageMedia(
           url,
           ...(typeof factIndex === "number" ? { factIndex } : {}),
         });
+      } else if (metadata.artifactId) {
+        appendImageBlock(blockImages, { ...metadata, artifactId: metadata.artifactId });
       }
     }
     // Separate blocks are separate attachments, including identical uploads.

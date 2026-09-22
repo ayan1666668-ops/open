@@ -107,7 +107,7 @@ function runCloseout(options: {
     `#!${process.execPath}
 import { appendFileSync, readFileSync } from 'node:fs';
 const args = process.argv.slice(2);
-if (args[0] === 'browse' && args[1] === '--no-browser') {
+if (args[0] === 'browse') {
   console.log('https://github.com/openclaw/openclaw');
   process.exit(0);
 }
@@ -147,7 +147,15 @@ refresh_prep_branch_for_reviewed_head() { :; }
 checkout_prep_branch() { :; }
 # Review authority is covered by the preparation fixtures; this isolates release classification.
 require_prepared_review() { :; }
-run_quiet_logged() { printf 'gate:%s\\n' "$1"; }
+run_quiet_logged() {
+  if [ "$1" = 'hosted CI/Testbox gates' ]; then
+    jq -se --slurpfile expected metadata.json '
+      length == 1 and
+      (.[0] | {headRefName,title,baseRefName,headRefOid,isCrossRepository}) == $expected[0]
+    ' >/dev/null || return 1
+  fi
+  printf 'gate:%s\\n' "$1"
+}
 prepare_gates 42
 `,
     ],

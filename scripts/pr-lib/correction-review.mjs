@@ -10,7 +10,8 @@ import {
   validateReviewArtifacts,
 } from "./review-artifacts.mjs";
 
-const git = (...args) => execFileSync("git", args, { encoding: "utf8" }).trim();
+const gitExecutable = process.env.OPENCLAW_PR_GIT || process.env.GIT_EXEC || "git";
+const git = (...args) => execFileSync(gitExecutable, args, { encoding: "utf8" }).trim();
 
 function readRegular(path) {
   if (!lstatSync(path).isFile()) {
@@ -51,14 +52,14 @@ function candidateMetadata(prMeta, incoming, head) {
   if (!/^[0-9a-f]{40}$/u.test(head) || head === incoming || git("rev-parse", "HEAD") !== head) {
     throw new Error("Review a committed correction, not the unchanged incoming head.");
   }
-  execFileSync("git", ["merge-base", "--is-ancestor", incoming, head]);
-  execFileSync("git", ["diff", "--quiet", "HEAD", "--"]);
+  execFileSync(gitExecutable, ["merge-base", "--is-ancestor", incoming, head]);
+  execFileSync(gitExecutable, ["diff", "--quiet", "HEAD", "--"]);
   if (git("ls-files", "--others", "--exclude-standard")) {
     throw new Error("Commit or preserve untracked source before reviewing the correction.");
   }
   // Include both the incoming scope and every fixup path. Candidate metadata is
   // derived in memory; the live incoming-head metadata is never rewritten.
-  const changed = execFileSync("git", ["diff", "--name-only", "-z", incoming, head], {
+  const changed = execFileSync(gitExecutable, ["diff", "--name-only", "-z", incoming, head], {
     encoding: "utf8",
   })
     .split("\0")

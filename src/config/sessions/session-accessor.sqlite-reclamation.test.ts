@@ -18,12 +18,15 @@ import { onSessionIdentityMutation } from "../../sessions/session-lifecycle-even
 import { withOpenClawAgentDatabaseReadOnly } from "../../state/openclaw-agent-db-readonly.js";
 import {
   closeOpenClawAgentDatabaseByPath,
+  closeOpenClawAgentDatabaseByPathAsync,
   closeOpenClawAgentDatabasesAsync,
   closeOpenClawAgentDatabasesForTest,
   getOpenClawAgentDatabaseIfOpen,
   openOpenClawAgentDatabase,
 } from "../../state/openclaw-agent-db.js";
+import { clearOpenClawAgentIntegrityVerification } from "../../state/openclaw-quarantine-store.js";
 import {
+  closeOpenClawStateDatabaseAsync,
   closeOpenClawStateDatabaseForTest,
   openOpenClawStateDatabase,
 } from "../../state/openclaw-state-db.js";
@@ -83,7 +86,7 @@ vi.mock("./session-accessor.sqlite-reclamation-worker.js", async (importOriginal
     await importOriginal<typeof import("./session-accessor.sqlite-reclamation-worker.js")>();
   return {
     ...actual,
-    withSqliteReclamationWorker: ((options, claim, run, assertRequestCurrent) =>
+    withSqliteReclamationWorker: ((options, claim, run, assertRequestCurrent, signal) =>
       actual.withSqliteReclamationWorker(
         options,
         claim,
@@ -121,6 +124,7 @@ vi.mock("./session-accessor.sqlite-reclamation-worker.js", async (importOriginal
           }
         },
         assertRequestCurrent,
+        signal,
       )) satisfies typeof actual.withSqliteReclamationWorker,
   };
 });
@@ -136,6 +140,7 @@ const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 afterEach(async () => {
   await closeOpenClawAgentDatabasesAsync();
   closeOpenClawAgentDatabasesForTest();
+  await closeOpenClawStateDatabaseAsync();
 });
 
 function createFixture(alias = false) {
@@ -230,11 +235,14 @@ test.each(
             if (operation === "board") {
               boardAppends.push(
                 board
-                  .putWidget({
-                    sessionKey: scope.sessionKey,
-                    name: "writer-proof",
-                    content: { kind: "html", html: "<p>committed</p>" },
-                  })
+                  .putWidget(
+                    {
+                      sessionKey: scope.sessionKey,
+                      name: "writer-proof",
+                      content: { kind: "html", html: "<p>committed</p>" },
+                    },
+                    { assertCurrent: () => expect(owner.getStore()).toBe("transcript-writer") },
+                  )
                   .then(
                     (snapshot) => {
                       expect(workerAuthorizationChecked).toBe(true);
@@ -266,6 +274,8 @@ test.each(
             databaseOptions,
           );
           expect(stored).toEqual({ found: true, value: [] });
+          expect(appends).toEqual([]);
+          expect(appendErrors).toEqual([]);
         }
       });
     const reclamation = owner.run("reclamation-owner", () =>
@@ -294,16 +304,20 @@ test.each(
           value: { archivedTranscripts: [], deleted: true },
         });
       }
+      await Promise.all(boardAppends);
     } finally {
       process.off("worker", observeWorker);
     }
-    await Promise.all(boardAppends);
-    expect(workers).toHaveLength(1);
+    // Boards add one canonical data worker; reclamation retains its separate worker.
+    expect(workers).toHaveLength(operation === "board" ? 2 : 1);
     expect(workers[0]?.id).toBeGreaterThan(0);
     expect(diagnostics).toEqual({ kind: "history-eviction", workerThreadId: workers[0]?.id });
     await closeOpenClawAgentDatabasesAsync();
     expect(workers[0]?.worker.threadId).toBe(-1);
     if (operation === "board") {
+      expect(workers[1]?.id).toBeGreaterThan(0);
+      expect(workers[1]?.id).not.toBe(workers[0]?.id);
+      expect(workers[1]?.worker.threadId).toBe(-1);
       expect(checksDuringWriters).toBe(0);
       expect(boardWriteOrder).toEqual(scopes.map((scope) => scope.sessionId));
     } else {
@@ -500,7 +514,8 @@ test.each([false, true])(
       expect(database.db.isOpen).toBe(false);
       expect(loadSessionEntryReadOnly(survivor)).toEqual(survivorEntry);
     } finally {
-      closeOpenClawAgentDatabaseByPath(database.path);
+      await closeOpenClawAgentDatabaseByPathAsync(database.path);
+      await closeOpenClawStateDatabaseAsync();
       closeOpenClawStateDatabaseForTest();
     }
   },
@@ -620,7 +635,7 @@ test("one reclamation pass leaves a large freelist for bounded later maintenance
   expect(Number(reopened.db.prepare("PRAGMA freelist_count").get()?.freelist_count)).toBe(0);
 });
 
-test("queued and different-store reclamations retain only their own worker identity", async () => {
+test("queued reclamations reuse their database Worker without borrowing another store's identity", async () => {
   const first = createFixture();
   const other = createFixture();
   const diagnostics: SqliteSessionReclamationDiagnostics[] = [{}, {}, {}];
@@ -643,7 +658,8 @@ test("queued and different-store reclamations retain only their own worker ident
     ]);
     const ids = diagnostics.map((record) => record.workerThreadId);
     expect(ids.every((id) => typeof id === "number" && id > 0)).toBe(true);
-    expect(new Set(ids).size).toBe(3);
+    expect(ids[1]).toBe(ids[0]);
+    expect(ids[2]).not.toBe(ids[0]);
   } finally {
     await Promise.allSettled(operations);
   }
@@ -665,6 +681,7 @@ test.each([false, true])(
   async (rejected) => {
     const { databaseOptions, plan } = createFixture();
     closeOpenClawAgentDatabasesForTest(databaseOptions.env.OPENCLAW_STATE_DIR);
+    clearOpenClawAgentIntegrityVerification(databaseOptions.path, databaseOptions.env);
     const file = path.join(tempDirs.make("openclaw-writer-log-"), "writer.log");
     const diagnostics: SqliteSessionReclamationDiagnostics = {};
     const workers: Array<{ worker: Worker; id: number }> = [];
@@ -868,6 +885,7 @@ test.each([
   async ({ elapsedMs, rejected, failLog }) => {
     const { databaseOptions, plan } = createFixture();
     closeOpenClawAgentDatabasesForTest(databaseOptions.env.OPENCLAW_STATE_DIR);
+    clearOpenClawAgentIntegrityVerification(databaseOptions.path, databaseOptions.env);
     const file = path.join(tempDirs.make("openclaw-reclamation-log-"), "reclamation.log");
     await fs.writeFile(file, "");
     setLoggerOverride({ level: "info", consoleLevel: "silent", file });

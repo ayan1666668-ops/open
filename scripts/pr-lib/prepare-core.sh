@@ -15,14 +15,8 @@ checkout_prep_branch() {
 resolve_pr_author_access_at_prepare() {
   # This lookup is optional: ordinary access refusals retain unknown access;
   # an exhausted/throttled API budget must stop preparation with its diagnostics.
-  local author="$1" repo_nwo response permission exit_code
-  repo_nwo=$(pr_gh repo view --json nameWithOwner --jq .nameWithOwner) || {
-    exit_code=$?
-    [ "$exit_code" -ne 75 ] || return 1
-    printf 'unknown\n'
-    return
-  }
-  if response=$(pr_gh api "repos/$repo_nwo/collaborators/$author/permission") &&
+  local author="$1" repo_nwo="$2" repo_host="$3" response permission exit_code
+  if response=$(pr_gh author-permission "$repo_nwo" "$repo_host" "$author") &&
     permission=$(printf '%s\n' "$response" | jq -er '.permission | select(type == "string")' 2>/dev/null); then
     case "$permission" in
       admin | write) printf 'maintainer\n' ;;
@@ -186,7 +180,7 @@ verify_prep_branch_matches_prepared_head() {
 }
 
 prepare_init() {
-  local pr="$1" review_mode="${2:-ready}"
+  local pr="$1" observation="${2:-}" review_mode="${3:-ready}"
   local incoming_json_oid=""
   # Validate the exact reviewed head before taking the lock past its reversible phase.
   case "$review_mode" in
@@ -225,10 +219,16 @@ prepare_init() {
   # Fetch cannot update pr-$pr while that branch is checked out.
   checkout_pr_worktree_target "$pr" "$reviewed_head_sha" || return 1
 
-  local json
-  json=$(read_pr_view_json "$pr" "headRefName,headRefOid") || return 1
+  if [ -n "$observation" ]; then
+    use_pr_observation "$pr" "$observation" || return 1
+  else
+    pr_observe "$pr" || return 1
+  fi
+  local json="$PR_OBSERVATION"
   local author_access_at_prep
-  author_access_at_prep=$(resolve_pr_author_access_at_prepare "${PR_AUTHOR:-}") || return 1
+  author_access_at_prep=$(resolve_pr_author_access_at_prepare "${PR_AUTHOR:-}" \
+    "$(printf '%s\n' "$json" | jq -er .baseRepository.nameWithOwner)" \
+    "$(printf '%s\n' "$json" | jq -er '.baseRepository.url | capture("^https://(?<host>[^/]+)/").host')") || return 1
 
   local head
   head=$(printf '%s\n' "$json" | jq -r .headRefName)
@@ -244,7 +244,7 @@ prepare_init() {
     exit 1
   fi
 
-  fetch_pr_head "$pr" "$reviewed_head_sha" "refs/heads/pr-$pr" || return 1
+  fetch_pr_head "$pr" "$reviewed_head_sha" "refs/heads/pr-$pr" "$json" || return 1
   pr_git checkout -B "pr-$pr-prep" "$reviewed_head_sha" || return 1
   retire_prep_evidence || return 1
 
@@ -366,6 +366,7 @@ verify_correction_publication_authority() {
 
 prepare_push() {
   local pr="$1"
+  local observation="${2:-}"
   local PREP_PUBLICATION_REVIEW_SNAPSHOT="" PREP_PUBLICATION_PR="$pr" PREP_PUBLICATION_ALLOW_PENDING=true
   PR_MAIN_SHA=""
   enter_worktree "$pr" false || return 1
@@ -400,12 +401,15 @@ prepare_push() {
   local lease_sha="$PREP_PUBLICATION_LEASE_SHA"
   prep_head_sha="$PREP_PUBLICATION_HEAD_SHA"
   local push_result_env=".local/prepare-push-result.env"
+  if [ "${GATES_MODE:-}" = github_pending ] && [ "${HOSTED_GATES_TARGET_HEAD_SHA:-}" != "$prep_head_sha" ]; then
+    echo "Deferred GitHub gates do not match the prepared head; re-run prepare-gates." >&2
+    return 1
+  fi
 
-  verify_pr_head_branch_matches_expected "$pr" "$PR_HEAD"
   require_prepared_review "$pr" || return 1
   PREP_PUBLICATION_REVIEW_SNAPSHOT=$(correction_review_snapshot "$pr") || return 1
   verify_correction_publication_authority || return 1
-  push_prep_head_to_pr_branch "$pr" "$PR_HEAD" "$prep_head_sha" "$lease_sha" "$push_result_env" || return $?
+  push_prep_head_to_pr_branch "$pr" "$PR_HEAD" "$prep_head_sha" "$lease_sha" "$push_result_env" "$observation" || return $?
   # shellcheck disable=SC1090
   source "$push_result_env"
   prep_head_sha="$PUSH_PREP_HEAD_SHA"
@@ -422,11 +426,15 @@ prepare_push() {
     finalize_remote_crabbox_aws_gate "$pr" "$prep_head_sha"
     # shellcheck disable=SC1091
     source .local/gates.env
+  elif [ "${GATES_MODE:-}" = github_pending ]; then
+    # Publication can assign a new OID to the verified prepared tree.
+    write_gates_env_stamp "$pr" "${DOCS_ONLY:-false}" "${CHANGELOG_REQUIRED:-false}" \
+      github_pending "" "" "$prep_head_sha" "" "" "" "" || return 1
   fi
 
   local contrib="${PR_AUTHOR:-}"
   if [ -z "$contrib" ]; then
-    contrib=$(pr_gh pr view "$pr" --json author --jq .author.login) || return 1
+    contrib=$(printf '%s\n' "$PR_HEAD_OBSERVATION" | jq -r .author.login) || return 1
   fi
   local coauthor_email=""
   if coauthor_email=$(resolve_contributor_coauthor_email "$contrib"); then
@@ -435,12 +443,16 @@ prepare_push() {
     coauthor_email=""
   fi
 
+  if [ "${GATES_MODE:-}" = github_pending ]; then
+    printf '%s\n' "- Required GitHub gates deferred; push succeeded to branch $PR_HEAD." >> .local/prep.md
+  else
+    printf '%s\n' "- Gates passed and push succeeded to branch $PR_HEAD." >> .local/prep.md
+  fi
   cat >> .local/prep.md <<EOF_PREP
-- Gates passed and push succeeded to branch $PR_HEAD.
 - Gate mode: ${GATES_MODE:-unknown}.
 - Verified the remote PR head tree matches the local prep head.
 EOF_PREP
-  if [ -n "${REMOTE_GATES_LEASE_ID:-}" ]; then
+  if [ "${GATES_MODE:-}" != github_pending ] && [ -n "${REMOTE_GATES_LEASE_ID:-}" ]; then
     cat >> .local/prep.md <<EOF_PREP
 - Remote gate stamp: ${REMOTE_GATES_PROVIDER:-unknown} ${REMOTE_GATES_RUN_ID:+run ${REMOTE_GATES_RUN_ID}, }lease ${REMOTE_GATES_LEASE_ID}${REMOTE_GATES_RUN_URL:+ (${REMOTE_GATES_RUN_URL})}.
 EOF_PREP
@@ -498,7 +510,6 @@ prepare_sync_head() {
   prep_head_sha="$PREP_PUBLICATION_HEAD_SHA"
   local push_result_env=".local/prepare-sync-result.env"
 
-  verify_pr_head_branch_matches_expected "$pr" "$PR_HEAD"
   require_prepared_review "$pr" || return 1
   PREP_PUBLICATION_REVIEW_SNAPSHOT=$(correction_review_snapshot "$pr") || return 1
   verify_correction_publication_authority || return 1
@@ -517,7 +528,7 @@ prepare_sync_head() {
 
   local contrib="${PR_AUTHOR:-}"
   if [ -z "$contrib" ]; then
-    contrib=$(pr_gh pr view "$pr" --json author --jq .author.login) || return 1
+    contrib=$(printf '%s\n' "$PR_HEAD_OBSERVATION" | jq -r .author.login) || return 1
   fi
   local coauthor_email=""
   if coauthor_email=$(resolve_contributor_coauthor_email "$contrib"); then
@@ -559,9 +570,10 @@ EOF_PREP
 
 prepare_run() {
   local pr="$1"
-  prepare_init "$pr"
-  prepare_gates "$pr"
-  prepare_push "$pr"
+  prepare_init "$pr" "${2:-}" || return 1
+  local observation="$PR_HEAD_OBSERVATION"
+  prepare_gates "$pr" "$observation" || return 1
+  prepare_push "$pr" "$observation" || return 1
   echo "prepare-run complete for PR #$pr"
   echo "pr_url=${PR_URL:-}"
 }

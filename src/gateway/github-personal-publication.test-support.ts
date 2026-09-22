@@ -9,8 +9,11 @@ import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { resetGatewayWorkAdmission } from "../process/gateway-work-admission.js";
 import { openOpenClawStateDatabase } from "../state/openclaw-state-db.js";
 import { updateUserGitHubConnection } from "../state/user-github-connections.js";
-import { ensureProfileForEmail } from "../state/user-profiles.js";
-import { personalGitHubStatus } from "./github-personal-oauth.js";
+import { ensureCanonicalUserProfileForEmail } from "../state/user-profile-writes.js";
+import {
+  createPersonalGitHubOAuthLifecycle,
+  personalGitHubStatus,
+} from "./github-personal-oauth.js";
 import {
   SESSION_ID,
   SESSION_KEY,
@@ -70,8 +73,8 @@ export async function expectPersonalPublicationReplay(
 }
 
 export async function createPersonalPublicationFixture() {
-  const owner = ensureProfileForEmail("alice@example.test").id;
-  const otherOwner = ensureProfileForEmail("bob@example.test").id;
+  const owner = (await ensureCanonicalUserProfileForEmail("alice@example.test")).id;
+  const otherOwner = (await ensureCanonicalUserProfileForEmail("bob@example.test")).id;
   const generation = randomUUID();
   const personalToken = `synthetic-personal-credential-${generation}`;
   updateUserGitHubConnection(
@@ -183,20 +186,28 @@ export async function callPersonalPublicationRpc(
   params: Record<string, unknown> = { sessionKey: SESSION_KEY },
 ) {
   const respond = vi.fn();
-  await handleGatewayRequest({
-    req: { type: "req", id: randomUUID(), method, params },
-    client,
-    context: {
-      ...context,
-      githubPublicationService: coordinator,
-      githubOAuthService: {
-        personal: { status: async (statusAction) => personalGitHubStatus(statusAction) },
-      } as GatewayRequestContext["githubOAuthService"],
-    },
-    respond,
-    isWebchatConnect: () => false,
-  });
-  return respond.mock.calls[0]!;
+  const personal = createPersonalGitHubOAuthLifecycle();
+  try {
+    await handleGatewayRequest({
+      req: { type: "req", id: randomUUID(), method, params },
+      client,
+      context: {
+        ...context,
+        githubPublicationService: coordinator,
+        githubOAuthService: {
+          personal: {
+            ...personal,
+            status: async (statusAction) => personalGitHubStatus(statusAction),
+          },
+        } as GatewayRequestContext["githubOAuthService"],
+      },
+      respond,
+      isWebchatConnect: () => false,
+    });
+    return respond.mock.calls[0]!;
+  } finally {
+    await personal.stop();
+  }
 }
 
 export function restartPersonalPublicationFixture(

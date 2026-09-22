@@ -132,8 +132,20 @@ export async function startAgentRunExecution(params: {
     const abortController = abortRegistration.controller;
     const operationalRunInstance = prepared.operationalRunInstance;
     const sessionKey = abortEntry?.sessionKey;
+    const assertTaskSettlementCurrent = () => {
+      params.assertContextCurrent?.();
+      assertAgentRunLifecycleGenerationCurrent(params.lifecycleGeneration);
+      // Cancellation closes execution, but its retained producer still records the outcome.
+      if (
+        !leaseActive ||
+        (abortRegistration.registered && !prepared.activeGatewayWorkAdmission.isActive())
+      ) {
+        throw new Error("Agent task settlement no longer owns this Gateway run");
+      }
+    };
     const assertDispatchCurrent = () => {
       params.assertContextCurrent?.();
+      prepared.operatorAuthority?.assertCurrent();
       abortController.signal.throwIfAborted();
       assertAgentRunLifecycleGenerationCurrent(params.lifecycleGeneration);
       if (
@@ -173,11 +185,15 @@ export async function startAgentRunExecution(params: {
       leaseActive = false;
       mediaCleanup ??= discardPreparedInboundMedia(refsToDiscard, params.context.logGateway);
       if (prepared.userTurn.recorder && params.resolvedSessionKey) {
-        emitSessionsChanged(params.context, {
-          sessionKey: params.resolvedSessionKey,
-          agentId: params.activeSessionAgentId,
-          reason: "agent.input.settled",
-        });
+        emitSessionsChanged(
+          params.context,
+          {
+            sessionKey: params.resolvedSessionKey,
+            agentId: params.activeSessionAgentId,
+            reason: "agent.input.settled",
+          },
+          { accessChanged: false },
+        );
       }
     };
     const dispatchAdmittedAgentRun = (
@@ -306,11 +322,15 @@ export async function startAgentRunExecution(params: {
           });
         }
         if (!params.suppressVisibleSessionEffects && params.resolvedSessionKey) {
-          emitSessionsChanged(params.context, {
-            sessionKey: params.resolvedSessionKey,
-            agentId: params.activeSessionAgentId,
-            reason: "send",
-          });
+          emitSessionsChanged(
+            params.context,
+            {
+              sessionKey: params.resolvedSessionKey,
+              agentId: params.activeSessionAgentId,
+              reason: "send",
+            },
+            { accessChanged: false },
+          );
         }
 
         if (!params.isRawModelRun) {
@@ -425,6 +445,7 @@ export async function startAgentRunExecution(params: {
           withAgentRunDispatchExecutionIdentity(
             {
               assertCurrent: assertDispatchCurrent,
+              assertSettlementCurrent: assertTaskSettlementCurrent,
               admittedRunEntry: abortEntry,
               commandRuntimeContext: {
                 config: prepared.replyDispatchRuntime.config,
@@ -512,6 +533,7 @@ export async function startAgentRunExecution(params: {
                 forceCodeModeTools: params.request.forceCodeModeTools,
                 ...(executionIdentityAdmission ? { executionIdentityAdmission } : {}),
                 operationalRunInstance: prepared.operationalRunInstance,
+                operatorAuthority: prepared.operatorAuthority,
                 onAdmittedRunContext: (admittedRunContext) => {
                   skillLibraryAuthoring?.bind(admittedRunContext);
                   bindGatewayContextResolver(
@@ -541,11 +563,15 @@ export async function startAgentRunExecution(params: {
                   }
                   params.io.emitExecutionStarted?.();
                   if (params.resolvedSessionKey) {
-                    emitSessionsChanged(params.context, {
-                      sessionKey: params.resolvedSessionKey,
-                      agentId: params.agentId,
-                      reason: "agent.run.started",
-                    });
+                    emitSessionsChanged(
+                      params.context,
+                      {
+                        sessionKey: params.resolvedSessionKey,
+                        agentId: params.agentId,
+                        reason: "agent.run.started",
+                      },
+                      { accessChanged: false },
+                    );
                   }
                 },
                 onActiveModelSelected: createAgentRunModelSelectionHandler({
