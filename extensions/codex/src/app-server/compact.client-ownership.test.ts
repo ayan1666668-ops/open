@@ -34,6 +34,7 @@ import {
 import {
   releaseCodexAppServerBindingSubscription,
   retainCodexAppServerBindingSubscription,
+  withCodexAppServerThreadMutation,
 } from "./thread-ownership.js";
 import { CODEX_APP_SERVER_VERSION } from "./version.js";
 
@@ -456,6 +457,10 @@ it.each([
       entered.resolve();
       return result;
     });
+    let queueEntered = false;
+    const queued = withCodexAppServerThreadMutation(threadId, async () => {
+      queueEntered = true;
+    });
     const successor = prepareThread(nextOwner).then(
       (value) => ({ value }),
       (error: unknown) => ({ error }),
@@ -495,6 +500,7 @@ it.each([
         }
       } else {
         await delay(20);
+        expect(queueEntered).toBe(false);
         expect(
           sharedClientRuntime.retainSharedCodexAppServerClientByInstanceId,
         ).not.toHaveBeenCalled();
@@ -503,8 +509,10 @@ it.each([
     } finally {
       releaseRetirementLease?.();
       harness?.emitExit();
+      await queued;
       await successor;
     }
+    expect(queueEntered).toBe(true);
     expect(await successor).toMatchObject(
       ownerClaimed
         ? { error: expect.any(Error) }
