@@ -5561,8 +5561,8 @@ server.listen(0, "127.0.0.1", () => {
     const checkoutStep = warmer.jobs.warm.steps.find(
       (step: WorkflowStep) => step.name === "Checkout",
     );
-    const seedStep = warmer.jobs.warm.steps.find(
-      (step: WorkflowStep) => step.name === "Select cache seed",
+    const bunSetup = warmer.jobs.warm.steps.find(
+      (step: WorkflowStep) => step.name === "Setup pinned Bun test runtime",
     );
     const warmStep = warmer.jobs.warm.steps.find(
       (step: WorkflowStep) => step.name === "Warm transform and compile caches",
@@ -5653,10 +5653,10 @@ server.listen(0, "127.0.0.1", () => {
             "vitest-fs-cache": "true",
             "vitest-worker-cache": String(full),
           });
-          for (const step of [buildStep, boundaryCleanupStep, seedStep]) {
+          for (const step of [buildStep, boundaryCleanupStep]) {
             expect(evaluateWorkflowExpression(step.if, context), step.name).toBe(full);
           }
-          for (const step of [boundaryPrepareStep, warmStep]) {
+          for (const step of [boundaryPrepareStep, bunSetup, warmStep]) {
             expect(step.if, step.name).toBeUndefined();
           }
           expect(evaluateWorkflowExpression(warmAssertionStep.if, context)).toBe(true);
@@ -5666,31 +5666,27 @@ server.listen(0, "127.0.0.1", () => {
         }
       }
     }
-    for (const [platform, collector] of [
-      ["linux", "ci-run-node-test-shard"],
-      ["linux-hosted", "ci-warm-hosted-vitest-caches"],
-    ]) {
+    expect(bunSetup.uses).toBe("./.github/actions/setup-test-bun");
+    expect(warmerSteps.indexOf(bunSetup)).toBeLessThan(warmerSteps.indexOf(warmStep));
+    expect(
+      warmer.jobs.dependencies.steps.some(
+        (step: WorkflowStep) => step.uses === "./.github/actions/setup-test-bun",
+      ),
+    ).toBe(false);
+    for (const platform of ["linux", "linux-hosted"]) {
       const invocation = runWorkflowShellScript(
         `node() { printf '%s\\n' "$*"; return 23; }\n${warmStep.run}`,
         { env: { ...process.env, CACHE_WARM_PLATFORM: platform } },
       );
       expect(invocation.stdout.trim(), invocation.stderr).toBe(
-        `--import tsx scripts/${collector}.mts`,
+        "--import tsx scripts/ci-warm-vitest-caches.mts",
       );
       expect(invocation.status, invocation.stderr).toBe(23);
     }
     expect(warmer.on).not.toHaveProperty("workflow_run");
     expect(checkoutStep.with).toBeUndefined();
     expect(warmerSource).toContain('cron: "17 8 * * *"');
-    expect(seedStep.run).toContain(
-      'import { createVitestCacheWarmGroups } from "./scripts/lib/ci-node-test-plan.mts";',
-    );
-    expect(seedStep.run).toMatch(
-      /const groups = createVitestCacheWarmGroups\(\);[\s\S]*appendFileSync\(\s*process\.env\.GITHUB_ENV,[\s\S]*OPENCLAW_NODE_TEST_GROUPS_JSON=\$\{JSON\.stringify\(groups\)\}/u,
-    );
     expect(warmerSource).not.toContain("OPENCLAW_NODE_TEST_CONFIGS_JSON");
-    expect(warmerSource).toContain('"OPENCLAW_NODE_TEST_PLAN_CONCURRENCY=1"');
-    expect(seedStep.run).toContain('"OPENCLAW_NODE_TEST_PLAN_CONTINUE_ON_FAILURE=1"');
     expect(warmStep.id).toBe("warm-caches");
     expect(warmStep["continue-on-error"]).toBe(true);
     expect(warmStep.env).toMatchObject({
@@ -5736,7 +5732,7 @@ server.listen(0, "127.0.0.1", () => {
           warmerSteps.findIndex((step) => step.name === "Warm build cache"),
         );
         expect(warmerSteps.indexOf(saveStep), saveStep.name).toBeLessThan(
-          warmerSteps.indexOf(seedStep),
+          warmerSteps.indexOf(warmStep),
         );
         expect(saveStep.if).not.toMatch(/always\(|failure\(/u);
       } else if (saveStep.name === "Save native SDK boundary cache") {
@@ -5760,7 +5756,6 @@ server.listen(0, "127.0.0.1", () => {
     // No close-time cleanup workflow is needed; Actions cache LRU/TTL expires
     // old hosted-writer and warmer generations.
     expect(existsSync(".github/workflows/pr-cache-cleanup.yml")).toBe(false);
-    expect(seedStep.if).toBe("${{ matrix.platform == 'linux' }}");
     expect(warmStep.if).toBeUndefined();
     const distSave = expectDefined(
       saveSteps.find((step) => step.name === "Save dist build cache"),

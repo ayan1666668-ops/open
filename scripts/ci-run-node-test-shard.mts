@@ -602,6 +602,7 @@ export async function runShardPlans(plans: ShardPlan[], options: RunShardOptions
                 childEnv.OPENCLAW_VITEST_INCLUDE_FILE;
               delete childEnv.OPENCLAW_VITEST_INCLUDE_FILE;
             }
+            Object.assign(childEnv, selection.env);
             const timingKey = entry.kind === "group" ? (entry.timingKey ?? entry.name) : entry.name;
             const timingPrefix =
               runtime === "bun" ? "bun:" : selection.includePatterns ? "node-subset:" : "";

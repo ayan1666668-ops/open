@@ -398,6 +398,32 @@ describe("scripts/ci-run-node-test-shard.mts", () => {
     ]);
   });
 
+  it.each(["bun-compatible", "dual"] as const)(
+    "applies the measured UI JIT policy only to the Bun child under %s",
+    async (policy) => {
+      const seen: Array<Record<string, string | undefined>> = [];
+      await expect(
+        runShardPlans([{ kind: "group", name: "ui", plan: { configs: ["ui/vitest.config.ts"] } }], {
+          env: { OPENCLAW_CI_TEST_RUNTIME_POLICY: policy },
+          scratchDir: makeScratchDir(),
+          runChild: async (_args, env) => {
+            seen.push({
+              runtime: env.OPENCLAW_VITEST_RUNTIME,
+              warmup: env.BUN_JSC_thresholdForFTLOptimizeAfterWarmUp,
+              soon: env.BUN_JSC_thresholdForFTLOptimizeSoon,
+              ftlEnabled: env.BUN_JSC_useFTLJIT,
+            });
+            return 0;
+          },
+        }),
+      ).resolves.toBe(0);
+      expect(seen).toEqual([
+        { runtime: "node", warmup: undefined, soon: undefined, ftlEnabled: undefined },
+        { runtime: "bun", warmup: "512000", soon: "8000", ftlEnabled: undefined },
+      ]);
+    },
+  );
+
   it.each([
     { vitestArgs: ["--root=another-root"] },
     { vitestArgs: ["--config", "another.config.ts"] },

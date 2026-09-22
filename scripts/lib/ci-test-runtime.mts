@@ -23,7 +23,15 @@ export type CiTestRuntimeSelection = {
   runtime: TestRuntime;
   includePatterns?: string[];
   includeAfterShard?: true;
+  env?: Readonly<Record<string, string>>;
 };
+
+// Short-lived UI workers spend less time compiling their top JIT tier when it
+// starts later. Keep every tier enabled and share the producer/consumer policy.
+export const BUN_UI_TEST_ENV = {
+  BUN_JSC_thresholdForFTLOptimizeAfterWarmUp: "512000",
+  BUN_JSC_thresholdForFTLOptimizeSoon: "8000",
+} as const;
 
 const bunCompatibleConfigs = new Set(["test/vitest/vitest.unit-fast-fake-timers.config.ts"]);
 // Bun fork 3ff0efc82217775e04094a1d4402d7c6932ecb24 failed or added skips in these files.
@@ -243,6 +251,7 @@ export function resolveCiTestRuntimeSelections(
       runtime: "bun",
       includePatterns: bunFiles,
       ...(partition.includeAfterShard ? { includeAfterShard: true } : {}),
+      ...(config === "ui/vitest.config.ts" ? { env: BUN_UI_TEST_ENV } : {}),
     },
   ];
 }

@@ -143,6 +143,11 @@ this setup resolves jsdom's native CSS tokenizer and prevents inlining only its
 `endOfFile` predicate. The pinned fork can otherwise
 enter an unbounded CSS-tokenizer loop after an ordered sequence of UI files.
 Baseline, DFG, and FTL JIT remain enabled; Node and Chromium are unaffected.
+The UI runtime owner delays FTL compilation with warmup/soon thresholds of
+512000/8000. These short-lived workers benefit from less compilation work;
+the protected cache publisher uses the same policy when collecting its seven
+canonical UI seed files on Bun. PR jobs restore that Bun seed alongside the
+Node seed, with separate transform-cache leaves.
 The setup leaves tokenizer exports and CSS behavior unchanged. Remove it
 only after a corrected pinned runtime passes the original ordered reproduction,
 the complete UI config, and all three native shards within their existing memory
@@ -156,8 +161,8 @@ Vitest and its workers use the selected runtime. Bun and Node have separate
 transform-cache directories and timing identities. Either runtime failing fails
 the job. This adds no matrix rows or runner registrations.
 
-`NODE_OPTIONS` continues to limit Node heaps; Bun does not use that V8 heap
-limit. Compare observed memory use alongside elapsed time before admitting more
+`NODE_OPTIONS`, where configured, limits Node heaps; the UI lane retains Node's
+default heap limit. Bun does not use that V8 limit. Compare observed memory use alongside elapsed time before admitting more
 lanes. Compatibility evidence must use the exact fork build installed by CI;
 stock Bun results and different fork revisions are separate measurements.
 
