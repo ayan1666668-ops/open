@@ -507,12 +507,16 @@ suite.define(() => {
         if (captureUiProof) {
           await page.screenshot({ path: path.join(proofDir, "active-runs.png") });
         }
-        expect((await activeCount.textContent())?.trim()).toBe("101 active");
+        expect((await activeCount.textContent())?.trim()).toBe("100 active");
         expect(await activeRuns.getByText("Showing 100 of 101", { exact: true }).count()).toBe(1);
         expect(await activeRuns.locator("li").count()).toBe(100);
         expect(await activeRuns.getByText("active-session-100", { exact: true }).count()).toBe(0);
-        for (const sessionId of ["active-session-0", "active-session-1", "active-session-2"]) {
-          expect(await activeRuns.getByText(sessionId, { exact: true }).count()).toBe(1);
+        for (const label of [
+          "active-session-0 / active-run-0",
+          "active-session-1 / active-run-1",
+          "active-session-2 / active-run-2",
+        ]) {
+          expect(await activeRuns.getByTitle(label, { exact: true }).count()).toBe(1);
         }
         expect(
           await gateway.getRequests("sessions.list", { ...currentWorkQuery, offset: 100 }),

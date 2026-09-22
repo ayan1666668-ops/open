@@ -158,18 +158,38 @@ function renderStatus(
   `;
 }
 
+type ActiveSession = SessionsListResult["sessions"][number] & {
+  activeRunIds?: string[];
+};
+
+type ActiveRunRow = {
+  sessionId: string;
+  runId?: string;
+};
+
 function renderActiveRuns({ sessions, totalCount, hasMore }: SessionsListResult): TemplateResult {
+  const rows: ActiveRunRow[] = [];
+  // SAFETY: the Gateway may expose activeRunIds before the generated session type is updated.
+  for (const session of sessions as ActiveSession[]) {
+    const sessionId = session.sessionId ?? session.key ?? t("common.unknown");
+    if (session.activeRunIds?.length) {
+      rows.push(...session.activeRunIds.map((runId) => ({ sessionId, runId })));
+    } else {
+      rows.push({ sessionId });
+    }
+  }
   return html`
     <div class="debug-overlay__count">
-      ${t("debug.overlay.activeRunsCount", { count: String(totalCount ?? sessions.length) })}
+      ${t("debug.overlay.activeRunsCount", { count: String(rows.length) })}
     </div>
     ${hasMore ? html`<div class="debug-overlay__count">${t("activityFeed.showing", { shown: String(sessions.length), total: String(totalCount ?? sessions.length) })}</div>` : nothing}
     ${
-      sessions.length > 0
+      rows.length > 0
         ? html`<ul class="debug-overlay__list">
-            ${sessions.map((session) => {
-              const id = session.sessionId ?? session.key;
-              return html`<li class="mono" title=${id}>${truncateUtf16Safe(id, 32)}</li>`;
+            ${rows.map((row) => {
+              const label =
+                row.runId === undefined ? row.sessionId : `${row.sessionId} / ${row.runId}`;
+              return html`<li class="mono" title=${label}>${truncateUtf16Safe(label, 64)}</li>`;
             })}
           </ul>`
         : html`<div class="debug-overlay__empty">${t("debug.overlay.noActiveRuns")}</div>`
