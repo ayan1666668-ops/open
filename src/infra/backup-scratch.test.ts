@@ -281,6 +281,88 @@ it("preserves unexpected contents and symbolic links instead of adopting them as
   await expect(fs.lstat(linked)).resolves.toSatisfy((entry) => entry.isSymbolicLink());
 });
 
+it.each(["admitted", "creating"] as const)(
+  "classifies active scratch before inspecting a journal that can disappear (%s)",
+  async (phase) => {
+    const root = dirs.make("backup-scratch-active-journal-");
+    const entered = createDeferredCore<string>();
+    const resume = createDeferredCore();
+    if (phase === "creating") {
+      const createDirectory = privateDirectory.createPrivateSqliteTempDirectory;
+      vi.spyOn(privateDirectory, "createPrivateSqliteTempDirectory").mockImplementation(
+        async (...args) => {
+          const directory = await createDirectory(...args);
+          entered.resolve(directory);
+          await resume.promise;
+          return directory;
+        },
+      );
+    }
+    const creating = createBackupScratchDirectory(root);
+    const directory = phase === "creating" ? await entered.promise : (await creating).directory;
+    const snapshot = path.join(directory, ".sqlite-snapshot-Active");
+    const journal = path.join(snapshot, "database.sqlite-journal");
+    let database: ReturnType<typeof nodeSqlite.openNodeSqliteDatabase> | undefined;
+    const startSnapshot = () => {
+      fsSync.mkdirSync(snapshot);
+      const opened = nodeSqlite.openNodeSqliteDatabase(path.join(snapshot, "database.sqlite"));
+      database = opened;
+      opened.exec(
+        "PRAGMA journal_mode = DELETE; CREATE TABLE fixture (id INTEGER); BEGIN IMMEDIATE; INSERT INTO fixture VALUES (1);",
+      );
+      expect(fsSync.existsSync(journal)).toBe(true);
+    };
+    const lstat = fs.lstat;
+    let inspectedJournal = false;
+    let observedMissingToken = false;
+    const inspect = vi.spyOn(fs, "lstat").mockImplementation(async (...args) => {
+      if (
+        phase === "creating" &&
+        args[0] === path.join(directory, stagingToken.SQLITE_STAGING_TOKEN_FILES[0]) &&
+        !observedMissingToken
+      ) {
+        try {
+          return await lstat(...args);
+        } catch (error) {
+          expect(error).toMatchObject({ code: "ENOENT" });
+          observedMissingToken = true;
+          resume.resolve();
+          await creating;
+          startSnapshot();
+          throw error;
+        }
+      }
+      if (args[0] === journal) {
+        inspectedJournal = true;
+        // A live snapshot can commit between the maintainer's readdir and lstat.
+        database?.exec("COMMIT");
+      }
+      return lstat(...args);
+    });
+    try {
+      if (phase === "admitted") {
+        startSnapshot();
+      }
+      const report = await maintainBackupScratch({ roots: [root], repair: true, log: () => {} });
+      expect(observedMissingToken).toBe(phase === "creating");
+      expect(report.warnings).toEqual([]);
+      expect(report.active).toEqual([directory]);
+      expect(report.reclaimed).toEqual([]);
+      expect(report.alreadyReclaimed).toEqual([]);
+      expect(inspectedJournal).toBe(false);
+      expect(database?.isTransaction).toBe(true);
+    } finally {
+      inspect.mockRestore();
+      resume.resolve();
+      if (database?.isTransaction) {
+        database.exec("ROLLBACK");
+      }
+      database?.close();
+      await finishBackupScratch(await creating);
+    }
+  },
+);
+
 it("reclaims abandoned scratch while a live transaction protects its files", async () => {
   const root = dirs.make("backup-scratch-lifetime-");
   const abandoned = await createBackupScratchDirectory(root);
