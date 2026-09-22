@@ -1563,7 +1563,6 @@ src/agents/apply-patch-targets.ts	1
 src/agents/apply-patch.ts	2
 src/agents/auth-profiles/clone.ts	1
 src/agents/auth-profiles/external-auth.ts	1
-src/agents/auth-profiles/oauth-manager.ts	1
 src/agents/auth-profiles/oauth-refresh-failure.ts	2
 src/agents/auth-profiles/oauth-refresh-lock-errors.ts	1
 src/agents/auth-profiles/oauth.ts	2
@@ -1574,7 +1573,7 @@ src/agents/auth-profiles/profiles.ts	1
 src/agents/auth-profiles/repair.ts	1
 src/agents/auth-profiles/source-check.ts	1
 src/agents/auth-profiles/store.ts	1
-src/agents/auth-profiles/usage.ts	3
+src/agents/auth-profiles/usage.ts	2
 src/agents/bash-process-registry.ts	1
 src/agents/bash-tools.exec-approval-followup.ts	5
 src/agents/bash-tools.exec-approval-request.ts	2
