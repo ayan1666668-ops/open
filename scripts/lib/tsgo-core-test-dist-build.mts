@@ -30,6 +30,13 @@ import { TSDOWN_UNIFIED_CONFIG_GROUP } from "./tsdown-config-groups.mts";
  * so the preparation restores them through the same steps the full build runs.
  */
 const RESTORED_RUNTIME_STEP_LABELS = [
+  // The copy phase runs each plugin's assetScripts.copy, and the canvas copy
+  // fails closed with "Missing A2UI bundle assets" until the build phase has
+  // written the bundles it reads, so the producer is restored alongside it.
+  // build-all runs the same pair in this order: build before the compile, copy
+  // after the runtime setup steps and before postbuild records the asset
+  // inventory.
+  "plugins:assets:build",
   "external-plugins:local-dist",
   "plugins:assets:copy",
   "runtime-postbuild",
@@ -79,11 +86,12 @@ function resolveRestoredRuntimeInvocation(
 export async function buildTsgoCoreTestTypedRuntimeDist(
   env: NodeJS.ProcessEnv,
   repoRoot: string,
+  runCommand: typeof runManagedCommand = runManagedCommand,
 ): Promise<number> {
   console.error(
     "[tsgo core test] building typed runtime dist entries before dist-dependent shards",
   );
-  const runtime = await runManagedCommand({
+  const runtime = await runCommand({
     bin: process.execPath,
     // Launched through the dist-artifact entry so it inherits the shard runner's
     // checkout ownership instead of blocking forever on the same lock.
@@ -96,7 +104,19 @@ export async function buildTsgoCoreTestTypedRuntimeDist(
     cwd: repoRoot,
     // The declarations the shard needs come from the staged writer below, so a
     // clean here must not remove declared outputs it cannot regenerate.
-    env: { ...env, OPENCLAW_RUN_NODE_SKIP_DTS_BUILD: "1" },
+    env: {
+      ...env,
+      OPENCLAW_RUN_NODE_SKIP_DTS_BUILD: "1",
+      // None of the restored steps runs the metadata writer, so the existing
+      // preservation contract in scripts/tsdown-build.mts keeps
+      // dist/cli-startup-metadata.json; losing it disables precomputed help and
+      // the channel names in CLI option descriptions.
+      OPENCLAW_PRESERVE_CLI_STARTUP_METADATA: "1",
+    },
+    // Every preparation child launches Node directly: a Windows shell routes
+    // the arguments through cmd.exe, which rejects the percent-encoded file URLs
+    // the artifact entry produces when the checkout path contains spaces.
+    shell: false,
     requireProcessTreeExit: process.platform !== "win32",
   });
   if (runtime !== 0) {
@@ -104,22 +124,24 @@ export async function buildTsgoCoreTestTypedRuntimeDist(
   }
   for (const step of listRestoredRuntimeSteps()) {
     const owner = resolveRestoredRuntimeInvocation(step, env, repoRoot);
-    const status = await runManagedCommand({
+    const status = await runCommand({
       bin: process.execPath,
       args: owner.args,
       cwd: repoRoot,
       env: owner.env,
+      shell: false,
       requireProcessTreeExit: process.platform !== "win32",
     });
     if (status !== 0) {
       return status;
     }
   }
-  return runManagedCommand({
+  return runCommand({
     bin: process.execPath,
     args: distArtifactEntryArgs(path.join(repoRoot, "scripts/write-typed-runtime-entry-dts.ts")),
     cwd: repoRoot,
     env,
+    shell: false,
     requireProcessTreeExit: process.platform !== "win32",
   });
 }
