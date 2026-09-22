@@ -4,6 +4,7 @@ import {
   assertCurrentNativeHostLaunchContext,
   assertExpectedNativeHostProfile,
   NativeHostSetupContextError,
+  type NativeHostRegistrationStatus,
 } from "./extension-install-context.js";
 import {
   chromeStoreInstallRequests,
@@ -27,11 +28,7 @@ import {
   pathInfo,
   stableChromeExtensionDir,
 } from "./extension-install-layout.js";
-import {
-  inspectRegistration,
-  installRegistration,
-  type NativeHostRegistrationStatus,
-} from "./extension-install-registration.js";
+import { inspectRegistration, installRegistration } from "./extension-install-registration.js";
 import { isValidProfileName } from "./profiles.js";
 export { NativeHostSetupContextError } from "./extension-install-context.js";
 export {

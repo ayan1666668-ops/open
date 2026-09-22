@@ -1,9 +1,21 @@
 import path from "node:path";
 import { resolveConfigPath, resolveStateDir } from "openclaw/plugin-sdk/state-paths";
-import type { ExtensionInstallDeps } from "./extension-install-layout.js";
-import type { NativeHostRegistrationStatus } from "./extension-install-registration.js";
+import type { ChromeProduct, ExtensionInstallDeps } from "./extension-install-layout.js";
 
 export type NativeHostLaunchContext = { stateDir: string; configPath?: string };
+
+export type NativeHostRegistrationStatus = {
+  product: ChromeProduct;
+  browser: string;
+  manifestPath: string;
+  extensionIds: string[];
+  state: "missing" | "owned" | "foreign" | "invalid" | null;
+  issue?: string;
+  browserProfile?: string;
+  nativeHostPath?: string;
+  launcherPath?: string;
+  launchContext?: NativeHostLaunchContext;
+};
 
 export function resolveInstallStateDir(deps: ExtensionInstallDeps): string {
   return path.resolve(deps.stateDir ?? resolveStateDir(deps.env));

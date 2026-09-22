@@ -10,13 +10,13 @@ import {
   resolveInstallConfigPath,
   resolveInstallStateDir,
   type NativeHostLaunchContext,
+  type NativeHostRegistrationStatus,
 } from "./extension-install-context.js";
 import { FOUNDATION_CHROME_WEB_STORE_EXTENSION_ID } from "./extension-install-external.js";
 import {
   approvedInstallRealpaths,
   assertOwnedPath,
   chromeProductRoots,
-  type ChromeProduct,
   type ChromeProductRoot,
   ensurePrivateDirectory,
   type ExtensionInstallDeps,
@@ -32,19 +32,6 @@ import {
 import { isValidProfileName } from "./profiles.js";
 
 const OWNED_LAUNCHER_MARKER = "# OpenClaw native messaging bootstrap v1";
-
-export type NativeHostRegistrationStatus = {
-  product: ChromeProduct;
-  browser: string;
-  manifestPath: string;
-  extensionIds: string[];
-  state: "missing" | "owned" | "foreign" | "invalid" | null;
-  issue?: string;
-  browserProfile?: string;
-  nativeHostPath?: string;
-  launcherPath?: string;
-  launchContext?: NativeHostLaunchContext;
-};
 
 function nativeMessagingRoot(deps: ExtensionInstallDeps = {}): string {
   return path.join(resolveInstallStateDir(deps), "browser", "native-messaging");
