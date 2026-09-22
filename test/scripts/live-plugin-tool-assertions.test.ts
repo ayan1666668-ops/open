@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { zstdCompressSync } from "node:zlib";
 import { afterEach, describe, expect, it } from "vitest";
 import { createNestedToolActivity } from "../../src/sessions/nested-tool-activity.js";
 import { resolveTestNodeExecPath } from "../../src/test-utils/node-process.js";
@@ -69,15 +70,25 @@ function runTranscriptAssertion(
     mkdirSync(path.dirname(file), { recursive: true });
     const database = new DatabaseSync(file);
     try {
+      const compressed = format === "sqlite-zstd";
       database.exec(`CREATE TABLE transcript_events (
-        session_id TEXT NOT NULL, seq INTEGER NOT NULL, event_json TEXT NOT NULL
+        session_id TEXT NOT NULL, seq INTEGER NOT NULL,
+        event_json TEXT ${compressed ? ", event_zstd BLOB, event_utf8_bytes INTEGER" : "NOT NULL"}
       )`);
       const insert = database.prepare(
-        "INSERT INTO transcript_events (session_id, seq, event_json) VALUES (?, ?, ?)",
+        compressed
+          ? "INSERT INTO transcript_events (session_id, seq, event_json, event_zstd, event_utf8_bytes) VALUES (?, ?, NULL, ?, ?)"
+          : "INSERT INTO transcript_events (session_id, seq, event_json) VALUES (?, ?, ?)",
       );
-      messages.forEach((message, index) =>
-        insert.run(sessionId, index, JSON.stringify({ message })),
-      );
+      messages.forEach((message, index) => {
+        const payload = JSON.stringify({ message });
+        if (compressed) {
+          const bytes = Buffer.from(payload);
+          insert.run(sessionId, index, zstdCompressSync(bytes), bytes.length);
+        } else {
+          insert.run(sessionId, index, payload);
+        }
+      });
     } finally {
       database.close();
     }
@@ -125,7 +136,12 @@ function runAssertionCommand(command: string, root: string, env: Record<string, 
 
 describe("live plugin tool assertions", () => {
   it.each([
-    { format: "sqlite", selector: { id: "e2e_slug_probe" }, wire: "native" },
+    {
+      format: "sqlite-zstd",
+      selector: { id: "e2e_slug_probe", name: "record-name" },
+      input: { name: "record-name" },
+      wire: "native",
+    },
     {
       format: "jsonl",
       selector: { id: "openclaw:e2e-live-plugin-tool:e2e_slug_probe" },
@@ -140,8 +156,9 @@ describe("live plugin tool assertions", () => {
     },
   ])(
     "reads accepted nested tool activity from $format: $wire $selector",
-    ({ format, selector, wire }) => {
+    ({ format, selector, wire, input }) => {
       const { call, nested, result } = deferredToolTranscript();
+      nested.details.input = input ?? {};
       const dispatcher =
         wire === "function"
           ? {
@@ -170,7 +187,7 @@ describe("live plugin tool assertions", () => {
     "unrelated dispatcher parent",
     "another plugin selector",
     "missing target selector",
-    "conflicting target selectors",
+    "unrelated outer selector",
     "malformed dispatcher arguments",
     "missing parent",
     "missing nested call id",
@@ -215,12 +232,15 @@ describe("live plugin tool assertions", () => {
       case "missing target selector":
         call.content[0].arguments.id = "";
         break;
-      case "conflicting target selectors":
+      case "unrelated outer selector":
         messages = [
           {
             ...call,
             content: [
-              { ...call.content[0], arguments: { id: "e2e_slug_probe", name: "unrelated_tool" } },
+              {
+                ...call.content[0],
+                arguments: { id: "unrelated_tool", input: { id: "e2e_slug_probe" } },
+              },
             ],
           },
           nested,

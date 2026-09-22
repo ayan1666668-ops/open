@@ -1,6 +1,7 @@
 // Agent method tests cover run/steer/reset/wait behavior, task/subagent state,
 // approval followups, lifecycle hooks, and emitted gateway events.
 import { expectDefined } from "@openclaw/normalization-core";
+import { asOptionalRecord } from "@openclaw/normalization-core/record-coerce";
 import { expect, vi } from "vitest";
 import type { readAcpSessionMeta } from "../../acp/runtime/session-meta.js";
 import type { AgentInternalEvent } from "../../agents/internal-events.js";
@@ -29,8 +30,8 @@ import { bindSessionRowProjection } from "../session-row-projection-access.js";
 import type { SessionRowProjection } from "../session-row-projection.js";
 import type { GatewaySessionRow } from "../session-utils.types.js";
 import {
-  flushScheduledDispatchStep,
   setDateOnlyFakeClockActive,
+  waitForAcceptedRunDispatch,
   waitForAssertion,
 } from "./agent-clock.test-helpers.js";
 import { agentIdentityHandlers } from "./agent-identity.js";
@@ -62,7 +63,7 @@ const mocks = vi.hoisted(() => ({
   patchSessionEntryTarget: vi.fn(),
   persistSessionTranscriptTurn: vi.fn(),
   stageSessionPendingInput: vi.fn<typeof stageSessionPendingInput>(),
-  recordSessionParticipant: vi.fn<typeof recordSessionParticipant>(() => "inserted"),
+  recordSessionParticipant: vi.fn<typeof recordSessionParticipant>(async () => "inserted"),
   listSessionParticipantsReadOnly: vi.fn<typeof listSessionParticipantsReadOnly>(() => new Map()),
   hasSessionTranscriptEventsSync: vi.fn<typeof hasSessionTranscriptEventsSync>(() => false),
   readTranscriptMutationStateSync: vi.fn<typeof readTranscriptMutationStateSync>(() => ({
@@ -490,29 +491,6 @@ export function expectRespondError(
   return expectRecordFields(mockCallArg(mock, 0, 2), expected);
 }
 
-async function waitForAcceptedRunDispatch(params: {
-  respond: ReturnType<typeof vi.fn>;
-  commandCallCount: number;
-}) {
-  const { respond } = params;
-  const accepted = respond.mock.calls.some(([ok, payload]) => {
-    return ok === true && (payload as { status?: string } | undefined)?.status === "accepted";
-  });
-  if (!accepted) {
-    return;
-  }
-  const respondCallCount = respond.mock.calls.length;
-  for (let attempt = 0; attempt < 50; attempt++) {
-    await flushScheduledDispatchStep();
-    if (
-      mocks.agentCommand.mock.calls.length > params.commandCallCount ||
-      respond.mock.calls.length > respondCallCount
-    ) {
-      return;
-    }
-  }
-}
-
 export function mockMainSessionEntry(
   entry: Record<string, unknown>,
   cfg: Record<string, unknown> = {},
@@ -589,7 +567,7 @@ function resetSessionAccessorMocks() {
         }
       : undefined;
   });
-  mocks.recordSessionParticipant.mockReset().mockReturnValue("inserted");
+  mocks.recordSessionParticipant.mockReset().mockResolvedValue("inserted");
   mocks.listSessionParticipantsReadOnly.mockReset().mockReturnValue(new Map());
   mocks.hasSessionTranscriptEventsSync.mockReset().mockReturnValue(false);
   mocks.readTranscriptMutationStateSync.mockReset().mockReturnValue({
@@ -1014,6 +992,8 @@ export async function invokeAgent(
   },
 ) {
   const respond = options?.respond ?? vi.fn();
+  const context = options?.context ?? makeContext();
+  const initialRespondCallCount = respond.mock.calls.length;
   const commandCallCount = mocks.agentCommand.mock.calls.length;
   // Most cases only need to cross the accepted-ack timer; keep tests that own
   // timer semantics on their explicit clock while avoiding a real sleep here.
@@ -1027,14 +1007,29 @@ export async function invokeAgent(
       {
         params,
         respond: respond as never,
-        context: options?.context ?? makeContext(),
+        context,
         req: { type: "req", id: options?.reqId ?? "agent-test-req", method: "agent" },
         client: options?.client ?? null,
         isWebchatConnect: options?.isWebchatConnect ?? (() => false),
       },
     );
     if (options?.flushDispatch !== false) {
-      await waitForAcceptedRunDispatch({ respond, commandCallCount });
+      await waitForAcceptedRunDispatch({
+        respond,
+        initialRespondCallCount,
+        hasDispatched: () => mocks.agentCommand.mock.calls.length > commandCallCount,
+        // Cancellation can settle the accepted invocation without dispatch or another reply.
+        hasTerminalResult: () => {
+          const idempotencyKey = params.idempotencyKey;
+          if (typeof idempotencyKey !== "string") {
+            return false;
+          }
+          const payload = asOptionalRecord(context.dedupe.get(`agent:${idempotencyKey}`)?.payload);
+          return (
+            payload?.status === "ok" || payload?.status === "timeout" || payload?.status === "error"
+          );
+        },
+      });
     }
   } finally {
     if (ownsDispatchTimers) {

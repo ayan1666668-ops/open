@@ -3,6 +3,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { isRecord } from "../../../lib/record-shared.mjs";
+import {
+  readSqliteTranscriptPayload,
+  sqliteTranscriptPayloadColumns,
+} from "../../../lib/sqlite-transcript-payload.mjs";
 import { extractAgentReplyTexts } from "../agent-turn-output.mjs";
 import { readPositiveIntEnv } from "../env-limits.mjs";
 import {
@@ -283,10 +287,8 @@ function dispatcherSelectsTool(input, toolSelectors) {
     return false;
   }
   const selectors = keys.filter((key) => Object.hasOwn(params, key));
-  return (
-    selectors.length > 0 &&
-    selectors.every((key) => toolSelectors.has(readNonEmptyString(params[key])))
-  );
+  // Other aliases can be target arguments; the correlated receipt identifies what ran.
+  return selectors.some((key) => toolSelectors.has(readNonEmptyString(params[key])));
 }
 
 function createToolEvidenceTracker(toolName, expected) {
@@ -447,7 +449,9 @@ function scanSqliteSessionTranscript(databasePath, sessionId, toolName, expected
       return { eventsChecked: 0, found: false };
     }
     const rows = database
-      .prepare("SELECT event_json FROM transcript_events WHERE session_id = ? ORDER BY seq LIMIT ?")
+      .prepare(
+        `SELECT ${sqliteTranscriptPayloadColumns(database)} FROM transcript_events WHERE session_id = ? ORDER BY seq LIMIT ?`,
+      )
       .all(sessionId, SESSION_SCAN_MAX_ENTRIES + 1);
     if (rows.length > SESSION_SCAN_MAX_ENTRIES) {
       throw new Error(`session transcript scan exceeded ${SESSION_SCAN_MAX_ENTRIES} SQLite events`);
@@ -455,10 +459,7 @@ function scanSqliteSessionTranscript(databasePath, sessionId, toolName, expected
 
     const tracker = createToolEvidenceTracker(toolName, expected);
     for (const row of rows) {
-      if (typeof row.event_json !== "string") {
-        continue;
-      }
-      const message = transcriptMessageFromLine(row.event_json);
+      const message = transcriptMessageFromLine(readSqliteTranscriptPayload(row));
       if (message && tracker.recordMessage(message)) {
         return { eventsChecked: rows.length, found: true };
       }
