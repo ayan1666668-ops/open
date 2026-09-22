@@ -11,7 +11,7 @@ import { createStubTool } from "../agents/test-helpers/agent-tool-stubs.js";
 import {
   loadExactSessionEntry,
   loadTranscriptEventsSync,
-  upsertSessionEntryCore,
+  patchSessionEntryCore,
 } from "../config/sessions/session-accessor.js";
 import * as hydration from "../config/sessions/session-transcript-hydration.js";
 import { waitForSessionTranscriptProjection } from "../config/sessions/session-transcript-reconcile.js";
@@ -146,7 +146,12 @@ describe("Side chat with a published Gateway runtime", () => {
           sessionKey: "agent:main:selected",
           storePath: path.join(state.agentDir("main"), "openclaw-agent.sqlite"),
         };
-        await upsertSessionEntryCore(selected, { sessionId: selected.sessionId, updatedAt: 1 });
+        const seededEntry = { sessionId: selected.sessionId, updatedAt: 1 };
+        await patchSessionEntryCore(selected, () => seededEntry, {
+          fallbackEntry: seededEntry,
+          // Prevent fixture-seed maintenance from overlapping the hydration SQL measurement.
+          skipMaintenance: true,
+        });
         const selectedManager = SessionManager.open(selected);
         selectedManager.appendMessage({
           role: "user",
