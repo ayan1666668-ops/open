@@ -916,12 +916,23 @@ describe("OpenAI-compatible embeddings HTTP API (e2e)", () => {
     expect(createEmbeddingProviderMock).toHaveBeenCalledTimes(createsBefore + 2);
   });
 
-  it("does not admit a replacement while provider cleanup is pending", (context) =>
+  it.for([
+    { kind: "local provider", localProvider: false, modelOverride: false, closeFails: true },
+    {
+      kind: "created local provider",
+      localProvider: true,
+      modelOverride: false,
+      closeFails: false,
+    },
+    { kind: "model override", localProvider: false, modelOverride: true, closeFails: false },
+  ])("does not bypass pending cleanup with $kind", (scenario, context) =>
     expectSerializedEmbeddingCleanup(context, {
-      transport: "local",
-      localResult: false,
-      closeFails: true,
-    }));
+      transport: scenario.localProvider ? "remote" : "local",
+      localResult: scenario.localProvider,
+      closeFails: scenario.closeFails,
+      modelOverrides: scenario.modelOverride ? ["openai/model-a", "openai/model-b"] : undefined,
+    }),
+  );
 
   it("does not create a provider for a disconnected request waiting behind cleanup", (context) => {
     return withHeldEmbeddingCleanup(context, false, async (fixture) => {
@@ -987,21 +998,6 @@ describe("OpenAI-compatible embeddings HTTP API (e2e)", () => {
       }
     });
   });
-
-  it("serializes cleanup when a remote request creates a local provider", (context) =>
-    expectSerializedEmbeddingCleanup(context, {
-      transport: "remote",
-      localResult: true,
-      closeFails: false,
-    }));
-
-  it("does not bypass local cleanup with a model override", (context) =>
-    expectSerializedEmbeddingCleanup(context, {
-      transport: "local",
-      localResult: false,
-      closeFails: false,
-      modelOverrides: ["openai/model-a", "openai/model-b"],
-    }));
 
   it("allows providers without cleanup resources to embed concurrently", async () => {
     const { promise: firstEmbedGate, resolve: releaseFirstEmbed } = createDeferred();
