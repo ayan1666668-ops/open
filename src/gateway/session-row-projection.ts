@@ -21,7 +21,6 @@ import { sessionChanges, type SessionRowChange } from "../sessions/session-row-c
 import { readOpenClawAgentDatabaseIdentity } from "../state/openclaw-agent-db-identity.js";
 import { withOpenClawAgentDatabaseReadOnly } from "../state/openclaw-agent-db-readonly.js";
 import { retainUserProfileCatalog } from "../state/user-profile-list.js";
-import type { readSessionRowFacts } from "./server-methods/session-placement-read-projection.js";
 import { createSessionProjectionDrain, yieldSessionListWork } from "./session-projection-work.js";
 import { readSessionRowModelFacts } from "./session-row-model-facts.js";
 import { createSessionRowPlacementProjection } from "./session-row-placement-projection.js";
@@ -53,23 +52,16 @@ import {
   selectMatchingSessionRows,
   selectSessionRowEntries,
 } from "./session-row-scope.js";
-import type { WorkerSessionPlacementStore } from "./worker-environments/placement-store.js";
 
 /** Committed publications own invalidation; each admitted physical store is hydrated once. */
-export async function createSessionRowProjection(params: {
-  cfg: OpenClawConfig;
-  getConfig?: () => OpenClawConfig;
-  modelCatalog?: records.Inputs["modelCatalog"];
-  getModelCatalog?: () => Promise<records.Inputs["modelCatalog"]>;
-  context?: Parameters<typeof readSessionRowFacts>[0]["context"];
-  placementFactsReader?: Pick<WorkerSessionPlacementStore, "readProjection">;
-}) {
+export async function createSessionRowProjection(params: records.ProjectionOptions) {
   // Publications may borrow startup admission; projection work retains its own authority.
   const inOwnerContext = AsyncLocalStorage.snapshot();
   while (!getSubagentSessionListReadSnapshotIdentity()) {
     await prepareSubagentSessionListReadCache();
   }
   let cfg = params.getConfig?.() ?? params.cfg;
+  const getPolicyConfig = (): OpenClawConfig => params.getPolicyConfig?.() ?? cfg;
   const rows = new Map<string, records.Row>();
   const creators = createSessionRowCreatorIndex();
   let stores = new Map<
@@ -679,6 +671,7 @@ export async function createSessionRowProjection(params: {
     get needsMaterialization() {
       return needsMaterialization();
     },
+    getPolicyConfig,
     get state() {
       if (!disposed) {
         prepareRead();
@@ -687,6 +680,7 @@ export async function createSessionRowProjection(params: {
         // Include replacements and lifecycle-only removals as well as publications/materialization.
         revision: (revisionToken ??= {}),
         cfg,
+        policyConfig: getPolicyConfig(),
         modelCatalog: catalog.current,
         rowContext: metadata.current,
         scope: scope.select,
