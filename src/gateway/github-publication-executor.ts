@@ -544,16 +544,6 @@ export async function executeGitHubPublication<Row extends PublicationRow>(param
       assertAuthority();
       return params.projectResult(params.interrupt());
     }
-    if (
-      !params.interrupt &&
-      (effectDispatched || initial.head_commit) &&
-      !(error instanceof GitHubPublicationKnownFailure)
-    ) {
-      throw new GitHubPublicationRecoveryPendingError(
-        "GitHub publication is unconfirmed; retry recovery before requesting another publication. Recorded effects are retained.",
-        { cause: error },
-      );
-    }
     const failure = resolveGitHubPublicationFailure(error);
     const result = params.projectResult(
       params.complete(initial, {

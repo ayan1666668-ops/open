@@ -328,7 +328,7 @@ describe("Gateway GitHub publication boundaries", () => {
 
   it.each([
     { boundary: "update-ref", status: "failed", effects: [] },
-    { boundary: "push", status: "publishing", effects: ["push"] },
+    { boundary: "push", status: "failed", effects: ["push"] },
     { boundary: "pull_request", status: "published", effects: ["push", "pull_request"] },
   ] as const)(
     "settles accepted shared publication work when authority closes after $boundary",
@@ -353,7 +353,7 @@ describe("Gateway GitHub publication boundaries", () => {
         return result;
       });
       const idempotencyKey = `shared-authority-after-${boundary}`;
-      const pending = coordinator.requestForSession({
+      const result = await coordinator.requestForSession({
         sessionKey: SESSION_KEY,
         agentId: "main",
         idempotencyKey,
@@ -363,14 +363,11 @@ describe("Gateway GitHub publication boundaries", () => {
           }
         },
       });
-      if (boundary === "push") {
-        await expect(pending).rejects.toThrow("GitHub publication is unconfirmed");
-      } else {
-        const result = await pending;
-        expect(result.status).toBe(status);
-        expect(coordinator.read(result.requestId)).toEqual(result);
-      }
+      expect(result.status).toBe(status);
+      expect(coordinator.read(result.requestId)).toEqual(result);
       expect(current).toBe(false);
+      await coordinator.resumeSessionRequests();
+      expect(coordinator.read(result.requestId)).toEqual(result);
       const headCommit = await workspace.git("rev-parse", "HEAD");
       expect(await workspace.git("show", "HEAD:artifact.txt")).toBe("accepted");
       expect(await workspace.git("status", "--porcelain")).toBe("");

@@ -1,10 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { openOpenClawStateDatabase } from "../state/openclaw-state-db.js";
 import { readPersonalGitHubPublication } from "./github-personal-publication-store.js";
 import {
   callPersonalPublicationRpc,
+  createForeignPublicationSession,
   createPersonalPublicationFixture,
   personalPublicationAccount as account,
 } from "./github-personal-publication.test-support.js";
+import { readGitHubPublicationRequest } from "./github-publication-store.js";
 import {
   BRANCH,
   SESSION_ID,
@@ -112,6 +115,39 @@ describe("personal publication definitive outcomes", () => {
       expect(workspace.effects).toEqual(["push", "pull_request"]);
     },
   );
+
+  it("does not resume shared GitHub writes after the RPC request loses write permission", async () => {
+    const workspace = await createRealPublicationWorkspace();
+    const transport = mocks.runCommand.getMockImplementation()!;
+    mocks.runCommand.mockImplementation(async (argv: string[], options?: { input?: string }) => {
+      const response = await transport(argv, options);
+      if (argv[0] === "git" && argv.includes("push")) {
+        await createForeignPublicationSession(fixture.otherOwner);
+      }
+      return response;
+    });
+    const idempotencyKey = "shared-rpc-revoked-after-push";
+    const response = await rpc("sessions.github.publish", {
+      sessionKey: SESSION_KEY,
+      idempotencyKey,
+      selection: {
+        source: "shared",
+        expected: { source: "system-configured", accountId: 42, login: "roboclaw-bot" },
+      },
+    });
+    expect(response[0]).toBe(false);
+    await fixture.coordinator.resumeSessionRequests();
+    expect(workspace.effects).toEqual(["push"]);
+    const receipt = readGitHubPublicationRequest(openOpenClawStateDatabase().db, {
+      sessionId: SESSION_ID,
+      idempotencyKey,
+    });
+    expect(receipt).toMatchObject({
+      status: "failed",
+      head_commit: await workspace.git("rev-parse", "HEAD"),
+      pull_request_url: null,
+    });
+  });
 
   it.each([
     "closed",
