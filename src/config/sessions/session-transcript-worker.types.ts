@@ -159,7 +159,7 @@ export type SessionExactEntriesWorkerInput = {
   env: NodeJS.ProcessEnv;
   sessionKeys: readonly string[];
   lifecycleSessionKey?: string;
-  projection?: "full" | "backing";
+  projection?: "full" | "backing" | "sharing";
   continuation?: CanonicalSessionReaderContinuation;
 };
 
@@ -167,6 +167,11 @@ export type SessionExactEntriesWorkerResult = {
   kind: "session-exact-entries";
   entries: SessionEntrySummary[];
   lifecycleTimestamps: SessionLifecycleTimestamps;
+  sharing?: {
+    source: { agentId: string; path: string };
+    databaseIdentity: string;
+    members: Array<{ sessionKey: string; identityIds: string[] }>;
+  };
 };
 
 export const MAX_SESSION_ROW_FACTS_KEYS = 64;
