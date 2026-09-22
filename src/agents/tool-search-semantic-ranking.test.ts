@@ -6,7 +6,12 @@ import {
 } from "../config/runtime-snapshot.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { prepareDecisionProviderReload } from "../decisions/runtime.js";
-import type { DecisionBatch, DecisionOutcome, DecisionRuntimeV1 } from "../decisions/types.js";
+import type {
+  DecisionBatch,
+  DecisionOutcome,
+  DecisionRuntimeV1,
+  ProviderDecisionOutcome,
+} from "../decisions/types.js";
 import { runPluginRegisterSyncInRegistry } from "../plugins/loader-module-runtime.js";
 import { createPluginRecord } from "../plugins/loader-records.js";
 import { getPluginInstance } from "../plugins/plugin-instance-scope.js";
@@ -125,7 +130,13 @@ function decisionFixture(
 }
 
 function registerDecisionFixture(config: OpenClawConfig) {
-  const evaluate = vi.fn(async (batch: DecisionBatch) => outcomeFor(batch));
+  const evaluate = vi.fn(async (batch: DecisionBatch): Promise<ProviderDecisionOutcome> => {
+    const outcome = outcomeFor(batch);
+    if (outcome.status !== "ok") {
+      throw new Error("Expected fixture Decision outcome");
+    }
+    return { status: "ok", result: outcome.result };
+  });
   const builder = createTestPluginRegistry();
   const record = createPluginRecord({
     id: "fixture-decision-owner",
