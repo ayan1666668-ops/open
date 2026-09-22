@@ -83,7 +83,9 @@ describe("task agent event liveness", () => {
               settled = true;
             },
           );
-          await new Promise<void>((resolve) => queueMicrotask(resolve));
+          await new Promise<void>((resolve) => {
+            queueMicrotask(resolve);
+          });
           expect(settled).toBe(false);
           release.resolve();
           await fence;
