@@ -575,6 +575,43 @@ function rollbackSecretStoreEntryWrite(params: {
   }
 }
 
+/** Live-store lookup for one protected entry: allowed hosts for egress re-validation.
+ * Returns undefined when the row is absent (deleted or rolled back). */
+export function lookupSecretStoreBinding(params: {
+  name: string;
+  database?: OpenClawStateDatabaseOptions;
+}): { allowedHosts: Set<string> } | undefined {
+  try {
+    return (
+      withExistingOpenClawStateDatabaseReadOnly(({ db: sqlite }) => {
+        const db = getNodeSqliteKysely<SecretStoreDatabase>(sqlite);
+        const scopeId = "";
+        const rows = executeSqliteQuerySync(
+          sqlite,
+          db
+            .selectFrom("secret_store_entries")
+            .select(["allowed_hosts"])
+            .where("scope_kind", "=", "team")
+            .where("scope_id", "=", scopeId)
+            .where("name", "=", params.name)
+            .where("deleted_at_ms", "is", null)
+            .limit(1),
+        ).rows;
+        const row = rows[0];
+        if (!row) {
+          return undefined;
+        }
+        return { allowedHosts: new Set(parseSecretAllowedHosts(row.allowed_hosts)) };
+      }, params.database ?? {}) ?? undefined
+    );
+  } catch (error) {
+    if (isMissingSecretStoreTableError(error)) {
+      return undefined;
+    }
+    throw error;
+  }
+}
+
 /** Writes one entry and returns owner-checked compensation for that exact write. */
 export function writeSecretStoreEntryWithRollback(params: SecretStoreWriteParams): {
   rollback: () => boolean;
@@ -595,6 +632,12 @@ export function writeSecretStoreEntryWithRollback(params: SecretStoreWriteParams
         previous,
         ...(params.database !== undefined ? { database: params.database } : {}),
       });
+      // A successful rollback changed the store (restored or removed the row):
+      // advance the mutations version so cached exec snapshots invalidate and
+      // later commands fall back to the pre-write state (#152409 review, P2).
+      if (rollbackResult) {
+        secretStoreMutationsVersion += 1;
+      }
       return rollbackResult;
     },
   };

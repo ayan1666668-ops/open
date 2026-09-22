@@ -7,7 +7,9 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { saveExecApprovals, type ExecApprovalsFile } from "../infra/exec-approvals.js";
-import { captureEnv, deleteTestEnvValue, setTestEnvValue } from "../test-utils/env.js";
+// saveExecApprovals stays for the allowlist file; the authorization commit is mocked above so the
+// shared-state SQLite broker is never required (in-process tests have no host broker).
+import { captureEnv, setTestEnvValue } from "../test-utils/env.js";
 import { resetProcessRegistryForTests } from "./bash-process-registry.test-support.js";
 import { createExecTool as createExecToolImpl } from "./bash-tools.exec-run.js";
 import { callGatewayTool } from "./tools/gateway.js";
@@ -15,11 +17,17 @@ import { callGatewayTool } from "./tools/gateway.js";
 const storeMocks = vi.hoisted(() => ({
   readSecretStoreExecEnvironment: vi.fn(),
   getSecretStoreMutationsVersion: vi.fn(() => 0),
+  commitExecAuthorizationLocked: vi.fn(async () => () => {}),
 }));
 vi.mock("../secrets/store/secret-store.js", async (importOriginal) => ({
   ...(await importOriginal<object>()),
   readSecretStoreExecEnvironment: storeMocks.readSecretStoreExecEnvironment,
   getSecretStoreMutationsVersion: storeMocks.getSecretStoreMutationsVersion,
+}));
+
+vi.mock("../infra/exec-approvals.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../infra/exec-approvals.js")>()),
+  commitExecAuthorizationLocked: storeMocks.commitExecAuthorizationLocked,
 }));
 
 vi.mock("../state/openclaw-state-worker-store.js", async (importOriginal) => {
@@ -92,7 +100,9 @@ describe("exec store-env cache invalidation (#152409)", () => {
     const dir = tempRoot;
     tempRoot = undefined;
     envSnapshot.restore();
-    if (dir) fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
+    if (dir) {
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
+    }
   });
 
   it("re-reads the store after a mid-session mutation; cached read reused when unchanged", async () => {
@@ -126,6 +136,44 @@ describe("exec store-env cache invalidation (#152409)", () => {
     const readsBefore = storeMocks.readSecretStoreExecEnvironment.mock.calls.length;
     await tool.execute("call-3", probe);
     expect(storeMocks.readSecretStoreExecEnvironment.mock.calls.length).toBe(readsBefore);
+  });
+
+  it("keeps ordinary env entries run-stable across store mutations (P1 review fix)", async () => {
+    const binDir = path.join(tempRoot!, "bin");
+    const probePath = path.join(binDir, "env-probe-plain");
+    fs.writeFileSync(probePath, "#!/bin/sh\nprintf '%s' \"$AWS_REGION\"\n", { mode: 0o755 });
+    saveExecApprovals({
+      version: 1,
+      defaults: { security: "allowlist", ask: "off", askFallback: "allowlist" },
+      agents: { "*": { allowlist: [{ pattern: probePath }] } },
+    } as unknown as ExecApprovalsFile);
+
+    const tool = createExecToolImpl({
+      agentId: "main",
+      host: "gateway",
+      security: "allowlist",
+      ask: "off",
+      safeBins: [],
+      pathPrepend: [binDir],
+      operationalRunInstance: { instanceId: "inst-plain", runId: "run-plain" },
+    });
+
+    // first read: an ordinary env row exists
+    storeMocks.readSecretStoreExecEnvironment.mockReturnValueOnce({
+      env: { AWS_REGION: "us-east-1" },
+    });
+    const before = await tool.execute("plain-1", { command: "env-probe-plain" });
+    expect(resultText(before)).toBe("us-east-1");
+
+    // a mid-session store mutation (secret write) must NOT refresh ordinary env:
+    // the documented run-stable contract holds even while the version advances.
+    storeMocks.getSecretStoreMutationsVersion.mockReturnValue(7);
+    storeMocks.readSecretStoreExecEnvironment.mockReturnValue({
+      env: { AWS_REGION: "eu-west-1" },
+      secretSentinels: { META_ADS_ACCESS_TOKEN: "oc-sent-x.synthetic.end" },
+    });
+    const after = await tool.execute("plain-2", { command: "env-probe-plain" });
+    expect(resultText(after)).toBe("us-east-1");
   });
 });
 

@@ -81,6 +81,10 @@ describe("secret store mutations version", () => {
     expect(getSecretStoreMutationsVersion()).toBeGreaterThan(v1);
     writer.rollback();
     const v2 = getSecretStoreMutationsVersion();
+    // P2 review fix: a successful rollback changes the store, so it must advance
+    // the version - otherwise exec snapshots created during the staged window keep
+    // serving the compensated credential until some unrelated mutation.
+    expect(getSecretStoreMutationsVersion()).toBeGreaterThan(v1);
     deleteSecretStoreEntry({ scope, name: "OTHER_SERVICE_KEY" });
     expect(getSecretStoreMutationsVersion()).toBeGreaterThan(v2);
   });

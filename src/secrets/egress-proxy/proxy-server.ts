@@ -18,6 +18,7 @@ import {
   resolveSecretSentinel,
   SECRET_SENTINEL_PATTERN,
 } from "../sentinel.js";
+import { getSecretStoreMutationsVersion } from "../store/secret-store.js";
 import {
   createSecretEgressCertificates,
   SecretEgressCertificateError,
@@ -70,6 +71,8 @@ export type SecretEgressProxyHandle = {
 type ConnectTarget = { hostname: string; port: number };
 type RegisteredProcess = {
   sentinelBindings: Map<string, { allowedHosts: Set<string>; name: string }>;
+  /** Store mutations version at registration. Divergence triggers store re-validation. */
+  storeVersion: number;
   token: Buffer;
   isActive: () => boolean;
   resources: Set<Readable | Writable>;
@@ -150,6 +153,18 @@ function resolveRegisteredSentinel(params: {
       host: params.host,
       secretName: binding.name,
     });
+  }
+  // Store may have changed since registration (e.g. a staged provider credential
+  // write was rolled back). On divergence, re-check the row against the live store
+  // so compensated credentials stop resolving for new substitutions.
+  if (params.registered.storeVersion !== getSecretStoreMutationsVersion()) {
+    const current = lookupSecretStoreBinding(binding.name);
+    if (!current || !current.allowedHosts.has(params.host)) {
+      throw new SecretEgressSubstitutionError("destination-not-allowed", {
+        host: params.host,
+        secretName: binding.name,
+      });
+    }
   }
   return resolveSecretSentinel(params.sentinel);
 }
@@ -622,6 +637,7 @@ export async function startSecretEgressProxyServer(params: {
             },
           ]),
         ),
+        storeVersion: getSecretStoreMutationsVersion(),
         token: randomBytes(32),
         isActive: () => !stopped && registrations.has(registered),
         resources: new Set(),
