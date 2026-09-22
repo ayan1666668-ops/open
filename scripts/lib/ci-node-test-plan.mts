@@ -1,6 +1,6 @@
 // Builds CI node/Vitest shard plans from the full suite configuration.
 import { readFileSync, statSync } from "node:fs";
-import { matchesGlob, relative } from "node:path";
+import { matchesGlob, relative, resolve } from "node:path";
 import {
   agentVitestProjectOwners,
   embeddedAgentVitestProjectOwners,
@@ -54,7 +54,7 @@ import {
   isParallelCommandsGroup,
   estimateCommandWorkerSeconds,
 } from "./ci-command-test-plan.mts";
-import { isCiProofTestFile } from "./ci-proof-test-inventory.mts";
+import { isCiProofTestFile, isReleaseOnlyRuntimeTestFile } from "./ci-proof-test-inventory.mts";
 import { rebalanceRuntimeTestJobs } from "./ci-runtime-test-placement.mts";
 import { isRuntimePlacementIncludePatterns } from "./ci-test-timings-schema.mts";
 import {
@@ -120,6 +120,7 @@ type NodeTestPlanOptions = {
   includeReleaseOnlyPluginShards?: boolean;
   includeProofTests?: boolean;
   includeReleaseOnlyToolingShards?: boolean;
+  includeReleaseOnlyRuntimeTests?: boolean;
   compact?: boolean;
   compactMode?: CompactNodeTestPlanMode;
   compactGroupCount?: number;
@@ -128,26 +129,52 @@ type NodeTestPlanOptions = {
   runnerBackend?: string;
 };
 
+type RuntimeTestSelection = Pick<
+  NodeTestPlanOptions,
+  "changedPaths" | "includeReleaseOnlyRuntimeTests"
+>;
+
+export function isRuntimeTestFileIncluded(
+  file: string,
+  options: RuntimeTestSelection,
+  cwd = process.cwd(),
+): boolean {
+  return (
+    options.includeReleaseOnlyRuntimeTests !== false ||
+    !isReleaseOnlyRuntimeTestFile(file) ||
+    (options.changedPaths?.includes(file) === true &&
+      statSync(resolve(cwd, file), { throwIfNoEntry: false })?.isFile() === true)
+  );
+}
+
+export function resolveStartupCorpusTestFiles(options: RuntimeTestSelection = {}): string[] {
+  return startupCorpusTestFiles.filter((file) => isRuntimeTestFileIncluded(file, options));
+}
+
 export function hasCompleteStartupCorpusCoverage(
   shards: readonly {
     requiresDist: boolean;
     targets?: readonly string[];
     groups?: readonly NodeTestShardGroup[];
   }[],
+  expectedFiles: readonly string[] = startupCorpusTestFiles,
 ): boolean {
   // Only explicit, unfiltered file owners prove the corpus is complete. A
   // config name or native shard can still execute just part of the matrix.
   const groups = shards.flatMap((shard) =>
     !shard.requiresDist && !shard.targets?.length ? (shard.groups ?? []) : [],
   );
-  return startupCorpusTestFiles.every((file) =>
-    groups.some(
-      (group) =>
-        group.configs.length === 1 &&
-        group.configs[0] === "test/vitest/vitest.runtime-config.config.ts" &&
-        Object.keys(group.env ?? {}).every((key) => key === "OPENCLAW_VITEST_MAX_WORKERS") &&
-        group.includePatterns?.includes(file),
-    ),
+  return (
+    expectedFiles.length > 0 &&
+    expectedFiles.every((file) =>
+      groups.some(
+        (group) =>
+          group.configs.length === 1 &&
+          group.configs[0] === "test/vitest/vitest.runtime-config.config.ts" &&
+          Object.keys(group.env ?? {}).every((key) => key === "OPENCLAW_VITEST_MAX_WORKERS") &&
+          group.includePatterns?.includes(file),
+      ),
+    )
   );
 }
 
@@ -2537,6 +2564,15 @@ function createNodeTestShardsForOwners(
             }
           }
         }
+        if (options.includeReleaseOnlyRuntimeTests === false) {
+          const files = includePatterns ?? listWholeConfigSplitFiles(splitShard.shardName);
+          if (files?.some(isReleaseOnlyRuntimeTestFile)) {
+            includePatterns = files.filter((file) => isRuntimeTestFileIncluded(file, options));
+            if (includePatterns.length === 0) {
+              return [];
+            }
+          }
+        }
         if (includePatterns && !includeTooling) {
           includePatterns = includePatterns.filter((file) => !isReleaseOnlyToolingTestFile(file));
           if (includePatterns.length === 0) {
@@ -3564,9 +3600,11 @@ export function packNodeTestGroups<Group>(
 /** Select exact files without losing their canonical process and artifact owners. */
 export function createSelectedNodeTestShardBundles(
   targets: readonly string[],
-  options: Pick<NodeTestPlanOptions, "runnerBackend"> = {},
+  options: Pick<NodeTestPlanOptions, "runnerBackend"> & RuntimeTestSelection = {},
 ): CompactNodeTestShard[] | null {
-  const selected = new Set(targets.filter((file) => !isCiProofTestFile(file)));
+  const selected = new Set(
+    targets.filter((file) => !isCiProofTestFile(file) && isRuntimeTestFileIncluded(file, options)),
+  );
   const configs = new Map<string, string>();
   for (const target of selected) {
     const plans = buildVitestRunPlans([target]);
@@ -3589,7 +3627,7 @@ export function createSelectedNodeTestShardBundles(
   const tooling = new Set([...selected].filter((target) => configs.get(target) === TOOLING_CONFIG));
   const shards = createNodeTestShardsForOwners(
     fullSuiteVitestShards,
-    { includeReleaseOnlyPluginShards: false, includeProofTests: false },
+    { ...options, includeReleaseOnlyPluginShards: false, includeProofTests: false },
     tooling.size === selected.size,
   );
   const owners = new Set<NodeTestShard>();

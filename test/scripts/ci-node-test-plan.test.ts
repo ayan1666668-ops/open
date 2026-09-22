@@ -20,8 +20,12 @@ import {
   isPolicyTestOwnedPath,
   packNodeTestGroups,
   resolvePolicyTestTargets,
+  resolveStartupCorpusTestFiles,
 } from "../../scripts/lib/ci-node-test-plan.mts";
-import { isCiProofTestFile } from "../../scripts/lib/ci-proof-test-inventory.mts";
+import {
+  isCiProofTestFile,
+  RELEASE_ONLY_RUNTIME_TEST_FILES,
+} from "../../scripts/lib/ci-proof-test-inventory.mts";
 import { isRuntimePlacementIncludePatterns } from "../../scripts/lib/ci-test-timings-schema.mts";
 import * as testTimings from "../../scripts/lib/ci-test-timings.mts";
 import { isExclusiveCiTestConfig } from "../../scripts/lib/local-check-runtime.mts";
@@ -109,6 +113,28 @@ describe("startup corpus coverage", () => {
     expect(listMatchedTestFiles(createRuntimeConfigVitestConfig({}))).toEqual(
       expect.arrayContaining(files),
     );
+  });
+  it("certifies only the selected tier and directly edited startup cells", () => {
+    const regular = "src/config/config-startup-corpus.test.ts";
+    const changed = "src/config/state-startup-corpus.part-2.test.ts";
+    const options = { includeReleaseOnlyRuntimeTests: false };
+    expect(resolveStartupCorpusTestFiles()).toEqual(files);
+    expect(resolveStartupCorpusTestFiles(options)).toEqual([regular]);
+    const selected = resolveStartupCorpusTestFiles({
+      ...options,
+      changedPaths: [changed, "src/config/state-startup-corpus.test-support.ts"],
+    });
+    expect(selected).toEqual([regular, changed]);
+    const shards = [{ requiresDist: false, groups: [{ ...group, includePatterns: selected }] }];
+    expect(hasCompleteStartupCorpusCoverage(shards, selected)).toBe(true);
+    expect(hasCompleteStartupCorpusCoverage(shards)).toBe(false);
+    expect(hasCompleteStartupCorpusCoverage(shards, [])).toBe(false);
+    expect(
+      hasCompleteStartupCorpusCoverage(
+        [{ requiresDist: false, groups: [{ ...group, includePatterns: [regular] }] }],
+        selected,
+      ),
+    ).toBe(false);
   });
   it.each<
     { label: string } & Partial<Parameters<typeof hasCompleteStartupCorpusCoverage>[0][number]>
@@ -3504,6 +3530,31 @@ describe("scripts/lib/ci-node-test-plan.mts", () => {
         ?.includePatterns,
     ).toContain("src/gateway/server.chat-recovered-output.test.ts");
   });
+
+  it.each(["blacksmith", "github", "hybrid"])(
+    "defers exactly the runtime release inventory from automatic plans on %s",
+    (runnerBackend) => {
+      for (const compactMode of ["push", "pull-request"] as const) {
+        const before = getCommittedCompactPlan(compactMode, runnerBackend);
+        const after = createNodeTestShardBundles({
+          compactMode,
+          runnerBackend,
+          includeReleaseOnlyPluginShards: false,
+          includeReleaseOnlyRuntimeTests: false,
+          changedPaths: ["src/config/state-startup-corpus.test-support.ts"],
+        });
+        const files = (plan: CompactNodeTestShard[]) =>
+          plan.flatMap((shard) => shard.groups.flatMap((group) => group.includePatterns ?? []));
+        const beforeFiles = files(before);
+        const afterFiles = files(after);
+        expect(beforeFiles.filter((file) => !afterFiles.includes(file)).toSorted()).toEqual(
+          [...RELEASE_ONLY_RUNTIME_TEST_FILES].toSorted(),
+        );
+        expect(afterFiles.filter((file) => !beforeFiles.includes(file))).toEqual([]);
+        expect(afterFiles).toContain("src/config/config-startup-corpus.test.ts");
+      }
+    },
+  );
 
   it("preserves runtime preparation and core-only ownership in full and compact plans", () => {
     const qaConfig = "test/vitest/vitest.extension-qa.config.ts";
