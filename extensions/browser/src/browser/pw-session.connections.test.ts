@@ -374,10 +374,10 @@ describe("pw-session connection scoping", () => {
   });
 
   it("keeps credentialed HTTP discovery out of Playwright's redirect path", async () => {
+    const cdpUrl = "https://browser-user:browser-password@browserless.example/cdp";
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     try {
       const discoveryStarted = createDeferred<void>();
-      const cdpUrl = "https://browser-user:browser-password@browserless.example/cdp";
       getChromeWebSocketUrlSpy.mockImplementation(async () => {
         discoveryStarted.resolve();
         return null;
