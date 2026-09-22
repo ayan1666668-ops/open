@@ -29,7 +29,7 @@ import {
   markTrustedContinuationHeartbeatWake,
   requestHeartbeatNow,
 } from "../../infra/heartbeat-wake.js";
-import { scheduleSessionDelivery } from "../../infra/session-delivery-queue-runtime.js";
+import type { scheduleSessionDelivery } from "../../infra/session-delivery-queue-runtime.js";
 import { enqueueSessionDeliveryWithStatus } from "../../infra/session-delivery-queue-storage.js";
 import { enqueueSystemEventRaw as enqueueSystemEvent } from "../../infra/system-events.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
@@ -68,7 +68,14 @@ type ContinuationWorkTerminalNoticeDeps = {
 
 const defaultDeps: ContinuationWorkTerminalNoticeDeps = {
   enqueueSessionDeliveryWithStatus,
-  scheduleSessionDelivery,
+  // Resolved on first CALL, not at module evaluation. An eager binding read here
+  // forces every upstream-shared test that mocks session-delivery-queue-runtime.js
+  // to declare this export in its vi.mock factory, even when it never invokes it.
+  // See karmaterminal/openclaw#1361.
+  scheduleSessionDelivery: async (...args) =>
+    await (
+      await import("../../infra/session-delivery-queue-runtime.js")
+    ).scheduleSessionDelivery(...args),
   enqueueSystemEvent,
   requestHeartbeatNow,
 };

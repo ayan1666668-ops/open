@@ -126,6 +126,47 @@ it("blocks new resources in a draining root without retiring a sibling root", as
   }
 });
 
+// Complement to "blocks new resources in a draining root": that case pins the
+// refusal, this one pins the RECOVERY. A caller that closes in order to force a
+// durable re-read depends on it — see the awaited
+// closeOpenClawAgentDatabasesForTestAsync in the return-covenant fixture's
+// observe phase. Before that call was awaited, the fixture's own scan raced its
+// own close and the Gateway returned
+// "UNAVAILABLE / Agent database resources are closing", which read like a
+// schema or teardown fault rather than a missing await.
+it("readmits an overlapping open once the drain has been awaited", async () => {
+  const gate = createDeferredCore();
+  const closePath = path.join(root, "awaited-drain", "owner.sqlite");
+  const resource = {
+    agentId: "worker",
+    path: closePath,
+    revoke: vi.fn(),
+    close: () => gate.promise,
+  };
+  registerOpenClawAgentDatabaseAsyncResource(resource);
+  const closing = closeOpenClawAgentDatabasesAsync(path.join(root, "awaited-drain"));
+  // While the drain is in flight the overlapping open is refused. This is the
+  // state an un-awaited close leaves behind.
+  expect(() =>
+    registerOpenClawAgentDatabaseAsyncResource({
+      ...resource,
+      revoke: vi.fn(),
+      close: async () => {},
+    }),
+  ).toThrow("are closing");
+  gate.resolve();
+  await closing;
+  // Awaiting it must clear the window, or awaiting would be no better than not.
+  const reopened = registerOpenClawAgentDatabaseAsyncResource({
+    agentId: "worker",
+    path: closePath,
+    revoke: vi.fn(),
+    close: async () => {},
+  });
+  expect(typeof reopened).toBe("function");
+  reopened();
+});
+
 it.each(["known", "unresolved"] as const)(
   "retains a failed %s close after unregistering and retries it before readmission",
   async (ownership) => {
