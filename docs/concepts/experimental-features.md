@@ -20,14 +20,15 @@ Custom plugin UI flag below controls user-installed native browser code only.
 
 ## Currently documented flags
 
-| Surface          | Key                                                                     | Use it when                                                                                                                       | More                                                                                   |
-| ---------------- | ----------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| Codex harness    | `plugins.entries.codex.config.appServer.experimental.sandboxExecServer` | You want native Codex app-server 0.143.0 or newer to target an OpenClaw sandbox-backed exec-server instead of disabling Code Mode | [Codex harness reference](/plugins/codex-harness-reference#sandboxed-native-execution) |
-| Code Mode        | `tools.codeMode.enabled`                                                | You want compact code-orchestrated access to a hidden OpenClaw tool catalog                                                       | [Code Mode](/tools/code-mode)                                                          |
-| Cloud workers    | `cloudWorkers.desktop`                                                  | You want to watch or control desktop-capable cloud worker environments from the Control UI                                        | [Cloud Worker Desktop](/gateway/cloud-workers#desktop-interactive)                     |
-| Custom plugin UI | `gateway.controlUi.experimental.customPlugins`                          | You want trusted user-installed plugins to add native Control UI views or replace built-in views                                  | [Feature plugins](/plugins/feature-plugins#enable-custom-plugin-ui)                    |
-| Host Desktop     | `desktop.host.enabled`                                                  | You want to watch or control the Gateway host through its VNC or Screen Sharing server                                            | [Desktop](/gateway/configuration-reference#desktop)                                    |
-| Tool Search      | `tools.toolSearch.enabled`                                              | You want to control the global Tool Search default, which is enabled                                                              | [Tool Search](/tools/tool-search)                                                      |
+| Surface                    | Key                                                                     | Use it when                                                                                                                       | More                                                                                   |
+| -------------------------- | ----------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| Codex harness              | `plugins.entries.codex.config.appServer.experimental.sandboxExecServer` | You want native Codex app-server 0.143.0 or newer to target an OpenClaw sandbox-backed exec-server instead of disabling Code Mode | [Codex harness reference](/plugins/codex-harness-reference#sandboxed-native-execution) |
+| Code Mode                  | `tools.codeMode.enabled`                                                | You want compact code-orchestrated access to a hidden OpenClaw tool catalog                                                       | [Code Mode](/tools/code-mode)                                                          |
+| Cloud workers              | `cloudWorkers.desktop`                                                  | You want to watch or control desktop-capable cloud worker environments from the Control UI                                        | [Cloud Worker Desktop](/gateway/cloud-workers#desktop-interactive)                     |
+| Custom plugin UI           | `gateway.controlUi.experimental.customPlugins`                          | You want trusted user-installed plugins to add native Control UI views or replace built-in views                                  | [Feature plugins](/plugins/feature-plugins#enable-custom-plugin-ui)                    |
+| Decision-assisted features | `agents.defaults.experimental.decisionAssistance`                       | You want eligible experiments to use an agent's independently selected Decision model                                             | [Decision models](/concepts/decision-models#agent-evaluation-tool)                     |
+| Host Desktop               | `desktop.host.enabled`                                                  | You want to watch or control the Gateway host through its VNC or Screen Sharing server                                            | [Desktop](/gateway/configuration-reference#desktop)                                    |
+| Tool Search                | `tools.toolSearch.enabled`                                              | You want to control the global Tool Search default, which is enabled                                                              | [Tool Search](/tools/tool-search)                                                      |
 
 ## Control UI Labs
 
@@ -35,10 +36,11 @@ Open **Settings → Labs** to manage experiments that have a
 Control UI switch. Enabling or disabling a lab patches the canonical Gateway
 config immediately without restarting the Gateway.
 
-Labs includes Code Mode, Tool Search for all models, Custom plugin UI,
-Host Desktop, and Cloud Worker Desktop. Under the default reload mode, custom
+Labs includes Decision-assisted features, Code Mode, Tool Search for all models,
+Custom plugin UI, Host Desktop, and Cloud Worker Desktop. Under the default reload mode, custom
 plugin views and desktop availability update in connected Control UI pages.
-Code Mode and Tool Search changes take effect for future agent runs.
+Decision assistance, Code Mode, and Tool Search changes take effect for future
+agent runs.
 Reload browser tabs after disabling Custom plugin UI to clear plugin JavaScript
 that already ran. The Cloud Worker Desktop lab controls access to existing
 desktop-capable workers; changing a profile's `settings.desktop` affects only
@@ -57,6 +59,12 @@ force Code Mode on for every model.
 Tool Search is enabled by default when `tools.toolSearch` is unset.
 Turning its Labs switch off disables the global default; turning it on restores
 that default.
+
+Decision-assisted features are off by default. The Labs switch is only an outer
+eligibility gate: it does not select or provision a Decision provider, enable a
+consumer's independent mode, grant tools, or bypass tool policy. Agents without
+an effective `decisionModel`, including agents with an explicit empty override,
+continue on the ordinary path without Decision inference.
 
 ## Local model lean mode
 

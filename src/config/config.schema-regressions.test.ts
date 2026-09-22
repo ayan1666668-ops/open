@@ -252,12 +252,13 @@ describe("config schema regressions", () => {
     expect(res.ok).toBe(true);
   });
 
-  it("accepts agents.entries experimental localModelLean overrides", () => {
+  it("accepts agents.entries experimental overrides", () => {
     const res = validateConfigObject({
       agents: {
         entries: {
           gemma: {
             experimental: {
+              decisionAssistance: false,
               localModelLean: true,
             },
           },

@@ -95,6 +95,8 @@ export const FIELD_LABELS: Record<string, string> = {
   "agents.entries.*.bootstrapMaxChars": "Agent Bootstrap Max Chars",
   "agents.entries.*.bootstrapTotalMaxChars": "Agent Bootstrap Total Max Chars",
   "agents.entries.*.experimental": "Agent Experimental Flags",
+  "agents.entries.*.experimental.decisionAssistance":
+    "Enable Decision-Assisted Features (Experimental)",
   "agents.entries.*.experimental.localModelLean": "Agent Lean Local Model Mode",
   agents: "Agents",
   "agents.ownership": "Agent Ownership Generation",
@@ -403,6 +405,8 @@ export const FIELD_LABELS: Record<string, string> = {
   "agents.entries.*.subagents.delegationMode": "Sub-agent Delegation Mode",
   ...WORKSPACE_FIELD_LABELS,
   "agents.defaults.experimental": "Experimental Agent Flags",
+  "agents.defaults.experimental.decisionAssistance":
+    "Enable Decision-Assisted Features (Experimental)",
   "agents.defaults.experimental.localModelLean": "Enable Lean Local Model Mode (Experimental)",
   "agents.defaults.startupContext": "Startup Context",
   "agents.defaults.startupContext.enabled": "Enable Startup Context",

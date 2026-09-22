@@ -55,7 +55,10 @@ const answer = {
 } satisfies ProviderDecisionOutcome;
 const config: OpenClawConfig = {
   agents: {
-    defaults: { decisionModel: "fixture/default" },
+    defaults: {
+      decisionModel: "fixture/default",
+      experimental: { decisionAssistance: true },
+    },
     entries: {
       main: { default: true },
       alternate: { decisionModel: "fixture/override" },
@@ -126,13 +129,47 @@ afterEach(() => {
 });
 
 describe("core decision_evaluate registered flow", () => {
-  it("uses effective selection for eligibility without needing a provider or healthy credentials", () => {
+  it("requires Labs eligibility and effective selection without provider-health churn", () => {
     expect(assembled()).toBeDefined();
     expect(assembled("alternate")).toBeDefined();
     expect(assembled("disabled")).toBeUndefined();
-    expect(assembled("main", { agents: { entries: { main: {} } } })).toBeUndefined();
     expect(
-      assembled("main", { agents: { defaults: { decisionModel: "" }, entries: { main: {} } } }),
+      assembled("main", {
+        agents: {
+          defaults: {
+            decisionModel: "fixture/default",
+            experimental: { decisionAssistance: true },
+          },
+          entries: { main: { experimental: { decisionAssistance: false } } },
+        },
+      }),
+    ).toBeUndefined();
+    expect(
+      assembled("main", {
+        agents: {
+          defaults: { decisionModel: "fixture/default" },
+          entries: { main: {} },
+        },
+      }),
+    ).toBeUndefined();
+    expect(
+      assembled("main", {
+        agents: {
+          defaults: { experimental: { decisionAssistance: true } },
+          entries: { main: {} },
+        },
+      }),
+    ).toBeUndefined();
+    expect(
+      assembled("main", {
+        agents: {
+          defaults: {
+            decisionModel: "fixture/default",
+            experimental: { decisionAssistance: true },
+          },
+          entries: { main: { decisionModel: "" } },
+        },
+      }),
     ).toBeUndefined();
     fixture(
       async () => answer,
@@ -194,7 +231,14 @@ describe("core decision_evaluate registered flow", () => {
     fixture(evaluate);
     const tool = requiredTool();
     const description = tool.description;
-    setRuntimeConfigSnapshot({ agents: { defaults: { decisionModel: "fixture/reconfigured" } } });
+    setRuntimeConfigSnapshot({
+      agents: {
+        defaults: {
+          decisionModel: "fixture/reconfigured",
+          experimental: { decisionAssistance: true },
+        },
+      },
+    });
     await tool.execute("call", batch);
     expect(evaluate).toHaveBeenLastCalledWith(
       batch,
@@ -202,7 +246,10 @@ describe("core decision_evaluate registered flow", () => {
     );
     setRuntimeConfigSnapshot({
       agents: {
-        defaults: { decisionModel: "fixture/default" },
+        defaults: {
+          decisionModel: "fixture/default",
+          experimental: { decisionAssistance: true },
+        },
         entries: { main: { decisionModel: "" } },
       },
     });
@@ -210,6 +257,21 @@ describe("core decision_evaluate registered flow", () => {
       status: "unavailable",
       reason: "disabled",
       guidance: expect.any(String),
+    });
+    expect(evaluate).toHaveBeenCalledOnce();
+    setRuntimeConfigSnapshot(config);
+    const retained = requiredTool();
+    setRuntimeConfigSnapshot({
+      agents: {
+        defaults: {
+          decisionModel: "fixture/default",
+          experimental: { decisionAssistance: false },
+        },
+      },
+    });
+    expect((await retained.execute("call", batch)).details).toMatchObject({
+      status: "unavailable",
+      reason: "disabled",
     });
     expect(evaluate).toHaveBeenCalledOnce();
     expect(tool.description).toBe(description);
@@ -291,7 +353,14 @@ describe("core decision_evaluate registered flow", () => {
     );
     const tool = requiredTool();
     expect(tool.description).toContain("at most 99 questions");
-    setRuntimeConfigSnapshot({ agents: { defaults: { decisionModel: "fixture/reconfigured" } } });
+    setRuntimeConfigSnapshot({
+      agents: {
+        defaults: {
+          decisionModel: "fixture/reconfigured",
+          experimental: { decisionAssistance: true },
+        },
+      },
+    });
     const result = await tool.execute("call", {
       state: "x".repeat(1_048_577),
       questions: { q: { type: "boolean" } },

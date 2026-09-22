@@ -122,7 +122,13 @@ export const AgentEntryBaseSchema = z
       .optional(),
     bootstrapMaxChars: z.number().int().positive().optional(),
     bootstrapTotalMaxChars: z.number().int().positive().optional(),
-    experimental: z.object({ localModelLean: z.boolean().optional() }).strict().optional(),
+    experimental: z
+      .object({
+        decisionAssistance: z.boolean().optional(),
+        localModelLean: z.boolean().optional(),
+      })
+      .strict()
+      .optional(),
     skills: z.array(z.string()).optional(),
     subagents: z
       .object({

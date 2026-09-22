@@ -29,12 +29,12 @@ page for its host requirements.
 | `utilityModel`  | Short language tasks such as titles and summaries        | Generated text                          |
 | `decisionModel` | Classification, rubric scoring, and predicate evaluation | Typed answers and probability estimates |
 
-Decision models have a separate **Decision** picker in the Control UI. Selecting
-one makes it available to supported consumers and makes the core
-`decision_evaluate` tool eligible for that agent, subject to normal tool policy
-and harness capabilities. It does not start background work or replace the chat
-model. Consumers retain control over when to evaluate evidence and what to do
-with the result.
+Decision models have a separate **Decision** picker in the Control UI. Selection
+chooses the provider for supported consumers but does not activate them. Turn on
+**Settings → Labs → Decision-assisted features** as the shared outer eligibility
+gate. Consumers still retain their independent modes, permissions, and tool
+policy. Neither selection nor Labs activation starts background work or replaces
+the chat model.
 
 ## Choose a provider and model
 
@@ -109,12 +109,12 @@ ONNX's token budget includes the state, instructions, and rubric.
 
 ## Agent evaluation tool
 
-`decision_evaluate` is a core tool. An agent with an effective `decisionModel`
-selection receives it automatically, subject to normal tool policy, explicit
-denies, and the active harness's capabilities. An unconfigured agent or one with
-an empty per-agent override does not receive the tool. There is no separate
-plugin or enablement setting for the tool; provider plugins still need their own
-normal setup.
+`decision_evaluate` is a core tool. An agent receives it only when the shared
+Decision-assisted Labs gate is on and that agent has an effective
+`decisionModel`, subject to normal tool policy, explicit denies, and the active
+harness's capabilities. An unconfigured agent or one with an empty per-agent
+override does not receive the tool. Labs does not grant the tool or select a
+provider; provider plugins still need their own normal setup.
 
 Call it with explicit shared `state` and a `questions` map:
 

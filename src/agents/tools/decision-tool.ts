@@ -1,6 +1,7 @@
 import { getRuntimeConfig } from "../../config/config.js";
 import { getGatewayPluginMetadataSnapshot } from "../../plugins/current-plugin-metadata-state.js";
 import { listAvailableManifestContractPlugins } from "../../plugins/manifest-contract-eligibility.js";
+import { isDecisionAssistanceEnabled } from "../decision-assistance.js";
 import { resolveDecisionModelSetting } from "../decision-model-setting.js";
 import type { OpenClawToolsOptions } from "../openclaw-tools.types.js";
 import type { AnyAgentTool } from "./common.js";
@@ -20,7 +21,7 @@ export function createDecisionTool(
 ): AnyAgentTool | null {
   const config = options?.config ?? getRuntimeConfig();
   const selected = resolveDecisionModelSetting(config, agentId);
-  if (!agentId.trim() || !selected) {
+  if (!agentId.trim() || !isDecisionAssistanceEnabled(config, agentId) || !selected) {
     return null;
   }
   // Prepared declarations follow the existing tool/context refresh lifecycle.
@@ -59,7 +60,11 @@ export function createDecisionTool(
       // Load execution only on invocation; the runtime rereads selection and checks live authority.
       const { evaluateDecision } = await import("../../decisions/runtime.js");
       operationSignal.throwIfAborted();
-      const currentSelection = resolveDecisionModelSetting(getRuntimeConfig(), agentId);
+      const currentConfig = getRuntimeConfig();
+      if (!isDecisionAssistanceEnabled(currentConfig, agentId)) {
+        return decisionToolResult({ status: "unavailable", reason: "disabled" });
+      }
+      const currentSelection = resolveDecisionModelSetting(currentConfig, agentId);
       const currentCapabilities =
         currentSelection &&
         models.find(

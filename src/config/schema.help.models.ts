@@ -167,6 +167,8 @@ export const MODEL_FIELD_HELP: Record<string, string> = {
     "Max total characters across all injected workspace bootstrap files (default: 60000).",
   "agents.defaults.experimental":
     "Experimental agent-default flags. Keep these off unless you are intentionally testing a preview surface.",
+  "agents.defaults.experimental.decisionAssistance":
+    "Enables eligible experimental Decision-assisted features for agents with an effective decisionModel. Off by default. This does not choose a provider, grant tools, or bypass ordinary tool policy.",
   "agents.defaults.experimental.localModelLean":
     "Advanced troubleshooting override that restricts optional tools such as browser, automations, and message. Off by default; supported local runtimes use automatic Tool Search without this restriction. Explicit tool allows and required delivery tools are preserved.",
   "agents.defaults.startupContext":
