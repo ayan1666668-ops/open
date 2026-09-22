@@ -6,7 +6,7 @@ import { normalizeOptionalString } from "@openclaw/normalization-core/string-coe
 import { SUPPORTED_NODE_VERSIONS } from "../../node-version.mjs";
 import { note } from "../../packages/terminal-core/src/note.js";
 import { formatGatewayServiceInstallationDrift } from "../cli/daemon-cli/shared.js";
-import { replaceConfigFile, type OpenClawConfig } from "../config/config.js";
+import type { OpenClawConfig } from "../config/config.js";
 import { ConfigWritePostCommitError } from "../config/io.write-errors.js";
 import { isDefaultInstallIdentity, resolveGatewayPort, resolveIsNixMode } from "../config/paths.js";
 import { resolveSecretInputRef } from "../config/types.secrets.js";
@@ -37,7 +37,6 @@ import {
   hasGatewayServiceLauncherOverride,
   resolveManagedGatewayServiceCommand,
 } from "../daemon/service-types.js";
-import { GatewayServiceAuthorityError } from "../daemon/service-update-authority.js";
 import { resolveGatewayService } from "../daemon/service.js";
 import {
   findSystemdGatewayInstallation,
@@ -54,8 +53,9 @@ import { resolveGatewayDaemonRuntime } from "./daemon-runtime.js";
 import { resolveGatewayAuthTokenForService } from "./doctor-gateway-auth-token.js";
 import {
   assertGatewayServiceInstallationRepairAllowed,
+  canRepairRunningGatewayDefinition,
+  installDoctorGatewayService,
   isExecStartRepairIssue,
-  repairGatewayServiceInstallation,
   resolveSystemdScopeFromServicePath,
   resolveSystemdServiceRewriteBlock,
   resolveSystemdUnitNameFromServicePath,
@@ -65,7 +65,9 @@ import { buildExpectedGatewayServicePlan } from "./doctor-gateway-runtime-plan.j
 import type { DoctorOptions, DoctorPrompter } from "./doctor-prompter.js";
 import {
   formatServiceConfigIssues,
+  hasRepairableServiceDefinitionDrift,
   isOperatorOwnedEnvironmentIssue,
+  isServiceDefinitionOnlyRepair,
   isServiceInstallationOnlyRepair,
   reportServiceDefinitionDrift,
 } from "./doctor-service-audit.js";
@@ -78,11 +80,9 @@ import {
 } from "./doctor-service-repair-policy.js";
 
 type GatewayServiceConfigRepairOptions = {
-  allowConfigSizeDrop?: boolean;
   allowExecSecretRefs?: boolean;
-  lastTouchedVersionOverride?: string;
-  preservedLegacyRootKeys?: readonly string[];
-  skipPluginValidation?: boolean;
+  /** Resolves with the persisted candidate; refusal must reject before service mutation. */
+  writeConfig: (nextConfig: OpenClawConfig) => Promise<OpenClawConfig>;
   serviceMaintenance?: DoctorGatewayInstallationMaintenance;
 };
 
@@ -326,7 +326,7 @@ export async function maybeRepairGatewayServiceConfig(
   mode: "local" | "remote",
   runtime: RuntimeEnv,
   prompter: DoctorPrompter,
-  options: GatewayServiceConfigRepairOptions = {},
+  options: GatewayServiceConfigRepairOptions,
 ): Promise<OpenClawConfig> {
   if (!isDefaultInstallIdentity(process.env)) {
     note(NON_DEFAULT_INSTALL_SERVICE_SKIP_REASON, "Gateway");
@@ -454,6 +454,11 @@ export async function maybeRepairGatewayServiceConfig(
     ...(installationDrift ? { expectedCommand: expectedPlan } : {}),
   });
   reportServiceDefinitionDrift(audit);
+  const definitionRepair =
+    !installationDrift &&
+    Boolean(expectedRoot) &&
+    !expectedLayout?.entrypointSourceCheckout &&
+    hasRepairableServiceDefinitionDrift(audit);
   if (audit.runtimeNote) {
     note(audit.runtimeNote, "Gateway runtime");
   }
@@ -520,12 +525,10 @@ export async function maybeRepairGatewayServiceConfig(
     expectedRuntimePlan === expectedPlan
       ? expectedLayout
       : await summarizeGatewayServiceLayout(expectedRuntimePlan);
-  const normalizedExpectedEntrypoint = runtimeLayout?.entrypointReal;
-  const normalizedCurrentEntrypoint = serviceLayout?.entrypointReal;
   if (
-    normalizedExpectedEntrypoint &&
-    normalizedCurrentEntrypoint &&
-    normalizedExpectedEntrypoint !== normalizedCurrentEntrypoint
+    runtimeLayout?.entrypointReal &&
+    serviceLayout?.entrypointReal &&
+    runtimeLayout.entrypointReal !== serviceLayout.entrypointReal
   ) {
     audit.issues.push({
       code: SERVICE_AUDIT_CODES.gatewayEntrypointMismatch,
@@ -547,7 +550,7 @@ export async function maybeRepairGatewayServiceConfig(
   );
   const showSourceCheckoutWarning = sourceCheckoutWarning !== null && !hasEntrypointMismatch;
 
-  if (audit.issues.length === 0) {
+  if (audit.issues.length === 0 && !definitionRepair) {
     if (sourceCheckoutWarning !== null && !hasEntrypointMismatch) {
       note(sourceCheckoutWarning, "Gateway service config");
     }
@@ -557,13 +560,15 @@ export async function maybeRepairGatewayServiceConfig(
   const consolidatedLines: string[] = [];
   let emittedSourceCheckoutWarning = false;
   if (sourceCheckoutWarning !== null && showSourceCheckoutWarning) {
-    consolidatedLines.push(sourceCheckoutWarning);
-    consolidatedLines.push("");
+    consolidatedLines.push(sourceCheckoutWarning, "");
     emittedSourceCheckoutWarning = true;
   }
   consolidatedLines.push(...formatServiceConfigIssues(audit.issues));
   note(consolidatedLines.join("\n"), "Gateway service config");
-  if (audit.issues.every((issue) => issue.code === SERVICE_AUDIT_CODES.gatewayRuntimeProbeFailed)) {
+  if (
+    audit.issues.length > 0 &&
+    audit.issues.every((issue) => issue.code === SERVICE_AUDIT_CODES.gatewayRuntimeProbeFailed)
+  ) {
     return cfg;
   }
 
@@ -583,6 +588,14 @@ export async function maybeRepairGatewayServiceConfig(
 
   if (serviceRepairDeferred) {
     note(formatServiceRepairDeferredNote(), "Gateway service config");
+    return cfg;
+  }
+
+  if (
+    definitionRepair &&
+    !options.serviceMaintenance &&
+    !(await canRepairRunningGatewayDefinition({ service, command, env: serviceInstallEnv }))
+  ) {
     return cfg;
   }
 
@@ -610,13 +623,21 @@ export async function maybeRepairGatewayServiceConfig(
     return cfg;
   }
 
-  const repairMessage = needsAggressive
-    ? "Overwrite gateway service config with current defaults now?"
-    : "Update gateway service config to the recommended defaults now?";
+  const gatewayTokenForRepair = expectedGatewayToken ?? readEmbeddedGatewayToken(managedDefinition);
+  const configuredGatewayToken =
+    typeof cfg.gateway?.auth?.token === "string"
+      ? normalizeOptionalString(cfg.gateway.auth.token)
+      : undefined;
+  const needsConfigWrite =
+    !tokenRefConfigured && !configuredGatewayToken && Boolean(gatewayTokenForRepair);
   const repair = await prompter.confirmRuntimeRepair({
-    message: repairMessage,
+    message: needsAggressive
+      ? "Overwrite gateway service config with current defaults now?"
+      : "Update gateway service config to the recommended defaults now?",
     initialValue: needsAggressive ? prompter.shouldForce : true,
-    requiresInteractiveConfirmation: !installationDrift || !isServiceInstallationOnlyRepair(audit),
+    requiresInteractiveConfirmation:
+      !(installationDrift && isServiceInstallationOnlyRepair(audit)) &&
+      !(definitionRepair && !needsConfigWrite && isServiceDefinitionOnlyRepair(audit)),
   });
   if (!repair) {
     if (!emittedSourceCheckoutWarning) {
@@ -645,14 +666,8 @@ export async function maybeRepairGatewayServiceConfig(
     runtime.error(`Gateway service repair blocked: ${String(err)}`);
     return cfg;
   }
-  const serviceEmbeddedToken = readEmbeddedGatewayToken(managedDefinition);
-  const gatewayTokenForRepair = expectedGatewayToken ?? serviceEmbeddedToken;
-  const configuredGatewayToken =
-    typeof cfg.gateway?.auth?.token === "string"
-      ? normalizeOptionalString(cfg.gateway.auth.token)
-      : undefined;
   let cfgForServiceInstall = cfg;
-  if (!tokenRefConfigured && !configuredGatewayToken && gatewayTokenForRepair) {
+  if (needsConfigWrite) {
     const nextCfg: OpenClawConfig = {
       ...cfg,
       gateway: {
@@ -665,20 +680,7 @@ export async function maybeRepairGatewayServiceConfig(
       },
     };
     try {
-      await replaceConfigFile({
-        nextConfig: nextCfg,
-        afterWrite: { mode: "auto" },
-        writeOptions: {
-          auditOrigin: "doctor",
-          allowConfigSizeDrop: options.allowConfigSizeDrop === true,
-          skipPluginValidation: options.skipPluginValidation === true,
-          preservedLegacyRootKeys: options.preservedLegacyRootKeys,
-          ...(options.lastTouchedVersionOverride
-            ? { lastTouchedVersionOverride: options.lastTouchedVersionOverride }
-            : {}),
-        },
-      });
-      cfgForServiceInstall = nextCfg;
+      cfgForServiceInstall = await options.writeConfig(nextCfg);
       note(
         expectedGatewayToken
           ? "Persisted gateway.auth.token from environment before reinstalling service."
@@ -703,41 +705,25 @@ export async function maybeRepairGatewayServiceConfig(
     runtimePath: needsNodeRuntime && systemNodePath ? systemNodePath : installedRuntimePath,
     pinnedRuntimePath: pinSnapshot.pin?.path,
   });
-  try {
-    const install = (assertCurrent = options.serviceMaintenance?.assertCurrent) =>
-      service.install({
-        assertCurrent,
-        runtimePinUpdate: { expected: pinSnapshot, pin: pinSnapshot.pin },
-        env: serviceInstallEnv,
-        stdout: process.stdout,
-        warn: (message) => note(message, "Gateway"),
-        programArguments: updatedPlan.programArguments,
-        workingDirectory: updatedPlan.workingDirectory,
-        environment: updatedPlan.environment,
-        environmentValueSources: updatedPlan.environmentValueSources,
-      });
-    if (installationDrift && expectedRoot) {
-      await repairGatewayServiceInstallation({
-        service,
-        command,
-        activeRoot: expectedRoot,
-        maintenance: options.serviceMaintenance,
-        env: serviceInstallEnv,
-        install,
-      });
-      note(
-        "Gateway service installation reconciled with the active CLI.",
-        "Gateway service installation",
-      );
-    } else {
-      await install();
-    }
-  } catch (err) {
-    if (err instanceof GatewayServiceAuthorityError) {
-      throw err;
-    }
-    runtime.error(`Gateway service update failed: ${String(err)}`);
-  }
+  await installDoctorGatewayService({
+    service,
+    command,
+    maintenance: options.serviceMaintenance,
+    runtime,
+    repair:
+      installationDrift && expectedRoot
+        ? { kind: "installation", root: expectedRoot }
+        : definitionRepair && expectedRoot
+          ? { kind: "definition", root: expectedRoot }
+          : { kind: "config" },
+    args: {
+      ...updatedPlan,
+      runtimePinUpdate: { expected: pinSnapshot, pin: pinSnapshot.pin },
+      env: serviceInstallEnv,
+      stdout: process.stdout,
+      warn: (message) => note(message, "Gateway"),
+    },
+  });
   return cfgForServiceInstall;
 }
 

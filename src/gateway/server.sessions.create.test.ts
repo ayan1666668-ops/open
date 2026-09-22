@@ -40,7 +40,7 @@ import {
   resolveSqliteStoreScope,
   runExclusiveSqliteSessionWrite,
 } from "../config/sessions/session-accessor.sqlite-scope.js";
-import { addSessionMember, removeSessionMember } from "../config/sessions/session-sharing-store.js";
+import * as sessionMembers from "../config/sessions/session-sharing-store.native.js";
 import { resolveSqliteTargetFromSessionStorePath } from "../config/sessions/session-sqlite-target.js";
 import type { GatewayOperatorRoleDefinition } from "../config/types.gateway.js";
 import { peekSystemEvents } from "../infra/system-events.js";
@@ -107,9 +107,10 @@ import {
   testState,
   writeSessionStore,
 } from "./test-helpers.js";
+import { releaseGatewaySessionStoreFixture } from "./test/server-sessions-resources.test-helpers.js";
 import {
   setupGatewaySessionsTestHarness,
-  createCheckpointFixture,
+  createCompactedSessionFixture,
   getGatewayConfigModule,
   sessionStoreEntry,
   directSessionReq,
@@ -1148,7 +1149,7 @@ test("sessions.create revalidates parent participation before committing a fork 
     storePath,
     messages: [{ role: "user", content: "private parent context" }],
   });
-  addSessionMember(
+  sessionMembers.addSessionMember(
     { agentId: "main", sessionKey: parentSessionKey, storePath },
     { identityId: "member", addedBy: "owner", expectedSessionId: parentSessionId },
   );
@@ -1221,7 +1222,7 @@ test("sessions.create revalidates parent participation before committing a fork 
 
   try {
     await firstGuard.promise;
-    removeSessionMember(
+    sessionMembers.removeSessionMember(
       { agentId: "main", sessionKey: parentSessionKey, storePath },
       "member",
       undefined,
@@ -1798,7 +1799,6 @@ test("chat.send fences dashboard title persistence from concurrent session delet
     expect(dispatchAdmissionsReleased).toBeDefined();
     await dispatchAdmissionsReleased;
     expect(isSessionWorkAdmissionActive(storePath, [sessionKey])).toBe(true);
-
     const drainStarted = createDeferredCore();
     const drainProbe = await beginSessionWorkAdmission({
       scope: storePath,
@@ -2618,12 +2618,11 @@ test("sessions.create provisions and reuses a session worktree for later runs", 
     layout: "state-only",
     prefix: "openclaw-session-worktree-",
   });
-  const root = openClawState.root;
-  const workspace = await initializeGitWorkspace(root);
+  const workspace = await initializeGitWorkspace(openClawState.root);
   await execFileAsync("git", ["-C", workspace, "branch", "selected-base"]);
   closeOpenClawStateDatabaseForTest();
   testState.agentConfig = { workspace };
-  const { storePath } = await createSessionStoreDir();
+  const { dir, storePath } = await createSessionStoreDir();
   const originalCreate = managedWorktrees.createWithOutcome.bind(managedWorktrees);
   const createSpy = vi
     .spyOn(managedWorktrees, "createWithOutcome")
@@ -2715,6 +2714,7 @@ test("sessions.create provisions and reuses a session worktree for later runs", 
     });
     ws.close();
   } finally {
+    await releaseGatewaySessionStoreFixture(dir);
     createSpy.mockRestore();
     if (worktreeId) {
       await managedWorktrees.remove({
@@ -2723,7 +2723,6 @@ test("sessions.create provisions and reuses a session worktree for later runs", 
         allowSnapshotLoss: true,
       });
     }
-    closeOpenClawStateDatabaseForTest();
     testState.agentConfig = undefined;
     await openClawState.cleanup();
   }
@@ -3598,7 +3597,6 @@ test("sessions.create rechecks Fast Mode before interrupting reset work", async 
     admission.release();
   }
 });
-
 test("sessions.create rejects a Fast Mode change completed by draining work before reset cleanup", async () => {
   const { storePath } = await createSessionStoreDir();
   const key = "agent:main:main";
@@ -6642,7 +6640,7 @@ test("sessions.create rejects unknown parentSessionKey", async () => {
 test("sessions.create forks the parent transcript into the new session", async () => {
   const { dir, storePath } = await createSessionStoreDir();
   testState.sessionConfig = { scope: "per-sender" };
-  const parent = await createCheckpointFixture(dir);
+  const parent = await createCompactedSessionFixture(dir);
   const projectRoot = path.join(dir, "qa-writer");
   await fs.mkdir(projectRoot);
   await writeSessionStore({
@@ -6837,7 +6835,7 @@ test("sessions.create rejects a pre-existing locked harness session", async () =
 test("sessions.create rejects children of model-selection-locked sessions", async () => {
   const { dir } = await createSessionStoreDir();
   testState.sessionConfig = { dmScope: "main", scope: "per-sender" };
-  const parent = await createCheckpointFixture(dir);
+  const parent = await createCompactedSessionFixture(dir);
   await writeSessionStore({
     entries: {
       main: sessionStoreEntry(parent.sessionId, {
@@ -6907,7 +6905,7 @@ test("sessions.create retains the 100K fallback when only another provider has m
     cache: getContextWindowCaches().discoveredTokenCache,
     models: [{ id: "unresolved-model", provider: "other-provider", contextTokens: 300_000 }],
   });
-  const parent = await createCheckpointFixture(dir);
+  const parent = await createCompactedSessionFixture(dir);
   await writeSessionStore({
     entries: {
       main: sessionStoreEntry(parent.sessionId, {
@@ -6946,7 +6944,7 @@ test("sessions.create admits an explicit fork within the child model context win
   agentDiscoveryMock.models = [
     { id: "gpt-large", name: "Large", provider: "openai", contextWindow: 922_000 },
   ];
-  const parent = await createCheckpointFixture(dir);
+  const parent = await createCompactedSessionFixture(dir);
   await writeSessionStore({
     entries: {
       main: sessionStoreEntry(parent.sessionId, {
@@ -6977,7 +6975,7 @@ test("sessions.create rejects an explicit fork above the selected child model wi
   agentDiscoveryMock.models = [
     { id: "gpt-small", name: "Small", provider: "openai", contextWindow: 128_000 },
   ];
-  const parent = await createCheckpointFixture(dir);
+  const parent = await createCompactedSessionFixture(dir);
   await writeSessionStore({
     entries: {
       main: sessionStoreEntry(parent.sessionId, {
@@ -7019,7 +7017,7 @@ test("sessions.create clamps configured capacity to the selected child model win
       contextWindowDefault: "1m",
     },
   ];
-  const parent = await createCheckpointFixture(dir);
+  const parent = await createCompactedSessionFixture(dir);
   await writeSessionStore({
     entries: {
       main: sessionStoreEntry(parent.sessionId, {
@@ -7165,7 +7163,7 @@ test("sessions.create resolves an agent-qualified fork from the parent store", a
   testState.agentsConfig = { list: [{ id: "main", default: true }, { id: "work" }] };
   try {
     await fs.mkdir(workDir, { recursive: true });
-    const parent = await createCheckpointFixture(workDir);
+    const parent = await createCompactedSessionFixture(workDir);
     await writeSessionStore({
       storePath: workStorePath,
       agentId: "work",
@@ -7197,7 +7195,6 @@ test("sessions.create resolves an agent-qualified fork from the parent store", a
       parentSessionKey: "agent:work:main",
       fork: true,
     });
-
     expect(created.ok, JSON.stringify(created.error)).toBe(true);
     expect(created.payload?.key).toMatch(/^agent:main:dashboard:/);
     expect(created.payload?.entry?.parentSessionKey).toBe("agent:work:main");
