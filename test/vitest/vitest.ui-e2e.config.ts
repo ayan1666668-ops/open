@@ -26,6 +26,7 @@ const uiE2eIncludePatterns = [
   automationManagementRealGatewayTest,
 ];
 export const uiE2eRealGatewayTestFiles = [
+  "ui/src/e2e/session-roster-request-rate.real-gateway.e2e.test.ts",
   "ui/src/e2e/quota-reset-status.real-gateway.e2e.test.ts",
   "ui/src/e2e/model-api-keys.real-gateway.e2e.test.ts",
   "ui/src/e2e/provider-browser-login.real-gateway.e2e.test.ts",
