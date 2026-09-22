@@ -31,11 +31,7 @@ Calls without `dynamics` keep their existing behavior.
 ## Contract
 
 ```typescript
-type DynamicsBoundary =
-  | "isolated"
-  | "artifact-only"
-  | "evidence-only"
-  | "summary-only";
+type DynamicsBoundary = "isolated" | "artifact-only" | "evidence-only" | "summary-only";
 
 type DynamicsRequirement = "optional" | "required";
 
@@ -209,7 +205,10 @@ Repository tests cover:
 - required-sandbox rejection with no downgrade
 - the real `spawnSubagentDirect` admission path with substituted final dispatch
 
-Repository coverage additionally exercises exact replay binding, host diagnostics, lifecycle advisory emission, and parent-owned cleanup through production owners with substituted final provider/model execution. A model-backed collector transcript remains the strongest missing end-to-end proof.
+Repository coverage additionally exercises exact replay binding, host diagnostics,
+lifecycle advisory emission, and parent-owned cleanup through production owners
+with substituted final provider/model execution. A model-backed collector transcript
+remains the strongest missing end-to-end proof.
 
 ## Related
 
