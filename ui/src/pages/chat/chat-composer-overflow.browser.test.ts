@@ -533,6 +533,35 @@ describe("composer overflow presentation", () => {
     await expectEdges(element, false);
   });
 
+  it.each([1440, 1600])(
+    "lets native textarea sizing grow and cap multiline drafts at %ipx",
+    async (width) => {
+      await page.viewport(width, 900);
+      render(renderChatComposer(createComposerProps()), container);
+      const textarea = container.querySelector<HTMLTextAreaElement>("textarea")!;
+      expect(getComputedStyle(textarea).fieldSizing).toBe("content");
+
+      textarea.value = "one line";
+      textarea.dispatchEvent(new InputEvent("input", { bubbles: true }));
+      await afterLayout();
+      const singleLineHeight = textarea.getBoundingClientRect().height;
+
+      textarea.value = "line 1\nline 2\nline 3";
+      textarea.dispatchEvent(new InputEvent("input", { bubbles: true }));
+      await afterLayout();
+      expect(textarea.getBoundingClientRect().height).toBeGreaterThan(singleLineHeight);
+
+      textarea.value = Array.from({ length: 20 }, (_, index) => `line ${index + 1}`).join("\n");
+      textarea.dispatchEvent(new InputEvent("input", { bubbles: true }));
+      await afterLayout();
+      const capped = textarea.getBoundingClientRect();
+      expect(capped.height).toBeCloseTo(Number.parseFloat(getComputedStyle(textarea).maxHeight), 0);
+      expect(textarea.scrollHeight).toBeGreaterThan(textarea.clientHeight);
+      expect(textarea.scrollWidth).toBeLessThanOrEqual(textarea.clientWidth + 1);
+      expect(container.getBoundingClientRect().width).toBe(760);
+    },
+  );
+
   it("preserves expanded mobile goal edges as its objective changes and scrolls", async () => {
     await page.viewport(480, 800);
     container.style.width = "400px";

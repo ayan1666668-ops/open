@@ -3565,6 +3565,44 @@ describe("chat composer IME composition", () => {
 });
 
 describe("chat composer sizing", () => {
+  beforeEach(() => vi.spyOn(CSS, "supports").mockReturnValue(false));
+
+  it("avoids synchronous layout reads for native-sized input", async () => {
+    vi.mocked(CSS.supports).mockReturnValue(true);
+    const container = renderChatView({});
+    const textarea = getComposerTextarea(container);
+    const thread = container.querySelector<HTMLElement>(".chat-thread")!;
+    document.body.append(container);
+    await Promise.resolve();
+    let textareaLayoutReads = 0;
+    let transcriptLayoutReads = 0;
+    Object.defineProperty(textarea, "scrollHeight", {
+      configurable: true,
+      get: () => {
+        textareaLayoutReads += 1;
+        return 200;
+      },
+    });
+    Object.defineProperty(thread, "scrollHeight", {
+      configurable: true,
+      get: () => {
+        transcriptLayoutReads += 1;
+        return 200;
+      },
+    });
+    textarea.style.height = "42px";
+
+    textarea.value = "responsive draft";
+    textarea.dispatchEvent(new InputEvent("input", { bubbles: true }));
+
+    expect({ textareaLayoutReads, transcriptLayoutReads }).toEqual({
+      textareaLayoutReads: 0,
+      transcriptLayoutReads: 0,
+    });
+    expect(textarea.style.height).toBe("");
+    container.remove();
+  });
+
   it("sizes restored drafts after the rendered value is committed", async () => {
     const container = renderChatView({ draft: "A restored long draft" });
     const textarea = getComposerTextarea(container);

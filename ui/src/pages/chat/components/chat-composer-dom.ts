@@ -44,6 +44,10 @@ const COMPOSER_POPOVER_GAP_PX = 6;
 // include that chrome so the outer panel retains a viewport gutter.
 const COMPOSER_POPOVER_VIEWPORT_INSET_PX = 28;
 
+function hasNativeTextareaContentSizing() {
+  return typeof CSS !== "undefined" && CSS.supports("field-sizing", "content");
+}
+
 function updateComposerPopoverAnchor(el: HTMLElement) {
   const viewport = window.visualViewport;
   const viewportTop = viewport?.offsetTop ?? 0;
@@ -127,6 +131,12 @@ export function replaceComposerPopoverAnchor(
 }
 
 function updateTextareaOverflow(el: HTMLTextAreaElement) {
+  if (composerTextareaResizeObservers.get(el)?.editing && hasNativeTextareaContentSizing()) {
+    el.style.overflowY = "";
+    el.removeAttribute("data-scroll-fade-top");
+    el.removeAttribute("data-scroll-fade-bottom");
+    return;
+  }
   const scrollable = el.scrollHeight > el.clientHeight + 1;
   // Two 16px fades need enough vertical runway not to overlap into a narrow
   // opaque strip on short drafts. Small overflows still scroll, just unfaded.
@@ -139,12 +149,25 @@ function updateTextareaOverflow(el: HTMLTextAreaElement) {
   el.toggleAttribute("data-scroll-fade-bottom", fadeBottom);
 }
 
-export function adjustTextareaHeight(el: HTMLTextAreaElement) {
+export function adjustTextareaHeight(
+  el: HTMLTextAreaElement,
+  options: { nativeInput?: boolean } = {},
+) {
   // A surface that declares the compact shape is a fixed CSS box: it holds one
   // line whatever the draft is, so an inline height left by an earlier measured
   // pass would silently outrank the stylesheet. Which shape a composer is in is
   // declared in its markup, never inferred here from how much text it holds.
   if (el.closest('[data-composer-layout="single-line"]')) {
+    el.style.height = "";
+    el.style.overflowY = "";
+    el.removeAttribute("data-scroll-fade-top");
+    el.removeAttribute("data-scroll-fade-bottom");
+    return;
+  }
+  // Modern engines can size the textarea from its content in the normal layout
+  // pass. Do not force repeated transcript and textarea layout reads on every
+  // keystroke when that native path is available.
+  if (options.nativeInput && hasNativeTextareaContentSizing()) {
     el.style.height = "";
     el.style.overflowY = "";
     el.removeAttribute("data-scroll-fade-top");
@@ -269,7 +292,7 @@ export function scheduleTextareaHeightAdjustment(el: HTMLTextAreaElement) {
   // controlled value is committed, so measure once the render has settled.
   queueMicrotask(() => {
     if (el.isConnected) {
-      adjustTextareaHeight(el);
+      adjustTextareaHeight(el, { nativeInput: true });
     }
   });
 }
