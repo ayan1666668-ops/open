@@ -93,7 +93,7 @@ The local plugin registry is OpenClaw's persisted cold read model for installed 
 
 Use `plugins registry` to inspect whether the persisted registry is present, current, or stale. Use `--refresh` to rebuild it from the persisted plugin index, config policy, and manifest/package metadata. This is a repair path, not a runtime activation path.
 
-`--refresh` can run when stale plugin metadata blocks normal configuration validation. It still requires parseable configuration that passes the core schema, preserves the config file, and does not activate plugin code. A successful refresh verifies the registry replacement; plugin configuration errors may still need separate repair.
+`--refresh` can run when stale plugin metadata blocks normal configuration validation. It still requires parseable configuration that passes the core schema, preserves the config file, and does not activate plugin code. Legacy plugin installation records are imported before rebuilding. A successful refresh verifies the registry replacement; plugin configuration errors may still need separate repair.
 
 When persisted and derived plugin records differ, the command lists each differing plugin with both sources. JSON output returns the same rows in `differences`. Policy staleness reports `policy-changed` in `refreshReasons` and leaves `differences` empty because policy validation runs before record comparison; a policy refresh can still update enabled fields. A refresh rereads and verifies its persisted replacement before it reports success. If plugin package files keep changing during verification, stop those updates and run `openclaw plugins registry --refresh` again.
 

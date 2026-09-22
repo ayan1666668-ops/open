@@ -8,6 +8,7 @@ import {
   formatInvalidConfigDetails,
 } from "../config/io.invalid-config.js";
 import { createManagedRuntimeEnvBase } from "../config/io.read-helpers.js";
+import { resolveStateDir } from "../config/paths.js";
 import { withPluginLifecycleLease } from "../plugins/plugin-lifecycle-lease.js";
 import { defaultRuntime } from "../runtime.js";
 import { shortenHomePath } from "../utils.js";
@@ -55,6 +56,20 @@ export async function runPluginsRegistryCommand(opts: PluginRegistryOptions): Pr
       lease.assertOwned();
       if (!snapshot.valid) {
         throw createInvalidConfigError(snapshot.path, formatInvalidConfigDetails(snapshot.issues));
+      }
+      const { migrateLegacyInstalledPluginIndex } =
+        await import("../infra/state-migrations.plugin-state.js");
+      lease.assertOwned();
+      // Core-only admission skips Doctor; retain its canonical ownership import before replacement.
+      const migration = await migrateLegacyInstalledPluginIndex({
+        stateDir: resolveStateDir(),
+        lease,
+      });
+      lease.assertOwned();
+      if (migration.warnings.length > 0) {
+        throw new Error(
+          `Plugin installation metadata migration did not complete: ${migration.warnings.join("; ")}. Run openclaw doctor --fix before refreshing the registry.`,
+        );
       }
       const config = snapshot.runtimeConfig;
       const index = await refreshPluginRegistry({

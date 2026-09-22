@@ -12,6 +12,7 @@ import { seedInstalledPluginIndex } from "../plugins/test-helpers/installed-plug
 import { writeManagedNpmPlugin } from "../plugins/test-helpers/managed-npm-plugin.js";
 import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
 import { registerPluginsCli } from "./plugins-cli.js";
+import { registerPreActionHooks } from "./program/preaction.js";
 
 const output = vi.hoisted(() => ({ writeJson: vi.fn() }));
 vi.mock("../runtime.js", async (importOriginal) => {
@@ -26,13 +27,58 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-async function refreshRegistry() {
+async function refreshRegistry(withBootstrap = false) {
   const program = new Command().name("openclaw");
-  registerPluginsCli(program);
-  await program.parseAsync(["plugins", "registry", "--refresh", "--json"], { from: "user" });
+  const argv = ["plugins", "registry", "--refresh", "--json"];
+  const previousArgv = process.argv;
+  try {
+    if (withBootstrap) {
+      process.argv = ["node", "openclaw", ...argv];
+      registerPreActionHooks(program, "test");
+    }
+    registerPluginsCli(program);
+    await program.parseAsync(argv, { from: "user" });
+  } finally {
+    process.argv = previousArgv;
+  }
 }
 
 describe("plugins registry recovery", () => {
+  it("imports legacy-only installation ownership through the registered bootstrap before refresh", async () => {
+    await withOpenClawTestState({ label: "registry-cli-legacy" }, async (state) => {
+      const bundled = state.path("empty-bundled");
+      const rootDir = state.path("linked-plugin");
+      fs.mkdirSync(bundled);
+      fs.mkdirSync(rootDir);
+      state.envVars.OPENCLAW_BUNDLED_PLUGINS_DIR = bundled;
+      state.applyEnv();
+      const plugin = createColdPluginFixture({ rootDir, pluginId: "demo" });
+      const records = { demo: { source: "path", sourcePath: rootDir, installPath: rootDir } };
+      const legacyPath = await state.writeJson("plugins/installs.json", { records });
+      await state.writeConfig({
+        plugins: { allow: ["demo"], load: { paths: [] }, entries: { demo: { enabled: true } } },
+      });
+      const configBytes = fs.readFileSync(state.configPath, "utf8");
+      const legacyBytes = fs.readFileSync(legacyPath, "utf8");
+      expect(readPersistedInstalledPluginIndexSync()).toBeNull();
+
+      await refreshRegistry(true);
+
+      expect(output.writeJson).toHaveBeenLastCalledWith(
+        expect.objectContaining({ refreshed: true, state: "fresh" }),
+      );
+      const persisted = readPersistedInstalledPluginIndexSync();
+      expect(persisted?.installRecords).toEqual(records);
+      expect(persisted?.plugins.find((entry) => entry.pluginId === "demo")?.source).toBe(
+        plugin.runtimeSource,
+      );
+      expect(fs.existsSync(legacyPath)).toBe(false);
+      expect(fs.readFileSync(`${legacyPath}.migrated`, "utf8")).toBe(legacyBytes);
+      expect(fs.readFileSync(state.configPath, "utf8")).toBe(configBytes);
+      expect(fs.existsSync(plugin.runtimeMarker)).toBe(false);
+    });
+  });
+
   it("replaces a stale config-selected source with its managed owner without activating either", async () => {
     await withOpenClawTestState({ label: "registry-cli-recovery" }, async (state) => {
       const bundled = state.path("empty-bundled");
@@ -113,6 +159,23 @@ describe("plugins registry recovery", () => {
     });
   });
 
+  it("retains an invalid legacy installation ledger without replacing the registry", async () => {
+    await withOpenClawTestState({ label: "registry-cli-invalid-ledger" }, async (state) => {
+      await state.writeConfig({ plugins: { enabled: false } });
+      await seedInstalledPluginIndex({}, { config: { plugins: { enabled: false } } });
+      const before = readPersistedInstalledPluginIndexRowSync({});
+      const legacyPath = await state.writeText("plugins/installs.json", "{ broken");
+
+      await expect(refreshRegistry(true)).rejects.toThrow(
+        "Plugin installation metadata migration did not complete",
+      );
+
+      expect(readPersistedInstalledPluginIndexRowSync({})).toEqual(before);
+      expect(fs.readFileSync(legacyPath, "utf8")).toBe("{ broken");
+      expect(output.writeJson).not.toHaveBeenCalled();
+    });
+  });
+
   it("repairs registry metadata without accepting invalid plugin configuration", async () => {
     await withOpenClawTestState({ label: "registry-cli-plugin-config" }, async (state) => {
       const rootDir = state.path("plugin");
@@ -153,12 +216,17 @@ describe("plugins registry recovery", () => {
     await withOpenClawTestState({ label: "registry-cli-invalid-core" }, async (state) => {
       await seedInstalledPluginIndex({}, { config: { plugins: { enabled: false } } });
       const before = readPersistedInstalledPluginIndexRowSync({});
+      const legacyPath = await state.writeJson("plugins/installs.json", {
+        records: { legacy: { source: "path" } },
+      });
+      const legacyBytes = fs.readFileSync(legacyPath, "utf8");
       fs.writeFileSync(state.configPath, raw);
 
       await expect(refreshRegistry()).rejects.toThrow(issue);
 
       expect(readPersistedInstalledPluginIndexRowSync({})).toEqual(before);
       expect(fs.readFileSync(state.configPath, "utf8")).toBe(raw);
+      expect(fs.readFileSync(legacyPath, "utf8")).toBe(legacyBytes);
       expect(output.writeJson).not.toHaveBeenCalled();
     });
   });
