@@ -93,7 +93,8 @@ describe("Liquid Swarm folding regression", () => {
     expect(decision.actions).toContainEqual({
       kind: "freeze",
       targetReplicaIds: ["candidate"],
-      reason: "low-entropy candidates with substantial evidence should be frozen for verification",
+      reason:
+        "low-entropy candidates with substantial evidence should be frozen for verification",
     });
     expect(decision.authority).toBe("search-only");
   });
