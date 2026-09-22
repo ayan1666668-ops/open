@@ -4,7 +4,6 @@
 
 - Codex: restore background memory narratives and isolated text completions on agent-scoped local runtimes with administrator-managed hooks, preserving managed hooks and existing native-account/proxy routing while keeping ordinary hooks and model tools isolated. (#151658)
 - Sandboxes: honor each registered runtime owner's pruning policy so a stricter agent cannot evict another agent's containers or browser bridges.
-- Ollama: native `think: "max"` and the full `/think` menu now also reach Ollama Cloud `glm-5.3`, `glm-5.3-flash`, `kimi-k3`, and `deepseek-v4.1-flash`, verified against each model's `/api/show` thinking descriptor.
 
 ### Changes
 
