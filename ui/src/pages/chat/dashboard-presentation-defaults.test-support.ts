@@ -76,6 +76,7 @@ export function createDashboardHarness(
         current = {
           ...current,
           ...(result.entry.updatedAt !== undefined ? { updatedAt: result.entry.updatedAt } : {}),
+          ...(result.entry.boardFace !== undefined ? { boardFace: result.entry.boardFace } : {}),
           ...(Object.hasOwn(result.entry, "boardPresentation")
             ? { boardPresentation: result.entry.boardPresentation }
             : {}),

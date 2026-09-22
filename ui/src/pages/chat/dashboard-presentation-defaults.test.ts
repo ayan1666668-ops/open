@@ -707,8 +707,10 @@ describe("dashboard shared default in the real header Layout menu", () => {
     expect(menu.querySelector(defaultStatus)).toBeNull();
   });
 
-  it("saves through the session capability, disables duplicate clicks, and acknowledges without rearranging", async () => {
-    const h = createDashboardHarness();
+  it("saves the opening face when presentation already matches, without rearranging or duplicate writes", async () => {
+    const h = createDashboardHarness({
+      row: session({ boardFace: undefined, boardPresentation: "expanded" }),
+    });
     await h.sessions.refresh({ agentId: "main", force: true });
     const stop = h.sessions.subscribe((next) => {
       h.state.sessionsResult = next.result;
@@ -744,18 +746,26 @@ describe("dashboard shared default in the real header Layout menu", () => {
     select(menu, "quick:layout:dashboard-default");
     expect(patch).toHaveBeenCalledExactlyOnceWith(
       key,
-      { boardPresentation: "expanded" },
+      { boardFace: "dashboard", boardPresentation: "expanded" },
       { agentId: "main", expectedSessionId: "dashboard-session" },
     );
-    expect(h.sessions.state.result?.sessions[0]?.boardPresentation).toBe("split");
+    expect(h.sessions.state.result?.sessions[0]?.boardFace).toBeUndefined();
     reply.resolve({
       ok: true,
       key,
       path: "(multiple)",
-      entry: { sessionId: "dashboard-session", updatedAt: 20, boardPresentation: "expanded" },
+      entry: {
+        sessionId: "dashboard-session",
+        updatedAt: 20,
+        boardFace: "dashboard",
+        boardPresentation: "expanded",
+      },
     });
     await operation;
-    expect(h.sessions.state.result?.sessions[0]?.boardPresentation).toBe("expanded");
+    expect(h.sessions.state.result?.sessions[0]).toMatchObject({
+      boardFace: "dashboard",
+      boardPresentation: "expanded",
+    });
     expect(h.state.sidebarLayout).toEqual(layout);
     expect(h.saved()).toEqual(persisted);
     menu = await h.header();

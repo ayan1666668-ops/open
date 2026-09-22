@@ -592,11 +592,7 @@ describe("chat page split layout host", () => {
     expect(navigation.navigate).toHaveBeenCalledWith("dashboard", {
       pathname: "/dashboard/main/1234567890",
     });
-    expect(navigation.patch).toHaveBeenCalledWith(
-      WORK_SESSION_KEY,
-      { boardFace: "dashboard" },
-      { agentId: "main" },
-    );
+    expect(navigation.patch).not.toHaveBeenCalled();
   });
 
   it("passes an empty session key while route data is still unresolved", async () => {

@@ -11,7 +11,6 @@ import { readSessionDragData, sessionDragActive } from "../../lib/sessions/drag.
 import { areUiSessionKeysEquivalent } from "../../lib/sessions/session-key.ts";
 import { OpenClawLightDomElement } from "../../lit/openclaw-element.ts";
 import { SubscriptionsController } from "../../lit/subscriptions-controller.ts";
-import { persistSessionBoardFace } from "./chat-board-face-persistence.ts";
 import { stillOwnsCanonicalLocation } from "./chat-canonical-location.ts";
 import { resolveDropIndicator, type DropIndicator } from "./chat-page-drop-indicator.ts";
 import { navigateChatPage } from "./chat-page-navigation.ts";
@@ -521,7 +520,6 @@ export class ChatPage extends OpenClawLightDomElement implements SessionSplitHos
     if (!selectedSessionKey || !areUiSessionKeysEquivalent(selectedSessionKey, sessionKey)) {
       return;
     }
-    persistSessionBoardFace(this.context, sessionKey, face);
     if (
       (!this.layout || this.layout.activePaneId === paneId) &&
       areUiSessionKeysEquivalent(this.data.sessionKey, sessionKey) &&
