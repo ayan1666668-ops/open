@@ -38,9 +38,14 @@ describe("native child continuity across source delivery turns", () => {
     await cleanupDynamicToolBuildFixture(dir, closers);
   });
 
-  it.each([false, true])(
-    "preserves parent/child identity without message execution (disableMessageTool=%s)",
-    async (disableMessageTool) => {
+  it.each([
+    { disableMessageTool: false, legacyCatalog: false },
+    { disableMessageTool: true, legacyCatalog: false },
+    { disableMessageTool: false, legacyCatalog: true },
+    { disableMessageTool: true, legacyCatalog: true },
+  ])(
+    "preserves parent/child identity without message execution ($disableMessageTool, legacyCatalog=$legacyCatalog)",
+    async ({ disableMessageTool, legacyCatalog }) => {
       const params = createParams(path.join(dir, "session.jsonl"), dir);
       params.disableTools = false;
       params.toolsAllow = ["sessions_spawn", "sessions_yield"];
@@ -58,7 +63,10 @@ describe("native child continuity across source delivery turns", () => {
       const initialTools = await buildDynamicToolsForTest(params, dir, registration);
       expect(initialTools.map((tool) => tool.name)).toContain("message");
       const initialSpecs = createCodexDynamicToolBridge({
-        tools: initialTools,
+        // Pre-upgrade automatic delivery omitted message from the saved native catalog.
+        tools: legacyCatalog
+          ? initialTools.filter((tool) => tool.name !== "message")
+          : initialTools,
         signal: new AbortController().signal,
       }).specs;
       let nextParent = 0;
@@ -155,7 +163,14 @@ describe("native child continuity across source delivery turns", () => {
           }).specs;
           const resumed = await startOrResumeThread({ ...common, dynamicTools: completionSpecs });
           expect(resumed.threadId).toBe(first.threadId);
-          expect(completionSpecs).toEqual(initialSpecs);
+          if (!legacyCatalog) {
+            expect(completionSpecs).toEqual(initialSpecs);
+          }
+          // A second adoption must retain the original fingerprint, not stamp a
+          // widened catalog that the native thread never received.
+          expect(
+            (await startOrResumeThread({ ...common, dynamicTools: completionSpecs })).threadId,
+          ).toBe(first.threadId);
           expect(
             await client.request(
               "test/followup_task",
