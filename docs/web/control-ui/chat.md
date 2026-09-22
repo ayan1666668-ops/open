@@ -551,6 +551,16 @@ back to the end or select **Latest** to resume following explicitly. Assistant
 text stays visible as it streams and becomes saved history, without a reply
 entry fade or slide.
 
+Hover an external web link, or focus it with the keyboard, to see its page title,
+description, and social image when available. GitHub repository and public
+landing-page links use the same card; issue and pull-request links keep their
+dedicated previews. The card uses
+OpenClaw's theme and includes **Open in your browser**. Press Escape to dismiss it.
+Pages without metadata keep the link label and destination. Touch taps open links
+normally. GitHub sign-in, account, and profile links do not trigger page previews.
+These anonymous previews respect **Automatically Fetch Link Favicons**; see
+[the request and privacy details](/web/control-ui/security-model#content-security-policy).
+
 Completed replies can show a compact **Sources** strip when their web links match
 recorded `web_search` or `web_fetch` results from the same run. Select a title and
 domain card to preview its **Search snippet** or **Page excerpt**, then use
@@ -647,6 +657,20 @@ The full Tasks page displays the supplied transcript. Core session transcripts
 are currently capped at 8,000 characters per text block. The Chat panel's full-text recovery may be unavailable
 after a temporary session is removed; loading earlier messages does not recover
 a capped reply's missing text.
+
+## Conversations stopped for review
+
+When a provider stops a conversation as a misalignment precaution, chat holds
+ordinary sends, queued input, and Talk. **Review findings** opens the available
+explanation. If the provider and runtime support continuation, the dialog shows
+the exact continuation message and asks you to **Acknowledge findings and
+continue**. Sending that request keeps the chat paused until the provider accepts
+it; a refresh, another session, or newer findings cannot confirm an older review.
+
+Queued messages remain held after continuation. Review and retry each one
+separately if it is still needed. Without a supported continuation, the
+conversation remains stopped. See [misalignment precautions](/concepts/model-failover#misalignment-precautions)
+for runtime support and recovery limits.
 
 ## Chat message width
 
