@@ -2212,6 +2212,7 @@ jobs:
               check_name: "temporary-telegram-bundle-7",
               shard_name: "changed-extensions-bundle-7",
               runner: "blacksmith-8vcpu-ubuntu-2404",
+              git_commits: ["97be50b180ea0219139a87488dfefbaaee8740ff", "69fe9901f9b046bf88b459f164dba08c58baa6c6"],
               plan_concurrency: 1,
               predicted_seconds: 240,
               test_runtime_policy: "bun-compatible",
@@ -3834,15 +3835,19 @@ jobs:
               return subprocess.check_output(['git', *args], text=True).strip()
           try:
               head = git('rev-parse', 'HEAD')
-              baseline = git('rev-parse', 'HEAD^')
-              assert baseline == '97be50b180ea0219139a87488dfefbaaee8740ff'
+              baseline = '97be50b180ea0219139a87488dfefbaaee8740ff'
+              previous = '69fe9901f9b046bf88b459f164dba08c58baa6c6'
+              def parents(commit):
+                  return [line[7:] for line in git('cat-file', '-p', commit).split('\n\n', 1)[0].splitlines() if line.startswith('parent ')]
+              assert parents(head) == [previous]
+              assert parents(previous) == [baseline]
               tree = git('rev-parse', 'HEAD^{tree}')
               owner = 'extensions/telegram/src/bot.create-telegram-bot.test.ts'
               receipt.update(head=head, tree=tree, baseline=baseline)
               receipt['baselineTree'] = git('rev-parse', baseline + '^{tree}')
               assert head == os.environ['GITHUB_SHA'] == os.environ['WORKFLOW_SHA']
               assert receipt['baselineTree'] == '0d261f68c654775df418d97698da25071efea1dd'
-              assert [line[7:] for line in git('cat-file', '-p', baseline).split('\n\n', 1)[0].splitlines() if line.startswith('parent ')] == [
+              assert parents(baseline) == [
                   '23ce1015576d0fd16303a653b08e95fc449aea2b', '05a0b7be36e7f53d4bf12c4d9672e9fc0a0ef635']
               assert set(git('diff', '--no-renames', '--name-only', baseline, head).splitlines()) == {'.github/workflows/ci.yml', owner}
               subprocess.run(['git', 'diff', '--exit-code', 'HEAD', '--'], check=True)
