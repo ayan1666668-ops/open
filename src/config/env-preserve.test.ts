@@ -854,6 +854,36 @@ describe("restoreEnvVarRefs", () => {
     expect(Object.hasOwn(result, "__proto__")).toBe(true);
     expect(result).toEqual(JSON.parse('{"__proto__":{"token":"${MY_TOKEN}"}}'));
   });
+
+  it("restores references across an unchanged two-row array with authored own __proto__ keys", () => {
+    // JSON.parse builds the rows' own "__proto__" data keys; an object
+    // literal would write the prototype instead. The comparison tree has to
+    // settle that key as inert data, or neither row equals its resolved
+    // counterpart and the array identities cannot match.
+    const parsed = JSON.parse(
+      '{"providers":[' +
+        '{"id":"alpha","token":"${MY_TOKEN}","__proto__":null},' +
+        '{"id":"beta","token":"${MY_TOKEN}","__proto__":null}' +
+        "]}",
+    ) as { providers: Array<Record<string, unknown>> };
+    const incoming = JSON.parse(
+      '{"providers":[' +
+        '{"id":"alpha","token":"tok-12345","__proto__":null},' +
+        '{"id":"beta","token":"tok-12345","__proto__":null}' +
+        "]}",
+    ) as { providers: Array<Record<string, unknown>> };
+
+    const result = restoreEnvVarRefs(incoming, parsed, env) as typeof parsed;
+    expect(result.providers.map((row) => row.id)).toEqual(["alpha", "beta"]);
+    expect(result).toEqual(parsed);
+    for (const row of result.providers) {
+      expect(row.token).toBe("${MY_TOKEN}");
+      const authoredKey = Object.getOwnPropertyDescriptor(row, "__proto__");
+      expect(authoredKey?.value).toBeNull();
+      expect(authoredKey?.enumerable).toBe(true);
+      expect(Object.getPrototypeOf(row)).toBe(Object.prototype);
+    }
+  });
 });
 
 describe("restoreEnvVarRefs with edited arrays", () => {
