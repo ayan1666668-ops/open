@@ -700,7 +700,7 @@ export async function finalizeRuntimeSnapshotWrite(params: {
   nextSourceConfig: OpenClawConfig;
   refreshOptions?: RuntimeConfigSnapshotRefreshOptions;
   hadBothSnapshots: boolean;
-  freshConfig: OpenClawConfig | ((assertCurrent: () => void) => Promise<OpenClawConfig>);
+  freshConfig: OpenClawConfig | RuntimeConfigAsyncLoader;
   notifyCommittedWrite: () => void;
   createRefreshError: (detail: string, cause: unknown) => Error;
   formatRefreshError: (error: unknown) => string;
@@ -746,24 +746,25 @@ export async function finalizeRuntimeSnapshotWrite(params: {
     }
   }
 
-  const assertWriteCurrent = params.assertCurrent;
   const assertCurrent = () => {
-    assertWriteCurrent?.();
+    params.assertCurrent?.();
     if (runtimeConfigSnapshotGeneration !== generation) {
       throw new Error("Runtime config reload was superseded before publication");
     }
   };
-  const fresh =
+  const { config, runtimeEnv } =
     typeof params.freshConfig === "function"
       ? await params.freshConfig(assertCurrent)
-      : params.freshConfig;
+      : { config: params.freshConfig };
   assertCurrent();
-  if (params.hadBothSnapshots) {
-    setRuntimeConfigSnapshot(fresh, params.nextSourceConfig);
-    notifyCommittedWrite();
-    return;
+  const publication = runtimeEnv?.publish();
+  try {
+    assertCurrent();
+    setRuntimeConfigSnapshot(config, params.hadBothSnapshots ? params.nextSourceConfig : undefined);
+    publication?.commit();
+  } catch (error) {
+    publication?.();
+    throw error;
   }
-
-  setRuntimeConfigSnapshot(fresh);
   notifyCommittedWrite();
 }

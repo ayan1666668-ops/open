@@ -314,8 +314,8 @@ describe("runtime snapshot state", () => {
 
   it("refreshes both snapshots from disk after a write when source + runtime snapshots exist", async () => {
     const notifyCommittedWrite = vi.fn();
-    const loadFreshConfig = vi.fn<() => Promise<OpenClawConfig>>(async () => ({
-      gateway: { auth: { mode: "token" } },
+    const loadFreshConfig = vi.fn<() => Promise<{ config: OpenClawConfig }>>(async () => ({
+      config: { gateway: { auth: { mode: "token" } } },
     }));
     const nextSourceConfig: OpenClawConfig = {
       gateway: { auth: { mode: "token" } },
@@ -341,7 +341,7 @@ describe("runtime snapshot state", () => {
 
   it("refreshes a plain runtime snapshot after writes without restoring a source snapshot", async () => {
     const notifyCommittedWrite = vi.fn();
-    const loadFreshConfig = vi.fn(async () => ({ gateway: { port: 19002 } }));
+    const loadFreshConfig = vi.fn(async () => ({ config: { gateway: { port: 19002 } } }));
 
     setRuntimeConfigSnapshot({ gateway: { port: 18789 } });
 
@@ -362,8 +362,8 @@ describe("runtime snapshot state", () => {
 
   it("keeps the last-known-good runtime snapshot active while specialized refresh is pending", async () => {
     const notifyCommittedWrite = vi.fn();
-    const loadFreshConfig = vi.fn<() => Promise<OpenClawConfig>>(async () => ({
-      gateway: { auth: { mode: "token" } },
+    const loadFreshConfig = vi.fn<() => Promise<{ config: OpenClawConfig }>>(async () => ({
+      config: { gateway: { auth: { mode: "token" } } },
     }));
     let releaseRefresh: (() => void) | undefined;
     const refreshPending = new Promise<boolean>((resolve) => {
@@ -430,7 +430,9 @@ describe("runtime snapshot state", () => {
         nextSourceConfig: candidate,
         hadBothSnapshots: true,
         freshConfig: () =>
-          phase === "reload" ? release.promise.then(() => candidate) : Promise.resolve(candidate),
+          phase === "reload"
+            ? release.promise.then(() => ({ config: candidate }))
+            : Promise.resolve({ config: candidate }),
         notifyCommittedWrite,
         formatRefreshError: String,
         createRefreshError: (detail, cause) => new Error(detail, { cause }),
@@ -528,7 +530,7 @@ describe("runtime snapshot state", () => {
     setRuntimeConfigSnapshot(activeConfig);
     const notifyCommittedWrite = vi.fn();
     const refresh = vi.fn(async () => true);
-    const loadFreshConfig = vi.fn(async () => ({ gateway: { port: 19001 } }));
+    const loadFreshConfig = vi.fn(async () => ({ config: { gateway: { port: 19001 } } }));
     setRuntimeConfigSnapshotRefreshHandler({ refresh });
 
     await finalizeRuntimeSnapshotWrite({
