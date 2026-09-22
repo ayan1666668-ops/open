@@ -12,15 +12,15 @@ Different replicas can use different models, thinking levels, contexts, and
 strategies at the same time. The regime taxonomy is a compact operator vocabulary
 for what those lanes appear to be doing; it is **not literal thermodynamics**.
 
-| Regime | Engineering meaning |
-| --- | --- |
-| gas | high candidate diversity with low coherence |
-| liquid | productive motion with moderate coherence |
-| critical | umbrella label for a lane that needs discrimination before amplification |
-| crystal | frozen-candidate heuristic: low entropy, strong coherence/evidence, no contradictory acceptance progress |
-| glass | low mobility + low progress while evidence is still incomplete |
-| jammed | resource/context/debt pressure dominates useful search |
-| unknown | insufficient measured telemetry |
+| Regime   | Engineering meaning                                                                                      |
+| -------- | -------------------------------------------------------------------------------------------------------- |
+| gas      | high candidate diversity with low coherence                                                              |
+| liquid   | productive motion with moderate coherence                                                                |
+| critical | umbrella label for a lane that needs discrimination before amplification                                 |
+| crystal  | frozen-candidate heuristic: low entropy, strong coherence/evidence, no contradictory acceptance progress |
+| glass    | low mobility + low progress while evidence is still incomplete                                           |
+| jammed   | resource/context/debt pressure dominates useful search                                                   |
+| unknown  | insufficient measured telemetry                                                                          |
 
 `critical` has an explicit typed trigger:
 
