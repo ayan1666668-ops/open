@@ -77,12 +77,12 @@ export function createSkillsContentWatcher(params: {
       if (!owns(generation)) {
         return;
       }
-      const rescan = generation === pending;
-      if (rescan) {
+      const isRescan = generation === pending;
+      if (isRescan) {
         pending = undefined;
         retire(generation);
       }
-      params.error(error, rescan);
+      params.error(error, isRescan);
     });
     return generation;
   };

@@ -31,7 +31,7 @@ describe("skills content rescan handoff", () => {
   });
   const start = () => {
     refresh.ensureSkillsWatcher({ workspaceDir: fixture.workspaceDir });
-    for (const watcher of [...createdWatchers]) {
+    for (const watcher of createdWatchers) {
       watcher.emit("ready");
     }
     const root = path.join(fixture.workspaceDir, "skills");
