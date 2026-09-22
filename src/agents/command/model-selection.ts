@@ -489,6 +489,7 @@ export async function resolveEmbeddedModelSelection(params: {
         !params.suppressVisibleSessionEffects
       ) {
         await clearSessionAuthProfileOverride({
+          agentId: params.sessionAgentId,
           sessionEntry: entry,
           sessionStore: params.sessionStore,
           sessionKey: params.sessionKey,
