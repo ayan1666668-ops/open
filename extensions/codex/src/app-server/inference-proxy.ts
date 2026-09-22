@@ -342,7 +342,7 @@ export async function createCodexInferenceProxy(params: {
       let idleTimer: ReturnType<typeof setTimeout> | undefined;
       let handshakeTimer: ReturnType<typeof setTimeout> | undefined;
       let closing = false;
-      const close = () => {
+      const finish = (status?: 502 | 504) => {
         if (closing) {
           return;
         }
@@ -359,7 +359,16 @@ export async function createCodexInferenceProxy(params: {
         remote?.terminate();
         local?.terminate();
         proxyAgent?.destroy();
-        socket.destroy();
+        // A bare EOF before 101 hides the relay failure as "Handshake not finished"
+        // in native Codex. Flush an HTTP failure, but never write HTTP after upgrade.
+        if (status && !local && !socket.destroyed && !socket.writableEnded) {
+          rejectWebSocketUpgrade(socket, {
+            status,
+            body: { contentType: "text/plain", text: FAILURE },
+          });
+        } else {
+          socket.destroy();
+        }
         // ws can emit close before a CONNECTING request's socket actually closes.
         // Keep residency until the public request/socket teardown has settled too.
         void setupSettled
@@ -370,6 +379,8 @@ export async function createCodexInferenceProxy(params: {
             resident?.finish();
           });
       };
+      const close = () => finish();
+      const failHandshake = () => finish(502);
       try {
         const { target, sampling } = resolveTarget(req);
         if (!sampling) {
@@ -408,7 +419,7 @@ export async function createCodexInferenceProxy(params: {
           return;
         }
         // Queueing, DNS and the remote handshake share one native-compatible deadline.
-        handshakeTimer = setTimeout(close, Math.max(1, deadlineAtMs - Date.now()));
+        handshakeTimer = setTimeout(() => finish(504), Math.max(1, deadlineAtMs - Date.now()));
         handshakeTimer.unref();
         const assertHandshakeCurrent = () => {
           assertCurrent();
@@ -456,8 +467,8 @@ export async function createCodexInferenceProxy(params: {
         remote.once("upgrade", (response) => {
           handshakeHeaders.set(req, relayHeaders(response.headers));
         });
-        remote.once("error", close);
-        remote.once("close", close);
+        remote.once("error", failHandshake);
+        remote.once("close", failHandshake);
         // Native auth/retry classification consumes the complete HTTP failure, not only status.
         remote.once("unexpected-response", (_request, response) => {
           void (async () => {
@@ -482,7 +493,7 @@ export async function createCodexInferenceProxy(params: {
                 close,
               );
             } catch {
-              close();
+              failHandshake();
             }
           })();
         });
@@ -599,11 +610,15 @@ export async function createCodexInferenceProxy(params: {
               });
             });
           } catch {
-            close();
+            failHandshake();
           }
         });
       } catch {
-        close();
+        if (connections.has(close)) {
+          failHandshake();
+        } else {
+          close();
+        }
       } finally {
         finishSetup();
       }

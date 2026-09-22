@@ -780,12 +780,18 @@ describe("inference relay capacity", () => {
       return dns.promise;
     });
     const stalled = connect();
-    const closed = new Promise<void>((resolve) => {
-      stalled.once("close", () => resolve());
-    });
+    const rejected = once(stalled, "unexpected-response");
     await started.promise;
     await vi.advanceTimersByTimeAsync(10_000);
-    await closed;
+    const [, response] = await rejected;
+    const chunks: Buffer[] = [];
+    for await (const chunk of response) {
+      chunks.push(Buffer.from(chunk));
+    }
+    expect(response.statusCode).toBe(504);
+    expect(Buffer.concat(chunks).toString()).toBe(
+      "Codex parent-local inference transport failed; retry on a fresh connection.",
+    );
     dns.resolve({ lookup: undefined });
     const streams = await holdUploads();
     expect(upstreams).toHaveLength(16);
