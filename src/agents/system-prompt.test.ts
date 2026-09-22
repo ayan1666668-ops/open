@@ -2190,7 +2190,6 @@ describe("buildAgentSystemPrompt", () => {
 
     expect(prompt).toContain("Runtime: name=Runt | agent=work | session=agent:main:main");
     expect(prompt).toContain("session=agent:main:main");
-    expect(prompt).toContain("sessionId=23ae7fce-3c27-4a51-b58e-d800d8ca091f");
     expect(prompt).toContain("sessionUrl=https://gateway.example/control/chat/main");
   });
 
@@ -2268,7 +2267,7 @@ describe("buildAgentSystemPrompt", () => {
 
     expect(prompt).toContain("agent=work");
     expect(prompt).toContain("session=agent:main:subagent:runtime-check");
-    expect(prompt).toContain("sessionId=23ae7fce-3c27-4a51-b58e-d800d8ca091f");
+    expect(prompt).not.toContain("sessionId=");
     expect(prompt).toContain("host=host");
     expect(prompt).toContain("repo=/repo");
     expect(prompt).toContain("os=macOS (arm64)");
@@ -2319,20 +2318,24 @@ describe("buildAgentSystemPrompt", () => {
     expect(runA.prompt).toBe(runB.prompt);
   });
 
-  it("preserves a stable session id that is not the run-scope id", () => {
+  it("never renders the transcript sessionId in the runtime line", () => {
+    // Rewind/switch rotate the transcript sessionId (#110660) while the conversation history
+    // stays byte-identical. Rendering it here re-busts every conversation checkpoint below the
+    // cache boundary on each rewind (#155685). The stable session key remains in `session=`.
     const prompt = buildAgentSystemPrompt({
       workspaceDir: "/tmp/openclaw",
       runtimeInfo: {
         agentId: "work",
-        sessionKey: "agent:work:cron:nightly-job:run:run-id",
-        sessionId: "stable-session-id",
+        sessionKey: "agent:main:main",
+        sessionId: "23ae7fce-3c27-4a51-b58e-d800d8ca091f",
         host: "host",
         os: "linux",
       },
     });
 
-    expect(prompt).toContain("session=agent:work:cron:nightly-job");
-    expect(prompt).toContain("sessionId=stable-session-id");
+    expect(prompt).toContain("session=agent:main:main");
+    expect(prompt).not.toContain("sessionId=");
+    expect(prompt).not.toContain("23ae7fce-3c27-4a51-b58e-d800d8ca091f");
   });
 
   it("renders extra system prompt exactly once", () => {

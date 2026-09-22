@@ -1301,15 +1301,15 @@ function buildRuntimeLine(
   const normalizedRuntimeCapabilities = normalizePromptCapabilityIds(runtimeCapabilities);
   // Automatic literal-prefix caches include Runtime before the tool catalog. Rendering an
   // isolated cron's volatile `:run:<id>` scope there defeats reuse across runs of the same job.
-  // Render the stable base key and drop the per-run session id it duplicates.
-  const { baseSessionKey, runId } = parseCronRunScopeSuffix(runtimeInfo?.sessionKey);
-  const stableSessionId =
-    runtimeInfo?.sessionId && runtimeInfo.sessionId !== runId ? runtimeInfo.sessionId : undefined;
+  // Render the stable base key only. The transcript sessionId is never rendered: rewind/switch
+  // mutations deliberately rotate it (#110660), and a 36-byte change in this line invalidates
+  // every conversation checkpoint below the cache boundary for an otherwise identical history
+  // (#155685, same class as #96686).
+  const { baseSessionKey } = parseCronRunScopeSuffix(runtimeInfo?.sessionKey);
   return `Runtime: ${[
     runtimeInfo?.agentName ? `name=${runtimeInfo.agentName}` : "",
     runtimeInfo?.agentId ? `agent=${runtimeInfo.agentId}` : "",
     baseSessionKey ? `session=${sanitizeForPromptLiteral(baseSessionKey)}` : "",
-    stableSessionId ? `sessionId=${sanitizeForPromptLiteral(stableSessionId)}` : "",
     runtimeInfo?.sessionUrl ? `sessionUrl=${sanitizeForPromptLiteral(runtimeInfo.sessionUrl)}` : "",
     runtimeInfo?.host ? `host=${runtimeInfo.host}` : "",
     runtimeInfo?.repoRoot ? `repo=${runtimeInfo.repoRoot}` : "",
