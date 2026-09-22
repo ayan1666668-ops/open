@@ -28,6 +28,29 @@ import {
   type PrometheusMetricStore,
 } from "./prometheus-metric-store.js";
 
+type ProviderUsageMetricsSnapshot = Readonly<{
+  generation: number;
+  providers: readonly Readonly<{
+    provider: string;
+    windows: readonly Readonly<{
+      window: string;
+      usedRatio: number;
+      resetTimestampSeconds?: number;
+    }>[];
+    lastAttemptTimestampSeconds?: number;
+    lastSuccessTimestampSeconds?: number;
+    refreshSuccess: boolean;
+    refreshOutcome:
+      | "success"
+      | "timeout"
+      | "auth"
+      | "rate_limit"
+      | "billing"
+      | "format"
+      | "unknown";
+  }>[];
+}>;
+
 const TOKEN_BUCKETS = [1, 4, 16, 64, 256, 1024, 4096, 16384, 65536, 262144, 1048576];
 const BYTE_BUCKETS = [
   1024, 4096, 16384, 65536, 262144, 1048576, 4194304, 16777216, 67108864, 268435456, 1073741824,
@@ -368,6 +391,62 @@ function recordModelUsage(
     labels,
     seconds(evt.durationMs),
   );
+}
+
+const PROVIDER_USAGE_GAUGE_NAMES = new Set([
+  "openclaw_provider_usage_used_ratio",
+  "openclaw_provider_usage_reset_timestamp_seconds",
+  "openclaw_provider_usage_last_success_timestamp_seconds",
+  "openclaw_provider_usage_last_attempt_timestamp_seconds",
+  "openclaw_provider_usage_refresh_success",
+]);
+
+function recordProviderUsageSnapshot(
+  store: PrometheusMetricStore,
+  snapshot: ProviderUsageMetricsSnapshot,
+): void {
+  for (const name of PROVIDER_USAGE_GAUGE_NAMES) {
+    store.clearGauges(name);
+  }
+  for (const provider of snapshot.providers) {
+    const providerLabels = { provider: normalizeDiagnosticValue(provider.provider) };
+    store.gauge(
+      "openclaw_provider_usage_last_attempt_timestamp_seconds",
+      "Unix timestamp of the latest provider allowance refresh attempt.",
+      providerLabels,
+      provider.lastAttemptTimestampSeconds,
+    );
+    store.gauge(
+      "openclaw_provider_usage_last_success_timestamp_seconds",
+      "Unix timestamp of the latest successful provider allowance refresh.",
+      providerLabels,
+      provider.lastSuccessTimestampSeconds,
+    );
+    store.gauge(
+      "openclaw_provider_usage_refresh_success",
+      "Whether the latest provider allowance refresh succeeded (1) or failed (0).",
+      providerLabels,
+      provider.refreshSuccess ? 1 : 0,
+    );
+    for (const window of provider.windows) {
+      const labels = {
+        ...providerLabels,
+        window: normalizeDiagnosticValue(window.window),
+      };
+      store.gauge(
+        "openclaw_provider_usage_used_ratio",
+        "Latest provider-reported allowance fraction used.",
+        labels,
+        window.usedRatio,
+      );
+      store.gauge(
+        "openclaw_provider_usage_reset_timestamp_seconds",
+        "Unix timestamp when the provider allowance window resets.",
+        labels,
+        window.resetTimestampSeconds,
+      );
+    }
+  }
 }
 
 function recordDiagnosticEvent(
@@ -941,12 +1020,17 @@ type TrustedExporterDiagnosticsBridge = {
     reason?: "configured";
   }) => void;
   reportExporterHealth?: (update: PrometheusExporterHealthUpdate) => void;
+  observeProviderUsage?: (
+    listener: (snapshot: ProviderUsageMetricsSnapshot) => void,
+  ) => Promise<() => void>;
 };
 
 export function createDiagnosticsPrometheusExporter() {
   const store = createPrometheusMetricStore();
   let unsubscribe: (() => void) | undefined;
+  let unsubscribeProviderUsage: (() => void) | undefined;
   let internalDiagnostics: TrustedExporterDiagnosticsBridge | undefined;
+  let lifecycleGeneration = 0;
   const reportExporterHealth = (update: PrometheusExporterHealthUpdate) => {
     try {
       internalDiagnostics?.reportExporterHealth?.(update);
@@ -957,7 +1041,9 @@ export function createDiagnosticsPrometheusExporter() {
 
   const service = {
     id: "diagnostics-prometheus",
-    start(ctx) {
+    reload: { configPrefixes: ["diagnostics.enabled"] },
+    async start(ctx) {
+      const generation = ++lifecycleGeneration;
       const subscribe = ctx.internalDiagnostics?.onEvent;
       if (!subscribe) {
         ctx.logger.error("diagnostics-prometheus: internal diagnostics capability unavailable");
@@ -993,6 +1079,25 @@ export function createDiagnosticsPrometheusExporter() {
         { includePrivateData: false },
       );
       internalDiagnostics = ctx.internalDiagnostics as unknown as TrustedExporterDiagnosticsBridge;
+      if (isDiagnosticsEnabled(ctx.config) && internalDiagnostics.observeProviderUsage) {
+        const releaseProviderUsage = await internalDiagnostics.observeProviderUsage((snapshot) => {
+          if (generation !== lifecycleGeneration) {
+            return;
+          }
+          try {
+            recordProviderUsageSnapshot(store, snapshot);
+          } catch (err) {
+            ctx.logger.error(
+              `diagnostics-prometheus: provider usage handler failed: ${safeErrorMessage(err)}`,
+            );
+          }
+        });
+        if (generation !== lifecycleGeneration) {
+          releaseProviderUsage();
+          return;
+        }
+        unsubscribeProviderUsage = releaseProviderUsage;
+      }
       reportExporterHealth({
         signal: "metrics",
         transport: "prometheus-scrape",
@@ -1008,8 +1113,11 @@ export function createDiagnosticsPrometheusExporter() {
       });
     },
     stop() {
+      lifecycleGeneration += 1;
       unsubscribe?.();
       unsubscribe = undefined;
+      unsubscribeProviderUsage?.();
+      unsubscribeProviderUsage = undefined;
       reportExporterHealth({
         signal: "metrics",
         transport: "prometheus-scrape",
