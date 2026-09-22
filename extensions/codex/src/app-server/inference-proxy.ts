@@ -380,7 +380,7 @@ export async function createCodexInferenceProxy(params: {
           });
       };
       const close = () => finish();
-      const failHandshake = () => finish(502);
+      const failHandshake = () => finish(Date.now() >= deadlineAtMs ? 504 : 502);
       try {
         const { target, sampling } = resolveTarget(req);
         if (!sampling) {
@@ -474,8 +474,9 @@ export async function createCodexInferenceProxy(params: {
           void (async () => {
             try {
               const body = await readProxyBody(response, MAX_ERROR_BODY_BYTES);
-              assertCurrent();
-              signal.throwIfAborted();
+              assertHandshakeCurrent();
+              // The complete response won the deadline; allow its downstream flush.
+              clearTimeout(handshakeTimer);
               const failureHeaders = Object.entries(relayHeaders(response.headers)).map(
                 ([key, value]) => key + ": " + value,
               );
