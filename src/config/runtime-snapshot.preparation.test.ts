@@ -15,6 +15,7 @@ import {
   registerRuntimeConfigSnapshotPreparer,
   resetConfigRuntimeState,
   setRuntimeConfigSnapshot,
+  setRuntimeConfigSourceSnapshotIfCurrent,
 } from "./runtime-snapshot.js";
 import {
   captureRuntimeConfig,
@@ -83,6 +84,58 @@ describe("prepared runtime snapshots", () => {
     expect(contribute).toHaveBeenCalledOnce();
     expect(changes).toHaveBeenCalledExactlyOnceWith({ all: true, scope: "config" });
     expect(changes).toHaveReturnedWith(candidate);
+  });
+
+  it("withholds the session change when a reload resolves to the published snapshot", () => {
+    const changes = vi.fn();
+    unregister.push(sessionChanges.subscribe(changes));
+    const published = () => ({
+      agents: {
+        defaults: { model: "unit-test/model" },
+        entries: { main: { identity: { name: "Zilla" } } },
+      },
+    });
+    setRuntimeConfigSnapshot(published());
+    expect(changes).toHaveBeenCalledExactlyOnceWith({ all: true, scope: "config" });
+    changes.mockClear();
+
+    // A reload reads the same bytes into a fresh object. Publishing it still counts as a
+    // publication, but no consumer of session data can observe a difference.
+    setRuntimeConfigSnapshot(published());
+    expect(getRuntimeConfigSnapshotMetadata()?.revision).toBe(2);
+    expect(changes).not.toHaveBeenCalled();
+
+    // Anything a consumer reads still publishes.
+    setRuntimeConfigSnapshot({
+      agents: {
+        defaults: { model: "unit-test/other" },
+        entries: { main: { identity: { name: "Zilla" } } },
+      },
+    });
+    expect(getRuntimeConfigSnapshotMetadata()?.revision).toBe(3);
+    expect(changes).toHaveBeenCalledExactlyOnceWith({ all: true, scope: "config" });
+  });
+
+  it("leaves a source-only republish out of session changes", () => {
+    const changes = vi.fn();
+    unregister.push(sessionChanges.subscribe(changes));
+    const runtime: OpenClawConfig = { gateway: { port: 18789 } };
+    const source = (model: string): OpenClawConfig => ({
+      gateway: { port: 18789 },
+      agents: { defaults: { model } },
+    });
+    setRuntimeConfigSnapshot(runtime, source("unit-test/model"));
+    expect(changes).toHaveBeenCalledExactlyOnceWith({ all: true, scope: "config" });
+    changes.mockClear();
+
+    // A newer canonical source does not change the object consumers read.
+    expect(
+      setRuntimeConfigSourceSnapshotIfCurrent({
+        expectedRevision: getRuntimeConfigSnapshotMetadata()?.revision ?? 0,
+        sourceConfig: source("unit-test/other"),
+      }),
+    ).toBe(true);
+    expect(changes).not.toHaveBeenCalled();
   });
 
   it.each([

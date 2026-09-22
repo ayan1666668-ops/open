@@ -4,6 +4,7 @@ import { setImmediate as nextTurn } from "node:timers/promises";
 import { afterEach, expect, it, vi } from "vitest";
 import * as agentIdentity from "../agents/identity.js";
 import * as catalogLookup from "../agents/model-catalog-lookup.js";
+import { resetConfigRuntimeState, setRuntimeConfigSnapshot } from "../config/runtime-snapshot.js";
 import {
   assignSessionOwner,
   deleteSessionEntryLifecycle,
@@ -566,6 +567,47 @@ it("reuses row identities across lists until their entry, profile, or config cha
       await projection.ensureMaterialized();
       projection.dispose();
       release();
+    }
+  });
+});
+
+it("keeps projected rows clean when a config publication resolves to the published snapshot", async () => {
+  await withOpenClawTestState({ scenario: "minimal" }, async () => {
+    const cfg = { agents: { list: [{ id: "main", default: true }] } };
+    for (let index = 0; index < 4; index++) {
+      replaceSessionEntrySync(
+        { agentId: "main", sessionKey: `agent:main:republish-${index}` },
+        { sessionId: `republish-${index}`, updatedAt: index + 1 },
+      );
+    }
+    const release = projectionWork.retainSessionListForegroundWork();
+    const projection = await createSessionRowProjection({ cfg, modelCatalog: [] });
+    try {
+      await listProjectedSessions({ projection, opts: {} });
+      expect(projection.dirtyRowCount).toBe(0);
+
+      // The first publication of a config is a real change: every row is invalidated.
+      setRuntimeConfigSnapshot(structuredClone(cfg));
+      expect(projection.dirtyRowCount).toBeGreaterThan(0);
+      await projection.ensureMaterialized();
+      expect(projection.dirtyRowCount).toBe(0);
+
+      // The same config published again is not a session-data change, so no row is
+      // invalidated and no drain starts.
+      setRuntimeConfigSnapshot(structuredClone(cfg));
+      expect(projection.dirtyRowCount).toBe(0);
+
+      // A real config change still dirties every row.
+      setRuntimeConfigSnapshot({
+        ...structuredClone(cfg),
+        agents: { ...cfg.agents, defaults: { model: "unit-test/model" } },
+      });
+      expect(projection.dirtyRowCount).toBeGreaterThan(0);
+    } finally {
+      await projection.ensureMaterialized();
+      projection.dispose();
+      release();
+      resetConfigRuntimeState();
     }
   });
 });

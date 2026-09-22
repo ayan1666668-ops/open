@@ -252,12 +252,16 @@ export function setRuntimeConfigSnapshot(
 }
 
 function publishRuntimeConfigSnapshot(config: OpenClawConfig, sourceConfig?: OpenClawConfig): void {
+  // A reload that resolves to the published snapshot is not session data changing.
+  const previous = runtimeConfigSnapshot;
   runtimeConfigSnapshotGeneration += 1;
   clearExecutablePathCache();
   runtimeConfigSnapshot = config;
   runtimeConfigSourceSnapshot = sourceConfig ?? null;
   runtimeConfigSnapshotMetadata = createRuntimeConfigSnapshotMetadata(config, sourceConfig);
-  sessionChanges.emit({ all: true, scope: "config" });
+  if (previous === null || !configSnapshotsMatch(previous, config)) {
+    sessionChanges.emit({ all: true, scope: "config" });
+  }
 }
 
 export function registerRuntimeConfigSnapshotPreparer(
