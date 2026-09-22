@@ -555,11 +555,6 @@ src/infra/deep-merge.ts
 src/infra/deferred-plugin-migrations.ts
 src/infra/delivery-queue-sqlite-bound.ts
 src/infra/delivery-queue-sqlite.types.ts
-src/infra/device-identity-coordinator-paths.ts
-src/infra/device-identity-coordinator.ts
-src/infra/device-identity-process-cache.ts
-src/infra/device-identity-store.ts
-src/infra/device-identity.ts
 src/infra/diagnostic-event-listener-presence.ts
 src/infra/diagnostic-events.ts
 src/infra/diagnostic-flags.ts
@@ -574,6 +569,11 @@ src/infra/diagnostics-timeline.ts
 src/infra/directory-durability.ts
 src/infra/disk-space.ts
 src/infra/dispatch-wrapper-resolution.ts
+src/infra/device-identity-coordinator-paths.ts
+src/infra/device-identity-coordinator.ts
+src/infra/device-identity-process-cache.ts
+src/infra/device-identity-store.ts
+src/infra/device-identity.ts
 src/infra/dotenv-global-core.ts
 src/infra/dotenv-global.ts
 src/infra/dotenv.ts
@@ -743,10 +743,10 @@ src/infra/sqlite-worker-broker-admission.ts
 src/infra/sqlite-worker-broker-lifecycle.ts
 src/infra/sqlite-worker-broker-reply.ts
 src/infra/sqlite-worker-broker.ts
+src/infra/sqlite-worker-input-admission.ts
 src/infra/sqlite-worker-client.ts
 src/infra/sqlite-worker-contract.ts
 src/infra/sqlite-worker-identity.ts
-src/infra/sqlite-worker-input-admission.ts
 src/infra/sqlite-worker-lifecycle-preparation.ts
 src/infra/sqlite-worker-operation-admission.ts
 src/infra/sqlite-worker-state-context.ts
