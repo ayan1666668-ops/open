@@ -14,12 +14,17 @@ function isValidPid(pid: number): boolean {
   return Number.isInteger(pid) && pid > 0;
 }
 
+/** Android (Termux) exposes Linux procfs under a distinct Node platform name. */
+function isLinuxProcfsPlatform(): boolean {
+  return process.platform === "linux" || process.platform === "android";
+}
+
 /**
  * Check if every thread has exited by reading Linux /proc/<pid>/status.
  * Returns false on non-Linux platforms or if the proc file can't be read.
  */
 function isZombieProcess(pid: number): boolean {
-  if (process.platform !== "linux") {
+  if (!isLinuxProcfsPlatform()) {
     return false;
   }
   try {
@@ -86,7 +91,7 @@ function getDarwinProcessStartTime(pid: number, env: NodeJS.ProcessEnv): number 
 
 /** Read the Linux procfs start identity used by Linux-owned runtime state. */
 export function getProcessStartTime(pid: number): number | null {
-  if (!isValidPid(pid) || process.platform !== "linux") {
+  if (!isValidPid(pid) || !isLinuxProcfsPlatform()) {
     return null;
   }
   try {
