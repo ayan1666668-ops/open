@@ -197,6 +197,8 @@ function catalogDetail(
     case "unreported":
       return "The running Gateway did not report a runtime state for this plugin.";
   }
+  // Exhaustive over catalog states; the return satisfies consistent-return.
+  return state satisfies never;
 }
 
 /** Resolve one plugin's Gateway observation from a list query. */
