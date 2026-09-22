@@ -675,6 +675,40 @@ describe("buildSubagentList", () => {
       );
     };
 
+    /**
+     * Count the session summaries the accessor materializes during one call.
+     * `listSqliteSessionEntriesFromDatabase` materializes its listing with a
+     * single `Array.from(iterateSessionEntriesForListing(...))`, so wrapping that
+     * one built-in measures real accessor work — no mock of the seam under test,
+     * and no dependence on how ESM binds the accessor into its callers.
+     */
+    const measureSessionSummaryMaterialization = <T>(run: () => T) => {
+      const host = Array as unknown as { from: (...args: never[]) => unknown[] };
+      const original = host.from;
+      let summaries = 0;
+      let listings = 0;
+      host.from = (...args: never[]) => {
+        const result = original.apply(Array, args);
+        const first = result[0];
+        if (
+          result.length > 0 &&
+          typeof first === "object" &&
+          first !== null &&
+          "sessionKey" in first &&
+          "entry" in first
+        ) {
+          listings += 1;
+          summaries += result.length;
+        }
+        return result;
+      };
+      try {
+        return { value: run(), summaries, listings };
+      } finally {
+        host.from = original;
+      }
+    };
+
     it("reports peers and path for live runs spawned into the same explicit cwd", async () => {
       const now = Date.now();
       const sharedDir = path.join(testWorkspaceDir, "shared-tree");
@@ -704,6 +738,53 @@ describe("buildSubagentList", () => {
       expect(byRunId.get(runB.runId)?.sharedCwdGroupId).toBe(1);
       expect(byRunId.get(runA.runId)?.line).toContain("[shared cwd group 1]");
       expect(list.text.split(path.resolve(sharedDir))).toHaveLength(2);
+    });
+
+    it("materializes session summaries only for the visible children", async () => {
+      // The advisory used to resolve `spawnedCwd` through its own unfiltered
+      // reader, which materialized one summary object per session in the store
+      // on every list call — even when no child had an explicit cwd. Prompt
+      // payloads were never decoded (`projection: "list"` excludes them), so the
+      // existing decode assertion could not see it; count materialized summaries
+      // instead. The spy calls through, so this measures real accessor work.
+      const now = Date.now();
+      const sharedDir = path.join(testWorkspaceDir, "shared-tree-selection");
+      const storePath = path.join(testWorkspaceDir, "sessions-shared-cwd-selection.json");
+      const unrelatedCount = 24;
+      for (let i = 0; i < unrelatedCount; i++) {
+        await seedSessionEntry(storePath, `agent:main:subagent:unrelated-${i}`, sharedDir);
+      }
+      const sharingRuns = ["selection-a", "selection-b"].map((suffix) => makeRun(suffix, now));
+      const inheritedRun = makeRun("selection-inherited", now);
+      const endedRun = makeRun("selection-ended", now, { ended: true });
+      const visibleRuns = [...sharingRuns, inheritedRun, endedRun];
+      for (const run of visibleRuns) {
+        addSubagentRunForTests(run);
+      }
+      for (const run of sharingRuns) {
+        await seedSessionEntry(storePath, run.childSessionKey, sharedDir);
+      }
+      await seedSessionEntry(storePath, inheritedRun.childSessionKey);
+      await seedSessionEntry(storePath, endedRun.childSessionKey, sharedDir);
+      const cfg = { session: { store: storePath } } as OpenClawConfig;
+
+      const measured = measureSessionSummaryMaterialization(() =>
+        buildSubagentList({ cfg, runs: visibleRuns, recentMinutes: 30 }),
+      );
+      const list = measured.value;
+
+      expect(measured.listings).toBeGreaterThan(0);
+      expect(measured.summaries).toBe(visibleRuns.length);
+      expect(measured.summaries).toBeLessThan(unrelatedCount);
+      // ...and the advisory still reports the collision it exists for.
+      expect(list.sharedCwdGroups).toEqual([
+        {
+          id: 1,
+          path: path.resolve(sharedDir),
+          runCount: 2,
+          runIds: sharingRuns.map((run) => run.runId),
+        },
+      ]);
     });
 
     it("pluralizes the suffix and excludes self from peers for three sharing runs", async () => {

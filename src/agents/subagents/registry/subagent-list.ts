@@ -13,7 +13,7 @@ import type { SessionEntry } from "../../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../../config/types.openclaw.js";
 import { formatDurationCompact } from "../../../infra/format-time/format-duration.js";
 import { resolveUserPath } from "../../../infra/home-dir.js";
-import { parseAgentSessionKey, type ParsedAgentSessionKey } from "../../../routing/session-key.js";
+import { parseAgentSessionKey } from "../../../routing/session-key.js";
 import {
   formatTokenUsageDisplay,
   resolveTotalTokens,
@@ -145,40 +145,6 @@ function loadSubagentSessionEntries(
   return entries;
 }
 
-type SessionEntryResolution = {
-  storePath: string;
-  entry: SessionEntry | undefined;
-};
-
-function resolveStorePathForKey(cfg: OpenClawConfig, parsed?: ParsedAgentSessionKey | null) {
-  return resolveSessionStorePathCore(cfg.session?.store, {
-    agentId: parsed?.agentId,
-  });
-}
-
-/** Resolve persisted session metadata for a session key, caching per store path. */
-function resolveSessionEntryForKey(params: {
-  cfg: OpenClawConfig;
-  key: string;
-  cache: Map<string, Record<string, SessionEntry>>;
-}): SessionEntryResolution {
-  const parsed = parseAgentSessionKey(params.key);
-  const storePath = resolveStorePathForKey(params.cfg, parsed);
-  let store = params.cache.get(storePath);
-  if (!store) {
-    store = Object.fromEntries(
-      listSessionEntriesReadOnly({ storePath, clone: false, projection: "list" }).map(
-        ({ sessionKey, entry }) => [sessionKey, entry],
-      ),
-    );
-    params.cache.set(storePath, store);
-  }
-  return {
-    storePath,
-    entry: store[params.key],
-  };
-}
-
 /** Build child-session indexes from the latest run associated with each child key. */
 function buildLatestSubagentRunIndex(
   runs: Map<string, SubagentRunReadRecord>,
@@ -287,17 +253,25 @@ function capSharedCwdPath(value: string) {
 /**
  * Index live runs by the explicit working directory they were spawned into.
  *
- * Reads `spawnedCwd` off the already-cached session entry, so grouping costs no
- * new session I/O; the only filesystem work is one canonicalization per
- * distinct explicit directory (see `canonicalCwdIdentity`). Runs without an
- * explicit `spawnedCwd`
+ * Reads `spawnedCwd` off `sessionEntries`, the selection `buildSubagentList`
+ * already loaded for the visible children, so grouping performs no session I/O
+ * of its own. That reuse is sound rather than best-effort: every run this
+ * function considers passes `isRetainedUnendedSubagentRun` at the same `now`,
+ * and `buildSubagentRunView` puts exactly those runs in `active` — so their
+ * child session keys are always part of the selection `loadSubagentSessionEntries`
+ * requested. A second whole-store read would materialize a summary object per
+ * unrelated session on every `list` call and on active-child context
+ * construction; `loadSubagentSessionEntries` passes `sessionKeys`, so nothing
+ * outside the visible children is ever materialized.
+ *
+ * The only filesystem work is one canonicalization per distinct explicit
+ * directory (see `canonicalCwdIdentity`). Runs without an explicit `spawnedCwd`
  * inherited the parent workspace — the default for `collect` swarms — and are
  * skipped so the advisory stays silent on normal usage.
  */
 function buildSharedCwdIndex(params: {
-  cfg: OpenClawConfig;
   runs: SubagentRunRecord[];
-  cache: Map<string, Record<string, SessionEntry>>;
+  sessionEntries: Map<string, SessionEntry>;
   now: number;
 }) {
   const groups = new Map<string, { path: string; displayPath: string; runIds: string[] }>();
@@ -306,11 +280,7 @@ function buildSharedCwdIndex(params: {
     if (!isRetainedUnendedSubagentRun(run, params.now)) {
       continue;
     }
-    const spawnedCwd = resolveSessionEntryForKey({
-      cfg: params.cfg,
-      key: run.childSessionKey,
-      cache: params.cache,
-    }).entry?.spawnedCwd?.trim();
+    const spawnedCwd = params.sessionEntries.get(run.childSessionKey)?.spawnedCwd?.trim();
     if (!spawnedCwd) {
       continue;
     }
@@ -451,7 +421,6 @@ export function buildSubagentList(params: {
   readSnapshot?: Map<string, SubagentRunReadRecord>;
 }): BuiltSubagentList {
   const now = Date.now();
-  const cache = new Map<string, Record<string, SessionEntry>>();
   const snapshot = params.readSnapshot ?? getSubagentSessionListRunsSnapshotForRead(subagentRuns);
   const { childSessionsByController, readIndex } = buildLatestSubagentRunIndex(snapshot);
   const pendingDescendantCount = (sessionKey: string) =>
@@ -469,9 +438,8 @@ export function buildSubagentList(params: {
   // `runView.latest` is upstream's extraction of this function's former
   // `dedupedRuns`: same sort, same dedup by childSessionKey, same authority.
   const sharedCwdIndex = buildSharedCwdIndex({
-    cfg: params.cfg,
     runs: runView.latest,
-    cache,
+    sessionEntries,
     now,
   });
   let index = 1;
