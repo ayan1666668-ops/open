@@ -1,7 +1,5 @@
-import { asNullableRecord } from "@openclaw/normalization-core/record-coerce";
 import { html, nothing } from "lit";
 import { repeat } from "lit/directives/repeat.js";
-import { resolveLocalUserName } from "../../../app/user-identity.ts";
 import type { BrowserTabSelection } from "../../../components/browser/browser-target.ts";
 import { icons } from "../../../components/icons.ts";
 import {
@@ -48,13 +46,26 @@ import {
 } from "./chat-message-markdown.ts";
 import { renderChatSendStatus, type ChatSendStatusActions } from "./chat-message-send-status.ts";
 import {
+  isOwnSenderGroup,
+  isSourceOnlyUserGroup,
+  resolveMessageGroupSenderLabel,
+} from "./chat-message-sender.ts";
+import {
   renderStreamGroupParts,
   type StreamGroupOptions,
   type StreamGroupPart,
 } from "./chat-message-stream.ts";
 import type { AssistantMessageDisclosure } from "./chat-message-text.ts";
 import { extractGroupMeta, renderMessageMeta } from "./chat-message-timestamp.ts";
-import { renderChatReplyAttribution } from "./chat-reply-attribution.ts";
+import {
+  renderReplyAttribution,
+  resolveMessageReplyAttribution,
+  resolveReplyAttribution,
+  type ReplyAttribution,
+} from "./chat-reply-attribution.ts";
+import { renderReplyConnector } from "./chat-reply-connector.ts";
+import type { ReplyPreview } from "./chat-reply-preview.types.ts";
+import { chatResponsiveLayout } from "./chat-responsive-layout.ts";
 import type { SidebarContent, SidebarFullMessageLoader } from "./chat-sidebar.ts";
 import {
   renderBrowserTabPreviews,
@@ -70,8 +81,6 @@ type ActiveContinuation = {
   options: StreamGroupOptions;
 };
 
-type ReplyPreview = MessageReplyTarget & { sourceMessageId: string };
-
 type GroupedMessageRenderOptions = Parameters<typeof renderGroupedMessage>[2];
 
 type RenderMessageGroupOptions = Omit<
@@ -83,9 +92,12 @@ type RenderMessageGroupOptions = Omit<
   | "entryId"
   | "entryRef"
   | "resolveReplyPreview"
+  | "suppressReplyPreview"
 > &
   ChatSendStatusActions &
   Parameters<typeof renderForwardedAvatar>[1] & {
+    replyAttribution?: ReplyAttribution;
+    hasReplyAttribution?: boolean;
     entryRefFor?: (key: string) => ((element?: Element) => void) | undefined;
     latestBrowserTabs?: ReadonlyMap<string, BrowserTabSelection>;
     /** Configured main-session key; an agent's main source labels as the agent. */
@@ -172,6 +184,7 @@ function renderPreparedGroupMessage(
     item.key,
     {
       ...opts,
+      suppressReplyPreview: opts.hasReplyAttribution,
       isStreaming: group.isStreaming && index === group.messages.length - 1,
       entryId: persistedMessageEntryId(item.message) ?? undefined,
       entryRef: opts.entryRefFor?.(item.key),
@@ -183,14 +196,6 @@ function renderPreparedGroupMessage(
     },
     opts.onOpenSidebar,
   );
-}
-
-function isOwnSenderGroup(
-  group: Pick<MessageGroup, "sender">,
-  userId: string | null | undefined,
-): boolean {
-  const identity = group.sender?.identity;
-  return identity?.type === "profile" && identity.id === userId;
 }
 
 export function renderActivityGroup(
@@ -387,54 +392,6 @@ export function renderActivityGroup(
       `;
 }
 
-function isSourceOnlyUserGroup(
-  group: Pick<MessageGroup, "role" | "sender" | "senderLabel" | "sourceClients">,
-): boolean {
-  return (
-    normalizeRoleForGrouping(group.role) === "user" &&
-    Boolean(group.sourceClients?.length) &&
-    !group.sender &&
-    !group.senderLabel?.trim()
-  );
-}
-
-export function resolveMessageGroupSenderLabel(
-  group: Pick<MessageGroup, "role" | "sender" | "senderLabel" | "sourceClients"> & {
-    messages: ReadonlyArray<{ message: unknown }>;
-  },
-  opts: Pick<RenderMessageGroupOptions, "assistantName" | "userId" | "userName">,
-): string {
-  const normalizedRole = normalizeRoleForGrouping(group.role);
-  if (isSourceOnlyUserGroup(group)) {
-    return messageClientSourcesLabel(group.sourceClients ?? []);
-  }
-  if (normalizedRole === "custom") {
-    const isError = group.messages.every(({ message }) => {
-      const customType = asNullableRecord(message)?.customType;
-      return (
-        customType === "run-failed-before-reply" || customType === "cloud-workspace-recovery-failed"
-      );
-    });
-    if (isError) {
-      return t("chat.messages.errorSender");
-    }
-    return group.messages.every(({ message }) => workspaceResultConflictFromTranscript(message))
-      ? t("chat.workspaceConflict.eventSender")
-      : t("common.system");
-  }
-  const resolvedUserName = resolveLocalUserName({ name: opts.userName });
-  const userLabel = group.senderLabel?.trim();
-  return normalizedRole === "user"
-    ? isOwnSenderGroup(group, opts.userId)
-      ? resolvedUserName
-      : (userLabel ?? resolvedUserName)
-    : normalizedRole === "assistant"
-      ? (userLabel ?? opts.assistantName ?? "Assistant")
-      : normalizedRole === "tool"
-        ? t("chat.messages.toolSender")
-        : normalizedRole;
-}
-
 function isActivityMessageGroup(group: MessageGroup): boolean {
   if (normalizeRoleForGrouping(group.role) !== "tool") {
     return false;
@@ -478,7 +435,10 @@ export function renderMessageGroup(group: MessageGroup, opts: RenderMessageGroup
     !isOwnSenderGroup(group, opts.userId);
   const forwardedSource = hasForwardedSource(group);
   const isForwarded = normalizedRole === "assistant" && forwardedSource;
+  const replyAttribution =
+    opts.replyAttribution ?? resolveReplyAttribution(group, opts.resolveReplyPreview);
   const showSenderName =
+    resolveMessageGroupSenderLabel(group, opts) !== replyAttribution?.name &&
     !isForwarded &&
     !sourceOnly &&
     (normalizedRole !== "user" || isPeerGroup || opts.showOwnSenderName !== false);
@@ -494,6 +454,23 @@ export function renderMessageGroup(group: MessageGroup, opts: RenderMessageGroup
         ? "workspace-conflict"
         : "other";
   const avatarPlacement = opts.avatarPlacement ?? "gutter";
+  const renderSenderIdentity = () => html`${
+    !showSenderName
+      ? nothing
+      : renderPersonName(
+          who,
+          // Only other people's messages: your own name links nowhere useful.
+          isPeerGroup && group.sender?.identity?.type === "profile"
+            ? personActivityLink(group.sender.identity.id, opts.personActivity, who)
+            : null,
+          "chat-sender-name",
+        )
+  }
+  ${
+    visibleSources?.length
+      ? html`<span class="chat-message-source">${messageClientSourcesLabel(visibleSources)}</span>`
+      : nothing
+  }`;
 
   // Aggregate usage/cost/model across all messages in the group
   const meta = extractGroupMeta(group, opts.contextWindow ?? null);
@@ -561,7 +538,7 @@ export function renderMessageGroup(group: MessageGroup, opts: RenderMessageGroup
   const inlineUserAvatar =
     normalizedRole === "user" &&
     avatarPlacement === "gutter" &&
-    Boolean(preparedMessages[lastMessageIndex]?.source.displayMarkdown);
+    (isPeerGroup || Boolean(preparedMessages[lastMessageIndex]?.source.displayMarkdown));
   const avatar =
     !sourceOnly &&
     normalizedRole !== "tool" &&
@@ -582,52 +559,95 @@ export function renderMessageGroup(group: MessageGroup, opts: RenderMessageGroup
           )
       : nothing;
 
+  const hasReplyConnector = Boolean(replyAttribution && avatar !== nothing);
   return html`
     <div
       class="chat-group ${roleClass} chat-group--with-footer${
         opts.latestAssistant ? " chat-group--latest-assistant" : ""
       }${isPeerGroup ? " chat-group--peer" : ""}${
         isForwarded ? " chat-group--forwarded" : ""
-      }${senderHue === null ? "" : " chat-group--sender-tint"}"
+      }${senderHue === null ? "" : " chat-group--sender-tint"}${hasReplyConnector ? " chat-group--reply" : ""}"
       style=${senderHue === null ? nothing : `--chat-sender-hue: ${senderHue}`}
       data-chat-row-key=${group.key}
     >
       ${inlineUserAvatar ? nothing : avatar}
       <div class="chat-group-messages">
         ${forwardedSource ? renderForwardedAttribution(group, opts) : nothing}
-        ${normalizedRole === "assistant" ? renderChatReplyAttribution(group.replyToSender) : nothing}
+        ${replyAttribution ? renderReplyAttribution(replyAttribution, opts.onOpenReply, opts.onResolveReply, { navigationLoading: replyAttribution.target?.kind === "id" && opts.replyNavigationId === replyAttribution.target.id }) : nothing}
         ${
           opts.frameContent ??
-          repeat(
-            preparedMessages,
-            (prepared) => prepared.item.key,
-            (prepared, index) => {
-              const { item, actions: actionDetails } = prepared;
-              return html`
-                ${renderPreparedGroupMessage(
-                  group,
-                  index,
-                  {
-                    ...opts,
-                    isForwarded: forwardedSource,
-                    avatar: inlineUserAvatar && index === lastMessageIndex ? avatar : undefined,
-                  },
-                  prepared,
-                )}
-                ${
+          chatResponsiveLayout((mobile) =>
+            repeat(
+              preparedMessages,
+              (prepared) => prepared.item.key,
+              (prepared, index) => {
+                const { item, actions: actionDetails } = prepared;
+                const actions =
                   actionDetails &&
                   (actionDetails.markdown || (actionDetails.replyTarget && opts.onReply)) &&
                   index < lastMessageIndex &&
                   !ownsRunFrame
                     ? html`
-                        <div class="chat-message-actions-row" data-message-actions-for=${item.key}>
-                          ${renderMessageActionButtons(actionDetails, opts)}
-                        </div>
+                        ${
+                          mobile
+                            ? html`<div class="chat-group-footer chat-message-footer">
+                                <div class="chat-group-footer__meta">
+                                  ${renderSenderIdentity()}
+                                  ${renderMessageMeta(prepared.source.normalizedMessage.timestamp, null)}
+                                </div>
+                                <div
+                                  class="chat-group-footer-actions"
+                                  data-message-actions-for=${item.key}
+                                >
+                                  ${renderMessageActionButtons(actionDetails, opts)}
+                                </div>
+                              </div>`
+                            : html`<div
+                                class="chat-message-actions-row"
+                                data-message-actions-for=${item.key}
+                              >
+                                ${renderMessageActionButtons(actionDetails, opts)}
+                              </div>`
+                        }
                       `
-                    : nothing
-                }
-              `;
-            },
+                    : nothing;
+                const peerAttribution = isPeerGroup
+                  ? resolveMessageReplyAttribution(
+                      prepared.source.normalizedMessage,
+                      opts.resolveReplyPreview,
+                      opts.userId,
+                    )
+                  : undefined;
+                const message = renderPreparedGroupMessage(
+                  group,
+                  index,
+                  {
+                    ...opts,
+                    isForwarded: forwardedSource,
+                    hasReplyAttribution: Boolean(replyAttribution || peerAttribution),
+                    avatar:
+                      !peerAttribution &&
+                      inlineUserAvatar &&
+                      (isPeerGroup || index === lastMessageIndex)
+                        ? avatar
+                        : undefined,
+                  },
+                  prepared,
+                );
+                return html`
+                  ${
+                    peerAttribution
+                      ? html`<div class="chat-message--reply">
+                          ${renderReplyAttribution(peerAttribution, opts.onOpenReply, opts.onResolveReply, { navigateToUnloaded: true, navigationLoading: peerAttribution.target?.kind === "id" && opts.replyNavigationId === peerAttribution.target.id })}
+                          ${message}${avatar}
+                          ${avatar !== nothing ? renderReplyConnector() : nothing}
+                        </div>`
+                      : message
+                  }
+                  ${actions}
+                `;
+              },
+            ),
           )
         }
         ${
@@ -667,26 +687,7 @@ export function renderMessageGroup(group: MessageGroup, opts: RenderMessageGroup
                     ? renderChatAuthorAvatar(group.sender)
                     : nothing
                 }
-                ${
-                  !showSenderName
-                    ? nothing
-                    : renderPersonName(
-                        who,
-                        // Only other people's messages: your own name links nowhere useful.
-                        isPeerGroup && group.sender?.identity?.type === "profile"
-                          ? personActivityLink(group.sender.identity.id, opts.personActivity, who)
-                          : null,
-                        "chat-sender-name",
-                      )
-                }
-                ${
-                  visibleSources?.length
-                    ? html`<span class="chat-message-source"
-                        >${messageClientSourcesLabel(visibleSources)}</span
-                      >`
-                    : nothing
-                }
-                ${renderChatSendStatus(sendStatus, opts)}
+                ${renderSenderIdentity()} ${renderChatSendStatus(sendStatus, opts)}
                 ${renderMessageMeta(group.timestamp, meta)}
               </div>
               ${
@@ -705,6 +706,7 @@ export function renderMessageGroup(group: MessageGroup, opts: RenderMessageGroup
               }
             </div>`
       }
+      ${hasReplyConnector ? renderReplyConnector() : nothing}
     </div>
   `;
 }

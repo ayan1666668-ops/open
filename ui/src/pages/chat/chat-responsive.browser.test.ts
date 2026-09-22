@@ -1453,9 +1453,9 @@ describeBrowserLayout.concurrent("chat responsive browser layout", () => {
           expandedTextToTool: 6,
           workedForSeparator: 0,
           turn: hasTouch ? 50 : 28,
-          persistentTurn: hasTouch ? 30 : 28,
+          persistentTurn: hasTouch ? 50 : 28,
           revealedPersistentTurn: hasTouch ? 50 : 28,
-          simpleToPersistentTurn: hasTouch ? 30 : 28,
+          simpleToPersistentTurn: hasTouch ? 50 : 28,
         });
       },
     );
