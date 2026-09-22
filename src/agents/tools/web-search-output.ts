@@ -7,7 +7,10 @@
  * re-wrapped here unconditionally, so no provider-controlled metadata can
  * spoof the trust marker and transport-specific extras never reach the model.
  */
-import { asFiniteNumber as readFiniteNumber } from "@openclaw/normalization-core/number-coercion";
+import {
+  asFiniteNumber as readFiniteNumber,
+  parseDateStringTimestampMs,
+} from "@openclaw/normalization-core/number-coercion";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import { truncateUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
 import type { Static } from "typebox";
@@ -138,6 +141,15 @@ function toHttpUrl(value: string): string | undefined {
 }
 // Purely structural date charset; free-form dates could smuggle instructions.
 const PUBLISHED_RE = /^\d{4}-\d{2}-\d{2}(?:[T ][\d:.+Z-]{0,20})?$/u;
+
+function isValidPublishedDate(value: string): boolean {
+  if (!PUBLISHED_RE.test(value)) {
+    return false;
+  }
+  const calendarDate = value.slice(0, 10);
+  const timestamp = parseDateStringTimestampMs(calendarDate);
+  return timestamp !== undefined && new Date(timestamp).toISOString().startsWith(calendarDate);
+}
 
 function wrapProse(value: string, budget?: WebSearchOutputBudget): string {
   let inner = unwrapWebSearchOutputText(value);
@@ -303,7 +315,7 @@ export function normalizeWebSearchOutput(params: {
               ? row.snippets.find((value): value is string => typeof value === "string")
               : undefined;
       const published =
-        typeof row.published === "string" && PUBLISHED_RE.test(row.published)
+        typeof row.published === "string" && isValidPublishedDate(row.published)
           ? row.published
           : undefined;
       const normalizedRow: Static<typeof WebSearchResultSchema> = {

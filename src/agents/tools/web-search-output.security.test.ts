@@ -76,6 +76,41 @@ describe("web_search normalized output security", () => {
     expect(normalized.truncated).toBe(true);
   });
 
+  it.each([
+    ["2026-02-30", undefined],
+    ["2026-13-01", undefined],
+    ["1900-02-29", undefined],
+    ["2000-02-29", "2000-02-29"],
+    ["0099-12-31", "0099-12-31"],
+    ["0000-02-29", "0000-02-29"],
+    ["2024-02-29T00:30:00+14:00", "2024-02-29T00:30:00+14:00"],
+    ["2026-09-21T", "2026-09-21T"],
+  ])("keeps only calendar-valid publication dates for %s", (published, expected) => {
+    const normalized = normalizeWebSearchOutput({
+      provider: "external-demo",
+      query: "publication date boundary",
+      result: {
+        results: [
+          {
+            title: "result title",
+            url: "https://example.com/result",
+            snippet: "result snippet",
+            published,
+          },
+        ],
+      },
+    });
+
+    assertOutputKind(normalized, "results");
+    expect(normalized.results).toHaveLength(1);
+    expect(normalized.results[0]).toMatchObject({
+      title: expect.any(String),
+      url: "https://example.com/result",
+      snippet: expect.any(String),
+    });
+    expect(normalized.results[0]?.published).toBe(expected);
+  });
+
   it("bounds the aggregate untrusted result URLs, titles, snippets, and site names", () => {
     const normalized = normalizeWebSearchOutput({
       provider: "external-demo",
