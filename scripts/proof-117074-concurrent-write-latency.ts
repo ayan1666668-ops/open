@@ -445,16 +445,18 @@ async function runWriterRole(): Promise<void> {
     index += 1;
     await delay(WRITER_INTERVAL_MS);
   }
+  // This process owns real leases on the parent's fixture root. Release them
+  // before publishing the report: the parent treats the report's appearance as
+  // the signal to join this exit and remove the root, so a drain that throws
+  // must leave no report behind rather than a report that outran its own
+  // shutdown.
+  await releaseSessionState(process.env.OPENCLAW_STATE_DIR ?? path.dirname(storePath));
   const report: WriterReport = { errors, samples };
   fs.writeFileSync(path.join(controlDir, "writer-report.json.part"), JSON.stringify(report));
   fs.renameSync(
     path.join(controlDir, "writer-report.json.part"),
     path.join(controlDir, "writer-report.json"),
   );
-  // This process owns real leases on the parent's fixture root. Release them
-  // before exiting: the parent joins this exit and only then removes the root,
-  // so an unjoined close here is what leaves a lease chasing a deleted file.
-  await releaseSessionState(process.env.OPENCLAW_STATE_DIR ?? path.dirname(storePath));
   // Every owner has drained, so the loop can run dry instead of being cut short.
   process.exitCode = 0;
 }
@@ -494,11 +496,15 @@ async function startWriter(stateDir: string, storePath: string): Promise<WriterH
     execArgv: ["--import", path.resolve("scripts/tsx.mjs")],
     stdio: ["ignore", "pipe", "pipe", "ipc"],
   });
-  // Registered at fork time so the exit can never be missed between the report
-  // landing and the join below.
-  const childExit = new Promise<void>((resolve) => {
-    child.once("exit", () => resolve());
-  });
+  // Registered at fork time so the exit outcome can never be missed between the
+  // report landing and the join below. The outcome is kept, not discarded: a
+  // nonzero exit or a signal means the child's own shutdown failed, and a proof
+  // may not report success on a writer that did not shut down.
+  const childExit = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
+    (resolve) => {
+      child.once("exit", (code, signal) => resolve({ code, signal }));
+    },
+  );
   let childOutput = "";
   child.stdout?.on("data", (chunk: Buffer) => {
     childOutput += chunk.toString("utf8");
@@ -521,16 +527,29 @@ async function startWriter(stateDir: string, storePath: string): Promise<WriterH
       fs.writeFileSync(path.join(controlDir, "writer-stop"), "1");
       const reportPath = path.join(controlDir, "writer-report.json");
       await waitForFile(reportPath, "writer report", 60_000);
+      // SAFETY: the child writes this file only after its own drain succeeds, and writes it atomically through a rename, so a readable file is a complete report.
       const report = JSON.parse(fs.readFileSync(reportPath, "utf8")) as WriterReport;
       // Join the writer process before the caller removes the fixture root: it
       // releases its own database leases on the way out. The kill stays only as
-      // a bounded backstop so a wedged child cannot hang the harness.
-      const killBackstop = setTimeout(() => child.kill(), WRITER_JOIN_TIMEOUT_MS);
+      // a bounded backstop so a wedged child cannot hang the harness, and
+      // firing it is itself a failure rather than a quiet fallback.
+      let backstopFired = false;
+      const killBackstop = setTimeout(() => {
+        backstopFired = true;
+        child.kill();
+      }, WRITER_JOIN_TIMEOUT_MS);
       killBackstop.unref();
+      let outcome: { code: number | null; signal: NodeJS.Signals | null };
       try {
-        await childExit;
+        outcome = await childExit;
       } finally {
         clearTimeout(killBackstop);
+      }
+      if (backstopFired || outcome.code !== 0 || outcome.signal !== null) {
+        throw new Error(
+          `writer process did not shut down cleanly: code=${outcome.code} signal=${outcome.signal}` +
+            `${backstopFired ? " (join backstop fired)" : ""}; writer output: ${childOutput.slice(-2000)}`,
+        );
       }
       return report;
     },
