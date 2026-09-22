@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { Worker } from "node:worker_threads";
 import { afterEach, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import { clearBundledDiscoveryModeMemo } from "../plugins/bundled-discovery-state.js";
@@ -76,6 +77,37 @@ async function withoutMainSql<T>(run: () => Promise<T>): Promise<T> {
     }
   }
 }
+
+it("preserves SDK config writes and load authority inside a native worker", async () => {
+  const { configPath } = fixture();
+  const worker = new Worker(
+    new URL("./io.runtime-async.worker.test-support.mjs", import.meta.url),
+    {
+      execArgv: [],
+      env: { ...process.env, OPENCLAW_CONFIG_PATH: configPath },
+      workerData: { configPath, sourceLoaderUrl: import.meta.resolve("tsx/esm/api") },
+    },
+  );
+  try {
+    const result = await new Promise<unknown>((resolve, reject) => {
+      let message: unknown;
+      worker.on("message", (value: unknown) => {
+        message = value;
+      });
+      worker.on("error", reject);
+      worker.on("exit", (code) => {
+        if (code === 0) {
+          resolve(message);
+        } else {
+          reject(new Error(`Config worker exited with code ${code}`));
+        }
+      });
+    });
+    expect(result).toEqual({ isMainThread: false, wroteConfig: true, rejectedStaleLoad: true });
+  } finally {
+    await worker.terminate();
+  }
+});
 
 it("loads and pins default config with real staged dotenv and health without main SQL", async () => {
   const { home, state, configPath } = fixture({
