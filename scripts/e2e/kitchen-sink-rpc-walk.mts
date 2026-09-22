@@ -2907,7 +2907,9 @@ async function profileKitchenSinkResources(reportPath: string) {
             auth: { mode: "token", token: TOKEN },
             controlUi: { enabled: false },
           },
-          plugins: { enabled: false },
+          // The default memory slot bypasses the allowlist when plugins are enabled.
+          // Keep it off in both cases so conformance measures only the fixture.
+          plugins: { enabled: false, slots: { memory: "none" } },
         });
         if (enabled) {
           if (sha256(fixture) !== fixtureSha256) {
@@ -3009,14 +3011,15 @@ async function profileKitchenSinkResources(reportPath: string) {
       } catch (error) {
         result.status = "failed";
         result.error = String(error instanceof Error ? error.message : error).slice(0, 2_048);
-        throw error;
       } finally {
         if (child) {
           const signals: string[] = [];
           try {
             await stopGateway(child, {
               killProcess: (pid, signal) => {
-                if (signal !== 0) signals.push(String(signal));
+                if (signal !== 0) {
+                  signals.push(String(signal));
+                }
                 return defaultKillProcess(pid, signal);
               },
             });
@@ -3028,7 +3031,14 @@ async function profileKitchenSinkResources(reportPath: string) {
               signal: child.signalCode,
             };
             if (!exited) {
-              throw new Error("Owned Gateway process group did not exit; temporary state retained");
+              result.status = "failed";
+              result.error = [
+                result.error,
+                "Owned Gateway process group did not exit; temporary state retained",
+              ]
+                .filter(Boolean)
+                .join("; ")
+                .slice(0, 2_048);
             }
           } catch (error) {
             result.status = "failed";
@@ -3048,9 +3058,9 @@ async function profileKitchenSinkResources(reportPath: string) {
         } else {
           console.error(`Kitchen Sink resource temp root preserved: ${root}`);
         }
-        if (result.status !== "exercised") {
-          throw new Error(result.error ?? "Kitchen Sink resource case did not complete");
-        }
+      }
+      if (result.status !== "exercised") {
+        throw new Error(result.error ?? "Kitchen Sink resource case did not complete");
       }
     }
     report.comparison = compareResourcePhases(cases[0]!.phases, cases[1]!.phases);

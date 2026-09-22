@@ -104,6 +104,12 @@ it("rejects an active-plugin contaminated baseline and missing or failed conform
   const fixture = { id: "openclaw-kitchen-sink-fixture", runtime: { state: "active" } };
   expect(assertKitchenSinkResourcePlugins({ plugins: [] }, false)).toEqual([]);
   expect(assertKitchenSinkResourcePlugins({ plugins: [fixture] }, true)).toEqual([fixture.id]);
+  expect(() =>
+    assertKitchenSinkResourcePlugins(
+      { plugins: [fixture, { id: "memory-core", runtime: { state: "active" } }] },
+      true,
+    ),
+  ).toThrow("Unexpected active plugins");
   expect(() => assertKitchenSinkResourcePlugins({ plugins: [fixture] }, false)).toThrow(
     "Unexpected active plugins",
   );
@@ -437,6 +443,31 @@ process.exit(17);
     await expect(cleanupKitchenSinkEnv(root)).resolves.toBe(true);
 
     expect(existsSync(root)).toBe(false);
+  });
+
+  it("preserves a disabled memory slot when enabling the resource fixture", async () => {
+    const { root, env } = makeEnv(kitchenSinkResourceEnv());
+    try {
+      writeFileSync(
+        env.OPENCLAW_CONFIG_PATH,
+        JSON.stringify({ plugins: { enabled: false, slots: { memory: "none" } } }),
+      );
+      configureKitchenSink(env, 18888);
+      const config = JSON.parse(readFileSync(env.OPENCLAW_CONFIG_PATH, "utf8"));
+      expect(config.plugins).toMatchObject({
+        enabled: true,
+        slots: { memory: "none" },
+        allow: ["openclaw-kitchen-sink-fixture"],
+        entries: {
+          "openclaw-kitchen-sink-fixture": {
+            enabled: true,
+            config: { personality: "conformance" },
+          },
+        },
+      });
+    } finally {
+      await cleanupKitchenSinkEnv(root);
+    }
   });
 
   it("uses the candidate config dialect only for an authorized frozen target", async () => {
