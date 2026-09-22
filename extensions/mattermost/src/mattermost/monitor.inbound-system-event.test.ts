@@ -591,6 +591,10 @@ describe("mattermost inbound user posts", () => {
       update: vi.fn(),
       updateAssistantText: vi.fn(),
       flush: vi.fn(async () => {}),
+      postId: vi.fn(() => undefined),
+      clear: vi.fn(async () => {}),
+      discardPending: vi.fn(async () => {}),
+      seal: vi.fn(async () => {}),
       stop: vi.fn(async () => {}),
       settleBoundaries: vi.fn(async () => {}),
       resolveFinalText: (text: string) => ({ kind: "full" as const, text, publishedParts: [] }),
@@ -1478,10 +1482,16 @@ describe("mattermost inbound user posts", () => {
       const socket = new FakeWebSocket();
       const abortController = new AbortController();
       mockState.abortController = abortController;
+      let previewPostId: string | undefined = "preview-progress";
       const draftStream = {
         update: vi.fn(),
         flush: vi.fn(async () => {}),
-        clear: vi.fn(async () => {}),
+        postId: vi.fn(() => previewPostId),
+        clear: vi.fn(async () => {
+          previewPostId = undefined;
+        }),
+        discardPending: vi.fn(async () => {}),
+        seal: vi.fn(async () => {}),
         deleteCurrentMessage: vi.fn(async () => {}),
         forceNewMessage: vi.fn(async () => {}),
         stop: vi.fn(async () => {}),
@@ -1602,6 +1612,15 @@ describe("mattermost inbound user posts", () => {
         });
         await params.replyOptions?.onPlanUpdate?.({ phase: "update", steps: [] });
         await params.replyOptions?.onObservedReplyDelivery?.();
+        const updatesAfterSourceDelivery = draftStream.update.mock.calls.length;
+        await params.replyOptions?.onItemEvent?.({
+          itemId: "tool:late",
+          kind: "tool",
+          name: "exec",
+          status: "running",
+          progressText: "late progress",
+        });
+        expect(draftStream.update).toHaveBeenCalledTimes(updatesAfterSourceDelivery);
         abortController.abort();
       });
 
@@ -1637,7 +1656,6 @@ describe("mattermost inbound user posts", () => {
 
       const replyOptions = mockState.dispatchInboundMessage.mock.calls.at(0)?.[0].replyOptions;
       expect(replyOptions?.allowProgressCallbacksWhenSourceDeliverySuppressed).toBe(true);
-      expect(draftStream.clear).toHaveBeenCalledTimes(1);
       if (label === false) {
         expect(firstPlanRetractionDeletes).toBe(1);
         expect(resumedProgress).toContain("▸ Resume");

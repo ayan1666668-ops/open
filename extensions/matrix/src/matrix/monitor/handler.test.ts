@@ -3076,6 +3076,7 @@ describe("matrix monitor handler draft streaming", () => {
     ) => Promise<void> | void;
     onAssistantMessageStart?: () => void;
     onQueuedFollowupAdmitted?: () => Promise<void> | void;
+    onObservedReplyDelivery?: () => Promise<void>;
     suppressDefaultToolProgressMessages?: boolean;
     onToolStart?: (payload: {
       itemId?: string;
@@ -3209,9 +3210,9 @@ describe("matrix monitor handler draft streaming", () => {
     sendTypingMatrixMock.mockRejectedValueOnce(new Error("typing unavailable"));
     const { deliver, finish } = await dispatch();
 
-    await expect(deliver({ text: "Already delivered block" }, { kind: "block" })).resolves.toBe(
-      acceptedDelivery,
-    );
+    await expect(
+      deliver({ text: "Already delivered block" }, { kind: "block" }),
+    ).resolves.toMatchObject(acceptedDelivery);
 
     expect(deliverMatrixRepliesMock).toHaveBeenCalledOnce();
     expect(sendTypingMatrixMock).toHaveBeenCalledExactlyOnceWith(
@@ -3327,6 +3328,35 @@ describe("matrix monitor handler draft streaming", () => {
       content: "prepared:Raw caption\ndelivered",
     });
     await finish();
+  });
+
+  it("retires a preview after source delivery and ignores late progress", async () => {
+    const { dispatch, redactEventMock } = createStreamingHarness({
+      streaming: "partial",
+      previewToolProgressEnabled: true,
+    });
+    const { opts, finish } = await dispatch();
+    try {
+      opts.onPartialReply?.({ text: "Visible preview" });
+      await waitForMatrixState(() => {
+        expect(sendSingleTextMessageMatrixMock).toHaveBeenCalledTimes(1);
+      });
+      await opts.onObservedReplyDelivery?.();
+      opts.onPartialReply?.({ text: "Late model delta" });
+      await opts.onItemEvent?.({
+        itemId: "late-tool",
+        kind: "tool",
+        name: "exec",
+        status: "running",
+        progressText: "late progress",
+      });
+    } finally {
+      await finish();
+    }
+    expect(redactEventMock).toHaveBeenCalledExactlyOnceWith("!room:example.org", "$draft1");
+    expect(sendSingleTextMessageMatrixMock).toHaveBeenCalledTimes(1);
+    expect(editMessageMatrixMock).not.toHaveBeenCalled();
+    expect(deliverMatrixRepliesMock).not.toHaveBeenCalled();
   });
 
   it("preserves provider previews for observer-only hooks", async () => {
@@ -4111,7 +4141,7 @@ describe("matrix monitor handler draft streaming", () => {
     },
   );
 
-  it("reports both visible events when post-replacement redaction fails", async () => {
+  it("preserves accepted replacement receipts and retries failed preview redaction", async () => {
     const { dispatch, redactEventMock } = createStreamingHarness({ streaming: "partial" });
     const { deliver, opts, finish } = await dispatch();
 
@@ -4128,8 +4158,21 @@ describe("matrix monitor handler draft streaming", () => {
       visibleReplySent: true,
       content: "Visible preview\ndelivered",
     });
+    deliverMatrixRepliesMock.mockResolvedValueOnce(
+      createMockMatrixDeliveryResult("$reply2", "Later durable reply"),
+    );
+    const laterResult = await deliver({ text: "Later durable reply" }, { kind: "final" });
+    expect(laterResult).toMatchObject({
+      messageIds: ["$reply2"],
+      visibleReplySent: true,
+      content: "Later durable reply",
+    });
+    expect(editMessageMatrixMock).not.toHaveBeenCalled();
     await finish();
-    expect(redactEventMock).toHaveBeenCalledTimes(1);
+    expect(mockCalls(redactEventMock, "redactEvent").map(([, id]) => id)).toEqual([
+      "$draft1",
+      "$draft1",
+    ]);
   });
 
   it.each(
