@@ -1,13 +1,11 @@
 import { Type } from "typebox";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { codeModeSwarmHandlers } from "./code-mode-swarm.runtime.js";
 import type { ToolSearchToolContext } from "./tool-search-types.js";
-import { waitForCollectorCompletion } from "./tools/agents-wait-tool.js";
 
 const state = vi.hoisted(() => ({
   enabled: true,
   blocked: false,
-  groupReads: 0,
   existing: undefined as
     | undefined
     | {
@@ -31,10 +29,6 @@ vi.mock("./agent-tool-source-execution-guard.js", () => ({
 vi.mock("./subagents/registry/subagent-registry.js", () => ({
   getSwarmRunByLaunchReplayKey: () => state.existing,
   initSubagentRegistry: vi.fn(),
-  listSwarmRunsForGroup: () => {
-    state.groupReads += 1;
-    return [];
-  },
 }));
 vi.mock("./subagents/swarm/swarm-collector-capability.js", () => ({
   isCollectorSpawnTool: () => true,
@@ -64,7 +58,6 @@ vi.mock("./tools/sessions-resolution.js", () => ({
   resolveInternalSessionKey: ({ key }: { key: string }) => key,
 }));
 
-const fixtureCatalogRefs = new Set<NonNullable<ToolSearchToolContext["catalogRef"]>>();
 
 function setup(dynamics?: unknown, options: Record<string, unknown> = {}) {
   const tool = {
@@ -96,7 +89,6 @@ function setup(dynamics?: unknown, options: Record<string, unknown> = {}) {
       },
     },
   };
-  fixtureCatalogRefs.add(ctx.catalogRef!);
   const callExactId = vi
     .fn()
     .mockResolvedValue({ result: { details: { status: "accepted", runId: "child-run" } } });
@@ -120,19 +112,10 @@ function setup(dynamics?: unknown, options: Record<string, unknown> = {}) {
   };
 }
 
-afterEach(() => {
-  for (const catalogRef of fixtureCatalogRefs) {
-    catalogRef.onDispose?.forEach((dispose) => dispose());
-  }
-  fixtureCatalogRefs.clear();
-});
-
 beforeEach(() => {
   state.enabled = true;
   state.blocked = false;
-  state.groupReads = 0;
   state.existing = undefined;
-  vi.mocked(waitForCollectorCompletion).mockReset();
 });
 
 describe("dynamics through the actual native spawn bridge", () => {
@@ -227,60 +210,6 @@ describe("dynamics through the actual native spawn bridge", () => {
       "dynamics.boundary must be",
     );
     expect(fixture.callExactId).not.toHaveBeenCalled();
-  });
-
-  it("keeps tracking across a recoverable wait error", async () => {
-    const fixture = setup({ boundary: "isolated" });
-    await codeModeSwarmHandlers.agentSpawn(fixture.params);
-    vi.mocked(waitForCollectorCompletion)
-      .mockRejectedValueOnce(new Error("not found"))
-      .mockResolvedValueOnce({
-        runId: "child-run",
-        status: "done",
-        result: "done",
-        sessionKey: "agent:main:child",
-      });
-
-    const waitParams = {
-      request: {
-        id: "wait-1",
-        method: "agentWait" as const,
-        args: ["child-run"],
-      },
-      ctx: fixture.ctx,
-    };
-    await expect(codeModeSwarmHandlers.agentWait(waitParams)).rejects.toThrow("not found");
-    await expect(codeModeSwarmHandlers.agentWait(waitParams)).resolves.toMatchObject({
-      status: "done",
-    });
-    expect(state.groupReads).toBe(1);
-  });
-
-  it("releases tracking when the owning parent catalog is disposed", async () => {
-    const fixture = setup({ boundary: "isolated" });
-    await codeModeSwarmHandlers.agentSpawn(fixture.params);
-    expect(fixture.ctx.catalogRef?.onDispose?.size).toBe(1);
-
-    fixture.ctx.catalogRef?.onDispose?.forEach((dispose) => dispose());
-    expect(fixture.ctx.catalogRef?.onDispose?.size).toBe(0);
-
-    vi.mocked(waitForCollectorCompletion).mockResolvedValue({
-      runId: "child-run",
-      status: "done",
-      result: "done",
-      sessionKey: "agent:main:child",
-    });
-    await expect(
-      codeModeSwarmHandlers.agentWait({
-        request: {
-          id: "wait-1",
-          method: "agentWait" as const,
-          args: ["child-run"],
-        },
-        ctx: fixture.ctx,
-      }),
-    ).resolves.toMatchObject({ status: "done" });
-    expect(state.groupReads).toBe(0);
   });
 
   it("does not silently downgrade a sandbox-required spawn rejected by the owner", async () => {

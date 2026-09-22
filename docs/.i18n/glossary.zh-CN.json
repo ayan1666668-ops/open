@@ -4922,25 +4922,5 @@
   {
     "source": "Swarm dynamics",
     "target": "Swarm 动态"
-  },
-  {
-    "source": "Swarm dynamics diagnostics",
-    "target": "Swarm 动态诊断"
-  },
-  {
-    "source": "Mixed-regime Swarm search",
-    "target": "混合态 Swarm 搜索"
-  },
-  {
-    "source": "Identity-bound convergence",
-    "target": "身份绑定收敛"
-  },
-  {
-    "source": "Liquid Software Factory",
-    "target": "Liquid Software Factory"
-  },
-  {
-    "source": "Adaptive test-time compute architecture",
-    "target": "自适应测试时计算架构"
   }
 ]

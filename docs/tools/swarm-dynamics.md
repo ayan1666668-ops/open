@@ -1,46 +1,18 @@
 ---
-summary: "Generic dynamics contract and adaptive compute advisories for native Swarm collectors"
+summary: "Bounded handoff and exact candidate identity for native Swarm launches"
 title: "Swarm dynamics"
 status: experimental
 ---
 
 # Swarm dynamics
 
-Swarm already lets each child choose its own execution level. The dynamics
-experiment keeps that primitive and adds bounded information flow plus population
-advisories.
+The optional `agents.run(..., { dynamics })` contract narrows a native Swarm
+launch. It does not allocate agents or add a second scheduler. Existing Swarm
+owners still decide admission, sandboxing, execution, cancellation, and replay.
 
-## Heterogeneous reasoning levels
+Calls without `dynamics` use the existing path unchanged.
 
-Different workers in one group can intentionally run at different levels:
-
-```javascript
-const settled = await Promise.allSettled([
-  agents.run("Generate a very different hypothesis.", {
-    label: "cheap-explorer-a",
-    thinking: "low",
-    fastMode: true,
-    dynamics: { boundary: "isolated" },
-  }),
-  agents.run("Try a second independent decomposition.", {
-    label: "cheap-explorer-b",
-    thinking: "low",
-    fastMode: true,
-    dynamics: { boundary: "isolated" },
-  }),
-  agents.run("Integrate only the supplied summaries.", {
-    label: "coordinator",
-    thinking: "medium",
-    dynamics: { boundary: "summary-only" },
-  }),
-]);
-```
-
-Later, an unresolved lane can be run with `thinking: "high"`. The population
-controller's `deepen` advisory explicitly suggests that existing OpenClaw thinking
-level; it does not create another reasoning API or automatically spend the tokens.
-
-## Generic dynamics contract
+## Contract
 
 ```typescript
 type DynamicsBoundary = "isolated" | "artifact-only" | "evidence-only" | "summary-only";
@@ -68,29 +40,26 @@ type DynamicsOptions = {
 };
 ```
 
-The contract is monotone with respect to authority: it may require a stricter
-sandbox or more identity/evidence fields, but it cannot grant tools, credentials,
-approval, publication, merge, or deployment authority.
+The contract is monotone with respect to authority. It may request a stricter
+existing sandbox or require identity/artifact fields, but it cannot grant tools,
+credentials, approvals, publication, merge, or deployment authority.
 
-Calls without `dynamics` preserve the existing path.
+## Handoff boundaries
 
-## Explicit handoff boundaries
+- `isolated` drops all explicit dynamics handoff fields.
+- `artifact-only` may carry candidate identity and artifact references.
+- `evidence-only` may carry candidate identity and evidence references.
+- `summary-only` carries only a bounded summary.
 
-- `isolated` drops all explicit dynamics handoff fields
-- `artifact-only` may carry candidate identity + artifact refs
-- `evidence-only` may carry candidate identity + evidence refs
-- `summary-only` carries only a bounded summary
-
-Requirements are checked against the selected boundary. A contract that requires
-artifacts across a boundary that drops artifacts is rejected.
-
-References are caller-provided data. Handoff filtering is not a complete sandbox
-and does not prove epistemic independence.
+OpenClaw rejects requirements that the selected boundary cannot preserve.
+References remain caller-provided data. Handoff filtering only controls the
+explicit `dynamics.handoff` payload; it is not a sandbox for the original task,
+workspace, memory, or tool visibility.
 
 ## Exact verifier launch
 
 ```javascript
-const verified = await agents.run("Verify this exact frozen candidate.", {
+await agents.run("Verify this exact candidate.", {
   thinking: "high",
   dynamics: {
     boundary: "artifact-only",
@@ -113,55 +82,22 @@ const verified = await agents.run("Verify this exact frozen candidate.", {
 });
 ```
 
-The prepared launch requests `context: "isolated"` and delegates
-`sandbox: "require"` to the existing native spawn owner. If the sandbox cannot be
-provided, admission fails; there is no unsandboxed retry.
+A dynamics launch uses `context: "isolated"`. When `sandbox: "require"` is
+requested, the existing native spawn owner must admit that sandbox or reject the
+launch; the bridge does not retry unsandboxed.
 
-Candidate/source/recipe/policy identity participates in the exact prepared launch
-bytes and therefore in the existing replay fingerprint.
+The complete candidate/source/recipe/policy manifest is canonically hashed and
+bound into the prepared launch before OpenClaw computes its existing replay
+fingerprint. Replaying the same request is deterministic; changing the governing
+candidate identity rejects reuse of a persisted collector.
 
-Identity proves which candidate is being discussed. It does not prove correctness.
+Candidate identity proves which exact object was handed to verification. It does
+not prove that verification ran, that the verifier was independent, or that the
+candidate is correct.
 
-## Population measurements
+## Per-child compute stays caller-owned
 
-The internal population substrate accepts typed measurements with a source:
-
-- `host` — OpenClaw-owned facts such as concurrency pressure and terminal outcome
-- `external` — semantic measurements supplied by another integration
-
-The current native collector path only emits facts it actually owns. It does not
-invent candidate entropy, coherence, acceptance progress, verifier disagreement,
-or trajectory correlation from successful completion.
-
-External measurement provenance is retained but is not an authenticated receipt.
-
-## Advisory policy
-
-The controller may recommend:
-
-- `measure` unresolved conflict
-- `deepen` a bounded subset, suggesting `thinking: "high"`
-- `perturb` correlated or arrested search
-- `freeze` a stable local candidate
-- `spawn` one bounded coordinating lane
-- `drain` under pressure
-- `hold` when no change is justified
-
-These are data, not actuators. Existing execution owners decide what actually runs.
-
-## Lifecycle and replay
-
-Dynamics bookkeeping belongs to the parent run. Parent disposal/abort releases the
-observer without cancelling unrelated live collectors. Exact replay continues to
-use OpenClaw's existing idempotency and request-fingerprint owners.
-
-## Evidence boundary
-
-Repository tests cover the generic contract, fail-closed sandbox admission,
-replay mismatch rejection, lifecycle cleanup, typed measurement provenance,
-selective deepening, correlation-aware fan-out suppression, acceptance progress,
-and the full fold into an exact sandbox-required verifier preparation.
-
-Final provider/model execution is still substituted in repository integration
-tests. A redacted live native collector transcript remains stronger evidence than
-another synthetic helper test.
+Swarm already supports `model`, `thinking`, and `fastMode` per child. Callers
+can combine those existing controls with a dynamics boundary without introducing
+a core allocation policy. Role names, search heuristics, and adaptive-budget
+controllers belong outside this generic launch contract.
