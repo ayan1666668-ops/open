@@ -82,6 +82,11 @@ import {
   type EmbeddedRunWaiter,
   type EmbeddedAgentQueueFailureReason,
 } from "./run-state.js";
+import {
+  isEmbeddedRunHandleAbortable,
+  isEmbeddedRunHandleCompacting,
+  isEmbeddedRunHandleSupersedable,
+} from "./runs.probes.js";
 
 export type { EmbeddedAgentQueueHandle, EmbeddedAgentQueueMessageOptions } from "./run-state.js";
 
@@ -510,32 +515,6 @@ function resolveEmbeddedInjection(
   }
 }
 
-function isEmbeddedRunHandleAbortable(
-  sessionId: string,
-  handle: EmbeddedAgentQueueHandle,
-): boolean {
-  try {
-    return handle.isAbortable?.() !== false;
-  } catch (err) {
-    diag.warn(
-      `abort failed: sessionId=${sessionId} reason=abortable_check_failed err=${String(err)}`,
-    );
-    return false;
-  }
-}
-
-function isEmbeddedRunHandleSupersedable(runId: string, handle: EmbeddedAgentQueueHandle): boolean {
-  if (!isEmbeddedRunHandleAbortable(runId, handle)) {
-    return false;
-  }
-  try {
-    return handle.isStopped?.() !== true && handle.isAborted?.() !== true;
-  } catch (err) {
-    diag.warn(`supersede failed: runId=${runId} reason=lifecycle_check_failed err=${String(err)}`);
-    return false;
-  }
-}
-
 export function isEmbeddedAgentRunAbortableForRunId(runId: string): boolean {
   const normalizedRunId = runId.trim();
   if (!normalizedRunId) {
@@ -802,7 +781,8 @@ function prepareEmbeddedAgentQueueMessage(
     diag.debug(`queue message failed: sessionId=${sessionId} reason=stale_run`);
     return { kind: "complete", outcome: createQueueFailureOutcome(sessionId, "stale_run") };
   }
-  if (handle.isCompacting()) {
+  // An indeterminate compaction probe fails closed: steering is refused, not delivered.
+  if (isEmbeddedRunHandleCompacting(sessionId, handle) !== false) {
     diag.debug(`queue message failed: sessionId=${sessionId} reason=compacting`);
     return { kind: "complete", outcome: createQueueFailureOutcome(sessionId, "compacting") };
   }
@@ -927,7 +907,7 @@ export function abortEmbeddedAgentRun(
   }
 
   const abortActiveEmbeddedRunHandles = (params: {
-    shouldAbort: (handle: EmbeddedAgentQueueHandle) => boolean;
+    shouldAbort: (handle: EmbeddedAgentQueueHandle, sessionId: string) => boolean;
     formatDebugMessage: (sessionId: string) => string;
     skipSessionIds?: ReadonlySet<string>;
   }): boolean => {
@@ -936,7 +916,7 @@ export function abortEmbeddedAgentRun(
       if (params.skipSessionIds?.has(id)) {
         continue;
       }
-      if (!params.shouldAbort(handle)) {
+      if (!params.shouldAbort(handle, id)) {
         continue;
       }
       if (!isEmbeddedRunHandleAbortable(id, handle)) {
@@ -963,7 +943,7 @@ export function abortEmbeddedAgentRun(
         diag.warn(`abort failed: sessionId=${id} owner=reply_run err=${String(err)}`),
     });
     const aborted = abortActiveEmbeddedRunHandles({
-      shouldAbort: (handle) => handle.isCompacting(),
+      shouldAbort: (handle, id) => isEmbeddedRunHandleCompacting(id, handle) === true,
       formatDebugMessage: (id) => `aborting compacting run: sessionId=${id}`,
       skipSessionIds: replyOwnedSessionIds,
     });

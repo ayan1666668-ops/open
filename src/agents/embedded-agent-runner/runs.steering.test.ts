@@ -602,6 +602,29 @@ describe("embedded-agent active-run steering", () => {
     expect(queueMessage).not.toHaveBeenCalled();
   });
 
+  it("fails closed when the compacting state check throws", async () => {
+    const queueMessage = vi.fn(async () => {});
+    setActiveEmbeddedRun("session-bad-compacting-state", {
+      ...createEmbeddedRunHandle({ queueMessage }),
+      isCompacting: () => {
+        throw new Error("compaction probe unavailable");
+      },
+    });
+
+    const outcome = await queueEmbeddedAgentMessageWithOutcomeAsync(
+      "session-bad-compacting-state",
+      "continue",
+    );
+
+    expect(outcome).toEqual({
+      queued: false,
+      sessionId: "session-bad-compacting-state",
+      reason: "compacting",
+      gatewayHealth: "live",
+    });
+    expect(queueMessage).not.toHaveBeenCalled();
+  });
+
   it("returns a structured no-active-run queue failure", () => {
     const outcome = queueEmbeddedAgentMessageWithOutcome("session-missing", "continue");
 
