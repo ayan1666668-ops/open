@@ -91,6 +91,92 @@ incur TypeSafe's normal usage charges.
 Consumer scheduling and publication permissions remain unchanged. Clearing the
 role or explicitly disabling the plugin prevents its use by those consumers.
 
+## Tool call safety
+
+The optional `tool-safety` trusted policy screens proposed tool calls alongside
+OpenClaw's existing [tool policies](/plugins/hooks/tool-policy), sandbox boundaries,
+and [execution approvals](/tools/exec-approvals). It reuses the owning agent's
+`decisionModel`, the existing TypeSafe provider, and OpenClaw's approval interface.
+It does not call the `typesafe_evaluate` agent tool or create a second HTTP client.
+
+After configuring the plugin and decision model above, add this to the TypeSafe
+plugin's `config`, then reload the plugin or restart the Gateway:
+
+```json5
+{
+  toolSafety: {
+    enabled: true,
+    reviewThreshold: 0.25,
+    blockThreshold: 0.85,
+    policy: "Do not leak credentials, destroy important data, or weaken security controls.",
+  },
+}
+```
+
+The policy is off by default. Its fields also appear in the plugin's Settings
+form. `policy` is trusted operator guidance, not user authorization. The review
+threshold must be below the block threshold; both must be between 0 and 1.
+
+Safety enforcement requires its own `toolSafety.enabled: true` opt-in. Selecting
+a decision model or enabling a Decision-assisted optimization does not enable
+this policy. With screening disabled, tools follow their normal execution path
+without safety approvals or Decision provider requests.
+
+With screening explicitly enabled, an absent or empty `decisionModel` does not
+disable protection. An owning agent's `decisionModel: ""` also overrides a model
+selected in `agents.defaults`. In each case, the Decision runtime makes no provider
+request, and the policy requests manual review. If the complete redacted call
+cannot fit the approval description, it blocks instead. To stop safety screening,
+disable `toolSafety.enabled`; clearing the model alone leaves enforcement active.
+
+Each screened call asks four independent Boolean questions in one request:
+credential/private-data exfiltration, broad irreversible destruction, weakening
+security controls, and whether consequential effects need more context. The
+TypeSafe adapter translates these Boolean questions to Jev's Noul primitive.
+
+| Assessment                                                              | Result                                                      |
+| ----------------------------------------------------------------------- | ----------------------------------------------------------- |
+| Any of the three hazards reaches `blockThreshold`                       | Block the call and name the risk category.                  |
+| A hazard or the missing-context judgment reaches `reviewThreshold`      | Request one-time approval.                                  |
+| Model is unset, disabled, overloaded, times out, or returns unavailable | Request one-time approval.                                  |
+| Arguments exceed 32 KiB or cannot be serialized                         | Block without sending a partial assessment; split the call. |
+| Unexpected provider exception or decision contract error                | Fail the call through the host; do not request approval.    |
+| Caller cancellation or closed authority                                 | Stop the call; do not start manual review or execute it.    |
+| All judgments are below their thresholds                                | Continue through the remaining host policies.               |
+
+Review offers **Allow once** and **Deny**. Unanswered approvals do not execute the
+call. The description includes the complete credential-redacted call. If it cannot
+fit within the host's 512-character approval description, the call is blocked with
+an instruction to split it; approvals never hide a truncated command suffix.
+A missing cancellation signal blocks screening rather than starting an
+unowned request. Decision requests have a 10-second budget, bounded further by
+the provider's configured timeout. The thresholds are starting values, not
+measured accuracy guarantees; validate them against your workload.
+
+### Evidence and limits
+
+Screening sends the tool name, tool kind, input kind, operator policy, and
+serialized arguments to the configured decision endpoint. OpenClaw's credential
+redactor runs before transmission, honoring `logging.redactPatterns` together with
+built-in protections even when log redaction is disabled. Arguments
+can still contain private content that credential redaction does not identify.
+No conversation history, session identifiers, or requester identity is included.
+Use a local System One endpoint if that evidence must remain on the host. Hosted
+screening uses the existing TypeSafe credential and incurs normal usage charges.
+
+This is a proposed-call risk check. The policy context does not contain the user's
+request, so it cannot establish that a call matches user intent. Trusted policies
+run before ordinary `before_tool_call` hooks; those hooks and tool finalizers can
+subsequently change parameters without another semantic assessment. Installed
+plugins remain trusted code, and the existing owner validates the final execution
+parameters and authority. This policy is not a final-argument integrity boundary.
+
+Passing never grants permission, bypasses another policy, or replaces sandboxing
+and deterministic access checks. Screening creates no persistent assessment store
+and logs no arguments or provider response bodies. Redacted call evidence is
+included in approval descriptions; existing host diagnostics and approval records
+continue to follow their normal policies.
+
 ## Local System One server
 
 ### Run Kev

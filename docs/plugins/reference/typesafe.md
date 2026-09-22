@@ -19,7 +19,7 @@ Optional typed evaluations, not a conversational model provider.
 
 ## Surface
 
-- Contracts: `decisionProviders`, `tools`
+- Contracts: `decisionProviders`, `tools`, `trustedToolPolicies`
 - Skills
 
 ## Related docs

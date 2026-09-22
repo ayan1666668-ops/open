@@ -5,6 +5,12 @@ or a local Kev System One server.
 It provides Choice, Score, and Boolean judgments through OpenClaw's shared
 decision-model API, plus the optional `typesafe_evaluate` tool.
 
+Optional `config.toolSafety.enabled` adds a trusted pre-tool risk check using the
+agent's decision model. High-risk calls are blocked; uncertain or unavailable
+assessments use OpenClaw's one-time approval flow. Existing permissions still
+apply. See [tool call safety](https://docs.openclaw.ai/plugins/typesafe#tool-call-safety)
+for configuration, evidence handling, and the proposed-call boundary.
+
 Requires OpenClaw and plugin API **2026.9.6 or later**. Released OpenClaw
 2026.9.5 does not include the decision API.
 
