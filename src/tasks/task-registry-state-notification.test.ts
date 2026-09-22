@@ -1,8 +1,11 @@
+import { setImmediate } from "node:timers/promises";
 import { err } from "@openclaw/normalization-core/result";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../test/helpers/promise.js";
 import { trackSqliteStatementExecutions } from "../../test/helpers/sqlite-statement-execution-counter.js";
+import { emitAgentEvent } from "../infra/agent-events.js";
 import type { MessageSendResult } from "../infra/outbound/message.js";
+import * as stateCoordinator from "../infra/state-database-coordinator.js";
 import * as systemEvents from "../infra/system-events.js";
 import {
   getActiveGatewayRootWorkCount,
@@ -11,17 +14,25 @@ import {
 } from "../process/gateway-work-admission.js";
 import { closeOpenClawStateDatabaseAsync } from "../state/openclaw-state-db-cache.js";
 import { openOpenClawStateDatabase } from "../state/openclaw-state-db.js";
+import { captureOpenClawStateWorkerContext } from "../state/openclaw-state-worker-context.js";
 import {
   createOpenClawTestState,
   type OpenClawTestState,
 } from "../test-utils/openclaw-test-state.js";
-import { resetTaskFlowRegistryForTests } from "./task-flow-registry.test-support.js";
+import {
+  createManagedTaskFlow,
+  resetTaskFlowRegistryForTests,
+} from "./task-flow-registry.test-support.js";
 import type { sendMessage as SendMessage } from "./task-registry-delivery-runtime.js";
-import { maybeDeliverTaskStateChangeUpdate } from "./task-registry-delivery.js";
+import {
+  maybeDeliverTaskStateChangeUpdate,
+  scheduleTaskDelivery,
+} from "./task-registry-delivery.js";
 import {
   captureTaskDeliveryWork,
   commitTaskDeliveryFixture,
 } from "./task-registry-delivery.test-support.js";
+import * as taskRegistryListener from "./task-registry-listener-state.js";
 import { getTaskDeliveryState } from "./task-registry-mutation.js";
 import { publishTaskRecordAfterAtomicStore } from "./task-registry-publication.js";
 import * as deliveryRuntime from "./task-registry-runtime-loaders.js";
@@ -58,7 +69,7 @@ let state: OpenClawTestState;
 let notifications: Array<{ complete: () => void; result: Promise<TaskRecord | null> }>;
 let nativeDeliveries: ReturnType<typeof captureTaskDeliveryWork> | undefined;
 
-function createTask(): TaskRecord {
+function createTask(parentFlowId?: string): TaskRecord {
   return createTaskFixture("cli", {
     ownerKey,
     requesterSessionKey: ownerKey,
@@ -69,6 +80,7 @@ function createTask(): TaskRecord {
     notifyPolicy: "state_changes",
     deliveryStatus: "pending",
     lastEventAt: Date.now(),
+    parentFlowId,
   });
 }
 
@@ -103,24 +115,6 @@ function stored(taskId: string) {
   return { task: snapshot.tasks.get(taskId), delivery: snapshot.deliveryStates.get(taskId) };
 }
 
-function failPreparationAfterQueue(failure: Error) {
-  const queued = vi.spyOn(systemEvents, "enqueueSystemEvent");
-  const mutate = taskRegistryState.withTaskRegistryMutation;
-  let failed = false;
-  vi.spyOn(taskRegistryState, "withTaskRegistryMutation").mockImplementation(
-    <T>(operation: () => T, onAdmissionFailure?: (error: unknown) => T): T => {
-      const before = queued.mock.calls.length;
-      const result = mutate(operation, onAdmissionFailure);
-      if (!failed && queued.mock.calls.length > before) {
-        failed = true;
-        throw failure;
-      }
-      return result;
-    },
-  );
-  return queued;
-}
-
 beforeEach(async () => {
   state = await createOpenClawTestState({
     layout: "state-only",
@@ -152,6 +146,120 @@ afterEach(async () => {
 });
 
 describe("task state notification acknowledgements", () => {
+  it.each(["direct", "scheduled"] as const)(
+    "retains %s failure ownership when the database retires during preparation",
+    async (mode) => {
+      const task = createTask();
+      const before = stored(task.taskId);
+      const entered = createDeferred();
+      const release = createDeferred();
+      vi.spyOn(taskRegistryListener, "captureTaskRegistryReadFence").mockImplementationOnce(
+        async () => {
+          entered.resolve();
+          await release.promise;
+        },
+      );
+      const warnings = vi.spyOn(taskRegistryState.taskRegistryLog, "warn");
+      using deliveries = captureTaskDeliveryWork();
+      const event = progress(task.createdAt + 10);
+      let result: Promise<TaskRecord | null | void>;
+      if (mode === "direct") {
+        result = maybeDeliverTaskStateChangeUpdate(task, event);
+      } else {
+        scheduleTaskDelivery(task, event);
+        result = deliveries.settle();
+      }
+      const outcome = result.then(
+        (value) => ({ ok: true as const, value }),
+        (error: unknown) => ({ ok: false as const, error }),
+      );
+      notifications.push({ complete: () => release.resolve(), result: outcome.then(() => null) });
+      await entered.promise;
+      await closeOpenClawStateDatabaseAsync();
+      release.resolve();
+      expect(await outcome).toEqual({
+        ok: false,
+        error: expect.objectContaining({ code: "STATE_DATABASE_READ_ADMISSION_INVALIDATED" }),
+      });
+      await setImmediate();
+      if (mode === "scheduled") {
+        expect(warnings).toHaveBeenCalledExactlyOnceWith(
+          "Background task notification failed",
+          expect.objectContaining({
+            taskId: task.taskId,
+            error: expect.objectContaining({ code: "STATE_DATABASE_READ_ADMISSION_INVALIDATED" }),
+          }),
+        );
+      } else {
+        expect(warnings).not.toHaveBeenCalled();
+      }
+      expect(sendMessage).not.toHaveBeenCalled();
+      expect(systemEvents.drainSystemEvents(ownerKey)).toEqual([]);
+      expect(stored(task.taskId)).toEqual(before);
+    },
+  );
+
+  it("joins an accepted terminal event before selecting progress for delivery", async () => {
+    const task = createTask();
+    const admitted = createDeferred();
+    const release = createDeferred();
+    const store = getTaskRegistryStore();
+    const mutate = store.runAgentEventMutationAsync.bind(store);
+    vi.spyOn(store, "runAgentEventMutationAsync").mockImplementationOnce(async (...args) => {
+      admitted.resolve();
+      await release.promise;
+      return mutate(...args);
+    });
+    sendMessage.mockResolvedValue(sent);
+    nativeDeliveries = captureTaskDeliveryWork();
+    emitAgentEvent({ runId, stream: "lifecycle", data: { phase: "end", endedAt: Date.now() } });
+    await admitted.promise;
+    const result = maybeDeliverTaskStateChangeUpdate(task, progress(task.createdAt + 10));
+    notifications.push({ complete: () => release.resolve(), result });
+    try {
+      await setImmediate();
+      expect(sendMessage).not.toHaveBeenCalled();
+      release.resolve();
+      await taskRegistryListener.captureTaskRegistryReadFence(
+        captureOpenClawStateWorkerContext().admission,
+      );
+      await result;
+      await nativeDeliveries.settle();
+      expect(stored(task.taskId).task?.status).toBe("succeeded");
+      expect(
+        sendMessage.mock.calls.every(([params]) => !params.content?.includes("Original progress")),
+      ).toBe(true);
+    } finally {
+      release.resolve();
+      await result;
+    }
+  });
+
+  it.each([false, true])(
+    "delivers and acknowledges with parent flow=%s without entering the host state coordinator",
+    async (linked) => {
+      const flow = linked
+        ? createManagedTaskFlow({
+            ownerKey,
+            requesterOrigin: nextOrigin,
+            goal: "Synthetic notification flow",
+            controllerId: "tests/notification",
+          })
+        : undefined;
+      const task = createTask(flow?.flowId);
+      const acquire = vi
+        .spyOn(stateCoordinator, "acquireStateDatabaseCoordinator")
+        .mockImplementation(() => {
+          throw new Error("Synthetic held host coordinator must not block notification delivery");
+        });
+      const notification = startNotification(task, progress(task.createdAt + 10));
+      expect(await notification.dispatched).toMatchObject(linked ? nextOrigin : origin);
+      notification.complete();
+      expect(await notification.result).toMatchObject({ taskId: task.taskId });
+      expect(acquire).not.toHaveBeenCalled();
+    },
+  );
+
   it("acknowledges a confirmed direct send without host task or delivery writes", async () => {
     const task = createTask();
     const warnings = vi.spyOn(taskRegistryState.taskRegistryLog, "warn");
@@ -189,6 +297,33 @@ describe("task state notification acknowledgements", () => {
       expect(result?.lastEventAt).toBeGreaterThanOrEqual(task.lastEventAt ?? task.createdAt);
       expect(sendMessage).toHaveBeenCalledOnce();
       expect(tracker.counts).toEqual({ task: 0, delivery: 0 });
+    } finally {
+      tracker.restore();
+    }
+  });
+
+  it("records a missing notification owner in the worker without acknowledging an unsent event", async () => {
+    const task = createTaskFixture("cli", {
+      ownerKey: "system:notification",
+      scopeKind: "system",
+      runId,
+      task: "Synthetic system notification",
+      notifyPolicy: "state_changes",
+      deliveryStatus: "pending",
+    });
+    const tracker = trackSqliteStatementExecutions(
+      openOpenClawStateDatabase().db,
+      ["writes"],
+      (sql) =>
+        /(?:insert|update|delete).*task_(?:runs|delivery_state)/i.test(sql) ? "writes" : null,
+    );
+    try {
+      const result = await maybeDeliverTaskStateChangeUpdate(task, progress(task.createdAt + 10));
+      expect(result?.deliveryStatus).toBe("not_applicable");
+      expect(stored(task.taskId).task).toEqual(result);
+      expect(stored(task.taskId).delivery?.lastNotifiedEventAt).toBeUndefined();
+      expect(tracker.counts.writes).toBe(0);
+      expect(sendMessage).not.toHaveBeenCalled();
     } finally {
       tracker.restore();
     }
@@ -344,111 +479,6 @@ describe("task state notification acknowledgements", () => {
     expect(consumed[0]).toContain("Original progress");
     expect(stored(task.taskId).delivery?.lastNotifiedEventAt).toBe(event.at);
     expect(results[0]).toEqual(results[1]);
-    expect(sendMessage).not.toHaveBeenCalled();
-  });
-
-  it.each(["initial", "fresh"] as const)(
-    "settles the queued ACK before reporting %s preparation cleanup failure",
-    async (phase) => {
-      const task = createTask();
-      const event = progress(task.createdAt + 10);
-      if (phase === "initial") {
-        commitTaskDeliveryFixture({ taskId: task.taskId });
-      } else {
-        const load = deliveryRuntime.loadTaskRegistryDeliveryRuntime;
-        vi.spyOn(deliveryRuntime, "loadTaskRegistryDeliveryRuntime").mockImplementationOnce(
-          async () => {
-            const runtime = await load();
-            commitTaskDeliveryFixture({ taskId: task.taskId });
-            return runtime;
-          },
-        );
-      }
-      const cleanupFailure = new Error("Synthetic post-queue preparation cleanup failure");
-      const queued = failPreparationAfterQueue(cleanupFailure);
-      const warnings = vi.spyOn(taskRegistryState.taskRegistryLog, "warn");
-      const store = getTaskRegistryStore();
-      const mutate = store.runInitialMutationAsync.bind(store);
-      const ackStarted = createDeferred();
-      const releaseAck = createDeferred();
-      const mutations = vi
-        .spyOn(store, "runInitialMutationAsync")
-        .mockImplementation(async (context, command, assertCurrent) => {
-          if (command.type === "tasks.acknowledgeStateChange") {
-            ackStarted.resolve();
-            await releaseAck.promise;
-          }
-          return mutate(context, command, assertCurrent);
-        });
-      const pending = maybeDeliverTaskStateChangeUpdate(task, event);
-      notifications.push({ complete: () => releaseAck.resolve(), result: pending });
-      let finished = false;
-      const outcome = pending
-        .then(
-          (value) => ({ ok: true as const, value }),
-          (error: unknown) => ({ ok: false as const, error }),
-        )
-        .finally(() => {
-          finished = true;
-        });
-      try {
-        expect(
-          await Promise.race([
-            ackStarted.promise.then(() => "ack_started"),
-            outcome.then(() => "settled"),
-          ]),
-        ).toBe("ack_started");
-        expect(finished).toBe(false);
-        expect(queued).toHaveBeenCalledOnce();
-        const releasedAt = Date.now();
-        releaseAck.resolve();
-        const result = await outcome;
-        const persisted = stored(task.taskId);
-        expect(persisted.delivery?.lastNotifiedEventAt).toBe(event.at);
-        expect(persisted.task?.lastEventAt).toBeGreaterThanOrEqual(releasedAt);
-        expect(getTaskById(task.taskId)).toEqual(persisted.task);
-        if (phase === "initial") {
-          expect(result).toEqual({ ok: false, error: cleanupFailure });
-        } else {
-          expect(result).toEqual({ ok: true, value: persisted.task });
-          expect(warnings.mock.calls.some(([, meta]) => meta?.error === cleanupFailure)).toBe(true);
-        }
-        expect(mutations).toHaveBeenCalledOnce();
-        expect(systemEvents.drainSystemEvents(ownerKey)).toEqual([
-          expect.stringContaining("Original progress"),
-        ]);
-        expect(sendMessage).not.toHaveBeenCalled();
-      } finally {
-        releaseAck.resolve();
-        await outcome;
-      }
-    },
-  );
-
-  it("preserves both preparation cleanup and queued ACK failures", async () => {
-    const task = createTask();
-    commitTaskDeliveryFixture({ taskId: task.taskId });
-    const before = stored(task.taskId);
-    const cleanupFailure = new Error("Synthetic queued preparation cleanup failure");
-    const ackFailure = new Error("Synthetic queued acknowledgement failure");
-    const queued = failPreparationAfterQueue(cleanupFailure);
-    const mutations = vi
-      .spyOn(getTaskRegistryStore(), "runInitialMutationAsync")
-      .mockRejectedValueOnce(ackFailure);
-    const pending = maybeDeliverTaskStateChangeUpdate(task, progress(task.createdAt + 10));
-    notifications.push({ complete() {}, result: pending });
-    const outcome = await pending.then(
-      (value) => ({ ok: true as const, value }),
-      (error: unknown) => ({ ok: false as const, error }),
-    );
-    if (outcome.ok || !(outcome.error instanceof AggregateError)) {
-      throw new Error("Expected cleanup and acknowledgement failures to remain aggregated");
-    }
-    expect(outcome.error.errors).toEqual([cleanupFailure, ackFailure]);
-    expect(outcome.error.cause).toBe(cleanupFailure);
-    expect(stored(task.taskId)).toEqual(before);
-    expect(queued).toHaveBeenCalledOnce();
-    expect(mutations).toHaveBeenCalledOnce();
     expect(sendMessage).not.toHaveBeenCalled();
   });
 

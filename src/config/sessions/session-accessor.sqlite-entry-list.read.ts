@@ -3,10 +3,8 @@ import type { OpenClawAgentDatabase } from "../../state/openclaw-agent-db.js";
 import { isIncognitoOpenClawAgentSqlitePath } from "../../state/openclaw-agent-db.paths.js";
 import { isInternalSessionEffectsKey } from "./internal-session-key.js";
 import type { SessionEntrySummary } from "./session-accessor.sqlite-contract.js";
-import {
-  readSessionEntryCache,
-  type SessionEntryCacheSnapshot,
-} from "./session-accessor.sqlite-entry-cache.js";
+import type { SessionEntryCacheSnapshot } from "./session-accessor.sqlite-entry-cache-projection.js";
+import { readSessionEntryCache } from "./session-accessor.sqlite-entry-cache.js";
 import {
   cloneSessionEntry,
   resolveSqliteScope,

@@ -59,6 +59,7 @@ import { createManagedTaskFlow } from "./task-flow-registry.test-support.js";
 import type { TaskFlowRecord } from "./task-flow-registry.types.js";
 import { getTaskActivitySnapshot } from "./task-registry-activity.js";
 import type { TaskRegistryControlRuntime } from "./task-registry-control.types.js";
+import { scheduleTaskDelivery } from "./task-registry-delivery.js";
 import {
   captureTaskDeliveryWork,
   waitForAssertion,
@@ -70,6 +71,12 @@ import {
   reloadTaskRegistryFromStoreAsync,
 } from "./task-registry-state.js";
 import {
+  expectRecordFields,
+  firstMockArg,
+  requireTaskById,
+  requireTaskByRunId,
+} from "./task-registry.assertions.test-support.js";
+import {
   cancelTaskById,
   deleteTaskRecordById,
   finalizeTaskRecordByRunId,
@@ -80,11 +87,11 @@ import {
   listTasksForRelatedSessionKey,
   listTaskRecords,
   linkTaskToFlowById,
-  maybeDeliverTaskTerminalUpdate,
   markTaskRunningByRunId,
   markTaskTerminalById,
   recordTaskProgressByRunId,
   resolveTaskForLookupToken,
+  setTaskRunDeliveryStatusByRunId,
   updateTaskNotifyPolicyById,
 } from "./task-registry.js";
 import { registerTaskRegistryScheduledMaintenanceTests } from "./task-registry.maintenance-scheduling.test-utils.js";
@@ -225,50 +232,12 @@ function createSessionBindingRecord(
   };
 }
 
-function expectRecordFields(record: unknown, expected: Record<string, unknown>) {
-  if (!record || typeof record !== "object") {
-    throw new Error("Expected record");
-  }
-  const actual = record as Record<string, unknown>;
-  for (const [key, value] of Object.entries(expected)) {
-    expect(actual[key]).toEqual(value);
-  }
-  return actual;
-}
-
-function requireTaskByRunId(runId: string): TaskRecord {
-  const task = findTaskByRunId(runId);
-  if (!task) {
-    throw new Error(`Expected task for run ${runId}`);
-  }
-  return task;
-}
-
-function requireTaskById(taskId: string): TaskRecord {
-  const task = getTaskById(taskId);
-  if (!task) {
-    throw new Error(`Expected task ${taskId}`);
-  }
-  return task;
-}
-
 function sentMessageCall(callIndex = 0): Record<string, unknown> {
   const call = hoisted.sendMessageMock.mock.calls[callIndex];
   if (!call) {
     throw new Error(`Expected sendMessage call ${callIndex}`);
   }
   return call[0] as Record<string, unknown>;
-}
-
-function firstMockArg(
-  mock: { mock: { calls: readonly unknown[][] } },
-  label: string,
-): Record<string, unknown> {
-  const [call] = mock.mock.calls;
-  if (!call) {
-    throw new Error(`Expected ${label} call`);
-  }
-  return expectRecordFields(call[0], {});
 }
 
 const cancelTask = (taskId: string) => cancelTaskById({ cfg: {} as never, taskId });
@@ -343,6 +312,7 @@ describe("task-registry", () => {
     "preserves the bare-session requester on direct %s delivery",
     async (kind) => {
       await withTaskRegistryTempDir(async () => {
+        using deliveries = captureTaskDeliveryWork();
         hoisted.sendMessageMock.mockResolvedValue({ deliveryStatus: "delivered" });
         const task = createTaskFixture("cli", {
           ownerKey: "global",
@@ -355,7 +325,8 @@ describe("task-registry", () => {
         });
         if (kind === "terminal") {
           markTaskTerminalById({ taskId: task.taskId, status: "succeeded", endedAt: Date.now() });
-          await maybeDeliverTaskTerminalUpdate(task.taskId);
+          scheduleTaskDelivery(requireTaskById(task.taskId));
+          await deliveries.settle();
         } else {
           await maybeDeliverTaskStateChangeUpdate(task, {
             at: Date.now(),
@@ -377,6 +348,7 @@ describe("task-registry", () => {
     "keeps bare-session %s events and wakes with the requesting agent",
     async (kind) => {
       await withTaskRegistryTempDir(async () => {
+        using deliveries = captureTaskDeliveryWork();
         hoisted.sendMessageMock.mockRejectedValue(new Error("fixture delivery unavailable"));
         const task = createTaskFixture("cli", {
           ownerKey: "global",
@@ -400,7 +372,8 @@ describe("task-registry", () => {
             endedAt: Date.now(),
             ...(kind === "blocked" ? { terminalOutcome: "blocked" } : {}),
           });
-          await maybeDeliverTaskTerminalUpdate(task.taskId);
+          scheduleTaskDelivery(requireTaskById(task.taskId));
+          await deliveries.settle();
         }
         const events = peekSystemEventEntries("agent:alpha:global");
         expect(events).toHaveLength(kind === "blocked" ? 2 : 1);
@@ -1880,6 +1853,7 @@ describe("task-registry", () => {
   it("keeps direct delegated ACP completions pending so parent-review handoffs can retry", async () => {
     await withTaskRegistryTempDir(
       async () => {
+        using deliveries = captureTaskDeliveryWork();
         hoisted.sendMessageMock.mockResolvedValue({
           channel: "notifychat",
           to: "notifychat:123",
@@ -1904,7 +1878,8 @@ describe("task-registry", () => {
 
         resetSystemEventsForTest();
         await reloadTaskRegistryFromStoreAsync(captureOpenClawStateWorkerContext());
-        await maybeDeliverTaskTerminalUpdate(task.taskId);
+        scheduleTaskDelivery(requireTaskById(task.taskId));
+        await deliveries.settle();
 
         expectRecordFields(requireTaskById(task.taskId), {
           deliveryStatus: "pending",
@@ -2307,6 +2282,7 @@ describe("task-registry", () => {
     },
   ] as const)("records terminal non-delivery when $name", async (testCase) => {
     await withTaskRegistryTempDir(async () => {
+      using deliveries = captureTaskDeliveryWork();
       hoisted.sendMessageMock.mockResolvedValue({
         channel: "notifychat",
         to: "notifychat:123",
@@ -2322,7 +2298,8 @@ describe("task-registry", () => {
       });
       markTaskTerminalById({ taskId: task.taskId, status: "succeeded", endedAt: 250 });
 
-      await maybeDeliverTaskTerminalUpdate(task.taskId);
+      scheduleTaskDelivery(requireTaskById(task.taskId));
+      await deliveries.settle();
 
       expectRecordFields(requireTaskById(task.taskId), { deliveryStatus: "failed" });
       expect(peekSystemEvents("agent:main:main")).toHaveLength(testCase.expectedFallbackCount);
@@ -2589,6 +2566,7 @@ describe("task-registry", () => {
 
   it("suppresses duplicate ACP delivery when a preferred spawned task shares the runId", async () => {
     await withTaskRegistryTempDir(async () => {
+      using deliveries = captureTaskDeliveryWork();
       hoisted.sendMessageMock.mockResolvedValue({
         channel: "notifychat",
         to: "notifychat:123",
@@ -2609,8 +2587,9 @@ describe("task-registry", () => {
         status: "succeeded",
       });
 
-      await maybeDeliverTaskTerminalUpdate(directTask.taskId);
-      await maybeDeliverTaskTerminalUpdate(spawnedTask.taskId);
+      scheduleTaskDelivery(requireTaskById(directTask.taskId));
+      scheduleTaskDelivery(requireTaskById(spawnedTask.taskId));
+      await deliveries.settle();
 
       expect(hoisted.sendMessageMock).not.toHaveBeenCalled();
       expect(countMatching(listTaskRecords(), (task) => task.runId === "run-shared-delivery")).toBe(
@@ -2629,6 +2608,7 @@ describe("task-registry", () => {
 
   it("does not suppress ACP delivery across different requester scopes when runIds collide", async () => {
     await withTaskRegistryTempDir(async () => {
+      using deliveries = captureTaskDeliveryWork();
       const victimTask = createTaskFixture("acp", {
         ownerKey: "agent:victim:main",
         childSessionKey: "agent:victim:acp:child",
@@ -2654,8 +2634,9 @@ describe("task-registry", () => {
         status: "succeeded",
         endedAt: 260,
       });
-      await maybeDeliverTaskTerminalUpdate(victimTask.taskId);
-      await maybeDeliverTaskTerminalUpdate(attackerTask.taskId);
+      scheduleTaskDelivery(requireTaskById(victimTask.taskId));
+      scheduleTaskDelivery(requireTaskById(attackerTask.taskId));
+      await deliveries.settle();
 
       await waitForAssertion(() =>
         expectRecordFields(requireTaskById(victimTask.taskId), {
@@ -2721,6 +2702,7 @@ describe("task-registry", () => {
 
   it("delivers a terminal ACP update only once when multiple notifiers race", async () => {
     await withTaskRegistryTempDir(async () => {
+      using deliveries = captureTaskDeliveryWork();
       const terminalSummary = (
         "Writable session or apply_patch authorization required. " +
         "Diagnostic detail. ".repeat(20)
@@ -2740,9 +2722,9 @@ describe("task-registry", () => {
         terminalSummary,
       });
 
-      const first = maybeDeliverTaskTerminalUpdate(task.taskId);
-      const second = maybeDeliverTaskTerminalUpdate(task.taskId);
-      await Promise.all([first, second]);
+      scheduleTaskDelivery(requireTaskById(task.taskId));
+      scheduleTaskDelivery(requireTaskById(task.taskId));
+      await deliveries.settle();
       await waitForFast(() =>
         expectRecordFields(requireTaskById(task.taskId), { deliveryStatus: "delivered" }),
       );
@@ -3957,6 +3939,7 @@ describe("task-registry", () => {
 
   it("does not hide a failed reload behind the restart-draining delivery fallback", async () => {
     await withTaskRegistryTempDir(async () => {
+      using deliveries = captureTaskDeliveryWork();
       const storedTask: TaskRecord = {
         taskId: "task-reload-failure",
         runtime: "acp",
@@ -3990,7 +3973,8 @@ describe("task-registry", () => {
       expect(getTaskById(storedTask.taskId)?.taskId).toBe(storedTask.taskId);
 
       beginGatewayRestartSignalAdmission();
-      const pendingDelivery = maybeDeliverTaskTerminalUpdate(storedTask.taskId);
+      scheduleTaskDelivery(storedTask);
+      const pendingDelivery = deliveries.settle();
       await Promise.resolve();
 
       restoreError = new Error("SQLITE_CORRUPT: task reload failed");
@@ -4950,34 +4934,40 @@ describe("task-registry", () => {
     });
   });
 
-  it("stops a pending terminal notifier when teardown suppresses delivery", async () => {
+  it("stops a pending terminal notifier when its delivery status is suppressed", async () => {
     await withTaskRegistryTempDir(async () => {
+      using deliveries = captureTaskDeliveryWork();
       hoisted.sendMessageMock.mockClear();
+      const runId = "run-subagent-pending-teardown";
       const task = createTaskFixture("subagent", {
         requesterOrigin: { channel: "notifychat", to: "notifychat:123" },
         childSessionKey: "agent:worker:subagent:pending-teardown",
-        runId: "run-subagent-pending-teardown",
+        runId,
         task: "Stop pending delivery",
         deliveryStatus: "pending",
       });
       finalizeSubagentTask(task, {
         status: "cancelled",
         endedAt: 200,
-        error: SUBAGENT_KILL_TASK_ERROR,
+        error: "Operator cancelled this task",
       });
 
-      const pendingDelivery = maybeDeliverTaskTerminalUpdate(task.taskId);
-      finalizeSubagentTask(task, {
-        status: "cancelled",
-        endedAt: 201,
-        error: SUBAGENT_KILL_TASK_ERROR,
-        suppressDelivery: true,
+      scheduleTaskDelivery(requireTaskById(task.taskId));
+      const pendingDelivery = deliveries.settle();
+      const suppressed = setTaskRunDeliveryStatusByRunId({
+        runId,
+        runtime: task.runtime,
+        sessionKey: task.childSessionKey,
+        deliveryStatus: "not_applicable",
       });
+      expect(suppressed).toHaveLength(1);
       await pendingDelivery;
 
       expect(hoisted.sendMessageMock).not.toHaveBeenCalled();
       expectRecordFields(getTaskById(task.taskId), {
         status: "cancelled",
+        endedAt: 200,
+        error: "Operator cancelled this task",
         deliveryStatus: "not_applicable",
       });
     });
