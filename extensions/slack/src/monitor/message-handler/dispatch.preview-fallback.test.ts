@@ -4314,8 +4314,6 @@ describe("dispatchPreparedSlackMessage preview fallback", () => {
       mockedDispatchSequence =
         messageToolReply || silent ? [] : [{ kind: "final", payload: finalPayload }];
       mockedSourceReplyDelivered = messageToolReply;
-      const { createMessageReceiptFromOutboundResults } =
-        await import("openclaw/plugin-sdk/channel-outbound");
       const { createSlackDraftStream } =
         await vi.importActual<typeof import("../../draft-stream.js")>("../../draft-stream.js");
       const { noteSlackDraftConversationMessage } =

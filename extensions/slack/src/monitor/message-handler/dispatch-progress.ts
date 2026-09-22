@@ -475,15 +475,14 @@ export function createSlackProgressRuntime(runtimeParams: {
       // preserves narration -> plan -> final answer ordering.
       await appendNativeProgressCompletion(false);
       return await delivery.deliverWithStreaming({ payload, kind });
-    } else {
-      const result = await delivery.deliverNormally({
-        payload,
-        kind,
-        forcedThreadTs: finalThreadTs,
-      });
-      await appendNativeProgressCompletion(payload.isError === true);
-      return result;
     }
+    const result = await delivery.deliverNormally({
+      payload,
+      kind,
+      forcedThreadTs: finalThreadTs,
+    });
+    await appendNativeProgressCompletion(payload.isError === true);
+    return result;
   };
 
   const buildNativeProgressCompletionChunks = (finalInProgressStatus: "complete" | "error") => {

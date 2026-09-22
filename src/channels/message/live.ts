@@ -1,10 +1,10 @@
 import { runBestEffortCleanup } from "../../infra/non-fatal-cleanup.js";
+import type { ChannelDeliveryResult } from "../turn/delivery-outcome.js";
 import { createAcceptedChannelDeliveryResult } from "../turn/delivery-result.js";
 import {
   createChannelPartialDeliveryError,
   isChannelPartialDeliveryError,
 } from "../turn/partial-delivery-error.js";
-import type { ChannelDeliveryResult } from "../turn/types.js";
 import type { LiveMessageState, MessageReceipt, RenderedMessageBatch } from "./types.js";
 
 /** A transport-owned preview. discardPending must stop new work before awaiting in-flight work. */

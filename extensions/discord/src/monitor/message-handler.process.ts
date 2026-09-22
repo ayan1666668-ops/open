@@ -206,7 +206,7 @@ export async function processDiscordMessage(
     draftPreview.freezeProgress();
     const retainedProgress =
       activeThreadRoute.threadReplyDelivered && !lifecycle.previewFinalized
-        ? draftPreview.finalizeProgressDraft().catch((error) => {
+        ? draftPreview.finalizeProgressDraft().catch((error: unknown) => {
             logVerbose(`discord: failed to finalize adopted thread progress (${String(error)})`);
           })
         : undefined;

@@ -226,8 +226,11 @@ export function createDiscordDraftPreviewController(params: {
     get isProgressDraftVisible() {
       return progressDraft.isVisible;
     },
-    setProgressNarratorLifecycle(lifecycle: { beginTurn: () => void; stopTurn: () => void }) {
-      progressNarratorLifecycle = lifecycle;
+    setProgressNarratorLifecycle(narratorLifecycle: {
+      beginTurn: () => void;
+      stopTurn: () => void;
+    }) {
+      progressNarratorLifecycle = narratorLifecycle;
     },
     freezeProgress,
     async adoptProgressContinuation(
