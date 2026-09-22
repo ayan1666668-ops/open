@@ -411,7 +411,10 @@ export async function withSessionHistoryWorkerReadCandidates<T>(
           }
           if (result.kind === "session-target-inventory") {
             // Best-effort inventory can encode a failed read instead of throwing it.
-            discoveryFailed ||= result.agents.some(({ result: inventory }) => !inventory.available);
+            discoveryFailed ||= result.agents.some(
+              ({ result: inventory }) =>
+                !inventory.available && inventory.reason !== "database-missing",
+            );
           }
           if (result.kind === "session-target-registry-required") {
             // Native discovery may already have opened other candidates. Settle

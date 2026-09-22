@@ -30,7 +30,7 @@ export async function readSessionEntriesFromStoreInWorker(
   input: SessionStoreWorkerReadScope & {
     sessionKeys: readonly string[];
     lifecycleSessionKey?: string;
-    projection?: "full" | "backing";
+    projection?: "full" | "backing" | "sharing";
   },
 ) {
   const read = {

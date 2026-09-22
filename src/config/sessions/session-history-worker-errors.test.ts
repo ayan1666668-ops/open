@@ -457,28 +457,32 @@ it("keeps native worker retirement for Bun candidate cleanup", async () => {
   }
 });
 
-it("retires inventory workers when best-effort discovery reports a failed read", async () => {
-  const request = input();
-  const candidates = [{ path: request.database.path, physicalPath: request.database.path }];
-  observed.run.mockResolvedValue({
-    ok: true,
-    value: {
-      kind: "session-target-inventory",
-      agents: [{ agentId: "main", result: { available: false, reason: "read-failed" }, reads: [] }],
-    },
-  });
-  await withSessionHistoryWorkerReadCandidates(candidates, async (scope) => {
-    await scope.readTargetInventory({
-      config: {},
-      agentIds: ["main"],
-      env: {},
-      paths: new Map(),
-      registeredDatabases: [],
+it.each(["read-failed", "database-missing"] as const)(
+  "settles inventory readers for %s",
+  async (reason) => {
+    const request = input();
+    const candidates = [{ path: request.database.path, physicalPath: request.database.path }];
+    observed.run.mockResolvedValue({
+      ok: true,
+      value: {
+        kind: "session-target-inventory",
+        agents: [{ agentId: "main", result: { available: false, reason }, reads: [] }],
+      },
     });
-  });
-  expect(observed.closeResources).not.toHaveBeenCalled();
-  expect(observed.rotate).toHaveBeenCalledTimes(1);
-});
+    await withSessionHistoryWorkerReadCandidates(candidates, async (scope) => {
+      await scope.readTargetInventory({
+        config: {},
+        agentIds: ["main"],
+        env: {},
+        paths: new Map(),
+        registeredDatabases: [],
+      });
+    });
+    const retired = reason === "read-failed" || Boolean(process.versions.bun);
+    expect(observed.closeResources).toHaveBeenCalledTimes(retired ? 0 : 1);
+    expect(observed.rotate).toHaveBeenCalledTimes(retired ? 1 : 0);
+  },
+);
 
 it.runIf(!process.versions.bun).each([false, true])(
   "keeps alias custody through overlapping retirement when retirement fails=%s",
