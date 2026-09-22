@@ -979,6 +979,7 @@ export async function runSessionCompactionIfNeeded(params: {
         allowGatewaySubagentBinding: true,
         messageChannel: params.followupRun.run.messageProvider,
         clientCaps: params.followupRun.run.clientCaps,
+        ...(params.followupRun.run.clientId ? { clientId: params.followupRun.run.clientId } : {}),
         conversationToolPolicy: params.followupRun.run.conversationToolPolicy,
         groupId: entry.groupId ?? params.followupRun.run.groupId,
         groupChannel: entry.groupChannel ?? params.followupRun.run.groupChannel,

@@ -5,6 +5,7 @@ import {
   setRuntimeConfigSnapshot,
 } from "../../config/runtime-snapshot.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import { collectRuntimeChannelCapabilities } from "../../agents/runtime-capabilities.js";
 import { buildEmbeddedRunBaseParams } from "./agent-runner-run-params.js";
 import type { FollowupRun } from "./queue.js";
 
@@ -98,5 +99,54 @@ describe("buildEmbeddedRunBaseParams runtime config", () => {
     });
 
     expect(resolved.toolBindings).toEqual(run.toolBindings);
+  });
+
+  it("keeps the originating client id so native disclosure does not depend on prompt-prep stubs", async () => {
+    const clientCaps = ["agent-kind", "inline-widgets"];
+    const nativeRun = makeRun({});
+    nativeRun.clientCaps = clientCaps;
+    nativeRun.clientId = "openclaw-macos";
+    const browserRun = makeRun({});
+    browserRun.clientCaps = clientCaps;
+    browserRun.clientId = "webchat";
+    const omittedRun = makeRun({});
+    omittedRun.clientCaps = clientCaps;
+
+    const [nativeParams, browserParams, omittedParams] = await Promise.all(
+      [nativeRun, browserRun, omittedRun].map((run) =>
+        buildEmbeddedRunBaseParams({
+          run,
+          provider: "openai",
+          model: "gpt-4.1-mini",
+          runId: "run-client-id",
+          authProfile: {},
+        }),
+      ),
+    );
+
+    expect(nativeParams?.clientId).toBe("openclaw-macos");
+    expect(browserParams?.clientId).toBe("webchat");
+    expect(omittedParams?.clientId).toBeUndefined();
+    expect(
+      collectRuntimeChannelCapabilities({
+        channel: "webchat",
+        clientCaps: nativeParams?.clientCaps,
+        clientId: nativeParams?.clientId,
+      }),
+    ).toEqual(["markdownDetails"]);
+    expect(
+      collectRuntimeChannelCapabilities({
+        channel: "webchat",
+        clientCaps: browserParams?.clientCaps,
+        clientId: browserParams?.clientId,
+      }),
+    ).toBeUndefined();
+    expect(
+      collectRuntimeChannelCapabilities({
+        channel: "webchat",
+        clientCaps: omittedParams?.clientCaps,
+        clientId: omittedParams?.clientId,
+      }),
+    ).toBeUndefined();
   });
 });
