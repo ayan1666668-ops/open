@@ -318,6 +318,24 @@ export abstract class ChatPaneBoard extends ChatPaneHistory {
       : undefined;
   }
 
+  captureNavigationFace(): "chat" | "dashboard" {
+    const state = this.state;
+    if (!state) {
+      return this.routeFace;
+    }
+    if (!isSidebarSlotVisible(state.sidebarLayout, "dashboard")) {
+      return "chat";
+    }
+    // Focusing an open pane adopts its live layout instead of reopening its shared default.
+    this.dashboardPresentationActivation = {
+      client: state.client,
+      key: boardProviderCacheKey(this.resolveBoardConversation()),
+      expanded: this.dashboardExpanded,
+      pendingRoute: this.routeFace !== "dashboard",
+    };
+    return "dashboard";
+  }
+
   protected syncRetainedBoardSession(board: ResolvedBoardView): void {
     const sessionKey = this.resolveBoardSessionKey(board.snapshot.sessionKey);
     const routeRequestsDashboard = this.routeFace === "dashboard" || this.dashboardExpanded;

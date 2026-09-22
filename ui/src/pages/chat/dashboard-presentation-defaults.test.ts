@@ -61,6 +61,30 @@ afterEach(() => {
 });
 
 describe("dashboard default activation and personal layout persistence", () => {
+  it.each(["split", "expanded-side"] as const)(
+    "keeps a live %s dashboard when focus adopts its face after the shared default changes",
+    (presentation) => {
+      const split = openSlot(ensureSidebarConversation({ columns: [] }), "dashboard");
+      const h = createDashboardHarness({
+        savedLayout: {
+          ...(presentation === "split" ? split : toggleSidebarPanelExpanded(split, "dashboard")),
+          dashboardPresentationOverride: null,
+        },
+      });
+      h.pane.routeFace = "chat";
+      const layout = structuredClone(h.state.sidebarLayout);
+      h.publishRow(session({ boardPresentation: presentation === "split" ? "expanded" : "split" }));
+
+      h.pane.routeFace = h.pane.captureNavigationFace();
+      h.sync();
+
+      expect(h.pane.routeFace).toBe("dashboard");
+      expect(h.state.sidebarLayout).toEqual(layout);
+      expect(sidebarMainPanel(h.state.sidebarLayout)?.slot).toBe("conversation");
+      expect(sidebarActivePanel(h.state.sidebarLayout)?.slot).toBe("dashboard");
+    },
+  );
+
   it("relocates only the visible fullscreen widget when a replacement task menu exists", async () => {
     await ensureBoardViewElement();
     const { pane } = createDashboardHarness();

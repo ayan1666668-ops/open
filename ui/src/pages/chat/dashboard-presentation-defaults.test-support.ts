@@ -31,6 +31,7 @@ type DashboardPane = TestChatPane & {
   paneWidth: number;
   resolveBoardView: () => ResolvedBoardView;
   syncRetainedBoardSession: (board: ResolvedBoardView) => void;
+  captureNavigationFace: () => "chat" | "dashboard";
   commitSidebarPanelResize: (layout: SidebarLayout, columnId: string, size: number) => void;
   handleBoardCommand: (event: BoardCommandEvent) => void;
   saveDashboardDefault: (row: GatewaySessionRow, agentId: string | undefined) => Promise<void>;

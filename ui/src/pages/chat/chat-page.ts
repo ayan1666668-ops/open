@@ -34,7 +34,7 @@ import { observeChatCache, type ChatMessageCache } from "./session-message-cache
 import { installSessionPrefetch } from "./session-prefetch.ts";
 import { SessionSnapshotStore } from "./session-snapshot-store.ts";
 import type { SplitDropZone } from "./split-drop-zone.ts";
-import type { ChatSplitLayout, SessionSplitHost } from "./split-layout-types.ts";
+import type { ChatSplitLayout, ChatSplitPane, SessionSplitHost } from "./split-layout-types.ts";
 import {
   applyUiCommandToSplitLayout,
   closePane,
@@ -305,7 +305,7 @@ export class ChatPage extends OpenClawLightDomElement implements SessionSplitHos
     this.persistLayout(next);
     const activePane = next && findPane(next, next.activePaneId)?.pane;
     if (activePane) {
-      this.updateRoute(activePane.sessionKey, true);
+      this.updateRouteToPane(activePane);
     }
   };
 
@@ -431,6 +431,16 @@ export class ChatPage extends OpenClawLightDomElement implements SessionSplitHos
     }
   }
 
+  private updateRouteToPane(pane: ChatSplitPane): void {
+    const mounted = [...this.querySelectorAll<ChatPaneElement>("openclaw-chat-pane")].find(
+      (candidate) =>
+        candidate.paneId === pane.id &&
+        candidate.sessionKey !== undefined &&
+        areUiSessionKeysEquivalent(candidate.sessionKey, pane.sessionKey),
+    );
+    this.updateRoute(pane.sessionKey, true, mounted?.captureNavigationFace?.());
+  }
+
   private applySessionDrop(sessionKey: string, paneId: string, zone: SplitDropZone): void {
     const trimmed = sessionKey.trim();
     if (!trimmed) {
@@ -471,7 +481,7 @@ export class ChatPage extends OpenClawLightDomElement implements SessionSplitHos
       return;
     }
     this.persistLayout(setActivePane(layout, paneId));
-    this.updateRoute(pane.sessionKey, true);
+    this.updateRouteToPane(pane);
   };
 
   private readonly handlePaneSessionChange = (
@@ -616,7 +626,7 @@ export class ChatPage extends OpenClawLightDomElement implements SessionSplitHos
     this.persistLayout(next);
     const activePane = next ? findPane(next, next.activePaneId)?.pane : survivingPane;
     if (activePane) {
-      this.updateRoute(activePane.sessionKey, true);
+      this.updateRouteToPane(activePane);
       if (ownsFocus) {
         const abort = new AbortController();
         this.pendingCloseFocus = {
