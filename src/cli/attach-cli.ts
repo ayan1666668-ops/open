@@ -11,6 +11,7 @@ import {
   resolveSessionTarget,
   type SessionTargetGateway,
 } from "./session-target.js";
+import { isTtyStream } from "./terminal-interactivity.js";
 
 type AttachGrant = {
   sessionKey: string;
@@ -139,11 +140,13 @@ export async function registerAttachCli(program: Command, _argv: string[] = proc
 
         if (opts.printConfig) {
           // The env block below carries a live, unrevoked bearer token. Warn on
-          // stderr (separate from the JSON on stdout) so a tester piping/copying
-          // stdout output doesn't miss that it must be treated as a secret.
-          defaultRuntime.error(
-            "WARNING: the JSON below includes a live OPENCLAW_MCP_TOKEN bearer credential (env.OPENCLAW_MCP_TOKEN). Treat it as a secret: do not paste it into logs, chat transcripts, or shared reports.",
-          );
+          // stderr, gated on stderr being a TTY so scripted/redirected callers
+          // that treat any stderr output as failure keep their exact prior output.
+          if (isTtyStream(process.stderr)) {
+            defaultRuntime.error(
+              "WARNING: the JSON below includes a live OPENCLAW_MCP_TOKEN bearer credential (env.OPENCLAW_MCP_TOKEN). Treat it as a secret: do not paste it into logs, chat transcripts, or shared reports.",
+            );
+          }
           defaultRuntime.log(
             JSON.stringify(
               {
