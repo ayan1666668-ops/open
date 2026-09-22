@@ -55,7 +55,13 @@ import { createRuntimeProcessBuildEntries } from "./runtime-process-core-build-e
 import { nativeSchtasksIntegrationEnabled } from "./vitest-worker-declarations.mts";
 
 // These fixture hooks require physical module boundaries and complete namespaces.
-export const legacyFinalizerBuildSources = [
+export const preservedModuleBuildSources = [
+  "src/cli/mcp-cli.ts",
+  "src/agents/agent-bundle-mcp-materialize.ts",
+  "src/plugins/tool-metadata.ts",
+  "src/plugins/tools.ts",
+  "src/plugins/loader.ts",
+  "src/mcp/channel-server.ts",
   "src/cli/update-finalization-output.test-support.ts",
   "src/cli/program/register.maintenance.ts",
   "src/cli/one-shot-exit.ts",
